@@ -1,11 +1,11 @@
-# gramsrv (telesrv)
+# gramsrv
 
-`gramsrv` is the public repository for `telesrv`, a Telegram-like MTProto server
-written in Go. It uses [`github.com/gotd/td`](https://github.com/gotd/td)
-v0.144.0 / Layer 225 as the TL and MTProto base, and its first compatibility
-target is a pinned Telegram Desktop build.
+`gramsrv` is a Telegram-like MTProto server written in Go. It uses
+[`github.com/gotd/td`](https://github.com/gotd/td) v0.144.0 / Layer 225 as the TL
+and MTProto base, and its first compatibility target is a pinned Telegram
+Desktop build.
 
-`telesrv` is an independent, unofficial project. It is not affiliated with,
+`gramsrv` is an independent, unofficial project. It is not affiliated with,
 endorsed by, or sponsored by Telegram or the official Telegram team.
 
 Keywords: `MTProto`, `Telegram Desktop`, `gotd/td`, `Telegram-like server`, `Go`,
@@ -13,7 +13,7 @@ Keywords: `MTProto`, `Telegram Desktop`, `gotd/td`, `Telegram-like server`, `Go`
 
 [中文 README](README.zh-CN.md)
 
-![Telegram Desktop Alice/Bob connected to telesrv](docs/assets/tdesktop-dual-session.png)
+![Telegram Desktop Alice/Bob connected to gramsrv](docs/assets/tdesktop-dual-session.png)
 
 ## Status
 
@@ -52,7 +52,7 @@ internal/store/           store interfaces and memory/postgres/redis backends
 docs/                     compatibility notes and module design docs
 ```
 
-## Run telesrv
+## Run gramsrv
 
 Requirements:
 
@@ -69,11 +69,11 @@ docker compose -f deploy/docker-compose.yml up -d
 Build and run the server:
 
 ```powershell
-go build -o bin/telesrv.exe ./cmd/telesrv
-.\bin\telesrv.exe
+go build -o bin/gramsrv.exe ./cmd/telesrv
+.\bin\gramsrv.exe
 ```
 
-On first start, `telesrv` creates `data/server_rsa.pem`, applies all database
+On first start, `gramsrv` creates `data/server_rsa.pem`, applies all database
 migrations, seeds bundled language packs, and listens on `0.0.0.0:2398`.
 
 Useful development environment variables:
@@ -90,9 +90,9 @@ Useful development environment variables:
 
 The optional sticker seed directory is skipped when it does not exist.
 
-## Build Telegram Desktop For telesrv
+## Build Telegram Desktop For gramsrv
 
-The stock Telegram Desktop binary will not connect to `telesrv`: it trusts
+The stock Telegram Desktop binary will not connect to `gramsrv`: it trusts
 Telegram's production DC list and RSA keys. Build your own patched client.
 
 Target baseline:
@@ -129,7 +129,7 @@ project. The debug binary is written to `out\Debug\Telegram.exe`.
 
 ## Patch Telegram Desktop
 
-After `telesrv` has generated `data/server_rsa.pem`, export the matching public
+After `gramsrv` has generated `data/server_rsa.pem`, export the matching public
 key:
 
 ```powershell
@@ -182,7 +182,7 @@ Log in with two different phone numbers. In local development, the login code is
 
 If the client keeps reconnecting, check these first:
 
-- `telesrv` is listening on port `2398`.
+- `gramsrv` is listening on port `2398`.
 - `data/server_rsa.pub` was copied into both RSA key arrays in TDesktop.
 - `TELESRV_ADVERTISE_IP` matches the address reachable from the client.
 - TDesktop was built from the pinned Layer 225 baseline or re-audited for a new

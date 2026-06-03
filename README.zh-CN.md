@@ -1,18 +1,17 @@
-# gramsrv (telesrv)
+# gramsrv
 
-`gramsrv` 是 `telesrv` 的公开仓库名。`telesrv` 是一个用 Go 编写的
-Telegram-like MTProto server，以
+`gramsrv` 是一个用 Go 编写的 Telegram-like MTProto server，以
 [`github.com/gotd/td`](https://github.com/gotd/td) v0.144.0 / Layer 225 作为
 TL 与 MTProto 基础，第一兼容目标是固定基线的 Telegram Desktop。
 
-`telesrv` 是独立的非官方项目，与 Telegram 官方及其团队没有关联，也未获得其背书或赞助。
+`gramsrv` 是独立的非官方项目，与 Telegram 官方及其团队没有关联，也未获得其背书或赞助。
 
 关键词：`MTProto`、`Telegram Desktop`、`gotd/td`、`Telegram-like server`、`Go`、
 `self-hosted chat server`。
 
 [English README](README.md)
 
-![Telegram Desktop Alice/Bob connected to telesrv](docs/assets/tdesktop-dual-session.png)
+![Telegram Desktop Alice/Bob connected to gramsrv](docs/assets/tdesktop-dual-session.png)
 
 ## 当前状态
 
@@ -41,7 +40,7 @@ internal/store/           store interfaces 与 memory/postgres/redis 后端
 docs/                     兼容性记录与模块设计文档
 ```
 
-## 运行 telesrv
+## 运行 gramsrv
 
 依赖：
 
@@ -58,11 +57,11 @@ docker compose -f deploy/docker-compose.yml up -d
 编译并启动 server：
 
 ```powershell
-go build -o bin/telesrv.exe ./cmd/telesrv
-.\bin\telesrv.exe
+go build -o bin/gramsrv.exe ./cmd/telesrv
+.\bin\gramsrv.exe
 ```
 
-第一次启动时，`telesrv` 会创建 `data/server_rsa.pem`，自动执行所有数据库 migrations，导入内置语言包，并监听 `0.0.0.0:2398`。
+第一次启动时，`gramsrv` 会创建 `data/server_rsa.pem`，自动执行所有数据库 migrations，导入内置语言包，并监听 `0.0.0.0:2398`。
 
 常用开发环境变量：
 
@@ -78,9 +77,9 @@ go build -o bin/telesrv.exe ./cmd/telesrv
 
 如果 sticker seed 目录不存在，启动时会自动跳过。
 
-## 编译连接 telesrv 的 Telegram Desktop
+## 编译连接 gramsrv 的 Telegram Desktop
 
-官方 Telegram Desktop 二进制不能直接连接 `telesrv`，因为它信任的是 Telegram 官方 DC 列表和 RSA keys。你需要编译一个最小 patch 过的客户端。
+官方 Telegram Desktop 二进制不能直接连接 `gramsrv`，因为它信任的是 Telegram 官方 DC 列表和 RSA keys。你需要编译一个最小 patch 过的客户端。
 
 目标基线：
 
@@ -115,7 +114,7 @@ configure.bat x64 -D TDESKTOP_API_ID=YOUR_API_ID -D TDESKTOP_API_HASH=YOUR_API_H
 
 ## Patch Telegram Desktop
 
-等 `telesrv` 生成 `data/server_rsa.pem` 后，导出匹配的公钥：
+等 `gramsrv` 生成 `data/server_rsa.pem` 后，导出匹配的公钥：
 
 ```powershell
 openssl rsa -in data/server_rsa.pem -RSAPublicKey_out -out data/server_rsa.pub
@@ -171,7 +170,7 @@ Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-bob")
 
 如果客户端一直重连，优先检查：
 
-- `telesrv` 是否正在监听 `2398`。
+- `gramsrv` 是否正在监听 `2398`。
 - `data/server_rsa.pub` 是否同时复制到了 TDesktop 的两个 RSA key 数组。
 - `TELESRV_ADVERTISE_IP` 是否是客户端可访问的地址。
 - TDesktop 是否基于固定 Layer 225 基线构建，或者你已经重新审计了新 layer。
