@@ -21,6 +21,12 @@ func (r *Router) dispatchCompat(ctx context.Context, b *bin.Buffer, id uint32) (
 	)
 
 	switch id {
+	case legacyLangpackGetLangPackTypeID:
+		name = "langpack.getLangPack#9ab5c58e"
+		enc, err = r.handleLegacyLangpackGetLangPack(ctx, b)
+	case legacyLangpackGetStringsTypeID:
+		name = "langpack.getStrings#2e1ee318"
+		enc, err = r.handleLegacyLangpackGetStrings(ctx, b)
 	case legacyLangpackGetLanguagesTypeID:
 		name = "langpack.getLanguages#800fd57d"
 		enc, err = r.handleLegacyLangpackGetLanguages(ctx, b)

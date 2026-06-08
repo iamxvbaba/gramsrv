@@ -37,6 +37,9 @@ func (r *Router) registerAuth(d *tg.ServerDispatcher) {
 	d.OnAuthDropTempAuthKeys(func(ctx context.Context, exceptauthkeys []int64) (bool, error) {
 		return true, nil
 	})
+	d.OnAuthInitPasskeyLogin(func(ctx context.Context, req *tg.AuthInitPasskeyLoginRequest) (*tg.AuthPasskeyLoginOptions, error) {
+		return &tg.AuthPasskeyLoginOptions{Options: tg.DataJSON{Data: "{}"}}, nil
+	})
 	d.OnAuthSendCode(r.onAuthSendCode)
 	d.OnAuthResendCode(r.onAuthResendCode)
 	d.OnAuthCancelCode(r.onAuthCancelCode)

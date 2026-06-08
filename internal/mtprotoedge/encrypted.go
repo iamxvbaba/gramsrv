@@ -608,6 +608,7 @@ func clientMessageNeedsAck(typeID uint32) bool {
 	case proto.MessageContainerTypeID,
 		mt.MsgsAckTypeID,
 		mt.PingDelayDisconnectRequestTypeID,
+		mt.DestroySessionRequestTypeID,
 		mt.HTTPWaitRequestTypeID,
 		mt.BadMsgNotificationTypeID,
 		mt.BadServerSaltTypeID,

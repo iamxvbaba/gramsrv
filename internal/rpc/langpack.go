@@ -8,7 +8,13 @@ import (
 	"github.com/gotd/td/tg"
 )
 
-const legacyLangpackGetLanguagesTypeID uint32 = 0x800fd57d
+const (
+	legacyLangpackGetLangPackTypeID  uint32 = 0x9ab5c58e
+	legacyLangpackGetStringsTypeID   uint32 = 0x2e1ee318
+	legacyLangpackGetLanguagesTypeID uint32 = 0x800fd57d
+
+	maxLegacyLangpackStringKeys = 512
+)
 
 // registerLangpack 注册 langpack.* RPC handler。
 func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
@@ -45,6 +51,59 @@ func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
 		}
 		return tgLangPackStrings(pack.Strings), nil
 	})
+}
+
+func (r *Router) handleLegacyLangpackGetLangPack(ctx context.Context, b *bin.Buffer) (bin.Encoder, error) {
+	if err := b.ConsumeID(legacyLangpackGetLangPackTypeID); err != nil {
+		return nil, err
+	}
+	langCode, err := b.String()
+	if err != nil {
+		return nil, err
+	}
+	langPack := langPackFromClient(ctx)
+	if r.deps.LangPack == nil {
+		return &tg.LangPackDifference{LangCode: langCode}, nil
+	}
+	pack, err := r.deps.LangPack.GetLangPack(ctx, langPack, langCode)
+	if err != nil {
+		return nil, internalErr()
+	}
+	return tgLangPackDifference(pack), nil
+}
+
+func (r *Router) handleLegacyLangpackGetStrings(ctx context.Context, b *bin.Buffer) (bin.Encoder, error) {
+	if err := b.ConsumeID(legacyLangpackGetStringsTypeID); err != nil {
+		return nil, err
+	}
+	langCode, err := b.String()
+	if err != nil {
+		return nil, err
+	}
+	headerLen, err := b.VectorHeader()
+	if err != nil {
+		return nil, err
+	}
+	if headerLen > maxLegacyLangpackStringKeys {
+		return nil, limitInvalidErr()
+	}
+	keys := make([]string, 0, headerLen)
+	for i := 0; i < headerLen; i++ {
+		key, err := b.String()
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	langPack := langPackFromClient(ctx)
+	if r.deps.LangPack == nil {
+		return &tg.LangPackStringClassVector{}, nil
+	}
+	pack, err := r.deps.LangPack.GetStrings(ctx, langPack, langCode, keys)
+	if err != nil {
+		return nil, internalErr()
+	}
+	return &tg.LangPackStringClassVector{Elems: tgLangPackStrings(pack.Strings)}, nil
 }
 
 func (r *Router) handleLegacyLangpackGetLanguages(ctx context.Context, b *bin.Buffer) (bin.Encoder, error) {

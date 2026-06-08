@@ -401,6 +401,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 		{name: "help.getPromoData", req: &tg.HelpGetPromoDataRequest{}},
 		{name: "help.getTermsOfServiceUpdate", req: &tg.HelpGetTermsOfServiceUpdateRequest{}},
 		{name: "help.getPremiumPromo", req: &tg.HelpGetPremiumPromoRequest{}},
+		{name: "auth.initPasskeyLogin", req: &tg.AuthInitPasskeyLoginRequest{APIID: 4, APIHash: "test"}},
 		{name: "account.getPassword", req: &tg.AccountGetPasswordRequest{}},
 		{name: "account.getNotifySettings", req: &tg.AccountGetNotifySettingsRequest{Peer: &tg.InputNotifyUsers{}}},
 		{name: "account.resetNotifySettings", req: &tg.AccountResetNotifySettingsRequest{}},
