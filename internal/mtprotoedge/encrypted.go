@@ -42,6 +42,11 @@ func newConnState() *connState {
 	}
 }
 
+func (cs *connState) reset() {
+	next := newConnState()
+	*cs = *next
+}
+
 const (
 	maxTrackedClientMsgIDs = 400
 
@@ -86,6 +91,9 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 
 	// 首个加密消息或 session 变化时（重新）注册连接到 SessionManager。
 	if current == nil || current.sessionID != data.SessionID {
+		if current != nil {
+			cs.reset()
+		}
 		if current != nil {
 			s.conns.Unregister(current)
 			current.Close()
@@ -599,6 +607,7 @@ func clientMessageNeedsAck(typeID uint32) bool {
 	switch typeID {
 	case proto.MessageContainerTypeID,
 		mt.MsgsAckTypeID,
+		mt.PingDelayDisconnectRequestTypeID,
 		mt.HTTPWaitRequestTypeID,
 		mt.BadMsgNotificationTypeID,
 		mt.BadServerSaltTypeID,

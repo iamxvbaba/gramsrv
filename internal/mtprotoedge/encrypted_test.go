@@ -278,14 +278,14 @@ func TestOldMessageInFreshContainerAccepted(t *testing.T) {
 	}
 }
 
-func TestPingDelayDisconnectOddSeqAccepted(t *testing.T) {
+func TestPingDelayDisconnectEvenSeqAccepted(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	reqMsgID := clientMsgID.New(proto.MessageFromClient)
-	sendEncryptedWithSeq(t, conn, cipher, auth, reqMsgID, 1, &mt.PingDelayDisconnectRequest{
+	sendEncryptedWithSeq(t, conn, cipher, auth, reqMsgID, 0, &mt.PingDelayDisconnectRequest{
 		PingID:          9,
 		DisconnectDelay: 60,
 	})
@@ -412,6 +412,32 @@ func TestBadMsgSeqTooHigh(t *testing.T) {
 	if bad.BadMsgID != lowMsgID || bad.BadMsgSeqno != 3 || bad.ErrorCode != badMsgSeqTooHigh {
 		t.Fatalf("bad_msg = %+v, want msg_id=%d seq=3 code=%d", bad, lowMsgID, badMsgSeqTooHigh)
 	}
+}
+
+func TestSessionChangeResetsClientSeqState(t *testing.T) {
+	const dc = 2
+	addr, pub, _ := startTestServer(t, Options{DC: dc})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	firstMsgID := clientMsgID.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, firstMsgID, 1, &tg.HelpGetConfigRequest{})
+	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
+
+	nextSessionID := auth.SessionID + 1
+	if nextSessionID == 0 {
+		nextSessionID++
+	}
+	secondMsgID := clientMsgID.New(proto.MessageFromClient)
+	body := encodeClientMessageBodyForTest(t, &tg.HelpGetConfigRequest{})
+	sendEncryptedWithSessionSaltAndSeq(t, conn, cipher, auth, nextSessionID, auth.ServerSalt, secondMsgID, 1, body)
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
+	if _, ok := replies[mt.BadMsgNotificationTypeID]; ok {
+		t.Fatalf("session change with fresh seq_no produced bad_msg_notification")
+	}
+	mustHave(t, replies, mt.NewSessionCreatedTypeID, "new_session_created after session change")
+	mustHave(t, replies, mt.MsgsAckTypeID, "msgs_ack after session change")
 }
 
 func readBadMsgNotification(t *testing.T, conn transport.Conn, cipher crypto.Cipher, key crypto.AuthKey) mt.BadMsgNotification {

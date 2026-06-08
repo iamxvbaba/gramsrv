@@ -306,6 +306,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		return r.dispatch(ctx, &bin.Buffer{Buf: inner.data}, depth+1)
 
 	default:
+		if enc, ok, err := r.dispatchCompat(ctx, b, id); ok {
+			return enc, err
+		}
 		start := time.Now()
 		enc, err := r.dispatcher.Handle(ctx, b)
 		dur := time.Since(start)

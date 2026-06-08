@@ -103,6 +103,124 @@ func TestKeyExchange(t *testing.T) {
 	}
 }
 
+func TestKeyExchangeIgnoresUnencryptedMsgsAck(t *testing.T) {
+	const dc = 2
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("gen rsa: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	keys := memory.NewAuthKeyStore()
+	srv := New(Options{
+		Logger:   zaptest.NewLogger(t),
+		DC:       dc,
+		RSAKey:   rsaKey,
+		AuthKeys: keys,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn, err := transport.Intermediate.Handshake(raw)
+	if err != nil {
+		t.Fatalf("transport handshake: %v", err)
+	}
+
+	pub := exchange.PublicKey{RSA: &rsaKey.PublicKey}
+	exchCtx, ec := context.WithTimeout(context.Background(), 10*time.Second)
+	defer ec()
+	res, err := exchange.NewExchanger(&ackingExchangeConn{Conn: conn, t: t}, dc).
+		WithRand(rand.Reader).
+		WithLogger(zaptest.NewLogger(t).Named("client")).
+		Client([]exchange.PublicKey{pub}).
+		Run(exchCtx)
+	if err != nil {
+		t.Fatalf("client exchange: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, found, _ := keys.Get(context.Background(), res.AuthKey.ID); found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not store auth key %x", res.AuthKey.ID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop after ctx cancel")
+	}
+}
+
+type ackingExchangeConn struct {
+	transport.Conn
+	t *testing.T
+}
+
+func (c *ackingExchangeConn) Recv(ctx context.Context, b *bin.Buffer) error {
+	if err := c.Conn.Recv(ctx, b); err != nil {
+		return err
+	}
+	c.ackHandshakeMessage(b)
+	return nil
+}
+
+func (c *ackingExchangeConn) ackHandshakeMessage(frame *bin.Buffer) {
+	var msg tgproto.UnencryptedMessage
+	copy := &bin.Buffer{Buf: frame.Copy()}
+	if err := msg.Decode(copy); err != nil {
+		return
+	}
+	payload := &bin.Buffer{Buf: msg.MessageData}
+	id, err := payload.PeekID()
+	if err != nil {
+		return
+	}
+	switch id {
+	case mt.ResPQTypeID, mt.ServerDHParamsOkTypeID:
+	default:
+		return
+	}
+
+	var ackPayload bin.Buffer
+	if err := (&mt.MsgsAck{MsgIDs: []int64{msg.MessageID}}).Encode(&ackPayload); err != nil {
+		c.t.Fatalf("encode msgs_ack: %v", err)
+	}
+	var ackFrame bin.Buffer
+	if err := (tgproto.UnencryptedMessage{
+		MessageID:   int64(tgproto.NewMessageID(time.Now(), tgproto.MessageFromClient)),
+		MessageData: ackPayload.Raw(),
+	}).Encode(&ackFrame); err != nil {
+		c.t.Fatalf("encode msgs_ack frame: %v", err)
+	}
+	sendCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Conn.Send(sendCtx, &ackFrame); err != nil {
+		c.t.Fatalf("send msgs_ack: %v", err)
+	}
+}
+
 func TestReconnectFakeReqPQThenEncryptedFrame(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})

@@ -12,6 +12,8 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/crypto"
 	"github.com/gotd/td/exchange"
+	"github.com/gotd/td/mt"
+	"github.com/gotd/td/proto"
 	"github.com/gotd/td/proto/codec"
 	"github.com/gotd/td/transport"
 
@@ -123,23 +125,48 @@ func (c *bufferedConn) push(b *bin.Buffer) {
 
 // Recv 优先返回已 push 的帧（FIFO），耗尽后读取底层连接。
 func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
-	c.mu.Lock()
-	if len(c.pending) > 0 {
-		e := c.pending[0]
-		c.pending = c.pending[1:]
-		c.last.ResetTo(e.Copy())
-		c.mu.Unlock()
-		b.ResetTo(e.Buf)
+	for {
+		c.mu.Lock()
+		if len(c.pending) > 0 {
+			e := c.pending[0]
+			c.pending = c.pending[1:]
+			c.last.ResetTo(e.Copy())
+			c.mu.Unlock()
+			b.ResetTo(e.Buf)
+		} else {
+			c.mu.Unlock()
+			if err := c.Conn.Recv(ctx, b); err != nil {
+				return err
+			}
+			c.mu.Lock()
+			c.last.ResetTo(b.Copy())
+			c.mu.Unlock()
+		}
+
+		if isUnencryptedMsgsAckFrame(b) {
+			continue
+		}
 		return nil
 	}
-	c.mu.Unlock()
-	if err := c.Conn.Recv(ctx, b); err != nil {
-		return err
+}
+
+func isUnencryptedMsgsAckFrame(frame *bin.Buffer) bool {
+	authKeyID, err := peekAuthKeyID(frame)
+	if err != nil || authKeyID != emptyAuthKeyID {
+		return false
 	}
-	c.mu.Lock()
-	c.last.ResetTo(b.Copy())
-	c.mu.Unlock()
-	return nil
+
+	var msg proto.UnencryptedMessage
+	copy := &bin.Buffer{Buf: frame.Copy()}
+	if err := msg.Decode(copy); err != nil {
+		return false
+	}
+	payload := &bin.Buffer{Buf: msg.MessageData}
+	id, err := payload.PeekID()
+	if err != nil {
+		return false
+	}
+	return id == mt.MsgsAckTypeID
 }
 
 func (c *bufferedConn) lastFrame() *bin.Buffer {

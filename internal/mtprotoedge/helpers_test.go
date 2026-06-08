@@ -105,10 +105,15 @@ func sendEncryptedWithSeq(t *testing.T, conn transport.Conn, cipher crypto.Ciphe
 
 func sendEncryptedWithSaltAndSeq(t *testing.T, conn transport.Conn, cipher crypto.Cipher, auth exchange.ClientExchangeResult, salt, msgID int64, seqNo int32, body []byte) {
 	t.Helper()
+	sendEncryptedWithSessionSaltAndSeq(t, conn, cipher, auth, auth.SessionID, salt, msgID, seqNo, body)
+}
+
+func sendEncryptedWithSessionSaltAndSeq(t *testing.T, conn transport.Conn, cipher crypto.Cipher, auth exchange.ClientExchangeResult, sessionID, salt, msgID int64, seqNo int32, body []byte) {
+	t.Helper()
 	var buf bin.Buffer
 	if err := cipher.Encrypt(auth.AuthKey, crypto.EncryptedMessageData{
 		Salt:                   salt,
-		SessionID:              auth.SessionID,
+		SessionID:              sessionID,
 		MessageID:              msgID,
 		SeqNo:                  seqNo,
 		MessageDataLen:         int32(len(body)),
