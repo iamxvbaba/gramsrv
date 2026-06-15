@@ -6,9 +6,9 @@ confirmed source checkpoint.
 
 ## Current Checkpoint
 
-- Last synced source commit: `77b033c8bf8c0a76ff0d7065e2192cbe55d3a3b6`
-- Last synced target commit: `75a8861`
-- Sync date: 2026-06-14
+- Last synced source commit: `06b6ae2bb2f90bd7cc1d6a8404a82aff507e6821`
+- Last synced target commit: `b435784`
+- Sync date: 2026-06-16
 - Source path used locally: `D:\work\waikuai\telegram\telesrv`
 - Target path used locally: `D:\work\waikuai\telegram\gramsrv-public`
 
@@ -22,10 +22,12 @@ confirmed source checkpoint.
 | 2026-06-10 | `c0a0e5b52240ed415d3b43ba77659821887bf50b` | `860e581` | synced | Added viewer-specific user projection, contact accept/phone sharing behavior, and regression coverage for contact/user/message projections. |
 | 2026-06-14 | `a636192ef22ee69d792b0ca7db1c6be963be9cb2` | `8ff3343` | synced | Added privacy-aware user projection, account privacy persistence/service, profile/fallback photo kinds, and viewer-specific dialog/message/user projections. |
 | 2026-06-14 | `77b033c8bf8c0a76ff0d7065e2192cbe55d3a3b6` | `75a8861` | synced | Exposed account privacy RPCs and profile/contact photo RPCs, plus `users.getFullUser` privacy and photo projection updates. |
+| 2026-06-16 | `04f4527df32ad5c35720cccc41d27fe51549612f` | `6dc4294` | synced | Completed account authorization flows, including active sessions, authorization reset, 2FA/SRP password settings, recovery paths, and auth error mapping. |
+| 2026-06-16 | `06b6ae2bb2f90bd7cc1d6a8404a82aff507e6821` | `b435784` | synced | Added Android legacy startup compatibility for MTProto exchange replay/acks and allowlisted legacy `langpack.getLanguages` handling. |
 
 ## Next Sync
 
-Start the next batch from source commits after `77b033c8bf8c0a76ff0d7065e2192cbe55d3a3b6`.
+Start the next batch from source commits after `06b6ae2bb2f90bd7cc1d6a8404a82aff507e6821`.
 At the time this log was created, newer `telesrv` commits existed after that point and were
 intentionally left out because the latest batch was scoped to the next two commits after
-`c0a0e5b52240ed415d3b43ba77659821887bf50b`.
+`77b033c8bf8c0a76ff0d7065e2192cbe55d3a3b6`.
