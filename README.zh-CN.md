@@ -8,12 +8,7 @@
 
 ## 演示视频
 
-<p align="center">
-  <video src="docs/assets/telesrv-demo-split-60s.mp4" controls muted playsinline width="100%"></video>
-</p>
-
-如果当前浏览器里的 GitHub Markdown 预览没有显示内联播放器，可以直接打开
-[60 秒 Desktop 与 Android 同屏演示](docs/assets/telesrv-demo-split-60s.mp4)。
+https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
 
 ## 亮点
 
