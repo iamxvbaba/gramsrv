@@ -1,43 +1,43 @@
 # gramsrv
 
-`gramsrv` is a Telegram-like MTProto server written in Go. It uses
-[`github.com/gotd/td`](https://github.com/gotd/td) v0.144.0 / Layer 225 as the TL
-and MTProto base, and its first compatibility target is a pinned Telegram
-Desktop build.
+`gramsrv` is a Go implementation of a Telegram-like MTProto server, focused on
+real client compatibility, repeatable protocol research, and self-hosted chat
+experiments.
 
-`gramsrv` is an independent, unofficial project. It is not affiliated with,
-endorsed by, or sponsored by Telegram or the official Telegram team.
+[Website](https://telesrv.net) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
 
-Keywords: `MTProto`, `Telegram Desktop`, `gotd/td`, `Telegram-like server`, `Go`,
-`self-hosted chat server`.
+![gramsrv multi-device Desktop and Android preview](docs/assets/readme-hero.png)
 
-[中文 README](README.zh-CN.md)
+`gramsrv` is independent and unofficial. It is not affiliated with, endorsed by,
+or sponsored by Telegram or the official Telegram team.
 
-![Telegram Desktop Alice/Bob connected to gramsrv](docs/assets/tdesktop-dual-session.png)
+## Highlights
 
-## Status
+- **Multi-device is implemented.** Telegram Desktop and Android clients can use
+  the same server state, with scoped sessions, online fan-out, current-session
+  exclusion, and offline recovery through update difference APIs.
+- **Telegram Desktop is the primary compatibility target.** The public build
+  tracks a pinned TDesktop baseline and keeps compatibility work documented.
+- **Android compatibility is active.** The current public screenshots include a
+  patched Android client connected to the same server path.
+- **Core chat paths work today.** Login, users, contacts, dialogs, private
+  messages, supergroups/channels, media/files, profile/channel photos,
+  stickers, reactions, language packs, and presence are covered on the main
+  path.
+- **Production boundaries are explicit.** Large-scale public channels,
+  multi-DC/file-DC/CDN, Bot API, payments, stories, Premium business logic,
+  abuse controls, and production object storage are outside the current public
+  scope.
 
-This project is useful for local protocol research and Telegram Desktop
-compatibility work. It is not a production Telegram replacement.
+For downloads, public information, and the current hosted experience entry,
+visit [telesrv.net](https://telesrv.net). For questions, compatibility reports,
+and development discussion, join [t.me/telesrv_chat](https://t.me/telesrv_chat).
 
-Implemented main paths include MTProto key exchange, login with a development
-code, users/contacts/dialogs, private messages, supergroups/channels, update
-difference recovery, local media/files, profile/channel photos, stickers,
-reactions, and presence. Large-scale public channels, multi-DC/file-DC/CDN,
-Bot API, payments, stories, Premium business logic, production abuse controls,
-and production object storage are intentionally out of scope for now.
+## Screenshots
 
-## Contributing
-
-Contributions are very welcome. The most helpful areas right now are Telegram
-Desktop compatibility reports, reproducible RPC traces, focused bug fixes,
-tests for online/offline update behavior, performance work on already
-implemented paths, and documentation that makes local setup easier.
-
-Please keep changes scoped and compatibility-driven. If a change affects
-Telegram Desktop behavior, include the client version/commit, the RPC path you
-tested, and whether server logs stayed free of `NOT_IMPLEMENTED`, `Unhandled
-RPC`, `bad_msg`, panic, or internal errors.
+| Telegram Desktop | Android |
+|---|---|
+| <img src="docs/assets/tdesktop1.png" alt="Telegram Desktop connected to gramsrv" width="520"> | <img src="docs/assets/android1.png" alt="Android client connected to gramsrv" width="260"> |
 
 ## Repository Layout
 
@@ -52,7 +52,7 @@ internal/store/           store interfaces and memory/postgres/redis backends
 docs/                     compatibility notes and module design docs
 ```
 
-## Run gramsrv
+## Quick Start
 
 Requirements:
 
@@ -90,86 +90,37 @@ Useful development environment variables:
 
 The optional sticker seed directory is skipped when it does not exist.
 
-## Build Telegram Desktop For gramsrv
+## Client Compatibility
 
-The stock Telegram Desktop binary will not connect to `gramsrv`: it trusts
-Telegram's production DC list and RSA keys. Build your own patched client.
+Stock Telegram clients will not connect to `gramsrv` because they trust
+Telegram's production DC list and RSA keys. Use a patched experience client from
+the [official website](https://telesrv.net), or build your own client with a
+minimal protocol patch.
 
-Target baseline:
+Current Telegram Desktop baseline:
 
 - Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
 - TL layer: 225
 - Local DC: `127.0.0.1:2398`, DC id `2`
 
-Clone and pin Telegram Desktop:
-
-```powershell
-git clone --recursive https://github.com/telegramdesktop/tdesktop.git
-cd tdesktop
-git checkout 9caf32dffc90ddd9bb08ad5777b865f729fa167b
-git submodule update --init --recursive
-```
-
-Build prerequisites and exact platform instructions are maintained upstream:
-
-- Windows: `docs/building-win.md`
-- macOS: `docs/building-mac.md`
-- Linux: `docs/building-linux.md`
-
-For Windows x64, the pinned upstream instructions currently boil down to:
-
-```powershell
-Telegram\build\prepare\win.bat
-cd Telegram
-configure.bat x64 -D TDESKTOP_API_ID=YOUR_API_ID -D TDESKTOP_API_HASH=YOUR_API_HASH
-```
-
-Then open `out\Telegram.slnx` in Visual Studio and build the `Telegram`
-project. The debug binary is written to `out\Debug\Telegram.exe`.
-
-## Patch Telegram Desktop
-
-After `gramsrv` has generated `data/server_rsa.pem`, export the matching public
-key:
+After `gramsrv` generates `data/server_rsa.pem`, export the matching public key:
 
 ```powershell
 openssl rsa -in data/server_rsa.pem -RSAPublicKey_out -out data/server_rsa.pub
 ```
 
-Patch Telegram Desktop file
-`Telegram/SourceFiles/mtproto/mtproto_dc_options.cpp`:
+Patch `Telegram/SourceFiles/mtproto/mtproto_dc_options.cpp`:
 
-1. Replace built-in production and test DC lists with local DC 2:
-
-```cpp
-const BuiltInDc kBuiltInDcs[] = {
-    { 2, "127.0.0.1", 2398 },
-};
-
-const BuiltInDc kBuiltInDcsIPv6[] = {
-    { 2, "::1", 2398 },
-};
-
-const BuiltInDc kBuiltInDcsTest[] = {
-    { 2, "127.0.0.1", 2398 },
-};
-
-const BuiltInDc kBuiltInDcsIPv6Test[] = {
-    { 2, "::1", 2398 },
-};
-```
-
-2. Replace both `kPublicRSAKeys` and `kTestPublicRSAKeys` with the contents of
+1. Replace the built-in production/test DC lists with your `gramsrv` endpoint.
+2. Replace both `kPublicRSAKeys` and `kTestPublicRSAKeys` with
    `data/server_rsa.pub`.
-3. In `DcOptions::constructFromBuiltIn()`, add `Flag::f_tcpo_only` to the IPv4
-   and IPv6 built-in DC flags.
+3. Add `Flag::f_tcpo_only` to the built-in DC flags.
 
-Keep this client patch minimal: DC endpoints, RSA key, and TCP-only flags only.
-Do not mix UI changes into the protocol patch.
+Keep the client patch minimal: endpoint, RSA key, and TCP-only flags only.
 
-## Run Two Local Desktop Clients
+## Multi-Device Smoke Test
 
-Use separate TDesktop working directories so Alice and Bob do not share `tdata`:
+Use separate client working directories so sessions do not share local `tdata`:
 
 ```powershell
 $tdesktop = "C:\path\to\tdesktop\out\Debug\Telegram.exe"
@@ -177,16 +128,19 @@ Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-alice")
 Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-bob")
 ```
 
-Log in with two different phone numbers. In local development, the login code is
+Log in with different phone numbers. In local development, the login code is
 `12345` unless you changed `TELESRV_DEV_AUTH_CODE`.
 
-If the client keeps reconnecting, check these first:
+Recommended checks:
 
-- `gramsrv` is listening on port `2398`.
-- `data/server_rsa.pub` was copied into both RSA key arrays in TDesktop.
-- `TELESRV_ADVERTISE_IP` matches the address reachable from the client.
-- TDesktop was built from the pinned Layer 225 baseline or re-audited for a new
-  layer.
+- Send private messages, stickers, media, replies, forwards, edits, deletes,
+  and read receipts between two users.
+- Keep one device online and restart another device to verify offline
+  `updates.getDifference` recovery.
+- Open the same account from multiple sessions and confirm current-session
+  echoes are not duplicated while other online sessions receive updates.
+- Check server logs for no new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`,
+  panic, or internal errors.
 
 ## Documentation
 
@@ -196,3 +150,13 @@ If the client keeps reconnecting, check these first:
 - [Message module](docs/message-module.md)
 - [Channel module](docs/channel-module.md)
 - [Performance audit](docs/performance-audit.md)
+
+## Contributing
+
+Compatibility-driven contributions are welcome. Useful areas include Telegram
+Desktop and Android reports, reproducible RPC traces, focused bug fixes,
+multi-device update tests, performance work on already implemented paths, and
+documentation that makes local setup easier.
+
+If a change affects visible client behavior, include the client version/commit,
+the RPC path you tested, and the server log result.
