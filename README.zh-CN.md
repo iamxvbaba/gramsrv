@@ -1,6 +1,6 @@
 # gramsrv
 
-`gramsrv` 是一个用 Go 编写的 Telegram-like MTProto server，重点放在真实客户端兼容、可复现协议研究和自建聊天服务实验。
+`gramsrv` 是一个用 Go 编写的 Telegram-like MTProto server，重点放在真实客户端兼容、可复现协议研究、自建聊天服务实验，以及对 Telegram 客户端新版本行为的持续追踪。
 
 [官网](https://telesrv.net) · [讨论群组](https://t.me/telesrv_chat) · [频道](https://t.me/telesrv) · [English README](README.md)
 
@@ -10,7 +10,10 @@
 
 ## 亮点
 
+- **一个 server 程序即可运行。** PostgreSQL 与 Redis 准备好后，Go server 进程会编排 RSA key 准备、数据库 migration、语言包 seed、MTProto edge、RPC router、updates、media/files 和可靠投递 worker。
 - **多设备已实现。** Telegram Desktop 与 Android 客户端可以使用同一套服务端状态，支持 scoped session、在线 fan-out、当前 session 排除，以及通过 updates difference API 做离线恢复。
+- **持续维护并追踪 Telegram 新版本。** 公开基线保持可复现，同时通过真实客户端 trace、兼容记录和后续适配任务持续跟踪 Telegram Desktop 与 Android 新版本行为。
+- **热路径优化是设计的一部分。** 可靠 outbox 批量投递、PostgreSQL 连接池预热、scoped session 查询、有界 RPC 参数和 seek 分页，减少聊天、同步与媒体路径上的重复工作。
 - **Telegram Desktop 是第一兼容目标。** 当前公开版本围绕固定 TDesktop 基线推进，并把兼容性进展写入文档。
 - **Android 兼容正在推进。** 当前公开截图已经包含连接到同一服务端路径的 Android 客户端。
 - **核心聊天主路径可用。** 已覆盖登录、users、contacts、dialogs、私聊消息、超级群/频道、media/files、用户/频道头像、stickers、reactions、语言包与 presence。
@@ -23,6 +26,12 @@
 | Telegram Desktop | Android |
 |---|---|
 | <img src="docs/assets/tdesktop1.png" alt="Telegram Desktop connected to gramsrv" width="520"> | <img src="docs/assets/android1.png" alt="Android client connected to gramsrv" width="260"> |
+
+## 持续维护与版本追踪
+
+`gramsrv` 不会把某一个固定客户端版本当成终点。固定 Telegram Desktop 基线用于保证回归可复现；新的 Telegram Desktop 与 Android 版本会通过真实客户端启动/同步 trace、兼容矩阵更新和聚焦适配任务持续跟进。
+
+当新的 Telegram 客户端路径出现时，推荐流程是先记录调用，约束输入边界，再决定实现、stub 或标记为范围外，并保持仓库文档与实际行为一致。
 
 ## 仓库结构
 
@@ -128,6 +137,6 @@ Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-bob")
 
 ## 参与贡献
 
-欢迎围绕兼容性目标参与贡献。现在最有价值的方向包括 Telegram Desktop / Android 兼容反馈、可复现 RPC trace、聚焦的小 bug fix、多设备 update 测试、已实现路径的性能优化，以及让本地启动更顺滑的文档改进。
+欢迎围绕兼容性目标参与贡献。现在最有价值的方向包括 Telegram Desktop / Android 兼容反馈、新 Telegram 客户端版本反馈、可复现 RPC trace、聚焦的小 bug fix、多设备 update 测试、已实现路径的性能优化，以及让本地启动更顺滑的文档改进。
 
 如果改动会影响客户端可见行为，请写清客户端版本/commit、验证过的 RPC 路径，以及 server 日志结果。

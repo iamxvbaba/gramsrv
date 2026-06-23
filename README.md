@@ -1,8 +1,8 @@
 # gramsrv
 
 `gramsrv` is a Go implementation of a Telegram-like MTProto server, focused on
-real client compatibility, repeatable protocol research, and self-hosted chat
-experiments.
+real client compatibility, repeatable protocol research, self-hosted chat
+experiments, and ongoing tracking of newer Telegram client behavior.
 
 [Website](https://telesrv.net) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
 
@@ -13,9 +13,19 @@ or sponsored by Telegram or the official Telegram team.
 
 ## Highlights
 
+- **One server program to run.** After PostgreSQL and Redis are ready, the Go
+  server process wires together RSA key preparation, database migrations,
+  language pack seeding, MTProto edge handling, RPC routing, updates,
+  media/files, and reliable dispatch workers.
 - **Multi-device is implemented.** Telegram Desktop and Android clients can use
   the same server state, with scoped sessions, online fan-out, current-session
   exclusion, and offline recovery through update difference APIs.
+- **Maintained with Telegram version tracking.** The public baseline stays
+  reproducible, while newer Telegram Desktop and Android behavior is tracked
+  through real client traces, compatibility notes, and targeted follow-up work.
+- **Optimized hot paths are part of the design.** Batched reliable outbox
+  delivery, warmed PostgreSQL pools, scoped session lookups, bounded RPC inputs,
+  and seek-style pagination reduce repeated work on chat, sync, and media paths.
 - **Telegram Desktop is the primary compatibility target.** The public build
   tracks a pinned TDesktop baseline and keeps compatibility work documented.
 - **Android compatibility is active.** The current public screenshots include a
@@ -38,6 +48,19 @@ and development discussion, join [t.me/telesrv_chat](https://t.me/telesrv_chat).
 | Telegram Desktop | Android |
 |---|---|
 | <img src="docs/assets/tdesktop1.png" alt="Telegram Desktop connected to gramsrv" width="520"> | <img src="docs/assets/android1.png" alt="Android client connected to gramsrv" width="260"> |
+
+## Maintenance and Version Tracking
+
+`gramsrv` does not treat one pinned client build as the end of the work. The
+pinned Telegram Desktop baseline keeps regressions reproducible, while newer
+Telegram Desktop and Android releases are followed separately through real
+client startup/sync traces, compatibility matrix updates, and focused adaptation
+tasks.
+
+When a new Telegram client path appears, the expected workflow is to record it,
+bound the inputs, decide whether it should be implemented, stubbed, or marked as
+out of scope, and then keep the repository documentation in sync with the actual
+behavior.
 
 ## Repository Layout
 
@@ -155,8 +178,9 @@ Recommended checks:
 
 Compatibility-driven contributions are welcome. Useful areas include Telegram
 Desktop and Android reports, reproducible RPC traces, focused bug fixes,
-multi-device update tests, performance work on already implemented paths, and
-documentation that makes local setup easier.
+new Telegram client version reports, multi-device update tests, performance
+work on already implemented paths, and documentation that makes local setup
+easier.
 
 If a change affects visible client behavior, include the client version/commit,
 the RPC path you tested, and the server log result.
