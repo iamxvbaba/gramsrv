@@ -70,6 +70,8 @@ github.com/gotd/log/logzap v0.1.1 h1:O6l7d8HUbODe+UMcrM47eXYDwdJ6RNmpQejLjrlcEIQ
 github.com/gotd/log/logzap v0.1.1/go.mod h1:5ObZkITbfhbsBOLzBkzmMk9QxXc0eNQpimau7zRL+Y8=
 github.com/gotd/neo v0.1.5 h1:oj0iQfMbGClP8xI59x7fE/uHoTJD7NZH9oV1WNuPukQ=
 github.com/gotd/neo v0.1.5/go.mod h1:9A2a4bn9zL6FADufBdt7tZt+WMhvZoc5gWXihOPoiBQ=
+github.com/gotd/td v0.159.0 h1:kKXt2NLmfIOgebbFS34FSlZbdydaf5fsta+nP69nP+w=
+github.com/gotd/td v0.159.0/go.mod h1:rdZ2NfOMUViApJa3EvYJ94GAxENjCB0b98tJbfS9NCc=
 github.com/gotd/tl v0.4.0 h1:8k2z0drujiPyhpLDa9PRm/yU1Gwlfn3iUzeInPiXwMA=
 github.com/gotd/tl v0.4.0/go.mod h1:CMIcjPWFS4qxxJ+1Ce7U/ilbtPrkoVo/t8uhN5Y/D7c=
 github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa h1:s+4MhCQ6YrzisK6hFJUX53drDT4UsSW3DEhKn0ifuHw=

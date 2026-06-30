@@ -8,7 +8,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gotd/ige v0.2.2
 	github.com/gotd/log/logzap v0.1.1
-	github.com/gotd/td v0.158.0
+	github.com/gotd/td v0.159.0
 	github.com/gotd/tl v0.4.0
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
@@ -74,5 +74,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
-
-replace github.com/gotd/td => ../td
