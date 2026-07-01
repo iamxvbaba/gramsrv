@@ -102,10 +102,6 @@ func (s *Service) CreateStickerSet(ctx context.Context, req domain.CreateSticker
 		return domain.StickerSet{}, nil, err
 	}
 	docByID := documentsByID(loaded)
-	documentIDs := make([]int64, 0, len(req.Items))
-	packs := make([]domain.StickerPack, 0, len(req.Items))
-	packIndex := map[string]int{}
-	keywords := []domain.StickerKeyword{}
 	items := make([]domain.StickerSetItemInput, 0, len(req.Items))
 	seenDocs := map[int64]struct{}{}
 	for _, item := range req.Items {
@@ -122,17 +118,13 @@ func (s *Service) CreateStickerSet(ctx context.Context, req domain.CreateSticker
 			return domain.StickerSet{}, nil, err
 		}
 		item.Emoji = emoji
-		documentIDs = append(documentIDs, item.DocumentID)
-		if idx, ok := packIndex[emoji]; ok {
-			packs[idx].DocumentIDs = append(packs[idx].DocumentIDs, item.DocumentID)
-		} else {
-			packIndex[emoji] = len(packs)
-			packs = append(packs, domain.StickerPack{Emoticon: emoji, DocumentIDs: []int64{item.DocumentID}})
-		}
-		if kw := parseStickerKeywords(item.DocumentID, item.Keywords); len(kw.Keywords) > 0 {
-			keywords = append(keywords, kw)
-		}
 		items = append(items, item)
+	}
+	if thumbID != 0 {
+		thumb, ok := docByID[thumbID]
+		if !ok || thumb.AccessHash != thumbAccess {
+			return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+		}
 	}
 
 	set := domain.StickerSet{
@@ -140,22 +132,41 @@ func (s *Service) CreateStickerSet(ctx context.Context, req domain.CreateSticker
 		AccessHash:    randomID(),
 		ShortName:     shortName,
 		Title:         title,
-		Count:         len(documentIDs),
 		Kind:          kind,
 		Emojis:        kind == domain.StickerSetKindEmoji,
 		Masks:         kind == domain.StickerSetKindMasks,
 		TextColor:     kind == domain.StickerSetKindEmoji && req.TextColor,
 		Creator:       true,
 		CreatorUserID: req.CreatorUserID,
-		DocumentIDs:   documentIDs,
-		Packs:         packs,
-		Keywords:      keywords,
 		Software:      strings.TrimSpace(req.Software),
 	}
+
+	updatedDocs := make([]domain.Document, 0, len(items))
+	finalBySourceID := make(map[int64]domain.Document, len(items))
+	for _, item := range items {
+		doc := docByID[item.DocumentID]
+		doc, err = s.materialDocumentForStickerSet(ctx, doc, set.ID)
+		if err != nil {
+			return domain.StickerSet{}, nil, err
+		}
+		doc, err = s.prepareStickerSetDocument(ctx, doc, set, item.Emoji)
+		if err != nil {
+			return domain.StickerSet{}, nil, err
+		}
+		set.DocumentIDs = append(set.DocumentIDs, doc.ID)
+		set.Packs = addDocumentToStickerPacks(set.Packs, item.Emoji, doc.ID)
+		set.Keywords = upsertStickerKeywords(set.Keywords, parseStickerKeywords(doc.ID, item.Keywords))
+		finalBySourceID[item.DocumentID] = doc
+		updatedDocs = append(updatedDocs, doc)
+	}
+	set.Count = len(set.DocumentIDs)
 	if thumbID != 0 {
-		thumb, ok := docByID[thumbID]
-		if !ok || thumb.AccessHash != thumbAccess {
-			return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+		thumb, ok := finalBySourceID[thumbID]
+		if !ok {
+			thumb, ok = docByID[thumbID]
+			if !ok || thumb.AccessHash != thumbAccess {
+				return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+			}
 		}
 		set.ThumbDocumentID = thumb.ID
 		set.Thumbs = copyPhotoSizes(thumb.Thumbs)
@@ -165,17 +176,6 @@ func (s *Service) CreateStickerSet(ctx context.Context, req domain.CreateSticker
 		}
 	}
 	set.Hash = stickerSetHash(set)
-
-	updatedDocs := make([]domain.Document, 0, len(items))
-	for _, item := range items {
-		doc := docByID[item.DocumentID]
-		doc, err = s.prepareStickerSetDocument(ctx, doc, set, item.Emoji)
-		if err != nil {
-			return domain.StickerSet{}, nil, err
-		}
-		docByID[item.DocumentID] = doc
-		updatedDocs = append(updatedDocs, doc)
-	}
 	if err := s.media.CreateStickerSet(ctx, set, updatedDocs); err != nil {
 		if errors.Is(err, domain.ErrStickerSetShortNameOccupied) {
 			return domain.StickerSet{}, nil, domain.ErrStickerSetShortNameOccupied
@@ -286,10 +286,7 @@ func (s *Service) prepareStickerSetDocument(ctx context.Context, doc domain.Docu
 }
 
 func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Document) (domain.Document, error) {
-	if doc.IsStickerLike() {
-		return doc, nil
-	}
-	mimeType := doc.StickerSetMaterialMime()
+	mimeType := canonicalStickerMaterialMime(doc.StickerSetMaterialMime())
 	hasImageSize := false
 	hasVideo := false
 	for _, attr := range doc.Attributes {
@@ -301,7 +298,7 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 		}
 	}
 	switch mimeType {
-	case "application/json":
+	case stickerMaterialMimeJSON:
 		data, ok := s.readStickerMaterialBlob(ctx, doc)
 		if !ok {
 			return domain.Document{}, domain.ErrStickerSetFileInvalid
@@ -314,10 +311,10 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 		if err != nil || int64(len(tgsData)) > domain.MaxStickerMaterialDocumentSize {
 			return domain.Document{}, domain.ErrStickerSetFileInvalid
 		}
-		if err := s.rewriteStickerMaterialBlob(ctx, doc.ID, tgsData, "application/x-tgsticker"); err != nil {
+		if err := s.rewriteStickerMaterialBlob(ctx, doc.ID, tgsData, stickerMaterialMimeTGS); err != nil {
 			return domain.Document{}, err
 		}
-		doc.MimeType = "application/x-tgsticker"
+		doc.MimeType = stickerMaterialMimeTGS
 		doc.Size = int64(len(tgsData))
 		doc.Attributes = replaceStickerMaterialFilename(doc.Attributes, "sticker.tgs")
 		if !hasImageSize {
@@ -327,9 +324,14 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 				H:    512,
 			})
 		}
-	case "application/x-tgsticker":
+	case stickerMaterialMimeTGS:
 		if data, ok := s.readStickerMaterialBlob(ctx, doc); ok && !validTGSStickerData(data) {
 			return domain.Document{}, domain.ErrStickerSetFileInvalid
+		}
+		var err error
+		doc, err = s.ensureStickerMaterialMIME(ctx, doc, stickerMaterialMimeTGS)
+		if err != nil {
+			return domain.Document{}, err
 		}
 		if !hasImageSize {
 			doc.Attributes = append(doc.Attributes, domain.DocumentAttribute{
@@ -338,7 +340,12 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 				H:    512,
 			})
 		}
-	case "image/webp":
+	case stickerMaterialMimeWebP:
+		var err error
+		doc, err = s.ensureStickerMaterialMIME(ctx, doc, stickerMaterialMimeWebP)
+		if err != nil {
+			return domain.Document{}, err
+		}
 		if !hasImageSize {
 			data, ok := s.readStickerMaterialBlob(ctx, doc)
 			if !ok {
@@ -354,11 +361,19 @@ func (s *Service) ensureStickerMaterialShape(ctx context.Context, doc domain.Doc
 				H:    h,
 			})
 		}
-	case "video/webm", "video/mp4":
+	case stickerMaterialMimeWebM, stickerMaterialMimeMP4:
 		if !hasVideo {
 			return domain.Document{}, domain.ErrStickerSetFileInvalid
 		}
+		var err error
+		doc, err = s.ensureStickerMaterialMIME(ctx, doc, mimeType)
+		if err != nil {
+			return domain.Document{}, err
+		}
 	default:
+		if doc.IsStickerLike() {
+			return doc, nil
+		}
 		return domain.Document{}, domain.ErrStickerSetFileInvalid
 	}
 	return doc, nil

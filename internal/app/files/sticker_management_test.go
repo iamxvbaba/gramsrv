@@ -178,3 +178,71 @@ func TestAddStickerToSetAcceptsUploadedMaterial(t *testing.T) {
 		t.Fatalf("added doc = %+v, want sticker-tagged video material", added)
 	}
 }
+
+func TestAddStickerToSetClonesDocumentWhenReusedAcrossSets(t *testing.T) {
+	ctx := context.Background()
+	media := &fakeMediaStore{
+		docs: map[int64]domain.Document{
+			401: {ID: 401, AccessHash: 4001, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+			402: {ID: 402, AccessHash: 4002, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+		},
+		sets: map[int64]domain.StickerSet{},
+	}
+	svc := NewService(media, nil, 2)
+
+	emojiSet, _, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Emoji Pack",
+		ShortName:     "emoji_pack",
+		Kind:          domain.StickerSetKindEmoji,
+		Items: []domain.StickerSetItemInput{{
+			DocumentID:         401,
+			DocumentAccessHash: 4001,
+			Emoji:              "🙂",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create emoji set: %v", err)
+	}
+	stickerSet, _, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Sticker Pack",
+		ShortName:     "sticker_pack",
+		Items: []domain.StickerSetItemInput{{
+			DocumentID:         402,
+			DocumentAccessHash: 4002,
+			Emoji:              "😄",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create sticker set: %v", err)
+	}
+	stickerSet, docs, err := svc.AddStickerToSet(ctx, 1000000001, domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: stickerSet.ID, AccessHash: stickerSet.AccessHash}, domain.StickerSetItemInput{
+		DocumentID:         401,
+		DocumentAccessHash: 4001,
+		Emoji:              "👋",
+	})
+	if err != nil {
+		t.Fatalf("add existing emoji doc to sticker set: %v", err)
+	}
+	if stickerSet.Count != 2 || len(docs) != 2 {
+		t.Fatalf("after add set=%+v docs=%d, want two docs", stickerSet, len(docs))
+	}
+	added := docs[1]
+	if added.ID == 401 || stickerSet.DocumentIDs[1] == 401 {
+		t.Fatalf("added doc reused source id, set=%+v docs=%+v", stickerSet, docs)
+	}
+	source := media.docs[401]
+	if !source.IsCustomEmoji() {
+		t.Fatalf("source doc attrs = %+v, want custom emoji preserved", source.Attributes)
+	}
+	if id, _, ok := source.StickerSetRef(); !ok || id != emojiSet.ID {
+		t.Fatalf("source doc set ref = %d/%v, want emoji set %d", id, ok, emojiSet.ID)
+	}
+	if !added.IsSticker() || added.IsCustomEmoji() {
+		t.Fatalf("added clone attrs = %+v, want regular sticker", added.Attributes)
+	}
+	if id, _, ok := added.StickerSetRef(); !ok || id != stickerSet.ID {
+		t.Fatalf("added clone set ref = %d/%v, want sticker set %d", id, ok, stickerSet.ID)
+	}
+}

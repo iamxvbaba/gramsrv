@@ -106,6 +106,106 @@ func TestCreateStickerSetAcceptsUploadedStickerMaterial(t *testing.T) {
 	}
 }
 
+func TestCreateStickerSetNormalizesUploadedTGSMime(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	media.docs[206] = domain.Document{
+		ID:         206,
+		AccessHash: 2006,
+		DCID:       2,
+		Size:       1024,
+		Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrFilename, FileName: "local.tgs"}},
+	}
+	media.blobs["doc:206"] = domain.FileBlob{
+		LocationKey: "doc:206",
+		Size:        1024,
+	}
+	svc := NewService(media, nil, 2)
+
+	_, docs, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Uploads",
+		ShortName:     "tgs_uploads",
+		Items: []domain.StickerSetItemInput{{
+			DocumentID:         206,
+			DocumentAccessHash: 2006,
+			Emoji:              "👋",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create with uploaded tgs material: %v", err)
+	}
+	if len(docs) != 1 || docs[0].MimeType != stickerMaterialMimeTGS {
+		t.Fatalf("created docs = %+v, want normalized tgs mime", docs)
+	}
+	stored := media.docs[206]
+	if stored.MimeType != stickerMaterialMimeTGS {
+		t.Fatalf("stored document mime = %q, want %q", stored.MimeType, stickerMaterialMimeTGS)
+	}
+	blob := media.blobs["doc:206"]
+	if blob.MimeType != stickerMaterialMimeTGS {
+		t.Fatalf("stored blob mime = %q, want %q", blob.MimeType, stickerMaterialMimeTGS)
+	}
+}
+
+func TestCreateStickerSetClonesDocumentWhenReusedAcrossSets(t *testing.T) {
+	ctx := context.Background()
+	media := &fakeMediaStore{
+		docs: map[int64]domain.Document{
+			301: {ID: 301, AccessHash: 3001, DCID: 2, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+		},
+		sets: map[int64]domain.StickerSet{},
+	}
+	svc := NewService(media, nil, 2)
+
+	emojiSet, emojiDocs, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Emoji Pack",
+		ShortName:     "emoji_pack",
+		Kind:          domain.StickerSetKindEmoji,
+		Items: []domain.StickerSetItemInput{{
+			DocumentID:         301,
+			DocumentAccessHash: 3001,
+			Emoji:              "🙂",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create emoji set: %v", err)
+	}
+	stickerSet, stickerDocs, err := svc.CreateStickerSet(ctx, domain.CreateStickerSetRequest{
+		CreatorUserID: 1000000001,
+		Title:         "Sticker Pack",
+		ShortName:     "sticker_pack",
+		Items: []domain.StickerSetItemInput{{
+			DocumentID:         301,
+			DocumentAccessHash: 3001,
+			Emoji:              "😄",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create sticker set from existing emoji doc: %v", err)
+	}
+	if len(emojiDocs) != 1 || len(stickerDocs) != 1 {
+		t.Fatalf("created docs: emoji=%+v sticker=%+v, want one doc each", emojiDocs, stickerDocs)
+	}
+	if stickerDocs[0].ID == 301 || stickerSet.DocumentIDs[0] == 301 {
+		t.Fatalf("sticker set reused source doc id, set=%+v docs=%+v", stickerSet, stickerDocs)
+	}
+	source := media.docs[301]
+	if !source.IsCustomEmoji() {
+		t.Fatalf("source doc attrs = %+v, want custom emoji preserved", source.Attributes)
+	}
+	if id, _, ok := source.StickerSetRef(); !ok || id != emojiSet.ID {
+		t.Fatalf("source doc set ref = %d/%v, want emoji set %d", id, ok, emojiSet.ID)
+	}
+	if !stickerDocs[0].IsSticker() || stickerDocs[0].IsCustomEmoji() {
+		t.Fatalf("cloned doc attrs = %+v, want regular sticker", stickerDocs[0].Attributes)
+	}
+	if id, _, ok := stickerDocs[0].StickerSetRef(); !ok || id != stickerSet.ID {
+		t.Fatalf("cloned doc set ref = %d/%v, want sticker set %d", id, ok, stickerSet.ID)
+	}
+}
+
 func TestCreateStickerSetAcceptsWebPMaterialWithClientImageSize(t *testing.T) {
 	ctx := context.Background()
 	media := &fakeMediaStore{
