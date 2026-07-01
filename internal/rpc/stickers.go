@@ -249,6 +249,13 @@ func (r *Router) onMessagesGetFeaturedEmojiStickers(ctx context.Context, hash in
 	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindEmoji)
 }
 
+func (r *Router) onMessagesGetOldFeaturedStickers(ctx context.Context, req *tg.MessagesGetOldFeaturedStickersRequest) (tg.MessagesFeaturedStickersClass, error) {
+	if req == nil {
+		return r.onMessagesGetFeaturedStickers(ctx, 0)
+	}
+	return r.onMessagesGetFeaturedStickers(ctx, req.Hash)
+}
+
 // featuredStickersForKind 把已 seed 的（未归档）贴纸/emoji 集作为 trending 呈现。
 // 性能：先用集目录 hash 比对，命中即返回 *NotModified——封面文档解析只在 cache-miss
 // 时发生（一次批量 GetDocuments），避免每次请求都解析封面。

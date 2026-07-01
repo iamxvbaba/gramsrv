@@ -451,6 +451,41 @@ func TestMessagesGetFeaturedStickersSurfacesSeededSets(t *testing.T) {
 	}
 }
 
+func TestMessagesGetOldFeaturedStickersUsesFeaturedCatalog(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		docs: map[int64]domain.Document{
+			201: {ID: 201, AccessHash: 21, DCID: 2},
+		},
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: {
+				{
+					ID:          10,
+					AccessHash:  100,
+					ShortName:   "one",
+					Title:       "One",
+					Kind:        domain.StickerSetKindStickers,
+					Count:       1,
+					Hash:        123,
+					DocumentIDs: []int64{201},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+	res, err := r.onMessagesGetOldFeaturedStickers(ctx, &tg.MessagesGetOldFeaturedStickersRequest{Limit: 20})
+	if err != nil {
+		t.Fatalf("getOldFeaturedStickers: %v", err)
+	}
+	full, ok := res.(*tg.MessagesFeaturedStickers)
+	if !ok {
+		t.Fatalf("getOldFeaturedStickers = %T, want *tg.MessagesFeaturedStickers", res)
+	}
+	if len(full.Sets) != 1 {
+		t.Fatalf("old featured sets = %d, want one", len(full.Sets))
+	}
+}
+
 // countingStickerFiles 包 *fakeFiles 计数 ListStickerSets，验证目录缓存短路。
 type countingStickerFiles struct {
 	*fakeFiles

@@ -20,6 +20,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetMaskStickers(r.onMessagesGetMaskStickers)
 	d.OnMessagesGetFeaturedStickers(r.onMessagesGetFeaturedStickers)
 	d.OnMessagesGetFeaturedEmojiStickers(r.onMessagesGetFeaturedEmojiStickers)
+	d.OnMessagesGetOldFeaturedStickers(r.onMessagesGetOldFeaturedStickers)
 	d.OnMessagesGetRecentStickers(r.onMessagesGetRecentStickers)
 	d.OnMessagesGetFavedStickers(r.onMessagesGetFavedStickers)
 	d.OnMessagesGetSavedGifs(r.onMessagesGetSavedGifs)
