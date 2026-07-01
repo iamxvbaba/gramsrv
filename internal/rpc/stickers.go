@@ -98,16 +98,10 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 					zap.Int("documents", len(fallbackDocs)),
 				)
 			}
-			if req.Hash != 0 && req.Hash == fallbackSet.Hash {
-				return &tg.MessagesStickerSetNotModified{}, nil
-			}
 			return tgMessagesStickerSet(fallbackSet, fallbackDocs), nil
 		}
 		// 未 seed 的系统集 / 未知短名：回退兼容 stub，避免破坏客户端。
 		return tdesktop.StickerSet(req), nil
-	}
-	if req.Hash != 0 && req.Hash == set.Hash {
-		return &tg.MessagesStickerSetNotModified{}, nil
 	}
 	return tgMessagesStickerSet(set, docs), nil
 }

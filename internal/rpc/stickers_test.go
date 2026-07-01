@@ -316,6 +316,44 @@ func TestMessagesGetStickerSetAndroidPlaceholderFallsBackToEmptyWithoutSeed(t *t
 	}
 }
 
+func TestMessagesGetStickerSetReturnsFullOnMatchingHash(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		docs: map[int64]domain.Document{
+			201: {ID: 201, AccessHash: 21, DCID: 2},
+		},
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: {
+				{
+					ID:          10,
+					AccessHash:  100,
+					ShortName:   "one",
+					Title:       "One",
+					Kind:        domain.StickerSetKindStickers,
+					Count:       1,
+					Hash:        12345,
+					DocumentIDs: []int64{201},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+	res, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
+		Stickerset: &tg.InputStickerSetID{ID: 10, AccessHash: 100},
+		Hash:       12345,
+	})
+	if err != nil {
+		t.Fatalf("getStickerSet matching hash: %v", err)
+	}
+	full, ok := res.(*tg.MessagesStickerSet)
+	if !ok {
+		t.Fatalf("getStickerSet matching hash = %T, want full *tg.MessagesStickerSet", res)
+	}
+	if len(full.Documents) != 1 {
+		t.Fatalf("documents = %d, want full set with one document", len(full.Documents))
+	}
+}
+
 func TestMessagesGetMaskStickersUsesMaskCatalog(t *testing.T) {
 	ctx := context.Background()
 	files := &fakeFiles{

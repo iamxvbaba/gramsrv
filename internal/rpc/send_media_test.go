@@ -391,6 +391,9 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected MessageMediaDocument, got %T", msg.Media)
 	}
+	if !media.Nopremium {
+		t.Fatal("sticker message media missing nopremium flag")
+	}
 	doc, ok := media.Document.(*tg.Document)
 	if !ok {
 		t.Fatalf("expected tg.Document, got %T", media.Document)
@@ -409,6 +412,28 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	}
 	if !hasSticker {
 		t.Error("document missing sticker attribute")
+	}
+}
+
+func TestTGMessageMediaDocumentMarksHistoricalStickerNopremium(t *testing.T) {
+	media := tgMessageMedia(&domain.MessageMedia{
+		Kind: domain.MessageMediaKindDocument,
+		Document: &domain.Document{
+			ID:         555,
+			AccessHash: 5,
+			MimeType:   "application/x-tgsticker",
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+				{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			},
+		},
+	})
+	docMedia, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		t.Fatalf("media = %T, want *tg.MessageMediaDocument", media)
+	}
+	if !docMedia.Nopremium {
+		t.Fatal("historical sticker message media missing nopremium flag")
 	}
 }
 

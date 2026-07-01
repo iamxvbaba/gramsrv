@@ -29,9 +29,13 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 		}
 		return out
 	case domain.MessageMediaKindDocument:
+		nopremium := m.Nopremium
+		if m.Document != nil && m.Document.IsSticker() {
+			nopremium = true
+		}
 		out := &tg.MessageMediaDocument{
 			Spoiler:   m.Spoiler,
-			Nopremium: m.Nopremium,
+			Nopremium: nopremium,
 			Voice:     m.Voice,
 			Round:     m.Round,
 			Video:     m.Video,
