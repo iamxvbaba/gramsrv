@@ -276,6 +276,9 @@ func (r *Router) onPhoneInviteToGroupCall(ctx context.Context, req *tg.PhoneInvi
 	if err != nil {
 		return nil, err
 	}
+	if scope.call.Conference() {
+		return nil, notImplementedErr()
+	}
 	if len(req.Users) == 0 || len(req.Users) > maxInviteToGroupCallUsers {
 		return nil, limitInvalidErr()
 	}

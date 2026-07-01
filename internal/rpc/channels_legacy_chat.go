@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
@@ -283,6 +282,9 @@ func (r *Router) onMessagesEditChatDefaultBannedRights(ctx context.Context, req 
 }
 
 func (r *Router) onMessagesEditChatCreator(ctx context.Context, req *tg.MessagesEditChatCreatorRequest) (tg.UpdatesClass, error) {
+	if r.deps.Channels == nil {
+		return nil, notImplementedErr()
+	}
 	if req.UserID == nil {
 		return nil, peerIDInvalidErr()
 	}
@@ -290,15 +292,52 @@ func (r *Router) onMessagesEditChatCreator(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return nil, internalErr()
 	}
-	if _, err := r.channelIDFromLegacyInputPeerChecked(ctx, userID, req.Peer); err != nil {
+	channelID, err := r.channelIDFromLegacyInputPeerChecked(ctx, userID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
-	if _, found, err := r.userFromInput(ctx, userID, req.UserID); err != nil {
+	if req.Password == nil {
+		return nil, passwordHashInvalidErr()
+	}
+	if _, ok := req.UserID.(*tg.InputUserEmpty); ok {
+		return nil, passwordHashInvalidErr()
+	}
+	if _, ok := req.Password.(*tg.InputCheckPasswordEmpty); ok {
+		return nil, passwordHashInvalidErr()
+	}
+	target, found, err := r.userFromInput(ctx, userID, req.UserID)
+	if err != nil {
 		return nil, internalErr()
-	} else if !found {
+	}
+	if !found || target.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	return nil, tgerr.New(400, "PASSWORD_HASH_INVALID")
+	if target.Bot {
+		return nil, userIDInvalidErr()
+	}
+	if r.deps.Account == nil {
+		return nil, passwordHashInvalidErr()
+	}
+	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
+		return nil, passwordErr(err)
+	}
+	res, err := r.deps.Channels.TransferOwnership(ctx, userID, domain.TransferChannelOwnershipRequest{
+		UserID:     userID,
+		ChannelID:  channelID,
+		NewOwnerID: target.ID,
+		Date:       int(r.clock.Now().Unix()),
+	})
+	if err != nil {
+		return nil, channelTransferErr(err)
+	}
+	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
+	r.addOnlineChannelMemberships(res.Channel.ID, res.OldOwner.UserID, res.NewOwner.UserID)
+	cache := newViewerPeerCache(r)
+	updates := r.channelOwnershipTransferUpdatesWithPeerCache(ctx, userID, userID, res, cache)
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+		return r.channelOwnershipTransferUpdatesWithPeerCache(ctx, viewerUserID, userID, res, cache)
+	})
+	return updates, nil
 }
 
 func (r *Router) onMessagesGetFutureChatCreatorAfterLeave(ctx context.Context, peer tg.InputPeerClass) (tg.UserClass, error) {

@@ -398,6 +398,9 @@ const (
 	// MessageServiceActionPhoneCall 映射 messageActionPhoneCall：私聊通话
 	// 结束（含 missed 超时）后落历史的通话条目，sender 恒为主叫。
 	MessageServiceActionPhoneCall MessageServiceActionKind = "phone_call"
+	// MessageServiceActionConferenceCall 映射 messageActionConferenceCall：
+	// ad-hoc conference call 的私聊邀请/状态服务消息。
+	MessageServiceActionConferenceCall MessageServiceActionKind = "conference_call"
 	// MessageServiceActionBotAllowed 映射 messageActionBotAllowed：用户授权
 	// bot 后在 bot 私聊中留下的服务消息。
 	MessageServiceActionBotAllowed MessageServiceActionKind = "bot_allowed"
@@ -422,6 +425,16 @@ type MessagePhoneCallAction struct {
 	Reason   string `json:"reason,omitempty"`
 	Duration int    `json:"duration,omitempty"`
 	Video    bool   `json:"video,omitempty"`
+}
+
+// MessageConferenceCallAction 是 messageActionConferenceCall 的协议中立载荷。
+type MessageConferenceCallAction struct {
+	CallID            int64  `json:"call_id"`
+	Missed            bool   `json:"missed,omitempty"`
+	Active            bool   `json:"active,omitempty"`
+	Video             bool   `json:"video,omitempty"`
+	Duration          int    `json:"duration,omitempty"`
+	OtherParticipants []Peer `json:"other_participants,omitempty"`
 }
 
 // MessageBotAllowedAction 是 messageActionBotAllowed 的协议中立载荷。
@@ -450,14 +463,15 @@ type MessageRequestedPeerAction struct {
 
 // MessageServiceAction 是私聊服务消息动作的协议中立表示。
 type MessageServiceAction struct {
-	Kind              MessageServiceActionKind    `json:"kind"`
-	Photo             *Photo                      `json:"photo,omitempty"`
-	Call              *MessagePhoneCallAction     `json:"call,omitempty"`
-	BotAllowed        *MessageBotAllowedAction    `json:"bot_allowed,omitempty"`
-	WebViewData       *MessageWebViewDataAction   `json:"web_view_data,omitempty"`
-	RequestedPeer     *MessageRequestedPeerAction `json:"requested_peer,omitempty"`
-	ChatThemeEmoticon string                      `json:"chat_theme_emoticon,omitempty"`
-	StarGift          *MessageStarGiftAction      `json:"star_gift,omitempty"`
+	Kind              MessageServiceActionKind     `json:"kind"`
+	Photo             *Photo                       `json:"photo,omitempty"`
+	Call              *MessagePhoneCallAction      `json:"call,omitempty"`
+	ConferenceCall    *MessageConferenceCallAction `json:"conference_call,omitempty"`
+	BotAllowed        *MessageBotAllowedAction     `json:"bot_allowed,omitempty"`
+	WebViewData       *MessageWebViewDataAction    `json:"web_view_data,omitempty"`
+	RequestedPeer     *MessageRequestedPeerAction  `json:"requested_peer,omitempty"`
+	ChatThemeEmoticon string                       `json:"chat_theme_emoticon,omitempty"`
+	StarGift          *MessageStarGiftAction       `json:"star_gift,omitempty"`
 }
 
 // MessageStarGiftAction 是 messageActionStarGift 的协议中立载荷：内嵌礼物快照（贴纸/星价）

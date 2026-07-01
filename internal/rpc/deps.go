@@ -470,6 +470,7 @@ type ChannelsService interface {
 	SetWallpaper(ctx context.Context, userID int64, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)
 	EditAbout(ctx context.Context, userID int64, req domain.EditChannelAboutRequest) (domain.Channel, error)
 	EditAdmin(ctx context.Context, userID int64, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
+	TransferOwnership(ctx context.Context, userID int64, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error)
 	EditMemberRank(ctx context.Context, userID int64, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
 	EditBanned(ctx context.Context, userID int64, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
 	EditDefaultBannedRights(ctx context.Context, userID int64, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error)
@@ -760,6 +761,7 @@ type PhoneService interface {
 	AcceptCall(ctx context.Context, userID, callID, accessHash int64, gb []byte, proto domain.PhoneCallProtocol, device domain.SessionRef) (domain.PhoneCall, error)
 	ConfirmCall(ctx context.Context, userID, callID, accessHash int64, ga []byte, keyFingerprint int64, proto domain.PhoneCallProtocol) (call domain.PhoneCall, forcedDiscard bool, err error)
 	DiscardCall(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, duration int) (call domain.PhoneCall, already bool, err error)
+	DiscardCallWithSlug(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, reasonSlug string, duration int) (call domain.PhoneCall, already bool, err error)
 	// Signal 在该通话的信令顺序锁内执行 forward；drop=true 表示按契约静默吞掉。
 	// peerDevice 是对端受理设备锚点（可零值/失效），定向推送失败须回退 user 扇出。
 	Signal(ctx context.Context, userID, callID, accessHash int64, forward func(peerUserID int64, peerDevice domain.SessionRef)) (drop bool, err error)
@@ -772,9 +774,13 @@ type PhoneService interface {
 // 错误集合见 domain.ErrGroupCall*（rpc 层映射为 GROUPCALL_* RPC_ERROR）。
 type GroupCallsService interface {
 	Create(ctx context.Context, channelID, creatorUserID int64, title string, now int) (domain.GroupCall, error)
+	CreateConference(ctx context.Context, creatorUserID, randomID, migratedFromPhoneCallID int64, now int) (domain.GroupCall, error)
 	Get(ctx context.Context, callID int64) (domain.GroupCall, bool, error)
+	GetBySlug(ctx context.Context, slug string) (domain.GroupCall, bool, error)
+	GetByInviteMessage(ctx context.Context, userID int64, msgID int) (domain.GroupCall, domain.GroupCallInvite, bool, error)
 	Join(ctx context.Context, req domain.JoinGroupCallRequest) (domain.GroupCallMutation, error)
 	Leave(ctx context.Context, callID, userID int64, now int) (domain.GroupCallMutation, error)
+	RemoveConferenceParticipants(ctx context.Context, req domain.RemoveConferenceCallParticipantsRequest) (domain.RemoveConferenceCallParticipantsResult, error)
 	Discard(ctx context.Context, callID int64, now int) (domain.GroupCall, []domain.GroupCallParticipant, error)
 	Touch(ctx context.Context, callID, userID int64, now int) (activeSSRCs []int64, joined bool, err error)
 	Participant(ctx context.Context, callID, userID int64) (domain.GroupCallParticipant, bool, error)
@@ -788,6 +794,11 @@ type GroupCallsService interface {
 	NextRaiseHandRating(ctx context.Context, callID int64) (int64, error)
 	SetParticipantOverride(ctx context.Context, callID, setterUserID, targetUserID int64, override domain.GroupCallParticipantOverride, clear bool) error
 	ParticipantOverride(ctx context.Context, callID, setterUserID, targetUserID int64) (domain.GroupCallParticipantOverride, bool, error)
+	CreateConferenceInvite(ctx context.Context, invite domain.GroupCallInvite) (domain.GroupCallInvite, error)
+	SetConferenceInviteStatus(ctx context.Context, callID, inviteeUserID int64, msgID int, status domain.GroupCallInviteStatus, now int) (domain.GroupCallInvite, bool, error)
+	ConferenceRecipients(ctx context.Context, callID int64) ([]int64, error)
+	AppendChainBlock(ctx context.Context, block domain.GroupCallChainBlock) (domain.GroupCallChainBlock, error)
+	ChainBlocks(ctx context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error)
 }
 
 // PollsService 抽象 poll 权威态的发送时创建与投票人列表（messages.getPollVotes）。

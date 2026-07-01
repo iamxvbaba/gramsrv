@@ -103,7 +103,7 @@ minimal protocol patch.
 Current Telegram Desktop baseline:
 
 - Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
-- TL layer: 225
+- TL layer: 227
 - Local DC: `127.0.0.1:2398`, DC id `2`
 
 After `gramsrv` generates `data/server_rsa.pem`, export the matching public key:

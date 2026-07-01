@@ -42,6 +42,10 @@ func (r *Router) groupCallUpdateContainer(ctx context.Context, viewerUserID int6
 
 // pushGroupCallUpdate 把 updateGroupCall（call 行变化）推给在线群成员。
 func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel, call domain.GroupCall) {
+	if call.Conference() {
+		r.pushConferenceGroupCallUpdate(ctx, call)
+		return
+	}
 	recipients := r.groupCallOnlineRecipients(channel.ID)
 	for _, viewerID := range recipients {
 		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, false)}
@@ -54,6 +58,10 @@ func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel
 // pushGroupCallParticipantsUpdate 把参与者增量（version=N）推给在线群成员。
 // 每个 viewer 单独构建：participant.Self flag 是 per-viewer 的。
 func (r *Router) pushGroupCallParticipantsUpdate(ctx context.Context, channel domain.Channel, call domain.GroupCall, rows []domain.GroupCallParticipant) {
+	if call.Conference() {
+		r.pushConferenceGroupCallParticipantsUpdate(ctx, call, rows)
+		return
+	}
 	if len(rows) == 0 {
 		return
 	}
@@ -70,6 +78,62 @@ func (r *Router) pushGroupCallParticipantsUpdate(ctx context.Context, channel do
 		}
 		r.pushUserMessage(ctx, viewerID, "group call participants",
 			r.groupCallUpdateContainer(ctx, viewerID, channel, update, userIDs))
+	}
+}
+
+func (r *Router) conferenceCallRecipients(ctx context.Context, callID int64) []int64 {
+	return r.conferenceCallRecipientsWith(ctx, callID, nil)
+}
+
+func (r *Router) conferenceCallRecipientsWith(ctx context.Context, callID int64, extraUserIDs []int64) []int64 {
+	if r.deps.GroupCalls == nil {
+		return nil
+	}
+	recipients, err := r.deps.GroupCalls.ConferenceRecipients(ctx, callID)
+	if err != nil {
+		return nil
+	}
+	recipients = append(recipients, extraUserIDs...)
+	recipients = uniquePositiveUserIDs(recipients)
+	if len(recipients) == 0 {
+		return nil
+	}
+	if provider, ok := r.deps.Sessions.(OnlineUserProvider); ok {
+		return provider.OnlineUserIDsForCandidates(recipients, domain.MaxChannelRealtimeFanout)
+	}
+	return recipients
+}
+
+func (r *Router) pushConferenceGroupCallUpdate(ctx context.Context, call domain.GroupCall) {
+	r.pushConferenceGroupCallUpdateTo(ctx, call, nil)
+}
+
+func (r *Router) pushConferenceGroupCallUpdateTo(ctx context.Context, call domain.GroupCall, extraUserIDs []int64) {
+	recipients := r.conferenceCallRecipientsWith(ctx, call.ID, extraUserIDs)
+	for _, viewerID := range recipients {
+		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, viewerID == call.CreatorUserID)}
+		r.pushUserMessage(ctx, viewerID, "conference call update",
+			r.groupCallUpdateContainer(ctx, viewerID, domain.Channel{}, update, []int64{call.CreatorUserID}))
+	}
+}
+
+func (r *Router) pushConferenceGroupCallParticipantsUpdate(ctx context.Context, call domain.GroupCall, rows []domain.GroupCallParticipant) {
+	if len(rows) == 0 {
+		return
+	}
+	userIDs := make([]int64, 0, len(rows))
+	for _, p := range rows {
+		userIDs = append(userIDs, p.UserID)
+	}
+	recipients := r.conferenceCallRecipients(ctx, call.ID)
+	for _, viewerID := range recipients {
+		update := &tg.UpdateGroupCallParticipants{
+			Call:         &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},
+			Participants: tgGroupCallParticipants(rows, viewerID),
+			Version:      call.Version,
+		}
+		r.pushUserMessage(ctx, viewerID, "conference call participants",
+			r.groupCallUpdateContainer(ctx, viewerID, domain.Channel{}, update, userIDs))
 	}
 }
 
@@ -93,6 +157,11 @@ func (r *Router) pushGroupCallServiceMessage(ctx context.Context, originUserID i
 // groupCallMutationFanout 是参与者维度变更后的统一扇出：participants 增量 +
 // call_not_empty 翻转时的 channel 维度刷新（Android banner 对 flag 依赖更重）。
 func (r *Router) groupCallMutationFanout(ctx context.Context, channel domain.Channel, mut domain.GroupCallMutation) domain.Channel {
+	if mut.Call.Conference() {
+		r.pushConferenceGroupCallParticipantsUpdate(ctx, mut.Call, []domain.GroupCallParticipant{mut.Participant})
+		r.pushConferenceGroupCallUpdate(ctx, mut.Call)
+		return domain.Channel{}
+	}
 	r.pushGroupCallParticipantsUpdate(ctx, channel, mut.Call, []domain.GroupCallParticipant{mut.Participant})
 	wantNotEmpty := mut.Call.Active() && mut.Call.ParticipantsCount > 0
 	if channel.ActiveCallNotEmpty != wantNotEmpty && r.deps.Channels != nil {
@@ -106,4 +175,34 @@ func (r *Router) groupCallMutationFanout(ctx context.Context, channel domain.Cha
 		r.pushGroupCallUpdate(ctx, channel, mut.Call)
 	}
 	return channel
+}
+
+func groupCallParticipantUserIDs(rows []domain.GroupCallParticipant) []int64 {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.UserID)
+	}
+	return out
+}
+
+func uniquePositiveUserIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

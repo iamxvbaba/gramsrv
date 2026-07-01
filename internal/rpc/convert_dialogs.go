@@ -322,6 +322,12 @@ func tgChannelsForDialogs(viewerUserID int64, channels []domain.Channel, dialogs
 				UserID:    viewerUserID,
 				Status:    domain.ChannelMemberLeft,
 			}
+		} else {
+			self = &domain.ChannelMember{
+				ChannelID: ch.ID,
+				UserID:    viewerUserID,
+				Status:    domain.ChannelMemberActive,
+			}
 		}
 		out = append(out, tgChannelChat(viewerUserID, ch, self))
 	}

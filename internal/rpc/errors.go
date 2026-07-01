@@ -307,11 +307,15 @@ func groupCallInvalidErr() error          { return tgerr.New(400, "GROUPCALL_INV
 func groupCallAlreadyDiscardedErr() error { return tgerr.New(400, "GROUPCALL_ALREADY_DISCARDED") }
 func groupCallAlreadyStartedErr() error   { return tgerr.New(400, "GROUPCALL_ALREADY_STARTED") }
 func groupCallForbiddenErr() error        { return tgerr.New(403, "GROUPCALL_FORBIDDEN") }
+func publicChannelMissingErr() error      { return tgerr.New(403, "PUBLIC_CHANNEL_MISSING") }
 func groupCallSSRCDuplicateErr() error {
 	return tgerr.New(400, "GROUPCALL_SSRC_DUPLICATE_MUCH")
 }
 func groupCallJoinMissingErr() error { return tgerr.New(400, "GROUPCALL_JOIN_MISSING") }
 func groupCallNotModifiedErr() error { return tgerr.New(400, "GROUPCALL_NOT_MODIFIED") }
+func confWriteChainInvalidErr() error {
+	return tgerr.New(400, "CONF_WRITE_CHAIN_INVALID")
+}
 
 // 私聊端对端加密（Secret Chat / encrypted chat）错误；触发点见
 // internal/rpc/encrypted_chats.go 与 app/secretchat、domain 错误映射。

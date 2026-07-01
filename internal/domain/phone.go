@@ -105,7 +105,10 @@ type PhoneCall struct {
 
 	P2PAllowed    bool
 	DiscardReason PhoneCallDiscardReason
-	Duration      int
+	// DiscardReasonSlug is set for migrate_conference and must resolve through
+	// phone.getGroupCall(inputGroupCallSlug) before the discarded update is sent.
+	DiscardReasonSlug string
+	Duration          int
 
 	// PrivacyP2P 与 Connections 自 PhoneCallRequest 原样保留（见其注释）。
 	PrivacyP2P  bool

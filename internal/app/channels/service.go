@@ -237,6 +237,7 @@ func (s *Service) InviteToChannel(ctx context.Context, userID, channelID int64, 
 	res, err := s.channels.InviteToChannel(ctx, channelID, userID, userIDs, date)
 	if err == nil {
 		s.invalidateActiveChannelIDs(activeMembershipUserIDsFromMembers(0, res.Members)...)
+		s.participantCache.invalidateChannel(channelID)
 	}
 	return res, err
 }
@@ -249,6 +250,7 @@ func (s *Service) JoinChannel(ctx context.Context, userID, channelID int64, date
 	res, err := s.channels.JoinChannel(ctx, channelID, userID, date)
 	if err == nil {
 		s.invalidateActiveChannelIDs(userID)
+		s.participantCache.invalidateChannel(channelID)
 	}
 	return res, err
 }
@@ -261,6 +263,7 @@ func (s *Service) LeaveChannel(ctx context.Context, userID, channelID int64, dat
 	res, err := s.channels.LeaveChannel(ctx, channelID, userID, date)
 	if err == nil {
 		s.invalidateActiveChannelIDs(userID)
+		s.participantCache.invalidateChannel(channelID)
 	}
 	return res, err
 }
@@ -318,7 +321,31 @@ func (s *Service) EditAdmin(ctx context.Context, userID int64, req domain.EditCh
 	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 || len(req.Rank) > domain.MaxChannelAdminRankLength {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
-	return s.channels.EditChannelAdmin(ctx, req)
+	res, err := s.channels.EditChannelAdmin(ctx, req)
+	if err == nil {
+		s.invalidateActiveChannelIDs(req.MemberID)
+		s.participantCache.invalidateChannel(req.ChannelID)
+	}
+	return res, err
+}
+
+// TransferOwnership transfers a channel/supergroup to another active member.
+func (s *Service) TransferOwnership(ctx context.Context, userID int64, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelInvalid
+	}
+	if req.UserID == 0 {
+		req.UserID = userID
+	}
+	if req.UserID != userID || req.ChannelID == 0 || req.NewOwnerID == 0 || req.NewOwnerID == userID {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelInvalid
+	}
+	res, err := s.channels.TransferChannelOwnership(ctx, req)
+	if err == nil {
+		s.invalidateActiveChannelIDs(req.UserID, req.NewOwnerID)
+		s.participantCache.invalidateChannel(req.ChannelID)
+	}
+	return res, err
 }
 
 // EditMemberRank sets or clears a participant's member tag without touching
@@ -333,7 +360,11 @@ func (s *Service) EditMemberRank(ctx context.Context, userID int64, req domain.E
 	if req.UserID != userID || req.ChannelID == 0 || req.MemberID == 0 || len(req.Rank) > domain.MaxChannelAdminRankLength {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelInvalid
 	}
-	return s.channels.EditChannelMemberRank(ctx, req)
+	res, err := s.channels.EditChannelMemberRank(ctx, req)
+	if err == nil {
+		s.participantCache.invalidateChannel(req.ChannelID)
+	}
+	return res, err
 }
 
 // EditBanned edits a participant's banned rights.
@@ -350,6 +381,7 @@ func (s *Service) EditBanned(ctx context.Context, userID int64, req domain.EditC
 	res, err := s.channels.EditChannelBanned(ctx, req)
 	if err == nil {
 		s.invalidateActiveChannelIDs(req.Participant.ID)
+		s.participantCache.invalidateChannel(req.ChannelID)
 	}
 	return res, err
 }

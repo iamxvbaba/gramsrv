@@ -10,9 +10,15 @@ import (
 
 // Canonical ids used to synthesize converted/defaulted values.
 const (
-	inputUserID    = 0xf21158c6 // inputUser user_id:long access_hash:long
-	inputMessageID = 0xa676a322 // inputMessageID id:int
-	boolFalseID    = 0xbc799737 // boolFalse
+	inputUserID                   = 0xf21158c6 // inputUser user_id:long access_hash:long
+	inputMessageID                = 0xa676a322 // inputMessageID id:int
+	inputChannelEmptyID           = 0xee8c1e86 // inputChannelEmpty
+	inputChannelID                = 0xf35aec28 // inputChannel channel_id:long access_hash:long
+	inputChannelFromMessageID     = 0x5b934f9d // inputChannelFromMessage peer:InputPeer msg_id:int channel_id:long
+	inputPeerEmptyID              = 0x7f3b18ea // inputPeerEmpty
+	inputPeerChannelID            = 0x27bcbbfc // inputPeerChannel channel_id:long access_hash:long
+	inputPeerChannelFromMessageID = 0xbd2a0840 // inputPeerChannelFromMessage peer:InputPeer msg_id:int channel_id:long
+	boolFalseID                   = 0xbc799737 // boolFalse
 )
 
 //go:embed schema/client-drift.tl
@@ -34,7 +40,8 @@ func mustLoadDrift() *schemaModel {
 // Pure schema diff cannot recover a rename, so it is declared here (data, not a
 // transform). It is the only thing a structural rename needs.
 var driftFieldRenames = map[string]string{
-	"bots.exportBotToken\x00bot": "bot_id",
+	"bots.exportBotToken\x00bot":       "bot_id",
+	"messages.editChatCreator\x00peer": "channel",
 }
 
 // fieldConverter rewrites one field whose wire type changed between the old and
@@ -71,6 +78,28 @@ var fieldConverters = map[string]fieldConverter{
 		out.PutID(inputUserID)
 		out.PutLong(id)
 		out.PutLong(0)
+		return nil
+	},
+	// channel:InputChannel -> peer:InputPeer for the old channels.editCreator
+	// Android constructor. Concrete layouts are otherwise byte-compatible.
+	"InputChannel->InputPeer": func(raw []byte, out *bin.Buffer) error {
+		in := &bin.Buffer{Buf: raw}
+		id, err := in.ID()
+		if err != nil {
+			return err
+		}
+		switch id {
+		case inputChannelEmptyID:
+			out.PutID(inputPeerEmptyID)
+		case inputChannelID:
+			out.PutID(inputPeerChannelID)
+			out.Put(in.Buf)
+		case inputChannelFromMessageID:
+			out.PutID(inputPeerChannelFromMessageID)
+			out.Put(in.Buf)
+		default:
+			return bin.NewUnexpectedID(id)
+		}
 		return nil
 	},
 }

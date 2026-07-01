@@ -365,12 +365,12 @@ func sentMessageIDFromUpdates(updates tg.UpdatesClass) int {
 	return 0
 }
 
-func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, fromPeer, toPeer domain.Peer, req *tg.MessagesForwardMessagesRequest, replyTo *domain.MessageReply, sendAs *domain.Peer) (tg.UpdatesClass, error) {
+func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, fromPeer, toPeer domain.Peer, req *tg.MessagesForwardMessagesRequest, replyTo *domain.MessageReply, sendAs *domain.Peer, preloadedSources []forwardSource) (tg.UpdatesClass, error) {
 	scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService)
 	if r.deps.Messages == nil || !ok {
 		return nil, peerIDInvalidErr()
 	}
-	sources, err := r.forwardSources(ctx, userID, fromPeer, req.ID)
+	sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloadedSources)
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}

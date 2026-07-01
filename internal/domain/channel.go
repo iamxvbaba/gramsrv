@@ -204,6 +204,40 @@ type ChannelAdminRights struct {
 	ManageDirectMessages bool
 }
 
+// CreatorChannelAdminRights returns the full rights set clients expect on creator projections.
+func CreatorChannelAdminRights() ChannelAdminRights {
+	return ChannelAdminRights{
+		ChangeInfo:     true,
+		PostMessages:   true,
+		EditMessages:   true,
+		DeleteMessages: true,
+		PostStories:    true,
+		EditStories:    true,
+		DeleteStories:  true,
+		BanUsers:       true,
+		InviteUsers:    true,
+		PinMessages:    true,
+		AddAdmins:      true,
+		ManageCall:     true,
+		ManageRanks:    true,
+	}
+}
+
+// NormalizeFullMegagroupAdminRights fills implicit full-admin bits for megagroups.
+func NormalizeFullMegagroupAdminRights(ch Channel, rights ChannelAdminRights) ChannelAdminRights {
+	if ch.Megagroup && !ch.Broadcast &&
+		rights.ChangeInfo &&
+		rights.DeleteMessages &&
+		rights.BanUsers &&
+		rights.InviteUsers &&
+		rights.PinMessages &&
+		rights.AddAdmins &&
+		rights.ManageCall {
+		rights.ManageRanks = true
+	}
+	return rights
+}
+
 // ChannelBannedRights is a domain-only representation of Telegram banned rights.
 type ChannelBannedRights struct {
 	ViewMessages    bool
@@ -1028,6 +1062,9 @@ type ChannelRecommendationsResult struct {
 }
 
 // PublicChannelSearchResult contains contacts.search public channel/supergroup matches.
+// Results are public peers the viewer is not an active member of; joined peers
+// are intentionally left to dialogs/resolve paths so clients do not render
+// invisible discovery rows for already joined channels.
 type PublicChannelSearchResult struct {
 	MyResults []Channel
 	Results   []Channel
@@ -1210,6 +1247,26 @@ type EditChannelAdminResult struct {
 	Event       ChannelUpdateEvent
 	Recipients  []int64
 	Date        int
+}
+
+// TransferChannelOwnershipRequest transfers a channel/supergroup to another active member.
+type TransferChannelOwnershipRequest struct {
+	UserID     int64
+	ChannelID  int64
+	NewOwnerID int64
+	Date       int
+}
+
+// TransferChannelOwnershipResult describes both participant transitions produced by an owner transfer.
+type TransferChannelOwnershipResult struct {
+	Channel          Channel
+	PreviousOwner    ChannelMember
+	OldOwner         ChannelMember
+	PreviousNewOwner ChannelMember
+	NewOwner         ChannelMember
+	Events           []ChannelUpdateEvent
+	Recipients       []int64
+	Date             int
 }
 
 // EditChannelMemberRankRequest sets or clears a participant's member tag (rank)

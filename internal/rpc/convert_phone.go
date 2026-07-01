@@ -66,18 +66,19 @@ func tgPhoneCallForViewer(call domain.PhoneCall, viewerID int64) tg.PhoneCallCla
 			gaOrB = call.GB // 主叫视角：拿被叫的 g_b
 		}
 		out := &tg.PhoneCall{
-			P2PAllowed:     call.P2PAllowed,
-			Video:          call.Video,
-			ID:             call.ID,
-			AccessHash:     call.AccessHash,
-			Date:           call.Date,
-			AdminID:        call.AdminID,
-			ParticipantID:  call.ParticipantID,
-			GAOrB:          gaOrB,
-			KeyFingerprint: call.KeyFingerprint,
-			Protocol:       tgPhoneCallProtocol(call.Protocol),
-			Connections:    tgPhoneConnections(call.Connections),
-			StartDate:      call.StartDate,
+			P2PAllowed:          call.P2PAllowed,
+			Video:               call.Video,
+			ConferenceSupported: true,
+			ID:                  call.ID,
+			AccessHash:          call.AccessHash,
+			Date:                call.Date,
+			AdminID:             call.AdminID,
+			ParticipantID:       call.ParticipantID,
+			GAOrB:               gaOrB,
+			KeyFingerprint:      call.KeyFingerprint,
+			Protocol:            tgPhoneCallProtocol(call.Protocol),
+			Connections:         tgPhoneConnections(call.Connections),
+			StartDate:           call.StartDate,
 		}
 		return out
 	case domain.PhoneCallStateDiscarded:
@@ -132,7 +133,7 @@ func tgPhoneCallDiscarded(call domain.PhoneCall) *tg.PhoneCallDiscarded {
 		Video: call.Video,
 		ID:    call.ID,
 	}
-	if reason := tgPhoneCallDiscardReason(call.DiscardReason); reason != nil {
+	if reason := tgPhoneCallDiscardReasonWithSlug(call.DiscardReason, call.DiscardReasonSlug); reason != nil {
 		out.SetReason(reason)
 	}
 	if call.Duration > 0 {
@@ -155,6 +156,10 @@ func tgPhoneCallStopRinging(call domain.PhoneCall) *tg.PhoneCallDiscarded {
 }
 
 func tgPhoneCallDiscardReason(r domain.PhoneCallDiscardReason) tg.PhoneCallDiscardReasonClass {
+	return tgPhoneCallDiscardReasonWithSlug(r, "")
+}
+
+func tgPhoneCallDiscardReasonWithSlug(r domain.PhoneCallDiscardReason, slug string) tg.PhoneCallDiscardReasonClass {
 	switch r {
 	case domain.PhoneCallDiscardReasonMissed:
 		return &tg.PhoneCallDiscardReasonMissed{}
@@ -165,7 +170,7 @@ func tgPhoneCallDiscardReason(r domain.PhoneCallDiscardReason) tg.PhoneCallDisca
 	case domain.PhoneCallDiscardReasonBusy:
 		return &tg.PhoneCallDiscardReasonBusy{}
 	case domain.PhoneCallDiscardReasonMigrateConference:
-		return &tg.PhoneCallDiscardReasonMigrateConferenceCall{}
+		return &tg.PhoneCallDiscardReasonMigrateConferenceCall{Slug: slug}
 	default:
 		return nil
 	}
@@ -187,4 +192,11 @@ func phoneCallDiscardReasonFromTL(r tg.PhoneCallDiscardReasonClass) domain.Phone
 		// 含 nil（客户端未带 reason）：按 hangup 处理。
 		return domain.PhoneCallDiscardReasonHangup
 	}
+}
+
+func phoneCallDiscardReasonSlugFromTL(r tg.PhoneCallDiscardReasonClass) string {
+	if migrate, ok := r.(*tg.PhoneCallDiscardReasonMigrateConferenceCall); ok {
+		return migrate.Slug
+	}
+	return ""
 }

@@ -68,7 +68,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 			member.AvailableMinPts = minPts
 		}
 	}
-	member.AdminRights = req.AdminRights
+	member.AdminRights = domain.NormalizeFullMegagroupAdminRights(channel, req.AdminRights)
 	if zeroChannelAdminRights(req.AdminRights) {
 		member.Role = domain.ChannelRoleMember
 		member.Rank = ""
@@ -108,6 +108,146 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	recipients = append(recipients, req.MemberID)
 	return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
+}
+
+func (s *ChannelStore) TransferChannelOwnership(ctx context.Context, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error) {
+	if req.UserID == 0 || req.ChannelID == 0 || req.NewOwnerID == 0 || req.NewOwnerID == req.UserID {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelInvalid
+	}
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.TransferChannelOwnershipResult{}, fmt.Errorf("transfer channel ownership: db does not support transactions")
+	}
+	if req.Date == 0 {
+		req.Date = nowUnix()
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.TransferChannelOwnershipResult{}, fmt.Errorf("begin transfer channel ownership: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	channel, previousOwner, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+	if err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if channel.CreatorUserID != req.UserID || previousOwner.Role != domain.ChannelRoleCreator {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelAdminRequired
+	}
+	previousNewOwner, err := s.getChannelMember(ctx, tx, req.ChannelID, req.NewOwnerID)
+	if err != nil {
+		if errors.Is(err, domain.ErrChannelPrivate) {
+			return domain.TransferChannelOwnershipResult{}, domain.ErrUserNotParticipant
+		}
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if previousNewOwner.Status != domain.ChannelMemberActive || previousNewOwner.BannedRights.ViewMessages {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrUserNotParticipant
+	}
+	if previousNewOwner.Role == domain.ChannelRoleCreator {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelNotModified
+	}
+	oldOwner := previousOwner
+	oldOwner.Role = domain.ChannelRoleAdmin
+	oldOwner.AdminRights = creatorChannelMember(req.ChannelID, req.UserID, req.Date).AdminRights
+	oldOwner.Rank = ""
+	oldOwner.Status = domain.ChannelMemberActive
+	oldOwner.LeftAt = 0
+	if oldOwner.InviterUserID == 0 {
+		oldOwner.InviterUserID = req.UserID
+	}
+	newOwner := previousNewOwner
+	newOwner.Role = domain.ChannelRoleCreator
+	newOwner.AdminRights = creatorChannelMember(req.ChannelID, req.NewOwnerID, req.Date).AdminRights
+	newOwner.Rank = ""
+	newOwner.Status = domain.ChannelMemberActive
+	newOwner.LeftAt = 0
+	if newOwner.JoinedAt == 0 {
+		newOwner.JoinedAt = req.Date
+	}
+	channel.CreatorUserID = req.NewOwnerID
+	if _, err := tx.Exec(ctx, `
+UPDATE channels
+SET creator_user_id = $2,
+    updated_at = now()
+WHERE id = $1 AND NOT deleted`, req.ChannelID, req.NewOwnerID); err != nil {
+		return domain.TransferChannelOwnershipResult{}, fmt.Errorf("update channel creator: %w", err)
+	}
+	if err := upsertChannelMemberTx(ctx, tx, channel, oldOwner); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if err := upsertChannelMemberTx(ctx, tx, channel, newOwner); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+		ChannelID:       req.ChannelID,
+		UserID:          req.UserID,
+		Date:            req.Date,
+		Type:            domain.ChannelAdminLogParticipantPromote,
+		PrevParticipant: &previousOwner,
+		NewParticipant:  &oldOwner,
+	}); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+		ChannelID:       req.ChannelID,
+		UserID:          req.UserID,
+		Date:            req.Date,
+		Type:            domain.ChannelAdminLogParticipantPromote,
+		PrevParticipant: &previousNewOwner,
+		NewParticipant:  &newOwner,
+	}); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	channel, err = refreshChannelCountsTx(ctx, tx, channel)
+	if err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	msg, _ := s.getChannelMessage(ctx, tx, req.ChannelID, channel.TopMessageID)
+	if err := upsertChannelDialogTx(ctx, tx, oldOwner.UserID, channel, msg, oldOwner.ReadInboxMaxID, oldOwner.ReadOutboxMaxID); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if err := upsertChannelDialogTx(ctx, tx, newOwner.UserID, channel, msg, newOwner.ReadInboxMaxID, newOwner.ReadOutboxMaxID); err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	recipients, err := s.listActiveChannelMemberIDs(ctx, tx, req.ChannelID, 0)
+	if err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.TransferChannelOwnershipResult{}, fmt.Errorf("commit transfer channel ownership: %w", err)
+	}
+	committed = true
+	if s.rowCache != nil {
+		s.rowCache.delete(req.ChannelID)
+	}
+	if s.memberCache != nil {
+		s.memberCache.delete(req.ChannelID, req.UserID)
+		s.memberCache.delete(req.ChannelID, req.NewOwnerID)
+	}
+	if s.dialogCache != nil {
+		s.dialogCache.delete(oldOwner.UserID, req.ChannelID)
+		s.dialogCache.delete(newOwner.UserID, req.ChannelID)
+	}
+	events := []domain.ChannelUpdateEvent{
+		transientChannelParticipantEvent(channel.ID, req.UserID, previousOwner, oldOwner, req.Date),
+		transientChannelParticipantEvent(channel.ID, req.UserID, previousNewOwner, newOwner, req.Date),
+	}
+	recipients = append(recipients, req.UserID, req.NewOwnerID)
+	return domain.TransferChannelOwnershipResult{
+		Channel:          channel,
+		PreviousOwner:    previousOwner,
+		OldOwner:         oldOwner,
+		PreviousNewOwner: previousNewOwner,
+		NewOwner:         newOwner,
+		Events:           events,
+		Recipients:       recipients,
+		Date:             req.Date,
+	}, nil
 }
 
 func (s *ChannelStore) EditChannelMemberRank(ctx context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error) {

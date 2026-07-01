@@ -568,6 +568,106 @@ func TestGetParticipantsCachesPageByCompositeReadModelHash(t *testing.T) {
 	}
 }
 
+func TestGetParticipantsCacheInvalidatesAfterAdminMutation(t *testing.T) {
+	ctx := context.Background()
+	const ownerID int64 = 1001
+	base := &countingChannelStore{ChannelStore: memory.NewChannelStore()}
+	service := NewService(base)
+	created, err := service.CreateChannel(ctx, ownerID, domain.CreateChannelRequest{
+		Title:         "Admin Cache",
+		Megagroup:     true,
+		MemberUserIDs: []int64{1002},
+		Date:          1700004103,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: created.Channel.ID}
+	versions := &fakeReadModelVersions{hashes: map[store.ReadModelKey]int64{
+		{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID}:                    201,
+		{Model: readmodel.ModelChannelParticipants, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID}:            202,
+		{Model: readmodel.ModelChannelMember, OwnerUserID: ownerID, PeerType: peer.Type, PeerID: peer.ID}:            203,
+		{Model: readmodel.ModelContactAccount, OwnerUserID: ownerID, PeerType: domain.PeerTypeUser, PeerID: ownerID}: 204,
+	}}
+	service = NewService(base, WithReadModelVersions(versions))
+
+	filter := domain.ChannelParticipantsFilter{Kind: domain.ChannelParticipantsAdmins}
+	before, err := service.GetParticipants(ctx, ownerID, created.Channel.ID, filter, 0, 20)
+	if err != nil {
+		t.Fatalf("first admins: %v", err)
+	}
+	if len(before.Participants) != 1 || before.Participants[0].UserID != ownerID {
+		t.Fatalf("first admins = %+v, want only creator", before.Participants)
+	}
+	if _, err := service.GetParticipants(ctx, ownerID, created.Channel.ID, filter, 0, 20); err != nil {
+		t.Fatalf("cached admins: %v", err)
+	}
+	if base.getParticipantCalls != 1 {
+		t.Fatalf("GetParticipants calls before mutation = %d, want 1", base.getParticipantCalls)
+	}
+
+	if _, err := service.EditAdmin(ctx, ownerID, domain.EditChannelAdminRequest{
+		ChannelID:   created.Channel.ID,
+		MemberID:    1002,
+		AdminRights: domain.ChannelAdminRights{InviteUsers: true},
+		Date:        1700004104,
+	}); err != nil {
+		t.Fatalf("EditAdmin: %v", err)
+	}
+	after, err := service.GetParticipants(ctx, ownerID, created.Channel.ID, filter, 0, 20)
+	if err != nil {
+		t.Fatalf("admins after mutation: %v", err)
+	}
+	if base.getParticipantCalls != 2 {
+		t.Fatalf("GetParticipants calls after mutation = %d, want 2", base.getParticipantCalls)
+	}
+	if len(after.Participants) != 2 || after.Participants[1].UserID != 1002 || after.Participants[1].Role != domain.ChannelRoleAdmin {
+		t.Fatalf("admins after mutation = %+v, want fresh promoted admin", after.Participants)
+	}
+}
+
+func TestFullMegagroupAdminGrantFillsManageRanks(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+	created, err := service.CreateChannel(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Full Admin",
+		Megagroup:     true,
+		MemberUserIDs: []int64{1002},
+		Date:          1700004200,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	rights := domain.ChannelAdminRights{
+		ChangeInfo:     true,
+		DeleteMessages: true,
+		BanUsers:       true,
+		InviteUsers:    true,
+		PinMessages:    true,
+		AddAdmins:      true,
+		ManageCall:     true,
+	}
+	edited, err := service.EditAdmin(ctx, 1001, domain.EditChannelAdminRequest{
+		ChannelID:   created.Channel.ID,
+		MemberID:    1002,
+		AdminRights: rights,
+		Date:        1700004201,
+	})
+	if err != nil {
+		t.Fatalf("EditAdmin full rights: %v", err)
+	}
+	if !edited.Participant.AdminRights.ManageRanks {
+		t.Fatalf("edited admin rights = %+v, want ManageRanks for full megagroup admin", edited.Participant.AdminRights)
+	}
+	member, err := service.GetParticipant(ctx, 1001, created.Channel.ID, 1002)
+	if err != nil {
+		t.Fatalf("GetParticipant: %v", err)
+	}
+	if !member.AdminRights.ManageRanks {
+		t.Fatalf("stored admin rights = %+v, want ManageRanks", member.AdminRights)
+	}
+}
+
 func TestCreateChatCreatesMegagroupWithChannelPts(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewChannelStore()
@@ -1713,6 +1813,60 @@ func TestDeleteParticipantHistoryDeletesOneBoundedSenderPage(t *testing.T) {
 	}
 }
 
+func TestTransferOwnershipDoesNotAdvanceChannelPts(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Transfer",
+		MemberUserIDs: []int64{1002},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	ptsBeforeTransfer := created.Channel.Pts
+	transfer, err := service.TransferOwnership(ctx, 1001, domain.TransferChannelOwnershipRequest{
+		ChannelID:  created.Channel.ID,
+		NewOwnerID: 1002,
+		Date:       11,
+	})
+	if err != nil {
+		t.Fatalf("TransferOwnership: %v", err)
+	}
+	if transfer.Channel.CreatorUserID != 1002 || transfer.NewOwner.Role != domain.ChannelRoleCreator || transfer.OldOwner.Role != domain.ChannelRoleAdmin {
+		t.Fatalf("transfer result = %+v, want owner moved to 1002 and old owner admin", transfer)
+	}
+	if transfer.Channel.Pts != ptsBeforeTransfer {
+		t.Fatalf("transfer channel pts = %d, want unchanged %d", transfer.Channel.Pts, ptsBeforeTransfer)
+	}
+	if len(transfer.Events) != 2 {
+		t.Fatalf("transfer events = %+v, want two participant transitions", transfer.Events)
+	}
+	for _, event := range transfer.Events {
+		if event.Type != domain.ChannelUpdateParticipant || event.Pts != 0 || event.PtsCount != 0 {
+			t.Fatalf("transfer event = %+v, want transient participant event", event)
+		}
+	}
+	diffAfterTransfer, err := service.GetDifference(ctx, 1002, domain.ChannelDifferenceRequest{ChannelID: created.Channel.ID, Pts: ptsBeforeTransfer, Limit: 10})
+	if err != nil {
+		t.Fatalf("GetDifference after transfer: %v", err)
+	}
+	if len(diffAfterTransfer.OtherUpdates) != 0 || diffAfterTransfer.Pts != ptsBeforeTransfer {
+		t.Fatalf("diff after transfer = %+v, want no durable participant update", diffAfterTransfer)
+	}
+	oldOwner, err := service.GetParticipant(ctx, 1002, created.Channel.ID, 1001)
+	if err != nil {
+		t.Fatalf("GetParticipant old owner: %v", err)
+	}
+	newOwner, err := service.GetParticipant(ctx, 1002, created.Channel.ID, 1002)
+	if err != nil {
+		t.Fatalf("GetParticipant new owner: %v", err)
+	}
+	if oldOwner.Role != domain.ChannelRoleAdmin || newOwner.Role != domain.ChannelRoleCreator {
+		t.Fatalf("participants after transfer old=%+v new=%+v, want admin/creator", oldOwner, newOwner)
+	}
+}
+
 func TestChannelAdminTitlePinAndInvite(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(memory.NewChannelStore())
@@ -2358,8 +2512,8 @@ func TestPublicChannelSearchAndResolveUsername(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchPublicChannels joined: %v", err)
 	}
-	if len(joined.MyResults) != 1 || joined.MyResults[0].ID != public.ID || len(joined.Results) != 0 {
-		t.Fatalf("joined public search = %+v, want my public channel only", joined)
+	if len(joined.MyResults) != 0 || len(joined.Results) != 0 {
+		t.Fatalf("joined public search = %+v, want no discovery result for active member", joined)
 	}
 	global, err := service.SearchPublicChannels(ctx, 1003, "public", 10)
 	if err != nil {

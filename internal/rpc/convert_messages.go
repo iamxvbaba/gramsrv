@@ -159,6 +159,27 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 			action.SetDuration(m.ServiceAction.Call.Duration)
 		}
 		return action
+	case domain.MessageServiceActionConferenceCall:
+		c := m.ServiceAction.ConferenceCall
+		if c == nil {
+			return &tg.MessageActionEmpty{}
+		}
+		action := &tg.MessageActionConferenceCall{
+			Missed: c.Missed,
+			Active: c.Active,
+			Video:  c.Video,
+			CallID: c.CallID,
+		}
+		if c.Duration > 0 {
+			action.SetDuration(c.Duration)
+		}
+		if len(c.OtherParticipants) > 0 {
+			peers := tgPeerList(c.OtherParticipants)
+			if len(peers) > 0 {
+				action.SetOtherParticipants(peers)
+			}
+		}
+		return action
 	case domain.MessageServiceActionBotAllowed:
 		allowed := m.ServiceAction.BotAllowed
 		if allowed == nil {

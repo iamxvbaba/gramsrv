@@ -27,6 +27,8 @@ func groupCallErr(err error) error {
 		return groupCallSSRCDuplicateErr()
 	case errors.Is(err, domain.ErrGroupCallNotJoined):
 		return groupCallJoinMissingErr()
+	case errors.Is(err, domain.ErrConferenceChainInvalid):
+		return confWriteChainInvalidErr()
 	default:
 		return internalErr()
 	}
@@ -41,29 +43,68 @@ type groupCallScope struct {
 }
 
 func (s *groupCallScope) canManage() bool {
+	if s.call.Conference() {
+		return s.userID != 0 && s.userID == s.call.CreatorUserID
+	}
 	return channelMemberIsAdmin(s.member)
 }
 
-// groupCallScopeFrom 解析 InputGroupCallClass（仅 id+access_hash 变体；slug/
-// inviteMessage 属 conference 路径，返回 GROUPCALL_INVALID）并校验成员资格。
+// groupCallScopeFrom 解析 InputGroupCallClass 并校验访问权。普通 group call 继续
+// 走频道成员资格；conference call 走 creator/participant/invite/slug 访问模型。
 func (r *Router) groupCallScopeFrom(ctx context.Context, in tg.InputGroupCallClass) (*groupCallScope, error) {
-	if r.deps.GroupCalls == nil || r.deps.Channels == nil {
+	if r.deps.GroupCalls == nil {
 		return nil, notImplementedErr()
 	}
 	userID, err := r.phoneRequireUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	callID, accessHash, err := inputGroupCallRef(in)
-	if err != nil {
-		return nil, err
-	}
-	call, found, err := r.deps.GroupCalls.Get(ctx, callID)
-	if err != nil {
-		return nil, internalErr()
-	}
-	if !found || call.AccessHash != accessHash {
+	var call domain.GroupCall
+	var found bool
+	allowBySlug := false
+	switch v := in.(type) {
+	case *tg.InputGroupCall:
+		call, found, err = r.deps.GroupCalls.Get(ctx, v.ID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if !found || call.AccessHash != v.AccessHash {
+			return nil, groupCallInvalidErr()
+		}
+	case *tg.InputGroupCallSlug:
+		call, found, err = r.deps.GroupCalls.GetBySlug(ctx, v.Slug)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if !found || !call.Conference() {
+			return nil, groupCallInvalidErr()
+		}
+		allowBySlug = true
+	case *tg.InputGroupCallInviteMessage:
+		call, _, found, err = r.deps.GroupCalls.GetByInviteMessage(ctx, userID, v.MsgID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if !found || !call.Conference() {
+			return nil, groupCallInvalidErr()
+		}
+	default:
 		return nil, groupCallInvalidErr()
+	}
+	if call.Conference() {
+		if !allowBySlug {
+			allowed, err := r.conferenceCallCanAccess(ctx, call.ID, userID)
+			if err != nil {
+				return nil, internalErr()
+			}
+			if !allowed {
+				return nil, groupCallForbiddenErr()
+			}
+		}
+		return &groupCallScope{userID: userID, call: call}, nil
+	}
+	if r.deps.Channels == nil {
+		return nil, notImplementedErr()
 	}
 	view, err := r.deps.Channels.GetChannel(ctx, userID, call.ChannelID)
 	if err != nil {
@@ -73,6 +114,19 @@ func (r *Router) groupCallScopeFrom(ctx context.Context, in tg.InputGroupCallCla
 		return nil, groupCallForbiddenErr()
 	}
 	return &groupCallScope{userID: userID, call: call, channel: view.Channel, member: view.Self}, nil
+}
+
+func (r *Router) conferenceCallCanAccess(ctx context.Context, callID, userID int64) (bool, error) {
+	recipients, err := r.deps.GroupCalls.ConferenceRecipients(ctx, callID)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range recipients {
+		if id == userID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreateGroupCallRequest) (tg.UpdatesClass, error) {
@@ -175,6 +229,14 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		}
 	}
 	now := int(r.clock.Now().Unix())
+	var publicKey []byte
+	if pk, ok := req.GetPublicKey(); ok {
+		publicKey = append([]byte(nil), pk[:]...)
+	}
+	var joinBlock []byte
+	if block, ok := req.GetBlock(); ok {
+		joinBlock = append([]byte(nil), block...)
+	}
 	// 视频内部状态：endpoint 服务端铸造（join 响应 video.endpoint 与日后
 	// participant.video.endpoint 必须逐字节一致）；ssrc-groups 无论摄像头开关都
 	// 存档——video_stopped=false（join flag 或后续 self-edit）时原样回放。
@@ -190,6 +252,8 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		SSRC:      ssrc,
 		Muted:     req.Muted,
 		IsAdmin:   scope.canManage(),
+		PublicKey: publicKey,
+		JoinBlock: joinBlock,
 		VideoJSON: encodeVideoState(videoState),
 		Now:       now,
 	})
@@ -215,6 +279,25 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		_, _ = r.deps.GroupCalls.Leave(ctx, scope.call.ID, scope.userID, now)
 		return nil, internalErr()
 	}
+	var conferenceJoinBlock domain.GroupCallChainBlock
+	var hasConferenceJoinBlock bool
+	if scope.call.Conference() && len(joinBlock) > 0 {
+		block, err := r.deps.GroupCalls.AppendChainBlock(ctx, domain.GroupCallChainBlock{
+			CallID:       scope.call.ID,
+			SubChainID:   0,
+			Offset:       -1,
+			AuthorUserID: scope.userID,
+			Block:        joinBlock,
+			CreatedAt:    now,
+		})
+		if err != nil {
+			_ = sfuService.Leave(ctx, scope.call.ID, scope.userID, sfu.EndpointMain)
+			_, _ = r.deps.GroupCalls.Leave(ctx, scope.call.ID, scope.userID, now)
+			return nil, groupCallErr(err)
+		}
+		conferenceJoinBlock = block
+		hasConferenceJoinBlock = true
+	}
 	// 扇出给房间/在线群成员（操作者其它设备含其中；本设备从 RPC 返回拿）。
 	channel := r.groupCallMutationFanout(ctx, scope.channel, mut)
 	// 响应（TDesktop 从本 RPC 返回的 Updates 摘取 updateGroupCallConnection，不会等推送）：
@@ -226,8 +309,16 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		}, []int64{scope.userID})
 	out.Updates = append(out.Updates, &tg.UpdateGroupCallConnection{Params: tg.DataJSON{Data: params}})
 	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage())}
-	callUpdate.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
+	if channel.ID != 0 {
+		callUpdate.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
+	}
 	out.Updates = append(out.Updates, callUpdate)
+	if hasConferenceJoinBlock {
+		nextOffset := conferenceJoinBlock.Offset + 1
+		blocks := [][]byte{conferenceJoinBlock.Block}
+		r.pushConferenceChainBlocks(ctx, mut.Call, conferenceJoinBlock.SubChainID, blocks, nextOffset)
+		out.Updates = append(out.Updates, conferenceChainBlocksUpdate(mut.Call, conferenceJoinBlock.SubChainID, blocks, nextOffset))
+	}
 	return out, nil
 }
 
@@ -253,12 +344,16 @@ func (r *Router) onPhoneLeaveGroupCall(ctx context.Context, req *tg.PhoneLeaveGr
 		_ = r.deps.SFU.Leave(ctx, scope.call.ID, scope.userID, sfu.EndpointMain)
 	}
 	channel := r.groupCallMutationFanout(ctx, scope.channel, mut)
-	return r.groupCallUpdateContainer(ctx, scope.userID, channel,
+	out := r.groupCallUpdateContainer(ctx, scope.userID, channel,
 		&tg.UpdateGroupCallParticipants{
 			Call:         &tg.InputGroupCall{ID: mut.Call.ID, AccessHash: mut.Call.AccessHash},
 			Participants: tgGroupCallParticipants([]domain.GroupCallParticipant{mut.Participant}, scope.userID),
 			Version:      mut.Call.Version,
-		}, []int64{scope.userID}), nil
+		}, []int64{scope.userID})
+	if mut.Call.Conference() && !mut.Call.Active() {
+		out.Updates = append(out.Updates, groupCallUpdateFor(domain.Channel{}, mut.Call, scope.userID, scope.userID == mut.Call.CreatorUserID))
+	}
+	return out, nil
 }
 
 func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCallClass) (tg.UpdatesClass, error) {
@@ -270,12 +365,17 @@ func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCa
 		return nil, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
 	now := int(r.clock.Now().Unix())
-	call, _, err := r.deps.GroupCalls.Discard(ctx, scope.call.ID, now)
+	call, activeBeforeDiscard, err := r.deps.GroupCalls.Discard(ctx, scope.call.ID, now)
 	if err != nil {
 		return nil, groupCallErr(err)
 	}
 	if r.deps.SFU != nil {
 		_ = r.deps.SFU.CloseRoom(ctx, call.ID)
+	}
+	if call.Conference() {
+		r.pushConferenceGroupCallUpdateTo(ctx, call, groupCallParticipantUserIDs(activeBeforeDiscard))
+		return r.groupCallUpdateContainer(ctx, scope.userID, domain.Channel{},
+			groupCallUpdateFor(domain.Channel{}, call, scope.userID, true), nil), nil
 	}
 	// 清 channel 关联 + ended 服务消息（带 duration）。
 	channel := scope.channel
@@ -328,11 +428,15 @@ func (r *Router) onPhoneGetGroupCall(ctx context.Context, req *tg.PhoneGetGroupC
 	for _, p := range page.Participants {
 		userIDs = append(userIDs, p.UserID)
 	}
+	chats := []tg.ChatClass{}
+	if !scope.call.Conference() {
+		chats = append(chats, tgChannel(scope.userID, scope.channel, &scope.member))
+	}
 	return &tg.PhoneGroupCall{
 		Call:                   tgGroupCall(scope.call, scope.userID, scope.canManage()),
 		Participants:           tgGroupCallParticipants(page.Participants, scope.userID),
 		ParticipantsNextOffset: page.NextOffset,
-		Chats:                  []tg.ChatClass{tgChannel(scope.userID, scope.channel, &scope.member)},
+		Chats:                  chats,
 		Users:                  r.tgUsersForIDs(ctx, scope.userID, userIDs),
 	}, nil
 }
@@ -358,11 +462,15 @@ func (r *Router) onPhoneGetGroupParticipants(ctx context.Context, req *tg.PhoneG
 		userIDs = append(userIDs, p.UserID)
 	}
 	// 响应 version=当前值：客户端 version 跳号后据此重建本地状态并恢复增量应用。
+	chats := []tg.ChatClass{}
+	if !scope.call.Conference() {
+		chats = append(chats, tgChannel(scope.userID, scope.channel, &scope.member))
+	}
 	return &tg.PhoneGroupParticipants{
 		Count:        page.Count,
 		Participants: tgGroupCallParticipants(page.Participants, scope.userID),
 		NextOffset:   page.NextOffset,
-		Chats:        []tg.ChatClass{tgChannel(scope.userID, scope.channel, &scope.member)},
+		Chats:        chats,
 		Users:        r.tgUsersForIDs(ctx, scope.userID, userIDs),
 		Version:      page.Version,
 	}, nil
@@ -417,6 +525,8 @@ func (r *Router) onPhoneCheckGroupCall(ctx context.Context, req *tg.PhoneCheckGr
 
 func groupCallUpdateFor(channel domain.Channel, call domain.GroupCall, viewerUserID int64, canManage bool) *tg.UpdateGroupCall {
 	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerUserID, canManage)}
-	update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
+	if channel.ID != 0 {
+		update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
+	}
 	return update
 }

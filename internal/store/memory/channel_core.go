@@ -48,25 +48,12 @@ func (s *ChannelStore) CreateChannel(_ context.Context, req domain.CreateChannel
 	}
 	channel.HasLink = true
 	creator := domain.ChannelMember{
-		ChannelID: channelID,
-		UserID:    req.CreatorUserID,
-		Role:      domain.ChannelRoleCreator,
-		Status:    domain.ChannelMemberActive,
-		JoinedAt:  req.Date,
-		AdminRights: domain.ChannelAdminRights{
-			ChangeInfo:     true,
-			PostMessages:   true,
-			EditMessages:   true,
-			DeleteMessages: true,
-			PostStories:    true,
-			EditStories:    true,
-			DeleteStories:  true,
-			BanUsers:       true,
-			InviteUsers:    true,
-			PinMessages:    true,
-			AddAdmins:      true,
-			ManageCall:     true,
-		},
+		ChannelID:   channelID,
+		UserID:      req.CreatorUserID,
+		Role:        domain.ChannelRoleCreator,
+		Status:      domain.ChannelMemberActive,
+		JoinedAt:    req.Date,
+		AdminRights: domain.CreatorChannelAdminRights(),
 	}
 	s.channels[channelID] = channel
 	s.invites[inviteHash] = domain.ChannelInvite{

@@ -53,6 +53,15 @@ func (c *participantsReadModelCache) getOrLoad(ctx context.Context, key particip
 	return c.cache.GetOrLoadVersioned(ctx, key, hash, load)
 }
 
+func (c *participantsReadModelCache) invalidateChannel(channelID int64) {
+	if c == nil || channelID == 0 {
+		return
+	}
+	c.cache.InvalidateWhere(func(key participantsCacheKey) bool {
+		return key.channelID == channelID
+	})
+}
+
 func (s *Service) cachedParticipants(ctx context.Context, userID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
 	filter, offset, limit = normalizeParticipantsRequest(filter, offset, limit)
 	if s.participantCache == nil || s.versions == nil {

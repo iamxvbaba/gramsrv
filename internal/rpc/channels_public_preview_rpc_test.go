@@ -196,4 +196,27 @@ func TestPublicChannelPreviewRPCsAllowNonMember(t *testing.T) {
 	if !ok || !peerDialogChat.Left || peerDialogChat.ID != public.Channel.ID {
 		t.Fatalf("peer dialog chat = %T %+v, want left public channel", peerDialogs.Chats[0], peerDialogs.Chats[0])
 	}
+
+	if _, err := channelService.JoinChannel(ctx, viewer.ID, public.Channel.ID, 1700010120); err != nil {
+		t.Fatalf("join public channel after preview: %v", err)
+	}
+	var joinedPeerDialogsIn bin.Buffer
+	if err := peerDialogsReq.Encode(&joinedPeerDialogsIn); err != nil {
+		t.Fatalf("encode joined getPeerDialogs: %v", err)
+	}
+	joinedPeerDialogsEnc, err := r.Dispatch(WithUserID(ctx, viewer.ID), [8]byte{}, 0, &joinedPeerDialogsIn)
+	if err != nil {
+		t.Fatalf("dispatch getPeerDialogs after join: %v", err)
+	}
+	joinedPeerDialogs, ok := joinedPeerDialogsEnc.(*tg.MessagesPeerDialogs)
+	if !ok {
+		t.Fatalf("joined getPeerDialogs response = %T, want peer dialogs", joinedPeerDialogsEnc)
+	}
+	if len(joinedPeerDialogs.Chats) != 1 {
+		t.Fatalf("joined peer dialog chats = %d, want one channel", len(joinedPeerDialogs.Chats))
+	}
+	joinedChat, ok := joinedPeerDialogs.Chats[0].(*tg.Channel)
+	if !ok || joinedChat.Left || joinedChat.ID != public.Channel.ID {
+		t.Fatalf("joined peer dialog chat = %T %+v, want active channel with left=false", joinedPeerDialogs.Chats[0], joinedPeerDialogs.Chats[0])
+	}
 }

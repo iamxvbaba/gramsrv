@@ -311,7 +311,7 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 			member.AvailableMinPts = minPts
 		}
 	}
-	member.AdminRights = req.AdminRights
+	member.AdminRights = domain.NormalizeFullMegagroupAdminRights(channel, req.AdminRights)
 	member.Rank = req.Rank
 	if zeroChannelAdminRights(req.AdminRights) {
 		member.Role = domain.ChannelRoleMember
@@ -347,6 +347,89 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 		Event:       event,
 		Recipients:  recipients,
 		Date:        req.Date,
+	}, nil
+}
+
+func (s *ChannelStore) TransferChannelOwnership(_ context.Context, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error) {
+	if req.UserID == 0 || req.ChannelID == 0 || req.NewOwnerID == 0 || req.NewOwnerID == req.UserID {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
+	if err != nil {
+		return domain.TransferChannelOwnershipResult{}, err
+	}
+	previousOwner := s.members[req.ChannelID][req.UserID]
+	if channel.CreatorUserID != req.UserID || previousOwner.Role != domain.ChannelRoleCreator {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelAdminRequired
+	}
+	previousNewOwner, ok := s.members[req.ChannelID][req.NewOwnerID]
+	if !ok || previousNewOwner.Status != domain.ChannelMemberActive || previousNewOwner.BannedRights.ViewMessages {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrUserNotParticipant
+	}
+	if previousNewOwner.Role == domain.ChannelRoleCreator {
+		return domain.TransferChannelOwnershipResult{}, domain.ErrChannelNotModified
+	}
+	oldOwner := previousOwner
+	oldOwner.Role = domain.ChannelRoleAdmin
+	oldOwner.AdminRights = creatorChannelAdminRights()
+	oldOwner.Rank = ""
+	oldOwner.Status = domain.ChannelMemberActive
+	oldOwner.LeftAt = 0
+	if oldOwner.InviterUserID == 0 {
+		oldOwner.InviterUserID = req.UserID
+	}
+	newOwner := previousNewOwner
+	newOwner.Role = domain.ChannelRoleCreator
+	newOwner.AdminRights = creatorChannelAdminRights()
+	newOwner.Rank = ""
+	newOwner.Status = domain.ChannelMemberActive
+	newOwner.LeftAt = 0
+	if newOwner.JoinedAt == 0 {
+		newOwner.JoinedAt = req.Date
+	}
+	channel.CreatorUserID = req.NewOwnerID
+	s.channels[req.ChannelID] = channel
+	s.members[req.ChannelID][req.UserID] = oldOwner
+	s.members[req.ChannelID][req.NewOwnerID] = newOwner
+	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
+		ChannelID:       req.ChannelID,
+		UserID:          req.UserID,
+		Date:            req.Date,
+		Type:            domain.ChannelAdminLogParticipantPromote,
+		PrevParticipant: ptrChannelMember(previousOwner),
+		NewParticipant:  ptrChannelMember(oldOwner),
+	})
+	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
+		ChannelID:       req.ChannelID,
+		UserID:          req.UserID,
+		Date:            req.Date,
+		Type:            domain.ChannelAdminLogParticipantPromote,
+		PrevParticipant: ptrChannelMember(previousNewOwner),
+		NewParticipant:  ptrChannelMember(newOwner),
+	})
+	s.refreshChannelCountsLocked(req.ChannelID)
+	channel = s.channels[req.ChannelID]
+	if msg, ok := s.findMessageLocked(req.ChannelID, channel.TopMessageID); ok {
+		s.upsertChannelDialogLocked(oldOwner.UserID, channel, msg, false)
+		s.upsertChannelDialogLocked(newOwner.UserID, channel, msg, false)
+	}
+	events := []domain.ChannelUpdateEvent{
+		transientChannelParticipantEvent(channel.ID, req.UserID, previousOwner, oldOwner, req.Date),
+		transientChannelParticipantEvent(channel.ID, req.UserID, previousNewOwner, newOwner, req.Date),
+	}
+	recipients := s.activeMemberIDsLocked(req.ChannelID, 0, 0)
+	recipients = append(recipients, req.UserID, req.NewOwnerID)
+	return domain.TransferChannelOwnershipResult{
+		Channel:          channel,
+		PreviousOwner:    previousOwner,
+		OldOwner:         oldOwner,
+		PreviousNewOwner: previousNewOwner,
+		NewOwner:         newOwner,
+		Events:           events,
+		Recipients:       recipients,
+		Date:             req.Date,
 	}, nil
 }
 
@@ -966,20 +1049,7 @@ func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 }
 
 func creatorChannelAdminRights() domain.ChannelAdminRights {
-	return domain.ChannelAdminRights{
-		ChangeInfo:     true,
-		PostMessages:   true,
-		EditMessages:   true,
-		DeleteMessages: true,
-		PostStories:    true,
-		EditStories:    true,
-		DeleteStories:  true,
-		BanUsers:       true,
-		InviteUsers:    true,
-		PinMessages:    true,
-		AddAdmins:      true,
-		ManageCall:     true,
-	}
+	return domain.CreatorChannelAdminRights()
 }
 
 func cloneChannelMembers(in []domain.ChannelMember) []domain.ChannelMember {

@@ -716,6 +716,47 @@ func (r *Router) channelParticipantUpdatesWithPeerCache(ctx context.Context, vie
 	}
 }
 
+func (r *Router) channelOwnershipTransferUpdatesWithPeerCache(ctx context.Context, viewerUserID, actorUserID int64, res domain.TransferChannelOwnershipResult, cache *viewerPeerCache) *tg.Updates {
+	if cache == nil {
+		cache = newViewerPeerCache(r)
+	}
+	date := res.Date
+	if date == 0 {
+		date = int(r.clock.Now().Unix())
+	}
+	updates := make([]tg.UpdateClass, 0, len(res.Events)+1)
+	userIDs := []int64{actorUserID, res.PreviousOwner.UserID, res.OldOwner.UserID, res.OldOwner.InviterUserID, res.PreviousNewOwner.UserID, res.NewOwner.UserID, res.NewOwner.InviterUserID}
+	for _, event := range res.Events {
+		update := tgChannelUpdate(viewerUserID, event)
+		if update == nil {
+			continue
+		}
+		updates = append(updates, update)
+		userIDs = append(userIDs, event.SenderUserID, event.Previous.UserID, event.Previous.InviterUserID, event.Participant.UserID, event.Participant.InviterUserID)
+	}
+	updates = append(updates, &tg.UpdateChannel{ChannelID: res.Channel.ID})
+	var self *domain.ChannelMember
+	switch viewerUserID {
+	case res.OldOwner.UserID:
+		member := res.OldOwner
+		self = &member
+	case res.NewOwner.UserID:
+		member := res.NewOwner
+		self = &member
+	}
+	chat := tgChannelChatMin(viewerUserID, res.Channel)
+	if self != nil {
+		chat = tgChannelChat(viewerUserID, res.Channel, self)
+	}
+	return &tg.Updates{
+		Updates: updates,
+		Users:   tgUsersForViewer(viewerUserID, cache.usersForIDs(ctx, viewerUserID, uniqueRecipientIDs(userIDs))),
+		Chats:   []tg.ChatClass{chat},
+		Date:    date,
+		Seq:     0,
+	}
+}
+
 func domainChannelAdminLogFilter(req *tg.ChannelsGetAdminLogRequest) domain.ChannelAdminLogFilter {
 	filter, ok := req.GetEventsFilter()
 	if !ok {
@@ -826,5 +867,16 @@ func channelAdminErr(err error) error {
 		return messageIDInvalidErr()
 	default:
 		return channelInvalidErr(err)
+	}
+}
+
+func channelTransferErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrChannelAdminRequired):
+		return tgerr400("CHAT_CREATOR_REQUIRED")
+	case errors.Is(err, domain.ErrUserNotParticipant):
+		return tgerr400("PARTICIPANT_MISSING")
+	default:
+		return channelAdminErr(err)
 	}
 }

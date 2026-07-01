@@ -91,7 +91,7 @@ go run ./cmd/stickerseeddeploy -source /path/to/HSgram_-premium-promo -dest data
 当前 Telegram Desktop 基线：
 
 - Telegram Desktop commit：`9caf32dffc90ddd9bb08ad5777b865f729fa167b`
-- TL layer：225
+- TL layer：227
 - 本地 DC：`127.0.0.1:2398`，DC id `2`
 
 等 `gramsrv` 生成 `data/server_rsa.pem` 后，导出匹配的公钥：
