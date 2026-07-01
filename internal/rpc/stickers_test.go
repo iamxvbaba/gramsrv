@@ -609,7 +609,7 @@ func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
 	}
 }
 
-func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
+func TestTGDocumentDoesNotEmitAnimatedAttributeForTGSSticker(t *testing.T) {
 	doc := tgDocument(domain.Document{
 		ID:         100,
 		AccessHash: 1,
@@ -618,6 +618,7 @@ func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
 		Attributes: []domain.DocumentAttribute{
 			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
 			{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			{Kind: domain.DocAttrAnimated},
 			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
 		},
 	})
@@ -638,8 +639,8 @@ func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
 	if !hasSticker {
 		t.Fatal("TGS sticker document missing sticker attribute")
 	}
-	if !hasAnimated {
-		t.Fatal("TGS sticker document missing synthesized animated attribute")
+	if hasAnimated {
+		t.Fatal("TGS sticker document has documentAttributeAnimated; TDesktop treats it as a non-sticker animation")
 	}
 }
 

@@ -15,7 +15,18 @@ import (
 // Documents 数组、optional 字段(static/anim/premium)正确编码、hash 命中回 NotModified。
 func TestMessagesGetAvailableEffects(t *testing.T) {
 	doc := func(id int64) domain.Document {
-		return domain.Document{ID: id, AccessHash: id * 10, MimeType: "application/x-tgsticker", DCID: 2}
+		return domain.Document{
+			ID:         id,
+			AccessHash: id * 10,
+			MimeType:   "application/x-tgsticker",
+			DCID:       2,
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+				{Kind: domain.DocAttrSticker, Alt: "\U0001f525", StickerSetID: 10, StickerSetAccessHash: 20},
+				{Kind: domain.DocAttrAnimated},
+				{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
+			},
+		}
 	}
 	files := &fakeFiles{
 		docs: map[int64]domain.Document{1: doc(1), 2: doc(2), 3: doc(3)},
@@ -44,6 +55,28 @@ func TestMessagesGetAvailableEffects(t *testing.T) {
 	// 文档去重:effect 引用 1/2/3 + 2 → 3 个唯一文档。
 	if len(full.Documents) != 3 {
 		t.Fatalf("documents = %d, want 3 deduped", len(full.Documents))
+	}
+	for _, item := range full.Documents {
+		d, ok := item.(*tg.Document)
+		if !ok {
+			t.Fatalf("document = %T, want *tg.Document", item)
+		}
+		hasSticker := false
+		hasAnimated := false
+		for _, attr := range d.Attributes {
+			switch attr.(type) {
+			case *tg.DocumentAttributeSticker:
+				hasSticker = true
+			case *tg.DocumentAttributeAnimated:
+				hasAnimated = true
+			}
+		}
+		if !hasSticker {
+			t.Fatalf("document %d missing sticker attribute", d.ID)
+		}
+		if hasAnimated {
+			t.Fatalf("document %d has documentAttributeAnimated; TDesktop treats TGS stickers as plain animations", d.ID)
+		}
 	}
 	e0 := full.Effects[0]
 	if e0.ID != 100 || e0.Emoticon != "\U0001f525" || e0.EffectStickerID != 2 {
