@@ -1372,7 +1372,7 @@ func (r *Router) onAccountUpdateEmojiStatus(ctx context.Context, status tg.Emoji
 	var documentID int64
 	var until int
 	if s, ok := status.(*tg.EmojiStatus); ok {
-		documentID = s.DocumentID
+		documentID = serverDocumentIDFromClientID(s.DocumentID)
 		if v, ok := s.GetUntil(); ok {
 			until = v
 		}
@@ -1446,7 +1446,7 @@ func domainPeerColorFromAccountUpdate(req *tg.AccountUpdateColorRequest) (domain
 		return domain.PeerColor{
 			HasColor:          hasColor,
 			Color:             value,
-			BackgroundEmojiID: backgroundEmojiID,
+			BackgroundEmojiID: serverDocumentIDFromClientID(backgroundEmojiID),
 		}, nil
 	case *tg.InputPeerColorCollectible, *tg.PeerColorCollectible:
 		return domain.PeerColor{}, colorInvalidErr()
@@ -1480,12 +1480,13 @@ func (r *Router) onAccountGetDefaultEmojiStatuses(ctx context.Context, hash int6
 	if !found || len(set.DocumentIDs) == 0 {
 		return tdesktop.DefaultEmojiStatuses(), nil
 	}
-	catalogHash := mediaCatalogHash(set.DocumentIDs)
+	clientIDs := clientDocumentIDsFromServerIDs(set.DocumentIDs)
+	catalogHash := mediaCatalogHash(clientIDs)
 	if hash == catalogHash {
 		return &tg.AccountEmojiStatusesNotModified{}, nil
 	}
-	statuses := make([]tg.EmojiStatusClass, 0, len(set.DocumentIDs))
-	for _, id := range set.DocumentIDs {
+	statuses := make([]tg.EmojiStatusClass, 0, len(clientIDs))
+	for _, id := range clientIDs {
 		statuses = append(statuses, &tg.EmojiStatus{DocumentID: id})
 	}
 	return &tg.AccountEmojiStatuses{Hash: catalogHash, Statuses: statuses}, nil
@@ -1543,11 +1544,12 @@ func (r *Router) onAccountGetDefaultProfilePhotoEmojis(ctx context.Context, hash
 	if err != nil {
 		return nil, internalErr()
 	}
-	listHash := emojiDocumentIDListHash(ids)
+	clientIDs := clientDocumentIDsFromServerIDs(ids)
+	listHash := emojiDocumentIDListHash(clientIDs)
 	if hash != 0 && hash == listHash {
 		return &tg.EmojiListNotModified{}, nil
 	}
-	return &tg.EmojiList{Hash: listHash, DocumentID: ids}, nil
+	return &tg.EmojiList{Hash: listHash, DocumentID: clientIDs}, nil
 }
 
 func (r *Router) onAccountGetDefaultBackgroundEmojis(ctx context.Context, hash int64) (tg.EmojiListClass, error) {
@@ -1561,11 +1563,12 @@ func (r *Router) onAccountGetDefaultBackgroundEmojis(ctx context.Context, hash i
 	if len(ids) == 0 {
 		return tdesktop.DefaultGroupPhotoEmojis(), nil
 	}
-	listHash := emojiDocumentIDListHash(ids)
+	clientIDs := clientDocumentIDsFromServerIDs(ids)
+	listHash := emojiDocumentIDListHash(clientIDs)
 	if hash != 0 && hash == listHash {
 		return &tg.EmojiListNotModified{}, nil
 	}
-	return &tg.EmojiList{Hash: listHash, DocumentID: ids}, nil
+	return &tg.EmojiList{Hash: listHash, DocumentID: clientIDs}, nil
 }
 
 func defaultBackgroundEmojiDocumentIDs(ctx context.Context, files FilesService) ([]int64, error) {

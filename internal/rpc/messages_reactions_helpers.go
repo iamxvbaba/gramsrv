@@ -118,7 +118,7 @@ func domainMessageReactionFromTL(reaction tg.ReactionClass) (domain.MessageReact
 		if typed.DocumentID <= 0 {
 			return domain.MessageReaction{}, reactionInvalidErr()
 		}
-		return domain.MessageReaction{Type: domain.MessageReactionCustomEmoji, DocumentID: typed.DocumentID}, nil
+		return domain.MessageReaction{Type: domain.MessageReactionCustomEmoji, DocumentID: serverDocumentIDFromClientID(typed.DocumentID)}, nil
 	case nil, *tg.ReactionEmpty, *tg.ReactionPaid:
 		return domain.MessageReaction{}, reactionInvalidErr()
 	default:
@@ -154,7 +154,7 @@ func domainStoryReactionValueFromTL(reaction tg.ReactionClass) (domain.MessageRe
 		if typed.DocumentID <= 0 {
 			return domain.MessageReaction{}, reactionInvalidErr()
 		}
-		return domain.MessageReaction{Type: domain.MessageReactionCustomEmoji, DocumentID: typed.DocumentID}, nil
+		return domain.MessageReaction{Type: domain.MessageReactionCustomEmoji, DocumentID: serverDocumentIDFromClientID(typed.DocumentID)}, nil
 	case nil, *tg.ReactionEmpty, *tg.ReactionPaid:
 		return domain.MessageReaction{}, reactionInvalidErr()
 	default:

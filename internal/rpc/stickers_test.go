@@ -17,7 +17,7 @@ func TestStickerSetsCatalogHashMatchesTDesktopFormula(t *testing.T) {
 		{ID: 11, Hash: 456},
 	}
 	got := stickerSetsCatalogHash(sets)
-	const want int64 = 4284229878340
+	const want int64 = 663064071320084188
 	if got != want {
 		t.Fatalf("stickerSetsCatalogHash() = %d, want %d", got, want)
 	}
@@ -32,7 +32,7 @@ func TestFeaturedStickerSetsHashMatchesTDesktopFormula(t *testing.T) {
 		{ID: 11, Hash: 456},
 	}
 	got := featuredStickerSetsHash(sets)
-	const want int64 = 365072220181
+	const want int64 = 7553815844051046976
 	if got != want {
 		t.Fatalf("featuredStickerSetsHash() = %d, want %d", got, want)
 	}
@@ -77,7 +77,7 @@ func TestMessagesGetAllStickersUsesTDesktopHashForNotModified(t *testing.T) {
 	if !ok {
 		t.Fatalf("first getAllStickers = %T, want *tg.MessagesAllStickers", first)
 	}
-	const wantHash int64 = 4284229878340
+	const wantHash int64 = 663064071320084188
 	if full.Hash != wantHash {
 		t.Fatalf("first hash = %d, want %d", full.Hash, wantHash)
 	}
@@ -128,8 +128,8 @@ func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiSets(t *testing.T) {
 		t.Fatalf("groups = %d, want one premium group", len(full.Groups))
 	}
 	premium, ok := full.Groups[0].(*tg.EmojiGroupPremium)
-	if !ok || premium.IconEmojiID != 1001 {
-		t.Fatalf("group = %T %+v, want premium icon 1001", full.Groups[0], full.Groups[0])
+	if want := clientDocumentIDFromServerID(1001); !ok || premium.IconEmojiID != want {
+		t.Fatalf("group = %T %+v, want premium icon %d", full.Groups[0], full.Groups[0], want)
 	}
 
 	second, err := r.onMessagesGetEmojiStickerGroups(ctx, full.Hash)
@@ -177,8 +177,8 @@ func TestAccountGetDefaultEmojiStatusesServesSynthesizedSet(t *testing.T) {
 		t.Fatalf("statuses = %d, want 2", len(full.Statuses))
 	}
 	status, ok := full.Statuses[0].(*tg.EmojiStatus)
-	if !ok || status.DocumentID != 101 {
-		t.Fatalf("statuses[0] = %#v, want EmojiStatus document 101", full.Statuses[0])
+	if want := clientDocumentIDFromServerID(101); !ok || status.DocumentID != want {
+		t.Fatalf("statuses[0] = %#v, want EmojiStatus document %d", full.Statuses[0], want)
 	}
 	if full.Hash == 0 {
 		t.Fatal("hash must be non-zero for cache round-trips")
@@ -549,8 +549,8 @@ func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiCatalog(t *testing.T) {
 		t.Fatalf("emoji sticker groups = %d, want one", len(full.Groups))
 	}
 	group, ok := full.Groups[0].(*tg.EmojiGroupPremium)
-	if !ok || group.IconEmojiID != 555 {
-		t.Fatalf("emoji sticker group = %T %+v, want premium icon 555", full.Groups[0], full.Groups[0])
+	if want := clientDocumentIDFromServerID(555); !ok || group.IconEmojiID != want {
+		t.Fatalf("emoji sticker group = %T %+v, want premium icon %d", full.Groups[0], full.Groups[0], want)
 	}
 	second, err := r.onMessagesGetEmojiStickerGroups(ctx, full.Hash)
 	if err != nil {
@@ -675,7 +675,7 @@ func TestTGDocumentCompactsCachedThumbToDownloadableSize(t *testing.T) {
 	}
 }
 
-func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
+func TestTGDocumentReplacesSeedSyntheticTGSPreviewThumbWithEmptyMarker(t *testing.T) {
 	doc := tgDocument(domain.Document{
 		ID:         100,
 		AccessHash: 1,
@@ -689,12 +689,57 @@ func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
 	if !ok {
 		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
 	}
-	if len(full.Thumbs) != 0 {
-		t.Fatalf("thumbs = %#v, want no synthetic TGS preview thumb", full.Thumbs)
+	if len(full.Thumbs) != 1 {
+		t.Fatalf("thumbs = %#v, want one empty marker thumb", full.Thumbs)
+	}
+	empty, ok := full.Thumbs[0].(*tg.PhotoSizeEmpty)
+	if !ok {
+		t.Fatalf("thumb = %T, want *tg.PhotoSizeEmpty", full.Thumbs[0])
+	}
+	if empty.Type != "m" {
+		t.Fatalf("empty thumb type = %q, want m", empty.Type)
 	}
 }
 
-func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
+func TestTGDocumentAddsEmptyThumbMarkerForTGSWithoutThumbs(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	if len(full.Thumbs) != 1 {
+		t.Fatalf("thumbs = %#v, want one empty marker thumb", full.Thumbs)
+	}
+	if empty, ok := full.Thumbs[0].(*tg.PhotoSizeEmpty); !ok || empty.Type != "m" {
+		t.Fatalf("thumb = %#v, want photoSizeEmpty m", full.Thumbs[0])
+	}
+}
+
+func TestTGDocumentUsesNonZeroDateForClientCompatibility(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Attributes: []domain.DocumentAttribute{
+			{Kind: domain.DocAttrSticker, Alt: "🙂"},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	if full.Date == 0 {
+		t.Fatal("document date = 0; Telegram Desktop ignores documents with zero date")
+	}
+}
+
+func TestTGDocumentDoesNotAddAnimatedAttributeForTGSSticker(t *testing.T) {
 	doc := tgDocument(domain.Document{
 		ID:         100,
 		AccessHash: 1,
@@ -702,6 +747,7 @@ func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
 		MimeType:   "application/x-tgsticker",
 		Attributes: []domain.DocumentAttribute{
 			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+			{Kind: domain.DocAttrAnimated},
 			{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
 			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
 		},
@@ -723,8 +769,8 @@ func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
 	if !hasSticker {
 		t.Fatal("TGS sticker document missing sticker attribute")
 	}
-	if !hasAnimated {
-		t.Fatal("TGS sticker document missing synthesized animated attribute")
+	if hasAnimated {
+		t.Fatal("TGS sticker document must not expose documentAttributeAnimated")
 	}
 }
 
@@ -743,6 +789,195 @@ func TestTGDocumentUsesDomainDocumentID(t *testing.T) {
 	}
 	if full.ID != documentID {
 		t.Fatalf("document id = %d, want %d", full.ID, documentID)
+	}
+}
+
+func TestTGDocumentAliasesTGSStickerDocumentID(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+
+	doc := tgDocument(domain.Document{
+		ID:         documentID,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Attributes: []domain.DocumentAttribute{
+			{Kind: domain.DocAttrSticker, Alt: "🙂"},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	if want := clientDocumentIDFromServerID(documentID); full.ID != want {
+		t.Fatalf("document id = %d, want client alias %d", full.ID, want)
+	}
+}
+
+func TestTGMessagesStickerSetAliasesPackDocumentIDs(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	set := domain.StickerSet{
+		ID:              10,
+		AccessHash:      20,
+		Title:           "Pack",
+		ShortName:       "pack",
+		Count:           1,
+		ThumbDocumentID: documentID,
+		Packs: []domain.StickerPack{
+			{Emoticon: "🙂", DocumentIDs: []int64{documentID}},
+		},
+		Keywords: []domain.StickerKeyword{
+			{DocumentID: documentID, Keywords: []string{"smile"}},
+		},
+	}
+	docs := []domain.Document{
+		{
+			ID:         documentID,
+			AccessHash: 1,
+			DCID:       2,
+			MimeType:   "application/x-tgsticker",
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrSticker, Alt: "🙂"},
+			},
+		},
+	}
+
+	full := tgMessagesStickerSet(set, docs)
+	want := clientDocumentIDFromServerID(documentID)
+	if got, ok := full.Set.GetThumbDocumentID(); !ok || got != want {
+		t.Fatalf("thumb_document_id = %d ok=%v, want %d", got, ok, want)
+	}
+	if len(full.Packs) != 1 || len(full.Packs[0].Documents) != 1 || full.Packs[0].Documents[0] != want {
+		t.Fatalf("packs = %#v, want document id %d", full.Packs, want)
+	}
+	if len(full.Keywords) != 1 || full.Keywords[0].DocumentID != want {
+		t.Fatalf("keywords = %#v, want document id %d", full.Keywords, want)
+	}
+	if doc, ok := full.Documents[0].(*tg.Document); !ok || doc.ID != want {
+		t.Fatalf("document = %#v, want id %d", full.Documents[0], want)
+	}
+}
+
+func TestTGMessagesStickerSetUsesFirstDocumentAsThumbFallback(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	set := domain.StickerSet{
+		ID:          10,
+		AccessHash:  20,
+		Title:       "Pack",
+		ShortName:   "pack",
+		Count:       1,
+		DocumentIDs: []int64{documentID},
+	}
+	docs := []domain.Document{
+		{
+			ID:         documentID,
+			AccessHash: 1,
+			DCID:       2,
+			MimeType:   "application/x-tgsticker",
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrSticker, Alt: "🙂"},
+			},
+		},
+	}
+
+	full := tgMessagesStickerSet(set, docs)
+	want := clientDocumentIDFromServerID(documentID)
+	if got, ok := full.Set.GetThumbDocumentID(); !ok || got != want {
+		t.Fatalf("fallback thumb_document_id = %d ok=%v, want %d", got, ok, want)
+	}
+}
+
+func TestTGMessagesStickerSetGraftsSetThumbOntoFallbackDocument(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	set := domain.StickerSet{
+		ID:          10,
+		AccessHash:  20,
+		Title:       "Pack",
+		ShortName:   "pack",
+		Count:       1,
+		Animated:    true,
+		DocumentIDs: []int64{documentID},
+		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindPath, Type: "j", Bytes: []byte{1, 2, 3}},
+		},
+	}
+	docs := []domain.Document{
+		{
+			ID:         documentID,
+			AccessHash: 1,
+			DCID:       2,
+			MimeType:   "application/x-tgsticker",
+			Thumbs: []domain.PhotoSize{
+				{Kind: domain.PhotoSizeKindCached, Type: "m", W: 1, H: 1, Bytes: []byte("png")},
+			},
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrSticker, Alt: "🙂"},
+			},
+		},
+	}
+
+	full := tgMessagesStickerSet(set, docs)
+	doc, ok := full.Documents[0].(*tg.Document)
+	if !ok {
+		t.Fatalf("document = %T, want *tg.Document", full.Documents[0])
+	}
+	if len(doc.Thumbs) != 1 {
+		t.Fatalf("document thumbs = %#v, want set path thumb", doc.Thumbs)
+	}
+	if _, ok := doc.Thumbs[0].(*tg.PhotoPathSize); !ok {
+		t.Fatalf("document thumb = %T, want *tg.PhotoPathSize", doc.Thumbs[0])
+	}
+}
+
+func TestTGMessagesStickerSetAddsAnimatedLoadableSetThumb(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	set := domain.StickerSet{
+		ID:              10,
+		AccessHash:      20,
+		Title:           "Pack",
+		ShortName:       "pack",
+		Count:           1,
+		Animated:        true,
+		ThumbDocumentID: documentID,
+		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindPath, Type: "j", Bytes: []byte{1, 2, 3}},
+		},
+	}
+	docs := []domain.Document{{
+		ID:         documentID,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Size:       12345,
+	}}
+
+	full := tgMessagesStickerSet(set, docs)
+	if len(full.Set.Thumbs) != 2 {
+		t.Fatalf("set thumbs = %#v, want path thumb plus loadable animated thumb", full.Set.Thumbs)
+	}
+	thumb, ok := full.Set.Thumbs[1].(*tg.PhotoSize)
+	if !ok {
+		t.Fatalf("animated set thumb = %T, want *tg.PhotoSize", full.Set.Thumbs[1])
+	}
+	if thumb.Type != "a" || thumb.W != 512 || thumb.H != 512 || thumb.Size != 12345 {
+		t.Fatalf("animated set thumb = %+v, want type=a 512x512 size=12345", thumb)
+	}
+}
+
+func TestTGStickerSetAliasesAnimatedThumbFallbackWithoutDocuments(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	set := tgStickerSet(domain.StickerSet{
+		ID:          10,
+		AccessHash:  20,
+		Title:       "Pack",
+		ShortName:   "pack",
+		Count:       1,
+		Animated:    true,
+		DocumentIDs: []int64{documentID},
+	})
+
+	want := clientDocumentIDFromServerID(documentID)
+	if got, ok := set.GetThumbDocumentID(); !ok || got != want {
+		t.Fatalf("allStickers fallback thumb_document_id = %d ok=%v, want %d", got, ok, want)
 	}
 }
 
@@ -773,5 +1008,15 @@ func TestMessagesGetCustomEmojiDocumentsUsesDomainIDs(t *testing.T) {
 	}
 	if doc.ID != documentID {
 		t.Fatalf("doc id = %d, want %d", doc.ID, documentID)
+	}
+
+	clientID := clientDocumentIDFromServerID(documentID)
+	docs, err = r.onMessagesGetCustomEmojiDocuments(ctx, []int64{clientID})
+	if err != nil {
+		t.Fatalf("getCustomEmojiDocuments alias: %v", err)
+	}
+	doc, ok = docs[0].(*tg.Document)
+	if !ok || doc.ID != clientID {
+		t.Fatalf("alias doc = %T %+v, want id %d", docs[0], docs[0], clientID)
 	}
 }

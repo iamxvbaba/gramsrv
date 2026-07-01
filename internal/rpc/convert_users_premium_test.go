@@ -43,8 +43,8 @@ func TestTgUserEmojiStatusHydration(t *testing.T) {
 		t.Fatal("premium user with status missing emoji_status field")
 	}
 	es, ok := status.(*tg.EmojiStatus)
-	if !ok || es.DocumentID != 777 {
-		t.Fatalf("emoji status = %#v, want document 777", status)
+	if want := clientDocumentIDFromServerID(777); !ok || es.DocumentID != want {
+		t.Fatalf("emoji status = %#v, want document %d", status, want)
 	}
 	if until, ok := es.GetUntil(); !ok || until != int(now+600) {
 		t.Fatalf("emoji status until = %d ok=%v", until, ok)

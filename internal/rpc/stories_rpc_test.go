@@ -2615,8 +2615,9 @@ func TestStoriesSendReactionRecordsOwnerNewReactionDifference(t *testing.T) {
 	if !ok || reactorPeer.UserID != viewer.ID {
 		t.Fatalf("owner update peer = %T %+v, want reacting viewer peer", ownerUpdate.Peer, ownerUpdate.Peer)
 	}
-	if reaction, ok := ownerUpdate.Reaction.(*tg.ReactionCustomEmoji); !ok || reaction.DocumentID != 12345 {
-		t.Fatalf("owner update reaction = %T %+v, want custom emoji 12345", ownerUpdate.Reaction, ownerUpdate.Reaction)
+	reaction, ok := ownerUpdate.Reaction.(*tg.ReactionCustomEmoji)
+	if want := clientDocumentIDFromServerID(12345); !ok || reaction.DocumentID != want {
+		t.Fatalf("owner update reaction = %T %+v, want custom emoji %d", ownerUpdate.Reaction, ownerUpdate.Reaction, want)
 	}
 	if findUserClass(got.Users, viewer.ID) == nil {
 		t.Fatalf("difference users = %+v, want reacting viewer user", got.Users)
@@ -3105,7 +3106,7 @@ func TestStoriesGetStoryReactionsListReturnsChannelAdminReactions(t *testing.T) 
 	if err != nil {
 		t.Fatalf("creator get custom story reactions list: %v", err)
 	}
-	assertStoryReactionListCustomViewer(t, customList, member.ID, 12345)
+	assertStoryReactionListCustomViewer(t, customList, member.ID, clientDocumentIDFromServerID(12345))
 
 	invalidOffsetReq := *req
 	invalidOffsetReq.SetOffset("1:1700000003:" + strconv.FormatInt(reactor.ID, 10))
@@ -6855,7 +6856,7 @@ func TestStoriesMediaAreasRejectInvalidInputWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("custom reaction media area edit: %v", err)
 	}
-	assertStorySuggestedCustomReactionArea(t, customUpdates.(*tg.Updates).Updates[0].(*tg.UpdateStory).Story.(*tg.StoryItem), 12345, 10, false, false)
+	assertStorySuggestedCustomReactionArea(t, customUpdates.(*tg.Updates).Updates[0].(*tg.UpdateStory).Story.(*tg.StoryItem), clientDocumentIDFromServerID(12345), 10, false, false)
 
 	invalidCoordinates := &tg.StoriesEditStoryRequest{Peer: &tg.InputPeerSelf{}, ID: idUpdate.ID}
 	invalidCoordinates.SetMediaAreas([]tg.MediaAreaClass{&tg.MediaAreaSuggestedReaction{
@@ -6880,7 +6881,7 @@ func TestStoriesMediaAreasRejectInvalidInputWithoutMutation(t *testing.T) {
 	if len(stories.Stories.Stories) != 1 {
 		t.Fatalf("stories after rejected edits = %+v, want one original story", stories.Stories.Stories)
 	}
-	assertStorySuggestedCustomReactionArea(t, stories.Stories.Stories[0].(*tg.StoryItem), 12345, 10, false, false)
+	assertStorySuggestedCustomReactionArea(t, stories.Stories.Stories[0].(*tg.StoryItem), clientDocumentIDFromServerID(12345), 10, false, false)
 }
 
 func TestStoriesSendStoryAcceptsEmptyOptionalNoops(t *testing.T) {

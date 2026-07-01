@@ -178,8 +178,8 @@ func TestSendReactionAllowsCustomEmojiFromChannelPolicy(t *testing.T) {
 		t.Fatalf("custom reaction results = %+v, want one chosen custom reaction", update.Reactions.Results)
 	}
 	reaction, ok := update.Reactions.Results[0].Reaction.(*tg.ReactionCustomEmoji)
-	if !ok || reaction.DocumentID != customDocumentID {
-		t.Fatalf("custom reaction = %T %+v, want document %d", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction, customDocumentID)
+	if want := clientDocumentIDFromServerID(customDocumentID); !ok || reaction.DocumentID != want {
+		t.Fatalf("custom reaction = %T %+v, want document %d", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction, want)
 	}
 
 	pushed := f.sessions.pushedUserIDs()

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strconv"
+	"strings"
 	"time"
 
 	"telesrv/internal/domain"
@@ -297,6 +299,16 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 		s.logGetFileCache(req, blob, found, chunk, cacheLog, err)
 	}()
 
+	if key, handled, err := s.resolveStickerSetThumbLocationKey(ctx, req.LocationKey); err != nil {
+		return domain.FileChunk{}, false, err
+	} else if handled {
+		if key == "" {
+			cacheLog.source = "sticker_set_thumb_miss"
+			return domain.FileChunk{}, false, nil
+		}
+		req.LocationKey = key
+	}
+
 	blob, ok := s.blobCache.get(req.LocationKey)
 	if ok {
 		cacheLog.metaCacheHit = true
@@ -390,6 +402,47 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 		MimeType: blob.MimeType,
 		Total:    total,
 	}, true, nil
+}
+
+const stickerSetThumbLocationPrefix = "sticker-set-thumb:"
+
+func (s *Service) resolveStickerSetThumbLocationKey(ctx context.Context, key string) (string, bool, error) {
+	if !strings.HasPrefix(key, stickerSetThumbLocationPrefix) {
+		return "", false, nil
+	}
+	refText := strings.TrimPrefix(key, stickerSetThumbLocationPrefix)
+	var (
+		set   domain.StickerSet
+		found bool
+		err   error
+	)
+	switch {
+	case strings.HasPrefix(refText, "id:"):
+		id, parseErr := strconv.ParseInt(strings.TrimPrefix(refText, "id:"), 10, 64)
+		if parseErr != nil || id == 0 {
+			return "", true, nil
+		}
+		set, found, err = s.media.GetStickerSetByID(ctx, id)
+	case strings.HasPrefix(refText, "short:"):
+		shortName := strings.TrimSpace(strings.TrimPrefix(refText, "short:"))
+		if shortName == "" {
+			return "", true, nil
+		}
+		set, found, err = s.media.GetStickerSetByShortName(ctx, shortName)
+	default:
+		return "", true, nil
+	}
+	if err != nil || !found {
+		return "", true, err
+	}
+	thumbDocumentID := set.ThumbDocumentID
+	if thumbDocumentID == 0 && len(set.DocumentIDs) > 0 {
+		thumbDocumentID = set.DocumentIDs[0]
+	}
+	if thumbDocumentID == 0 {
+		return "", true, nil
+	}
+	return fmt.Sprintf("doc:%d", thumbDocumentID), true, nil
 }
 
 func (s *Service) logGetFileCache(req domain.FileDownloadRequest, blob domain.FileBlob, found bool, chunk domain.FileChunk, cacheLog getFileCacheLog, err error) {

@@ -29,22 +29,24 @@ func (r *Router) stickerDocumentFromInput(ctx context.Context, input tg.InputDoc
 	if !ok || in.ID == 0 || r.deps.Files == nil {
 		return domain.Document{}, stickerInvalidErr()
 	}
-	doc, found, err := r.deps.Files.GetDocument(ctx, in.ID)
-	if err != nil {
-		return domain.Document{}, internalErr()
-	}
-	ok = found && doc.AccessHash == in.AccessHash
-	if ok {
-		if requireGif {
-			ok = doc.IsGif()
-		} else {
-			ok = doc.IsSticker()
+	for _, docID := range inputDocumentIDsFromClientID(in.ID) {
+		doc, found, err := r.deps.Files.GetDocument(ctx, docID)
+		if err != nil {
+			return domain.Document{}, internalErr()
+		}
+		ok = found && doc.AccessHash == in.AccessHash
+		if ok {
+			if requireGif {
+				ok = doc.IsGif()
+			} else {
+				ok = doc.IsSticker()
+			}
+		}
+		if ok {
+			return doc, nil
 		}
 	}
-	if !ok {
-		return domain.Document{}, stickerInvalidErr()
-	}
-	return doc, nil
+	return domain.Document{}, stickerInvalidErr()
 }
 
 func (r *Router) onMessagesFaveSticker(ctx context.Context, req *tg.MessagesFaveStickerRequest) (bool, error) {

@@ -42,7 +42,7 @@ func TestAccountUpdateColorPersistsExplicitZeroAndPushesSelfUser(t *testing.T) {
 		t.Fatalf("load saved user found=%v err=%v", found, err)
 	}
 	assertDomainPeerColor(t, saved.Color, true, 0, 123456)
-	assertTgUserPeerColor(t, tgSelfUser(saved).GetColor, true, 0, 123456)
+	assertTgUserPeerColor(t, tgSelfUser(saved).GetColor, true, 0, clientDocumentIDFromServerID(123456))
 
 	snap := sessions.snapshot()
 	if snap.userID != owner.ID {
@@ -59,7 +59,7 @@ func TestAccountUpdateColorPersistsExplicitZeroAndPushesSelfUser(t *testing.T) {
 	if !ok {
 		t.Fatalf("pushed user = %T, want *tg.User", updates.Users[0])
 	}
-	assertTgUserPeerColor(t, pushedUser.GetColor, true, 0, 123456)
+	assertTgUserPeerColor(t, pushedUser.GetColor, true, 0, clientDocumentIDFromServerID(123456))
 }
 
 func TestAccountUpdateColorProfileSetAndClear(t *testing.T) {
@@ -84,7 +84,7 @@ func TestAccountUpdateColorProfileSetAndClear(t *testing.T) {
 	}
 	saved, _, _ := userStore.ByID(ctx, owner.ID)
 	assertDomainPeerColor(t, saved.ProfileColor, true, 3, 777)
-	assertTgUserPeerColor(t, tgSelfUser(saved).GetProfileColor, true, 3, 777)
+	assertTgUserPeerColor(t, tgSelfUser(saved).GetProfileColor, true, 3, clientDocumentIDFromServerID(777))
 
 	clear := &tg.AccountUpdateColorRequest{}
 	clear.SetForProfile(true)

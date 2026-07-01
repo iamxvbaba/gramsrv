@@ -106,6 +106,41 @@ func TestMessagesInstallStickerSetUpdatesAllStickersProjection(t *testing.T) {
 	}
 }
 
+func TestMessagesGetAllStickersIncludesDefaultCatalogSets(t *testing.T) {
+	ctx := WithUserID(context.Background(), 1000000001)
+	files := &fakeFiles{
+		docs: map[int64]domain.Document{
+			101: {ID: 101, AccessHash: 11, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+			102: {ID: 102, AccessHash: 12, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+			103: {ID: 103, AccessHash: 13, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+		},
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: {
+				{ID: 10, AccessHash: 100, ShortName: "default_one", Title: "Default One", Kind: domain.StickerSetKindStickers, Count: 1, Hash: 7, SortOrder: 10, DocumentIDs: []int64{101}},
+				{ID: 20, AccessHash: 200, ShortName: "user_pack", Title: "User Pack", Kind: domain.StickerSetKindStickers, Count: 1, Hash: 8, Creator: true, CreatorUserID: 1000000002, DocumentIDs: []int64{102}},
+				{ID: 30, AccessHash: 300, ShortName: "plain_catalog", Title: "Plain Catalog", Kind: domain.StickerSetKindStickers, Count: 1, Hash: 9, DocumentIDs: []int64{103}},
+			},
+		},
+	}
+	passwordStore := memory.NewPasswordStore()
+	r := New(Config{}, Deps{
+		Account: appaccount.NewService(passwordStore, appaccount.WithUserStickerSets(passwordStore)),
+		Files:   files,
+	}, zaptest.NewLogger(t), clock.System)
+
+	out, err := r.onMessagesGetAllStickers(ctx, 0)
+	if err != nil {
+		t.Fatalf("get all stickers: %v", err)
+	}
+	full, ok := out.(*tg.MessagesAllStickers)
+	if !ok {
+		t.Fatalf("get all stickers = %T, want *tg.MessagesAllStickers", out)
+	}
+	if len(full.Sets) != 1 || full.Sets[0].ID != 10 || full.Sets[0].InstalledDate == 0 {
+		t.Fatalf("default catalog all stickers = %+v, want only default set 10 as installed", full.Sets)
+	}
+}
+
 func TestMessagesEmptyViewerStickerSetsInvalidateOldClientHash(t *testing.T) {
 	r, _, _ := userStickerSetRouter(t)
 	ctx := WithUserID(context.Background(), 1000000001)

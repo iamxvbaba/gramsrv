@@ -80,8 +80,8 @@ func TestSendMediaPollTDesktopShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("answer media = %T, want MessageMediaDocument", answerMedia)
 	}
-	if doc, ok := docMedia.Document.(*tg.Document); !ok || doc.ID != 555 {
-		t.Fatalf("answer media document = %#v, want id 555", docMedia.Document)
+	if doc, ok := docMedia.Document.(*tg.Document); !ok || doc.ID != clientDocumentIDFromServerID(555) {
+		t.Fatalf("answer media document = %#v, want id %d", docMedia.Document, clientDocumentIDFromServerID(555))
 	}
 
 	// 服务端分配的 option 必须能直接用于投票。

@@ -265,7 +265,7 @@ func inputDocumentRef(input tg.InputDocumentClass) (int64, int64, bool) {
 	if !ok || doc == nil || doc.ID == 0 || doc.AccessHash == 0 {
 		return 0, 0, false
 	}
-	return doc.ID, doc.AccessHash, true
+	return serverDocumentIDFromClientID(doc.ID), doc.AccessHash, true
 }
 
 func packShortNameInvalidErr() error  { return tgerr400("PACK_SHORT_NAME_INVALID") }

@@ -9,6 +9,7 @@ import (
 )
 
 const mimeApplicationXTGSticker = "application/x-tgsticker"
+const stickerSetClientShapeHashSalt int64 = 20260704
 
 // 本文件集中 domain media 值对象 → tg.* 的转换；tg.* 只在 rpc 层出现。
 // 供 reaction / sticker 资源 RPC 与消息 media 共用。
@@ -263,20 +264,34 @@ func tgPhoto(p domain.Photo) tg.PhotoClass {
 
 // tgDocument 把 domain.Document 转成 tg.DocumentClass。
 func tgDocument(d domain.Document) tg.DocumentClass {
+	return tgDocumentWithClientID(d, clientDocumentIDForDocument(d))
+}
+
+func tgDocumentWithClientID(d domain.Document, clientID int64) tg.DocumentClass {
 	if d.ID == 0 {
 		return &tg.DocumentEmpty{}
 	}
+	if clientID <= 0 {
+		clientID = clientDocumentIDForDocument(d)
+	}
 	return &tg.Document{
-		ID:            d.ID,
+		ID:            clientID,
 		AccessHash:    d.AccessHash,
 		FileReference: d.FileReference,
-		Date:          d.Date,
+		Date:          tgDocumentDate(d.Date),
 		MimeType:      d.MimeType,
 		Size:          d.Size,
 		Thumbs:        tgDocumentThumbs(d.MimeType, d.Thumbs),
 		DCID:          d.DCID,
 		Attributes:    tgDocumentAttributes(d.MimeType, d.Attributes),
 	}
+}
+
+func tgDocumentDate(date int) int {
+	if date > 0 {
+		return date
+	}
+	return 1
 }
 
 func tgDocuments(docs []domain.Document) []tg.DocumentClass {
@@ -288,8 +303,14 @@ func tgDocuments(docs []domain.Document) []tg.DocumentClass {
 }
 
 func tgDocumentThumbs(mimeType string, sizes []domain.PhotoSize) []tg.PhotoSizeClass {
+	fallback := func(out []tg.PhotoSizeClass) []tg.PhotoSizeClass {
+		if mimeType == mimeApplicationXTGSticker && len(out) == 0 {
+			return []tg.PhotoSizeClass{&tg.PhotoSizeEmpty{Type: "m"}}
+		}
+		return out
+	}
 	if len(sizes) == 0 {
-		return nil
+		return fallback(nil)
 	}
 	out := make([]tg.PhotoSizeClass, 0, len(sizes))
 	for _, s := range sizes {
@@ -308,7 +329,7 @@ func tgDocumentThumbs(mimeType string, sizes []domain.PhotoSize) []tg.PhotoSizeC
 		}
 		out = append(out, tgPhotoSize(s))
 	}
-	return compactPhotoSizeClasses(out)
+	return fallback(compactPhotoSizeClasses(out))
 }
 
 func isSeedSyntheticTGStickerPreviewThumb(mimeType string, s domain.PhotoSize) bool {
@@ -429,18 +450,17 @@ func compactPhotoSizeClasses(in []tg.PhotoSizeClass) []tg.PhotoSizeClass {
 }
 
 func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
-	out := make([]tg.DocumentAttributeClass, 0, len(attrs)+1)
-	hasAnimated := false
-	hasStickerLike := false
+	out := make([]tg.DocumentAttributeClass, 0, len(attrs))
 	for _, a := range attrs {
 		switch a.Kind {
 		case domain.DocAttrImageSize:
 			out = append(out, &tg.DocumentAttributeImageSize{W: a.W, H: a.H})
 		case domain.DocAttrAnimated:
-			hasAnimated = true
+			if mimeType == mimeApplicationXTGSticker {
+				continue
+			}
 			out = append(out, &tg.DocumentAttributeAnimated{})
 		case domain.DocAttrSticker:
-			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeSticker{
 				Mask:       a.Mask,
 				Alt:        a.Alt,
@@ -468,7 +488,6 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 		case domain.DocAttrFilename:
 			out = append(out, &tg.DocumentAttributeFilename{FileName: a.FileName})
 		case domain.DocAttrCustomEmoji:
-			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeCustomEmoji{
 				Free:       a.Free,
 				TextColor:  a.TextColor,
@@ -476,9 +495,6 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
 			})
 		}
-	}
-	if mimeType == mimeApplicationXTGSticker && hasStickerLike && !hasAnimated {
-		out = append(out, &tg.DocumentAttributeAnimated{})
 	}
 	return out
 }
@@ -601,6 +617,14 @@ func effectDocumentIDs(effects []domain.AvailableEffect) []int64 {
 // ---- sticker sets ----
 
 func tgStickerSet(set domain.StickerSet) tg.StickerSet {
+	return tgStickerSetWithDocumentAliases(set, nil)
+}
+
+func tgStickerSetWithDocumentAliases(set domain.StickerSet, documentAliases map[int64]int64) tg.StickerSet {
+	return tgStickerSetWithDocumentAliasesAndThumb(set, documentAliases, 0)
+}
+
+func tgStickerSetWithDocumentAliasesAndThumb(set domain.StickerSet, documentAliases map[int64]int64, thumbSize int64) tg.StickerSet {
 	out := tg.StickerSet{
 		Archived:   set.Archived,
 		Official:   set.Official,
@@ -613,7 +637,7 @@ func tgStickerSet(set domain.StickerSet) tg.StickerSet {
 		Title:      set.Title,
 		ShortName:  set.ShortName,
 		Count:      set.Count,
-		Hash:       set.Hash,
+		Hash:       stickerSetClientHash(set),
 	}
 	if set.Installed {
 		date := set.InstalledDate
@@ -622,29 +646,90 @@ func tgStickerSet(set domain.StickerSet) tg.StickerSet {
 		}
 		out.SetInstalledDate(date)
 	}
-	if thumbs := tgStickerSetThumbs(set.Thumbs); len(thumbs) > 0 {
+	if thumbs := tgStickerSetThumbs(set, stickerSetThumbsWithAnimatedFallback(set, thumbSize)); len(thumbs) > 0 {
 		out.SetThumbs(thumbs)
 		out.SetThumbDCID(set.ThumbDCID)
 		out.SetThumbVersion(set.ThumbVersion)
 	}
-	if set.ThumbDocumentID != 0 {
-		out.SetThumbDocumentID(set.ThumbDocumentID)
+	if thumbDocumentID := stickerSetDisplayThumbDocumentID(set); thumbDocumentID != 0 {
+		out.SetThumbDocumentID(stickerSetClientThumbDocumentID(set, thumbDocumentID, documentAliases))
 	}
 	return out
 }
 
-func tgStickerSetThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
+func stickerSetThumbsWithAnimatedFallback(set domain.StickerSet, thumbSize int64) []domain.PhotoSize {
+	thumbs := append([]domain.PhotoSize(nil), set.Thumbs...)
+	if !set.Animated || stickerSetHasLoadableThumb(thumbs) || stickerSetDisplayThumbDocumentID(set) == 0 {
+		return thumbs
+	}
+	size := 1
+	if thumbSize > 0 && thumbSize <= int64(^uint(0)>>1) {
+		size = int(thumbSize)
+	}
+	thumbs = append(thumbs, domain.PhotoSize{
+		Kind: domain.PhotoSizeKindDefault,
+		Type: "a",
+		W:    512,
+		H:    512,
+		Size: size,
+	})
+	return thumbs
+}
+
+func stickerSetHasLoadableThumb(sizes []domain.PhotoSize) bool {
+	for _, s := range sizes {
+		if s.Downloadable() || s.Kind == domain.PhotoSizeKindCached || s.Kind == domain.PhotoSizeKindStripped {
+			return true
+		}
+	}
+	return false
+}
+
+func stickerSetDisplayThumbDocumentID(set domain.StickerSet) int64 {
+	if set.ThumbDocumentID != 0 {
+		return set.ThumbDocumentID
+	}
+	for _, id := range set.DocumentIDs {
+		if id != 0 {
+			return id
+		}
+	}
+	return 0
+}
+
+func stickerSetClientThumbDocumentID(set domain.StickerSet, id int64, documentAliases map[int64]int64) int64 {
+	if id == 0 {
+		return 0
+	}
+	if clientID := clientDocumentIDWithAliases(id, documentAliases); clientID != id {
+		return clientID
+	}
+	if set.Animated {
+		return clientDocumentIDFromServerID(id)
+	}
+	return id
+}
+
+func stickerSetClientHash(set domain.StickerSet) int {
+	return int(tdesktopHashUpdate(uint64(uint32(set.Hash)), stickerSetClientShapeHashSalt) & 0x7fffffff)
+}
+
+func tgStickerSetThumbs(set domain.StickerSet, sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 	if len(sizes) == 0 {
 		return nil
 	}
 	filtered := make([]domain.PhotoSize, 0, len(sizes))
 	for _, s := range sizes {
-		if s.Downloadable() {
+		if s.Downloadable() && !(set.Animated && isStickerSetAnimatedThumbSize(s)) {
 			continue
 		}
 		filtered = append(filtered, s)
 	}
 	return tgPhotoSizes(filtered)
+}
+
+func isStickerSetAnimatedThumbSize(s domain.PhotoSize) bool {
+	return s.Kind == domain.PhotoSizeKindDefault && strings.EqualFold(s.Type, "a")
 }
 
 func tgStickerSets(sets []domain.StickerSet) []tg.StickerSet {
@@ -655,33 +740,84 @@ func tgStickerSets(sets []domain.StickerSet) []tg.StickerSet {
 	return out
 }
 
-func tgStickerPacks(packs []domain.StickerPack) []tg.StickerPack {
+func tgStickerPacks(packs []domain.StickerPack, documentAliases map[int64]int64) []tg.StickerPack {
 	out := make([]tg.StickerPack, 0, len(packs))
 	for _, p := range packs {
-		out = append(out, tg.StickerPack{Emoticon: p.Emoticon, Documents: append([]int64(nil), p.DocumentIDs...)})
+		ids := make([]int64, 0, len(p.DocumentIDs))
+		for _, id := range p.DocumentIDs {
+			ids = append(ids, clientDocumentIDWithAliases(id, documentAliases))
+		}
+		out = append(out, tg.StickerPack{Emoticon: p.Emoticon, Documents: ids})
 	}
 	return out
 }
 
-func tgStickerKeywords(keywords []domain.StickerKeyword) []tg.StickerKeyword {
+func tgStickerKeywords(keywords []domain.StickerKeyword, documentAliases map[int64]int64) []tg.StickerKeyword {
 	out := make([]tg.StickerKeyword, 0, len(keywords))
 	for _, kw := range keywords {
 		if kw.DocumentID == 0 || len(kw.Keywords) == 0 {
 			continue
 		}
-		out = append(out, tg.StickerKeyword{DocumentID: kw.DocumentID, Keyword: append([]string(nil), kw.Keywords...)})
+		out = append(out, tg.StickerKeyword{DocumentID: clientDocumentIDWithAliases(kw.DocumentID, documentAliases), Keyword: append([]string(nil), kw.Keywords...)})
 	}
 	return out
 }
 
 // tgMessagesStickerSet 构造完整 messages.stickerSet（set + packs + documents）。
 func tgMessagesStickerSet(set domain.StickerSet, docs []domain.Document) *tg.MessagesStickerSet {
+	docs = stickerSetDocumentsWithThumbFallback(set, docs)
+	documentAliases := clientDocumentIDAliases(docs)
 	return &tg.MessagesStickerSet{
-		Set:       tgStickerSet(set),
-		Packs:     tgStickerPacks(set.Packs),
-		Keywords:  tgStickerKeywords(set.Keywords),
+		Set:       tgStickerSetWithDocumentAliasesAndThumb(set, documentAliases, stickerSetThumbDocumentSize(set, docs)),
+		Packs:     tgStickerPacks(set.Packs, documentAliases),
+		Keywords:  tgStickerKeywords(set.Keywords, documentAliases),
 		Documents: tgDocuments(docs),
 	}
+}
+
+func stickerSetThumbDocumentSize(set domain.StickerSet, docs []domain.Document) int64 {
+	thumbDocumentID := stickerSetDisplayThumbDocumentID(set)
+	if thumbDocumentID == 0 {
+		return 0
+	}
+	for _, d := range docs {
+		if d.ID == thumbDocumentID {
+			return d.Size
+		}
+	}
+	return 0
+}
+
+func stickerSetDocumentsWithThumbFallback(set domain.StickerSet, docs []domain.Document) []domain.Document {
+	thumbDocumentID := stickerSetDisplayThumbDocumentID(set)
+	if thumbDocumentID == 0 || len(set.Thumbs) == 0 || len(docs) == 0 {
+		return docs
+	}
+	out := append([]domain.Document(nil), docs...)
+	for i := range out {
+		if out[i].ID != thumbDocumentID || !documentNeedsStickerSetThumbFallback(out[i]) {
+			continue
+		}
+		out[i].Thumbs = append([]domain.PhotoSize(nil), set.Thumbs...)
+		break
+	}
+	return out
+}
+
+func documentNeedsStickerSetThumbFallback(d domain.Document) bool {
+	if d.MimeType != mimeApplicationXTGSticker {
+		return false
+	}
+	if len(d.Thumbs) == 0 {
+		return true
+	}
+	for _, s := range d.Thumbs {
+		if isSeedSyntheticTGStickerPreviewThumb(d.MimeType, s) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // stickerSetRefFromInput 把 tg.InputStickerSet 转成 domain.StickerSetRef。

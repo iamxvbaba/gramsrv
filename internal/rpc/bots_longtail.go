@@ -574,7 +574,7 @@ func botEmojiStatusFromTG(status tg.EmojiStatusClass) (documentID int64, until i
 		if v, ok := s.GetUntil(); ok {
 			until = v
 		}
-		return s.DocumentID, until, nil
+		return serverDocumentIDFromClientID(s.DocumentID), until, nil
 	case *tg.EmojiStatusCollectible:
 		if s.DocumentID < 0 {
 			return 0, 0, tgerr400("EMOJI_STATUS_INVALID")
@@ -582,7 +582,7 @@ func botEmojiStatusFromTG(status tg.EmojiStatusClass) (documentID int64, until i
 		if v, ok := s.GetUntil(); ok {
 			until = v
 		}
-		return s.DocumentID, until, nil
+		return serverDocumentIDFromClientID(s.DocumentID), until, nil
 	default:
 		return 0, 0, tgerr400("EMOJI_STATUS_INVALID")
 	}

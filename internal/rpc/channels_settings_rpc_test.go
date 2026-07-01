@@ -658,7 +658,7 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if !ok {
 		t.Fatalf("update color channel = %+v, want profile color", colorChannel)
 	}
-	if peerColor := profileColor.(*tg.PeerColor); peerColor.Color != 1 || peerColor.BackgroundEmojiID != 9001 {
+	if peerColor := profileColor.(*tg.PeerColor); peerColor.Color != 1 || peerColor.BackgroundEmojiID != clientDocumentIDFromServerID(9001) {
 		t.Fatalf("profile color = %+v, want color/background", peerColor)
 	}
 	status := &tg.EmojiStatus{DocumentID: 9101}
@@ -672,7 +672,7 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if !ok {
 		t.Fatalf("update emoji status channel = %+v, want emoji status", statusChannel)
 	}
-	if got := emojiStatus.(*tg.EmojiStatus); got.DocumentID != 9101 || got.Until != 1700000100 {
+	if got := emojiStatus.(*tg.EmojiStatus); got.DocumentID != clientDocumentIDFromServerID(9101) || got.Until != 1700000100 {
 		t.Fatalf("emoji status = %+v, want document/until", got)
 	}
 	chatsWithAppearance, err := r.onChannelsGetChannels(WithUserID(ctx, owner.ID), []tg.InputChannelClass{input})

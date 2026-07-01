@@ -232,8 +232,8 @@ func TestMessagesSendReactionPrivatePeerAllowsCustomEmoji(t *testing.T) {
 	}
 	update := updates.(*tg.Updates).Updates[0].(*tg.UpdateMessageReactions)
 	reaction, ok := update.Reactions.Results[0].Reaction.(*tg.ReactionCustomEmoji)
-	if !ok || reaction.DocumentID != customDocumentID {
-		t.Fatalf("update reaction = %T %+v, want custom document %d", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction, customDocumentID)
+	if want := clientDocumentIDFromServerID(customDocumentID); !ok || reaction.DocumentID != want {
+		t.Fatalf("update reaction = %T %+v, want custom document %d", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction, want)
 	}
 }
 

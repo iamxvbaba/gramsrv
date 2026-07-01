@@ -79,7 +79,7 @@ func tgUserEmojiStatus(u domain.User, now int64) tg.EmojiStatusClass {
 	if !u.EmojiStatusActiveAt(now) {
 		return &tg.EmojiStatusEmpty{}
 	}
-	status := &tg.EmojiStatus{DocumentID: u.EmojiStatusDocumentID}
+	status := &tg.EmojiStatus{DocumentID: clientDocumentIDFromServerID(u.EmojiStatusDocumentID)}
 	if u.EmojiStatusUntil > 0 {
 		status.SetUntil(u.EmojiStatusUntil)
 	}
@@ -104,7 +104,7 @@ func tgUserPeerColor(color domain.PeerColor) tg.PeerColorClass {
 		out.SetColor(color.Color)
 	}
 	if color.BackgroundEmojiID != 0 {
-		out.SetBackgroundEmojiID(color.BackgroundEmojiID)
+		out.SetBackgroundEmojiID(clientDocumentIDFromServerID(color.BackgroundEmojiID))
 	}
 	return out
 }
@@ -300,7 +300,7 @@ func tgChannelEmojiStatus(status domain.ChannelEmojiStatus) tg.EmojiStatusClass 
 	if status.Empty() {
 		return nil
 	}
-	out := &tg.EmojiStatus{DocumentID: status.DocumentID}
+	out := &tg.EmojiStatus{DocumentID: clientDocumentIDFromServerID(status.DocumentID)}
 	if status.Until > 0 {
 		out.SetUntil(status.Until)
 	}

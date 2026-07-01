@@ -62,6 +62,34 @@ func TestFileLocationKeyUsesDocumentID(t *testing.T) {
 	}
 }
 
+func TestFileLocationKeyDecodesClientDocumentAlias(t *testing.T) {
+	const documentID int64 = 1382305375846410902
+	key, ok := fileLocationKey(&tg.InputDocumentFileLocation{
+		ID:        clientDocumentIDFromServerID(documentID),
+		ThumbSize: "m",
+	})
+	if !ok {
+		t.Fatal("fileLocationKey returned !ok")
+	}
+	const want = "doc:1382305375846410902:m"
+	if key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+}
+
+func TestFileLocationKeyMapsStickerSetThumb(t *testing.T) {
+	key, ok := fileLocationKey(&tg.InputStickerSetThumb{
+		Stickerset: &tg.InputStickerSetID{ID: 778160933443731497, AccessHash: 123},
+	})
+	if !ok {
+		t.Fatal("fileLocationKey returned !ok")
+	}
+	const want = "sticker-set-thumb:id:778160933443731497"
+	if key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+}
+
 func TestFileLocationKeyMapsLegacyAndroidPhotoLocations(t *testing.T) {
 	tests := []struct {
 		name     string

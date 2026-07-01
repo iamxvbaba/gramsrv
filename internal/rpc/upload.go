@@ -114,10 +114,11 @@ func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 		if loc.ID == 0 {
 			return "", false
 		}
+		id := serverDocumentIDFromClientID(loc.ID)
 		if loc.ThumbSize == "" {
-			return fmt.Sprintf("doc:%d", loc.ID), true
+			return fmt.Sprintf("doc:%d", id), true
 		}
-		return fmt.Sprintf("doc:%d:%s", loc.ID, loc.ThumbSize), true
+		return fmt.Sprintf("doc:%d:%s", id, loc.ThumbSize), true
 	case *tg.InputPhotoFileLocation:
 		if loc.ID == 0 || loc.ThumbSize == "" {
 			return "", false
@@ -158,6 +159,10 @@ func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 			size = "c"
 		}
 		return fmt.Sprintf("photo:%d:%s", photoID, size), true
+	case *tg.InputStickerSetThumb:
+		return stickerSetThumbLocationKey(loc.Stickerset)
+	case *tg.InputStickerSetThumbLegacy:
+		return stickerSetThumbLocationKey(loc.Stickerset)
 	case *tg.InputEncryptedFileLocation:
 		// 密聊文件（P2）：盲 blob，location_key "enc:<id>"。access_hash 不强校验
 		// （沿用现有媒体 dev 姿态，依赖不可枚举 id）。
@@ -166,7 +171,25 @@ func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 		}
 		return fmt.Sprintf("enc:%d", loc.ID), true
 	default:
-		// InputStickerSetThumb / secure / takeout 等本阶段不生成对应资源。
+		// secure / takeout 等本阶段不生成对应资源。
+		return "", false
+	}
+}
+
+func stickerSetThumbLocationKey(set tg.InputStickerSetClass) (string, bool) {
+	switch s := set.(type) {
+	case *tg.InputStickerSetID:
+		if s.ID == 0 {
+			return "", false
+		}
+		return fmt.Sprintf("sticker-set-thumb:id:%d", s.ID), true
+	case *tg.InputStickerSetShortName:
+		name := strings.TrimSpace(s.ShortName)
+		if name == "" {
+			return "", false
+		}
+		return fmt.Sprintf("sticker-set-thumb:short:%s", name), true
+	default:
 		return "", false
 	}
 }

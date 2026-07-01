@@ -41,7 +41,7 @@ func (r *Router) onMessagesCreateForumTopic(ctx context.Context, req *tg.Message
 		Title:        strings.TrimSpace(req.Title),
 		TitleMissing: req.TitleMissing,
 		IconColor:    req.IconColor,
-		IconEmojiID:  req.IconEmojiID,
+		IconEmojiID:  serverDocumentIDFromClientID(req.IconEmojiID),
 		RandomID:     req.RandomID,
 		SendAs:       sendAs,
 		Date:         int(r.clock.Now().Unix()),
@@ -94,7 +94,8 @@ func (r *Router) onMessagesEditForumTopic(ctx context.Context, req *tg.MessagesE
 		edit.Title = &title
 	}
 	if iconEmojiID, ok := req.GetIconEmojiID(); ok {
-		edit.IconEmojiID = &iconEmojiID
+		serverIconEmojiID := serverDocumentIDFromClientID(iconEmojiID)
+		edit.IconEmojiID = &serverIconEmojiID
 	}
 	if closed, ok := req.GetClosed(); ok {
 		edit.Closed = &closed
@@ -478,7 +479,7 @@ func tgForumTopicFromDomain(viewerUserID int64, topic domain.ChannelForumTopic) 
 		Peer:                 &tg.PeerChannel{ChannelID: topic.ChannelID},
 		Title:                topic.Title,
 		IconColor:            iconColor,
-		IconEmojiID:          topic.IconEmojiID,
+		IconEmojiID:          clientDocumentIDFromServerID(topic.IconEmojiID),
 		TopMessage:           topic.TopMessageID,
 		ReadInboxMaxID:       topic.ReadInboxMaxID,
 		ReadOutboxMaxID:      topic.ReadOutboxMaxID,

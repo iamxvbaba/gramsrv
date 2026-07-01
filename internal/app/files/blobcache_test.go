@@ -110,6 +110,37 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	}
 }
 
+func TestGetFileResolvesStickerSetThumbToThumbDocument(t *testing.T) {
+	ctx := context.Background()
+	local, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	objectKey, err := local.Put(ctx, []byte("tgs-data"))
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	media := newFakeMediaStore()
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:99", ObjectKey: objectKey, Size: 8, MimeType: "application/x-tgsticker"}); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	if err := media.PutStickerSet(ctx, domain.StickerSet{ID: 7, ThumbDocumentID: 99}); err != nil {
+		t.Fatalf("put set: %v", err)
+	}
+	svc := NewService(media, local, 2)
+
+	chunk, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "sticker-set-thumb:id:7", Offset: 0, Limit: 8})
+	if err != nil || !ok {
+		t.Fatalf("getfile ok=%v err=%v", ok, err)
+	}
+	if string(chunk.Bytes) != "tgs-data" {
+		t.Fatalf("chunk = %q, want tgs-data", chunk.Bytes)
+	}
+	if chunk.MimeType != "application/x-tgsticker" {
+		t.Fatalf("mime = %q, want application/x-tgsticker", chunk.MimeType)
+	}
+}
+
 func TestGetFileLogsCacheHitMiss(t *testing.T) {
 	ctx := context.Background()
 	local, err := NewLocalFS(t.TempDir())

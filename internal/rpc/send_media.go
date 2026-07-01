@@ -859,14 +859,14 @@ func inputPhotoID(input tg.InputPhotoClass) (int64, bool) {
 
 func inputDocumentID(input tg.InputDocumentClass) (int64, bool) {
 	if d, ok := input.(*tg.InputDocument); ok && d != nil && d.ID != 0 {
-		return d.ID, true
+		return serverDocumentIDFromClientID(d.ID), true
 	}
 	return 0, false
 }
 
 func inputDocumentCandidateIDs(input tg.InputDocumentClass) ([]int64, bool) {
 	if d, ok := input.(*tg.InputDocument); ok && d != nil && d.ID != 0 {
-		return []int64{d.ID}, true
+		return inputDocumentIDsFromClientID(d.ID), true
 	}
 	return nil, false
 }

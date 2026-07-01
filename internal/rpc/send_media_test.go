@@ -814,11 +814,17 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tg.Document, got %T", media.Document)
 	}
-	if want := int64(555); doc.ID != want {
+	if want := clientDocumentIDFromServerID(555); doc.ID != want {
 		t.Errorf("document id = %d, want %d", doc.ID, want)
 	}
 	if doc.DCID != 2 {
 		t.Errorf("document dc_id = %d, want 2", doc.DCID)
+	}
+	if len(doc.Thumbs) != 1 {
+		t.Fatalf("document thumbs = %#v, want one TGS empty marker thumb", doc.Thumbs)
+	}
+	if empty, ok := doc.Thumbs[0].(*tg.PhotoSizeEmpty); !ok || empty.Type != "m" {
+		t.Fatalf("document thumb = %#v, want photoSizeEmpty m", doc.Thumbs[0])
 	}
 	hasSticker, hasAnimated := false, false
 	for _, a := range doc.Attributes {
@@ -832,8 +838,8 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if !hasSticker {
 		t.Error("document missing sticker attribute")
 	}
-	if !hasAnimated {
-		t.Error("tgsticker document missing animated attribute")
+	if hasAnimated {
+		t.Error("tgsticker document must not expose documentAttributeAnimated")
 	}
 }
 

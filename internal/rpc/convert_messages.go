@@ -421,7 +421,7 @@ func tgMessageReaction(in domain.MessageReaction) tg.ReactionClass {
 		if in.DocumentID <= 0 {
 			return nil
 		}
-		return &tg.ReactionCustomEmoji{DocumentID: in.DocumentID}
+		return &tg.ReactionCustomEmoji{DocumentID: clientDocumentIDFromServerID(in.DocumentID)}
 	default:
 		return nil
 	}
@@ -455,7 +455,11 @@ func tgMessageEntities(entities []domain.MessageEntity) []tg.MessageEntityClass 
 		case domain.MessageEntityBlockquote:
 			out = append(out, &tg.MessageEntityBlockquote{Offset: entity.Offset, Length: entity.Length, Collapsed: entity.Collapsed})
 		case domain.MessageEntityCustomEmoji:
-			out = append(out, &tg.MessageEntityCustomEmoji{Offset: entity.Offset, Length: entity.Length, DocumentID: entity.DocumentID})
+			out = append(out, &tg.MessageEntityCustomEmoji{
+				Offset:     entity.Offset,
+				Length:     entity.Length,
+				DocumentID: clientDocumentIDFromServerID(entity.DocumentID),
+			})
 		case domain.MessageEntityMention:
 			out = append(out, &tg.MessageEntityMention{Offset: entity.Offset, Length: entity.Length})
 		case domain.MessageEntityHashtag:
@@ -525,7 +529,12 @@ func domainMessageEntitiesForViewer(viewerUserID int64, entities []tg.MessageEnt
 		case *tg.MessageEntityBlockquote:
 			out = append(out, domain.MessageEntity{Type: domain.MessageEntityBlockquote, Offset: e.Offset, Length: e.Length, Collapsed: e.Collapsed})
 		case *tg.MessageEntityCustomEmoji:
-			out = append(out, domain.MessageEntity{Type: domain.MessageEntityCustomEmoji, Offset: e.Offset, Length: e.Length, DocumentID: e.DocumentID})
+			out = append(out, domain.MessageEntity{
+				Type:       domain.MessageEntityCustomEmoji,
+				Offset:     e.Offset,
+				Length:     e.Length,
+				DocumentID: serverDocumentIDFromClientID(e.DocumentID),
+			})
 		case *tg.MessageEntityMention:
 			out = append(out, domain.MessageEntity{Type: domain.MessageEntityMention, Offset: e.Offset, Length: e.Length})
 		case *tg.MessageEntityHashtag:

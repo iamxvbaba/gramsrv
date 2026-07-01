@@ -216,7 +216,7 @@ func (r *Router) onMessagesGetEmojiStickerGroups(ctx context.Context, hash int) 
 		Groups: []tg.EmojiGroupClass{
 			&tg.EmojiGroupPremium{
 				Title:       "Premium",
-				IconEmojiID: iconEmojiID,
+				IconEmojiID: clientDocumentIDFromServerID(iconEmojiID),
 			},
 		},
 	}, nil
@@ -237,6 +237,8 @@ func (r *Router) allStickersForKind(ctx context.Context, hash int64, kind domain
 	if !handled {
 		// 兼容无 per-user 安装态的测试/旧内存路径：从目录缓存读全局 installed 标志。
 		sets = installedGlobalStickerSets(r.stickerCatalogSets(ctx, kind))
+	} else if kind == domain.StickerSetKindStickers {
+		sets = r.stickerPanelSetsWithDefaultCatalog(ctx, sets)
 	}
 	if len(sets) == 0 {
 		return messagesAllStickersEmpty(hash), nil
@@ -339,6 +341,49 @@ func stickerSetWithViewerInstallItem(set domain.StickerSet, item domain.UserStic
 	return set
 }
 
+func (r *Router) stickerPanelSetsWithDefaultCatalog(ctx context.Context, installed []domain.StickerSet) []domain.StickerSet {
+	catalog := r.stickerCatalogSets(ctx, domain.StickerSetKindStickers)
+	if len(catalog) == 0 {
+		return installed
+	}
+	out := make([]domain.StickerSet, 0, len(installed)+len(catalog))
+	seen := make(map[int64]struct{}, len(installed)+len(catalog))
+	for _, set := range installed {
+		if set.ID == 0 || set.Deleted || set.Archived {
+			continue
+		}
+		out = append(out, set)
+		seen[set.ID] = struct{}{}
+	}
+	for _, set := range catalog {
+		if _, ok := seen[set.ID]; ok || !defaultStickerSetForPanel(set) {
+			continue
+		}
+		set = stickerSetWithoutViewerInstallState(set)
+		set.Installed = true
+		set.InstalledDate = 1
+		out = append(out, set)
+		seen[set.ID] = struct{}{}
+	}
+	return out
+}
+
+func defaultStickerSetForPanel(set domain.StickerSet) bool {
+	if set.ID == 0 || set.Deleted || set.Archived {
+		return false
+	}
+	if userStickerSetKind(set) != domain.StickerSetKindStickers {
+		return false
+	}
+	if set.Creator || set.CreatorUserID != 0 {
+		return false
+	}
+	if !set.Official && set.SortOrder <= 0 {
+		return false
+	}
+	return set.Count > 0 || len(set.DocumentIDs) > 0
+}
+
 func installedGlobalStickerSets(sets []domain.StickerSet) []domain.StickerSet {
 	out := make([]domain.StickerSet, 0, len(sets))
 	for _, set := range sets {
@@ -353,24 +398,24 @@ func installedGlobalStickerSets(sets []domain.StickerSet) []domain.StickerSet {
 const featuredCoversPerSet = 5
 
 func (r *Router) onMessagesGetFeaturedStickers(ctx context.Context, hash int64) (tg.MessagesFeaturedStickersClass, error) {
-	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindStickers)
+	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindStickers, 0, 0)
 }
 
 func (r *Router) onMessagesGetFeaturedEmojiStickers(ctx context.Context, hash int64) (tg.MessagesFeaturedStickersClass, error) {
-	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindEmoji)
+	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindEmoji, 0, 0)
 }
 
 func (r *Router) onMessagesGetOldFeaturedStickers(ctx context.Context, req *tg.MessagesGetOldFeaturedStickersRequest) (tg.MessagesFeaturedStickersClass, error) {
 	if req == nil {
-		return r.onMessagesGetFeaturedStickers(ctx, 0)
+		return r.featuredStickersForKind(ctx, 0, domain.StickerSetKindStickers, 0, 0)
 	}
-	return r.onMessagesGetFeaturedStickers(ctx, req.Hash)
+	return r.featuredStickersForKind(ctx, req.Hash, domain.StickerSetKindStickers, req.Offset, req.Limit)
 }
 
 // featuredStickersForKind 把已 seed 的（未归档）贴纸/emoji 集作为 trending 呈现。
 // 性能：先用集目录 hash 比对，命中即返回 *NotModified——封面文档解析只在 cache-miss
 // 时发生（一次批量 GetDocuments），避免每次请求都解析封面。
-func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind domain.StickerSetKind) (tg.MessagesFeaturedStickersClass, error) {
+func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind domain.StickerSetKind, offset, limit int) (tg.MessagesFeaturedStickersClass, error) {
 	if r.deps.Files == nil {
 		return messagesFeaturedStickersEmpty(hash), nil
 	}
@@ -391,6 +436,10 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	if err != nil {
 		return nil, err
 	}
+	visible = pageFeaturedStickerSets(visible, offset, limit)
+	if len(visible) == 0 {
+		return messagesFeaturedStickersEmpty(hash), nil
+	}
 	catalogHash := featuredStickerSetsHash(visible)
 	if hash != 0 && hash == catalogHash {
 		// 关键 perf 短路：目录未变直接返回，不解析任何封面文档。
@@ -399,7 +448,9 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	covers := r.resolveFeaturedCovers(ctx, visible)
 	covered := make([]tg.StickerSetCoveredClass, 0, len(visible))
 	for _, s := range visible {
-		covered = append(covered, featuredCoveredSet(s, covers))
+		if set := featuredCoveredSet(s, covers); set != nil {
+			covered = append(covered, set)
+		}
 	}
 	return &tg.MessagesFeaturedStickers{
 		Hash:   catalogHash,
@@ -407,6 +458,20 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 		Sets:   covered,
 		Unread: []int64{},
 	}, nil
+}
+
+func pageFeaturedStickerSets(sets []domain.StickerSet, offset, limit int) []domain.StickerSet {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(sets) {
+		offset = len(sets)
+	}
+	sets = sets[offset:]
+	if limit <= 0 || limit >= len(sets) {
+		return sets
+	}
+	return sets[:limit]
 }
 
 // resolveFeaturedCovers 批量解析所有 featured 集的前若干封面文档（一次查询）。
@@ -435,18 +500,24 @@ func (r *Router) resolveFeaturedCovers(ctx context.Context, sets []domain.Sticke
 // featuredCoveredSet 用已解析的封面构造 covered set；无封面时回退 noCovered。
 func featuredCoveredSet(s domain.StickerSet, covers map[int64]domain.Document) tg.StickerSetCoveredClass {
 	out := make([]tg.DocumentClass, 0, featuredCoversPerSet)
+	docs := make([]domain.Document, 0, featuredCoversPerSet)
 	for i, id := range s.DocumentIDs {
 		if i >= featuredCoversPerSet {
 			break
 		}
 		if doc, ok := covers[id]; ok {
+			docs = append(docs, doc)
 			out = append(out, tgDocument(doc))
 		}
 	}
+	aliases := clientDocumentIDAliases(docs)
 	if len(out) == 0 {
-		return &tg.StickerSetNoCovered{Set: tgStickerSet(s)}
+		return nil
 	}
-	return &tg.StickerSetMultiCovered{Set: tgStickerSet(s), Covers: out}
+	if len(out) == 1 {
+		return &tg.StickerSetCovered{Set: tgStickerSetWithDocumentAliases(s, aliases), Cover: out[0]}
+	}
+	return &tg.StickerSetMultiCovered{Set: tgStickerSetWithDocumentAliases(s, aliases), Covers: out}
 }
 
 func documentsByID(docs []domain.Document) map[int64]domain.Document {
@@ -486,13 +557,13 @@ func stickerSetsCatalogHash(sets []domain.StickerSet) int64 {
 		if set.Archived {
 			continue
 		}
-		values = append(values, int64(set.Hash))
+		values = append(values, int64(stickerSetClientHash(set)))
 	}
 	return int64(tdesktopCountHash(values))
 }
 
 func featuredStickerSetsHash(sets []domain.StickerSet) int64 {
-	values := make([]int64, 0, len(sets))
+	values := make([]int64, 0, len(sets)*2)
 	for _, set := range sets {
 		if set.ID == 0 {
 			return 0
@@ -500,7 +571,7 @@ func featuredStickerSetsHash(sets []domain.StickerSet) int64 {
 		if set.Archived {
 			continue
 		}
-		values = append(values, set.ID)
+		values = append(values, set.ID, int64(stickerSetClientHash(set)))
 	}
 	return int64(tdesktopCountHash(values))
 }
@@ -511,7 +582,7 @@ func emojiStickerGroupsHash(sets []domain.StickerSet) int {
 		if set.ID == 0 || set.Archived {
 			continue
 		}
-		values = append(values, set.ID, int64(set.Hash))
+		values = append(values, set.ID, int64(stickerSetClientHash(set)))
 	}
 	return int(tdesktopCountHash(values) & 0x7fffffff)
 }

@@ -209,7 +209,7 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			TitleMissing: action.TitleMissing,
 			Title:        action.Title,
 			IconColor:    action.IconColor,
-			IconEmojiID:  action.IconEmojiID,
+			IconEmojiID:  clientDocumentIDFromServerID(action.IconEmojiID),
 		}
 	case domain.ChannelActionTopicEdit:
 		out := &tg.MessageActionTopicEdit{}
@@ -217,7 +217,7 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			out.SetTitle(action.Title)
 		}
 		if action.IconEmojiIDSet {
-			out.SetIconEmojiID(action.IconEmojiID)
+			out.SetIconEmojiID(clientDocumentIDFromServerID(action.IconEmojiID))
 		}
 		if action.Closed != nil {
 			out.SetClosed(*action.Closed)
@@ -584,7 +584,7 @@ func tgChannelReactionPolicy(policy domain.ChannelReactionPolicy) tg.ChatReactio
 			if id <= 0 {
 				continue
 			}
-			reactions = append(reactions, &tg.ReactionCustomEmoji{DocumentID: id})
+			reactions = append(reactions, &tg.ReactionCustomEmoji{DocumentID: clientDocumentIDFromServerID(id)})
 		}
 		return &tg.ChatReactionsSome{Reactions: reactions}
 	default:
@@ -601,7 +601,7 @@ func tgPeerColor(color domain.ChannelPeerColor) tg.PeerColorClass {
 		out.SetColor(color.Color)
 	}
 	if color.BackgroundEmojiID != 0 {
-		out.SetBackgroundEmojiID(color.BackgroundEmojiID)
+		out.SetBackgroundEmojiID(clientDocumentIDFromServerID(color.BackgroundEmojiID))
 	}
 	return out
 }

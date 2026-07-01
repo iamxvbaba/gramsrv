@@ -31,8 +31,9 @@ func TestAccountGetDefaultProfilePhotoEmojisUsesSeededEmojiSets(t *testing.T) {
 	if !ok {
 		t.Fatalf("default profile photo emojis = %T, want *tg.EmojiList", got)
 	}
-	if len(list.DocumentID) != 3 || list.DocumentID[0] != 1001 || list.DocumentID[1] != 1002 || list.DocumentID[2] != 1003 {
-		t.Fatalf("document ids = %v, want deduped seeded emoji ids", list.DocumentID)
+	wantIDs := clientDocumentIDsFromServerIDs([]int64{1001, 1002, 1003})
+	if len(list.DocumentID) != 3 || list.DocumentID[0] != wantIDs[0] || list.DocumentID[1] != wantIDs[1] || list.DocumentID[2] != wantIDs[2] {
+		t.Fatalf("document ids = %v, want deduped seeded emoji ids %v", list.DocumentID, wantIDs)
 	}
 	if list.Hash == 0 {
 		t.Fatal("emoji list hash = 0, want stable non-zero hash")
@@ -65,8 +66,9 @@ func TestAccountGetDefaultProfilePhotoEmojisFallsBackToSystemAnimatedEmoji(t *te
 	if !ok {
 		t.Fatalf("default profile photo emojis = %T, want *tg.EmojiList", got)
 	}
-	if len(list.DocumentID) != 2 || list.DocumentID[0] != 4001 || list.DocumentID[1] != 4002 {
-		t.Fatalf("document ids = %v, want animated_emoji fallback only", list.DocumentID)
+	wantIDs := clientDocumentIDsFromServerIDs([]int64{4001, 4002})
+	if len(list.DocumentID) != 2 || list.DocumentID[0] != wantIDs[0] || list.DocumentID[1] != wantIDs[1] {
+		t.Fatalf("document ids = %v, want animated_emoji fallback only %v", list.DocumentID, wantIDs)
 	}
 }
 
@@ -87,8 +89,9 @@ func TestAccountGetDefaultBackgroundEmojisUsesStatusPack(t *testing.T) {
 	if !ok {
 		t.Fatalf("default background emojis = %T, want *tg.EmojiList", got)
 	}
-	if len(list.DocumentID) != 2 || list.DocumentID[0] != 1001 || list.DocumentID[1] != 1002 {
-		t.Fatalf("document ids = %v, want deduped StatusPack ids", list.DocumentID)
+	wantIDs := clientDocumentIDsFromServerIDs([]int64{1001, 1002})
+	if len(list.DocumentID) != 2 || list.DocumentID[0] != wantIDs[0] || list.DocumentID[1] != wantIDs[1] {
+		t.Fatalf("document ids = %v, want deduped StatusPack ids %v", list.DocumentID, wantIDs)
 	}
 	if list.Hash == 0 {
 		t.Fatal("emoji list hash = 0, want stable non-zero hash")

@@ -222,15 +222,20 @@ func (r *Router) onMessagesGetCustomEmojiDocuments(ctx context.Context, document
 	if r.deps.Files == nil || len(documentIDs) == 0 {
 		return []tg.DocumentClass{}, nil
 	}
-	docs, err := r.deps.Files.GetDocuments(ctx, documentIDs)
+	serverIDs := make([]int64, 0, len(documentIDs))
+	for _, id := range documentIDs {
+		serverIDs = append(serverIDs, serverDocumentIDFromClientID(id))
+	}
+	docs, err := r.deps.Files.GetDocuments(ctx, serverIDs)
 	if err != nil {
 		return nil, internalErr()
 	}
 	byID := documentsByID(docs)
 	out := make([]tg.DocumentClass, 0, len(documentIDs))
 	for _, id := range documentIDs {
-		if d, ok := byID[id]; ok {
-			out = append(out, tgDocument(d))
+		serverID := serverDocumentIDFromClientID(id)
+		if d, ok := byID[serverID]; ok {
+			out = append(out, tgDocumentWithClientID(d, id))
 		} else {
 			out = append(out, &tg.DocumentEmpty{ID: id})
 		}

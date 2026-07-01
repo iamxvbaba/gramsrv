@@ -425,7 +425,7 @@ func domainPeerColorFromChannelUpdate(req *tg.ChannelsUpdateColorRequest) domain
 	backgroundEmojiID, hasBackground := req.GetBackgroundEmojiID()
 	out := domain.ChannelPeerColor{HasColor: hasColor, Color: color}
 	if hasBackground {
-		out.BackgroundEmojiID = backgroundEmojiID
+		out.BackgroundEmojiID = serverDocumentIDFromClientID(backgroundEmojiID)
 	}
 	return out
 }
@@ -442,7 +442,7 @@ func domainChannelEmojiStatus(status tg.EmojiStatusClass) (domain.ChannelEmojiSt
 		if until < 0 {
 			return domain.ChannelEmojiStatus{}, tgerr400("EMOJI_STATUS_INVALID")
 		}
-		return domain.ChannelEmojiStatus{DocumentID: s.DocumentID, Until: until}, nil
+		return domain.ChannelEmojiStatus{DocumentID: serverDocumentIDFromClientID(s.DocumentID), Until: until}, nil
 	case *tg.EmojiStatusCollectible:
 		if s.DocumentID <= 0 {
 			return domain.ChannelEmojiStatus{}, tgerr400("EMOJI_STATUS_INVALID")
@@ -451,7 +451,7 @@ func domainChannelEmojiStatus(status tg.EmojiStatusClass) (domain.ChannelEmojiSt
 		if until < 0 {
 			return domain.ChannelEmojiStatus{}, tgerr400("EMOJI_STATUS_INVALID")
 		}
-		return domain.ChannelEmojiStatus{DocumentID: s.DocumentID, Until: until}, nil
+		return domain.ChannelEmojiStatus{DocumentID: serverDocumentIDFromClientID(s.DocumentID), Until: until}, nil
 	case *tg.InputEmojiStatusCollectible:
 		return domain.ChannelEmojiStatus{}, tgerr400("EMOJI_STATUS_INVALID")
 	default:
