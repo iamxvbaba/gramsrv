@@ -796,10 +796,16 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sendMedia sticker: %v", err)
 	}
-	msg := newMessageFromUpdates(t, updates)
-	media, ok := msg.Media.(*tg.MessageMediaDocument)
+	sent, ok := updates.(*tg.UpdateShortSentMessage)
 	if !ok {
-		t.Fatalf("expected MessageMediaDocument, got %T", msg.Media)
+		t.Fatalf("expected *tg.UpdateShortSentMessage, got %T", updates)
+	}
+	if sent.ID == 0 || sent.Pts == 0 || sent.PtsCount != 1 || sent.Date == 0 {
+		t.Fatalf("short sent metadata = id:%d pts:%d pts_count:%d date:%d", sent.ID, sent.Pts, sent.PtsCount, sent.Date)
+	}
+	media, ok := sent.Media.(*tg.MessageMediaDocument)
+	if !ok {
+		t.Fatalf("expected MessageMediaDocument, got %T", sent.Media)
 	}
 	if !media.Nopremium {
 		t.Fatal("sticker message media missing nopremium flag")
@@ -814,14 +820,20 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if doc.DCID != 2 {
 		t.Errorf("document dc_id = %d, want 2", doc.DCID)
 	}
-	hasSticker := false
+	hasSticker, hasAnimated := false, false
 	for _, a := range doc.Attributes {
 		if _, ok := a.(*tg.DocumentAttributeSticker); ok {
 			hasSticker = true
 		}
+		if _, ok := a.(*tg.DocumentAttributeAnimated); ok {
+			hasAnimated = true
+		}
 	}
 	if !hasSticker {
 		t.Error("document missing sticker attribute")
+	}
+	if !hasAnimated {
+		t.Error("tgsticker document missing animated attribute")
 	}
 }
 

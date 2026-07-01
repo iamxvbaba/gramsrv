@@ -405,6 +405,31 @@ func tgPrivateMessageUpdates(event domain.UpdateEvent, msg domain.Message, rando
 	}
 }
 
+func tgPrivateShortSentMessage(event domain.UpdateEvent, msg domain.Message) *tg.UpdateShortSentMessage {
+	date := event.Date
+	if date == 0 {
+		date = msg.Date
+	}
+	pts := event.Pts
+	if pts == 0 {
+		pts = msg.Pts
+	}
+	ptsCount := event.PtsCount
+	if ptsCount == 0 {
+		ptsCount = 1
+	}
+	return &tg.UpdateShortSentMessage{
+		Out:       msg.Out,
+		ID:        msg.ID,
+		Pts:       pts,
+		PtsCount:  ptsCount,
+		Date:      date,
+		Media:     tgMessageMedia(msg.Media),
+		Entities:  tgMessageEntities(msg.Entities),
+		TTLPeriod: msg.TTLPeriod,
+	}
+}
+
 func (r *Router) usersForMessageUpdate(ctx context.Context, ownerUserID int64, msg domain.Message) []tg.UserClass {
 	seen := make(map[int64]struct{}, 2)
 	users := make([]tg.UserClass, 0, 2)

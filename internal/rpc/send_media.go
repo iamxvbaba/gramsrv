@@ -46,7 +46,8 @@ type outgoingSend struct {
 	groupedID int64
 	// effect 是消息特效 id（私聊专属，0 表无特效）。调用方已对 catalog 校验合法性；
 	// 频道侧忽略（官方群/频道不渲染特效）。
-	effect int64
+	effect          int64
+	preferShortSent bool
 }
 
 // sendOutgoing 把一条出站消息落地到私聊或频道，返回 *tg.Updates、是否重复、错误。
@@ -188,6 +189,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		// 链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 	}
+	if p.preferShortSent {
+		return tgPrivateShortSentMessage(res.SenderEvent, res.SenderMessage), res.Duplicate, nil
+	}
 	return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, p.randomID, true, users, chats), res.Duplicate, nil
 }
 
@@ -292,17 +296,18 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 	}
 	updates, _, err := r.sendOutgoing(ctx, userID, peer, outgoingSend{
-		randomID:     req.RandomID,
-		message:      req.Message,
-		entities:     req.Entities,
-		media:        media,
-		silent:       req.Silent,
-		noforwards:   req.Noforwards,
-		replyToInput: req.ReplyTo,
-		sendAsInput:  req.SendAs,
-		clearDraft:   req.ClearDraft,
-		replyMarkup:  replyMarkup,
-		effect:       req.Effect,
+		randomID:        req.RandomID,
+		message:         req.Message,
+		entities:        req.Entities,
+		media:           media,
+		silent:          req.Silent,
+		noforwards:      req.Noforwards,
+		replyToInput:    req.ReplyTo,
+		sendAsInput:     req.SendAs,
+		clearDraft:      req.ClearDraft,
+		replyMarkup:     replyMarkup,
+		effect:          req.Effect,
+		preferShortSent: shouldPreferShortSentMedia(media),
 	})
 	if err != nil {
 		return nil, err
@@ -814,6 +819,13 @@ func (r *Router) messageContactUserID(ctx context.Context, userID int64, phone s
 		return 0
 	}
 	return u.ID
+}
+
+func shouldPreferShortSentMedia(media *domain.MessageMedia) bool {
+	return media != nil &&
+		media.Kind == domain.MessageMediaKindDocument &&
+		media.Document != nil &&
+		media.Document.IsSticker()
 }
 
 // messageMediaFromDocument 由 Document 构造 MessageMedia，并从属性推导 Video/Round/Voice 标志。
