@@ -275,7 +275,7 @@ func tgDocument(d domain.Document) tg.DocumentClass {
 		Size:          d.Size,
 		Thumbs:        tgDocumentThumbs(d.MimeType, d.Thumbs),
 		DCID:          d.DCID,
-		Attributes:    tgDocumentAttributes(d.Attributes),
+		Attributes:    tgDocumentAttributes(d.MimeType, d.Attributes),
 	}
 }
 
@@ -428,15 +428,19 @@ func compactPhotoSizeClasses(in []tg.PhotoSizeClass) []tg.PhotoSizeClass {
 	return out
 }
 
-func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
-	out := make([]tg.DocumentAttributeClass, 0, len(attrs))
+func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
+	out := make([]tg.DocumentAttributeClass, 0, len(attrs)+1)
+	hasAnimated := false
+	hasStickerLike := false
 	for _, a := range attrs {
 		switch a.Kind {
 		case domain.DocAttrImageSize:
 			out = append(out, &tg.DocumentAttributeImageSize{W: a.W, H: a.H})
 		case domain.DocAttrAnimated:
+			hasAnimated = true
 			out = append(out, &tg.DocumentAttributeAnimated{})
 		case domain.DocAttrSticker:
+			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeSticker{
 				Mask:       a.Mask,
 				Alt:        a.Alt,
@@ -464,6 +468,7 @@ func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttribu
 		case domain.DocAttrFilename:
 			out = append(out, &tg.DocumentAttributeFilename{FileName: a.FileName})
 		case domain.DocAttrCustomEmoji:
+			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeCustomEmoji{
 				Free:       a.Free,
 				TextColor:  a.TextColor,
@@ -471,6 +476,9 @@ func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttribu
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
 			})
 		}
+	}
+	if mimeType == mimeApplicationXTGSticker && hasStickerLike && !hasAnimated {
+		out = append(out, &tg.DocumentAttributeAnimated{})
 	}
 	return out
 }

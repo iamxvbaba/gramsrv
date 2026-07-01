@@ -1132,7 +1132,7 @@ func tgInlineWebDocument(in domain.BotInlineWebDocument) tg.WebDocumentClass {
 		AccessHash: in.AccessHash,
 		Size:       in.Size,
 		MimeType:   in.MimeType,
-		Attributes: tgDocumentAttributes(in.Attributes),
+		Attributes: tgDocumentAttributes(in.MimeType, in.Attributes),
 	}
 }
 

@@ -619,6 +619,40 @@ func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
 	}
 }
 
+func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Attributes: []domain.DocumentAttribute{
+			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+			{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	hasSticker := false
+	hasAnimated := false
+	for _, attr := range full.Attributes {
+		switch attr.(type) {
+		case *tg.DocumentAttributeSticker:
+			hasSticker = true
+		case *tg.DocumentAttributeAnimated:
+			hasAnimated = true
+		}
+	}
+	if !hasSticker {
+		t.Fatal("TGS sticker document missing sticker attribute")
+	}
+	if !hasAnimated {
+		t.Fatal("TGS sticker document missing synthesized animated attribute")
+	}
+}
+
 func TestTGDocumentUsesDomainDocumentID(t *testing.T) {
 	const documentID int64 = 1382305375846410902
 
