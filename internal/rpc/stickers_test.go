@@ -76,6 +76,16 @@ func TestMessagesGetAllStickersUsesTDesktopHashForNotModified(t *testing.T) {
 	}
 }
 
+func TestMessagesReorderStickerSetsNoop(t *testing.T) {
+	r := &Router{}
+	ok, err := r.onMessagesReorderStickerSets(context.Background(), &tg.MessagesReorderStickerSetsRequest{
+		Order: []int64{3, 2, 1},
+	})
+	if err != nil || !ok {
+		t.Fatalf("reorderStickerSets ok=%v err=%v, want true nil", ok, err)
+	}
+}
+
 func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiSets(t *testing.T) {
 	ctx := context.Background()
 	files := &fakeFiles{

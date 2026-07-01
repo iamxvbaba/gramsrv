@@ -179,6 +179,10 @@ func (r *Router) onMessagesGetAllStickers(ctx context.Context, hash int64) (tg.M
 	return r.allStickersForKind(ctx, hash, domain.StickerSetKindStickers)
 }
 
+func (r *Router) onMessagesReorderStickerSets(ctx context.Context, req *tg.MessagesReorderStickerSetsRequest) (bool, error) {
+	return true, nil
+}
+
 func (r *Router) onMessagesGetEmojiStickers(ctx context.Context, hash int64) (tg.MessagesAllStickersClass, error) {
 	return r.allStickersForKind(ctx, hash, domain.StickerSetKindEmoji)
 }

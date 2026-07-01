@@ -27,6 +27,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesSaveRecentSticker(r.onMessagesSaveRecentSticker)
 	d.OnMessagesSaveGif(r.onMessagesSaveGif)
 	d.OnMessagesClearRecentStickers(r.onMessagesClearRecentStickers)
+	d.OnMessagesReorderStickerSets(r.onMessagesReorderStickerSets)
 	d.OnMessagesSendMessage(r.onMessagesSendMessage)
 	d.OnMessagesForwardMessages(r.onMessagesForwardMessages)
 	d.OnMessagesGetDialogFilters(r.onMessagesGetDialogFilters)
