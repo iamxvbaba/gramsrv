@@ -85,7 +85,13 @@ Useful local environment variables:
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
 
-The optional sticker seed directory is skipped when it does not exist.
+The optional sticker seed directory is skipped when it does not exist. To deploy the official premium sticker/emoji catalog from `HSgram_-premium-promo`, run:
+
+```sh
+go run ./cmd/stickerseeddeploy -source /path/to/HSgram_-premium-promo -dest data/sticker-seed
+```
+
+Restart `telesrv` after deploying; `SeedMedia` imports new or changed sets on startup.
 
 ## Client Compatibility
 

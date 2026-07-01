@@ -294,6 +294,40 @@ func TestChannelFanoutDispatcherNudgesBeyondCapMembers(t *testing.T) {
 	}
 }
 
+// TestChannelFanoutDispatcherQueueFullNudgesOnlineMembers：分片队列满时不再只丢完整 payload
+// 并等待下一条 pts，而是立刻发 UpdateChannelTooLong{pts} 给在线成员，触发 getChannelDifference。
+func TestChannelFanoutDispatcherQueueFullNudgesOnlineMembers(t *testing.T) {
+	cs := newNudgeSessions([]int64{2001, 2002})
+	r := New(Config{}, Deps{Sessions: cs}, zaptest.NewLogger(t), clock.System)
+	d := newChannelFanoutDispatcher(r, 1, 1)
+	r.channelFanout = d
+	d.started.Store(true)
+	d.shards[0] <- fanoutTestJob([]int64{9999}, 0, 0, nil)
+
+	built := map[int64]bool{}
+	d.Enqueue(context.Background(), fanoutTestJob([]int64{2001}, 0, 99, built))
+
+	if got := d.dropped.Load(); got != 1 {
+		t.Fatalf("dropped = %d, want 1", got)
+	}
+	if len(built) != 0 {
+		t.Fatalf("full payload builder ran on queue-full overflow: %v", built)
+	}
+	for _, uid := range []int64{2001, 2002} {
+		ups, ok := cs.msgFor(uid).(*tg.Updates)
+		if !ok || len(ups.Updates) != 1 {
+			t.Fatalf("overflow nudge to %d not single-update *tg.Updates: %#v", uid, cs.msgFor(uid))
+		}
+		tl, ok := ups.Updates[0].(*tg.UpdateChannelTooLong)
+		if !ok {
+			t.Fatalf("overflow nudge to %d not UpdateChannelTooLong: %#v", uid, ups.Updates[0])
+		}
+		if p, ok := tl.GetPts(); !ok || p != 5 {
+			t.Fatalf("overflow nudge to %d pts=%d ok=%v, want 5", uid, p, ok)
+		}
+	}
+}
+
 // TestChannelEditMessageFanoutNudgePtsUsesMaxContainer：edit 可只产服务消息容器（Event.Pts==0、
 // ServiceEvent.Pts!=0，如纯 todo 完成）。此时 >cap 在线成员的 nudge 必须带 ServiceEvent.Pts（两容器
 // 较大值），否则用 Event.Pts==0 会被 job.pts>0 门控吞掉 nudge、beyond-cap 成员错过 getChannelDifference。

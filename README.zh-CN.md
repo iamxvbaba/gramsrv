@@ -76,7 +76,13 @@ go build -o bin/gramsrv.exe ./cmd/telesrv
 | `TELESRV_BLOB_DIR` | `data/blobs` | 本地媒体 blob 目录 |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | 可选 sticker/reaction 种子目录 |
 
-如果 sticker seed 目录不存在，启动时会自动跳过。
+如果 sticker seed 目录不存在，启动时会自动跳过。要从 `HSgram_-premium-promo` 部署官方 premium sticker/emoji 目录，执行：
+
+```sh
+go run ./cmd/stickerseeddeploy -source /path/to/HSgram_-premium-promo -dest data/sticker-seed
+```
+
+部署后重启 `telesrv`；`SeedMedia` 会在启动时增量导入新增或变更的集合。
 
 ## 客户端兼容
 

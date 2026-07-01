@@ -419,7 +419,8 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	//     禁用了 stripped 内联占位，cached 字节又经 RPC 出口转成 downloadable）；丢掉它会让
 	//     打开会话时 sticker 先空白、并多触发一次缩略图 getFile。
 	//   - 小 PhotoSize 静态图：写 blob 并暂存为 PhotoCachedSize（RPC 出口再转 downloadable
-	//     photoSize m），供 sticker 面板等需要小缩略图的场景下载。
+	//     photoSize m），供 sticker 面板等需要小缩略图的场景下载。若导出数据没有任何
+	//     document-level thumb，则补一个透明 1x1 预览，保证客户端缩略图请求有可服务 blob。
 	thumbs := make([]domain.PhotoSize, 0, len(dj.Thumbs))
 	for _, tj := range dj.Thumbs {
 		ps, downloadable := seedPhotoSize(tj)
@@ -571,6 +572,12 @@ func systemKeyForDefaultSet(dirName string) string {
 		return "animated_emoji_animations"
 	case "DefaultSet_EmojiGenericAnimations":
 		return "emoji_generic_animations"
+	case "DefaultSet_EmojiDefaultStatuses":
+		return domain.StickerSetSystemKeyEmojiDefaultStatuses
+	case "DefaultSet_EmojiDefaultTopicIcons":
+		return domain.StickerSetSystemKeyEmojiDefaultTopicIcons
+	case "DefaultSet_PremiumGifts":
+		return domain.StickerSetSystemKeyPremiumGifts
 	case "DefaultSet_Dice_Normal":
 		return "dice:\U0001f3b2"
 	case "DefaultSet_Dice_Dart":
@@ -716,10 +723,7 @@ func (s *Service) ensureTGStickerPreviewThumb(ctx context.Context, doc *domain.D
 }
 
 func seedDocumentNeedsSyntheticTGStickerPreviewThumb(doc domain.Document) bool {
-	if doc.MimeType != "application/x-tgsticker" || len(doc.Thumbs) > 0 {
-		return false
-	}
-	return seedDocumentHasAttribute(doc.Attributes, domain.DocAttrCustomEmoji)
+	return doc.MimeType == "application/x-tgsticker" && len(doc.Thumbs) == 0
 }
 
 func seedDocumentHasAttribute(attrs []domain.DocumentAttribute, kind domain.DocumentAttributeKind) bool {

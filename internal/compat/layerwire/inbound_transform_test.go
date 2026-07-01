@@ -70,6 +70,30 @@ func TestInboundBodyTransforms(t *testing.T) {
 		validateMethodRequest(t, out, 0xad8c9a23, "channelsGetMessages")
 	})
 
+	t.Run("messagesGetMessages", func(t *testing.T) {
+		var in bin.Buffer
+		in.PutID(0x4222fa74)
+		in.PutVectorHeader(2)
+		in.PutInt(21)
+		in.PutInt(22)
+		out, ok, err := UpgradeInbound(0x4222fa74, &in)
+		if !ok || err != nil {
+			t.Fatalf("upgrade: ok=%v err=%v", ok, err)
+		}
+		validateMethodRequest(t, out, tg.MessagesGetMessagesRequestTypeID, "messagesGetMessages")
+		var req tg.MessagesGetMessagesRequest
+		if err := req.Decode(&bin.Buffer{Buf: append([]byte(nil), out.Buf...)}); err != nil {
+			t.Fatalf("decode upgraded messages.getMessages: %v", err)
+		}
+		if len(req.ID) != 2 {
+			t.Fatalf("upgraded ids = %d, want 2", len(req.ID))
+		}
+		first, ok := req.ID[0].(*tg.InputMessageID)
+		if !ok || first.ID != 21 {
+			t.Fatalf("upgraded id[0] = %T %+v, want inputMessageID(21)", req.ID[0], req.ID[0])
+		}
+	})
+
 	t.Run("botsExportBotToken", func(t *testing.T) {
 		var in bin.Buffer
 		in.PutID(0x0063b089)

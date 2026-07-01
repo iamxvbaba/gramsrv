@@ -162,9 +162,7 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 	d.OnAccountUpdateColor(r.onAccountUpdateColor)
 	d.OnAccountGetDefaultProfilePhotoEmojis(r.onAccountGetDefaultProfilePhotoEmojis)
 	d.OnAccountGetDefaultBackgroundEmojis(r.onAccountGetDefaultBackgroundEmojis)
-	d.OnAccountGetChannelDefaultEmojiStatuses(func(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
-		return &tg.AccountEmojiStatuses{Hash: 0, Statuses: []tg.EmojiStatusClass{}}, nil
-	})
+	d.OnAccountGetChannelDefaultEmojiStatuses(r.onAccountGetDefaultEmojiStatuses)
 	d.OnAccountGetChannelRestrictedStatusEmojis(func(ctx context.Context, hash int64) (tg.EmojiListClass, error) {
 		return tdesktop.DefaultGroupPhotoEmojis(), nil
 	})

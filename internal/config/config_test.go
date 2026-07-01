@@ -55,6 +55,51 @@ func TestLoadBusinessAIProviderDefaultsToEcho(t *testing.T) {
 	}
 }
 
+func TestLoadProductionBackpressureDefaults(t *testing.T) {
+	t.Setenv("TELESRV_CONFIG", "")
+	t.Setenv("TELESRV_OUTBOX_BATCH", "")
+	t.Setenv("TELESRV_OUTBOX_INTERVAL", "")
+	t.Setenv("TELESRV_OUTBOX_WORKERS", "")
+	t.Setenv("TELESRV_CATCHUP_RATE_LIMIT", "")
+	t.Setenv("TELESRV_CATCHUP_RATE_WINDOW", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OutboxWorkers != 1 {
+		t.Fatalf("OutboxWorkers = %d, want 1 (single worker preserves per-user pts order)", cfg.OutboxWorkers)
+	}
+	if cfg.OutboxBatch != 200 {
+		t.Fatalf("OutboxBatch = %d, want 200", cfg.OutboxBatch)
+	}
+	if cfg.OutboxInterval != 50*time.Millisecond {
+		t.Fatalf("OutboxInterval = %v, want 50ms", cfg.OutboxInterval)
+	}
+	if cfg.CatchupRateLimit != 120 {
+		t.Fatalf("CatchupRateLimit = %d, want 120", cfg.CatchupRateLimit)
+	}
+	if cfg.CatchupRateWindow != time.Minute {
+		t.Fatalf("CatchupRateWindow = %v, want 1m", cfg.CatchupRateWindow)
+	}
+}
+
+func TestLoadStickerSeedDefaultsCoverOfficialCatalog(t *testing.T) {
+	t.Setenv("TELESRV_STICKER_SEED_DIR", "")
+	t.Setenv("TELESRV_STICKER_SEED_MAX_SETS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StickerSeedDir != "data/sticker-seed" {
+		t.Fatalf("StickerSeedDir = %q, want data/sticker-seed", cfg.StickerSeedDir)
+	}
+	if cfg.StickerSeedMaxSets != 300 {
+		t.Fatalf("StickerSeedMaxSets = %d, want 300", cfg.StickerSeedMaxSets)
+	}
+}
+
 func TestLoadReadsEnvStyleConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telesrv.env")
 	writeConfigFile(t, path, `

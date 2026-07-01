@@ -60,8 +60,12 @@ func TestDispatchUnwrapsWrappers(t *testing.T) {
 	if cfg.ThisDC != dc {
 		t.Fatalf("ThisDC = %d, want %d", cfg.ThisDC, dc)
 	}
-	if len(cfg.DCOptions) != 0 {
-		t.Fatalf("DCOptions = %+v, want empty (client uses pinned static address)", cfg.DCOptions)
+	if len(cfg.DCOptions) != 1 {
+		t.Fatalf("DCOptions = %+v, want one advertised DC", cfg.DCOptions)
+	}
+	dcOption := cfg.DCOptions[0]
+	if dcOption.ID != dc || dcOption.IPAddress != "127.0.0.1" || dcOption.Port != 2398 || !dcOption.TCPObfuscatedOnly || !dcOption.Static || !dcOption.ThisPortOnly {
+		t.Fatalf("DCOptions[0] = %+v, want static tcpo 127.0.0.1:2398 for dc%d", dcOption, dc)
 	}
 }
 

@@ -76,9 +76,12 @@ func TestTelegramClientEndToEnd(t *testing.T) {
 		if cfg.ThisDC != dc {
 			t.Errorf("config.ThisDC = %d, want %d", cfg.ThisDC, dc)
 		}
-		// 不下发 DCOptions：客户端使用自己的 DCList / 写死 static 地址。
-		if len(cfg.DCOptions) != 0 {
-			t.Errorf("config.DCOptions = %+v, want empty", cfg.DCOptions)
+		if len(cfg.DCOptions) != 1 {
+			t.Fatalf("config.DCOptions = %+v, want one advertised DC", cfg.DCOptions)
+		}
+		dcOption := cfg.DCOptions[0]
+		if dcOption.ID != dc || dcOption.IPAddress != tcpAddr.IP.String() || dcOption.Port != tcpAddr.Port || !dcOption.TCPObfuscatedOnly || !dcOption.Static || !dcOption.ThisPortOnly {
+			t.Errorf("config.DCOptions[0] = %+v, want static tcpo %s for dc%d", dcOption, tcpAddr.String(), dc)
 		}
 		return nil
 	}); err != nil {

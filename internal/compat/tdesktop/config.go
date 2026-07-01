@@ -16,12 +16,14 @@ func BuildConfig(dc int, ip string, port int, now time.Time) *tg.Config {
 		Expires:  int(now.Add(time.Hour).Unix()),
 		TestMode: false,
 		ThisDC:   dc,
-		// 不下发 DCOptions：客户端（TDesktop patch / drklo fork）已写死 static DC
-		// 地址，空列表会让客户端保留它——drklo ConnectionsManager.cpp 的 processConfig
-		// 在 dc_options 为空时整段跳过 replaceAddresses/saveConfig，既不覆盖也不持久化。
-		// 服务端因此无需配置对外可达 IP，换网络/部署只改客户端写死地址即可。ip/port
-		// 参数暂留，供未来需要显式 advertise 时改回。
-		DCOptions:            nil,
+		DCOptions: []tg.DCOption{{
+			ID:                dc,
+			IPAddress:         ip,
+			Port:              port,
+			TCPObfuscatedOnly: true,
+			Static:            true,
+			ThisPortOnly:      true,
+		}},
 		ChatSizeMax:          200,
 		MegagroupSizeMax:     200000,
 		ForwardedCountMax:    100,

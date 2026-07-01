@@ -76,6 +76,56 @@ func TestMessagesGetAllStickersUsesTDesktopHashForNotModified(t *testing.T) {
 	}
 }
 
+func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiSets(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindEmoji: {
+				{
+					ID:              91,
+					AccessHash:      9100,
+					ShortName:       "PremiumEmoji",
+					Title:           "Premium Emoji",
+					Kind:            domain.StickerSetKindEmoji,
+					Emojis:          true,
+					Count:           2,
+					Hash:            12345,
+					ThumbDocumentID: 1001,
+					DocumentIDs:     []int64{1001, 1002},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+
+	first, err := r.onMessagesGetEmojiStickerGroups(ctx, 0)
+	if err != nil {
+		t.Fatalf("getEmojiStickerGroups: %v", err)
+	}
+	full, ok := first.(*tg.MessagesEmojiGroups)
+	if !ok {
+		t.Fatalf("getEmojiStickerGroups = %T, want *tg.MessagesEmojiGroups", first)
+	}
+	if full.Hash == 0 {
+		t.Fatal("getEmojiStickerGroups hash = 0, want cacheable hash")
+	}
+	if len(full.Groups) != 1 {
+		t.Fatalf("groups = %d, want one premium group", len(full.Groups))
+	}
+	premium, ok := full.Groups[0].(*tg.EmojiGroupPremium)
+	if !ok || premium.IconEmojiID != 1001 {
+		t.Fatalf("group = %T %+v, want premium icon 1001", full.Groups[0], full.Groups[0])
+	}
+
+	second, err := r.onMessagesGetEmojiStickerGroups(ctx, full.Hash)
+	if err != nil {
+		t.Fatalf("getEmojiStickerGroups cached: %v", err)
+	}
+	if _, ok := second.(*tg.MessagesEmojiGroupsNotModified); !ok {
+		t.Fatalf("cached getEmojiStickerGroups = %T, want notModified", second)
+	}
+}
+
 func TestAccountGetDefaultEmojiStatusesServesSynthesizedSet(t *testing.T) {
 	ctx := context.Background()
 	files := &fakeFiles{
@@ -152,6 +202,41 @@ func TestAccountGetDefaultEmojiStatusesFallsBackWhenUnseeded(t *testing.T) {
 	}
 	if _, ok := res.(*tg.AccountEmojiStatusesNotModified); !ok {
 		t.Fatalf("unseeded result = %T, want compat notModified stub", res)
+	}
+}
+
+func TestStickerSetRefFromSpecialInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		in   tg.InputStickerSetClass
+		want string
+	}{
+		{
+			name: "channel default statuses",
+			in:   &tg.InputStickerSetEmojiChannelDefaultStatuses{},
+			want: domain.StickerSetSystemKeyEmojiDefaultStatuses,
+		},
+		{
+			name: "topic icons",
+			in:   &tg.InputStickerSetEmojiDefaultTopicIcons{},
+			want: domain.StickerSetSystemKeyEmojiDefaultTopicIcons,
+		},
+		{
+			name: "premium gifts",
+			in:   &tg.InputStickerSetPremiumGifts{},
+			want: domain.StickerSetSystemKeyPremiumGifts,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ref, ok := stickerSetRefFromInput(tc.in)
+			if !ok {
+				t.Fatalf("stickerSetRefFromInput(%T) ok=false", tc.in)
+			}
+			if ref.Kind != domain.StickerSetRefBySystem || ref.SystemKey != tc.want {
+				t.Fatalf("ref = %+v, want system key %q", ref, tc.want)
+			}
+		})
 	}
 }
 

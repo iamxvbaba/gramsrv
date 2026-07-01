@@ -658,6 +658,12 @@ func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "emoji_generic_animations"}, true
 	case *tg.InputStickerSetEmojiDefaultStatuses:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultStatuses}, true
+	case *tg.InputStickerSetEmojiChannelDefaultStatuses:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultStatuses}, true
+	case *tg.InputStickerSetEmojiDefaultTopicIcons:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultTopicIcons}, true
+	case *tg.InputStickerSetPremiumGifts:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyPremiumGifts}, true
 	case *tg.InputStickerSetDice:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "dice:" + in.Emoticon}, true
 	default:

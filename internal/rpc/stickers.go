@@ -183,6 +183,43 @@ func (r *Router) onMessagesGetEmojiStickers(ctx context.Context, hash int64) (tg
 	return r.allStickersForKind(ctx, hash, domain.StickerSetKindEmoji)
 }
 
+func (r *Router) onMessagesGetEmojiStickerGroups(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
+	empty := func() tg.MessagesEmojiGroupsClass {
+		return &tg.MessagesEmojiGroups{Hash: 0, Groups: []tg.EmojiGroupClass{}}
+	}
+	if r.deps.Files == nil {
+		return empty(), nil
+	}
+	sets := r.stickerCatalogSets(ctx, domain.StickerSetKindEmoji)
+	visible := make([]domain.StickerSet, 0, len(sets))
+	for _, set := range sets {
+		if set.ID == 0 || set.Archived {
+			continue
+		}
+		visible = append(visible, set)
+	}
+	if len(visible) == 0 {
+		return empty(), nil
+	}
+	catalogHash := emojiStickerGroupsHash(visible)
+	if hash != 0 && hash == catalogHash {
+		return &tg.MessagesEmojiGroupsNotModified{}, nil
+	}
+	iconEmojiID := emojiStickerGroupIconID(visible)
+	if iconEmojiID == 0 {
+		return empty(), nil
+	}
+	return &tg.MessagesEmojiGroups{
+		Hash: catalogHash,
+		Groups: []tg.EmojiGroupClass{
+			&tg.EmojiGroupPremium{
+				Title:       "Premium",
+				IconEmojiID: iconEmojiID,
+			},
+		},
+	}, nil
+}
+
 func (r *Router) onMessagesGetMaskStickers(ctx context.Context, hash int64) (tg.MessagesAllStickersClass, error) {
 	return r.allStickersForKind(ctx, hash, domain.StickerSetKindMasks)
 }
@@ -331,6 +368,31 @@ func stickerSetsCatalogHash(sets []domain.StickerSet) int64 {
 		values = append(values, int64(set.Hash))
 	}
 	return int64(tdesktopCountHash(values))
+}
+
+func emojiStickerGroupsHash(sets []domain.StickerSet) int {
+	values := make([]int64, 0, len(sets)*2)
+	for _, set := range sets {
+		if set.ID == 0 || set.Archived {
+			continue
+		}
+		values = append(values, set.ID, int64(set.Hash))
+	}
+	return int(tdesktopCountHash(values) & 0x7fffffff)
+}
+
+func emojiStickerGroupIconID(sets []domain.StickerSet) int64 {
+	for _, set := range sets {
+		if set.ThumbDocumentID != 0 {
+			return set.ThumbDocumentID
+		}
+		for _, id := range set.DocumentIDs {
+			if id != 0 {
+				return id
+			}
+		}
+	}
+	return 0
 }
 
 func boolHashValue(v bool) int64 {

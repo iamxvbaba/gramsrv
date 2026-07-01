@@ -132,7 +132,7 @@ type Config struct {
 	// SendRateWindow 是发送限流窗口。
 	SendRateWindow time.Duration
 	// CatchupRateLimit 是 difference 类 catch-up RPC（getChannelDifference / getPeerDialogs）
-	// 每用户每窗口允许的次数；<=0 关闭（设计 fan-out Phase 2 / §10.3，放开大群 nudge 全速前置）。
+	// 每用户每窗口允许的次数；默认开启，防止大群 nudge / 慢客户端恢复时形成补拉风暴；<=0 显式关闭。
 	CatchupRateLimit int
 	// CatchupRateWindow 是 catch-up 限流窗口。
 	CatchupRateWindow time.Duration
@@ -247,9 +247,7 @@ func Load() (Config, error) {
 			"http://localhost:1234",
 			"http://127.0.0.1:1234",
 		}),
-		// AdvertiseIP 当前不影响 help.getConfig——getConfig 返回空 DCOptions，
-		// 客户端使用其写死的 static DC 地址（见 compat/tdesktop/config.go）。
-		// 字段与默认值保留，供未来需要显式下发 DC 地址时使用。
+		// AdvertiseIP 写入 help.getConfig 的 dc_options，客户端据此持久化本 DC 地址。
 		AdvertiseIP:     envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
 		RSAKeyPath:      envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
 		DC:              envIntOr("TELESRV_DC", 2),
@@ -277,7 +275,7 @@ func Load() (Config, error) {
 		LangPackSeedDir:               envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
 		BlobDir:                       envOr("TELESRV_BLOB_DIR", "data/blobs"),
 		StickerSeedDir:                envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
-		StickerSeedMaxSets:            envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 200),
+		StickerSeedMaxSets:            envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
 		MapboxToken:                   envOr("TELESRV_MAPBOX_TOKEN", ""),
 		MapTileCacheDir:               envOr("TELESRV_MAPTILE_CACHE_DIR", "data/maptiles"),
 		ExternalMediaEnable:           envBoolOr("TELESRV_EXTERNAL_MEDIA_ENABLE", true),
@@ -295,13 +293,13 @@ func Load() (Config, error) {
 		ChannelBoostCacheTTL:          envDurationOr("TELESRV_CHANNEL_BOOST_CACHE_TTL", 10*time.Second),
 
 		OutboxWorkers:          envIntOr("TELESRV_OUTBOX_WORKERS", 1),
-		OutboxBatch:            envIntOr("TELESRV_OUTBOX_BATCH", 100),
-		OutboxInterval:         envDurationOr("TELESRV_OUTBOX_INTERVAL", 200*time.Millisecond),
+		OutboxBatch:            envIntOr("TELESRV_OUTBOX_BATCH", 200),
+		OutboxInterval:         envDurationOr("TELESRV_OUTBOX_INTERVAL", 50*time.Millisecond),
 		OutboxLeaseTimeout:     envDurationOr("TELESRV_OUTBOX_LEASE_TIMEOUT", 30*time.Second),
 		OutboundPushTimeout:    envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
 		SendRateLimit:          envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
 		SendRateWindow:         envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
-		CatchupRateLimit:       envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
+		CatchupRateLimit:       envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 120),
 		CatchupRateWindow:      envDurationOr("TELESRV_CATCHUP_RATE_WINDOW", time.Minute),
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),

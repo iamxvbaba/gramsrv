@@ -25,6 +25,7 @@ type captureMessages struct {
 	readContentsRes   domain.ReadMessageContentsResult
 	setReactionReq    domain.SetPrivateMessageReactionsRequest
 	setReactionRes    domain.PrivateMessageReactionsResult
+	setReactionCalls  int
 	getReactionReq    domain.PrivateMessageReactionsRequest
 	getReactionRes    domain.PrivateMessageReactionsResult
 	getMessagesCalls  int
@@ -429,6 +430,7 @@ func (s *captureMessages) GetOutboxReadDate(_ context.Context, _ int64, req doma
 }
 
 func (s *captureMessages) SetMessageReactions(_ context.Context, userID int64, req domain.SetPrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error) {
+	s.setReactionCalls++
 	s.setReactionReq = req
 	if len(s.setReactionRes.Messages) == 0 {
 		if len(req.Reactions) == 0 {

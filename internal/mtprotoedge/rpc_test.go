@@ -60,9 +60,12 @@ func TestRPCGetConfig(t *testing.T) {
 	if cfg.ThisDC != dc {
 		t.Fatalf("config.ThisDC = %d, want %d", cfg.ThisDC, dc)
 	}
-	// 不下发 DCOptions：客户端使用写死的 static DC 地址（空列表令其保留本地地址）。
-	if len(cfg.DCOptions) != 0 {
-		t.Fatalf("config.DCOptions = %+v, want empty (client uses pinned static address)", cfg.DCOptions)
+	if len(cfg.DCOptions) != 1 {
+		t.Fatalf("config.DCOptions = %+v, want one advertised DC", cfg.DCOptions)
+	}
+	dcOption := cfg.DCOptions[0]
+	if dcOption.ID != dc || dcOption.IPAddress != advIP || dcOption.Port != advPort || !dcOption.TCPObfuscatedOnly || !dcOption.Static || !dcOption.ThisPortOnly {
+		t.Fatalf("config.DCOptions[0] = %+v, want static tcpo %s:%d for dc%d", dcOption, advIP, advPort, dc)
 	}
 }
 

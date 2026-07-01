@@ -162,6 +162,53 @@ func TestMessagesSendReactionPrivatePeerReturnsReactionUpdate(t *testing.T) {
 	}
 }
 
+func TestMessagesSendReactionSuppressesTransientPrivateBigClear(t *testing.T) {
+	const (
+		userID = int64(1000000001)
+		peerID = int64(1000000002)
+		now    = int64(1700000200)
+	)
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{Messages: messages}, zaptest.NewLogger(t), fixedClock{now: time.Unix(now, 0)})
+	add := &tg.MessagesSendReactionRequest{
+		Peer:     &tg.InputPeerUser{UserID: peerID, AccessHash: 22},
+		MsgID:    7,
+		Reaction: []tg.ReactionClass{&tg.ReactionEmoji{Emoticon: "\U0001f44d"}},
+		Big:      true,
+	}
+	add.SetReaction(add.Reaction)
+	if _, err := r.onMessagesSendReaction(WithUserID(context.Background(), userID), add); err != nil {
+		t.Fatalf("messages.sendReaction add: %v", err)
+	}
+	messages.getReactionRes = messages.setReactionRes
+
+	clear := &tg.MessagesSendReactionRequest{
+		Peer:  &tg.InputPeerUser{UserID: peerID, AccessHash: 22},
+		MsgID: 7,
+	}
+	updates, err := r.onMessagesSendReaction(WithUserID(context.Background(), userID), clear)
+	if err != nil {
+		t.Fatalf("messages.sendReaction transient clear: %v", err)
+	}
+	if messages.setReactionCalls != 1 {
+		t.Fatalf("SetMessageReactions calls = %d, want only the initial add", messages.setReactionCalls)
+	}
+	if messages.getReactionReq.OwnerUserID != userID || len(messages.getReactionReq.IDs) != 1 || messages.getReactionReq.IDs[0] != 7 {
+		t.Fatalf("GetMessageReactions req = %+v, want current message reload", messages.getReactionReq)
+	}
+	got := updates.(*tg.Updates).Updates
+	if len(got) != 1 {
+		t.Fatalf("updates = %+v, want one reaction update", got)
+	}
+	update, ok := got[0].(*tg.UpdateMessageReactions)
+	if !ok {
+		t.Fatalf("update = %T, want *tg.UpdateMessageReactions", got[0])
+	}
+	if len(update.Reactions.Results) != 1 || update.Reactions.Results[0].Count != 1 || update.Reactions.Results[0].ChosenOrder != 1 {
+		t.Fatalf("reaction results = %+v, want preserved chosen reaction", update.Reactions.Results)
+	}
+}
+
 func TestMessagesSendReactionPrivatePeerAllowsCustomEmoji(t *testing.T) {
 	const (
 		userID           = int64(1000000001)

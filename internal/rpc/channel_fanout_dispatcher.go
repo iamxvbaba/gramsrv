@@ -23,8 +23,8 @@ import (
 //     DrKLO Android ~1.5s 乱序窗口与 TDesktop PtsWaiter 的连续性期望（设计 §10.2）。
 //   - 单实例 + 无 durable 重投队列 + 同 channel 串行 → 无乱序、无自重复，故 v1 不需要
 //     per-session at-most-once 双水位（那是 Phase 3 跨实例的事，设计 §9/§10.1）。
-//   - 有界队列满时丢弃当前 job 并告警：被丢 recipient 会在该 channel 下一条成功投递的
-//     pts 跳变时经 getChannelDifference 收敛（设计约束 B）。
+//   - 有界队列满时丢弃完整 payload，但立即给在线成员发 UpdateChannelTooLong{pts} nudge，
+//     促使客户端 getChannelDifference 收敛，避免必须等该 channel 下一条消息。
 
 const (
 	defaultChannelFanoutShards = 64
@@ -152,8 +152,8 @@ func (d *channelFanoutDispatcher) shardIndex(channelID int64) int {
 }
 
 // Enqueue 投递一条 fan-out 任务。dispatcher 未启动时同步执行（用请求 ctx，保持旧行为）；
-// 已启动时投入对应分片，满则丢弃 + 告警（该 channel 下一条消息的 pts 跳变会经
-// getChannelDifference 兜底）。
+// 已启动时投入对应分片，满则丢弃完整 payload + 告警，并对真实 channel pts payload 发
+// UpdateChannelTooLong nudge 触发客户端补差异。
 func (d *channelFanoutDispatcher) Enqueue(reqCtx context.Context, job channelFanoutJob) {
 	if d == nil || job.build == nil {
 		return
@@ -167,9 +167,22 @@ func (d *channelFanoutDispatcher) Enqueue(reqCtx context.Context, job channelFan
 	case shard <- job:
 	default:
 		d.dropped.Add(1)
-		d.log.Warn("channel fanout queue full, dropped realtime push (recovered via next pts gap / getChannelDifference)",
+		d.log.Warn("channel fanout queue full, dropped full realtime payload and attempted difference nudge",
 			zap.Int64("channel_id", job.channelID), zap.Int("pts", job.pts))
+		d.nudgeDroppedFanout(reqCtx, job)
 	}
+}
+
+func (d *channelFanoutDispatcher) nudgeDroppedFanout(reqCtx context.Context, job channelFanoutJob) {
+	if d == nil || d.r == nil || job.scope != channelFanoutMembers || job.channelID == 0 || job.pts <= 0 {
+		return
+	}
+	ctx := context.Background()
+	if reqCtx != nil {
+		ctx = context.WithoutCancel(reqCtx)
+	}
+	pushCtx := WithSessionID(WithAuthKeyID(ctx, job.originAuthKeyID), job.originSessionID)
+	d.r.nudgeBeyondCapChannelMembers(pushCtx, job.channelID, job.pts, nil)
 }
 
 // runChannelFanoutJob 执行一条 fan-out：与同步 pushChannelUpdatesWithScope 等价，区别是

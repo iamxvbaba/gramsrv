@@ -104,10 +104,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetEmojiStatusGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
 		return tdesktop.EmojiStatusGroups(), nil
 	})
-	d.OnMessagesGetEmojiStickerGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
-		// 自定义 emoji 贴纸的分类(Premium);telesrv 未 seed custom-emoji 集,保持空。
-		return &tg.MessagesEmojiGroupsNotModified{}, nil
-	})
+	d.OnMessagesGetEmojiStickerGroups(r.onMessagesGetEmojiStickerGroups)
 	d.OnMessagesGetEmojiProfilePhotoGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
 		return tdesktop.EmojiProfilePhotoGroups(), nil
 	})
