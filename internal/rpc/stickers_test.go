@@ -517,6 +517,25 @@ func TestTGDocumentCompactsCachedThumbToDownloadableSize(t *testing.T) {
 	}
 }
 
+func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindCached, Type: "m", W: 1, H: 1, Bytes: []byte("png")},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	if len(full.Thumbs) != 0 {
+		t.Fatalf("thumbs = %#v, want no synthetic TGS preview thumb", full.Thumbs)
+	}
+}
+
 func TestTGDocumentUsesDomainDocumentID(t *testing.T) {
 	const documentID int64 = 1382305375846410902
 

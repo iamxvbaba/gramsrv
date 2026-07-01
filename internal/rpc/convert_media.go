@@ -8,6 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
+const mimeApplicationXTGSticker = "application/x-tgsticker"
+
 // 本文件集中 domain media 值对象 → tg.* 的转换；tg.* 只在 rpc 层出现。
 // 供 reaction / sticker 资源 RPC 与消息 media 共用。
 
@@ -267,7 +269,7 @@ func tgDocument(d domain.Document) tg.DocumentClass {
 		Date:          d.Date,
 		MimeType:      d.MimeType,
 		Size:          d.Size,
-		Thumbs:        tgDocumentThumbs(d.Thumbs),
+		Thumbs:        tgDocumentThumbs(d.MimeType, d.Thumbs),
 		DCID:          d.DCID,
 		Attributes:    tgDocumentAttributes(d.Attributes),
 	}
@@ -281,12 +283,15 @@ func tgDocuments(docs []domain.Document) []tg.DocumentClass {
 	return out
 }
 
-func tgDocumentThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
+func tgDocumentThumbs(mimeType string, sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 	if len(sizes) == 0 {
 		return nil
 	}
 	out := make([]tg.PhotoSizeClass, 0, len(sizes))
 	for _, s := range sizes {
+		if isSeedSyntheticTGStickerPreviewThumb(mimeType, s) {
+			continue
+		}
 		if s.Kind == domain.PhotoSizeKindCached && len(s.Bytes) > 0 {
 			size := s.Size
 			if size == 0 {
@@ -300,6 +305,17 @@ func tgDocumentThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 		out = append(out, tgPhotoSize(s))
 	}
 	return compactPhotoSizeClasses(out)
+}
+
+func isSeedSyntheticTGStickerPreviewThumb(mimeType string, s domain.PhotoSize) bool {
+	// Older seed imports gave TGS documents without thumbnails a 1x1 transparent
+	// "m" PNG. Clients can prefer that unusable preview and render blank stickers.
+	return mimeType == mimeApplicationXTGSticker &&
+		s.Kind == domain.PhotoSizeKindCached &&
+		s.Type == "m" &&
+		s.W <= 1 &&
+		s.H <= 1 &&
+		len(s.Bytes) > 0
 }
 
 func tgPhotoSizes(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
