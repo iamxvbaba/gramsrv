@@ -72,7 +72,17 @@ func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channe
     (m.banned_rights->>'SendPolls')::boolean IS TRUE OR
     (m.banned_rights->>'ChangeInfo')::boolean IS TRUE OR
     (m.banned_rights->>'InviteUsers')::boolean IS TRUE OR
-    (m.banned_rights->>'PinMessages')::boolean IS TRUE
+    (m.banned_rights->>'PinMessages')::boolean IS TRUE OR
+    (m.banned_rights->>'ManageTopics')::boolean IS TRUE OR
+    (m.banned_rights->>'SendPhotos')::boolean IS TRUE OR
+    (m.banned_rights->>'SendVideos')::boolean IS TRUE OR
+    (m.banned_rights->>'SendRoundvideos')::boolean IS TRUE OR
+    (m.banned_rights->>'SendAudios')::boolean IS TRUE OR
+    (m.banned_rights->>'SendVoices')::boolean IS TRUE OR
+    (m.banned_rights->>'SendDocs')::boolean IS TRUE OR
+    (m.banned_rights->>'SendPlain')::boolean IS TRUE OR
+    (m.banned_rights->>'EditRank')::boolean IS TRUE OR
+    (m.banned_rights->>'SendReactions')::boolean IS TRUE
 )`)
 	case domain.ChannelParticipantsSearch:
 		where = append(where, "m.status = 'active'")

@@ -61,6 +61,9 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 			return domain.SendChannelMessageResult{}, err
 		}
 	}
+	if blocksPlainChannelMessage(req, channel, member, fromBoostsApplied) {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+	}
 	if !canSendChannelMessageWithBoost(channel, member, fromBoostsApplied) {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
@@ -488,4 +491,20 @@ func canSendChannelMessageWithBoost(channel domain.Channel, member domain.Channe
 		return true
 	}
 	return channel.BoostsUnrestrict > 0 && selfBoostsApplied >= channel.BoostsUnrestrict
+}
+
+func blocksPlainChannelMessage(req domain.SendChannelMessageRequest, channel domain.Channel, member domain.ChannelMember, selfBoostsApplied int) bool {
+	if strings.TrimSpace(req.Message) == "" || req.Action != nil || !req.Media.IsZero() {
+		return false
+	}
+	if channel.Broadcast || member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin {
+		return false
+	}
+	if member.BannedRights.SendPlain {
+		return true
+	}
+	if !channel.DefaultBannedRights.SendPlain {
+		return false
+	}
+	return channel.BoostsUnrestrict == 0 || selfBoostsApplied < channel.BoostsUnrestrict
 }

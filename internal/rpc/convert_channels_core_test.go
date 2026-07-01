@@ -67,3 +67,37 @@ func TestTGChannelFullIncludesExportedInvite(t *testing.T) {
 		t.Fatalf("channelFull.exported_invite = %#v, want active permanent invite", invite)
 	}
 }
+
+func TestChannelBannedRightsRoundTripModernFields(t *testing.T) {
+	in := tg.ChatBannedRights{
+		ViewMessages:    true,
+		SendMessages:    true,
+		SendMedia:       true,
+		SendStickers:    true,
+		SendGifs:        true,
+		SendGames:       true,
+		SendInline:      true,
+		EmbedLinks:      true,
+		SendPolls:       true,
+		ChangeInfo:      true,
+		InviteUsers:     true,
+		PinMessages:     true,
+		ManageTopics:    true,
+		SendPhotos:      true,
+		SendVideos:      true,
+		SendRoundvideos: true,
+		SendAudios:      true,
+		SendVoices:      true,
+		SendDocs:        true,
+		SendPlain:       true,
+		EditRank:        true,
+		SendReactions:   true,
+		UntilDate:       12345,
+	}
+	domainRights := domainChannelBannedRights(in)
+	out := tgChatBannedRights(domainRights)
+
+	if out != in {
+		t.Fatalf("banned rights round-trip = %+v, want %+v", out, in)
+	}
+}
