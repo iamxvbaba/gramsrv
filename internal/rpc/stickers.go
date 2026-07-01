@@ -174,7 +174,7 @@ func (r *Router) onMessagesGetAllStickers(ctx context.Context, hash int64) (tg.M
 }
 
 func (r *Router) onMessagesReorderStickerSets(ctx context.Context, req *tg.MessagesReorderStickerSetsRequest) (bool, error) {
-	return true, nil
+	return tdesktop.ReorderStickerSets(req)
 }
 
 func (r *Router) onMessagesGetEmojiStickers(ctx context.Context, hash int64) (tg.MessagesAllStickersClass, error) {

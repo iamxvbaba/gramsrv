@@ -429,7 +429,7 @@ func channelReplyBelongsToRoot(msg domain.ChannelMessage, channelID int64, rootI
 	return msg.ReplyTo.TopMessageID == rootID || (msg.ReplyTo.TopMessageID == 0 && msg.ReplyTo.MessageID == rootID)
 }
 
-func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel) (*domain.MessageReply, error) {
+func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel, selfBoostsApplied int) (*domain.MessageReply, error) {
 	if req.ReplyTo == nil {
 		return nil, nil
 	}
@@ -452,7 +452,7 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 		if !ok || topic.Hidden {
 			return nil, domain.ErrReplyMessageIDInvalid
 		}
-		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID) {
+		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 			return nil, domain.ErrChannelWriteForbidden
 		}
 		reply := cloneMessageReply(req.ReplyTo)
@@ -478,7 +478,7 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	}
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, ok := s.topics[req.ChannelID][reply.TopMessageID]; ok && !topic.Hidden {
-			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID) {
+			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 				return nil, domain.ErrChannelWriteForbidden
 			}
 			reply.ForumTopic = true

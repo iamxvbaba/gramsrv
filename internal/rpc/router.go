@@ -128,7 +128,7 @@ type Router struct {
 	emojiStickers                *emojiStickerIndex
 	notifySettings               *notifySettingsCache
 	stickerCatalog               *stickerCatalogCache
-	transientPrivateBigReactions sync.Map
+	transientPrivateBigReactions transientPrivateBigReactionCache
 	accountSettings              *accountSettingsCache
 	// webPageResolveSem 是链接预览异步解析的并发信号量（有界）：发送后把 pending 占位
 	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调

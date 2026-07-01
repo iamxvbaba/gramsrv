@@ -92,6 +92,18 @@ func (s *ChannelStore) CreateForumTopic(ctx context.Context, req domain.CreateCh
 		s.mu.Unlock()
 		return domain.CreateChannelForumTopicResult{}, domain.ErrChannelWriteForbidden
 	}
+	selfBoostsApplied := 0
+	if channel.Megagroup {
+		now := req.Date
+		if now == 0 {
+			now = int(time.Now().Unix())
+		}
+		selfBoostsApplied = s.selfBoostsAppliedLocked(req.UserID, req.ChannelID, now)
+	}
+	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
+		s.mu.Unlock()
+		return domain.CreateChannelForumTopicResult{}, domain.ErrChannelWriteForbidden
+	}
 	if id, ok := s.randomToID[channelRandomKey{channelID: req.ChannelID, userID: req.UserID, randomID: req.RandomID}]; ok {
 		if topic, ok := s.topics[req.ChannelID][id]; ok {
 			msg, _ := s.findMessageLocked(req.ChannelID, id)
@@ -184,7 +196,15 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, domain.ErrMessageIDInvalid
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID) {
+	selfBoostsApplied := 0
+	if channel.Megagroup {
+		now := req.Date
+		if now == 0 {
+			now = int(time.Now().Unix())
+		}
+		selfBoostsApplied = s.selfBoostsAppliedLocked(req.UserID, req.ChannelID, now)
+	}
+	if !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 		s.mu.Unlock()
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelAdminRequired
 	}
@@ -361,7 +381,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(_ context.Context, req domain.Del
 	if !ok {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrMessageIDInvalid
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
@@ -613,7 +633,10 @@ func (s *ChannelStore) channelMessageRepliesLocked(viewerUserID, channelID int64
 	return &stats
 }
 
-func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64) bool {
+func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, selfBoostsApplied int) bool {
+	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
+		return false
+	}
 	if topic.CreatorUserID == userID {
 		return true
 	}
