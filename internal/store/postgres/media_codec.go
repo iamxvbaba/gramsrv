@@ -136,3 +136,14 @@ func decodeStickerPacks(s string) ([]domain.StickerPack, error) {
 	}
 	return out, nil
 }
+
+func decodeStickerKeywords(s string) ([]domain.StickerKeyword, error) {
+	if s == "" || s == "[]" || s == "null" {
+		return nil, nil
+	}
+	var out []domain.StickerKeyword
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

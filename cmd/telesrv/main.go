@@ -60,6 +60,7 @@ import (
 	"telesrv/internal/store/postgres"
 	"telesrv/internal/store/redisstore"
 	"telesrv/internal/turnsrv"
+	"telesrv/internal/web/stickerlinks"
 )
 
 func main() {
@@ -405,11 +406,22 @@ func run(logger *zap.Logger) error {
 	// userCache 与 users 服务共享同一实例：bot 元数据写入（version bump）后必须
 	// 失效缓存，否则 TTL 内 getUsers 回旧 first_name/旧 bot_info_version。
 	userCache := redisstore.NewUserCache(rdb, redisstore.DefaultUserCacheTTL)
+	accountService := account.NewService(passwordStore,
+		account.WithReactionSettings(passwordStore),
+		account.WithAccountSettings(passwordStore),
+		account.WithNotifySettings(passwordStore),
+		account.WithStickerCollections(passwordStore),
+		account.WithUserStickerSets(passwordStore),
+		account.WithSavedMusic(passwordStore),
+		account.WithBusinessAutomation(passwordStore),
+		account.WithUsers(userStore))
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
 		botsapp.WithBlockChecker(contactStore),
 		botsapp.WithPublicChannelUsernameResolver(channelStore),
-		botsapp.WithUserCache(userCache))
+		botsapp.WithUserCache(userCache),
+		botsapp.WithStickerSetCreator(filesService),
+		botsapp.WithUserStickerSets(accountService))
 	groupCallStore := postgres.NewGroupCallStore(pool)
 	groupCallsService := groupcallsapp.NewService(groupCallStore)
 	// 群通话媒体面：内嵌 pion SFU（M1+）。SFU 的 liveness reporter 把媒体面存活
@@ -517,14 +529,6 @@ func run(logger *zap.Logger) error {
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode, auth.WithLoginMessages(messageStore, dialogStore), auth.WithPasswords(passwordStore), auth.WithBotLogin(botStore), auth.WithPremiumGrant(cfg.PremiumGrantMonths))
-	accountService := account.NewService(passwordStore,
-		account.WithReactionSettings(passwordStore),
-		account.WithAccountSettings(passwordStore),
-		account.WithNotifySettings(passwordStore),
-		account.WithStickerCollections(passwordStore),
-		account.WithSavedMusic(passwordStore),
-		account.WithBusinessAutomation(passwordStore),
-		account.WithUsers(userStore))
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -624,6 +628,12 @@ func run(logger *zap.Logger) error {
 	}
 	if _, err := adminapi.Start(ctx, adminapi.Config{Addr: cfg.AdminAPIAddr, Token: cfg.AdminAPIToken}, adminService, logger.Named("adminapi")); err != nil {
 		return fmt.Errorf("start admin api: %w", err)
+	}
+	if _, err := stickerlinks.Start(ctx, stickerlinks.Config{
+		Addr:          cfg.StickerWebAddr,
+		PublicBaseURL: cfg.StickerWebPublicURL,
+	}, filesService, logger.Named("stickerlinks")); err != nil {
+		return fmt.Errorf("start sticker links: %w", err)
 	}
 
 	srv := mtprotoedge.New(mtprotoedge.Options{

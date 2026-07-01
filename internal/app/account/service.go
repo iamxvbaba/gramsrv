@@ -20,13 +20,14 @@ const (
 
 // Service 提供账号安全配置查询。
 type Service struct {
-	passwords  store.PasswordStore
-	reactions  store.AccountReactionSettingsStore
-	settings   store.AccountSettingsStore
-	notify     store.NotifySettingsStore
-	stickers   store.StickerCollectionStore
-	savedMusic store.SavedMusicStore
-	business   store.BusinessAutomationStore
+	passwords   store.PasswordStore
+	reactions   store.AccountReactionSettingsStore
+	settings    store.AccountSettingsStore
+	notify      store.NotifySettingsStore
+	stickers    store.StickerCollectionStore
+	stickerSets store.UserStickerSetStore
+	savedMusic  store.SavedMusicStore
+	business    store.BusinessAutomationStore
 	// users 仅用于登录邮箱的 phone→user 解析（sendCode 检测 / login-setup / reset 走 phone）。
 	users store.UserStore
 }
@@ -59,6 +60,13 @@ func WithNotifySettings(notify store.NotifySettingsStore) ServiceOption {
 func WithStickerCollections(stickers store.StickerCollectionStore) ServiceOption {
 	return func(s *Service) {
 		s.stickers = stickers
+	}
+}
+
+// WithUserStickerSets 注入账号级 installed sticker set 状态持久化。
+func WithUserStickerSets(stickerSets store.UserStickerSetStore) ServiceOption {
+	return func(s *Service) {
+		s.stickerSets = stickerSets
 	}
 }
 
@@ -747,6 +755,42 @@ func (s *Service) ClearStickerCollection(ctx context.Context, userID int64, kind
 		return nil
 	}
 	return s.stickers.ClearStickerCollection(ctx, userID, kind)
+}
+
+// InstallUserStickerSet 安装或重新激活一个贴纸集，安装态是 per-user 事实。
+func (s *Service) InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error {
+	if s == nil || s.stickerSets == nil || userID == 0 || setID == 0 {
+		return nil
+	}
+	return s.stickerSets.InstallUserStickerSet(ctx, userID, setID, kind, archived, installedDate)
+}
+
+func (s *Service) UninstallUserStickerSet(ctx context.Context, userID int64, setID int64) error {
+	if s == nil || s.stickerSets == nil || userID == 0 || setID == 0 {
+		return nil
+	}
+	return s.stickerSets.UninstallUserStickerSet(ctx, userID, setID)
+}
+
+func (s *Service) SetUserStickerSetArchived(ctx context.Context, userID int64, setID int64, archived bool, now int) error {
+	if s == nil || s.stickerSets == nil || userID == 0 || setID == 0 {
+		return nil
+	}
+	return s.stickerSets.SetUserStickerSetArchived(ctx, userID, setID, archived, now)
+}
+
+func (s *Service) ReorderUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, order []int64, now int) error {
+	if s == nil || s.stickerSets == nil || userID == 0 || len(order) == 0 {
+		return nil
+	}
+	return s.stickerSets.ReorderUserStickerSets(ctx, userID, kind, order, now)
+}
+
+func (s *Service) ListUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, archived *bool, offsetID int64, limit int) ([]domain.UserStickerSet, int, error) {
+	if s == nil || s.stickerSets == nil || userID == 0 {
+		return nil, 0, nil
+	}
+	return s.stickerSets.ListUserStickerSets(ctx, userID, kind, archived, offsetID, limit)
 }
 
 func normalizeReactionSettings(settings domain.AccountReactionSettings) domain.AccountReactionSettings {

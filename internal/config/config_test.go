@@ -20,13 +20,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 }
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
-	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
+	t.Setenv("TELESRV_ADVERTISE_IP", "192.0.2.10")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AdvertiseIP != "203.0.113.10" {
+	if cfg.AdvertiseIP != "192.0.2.10" {
 		t.Fatalf("AdvertiseIP = %q, want explicit env", cfg.AdvertiseIP)
 	}
 }
@@ -107,6 +107,8 @@ TELESRV_MAPBOX_TOKEN="file-token"
 TELESRV_POSTGRES_MAX_CONNS=77
 TELESRV_WEBSOCKET_ALLOWED_ORIGINS=https://one.example, https://two.example
 TELESRV_CALL_RING_TIMEOUT=2m
+TELESRV_STICKER_WEB_ADDR=127.0.0.1:2401
+TELESRV_STICKER_WEB_PUBLIC_URL=https://packs.example.test
 `)
 	t.Setenv("TELESRV_CONFIG", path)
 
@@ -125,6 +127,12 @@ TELESRV_CALL_RING_TIMEOUT=2m
 	}
 	if cfg.CallRingTimeout != 2*time.Minute {
 		t.Fatalf("CallRingTimeout = %v, want 2m", cfg.CallRingTimeout)
+	}
+	if cfg.StickerWebAddr != "127.0.0.1:2401" {
+		t.Fatalf("StickerWebAddr = %q, want 127.0.0.1:2401", cfg.StickerWebAddr)
+	}
+	if cfg.StickerWebPublicURL != "https://packs.example.test" {
+		t.Fatalf("StickerWebPublicURL = %q, want https://packs.example.test", cfg.StickerWebPublicURL)
 	}
 }
 

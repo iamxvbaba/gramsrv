@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"telesrv/internal/domain"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestBlobMetaCacheGetPutEvict(t *testing.T) {
@@ -104,6 +107,58 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	}
 	if blobs.getRangeCalls != 1 {
 		t.Errorf("getRangeCalls = %d, want 1 (byte cache hit)", blobs.getRangeCalls)
+	}
+}
+
+func TestGetFileLogsCacheHitMiss(t *testing.T) {
+	ctx := context.Background()
+	local, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	objectKey, err := local.Put(ctx, []byte("0123456789"))
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	media := newFakeMediaStore()
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:log", ObjectKey: objectKey, Size: 10, MimeType: "application/octet-stream"}); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	blobs := &countingBlobBackend{BlobBackend: local}
+	core, logs := observer.New(zap.InfoLevel)
+	svc := NewService(media, blobs, 2, WithLogger(zap.New(core)))
+
+	if _, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:log", Offset: 0, Limit: 5}); err != nil || !ok {
+		t.Fatalf("first getfile ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:log", Offset: 5, Limit: 5}); err != nil || !ok {
+		t.Fatalf("second getfile ok=%v err=%v", ok, err)
+	}
+
+	entries := logs.FilterMessage("upload.getFile cache").All()
+	if len(entries) != 2 {
+		t.Fatalf("cache log entries = %d, want 2", len(entries))
+	}
+	first := entries[0].ContextMap()
+	if first["source"] != "backend_fill_byte_cache" ||
+		first["meta_cache_hit"] != false ||
+		first["meta_cache_filled"] != true ||
+		first["byte_cache_hit"] != false ||
+		first["byte_cache_filled"] != true ||
+		first["backend_read"] != true ||
+		first["returned_bytes"] != int64(5) {
+		t.Fatalf("first cache log = %#v, want backend fill miss", first)
+	}
+	second := entries[1].ContextMap()
+	if second["source"] != "byte_cache" ||
+		second["meta_cache_hit"] != true ||
+		second["byte_cache_hit"] != true ||
+		second["backend_read"] != false ||
+		second["returned_bytes"] != int64(5) {
+		t.Fatalf("second cache log = %#v, want byte cache hit", second)
+	}
+	if blobs.getRangeCalls != 1 {
+		t.Fatalf("GetRange calls = %d, want only first miss to read backend", blobs.getRangeCalls)
 	}
 }
 

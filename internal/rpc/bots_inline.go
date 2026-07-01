@@ -20,27 +20,27 @@ const (
 	botInlineCacheMaxEntries = 256
 )
 
-func botInlineDisabledErr() error       { return tgerr.New(400, "BOT_INLINE_DISABLED") }
-func botInlineGeoNotAllowedErr() error  { return tgerr.New(400, "BOT_INLINE_GEO_NOT_ALLOWED") }
-func botWebviewDisabledErr() error      { return tgerr.New(400, "BOT_WEBVIEW_DISABLED") }
-func queryIDInvalidErr() error          { return tgerr.New(400, "QUERY_ID_INVALID") }
-func queryIDEmptyErr() error            { return tgerr.New(400, "QUERY_ID_EMPTY") }
-func resultIDEmptyErr() error           { return tgerr.New(400, "RESULT_ID_EMPTY") }
-func resultIDInvalidErr() error         { return tgerr.New(400, "RESULT_ID_INVALID") }
-func resultIDDuplicateErr() error       { return tgerr.New(400, "RESULT_ID_DUPLICATE") }
-func resultTypeInvalidErr() error       { return tgerr.New(400, "RESULT_TYPE_INVALID") }
-func resultsTooMuchErr() error          { return tgerr.New(400, "RESULTS_TOO_MUCH") }
-func sendMessageTypeInvalidErr() error  { return tgerr.New(400, "SEND_MESSAGE_TYPE_INVALID") }
-func nextOffsetInvalidErr() error       { return tgerr.New(400, "NEXT_OFFSET_INVALID") }
-func startParamEmptyErr() error         { return tgerr.New(400, "START_PARAM_EMPTY") }
-func switchPmTextEmptyErr() error       { return tgerr.New(400, "SWITCH_PM_TEXT_EMPTY") }
-func switchWebviewInvalidErr() error    { return tgerr.New(400, "SWITCH_WEBVIEW_URL_INVALID") }
-func inlineResultExpiredErr() error     { return tgerr.New(400, "INLINE_RESULT_EXPIRED") }
-func webDocumentInvalidErr() error      { return tgerr.New(400, "WEBDOCUMENT_INVALID") }
-func webDocumentMimeInvalidErr() error  { return tgerr.New(400, "WEBDOCUMENT_MIME_INVALID") }
-func webDocumentSizeTooBigErr() error   { return tgerr.New(400, "WEBDOCUMENT_SIZE_TOO_BIG") }
-func webDocumentURLEmptyErr() error     { return tgerr.New(400, "WEBDOCUMENT_URL_EMPTY") }
-func webDocumentURLInvalidErr() error   { return tgerr.New(400, "WEBDOCUMENT_URL_INVALID") }
+func botInlineDisabledErr() error      { return tgerr.New(400, "BOT_INLINE_DISABLED") }
+func botInlineGeoNotAllowedErr() error { return tgerr.New(400, "BOT_INLINE_GEO_NOT_ALLOWED") }
+func botWebviewDisabledErr() error     { return tgerr.New(400, "BOT_WEBVIEW_DISABLED") }
+func queryIDInvalidErr() error         { return tgerr.New(400, "QUERY_ID_INVALID") }
+func queryIDEmptyErr() error           { return tgerr.New(400, "QUERY_ID_EMPTY") }
+func resultIDEmptyErr() error          { return tgerr.New(400, "RESULT_ID_EMPTY") }
+func resultIDInvalidErr() error        { return tgerr.New(400, "RESULT_ID_INVALID") }
+func resultIDDuplicateErr() error      { return tgerr.New(400, "RESULT_ID_DUPLICATE") }
+func resultTypeInvalidErr() error      { return tgerr.New(400, "RESULT_TYPE_INVALID") }
+func resultsTooMuchErr() error         { return tgerr.New(400, "RESULTS_TOO_MUCH") }
+func sendMessageTypeInvalidErr() error { return tgerr.New(400, "SEND_MESSAGE_TYPE_INVALID") }
+func nextOffsetInvalidErr() error      { return tgerr.New(400, "NEXT_OFFSET_INVALID") }
+func startParamEmptyErr() error        { return tgerr.New(400, "START_PARAM_EMPTY") }
+func switchPmTextEmptyErr() error      { return tgerr.New(400, "SWITCH_PM_TEXT_EMPTY") }
+func switchWebviewInvalidErr() error   { return tgerr.New(400, "SWITCH_WEBVIEW_URL_INVALID") }
+func inlineResultExpiredErr() error    { return tgerr.New(400, "INLINE_RESULT_EXPIRED") }
+func webDocumentInvalidErr() error     { return tgerr.New(400, "WEBDOCUMENT_INVALID") }
+func webDocumentMimeInvalidErr() error { return tgerr.New(400, "WEBDOCUMENT_MIME_INVALID") }
+func webDocumentSizeTooBigErr() error  { return tgerr.New(400, "WEBDOCUMENT_SIZE_TOO_BIG") }
+func webDocumentURLEmptyErr() error    { return tgerr.New(400, "WEBDOCUMENT_URL_EMPTY") }
+func webDocumentURLInvalidErr() error  { return tgerr.New(400, "WEBDOCUMENT_URL_INVALID") }
 
 func (r *Router) onMessagesGetInlineBotResults(ctx context.Context, req *tg.MessagesGetInlineBotResultsRequest) (*tg.MessagesBotResults, error) {
 	userID, _, err := r.currentUserID(ctx)
@@ -1132,7 +1132,7 @@ func tgInlineWebDocument(in domain.BotInlineWebDocument) tg.WebDocumentClass {
 		AccessHash: in.AccessHash,
 		Size:       in.Size,
 		MimeType:   in.MimeType,
-		Attributes: tgDocumentAttributes(in.Attributes),
+		Attributes: tgDocumentAttributes(in.MimeType, in.Attributes),
 	}
 }
 

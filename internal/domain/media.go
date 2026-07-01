@@ -1,5 +1,10 @@
 package domain
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 // 本文件定义媒体相关的业务值对象（文档、照片、贴纸集、可用 reaction、消息媒体）。
 // 这些类型完全不依赖 tg.*；rpc 层负责 domain↔tg 转换。
 //
@@ -236,6 +241,91 @@ func (d Document) IsSticker() bool {
 		}
 	}
 	return false
+}
+
+func (d Document) IsCustomEmoji() bool {
+	for _, attr := range d.Attributes {
+		if attr.Kind == DocAttrCustomEmoji {
+			return true
+		}
+	}
+	return false
+}
+
+func (d Document) IsStickerLike() bool {
+	return d.IsSticker() || d.IsCustomEmoji()
+}
+
+// MaxStickerMaterialDocumentSize bounds uploaded documents that can be promoted
+// into user-created sticker/custom emoji sets without server-side transcoding.
+const MaxStickerMaterialDocumentSize int64 = 20 << 20
+
+// IsStickerSetMaterial reports whether an existing Document can be used as an
+// input item for stickers.createStickerSet/stickers.addStickerToSet. Already
+// tagged sticker/custom emoji documents always pass. Untagged TGS/WebP/Lottie
+// JSON uploads can be shaped later from their MIME/body; video uploads must
+// already carry a video attribute because this layer does not transcode or
+// probe containers.
+func (d Document) IsStickerSetMaterial() bool {
+	if d.IsStickerLike() {
+		return true
+	}
+	if d.ID == 0 || d.AccessHash == 0 || d.Size > MaxStickerMaterialDocumentSize {
+		return false
+	}
+	switch d.stickerMaterialMimeOrExt() {
+	case "application/x-tgsticker", "image/webp", "application/json":
+		return true
+	case "video/webm", "video/mp4":
+		return d.hasDocumentAttribute(DocAttrVideo)
+	default:
+		return false
+	}
+}
+
+func (d Document) hasDocumentAttribute(kind DocumentAttributeKind) bool {
+	for _, attr := range d.Attributes {
+		if attr.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// StickerSetMaterialMime returns the normalized sticker material MIME inferred
+// from the document MIME type or a filename attribute.
+func (d Document) StickerSetMaterialMime() string {
+	return d.stickerMaterialMimeOrExt()
+}
+
+func (d Document) stickerMaterialMimeOrExt() string {
+	mimeType := strings.ToLower(strings.TrimSpace(d.MimeType))
+	switch mimeType {
+	case "application/x-tgsticker", "image/webp", "video/webm", "video/mp4",
+		"application/json", "application/lottie+json", "text/json":
+		if mimeType == "application/lottie+json" || mimeType == "text/json" {
+			return "application/json"
+		}
+		return mimeType
+	}
+	for _, attr := range d.Attributes {
+		if attr.Kind != DocAttrFilename {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(strings.TrimSpace(attr.FileName))) {
+		case ".tgs":
+			return "application/x-tgsticker"
+		case ".webp":
+			return "image/webp"
+		case ".json":
+			return "application/json"
+		case ".webm":
+			return "video/webm"
+		case ".mp4":
+			return "video/mp4"
+		}
+	}
+	return mimeType
 }
 
 // IsGif reports whether the document is a savable GIF (documentAttributeAnimated).
@@ -558,6 +648,11 @@ type StickerPack struct {
 	DocumentIDs []int64 `json:"document_ids"`
 }
 
+type StickerKeyword struct {
+	DocumentID int64    `json:"document_id"`
+	Keywords   []string `json:"keywords"`
+}
+
 const (
 	// StickerSetSystemKeyEmojiDefaultStatuses 是 inputStickerSetEmojiDefaultStatuses
 	// 对应的系统集标识：premium 用户 emoji status 选择器的"默认状态"主体集
@@ -582,30 +677,65 @@ const (
 
 // StickerSet 是贴纸/自定义 emoji 集的元数据 + 有序文档 id。
 type StickerSet struct {
-	ID              int64          `json:"id"`
-	AccessHash      int64          `json:"access_hash"`
-	ShortName       string         `json:"short_name"`
-	Title           string         `json:"title"`
-	Count           int            `json:"count"`
-	Hash            int            `json:"hash"`
-	Kind            StickerSetKind `json:"set_kind"`
-	Official        bool           `json:"official,omitempty"`
-	Animated        bool           `json:"animated,omitempty"`
-	Videos          bool           `json:"videos,omitempty"`
-	Emojis          bool           `json:"emojis,omitempty"`
-	Masks           bool           `json:"masks,omitempty"`
-	Installed       bool           `json:"installed,omitempty"`
-	Archived        bool           `json:"archived,omitempty"`
-	InstalledDate   int            `json:"installed_date,omitempty"`
-	ThumbDocumentID int64          `json:"thumb_document_id,omitempty"`
-	Thumbs          []PhotoSize    `json:"thumbs,omitempty"`
-	ThumbDCID       int            `json:"thumb_dc_id,omitempty"`
-	ThumbVersion    int            `json:"thumb_version,omitempty"`
-	DocumentIDs     []int64        `json:"document_ids,omitempty"`
-	Packs           []StickerPack  `json:"packs,omitempty"`
-	SortOrder       int            `json:"sort_order,omitempty"`
+	ID              int64            `json:"id"`
+	AccessHash      int64            `json:"access_hash"`
+	ShortName       string           `json:"short_name"`
+	Title           string           `json:"title"`
+	Count           int              `json:"count"`
+	Hash            int              `json:"hash"`
+	Kind            StickerSetKind   `json:"set_kind"`
+	Official        bool             `json:"official,omitempty"`
+	Animated        bool             `json:"animated,omitempty"`
+	Videos          bool             `json:"videos,omitempty"`
+	Emojis          bool             `json:"emojis,omitempty"`
+	Masks           bool             `json:"masks,omitempty"`
+	TextColor       bool             `json:"text_color,omitempty"`
+	Creator         bool             `json:"creator,omitempty"`
+	CreatorUserID   int64            `json:"creator_user_id,omitempty"`
+	Installed       bool             `json:"installed,omitempty"`
+	Archived        bool             `json:"archived,omitempty"`
+	Deleted         bool             `json:"deleted,omitempty"`
+	InstalledDate   int              `json:"installed_date,omitempty"`
+	ThumbDocumentID int64            `json:"thumb_document_id,omitempty"`
+	Thumbs          []PhotoSize      `json:"thumbs,omitempty"`
+	ThumbDCID       int              `json:"thumb_dc_id,omitempty"`
+	ThumbVersion    int              `json:"thumb_version,omitempty"`
+	DocumentIDs     []int64          `json:"document_ids,omitempty"`
+	Packs           []StickerPack    `json:"packs,omitempty"`
+	Keywords        []StickerKeyword `json:"keywords,omitempty"`
+	SortOrder       int              `json:"sort_order,omitempty"`
+	Software        string           `json:"software,omitempty"`
 	// SystemKey 是 TDesktop 系统集的稳定标识（如 "animated_emoji"、"dice:🎲"），用于 InputStickerSet* 路由。
 	SystemKey string `json:"system_key,omitempty"`
+}
+
+const (
+	MinStickerSetShortNameLen = 5
+	MaxStickerSetShortNameLen = 32
+	MaxStickerSetTitleLen     = 64
+	MaxStickerSetItems        = 120
+	MaxStickerSetKeywords     = 20
+	MaxStickerSetKeywordLen   = 32
+)
+
+type StickerSetItemInput struct {
+	DocumentID         int64
+	DocumentAccessHash int64
+	Emoji              string
+	Keywords           string
+}
+
+type CreateStickerSetRequest struct {
+	CreatorUserID   int64
+	Title           string
+	ShortName       string
+	Kind            StickerSetKind
+	TextColor       bool
+	ThumbDocumentID int64
+	ThumbAccessHash int64
+	Items           []StickerSetItemInput
+	Software        string
+	Date            int
 }
 
 // ProfilePhotoKind distinguishes a user's real profile photo from the fallback

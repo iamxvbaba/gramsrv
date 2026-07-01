@@ -49,6 +49,17 @@ type StickerCollectionStore interface {
 	ClearStickerCollection(ctx context.Context, userID int64, kind domain.StickerCollectionKind) error
 }
 
+// UserStickerSetStore persists per-user installed sticker set state.
+// Sticker set metadata remains in MediaStore; this store only owns account-local
+// installation/archive/order facts.
+type UserStickerSetStore interface {
+	InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error
+	UninstallUserStickerSet(ctx context.Context, userID int64, setID int64) error
+	SetUserStickerSetArchived(ctx context.Context, userID int64, setID int64, archived bool, now int) error
+	ReorderUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, order []int64, now int) error
+	ListUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, archived *bool, offsetID int64, limit int) ([]domain.UserStickerSet, int, error)
+}
+
 // SavedMusicStore persists one account's ordered profile music list.
 type SavedMusicStore interface {
 	SaveMusic(ctx context.Context, req domain.SaveMusicRequest) error

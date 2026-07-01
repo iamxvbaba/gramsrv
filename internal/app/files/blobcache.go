@@ -70,6 +70,19 @@ func (c *stickerSetNegativeCache) put(ref domain.StickerSetRef) {
 	c.entries[key] = time.Now().Add(c.ttl)
 }
 
+func (c *stickerSetNegativeCache) delete(refs ...domain.StickerSetRef) {
+	if c == nil || len(refs) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, ref := range refs {
+		if key := stickerSetRefKey(ref); key != "" {
+			delete(c.entries, key)
+		}
+	}
+}
+
 // blobMetaCache 是 location_key → FileBlob 元数据的进程内 LRU，用于消除 upload.getFile
 // 每个 chunk 一次 GetFileBlob 的 PG 往返（一个文件按 ≤512KB/1MB 分多次 getFile，热门贴纸/
 // reaction/头像更被大量用户重复拉）。
@@ -266,11 +279,30 @@ func (c *stickerSetFullCache) put(set domain.StickerSet, docs []domain.Document)
 	}
 }
 
+func (c *stickerSetFullCache) delete(set domain.StickerSet) {
+	if c == nil || set.ID == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.byID, set.ID)
+	if set.ShortName != "" {
+		delete(c.byShort, set.ShortName)
+	}
+	if set.SystemKey != "" {
+		delete(c.bySystem, set.SystemKey)
+	}
+}
+
 func copyStickerSet(set domain.StickerSet) domain.StickerSet {
 	set.DocumentIDs = append([]int64(nil), set.DocumentIDs...)
 	set.Packs = append([]domain.StickerPack(nil), set.Packs...)
 	for i := range set.Packs {
 		set.Packs[i].DocumentIDs = append([]int64(nil), set.Packs[i].DocumentIDs...)
+	}
+	set.Keywords = append([]domain.StickerKeyword(nil), set.Keywords...)
+	for i := range set.Keywords {
+		set.Keywords[i].Keywords = append([]string(nil), set.Keywords[i].Keywords...)
 	}
 	set.Thumbs = copyPhotoSizes(set.Thumbs)
 	return set

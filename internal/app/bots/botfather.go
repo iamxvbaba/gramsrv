@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -69,47 +70,61 @@ type botReply struct {
 
 // HandlesBot 报告该收件人是否为内置应答 bot（messages.BotResponder 实现）。
 func (s *Service) HandlesBot(botUserID int64) bool {
-	return s != nil && botUserID == domain.BotFatherUserID
+	return s != nil && (botUserID == domain.BotFatherUserID || botUserID == domain.StickersBotUserID)
 }
 
 // OnPrivateMessage 处理投递给内置 bot 的私聊消息（messages.BotResponder 实现）。
 // msg 是 bot 视角的收件 box 行。回复异步生成（不占用户 sendMessage 的 RPC
 // goroutine——官方 bot 回复本就异步到达），失败只记日志，绝不影响用户消息本身。
 func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message) {
-	if s == nil || s.messages == nil || botUserID != domain.BotFatherUserID {
+	if s == nil || s.messages == nil || !s.HandlesBot(botUserID) {
 		return
 	}
 	userID := msg.From.ID
 	if msg.From.Type != domain.PeerTypeUser || userID == 0 || userID == botUserID {
 		return
 	}
-	go s.respondAsBotFather(userID, msg.Body)
+	switch botUserID {
+	case domain.BotFatherUserID:
+		go s.respondAsBotFather(userID, msg.Body)
+	case domain.StickersBotUserID:
+		go s.respondAsStickers(userID, msg)
+	}
 }
 
 // respondAsBotFather 生成并写入 BotFather 回复（OnPrivateMessage 在 goroutine 内调用）。
 // 按用户取条带锁串行：状态机 Get→modify→Upsert/Delete 的 RMW 因此原子、回复保序，
 // 不同用户并发不受影响。ctx 用 Background（脱离已返回的用户 RPC），限较长超时。
 func (s *Service) respondAsBotFather(userID int64, body string) {
-	mu := &s.replyLocks[uint64(userID)%replyLockStripes]
+	mu := s.serviceBotReplyLock(domain.BotFatherUserID, userID)
 	mu.Lock()
 	defer mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	reply := s.handleBotFather(ctx, userID, body)
-	if reply.Text == "" {
+	s.sendServiceBotReply(ctx, domain.BotFatherUserID, userID, reply)
+}
+
+func (s *Service) serviceBotReplyLock(botUserID, userID int64) *sync.Mutex {
+	key := uint64(userID) ^ (uint64(botUserID) * 11400714819323198485)
+	return &s.replyLocks[key%replyLockStripes]
+}
+
+func (s *Service) sendServiceBotReply(ctx context.Context, botUserID, userID int64, reply botReply) {
+	if s == nil || s.messages == nil || reply.Text == "" {
 		return
 	}
 	blocked := false
 	if s.blocker != nil {
-		if b, err := s.blocker.IsBlocked(ctx, userID, domain.BotFatherUserID); err != nil {
-			s.log.Warn("botfather: check block", zap.Int64("user_id", userID), zap.Error(err))
+		if b, err := s.blocker.IsBlocked(ctx, userID, botUserID); err != nil {
+			s.log.Warn("service bot: check block", zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
 		} else {
 			blocked = b
 		}
 	}
 	if _, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
-		SenderUserID:     domain.BotFatherUserID,
+		SenderUserID:     botUserID,
 		RecipientUserID:  userID,
 		RandomID:         s.botReplyRandomID(),
 		Message:          reply.Text,
@@ -117,12 +132,12 @@ func (s *Service) respondAsBotFather(userID int64, body string) {
 		Date:             int(s.now().Unix()),
 		RecipientBlocked: blocked,
 	}); err != nil {
-		s.log.Error("botfather: send reply", zap.Int64("user_id", userID), zap.Error(err))
+		s.log.Error("service bot: send reply", zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
 	}
 }
 
 // botReplyRandomID 为服务端回复构造非零幂等键（(sender, random_id) 唯一索引）。
-// 所有 BotFather 回复共享 sender=BotFather 一个命名空间，必须全局唯一——用
+// 所有服务 bot 回复按各自 sender 命名空间唯一——用
 // crypto/rand 取 64 位随机数（碰撞概率可忽略），熵源失败时退化为纳秒+单调序列。
 func (s *Service) botReplyRandomID() int64 {
 	if v, err := randomInt64(); err == nil && v != 0 {

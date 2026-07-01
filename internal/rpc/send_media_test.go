@@ -3,6 +3,8 @@ package rpc
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/gotd/td/clock"
@@ -87,6 +89,9 @@ func (f *fakeFiles) GetDocuments(_ context.Context, ids []int64) ([]domain.Docum
 func (f *fakeFiles) ResolveStickerSet(_ context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
 	for _, sets := range f.sets {
 		for _, set := range sets {
+			if set.Deleted {
+				continue
+			}
 			match := false
 			switch ref.Kind {
 			case domain.StickerSetRefByID:
@@ -113,6 +118,411 @@ func (f *fakeFiles) ResolveStickerSet(_ context.Context, ref domain.StickerSetRe
 func (f *fakeFiles) ListStickerSets(_ context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
 	sets := f.sets[kind]
 	return append([]domain.StickerSet(nil), sets...), nil
+}
+func (f *fakeFiles) CheckStickerSetShortName(_ context.Context, shortName string) (bool, error) {
+	if !validTestStickerShortName(shortName) {
+		return false, domain.ErrStickerSetShortNameInvalid
+	}
+	for _, sets := range f.sets {
+		for _, set := range sets {
+			if set.ShortName != "" && strings.EqualFold(set.ShortName, shortName) && !set.Deleted {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+func validTestStickerShortName(shortName string) bool {
+	shortName = strings.ToLower(strings.TrimSpace(shortName))
+	if len(shortName) < domain.MinStickerSetShortNameLen || len(shortName) > domain.MaxStickerSetShortNameLen {
+		return false
+	}
+	for i := 0; i < len(shortName); i++ {
+		ch := shortName[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9' && i > 0) || (ch == '_' && i > 0 && i < len(shortName)-1) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+func (f *fakeFiles) SuggestStickerSetShortName(ctx context.Context, title string, userID int64) (string, error) {
+	base := strings.ToLower(strings.TrimSpace(title))
+	base = strings.ReplaceAll(base, " ", "_")
+	if base == "" {
+		base = "stickers"
+	}
+	if len(base) < domain.MinStickerSetShortNameLen {
+		base += "_pack"
+	}
+	if len(base) > domain.MaxStickerSetShortNameLen {
+		base = strings.Trim(base[:domain.MaxStickerSetShortNameLen], "_")
+	}
+	candidates := []string{base, base + "_pack", base + "_2"}
+	for _, c := range candidates {
+		if ok, err := f.CheckStickerSetShortName(ctx, c); err != nil {
+			continue
+		} else if ok {
+			return c, nil
+		}
+	}
+	return "", domain.ErrStickerSetShortNameOccupied
+}
+func (f *fakeFiles) CreateStickerSet(_ context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
+	if f.sets == nil {
+		f.sets = map[domain.StickerSetKind][]domain.StickerSet{}
+	}
+	if f.docs == nil {
+		f.docs = map[int64]domain.Document{}
+	}
+	if strings.TrimSpace(req.Title) == "" {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetTitleInvalid
+	}
+	if len(req.Items) == 0 {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetEmpty
+	}
+	shortName := strings.ToLower(strings.TrimSpace(req.ShortName))
+	if shortName == "" {
+		shortName = "created_pack"
+	}
+	if ok, err := f.CheckStickerSetShortName(context.Background(), shortName); err != nil {
+		return domain.StickerSet{}, nil, err
+	} else if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetShortNameOccupied
+	}
+	kind := req.Kind
+	if kind == "" {
+		kind = domain.StickerSetKindStickers
+	}
+	docIDs := make([]int64, 0, len(req.Items))
+	packs := []domain.StickerPack{}
+	keywords := []domain.StickerKeyword{}
+	docs := make([]domain.Document, 0, len(req.Items))
+	for _, item := range req.Items {
+		doc, ok := f.docs[item.DocumentID]
+		if !ok || doc.AccessHash != item.DocumentAccessHash || !doc.IsStickerSetMaterial() {
+			return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+		}
+		if strings.TrimSpace(item.Emoji) == "" {
+			return domain.StickerSet{}, nil, domain.ErrStickerSetEmojiInvalid
+		}
+		docIDs = append(docIDs, item.DocumentID)
+		packs = append(packs, domain.StickerPack{Emoticon: item.Emoji, DocumentIDs: []int64{item.DocumentID}})
+		if item.Keywords != "" {
+			keywords = append(keywords, domain.StickerKeyword{DocumentID: item.DocumentID, Keywords: []string{strings.TrimSpace(item.Keywords)}})
+		}
+		doc.Attributes = []domain.DocumentAttribute{{Kind: domain.DocAttrSticker, Alt: item.Emoji, StickerSetID: 9000, StickerSetAccessHash: 9001}}
+		if kind == domain.StickerSetKindEmoji {
+			doc.Attributes[0].Kind = domain.DocAttrCustomEmoji
+			doc.Attributes[0].TextColor = req.TextColor
+		}
+		f.docs[item.DocumentID] = doc
+		docs = append(docs, doc)
+	}
+	set := domain.StickerSet{
+		ID:            9000 + int64(len(f.sets[kind])),
+		AccessHash:    9001 + int64(len(f.sets[kind])),
+		ShortName:     shortName,
+		Title:         req.Title,
+		Kind:          kind,
+		Emojis:        kind == domain.StickerSetKindEmoji,
+		Masks:         kind == domain.StickerSetKindMasks,
+		TextColor:     kind == domain.StickerSetKindEmoji && req.TextColor,
+		Creator:       true,
+		CreatorUserID: req.CreatorUserID,
+		Count:         len(docIDs),
+		Hash:          77 + len(f.sets[kind]),
+		DocumentIDs:   docIDs,
+		Packs:         packs,
+		Keywords:      keywords,
+	}
+	f.sets[kind] = append(f.sets[kind], set)
+	return set, docs, nil
+}
+func (f *fakeFiles) ListCreatedStickerSets(_ context.Context, userID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error) {
+	var all []domain.StickerSet
+	for _, sets := range f.sets {
+		for _, set := range sets {
+			if set.CreatorUserID == userID && !set.Deleted {
+				set.Creator = true
+				all = append(all, set)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
+	total := len(all)
+	if offsetID != 0 {
+		filtered := all[:0]
+		for _, set := range all {
+			if set.ID < offsetID {
+				filtered = append(filtered, set)
+			}
+		}
+		all = filtered
+	}
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, total, nil
+}
+func (f *fakeFiles) AddStickerToSet(_ context.Context, actorUserID int64, ref domain.StickerSetRef, item domain.StickerSetItemInput) (domain.StickerSet, []domain.Document, error) {
+	kind, idx, ok := f.fakeStickerSetIndex(ref)
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetInvalid
+	}
+	set := f.sets[kind][idx]
+	if set.CreatorUserID != actorUserID {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetNotOwned
+	}
+	doc, ok := f.docs[item.DocumentID]
+	if !ok || doc.AccessHash != item.DocumentAccessHash || !doc.IsStickerSetMaterial() {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	if setID, _, ok := doc.StickerSetRef(); ok && setID != 0 && setID != set.ID {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	if fakeContainsInt64(set.DocumentIDs, doc.ID) {
+		return set, f.fakeStickerSetDocs(set), nil
+	}
+	emoji := strings.TrimSpace(item.Emoji)
+	if emoji == "" {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetEmojiInvalid
+	}
+	doc = fakeAttachStickerSet(doc, set, emoji)
+	f.docs[doc.ID] = doc
+	set.DocumentIDs = append(set.DocumentIDs, doc.ID)
+	set.Count = len(set.DocumentIDs)
+	set.Packs = fakeAddStickerPackDoc(set.Packs, emoji, doc.ID)
+	if kw := strings.TrimSpace(item.Keywords); kw != "" {
+		set.Keywords = fakeUpsertStickerKeyword(set.Keywords, domain.StickerKeyword{DocumentID: doc.ID, Keywords: []string{kw}})
+	}
+	set.Hash++
+	f.sets[kind][idx] = set
+	return set, f.fakeStickerSetDocs(set), nil
+}
+func (f *fakeFiles) RemoveStickerFromSet(_ context.Context, actorUserID int64, documentID int64, accessHash int64) (domain.StickerSet, []domain.Document, error) {
+	doc, ok := f.docs[documentID]
+	if !ok || doc.AccessHash != accessHash || !doc.IsStickerLike() {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	setID, setAccessHash, ok := doc.StickerSetRef()
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	kind, idx, ok := f.fakeStickerSetIndex(domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: setID, AccessHash: setAccessHash})
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetInvalid
+	}
+	set := f.sets[kind][idx]
+	if set.CreatorUserID != actorUserID {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetNotOwned
+	}
+	pos := fakeIndexInt64(set.DocumentIDs, documentID)
+	if pos < 0 {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	set.DocumentIDs = append(append([]int64(nil), set.DocumentIDs[:pos]...), set.DocumentIDs[pos+1:]...)
+	set.Count = len(set.DocumentIDs)
+	set.Packs = fakeRemoveStickerPackDoc(set.Packs, documentID)
+	set.Keywords = fakeRemoveStickerKeyword(set.Keywords, documentID)
+	set.Hash++
+	doc = fakeDetachStickerSet(doc)
+	f.docs[doc.ID] = doc
+	f.sets[kind][idx] = set
+	return set, f.fakeStickerSetDocs(set), nil
+}
+func (f *fakeFiles) ChangeStickerPosition(_ context.Context, actorUserID int64, documentID int64, accessHash int64, position int) (domain.StickerSet, []domain.Document, error) {
+	doc, ok := f.docs[documentID]
+	if !ok || doc.AccessHash != accessHash || !doc.IsStickerLike() {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	setID, setAccessHash, ok := doc.StickerSetRef()
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	kind, idx, ok := f.fakeStickerSetIndex(domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: setID, AccessHash: setAccessHash})
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetInvalid
+	}
+	set := f.sets[kind][idx]
+	if set.CreatorUserID != actorUserID {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetNotOwned
+	}
+	from := fakeIndexInt64(set.DocumentIDs, documentID)
+	if from < 0 {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	}
+	if position < 0 || position >= len(set.DocumentIDs) {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetPositionInvalid
+	}
+	set.DocumentIDs = fakeMoveInt64(set.DocumentIDs, from, position)
+	set.Hash++
+	f.sets[kind][idx] = set
+	return set, f.fakeStickerSetDocs(set), nil
+}
+func (f *fakeFiles) RenameStickerSet(_ context.Context, actorUserID int64, ref domain.StickerSetRef, title string) (domain.StickerSet, []domain.Document, error) {
+	kind, idx, ok := f.fakeStickerSetIndex(ref)
+	if !ok {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetInvalid
+	}
+	set := f.sets[kind][idx]
+	if set.CreatorUserID != actorUserID {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetNotOwned
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetTitleInvalid
+	}
+	set.Title = title
+	set.Hash++
+	f.sets[kind][idx] = set
+	return set, f.fakeStickerSetDocs(set), nil
+}
+func (f *fakeFiles) DeleteStickerSet(_ context.Context, actorUserID int64, ref domain.StickerSetRef) (domain.StickerSetKind, error) {
+	kind, idx, ok := f.fakeStickerSetIndex(ref)
+	if !ok {
+		return "", domain.ErrStickerSetInvalid
+	}
+	set := f.sets[kind][idx]
+	if set.CreatorUserID != actorUserID {
+		return "", domain.ErrStickerSetNotOwned
+	}
+	set.Deleted = true
+	f.sets[kind][idx] = set
+	return kind, nil
+}
+func (f *fakeFiles) fakeStickerSetIndex(ref domain.StickerSetRef) (domain.StickerSetKind, int, bool) {
+	for kind, sets := range f.sets {
+		for idx, set := range sets {
+			if set.Deleted {
+				continue
+			}
+			switch ref.Kind {
+			case domain.StickerSetRefByID:
+				if set.ID == ref.ID && (ref.AccessHash == 0 || set.AccessHash == ref.AccessHash) {
+					return kind, idx, true
+				}
+			case domain.StickerSetRefByShortName:
+				if strings.EqualFold(set.ShortName, ref.ShortName) {
+					return kind, idx, true
+				}
+			case domain.StickerSetRefBySystem:
+				if set.SystemKey == ref.SystemKey {
+					return kind, idx, true
+				}
+			}
+		}
+	}
+	return "", 0, false
+}
+func (f *fakeFiles) fakeStickerSetDocs(set domain.StickerSet) []domain.Document {
+	out := make([]domain.Document, 0, len(set.DocumentIDs))
+	for _, id := range set.DocumentIDs {
+		if doc, ok := f.docs[id]; ok {
+			out = append(out, doc)
+		}
+	}
+	return out
+}
+func fakeAttachStickerSet(doc domain.Document, set domain.StickerSet, emoji string) domain.Document {
+	want := domain.DocAttrSticker
+	if set.Kind == domain.StickerSetKindEmoji || set.Emojis {
+		want = domain.DocAttrCustomEmoji
+	}
+	attrs := append([]domain.DocumentAttribute(nil), doc.Attributes...)
+	replaced := false
+	for i := range attrs {
+		if attrs[i].Kind != domain.DocAttrSticker && attrs[i].Kind != domain.DocAttrCustomEmoji {
+			continue
+		}
+		attrs[i].Kind = want
+		attrs[i].Alt = emoji
+		attrs[i].StickerSetID = set.ID
+		attrs[i].StickerSetAccessHash = set.AccessHash
+		attrs[i].TextColor = set.TextColor
+		replaced = true
+		break
+	}
+	if !replaced {
+		attrs = append(attrs, domain.DocumentAttribute{Kind: want, Alt: emoji, StickerSetID: set.ID, StickerSetAccessHash: set.AccessHash, TextColor: set.TextColor})
+	}
+	doc.Attributes = attrs
+	return doc
+}
+func fakeDetachStickerSet(doc domain.Document) domain.Document {
+	attrs := append([]domain.DocumentAttribute(nil), doc.Attributes...)
+	for i := range attrs {
+		if attrs[i].Kind == domain.DocAttrSticker || attrs[i].Kind == domain.DocAttrCustomEmoji {
+			attrs[i].StickerSetID = 0
+			attrs[i].StickerSetAccessHash = 0
+			attrs[i].TextColor = false
+			break
+		}
+	}
+	doc.Attributes = attrs
+	return doc
+}
+func fakeAddStickerPackDoc(packs []domain.StickerPack, emoji string, documentID int64) []domain.StickerPack {
+	out := append([]domain.StickerPack(nil), packs...)
+	for i := range out {
+		out[i].DocumentIDs = append([]int64(nil), out[i].DocumentIDs...)
+		if out[i].Emoticon == emoji {
+			if !fakeContainsInt64(out[i].DocumentIDs, documentID) {
+				out[i].DocumentIDs = append(out[i].DocumentIDs, documentID)
+			}
+			return out
+		}
+	}
+	return append(out, domain.StickerPack{Emoticon: emoji, DocumentIDs: []int64{documentID}})
+}
+func fakeRemoveStickerPackDoc(packs []domain.StickerPack, documentID int64) []domain.StickerPack {
+	out := make([]domain.StickerPack, 0, len(packs))
+	for _, pack := range packs {
+		ids := make([]int64, 0, len(pack.DocumentIDs))
+		for _, id := range pack.DocumentIDs {
+			if id != documentID {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) != 0 {
+			out = append(out, domain.StickerPack{Emoticon: pack.Emoticon, DocumentIDs: ids})
+		}
+	}
+	return out
+}
+func fakeUpsertStickerKeyword(in []domain.StickerKeyword, keyword domain.StickerKeyword) []domain.StickerKeyword {
+	out := fakeRemoveStickerKeyword(in, keyword.DocumentID)
+	return append(out, keyword)
+}
+func fakeRemoveStickerKeyword(in []domain.StickerKeyword, documentID int64) []domain.StickerKeyword {
+	out := make([]domain.StickerKeyword, 0, len(in))
+	for _, kw := range in {
+		if kw.DocumentID != documentID {
+			out = append(out, kw)
+		}
+	}
+	return out
+}
+func fakeContainsInt64(in []int64, value int64) bool {
+	return fakeIndexInt64(in, value) >= 0
+}
+func fakeIndexInt64(in []int64, value int64) int {
+	for i, v := range in {
+		if v == value {
+			return i
+		}
+	}
+	return -1
+}
+func fakeMoveInt64(in []int64, from, to int) []int64 {
+	out := append([]int64(nil), in...)
+	value := out[from]
+	out = append(out[:from], out[from+1:]...)
+	if to >= len(out) {
+		return append(out, value)
+	}
+	out = append(out[:to], append([]int64{value}, out[to:]...)...)
+	return out
 }
 func (f *fakeFiles) CreatePhotoFromUpload(_ context.Context, _ domain.UploadedFileRef) (domain.Photo, error) {
 	photo := domain.Photo{ID: 777, AccessHash: 7, DCID: 2, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 800, H: 600}}}
@@ -391,6 +801,9 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected MessageMediaDocument, got %T", msg.Media)
 	}
+	if !media.Nopremium {
+		t.Fatal("sticker message media missing nopremium flag")
+	}
 	doc, ok := media.Document.(*tg.Document)
 	if !ok {
 		t.Fatalf("expected tg.Document, got %T", media.Document)
@@ -409,6 +822,28 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	}
 	if !hasSticker {
 		t.Error("document missing sticker attribute")
+	}
+}
+
+func TestTGMessageMediaDocumentMarksHistoricalStickerNopremium(t *testing.T) {
+	media := tgMessageMedia(&domain.MessageMedia{
+		Kind: domain.MessageMediaKindDocument,
+		Document: &domain.Document{
+			ID:         555,
+			AccessHash: 5,
+			MimeType:   "application/x-tgsticker",
+			Attributes: []domain.DocumentAttribute{
+				{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+				{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			},
+		},
+	})
+	docMedia, ok := media.(*tg.MessageMediaDocument)
+	if !ok {
+		t.Fatalf("media = %T, want *tg.MessageMediaDocument", media)
+	}
+	if !docMedia.Nopremium {
+		t.Fatal("historical sticker message media missing nopremium flag")
 	}
 }
 

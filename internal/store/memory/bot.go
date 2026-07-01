@@ -12,7 +12,7 @@ import (
 
 // BotStore 是 store.BotStore 的内存实现。bot 的 users 行经注入的 UserStore 创建，
 // 与 postgres 实现（单事务建 users+bots 两行）保持可见性一致。
-// 内置 BotFather 的 bots 行预置（token 为空 = 不可登录），对齐迁移 0090 种子。
+// 内置 service bots 的 bots 行预置（token 为空 = 不可登录），对齐迁移种子。
 type BotStore struct {
 	mu             sync.RWMutex
 	users          *UserStore
@@ -59,7 +59,13 @@ func NewBotStore(users *UserStore) *BotStore {
 		emojiPerms:     make(map[[2]int64]bool),
 		customMethod:   make(map[string]domain.BotWebViewCustomMethodQuery),
 	}
-	s.byID[domain.BotFatherUserID] = domain.BotProfile{
+	s.byID[domain.BotFatherUserID] = botFatherSeedProfile()
+	s.byID[domain.StickersBotUserID] = stickersSeedProfile()
+	return s
+}
+
+func botFatherSeedProfile() domain.BotProfile {
+	return domain.BotProfile{
 		BotUserID:   domain.BotFatherUserID,
 		OwnerUserID: domain.BotFatherUserID,
 		Description: "BotFather is the one bot to rule them all. Use it to create new bot accounts and manage your existing bots.",
@@ -72,7 +78,25 @@ func NewBotStore(users *UserStore) *BotStore {
 			{Command: "help", Description: "show help"},
 		},
 	}
-	return s
+}
+
+func stickersSeedProfile() domain.BotProfile {
+	return domain.BotProfile{
+		BotUserID:   domain.StickersBotUserID,
+		OwnerUserID: domain.StickersBotUserID,
+		Description: "Create custom sticker and emoji packs for telesrv.",
+		Commands: []domain.BotCommand{
+			{Command: "start", Description: "start the sticker pack assistant"},
+			{Command: "help", Description: "show help"},
+			{Command: "newpack", Description: "create a sticker pack"},
+			{Command: "newemoji", Description: "create a custom emoji pack"},
+			{Command: "addsticker", Description: "add to one of your packs"},
+			{Command: "delsticker", Description: "remove one item from a pack"},
+			{Command: "publish", Description: "publish the current pack"},
+			{Command: "cancel", Description: "cancel the current operation"},
+			{Command: "packs", Description: "list your created packs"},
+		},
+	}
 }
 
 func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profile domain.BotProfile) (domain.User, domain.BotProfile, error) {

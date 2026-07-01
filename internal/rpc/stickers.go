@@ -90,6 +90,10 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 		if fallbackSet, fallbackDocs, fallbackFound, fallbackErr := r.resolvePlaceholderStickerSet(ctx, ref); fallbackErr != nil {
 			return nil, internalErr()
 		} else if fallbackFound {
+			fallbackSet, fallbackErr = r.stickerSetWithViewerInstallState(ctx, fallbackSet)
+			if fallbackErr != nil {
+				return nil, fallbackErr
+			}
 			if r.log != nil {
 				r.log.Debug("getStickerSet placeholder fallback",
 					zap.String("short_name", ref.ShortName),
@@ -98,16 +102,14 @@ func (r *Router) onMessagesGetStickerSet(ctx context.Context, req *tg.MessagesGe
 					zap.Int("documents", len(fallbackDocs)),
 				)
 			}
-			if req.Hash != 0 && req.Hash == fallbackSet.Hash {
-				return &tg.MessagesStickerSetNotModified{}, nil
-			}
 			return tgMessagesStickerSet(fallbackSet, fallbackDocs), nil
 		}
 		// 未 seed 的系统集 / 未知短名：回退兼容 stub，避免破坏客户端。
 		return tdesktop.StickerSet(req), nil
 	}
-	if req.Hash != 0 && req.Hash == set.Hash {
-		return &tg.MessagesStickerSetNotModified{}, nil
+	set, err = r.stickerSetWithViewerInstallState(ctx, set)
+	if err != nil {
+		return nil, err
 	}
 	return tgMessagesStickerSet(set, docs), nil
 }
@@ -228,8 +230,14 @@ func (r *Router) allStickersForKind(ctx context.Context, hash int64, kind domain
 	if r.deps.Files == nil {
 		return messagesAllStickersEmpty(hash), nil
 	}
-	// perf：从目录缓存读集（TTL 内 hash 命中不打 PG）。
-	sets := r.stickerCatalogSets(ctx, kind)
+	sets, handled, err := r.installedStickerSetsForViewer(ctx, kind)
+	if err != nil {
+		return nil, err
+	}
+	if !handled {
+		// 兼容无 per-user 安装态的测试/旧内存路径：从目录缓存读全局 installed 标志。
+		sets = installedGlobalStickerSets(r.stickerCatalogSets(ctx, kind))
+	}
 	if len(sets) == 0 {
 		return messagesAllStickersEmpty(hash), nil
 	}
@@ -238,6 +246,107 @@ func (r *Router) allStickersForKind(ctx context.Context, hash int64, kind domain
 		return &tg.MessagesAllStickersNotModified{}, nil
 	}
 	return &tg.MessagesAllStickers{Hash: catalogHash, Sets: tgStickerSets(sets)}, nil
+}
+
+func (r *Router) installedStickerSetsForViewer(ctx context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, bool, error) {
+	svc, ok := r.userStickerSetSvc()
+	if !ok {
+		return nil, false, nil
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil || userID == 0 {
+		if err != nil {
+			return nil, true, internalErr()
+		}
+		return nil, true, nil
+	}
+	userSets, _, err := svc.ListUserStickerSets(ctx, userID, kind, nil, 0, domain.MaxInstalledStickerSets)
+	if err != nil {
+		return nil, true, internalErr()
+	}
+	out := make([]domain.StickerSet, 0, len(userSets))
+	for _, item := range userSets {
+		if item.Archived || item.StickerSetID == 0 {
+			continue
+		}
+		set, _, found, err := r.deps.Files.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: item.StickerSetID})
+		if err != nil {
+			return nil, true, internalErr()
+		}
+		if !found || set.ID == 0 || set.Deleted || userStickerSetKind(set) != kind {
+			continue
+		}
+		set = stickerSetWithoutViewerInstallState(set)
+		out = append(out, stickerSetWithViewerInstallItem(set, item))
+	}
+	return out, true, nil
+}
+
+func (r *Router) stickerSetsWithViewerInstallState(ctx context.Context, kind domain.StickerSetKind, sets []domain.StickerSet) ([]domain.StickerSet, error) {
+	out := make([]domain.StickerSet, 0, len(sets))
+	byID := make(map[int64]int, len(sets))
+	for _, set := range sets {
+		set = stickerSetWithoutViewerInstallState(set)
+		byID[set.ID] = len(out)
+		out = append(out, set)
+	}
+	svc, ok := r.userStickerSetSvc()
+	if !ok {
+		return out, nil
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if userID == 0 {
+		return out, nil
+	}
+	userSets, _, err := svc.ListUserStickerSets(ctx, userID, kind, nil, 0, domain.MaxInstalledStickerSets)
+	if err != nil {
+		return nil, internalErr()
+	}
+	for _, item := range userSets {
+		i, ok := byID[item.StickerSetID]
+		if !ok {
+			continue
+		}
+		out[i] = stickerSetWithViewerInstallItem(out[i], item)
+	}
+	return out, nil
+}
+
+func (r *Router) stickerSetWithViewerInstallState(ctx context.Context, set domain.StickerSet) (domain.StickerSet, error) {
+	sets, err := r.stickerSetsWithViewerInstallState(ctx, userStickerSetKind(set), []domain.StickerSet{set})
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	if len(sets) == 0 {
+		return stickerSetWithoutViewerInstallState(set), nil
+	}
+	return sets[0], nil
+}
+
+func stickerSetWithoutViewerInstallState(set domain.StickerSet) domain.StickerSet {
+	set.Installed = false
+	set.InstalledDate = 0
+	return set
+}
+
+func stickerSetWithViewerInstallItem(set domain.StickerSet, item domain.UserStickerSet) domain.StickerSet {
+	set.Installed = true
+	set.Archived = item.Archived
+	set.InstalledDate = item.InstalledDate
+	return set
+}
+
+func installedGlobalStickerSets(sets []domain.StickerSet) []domain.StickerSet {
+	out := make([]domain.StickerSet, 0, len(sets))
+	for _, set := range sets {
+		if set.Installed && !set.Archived {
+			out = append(out, set)
+		}
+	}
+	return out
 }
 
 // featuredCoversPerSet 限制每个 featured 集解析的封面贴纸数量（trending 预览用）。
@@ -249,6 +358,13 @@ func (r *Router) onMessagesGetFeaturedStickers(ctx context.Context, hash int64) 
 
 func (r *Router) onMessagesGetFeaturedEmojiStickers(ctx context.Context, hash int64) (tg.MessagesFeaturedStickersClass, error) {
 	return r.featuredStickersForKind(ctx, hash, domain.StickerSetKindEmoji)
+}
+
+func (r *Router) onMessagesGetOldFeaturedStickers(ctx context.Context, req *tg.MessagesGetOldFeaturedStickersRequest) (tg.MessagesFeaturedStickersClass, error) {
+	if req == nil {
+		return r.onMessagesGetFeaturedStickers(ctx, 0)
+	}
+	return r.onMessagesGetFeaturedStickers(ctx, req.Hash)
 }
 
 // featuredStickersForKind 把已 seed 的（未归档）贴纸/emoji 集作为 trending 呈现。
@@ -270,7 +386,12 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	if len(visible) == 0 {
 		return messagesFeaturedStickersEmpty(hash), nil
 	}
-	catalogHash := stickerSetsCatalogHash(visible)
+	var err error
+	visible, err = r.stickerSetsWithViewerInstallState(ctx, kind, visible)
+	if err != nil {
+		return nil, err
+	}
+	catalogHash := featuredStickerSetsHash(visible)
 	if hash != 0 && hash == catalogHash {
 		// 关键 perf 短路：目录未变直接返回，不解析任何封面文档。
 		return &tg.MessagesFeaturedStickersNotModified{Count: len(visible)}, nil
@@ -366,6 +487,20 @@ func stickerSetsCatalogHash(sets []domain.StickerSet) int64 {
 			continue
 		}
 		values = append(values, int64(set.Hash))
+	}
+	return int64(tdesktopCountHash(values))
+}
+
+func featuredStickerSetsHash(sets []domain.StickerSet) int64 {
+	values := make([]int64, 0, len(sets))
+	for _, set := range sets {
+		if set.ID == 0 {
+			return 0
+		}
+		if set.Archived {
+			continue
+		}
+		values = append(values, set.ID)
 	}
 	return int64(tdesktopCountHash(values))
 }

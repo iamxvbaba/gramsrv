@@ -263,23 +263,48 @@ func (s *Service) DeleteExpiredUploadParts(ctx context.Context, before time.Time
 // 元数据走进程内 LRU（消除每 chunk 一次 PG 查）；小 blob 全量字节进 LRU，供 sticker /
 // reaction / thumbnail 热路径直接内存切片；大 blob 仍按 offset/limit 段读。
 type blobMetaResult struct {
-	blob  domain.FileBlob
-	found bool
+	blob        domain.FileBlob
+	found       bool
+	cacheHit    bool
+	cacheFilled bool
 }
 
 type blobBytesResult struct {
-	data      []byte
-	total     int64
-	cacheable bool
+	data        []byte
+	total       int64
+	cacheable   bool
+	cacheHit    bool
+	cacheFilled bool
 }
 
-func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error) {
+type getFileCacheLog struct {
+	start             time.Time
+	metaCacheHit      bool
+	metaCacheFilled   bool
+	metaSingleflight  bool
+	byteCacheEligible bool
+	byteCacheHit      bool
+	byteCacheFilled   bool
+	byteSingleflight  bool
+	backendRead       bool
+	source            string
+}
+
+func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (chunk domain.FileChunk, found bool, err error) {
+	cacheLog := getFileCacheLog{start: time.Now(), source: "unknown"}
+	var blob domain.FileBlob
+	defer func() {
+		s.logGetFileCache(req, blob, found, chunk, cacheLog, err)
+	}()
+
 	blob, ok := s.blobCache.get(req.LocationKey)
-	if !ok {
+	if ok {
+		cacheLog.metaCacheHit = true
+	} else {
 		// 同一 location_key 的并发首访合并成一次 PG GetFileBlob。
-		v, err, _ := s.blobMetaSF.Do(req.LocationKey, func() (any, error) {
+		v, err, shared := s.blobMetaSF.Do(req.LocationKey, func() (any, error) {
 			if cached, ok := s.blobCache.get(req.LocationKey); ok {
-				return blobMetaResult{blob: cached, found: true}, nil
+				return blobMetaResult{blob: cached, found: true, cacheHit: true}, nil
 			}
 			b, found, err := s.media.GetFileBlob(ctx, req.LocationKey)
 			if err != nil {
@@ -288,19 +313,26 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			if found {
 				s.blobCache.put(req.LocationKey, b)
 			}
-			return blobMetaResult{blob: b, found: found}, nil
+			return blobMetaResult{blob: b, found: found, cacheFilled: found}, nil
 		})
+		cacheLog.metaSingleflight = shared
 		if err != nil {
 			return domain.FileChunk{}, false, err
 		}
 		res := v.(blobMetaResult)
+		cacheLog.metaCacheHit = res.cacheHit
+		cacheLog.metaCacheFilled = res.cacheFilled
 		if !res.found {
+			cacheLog.source = "metadata_miss"
 			return domain.FileChunk{}, false, nil
 		}
 		blob = res.blob
 	}
 	if blob.Size > 0 && blob.Size <= blobBytesCacheMaxEntryBytes {
+		cacheLog.byteCacheEligible = true
 		if data, ok := s.byteCache.get(blob.ObjectKey); ok {
+			cacheLog.byteCacheHit = true
+			cacheLog.source = "byte_cache"
 			return domain.FileChunk{
 				Bytes:    sliceBlobBytes(data, req.Offset, int64(req.Limit)),
 				MimeType: blob.MimeType,
@@ -308,9 +340,9 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			}, true, nil
 		}
 		// 同一 object_key 的小 blob 并发首访合并成一次 backend 全量读 + 一次 byteCache 填充。
-		v, err, _ := s.blobBytesSF.Do(blob.ObjectKey, func() (any, error) {
+		v, err, shared := s.blobBytesSF.Do(blob.ObjectKey, func() (any, error) {
 			if cached, ok := s.byteCache.get(blob.ObjectKey); ok {
-				return blobBytesResult{data: cached, total: int64(len(cached)), cacheable: true}, nil
+				return blobBytesResult{data: cached, total: int64(len(cached)), cacheable: true, cacheHit: true}, nil
 			}
 			data, total, err := s.blobs.GetRange(ctx, blob.ObjectKey, 0, blobBytesCacheMaxEntryBytes+1)
 			if err != nil {
@@ -318,15 +350,24 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			}
 			if total <= blobBytesCacheMaxEntryBytes && int64(len(data)) == total {
 				s.byteCache.put(blob.ObjectKey, data)
-				return blobBytesResult{data: data, total: total, cacheable: true}, nil
+				return blobBytesResult{data: data, total: total, cacheable: true, cacheFilled: true}, nil
 			}
 			return blobBytesResult{cacheable: false}, nil
 		})
+		cacheLog.byteSingleflight = shared
 		if err != nil {
 			return domain.FileChunk{}, false, fmt.Errorf("read blob %q: %w", blob.LocationKey, err)
 		}
 		// res.data 在并发 caller 间只读共享，sliceBlobBytes 各自拷贝出自己的分片，安全。
 		if res := v.(blobBytesResult); res.cacheable {
+			cacheLog.byteCacheHit = res.cacheHit
+			cacheLog.byteCacheFilled = res.cacheFilled
+			cacheLog.backendRead = res.cacheFilled
+			if res.cacheHit {
+				cacheLog.source = "byte_cache"
+			} else {
+				cacheLog.source = "backend_fill_byte_cache"
+			}
 			return domain.FileChunk{
 				Bytes:    sliceBlobBytes(res.data, req.Offset, int64(req.Limit)),
 				MimeType: blob.MimeType,
@@ -334,6 +375,11 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 			}, true, nil
 		}
 		// 大小不符/超限：落到下面的按需 range 读(与原行为一致)。
+		cacheLog.source = "backend_range_uncacheable"
+	}
+	cacheLog.backendRead = true
+	if cacheLog.source == "unknown" {
+		cacheLog.source = "backend_range"
 	}
 	data, total, err := s.blobs.GetRange(ctx, blob.ObjectKey, req.Offset, int64(req.Limit))
 	if err != nil {
@@ -344,6 +390,38 @@ func (s *Service) GetFile(ctx context.Context, req domain.FileDownloadRequest) (
 		MimeType: blob.MimeType,
 		Total:    total,
 	}, true, nil
+}
+
+func (s *Service) logGetFileCache(req domain.FileDownloadRequest, blob domain.FileBlob, found bool, chunk domain.FileChunk, cacheLog getFileCacheLog, err error) {
+	fields := []zap.Field{
+		zap.String("location_key", req.LocationKey),
+		zap.Int64("offset", req.Offset),
+		zap.Int("limit", req.Limit),
+		zap.Bool("found", found),
+		zap.String("source", cacheLog.source),
+		zap.Bool("meta_cache_hit", cacheLog.metaCacheHit),
+		zap.Bool("meta_cache_filled", cacheLog.metaCacheFilled),
+		zap.Bool("meta_singleflight_shared", cacheLog.metaSingleflight),
+		zap.Bool("byte_cache_eligible", cacheLog.byteCacheEligible),
+		zap.Bool("byte_cache_hit", cacheLog.byteCacheHit),
+		zap.Bool("byte_cache_filled", cacheLog.byteCacheFilled),
+		zap.Bool("byte_singleflight_shared", cacheLog.byteSingleflight),
+		zap.Bool("backend_read", cacheLog.backendRead),
+		zap.Int("returned_bytes", len(chunk.Bytes)),
+		zap.Int64("total_bytes", chunk.Total),
+		zap.Duration("dur", time.Since(cacheLog.start)),
+	}
+	if blob.ObjectKey != "" {
+		fields = append(fields,
+			zap.String("object_key", blob.ObjectKey),
+			zap.Int64("blob_size", blob.Size),
+			zap.String("mime_type", blob.MimeType),
+		)
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	s.log.Info("upload.getFile cache", fields...)
 }
 
 func sliceBlobBytes(data []byte, offset, limit int64) []byte {

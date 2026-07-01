@@ -20,6 +20,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetMaskStickers(r.onMessagesGetMaskStickers)
 	d.OnMessagesGetFeaturedStickers(r.onMessagesGetFeaturedStickers)
 	d.OnMessagesGetFeaturedEmojiStickers(r.onMessagesGetFeaturedEmojiStickers)
+	d.OnMessagesGetOldFeaturedStickers(r.onMessagesGetOldFeaturedStickers)
 	d.OnMessagesGetRecentStickers(r.onMessagesGetRecentStickers)
 	d.OnMessagesGetFavedStickers(r.onMessagesGetFavedStickers)
 	d.OnMessagesGetSavedGifs(r.onMessagesGetSavedGifs)
@@ -91,6 +92,11 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetAvailableReactions(r.onMessagesGetAvailableReactions)
 	d.OnMessagesGetAvailableEffects(r.onMessagesGetAvailableEffects)
 	d.OnMessagesGetStickers(r.onMessagesGetStickers)
+	d.OnMessagesInstallStickerSet(r.onMessagesInstallStickerSet)
+	d.OnMessagesUninstallStickerSet(r.onMessagesUninstallStickerSet)
+	d.OnMessagesReorderStickerSets(r.onMessagesReorderStickerSets)
+	d.OnMessagesToggleStickerSets(r.onMessagesToggleStickerSets)
+	d.OnMessagesGetMyStickers(r.onMessagesGetMyStickers)
 	d.OnMessagesGetArchivedStickers(func(ctx context.Context, req *tg.MessagesGetArchivedStickersRequest) (*tg.MessagesArchivedStickers, error) {
 		return &tg.MessagesArchivedStickers{
 			Count: 0,

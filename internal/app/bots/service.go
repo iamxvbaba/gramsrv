@@ -29,15 +29,31 @@ type publicChannelUsernameResolver interface {
 	ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error)
 }
 
+type stickerSetCreator interface {
+	CreateStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error)
+	ListCreatedStickerSets(ctx context.Context, userID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error)
+	ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error)
+	GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error)
+	AddStickerToSet(ctx context.Context, actorUserID int64, ref domain.StickerSetRef, item domain.StickerSetItemInput) (domain.StickerSet, []domain.Document, error)
+	RemoveStickerFromSet(ctx context.Context, actorUserID int64, documentID int64, accessHash int64) (domain.StickerSet, []domain.Document, error)
+}
+
+type userStickerSetInstaller interface {
+	InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error
+}
+
 // RouterHooks 是 rpc 层回调（router 创建后经 SetRouterHooks 延迟注入，打破
-// router↔bots 的构造循环；两个能力都依赖 tg.*/连接层边界，不能在 app 层实现）：
+// router↔bots 的构造循环；两个能力都依赖 TL/连接层边界，不能在 app 层实现）：
 //   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
 //     authorization + 强制断连）。
 //   - PushBotCommandsChanged：命令变更后给在线相关用户推 updateBotCommands
 //     （无 pts 的 ephemeral update，离线用户靠 bot_info_version bump 兜底）。
+//   - PushStickerSetsChanged：@Stickers 发布后给 creator 当前在线 session 推
+//     updateStickerSets；离线端靠持久化 install 状态 + 下次 getAllStickers 兜底。
 type RouterHooks interface {
 	RevokeBotSessions(ctx context.Context, botUserID int64) error
 	PushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand)
+	PushStickerSetsChanged(ctx context.Context, userID int64, kind domain.StickerSetKind)
 }
 
 // replyLockStripes 是回复串行化条带数：同一用户的 BotFather 回复落同一条带、
@@ -51,6 +67,8 @@ type Service struct {
 	messages  store.MessageStore
 	blocker   blockChecker
 	channels  publicChannelUsernameResolver
+	stickers  stickerSetCreator
+	installer userStickerSetInstaller
 	hooks     RouterHooks
 	userCache store.UserCache
 	cache     *botProfileCache
@@ -110,6 +128,24 @@ func WithUserCache(c store.UserCache) Option {
 	return func(s *Service) {
 		if c != nil {
 			s.userCache = c
+		}
+	}
+}
+
+// WithStickerSetCreator 注入 sticker set 创建/查询能力，供内置 @Stickers bot 使用。
+func WithStickerSetCreator(c stickerSetCreator) Option {
+	return func(s *Service) {
+		if c != nil {
+			s.stickers = c
+		}
+	}
+}
+
+// WithUserStickerSets 注入 per-user sticker set 安装状态写入能力。
+func WithUserStickerSets(c userStickerSetInstaller) Option {
+	return func(s *Service) {
+		if c != nil {
+			s.installer = c
 		}
 	}
 }

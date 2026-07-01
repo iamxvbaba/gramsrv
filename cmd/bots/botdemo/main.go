@@ -14,7 +14,7 @@
 //
 // 用法示例（向超级群定时轮流发文本/图片/图文，每 15s 一条）：
 //
-//	go run ./cmd/botdemo \
+//	go run ./cmd/bots/botdemo \
 //	    -token "<bot_id>:<secret>" \
 //	    -chat <channel_id> -chat-hash <access_hash> \
 //	    -interval 15s -mode rotate

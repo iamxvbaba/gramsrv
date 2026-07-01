@@ -40,7 +40,7 @@ var specialSeedDirs = map[string]string{
 }
 
 func main() {
-	source := flag.String("source", "", "HSgram premium promo repository checkout")
+	source := flag.String("source", "", "sticker catalog repository checkout")
 	dest := flag.String("dest", "data/sticker-seed", "telesrv sticker seed destination")
 	clean := flag.Bool("clean", true, "remove managed seed subdirectories before deploying")
 	flag.Parse()
@@ -48,7 +48,7 @@ func main() {
 		*source = flag.Arg(0)
 	}
 	if *source == "" {
-		fatalf("usage: stickerseeddeploy -source /path/to/HSgram_-premium-promo [-dest data/sticker-seed]")
+		fatalf("usage: stickerseeddeploy -source /path/to/catalog [-dest data/sticker-seed]")
 	}
 	stats, err := deploy(*source, *dest, *clean)
 	if err != nil {

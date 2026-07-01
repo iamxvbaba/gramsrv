@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"telesrv/internal/domain"
@@ -237,15 +239,27 @@ ON CONFLICT (key) DO UPDATE SET
 // ---- 文档 ----
 
 func (s *MediaStore) PutDocument(ctx context.Context, doc domain.Document) error {
-	attrs, err := jsonArrayOrEmpty(doc.Attributes)
+	params, err := putDocumentParams(doc)
 	if err != nil {
 		return err
+	}
+	if err := s.q.PutDocument(ctx, params); err != nil {
+		return err
+	}
+	s.documents.put(doc.ID, doc)
+	return nil
+}
+
+func putDocumentParams(doc domain.Document) (sqlcgen.PutDocumentParams, error) {
+	attrs, err := jsonArrayOrEmpty(doc.Attributes)
+	if err != nil {
+		return sqlcgen.PutDocumentParams{}, err
 	}
 	thumbs, err := jsonArrayOrEmpty(doc.Thumbs)
 	if err != nil {
-		return err
+		return sqlcgen.PutDocumentParams{}, err
 	}
-	if err := s.q.PutDocument(ctx, sqlcgen.PutDocumentParams{
+	return sqlcgen.PutDocumentParams{
 		ID:             doc.ID,
 		AccessHash:     doc.AccessHash,
 		FileReference:  bytesOrEmpty(doc.FileReference),
@@ -255,11 +269,7 @@ func (s *MediaStore) PutDocument(ctx context.Context, doc domain.Document) error
 		DcID:           int32(doc.DCID),
 		AttributesJson: attrs,
 		ThumbsJson:     thumbs,
-	}); err != nil {
-		return err
-	}
-	s.documents.put(doc.ID, doc)
-	return nil
+	}, nil
 }
 
 func (s *MediaStore) GetDocument(ctx context.Context, id int64) (domain.Document, bool, error) {
@@ -559,53 +569,399 @@ func (s *MediaStore) PutStickerSet(ctx context.Context, set domain.StickerSet) e
 	})
 }
 
-func (s *MediaStore) GetStickerSetByID(ctx context.Context, id int64) (domain.StickerSet, bool, error) {
-	row, err := s.q.GetStickerSetByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.StickerSet{}, false, nil
+func (s *MediaStore) CreateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error {
+	err := withTx(ctx, s.db, "create sticker set", func(tx pgx.Tx) error {
+		if err := insertStickerSet(ctx, tx, set); err != nil {
+			return err
 		}
-		return domain.StickerSet{}, false, err
+		qtx := s.q.WithTx(tx)
+		for _, doc := range docs {
+			params, err := putDocumentParams(doc)
+			if err != nil {
+				return err
+			}
+			if err := qtx.PutDocument(ctx, params); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if stickerSetShortNameConflict(err) {
+			return domain.ErrStickerSetShortNameOccupied
+		}
+		return err
 	}
-	return stickerSetFromRow(row)
+	for _, doc := range docs {
+		s.documents.put(doc.ID, doc)
+	}
+	return nil
+}
+
+func (s *MediaStore) UpdateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error {
+	err := withTx(ctx, s.db, "update sticker set", func(tx pgx.Tx) error {
+		if err := updateStickerSet(ctx, tx, set); err != nil {
+			return err
+		}
+		qtx := s.q.WithTx(tx)
+		for _, doc := range docs {
+			params, err := putDocumentParams(doc)
+			if err != nil {
+				return err
+			}
+			if err := qtx.PutDocument(ctx, params); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, doc := range docs {
+		s.documents.put(doc.ID, doc)
+	}
+	return nil
+}
+
+func (s *MediaStore) DeleteStickerSet(ctx context.Context, setID int64, creatorUserID int64) error {
+	return withTx(ctx, s.db, "delete sticker set", func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+UPDATE sticker_sets
+SET deleted = true, updated_at = now()
+WHERE id = $1
+  AND creator_user_id = $2
+  AND deleted = false`, setID, creatorUserID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrStickerSetInvalid
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM user_sticker_sets WHERE sticker_set_id = $1`, setID)
+		return err
+	})
+}
+
+func insertStickerSet(ctx context.Context, db sqlcgen.DBTX, set domain.StickerSet) error {
+	thumbs, err := jsonArrayOrEmpty(set.Thumbs)
+	if err != nil {
+		return err
+	}
+	docIDs, err := jsonArrayOrEmpty(set.DocumentIDs)
+	if err != nil {
+		return err
+	}
+	packs, err := jsonArrayOrEmpty(set.Packs)
+	if err != nil {
+		return err
+	}
+	keywords, err := jsonArrayOrEmpty(set.Keywords)
+	if err != nil {
+		return err
+	}
+	kind := string(set.Kind)
+	if kind == "" {
+		kind = string(domain.StickerSetKindStickers)
+	}
+	_, err = db.Exec(ctx, `
+INSERT INTO sticker_sets (
+  id, access_hash, short_name, title, count, hash, set_kind,
+  official, animated, videos, emojis, masks, text_color, creator_user_id,
+  installed, archived, deleted, installed_date,
+  thumb_document_id, thumbs, thumb_dc_id, thumb_version,
+  document_ids, packs, keywords, sort_order, system_key, software, updated_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11, $12, $13, $14,
+  $15, $16, $17, $18,
+  $19, $20::jsonb, $21, $22,
+  $23::jsonb, $24::jsonb, $25::jsonb, $26, $27, $28, now()
+)`,
+		set.ID, set.AccessHash, set.ShortName, set.Title, set.Count, set.Hash, kind,
+		set.Official, set.Animated, set.Videos, set.Emojis, set.Masks, set.TextColor, set.CreatorUserID,
+		set.Installed, set.Archived, set.Deleted, set.InstalledDate,
+		set.ThumbDocumentID, thumbs, set.ThumbDCID, set.ThumbVersion,
+		docIDs, packs, keywords, set.SortOrder, set.SystemKey, set.Software,
+	)
+	return err
+}
+
+func updateStickerSet(ctx context.Context, db sqlcgen.DBTX, set domain.StickerSet) error {
+	thumbs, err := jsonArrayOrEmpty(set.Thumbs)
+	if err != nil {
+		return err
+	}
+	docIDs, err := jsonArrayOrEmpty(set.DocumentIDs)
+	if err != nil {
+		return err
+	}
+	packs, err := jsonArrayOrEmpty(set.Packs)
+	if err != nil {
+		return err
+	}
+	keywords, err := jsonArrayOrEmpty(set.Keywords)
+	if err != nil {
+		return err
+	}
+	kind := string(set.Kind)
+	if kind == "" {
+		kind = string(domain.StickerSetKindStickers)
+	}
+	tag, err := db.Exec(ctx, `
+UPDATE sticker_sets
+SET title = $3,
+    count = $4,
+    hash = $5,
+    set_kind = $6,
+    official = $7,
+    animated = $8,
+    videos = $9,
+    emojis = $10,
+    masks = $11,
+    text_color = $12,
+    installed = $13,
+    archived = $14,
+    installed_date = $15,
+    thumb_document_id = $16,
+    thumbs = $17::jsonb,
+    thumb_dc_id = $18,
+    thumb_version = $19,
+    document_ids = $20::jsonb,
+    packs = $21::jsonb,
+    keywords = $22::jsonb,
+    sort_order = $23,
+    software = $24,
+    updated_at = now()
+WHERE id = $1
+  AND access_hash = $2
+  AND deleted = false`,
+		set.ID, set.AccessHash,
+		set.Title, set.Count, set.Hash, kind,
+		set.Official, set.Animated, set.Videos, set.Emojis, set.Masks, set.TextColor,
+		set.Installed, set.Archived, set.InstalledDate,
+		set.ThumbDocumentID, thumbs, set.ThumbDCID, set.ThumbVersion,
+		docIDs, packs, keywords, set.SortOrder, set.Software,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrStickerSetInvalid
+	}
+	return nil
+}
+
+func stickerSetShortNameConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != pgerrcode.UniqueViolation {
+		return false
+	}
+	switch pgErr.ConstraintName {
+	case "sticker_sets_short_name_lower_idx", "sticker_sets_short_name_idx":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *MediaStore) GetStickerSetByID(ctx context.Context, id int64) (domain.StickerSet, bool, error) {
+	return queryStickerSet(ctx, s.db, "id = $1", id)
 }
 
 func (s *MediaStore) GetStickerSetByShortName(ctx context.Context, shortName string) (domain.StickerSet, bool, error) {
-	row, err := s.q.GetStickerSetByShortName(ctx, shortName)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.StickerSet{}, false, nil
-		}
-		return domain.StickerSet{}, false, err
-	}
-	return stickerSetFromRow(sqlcgen.GetStickerSetByIDRow(row))
+	return queryStickerSet(ctx, s.db, "lower(short_name) = lower($1)", shortName)
 }
 
 func (s *MediaStore) GetStickerSetBySystemKey(ctx context.Context, systemKey string) (domain.StickerSet, bool, error) {
-	row, err := s.q.GetStickerSetBySystemKey(ctx, systemKey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.StickerSet{}, false, nil
-		}
-		return domain.StickerSet{}, false, err
-	}
-	return stickerSetFromRow(sqlcgen.GetStickerSetByIDRow(row))
+	return queryStickerSet(ctx, s.db, "system_key = $1", systemKey)
 }
 
 func (s *MediaStore) ListStickerSets(ctx context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
-	rows, err := s.q.ListStickerSetsByKind(ctx, string(kind))
+	rows, err := s.db.Query(ctx, stickerSetSelectSQL+`
+WHERE set_kind = $1 AND deleted = false
+ORDER BY sort_order ASC, id ASC`, string(kind))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]domain.StickerSet, 0, len(rows))
-	for _, r := range rows {
-		set, _, err := stickerSetFromRow(sqlcgen.GetStickerSetByIDRow(r))
+	defer rows.Close()
+	out := []domain.StickerSet{}
+	for rows.Next() {
+		set, err := scanStickerSet(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, set)
 	}
-	return out, nil
+	return out, rows.Err()
+}
+
+func (s *MediaStore) ListStickerSetsByCreator(ctx context.Context, creatorUserID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error) {
+	if limit <= 0 {
+		limit = domain.MaxCreatedStickerSets
+	}
+	if limit > domain.MaxCreatedStickerSets {
+		limit = domain.MaxCreatedStickerSets
+	}
+	var total int
+	if err := s.db.QueryRow(ctx, `
+SELECT count(*)::int
+FROM sticker_sets
+WHERE creator_user_id = $1 AND deleted = false`, creatorUserID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(ctx, stickerSetSelectSQL+`
+WHERE creator_user_id = $1
+  AND deleted = false
+  AND ($2::bigint = 0 OR id < $2::bigint)
+ORDER BY id DESC
+LIMIT $3`, creatorUserID, offsetID, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []domain.StickerSet{}
+	for rows.Next() {
+		set, err := scanStickerSet(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		set.Creator = true
+		out = append(out, set)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, total, nil
+}
+
+func (s *MediaStore) StickerSetShortNameAvailable(ctx context.Context, shortName string) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(ctx, `
+SELECT EXISTS (
+  SELECT 1
+  FROM sticker_sets
+  WHERE lower(short_name) = lower($1)
+    AND short_name <> ''
+    AND deleted = false
+)`, shortName).Scan(&exists); err != nil {
+		return false, err
+	}
+	return !exists, nil
+}
+
+const stickerSetSelectSQL = `
+SELECT
+  id, access_hash, short_name, title, count, hash, set_kind,
+  official, animated, videos, emojis, masks, installed, archived, installed_date,
+  thumb_document_id, thumbs::text AS thumbs_json, thumb_dc_id, thumb_version,
+  document_ids::text AS document_ids_json, packs::text AS packs_json, sort_order, system_key,
+  creator_user_id, text_color, deleted, software, keywords::text AS keywords_json
+FROM sticker_sets
+`
+
+type stickerSetScanner interface {
+	Scan(dest ...any) error
+}
+
+func queryStickerSet(ctx context.Context, db sqlcgen.DBTX, predicate string, args ...any) (domain.StickerSet, bool, error) {
+	row := db.QueryRow(ctx, stickerSetSelectSQL+"WHERE "+predicate+" AND deleted = false LIMIT 1", args...)
+	set, err := scanStickerSet(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.StickerSet{}, false, nil
+		}
+		return domain.StickerSet{}, false, err
+	}
+	return set, true, nil
+}
+
+func scanStickerSet(row stickerSetScanner) (domain.StickerSet, error) {
+	var (
+		id              int64
+		accessHash      int64
+		shortName       string
+		title           string
+		count           int32
+		hash            int32
+		kind            string
+		official        bool
+		animated        bool
+		videos          bool
+		emojis          bool
+		masks           bool
+		installed       bool
+		archived        bool
+		installedDate   int32
+		thumbDocumentID int64
+		thumbsJSON      string
+		thumbDCID       int32
+		thumbVersion    int32
+		docIDsJSON      string
+		packsJSON       string
+		sortOrder       int32
+		systemKey       string
+		creatorUserID   int64
+		textColor       bool
+		deleted         bool
+		software        string
+		keywordsJSON    string
+	)
+	if err := row.Scan(
+		&id, &accessHash, &shortName, &title, &count, &hash, &kind,
+		&official, &animated, &videos, &emojis, &masks, &installed, &archived, &installedDate,
+		&thumbDocumentID, &thumbsJSON, &thumbDCID, &thumbVersion,
+		&docIDsJSON, &packsJSON, &sortOrder, &systemKey,
+		&creatorUserID, &textColor, &deleted, &software, &keywordsJSON,
+	); err != nil {
+		return domain.StickerSet{}, err
+	}
+	thumbs, err := decodePhotoSizes(thumbsJSON)
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	docIDs, err := decodeInt64Slice(docIDsJSON)
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	packs, err := decodeStickerPacks(packsJSON)
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	keywords, err := decodeStickerKeywords(keywordsJSON)
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	return domain.StickerSet{
+		ID:              id,
+		AccessHash:      accessHash,
+		ShortName:       shortName,
+		Title:           title,
+		Count:           int(count),
+		Hash:            int(hash),
+		Kind:            domain.StickerSetKind(kind),
+		Official:        official,
+		Animated:        animated,
+		Videos:          videos,
+		Emojis:          emojis,
+		Masks:           masks,
+		TextColor:       textColor,
+		CreatorUserID:   creatorUserID,
+		Installed:       installed,
+		Archived:        archived,
+		Deleted:         deleted,
+		InstalledDate:   int(installedDate),
+		ThumbDocumentID: thumbDocumentID,
+		Thumbs:          thumbs,
+		ThumbDCID:       int(thumbDCID),
+		ThumbVersion:    int(thumbVersion),
+		DocumentIDs:     docIDs,
+		Packs:           packs,
+		Keywords:        keywords,
+		SortOrder:       int(sortOrder),
+		SystemKey:       systemKey,
+		Software:        software,
+	}, nil
 }
 
 func (s *MediaStore) CountStickerSets(ctx context.Context) (int, error) {

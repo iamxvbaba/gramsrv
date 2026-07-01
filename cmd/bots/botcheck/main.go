@@ -6,8 +6,8 @@
 //
 // 用法：
 //
-//	go run ./cmd/botcheck -token "<bot_id>:<secret>"            # 仅登录自检
-//	go run ./cmd/botcheck -token "<bot_id>:<secret>" -echo      # 自检后持续 echo
+//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>"            # 仅登录自检
+//	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>" -echo      # 自检后持续 echo
 //
 // 连接生产 telesrv（obfuscated TCP）靠 DCOption.TCPObfuscatedOnly=true，
 // gotd dcs.Plain 据此自动走 MTProto TCP obfuscation。

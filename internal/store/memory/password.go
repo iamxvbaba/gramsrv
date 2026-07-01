@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"telesrv/internal/domain"
 )
@@ -14,6 +15,7 @@ type PasswordStore struct {
 	accountSettings                map[int64]domain.AccountSettings
 	notifySettings                 map[notifySettingsKey]domain.PeerNotifySettings
 	stickerCollections             map[stickerCollectionKey][]domain.StickerCollectionItem
+	userStickerSets                map[int64]map[int64]domain.UserStickerSet
 	savedMusic                     map[int64][]domain.Document
 	businessProfiles               map[int64]domain.BusinessProfile
 	businessChatLinks              map[string]domain.BusinessChatLink
@@ -48,6 +50,7 @@ func NewPasswordStore() *PasswordStore {
 		accountSettings:                make(map[int64]domain.AccountSettings),
 		notifySettings:                 make(map[notifySettingsKey]domain.PeerNotifySettings),
 		stickerCollections:             make(map[stickerCollectionKey][]domain.StickerCollectionItem),
+		userStickerSets:                make(map[int64]map[int64]domain.UserStickerSet),
 		savedMusic:                     make(map[int64][]domain.Document),
 		businessProfiles:               make(map[int64]domain.BusinessProfile),
 		businessChatLinks:              make(map[string]domain.BusinessChatLink),
@@ -232,6 +235,113 @@ func (s *PasswordStore) ClearStickerCollection(_ context.Context, userID int64, 
 	delete(s.stickerCollections, stickerCollectionKey{owner: userID, kind: kind})
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *PasswordStore) InstallUserStickerSet(_ context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error {
+	if userID == 0 || setID == 0 {
+		return domain.ErrStickerInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sets := s.userStickerSets[userID]
+	if sets == nil {
+		sets = make(map[int64]domain.UserStickerSet)
+		s.userStickerSets[userID] = sets
+	}
+	order := int64(installedDate) << 32
+	sets[setID] = domain.UserStickerSet{
+		OwnerUserID:   userID,
+		StickerSetID:  setID,
+		Kind:          kind,
+		Archived:      archived,
+		InstalledDate: installedDate,
+		OrderValue:    order,
+	}
+	return nil
+}
+
+func (s *PasswordStore) UninstallUserStickerSet(_ context.Context, userID int64, setID int64) error {
+	s.mu.Lock()
+	if sets := s.userStickerSets[userID]; sets != nil {
+		delete(sets, setID)
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *PasswordStore) SetUserStickerSetArchived(_ context.Context, userID int64, setID int64, archived bool, now int) error {
+	s.mu.Lock()
+	if sets := s.userStickerSets[userID]; sets != nil {
+		if item, ok := sets[setID]; ok {
+			item.Archived = archived
+			if !archived && now > 0 {
+				item.OrderValue = int64(now) << 32
+			}
+			sets[setID] = item
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *PasswordStore) ReorderUserStickerSets(_ context.Context, userID int64, kind domain.StickerSetKind, order []int64, now int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sets := s.userStickerSets[userID]
+	if sets == nil {
+		return nil
+	}
+	orderValue := int64(now) << 32
+	for _, id := range order {
+		item, ok := sets[id]
+		if !ok || item.Kind != kind {
+			continue
+		}
+		item.OrderValue = orderValue
+		sets[id] = item
+		orderValue--
+	}
+	return nil
+}
+
+func (s *PasswordStore) ListUserStickerSets(_ context.Context, userID int64, kind domain.StickerSetKind, archived *bool, offsetID int64, limit int) ([]domain.UserStickerSet, int, error) {
+	if limit <= 0 || limit > domain.MaxInstalledStickerSets {
+		limit = domain.MaxInstalledStickerSets
+	}
+	s.mu.RLock()
+	raw := s.userStickerSets[userID]
+	items := make([]domain.UserStickerSet, 0, len(raw))
+	for _, item := range raw {
+		if item.Kind != kind {
+			continue
+		}
+		if archived != nil && item.Archived != *archived {
+			continue
+		}
+		items = append(items, item)
+	}
+	s.mu.RUnlock()
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].OrderValue == items[j].OrderValue {
+			return items[i].StickerSetID > items[j].StickerSetID
+		}
+		return items[i].OrderValue > items[j].OrderValue
+	})
+	total := len(items)
+	if offsetID != 0 {
+		start := 0
+		for i, item := range items {
+			if item.StickerSetID == offsetID {
+				start = i + 1
+				break
+			}
+		}
+		items = items[start:]
+	}
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return append([]domain.UserStickerSet(nil), items...), total, nil
 }
 
 func (s *PasswordStore) ListNotifyExceptions(_ context.Context, ownerUserID int64) ([]domain.NotifyException, error) {

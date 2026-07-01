@@ -26,6 +26,21 @@ func TestStickerSetsCatalogHashMatchesTDesktopFormula(t *testing.T) {
 	}
 }
 
+func TestFeaturedStickerSetsHashMatchesTDesktopFormula(t *testing.T) {
+	sets := []domain.StickerSet{
+		{ID: 10, Hash: 123},
+		{ID: 11, Hash: 456},
+	}
+	got := featuredStickerSetsHash(sets)
+	const want int64 = 365072220181
+	if got != want {
+		t.Fatalf("featuredStickerSetsHash() = %d, want %d", got, want)
+	}
+	if catalog := stickerSetsCatalogHash(sets); catalog == got {
+		t.Fatalf("test fixture no longer distinguishes featured hash from catalog hash: %d", got)
+	}
+}
+
 func TestMessagesGetAllStickersUsesTDesktopHashForNotModified(t *testing.T) {
 	ctx := context.Background()
 	files := &fakeFiles{
@@ -288,6 +303,45 @@ func TestMessagesGetStickerSetAndroidPlaceholderUsesSeededSet(t *testing.T) {
 	}
 }
 
+func TestMessagesGetStickerSetReturnsFullOnMatchingHash(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		docs: map[int64]domain.Document{
+			201: {ID: 201, AccessHash: 21, DCID: 2},
+		},
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: {
+				{
+					ID:          10,
+					AccessHash:  100,
+					ShortName:   "one",
+					Title:       "One",
+					Kind:        domain.StickerSetKindStickers,
+					Count:       1,
+					Hash:        123,
+					DocumentIDs: []int64{201},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+
+	res, err := r.onMessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{
+		Stickerset: &tg.InputStickerSetID{ID: 10, AccessHash: 100},
+		Hash:       123,
+	})
+	if err != nil {
+		t.Fatalf("getStickerSet matching hash: %v", err)
+	}
+	full, ok := res.(*tg.MessagesStickerSet)
+	if !ok {
+		t.Fatalf("getStickerSet matching hash = %T, want *tg.MessagesStickerSet", res)
+	}
+	if full.Set.ID != 10 || len(full.Documents) != 1 {
+		t.Fatalf("getStickerSet matching hash returned set %d docs %d, want set 10 with one doc", full.Set.ID, len(full.Documents))
+	}
+}
+
 func TestMessagesGetStickerSetAndroidPlaceholderFallsBackToEmptyWithoutSeed(t *testing.T) {
 	ctx := context.Background()
 	r := &Router{deps: Deps{Files: &fakeFiles{}}}
@@ -303,6 +357,30 @@ func TestMessagesGetStickerSetAndroidPlaceholderFallsBackToEmptyWithoutSeed(t *t
 	}
 	if len(full.Documents) != 0 {
 		t.Fatalf("placeholder without seed documents = %d, want empty compat set", len(full.Documents))
+	}
+}
+
+func TestStickerSetRefFromSystemInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		in   tg.InputStickerSetClass
+		want string
+	}{
+		{"emoji default statuses", &tg.InputStickerSetEmojiDefaultStatuses{}, domain.StickerSetSystemKeyEmojiDefaultStatuses},
+		{"emoji channel default statuses", &tg.InputStickerSetEmojiChannelDefaultStatuses{}, domain.StickerSetSystemKeyEmojiDefaultStatuses},
+		{"emoji default topic icons", &tg.InputStickerSetEmojiDefaultTopicIcons{}, domain.StickerSetSystemKeyEmojiDefaultTopicIcons},
+		{"premium gifts", &tg.InputStickerSetPremiumGifts{}, domain.StickerSetSystemKeyPremiumGifts},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, ok := stickerSetRefFromInput(tt.in)
+			if !ok {
+				t.Fatalf("stickerSetRefFromInput(%T) not handled", tt.in)
+			}
+			if ref.Kind != domain.StickerSetRefBySystem || ref.SystemKey != tt.want {
+				t.Fatalf("ref = %+v, want system key %q", ref, tt.want)
+			}
+		})
 	}
 }
 
@@ -400,6 +478,86 @@ func TestMessagesGetFeaturedStickersSurfacesSeededSets(t *testing.T) {
 	emojiFull, ok := emoji.(*tg.MessagesFeaturedStickers)
 	if !ok || emojiFull.Count != 1 {
 		t.Fatalf("featured emoji = %T count %v, want 1 emoji set", emoji, emojiFull)
+	}
+}
+
+func TestMessagesGetOldFeaturedStickersUsesFeaturedCatalog(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		docs: map[int64]domain.Document{
+			201: {ID: 201, AccessHash: 21, DCID: 2},
+		},
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: {
+				{
+					ID:          10,
+					AccessHash:  100,
+					ShortName:   "one",
+					Title:       "One",
+					Kind:        domain.StickerSetKindStickers,
+					Count:       1,
+					Hash:        123,
+					DocumentIDs: []int64{201},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+	res, err := r.onMessagesGetOldFeaturedStickers(ctx, &tg.MessagesGetOldFeaturedStickersRequest{Limit: 20})
+	if err != nil {
+		t.Fatalf("getOldFeaturedStickers: %v", err)
+	}
+	full, ok := res.(*tg.MessagesFeaturedStickers)
+	if !ok {
+		t.Fatalf("getOldFeaturedStickers = %T, want *tg.MessagesFeaturedStickers", res)
+	}
+	if len(full.Sets) != 1 {
+		t.Fatalf("old featured sets = %d, want one", len(full.Sets))
+	}
+}
+
+func TestMessagesGetEmojiStickerGroupsUsesSeededEmojiCatalog(t *testing.T) {
+	ctx := context.Background()
+	files := &fakeFiles{
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindEmoji: {
+				{
+					ID:              20,
+					AccessHash:      200,
+					ShortName:       "emoji",
+					Title:           "Emoji",
+					Kind:            domain.StickerSetKindEmoji,
+					Count:           1,
+					Hash:            999,
+					Emojis:          true,
+					ThumbDocumentID: 555,
+					DocumentIDs:     []int64{201},
+				},
+			},
+		},
+	}
+	r := &Router{deps: Deps{Files: files}}
+	first, err := r.onMessagesGetEmojiStickerGroups(ctx, 0)
+	if err != nil {
+		t.Fatalf("getEmojiStickerGroups: %v", err)
+	}
+	full, ok := first.(*tg.MessagesEmojiGroups)
+	if !ok {
+		t.Fatalf("getEmojiStickerGroups = %T, want *tg.MessagesEmojiGroups", first)
+	}
+	if len(full.Groups) != 1 {
+		t.Fatalf("emoji sticker groups = %d, want one", len(full.Groups))
+	}
+	group, ok := full.Groups[0].(*tg.EmojiGroupPremium)
+	if !ok || group.IconEmojiID != 555 {
+		t.Fatalf("emoji sticker group = %T %+v, want premium icon 555", full.Groups[0], full.Groups[0])
+	}
+	second, err := r.onMessagesGetEmojiStickerGroups(ctx, full.Hash)
+	if err != nil {
+		t.Fatalf("getEmojiStickerGroups cached: %v", err)
+	}
+	if _, ok := second.(*tg.MessagesEmojiGroupsNotModified); !ok {
+		t.Fatalf("cached getEmojiStickerGroups = %T, want notModified", second)
 	}
 }
 
@@ -514,6 +672,59 @@ func TestTGDocumentCompactsCachedThumbToDownloadableSize(t *testing.T) {
 	}
 	if size.Type != "m" || size.W != 128 || size.H != 128 || size.Size != 4 {
 		t.Fatalf("thumb size = %+v, want downloadable m 128x128 size=4", size)
+	}
+}
+
+func TestTGDocumentDropsSeedSyntheticTGSPreviewThumb(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Thumbs: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindCached, Type: "m", W: 1, H: 1, Bytes: []byte("png")},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	if len(full.Thumbs) != 0 {
+		t.Fatalf("thumbs = %#v, want no synthetic TGS preview thumb", full.Thumbs)
+	}
+}
+
+func TestTGDocumentAddsAnimatedAttributeForTGSSticker(t *testing.T) {
+	doc := tgDocument(domain.Document{
+		ID:         100,
+		AccessHash: 1,
+		DCID:       2,
+		MimeType:   "application/x-tgsticker",
+		Attributes: []domain.DocumentAttribute{
+			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+			{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
+		},
+	})
+	full, ok := doc.(*tg.Document)
+	if !ok {
+		t.Fatalf("tgDocument = %T, want *tg.Document", doc)
+	}
+	hasSticker := false
+	hasAnimated := false
+	for _, attr := range full.Attributes {
+		switch attr.(type) {
+		case *tg.DocumentAttributeSticker:
+			hasSticker = true
+		case *tg.DocumentAttributeAnimated:
+			hasAnimated = true
+		}
+	}
+	if !hasSticker {
+		t.Fatal("TGS sticker document missing sticker attribute")
+	}
+	if !hasAnimated {
+		t.Fatal("TGS sticker document missing synthesized animated attribute")
 	}
 }
 

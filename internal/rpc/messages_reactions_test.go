@@ -341,3 +341,30 @@ func TestMessagesSendReactionPrivatePushesViewerLocalMessageID(t *testing.T) {
 		t.Fatalf("pushed recent reactions = %+v set=%v, want one unread non-my reaction", recent, ok)
 	}
 }
+
+func TestTransientPrivateBigReactionCacheIsBoundedAndExpires(t *testing.T) {
+	r := &Router{}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 2002}
+	r.rememberTransientPrivateBigReaction(1001, peer, 1, 10)
+	if !r.shouldSuppressTransientPrivateReactionClear(1001, peer, 1, 12) {
+		t.Fatalf("transient big reaction clear should be suppressed inside window")
+	}
+	if r.shouldSuppressTransientPrivateReactionClear(1001, peer, 1, 14) {
+		t.Fatalf("transient big reaction clear should not be suppressed after expiry")
+	}
+
+	var cache transientPrivateBigReactionCache
+	for i := 0; i < transientPrivateBigReactionMaxEntries+100; i++ {
+		cache.remember(transientPrivateBigReactionKey{
+			UserID:    1001,
+			PeerID:    int64(2000 + i),
+			MessageID: i + 1,
+		}, 100+i, 1)
+	}
+	cache.mu.Lock()
+	got := len(cache.entries)
+	cache.mu.Unlock()
+	if got > transientPrivateBigReactionMaxEntries {
+		t.Fatalf("transient cache entries = %d, want <= %d", got, transientPrivateBigReactionMaxEntries)
+	}
+}

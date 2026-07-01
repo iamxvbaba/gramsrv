@@ -125,7 +125,7 @@ func applyTgUserBotFields(out *tg.User, u domain.User) {
 		version = 1
 	}
 	out.SetBotInfoVersion(version)
-	if u.ID != domain.BotFatherUserID {
+	if !domain.IsSystemUserID(u.ID) {
 		out.SetBotBusiness(true)
 	}
 	out.Phone = ""

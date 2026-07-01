@@ -559,6 +559,125 @@ func (s *PasswordStore) ClearStickerCollection(ctx context.Context, userID int64
 	return nil
 }
 
+func (s *PasswordStore) InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error {
+	if userID == 0 || setID == 0 {
+		return domain.ErrStickerInvalid
+	}
+	orderValue := int64(installedDate) << 32
+	_, err := s.db.Exec(ctx, `
+INSERT INTO user_sticker_sets (owner_user_id, sticker_set_id, set_kind, archived, installed_date, order_value, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (owner_user_id, sticker_set_id) DO UPDATE SET
+  set_kind = EXCLUDED.set_kind,
+  archived = EXCLUDED.archived,
+  installed_date = CASE
+    WHEN user_sticker_sets.installed_date = 0 THEN EXCLUDED.installed_date
+    ELSE user_sticker_sets.installed_date
+  END,
+  order_value = EXCLUDED.order_value,
+  updated_at = now()`,
+		userID, setID, string(kind), archived, installedDate, orderValue)
+	if err != nil {
+		return fmt.Errorf("install user sticker set: %w", err)
+	}
+	return nil
+}
+
+func (s *PasswordStore) UninstallUserStickerSet(ctx context.Context, userID int64, setID int64) error {
+	if _, err := s.db.Exec(ctx, `
+DELETE FROM user_sticker_sets
+WHERE owner_user_id = $1 AND sticker_set_id = $2`, userID, setID); err != nil {
+		return fmt.Errorf("uninstall user sticker set: %w", err)
+	}
+	return nil
+}
+
+func (s *PasswordStore) SetUserStickerSetArchived(ctx context.Context, userID int64, setID int64, archived bool, now int) error {
+	orderValue := int64(now) << 32
+	_, err := s.db.Exec(ctx, `
+UPDATE user_sticker_sets
+SET archived = $3,
+    order_value = CASE WHEN $3::boolean = false AND $4::bigint > 0 THEN $4::bigint ELSE order_value END,
+    updated_at = now()
+WHERE owner_user_id = $1 AND sticker_set_id = $2`, userID, setID, archived, orderValue)
+	if err != nil {
+		return fmt.Errorf("set user sticker set archived: %w", err)
+	}
+	return nil
+}
+
+func (s *PasswordStore) ReorderUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, order []int64, now int) error {
+	if len(order) == 0 {
+		return nil
+	}
+	return withTx(ctx, s.db, "reorder user sticker sets", func(tx pgx.Tx) error {
+		orderValue := int64(now) << 32
+		for _, id := range order {
+			if _, err := tx.Exec(ctx, `
+UPDATE user_sticker_sets
+SET order_value = $4, updated_at = now()
+WHERE owner_user_id = $1 AND set_kind = $2 AND sticker_set_id = $3`,
+				userID, string(kind), id, orderValue); err != nil {
+				return fmt.Errorf("update user sticker set order: %w", err)
+			}
+			orderValue--
+		}
+		return nil
+	})
+}
+
+func (s *PasswordStore) ListUserStickerSets(ctx context.Context, userID int64, kind domain.StickerSetKind, archived *bool, offsetID int64, limit int) ([]domain.UserStickerSet, int, error) {
+	if userID == 0 {
+		return nil, 0, nil
+	}
+	if limit <= 0 || limit > domain.MaxInstalledStickerSets {
+		limit = domain.MaxInstalledStickerSets
+	}
+	var archivedFilter any
+	if archived != nil {
+		archivedFilter = *archived
+	}
+	rows, err := s.db.Query(ctx, `
+WITH ordered AS (
+  SELECT owner_user_id, sticker_set_id, set_kind, archived, installed_date, order_value,
+         ROW_NUMBER() OVER (ORDER BY order_value DESC, sticker_set_id DESC) AS rn,
+         COUNT(*) OVER () AS total
+  FROM user_sticker_sets
+  WHERE owner_user_id = $1
+    AND set_kind = $2
+    AND ($3::boolean IS NULL OR archived = $3::boolean)
+),
+page AS (
+  SELECT COALESCE((SELECT rn FROM ordered WHERE sticker_set_id = $4), 0) AS offset_rn
+)
+SELECT owner_user_id, sticker_set_id, set_kind, archived, installed_date, order_value, total
+FROM ordered, page
+WHERE ordered.rn > page.offset_rn
+ORDER BY ordered.rn ASC
+LIMIT $5`, userID, string(kind), archivedFilter, offsetID, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list user sticker sets: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.UserStickerSet, 0, limit)
+	total := 0
+	for rows.Next() {
+		var (
+			item     domain.UserStickerSet
+			kindText string
+		)
+		if err := rows.Scan(&item.OwnerUserID, &item.StickerSetID, &kindText, &item.Archived, &item.InstalledDate, &item.OrderValue, &total); err != nil {
+			return nil, 0, fmt.Errorf("scan user sticker set: %w", err)
+		}
+		item.Kind = domain.StickerSetKind(kindText)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate user sticker sets: %w", err)
+	}
+	return out, total, nil
+}
+
 func nullableBool(v *bool) any {
 	if v == nil {
 		return nil

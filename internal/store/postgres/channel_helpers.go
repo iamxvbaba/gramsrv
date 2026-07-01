@@ -653,7 +653,7 @@ GROUP BY topic_id`, userID, channelID, roots, availableMinID)
 	return nil
 }
 
-func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX, req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel) (*domain.MessageReply, error) {
+func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX, req domain.SendChannelMessageRequest, member domain.ChannelMember, channel domain.Channel, selfBoostsApplied int) (*domain.MessageReply, error) {
 	if req.ReplyTo == nil {
 		return nil, nil
 	}
@@ -679,7 +679,7 @@ func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX,
 		if topic.Hidden {
 			return nil, domain.ErrReplyMessageIDInvalid
 		}
-		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID) {
+		if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 			return nil, domain.ErrChannelWriteForbidden
 		}
 		reply := cloneMessageReply(req.ReplyTo)
@@ -711,7 +711,7 @@ func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX,
 	}
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, err := s.getForumTopic(ctx, db, req.ChannelID, reply.TopMessageID); err == nil && !topic.Hidden {
-			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID) {
+			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 				return nil, domain.ErrChannelWriteForbidden
 			}
 			reply.ForumTopic = true

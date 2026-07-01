@@ -609,7 +609,7 @@ func stickerSetKind(sj seedStickerSetJSON, systemKey string) domain.StickerSetKi
 }
 
 func seedStickerSetInstalled(kind domain.StickerSetKind) bool {
-	return kind != domain.StickerSetKindSystem
+	return false
 }
 
 // ---- JSON → domain 转换 ----

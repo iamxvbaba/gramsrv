@@ -44,10 +44,15 @@ type MediaStore interface {
 
 	// 贴纸集 / 可用 reaction。
 	PutStickerSet(ctx context.Context, set domain.StickerSet) error
+	CreateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
+	UpdateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
+	DeleteStickerSet(ctx context.Context, setID int64, creatorUserID int64) error
 	GetStickerSetByID(ctx context.Context, id int64) (domain.StickerSet, bool, error)
 	GetStickerSetByShortName(ctx context.Context, shortName string) (domain.StickerSet, bool, error)
 	GetStickerSetBySystemKey(ctx context.Context, systemKey string) (domain.StickerSet, bool, error)
 	ListStickerSets(ctx context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error)
+	ListStickerSetsByCreator(ctx context.Context, creatorUserID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error)
+	StickerSetShortNameAvailable(ctx context.Context, shortName string) (bool, error)
 	CountStickerSets(ctx context.Context) (int, error)
 	PutAvailableReaction(ctx context.Context, r domain.AvailableReaction) error
 	ListAvailableReactions(ctx context.Context) ([]domain.AvailableReaction, error)

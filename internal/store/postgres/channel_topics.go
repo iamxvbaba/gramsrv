@@ -131,6 +131,20 @@ func (s *ChannelStore) CreateForumTopic(ctx context.Context, req domain.CreateCh
 	if !canSendChannelMessage(channel, member) {
 		return domain.CreateChannelForumTopicResult{}, domain.ErrChannelWriteForbidden
 	}
+	selfBoostsApplied := 0
+	if channel.Megagroup {
+		now := req.Date
+		if now <= 0 {
+			now = nowUnix()
+		}
+		selfBoostsApplied, err = s.countActiveUserBoostsForPeer(ctx, s.db, req.UserID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}, now)
+		if err != nil {
+			return domain.CreateChannelForumTopicResult{}, err
+		}
+	}
+	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
+		return domain.CreateChannelForumTopicResult{}, domain.ErrChannelWriteForbidden
+	}
 	if req.IconColor == 0 {
 		req.IconColor = domain.DefaultForumTopicIconColor
 	}
@@ -192,7 +206,18 @@ func (s *ChannelStore) EditForumTopic(ctx context.Context, req domain.EditChanne
 	if err != nil {
 		return domain.EditChannelForumTopicResult{}, err
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID) {
+	selfBoostsApplied := 0
+	if channel.Megagroup {
+		now := req.Date
+		if now <= 0 {
+			now = nowUnix()
+		}
+		selfBoostsApplied, err = s.countActiveUserBoostsForPeer(ctx, s.db, req.UserID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}, now)
+		if err != nil {
+			return domain.EditChannelForumTopicResult{}, err
+		}
+	}
+	if !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {
 		return domain.EditChannelForumTopicResult{}, domain.ErrChannelAdminRequired
 	}
 	next := topic
@@ -390,7 +415,7 @@ func (s *ChannelStore) DeleteForumTopicHistory(ctx context.Context, req domain.D
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
 	}
-	if !canManageForumTopic(channel, member, topic, req.UserID) && !canDeleteAnyChannelMessage(member) {
+	if !canManageForumTopic(channel, member, topic, req.UserID, 0) && !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
 	rows, err := tx.Query(ctx, `
@@ -1023,7 +1048,10 @@ func scanChannelForumTopic(row rowScanner) (domain.ChannelForumTopic, error) {
 	return topic, nil
 }
 
-func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64) bool {
+func canManageForumTopic(channel domain.Channel, member domain.ChannelMember, topic domain.ChannelForumTopic, userID int64, selfBoostsApplied int) bool {
+	if domain.ChannelBannedRightsBlockManageTopics(channel, member, selfBoostsApplied) {
+		return false
+	}
 	if topic.CreatorUserID == userID {
 		return true
 	}

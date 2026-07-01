@@ -411,3 +411,5 @@ func (c *captureRevoker) PushBotCommandsChanged(_ context.Context, botUserID int
 	c.pushedCommandsTo = botUserID
 	c.pushedCommands = append([]domain.BotCommand(nil), commands...)
 }
+
+func (c *captureRevoker) PushStickerSetsChanged(context.Context, int64, domain.StickerSetKind) {}

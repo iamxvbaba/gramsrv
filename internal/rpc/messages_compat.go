@@ -517,17 +517,12 @@ func (r *Router) validateRequiredSavedHistoryParentPeer(ctx context.Context, use
 }
 
 func messagesAllStickersEmpty(hash int64) tg.MessagesAllStickersClass {
-	if hash != 0 {
-		return &tg.MessagesAllStickersNotModified{}
-	}
-	return &tg.MessagesAllStickers{Sets: []tg.StickerSet{}}
+	return &tg.MessagesAllStickers{Hash: 0, Sets: []tg.StickerSet{}}
 }
 
 func messagesFeaturedStickersEmpty(hash int64) tg.MessagesFeaturedStickersClass {
-	if hash != 0 {
-		return &tg.MessagesFeaturedStickersNotModified{Count: 0}
-	}
 	return &tg.MessagesFeaturedStickers{
+		Hash:   0,
 		Count:  0,
 		Sets:   []tg.StickerSetCoveredClass{},
 		Unread: []int64{},

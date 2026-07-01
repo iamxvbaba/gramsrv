@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -210,17 +211,63 @@ func (f *fakeMediaStore) PutStickerSet(_ context.Context, set domain.StickerSet)
 	f.sets[set.ID] = set
 	return nil
 }
+func (f *fakeMediaStore) CreateStickerSet(_ context.Context, set domain.StickerSet, docs []domain.Document) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, existing := range f.sets {
+		if existing.ShortName != "" && strings.EqualFold(existing.ShortName, set.ShortName) {
+			return domain.ErrStickerSetShortNameOccupied
+		}
+	}
+	f.sets[set.ID] = set
+	if f.docs == nil {
+		f.docs = map[int64]domain.Document{}
+	}
+	for _, doc := range docs {
+		f.docs[doc.ID] = doc
+	}
+	return nil
+}
+func (f *fakeMediaStore) UpdateStickerSet(_ context.Context, set domain.StickerSet, docs []domain.Document) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.sets[set.ID]; !ok {
+		return domain.ErrStickerSetInvalid
+	}
+	f.sets[set.ID] = set
+	if f.docs == nil {
+		f.docs = map[int64]domain.Document{}
+	}
+	for _, doc := range docs {
+		f.docs[doc.ID] = doc
+	}
+	return nil
+}
+func (f *fakeMediaStore) DeleteStickerSet(_ context.Context, setID int64, creatorUserID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	set, ok := f.sets[setID]
+	if !ok || set.Deleted || set.CreatorUserID != creatorUserID {
+		return domain.ErrStickerSetInvalid
+	}
+	set.Deleted = true
+	f.sets[setID] = set
+	return nil
+}
 func (f *fakeMediaStore) GetStickerSetByID(_ context.Context, id int64) (domain.StickerSet, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.sets[id]
+	if ok && s.Deleted {
+		return domain.StickerSet{}, false, nil
+	}
 	return s, ok, nil
 }
 func (f *fakeMediaStore) GetStickerSetByShortName(_ context.Context, name string) (domain.StickerSet, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, s := range f.sets {
-		if s.ShortName == name {
+		if strings.EqualFold(s.ShortName, name) && !s.Deleted {
 			return s, true, nil
 		}
 	}
@@ -241,11 +288,47 @@ func (f *fakeMediaStore) ListStickerSets(_ context.Context, kind domain.StickerS
 	defer f.mu.Unlock()
 	var out []domain.StickerSet
 	for _, s := range f.sets {
-		if s.Kind == kind {
+		if s.Kind == kind && !s.Deleted {
 			out = append(out, s)
 		}
 	}
 	return out, nil
+}
+func (f *fakeMediaStore) ListStickerSetsByCreator(_ context.Context, creatorUserID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var all []domain.StickerSet
+	for _, s := range f.sets {
+		if s.CreatorUserID == creatorUserID && !s.Deleted {
+			s.Creator = true
+			all = append(all, s)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
+	total := len(all)
+	if offsetID != 0 {
+		filtered := all[:0]
+		for _, s := range all {
+			if s.ID < offsetID {
+				filtered = append(filtered, s)
+			}
+		}
+		all = filtered
+	}
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return append([]domain.StickerSet(nil), all...), total, nil
+}
+func (f *fakeMediaStore) StickerSetShortNameAvailable(_ context.Context, shortName string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, s := range f.sets {
+		if s.ShortName != "" && strings.EqualFold(s.ShortName, shortName) && !s.Deleted {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 func (f *fakeMediaStore) CountStickerSets(_ context.Context) (int, error) {
 	f.mu.Lock()
@@ -657,15 +740,15 @@ func TestSeedDocumentStorageIDNormalizesExternalIDs(t *testing.T) {
 	}
 }
 
-func TestSeedStickerSetInstalledFlagExcludesSystemSets(t *testing.T) {
+func TestSeedStickerSetInstalledFlagNeverMarksViewerState(t *testing.T) {
 	cases := []struct {
 		name string
 		kind domain.StickerSetKind
 		want bool
 	}{
-		{name: "regular stickers", kind: domain.StickerSetKindStickers, want: true},
-		{name: "custom emoji", kind: domain.StickerSetKindEmoji, want: true},
-		{name: "masks", kind: domain.StickerSetKindMasks, want: true},
+		{name: "regular stickers", kind: domain.StickerSetKindStickers, want: false},
+		{name: "custom emoji", kind: domain.StickerSetKindEmoji, want: false},
+		{name: "masks", kind: domain.StickerSetKindMasks, want: false},
 		{name: "system resources", kind: domain.StickerSetKindSystem, want: false},
 	}
 	for _, tc := range cases {

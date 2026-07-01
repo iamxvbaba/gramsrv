@@ -52,3 +52,10 @@ func (r *Router) stickerCatalogSets(ctx context.Context, kind domain.StickerSetK
 	}
 	return sets
 }
+
+func (r *Router) invalidateStickerCatalog(kind domain.StickerSetKind) {
+	if r.stickerCatalog == nil || r.stickerCatalog.cache == nil {
+		return
+	}
+	r.stickerCatalog.cache.Invalidate(kind)
+}

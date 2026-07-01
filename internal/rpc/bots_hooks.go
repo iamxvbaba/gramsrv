@@ -11,7 +11,8 @@ import (
 )
 
 // 本文件实现 app/bots 的 RouterHooks 回调：token revoke 后的 session 失效闭环，
-// 以及命令变更后的 updateBotCommands 在线推送。Router 创建后经
+// 命令变更后的 updateBotCommands 在线推送，以及 @Stickers 发布后的
+// updateStickerSets 在线提示。Router 创建后经
 // botsService.SetRouterHooks(router) 装配（见 cmd/telesrv/main.go）。
 
 // maxBotCommandsPushPeers 限制单次命令变更的推送扇出（bot 的最近 dialog peer 数）。
@@ -58,6 +59,26 @@ func (r *Router) PushBotCommandsChanged(ctx context.Context, botUserID int64, co
 	// 拷贝命令切片：调用方（service）可能复用底层数组。
 	cmds := append([]domain.BotCommand(nil), commands...)
 	go r.pushBotCommandsChanged(context.WithoutCancel(ctx), botUserID, cmds)
+}
+
+// PushStickerSetsChanged 给单个用户在线 session 推 updateStickerSets。该 update 无
+// pts，不进 getDifference；权威安装态已写 user_sticker_sets，离线端下次
+// messages.getAllStickers/messages.getEmojiStickers 会重建。
+func (r *Router) PushStickerSetsChanged(ctx context.Context, userID int64, kind domain.StickerSetKind) {
+	if userID == 0 {
+		return
+	}
+	r.invalidateStickerCatalog(kind)
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.log.Error("push sticker sets panicked", zap.Int64("user_id", userID), zap.Any("panic", rec))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		r.pushStickerSetsUpdate(ctx, userID, kind)
+	}()
 }
 
 func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand) {
