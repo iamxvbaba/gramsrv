@@ -117,18 +117,19 @@ type Router struct {
 	// updateStatus 高频续期时数秒内只落一次 DB。
 	lastSeenPersist sync.Map // userID(int64) -> int64(unix)
 	// tempKeyResolveCache 缓存 rawTempKeyID -> resolved perm（带过期），容量有界。
-	tempKeyResolveCache         *tempKeyResolveCache
-	storyProjectionCache        *storyProjectionCache
-	storyPinnedCache            *storyPinnedAvailableCache
-	storyPinnedListCache        *storyPinnedStoriesCache
-	channelFullBotCache         *channelFullBotInfoCache
-	userFullProjectionCache     *userFullProjectionCache
-	peerSettingsProjectionCache *peerSettingsProjectionCache
-	channelFullProjectionCache  *channelFullProjectionCache
-	emojiStickers               *emojiStickerIndex
-	notifySettings              *notifySettingsCache
-	stickerCatalog              *stickerCatalogCache
-	accountSettings             *accountSettingsCache
+	tempKeyResolveCache          *tempKeyResolveCache
+	storyProjectionCache         *storyProjectionCache
+	storyPinnedCache             *storyPinnedAvailableCache
+	storyPinnedListCache         *storyPinnedStoriesCache
+	channelFullBotCache          *channelFullBotInfoCache
+	userFullProjectionCache      *userFullProjectionCache
+	peerSettingsProjectionCache  *peerSettingsProjectionCache
+	channelFullProjectionCache   *channelFullProjectionCache
+	emojiStickers                *emojiStickerIndex
+	notifySettings               *notifySettingsCache
+	stickerCatalog               *stickerCatalogCache
+	transientPrivateBigReactions transientPrivateBigReactionCache
+	accountSettings              *accountSettingsCache
 	// webPageResolveSem 是链接预览异步解析的并发信号量（有界）：发送后把 pending 占位
 	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调
 	// resolvePendingWebPage 同步验证）。

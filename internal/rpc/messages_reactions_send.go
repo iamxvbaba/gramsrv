@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"sync"
+
 	"github.com/gotd/td/tg"
 	"telesrv/internal/domain"
 )
@@ -51,6 +53,20 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return updates, nil
 	}
 	if peer.Type == domain.PeerTypeUser && r.deps.Messages != nil {
+		if len(reactions) == 0 && r.shouldSuppressTransientPrivateReactionClear(userID, peer, req.MsgID, date) {
+			res, err := r.deps.Messages.GetMessageReactions(ctx, userID, domain.PrivateMessageReactionsRequest{
+				OwnerUserID: userID,
+				Peer:        peer,
+				IDs:         []int{req.MsgID},
+			})
+			if err != nil {
+				return nil, messageReactionErr(err)
+			}
+			return r.privateMessagesReactionsUpdates(ctx, userID, peer, res, []int{req.MsgID}), nil
+		}
+		if req.Big && len(reactions) > 0 {
+			r.rememberTransientPrivateBigReaction(userID, peer, req.MsgID, date)
+		}
 		res, err := r.deps.Messages.SetMessageReactions(ctx, userID, domain.SetPrivateMessageReactionsRequest{
 			UserID:              userID,
 			Peer:                peer,
@@ -63,6 +79,9 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		})
 		if err != nil {
 			return nil, messageReactionErr(err)
+		}
+		if len(reactions) == 0 {
+			r.forgetTransientPrivateBigReaction(userID, peer, req.MsgID)
 		}
 		if err := r.recordMessageReactionUse(ctx, userID, reactions, req.GetAddToRecent(), date); err != nil {
 			return nil, internalErr()
@@ -92,6 +111,104 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return updates, nil
 	}
 	return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
+}
+
+const (
+	transientPrivateBigReactionClearWindowSeconds = 3
+	transientPrivateBigReactionMaxEntries         = 4096
+)
+
+type transientPrivateBigReactionKey struct {
+	UserID    int64
+	PeerID    int64
+	MessageID int
+}
+
+type transientPrivateBigReactionEntry struct {
+	ExpiresAt int
+}
+
+type transientPrivateBigReactionCache struct {
+	mu      sync.Mutex
+	entries map[transientPrivateBigReactionKey]transientPrivateBigReactionEntry
+}
+
+func transientPrivateBigReactionMapKey(userID int64, peer domain.Peer, messageID int) transientPrivateBigReactionKey {
+	return transientPrivateBigReactionKey{
+		UserID:    userID,
+		PeerID:    peer.ID,
+		MessageID: messageID,
+	}
+}
+
+func (r *Router) rememberTransientPrivateBigReaction(userID int64, peer domain.Peer, messageID int, date int) {
+	if peer.Type != domain.PeerTypeUser || userID == 0 || peer.ID == 0 || messageID <= 0 || date <= 0 {
+		return
+	}
+	r.transientPrivateBigReactions.remember(transientPrivateBigReactionMapKey(userID, peer, messageID), date+transientPrivateBigReactionClearWindowSeconds, date)
+}
+
+func (r *Router) shouldSuppressTransientPrivateReactionClear(userID int64, peer domain.Peer, messageID int, date int) bool {
+	return r.transientPrivateBigReactions.shouldSuppress(transientPrivateBigReactionMapKey(userID, peer, messageID), date)
+}
+
+func (r *Router) forgetTransientPrivateBigReaction(userID int64, peer domain.Peer, messageID int) {
+	r.transientPrivateBigReactions.forget(transientPrivateBigReactionMapKey(userID, peer, messageID))
+}
+
+func (c *transientPrivateBigReactionCache) remember(key transientPrivateBigReactionKey, expiresAt int, now int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[transientPrivateBigReactionKey]transientPrivateBigReactionEntry)
+	}
+	if len(c.entries) >= transientPrivateBigReactionMaxEntries {
+		c.pruneLocked(now)
+	}
+	if len(c.entries) >= transientPrivateBigReactionMaxEntries {
+		c.dropOneLocked()
+	}
+	c.entries[key] = transientPrivateBigReactionEntry{ExpiresAt: expiresAt}
+}
+
+func (c *transientPrivateBigReactionCache) shouldSuppress(key transientPrivateBigReactionKey, now int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+	if now > entry.ExpiresAt {
+		delete(c.entries, key)
+		return false
+	}
+	return true
+}
+
+func (c *transientPrivateBigReactionCache) forget(key transientPrivateBigReactionKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
+func (c *transientPrivateBigReactionCache) pruneLocked(now int) {
+	for key, entry := range c.entries {
+		if now > entry.ExpiresAt {
+			delete(c.entries, key)
+		}
+	}
+}
+
+func (c *transientPrivateBigReactionCache) dropOneLocked() {
+	var oldestKey transientPrivateBigReactionKey
+	oldestExpiresAt := int(^uint(0) >> 1)
+	for key, entry := range c.entries {
+		if entry.ExpiresAt < oldestExpiresAt {
+			oldestKey = key
+			oldestExpiresAt = entry.ExpiresAt
+		}
+	}
+	delete(c.entries, oldestKey)
 }
 
 func (r *Router) recordMessageReactionUse(ctx context.Context, userID int64, reactions []domain.MessageReaction, addToRecent bool, date int) error {

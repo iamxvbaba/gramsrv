@@ -41,6 +41,18 @@ func (s *ChannelStore) SetChannelMessageReactions(ctx context.Context, req domai
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
+	if len(req.Reactions) > 0 {
+		selfBoostsApplied := 0
+		if channel.Megagroup {
+			selfBoostsApplied, err = countActiveUserBoostsForPeer(ctx, tx, req.UserID, domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}, req.Date)
+			if err != nil {
+				return domain.ChannelMessageReactionsResult{}, err
+			}
+		}
+		if domain.ChannelBannedRightsBlockReactions(channel, member, selfBoostsApplied) {
+			return domain.ChannelMessageReactionsResult{}, domain.ErrChannelWriteForbidden
+		}
+	}
 	msg, err := s.getChannelMessage(ctx, tx, req.ChannelID, req.MessageID)
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err

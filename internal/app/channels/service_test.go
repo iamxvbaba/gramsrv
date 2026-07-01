@@ -1321,6 +1321,213 @@ func TestDefaultBannedRightsRestrictMemberSendAndInvite(t *testing.T) {
 	}
 }
 
+func TestSendPlainRightsRestrictTextMessages(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Plain Text Gate",
+		MemberUserIDs: []int64{1002},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+
+	if _, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
+		ChannelID:   created.Channel.ID,
+		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		BannedRights: domain.ChannelBannedRights{
+			SendPlain: true,
+		},
+		Date: 11,
+	}); err != nil {
+		t.Fatalf("EditBanned send_plain: %v", err)
+	}
+	if _, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  1,
+		Message:   "blocked by member send_plain",
+		Date:      12,
+	}); !errors.Is(err, domain.ErrChannelWriteForbidden) {
+		t.Fatalf("member SendMessage err = %v, want ErrChannelWriteForbidden", err)
+	}
+	if _, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
+		ChannelID:    created.Channel.ID,
+		Participant:  domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		BannedRights: domain.ChannelBannedRights{},
+		Date:         13,
+	}); err != nil {
+		t.Fatalf("clear member send_plain: %v", err)
+	}
+
+	if _, err := service.EditDefaultBannedRights(ctx, 1001, domain.EditChannelDefaultBannedRightsRequest{
+		ChannelID: created.Channel.ID,
+		BannedRights: domain.ChannelBannedRights{
+			SendPlain: true,
+		},
+		Date: 14,
+	}); err != nil {
+		t.Fatalf("EditDefaultBannedRights send_plain: %v", err)
+	}
+	if _, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  2,
+		Message:   "blocked by default send_plain",
+		Date:      15,
+	}); !errors.Is(err, domain.ErrChannelWriteForbidden) {
+		t.Fatalf("member SendMessage default err = %v, want ErrChannelWriteForbidden", err)
+	}
+	if _, err := service.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  3,
+		Message:   "creator bypass",
+		Date:      16,
+	}); err != nil {
+		t.Fatalf("creator SendMessage under send_plain default: %v", err)
+	}
+}
+
+func TestFineGrainedBannedRightsRestrictMediaReactionsAndTopics(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Fine Rights",
+		MemberUserIDs: []int64{1002},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+
+	if _, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
+		ChannelID:   created.Channel.ID,
+		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		BannedRights: domain.ChannelBannedRights{
+			SendPhotos: true,
+		},
+		Date: 11,
+	}); err != nil {
+		t.Fatalf("EditBanned send_photos: %v", err)
+	}
+	if _, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  1,
+		Media:     &domain.MessageMedia{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: 10}},
+		Date:      12,
+	}); !errors.Is(err, domain.ErrChannelWriteForbidden) {
+		t.Fatalf("member photo SendMessage err = %v, want ErrChannelWriteForbidden", err)
+	}
+	if _, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  2,
+		Message:   "text still allowed",
+		Date:      13,
+	}); err != nil {
+		t.Fatalf("member text under send_photos ban: %v", err)
+	}
+
+	if _, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
+		ChannelID:    created.Channel.ID,
+		Participant:  domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		BannedRights: domain.ChannelBannedRights{},
+		Date:         14,
+	}); err != nil {
+		t.Fatalf("clear member rights: %v", err)
+	}
+	sent, err := service.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  3,
+		Message:   "react here",
+		Date:      15,
+	})
+	if err != nil {
+		t.Fatalf("owner SendMessage: %v", err)
+	}
+	if _, err := service.EditDefaultBannedRights(ctx, 1001, domain.EditChannelDefaultBannedRightsRequest{
+		ChannelID: created.Channel.ID,
+		BannedRights: domain.ChannelBannedRights{
+			SendReactions: true,
+		},
+		Date: 16,
+	}); err != nil {
+		t.Fatalf("EditDefaultBannedRights send_reactions: %v", err)
+	}
+	if _, err := service.SetMessageReactions(ctx, 1002, domain.SetChannelMessageReactionsRequest{
+		ChannelID: created.Channel.ID,
+		MessageID: sent.Message.ID,
+		Reactions: []domain.MessageReaction{{
+			Type:     domain.MessageReactionEmoji,
+			Emoticon: "\U0001f44d",
+		}},
+		Date: 17,
+	}); !errors.Is(err, domain.ErrChannelWriteForbidden) {
+		t.Fatalf("member SetMessageReactions err = %v, want ErrChannelWriteForbidden", err)
+	}
+	if _, err := service.SetMessageReactions(ctx, 1002, domain.SetChannelMessageReactionsRequest{
+		ChannelID: created.Channel.ID,
+		MessageID: sent.Message.ID,
+		Date:      18,
+	}); err != nil {
+		t.Fatalf("member clear reactions under send_reactions ban: %v", err)
+	}
+
+	if _, err := service.SetForum(ctx, 1001, created.Channel.ID, true, true); err != nil {
+		t.Fatalf("SetForum: %v", err)
+	}
+	if _, err := service.EditDefaultBannedRights(ctx, 1001, domain.EditChannelDefaultBannedRightsRequest{
+		ChannelID: created.Channel.ID,
+		BannedRights: domain.ChannelBannedRights{
+			ManageTopics: true,
+		},
+		Date: 19,
+	}); err != nil {
+		t.Fatalf("EditDefaultBannedRights manage_topics: %v", err)
+	}
+	if _, err := service.CreateForumTopic(ctx, 1002, domain.CreateChannelForumTopicRequest{
+		ChannelID: created.Channel.ID,
+		Title:     "blocked topic",
+		RandomID:  4,
+		Date:      20,
+	}); !errors.Is(err, domain.ErrChannelWriteForbidden) {
+		t.Fatalf("member CreateForumTopic err = %v, want ErrChannelWriteForbidden", err)
+	}
+	if _, err := service.EditDefaultBannedRights(ctx, 1001, domain.EditChannelDefaultBannedRightsRequest{
+		ChannelID:    created.Channel.ID,
+		BannedRights: domain.ChannelBannedRights{},
+		Date:         21,
+	}); err != nil {
+		t.Fatalf("clear default rights: %v", err)
+	}
+	topic, err := service.CreateForumTopic(ctx, 1002, domain.CreateChannelForumTopicRequest{
+		ChannelID: created.Channel.ID,
+		Title:     "member topic",
+		RandomID:  5,
+		Date:      22,
+	})
+	if err != nil {
+		t.Fatalf("member CreateForumTopic after clear: %v", err)
+	}
+	if _, err := service.EditBanned(ctx, 1001, domain.EditChannelBannedRequest{
+		ChannelID:   created.Channel.ID,
+		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		BannedRights: domain.ChannelBannedRights{
+			ManageTopics: true,
+		},
+		Date: 23,
+	}); err != nil {
+		t.Fatalf("EditBanned manage_topics: %v", err)
+	}
+	renamed := "renamed"
+	if _, err := service.EditForumTopic(ctx, 1002, domain.EditChannelForumTopicRequest{
+		ChannelID: created.Channel.ID,
+		TopicID:   topic.Topic.TopicID,
+		Title:     &renamed,
+		Date:      24,
+	}); !errors.Is(err, domain.ErrChannelAdminRequired) {
+		t.Fatalf("member EditForumTopic err = %v, want ErrChannelAdminRequired", err)
+	}
+}
+
 func TestSendMessageResolvesChannelReplyTopID(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(memory.NewChannelStore())

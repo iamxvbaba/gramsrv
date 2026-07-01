@@ -240,20 +240,29 @@ func NormalizeFullMegagroupAdminRights(ch Channel, rights ChannelAdminRights) Ch
 
 // ChannelBannedRights is a domain-only representation of Telegram banned rights.
 type ChannelBannedRights struct {
-	ViewMessages bool
-	SendMessages bool
-	SendMedia    bool
-	SendStickers bool
-	SendGifs     bool
-	SendGames    bool
-	SendInline   bool
-	EmbedLinks   bool
-	SendPolls    bool
-	ChangeInfo   bool
-	InviteUsers  bool
-	PinMessages  bool
-	EditRank     bool
-	UntilDate    int
+	ViewMessages    bool
+	SendMessages    bool
+	SendMedia       bool
+	SendStickers    bool
+	SendGifs        bool
+	SendGames       bool
+	SendInline      bool
+	EmbedLinks      bool
+	SendPolls       bool
+	ChangeInfo      bool
+	InviteUsers     bool
+	PinMessages     bool
+	ManageTopics    bool
+	SendPhotos      bool
+	SendVideos      bool
+	SendRoundvideos bool
+	SendAudios      bool
+	SendVoices      bool
+	SendDocs        bool
+	SendPlain       bool
+	EditRank        bool
+	SendReactions   bool
+	UntilDate       int
 }
 
 // ChannelReactionPolicyType describes which reactions are allowed in a channel.

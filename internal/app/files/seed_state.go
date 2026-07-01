@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-
-	"telesrv/internal/domain"
 )
 
 const (
@@ -105,10 +103,7 @@ func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []str
 }
 
 func seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj seedDocumentJSON) bool {
-	if dj.MimeType != "application/x-tgsticker" || len(dj.Thumbs) > 0 {
-		return false
-	}
-	return seedDocumentHasAttribute(seedDocumentAttributes(dj.Attributes), domain.DocAttrCustomEmoji)
+	return dj.MimeType == "application/x-tgsticker" && len(dj.Thumbs) == 0
 }
 
 func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumentJSON, index seedDirIndex) (bool, error) {

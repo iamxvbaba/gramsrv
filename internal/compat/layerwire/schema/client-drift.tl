@@ -19,6 +19,7 @@
 
 messages.uploadMedia#519bc2b1 peer:InputPeer media:InputMedia = MessageMedia;
 auth.signUp#80eee427 phone_number:string phone_code_hash:string first_name:string last_name:string = auth.Authorization;
+messages.getMessages#4222fa74 id:Vector<int> = messages.Messages;
 channels.getMessages#93d7b347 channel:InputChannel id:Vector<int> = messages.Messages;
 bots.exportBotToken#0063b089 bot_id:long revoke:Bool = bots.ExportedBotToken;
 account.registerDevice#637ea878 token_type:int token:string = Bool;

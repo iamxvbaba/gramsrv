@@ -571,6 +571,12 @@ func systemKeyForDefaultSet(dirName string) string {
 		return "animated_emoji_animations"
 	case "DefaultSet_EmojiGenericAnimations":
 		return "emoji_generic_animations"
+	case "DefaultSet_EmojiDefaultStatuses":
+		return domain.StickerSetSystemKeyEmojiDefaultStatuses
+	case "DefaultSet_EmojiDefaultTopicIcons":
+		return domain.StickerSetSystemKeyEmojiDefaultTopicIcons
+	case "DefaultSet_PremiumGifts":
+		return domain.StickerSetSystemKeyPremiumGifts
 	case "DefaultSet_Dice_Normal":
 		return "dice:\U0001f3b2"
 	case "DefaultSet_Dice_Dart":
@@ -716,10 +722,7 @@ func (s *Service) ensureTGStickerPreviewThumb(ctx context.Context, doc *domain.D
 }
 
 func seedDocumentNeedsSyntheticTGStickerPreviewThumb(doc domain.Document) bool {
-	if doc.MimeType != "application/x-tgsticker" || len(doc.Thumbs) > 0 {
-		return false
-	}
-	return seedDocumentHasAttribute(doc.Attributes, domain.DocAttrCustomEmoji)
+	return doc.MimeType == "application/x-tgsticker" && len(doc.Thumbs) == 0
 }
 
 func seedDocumentHasAttribute(attrs []domain.DocumentAttribute, kind domain.DocumentAttributeKind) bool {

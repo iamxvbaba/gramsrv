@@ -61,10 +61,13 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 			return domain.SendChannelMessageResult{}, err
 		}
 	}
+	if domain.ChannelBannedRightsBlockMessage(req, channel, member, fromBoostsApplied) {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+	}
 	if !canSendChannelMessageWithBoost(channel, member, fromBoostsApplied) {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
-	replyTo, err := s.resolveChannelReply(ctx, tx, req, member, channel)
+	replyTo, err := s.resolveChannelReply(ctx, tx, req, member, channel, fromBoostsApplied)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}

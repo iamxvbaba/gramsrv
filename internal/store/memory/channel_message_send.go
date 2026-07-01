@@ -28,6 +28,9 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	if channel.Megagroup {
 		fromBoostsApplied = s.selfBoostsAppliedLocked(req.UserID, req.ChannelID, req.Date)
 	}
+	if domain.ChannelBannedRightsBlockMessage(req, channel, member, fromBoostsApplied) {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+	}
 	if !canSendChannelMessageWithBoost(channel, member, fromBoostsApplied) {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
@@ -51,7 +54,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	if wait := channelSlowModeWait(channel, member, req.Date); wait > 0 {
 		return domain.SendChannelMessageResult{}, domain.NewSlowModeWaitError(wait)
 	}
-	replyTo, err := s.resolveChannelReplyLocked(req, member, channel)
+	replyTo, err := s.resolveChannelReplyLocked(req, member, channel, fromBoostsApplied)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}

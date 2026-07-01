@@ -50,6 +50,15 @@ func (s *ChannelStore) SetChannelMessageReactions(_ context.Context, req domain.
 	if err != nil {
 		return domain.ChannelMessageReactionsResult{}, err
 	}
+	if len(req.Reactions) > 0 {
+		selfBoostsApplied := 0
+		if channel.Megagroup {
+			selfBoostsApplied = s.selfBoostsAppliedLocked(req.UserID, req.ChannelID, req.Date)
+		}
+		if domain.ChannelBannedRightsBlockReactions(channel, member, selfBoostsApplied) {
+			return domain.ChannelMessageReactionsResult{}, domain.ErrChannelWriteForbidden
+		}
+	}
 	idx, ok := s.findMessageIndexLocked(req.ChannelID, req.MessageID)
 	if !ok {
 		return domain.ChannelMessageReactionsResult{}, domain.ErrMessageIDInvalid

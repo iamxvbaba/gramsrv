@@ -653,10 +653,16 @@ type StickerKeyword struct {
 	Keywords   []string `json:"keywords"`
 }
 
-// StickerSetSystemKeyEmojiDefaultStatuses 是 inputStickerSetEmojiDefaultStatuses
-// 对应的系统集标识：premium 用户 emoji status 选择器的"默认状态"主体集
-// （messages.getStickerSet 与 account.getDefaultEmojiStatuses 共用）。
-const StickerSetSystemKeyEmojiDefaultStatuses = "emoji_default_statuses"
+const (
+	// StickerSetSystemKeyEmojiDefaultStatuses 是 inputStickerSetEmojiDefaultStatuses
+	// 对应的系统集标识：premium 用户 emoji status 选择器的"默认状态"主体集
+	// （messages.getStickerSet 与 account.getDefaultEmojiStatuses 共用）。
+	StickerSetSystemKeyEmojiDefaultStatuses = "emoji_default_statuses"
+	// StickerSetSystemKeyEmojiDefaultTopicIcons 对应论坛 topic 默认图标系统集。
+	StickerSetSystemKeyEmojiDefaultTopicIcons = "emoji_default_topic_icons"
+	// StickerSetSystemKeyPremiumGifts 对应 premium gifts 系统集。
+	StickerSetSystemKeyPremiumGifts = "premium_gifts"
+)
 
 // StickerSetKind 区分贴纸集用途（影响 getAllStickers / getEmojiStickers 归类）。
 type StickerSetKind string

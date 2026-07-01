@@ -8,6 +8,8 @@ import (
 	"telesrv/internal/domain"
 )
 
+const mimeApplicationXTGSticker = "application/x-tgsticker"
+
 // 本文件集中 domain media 值对象 → tg.* 的转换；tg.* 只在 rpc 层出现。
 // 供 reaction / sticker 资源 RPC 与消息 media 共用。
 
@@ -27,9 +29,13 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 		}
 		return out
 	case domain.MessageMediaKindDocument:
+		nopremium := m.Nopremium
+		if m.Document != nil && m.Document.IsSticker() {
+			nopremium = true
+		}
 		out := &tg.MessageMediaDocument{
 			Spoiler:   m.Spoiler,
-			Nopremium: m.Nopremium,
+			Nopremium: nopremium,
 			Voice:     m.Voice,
 			Round:     m.Round,
 			Video:     m.Video,
@@ -267,9 +273,9 @@ func tgDocument(d domain.Document) tg.DocumentClass {
 		Date:          d.Date,
 		MimeType:      d.MimeType,
 		Size:          d.Size,
-		Thumbs:        tgDocumentThumbs(d.Thumbs),
+		Thumbs:        tgDocumentThumbs(d.MimeType, d.Thumbs),
 		DCID:          d.DCID,
-		Attributes:    tgDocumentAttributes(d.Attributes),
+		Attributes:    tgDocumentAttributes(d.MimeType, d.Attributes),
 	}
 }
 
@@ -281,12 +287,15 @@ func tgDocuments(docs []domain.Document) []tg.DocumentClass {
 	return out
 }
 
-func tgDocumentThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
+func tgDocumentThumbs(mimeType string, sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 	if len(sizes) == 0 {
 		return nil
 	}
 	out := make([]tg.PhotoSizeClass, 0, len(sizes))
 	for _, s := range sizes {
+		if isSeedSyntheticTGStickerPreviewThumb(mimeType, s) {
+			continue
+		}
 		if s.Kind == domain.PhotoSizeKindCached && len(s.Bytes) > 0 {
 			size := s.Size
 			if size == 0 {
@@ -300,6 +309,17 @@ func tgDocumentThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 		out = append(out, tgPhotoSize(s))
 	}
 	return compactPhotoSizeClasses(out)
+}
+
+func isSeedSyntheticTGStickerPreviewThumb(mimeType string, s domain.PhotoSize) bool {
+	// Older seed imports gave TGS documents without thumbnails a 1x1 transparent
+	// "m" PNG. Clients can prefer that unusable preview and render blank stickers.
+	return mimeType == mimeApplicationXTGSticker &&
+		s.Kind == domain.PhotoSizeKindCached &&
+		s.Type == "m" &&
+		s.W <= 1 &&
+		s.H <= 1 &&
+		len(s.Bytes) > 0
 }
 
 func tgPhotoSizes(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
@@ -408,15 +428,19 @@ func compactPhotoSizeClasses(in []tg.PhotoSizeClass) []tg.PhotoSizeClass {
 	return out
 }
 
-func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
-	out := make([]tg.DocumentAttributeClass, 0, len(attrs))
+func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
+	out := make([]tg.DocumentAttributeClass, 0, len(attrs)+1)
+	hasAnimated := false
+	hasStickerLike := false
 	for _, a := range attrs {
 		switch a.Kind {
 		case domain.DocAttrImageSize:
 			out = append(out, &tg.DocumentAttributeImageSize{W: a.W, H: a.H})
 		case domain.DocAttrAnimated:
+			hasAnimated = true
 			out = append(out, &tg.DocumentAttributeAnimated{})
 		case domain.DocAttrSticker:
+			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeSticker{
 				Mask:       a.Mask,
 				Alt:        a.Alt,
@@ -444,6 +468,7 @@ func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttribu
 		case domain.DocAttrFilename:
 			out = append(out, &tg.DocumentAttributeFilename{FileName: a.FileName})
 		case domain.DocAttrCustomEmoji:
+			hasStickerLike = true
 			out = append(out, &tg.DocumentAttributeCustomEmoji{
 				Free:       a.Free,
 				TextColor:  a.TextColor,
@@ -451,6 +476,9 @@ func tgDocumentAttributes(attrs []domain.DocumentAttribute) []tg.DocumentAttribu
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
 			})
 		}
+	}
+	if mimeType == mimeApplicationXTGSticker && hasStickerLike && !hasAnimated {
+		out = append(out, &tg.DocumentAttributeAnimated{})
 	}
 	return out
 }
@@ -671,6 +699,12 @@ func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "emoji_generic_animations"}, true
 	case *tg.InputStickerSetEmojiDefaultStatuses:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultStatuses}, true
+	case *tg.InputStickerSetEmojiChannelDefaultStatuses:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultStatuses}, true
+	case *tg.InputStickerSetEmojiDefaultTopicIcons:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultTopicIcons}, true
+	case *tg.InputStickerSetPremiumGifts:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyPremiumGifts}, true
 	case *tg.InputStickerSetDice:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "dice:" + in.Emoticon}, true
 	default:

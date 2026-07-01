@@ -819,6 +819,9 @@ func (r *Router) messageContactUserID(ctx context.Context, userID int64, phone s
 // messageMediaFromDocument 由 Document 构造 MessageMedia，并从属性推导 Video/Round/Voice 标志。
 func messageMediaFromDocument(doc domain.Document, spoiler bool, ttl int) *domain.MessageMedia {
 	media := &domain.MessageMedia{Kind: domain.MessageMediaKindDocument, Document: &doc, Spoiler: spoiler, TTLSeconds: ttl}
+	if doc.IsSticker() {
+		media.Nopremium = true
+	}
 	for _, attr := range doc.Attributes {
 		switch attr.Kind {
 		case domain.DocAttrVideo:
