@@ -147,6 +147,34 @@ func TestInboundBodyTransforms(t *testing.T) {
 		}
 		validateMethodRequest(t, out, 0x42c6978f, "langpackGetLanguages")
 	})
+
+	t.Run("channelsEditCreatorToMessagesEditChatCreator", func(t *testing.T) {
+		var in bin.Buffer
+		in.PutID(0x8f38cd1f)
+		_ = (&tg.InputChannel{ChannelID: 132, AccessHash: 8956724956393200600}).Encode(&in)
+		_ = (&tg.InputUser{UserID: 1780243211, AccessHash: 42}).Encode(&in)
+		_ = (&tg.InputCheckPasswordEmpty{}).Encode(&in)
+		out, ok, err := UpgradeInbound(0x8f38cd1f, &in)
+		if !ok || err != nil {
+			t.Fatalf("upgrade: ok=%v err=%v", ok, err)
+		}
+		validateMethodRequest(t, out, 0xf743b857, "messagesEditChatCreator")
+		var req tg.MessagesEditChatCreatorRequest
+		if err := req.Decode(&bin.Buffer{Buf: append([]byte(nil), out.Buf...)}); err != nil {
+			t.Fatalf("decode upgraded editChatCreator: %v", err)
+		}
+		peer, ok := req.Peer.(*tg.InputPeerChannel)
+		if !ok || peer.ChannelID != 132 || peer.AccessHash != 8956724956393200600 {
+			t.Fatalf("upgraded peer = %T %+v, want inputPeerChannel", req.Peer, req.Peer)
+		}
+		user, ok := req.UserID.(*tg.InputUser)
+		if !ok || user.UserID != 1780243211 || user.AccessHash != 42 {
+			t.Fatalf("upgraded user = %T %+v, want inputUser", req.UserID, req.UserID)
+		}
+		if _, ok := req.Password.(*tg.InputCheckPasswordEmpty); !ok {
+			t.Fatalf("upgraded password = %T, want inputCheckPasswordEmpty", req.Password)
+		}
+	})
 }
 
 // TestInboundCRCSwaps covers the body-compatible client-drift methods that only

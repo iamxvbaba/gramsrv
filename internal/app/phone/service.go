@@ -252,6 +252,10 @@ func (s *Service) ConfirmCall(ctx context.Context, userID, callID, accessHash in
 // DiscardCall 挂断：任意非终态可达，幂等。already=true 表示通话此前已是终态
 // （双方同时挂断：先到者定 reason，后到者拿快照）。
 func (s *Service) DiscardCall(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, duration int) (domain.PhoneCall, bool, error) {
+	return s.DiscardCallWithSlug(ctx, userID, callID, accessHash, reason, "", duration)
+}
+
+func (s *Service) DiscardCallWithSlug(ctx context.Context, userID, callID, accessHash int64, reason domain.PhoneCallDiscardReason, reasonSlug string, duration int) (domain.PhoneCall, bool, error) {
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
 	e, err := s.lookupLocked(callID, accessHash)
@@ -267,11 +271,14 @@ func (s *Service) DiscardCall(ctx context.Context, userID, callID, accessHash in
 	if reason == "" {
 		reason = domain.PhoneCallDiscardReasonHangup
 	}
+	if reason != domain.PhoneCallDiscardReasonMigrateConference {
+		reasonSlug = ""
+	}
 	// duration 只在通话真正建立（Confirmed）后才认，防止客户端把振铃时长报成通话时长。
 	if e.call.StartDate == 0 || duration < 0 {
 		duration = 0
 	}
-	s.reg.markDiscardedLocked(e, reason, duration, int(s.clk.Now().Unix()))
+	s.reg.markDiscardedWithSlugLocked(e, reason, reasonSlug, duration, int(s.clk.Now().Unix()))
 	return e.call, false, nil
 }
 

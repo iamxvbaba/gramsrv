@@ -229,7 +229,7 @@ func tgContactsFound(viewerUserID int64, res domain.UserSearchResult) *tg.Contac
 	}
 	for _, ch := range res.MyChannelResults {
 		out.MyResults = append(out.MyResults, &tg.PeerChannel{ChannelID: ch.ID})
-		appendChannel(ch, nil)
+		appendChannel(ch, &domain.ChannelMember{ChannelID: ch.ID, UserID: viewerUserID, Status: domain.ChannelMemberActive})
 	}
 	for _, u := range res.Results {
 		out.Results = append(out.Results, &tg.PeerUser{UserID: u.ID})

@@ -69,6 +69,14 @@ func (d *GroupCallSweepDispatcher) DispatchOnce(ctx context.Context) {
 		if d.router.deps.SFU != nil {
 			_ = d.router.deps.SFU.Leave(ctx, mut.Call.ID, mut.Participant.UserID, sfu.EndpointMain)
 		}
+		if mut.Call.Conference() {
+			d.router.groupCallMutationFanout(ctx, domain.Channel{}, mut)
+			d.log.Info("conference call participant swept",
+				zap.Int64("call_id", mut.Call.ID),
+				zap.Int64("user_id", mut.Participant.UserID),
+				zap.String("state", string(mut.Call.State)))
+			continue
+		}
 		channel, err := d.router.channelForGroupCall(ctx, mut.Call)
 		if err != nil {
 			continue

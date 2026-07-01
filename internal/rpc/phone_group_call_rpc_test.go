@@ -25,7 +25,20 @@ type groupCallSessions struct {
 
 func (s *groupCallSessions) IsUserOnline(userID int64) bool { return false }
 func (s *groupCallSessions) OnlineUserIDsForCandidates(candidateUserIDs []int64, limit int) []int64 {
-	return nil
+	online := map[int64]struct{}{}
+	for _, id := range s.online {
+		online[id] = struct{}{}
+	}
+	out := make([]int64, 0, len(candidateUserIDs))
+	for _, id := range candidateUserIDs {
+		if _, ok := online[id]; ok {
+			out = append(out, id)
+			if limit > 0 && len(out) == limit {
+				break
+			}
+		}
+	}
+	return out
 }
 func (s *groupCallSessions) TrackChannelInterest([8]byte, int64, int64, []int64)         {}
 func (s *groupCallSessions) ClearChannelInterest([8]byte, int64, int64)                  {}

@@ -150,18 +150,18 @@ func (s *ChannelStore) SearchPublicChannels(ctx context.Context, viewerUserID in
 	queryPrefix := escapeLike(queryLower) + "%"
 	queryLike := "%" + escapeLike(queryLower) + "%"
 	rows, err := s.db.Query(ctx, `
-SELECT `+channelColumns+`,
-       EXISTS (
-         SELECT 1
-         FROM channel_members m
-         WHERE m.channel_id = c.id
-           AND m.user_id = $1
-           AND m.status = 'active'
-       ) AS viewer_member
+SELECT `+channelColumns+`
 FROM channels c
 WHERE NOT c.deleted
   AND (c.broadcast OR c.megagroup)
   AND COALESCE(c.username, '') <> ''
+  AND NOT EXISTS (
+    SELECT 1
+    FROM channel_members m
+    WHERE m.channel_id = c.id
+      AND m.user_id = $1
+      AND m.status = 'active'
+  )
   AND (
     lower(c.username) = $2
     OR lower(c.username) LIKE $3 ESCAPE '\'
@@ -176,7 +176,6 @@ ORDER BY CASE
     WHEN lower(c.title) LIKE $3 ESCAPE '\' THEN 3
     ELSE 4
   END,
-  viewer_member DESC,
   c.participants_count DESC,
   c.date DESC,
   c.id DESC
@@ -186,19 +185,14 @@ LIMIT $5`, viewerUserID, queryLower, queryPrefix, queryLike, limit)
 	}
 	defer rows.Close()
 	out := domain.PublicChannelSearchResult{
-		MyResults: make([]domain.Channel, 0),
-		Results:   make([]domain.Channel, 0, limit),
+		Results: make([]domain.Channel, 0, limit),
 	}
 	for rows.Next() {
-		ch, viewerMember, err := scanChannelWithViewerMember(rows)
+		ch, err := scanChannel(rows)
 		if err != nil {
 			return domain.PublicChannelSearchResult{}, err
 		}
-		if viewerMember {
-			out.MyResults = append(out.MyResults, ch)
-		} else {
-			out.Results = append(out.Results, ch)
-		}
+		out.Results = append(out.Results, ch)
 	}
 	if err := rows.Err(); err != nil {
 		return domain.PublicChannelSearchResult{}, err

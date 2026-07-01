@@ -848,7 +848,6 @@ func (r *Router) onContactsSearch(ctx context.Context, req *tg.ContactsSearchReq
 		if err != nil {
 			return nil, channelInvalidErr(err)
 		}
-		res.MyChannelResults = channelRes.MyResults
 		res.ChannelResults = channelRes.Results
 	}
 	return r.tgContactsFound(ctx, userID, r.withUserSearchPresence(res)), nil

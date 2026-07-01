@@ -26,3 +26,7 @@ contacts.search#11f812d8 q:string limit:int = contacts.Found;
 langpack.getLangPack#9ab5c58e lang_code:string = LangPackDifference;
 langpack.getStrings#2e1ee318 lang_code:string keys:Vector<string> = Vector<LangPackString>;
 langpack.getLanguages#800fd57d = Vector<LangPackLanguage>;
+// DrKLO still emits old channels.editCreator#8f38cd1f; canonical 227 replaced
+// that flow with messages.editChatCreator(peer:InputPeer,...). Keep the old
+// constructor id here but target the canonical method name for generic upgrade.
+messages.editChatCreator#8f38cd1f channel:InputChannel user_id:InputUser password:InputCheckPasswordSRP = Updates;

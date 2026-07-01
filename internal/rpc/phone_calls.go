@@ -210,15 +210,28 @@ func (r *Router) onPhoneDiscardCall(ctx context.Context, req *tg.PhoneDiscardCal
 		return nil, err
 	}
 	reason := phoneCallDiscardReasonFromTL(req.Reason)
-	call, already, err := r.deps.Phone.DiscardCall(ctx, userID, req.Peer.ID, req.Peer.AccessHash, reason, req.Duration)
+	reasonSlug := phoneCallDiscardReasonSlugFromTL(req.Reason)
+	if reason == domain.PhoneCallDiscardReasonMigrateConference {
+		if reasonSlug == "" || r.deps.GroupCalls == nil {
+			return nil, groupCallInvalidErr()
+		}
+		if call, found, err := r.deps.GroupCalls.GetBySlug(ctx, reasonSlug); err != nil {
+			return nil, internalErr()
+		} else if !found || !call.Conference() || !call.Active() {
+			return nil, groupCallInvalidErr()
+		}
+	}
+	call, already, err := r.deps.Phone.DiscardCallWithSlug(ctx, userID, req.Peer.ID, req.Peer.AccessHash, reason, reasonSlug, req.Duration)
 	if err != nil {
 		return nil, phoneCallErr(err)
 	}
 	if !already {
 		// 对端全部设备 + 发起者其它设备（ctx except 排除发起设备，其结果在 RPC 响应里）。
 		r.pushPhoneCallDiscardedBoth(ctx, call)
-		// 落 messageActionPhoneCall 历史（带 pts 走 outbox，双方全部设备可靠收到）。
-		r.sendPhoneCallServiceMessage(ctx, call)
+		if reason != domain.PhoneCallDiscardReasonMigrateConference {
+			// 落 messageActionPhoneCall 历史（带 pts 走 outbox，双方全部设备可靠收到）。
+			r.sendPhoneCallServiceMessage(ctx, call)
+		}
 	}
 	// 双方同时挂断的竞态：先到者定 reason，后到者拿终态快照（幂等成功）。
 	return r.phoneCallUpdates(ctx, call, userID), nil

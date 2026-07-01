@@ -66,7 +66,7 @@ type ImportContactsResult struct {
 
 // UserSearchResult 是 contacts.search 的业务结果。
 // MyResults 放当前账号通讯录内命中的用户；Results 放其他全局命中用户。
-// MyChannelResults 放当前账号已加入的公开 channel/supergroup；ChannelResults 放其他公开命中。
+// ChannelResults 放未加入的公开 channel/supergroup 命中；已加入频道由 dialogs/resolve 路径呈现。
 type UserSearchResult struct {
 	MyResults        []User
 	Results          []User

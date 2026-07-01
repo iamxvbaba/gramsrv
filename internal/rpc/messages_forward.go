@@ -11,9 +11,12 @@ import (
 )
 
 func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.MessagesForwardMessagesRequest) (tg.UpdatesClass, error) {
-	if len(req.ID) == 0 || len(req.ID) != len(req.RandomID) {
+	ids, randomIDs, ok := normalizeForwardMessageVectors(req.ID, req.RandomID)
+	if !ok {
 		return nil, inputRequestInvalidErr()
 	}
+	req.ID = ids
+	req.RandomID = randomIDs
 	if len(req.ID) > domain.MaxForwardMessageIDs {
 		return nil, limitInvalidErr()
 	}
@@ -37,7 +40,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if userID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	fromPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.FromPeer)
+	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, req.ID, req.RandomID)
 	if err != nil {
 		return nil, err
 	}
@@ -69,22 +72,20 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			}
 		}
 	}
-	for i, id := range req.ID {
-		if id <= 0 || id > domain.MaxMessageBoxID || req.RandomID[i] == 0 {
-			return nil, messageIDInvalidErr()
-		}
+	if !forwardMessageIDsValid(req.ID, req.RandomID) {
+		return nil, messageIDInvalidErr()
 	}
 	if err := r.checkSendRateLimit(ctx, userID, len(req.ID)); err != nil {
 		return nil, err
 	}
 	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
-		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs)
+		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, preloadedSources)
 	}
 	if toPeer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
 		}
-		sources, err := r.forwardSources(ctx, userID, fromPeer, req.ID)
+		sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloadedSources)
 		if err != nil {
 			return nil, messageForwardErr(err)
 		}
@@ -152,7 +153,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		// 私聊源与频道源统一经 forwardSources 取源：首次生成的 forward header 在
 		// forwardSources 内已按原作者 PrivacyKeyForwards 降级（不允许链接回账号时仅保
 		// 留 from_name），避免私聊→私聊路径泄漏原作者可点击账号；media 也随 source 透传。
-		sources, err := r.forwardSources(ctx, userID, fromPeer, req.ID)
+		sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloadedSources)
 		if err != nil {
 			return nil, messageForwardErr(err)
 		}
@@ -200,6 +201,110 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	return nil, peerIDInvalidErr()
 }
 
+func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int64, bool) {
+	if len(ids) == 0 || len(randomIDs) == 0 {
+		return nil, nil, false
+	}
+	if len(ids) == len(randomIDs) {
+		return ids, randomIDs, true
+	}
+	if len(ids) < len(randomIDs) {
+		return nil, nil, false
+	}
+	compact := make([]int, 0, len(randomIDs))
+	runLength := 0
+	for i, id := range ids {
+		if i == 0 || id != ids[i-1] {
+			compact = append(compact, id)
+			runLength = 1
+			continue
+		}
+		runLength++
+		if runLength > 2 {
+			return nil, nil, false
+		}
+	}
+	if len(compact) != len(randomIDs) {
+		return nil, nil, false
+	}
+	return compact, randomIDs, true
+}
+
+func (r *Router) forwardFromPeerAndSources(ctx context.Context, userID int64, input tg.InputPeerClass, ids []int, randomIDs []int64) (domain.Peer, []forwardSource, error) {
+	if forwardFromPeerIsEmpty(input) {
+		if !forwardMessageIDsValid(ids, randomIDs) {
+			return domain.Peer{}, nil, messageIDInvalidErr()
+		}
+		fromPeer, sources, err := r.forwardSourcesFromEmptyPeer(ctx, userID, ids)
+		if err != nil {
+			return domain.Peer{}, nil, messageForwardErr(err)
+		}
+		return fromPeer, sources, nil
+	}
+	fromPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, input)
+	return fromPeer, nil, err
+}
+
+func forwardMessageIDsValid(ids []int, randomIDs []int64) bool {
+	if len(ids) == 0 || len(ids) != len(randomIDs) {
+		return false
+	}
+	for i, id := range ids {
+		if id <= 0 || id > domain.MaxMessageBoxID || randomIDs[i] == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func forwardFromPeerIsEmpty(peer tg.InputPeerClass) bool {
+	if inputPeerClassNil(peer) {
+		return false
+	}
+	_, ok := peer.(*tg.InputPeerEmpty)
+	return ok
+}
+
+func (r *Router) forwardSourcesFromEmptyPeer(ctx context.Context, userID int64, ids []int) (domain.Peer, []forwardSource, error) {
+	if r.deps.Messages == nil {
+		return domain.Peer{}, nil, domain.ErrMessageIDInvalid
+	}
+	list, err := r.deps.Messages.GetMessages(ctx, userID, ids)
+	if err != nil {
+		return domain.Peer{}, nil, domain.ErrMessageIDInvalid
+	}
+	var fromPeer domain.Peer
+	byID := make(map[int]domain.Message, len(list.Messages))
+	for _, msg := range list.Messages {
+		byID[msg.ID] = msg
+	}
+	for _, id := range ids {
+		msg, ok := byID[id]
+		if !ok || msg.Peer.Type != domain.PeerTypeUser || msg.Peer.ID == 0 {
+			return domain.Peer{}, nil, domain.ErrMessageIDInvalid
+		}
+		if fromPeer.ID == 0 {
+			fromPeer = msg.Peer
+			continue
+		}
+		if msg.Peer != fromPeer {
+			return domain.Peer{}, nil, domain.ErrMessageIDInvalid
+		}
+	}
+	sources, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
+	if err != nil {
+		return domain.Peer{}, nil, err
+	}
+	return fromPeer, sources, nil
+}
+
+func (r *Router) forwardSourcesForRequest(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, preloaded []forwardSource) ([]forwardSource, error) {
+	if preloaded != nil {
+		return preloaded, nil
+	}
+	return r.forwardSources(ctx, userID, fromPeer, ids)
+}
+
 func mergeForwardTopMsgID(toPeer domain.Peer, replyTo *domain.MessageReply, topMsgID int, topMsgIDSet bool) (*domain.MessageReply, error) {
 	if !topMsgIDSet || topMsgID == 0 {
 		return replyTo, nil
@@ -241,36 +346,11 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 		if err != nil {
 			return nil, domain.ErrMessageIDInvalid
 		}
-		byID := make(map[int]domain.Message, len(list.Messages))
-		for _, msg := range list.Messages {
-			byID[msg.ID] = msg
+		sources, err := r.forwardSourcesFromPrivateMessages(ctx, userID, fromPeer, ids, list.Messages)
+		if err != nil {
+			return nil, err
 		}
-		for _, id := range ids {
-			msg, ok := byID[id]
-			if !ok {
-				return nil, domain.ErrMessageIDInvalid
-			}
-			if msg.Peer != fromPeer {
-				return nil, domain.ErrMessageIDInvalid
-			}
-			if msg.NoForwards {
-				return nil, domain.ErrChatForwardsRestricted
-			}
-			forward := cloneDomainMessageForward(msg.Forward)
-			if forward == nil {
-				forward = &domain.MessageForward{From: msg.From, Date: msg.Date}
-				r.applyForwardAuthorPrivacy(ctx, userID, forward)
-			}
-			out = append(out, forwardSource{
-				body: msg.Body,
-				entities: append([]domain.MessageEntity(nil),
-					msg.Entities...),
-				media:   msg.Media,
-				forward: forward,
-				from:    msg.From,
-				date:    msg.Date,
-			})
-		}
+		out = append(out, sources...)
 	case domain.PeerTypeChannel:
 		if r.deps.Channels == nil {
 			return nil, domain.ErrMessageIDInvalid
@@ -321,6 +401,44 @@ func (r *Router) forwardSources(ctx context.Context, userID int64, fromPeer doma
 		}
 	default:
 		return nil, domain.ErrMessageIDInvalid
+	}
+	return out, nil
+}
+
+func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID int64, fromPeer domain.Peer, ids []int, messages []domain.Message) ([]forwardSource, error) {
+	if fromPeer.Type != domain.PeerTypeUser || fromPeer.ID == 0 {
+		return nil, domain.ErrMessageIDInvalid
+	}
+	byID := make(map[int]domain.Message, len(messages))
+	for _, msg := range messages {
+		byID[msg.ID] = msg
+	}
+	out := make([]forwardSource, 0, len(ids))
+	for _, id := range ids {
+		msg, ok := byID[id]
+		if !ok {
+			return nil, domain.ErrMessageIDInvalid
+		}
+		if msg.Peer != fromPeer {
+			return nil, domain.ErrMessageIDInvalid
+		}
+		if msg.NoForwards {
+			return nil, domain.ErrChatForwardsRestricted
+		}
+		forward := cloneDomainMessageForward(msg.Forward)
+		if forward == nil {
+			forward = &domain.MessageForward{From: msg.From, Date: msg.Date}
+			r.applyForwardAuthorPrivacy(ctx, userID, forward)
+		}
+		out = append(out, forwardSource{
+			body: msg.Body,
+			entities: append([]domain.MessageEntity(nil),
+				msg.Entities...),
+			media:   msg.Media,
+			forward: forward,
+			from:    msg.From,
+			date:    msg.Date,
+		})
 	}
 	return out, nil
 }

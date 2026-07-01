@@ -436,7 +436,7 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 		switch self.Role {
 		case domain.ChannelRoleCreator:
 			out.Creator = true
-			out.SetAdminRights(tgChatAdminRights(self.AdminRights))
+			out.SetAdminRights(tgChatAdminRights(creatorProjectionAdminRights(self.AdminRights)))
 		case domain.ChannelRoleAdmin:
 			out.SetAdminRights(tgChatAdminRights(self.AdminRights))
 		}
@@ -611,7 +611,7 @@ func tgChannelParticipant(selfUserID int64, member domain.ChannelMember) tg.Chan
 	case domain.ChannelRoleCreator:
 		out := &tg.ChannelParticipantCreator{
 			UserID:      member.UserID,
-			AdminRights: tgChatAdminRights(member.AdminRights),
+			AdminRights: tgChatAdminRights(creatorProjectionAdminRights(member.AdminRights)),
 		}
 		if member.Rank != "" {
 			out.SetRank(member.Rank)
@@ -777,6 +777,13 @@ func tgChatAdminRights(rights domain.ChannelAdminRights) tg.ChatAdminRights {
 		// 从而为关联 monoforum 派生 MonoforumAdmin(Direct-Messages 容器渲染所需)。
 		ManageDirectMessages: rights.ManageDirectMessages,
 	}
+}
+
+func creatorProjectionAdminRights(rights domain.ChannelAdminRights) domain.ChannelAdminRights {
+	creatorRights := domain.CreatorChannelAdminRights()
+	creatorRights.Anonymous = rights.Anonymous
+	creatorRights.ManageDirectMessages = rights.ManageDirectMessages
+	return creatorRights
 }
 
 func domainChannelAdminRights(rights tg.ChatAdminRights) domain.ChannelAdminRights {

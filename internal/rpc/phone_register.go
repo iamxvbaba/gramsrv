@@ -36,10 +36,18 @@ func (r *Router) registerPhone(d *tg.ServerDispatcher) {
 	d.OnPhoneGetGroupCall(r.onPhoneGetGroupCall)
 	d.OnPhoneGetGroupParticipants(r.onPhoneGetGroupParticipants)
 	d.OnPhoneCheckGroupCall(r.onPhoneCheckGroupCall)
+	d.OnPhoneExportGroupCallInvite(r.onPhoneExportGroupCallInvite)
 	d.OnPhoneEditGroupCallParticipant(r.onPhoneEditGroupCallParticipant)
 	d.OnPhoneEditGroupCallTitle(r.onPhoneEditGroupCallTitle)
 	d.OnPhoneToggleGroupCallSettings(r.onPhoneToggleGroupCallSettings)
 	d.OnPhoneInviteToGroupCall(r.onPhoneInviteToGroupCall)
+	// Ad-hoc E2E conference call（P2P 通话升级/拉人路径）。
+	d.OnPhoneCreateConferenceCall(r.onPhoneCreateConferenceCall)
+	d.OnPhoneInviteConferenceCallParticipant(r.onPhoneInviteConferenceCallParticipant)
+	d.OnPhoneDeleteConferenceCallParticipants(r.onPhoneDeleteConferenceCallParticipants)
+	d.OnPhoneSendConferenceCallBroadcast(r.onPhoneSendConferenceCallBroadcast)
+	d.OnPhoneDeclineConferenceCallInvite(r.onPhoneDeclineConferenceCallInvite)
+	d.OnPhoneGetGroupCallChainBlocks(r.onPhoneGetGroupCallChainBlocks)
 	// 屏幕共享（M4）：同参与者第二媒体连接。
 	d.OnPhoneJoinGroupCallPresentation(r.onPhoneJoinGroupCallPresentation)
 	d.OnPhoneLeaveGroupCallPresentation(r.onPhoneLeaveGroupCallPresentation)

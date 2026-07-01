@@ -29,6 +29,7 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.G
 		JoinMuted:          call.JoinMuted,
 		CanChangeJoinMuted: canManage,
 		Creator:            call.CreatorUserID == viewerUserID && viewerUserID != 0,
+		Conference:         call.Conference(),
 		// can_start_video：TDesktop 不读；DrKLO 用它喂入会前 dummy self 行的
 		// video_joined。RTC 通话一律放行。
 		CanStartVideo:     true,
@@ -40,6 +41,13 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.G
 	}
 	if call.Title != "" {
 		out.SetTitle(call.Title)
+	}
+	if call.Conference() {
+		if link := conferenceCanonicalInviteLink(call.InviteSlug); link != "" {
+			out.SetInviteLink(link)
+		} else if call.InviteLink != "" {
+			out.SetInviteLink(call.InviteLink)
+		}
 	}
 	return out
 }

@@ -83,11 +83,16 @@ func (r *registry) decActiveLocked(userID int64) {
 
 // markDiscardedLocked 把非终态 entry 迁入终态并更新并发计数。
 func (r *registry) markDiscardedLocked(e *entry, reason domain.PhoneCallDiscardReason, duration, nowUnix int) {
+	r.markDiscardedWithSlugLocked(e, reason, "", duration, nowUnix)
+}
+
+func (r *registry) markDiscardedWithSlugLocked(e *entry, reason domain.PhoneCallDiscardReason, reasonSlug string, duration, nowUnix int) {
 	if e.call.Terminal() {
 		return
 	}
 	e.call.State = domain.PhoneCallStateDiscarded
 	e.call.DiscardReason = reason
+	e.call.DiscardReasonSlug = reasonSlug
 	e.call.Duration = duration
 	e.call.DiscardedAt = nowUnix
 	r.decActiveLocked(e.call.AdminID)

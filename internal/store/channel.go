@@ -26,6 +26,7 @@ type ChannelStore interface {
 	SetChannelWallpaper(ctx context.Context, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)
 	EditChannelAbout(ctx context.Context, req domain.EditChannelAboutRequest) (domain.Channel, error)
 	EditChannelAdmin(ctx context.Context, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
+	TransferChannelOwnership(ctx context.Context, req domain.TransferChannelOwnershipRequest) (domain.TransferChannelOwnershipResult, error)
 	EditChannelMemberRank(ctx context.Context, req domain.EditChannelMemberRankRequest) (domain.EditChannelAdminResult, error)
 	EditChannelBanned(ctx context.Context, req domain.EditChannelBannedRequest) (domain.EditChannelBannedResult, error)
 	EditChannelDefaultBannedRights(ctx context.Context, req domain.EditChannelDefaultBannedRightsRequest) (domain.Channel, error)

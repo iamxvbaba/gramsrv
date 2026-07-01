@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -18,11 +19,31 @@ type overrideKey struct {
 	callID, setter, target int64
 }
 
+type conferenceRandomKey struct {
+	creatorID int64
+	randomID  int64
+}
+
+type inviteMessageKey struct {
+	userID int64
+	msgID  int
+}
+
+type chainKey struct {
+	callID     int64
+	subChainID int
+}
+
 type GroupCallStore struct {
 	mu              sync.Mutex
 	calls           map[int64]domain.GroupCall
-	activeByChan    map[int64]int64                                 // channelID → active callID
+	activeByChan    map[int64]int64 // channelID → active callID
+	bySlug          map[string]int64
+	byConferenceRnd map[conferenceRandomKey]int64
 	participants    map[int64]map[int64]domain.GroupCallParticipant // callID → userID → row
+	invites         map[int64][]domain.GroupCallInvite
+	inviteByMessage map[inviteMessageKey]domain.GroupCallInvite
+	chainBlocks     map[chainKey][]domain.GroupCallChainBlock
 	overrides       map[overrideKey]domain.GroupCallParticipantOverride
 	raiseHandSeq    map[int64]int64 // callID → 单调举手序号
 	nextSyntheticID int64
@@ -31,11 +52,16 @@ type GroupCallStore struct {
 // NewGroupCallStore 创建内存实现。
 func NewGroupCallStore() *GroupCallStore {
 	return &GroupCallStore{
-		calls:        make(map[int64]domain.GroupCall),
-		activeByChan: make(map[int64]int64),
-		participants: make(map[int64]map[int64]domain.GroupCallParticipant),
-		overrides:    make(map[overrideKey]domain.GroupCallParticipantOverride),
-		raiseHandSeq: make(map[int64]int64),
+		calls:           make(map[int64]domain.GroupCall),
+		activeByChan:    make(map[int64]int64),
+		bySlug:          make(map[string]int64),
+		byConferenceRnd: make(map[conferenceRandomKey]int64),
+		participants:    make(map[int64]map[int64]domain.GroupCallParticipant),
+		invites:         make(map[int64][]domain.GroupCallInvite),
+		inviteByMessage: make(map[inviteMessageKey]domain.GroupCallInvite),
+		chainBlocks:     make(map[chainKey][]domain.GroupCallChainBlock),
+		overrides:       make(map[overrideKey]domain.GroupCallParticipantOverride),
+		raiseHandSeq:    make(map[int64]int64),
 	}
 }
 
@@ -53,6 +79,7 @@ func (s *GroupCallStore) CreateGroupCall(_ context.Context, call domain.GroupCal
 	if _, exists := s.calls[call.ID]; exists {
 		return domain.GroupCall{}, domain.ErrGroupCallInvalid
 	}
+	call.Kind = domain.GroupCallKindChannel
 	call.State = domain.GroupCallStateActive
 	if call.Version <= 0 {
 		call.Version = 1
@@ -64,11 +91,67 @@ func (s *GroupCallStore) CreateGroupCall(_ context.Context, call domain.GroupCal
 	return call, nil
 }
 
+func (s *GroupCallStore) CreateConferenceCall(_ context.Context, call domain.GroupCall) (domain.GroupCall, error) {
+	if call.ID == 0 || call.AccessHash == 0 || call.CreatorUserID == 0 || call.InviteSlug == "" || call.InviteLink == "" {
+		return domain.GroupCall{}, domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if call.RandomID != 0 {
+		if id, ok := s.byConferenceRnd[conferenceRandomKey{creatorID: call.CreatorUserID, randomID: call.RandomID}]; ok {
+			existing := s.calls[id]
+			return existing, nil
+		}
+	}
+	if _, exists := s.calls[call.ID]; exists {
+		return domain.GroupCall{}, domain.ErrGroupCallInvalid
+	}
+	if _, exists := s.bySlug[call.InviteSlug]; exists {
+		return domain.GroupCall{}, domain.ErrGroupCallInvalid
+	}
+	call.Kind = domain.GroupCallKindConference
+	call.ChannelID = 0
+	call.State = domain.GroupCallStateActive
+	if call.Version <= 0 {
+		call.Version = 1
+	}
+	call.ParticipantsCount = 0
+	s.calls[call.ID] = call
+	s.bySlug[call.InviteSlug] = call.ID
+	if call.RandomID != 0 {
+		s.byConferenceRnd[conferenceRandomKey{creatorID: call.CreatorUserID, randomID: call.RandomID}] = call.ID
+	}
+	s.participants[call.ID] = make(map[int64]domain.GroupCallParticipant)
+	return call, nil
+}
+
 func (s *GroupCallStore) GetGroupCall(_ context.Context, callID int64) (domain.GroupCall, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	call, ok := s.calls[callID]
 	return call, ok, nil
+}
+
+func (s *GroupCallStore) GetGroupCallBySlug(_ context.Context, slug string) (domain.GroupCall, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.bySlug[slug]
+	if !ok {
+		return domain.GroupCall{}, false, nil
+	}
+	call, ok := s.calls[id]
+	return call, ok, nil
+}
+
+func (s *GroupCallStore) GetGroupCallByInviteMessage(_ context.Context, userID int64, msgID int) (domain.GroupCall, domain.GroupCallInvite, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inv, ok := s.inviteByMessage[inviteMessageKey{userID: userID, msgID: msgID}]
+	if !ok {
+		return domain.GroupCall{}, domain.GroupCallInvite{}, false, nil
+	}
+	call, ok := s.calls[inv.CallID]
+	return call, inv, ok, nil
 }
 
 func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCallRequest) (domain.GroupCallMutation, error) {
@@ -102,6 +185,8 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 		// VideoJSON 整体替换、PresentationJSON 随全新行清空（rejoin 后客户端
 		// 会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
 		VideoJSON: append([]byte(nil), req.VideoJSON...),
+		PublicKey: append([]byte(nil), req.PublicKey...),
+		JoinBlock: append([]byte(nil), req.JoinBlock...),
 	}
 	if rejoining && wasActive {
 		// 同设备换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
@@ -113,6 +198,14 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 		p.MutedByAdmin = true
 	}
 	rows[req.UserID] = p
+	for i, inv := range s.invites[req.CallID] {
+		if inv.InviteeUserID == req.UserID && inv.Status == domain.GroupCallInvitePending {
+			inv.Status = domain.GroupCallInviteAccepted
+			inv.UpdatedAt = req.Now
+			s.invites[req.CallID][i] = inv
+			s.inviteByMessage[inviteMessageKey{userID: inv.InviteeUserID, msgID: inv.MessageID}] = inv
+		}
+	}
 	if !wasActive {
 		call.ParticipantsCount++
 	}
@@ -139,8 +232,95 @@ func (s *GroupCallStore) LeaveGroupCall(_ context.Context, callID, userID int64,
 		call.ParticipantsCount--
 	}
 	call.Version++
+	discardEmptyConference(&call, now)
 	s.calls[callID] = call
 	return domain.GroupCallMutation{Call: call, Participant: p}, nil
+}
+
+func (s *GroupCallStore) RemoveConferenceCallParticipants(_ context.Context, req domain.RemoveConferenceCallParticipantsRequest) (domain.RemoveConferenceCallParticipantsResult, error) {
+	if req.CallID == 0 || len(req.TargetUserIDs) == 0 || req.OnlyLeft == req.Kick {
+		return domain.RemoveConferenceCallParticipantsResult{}, domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	call, ok := s.calls[req.CallID]
+	if !ok || !call.Conference() {
+		return domain.RemoveConferenceCallParticipantsResult{}, domain.ErrGroupCallInvalid
+	}
+	if !call.Active() {
+		return domain.RemoveConferenceCallParticipantsResult{}, domain.ErrGroupCallDiscarded
+	}
+	rows := s.participants[req.CallID]
+	targets := uniqueNonZeroInt64s(req.TargetUserIDs...)
+	e2eTargets := make([]int64, 0, len(targets))
+	mediaTargets := make([]int64, 0, len(targets))
+	for _, targetID := range targets {
+		p, ok := rows[targetID]
+		if !ok {
+			continue
+		}
+		hasE2EMarker := len(p.JoinBlock) > 0
+		if req.OnlyLeft {
+			if p.Left && hasE2EMarker {
+				e2eTargets = append(e2eTargets, targetID)
+			}
+			continue
+		}
+		if req.Kick {
+			if hasE2EMarker {
+				e2eTargets = append(e2eTargets, targetID)
+			}
+			if !p.Left {
+				mediaTargets = append(mediaTargets, targetID)
+			}
+		}
+	}
+	out := domain.RemoveConferenceCallParticipantsResult{Call: call}
+	if len(e2eTargets) > 0 {
+		if len(req.Block) == 0 {
+			return domain.RemoveConferenceCallParticipantsResult{}, domain.ErrConferenceChainInvalid
+		}
+		block, err := s.appendGroupCallChainBlockLocked(domain.GroupCallChainBlock{
+			CallID:       req.CallID,
+			SubChainID:   0,
+			Offset:       -1,
+			AuthorUserID: req.AuthorUserID,
+			Block:        req.Block,
+			CreatedAt:    req.Now,
+		})
+		if err != nil {
+			return domain.RemoveConferenceCallParticipantsResult{}, err
+		}
+		out.ChainBlock = block
+		out.ChainBlockAppended = true
+		for _, targetID := range e2eTargets {
+			p := rows[targetID]
+			p.PublicKey = nil
+			p.JoinBlock = nil
+			rows[targetID] = p
+		}
+	}
+	if len(mediaTargets) > 0 {
+		out.ParticipantsChanged = make([]domain.GroupCallParticipant, 0, len(mediaTargets))
+		for _, targetID := range mediaTargets {
+			p := rows[targetID]
+			if p.Left {
+				continue
+			}
+			p.Left = true
+			p.ActiveDate = req.Now
+			rows[targetID] = p
+			if call.ParticipantsCount > 0 {
+				call.ParticipantsCount--
+			}
+			call.Version++
+			out.ParticipantsChanged = append(out.ParticipantsChanged, p)
+		}
+		discardEmptyConference(&call, req.Now)
+		s.calls[req.CallID] = call
+		out.Call = call
+	}
+	return out, nil
 }
 
 func (s *GroupCallStore) DiscardGroupCall(_ context.Context, callID int64, now int) (domain.GroupCall, []domain.GroupCallParticipant, error) {
@@ -376,10 +556,20 @@ func (s *GroupCallStore) ResetAllParticipants(_ context.Context, now int) ([]dom
 		}
 		call.ParticipantsCount = 0
 		call.Version++
+		discardEmptyConference(&call, now)
 		s.calls[callID] = call
 		out = append(out, call)
 	}
 	return out, nil
+}
+
+func discardEmptyConference(call *domain.GroupCall, now int) {
+	if call == nil || !call.Conference() || !call.Active() || call.ParticipantsCount > 0 {
+		return
+	}
+	call.State = domain.GroupCallStateDiscarded
+	call.DiscardedAt = now
+	call.Duration = max(0, now-call.CreatedAt)
 }
 
 func applyGroupCallParticipantUpdate(p *domain.GroupCallParticipant, u domain.GroupCallParticipantUpdate) bool {
@@ -455,6 +645,162 @@ func (s *GroupCallStore) GetParticipantOverride(_ context.Context, callID, sette
 	defer s.mu.Unlock()
 	ov, ok := s.overrides[overrideKey{callID: callID, setter: setterUserID, target: targetUserID}]
 	return ov, ok, nil
+}
+
+func (s *GroupCallStore) CreateConferenceInvite(_ context.Context, invite domain.GroupCallInvite) (domain.GroupCallInvite, error) {
+	if invite.CallID == 0 || invite.InviterUserID == 0 || invite.InviteeUserID == 0 || invite.MessageID == 0 {
+		return domain.GroupCallInvite{}, domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	call, ok := s.calls[invite.CallID]
+	if !ok || !call.Conference() {
+		return domain.GroupCallInvite{}, domain.ErrGroupCallInvalid
+	}
+	if invite.Status == "" {
+		invite.Status = domain.GroupCallInvitePending
+	}
+	key := inviteMessageKey{userID: invite.InviteeUserID, msgID: invite.MessageID}
+	if existing, ok := s.inviteByMessage[key]; ok {
+		return existing, nil
+	}
+	s.invites[invite.CallID] = append(s.invites[invite.CallID], invite)
+	s.inviteByMessage[key] = invite
+	return invite, nil
+}
+
+func (s *GroupCallStore) SetConferenceInviteStatus(_ context.Context, callID int64, inviteeUserID int64, msgID int, status domain.GroupCallInviteStatus, now int) (domain.GroupCallInvite, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := inviteMessageKey{userID: inviteeUserID, msgID: msgID}
+	inv, ok := s.inviteByMessage[key]
+	if !ok || inv.CallID != callID {
+		return domain.GroupCallInvite{}, false, nil
+	}
+	if inv.Status == status {
+		return inv, false, nil
+	}
+	inv.Status = status
+	inv.UpdatedAt = now
+	s.inviteByMessage[key] = inv
+	for i, row := range s.invites[callID] {
+		if row.InviteeUserID == inviteeUserID && row.MessageID == msgID {
+			s.invites[callID][i] = inv
+			break
+		}
+	}
+	return inv, true, nil
+}
+
+func (s *GroupCallStore) ListConferenceRecipientUserIDs(_ context.Context, callID int64) ([]int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	call, ok := s.calls[callID]
+	if !ok {
+		return nil, domain.ErrGroupCallInvalid
+	}
+	includeHistorical := !call.Active()
+	seen := map[int64]struct{}{}
+	if call.CreatorUserID != 0 {
+		seen[call.CreatorUserID] = struct{}{}
+	}
+	for userID, p := range s.participants[callID] {
+		if includeHistorical || !p.Left {
+			seen[userID] = struct{}{}
+		}
+	}
+	for _, inv := range s.invites[callID] {
+		if includeHistorical || inv.Status == domain.GroupCallInvitePending || inv.Status == domain.GroupCallInviteAccepted {
+			seen[inv.InviteeUserID] = struct{}{}
+			seen[inv.InviterUserID] = struct{}{}
+		}
+	}
+	out := make([]int64, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+func (s *GroupCallStore) AppendGroupCallChainBlock(_ context.Context, block domain.GroupCallChainBlock) (domain.GroupCallChainBlock, error) {
+	if block.CallID == 0 || len(block.Block) == 0 {
+		return domain.GroupCallChainBlock{}, domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appendGroupCallChainBlockLocked(block)
+}
+
+func (s *GroupCallStore) appendGroupCallChainBlockLocked(block domain.GroupCallChainBlock) (domain.GroupCallChainBlock, error) {
+	if call, ok := s.calls[block.CallID]; !ok || !call.Conference() {
+		return domain.GroupCallChainBlock{}, domain.ErrGroupCallInvalid
+	}
+	key := chainKey{callID: block.CallID, subChainID: block.SubChainID}
+	rows := s.chainBlocks[key]
+	for _, row := range rows {
+		if bytes.Equal(row.Block, block.Block) {
+			return domain.GroupCallChainBlock{}, domain.ErrConferenceChainInvalid
+		}
+	}
+	nextOffset := 0
+	if len(rows) > 0 {
+		nextOffset = rows[len(rows)-1].Offset + 1
+	}
+	if block.Offset < 0 {
+		block.Offset = nextOffset
+	}
+	if block.Offset != nextOffset {
+		return domain.GroupCallChainBlock{}, domain.ErrConferenceChainInvalid
+	}
+	for _, row := range rows {
+		if row.Offset == block.Offset {
+			return domain.GroupCallChainBlock{}, domain.ErrConferenceChainInvalid
+		}
+	}
+	block.Block = append([]byte(nil), block.Block...)
+	s.chainBlocks[key] = append(rows, block)
+	sort.Slice(s.chainBlocks[key], func(i, j int) bool {
+		return s.chainBlocks[key][i].Offset < s.chainBlocks[key][j].Offset
+	})
+	return block, nil
+}
+
+func (s *GroupCallStore) ListGroupCallChainBlocks(_ context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if call, ok := s.calls[callID]; !ok || !call.Conference() {
+		return domain.GroupCallChainBlockPage{}, domain.ErrGroupCallInvalid
+	}
+	rows := s.chainBlocks[chainKey{callID: callID, subChainID: subChainID}]
+	if offset == domain.GroupCallChainBlockLatestOffset {
+		page := domain.GroupCallChainBlockPage{NextOffset: 0}
+		if len(rows) == 0 {
+			return page, nil
+		}
+		block := rows[len(rows)-1]
+		page.Blocks = append(page.Blocks, block)
+		page.NextOffset = block.Offset + 1
+		return page, nil
+	}
+	if offset < 0 {
+		return domain.GroupCallChainBlockPage{}, domain.ErrGroupCallInvalid
+	}
+	page := domain.GroupCallChainBlockPage{NextOffset: offset}
+	for _, row := range rows {
+		if row.Offset < offset {
+			continue
+		}
+		page.Blocks = append(page.Blocks, row)
+		page.NextOffset = row.Offset + 1
+		if len(page.Blocks) == limit {
+			break
+		}
+	}
+	return page, nil
 }
 
 func max(a, b int) int {

@@ -15,6 +15,17 @@ import (
 	"telesrv/internal/store/memory"
 )
 
+type acceptPasswordAccountService struct {
+	AccountService
+}
+
+func (acceptPasswordAccountService) CheckPassword(_ context.Context, _ int64, check domain.PasswordCheck) error {
+	if check.Empty {
+		return domain.ErrPasswordHashInvalid
+	}
+	return nil
+}
+
 func TestMessagesGetFutureChatCreatorAfterLeaveAndCreatorLeaveTransfers(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -95,6 +106,85 @@ func TestMessagesGetFutureChatCreatorAfterLeaveAndCreatorLeaveTransfers(t *testi
 	}
 	if rejoined.Role != domain.ChannelRoleMember || rejoined.Status != domain.ChannelMemberActive || rejoined.Rank != "" {
 		t.Fatalf("rejoined old owner = %+v, want active plain member", rejoined)
+	}
+}
+
+func TestMessagesEditChatCreatorTransfersWithoutChannelPts(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 9121, Phone: "15550009121", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	member, err := userStore.Create(ctx, domain.User{AccessHash: 9122, Phone: "15550009122", FirstName: "Member"})
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	channelStore := memory.NewChannelStore()
+	channelService := appchannels.NewService(channelStore)
+	r := New(Config{}, Deps{
+		Account:  acceptPasswordAccountService{},
+		Users:    appusers.NewService(userStore),
+		Channels: channelService,
+	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700009130, 0)})
+	created, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "explicit transfer",
+		Megagroup:     true,
+		MemberUserIDs: []int64{member.ID},
+		Date:          1700009130,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	ownerCtx := WithUserID(ctx, owner.ID)
+	peer := &tg.InputPeerChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
+	if _, err := r.onMessagesEditChatCreator(ownerCtx, &tg.MessagesEditChatCreatorRequest{
+		Peer:     peer,
+		UserID:   &tg.InputUserEmpty{},
+		Password: &tg.InputCheckPasswordEmpty{},
+	}); err == nil || !tgerr.Is(err, "PASSWORD_HASH_INVALID") {
+		t.Fatalf("editChatCreator probe err = %v, want PASSWORD_HASH_INVALID", err)
+	}
+
+	updatesClass, err := r.onMessagesEditChatCreator(ownerCtx, &tg.MessagesEditChatCreatorRequest{
+		Peer:     peer,
+		UserID:   &tg.InputUser{UserID: member.ID, AccessHash: member.AccessHash},
+		Password: &tg.InputCheckPasswordSRP{SRPID: 1, A: []byte{1}, M1: []byte{2}},
+	})
+	if err != nil {
+		t.Fatalf("editChatCreator transfer: %v", err)
+	}
+	updates := updatesClass.(*tg.Updates)
+	participantUpdates := 0
+	hasChannel := false
+	for _, update := range updates.Updates {
+		switch update.(type) {
+		case *tg.UpdateChannelParticipant:
+			participantUpdates++
+		case *tg.UpdateChannel:
+			hasChannel = true
+		}
+	}
+	if participantUpdates != 2 || !hasChannel {
+		t.Fatalf("transfer updates = %+v, want two participant updates and updateChannel", updates.Updates)
+	}
+	if chat, ok := updates.Chats[0].(*tg.Channel); !ok || chat.Creator || !chat.AdminRights.AddAdmins {
+		t.Fatalf("owner response chat = %T %+v, want old owner as non-creator admin", updates.Chats[0], updates.Chats[0])
+	}
+	view, err := channelService.GetChannel(ctx, member.ID, created.Channel.ID)
+	if err != nil {
+		t.Fatalf("member get channel after transfer: %v", err)
+	}
+	if view.Channel.CreatorUserID != member.ID || view.Self.Role != domain.ChannelRoleCreator || view.Channel.Pts != created.Channel.Pts {
+		t.Fatalf("channel after transfer = %+v self=%+v, want member creator and pts unchanged %d", view.Channel, view.Self, created.Channel.Pts)
+	}
+	oldOwner, err := channelService.GetParticipant(ctx, member.ID, created.Channel.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("old owner participant after transfer: %v", err)
+	}
+	if oldOwner.Role != domain.ChannelRoleAdmin {
+		t.Fatalf("old owner after transfer = %+v, want admin", oldOwner)
 	}
 }
 

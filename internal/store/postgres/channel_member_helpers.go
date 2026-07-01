@@ -351,25 +351,12 @@ func zeroChannelBannedRights(rights domain.ChannelBannedRights) bool {
 
 func creatorChannelMember(channelID, userID int64, date int) domain.ChannelMember {
 	return domain.ChannelMember{
-		ChannelID: channelID,
-		UserID:    userID,
-		Role:      domain.ChannelRoleCreator,
-		Status:    domain.ChannelMemberActive,
-		JoinedAt:  date,
-		AdminRights: domain.ChannelAdminRights{
-			ChangeInfo:     true,
-			PostMessages:   true,
-			EditMessages:   true,
-			DeleteMessages: true,
-			PostStories:    true,
-			EditStories:    true,
-			DeleteStories:  true,
-			BanUsers:       true,
-			InviteUsers:    true,
-			PinMessages:    true,
-			AddAdmins:      true,
-			ManageCall:     true,
-		},
+		ChannelID:   channelID,
+		UserID:      userID,
+		Role:        domain.ChannelRoleCreator,
+		Status:      domain.ChannelMemberActive,
+		JoinedAt:    date,
+		AdminRights: domain.CreatorChannelAdminRights(),
 	}
 }
 

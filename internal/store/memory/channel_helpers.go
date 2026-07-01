@@ -87,7 +87,6 @@ func (s *ChannelStore) SearchPublicChannels(_ context.Context, viewerUserID int6
 
 	type item struct {
 		channel domain.Channel
-		joined  bool
 		rank    int
 	}
 	items := make([]item, 0, limit)
@@ -98,18 +97,17 @@ func (s *ChannelStore) SearchPublicChannels(_ context.Context, viewerUserID int6
 		}
 		member, joined := s.members[channelID][viewerUserID]
 		joined = joined && member.Status == domain.ChannelMemberActive
+		if joined {
+			continue
+		}
 		items = append(items, item{
 			channel: cloneChannel(channel),
-			joined:  joined,
 			rank:    rank,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].rank != items[j].rank {
 			return items[i].rank < items[j].rank
-		}
-		if items[i].joined != items[j].joined {
-			return items[i].joined
 		}
 		if items[i].channel.ParticipantsCount != items[j].channel.ParticipantsCount {
 			return items[i].channel.ParticipantsCount > items[j].channel.ParticipantsCount
@@ -122,14 +120,10 @@ func (s *ChannelStore) SearchPublicChannels(_ context.Context, viewerUserID int6
 
 	out := domain.PublicChannelSearchResult{}
 	for _, item := range items {
-		if len(out.MyResults)+len(out.Results) >= limit {
+		if len(out.Results) >= limit {
 			break
 		}
-		if item.joined {
-			out.MyResults = append(out.MyResults, item.channel)
-		} else {
-			out.Results = append(out.Results, item.channel)
-		}
+		out.Results = append(out.Results, item.channel)
 	}
 	return out, nil
 }

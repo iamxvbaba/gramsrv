@@ -591,19 +591,8 @@ func TestContactsSearchFindsPublicChannels(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type = %T, want *tg.ContactsFound", enc)
 	}
-	if len(box.MyResults) != 1 || len(box.Chats) != 1 {
-		t.Fatalf("search result sizes = my %d chats %d, want 1/1", len(box.MyResults), len(box.Chats))
-	}
-	peer, ok := box.MyResults[0].(*tg.PeerChannel)
-	if !ok || peer.ChannelID != public.ID {
-		t.Fatalf("peer = %T %+v, want public channel", box.MyResults[0], box.MyResults[0])
-	}
-	chat, ok := box.Chats[0].(*tg.Channel)
-	if !ok || chat.ID != public.ID || chat.Username != "cu_public_rpc" {
-		t.Fatalf("chat = %T %+v, want public channel chat", box.Chats[0], box.Chats[0])
-	}
-	if chat.Left {
-		t.Fatalf("member search chat left = true, want active member channel")
+	if len(box.MyResults) != 0 || len(box.Results) != 0 || len(box.Chats) != 0 {
+		t.Fatalf("member public search = my %d results %d chats %d, want no discovery channel for active member", len(box.MyResults), len(box.Results), len(box.Chats))
 	}
 
 	var strangerIn bin.Buffer

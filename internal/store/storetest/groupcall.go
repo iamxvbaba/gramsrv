@@ -6,6 +6,8 @@ package storetest
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -36,6 +38,9 @@ func RunGroupCallStoreContract(t *testing.T, factory GroupCallStoreFactory) {
 	t.Run("UpdateParticipant", func(t *testing.T) { contractUpdateParticipant(t, factory) })
 	t.Run("ResetAllParticipants", func(t *testing.T) { contractReset(t, factory) })
 	t.Run("JoinVideoStateLifecycle", func(t *testing.T) { contractJoinVideoState(t, factory) })
+	t.Run("ConferenceChainBlocks", func(t *testing.T) { contractConferenceChainBlocks(t, factory) })
+	t.Run("ConferenceRecipientsTerminalAccess", func(t *testing.T) { contractConferenceRecipientsTerminalAccess(t, factory) })
+	t.Run("ConferenceEmptyDiscards", func(t *testing.T) { contractConferenceEmptyDiscards(t, factory) })
 }
 
 func newContractCall(t *testing.T, st store.GroupCallStore, channelID, id int64) domain.GroupCall {
@@ -134,7 +139,7 @@ func contractSSRC(t *testing.T, factory GroupCallStoreFactory) {
 }
 
 // contractJoinVideoState：join 携带 VideoJSON 整体替换、rejoin 清空 presentation
-//（主连接 rejoin 后客户端会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
+// （主连接 rejoin 后客户端会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
 func contractJoinVideoState(t *testing.T, factory GroupCallStoreFactory) {
 	st, channelID := factory(t)
 	ctx := context.Background()
@@ -325,6 +330,157 @@ func contractReset(t *testing.T, factory GroupCallStoreFactory) {
 	// 重启清理后客户端 touch 返回未在会 → 触发 rejoin。
 	if _, joined, err := st.TouchParticipant(ctx, call.ID, 101, now+101); err != nil || joined {
 		t.Fatalf("touch after reset joined=%v err=%v, want false", joined, err)
+	}
+}
+
+func contractConferenceChainBlocks(t *testing.T, factory GroupCallStoreFactory) {
+	st, channelID := factory(t)
+	ctx := context.Background()
+	now := baseNow()
+	slug := fmt.Sprintf("contract-chain-%d", channelID)
+	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
+		ID: channelID*100 + 51, AccessHash: channelID*100 + 58, CreatorUserID: 1,
+		InviteSlug: slug, InviteLink: "https://telesrv.net/call/" + slug + "?slug=" + slug,
+		RandomID: channelID*100 + 51, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("create conference call: %v", err)
+	}
+	firstBlock := []byte("same-chain-block")
+	first, err := st.AppendGroupCallChainBlock(ctx, domain.GroupCallChainBlock{
+		CallID: call.ID, SubChainID: 0, Offset: -1, Block: firstBlock, CreatedAt: now,
+	})
+	if err != nil || first.Offset != 0 {
+		t.Fatalf("append first chain block = %+v err=%v", first, err)
+	}
+	dup, err := st.AppendGroupCallChainBlock(ctx, domain.GroupCallChainBlock{
+		CallID: call.ID, SubChainID: 0, Offset: -1, Block: append([]byte(nil), firstBlock...), CreatedAt: now + 1,
+	})
+	if !errors.Is(err, domain.ErrConferenceChainInvalid) {
+		t.Fatalf("append duplicate chain block = %+v err=%v, want ErrConferenceChainInvalid", dup, err)
+	}
+	secondBlock := []byte("next-chain-block")
+	second, err := st.AppendGroupCallChainBlock(ctx, domain.GroupCallChainBlock{
+		CallID: call.ID, SubChainID: 0, Offset: -1, Block: secondBlock, CreatedAt: now + 2,
+	})
+	if err != nil || second.Offset != 1 {
+		t.Fatalf("append second chain block = %+v err=%v", second, err)
+	}
+	if _, err := st.AppendGroupCallChainBlock(ctx, domain.GroupCallChainBlock{
+		CallID: call.ID, SubChainID: 0, Offset: 0, Block: []byte("stale-offset-block"), CreatedAt: now + 3,
+	}); !errors.Is(err, domain.ErrConferenceChainInvalid) {
+		t.Fatalf("append stale offset chain block err=%v, want ErrConferenceChainInvalid", err)
+	}
+	page, err := st.ListGroupCallChainBlocks(ctx, call.ID, 0, 0, 10)
+	if err != nil || page.NextOffset != 2 || len(page.Blocks) != 2 {
+		t.Fatalf("list chain blocks = %+v err=%v", page, err)
+	}
+	latest, err := st.ListGroupCallChainBlocks(ctx, call.ID, 0, domain.GroupCallChainBlockLatestOffset, 1)
+	if err != nil || latest.NextOffset != 2 || len(latest.Blocks) != 1 || string(latest.Blocks[0].Block) != string(secondBlock) {
+		t.Fatalf("latest chain block = %+v err=%v", latest, err)
+	}
+}
+
+func contractConferenceRecipientsTerminalAccess(t *testing.T, factory GroupCallStoreFactory) {
+	st, channelID := factory(t)
+	ctx := context.Background()
+	now := baseNow()
+	slug := fmt.Sprintf("contract-recipient-%d", channelID)
+	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
+		ID: channelID*100 + 61, AccessHash: channelID*100 + 68, CreatorUserID: 1,
+		InviteSlug: slug, InviteLink: "https://telesrv.net/call/" + slug + "?slug=" + slug,
+		RandomID: channelID*100 + 61, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("create conference call: %v", err)
+	}
+	join(t, st, call.ID, 2, 7102, now+1)
+	join(t, st, call.ID, 3, 7103, now+2)
+	if _, err := st.LeaveGroupCall(ctx, call.ID, 3, now+3); err != nil {
+		t.Fatalf("leave historical participant: %v", err)
+	}
+	if _, err := st.CreateConferenceInvite(ctx, domain.GroupCallInvite{
+		CallID: call.ID, InviterUserID: 1, InviteeUserID: 4, MessageID: 401,
+		Status: domain.GroupCallInvitePending, CreatedAt: now + 4,
+	}); err != nil {
+		t.Fatalf("create pending invite: %v", err)
+	}
+	if _, err := st.CreateConferenceInvite(ctx, domain.GroupCallInvite{
+		CallID: call.ID, InviterUserID: 1, InviteeUserID: 5, MessageID: 501,
+		Status: domain.GroupCallInviteDeclined, CreatedAt: now + 5, UpdatedAt: now + 5,
+	}); err != nil {
+		t.Fatalf("create declined invite: %v", err)
+	}
+	activeRecipients, err := st.ListConferenceRecipientUserIDs(ctx, call.ID)
+	if err != nil {
+		t.Fatalf("active recipients: %v", err)
+	}
+	if want := []int64{1, 2, 4}; !reflect.DeepEqual(activeRecipients, want) {
+		t.Fatalf("active recipients = %v, want %v", activeRecipients, want)
+	}
+	if _, _, err := st.DiscardGroupCall(ctx, call.ID, now+10); err != nil {
+		t.Fatalf("discard conference: %v", err)
+	}
+	discardedRecipients, err := st.ListConferenceRecipientUserIDs(ctx, call.ID)
+	if err != nil {
+		t.Fatalf("discarded recipients: %v", err)
+	}
+	if want := []int64{1, 2, 3, 4, 5}; !reflect.DeepEqual(discardedRecipients, want) {
+		t.Fatalf("discarded recipients = %v, want %v", discardedRecipients, want)
+	}
+}
+
+func contractConferenceEmptyDiscards(t *testing.T, factory GroupCallStoreFactory) {
+	st, channelID := factory(t)
+	ctx := context.Background()
+	now := baseNow()
+	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
+		ID: channelID*100 + 71, AccessHash: channelID*100 + 78, CreatorUserID: 1,
+		InviteSlug: fmt.Sprintf("contract-empty-%d", channelID),
+		InviteLink: fmt.Sprintf("https://telesrv.net/call/contract-empty-%d?slug=contract-empty-%d", channelID, channelID),
+		RandomID:   channelID*100 + 71,
+		CreatedAt:  now,
+	})
+	if err != nil {
+		t.Fatalf("create conference call: %v", err)
+	}
+	join(t, st, call.ID, 1, 7201, now+1)
+	join(t, st, call.ID, 2, 7202, now+2)
+	firstLeave, err := st.LeaveGroupCall(ctx, call.ID, 2, now+3)
+	if err != nil {
+		t.Fatalf("first leave conference: %v", err)
+	}
+	if !firstLeave.Call.Active() || firstLeave.Call.ParticipantsCount != 1 {
+		t.Fatalf("first leave call = %+v, want still active with one participant", firstLeave.Call)
+	}
+	lastLeave, err := st.LeaveGroupCall(ctx, call.ID, 1, now+4)
+	if err != nil {
+		t.Fatalf("last leave conference: %v", err)
+	}
+	if lastLeave.Call.Active() || lastLeave.Call.ParticipantsCount != 0 || lastLeave.Call.DiscardedAt != now+4 {
+		t.Fatalf("last leave call = %+v, want discarded empty conference", lastLeave.Call)
+	}
+	if _, err := st.JoinGroupCall(ctx, domain.JoinGroupCallRequest{CallID: call.ID, UserID: 3, SSRC: 7203, Now: now + 5}); !errors.Is(err, domain.ErrGroupCallDiscarded) {
+		t.Fatalf("join empty discarded conference err = %v, want ErrGroupCallDiscarded", err)
+	}
+
+	resetCall, err := st.CreateConferenceCall(ctx, domain.GroupCall{
+		ID: channelID*100 + 81, AccessHash: channelID*100 + 88, CreatorUserID: 1,
+		InviteSlug: fmt.Sprintf("contract-reset-empty-%d", channelID),
+		InviteLink: fmt.Sprintf("https://telesrv.net/call/contract-reset-empty-%d?slug=contract-reset-empty-%d", channelID, channelID),
+		RandomID:   channelID*100 + 81,
+		CreatedAt:  now + 10,
+	})
+	if err != nil {
+		t.Fatalf("create reset conference call: %v", err)
+	}
+	join(t, st, resetCall.ID, 1, 7301, now+11)
+	reset, err := st.ResetAllParticipants(ctx, now+12)
+	if err != nil || len(reset) != 1 {
+		t.Fatalf("reset conferences = %+v err=%v, want one affected call", reset, err)
+	}
+	if reset[0].ID != resetCall.ID || reset[0].Active() || reset[0].ParticipantsCount != 0 {
+		t.Fatalf("reset conference call = %+v, want discarded empty conference", reset[0])
 	}
 }
 

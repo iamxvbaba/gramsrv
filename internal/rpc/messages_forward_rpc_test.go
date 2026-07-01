@@ -195,6 +195,200 @@ func TestMessagesForwardMessagesLoadsPrivateSourcesInSingleBatch(t *testing.T) {
 	}
 }
 
+func TestMessagesForwardMessagesInfersPrivateSourceFromInputPeerEmpty(t *testing.T) {
+	const (
+		ownerID = int64(1780243210)
+		fromID  = int64(1780243211)
+		toID    = int64(1780243212)
+	)
+	ctx := context.Background()
+	messages := &captureMessages{
+		getMessagesListed: true,
+		list: domain.MessageList{Messages: []domain.Message{
+			{
+				ID:          189,
+				OwnerUserID: ownerID,
+				Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+				From:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+				Date:        1700002189,
+				Body:        "android source",
+			},
+		}},
+	}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users: mapUsersService{users: map[int64]domain.User{
+			ownerID: {ID: ownerID, FirstName: "Owner"},
+			fromID:  {ID: fromID, FirstName: "From"},
+			toID:    {ID: toID, FirstName: "To"},
+		}},
+	}, zaptest.NewLogger(t), clock.System)
+
+	updatesClass, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerEmpty{},
+		ToPeer:   &tg.InputPeerUser{UserID: toID},
+		ID:       []int{189},
+		RandomID: []int64{5069400637215652584},
+	})
+	if err != nil {
+		t.Fatalf("forward with empty source peer: %v", err)
+	}
+	if messages.getMessagesCalls != 1 || len(messages.getMessagesIDs) != 1 || len(messages.getMessagesIDs[0]) != 1 || messages.getMessagesIDs[0][0] != 189 {
+		t.Fatalf("GetMessages calls=%d ids=%+v, want one source lookup for [189]", messages.getMessagesCalls, messages.getMessagesIDs)
+	}
+	if messages.sendReq.RecipientUserID != toID || messages.sendReq.Message != "android source" {
+		t.Fatalf("send request = %+v, want inferred source body to target", messages.sendReq)
+	}
+	if messages.sendReq.Forward == nil || messages.sendReq.Forward.From != (domain.Peer{Type: domain.PeerTypeUser, ID: fromID}) {
+		t.Fatalf("forward header = %+v, want original author %d", messages.sendReq.Forward, fromID)
+	}
+	updates, ok := updatesClass.(*tg.Updates)
+	if !ok || len(updates.Updates) != 2 {
+		t.Fatalf("updates = %T %+v, want updateMessageID + updateNewMessage", updatesClass, updatesClass)
+	}
+	if id, ok := updates.Updates[0].(*tg.UpdateMessageID); !ok || id.RandomID != 5069400637215652584 {
+		t.Fatalf("first update = %#v, want request random id", updates.Updates[0])
+	}
+}
+
+func TestMessagesForwardMessagesInputPeerEmptyRejectsMixedPrivateSources(t *testing.T) {
+	const (
+		ownerID = int64(1780243210)
+		fromA   = int64(1780243211)
+		fromB   = int64(1780243212)
+		toID    = int64(1780243213)
+	)
+	ctx := context.Background()
+	messages := &captureMessages{
+		getMessagesListed: true,
+		list: domain.MessageList{Messages: []domain.Message{
+			{ID: 10, OwnerUserID: ownerID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fromA}, From: domain.Peer{Type: domain.PeerTypeUser, ID: fromA}, Date: 1700002210, Body: "first"},
+			{ID: 11, OwnerUserID: ownerID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fromB}, From: domain.Peer{Type: domain.PeerTypeUser, ID: fromB}, Date: 1700002211, Body: "second"},
+		}},
+	}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users: mapUsersService{users: map[int64]domain.User{
+			ownerID: {ID: ownerID, FirstName: "Owner"},
+			fromA:   {ID: fromA, FirstName: "FromA"},
+			fromB:   {ID: fromB, FirstName: "FromB"},
+			toID:    {ID: toID, FirstName: "To"},
+		}},
+	}, zaptest.NewLogger(t), clock.System)
+
+	_, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerEmpty{},
+		ToPeer:   &tg.InputPeerUser{UserID: toID},
+		ID:       []int{10, 11},
+		RandomID: []int64{10010, 10011},
+	})
+	if err == nil || !strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
+		t.Fatalf("forward mixed empty-source ids err = %v, want MESSAGE_ID_INVALID", err)
+	}
+	if messages.sendReq.RecipientUserID != 0 {
+		t.Fatalf("send request = %+v, want no send after mixed source rejection", messages.sendReq)
+	}
+}
+
+func TestMessagesForwardMessagesInputPeerEmptyRejectsBadIDsBeforeLookup(t *testing.T) {
+	const ownerID = int64(1780243210)
+	ctx := context.Background()
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+	}, zaptest.NewLogger(t), clock.System)
+
+	_, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerEmpty{},
+		ToPeer:   &tg.InputPeerUser{UserID: 1780243211},
+		ID:       []int{0},
+		RandomID: []int64{10001},
+	})
+	if err == nil || !strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
+		t.Fatalf("forward bad empty-source id err = %v, want MESSAGE_ID_INVALID", err)
+	}
+	if messages.getMessagesCalls != 0 {
+		t.Fatalf("GetMessages calls = %d, want no source lookup for invalid id", messages.getMessagesCalls)
+	}
+}
+
+func TestMessagesForwardMessagesNormalizesAndroidDuplicateIDRetry(t *testing.T) {
+	const (
+		ownerID = int64(1780243210)
+		fromID  = int64(1780243211)
+	)
+	ctx := context.Background()
+	messages := &captureMessages{
+		getMessagesListed: true,
+		list: domain.MessageList{Messages: []domain.Message{
+			{
+				ID:          187,
+				OwnerUserID: ownerID,
+				Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+				From:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+				Date:        1700002187,
+				Body:        "retry source",
+			},
+		}},
+	}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users: mapUsersService{users: map[int64]domain.User{
+			ownerID: {ID: ownerID, FirstName: "Owner"},
+			fromID:  {ID: fromID, FirstName: "From"},
+		}},
+	}, zaptest.NewLogger(t), clock.System)
+
+	updatesClass, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), &tg.MessagesForwardMessagesRequest{
+		FromPeer:   &tg.InputPeerEmpty{},
+		ToPeer:     &tg.InputPeerUser{UserID: fromID},
+		ID:         []int{187, 187},
+		RandomID:   []int64{1993272996073519809},
+		DropAuthor: true,
+	})
+	if err != nil {
+		t.Fatalf("forward android duplicate-id retry: %v", err)
+	}
+	if messages.getMessagesCalls != 1 || len(messages.getMessagesIDs) != 1 || len(messages.getMessagesIDs[0]) != 1 || messages.getMessagesIDs[0][0] != 187 {
+		t.Fatalf("GetMessages calls=%d ids=%+v, want one normalized source lookup for [187]", messages.getMessagesCalls, messages.getMessagesIDs)
+	}
+	if messages.sendReq.RecipientUserID != fromID || messages.sendReq.Message != "retry source" {
+		t.Fatalf("send request = %+v, want one forwarded message to current peer", messages.sendReq)
+	}
+	if messages.sendReq.Forward != nil {
+		t.Fatalf("forward header = %+v, want dropped author", messages.sendReq.Forward)
+	}
+	updates, ok := updatesClass.(*tg.Updates)
+	if !ok || len(updates.Updates) != 2 {
+		t.Fatalf("updates = %T %+v, want one updateMessageID + one updateNewMessage", updatesClass, updatesClass)
+	}
+	if id, ok := updates.Updates[0].(*tg.UpdateMessageID); !ok || id.RandomID != 1993272996073519809 {
+		t.Fatalf("first update = %#v, want normalized random id", updates.Updates[0])
+	}
+}
+
+func TestMessagesForwardMessagesRejectsUnpairedIDRandomVectors(t *testing.T) {
+	const ownerID = int64(1780243210)
+	ctx := context.Background()
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+	}, zaptest.NewLogger(t), clock.System)
+
+	_, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerEmpty{},
+		ToPeer:   &tg.InputPeerUser{UserID: 1780243211},
+		ID:       []int{187, 188},
+		RandomID: []int64{1993272996073519809},
+	})
+	if err == nil || !strings.Contains(err.Error(), "INPUT_REQUEST_INVALID") {
+		t.Fatalf("forward unpaired vectors err = %v, want INPUT_REQUEST_INVALID", err)
+	}
+	if messages.getMessagesCalls != 0 {
+		t.Fatalf("GetMessages calls = %d, want no source lookup for unpaired vectors", messages.getMessagesCalls)
+	}
+}
+
 func TestChatsForMessageUpdatesUsesBatchChannelProjection(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
