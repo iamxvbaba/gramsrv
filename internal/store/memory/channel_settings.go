@@ -423,6 +423,25 @@ func (s *ChannelStore) SetNoForwards(_ context.Context, userID, channelID int64,
 	return channel, nil
 }
 
+func (s *ChannelStore) SetPrivateChatForbidden(_ context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
+	if userID == 0 || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, err := s.channelForMemberLocked(userID, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	member := s.members[channelID][userID]
+	if !channel.Megagroup || !canChangeChannelInfo(member) {
+		return domain.Channel{}, domain.ErrChannelAdminRequired
+	}
+	channel.PrivateChatForbidden = enabled
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
 func (s *ChannelStore) SetColor(_ context.Context, userID, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
 	if userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid

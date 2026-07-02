@@ -51,6 +51,7 @@ type ChannelStore interface {
 	SetSlowMode(ctx context.Context, userID, channelID int64, seconds int) (domain.Channel, error)
 	SetBoostsToUnblockRestrictions(ctx context.Context, userID, channelID int64, boosts int) (domain.Channel, error)
 	SetNoForwards(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
+	SetPrivateChatForbidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetJoinToSend(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetJoinRequest(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetAvailableReactions(ctx context.Context, userID, channelID int64, policy domain.ChannelReactionPolicy) (domain.Channel, error)

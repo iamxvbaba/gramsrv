@@ -633,6 +633,42 @@ func (s *ChannelStore) SetNoForwards(ctx context.Context, userID, channelID int6
 	return channel, nil
 }
 
+func (s *ChannelStore) SetPrivateChatForbidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
+	if userID == 0 || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.Channel{}, fmt.Errorf("toggle channel private chat forbidden: db does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.Channel{}, fmt.Errorf("begin toggle channel private chat forbidden: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	channel, member, err := s.getChannelForMember(ctx, tx, userID, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if !channel.Megagroup || !canChangeChannelInfo(member) {
+		return domain.Channel{}, domain.ErrChannelAdminRequired
+	}
+	if _, err := tx.Exec(ctx, `UPDATE channels SET private_chat_forbidden = $2, updated_at = now() WHERE id = $1`, channelID, enabled); err != nil {
+		return domain.Channel{}, fmt.Errorf("update channel private chat forbidden: %w", err)
+	}
+	channel.PrivateChatForbidden = enabled
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Channel{}, fmt.Errorf("commit toggle channel private chat forbidden: %w", err)
+	}
+	committed = true
+	return channel, nil
+}
+
 func (s *ChannelStore) SetColor(ctx context.Context, userID, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
 	if userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid

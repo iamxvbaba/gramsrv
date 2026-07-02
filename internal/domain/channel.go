@@ -403,6 +403,7 @@ type Channel struct {
 	BroadcastMessagesAllowed bool
 	SendPaidMessagesStars    int64
 	NoForwards               bool
+	PrivateChatForbidden     bool
 	JoinToSend               bool
 	JoinRequest              bool
 	Signatures               bool

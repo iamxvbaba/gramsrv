@@ -604,6 +604,14 @@ func (s *Service) SetNoForwards(ctx context.Context, userID, channelID int64, en
 	return s.channels.SetNoForwards(ctx, userID, channelID, enabled)
 }
 
+// SetPrivateChatForbidden toggles group-scoped private chat suppression.
+func (s *Service) SetPrivateChatForbidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
+	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	return s.channels.SetPrivateChatForbidden(ctx, userID, channelID, enabled)
+}
+
 // SetHistoryTTL updates channel/supergroup message auto-delete period.
 func (s *Service) SetHistoryTTL(ctx context.Context, userID, channelID int64, period int, date int) (domain.Channel, []int64, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 || period < 0 {
