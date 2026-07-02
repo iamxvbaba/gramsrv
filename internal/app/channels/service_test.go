@@ -2128,6 +2128,18 @@ func TestChannelAdminTitlePinAndInvite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdminLog: %v", err)
 	}
+	iosInitialLogs, err := service.ListAdminLog(ctx, 1001, domain.ChannelAdminLogRequest{
+		ChannelID: created.Channel.ID,
+		MaxID:     1<<63 - 1,
+		MinID:     -1 << 63,
+		Limit:     20,
+	})
+	if err != nil {
+		t.Fatalf("ListAdminLog iOS initial bounds: %v", err)
+	}
+	if len(iosInitialLogs.Events) == 0 {
+		t.Fatalf("ListAdminLog iOS initial bounds returned no events, want admin history")
+	}
 	seen := map[domain.ChannelAdminLogEventType]bool{}
 	for _, event := range logs.Events {
 		seen[event.Type] = true
