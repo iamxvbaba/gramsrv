@@ -1,6 +1,7 @@
 import { Check, Loader2, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { useI18n } from "../i18n";
 import { channelKind, displayName, displayPhone, displayUsername } from "../lib/format";
 import type { AccountRow, ChannelRow } from "../types";
 import { Badge } from "./ui";
@@ -14,6 +15,7 @@ export function UserPicker({
   value: AccountRow | null;
   onChange: (row: AccountRow | null) => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<AccountRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -46,7 +48,7 @@ export function UserPicker({
         <span>{label}</span>
         {value ? (
           <button className="link-button" type="button" onClick={() => onChange(null)}>
-            <X size={13} /> 清除
+            <X size={13} /> {t("common.clear")}
           </button>
         ) : null}
       </div>
@@ -71,10 +73,10 @@ export function UserPicker({
               void search();
             }
           }}
-          placeholder="搜索 user_id / phone / username"
+          placeholder={t("picker.userPlaceholder")}
         />
         <button className="btn compact-btn" type="button" onClick={search} disabled={busy}>
-          {busy ? <Loader2 size={14} className="spin" /> : "搜索"}
+          {busy ? <Loader2 size={14} className="spin" /> : t("common.search")}
         </button>
       </div>
       {error && <div className="picker-error">{error}</div>}
@@ -89,10 +91,10 @@ export function UserPicker({
             <span className="mono">{row.ID}</span>
             <strong>{displayName(row)}</strong>
             <span>{displayUsername(row.Username) || displayPhone(row.Phone) || "-"}</span>
-            {row.Verified ? <Badge tone="good">认证</Badge> : <Badge>普通</Badge>}
+            {row.Verified ? <Badge tone="good">{t("picker.verified")}</Badge> : <Badge>{t("picker.regular")}</Badge>}
           </button>
         ))}
-        {rows.length === 0 && !busy ? <div className="picker-empty">无结果</div> : null}
+        {rows.length === 0 && !busy ? <div className="picker-empty">{t("common.noResults")}</div> : null}
       </div>
     </div>
   );
@@ -107,6 +109,7 @@ export function ChannelPicker({
   value: ChannelRow | null;
   onChange: (row: ChannelRow | null) => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<ChannelRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -139,7 +142,7 @@ export function ChannelPicker({
         <span>{label}</span>
         {value ? (
           <button className="link-button" type="button" onClick={() => onChange(null)}>
-            <X size={13} /> 清除
+            <X size={13} /> {t("common.clear")}
           </button>
         ) : null}
       </div>
@@ -150,7 +153,7 @@ export function ChannelPicker({
             <strong>{value.Title || "-"}</strong>
             <span className="mono">{value.ID}</span>
           </div>
-          <span>{displayUsername(value.Username) || channelKind(value)}</span>
+          <span>{displayUsername(value.Username) || channelKind(value, t)}</span>
         </div>
       ) : null}
       <div className="picker-search">
@@ -164,10 +167,10 @@ export function ChannelPicker({
               void search();
             }
           }}
-          placeholder="搜索 channel_id / username / title"
+          placeholder={t("picker.channelPlaceholder")}
         />
         <button className="btn compact-btn" type="button" onClick={search} disabled={busy}>
-          {busy ? <Loader2 size={14} className="spin" /> : "搜索"}
+          {busy ? <Loader2 size={14} className="spin" /> : t("common.search")}
         </button>
       </div>
       {error && <div className="picker-error">{error}</div>}
@@ -181,11 +184,11 @@ export function ChannelPicker({
           >
             <span className="mono">{row.ID}</span>
             <strong>{row.Title || "-"}</strong>
-            <span>{displayUsername(row.Username) || channelKind(row)}</span>
-            {row.Verified ? <Badge tone="good">认证</Badge> : <Badge>{channelKind(row)}</Badge>}
+            <span>{displayUsername(row.Username) || channelKind(row, t)}</span>
+            {row.Verified ? <Badge tone="good">{t("picker.verified")}</Badge> : <Badge>{channelKind(row, t)}</Badge>}
           </button>
         ))}
-        {rows.length === 0 && !busy ? <div className="picker-empty">无结果</div> : null}
+        {rows.length === 0 && !busy ? <div className="picker-empty">{t("common.noResults")}</div> : null}
       </div>
     </div>
   );

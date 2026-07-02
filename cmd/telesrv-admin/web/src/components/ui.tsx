@@ -1,5 +1,6 @@
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { useI18n } from "../i18n";
 import { formatDate } from "../lib/format";
 import type { AuditLogRow } from "../types";
 
@@ -91,10 +92,11 @@ export function Summary({ label, value, mono = false }: { label: string; value: 
 }
 
 export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
+  const { t } = useI18n();
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr><th>ID</th><th>命令 ID</th><th>动作</th><th>操作者</th><th>状态</th><th>预演</th><th>原因</th><th>时间</th></tr></thead>
+        <thead><tr><th>{t("audit.id")}</th><th>{t("audit.commandID")}</th><th>{t("audit.action")}</th><th>{t("audit.actor")}</th><th>{t("audit.status")}</th><th>{t("audit.dryRun")}</th><th>{t("audit.reason")}</th><th>{t("audit.time")}</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.ID}>
@@ -103,7 +105,7 @@ export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
               <td>{row.Action}</td>
               <td>{row.Actor}</td>
               <td>{row.Status}</td>
-              <td>{row.DryRun ? "是" : "否"}</td>
+              <td>{row.DryRun ? t("common.yes") : t("common.no")}</td>
               <td className="truncate">{row.Reason}</td>
               <td>{formatDate(row.CreatedAt)}</td>
             </tr>
@@ -116,7 +118,8 @@ export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
 }
 
 export function EmptyRow({ colSpan }: { colSpan: number }) {
-  return <tr><td colSpan={colSpan} className="empty-cell">无结果</td></tr>;
+  const { t } = useI18n();
+  return <tr><td colSpan={colSpan} className="empty-cell">{t("common.noResults")}</td></tr>;
 }
 
 export function LoadingSurface({ label }: { label: string }) {

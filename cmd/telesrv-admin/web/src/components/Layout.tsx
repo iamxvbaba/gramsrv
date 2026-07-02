@@ -11,17 +11,19 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
+import { LanguageSwitch, useI18n } from "../i18n";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { AppLink } from "./AppLink";
 
 export function BootScreen() {
+  const { t } = useI18n();
   return (
     <div className="boot-screen">
       <div className="brand compact brand-elevated">
         <span className="brand-mark">T</span>
         <span>
           <strong>telesrv</strong>
-          <small>管理控制台</small>
+          <small>{t("app.adminConsole")}</small>
         </span>
       </div>
       <div className="loader-bar" />
@@ -42,6 +44,7 @@ export function Shell({
   onLogout: () => void;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   const messagesActive = route.path.startsWith("/messages");
   const [messagesOpen, setMessagesOpen] = useState(messagesActive);
 
@@ -63,14 +66,14 @@ export function Shell({
           <span className="brand-mark">T</span>
           <span>
             <strong>telesrv</strong>
-            <small>管理控制台</small>
+            <small>{t("app.adminConsole")}</small>
           </span>
         </AppLink>
-        <div className="sidebar-label">导航</div>
-        <nav className="nav-list" aria-label="主导航">
-          <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>总览</NavLink>
-          <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>账号</NavLink>
-          <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>超级群/频道</NavLink>
+        <div className="sidebar-label">{t("layout.navigation")}</div>
+        <nav className="nav-list" aria-label={t("layout.primaryNav")}>
+          <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{t("layout.dashboard")}</NavLink>
+          <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{t("layout.accounts")}</NavLink>
+          <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{t("layout.channels")}</NavLink>
           <div className={`nav-section ${messagesActive ? "active" : ""} ${messagesOpen ? "open" : ""}`}>
             <button
               className="nav-section-toggle"
@@ -79,7 +82,7 @@ export function Shell({
               onClick={() => setMessagesOpen((open) => !open)}
             >
               <MessageSquareText size={16} />
-              <span>消息</span>
+              <span>{t("layout.messages")}</span>
               <ChevronDown className="nav-section-chevron" size={15} />
             </button>
             {messagesOpen && (
@@ -90,7 +93,7 @@ export function Shell({
                   navigate={navigate}
                   activeWhen={(path) => path === "/messages" || path === "/messages/detail" || path.startsWith("/messages/private")}
                 >
-                  私聊
+                  {t("layout.privateMessages")}
                 </NavLink>
                 <NavLink
                   href="/messages/groups"
@@ -98,29 +101,30 @@ export function Shell({
                   navigate={navigate}
                   activeWhen={(path) => path.startsWith("/messages/groups")}
                 >
-                  群聊
+                  {t("layout.groupMessages")}
                 </NavLink>
               </div>
             )}
           </div>
         </nav>
         <div className="sidebar-status">
-          <div className="sidebar-label">运行状态</div>
-          <div className="runtime-row"><Server size={14} /><span>管理后台</span><strong>就绪</strong></div>
-          <div className="runtime-row"><Database size={14} /><span>PG 读取</span><strong>只读</strong></div>
-          <div className="runtime-row"><Shield size={14} /><span>写操作</span><strong>预演</strong></div>
+          <div className="sidebar-label">{t("layout.runtime")}</div>
+          <div className="runtime-row"><Server size={14} /><span>{t("layout.adminBackend")}</span><strong>{t("layout.ready")}</strong></div>
+          <div className="runtime-row"><Database size={14} /><span>{t("layout.pgRead")}</span><strong>{t("layout.readOnly")}</strong></div>
+          <div className="runtime-row"><Shield size={14} /><span>{t("layout.writeOps")}</span><strong>{t("layout.dryRun")}</strong></div>
         </div>
       </aside>
       <div className="workspace">
         <header className="topbar">
           <div>
-            <div className="eyebrow">{routeSubtitle(route.path)}</div>
-            <h1>{routeTitle(route.path)}</h1>
+            <div className="eyebrow">{routeSubtitle(route.path, t)}</div>
+            <h1>{routeTitle(route.path, t)}</h1>
           </div>
           <div className="topbar-actions">
-            <span className="actor-pill">操作者：{actor}</span>
-            <button className="btn ghost icon-text" type="button" onClick={logout} title="退出">
-              <LogOut size={16} /> 退出
+            <LanguageSwitch />
+            <span className="actor-pill">{t("layout.actor", { actor })}</span>
+            <button className="btn ghost icon-text" type="button" onClick={logout} title={t("layout.logout")}>
+              <LogOut size={16} /> {t("layout.logout")}
             </button>
           </div>
         </header>

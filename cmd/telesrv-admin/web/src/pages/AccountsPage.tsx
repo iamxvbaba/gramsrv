@@ -2,12 +2,14 @@ import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix } from "../lib/format";
 import { accountMetrics } from "../lib/metrics";
 import type { Navigate } from "../routing";
 import type { AccountListResponse } from "../types";
 
 export function AccountsPage({ navigate }: { navigate: Navigate }) {
+  const { t } = useI18n();
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState("50");
   const [data, setData] = useState<AccountListResponse | null>(null);
@@ -47,37 +49,37 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
 
   return (
     <PageFrame
-      title="账号"
-      eyebrow={data?.listing === false ? "查询结果" : "最近活跃账号"}
+      title={t("account.pageTitle")}
+      eyebrow={data?.listing === false ? t("account.queryResults") : t("account.recentActive")}
       actions={
         <button className="btn" type="button" onClick={() => load(false)} disabled={busy}>
-          <RefreshCw size={15} /> 刷新
+          <RefreshCw size={15} /> {t("common.refresh")}
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label="当前页账号" value={String(data?.rows.length ?? 0)} />
-        <Metric label="在线设备记录" value={String(metrics.devices)} />
-        <Metric label="会员" value={String(metrics.premium)} tone="good" />
-        <Metric label="冻结" value={String(metrics.frozen)} tone={metrics.frozen > 0 ? "danger" : "neutral"} />
+        <Metric label={t("account.currentPage")} value={String(data?.rows.length ?? 0)} />
+        <Metric label={t("account.onlineDevices")} value={String(metrics.devices)} />
+        <Metric label={t("account.premium")} value={String(metrics.premium)} tone="good" />
+        <Metric label={t("account.frozen")} value={String(metrics.frozen)} tone={metrics.frozen > 0 ? "danger" : "neutral"} />
       </div>
       <QueryPanel>
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
           <label className="searchbox">
             <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="用户 ID / 手机号 / 用户名" />
+            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={t("account.searchPlaceholder")} />
           </label>
           <label className="field-inline">
-            <span>条数</span>
+            <span>{t("common.limit")}</span>
             <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} type="number" min="1" max="100" />
           </label>
           <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} 查询
+            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {t("common.search")}
           </button>
           {data?.listing && data.has_more && (
             <button className="btn icon-text" type="button" onClick={() => load(true)} disabled={busy}>
-              <ChevronRight size={15} /> 下一页
+              <ChevronRight size={15} /> {t("messages.nextPage")}
             </button>
           )}
         </form>
@@ -86,16 +88,16 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>用户 ID</th>
-              <th>手机号</th>
-              <th>用户名</th>
-              <th>姓名</th>
-              <th>设备</th>
-              <th>最近活跃</th>
-              <th>会员</th>
-              <th>认证</th>
-              <th>冻结</th>
-              <th>更新时间</th>
+              <th>{t("account.userID")}</th>
+              <th>{t("account.phone")}</th>
+              <th>{t("common.username")}</th>
+              <th>{t("common.name")}</th>
+              <th>{t("common.device")}</th>
+              <th>{t("account.lastActive")}</th>
+              <th>{t("account.premium")}</th>
+              <th>{t("common.verified")}</th>
+              <th>{t("account.frozen")}</th>
+              <th>{t("common.updatedAt")}</th>
               <th></th>
             </tr>
           </thead>
@@ -108,11 +110,11 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
                 <td>{displayName(row)}</td>
                 <td>{row.DeviceCount}</td>
                 <td>{formatDate(row.LastActiveAt)}</td>
-                <td>{row.PremiumUntil > 0 ? <Badge tone="good">会员 {formatUnix(row.PremiumUntil)}</Badge> : <Badge>无</Badge>}</td>
-                <td>{row.Verified ? <Badge tone="good">已认证</Badge> : <Badge>未认证</Badge>}</td>
-                <td>{row.Frozen ? <Badge tone="danger">冻结</Badge> : <Badge>正常</Badge>}</td>
+                <td>{row.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")} {formatUnix(row.PremiumUntil)}</Badge> : <Badge>{t("common.none")}</Badge>}</td>
+                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}</td>
+                <td>{row.Frozen ? <Badge tone="danger">{t("account.frozen")}</Badge> : <Badge>{t("common.normal")}</Badge>}</td>
                 <td>{formatDate(row.UpdatedAt)}</td>
-                <td><button className="row-link" onClick={() => navigate(`/accounts/${row.ID}`)}>详情 <ChevronRight size={14} /></button></td>
+                <td><button className="row-link" onClick={() => navigate(`/accounts/${row.ID}`)}>{t("common.detail")} <ChevronRight size={14} /></button></td>
               </tr>
             ))}
             {(!data || data.rows.length === 0) && <EmptyRow colSpan={11} />}

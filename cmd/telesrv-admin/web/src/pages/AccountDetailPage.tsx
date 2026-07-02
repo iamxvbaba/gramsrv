@@ -4,11 +4,13 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { AuthorizationTable } from "../components/AuthorizationTable";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { AccountDetail } from "../types";
 
 export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
+  const { t } = useI18n();
   const [detail, setDetail] = useState<AccountDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,15 +36,15 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
     return <Alert>{error}</Alert>;
   }
   if (!detail) {
-    return <LoadingSurface label={busy ? "加载账号详情" : "等待数据"} />;
+    return <LoadingSurface label={busy ? t("account.loadingDetail") : t("account.waitingData")} />;
   }
 
   const account = detail.Account;
   return (
     <PageFrame
-      title={`账号 #${account.ID}`}
-      eyebrow="账号档案"
-      actions={<button className="btn icon-text" onClick={() => navigate("/accounts")}><ArrowLeft size={15} /> 返回列表</button>}
+      title={t("account.detailTitle", { id: account.ID })}
+      eyebrow={t("account.profile")}
+      actions={<button className="btn icon-text" onClick={() => navigate("/accounts")}><ArrowLeft size={15} /> {t("common.backToList")}</button>}
     >
       <SplitLayout
         main={
@@ -50,49 +52,49 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
             <section className="entity-head">
               <div>
                 <div className="entity-title">{displayName(account)}</div>
-                <div className="entity-subtitle">{displayUsername(account.Username) || "无用户名"} · {displayPhone(account.Phone) || "无手机号"}</div>
+                <div className="entity-subtitle">{displayUsername(account.Username) || t("account.noUsername")} · {displayPhone(account.Phone) || t("account.noPhone")}</div>
               </div>
               <div className="entity-badges">
-                {account.PremiumUntil > 0 ? <Badge tone="good">会员</Badge> : <Badge>非会员</Badge>}
-                {detail.Verified ? <Badge tone="good">已认证</Badge> : <Badge>未认证</Badge>}
-                {account.Frozen ? <Badge tone="danger">发消息冻结</Badge> : <Badge>发送正常</Badge>}
+                {account.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")}</Badge> : <Badge>{t("account.notPremium")}</Badge>}
+                {detail.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
+                {account.Frozen ? <Badge tone="danger">{t("account.sendFrozen")}</Badge> : <Badge>{t("account.sendNormal")}</Badge>}
               </div>
             </section>
             <div className="summary-grid">
-              <Summary label="用户 ID" value={String(account.ID)} mono />
-              <Summary label="最后在线" value={formatUnix(detail.LastSeenAt) || "-"} />
-              <Summary label="会员到期" value={account.PremiumUntil > 0 ? formatUnix(account.PremiumUntil) : "无"} />
-              <Summary label="更新时间" value={formatDate(account.UpdatedAt) || "-"} />
-              <Summary label="授权设备" value={String(detail.Authorizations.length)} />
-              <Summary label="账号标记" value={`support=${detail.Support} bot=${detail.Bot}`} />
-              <Summary label="限制状态" value={detail.HasRestriction ? detail.Restriction.Reason || "已限制" : "无"} />
-              <Summary label="创建时间" value={formatDate(account.CreatedAt) || "-"} />
+              <Summary label={t("account.userID")} value={String(account.ID)} mono />
+              <Summary label={t("account.lastActive")} value={formatUnix(detail.LastSeenAt) || "-"} />
+              <Summary label={t("account.premiumUntil")} value={account.PremiumUntil > 0 ? formatUnix(account.PremiumUntil) : t("common.none")} />
+              <Summary label={t("common.updatedAt")} value={formatDate(account.UpdatedAt) || "-"} />
+              <Summary label={t("account.activeSessions")} value={String(detail.Authorizations.length)} />
+              <Summary label={t("account.accountFlags")} value={`support=${detail.Support} bot=${detail.Bot}`} />
+              <Summary label={t("account.restriction")} value={detail.HasRestriction ? detail.Restriction.Reason || t("account.restricted") : t("common.none")} />
+              <Summary label={t("account.createdAt")} value={formatDate(account.CreatedAt) || "-"} />
             </div>
             {detail.About && <p className="about-text">{detail.About}</p>}
             <section className="section-block">
-              <SectionHead title="授权设备" text={`共 ${detail.Authorizations.length} 个授权`} />
+              <SectionHead title={t("account.authorizationsTitle")} text={t("account.authorizationsCount", { count: detail.Authorizations.length })} />
               <AuthorizationTable rows={detail.Authorizations} userID={account.ID} onDone={load} />
             </section>
             <section className="section-block">
-              <SectionHead title="最近后台操作" text="最近 30 条审计" />
+              <SectionHead title={t("account.recentAdminOps")} text={t("account.recent30Audit")} />
               <AuditTable rows={detail.AuditLogs} />
             </section>
           </div>
         }
         side={
           <section className="action-dock">
-            <div className="dock-title">账号操作</div>
+            <div className="dock-title">{t("account.actionDock")}</div>
             <ActionButton
-              label={account.Frozen ? "解冻发消息" : "冻结发消息"}
+              label={account.Frozen ? t("account.unfreezeSend") : t("account.freezeSend")}
               icon={<CircleAlert size={15} />}
               path="/api/actions/freeze-send"
               payload={() => ({ user_id: account.ID, frozen: !account.Frozen })}
               onDone={load}
             />
             <label className="duration-field">
-              <span>会员时长（月）</span>
+              <span>{t("account.premiumMonths")}</span>
               <input
-                aria-label="设置会员时长，单位月"
+                aria-label={t("account.premiumMonthsAria")}
                 value={months}
                 onChange={(event) => setMonths(event.target.value)}
                 type="number"
@@ -102,7 +104,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
             </label>
             <div className="action-stack">
               <ActionButton
-                label="设置会员"
+                label={t("account.setPremium")}
                 icon={<Sparkles size={15} />}
                 tone="warn"
                 path="/api/actions/grant-premium"
@@ -110,7 +112,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 onDone={load}
               />
               <ActionButton
-                label="取消会员"
+                label={t("account.clearPremium")}
                 icon={<Sparkles size={15} />}
                 tone="warn"
                 path="/api/actions/grant-premium"
@@ -118,7 +120,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 onDone={load}
               />
               <ActionButton
-                label={detail.Verified ? "取消认证" : "设置认证"}
+                label={detail.Verified ? t("account.clearVerified") : t("account.setVerified")}
                 icon={<BadgeCheck size={15} />}
                 tone="warn"
                 path="/api/actions/set-verified"

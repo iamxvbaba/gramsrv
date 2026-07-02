@@ -2,32 +2,34 @@ import { CheckCircle2, ChevronRight, Clock3, FileJson, KeyRound, MessageSquareTe
 import type { ReactNode } from "react";
 import { AppLink } from "../components/AppLink";
 import { StatusItem } from "../components/ui";
+import { useI18n } from "../i18n";
 import type { Navigate } from "../routing";
 
 export function Dashboard({ navigate }: { navigate: Navigate }) {
+  const { t } = useI18n();
   return (
     <div className="dashboard-layout">
       <section className="overview-band">
         <div>
-          <div className="eyebrow">运行总览</div>
-          <h2>控制台总览</h2>
+          <div className="eyebrow">{t("dashboard.eyebrow")}</div>
+          <h2>{t("dashboard.title")}</h2>
         </div>
         <div className="overview-metrics">
-          <StatusItem label="读路径" value="PG 只读" tone="neutral" />
-          <StatusItem label="写路径" value="Admin API" tone="good" />
-          <StatusItem label="执行策略" value="先预演" tone="warn" />
+          <StatusItem label={t("dashboard.readPath")} value={t("dashboard.readPathValue")} tone="neutral" />
+          <StatusItem label={t("dashboard.writePath")} value="Admin API" tone="good" />
+          <StatusItem label={t("dashboard.executionPolicy")} value={t("dashboard.dryRunFirst")} tone="warn" />
         </div>
       </section>
       <div className="command-grid">
-        <Launcher icon={<Users />} title="账号管理" text="账号状态、会员、认证、会话。" href="/accounts" navigate={navigate} />
-        <Launcher icon={<ShieldCheck />} title="超级群与频道" text="公开实体、成员计数、认证状态。" href="/channels" navigate={navigate} />
-        <Launcher icon={<MessageSquareText />} title="消息审计" text="消息盒、update、outbox 状态。" href="/messages" navigate={navigate} />
+        <Launcher icon={<Users />} title={t("route.accounts")} text={t("dashboard.accountsText")} href="/accounts" navigate={navigate} />
+        <Launcher icon={<ShieldCheck />} title={t("route.channels")} text={t("dashboard.channelsText")} href="/channels" navigate={navigate} />
+        <Launcher icon={<MessageSquareText />} title={t("route.messages")} text={t("dashboard.messagesText")} href="/messages" navigate={navigate} />
       </div>
       <section className="work-strip">
-        <div className="strip-item"><CheckCircle2 size={16} /><span>所有危险操作先预演</span></div>
-        <div className="strip-item"><KeyRound size={16} /><span>浏览器不持有内部 token</span></div>
-        <div className="strip-item"><Clock3 size={16} /><span>列表使用游标分页</span></div>
-        <div className="strip-item"><FileJson size={16} /><span>详情页保留原始状态快照</span></div>
+        <div className="strip-item"><CheckCircle2 size={16} /><span>{t("dashboard.strip.dryRun")}</span></div>
+        <div className="strip-item"><KeyRound size={16} /><span>{t("dashboard.strip.token")}</span></div>
+        <div className="strip-item"><Clock3 size={16} /><span>{t("dashboard.strip.pagination")}</span></div>
+        <div className="strip-item"><FileJson size={16} /><span>{t("dashboard.strip.snapshot")}</span></div>
       </section>
     </div>
   );
