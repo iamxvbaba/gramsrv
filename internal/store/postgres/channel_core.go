@@ -23,6 +23,39 @@ type channelIDAtLeastAllocator interface {
 	NextChannelIDAtLeast(ctx context.Context, floor int64) (int64, error)
 }
 
+type channelMessageIDCounterEnsurer interface {
+	EnsureChannelMessageIDCounter(ctx context.Context, channelID int64) error
+}
+
+func (s *ChannelStore) ensureChannelMessageIDCounter(ctx context.Context, channelID int64) error {
+	ensurer, ok := s.msgIDs.(channelMessageIDCounterEnsurer)
+	if !ok || channelID == 0 {
+		return nil
+	}
+	if err := ensurer.EnsureChannelMessageIDCounter(ctx, channelID); err != nil {
+		return fmt.Errorf("ensure channel message id counter for channel %d: %w", channelID, err)
+	}
+	return nil
+}
+
+func (s *ChannelStore) ensureChannelMessageIDCountersForSend(ctx context.Context, channelID int64) error {
+	if err := s.ensureChannelMessageIDCounter(ctx, channelID); err != nil {
+		return err
+	}
+	channel, err := getChannelByID(ctx, s.db, channelID)
+	if err != nil {
+		return nil
+	}
+	if !channel.Broadcast || channel.LinkedChatID == 0 {
+		return nil
+	}
+	linked, err := getChannelByID(ctx, s.db, channel.LinkedChatID)
+	if err != nil || linked.Deleted || !linked.Megagroup {
+		return nil
+	}
+	return s.ensureChannelMessageIDCounter(ctx, linked.ID)
+}
+
 // allocateFreshChannelID 分配未被占用的 channel id。计数器可能落后于
 // channels 表真实最大 id（Redis 快照回退、或测试 fallback 分配器绕过
 // Redis 直写同一库），盲用会撞主键且可能污染后续 channel message id
@@ -70,6 +103,9 @@ func (s *ChannelStore) CreateChannel(ctx context.Context, req domain.CreateChann
 	}
 	channelID, err := s.allocateFreshChannelID(ctx)
 	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
+	if err := s.ensureChannelMessageIDCounter(ctx, channelID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
 	accessHash, err := randomChannelAccessHash()

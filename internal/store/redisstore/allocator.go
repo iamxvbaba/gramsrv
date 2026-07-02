@@ -149,6 +149,13 @@ func (a *BoxIDAllocator) CurrentBoxID(ctx context.Context, userID int64) (int, e
 	return int(v), err
 }
 
+// EnsureBoxIDCounter recovers the Redis counter from durable storage if it is
+// missing, without allocating a visible message id.
+func (a *BoxIDAllocator) EnsureBoxIDCounter(ctx context.Context, userID int64) error {
+	_, err := a.CurrentBoxID(ctx, userID)
+	return err
+}
+
 // BumpBoxIDAtLeast advances the Redis box id counter to at least floor without
 // allocating a visible id. It is a cold-path self-heal for Redis counters that
 // lag behind message_boxes after external/dev writes.
@@ -215,6 +222,13 @@ func (a *ChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, ch
 func (a *ChannelMessageIDAllocator) CurrentChannelMessageID(ctx context.Context, channelID int64) (int, error) {
 	v, err := a.counter.current(ctx, channelID)
 	return int(v), err
+}
+
+// EnsureChannelMessageIDCounter recovers the Redis counter from durable storage
+// if it is missing, without allocating a visible channel message id.
+func (a *ChannelMessageIDAllocator) EnsureChannelMessageIDCounter(ctx context.Context, channelID int64) error {
+	_, err := a.CurrentChannelMessageID(ctx, channelID)
+	return err
 }
 
 func (a counterAllocator) next(ctx context.Context, userID int64) (int64, error) {

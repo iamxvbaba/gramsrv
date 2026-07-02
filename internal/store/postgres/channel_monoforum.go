@@ -33,6 +33,9 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 	if !ok {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("send monoforum message: db does not support transactions")
 	}
+	if err := s.ensureChannelMessageIDCounter(ctx, req.MonoforumID); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("begin send monoforum: %w", err)

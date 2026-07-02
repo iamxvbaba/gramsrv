@@ -40,6 +40,9 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	if !ok {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("send channel message: db does not support transactions")
 	}
+	if err := s.ensureChannelMessageIDCountersForSend(ctx, req.ChannelID); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("begin send channel: %w", err)

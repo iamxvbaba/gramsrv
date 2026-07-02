@@ -31,6 +31,11 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	if err != nil {
 		return domain.EditChannelMessageResult{}, fmt.Errorf("encode channel edit reply markup: %w", err)
 	}
+	if req.TodoServiceAction != nil {
+		if err := s.ensureChannelMessageIDCounter(ctx, req.ChannelID); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, fmt.Errorf("begin edit channel message: %w", err)

@@ -155,6 +155,10 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		senderMeta.SavedPeerID = savedPeer.ID
 	}
 
+	if err := s.ensureBoxIDCountersBeforeSend(ctx, req, deliverRecipient); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("begin send message tx: %w", err)
@@ -369,6 +373,27 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 
 type boxIDCounterBumper interface {
 	BumpBoxIDAtLeast(ctx context.Context, userID int64, floor int) error
+}
+
+type boxIDCounterEnsurer interface {
+	EnsureBoxIDCounter(ctx context.Context, userID int64) error
+}
+
+func (s *MessageStore) ensureBoxIDCountersBeforeSend(ctx context.Context, req domain.SendPrivateTextRequest, deliverRecipient bool) error {
+	ensurer, ok := s.boxIDs.(boxIDCounterEnsurer)
+	if !ok {
+		return nil
+	}
+	userIDs := []int64{req.SenderUserID}
+	if deliverRecipient && req.RecipientUserID != req.SenderUserID {
+		userIDs = append(userIDs, req.RecipientUserID)
+	}
+	for _, userID := range userIDs {
+		if err := ensurer.EnsureBoxIDCounter(ctx, userID); err != nil {
+			return fmt.Errorf("ensure box id counter for user %d: %w", userID, err)
+		}
+	}
+	return nil
 }
 
 func (s *MessageStore) bumpBoxIDCountersAfterDuplicate(ctx context.Context, req domain.SendPrivateTextRequest) error {

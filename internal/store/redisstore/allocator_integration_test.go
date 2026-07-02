@@ -48,6 +48,76 @@ func TestRedisBoxAllocatorRecoverFromCounterSource(t *testing.T) {
 	}
 }
 
+func TestRedisBoxAllocatorEnsureBoxIDCounter(t *testing.T) {
+	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TELESRV_TEST_REDIS_ADDR to run redis integration test")
+	}
+	ctx := context.Background()
+	c, err := Open(ctx, addr, "", 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	userID := time.Now().UnixNano()
+	t.Cleanup(func() { _ = c.Del(ctx, boxIDKey(userID)).Err() })
+
+	boxes := NewBoxIDAllocator(c, staticCounterSource{value: 200})
+	if err := boxes.EnsureBoxIDCounter(ctx, userID); err != nil {
+		t.Fatalf("EnsureBoxIDCounter: %v", err)
+	}
+	currentBox, err := boxes.CurrentBoxID(ctx, userID)
+	if err != nil {
+		t.Fatalf("CurrentBoxID: %v", err)
+	}
+	if currentBox != 200 {
+		t.Fatalf("current box = %d, want recovered 200", currentBox)
+	}
+	nextBox, err := boxes.NextBoxID(ctx, userID)
+	if err != nil {
+		t.Fatalf("NextBoxID: %v", err)
+	}
+	if nextBox != 201 {
+		t.Fatalf("next box = %d, want 201", nextBox)
+	}
+}
+
+func TestRedisChannelMessageAllocatorEnsureCounter(t *testing.T) {
+	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TELESRV_TEST_REDIS_ADDR to run redis integration test")
+	}
+	ctx := context.Background()
+	c, err := Open(ctx, addr, "", 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	channelID := time.Now().UnixNano()
+	t.Cleanup(func() { _ = c.Del(ctx, channelMessageIDKey(channelID)).Err() })
+
+	ids := NewChannelMessageIDAllocator(c, staticCounterSource{value: 300})
+	if err := ids.EnsureChannelMessageIDCounter(ctx, channelID); err != nil {
+		t.Fatalf("EnsureChannelMessageIDCounter: %v", err)
+	}
+	current, err := ids.CurrentChannelMessageID(ctx, channelID)
+	if err != nil {
+		t.Fatalf("CurrentChannelMessageID: %v", err)
+	}
+	if current != 300 {
+		t.Fatalf("current channel message id = %d, want recovered 300", current)
+	}
+	next, err := ids.NextChannelMessageID(ctx, channelID)
+	if err != nil {
+		t.Fatalf("NextChannelMessageID: %v", err)
+	}
+	if next != 301 {
+		t.Fatalf("next channel message id = %d, want 301", next)
+	}
+}
+
 func TestRedisBoxAllocatorConcurrentFirstUse(t *testing.T) {
 	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
 	if addr == "" {
