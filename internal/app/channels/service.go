@@ -743,6 +743,9 @@ func (s *Service) ListAdminLog(ctx context.Context, userID int64, req domain.Cha
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
+	if req.MinID < 0 {
+		req.MinID = 0
+	}
 	if req.UserID != userID || req.ChannelID == 0 || req.MaxID < 0 || req.MinID < 0 {
 		return domain.ChannelAdminLogResult{}, domain.ErrChannelInvalid
 	}
