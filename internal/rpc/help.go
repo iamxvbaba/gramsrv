@@ -20,6 +20,9 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 	d.OnHelpGetInviteText(func(ctx context.Context) (*tg.HelpInviteText, error) {
 		return &tg.HelpInviteText{Message: "Join me on Telegram."}, nil
 	})
+	d.OnHelpGetAppUpdate(func(ctx context.Context, source string) (tg.HelpAppUpdateClass, error) {
+		return &tg.HelpNoAppUpdate{}, nil
+	})
 	d.OnHelpGetAppConfig(func(ctx context.Context, hash int) (tg.HelpAppConfigClass, error) {
 		if r.deps.Help == nil {
 			return tdesktop.AppConfig(hash), nil
@@ -48,6 +51,9 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 	})
 	d.OnHelpGetTimezonesList(func(ctx context.Context, hash int) (tg.HelpTimezonesListClass, error) {
 		return tdesktop.TimezonesList(hash), nil
+	})
+	d.OnHelpSaveAppLog(func(ctx context.Context, events []tg.InputAppEvent) (bool, error) {
+		return true, nil
 	})
 	d.OnHelpGetPeerColors(func(ctx context.Context, hash int) (tg.HelpPeerColorsClass, error) {
 		return tdesktop.PeerColors(hash), nil

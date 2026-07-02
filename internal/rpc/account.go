@@ -19,6 +19,9 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 	d.OnAccountUnregisterDevice(func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (bool, error) {
 		return true, nil
 	})
+	d.OnAccountUpdateDeviceLocked(func(ctx context.Context, period int) (bool, error) {
+		return true, nil
+	})
 	d.OnAccountCheckUsername(r.onAccountCheckUsername)
 	d.OnAccountUpdateProfile(r.onAccountUpdateProfile)
 	d.OnAccountUpdateUsername(r.onAccountUpdateUsername)

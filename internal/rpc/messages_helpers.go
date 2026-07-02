@@ -408,14 +408,16 @@ func (r *Router) domainFolderPeerFromInputPeer(ctx context.Context, userID int64
 	case *tg.InputPeerUser:
 		return domain.Peer{Type: domain.PeerTypeUser, ID: p.UserID}, p.AccessHash, nil
 	case *tg.InputPeerChannel:
-		out := domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChannelID}
-		if err := r.validateInputPeerChannelAccess(ctx, userID, peer, p.ChannelID); err != nil {
+		channelID := normalizeInputChannelID(p.ChannelID)
+		out := domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}
+		if err := r.validateInputPeerChannelAccess(ctx, userID, peer, channelID); err != nil {
 			return domain.Peer{}, 0, err
 		}
 		return out, p.AccessHash, nil
 	case *tg.InputPeerChannelFromMessage:
-		out := domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChannelID}
-		if p.ChannelID <= 0 {
+		channelID := normalizeInputChannelID(p.ChannelID)
+		out := domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}
+		if channelID <= 0 {
 			return domain.Peer{}, 0, peerIDInvalidErr()
 		}
 		return out, 0, nil
@@ -445,9 +447,11 @@ func (r *Router) domainPeerFromInputPeer(userID int64, peer tg.InputPeerClass) (
 	case *tg.InputPeerUser:
 		return domain.Peer{Type: domain.PeerTypeUser, ID: p.UserID}, true
 	case *tg.InputPeerChannel:
-		return domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChannelID}, true
+		id := normalizeInputChannelID(p.ChannelID)
+		return domain.Peer{Type: domain.PeerTypeChannel, ID: id}, id > 0
 	case *tg.InputPeerChannelFromMessage:
-		return domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChannelID}, p.ChannelID > 0
+		id := normalizeInputChannelID(p.ChannelID)
+		return domain.Peer{Type: domain.PeerTypeChannel, ID: id}, id > 0
 	case *tg.InputPeerChat:
 		return domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChatID}, p.ChatID > 0
 	case *tg.InputPeerSelf:
@@ -494,16 +498,18 @@ func inputPeerChannelRef(peer tg.InputPeerClass) (channelInputRef, bool) {
 		if p == nil {
 			return channelInputRef{}, false
 		}
+		id := normalizeInputChannelID(p.ChannelID)
 		return channelInputRef{
-			ID:              p.ChannelID,
+			ID:              id,
 			AccessHash:      p.AccessHash,
 			CheckAccessHash: p.AccessHash != 0,
-		}, p.ChannelID > 0
+		}, id > 0
 	case *tg.InputPeerChannelFromMessage:
 		if p == nil {
 			return channelInputRef{}, false
 		}
-		return channelInputRef{ID: p.ChannelID}, p.ChannelID > 0
+		id := normalizeInputChannelID(p.ChannelID)
+		return channelInputRef{ID: id}, id > 0
 	default:
 		return channelInputRef{}, false
 	}

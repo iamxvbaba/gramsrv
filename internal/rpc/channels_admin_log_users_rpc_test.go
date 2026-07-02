@@ -46,6 +46,46 @@ func TestChannelAdminLogUsersUsesSingleBatchLookup(t *testing.T) {
 	}
 }
 
+func TestInputChannelRefNormalizesIOSChannelInputs(t *testing.T) {
+	const channelID int64 = 12345
+	negativePackedID := -packedChannelPeerIDBase - channelID
+	positivePackedID := packedChannelPeerIDBase + channelID
+
+	tests := []struct {
+		name  string
+		input tg.InputChannelClass
+	}{
+		{
+			name:  "negative packed input channel",
+			input: &tg.InputChannel{ChannelID: negativePackedID, AccessHash: 77},
+		},
+		{
+			name:  "positive packed input channel",
+			input: &tg.InputChannel{ChannelID: positivePackedID, AccessHash: 77},
+		},
+		{
+			name: "from message falls back to peer channel",
+			input: &tg.InputChannelFromMessage{
+				Peer: &tg.InputPeerChannel{ChannelID: channelID, AccessHash: 88},
+			},
+		},
+		{
+			name: "from message falls back to packed peer channel",
+			input: &tg.InputChannelFromMessage{
+				Peer: &tg.InputPeerChannel{ChannelID: positivePackedID, AccessHash: 99},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ref, ok := inputChannelRef(tt.input)
+			if !ok || ref.ID != channelID {
+				t.Fatalf("inputChannelRef() = %+v ok=%v, want id %d", ref, ok, channelID)
+			}
+		})
+	}
+}
+
 func gotUserIDs(users []tg.UserClass) []int64 {
 	out := make([]int64, 0, len(users))
 	for _, item := range users {

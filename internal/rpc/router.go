@@ -903,6 +903,9 @@ func (r *Router) fallback(ctx context.Context, b *bin.Buffer) (bin.Encoder, erro
 	if enc, handled, err := r.tryLegacyThemeRPC(ctx, b); handled {
 		return enc, err
 	}
+	if enc, handled, err := r.tryHelpCompatRPC(ctx, b); handled {
+		return enc, err
+	}
 	id, _ := b.PeekID()
 	fields := append([]zap.Field{
 		zap.String("method", tlTypeName(id)),

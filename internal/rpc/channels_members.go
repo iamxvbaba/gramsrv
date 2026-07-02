@@ -480,6 +480,32 @@ func (r *Router) onChannelsGetAdminLog(ctx context.Context, req *tg.ChannelsGetA
 	}
 	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
+		fields := append(r.contextLogFields(ctx),
+			zap.Int64("user_id", userID),
+			zap.Error(err),
+		)
+		switch channel := req.Channel.(type) {
+		case *tg.InputChannel:
+			if channel != nil {
+				fields = append(fields,
+					zap.String("channel_kind", "inputChannel"),
+					zap.Int64("channel_id", channel.ChannelID),
+					zap.Int64("normalized_channel_id", normalizeInputChannelID(channel.ChannelID)),
+				)
+			}
+		case *tg.InputChannelFromMessage:
+			if channel != nil {
+				fields = append(fields,
+					zap.String("channel_kind", "inputChannelFromMessage"),
+					zap.Int64("channel_id", channel.ChannelID),
+					zap.Int64("normalized_channel_id", normalizeInputChannelID(channel.ChannelID)),
+					zap.Int("msg_id", channel.MsgID),
+				)
+			}
+		default:
+			fields = append(fields, zap.String("channel_kind", "other"))
+		}
+		r.log.Warn("channels.getAdminLog channel input invalid", fields...)
 		return nil, err
 	}
 	adminIDs := []int64(nil)
@@ -503,6 +529,16 @@ func (r *Router) onChannelsGetAdminLog(ctx context.Context, req *tg.ChannelsGetA
 		Filter:       domainChannelAdminLogFilter(req),
 	})
 	if err != nil {
+		fields := append(r.contextLogFields(ctx),
+			zap.Int64("user_id", userID),
+			zap.Int64("channel_id", channelID),
+			zap.Int("limit", req.Limit),
+			zap.Int64("max_id", req.MaxID),
+			zap.Int64("min_id", req.MinID),
+			zap.String("query", req.Q),
+			zap.Error(err),
+		)
+		r.log.Warn("channels.getAdminLog list failed", fields...)
 		return nil, channelAdminErr(err)
 	}
 	events := tgChannelAdminLogEvents(userID, res.Events)

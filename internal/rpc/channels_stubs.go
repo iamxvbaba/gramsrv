@@ -527,16 +527,46 @@ type channelInputRef struct {
 	CheckAccessHash bool
 }
 
+const packedChannelPeerIDBase int64 = 1000000000000
+
+func normalizeInputChannelID(id int64) int64 {
+	if id < 0 {
+		id = -id
+	}
+	if id > packedChannelPeerIDBase {
+		return id - packedChannelPeerIDBase
+	}
+	return id
+}
+
 func inputChannelRef(input tg.InputChannelClass) (channelInputRef, bool) {
 	switch channel := input.(type) {
 	case *tg.InputChannel:
+		if channel == nil {
+			return channelInputRef{}, false
+		}
+		id := normalizeInputChannelID(channel.ChannelID)
 		return channelInputRef{
-			ID:              channel.ChannelID,
+			ID:              id,
 			AccessHash:      channel.AccessHash,
 			CheckAccessHash: channel.AccessHash != 0,
-		}, channel.ChannelID > 0
+		}, id > 0
 	case *tg.InputChannelFromMessage:
-		return channelInputRef{ID: channel.ChannelID}, channel.ChannelID > 0
+		if channel == nil {
+			return channelInputRef{}, false
+		}
+		id := normalizeInputChannelID(channel.ChannelID)
+		if id > 0 {
+			return channelInputRef{ID: id}, true
+		}
+		if ref, ok := inputPeerChannelRef(channel.Peer); ok {
+			return ref, true
+		}
+		if peerID, ok := channelIDFromLegacyInputPeer(0, channel.Peer); ok {
+			id = normalizeInputChannelID(peerID)
+			return channelInputRef{ID: id}, id > 0
+		}
+		return channelInputRef{}, false
 	default:
 		return channelInputRef{}, false
 	}

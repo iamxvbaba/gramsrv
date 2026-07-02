@@ -86,6 +86,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetReplies(r.onMessagesGetReplies)
 	d.OnMessagesGetDiscussionMessage(r.onMessagesGetDiscussionMessage)
 	d.OnMessagesReadDiscussion(r.onMessagesReadDiscussion)
+	d.OnMessagesGetRecentLocations(r.onMessagesGetRecentLocations)
 	d.OnMessagesGetForumTopics(r.onMessagesGetForumTopics)
 	d.OnMessagesGetForumTopicsByID(r.onMessagesGetForumTopicsByID)
 	d.OnMessagesGetOnlines(r.onMessagesGetOnlines)
