@@ -173,6 +173,68 @@ func TestChannelCreatorLeaveTransfersOwner(t *testing.T) {
 	}
 }
 
+func TestChannelCreatorCanEditOwnAdminRights(t *testing.T) {
+	ctx := context.Background()
+	store := NewChannelStore()
+	created, err := store.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: 1,
+		Title:         "creator self admin",
+		Megagroup:     true,
+		MemberUserIDs: []int64{2},
+		Date:          1_700_000_114,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+
+	edited, err := store.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    1,
+		ChannelID: created.Channel.ID,
+		MemberID:  1,
+		AdminRights: domain.ChannelAdminRights{
+			Anonymous: true,
+		},
+		Date: 1_700_000_115,
+	})
+	if err != nil {
+		t.Fatalf("creator edits own admin rights: %v", err)
+	}
+	if edited.Participant.Role != domain.ChannelRoleCreator || !edited.Participant.AdminRights.Anonymous || !edited.Participant.AdminRights.ChangeInfo || !edited.Participant.AdminRights.AddAdmins {
+		t.Fatalf("edited creator = %+v, want creator with anonymous plus full creator projection", edited.Participant)
+	}
+	persisted, err := store.GetParticipant(ctx, 1, created.Channel.ID, 1)
+	if err != nil {
+		t.Fatalf("get creator participant: %v", err)
+	}
+	if persisted.Role != domain.ChannelRoleCreator || !persisted.AdminRights.Anonymous || !persisted.AdminRights.ChangeInfo || !persisted.AdminRights.AddAdmins {
+		t.Fatalf("persisted creator = %+v, want creator with anonymous plus full creator projection", persisted)
+	}
+
+	if _, err := store.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    1,
+		ChannelID: created.Channel.ID,
+		MemberID:  2,
+		AdminRights: domain.ChannelAdminRights{
+			ChangeInfo: true,
+			AddAdmins:  true,
+		},
+		Date: 1_700_000_116,
+	}); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
+	if _, err := store.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    2,
+		ChannelID: created.Channel.ID,
+		MemberID:  1,
+		AdminRights: domain.ChannelAdminRights{
+			ChangeInfo: true,
+		},
+		Date: 1_700_000_117,
+	}); !errors.Is(err, domain.ErrChannelUserCreator) {
+		t.Fatalf("admin edits creator err = %v, want ErrChannelUserCreator", err)
+	}
+}
+
 func TestChannelAdminAndBanDoNotAdvanceChannelPts(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()

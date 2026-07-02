@@ -783,7 +783,8 @@ func adminRightsSubset(want, have domain.ChannelAdminRights) bool {
 		(!want.AddAdmins || have.AddAdmins) &&
 		(!want.ManageCall || have.ManageCall) &&
 		(!want.Anonymous || have.Anonymous) &&
-		(!want.ManageRanks || have.ManageRanks)
+		(!want.ManageRanks || have.ManageRanks) &&
+		(!want.ManageDirectMessages || have.ManageDirectMessages)
 }
 
 // checkEditMemberRank validates a rank-only (member tag) edit: creator edits

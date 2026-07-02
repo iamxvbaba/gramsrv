@@ -223,6 +223,15 @@ func CreatorChannelAdminRights() ChannelAdminRights {
 	}
 }
 
+// CreatorProjectionAdminRights returns the full rights clients expect for an
+// owner while preserving creator-scoped mutable flags.
+func CreatorProjectionAdminRights(rights ChannelAdminRights) ChannelAdminRights {
+	creatorRights := CreatorChannelAdminRights()
+	creatorRights.Anonymous = rights.Anonymous
+	creatorRights.ManageDirectMessages = rights.ManageDirectMessages
+	return creatorRights
+}
+
 // NormalizeFullMegagroupAdminRights fills implicit full-admin bits for megagroups.
 func NormalizeFullMegagroupAdminRights(ch Channel, rights ChannelAdminRights) ChannelAdminRights {
 	if ch.Megagroup && !ch.Broadcast &&
@@ -1236,8 +1245,14 @@ type EditChannelAdminRequest struct {
 	ChannelID   int64
 	MemberID    int64
 	AdminRights ChannelAdminRights
+	RankSet     bool
 	Rank        string
 	Date        int
+}
+
+// HasRank reports whether channels.editAdmin explicitly supplied a rank.
+func (r EditChannelAdminRequest) HasRank() bool {
+	return r.RankSet || r.Rank != ""
 }
 
 // EditChannelAdminResult describes the participant transition.

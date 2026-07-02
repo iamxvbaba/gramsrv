@@ -127,6 +127,10 @@ Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-bob")
 - 同一账号多 session 登录，确认当前 session 不重复 echo，其它在线 session 能收到 updates。
 - 检查 server 日志没有新增 `NOT_IMPLEMENTED`、`Unhandled RPC`、`bad_msg`、panic 或 internal error。
 
+## 贡献者
+
+- [ajarshia](https://github.com/ajarshia) - Android Persian (`fa`) 语言包。
+
 ## 仓库结构
 
 ```text

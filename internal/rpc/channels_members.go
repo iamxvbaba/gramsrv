@@ -402,6 +402,7 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 		ChannelID:   channelID,
 		MemberID:    target.ID,
 		AdminRights: domainChannelAdminRights(req.AdminRights),
+		RankSet:     req.Flags.Has(0),
 		Rank:        req.Rank,
 		Date:        int(r.clock.Now().Unix()),
 	})

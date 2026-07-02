@@ -29,7 +29,12 @@ func sendMessageToStickers(t *testing.T, svc *Service, messages *memory.MessageS
 	msg.From = domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
 	msg.Peer = domain.Peer{Type: domain.PeerTypeUser, ID: domain.StickersBotUserID}
 	svc.respondAsStickers(owner.ID, msg)
-	list, err := messages.ListByUser(context.Background(), owner.ID, domain.MessageFilter{
+	return latestStickersReply(t, messages, owner.ID).Body
+}
+
+func latestStickersReply(t *testing.T, messages *memory.MessageStore, userID int64) domain.Message {
+	t.Helper()
+	list, err := messages.ListByUser(context.Background(), userID, domain.MessageFilter{
 		HasPeer: true,
 		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: domain.StickersBotUserID},
 		Limit:   100,
@@ -44,9 +49,9 @@ func sendMessageToStickers(t *testing.T, svc *Service, messages *memory.MessageS
 		}
 	}
 	if latest.ID == 0 {
-		t.Fatalf("no Stickers reply after message %+v", msg)
+		t.Fatal("no Stickers reply")
 	}
-	return latest.Body
+	return latest
 }
 
 func newStickersBotTestService(t *testing.T) (*Service, *memory.UserStore, *memory.BotStore, *memory.MessageStore, *stickersBotFakeCreator, *stickersBotFakeInstaller) {
@@ -138,6 +143,10 @@ func TestStickersBotSystemSeedStartAndCancel(t *testing.T) {
 	if reply := sendTextToStickers(t, svc, messages, owner, "/start"); !strings.Contains(reply, "/newpack") || !strings.Contains(reply, "/newemoji") || !strings.Contains(reply, "/addsticker") {
 		t.Fatalf("/start reply = %q, want help text", reply)
 	}
+	startReply := latestStickersReply(t, messages, owner.ID)
+	assertReplyEntityText(t, startReply, domain.MessageEntityBotCommand, "/newpack")
+	assertReplyEntityText(t, startReply, domain.MessageEntityBotCommand, "/newemoji")
+	assertReplyEntityText(t, startReply, domain.MessageEntityBotCommand, "/addsticker")
 	sendTextToStickers(t, svc, messages, owner, "/newpack")
 	if reply := sendTextToStickers(t, svc, messages, owner, "/cancel"); !strings.Contains(reply, "Cancelled") {
 		t.Fatalf("/cancel reply = %q, want cancelled", reply)
@@ -190,6 +199,8 @@ func TestStickersBotPublishStickerPack(t *testing.T) {
 	if !strings.Contains(reply, "https://telesrv.net/addstickers/fresh_pack") {
 		t.Fatalf("publish reply = %q, want addstickers link", reply)
 	}
+	publishReply := latestStickersReply(t, messages, owner.ID)
+	assertReplyEntityText(t, publishReply, domain.MessageEntityURL, "https://telesrv.net/addstickers/fresh_pack")
 	if len(creator.created) != 1 {
 		t.Fatalf("created requests = %d, want 1", len(creator.created))
 	}
@@ -452,6 +463,22 @@ func botCommandExists(commands []domain.BotCommand, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertReplyEntityText(t *testing.T, msg domain.Message, typ domain.MessageEntityType, want string) {
+	t.Helper()
+	for _, entity := range msg.Entities {
+		if entity.Type != typ {
+			continue
+		}
+		if entity.Offset < 0 || entity.Length < 0 || entity.Offset+entity.Length > len(msg.Body) {
+			t.Fatalf("entity %+v out of ASCII bounds for %q", entity, msg.Body)
+		}
+		if got := msg.Body[entity.Offset : entity.Offset+entity.Length]; got == want {
+			return
+		}
+	}
+	t.Fatalf("message %q entities %+v missing %s entity for %q", msg.Body, msg.Entities, typ, want)
 }
 
 type stickersBotFakeCreator struct {

@@ -19,8 +19,9 @@ func (s *Service) AddStickerToSet(ctx context.Context, actorUserID int64, ref do
 	if err != nil {
 		return domain.StickerSet{}, nil, err
 	}
-	if ownedSetID, _, ok := doc.StickerSetRef(); ok && ownedSetID != set.ID {
-		return domain.StickerSet{}, nil, domain.ErrStickerSetFileInvalid
+	doc, err = s.materialDocumentForStickerSet(ctx, doc, set.ID)
+	if err != nil {
+		return domain.StickerSet{}, nil, err
 	}
 	if containsInt64(set.DocumentIDs, doc.ID) {
 		return set, docs, nil

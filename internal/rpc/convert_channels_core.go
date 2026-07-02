@@ -780,10 +780,7 @@ func tgChatAdminRights(rights domain.ChannelAdminRights) tg.ChatAdminRights {
 }
 
 func creatorProjectionAdminRights(rights domain.ChannelAdminRights) domain.ChannelAdminRights {
-	creatorRights := domain.CreatorChannelAdminRights()
-	creatorRights.Anonymous = rights.Anonymous
-	creatorRights.ManageDirectMessages = rights.ManageDirectMessages
-	return creatorRights
+	return domain.CreatorProjectionAdminRights(rights)
 }
 
 func domainChannelAdminRights(rights tg.ChatAdminRights) domain.ChannelAdminRights {

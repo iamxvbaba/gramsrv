@@ -128,7 +128,7 @@ func (s *Service) sendServiceBotReply(ctx context.Context, botUserID, userID int
 		RecipientUserID:  userID,
 		RandomID:         s.botReplyRandomID(),
 		Message:          reply.Text,
-		Entities:         reply.Entities,
+		Entities:         serviceBotReplyEntities(reply.Text, reply.Entities),
 		Date:             int(s.now().Unix()),
 		RecipientBlocked: blocked,
 	}); err != nil {

@@ -91,8 +91,8 @@ func (r *Router) langpackLanguages(ctx context.Context, langPack string) []tg.La
 	if langPack == "" {
 		langPack = langPackFromClient(ctx)
 	}
-	_ = langPack
-	return []tg.LangPackLanguage{
+	langPack = strings.ToLower(langPack)
+	languages := []tg.LangPackLanguage{
 		{
 			Official:        true,
 			Name:            "English",
@@ -114,6 +114,20 @@ func (r *Router) langpackLanguages(ctx context.Context, langPack string) []tg.La
 			TranslationsURL: "",
 		},
 	}
+	if langPack == "android" {
+		languages = append(languages, tg.LangPackLanguage{
+			Official:        true,
+			Rtl:             true,
+			Name:            "Persian",
+			NativeName:      "فارسی",
+			LangCode:        "fa",
+			PluralCode:      "fa",
+			StringsCount:    11002,
+			TranslatedCount: 11002,
+			TranslationsURL: "",
+		})
+	}
+	return languages
 }
 
 func langPackFromClient(ctx context.Context) string {
@@ -123,6 +137,12 @@ func langPackFromClient(ctx context.Context) string {
 	}
 	if info.LangPack != "" {
 		return info.LangPack
+	}
+	switch info.ClientType() {
+	case ClientTypeAndroid:
+		return string(ClientTypeAndroid)
+	case ClientTypeTDesktop:
+		return string(ClientTypeTDesktop)
 	}
 	client := strings.ToLower(info.DeviceModel + " " + info.SystemVersion + " " + info.AppVersion)
 	if strings.Contains(client, "android") {

@@ -739,7 +739,7 @@ func TestTGDocumentUsesNonZeroDateForClientCompatibility(t *testing.T) {
 	}
 }
 
-func TestTGDocumentDoesNotAddAnimatedAttributeForTGSSticker(t *testing.T) {
+func TestTGDocumentDoesNotEmitAnimatedAttributeForTGSSticker(t *testing.T) {
 	doc := tgDocument(domain.Document{
 		ID:         100,
 		AccessHash: 1,
@@ -749,6 +749,7 @@ func TestTGDocumentDoesNotAddAnimatedAttributeForTGSSticker(t *testing.T) {
 			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
 			{Kind: domain.DocAttrAnimated},
 			{Kind: domain.DocAttrSticker, Alt: "🙂", StickerSetID: 10, StickerSetAccessHash: 20},
+			{Kind: domain.DocAttrAnimated},
 			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
 		},
 	})
@@ -770,7 +771,7 @@ func TestTGDocumentDoesNotAddAnimatedAttributeForTGSSticker(t *testing.T) {
 		t.Fatal("TGS sticker document missing sticker attribute")
 	}
 	if hasAnimated {
-		t.Fatal("TGS sticker document must not expose documentAttributeAnimated")
+		t.Fatal("TGS sticker document has documentAttributeAnimated; TDesktop treats it as a non-sticker animation")
 	}
 }
 
