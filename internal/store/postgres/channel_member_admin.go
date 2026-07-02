@@ -35,9 +35,6 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	if !canAddChannelAdmins(actor) {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelAdminRequired
 	}
-	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
-		return domain.EditChannelAdminResult{}, domain.ErrChannelRightForbidden
-	}
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.MemberID)
 	if err != nil {
 		if !errors.Is(err, domain.ErrChannelPrivate) {
@@ -56,13 +53,52 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		}
 	}
 	if previous.Role == domain.ChannelRoleCreator {
-		return domain.EditChannelAdminResult{}, domain.ErrChannelUserCreator
+		if req.MemberID != req.UserID || channel.CreatorUserID != req.UserID || actor.Role != domain.ChannelRoleCreator {
+			return domain.EditChannelAdminResult{}, domain.ErrChannelUserCreator
+		}
+		member := previous
+		member.Status = domain.ChannelMemberActive
+		member.LeftAt = 0
+		member.AdminRights = domain.CreatorProjectionAdminRights(req.AdminRights)
+		if req.HasRank() {
+			member.Rank = req.Rank
+		}
+		if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+		if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+			ChannelID:       req.ChannelID,
+			UserID:          req.UserID,
+			Date:            req.Date,
+			Type:            domain.ChannelAdminLogParticipantPromote,
+			PrevParticipant: &previous,
+			NewParticipant:  &member,
+		}); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+		channel, err = refreshChannelCountsTx(ctx, tx, channel)
+		if err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
+		event := transientChannelParticipantEvent(channel.ID, req.UserID, previous, member, req.Date)
+		if err := tx.Commit(ctx); err != nil {
+			return domain.EditChannelAdminResult{}, fmt.Errorf("commit edit channel creator admin: %w", err)
+		}
+		committed = true
+		recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
+		recipients = append(recipients, req.MemberID)
+		return domain.EditChannelAdminResult{Channel: channel, Previous: previous, Participant: member, Event: event, Recipients: recipients, Date: req.Date}, nil
+	}
+	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
+		return domain.EditChannelAdminResult{}, domain.ErrChannelRightForbidden
 	}
 	member := previous
 	member.InviterUserID = req.UserID
 	member.Status = domain.ChannelMemberActive
 	member.LeftAt = 0
-	member.Rank = req.Rank
+	if req.HasRank() {
+		member.Rank = req.Rank
+	}
 	if previous.Status != domain.ChannelMemberActive {
 		if minPts := channelInitialAvailableMinPts(channel); minPts > member.AvailableMinPts {
 			member.AvailableMinPts = minPts

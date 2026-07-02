@@ -228,6 +228,105 @@ func TestChannelsGetParticipantsHidesAnonymousAdminFromRegularMember(t *testing.
 	}
 }
 
+func TestChannelsEditAdminCreatorSelfCanToggleAnonymous(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 41, Phone: "15550002171", FirstName: "Owner"})
+	admin, _ := userStore.Create(ctx, domain.User{AccessHash: 42, Phone: "15550002172", FirstName: "Admin"})
+	channelStore := memory.NewChannelStore()
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: appchannels.NewService(channelStore),
+	}, zaptest.NewLogger(t), clock.System)
+	created, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
+		Users: []tg.InputUserClass{&tg.InputUser{UserID: admin.ID, AccessHash: admin.AccessHash}},
+		Title: "Creator Anonymous Group",
+	})
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	channel := created.Updates.(*tg.Updates).Chats[0].(*tg.Channel)
+	inputChannel := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
+
+	updates, err := r.onChannelsEditAdmin(WithUserID(ctx, owner.ID), &tg.ChannelsEditAdminRequest{
+		Channel: inputChannel,
+		UserID:  &tg.InputUser{UserID: owner.ID, AccessHash: owner.AccessHash},
+		AdminRights: tg.ChatAdminRights{
+			Anonymous: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("creator toggles own anonymous admin rights: %v", err)
+	}
+	var participantUpdate *tg.ChannelParticipantCreator
+	for _, update := range updates.(*tg.Updates).Updates {
+		upd, ok := update.(*tg.UpdateChannelParticipant)
+		if !ok {
+			continue
+		}
+		if creator, ok := upd.NewParticipant.(*tg.ChannelParticipantCreator); ok && creator.UserID == owner.ID {
+			participantUpdate = creator
+			break
+		}
+	}
+	if participantUpdate == nil {
+		t.Fatalf("editAdmin updates = %+v, want creator participant update", updates.(*tg.Updates).Updates)
+	}
+	if !participantUpdate.AdminRights.Anonymous || !participantUpdate.AdminRights.ChangeInfo || !participantUpdate.AdminRights.AddAdmins {
+		t.Fatalf("creator update rights = %+v, want anonymous plus full creator projection", participantUpdate.AdminRights)
+	}
+
+	participant, err := r.onChannelsGetParticipant(WithUserID(ctx, owner.ID), &tg.ChannelsGetParticipantRequest{
+		Channel:     inputChannel,
+		Participant: &tg.InputPeerUser{UserID: owner.ID, AccessHash: owner.AccessHash},
+	})
+	if err != nil {
+		t.Fatalf("get creator participant: %v", err)
+	}
+	projectedCreator, ok := participant.Participant.(*tg.ChannelParticipantCreator)
+	if !ok {
+		t.Fatalf("participant = %T, want ChannelParticipantCreator", participant.Participant)
+	}
+	if !projectedCreator.AdminRights.Anonymous || !projectedCreator.AdminRights.ChangeInfo || !projectedCreator.AdminRights.AddAdmins {
+		t.Fatalf("projected creator rights = %+v, want anonymous plus full creator projection", projectedCreator.AdminRights)
+	}
+
+	chats, err := r.onChannelsGetChannels(WithUserID(ctx, owner.ID), []tg.InputChannelClass{inputChannel})
+	if err != nil {
+		t.Fatalf("get channels: %v", err)
+	}
+	projectedChannel := chats.(*tg.MessagesChats).Chats[0].(*tg.Channel)
+	rights, ok := projectedChannel.GetAdminRights()
+	if !ok {
+		t.Fatalf("projected channel has no admin rights: %+v", projectedChannel)
+	}
+	if !rights.Anonymous || !rights.ChangeInfo || !rights.AddAdmins {
+		t.Fatalf("projected channel admin rights = %+v, want anonymous plus full creator projection", rights)
+	}
+
+	if _, err := r.onChannelsEditAdmin(WithUserID(ctx, owner.ID), &tg.ChannelsEditAdminRequest{
+		Channel: inputChannel,
+		UserID:  &tg.InputUser{UserID: admin.ID, AccessHash: admin.AccessHash},
+		AdminRights: tg.ChatAdminRights{
+			Anonymous:  true,
+			ChangeInfo: true,
+			AddAdmins:  true,
+		},
+	}); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
+	_, err = r.onChannelsEditAdmin(WithUserID(ctx, admin.ID), &tg.ChannelsEditAdminRequest{
+		Channel: inputChannel,
+		UserID:  &tg.InputUser{UserID: owner.ID, AccessHash: owner.AccessHash},
+		AdminRights: tg.ChatAdminRights{
+			ChangeInfo: true,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "USER_CREATOR") {
+		t.Fatalf("admin edits creator err = %v, want USER_CREATOR", err)
+	}
+}
+
 func tgParticipantListHasUser(participants []tg.ChannelParticipantClass, userID int64) bool {
 	for _, participant := range participants {
 		for _, id := range channelParticipantUserRefs(participant) {

@@ -19,7 +19,9 @@ func TestLangpackGetLanguagesCurrentAndLegacy(t *testing.T) {
 		if err := (&tg.LangpackGetLanguagesRequest{LangPack: "tdesktop"}).Encode(&in); err != nil {
 			t.Fatalf("encode request: %v", err)
 		}
-		assertLangpackLanguages(t, r, context.Background(), &in)
+		langs := dispatchLangpackLanguages(t, r, context.Background(), &in)
+		assertHasLangpackLanguage(t, langs, "en")
+		assertNoLangpackLanguage(t, langs, "fa")
 	})
 
 	t.Run("legacy android no args", func(t *testing.T) {
@@ -30,7 +32,17 @@ func TestLangpackGetLanguagesCurrentAndLegacy(t *testing.T) {
 			AppVersion:  "12.7.3",
 			LangCode:    "en",
 		})
-		assertLangpackLanguages(t, r, ctx, &in)
+		langs := dispatchLangpackLanguages(t, r, ctx, &in)
+		assertHasLangpackLanguage(t, langs, "en")
+		assertHasLangpackLanguage(t, langs, "fa")
+	})
+
+	t.Run("legacy android from cached client type", func(t *testing.T) {
+		var in bin.Buffer
+		in.PutID(0x800fd57d)
+		ctx := WithClientInfo(context.Background(), ClientInfo{Type: ClientTypeAndroid})
+		langs := dispatchLangpackLanguages(t, r, ctx, &in)
+		assertHasLangpackLanguage(t, langs, "fa")
 	})
 }
 
@@ -56,6 +68,23 @@ func TestLangpackGetLanguage(t *testing.T) {
 	if lang.LangCode != "zh-hans" || lang.PluralCode != "zh" {
 		t.Fatalf("language = %+v, want zh-hans", lang)
 	}
+}
+
+func TestLangpackAndroidPersianLanguage(t *testing.T) {
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
+
+	lang := r.langpackLanguage(context.Background(), "android", "fa")
+	if lang.LangCode != "fa" || lang.PluralCode != "fa" || lang.Name != "Persian" || lang.NativeName != "فارسی" || !lang.Rtl {
+		t.Fatalf("android fa language = %+v", lang)
+	}
+
+	languages := r.langpackLanguages(androidClientContext(), "")
+	for _, item := range languages {
+		if item.LangCode == "fa" {
+			return
+		}
+	}
+	t.Fatalf("android languages = %+v, want fa entry", languages)
 }
 
 func TestLegacyLangpackGetLangPack(t *testing.T) {
@@ -157,7 +186,7 @@ func TestLegacyAccountRegisterDevice(t *testing.T) {
 	}
 }
 
-func assertLangpackLanguages(t *testing.T, r *Router, ctx context.Context, in *bin.Buffer) {
+func dispatchLangpackLanguages(t *testing.T, r *Router, ctx context.Context, in *bin.Buffer) []tg.LangPackLanguage {
 	t.Helper()
 	enc, err := r.Dispatch(ctx, [8]byte{}, 0, in)
 	if err != nil {
@@ -171,8 +200,25 @@ func assertLangpackLanguages(t *testing.T, r *Router, ctx context.Context, in *b
 	if err := langs.Decode(&out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(langs.Elems) == 0 || langs.Elems[0].LangCode != "en" {
-		t.Fatalf("languages = %+v, want English entry", langs.Elems)
+	return langs.Elems
+}
+
+func assertHasLangpackLanguage(t *testing.T, langs []tg.LangPackLanguage, code string) {
+	t.Helper()
+	for _, lang := range langs {
+		if lang.LangCode == code {
+			return
+		}
+	}
+	t.Fatalf("languages = %+v, want %s entry", langs, code)
+}
+
+func assertNoLangpackLanguage(t *testing.T, langs []tg.LangPackLanguage, code string) {
+	t.Helper()
+	for _, lang := range langs {
+		if lang.LangCode == code {
+			t.Fatalf("languages = %+v, want no %s entry", langs, code)
+		}
 	}
 }
 

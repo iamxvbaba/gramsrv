@@ -139,6 +139,10 @@ Recommended checks:
 - Check server logs for no new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`,
   panic, or internal errors.
 
+## Contributors
+
+- [ajarshia](https://github.com/ajarshia) - Android Persian (`fa`) language pack.
+
 ## Repository Layout
 
 ```text

@@ -282,9 +282,6 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 	if !canAddChannelAdmins(actor) {
 		return domain.EditChannelAdminResult{}, domain.ErrChannelAdminRequired
 	}
-	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
-		return domain.EditChannelAdminResult{}, domain.ErrChannelRightForbidden
-	}
 	previous, ok := s.members[req.ChannelID][req.MemberID]
 	if !ok {
 		previous = domain.ChannelMember{
@@ -300,7 +297,41 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 		}
 	}
 	if previous.Role == domain.ChannelRoleCreator {
-		return domain.EditChannelAdminResult{}, domain.ErrChannelUserCreator
+		if req.MemberID != req.UserID || channel.CreatorUserID != req.UserID || actor.Role != domain.ChannelRoleCreator {
+			return domain.EditChannelAdminResult{}, domain.ErrChannelUserCreator
+		}
+		member := previous
+		member.Status = domain.ChannelMemberActive
+		member.LeftAt = 0
+		member.AdminRights = domain.CreatorProjectionAdminRights(req.AdminRights)
+		if req.HasRank() {
+			member.Rank = req.Rank
+		}
+		s.members[req.ChannelID][req.MemberID] = member
+		s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
+			ChannelID:       req.ChannelID,
+			UserID:          req.UserID,
+			Date:            req.Date,
+			Type:            domain.ChannelAdminLogParticipantPromote,
+			PrevParticipant: ptrChannelMember(previous),
+			NewParticipant:  ptrChannelMember(member),
+		})
+		s.refreshChannelCountsLocked(req.ChannelID)
+		channel = s.channels[req.ChannelID]
+		event := transientChannelParticipantEvent(channel.ID, req.UserID, previous, member, req.Date)
+		recipients := s.activeMemberIDsLocked(req.ChannelID, 0, 0)
+		recipients = append(recipients, req.MemberID)
+		return domain.EditChannelAdminResult{
+			Channel:     channel,
+			Previous:    previous,
+			Participant: member,
+			Event:       event,
+			Recipients:  recipients,
+			Date:        req.Date,
+		}, nil
+	}
+	if actor.Role != domain.ChannelRoleCreator && !adminRightsSubset(req.AdminRights, actor.AdminRights) {
+		return domain.EditChannelAdminResult{}, domain.ErrChannelRightForbidden
 	}
 	member := previous
 	member.InviterUserID = req.UserID
@@ -312,7 +343,9 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 		}
 	}
 	member.AdminRights = domain.NormalizeFullMegagroupAdminRights(channel, req.AdminRights)
-	member.Rank = req.Rank
+	if req.HasRank() {
+		member.Rank = req.Rank
+	}
 	if zeroChannelAdminRights(req.AdminRights) {
 		member.Role = domain.ChannelRoleMember
 		member.Rank = ""

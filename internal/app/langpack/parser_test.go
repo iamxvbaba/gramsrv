@@ -96,3 +96,27 @@ func TestSeedDirectoryWalksClientSubdirs(t *testing.T) {
 		t.Fatalf("weba pack = %+v", pack)
 	}
 }
+
+func TestBundledAndroidPersianLangPackParses(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "data", "langpack", "android", "android_fa_v59634849.strings")
+	pack, err := ParseTDesktopFile(path)
+	if err != nil {
+		t.Fatalf("parse bundled android fa pack: %v", err)
+	}
+	if pack.LangPack != "android" || pack.LangCode != "fa" || pack.Version != 59634849 {
+		t.Fatalf("pack meta = %+v, want android/fa v59634849", pack)
+	}
+	if len(pack.Strings) < 10000 {
+		t.Fatalf("strings count = %d, want full android fa pack", len(pack.Strings))
+	}
+	wantPersian := "\u0641\u0627\u0631\u0633\u06cc"
+	for _, item := range pack.Strings {
+		if item.Key == "TranslateLanguageFA" {
+			if item.Value != wantPersian {
+				t.Fatalf("TranslateLanguageFA = %q, want %q", item.Value, wantPersian)
+			}
+			return
+		}
+	}
+	t.Fatalf("TranslateLanguageFA not found in bundled android fa pack")
+}

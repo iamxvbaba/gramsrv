@@ -80,6 +80,96 @@ func TestChannelStoreEditAboutPersistsAndChecksPermission(t *testing.T) {
 	}
 }
 
+func TestChannelStoreCreatorCanEditOwnAdminRights(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	owner, err := users.Create(ctx, domain.User{
+		AccessHash: 141,
+		Phone:      "+1888" + suffix + "11",
+		FirstName:  "CreatorSelfOwner",
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	admin, err := users.Create(ctx, domain.User{
+		AccessHash: 142,
+		Phone:      "+1888" + suffix + "12",
+		FirstName:  "CreatorSelfAdmin",
+	})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	var channelID int64
+	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
+		}
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, admin.ID})
+	})
+
+	channels := NewChannelStore(pool)
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Creator Self " + suffix,
+		Megagroup:     true,
+		MemberUserIDs: []int64{admin.ID},
+		Date:          1700000610,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID = created.Channel.ID
+
+	edited, err := channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    owner.ID,
+		ChannelID: channelID,
+		MemberID:  owner.ID,
+		AdminRights: domain.ChannelAdminRights{
+			Anonymous: true,
+		},
+		Date: 1700000611,
+	})
+	if err != nil {
+		t.Fatalf("creator edits own admin rights: %v", err)
+	}
+	if edited.Participant.Role != domain.ChannelRoleCreator || !edited.Participant.AdminRights.Anonymous || !edited.Participant.AdminRights.ChangeInfo || !edited.Participant.AdminRights.AddAdmins {
+		t.Fatalf("edited creator = %+v, want creator with anonymous plus full creator projection", edited.Participant)
+	}
+	persisted, err := channels.GetParticipant(ctx, owner.ID, channelID, owner.ID)
+	if err != nil {
+		t.Fatalf("get creator participant: %v", err)
+	}
+	if persisted.Role != domain.ChannelRoleCreator || !persisted.AdminRights.Anonymous || !persisted.AdminRights.ChangeInfo || !persisted.AdminRights.AddAdmins {
+		t.Fatalf("persisted creator = %+v, want creator with anonymous plus full creator projection", persisted)
+	}
+
+	if _, err := channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    owner.ID,
+		ChannelID: channelID,
+		MemberID:  admin.ID,
+		AdminRights: domain.ChannelAdminRights{
+			ChangeInfo: true,
+			AddAdmins:  true,
+		},
+		Date: 1700000612,
+	}); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
+	if _, err := channels.EditChannelAdmin(ctx, domain.EditChannelAdminRequest{
+		UserID:    admin.ID,
+		ChannelID: channelID,
+		MemberID:  owner.ID,
+		AdminRights: domain.ChannelAdminRights{
+			ChangeInfo: true,
+		},
+		Date: 1700000613,
+	}); !errors.Is(err, domain.ErrChannelUserCreator) {
+		t.Fatalf("admin edits creator err = %v, want ErrChannelUserCreator", err)
+	}
+}
+
 func TestChannelStoreAdminLogFiltersAndSearch(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
