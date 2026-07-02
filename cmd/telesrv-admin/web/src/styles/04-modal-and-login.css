@@ -180,6 +180,14 @@
   gap: 12px;
 }
 
+.login-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .login-chip {
   display: inline-flex;
   min-height: 24px;

@@ -1,11 +1,13 @@
 import { Cable, LogOut, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { formatDate } from "../lib/format";
+import { useI18n } from "../i18n";
 import type { AuthorizationRow } from "../types";
 import { ActionButton } from "./ActionButton";
 import { EmptyRow } from "./ui";
 
 export function AuthorizationTable({ rows, userID, onDone }: { rows: AuthorizationRow[]; userID: number; onDone: () => void }) {
+  const { t } = useI18n();
   const [removedHashes, setRemovedHashes] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
@@ -28,11 +30,11 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
         <table className="data-table authorization-table">
           <thead>
             <tr>
-              <th>设备</th>
-              <th>平台</th>
-              <th>IP</th>
-              <th>最近活跃</th>
-              <th className="device-actions-head">操作</th>
+              <th>{t("auth.device")}</th>
+              <th>{t("auth.platform")}</th>
+              <th>{t("auth.ip")}</th>
+              <th>{t("auth.lastActive")}</th>
+              <th className="device-actions-head">{t("common.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -45,7 +47,7 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
                 <td className="device-actions-cell">
                   <div className="device-actions">
                     <ActionButton
-                      label="撤销当前"
+                      label={t("auth.revokeCurrent")}
                       icon={<LogOut size={13} />}
                       compact
                       path="/api/actions/revoke-sessions"
@@ -53,7 +55,7 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
                       onDone={() => afterRevoke((previous) => new Set([...previous, row.Hash]))}
                     />
                     <ActionButton
-                      label="保留当前"
+                      label={t("auth.keepCurrent")}
                       icon={<ShieldCheck size={13} />}
                       compact
                       path="/api/actions/revoke-sessions"
@@ -70,7 +72,7 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
       </div>
       <div className="danger-zone">
         <ActionButton
-          label="撤销全部设备"
+          label={t("auth.revokeAll")}
           icon={<Cable size={15} />}
           path="/api/actions/revoke-sessions"
           payload={() => ({ user_id: userID, revoke_all: true })}

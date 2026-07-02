@@ -260,6 +260,38 @@ a {
   gap: 8px;
 }
 
+.language-switch {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 2px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.language-switch button {
+  min-width: 42px;
+  min-height: 24px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.language-switch button.active {
+  color: #ffffff;
+  background: var(--brand);
+}
+
+.language-switch button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 .actor-pill {
   display: inline-flex;
   min-height: 30px;

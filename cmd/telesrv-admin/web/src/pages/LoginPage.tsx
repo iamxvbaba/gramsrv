@@ -2,8 +2,10 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert } from "../components/ui";
+import { LanguageSwitch, useI18n } from "../i18n";
 
 export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
+  const { t } = useI18n();
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,19 +32,22 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
             <span className="brand-mark">T</span>
             <span>
               <strong>telesrv</strong>
-              <small>管理控制台</small>
+              <small>{t("app.adminConsole")}</small>
             </span>
           </div>
-          <span className="login-chip">本地访问</span>
+          <div className="login-head-actions">
+            <LanguageSwitch />
+            <span className="login-chip">{t("app.localAccess")}</span>
+          </div>
         </div>
         <div className="login-copy">
-          <h1>运维后台</h1>
-          <p>输入凭据后进入控制台。</p>
+          <h1>{t("login.heading")}</h1>
+          <p>{t("login.body")}</p>
         </div>
         {error && <Alert>{error}</Alert>}
         <form className="form-stack" onSubmit={submit}>
           <label>
-            <span>管理员密码或 token</span>
+            <span>{t("login.secret")}</span>
             <input
               autoFocus
               type="password"
@@ -52,7 +57,7 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
             />
           </label>
           <button className="btn primary full" type="submit" disabled={busy}>
-            {busy ? "登录中" : "登录"}
+            {busy ? t("login.submitting") : t("login.submit")}
           </button>
         </form>
       </section>

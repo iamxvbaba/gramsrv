@@ -2,12 +2,14 @@ import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { useI18n } from "../i18n";
 import { channelKind, displayUsername, formatDate } from "../lib/format";
 import { channelMetrics } from "../lib/metrics";
 import type { Navigate } from "../routing";
 import type { ChannelListResponse } from "../types";
 
 export function ChannelsPage({ navigate }: { navigate: Navigate }) {
+  const { t } = useI18n();
   const [q, setQ] = useState("");
   const [limit, setLimit] = useState("50");
   const [data, setData] = useState<ChannelListResponse | null>(null);
@@ -47,37 +49,37 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
 
   return (
     <PageFrame
-      title="超级群与频道"
-      eyebrow={data?.listing === false ? "查询结果" : "最近更新"}
+      title={t("channel.pageTitle")}
+      eyebrow={data?.listing === false ? t("account.queryResults") : t("channel.recentUpdated")}
       actions={
         <button className="btn" type="button" onClick={() => load(false)} disabled={busy}>
-          <RefreshCw size={15} /> 刷新
+          <RefreshCw size={15} /> {t("common.refresh")}
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label="当前页实体" value={String(data?.rows.length ?? 0)} />
-        <Metric label="超级群" value={String(metrics.megagroups)} />
-        <Metric label="频道" value={String(metrics.broadcasts)} />
-        <Metric label="已认证" value={String(metrics.verified)} tone="good" />
+        <Metric label={t("channel.currentPage")} value={String(data?.rows.length ?? 0)} />
+        <Metric label={t("channel.megagroups")} value={String(metrics.megagroups)} />
+        <Metric label={t("channel.broadcasts")} value={String(metrics.broadcasts)} />
+        <Metric label={t("channel.verifiedCount")} value={String(metrics.verified)} tone="good" />
       </div>
       <QueryPanel>
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
           <label className="searchbox">
             <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="频道 ID / 用户名 / 标题" />
+            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={t("channel.searchPlaceholder")} />
           </label>
           <label className="field-inline">
-            <span>条数</span>
+            <span>{t("common.limit")}</span>
             <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} type="number" min="1" max="100" />
           </label>
           <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} 查询
+            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {t("common.search")}
           </button>
           {data?.listing && data.has_more && (
             <button className="btn icon-text" type="button" onClick={() => load(true)} disabled={busy}>
-              <ChevronRight size={15} /> 下一页
+              <ChevronRight size={15} /> {t("messages.nextPage")}
             </button>
           )}
         </form>
@@ -86,15 +88,15 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>频道 ID</th>
-              <th>类型</th>
-              <th>用户名</th>
-              <th>标题</th>
-              <th>成员</th>
-              <th>管理员</th>
+              <th>{t("channel.channelID")}</th>
+              <th>{t("channel.kind")}</th>
+              <th>{t("common.username")}</th>
+              <th>{t("channel.title")}</th>
+              <th>{t("common.members")}</th>
+              <th>{t("common.admins")}</th>
               <th>PTS</th>
-              <th>认证</th>
-              <th>更新时间</th>
+              <th>{t("common.verified")}</th>
+              <th>{t("common.updatedAt")}</th>
               <th></th>
             </tr>
           </thead>
@@ -102,15 +104,15 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
             {data?.rows.map((row) => (
               <tr key={row.ID}>
                 <td className="mono">{row.ID}</td>
-                <td>{channelKind(row)}</td>
+                <td>{channelKind(row, t)}</td>
                 <td>{displayUsername(row.Username)}</td>
                 <td>{row.Title}</td>
                 <td>{row.ParticipantsCount}</td>
                 <td>{row.AdminsCount}</td>
                 <td>{row.PTS}</td>
-                <td>{row.Verified ? <Badge tone="good">已认证</Badge> : <Badge>未认证</Badge>}</td>
+                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}</td>
                 <td>{formatDate(row.UpdatedAt)}</td>
-                <td><button className="row-link" onClick={() => navigate(`/channels/${row.ID}`)}>详情 <ChevronRight size={14} /></button></td>
+                <td><button className="row-link" onClick={() => navigate(`/channels/${row.ID}`)}>{t("common.detail")} <ChevronRight size={14} /></button></td>
               </tr>
             ))}
             {(!data || data.rows.length === 0) && <EmptyRow colSpan={10} />}

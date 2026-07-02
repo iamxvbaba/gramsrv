@@ -1,4 +1,5 @@
 import type { AccountRow, ChannelRow } from "../types";
+import type { TFunction } from "../i18n";
 
 export function displayPhone(value: string): string {
   const phone = value.trim();
@@ -16,11 +17,17 @@ export function displayName(row: Pick<AccountRow, "FirstName" | "LastName">): st
   return `${row.FirstName || ""} ${row.LastName || ""}`.trim() || "-";
 }
 
-export function channelKind(ch: ChannelRow): string {
-  if (ch.Broadcast && !ch.Megagroup) return "频道";
-  if (ch.Megagroup && ch.Forum) return "超级群/论坛";
-  if (ch.Megagroup) return "超级群";
-  return "频道/群";
+export function channelKind(ch: ChannelRow, t?: TFunction): string {
+  const translate = t ?? ((key: string) => ({
+    "channel.kind.broadcast": "Channel",
+    "channel.kind.forum": "Supergroup / Forum",
+    "channel.kind.megagroup": "Supergroup",
+    "channel.kind.generic": "Channel / Group"
+  })[key] ?? key);
+  if (ch.Broadcast && !ch.Megagroup) return translate("channel.kind.broadcast");
+  if (ch.Megagroup && ch.Forum) return translate("channel.kind.forum");
+  if (ch.Megagroup) return translate("channel.kind.megagroup");
+  return translate("channel.kind.generic");
 }
 
 export function formatDate(value: string): string {
@@ -43,14 +50,14 @@ export function toInt(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function parseIDs(value: string): number[] {
+export function parseIDs(value: string, invalidMessage = "msg ids invalid"): number[] {
   const ids = value
     .split(/[\s,]+/)
     .map((item) => item.trim())
     .filter(Boolean)
     .map((item) => Number.parseInt(item, 10));
   if (ids.length === 0 || ids.some((id) => !Number.isFinite(id) || id <= 0)) {
-    throw new Error("msg ids invalid");
+    throw new Error(invalidMessage);
   }
   return ids;
 }
