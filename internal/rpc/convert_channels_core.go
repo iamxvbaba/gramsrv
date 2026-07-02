@@ -383,7 +383,15 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	if ch.SendPaidMessagesStars > 0 || ch.BroadcastMessagesAllowed || ch.Monoforum {
 		out.SetSendPaidMessagesStars(ch.SendPaidMessagesStars)
 	}
-	if ch.HasLink || ch.LinkedChatID != 0 {
+	// has_link 官方语义 = 频道存在「关联讨论群」，客户端（尤其 iOS）据此在广播频道
+	// 消息上乐观渲染「留言(评论)」页脚。但本服务 domain.HasLink 实为「存在未撤销的邀请
+	// 链接」（新建频道即置 true，见 store 层 channel 创建），语义与官方不同。
+	// 若广播频道并无真实关联讨论群（LinkedChatID==0）却因邀请链接而置位 has_link，
+	// iOS 发帖时会先显示「留言」页脚、随后发现无 linked_chat_id 再撤销，产生闪烁。
+	// 因此广播频道仅在存在真实关联群时才投影 has_link；megagroup 维持旧投影（邀请链接
+	// 即可置位），因为 Android send-as 入口依赖 megagroup && (public || has_geo || has_link)
+	// 判定是否拉取候选列表。
+	if ch.LinkedChatID != 0 || (ch.HasLink && !ch.Broadcast) {
 		out.SetHasLink(true)
 	}
 	if ch.Monoforum {
