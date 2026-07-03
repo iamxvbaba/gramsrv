@@ -336,6 +336,9 @@ func (s *Service) appendMissingChannelPeerPreviews(ctx context.Context, userID i
 		if !ok || view.Forbidden {
 			continue
 		}
+		if view.Self.Status != domain.ChannelMemberActive {
+			continue
+		}
 		history, err := s.channels.ListChannelHistory(ctx, userID, domain.ChannelHistoryFilter{
 			ChannelID: channelID,
 			Limit:     1,

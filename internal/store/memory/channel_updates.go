@@ -27,6 +27,16 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 	if preview {
 		dialog = previewChannelDialog(req.UserID, channel, member)
 	}
+	if preview && member.Status != domain.ChannelMemberActive {
+		return domain.ChannelDifference{
+			Channel: channel,
+			Self:    member,
+			Pts:     channel.Pts,
+			Final:   true,
+			Timeout: 30,
+			Dialog:  dialog,
+		}, nil
+	}
 	if channel.Pts-req.Pts > limit {
 		messages := make([]domain.ChannelMessage, 0, domain.MaxChannelDifferenceTooLongMessages)
 		for i := len(s.messages[req.ChannelID]) - 1; i >= 0 && len(messages) < domain.MaxChannelDifferenceTooLongMessages; i-- {

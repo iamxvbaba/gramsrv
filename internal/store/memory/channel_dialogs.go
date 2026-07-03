@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"telesrv/internal/domain"
 )
@@ -119,8 +120,23 @@ func (s *ChannelStore) GetChannelDialogs(_ context.Context, viewerUserID int64, 
 			continue
 		}
 		seen[channelID] = struct{}{}
-		channel, member, _, err := s.channelForViewerLocked(viewerUserID, channelID)
+		channel, member, err := s.channelAndMemberLocked(viewerUserID, channelID)
 		if err != nil {
+			if !errors.Is(err, domain.ErrChannelPrivate) && !errors.Is(err, domain.ErrChannelInvalid) {
+				continue
+			}
+			var ok bool
+			channel, ok = s.channels[channelID]
+			if !ok || channel.Deleted || !channel.Monoforum || channel.LinkedMonoforumID == 0 {
+				continue
+			}
+			parentMember, ok := s.members[channel.LinkedMonoforumID][viewerUserID]
+			if !ok || parentMember.Status != domain.ChannelMemberActive || !isChannelAdmin(parentMember) {
+				continue
+			}
+			member = syntheticMonoforumAdminMember(channel, parentMember)
+		}
+		if member.Status != domain.ChannelMemberActive {
 			continue
 		}
 		dialog := channelDialogToDialog(s.dialogForMemberLocked(viewerUserID, channel, member), channel.Pts, member.Status)

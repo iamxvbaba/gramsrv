@@ -695,7 +695,7 @@ func TestGetPeerDialogsRejectsHugeVector(t *testing.T) {
 	}
 }
 
-func TestGetPeerDialogsIncludesPublicChannelPreviewForNonMember(t *testing.T) {
+func TestGetPeerDialogsSkipsPublicChannelPreviewForNonMember(t *testing.T) {
 	ctx := context.Background()
 	channelStore := memory.NewChannelStore()
 	channels := appchannels.NewService(channelStore)
@@ -716,13 +716,12 @@ func TestGetPeerDialogsIncludesPublicChannelPreviewForNonMember(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateUsername public: %v", err)
 	}
-	sent, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+	if _, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: public.Channel.ID,
 		RandomID:  99,
 		Message:   "public peer dialog top",
 		Date:      1700002010,
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("SendMessage public: %v", err)
 	}
 	private, err := channels.CreateChannel(ctx, 1001, domain.CreateChannelRequest{
@@ -741,28 +740,12 @@ func TestGetPeerDialogsIncludesPublicChannelPreviewForNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPeerDialogs public preview: %v", err)
 	}
-	if len(list.Dialogs) != 1 {
-		t.Fatalf("dialogs = %+v, want only public preview dialog", list.Dialogs)
-	}
-	dialog := findChannelDialog(t, list, public.Channel.ID)
-	if dialog.TopMessage != sent.Message.ID || dialog.TopMessageDate != sent.Message.Date {
-		t.Fatalf("preview dialog top = id %d date %d, want %d/%d", dialog.TopMessage, dialog.TopMessageDate, sent.Message.ID, sent.Message.Date)
-	}
-	if !dialog.ChannelLeft {
-		t.Fatalf("preview dialog ChannelLeft = false, want read-only left preview")
-	}
-	if dialog.UnreadCount != 0 || dialog.ReadInboxMaxID < sent.Message.ID || dialog.ReadOutboxMaxID < sent.Message.ID {
-		t.Fatalf("preview dialog read/unread = %+v, want read through top and no unread", dialog)
-	}
-	if len(list.ChannelMessages) != 1 || list.ChannelMessages[0].Body != "public peer dialog top" {
-		t.Fatalf("channel messages = %+v, want public top message", list.ChannelMessages)
-	}
-	if len(list.Channels) != 1 || list.Channels[0].ID != public.Channel.ID {
-		t.Fatalf("channels = %+v, want public channel shell", list.Channels)
+	if len(list.Dialogs) != 0 || len(list.ChannelMessages) != 0 || len(list.Channels) != 0 || list.Count != 0 {
+		t.Fatalf("peer dialogs = %+v, want no materialized public preview dialog", list)
 	}
 }
 
-func TestGetPeerDialogsBatchesMissingChannelPreviews(t *testing.T) {
+func TestGetPeerDialogsBatchesMissingChannelVisibilityChecks(t *testing.T) {
 	ctx := context.Background()
 	channelStore := &countingDialogChannelStore{ChannelStore: memory.NewChannelStore()}
 	channels := appchannels.NewService(channelStore)
@@ -783,13 +766,12 @@ func TestGetPeerDialogsBatchesMissingChannelPreviews(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateUsername first: %v", err)
 	}
-	firstMsg, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+	if _, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: first.Channel.ID,
 		RandomID:  101,
 		Message:   "first public preview",
 		Date:      1700002110,
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("SendMessage first: %v", err)
 	}
 
@@ -808,13 +790,12 @@ func TestGetPeerDialogsBatchesMissingChannelPreviews(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateUsername second: %v", err)
 	}
-	secondMsg, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+	if _, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: second.Channel.ID,
 		RandomID:  102,
 		Message:   "second public preview",
 		Date:      1700002130,
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("SendMessage second: %v", err)
 	}
 
@@ -839,19 +820,10 @@ func TestGetPeerDialogsBatchesMissingChannelPreviews(t *testing.T) {
 		t.Fatalf("GetPeerDialogs batch previews: %v", err)
 	}
 	if channelStore.getChannelsCalls != 1 || channelStore.getChannelCalls != 0 {
-		t.Fatalf("preview channel calls: GetChannels=%d GetChannel=%d, want one batch call only", channelStore.getChannelsCalls, channelStore.getChannelCalls)
+		t.Fatalf("visibility channel calls: GetChannels=%d GetChannel=%d, want one batch call only", channelStore.getChannelsCalls, channelStore.getChannelCalls)
 	}
-	if len(list.Dialogs) != 2 {
-		t.Fatalf("dialogs = %+v, want two public previews", list.Dialogs)
-	}
-	if got := findChannelDialog(t, list, first.Channel.ID); got.TopMessage != firstMsg.Message.ID {
-		t.Fatalf("first preview top = %d, want %d", got.TopMessage, firstMsg.Message.ID)
-	}
-	if got := findChannelDialog(t, list, second.Channel.ID); got.TopMessage != secondMsg.Message.ID {
-		t.Fatalf("second preview top = %d, want %d", got.TopMessage, secondMsg.Message.ID)
-	}
-	if len(list.ChannelMessages) != 2 {
-		t.Fatalf("channel messages = %+v, want two top messages", list.ChannelMessages)
+	if len(list.Dialogs) != 0 || len(list.ChannelMessages) != 0 || len(list.Channels) != 0 || list.Count != 0 {
+		t.Fatalf("peer dialogs = %+v, want no public preview dialogs", list)
 	}
 }
 

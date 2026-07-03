@@ -27,6 +27,16 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 	if limit <= 0 || limit > domain.MaxChannelDifferenceLimit {
 		limit = domain.MaxChannelDifferenceLimit
 	}
+	if preview && member.Status != domain.ChannelMemberActive {
+		return domain.ChannelDifference{
+			Channel: channel,
+			Self:    member,
+			Pts:     channel.Pts,
+			Final:   true,
+			Timeout: 30,
+			Dialog:  previewChannelDialog(req.UserID, channel, member),
+		}, nil
+	}
 	if channel.Pts-req.Pts > limit {
 		args := []any{req.ChannelID}
 		where := "channel_id = $1 AND NOT deleted"

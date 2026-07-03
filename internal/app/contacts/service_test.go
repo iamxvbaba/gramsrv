@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	privacyapp "telesrv/internal/app/privacy"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -388,6 +389,94 @@ func TestAddContactNormalizesPhoneToDigits(t *testing.T) {
 	}
 	if emptied.Phone != bob.Phone {
 		t.Fatalf("digitless phone contact = %q, want fallback to target phone %q", emptied.Phone, bob.Phone)
+	}
+}
+
+func TestAddContactPhonePrivacyExceptionPeerSettings(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	privacySvc := privacyapp.NewService(memory.NewPrivacyStore(), contactsStore)
+	alice, err := users.Create(ctx, domain.User{Phone: "15550000101", FirstName: "Alice", LastName: "A"})
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := users.Create(ctx, domain.User{Phone: "15550000102", FirstName: "Bob", LastName: "B"})
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	carol, err := users.Create(ctx, domain.User{Phone: "15550000103", FirstName: "Carol", LastName: "C"})
+	if err != nil {
+		t.Fatalf("create carol: %v", err)
+	}
+	dave, err := users.Create(ctx, domain.User{Phone: "15550000104", FirstName: "Dave", LastName: "D"})
+	if err != nil {
+		t.Fatalf("create dave: %v", err)
+	}
+	svc := NewService(contactsStore, users).Configure(WithPrivacyEvaluator(privacySvc))
+
+	bobSettings, err := svc.GetPeerSettings(ctx, alice.ID, domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID})
+	if err != nil {
+		t.Fatalf("bob peer settings before add: %v", err)
+	}
+	if !bobSettings.AddContact || bobSettings.ShareContact || !bobSettings.NeedContactsException {
+		t.Fatalf("bob settings before add = %+v, want add + need exception only", bobSettings)
+	}
+	if _, err := svc.AddContact(ctx, alice.ID, domain.ContactInput{
+		ContactUserID: bob.ID,
+		Phone:         bob.Phone,
+		FirstName:     "Bobby",
+	}); err != nil {
+		t.Fatalf("alice add bob: %v", err)
+	}
+	bobSettings, err = svc.GetPeerSettings(ctx, alice.ID, domain.Peer{Type: domain.PeerTypeUser, ID: bob.ID})
+	if err != nil {
+		t.Fatalf("bob peer settings after add without exception: %v", err)
+	}
+	if bobSettings.AddContact || !bobSettings.ShareContact || !bobSettings.NeedContactsException {
+		t.Fatalf("bob settings after add without exception = %+v, want share + need exception", bobSettings)
+	}
+	if allowed, err := privacySvc.CanSee(ctx, alice.ID, bob.ID, domain.PrivacyKeyPhoneNumber); err != nil {
+		t.Fatalf("bob can see alice phone: %v", err)
+	} else if allowed {
+		t.Fatalf("bob can see alice phone = true, want false before exception")
+	}
+
+	if _, err := svc.AddContact(ctx, alice.ID, domain.ContactInput{
+		ContactUserID:            carol.ID,
+		Phone:                    carol.Phone,
+		FirstName:                "Carol",
+		AddPhonePrivacyException: true,
+	}); err != nil {
+		t.Fatalf("alice add carol with exception: %v", err)
+	}
+	carolSettings, err := svc.GetPeerSettings(ctx, alice.ID, domain.Peer{Type: domain.PeerTypeUser, ID: carol.ID})
+	if err != nil {
+		t.Fatalf("carol peer settings after exception: %v", err)
+	}
+	if carolSettings.AddContact || carolSettings.ShareContact || carolSettings.NeedContactsException {
+		t.Fatalf("carol settings after exception = %+v, want no add/share/need exception", carolSettings)
+	}
+	if allowed, err := privacySvc.CanSee(ctx, alice.ID, carol.ID, domain.PrivacyKeyPhoneNumber); err != nil {
+		t.Fatalf("carol can see alice phone: %v", err)
+	} else if !allowed {
+		t.Fatalf("carol can see alice phone = false, want true after exception")
+	}
+
+	if _, err := contactsStore.Upsert(ctx, dave.ID, domain.ContactInput{
+		ContactUserID: alice.ID,
+		Phone:         alice.Phone,
+		FirstName:     alice.FirstName,
+		LastName:      alice.LastName,
+	}); err != nil {
+		t.Fatalf("dave add alice: %v", err)
+	}
+	daveSettings, err := svc.GetPeerSettings(ctx, alice.ID, domain.Peer{Type: domain.PeerTypeUser, ID: dave.ID})
+	if err != nil {
+		t.Fatalf("dave peer settings before alice add: %v", err)
+	}
+	if !daveSettings.AddContact || daveSettings.ShareContact || daveSettings.NeedContactsException {
+		t.Fatalf("dave settings with reverse contact = %+v, want add only", daveSettings)
 	}
 }
 

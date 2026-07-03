@@ -10,6 +10,7 @@ import (
 	"strings"
 	appchannels "telesrv/internal/app/channels"
 	appcontacts "telesrv/internal/app/contacts"
+	appprivacy "telesrv/internal/app/privacy"
 	appstories "telesrv/internal/app/stories"
 	appupdates "telesrv/internal/app/updates"
 	appusers "telesrv/internal/app/users"
@@ -1055,6 +1056,84 @@ func TestContactsAcceptContactReturnsSettingsAndReset(t *testing.T) {
 	if reverse.Phone != alice.Phone || !reverse.Mutual {
 		t.Fatalf("bob contact alice = %+v, want shared phone and mutual", reverse)
 	}
+}
+
+func TestContactsAddContactPhonePrivacyExceptionUpdatesPeerSettings(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	privacySvc := appprivacy.NewService(memory.NewPrivacyStore(), contactsStore)
+	alice, err := userStore.Create(ctx, domain.User{AccessHash: 31, Phone: "2001", FirstName: "Alice", LastName: "A"})
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	bob, err := userStore.Create(ctx, domain.User{AccessHash: 32, Phone: "2002", FirstName: "Bob", LastName: "B"})
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	carol, err := userStore.Create(ctx, domain.User{AccessHash: 33, Phone: "2003", FirstName: "Carol", LastName: "C"})
+	if err != nil {
+		t.Fatalf("create carol: %v", err)
+	}
+	contactsSvc := appcontacts.NewService(contactsStore, userStore).Configure(appcontacts.WithPrivacyEvaluator(privacySvc))
+	usersSvc := appusers.NewService(userStore, appusers.WithContactStore(contactsStore), appusers.WithPrivacyEvaluator(privacySvc))
+	r := New(Config{}, Deps{
+		Contacts: contactsSvc,
+		Users:    usersSvc,
+	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000410, 0)})
+
+	withoutException, err := r.onContactsAddContact(WithUserID(ctx, alice.ID), &tg.ContactsAddContactRequest{
+		ID:        &tg.InputUser{UserID: bob.ID, AccessHash: bob.AccessHash},
+		Phone:     bob.Phone,
+		FirstName: "Bobby",
+	})
+	if err != nil {
+		t.Fatalf("contacts.addContact without exception: %v", err)
+	}
+	bobSettings := firstPeerSettingsUpdate(t, withoutException)
+	if bobSettings.Settings.AddContact || !bobSettings.Settings.ShareContact || !bobSettings.Settings.NeedContactsException {
+		t.Fatalf("bob peer settings = %+v, want share + need exception", bobSettings.Settings)
+	}
+	if allowed, err := privacySvc.CanSee(ctx, alice.ID, bob.ID, domain.PrivacyKeyPhoneNumber); err != nil {
+		t.Fatalf("bob can see alice phone: %v", err)
+	} else if allowed {
+		t.Fatalf("bob can see alice phone = true, want false before exception")
+	}
+
+	withException, err := r.onContactsAddContact(WithUserID(ctx, alice.ID), &tg.ContactsAddContactRequest{
+		AddPhonePrivacyException: true,
+		ID:                       &tg.InputUser{UserID: carol.ID, AccessHash: carol.AccessHash},
+		Phone:                    carol.Phone,
+		FirstName:                "Carol",
+	})
+	if err != nil {
+		t.Fatalf("contacts.addContact with exception: %v", err)
+	}
+	carolSettings := firstPeerSettingsUpdate(t, withException)
+	if carolSettings.Settings.AddContact || carolSettings.Settings.ShareContact || carolSettings.Settings.NeedContactsException {
+		t.Fatalf("carol peer settings = %+v, want no add/share/need exception", carolSettings.Settings)
+	}
+	if allowed, err := privacySvc.CanSee(ctx, alice.ID, carol.ID, domain.PrivacyKeyPhoneNumber); err != nil {
+		t.Fatalf("carol can see alice phone: %v", err)
+	} else if !allowed {
+		t.Fatalf("carol can see alice phone = false, want true after exception")
+	}
+}
+
+func firstPeerSettingsUpdate(t *testing.T, updates tg.UpdatesClass) *tg.UpdatePeerSettings {
+	t.Helper()
+	got, ok := updates.(*tg.Updates)
+	if !ok {
+		t.Fatalf("updates = %T, want *tg.Updates", updates)
+	}
+	if len(got.Updates) == 0 {
+		t.Fatalf("updates = %+v, want UpdatePeerSettings", got.Updates)
+	}
+	settings, ok := got.Updates[0].(*tg.UpdatePeerSettings)
+	if !ok {
+		t.Fatalf("update[0] = %T, want UpdatePeerSettings", got.Updates[0])
+	}
+	return settings
 }
 
 func TestContactsStatusesUsesOnlineSessionFallback(t *testing.T) {

@@ -115,7 +115,7 @@ func TestChannelStoreDifferenceStartsAtMemberAvailableMinPts(t *testing.T) {
 	}
 }
 
-func TestChannelStorePublicPreviewDifferenceAllowsNonMember(t *testing.T) {
+func TestChannelStorePublicPreviewDifferenceSkipsNonMemberMessages(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -183,8 +183,8 @@ func TestChannelStorePublicPreviewDifferenceAllowsNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list public preview difference: %v", err)
 	}
-	if !diff.Final || diff.Pts != sent.Event.Pts || len(diff.NewMessages) != 1 || diff.NewMessages[0].Body != "public preview difference" {
-		t.Fatalf("preview diff = %+v, want one public preview message at current pts", diff)
+	if !diff.Final || diff.Pts != sent.Event.Pts || len(diff.Events) != 0 || len(diff.NewMessages) != 0 || len(diff.OtherUpdates) != 0 {
+		t.Fatalf("preview diff = %+v, want empty public preview difference at current pts", diff)
 	}
 	if diff.Dialog.UnreadCount != 0 || diff.Dialog.ReadInboxMaxID < sent.Message.ID {
 		t.Fatalf("preview diff dialog = %+v, want read-only public preview dialog", diff.Dialog)

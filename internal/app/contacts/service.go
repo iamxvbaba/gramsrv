@@ -421,18 +421,36 @@ func (s *Service) GetPeerSettings(ctx context.Context, userID int64, peer domain
 		return domain.PeerSettings{}, err
 	}
 	shareContact := found && !contact.Mutual
+	needContactsException := false
 	if s.privacy != nil {
-		peerCanSeePhone, err := s.privacy.CanSee(ctx, userID, peer.ID, domain.PrivacyKeyPhoneNumber)
+		peerCanSeePhone, err := s.peerCanSeeCurrentUserPhone(ctx, userID, peer.ID)
 		if err != nil {
 			return domain.PeerSettings{}, err
 		}
+		needContactsException = !peerCanSeePhone
 		shareContact = found && !peerCanSeePhone
 	}
 	return domain.PeerSettings{
-		AddContact:   !found,
-		BlockContact: !blocked,
-		ShareContact: shareContact,
+		AddContact:            !found,
+		BlockContact:          !blocked,
+		ShareContact:          shareContact,
+		NeedContactsException: needContactsException,
 	}, nil
+}
+
+func (s *Service) peerCanSeeCurrentUserPhone(ctx context.Context, ownerUserID, viewerUserID int64) (bool, error) {
+	allowed, err := s.privacy.CanSee(ctx, ownerUserID, viewerUserID, domain.PrivacyKeyPhoneNumber)
+	if err != nil || allowed {
+		return allowed, err
+	}
+	if s.contacts == nil {
+		return false, nil
+	}
+	_, found, err := s.contacts.Get(ctx, viewerUserID, ownerUserID)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 // BlockContact adds peer to the current user's blocklist.
