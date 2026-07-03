@@ -42,8 +42,12 @@ type userStickerSetInstaller interface {
 	InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error
 }
 
+type aiChatGenerator interface {
+	GenerateTextStream(ctx context.Context, req domain.AITextGenerationRequest, emit func(domain.AIComposeText) error) (domain.AIComposeText, error)
+}
+
 // RouterHooks 是 rpc 层回调（router 创建后经 SetRouterHooks 延迟注入，打破
-// router↔bots 的构造循环；两个能力都依赖 TL/连接层边界，不能在 app 层实现）：
+// router↔bots 的构造循环；这些能力都依赖 TL/连接层边界，不能在 app 层实现）：
 //   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
 //     authorization + 强制断连）。
 //   - PushBotCommandsChanged：命令变更后给在线相关用户推 updateBotCommands
@@ -56,24 +60,34 @@ type RouterHooks interface {
 	PushStickerSetsChanged(ctx context.Context, userID int64, kind domain.StickerSetKind)
 }
 
+// TextDraftPusher 推送 @ChatBot AI 流式回复的 transient 文本草稿，由 rpc 层转换为
+// UpdateUserTyping/sendMessageTextDraftAction。它独立于普通 bot hooks，避免 BotFather
+// 和 @Stickers 的测试/依赖被 AI 对话能力污染。
+type TextDraftPusher interface {
+	PushBotTextDraft(ctx context.Context, botUserID, userID, randomID int64, text string)
+}
+
 // replyLockStripes 是回复串行化条带数：同一用户的 BotFather 回复落同一条带、
 // 串行执行（状态机 RMW 原子 + 回复保序），不同用户并发；固定大小不随用户数增长。
 const replyLockStripes = 256
 
 // Service 提供 bot 账号业务。
 type Service struct {
-	users     store.UserStore
-	bots      store.BotStore
-	messages  store.MessageStore
-	blocker   blockChecker
-	channels  publicChannelUsernameResolver
-	stickers  stickerSetCreator
-	installer userStickerSetInstaller
-	hooks     RouterHooks
-	userCache store.UserCache
-	cache     *botProfileCache
-	log       *zap.Logger
-	now       func() time.Time
+	users                 store.UserStore
+	bots                  store.BotStore
+	messages              store.MessageStore
+	blocker               blockChecker
+	channels              publicChannelUsernameResolver
+	stickers              stickerSetCreator
+	installer             userStickerSetInstaller
+	aiChat                aiChatGenerator
+	hooks                 RouterHooks
+	textDrafts            TextDraftPusher
+	userCache             store.UserCache
+	cache                 *botProfileCache
+	log                   *zap.Logger
+	now                   func() time.Time
+	chatBotStreamThrottle time.Duration
 	// replySeq 是回复 randomID 在 crypto/rand 失败时的兜底单调序列。
 	replySeq   atomic.Int64
 	replyLocks [replyLockStripes]sync.Mutex
@@ -150,6 +164,24 @@ func WithUserStickerSets(c userStickerSetInstaller) Option {
 	}
 }
 
+// WithAIChatGenerator 注入内置 @ChatBot 使用的 AI 文本生成器。
+func WithAIChatGenerator(g aiChatGenerator) Option {
+	return func(s *Service) {
+		if g != nil {
+			s.aiChat = g
+		}
+	}
+}
+
+// WithAIChatStreamThrottle 调整 @ChatBot 流式草稿推送的最小时间间隔（测试用）。
+func WithAIChatStreamThrottle(d time.Duration) Option {
+	return func(s *Service) {
+		if d >= 0 {
+			s.chatBotStreamThrottle = d
+		}
+	}
+}
+
 // invalidateUserCache 在 bot 的 users 行变更（含 version bump）后清缓存。
 // 失效失败只记日志：缓存最长 TTL 后自愈，不阻塞写路径。
 func (s *Service) invalidateUserCache(ctx context.Context, botUserID int64) {
@@ -197,15 +229,29 @@ func (s *Service) SetRouterHooks(h RouterHooks) {
 	}
 }
 
+// SetTextDraftPusher 注入 @ChatBot 流式草稿推送边界。
+func (s *Service) SetTextDraftPusher(p TextDraftPusher) {
+	if s != nil {
+		s.textDrafts = p
+	}
+}
+
+func (s *Service) SetAIChatGenerator(g aiChatGenerator) {
+	if s != nil {
+		s.aiChat = g
+	}
+}
+
 // NewService 创建 bots 服务。
 func NewService(users store.UserStore, bots store.BotStore, messages store.MessageStore, opts ...Option) *Service {
 	s := &Service{
-		users:    users,
-		bots:     bots,
-		messages: messages,
-		cache:    newBotProfileCache(botProfileCacheMaxEntries, botProfileCacheTTL),
-		log:      zap.NewNop(),
-		now:      time.Now,
+		users:                 users,
+		bots:                  bots,
+		messages:              messages,
+		cache:                 newBotProfileCache(botProfileCacheMaxEntries, botProfileCacheTTL),
+		log:                   zap.NewNop(),
+		now:                   time.Now,
+		chatBotStreamThrottle: defaultChatBotStreamThrottle,
 	}
 	for _, opt := range opts {
 		opt(s)

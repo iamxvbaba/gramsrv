@@ -183,6 +183,11 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 				}
 			}
 		}
+		if w.ComposeToneEmojiID != 0 {
+			page.SetAttributes([]tg.WebPageAttributeClass{
+				&tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID},
+			})
+		}
 		return page
 	case domain.MessageWebPageStateEmpty:
 		page := &tg.WebPageEmpty{ID: w.ID}

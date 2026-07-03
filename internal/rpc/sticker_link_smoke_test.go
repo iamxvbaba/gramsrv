@@ -194,6 +194,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 		Sessions: &captureSessions{},
 	}, zaptest.NewLogger(t), clock.System)
 	botsService.SetRouterHooks(r)
+	botsService.SetTextDraftPusher(r)
 
 	sendStickersBotText(t, r, alice, "/newpack", 9101)
 	waitForStickersReply(t, messageStore, alice.ID, "sticker pack")

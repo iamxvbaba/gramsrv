@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	appConfigHash     = 12 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 13 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -43,6 +43,11 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "stories_stealth_future_period", Value: &tg.JSONNumber{Value: 1500}},
 		{Key: "stories_stealth_past_period", Value: &tg.JSONNumber{Value: 300}},
 		{Key: "stories_stealth_cooldown_period", Value: &tg.JSONNumber{Value: 10800}},
+		{Key: "aicompose_tone_examples_num", Value: &tg.JSONNumber{Value: 3}},
+		{Key: "aicompose_tone_title_length_max", Value: &tg.JSONNumber{Value: 12}},
+		{Key: "aicompose_tone_prompt_length_max", Value: &tg.JSONNumber{Value: 1024}},
+		{Key: "aicompose_tone_saved_limit_default", Value: &tg.JSONNumber{Value: 5}},
+		{Key: "aicompose_tone_saved_limit_premium", Value: &tg.JSONNumber{Value: 20}},
 		// upload_markup_video=true 即官方默认（emoji/sticker 头像由客户端本地渲染 mp4 后随
 		// markup 一起上传）。显式下发是为了把曾收到过 false 的客户端持久化配置洗回默认——
 		// 客户端对缺失的 key 会保留本地旧值，仅删除 key 无法恢复。

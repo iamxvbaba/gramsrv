@@ -260,6 +260,7 @@ SELECT
   m.ttl_period,
   m.expires_at,
   m.edit_date,
+  m.hide_edited,
   m.outgoing,
   m.body,
   m.entities::text AS entities_json,
@@ -317,6 +318,7 @@ type ListPinnedSavedDialogTopsRow struct {
 	TtlPeriod            int32
 	ExpiresAt            int32
 	EditDate             int32
+	HideEdited           bool
 	Outgoing             bool
 	Body                 string
 	EntitiesJson         string
@@ -374,6 +376,7 @@ func (q *Queries) ListPinnedSavedDialogTops(ctx context.Context, ownerUserID int
 			&i.TtlPeriod,
 			&i.ExpiresAt,
 			&i.EditDate,
+			&i.HideEdited,
 			&i.Outgoing,
 			&i.Body,
 			&i.EntitiesJson,
@@ -443,6 +446,7 @@ SELECT
   m.ttl_period,
   m.expires_at,
   m.edit_date,
+  m.hide_edited,
   m.outgoing,
   m.body,
   m.entities::text AS entities_json,
@@ -510,6 +514,7 @@ type ListSavedDialogTopsRow struct {
 	TtlPeriod            int32
 	ExpiresAt            int32
 	EditDate             int32
+	HideEdited           bool
 	Outgoing             bool
 	Body                 string
 	EntitiesJson         string
@@ -576,6 +581,7 @@ func (q *Queries) ListSavedDialogTops(ctx context.Context, arg ListSavedDialogTo
 			&i.TtlPeriod,
 			&i.ExpiresAt,
 			&i.EditDate,
+			&i.HideEdited,
 			&i.Outgoing,
 			&i.Body,
 			&i.EntitiesJson,
@@ -653,6 +659,7 @@ SELECT
   m.ttl_period,
   m.expires_at,
   m.edit_date,
+  m.hide_edited,
   m.outgoing,
   m.body,
   m.entities::text AS entities_json,
@@ -716,6 +723,7 @@ type ListSavedDialogTopsByPeersRow struct {
 	TtlPeriod            int32
 	ExpiresAt            int32
 	EditDate             int32
+	HideEdited           bool
 	Outgoing             bool
 	Body                 string
 	EntitiesJson         string
@@ -773,6 +781,7 @@ func (q *Queries) ListSavedDialogTopsByPeers(ctx context.Context, arg ListSavedD
 			&i.TtlPeriod,
 			&i.ExpiresAt,
 			&i.EditDate,
+			&i.HideEdited,
 			&i.Outgoing,
 			&i.Body,
 			&i.EntitiesJson,

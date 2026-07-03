@@ -74,7 +74,7 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
-	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && sameMessageEntities(oldEntities, req.Entities) {
+	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
@@ -170,6 +170,7 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 		Body:             req.Message,
 		EntitiesJson:     entities,
 		EditDate:         int32(req.EditDate),
+		HideEdited:       req.HideEdited,
 		SetReplyMarkup:   req.SetReplyMarkup,
 		ReplyMarkupJson:  replyMarkupJSON,
 	}); err != nil {
@@ -205,6 +206,7 @@ WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, targ
 			Body:            req.Message,
 			EntitiesJson:    entities,
 			EditDate:        int32(req.EditDate),
+			HideEdited:      req.HideEdited,
 			Pts:             int32(pts),
 			SetReplyMarkup:  req.SetReplyMarkup,
 			ReplyMarkupJson: replyMarkupJSON,

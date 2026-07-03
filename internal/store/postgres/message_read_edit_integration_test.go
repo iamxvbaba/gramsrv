@@ -107,6 +107,79 @@ func TestMessageStoreReadAndEditEmitDurableEvents(t *testing.T) {
 	}
 }
 
+func TestMessageStoreEditCanHideEditedBadge(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	sender, err := users.Create(ctx, domain.User{
+		AccessHash: 331,
+		Phone:      "+1666" + suffix + "31",
+		FirstName:  "HiddenEditSender",
+	})
+	if err != nil {
+		t.Fatalf("create sender: %v", err)
+	}
+	recipient, err := users.Create(ctx, domain.User{
+		AccessHash: 332,
+		Phone:      "+1666" + suffix + "32",
+		FirstName:  "HiddenEditRecipient",
+	})
+	if err != nil {
+		t.Fatalf("create recipient: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
+	})
+
+	messages := NewMessageStore(pool)
+	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    sender.ID,
+		RecipientUserID: recipient.ID,
+		RandomID:        223399,
+		Message:         "...",
+		Date:            1700000400,
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText: %v", err)
+	}
+	edited, err := messages.EditMessage(ctx, domain.EditMessageRequest{
+		OwnerUserID: sender.ID,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		ID:          sent.SenderMessage.ID,
+		Message:     "streamed answer",
+		EditDate:    1700000405,
+		HideEdited:  true,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if self := edited.Self(); self.Message.Body != "streamed answer" || !self.Message.HideEdited {
+		t.Fatalf("self hidden edit = %+v, want hidden edited message", self)
+	}
+
+	history, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("recipient history: %v", err)
+	}
+	if len(history.Messages) != 1 || history.Messages[0].Body != "streamed answer" || !history.Messages[0].HideEdited {
+		t.Fatalf("recipient history = %+v, want hidden edited message", history.Messages)
+	}
+
+	events, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("recipient events: %v", err)
+	}
+	if len(events) != 2 || events[1].Type != domain.UpdateEventEditMessage || !events[1].Message.HideEdited {
+		t.Fatalf("recipient events = %+v, want hidden edit event", events)
+	}
+}
+
 func TestMessageStoreReadHistoryStaleUnreadRepairDoesNotAppendPts(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

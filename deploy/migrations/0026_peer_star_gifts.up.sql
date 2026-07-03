@@ -1,22 +1,8 @@
 -- Star gifts are owned by a peer, not only by users: user gifts are addressed by
 -- inputSavedStarGiftUser.msg_id, while channel gifts are addressed by
 -- inputSavedStarGiftChat{peer,saved_id}.
-DO $$
-BEGIN
-    IF to_regclass('public.user_star_gifts') IS NOT NULL
-       AND to_regclass('public.peer_star_gifts') IS NULL THEN
-        ALTER TABLE public.user_star_gifts RENAME TO peer_star_gifts;
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'peer_star_gifts'
-          AND column_name = 'owner_user_id'
-    ) THEN
-        ALTER TABLE public.peer_star_gifts RENAME COLUMN owner_user_id TO owner_peer_id;
-    END IF;
-END $$;
+ALTER TABLE public.user_star_gifts RENAME TO peer_star_gifts;
+ALTER TABLE public.peer_star_gifts RENAME COLUMN owner_user_id TO owner_peer_id;
 
 ALTER TABLE public.peer_star_gifts
     ADD COLUMN IF NOT EXISTS owner_peer_type text DEFAULT 'user' NOT NULL,

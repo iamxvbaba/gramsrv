@@ -32,6 +32,7 @@ codebase.
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
 | ✅ | Private chats | Send, history, read receipts, edit, delete, forward, reply, rich entities, grouped/media messages, reactions, scheduled/TTL-oriented paths. |
+| ✅ | AI compose and ChatBot | Input-box rewrite/polish, default and custom tones, addstyle previews, local and external provider chains, streamed `@ChatBot` draft replies, and Business AI reply hooks. |
 | ✅ | Supergroups and channels | Create, join, leave, invite links, participants, admins, forum topics, history, send/edit/delete/read, reactions, public search, and previews. |
 | ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
 | ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
@@ -84,8 +85,17 @@ Useful local environment variables:
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | bundled language pack seed directory |
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
+| `TELESRV_AI_ENABLED` | `true` | enable AI compose entry points |
+| `TELESRV_AI_PROVIDERS` | `local` | ordered AI provider chain, such as `local` or `kimi,local` |
+| `TELESRV_AI_TIMEOUT` | `15s` | per AI provider call timeout |
+| `TELESRV_AI_RATE_LIMIT` | `20` | per-account AI compose request budget |
+| `TELESRV_AI_RATE_WINDOW` | `1m` | AI compose rate-limit window |
+| `TELESRV_AI_LOG_CONTENT` | `false` | whether logs may include prompt/generated text |
+| `TELESRV_BUSINESS_AI_PROVIDER` | `echo` | Business automation reply provider |
 
 The optional sticker seed directory is skipped when it does not exist.
+Optional OpenAI-compatible, Kimi/Moonshot, Gemini, and Anthropic provider
+variables are documented in `.env.example`.
 
 ## Client Compatibility
 

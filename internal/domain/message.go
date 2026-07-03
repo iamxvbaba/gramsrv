@@ -23,6 +23,9 @@ const (
 	MessageEntityEmail       MessageEntityType = "email"
 	MessageEntityPhone       MessageEntityType = "phone"
 	MessageEntityBankCard    MessageEntityType = "bank_card"
+	MessageEntityDiffInsert  MessageEntityType = "diff_insert"
+	MessageEntityDiffReplace MessageEntityType = "diff_replace"
+	MessageEntityDiffDelete  MessageEntityType = "diff_delete"
 )
 
 const (
@@ -101,6 +104,8 @@ type MessageEntity struct {
 	DocumentID int64
 	// Collapsed 仅 blockquote 使用。
 	Collapsed bool
+	// OldText 仅 AI compose diff_replace 使用；普通消息输入不会接受该实体。
+	OldText string
 }
 
 // Message 是账号视角下的一条私聊消息。
@@ -113,6 +118,7 @@ type Message struct {
 	From           Peer
 	Date           int
 	EditDate       int
+	HideEdited     bool
 	Out            bool
 	Silent         bool
 	NoForwards     bool
@@ -405,6 +411,7 @@ type EditMessageRequest struct {
 	Entities        []MessageEntity
 	Media           *MessageMedia
 	EditDate        int
+	HideEdited      bool
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
 	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）；

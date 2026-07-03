@@ -10,10 +10,10 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件实现 app/bots 的 RouterHooks 回调：token revoke 后的 session 失效闭环，
-// 命令变更后的 updateBotCommands 在线推送，以及 @Stickers 发布后的
-// updateStickerSets 在线提示。Router 创建后经
-// botsService.SetRouterHooks(router) 装配（见 cmd/telesrv/main.go）。
+// 本文件实现 app/bots 的 rpc 回调：token revoke 后的 session 失效闭环，
+// 命令变更后的 updateBotCommands 在线推送、@Stickers 发布后的 updateStickerSets
+// 在线提示，以及 @ChatBot 流式草稿 transient 推送。Router 创建后经
+// botsService.SetRouterHooks / SetTextDraftPusher 装配（见 cmd/telesrv/main.go）。
 
 // maxBotCommandsPushPeers 限制单次命令变更的推送扇出（bot 的最近 dialog peer 数）。
 // 超出的离线/长尾用户靠 bot_info_version bump 在下次 getFullUser 时拿到新命令。
@@ -79,6 +79,25 @@ func (r *Router) PushStickerSetsChanged(ctx context.Context, userID int64, kind 
 		defer cancel()
 		r.pushStickerSetsUpdate(ctx, userID, kind)
 	}()
+}
+
+// PushBotTextDraft 推送内置 service bot 的流式文本草稿。草稿是 TDesktop 专用的
+// transient typing action，不写 message/dialog/pts/outbox；最终可恢复事实仍由随后
+// 入库的普通 bot message 承担。
+func (r *Router) PushBotTextDraft(ctx context.Context, botUserID, userID, randomID int64, text string) {
+	if botUserID == 0 || userID == 0 || randomID == 0 || text == "" {
+		return
+	}
+	r.pushUserMessageTransient(context.WithoutCancel(ctx), userID, "push bot text draft", &tg.UpdateShort{
+		Update: &tg.UpdateUserTyping{
+			UserID: botUserID,
+			Action: &tg.SendMessageTextDraftAction{
+				RandomID: randomID,
+				Text:     tg.TextWithEntities{Text: text},
+			},
+		},
+		Date: int(r.clock.Now().Unix()),
+	})
 }
 
 func (r *Router) pushBotCommandsChanged(ctx context.Context, botUserID int64, commands []domain.BotCommand) {

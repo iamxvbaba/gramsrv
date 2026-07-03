@@ -150,6 +150,7 @@ SELECT
   COALESCE(m.ttl_period, 0)::int AS ttl_period,
   COALESCE(m.expires_at, 0)::int AS expires_at,
   COALESCE(m.edit_date, 0)::int AS edit_date,
+  COALESCE(m.hide_edited, false)::boolean AS hide_edited,
   COALESCE(m.outgoing, false)::boolean AS outgoing,
   COALESCE(m.body, '')::text AS body,
   COALESCE(m.entities::text, '[]')::text AS message_entities_json,
@@ -285,6 +286,7 @@ type BatchListDispatchEventsRow struct {
 	TtlPeriod                      int32
 	ExpiresAt                      int32
 	EditDate                       int32
+	HideEdited                     bool
 	Outgoing                       bool
 	Body                           string
 	MessageEntitiesJson            string
@@ -418,6 +420,7 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 			&i.TtlPeriod,
 			&i.ExpiresAt,
 			&i.EditDate,
+			&i.HideEdited,
 			&i.Outgoing,
 			&i.Body,
 			&i.MessageEntitiesJson,
@@ -704,6 +707,7 @@ SELECT
   COALESCE(m.ttl_period, 0)::int AS ttl_period,
   COALESCE(m.expires_at, 0)::int AS expires_at,
   COALESCE(m.edit_date, 0)::int AS edit_date,
+  COALESCE(m.hide_edited, false)::boolean AS hide_edited,
   COALESCE(m.outgoing, false)::boolean AS outgoing,
   COALESCE(m.body, '')::text AS body,
   COALESCE(m.entities::text, '[]')::text AS message_entities_json,
@@ -842,6 +846,7 @@ type ListUserUpdateEventsAfterRow struct {
 	TtlPeriod                      int32
 	ExpiresAt                      int32
 	EditDate                       int32
+	HideEdited                     bool
 	Outgoing                       bool
 	Body                           string
 	MessageEntitiesJson            string
@@ -973,6 +978,7 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 			&i.TtlPeriod,
 			&i.ExpiresAt,
 			&i.EditDate,
+			&i.HideEdited,
 			&i.Outgoing,
 			&i.Body,
 			&i.MessageEntitiesJson,

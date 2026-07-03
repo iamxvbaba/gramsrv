@@ -67,6 +67,9 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if m.EditDate != 0 {
 		msg.SetEditDate(m.EditDate)
 	}
+	if m.HideEdited {
+		msg.SetEditHide(true)
+	}
 	if m.Silent {
 		msg.SetSilent(true)
 	}
@@ -472,6 +475,12 @@ func tgMessageEntities(entities []domain.MessageEntity) []tg.MessageEntityClass 
 			out = append(out, &tg.MessageEntityPhone{Offset: entity.Offset, Length: entity.Length})
 		case domain.MessageEntityBankCard:
 			out = append(out, &tg.MessageEntityBankCard{Offset: entity.Offset, Length: entity.Length})
+		case domain.MessageEntityDiffInsert:
+			out = append(out, &tg.MessageEntityDiffInsert{Offset: entity.Offset, Length: entity.Length})
+		case domain.MessageEntityDiffReplace:
+			out = append(out, &tg.MessageEntityDiffReplace{Offset: entity.Offset, Length: entity.Length, OldText: entity.OldText})
+		case domain.MessageEntityDiffDelete:
+			out = append(out, &tg.MessageEntityDiffDelete{Offset: entity.Offset, Length: entity.Length})
 		}
 	}
 	return out

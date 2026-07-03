@@ -383,6 +383,9 @@ func (r *Router) webPagePreviewMedia(ctx context.Context, message string, entiti
 // 的 20s，避免慢/挂上游把 RPC worker 钉死。命中（含负缓存的 empty）返回 ok=true，调用方据 state
 // 决定；抓取失败返回 false。未启用返回 false。
 func (r *Router) resolveWebPageForRequest(ctx context.Context, url string) (domain.MessageWebPage, bool) {
+	if page, ok := r.resolveAIComposeStyleWebPage(ctx, url); ok {
+		return page, true
+	}
 	if r.deps.Files == nil {
 		return domain.MessageWebPage{}, false
 	}

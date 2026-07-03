@@ -642,6 +642,7 @@ func messageFromCreateRow(row sqlcgen.CreateMessageRow) (domain.Message, error) 
 		From:        domain.Peer{Type: domain.PeerTypeUser, ID: row.FromUserID},
 		Date:        int(row.MessageDate),
 		EditDate:    int(row.EditDate),
+		HideEdited:  row.HideEdited,
 		Out:         row.Outgoing,
 		Body:        row.Body,
 		Entities:    entities,

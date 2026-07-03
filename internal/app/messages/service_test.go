@@ -372,6 +372,36 @@ func TestEchoBusinessAutomationProviderSkipsEmptyText(t *testing.T) {
 	}
 }
 
+func TestAIBusinessAutomationProviderUsesGenerator(t *testing.T) {
+	generator := &fakeBusinessAITextGenerator{text: "Thanks, we will check this."}
+	msgs, err := NewAIBusinessAutomationProvider(generator).BusinessAutomationReplies(context.Background(), BusinessAutomationReplyInput{
+		Kind:        domain.BusinessAutomationGreeting,
+		OwnerUserID: 1001,
+		TriggerMessage: domain.Message{
+			Body: "hello, are you open?",
+			Entities: []domain.MessageEntity{{
+				Type:   domain.MessageEntityBold,
+				Offset: 0,
+				Length: 5,
+			}},
+		},
+		Templates: []domain.QuickReplyMessage{{Message: "Hi, thanks for contacting us."}},
+		Now:       1_700_060_000,
+	})
+	if err != nil {
+		t.Fatalf("BusinessAutomationReplies: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Message != generator.text {
+		t.Fatalf("messages = %+v, want generator reply", msgs)
+	}
+	if generator.seen.UserID != 1001 || generator.seen.Text.Text != "hello, are you open?" {
+		t.Fatalf("generator request = %#v", generator.seen)
+	}
+	if generator.seen.Instruction == "" {
+		t.Fatal("generator instruction is empty")
+	}
+}
+
 func findUser(t *testing.T, users []domain.User, id int64) domain.User {
 	t.Helper()
 	for _, user := range users {
@@ -507,6 +537,16 @@ type staticBusinessAutomationProvider struct {
 
 func (p staticBusinessAutomationProvider) BusinessAutomationReplies(context.Context, BusinessAutomationReplyInput) ([]domain.QuickReplyMessage, error) {
 	return []domain.QuickReplyMessage{{ID: 1, Message: p.message}}, nil
+}
+
+type fakeBusinessAITextGenerator struct {
+	text string
+	seen domain.AITextGenerationRequest
+}
+
+func (g *fakeBusinessAITextGenerator) GenerateText(_ context.Context, req domain.AITextGenerationRequest) (domain.AIComposeText, error) {
+	g.seen = req
+	return domain.AIComposeText{Text: g.text}, nil
 }
 
 func businessAutomationAllRecipients() domain.BusinessRecipients {

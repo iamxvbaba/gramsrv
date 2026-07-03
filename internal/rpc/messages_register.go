@@ -501,6 +501,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 	d.OnMessagesGetSearchResultsCalendar(r.onMessagesGetSearchResultsCalendar)
 	d.OnMessagesGetSearchResultsPositions(r.onMessagesGetSearchResultsPositions)
 	d.OnMessagesSendReaction(r.onMessagesSendReaction)
+	d.OnMessagesComposeMessageWithAI(r.onMessagesComposeMessageWithAI)
 	// 语音转文字无识别后端：注册为显式失败（TRANSCRIPTION_FAILED），premium
 	// 客户端点击转录按钮得到优雅失败提示，而不是 NOT_IMPLEMENTED trace。
 	d.OnMessagesTranscribeAudio(func(ctx context.Context, req *tg.MessagesTranscribeAudioRequest) (*tg.MessagesTranscribedAudio, error) {

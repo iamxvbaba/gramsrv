@@ -469,6 +469,9 @@ type MessageWebPage struct {
 	Description string              `json:"description,omitempty"`
 	Author      string              `json:"author,omitempty"`
 	Photo       *Photo              `json:"photo,omitempty"`
+	// ComposeToneEmojiID 映射 webPageAttributeAiComposeTone，用于 TDesktop 渲染
+	// addstyle tone 分享卡片；0 表示普通网页。
+	ComposeToneEmojiID int64 `json:"compose_tone_emoji_id,omitempty"`
 
 	ForceLargeMedia bool `json:"force_large_media,omitempty"`
 	ForceSmallMedia bool `json:"force_small_media,omitempty"`

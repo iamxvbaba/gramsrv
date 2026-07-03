@@ -658,12 +658,26 @@ type LangPackService interface {
 	GetStrings(ctx context.Context, langPack, langCode string, keys []string) (domain.LangPack, error)
 }
 
+// AIComposeService 抽象客户端输入框 AI 改写/润色与 aicompose tones 目录。
+// 这里只使用 domain DTO；rpc 层负责 tg.TextWithEntities/InputAiComposeTone ↔ domain 转换。
+type AIComposeService interface {
+	ListTones(ctx context.Context, userID, hash int64) (domain.AIComposeTones, bool, error)
+	GetTone(ctx context.Context, userID int64, ref domain.AIComposeToneRef) (domain.AIComposeTones, error)
+	CreateTone(ctx context.Context, input domain.AIComposeToneInput) (domain.AIComposeTone, error)
+	UpdateTone(ctx context.Context, update domain.AIComposeToneUpdate) (domain.AIComposeTone, error)
+	SaveTone(ctx context.Context, userID int64, ref domain.AIComposeToneRef, unsave bool) error
+	DeleteTone(ctx context.Context, userID int64, ref domain.AIComposeToneRef) error
+	GetToneExample(ctx context.Context, userID int64, ref domain.AIComposeToneRef, num int) (domain.AIComposeToneExample, error)
+	Compose(ctx context.Context, req domain.AIComposeRequest) (domain.AIComposeResult, error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth        AuthService
 	Account     AccountService
 	Privacy     PrivacyService
 	Help        HelpService
+	AICompose   AIComposeService
 	Users       UsersService
 	Updates     UpdatesService
 	Contacts    ContactsService

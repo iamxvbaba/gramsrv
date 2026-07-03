@@ -25,6 +25,7 @@ import (
 	adminapp "telesrv/internal/admin"
 	"telesrv/internal/adminapi"
 	"telesrv/internal/app/account"
+	aiapp "telesrv/internal/app/ai"
 	"telesrv/internal/app/auth"
 	botsapp "telesrv/internal/app/bots"
 	channelapp "telesrv/internal/app/channels"
@@ -104,7 +105,7 @@ func newLogger() (*zap.Logger, error) {
 	), nil
 }
 
-func newBusinessAutomationOptions(cfg config.Config, online messageapp.BusinessAutomationOnlineChecker, logger *zap.Logger) []messageapp.BusinessAutomationOption {
+func newBusinessAutomationOptions(cfg config.Config, online messageapp.BusinessAutomationOnlineChecker, generator messageapp.BusinessAITextGenerator, logger *zap.Logger) []messageapp.BusinessAutomationOption {
 	opts := []messageapp.BusinessAutomationOption{
 		messageapp.WithBusinessAutomationOnlineChecker(online),
 	}
@@ -115,8 +116,51 @@ func newBusinessAutomationOptions(cfg config.Config, online messageapp.BusinessA
 		logger.Info("Business automation reply provider", zap.String("provider", "echo"))
 	case "template", "quick_reply", "quick-reply":
 		logger.Info("Business automation reply provider", zap.String("provider", "template"))
+	case "ai", "compose_ai", "ai_compose", "aicompose", "kimi":
+		if generator == nil {
+			logger.Warn("Business automation AI provider requested but AI generator is unavailable", zap.String("provider", cfg.BusinessAIProvider))
+			return opts
+		}
+		opts = append(opts, messageapp.WithBusinessAutomationReplyProvider(messageapp.NewAIBusinessAutomationProvider(generator)))
+		logger.Info("Business automation reply provider", zap.String("provider", "ai"))
 	default:
 		logger.Warn("未知 Business automation AI provider，回退 quick reply 模板", zap.String("provider", cfg.BusinessAIProvider))
+	}
+	return opts
+}
+
+func newAIComposeOptions(cfg config.Config, limiter aiapp.RateLimiter, premium aiapp.PremiumChecker, logger *zap.Logger) []aiapp.Option {
+	opts := []aiapp.Option{
+		aiapp.WithEnabled(cfg.AIEnabled),
+		aiapp.WithTimeout(cfg.AITimeout),
+		aiapp.WithRateLimiter(limiter, cfg.AIRateLimit, cfg.AIRateWindow),
+		aiapp.WithPremiumChecker(premium),
+		aiapp.WithLogger(logger.Named("app").Named("ai")),
+		aiapp.WithPrivacyLogContent(cfg.AIPrivacyLogContent),
+	}
+	providers := make([]aiapp.Provider, 0, len(cfg.AIProviders))
+	for _, pc := range cfg.AIProviders {
+		provider, err := aiapp.NewProviderFromConfig(aiapp.ProviderConfig{
+			Name:            pc.Name,
+			Kind:            aiapp.ProviderKind(pc.Kind),
+			BaseURL:         pc.BaseURL,
+			APIKey:          pc.APIKey,
+			Model:           pc.Model,
+			Timeout:         cfg.AITimeout,
+			MaxOutputTokens: pc.MaxOutputTokens,
+			Temperature:     pc.Temperature,
+			OmitTemperature: pc.OmitTemperature,
+			Thinking:        pc.Thinking,
+		})
+		if err != nil {
+			logger.Warn("AI compose provider 已跳过", zap.String("provider", pc.Name), zap.String("kind", pc.Kind), zap.Error(err))
+			continue
+		}
+		providers = append(providers, provider)
+		logger.Info("AI compose provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+	}
+	if len(providers) > 0 {
+		opts = append(opts, aiapp.WithProviders(providers...))
 	}
 	return opts
 }
@@ -359,6 +403,7 @@ func run(logger *zap.Logger) error {
 	langPackStore := postgres.NewLangPackStore(pool)
 	passwordStore := postgres.NewPasswordStore(pool)
 	helpStore := postgres.NewHelpStore(pool)
+	aiComposeStore := postgres.NewAIComposeStore(pool)
 	tempAuthKeyStore := postgres.NewTempAuthKeyBindingStore(pool)
 	sessionStore := redisstore.NewSessionStore(rdb, redisstore.DefaultSessionTTL)
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
@@ -503,6 +548,8 @@ func run(logger *zap.Logger) error {
 	// 自定义云主题(Create a New Theme):主题目录与每用户已安装列表均持久化到 postgres。
 	themeService := themesapp.NewService(postgres.NewThemeStore(pool))
 	usersService := users.NewService(userStore, users.WithBaseUserCache(userCache), users.WithContactStore(contactStore), users.WithPhotoProvider(cachedPhotos), users.WithPrivacyEvaluator(privacyService))
+	aiComposeService := aiapp.NewService(aiComposeStore, newAIComposeOptions(cfg, rateLimiter, usersService.PremiumActive, logger)...)
+	botsService.SetAIChatGenerator(aiComposeService)
 	dialogsService := dialogs.NewService(dialogStore, channelStore).Configure(
 		dialogs.WithContactStore(contactStore),
 		dialogs.WithPhotoProvider(cachedPhotos),
@@ -518,7 +565,7 @@ func run(logger *zap.Logger) error {
 		channelapp.WithReadModelVersions(readModelVersionStore),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
-	businessAutomationOptions := newBusinessAutomationOptions(cfg, activeSessions, logger)
+	businessAutomationOptions := newBusinessAutomationOptions(cfg, activeSessions, aiComposeService, logger)
 	messagesService := messageapp.NewService(messageStore, dialogStore,
 		messageapp.WithContactStore(contactStore),
 		messageapp.WithPhotoProvider(cachedPhotos),
@@ -552,6 +599,7 @@ func run(logger *zap.Logger) error {
 		Account:     accountService,
 		Privacy:     privacyService,
 		Help:        help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken)),
+		AICompose:   aiComposeService,
 		Users:       usersService,
 		Updates:     updatesService,
 		Contacts:    contactsService,
@@ -605,8 +653,10 @@ func run(logger *zap.Logger) error {
 		ChannelNotifier: router,
 		Messages:        messagesService,
 	})
-	// token revoke 后踢已登录 bot session 经 router 实现（需 tg.* 边界），router 创建后注入。
+	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
+	// router 创建后注入。
 	botsService.SetRouterHooks(router)
+	botsService.SetTextDraftPusher(router)
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),

@@ -149,6 +149,7 @@ func messageFromForwardRow(row sqlcgen.GetMessageBoxesForForwardRow) (domain.Mes
 		From:           domain.Peer{Type: domain.PeerTypeUser, ID: row.FromUserID},
 		Date:           int(row.MessageDate),
 		EditDate:       int(row.EditDate),
+		HideEdited:     row.HideEdited,
 		Out:            row.Outgoing,
 		Silent:         silent,
 		NoForwards:     noforwards,

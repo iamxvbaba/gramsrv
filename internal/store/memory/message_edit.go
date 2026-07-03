@@ -44,7 +44,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if req.Message == "" && req.Media == nil && target.Media.IsZero() {
 		return res, domain.ErrMessageEmpty
 	}
-	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && equalMessageEntities(target.Entities, req.Entities) {
+	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	messageSenderID := target.From.ID
@@ -74,6 +74,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 					msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
 				}
 				msg.EditDate = req.EditDate
+				msg.HideEdited = req.HideEdited
 				msg.Pts = s.nextPtsLocked(userID)
 				s.m[userID][i] = msg
 				event := editMessageEvent(msg)

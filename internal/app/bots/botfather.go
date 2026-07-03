@@ -70,7 +70,7 @@ type botReply struct {
 
 // HandlesBot 报告该收件人是否为内置应答 bot（messages.BotResponder 实现）。
 func (s *Service) HandlesBot(botUserID int64) bool {
-	return s != nil && (botUserID == domain.BotFatherUserID || botUserID == domain.StickersBotUserID)
+	return s != nil && (botUserID == domain.BotFatherUserID || botUserID == domain.StickersBotUserID || botUserID == domain.ChatBotUserID)
 }
 
 // OnPrivateMessage 处理投递给内置 bot 的私聊消息（messages.BotResponder 实现）。
@@ -89,6 +89,8 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 		go s.respondAsBotFather(userID, msg.Body)
 	case domain.StickersBotUserID:
 		go s.respondAsStickers(userID, msg)
+	case domain.ChatBotUserID:
+		go s.respondAsChatBot(userID, msg)
 	}
 }
 
@@ -112,28 +114,39 @@ func (s *Service) serviceBotReplyLock(botUserID, userID int64) *sync.Mutex {
 }
 
 func (s *Service) sendServiceBotReply(ctx context.Context, botUserID, userID int64, reply botReply) {
+	_, _ = s.sendServiceBotReplyResult(ctx, botUserID, userID, reply)
+}
+
+func (s *Service) serviceBotRecipientBlocked(ctx context.Context, botUserID, userID int64) bool {
+	if s == nil || s.blocker == nil {
+		return false
+	}
+	blocked, err := s.blocker.IsBlocked(ctx, userID, botUserID)
+	if err != nil {
+		s.log.Warn("service bot: check block", zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
+		return false
+	}
+	return blocked
+}
+
+func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, userID int64, reply botReply) (domain.SendPrivateTextResult, bool) {
 	if s == nil || s.messages == nil || reply.Text == "" {
-		return
+		return domain.SendPrivateTextResult{}, false
 	}
-	blocked := false
-	if s.blocker != nil {
-		if b, err := s.blocker.IsBlocked(ctx, userID, botUserID); err != nil {
-			s.log.Warn("service bot: check block", zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
-		} else {
-			blocked = b
-		}
-	}
-	if _, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+	res, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:     botUserID,
 		RecipientUserID:  userID,
 		RandomID:         s.botReplyRandomID(),
 		Message:          reply.Text,
 		Entities:         serviceBotReplyEntities(reply.Text, reply.Entities),
 		Date:             int(s.now().Unix()),
-		RecipientBlocked: blocked,
-	}); err != nil {
+		RecipientBlocked: s.serviceBotRecipientBlocked(ctx, botUserID, userID),
+	})
+	if err != nil {
 		s.log.Error("service bot: send reply", zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
+		return domain.SendPrivateTextResult{}, false
 	}
+	return res, true
 }
 
 // botReplyRandomID 为服务端回复构造非零幂等键（(sender, random_id) 唯一索引）。

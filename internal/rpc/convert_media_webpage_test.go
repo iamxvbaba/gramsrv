@@ -98,6 +98,39 @@ func TestTgMessageMediaWebPageDone(t *testing.T) {
 	}
 }
 
+func TestTgMessageMediaWebPageAiComposeToneAttribute(t *testing.T) {
+	src := &domain.MessageMedia{
+		Kind: domain.MessageMediaKindWebPage,
+		WebPage: &domain.MessageWebPage{
+			State:              domain.MessageWebPageStateDone,
+			ID:                 123,
+			URL:                "https://t.me/addstyle/ai-test",
+			DisplayURL:         "t.me/addstyle/ai-test",
+			Hash:               7,
+			Type:               "telegram_aicomposetone",
+			Title:              "Sharp",
+			ComposeToneEmojiID: 99,
+		},
+	}
+	got := tgMessageMedia(jsonRoundTripMedia(t, src))
+	wrap, ok := got.(*tg.MessageMediaWebPage)
+	if !ok {
+		t.Fatalf("tgMessageMedia = %T, want *tg.MessageMediaWebPage", got)
+	}
+	page, ok := wrap.Webpage.(*tg.WebPage)
+	if !ok {
+		t.Fatalf("Webpage = %T, want *tg.WebPage", wrap.Webpage)
+	}
+	attrs, ok := page.GetAttributes()
+	if !ok || len(attrs) != 1 {
+		t.Fatalf("attributes = %#v ok=%v, want one", attrs, ok)
+	}
+	attr, ok := attrs[0].(*tg.WebPageAttributeAiComposeTone)
+	if !ok || attr.EmojiID != 99 {
+		t.Fatalf("attribute = %#v, want AiComposeTone emoji 99", attrs[0])
+	}
+}
+
 // TestTgMessageMediaWebPagePending 验证 pending 形态投影为 webPagePending{id,url,date}。
 func TestTgMessageMediaWebPagePending(t *testing.T) {
 	src := &domain.MessageMedia{

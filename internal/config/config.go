@@ -100,6 +100,17 @@ type Config struct {
 	// 空值/"echo" 回显触发私聊文本，用于跑通后续 AI provider 链路；
 	// "template" 使用 quick reply 模板。
 	BusinessAIProvider string
+	// AIEnabled 控制客户端输入框 AI 改写/润色能力；关闭时 getTones 返回空集合以隐藏入口。
+	AIEnabled bool
+	// AIProviders 是 compose AI provider 链路，按顺序尝试；默认 local，不出网。
+	AIProviders []AIProviderConfig
+	// AITimeout 是单次 provider 调用总超时。
+	AITimeout time.Duration
+	// AIRateLimit/AIRateWindow 是账号级 compose AI 限流。
+	AIRateLimit  int
+	AIRateWindow time.Duration
+	// AIPrivacyLogContent 为 false 时日志只写长度/provider/状态，不写用户输入和生成文本。
+	AIPrivacyLogContent bool
 	// TempKeyResolveCacheMaxEntries 是 Router temp→perm 解析缓存容量。
 	TempKeyResolveCacheMaxEntries int
 
@@ -232,6 +243,18 @@ type Config struct {
 	SFUAdvertiseIP string
 }
 
+type AIProviderConfig struct {
+	Name            string
+	Kind            string
+	BaseURL         string
+	APIKey          string
+	Model           string
+	MaxOutputTokens int
+	Temperature     float64
+	OmitTemperature bool
+	Thinking        string
+}
+
 // Load 从环境变量与可选配置文件读取配置并填充默认值。环境变量优先于配置文件。
 func Load() (Config, error) {
 	fileEnv, err := loadConfigEnv()
@@ -294,6 +317,12 @@ func Load() (Config, error) {
 		WebPagePreviewMaxBytes:        int64(envIntOr("TELESRV_WEBPAGE_PREVIEW_MAX_BYTES", 5<<20)),
 		WebPagePreviewRatePerMin:      envIntOr("TELESRV_WEBPAGE_PREVIEW_RATE_PER_MIN", 300),
 		BusinessAIProvider:            envOr("TELESRV_BUSINESS_AI_PROVIDER", "echo"),
+		AIEnabled:                     envBoolOr("TELESRV_AI_ENABLED", true),
+		AIProviders:                   loadAIProviders(fileEnv),
+		AITimeout:                     envDurationOr("TELESRV_AI_TIMEOUT", 15*time.Second),
+		AIRateLimit:                   envIntOr("TELESRV_AI_RATE_LIMIT", 20),
+		AIRateWindow:                  envDurationOr("TELESRV_AI_RATE_WINDOW", time.Minute),
+		AIPrivacyLogContent:           envBoolOr("TELESRV_AI_LOG_CONTENT", false),
 		TempKeyResolveCacheMaxEntries: envIntOr("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", 4096),
 		ChannelRowCacheMaxEntries:     envIntOr("TELESRV_CHANNEL_ROW_CACHE_MAX", 50000),
 		ChannelMemberCacheMaxEntries:  envIntOr("TELESRV_CHANNEL_MEMBER_CACHE_MAX", 100000),
@@ -353,6 +382,74 @@ func Load() (Config, error) {
 		SFUAdvertiseIP: envOr("TELESRV_SFU_ADVERTISE_IP", ""),
 	}
 	return cfg, nil
+}
+
+func loadAIProviders(env envSource) []AIProviderConfig {
+	names := env.envListOr("TELESRV_AI_PROVIDERS", []string{"local"})
+	out := make([]AIProviderConfig, 0, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			continue
+		}
+		suffix := providerEnvSuffix(name)
+		kind := env.envOr("TELESRV_AI_"+suffix+"_KIND", defaultAIProviderKind(name))
+		out = append(out, AIProviderConfig{
+			Name:            name,
+			Kind:            strings.ToLower(strings.TrimSpace(kind)),
+			BaseURL:         env.envOr("TELESRV_AI_"+suffix+"_BASE_URL", ""),
+			APIKey:          env.envOr("TELESRV_AI_"+suffix+"_API_KEY", defaultAIProviderAPIKey(env, name)),
+			Model:           env.envOr("TELESRV_AI_"+suffix+"_MODEL", ""),
+			MaxOutputTokens: env.envIntOr("TELESRV_AI_"+suffix+"_MAX_OUTPUT_TOKENS", 1024),
+			Temperature:     env.envFloatOr("TELESRV_AI_"+suffix+"_TEMPERATURE", 0.2),
+			OmitTemperature: env.envBoolOr("TELESRV_AI_"+suffix+"_OMIT_TEMPERATURE", false),
+			Thinking:        strings.ToLower(strings.TrimSpace(env.envOr("TELESRV_AI_"+suffix+"_THINKING", ""))),
+		})
+	}
+	if len(out) == 0 {
+		out = append(out, AIProviderConfig{Name: "local", Kind: "local", MaxOutputTokens: 1024, Temperature: 0.2})
+	}
+	return out
+}
+
+func providerEnvSuffix(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func defaultAIProviderKind(name string) string {
+	switch name {
+	case "openai":
+		return "openai_responses"
+	case "openai_chat", "openai-compatible", "openai_compat":
+		return "openai_chat"
+	case "gemini":
+		return "gemini"
+	case "anthropic":
+		return "anthropic"
+	default:
+		return name
+	}
+}
+
+func defaultAIProviderAPIKey(env envSource, name string) string {
+	switch name {
+	case "openai", "openai_chat", "openai-compatible", "openai_compat":
+		return env.envOr("OPENAI_API_KEY", "")
+	case "gemini":
+		return env.envOr("GEMINI_API_KEY", "")
+	case "anthropic":
+		return env.envOr("ANTHROPIC_API_KEY", "")
+	default:
+		return ""
+	}
 }
 
 type envSource map[string]string
@@ -499,6 +596,15 @@ func (e envSource) envIntOr(key string, def int) int {
 func (e envSource) envInt64Or(key string, def int64) int64 {
 	if v := e.envOr(key, ""); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func (e envSource) envFloatOr(key string, def float64) float64 {
+	if v := e.envOr(key, ""); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			return n
 		}
 	}

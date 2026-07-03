@@ -61,6 +61,7 @@ func NewBotStore(users *UserStore) *BotStore {
 	}
 	s.byID[domain.BotFatherUserID] = botFatherSeedProfile()
 	s.byID[domain.StickersBotUserID] = stickersSeedProfile()
+	s.byID[domain.ChatBotUserID] = chatBotSeedProfile()
 	return s
 }
 
@@ -95,6 +96,19 @@ func stickersSeedProfile() domain.BotProfile {
 			{Command: "publish", Description: "publish the current pack"},
 			{Command: "cancel", Description: "cancel the current operation"},
 			{Command: "packs", Description: "list your created packs"},
+		},
+	}
+}
+
+func chatBotSeedProfile() domain.BotProfile {
+	return domain.BotProfile{
+		BotUserID:   domain.ChatBotUserID,
+		OwnerUserID: domain.ChatBotUserID,
+		Description: "Chat with the configured telesrv AI provider.",
+		Commands: []domain.BotCommand{
+			{Command: "start", Description: "start chatting"},
+			{Command: "help", Description: "show help"},
+			{Command: "reset", Description: "clear local chat context"},
 		},
 	}
 }

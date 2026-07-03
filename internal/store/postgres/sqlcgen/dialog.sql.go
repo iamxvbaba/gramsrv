@@ -712,6 +712,7 @@ base AS (
     COALESCE(m.ttl_period, 0)::int AS message_ttl_period,
     COALESCE(m.expires_at, 0)::int AS message_expires_at,
     COALESCE(m.edit_date, 0)::int AS message_edit_date,
+    COALESCE(m.hide_edited, false)::boolean AS message_hide_edited,
     COALESCE(m.silent, false)::boolean AS message_silent,
     COALESCE(m.noforwards, false)::boolean AS message_noforwards,
     COALESCE(m.reply_to_msg_id, 0)::int AS message_reply_to_msg_id,
@@ -796,6 +797,7 @@ SELECT
   message_ttl_period,
   message_expires_at,
   message_edit_date,
+  message_hide_edited,
   message_silent,
   message_noforwards,
   message_reply_to_msg_id,
@@ -880,6 +882,7 @@ type ListDialogsByPeersRow struct {
 	MessageTtlPeriod            int32
 	MessageExpiresAt            int32
 	MessageEditDate             int32
+	MessageHideEdited           bool
 	MessageSilent               bool
 	MessageNoforwards           bool
 	MessageReplyToMsgID         int32
@@ -965,6 +968,7 @@ func (q *Queries) ListDialogsByPeers(ctx context.Context, arg ListDialogsByPeers
 			&i.MessageTtlPeriod,
 			&i.MessageExpiresAt,
 			&i.MessageEditDate,
+			&i.MessageHideEdited,
 			&i.MessageSilent,
 			&i.MessageNoforwards,
 			&i.MessageReplyToMsgID,
@@ -1052,6 +1056,7 @@ WITH base AS (
     COALESCE(m.ttl_period, 0)::int AS message_ttl_period,
     COALESCE(m.expires_at, 0)::int AS message_expires_at,
     COALESCE(m.edit_date, 0)::int AS message_edit_date,
+    COALESCE(m.hide_edited, false)::boolean AS message_hide_edited,
     COALESCE(m.silent, false)::boolean AS message_silent,
     COALESCE(m.noforwards, false)::boolean AS message_noforwards,
     COALESCE(m.reply_to_msg_id, 0)::int AS message_reply_to_msg_id,
@@ -1134,7 +1139,7 @@ WITH base AS (
     AND (NOT $16::boolean OR NOT d.pinned)
 ),
 paged AS (
-  SELECT user_id, peer_type, peer_id, folder_id, top_message_id, top_message_date, read_inbox_max_id, read_outbox_max_id, unread_count, unread_mentions_count, unread_reactions_count, ttl_period, theme_emoticon, has_scheduled, pinned, pinned_order, unread_mark, hidden_peer_settings_bar, peer_user_id, peer_access_hash, peer_phone, peer_first_name, peer_last_name, peer_username, peer_country_code, peer_verified, peer_support, peer_is_bot, peer_bot_info_version, peer_premium_until, peer_emoji_status_document_id, peer_emoji_status_until, peer_last_seen_at, peer_contact, peer_mutual, message_id, message_private_message_id, message_from_user_id, message_date, message_outgoing, message_body, message_entities_json, message_media_json, message_ttl_period, message_expires_at, message_edit_date, message_silent, message_noforwards, message_reply_to_msg_id, message_reply_to_peer_type, message_reply_to_peer_id, message_reply_to_top_id, message_reply_to_story_id, message_quote_text, message_quote_entities_json, message_quote_offset, message_fwd_from_peer_type, message_fwd_from_peer_id, message_fwd_from_name, message_fwd_date, message_fwd_saved_from_peer_type, message_fwd_saved_from_peer_id, message_fwd_saved_from_msg_id, message_saved_peer_type, message_saved_peer_id, message_media_unread, message_reaction_unread, message_via_bot_id, message_grouped_id, message_effect, message_reply_markup_json, message_rich_message_json, message_pinned
+  SELECT user_id, peer_type, peer_id, folder_id, top_message_id, top_message_date, read_inbox_max_id, read_outbox_max_id, unread_count, unread_mentions_count, unread_reactions_count, ttl_period, theme_emoticon, has_scheduled, pinned, pinned_order, unread_mark, hidden_peer_settings_bar, peer_user_id, peer_access_hash, peer_phone, peer_first_name, peer_last_name, peer_username, peer_country_code, peer_verified, peer_support, peer_is_bot, peer_bot_info_version, peer_premium_until, peer_emoji_status_document_id, peer_emoji_status_until, peer_last_seen_at, peer_contact, peer_mutual, message_id, message_private_message_id, message_from_user_id, message_date, message_outgoing, message_body, message_entities_json, message_media_json, message_ttl_period, message_expires_at, message_edit_date, message_hide_edited, message_silent, message_noforwards, message_reply_to_msg_id, message_reply_to_peer_type, message_reply_to_peer_id, message_reply_to_top_id, message_reply_to_story_id, message_quote_text, message_quote_entities_json, message_quote_offset, message_fwd_from_peer_type, message_fwd_from_peer_id, message_fwd_from_name, message_fwd_date, message_fwd_saved_from_peer_type, message_fwd_saved_from_peer_id, message_fwd_saved_from_msg_id, message_saved_peer_type, message_saved_peer_id, message_media_unread, message_reaction_unread, message_via_bot_id, message_grouped_id, message_effect, message_reply_markup_json, message_rich_message_json, message_pinned
   FROM base
   WHERE (
     ($17::int <= 0 AND $18::int <= 0)
@@ -1217,6 +1222,7 @@ SELECT
   message_ttl_period,
   message_expires_at,
   message_edit_date,
+  message_hide_edited,
   message_silent,
   message_noforwards,
   message_reply_to_msg_id,
@@ -1324,6 +1330,7 @@ type ListDialogsByUserRow struct {
 	MessageTtlPeriod            int32
 	MessageExpiresAt            int32
 	MessageEditDate             int32
+	MessageHideEdited           bool
 	MessageSilent               bool
 	MessageNoforwards           bool
 	MessageReplyToMsgID         int32
@@ -1430,6 +1437,7 @@ func (q *Queries) ListDialogsByUser(ctx context.Context, arg ListDialogsByUserPa
 			&i.MessageTtlPeriod,
 			&i.MessageExpiresAt,
 			&i.MessageEditDate,
+			&i.MessageHideEdited,
 			&i.MessageSilent,
 			&i.MessageNoforwards,
 			&i.MessageReplyToMsgID,

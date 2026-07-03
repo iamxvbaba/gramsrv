@@ -14,6 +14,11 @@ const (
 	StickersBotUserID int64 = 1063110917
 	// StickersBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
 	StickersBotAccessHash int64 = 5213187021149032991
+
+	// ChatBotUserID 是内置 @ChatBot 账号。它把私聊文本转给 server AI provider 链。
+	ChatBotUserID int64 = 1250000007
+	// ChatBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
+	ChatBotAccessHash int64 = 6332902371644871201
 )
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
@@ -55,6 +60,19 @@ func StickersBotUser() User {
 	}
 }
 
+// ChatBotUser 返回内置 @ChatBot 账号。
+func ChatBotUser() User {
+	return User{
+		ID:             ChatBotUserID,
+		AccessHash:     ChatBotAccessHash,
+		FirstName:      "ChatBot",
+		Username:       "ChatBot",
+		Verified:       true,
+		Bot:            true,
+		BotInfoVersion: 1,
+	}
+}
+
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
 // 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
 func SystemUserByID(id int64) (User, bool) {
@@ -65,6 +83,8 @@ func SystemUserByID(id int64) (User, bool) {
 		return BotFatherUser(), true
 	case StickersBotUserID:
 		return StickersBotUser(), true
+	case ChatBotUserID:
+		return ChatBotUser(), true
 	}
 	return User{}, false
 }
@@ -76,7 +96,7 @@ func IsSystemUserID(id int64) bool {
 
 func SystemUserByPhone(phone string) (User, bool) {
 	phone = NormalizePhone(phone)
-	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID} {
+	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID} {
 		u, ok := SystemUserByID(id)
 		if !ok || u.Phone == "" {
 			continue
