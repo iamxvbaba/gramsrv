@@ -50,13 +50,13 @@ func TestUploadGetFileRejectsInvalidRanges(t *testing.T) {
 
 func TestFileLocationKeyUsesDocumentID(t *testing.T) {
 	key, ok := fileLocationKey(&tg.InputDocumentFileLocation{
-		ID:        1382305375846410902,
+		ID:        5382305375846410902,
 		ThumbSize: "m",
 	})
 	if !ok {
 		t.Fatal("fileLocationKey returned !ok")
 	}
-	const want = "doc:1382305375846410902:m"
+	const want = "doc:5382305375846410902:m"
 	if key != want {
 		t.Fatalf("key = %q, want %q", key, want)
 	}

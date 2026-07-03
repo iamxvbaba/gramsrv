@@ -33,7 +33,7 @@ func localTransform(text string, req domain.AIComposeRequest, tone domain.AIComp
 		return ensureSentencePunctuation(text)
 	case "friendly":
 		return ensureSentencePunctuation(text)
-	case "concise":
+	case "short", "concise":
 		return trimVerboseLead(text)
 	default:
 		return ensureSentencePunctuation(text)
