@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"telesrv/internal/config"
 )
 
 func main() {
@@ -69,28 +71,39 @@ type uiConfig struct {
 	SessionKey    []byte
 }
 
+// loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
+// 并转换为 telesrv-admin 需要的 uiConfig。环境变量优先级高于 .env 文件。
 func loadConfig() (uiConfig, error) {
-	cfg := uiConfig{
-		Addr:          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2400"),
-		PostgresDSN:   envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv?sslmode=disable"),
-		AdminAPIURL:   adminAPIURL(envOr("TELESRV_ADMIN_API_ADDR", "127.0.0.1:2399")),
-		AdminAPIToken: os.Getenv("TELESRV_ADMIN_API_TOKEN"),
-		Password:      os.Getenv("TELESRV_ADMIN_UI_PASSWORD"),
-		Token:         os.Getenv("TELESRV_ADMIN_UI_TOKEN"),
+	appCfg, err := config.Load()
+	if err != nil {
+		return uiConfig{}, fmt.Errorf("load config: %w", err)
 	}
-	if cfg.Password == "" && cfg.Token == "" {
-		return cfg, fmt.Errorf("TELESRV_ADMIN_UI_PASSWORD or TELESRV_ADMIN_UI_TOKEN is required")
+
+	adminAPIAddr := appCfg.AdminAPIAddr
+	if strings.TrimSpace(adminAPIAddr) == "" {
+		adminAPIAddr = "127.0.0.1:2399"
 	}
-	if strings.TrimSpace(cfg.AdminAPIToken) == "" {
-		return cfg, fmt.Errorf("TELESRV_ADMIN_API_TOKEN is required for admin write actions")
+
+	if appCfg.AdminUIPassword == "" && appCfg.AdminUIToken == "" {
+		return uiConfig{}, fmt.Errorf("TELESRV_ADMIN_UI_PASSWORD or TELESRV_ADMIN_UI_TOKEN is required")
 	}
-	rawKey := os.Getenv("TELESRV_ADMIN_SESSION_KEY")
-	if rawKey == "" {
-		return cfg, fmt.Errorf("TELESRV_ADMIN_SESSION_KEY is required")
+	if strings.TrimSpace(appCfg.AdminAPIToken) == "" {
+		return uiConfig{}, fmt.Errorf("TELESRV_ADMIN_API_TOKEN is required for admin write actions")
 	}
-	sum := sha256.Sum256([]byte(rawKey))
-	cfg.SessionKey = sum[:]
-	return cfg, nil
+	if appCfg.AdminSessionKey == "" {
+		return uiConfig{}, fmt.Errorf("TELESRV_ADMIN_SESSION_KEY is required")
+	}
+	sum := sha256.Sum256([]byte(appCfg.AdminSessionKey))
+
+	return uiConfig{
+		Addr:          appCfg.AdminUIAddr,
+		PostgresDSN:   appCfg.PostgresDSN,
+		AdminAPIURL:   adminAPIURL(adminAPIAddr),
+		AdminAPIToken: appCfg.AdminAPIToken,
+		Password:      appCfg.AdminUIPassword,
+		Token:         appCfg.AdminUIToken,
+		SessionKey:    sum[:],
+	}, nil
 }
 
 func adminAPIURL(addr string) string {
@@ -102,13 +115,6 @@ func adminAPIURL(addr string) string {
 		return strings.TrimRight(addr, "/")
 	}
 	return "http://" + addr
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 func newCommandID(prefix string) string {
