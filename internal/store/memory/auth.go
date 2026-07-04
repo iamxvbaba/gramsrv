@@ -158,6 +158,20 @@ func (s *AuthorizationStore) ByAuthKey(_ context.Context, id [8]byte) (domain.Au
 	return a, ok, nil
 }
 
+func (s *AuthorizationStore) UpdateLayer(_ context.Context, id [8]byte, layer int) error {
+	if layer <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	if a, ok := s.m[id]; ok {
+		a.Layer = layer
+		a.ActiveAt = time.Now()
+		s.m[id] = a
+	}
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *AuthorizationStore) MarkPasswordPassed(_ context.Context, id [8]byte) error {
 	s.mu.Lock()
 	if a, ok := s.m[id]; ok {

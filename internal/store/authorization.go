@@ -10,6 +10,7 @@ import (
 type AuthorizationStore interface {
 	Bind(ctx context.Context, a domain.Authorization) error
 	ByAuthKey(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
+	UpdateLayer(ctx context.Context, authKeyID [8]byte, layer int) error
 	ListByUser(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	Delete(ctx context.Context, authKeyID [8]byte) error
 	DeleteByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error)

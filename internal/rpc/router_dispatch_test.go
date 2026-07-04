@@ -133,7 +133,7 @@ func TestDispatchRemembersLayerAndClientTypeForSession(t *testing.T) {
 	}
 
 	sessionCtx := WithSessionID(WithRawAuthKeyID(WithAuthKeyID(context.Background(), rawAuthKeyID), rawAuthKeyID), sessionID)
-	info, ok := r.clientSessionInfo(sessionCtx)
+	info, ok, _ := r.clientSessionInfo(sessionCtx)
 	if !ok {
 		t.Fatalf("session metadata missing")
 	}
@@ -218,11 +218,14 @@ func TestAndroidLegacyCompatLogsClientMetadataWithoutInit(t *testing.T) {
 		t.Fatalf("RPC inner handled log missing")
 	}
 	fields := entries[len(entries)-1].ContextMap()
-	if got := intLogField(fields["layer"]); got != currentClientLayer {
-		t.Fatalf("logged layer = %d fields=%v, want %d", got, fields, currentClientLayer)
+	if got := intLogField(fields["layer"]); got != 0 {
+		t.Fatalf("logged layer = %d fields=%v, want 0", got, fields)
 	}
 	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
 		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)
+	}
+	if got, ok := r.NegotiatedLayer(rawAuthKeyID, sessionID); ok || got != currentClientLayer {
+		t.Fatalf("negotiated layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 }
 
@@ -252,6 +255,67 @@ func TestNegotiatedLayerStickyContract(t *testing.T) {
 	// Unrelated auth_key stays unknown.
 	if _, ok := r.NegotiatedLayer([8]byte{9, 9}, session); ok {
 		t.Fatalf("unrelated auth_key reported known")
+	}
+}
+
+func TestObservedClientLayerOverridesStaleAuthFallback(t *testing.T) {
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
+	rawAuthKey := [8]byte{0x68, 0x25, 0x7a, 0x01}
+	effectiveAuthKey := [8]byte{0x8b, 0x6f, 0x26, 0x17}
+	ctx := WithAuthKeyID(
+		WithSessionID(WithRawAuthKeyID(context.Background(), rawAuthKey), 100),
+		effectiveAuthKey,
+	)
+
+	r.rememberClientSessionInfo(ctx, clientSessionInfo{layer: currentClientLayer})
+	r.rememberClientLayer(ctx, 225)
+
+	if got, ok := r.NegotiatedLayer(rawAuthKey, 100); !ok || got != 225 {
+		t.Fatalf("exact session layer = (%d,%v), want (225,true)", got, ok)
+	}
+	if got, ok := r.NegotiatedLayer(rawAuthKey, 101); !ok || got != 225 {
+		t.Fatalf("raw auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	}
+	if got, ok := r.NegotiatedLayer(effectiveAuthKey, 101); !ok || got != 225 {
+		t.Fatalf("effective auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	}
+}
+
+func TestInvokeWithLayerPersistsClientLayerUpgrade(t *testing.T) {
+	authKeyID := [8]byte{0x68, 0x25, 0x7a, 0x02}
+	userID := int64(1780269504)
+	auth := &captureAuthService{
+		userID: userID,
+		authorizations: []domain.Authorization{{
+			AuthKeyID: authKeyID,
+			UserID:    userID,
+			Layer:     225,
+		}},
+	}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+	req := &tg.InvokeWithLayerRequest{
+		Layer: currentClientLayer,
+		Query: &tg.HelpGetConfigRequest{},
+	}
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatalf("encode invokeWithLayer: %v", err)
+	}
+
+	if _, err := r.Dispatch(context.Background(), authKeyID, 100, &in); err != nil {
+		t.Fatalf("dispatch invokeWithLayer: %v", err)
+	}
+
+	if auth.layerUpdates != 1 {
+		t.Fatalf("layer update calls = %d, want 1", auth.layerUpdates)
+	}
+	if got := auth.authorizations[0].Layer; got != currentClientLayer {
+		t.Fatalf("persisted layer = %d, want %d", got, currentClientLayer)
+	}
+	if got, ok := r.NegotiatedLayer(authKeyID, 101); !ok || got != currentClientLayer {
+		t.Fatalf("new session negotiated layer = (%d,%v), want (%d,true)", got, ok, currentClientLayer)
 	}
 }
 
@@ -331,6 +395,69 @@ func TestDispatchRestoresClientMetadataFromAuthorization(t *testing.T) {
 	}
 }
 
+func TestDispatchCopiesEffectiveAuthLayerToRawTempSession(t *testing.T) {
+	rawAuthKeyID := [8]byte{0x1a, 0x2d, 0x2d, 0x3d, 0x4b, 0x38, 0x62, 0xc0}
+	permAuthKeyID := [8]byte{0x5b, 0x1c, 0x12, 0x24, 0x98, 0x85, 0x60, 0xc1}
+	userID := int64(1780243218)
+	auth := &captureAuthService{
+		resolvedAuthKeyID: permAuthKeyID,
+		hasResolved:       true,
+		userID:            userID,
+		authorizations: []domain.Authorization{{
+			AuthKeyID:     permAuthKeyID,
+			UserID:        userID,
+			Layer:         225,
+			DeviceModel:   "nubiaNX629J",
+			Platform:      string(ClientTypeAndroid),
+			SystemVersion: "SDK 30",
+			AppVersion:    "12.7.3 (67509) pbeta",
+		}},
+	}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+
+	var warm bin.Buffer
+	if err := (&tg.HelpGetConfigRequest{}).Encode(&warm); err != nil {
+		t.Fatalf("encode warm request: %v", err)
+	}
+	if _, err := r.Dispatch(context.Background(), permAuthKeyID, 11, &warm); err != nil {
+		t.Fatalf("dispatch warm perm request: %v", err)
+	}
+	if got, ok := r.NegotiatedLayer(permAuthKeyID, 12); !ok || got != 225 {
+		t.Fatalf("perm auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	}
+
+	var firstTempRequest bin.Buffer
+	if err := (&tg.HelpGetConfigRequest{}).Encode(&firstTempRequest); err != nil {
+		t.Fatalf("encode temp request: %v", err)
+	}
+	const tempSessionID = int64(5579025282411299519)
+	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, tempSessionID, &firstTempRequest); err != nil {
+		t.Fatalf("dispatch first temp request: %v", err)
+	}
+	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID); !ok || got != 225 {
+		t.Fatalf("raw temp exact session layer = (%d,%v), want (225,true)", got, ok)
+	}
+	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID+1); !ok || got != 225 {
+		t.Fatalf("raw temp auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	}
+	hotCtx := WithAuthKeyID(
+		WithSessionID(WithRawAuthKeyID(context.Background(), rawAuthKeyID), tempSessionID),
+		permAuthKeyID,
+	)
+	info, ok, stored := r.clientSessionInfo(hotCtx)
+	if !ok || info.layer != 225 {
+		t.Fatalf("cached temp session info = (%+v,%v), want layer 225", info, ok)
+	}
+	if !stored {
+		t.Fatalf("cached temp session metadata is not fully materialized for hot path")
+	}
+	if wrote := r.rememberClientSessionInfoIfMissing(hotCtx, info); wrote {
+		t.Fatalf("hot path rewrote already materialized client session metadata")
+	}
+}
+
 func TestDispatchRestoresAndroidMetadataFromAuthorizationSDKVersion(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	authKeyID := [8]byte{0x16, 0x65, 0x54, 0x12, 0xaa, 0xbb, 0xcc, 0xdd}
@@ -363,8 +490,8 @@ func TestDispatchRestoresAndroidMetadataFromAuthorizationSDKVersion(t *testing.T
 		t.Fatalf("RPC inner handled log missing")
 	}
 	fields := entries[len(entries)-1].ContextMap()
-	if got := intLogField(fields["layer"]); got != currentClientLayer {
-		t.Fatalf("logged layer = %d fields=%v, want %d", got, fields, currentClientLayer)
+	if got := intLogField(fields["layer"]); got != 0 {
+		t.Fatalf("logged layer = %d fields=%v, want 0", got, fields)
 	}
 	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
 		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)

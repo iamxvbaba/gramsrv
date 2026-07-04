@@ -39,6 +39,7 @@ type AuthService interface {
 	SignInBot(ctx context.Context, a domain.Authorization, token string) (domain.User, error)
 	LogOut(ctx context.Context, authKeyID [8]byte) error
 	Authorization(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
+	UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	ResetAuthorization(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error)
 	ResetAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error)

@@ -68,6 +68,18 @@ FROM authorizations WHERE auth_key_id = $1`, authKeyIDToInt64(id))
 	return a, true, nil
 }
 
+func (s *AuthorizationStore) UpdateLayer(ctx context.Context, id [8]byte, layer int) error {
+	if layer <= 0 {
+		return nil
+	}
+	if _, err := s.db.Exec(ctx, `
+UPDATE authorizations SET layer = $2, active_at = now() WHERE auth_key_id = $1`,
+		authKeyIDToInt64(id), int32(layer)); err != nil {
+		return fmt.Errorf("update authorization layer: %w", err)
+	}
+	return nil
+}
+
 // MarkPasswordPassed 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。
 func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte) error {
 	if _, err := s.db.Exec(ctx, `

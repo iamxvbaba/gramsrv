@@ -212,12 +212,13 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 		ctx = WithUserID(ctx, userID)
 	}
 	tUser := r.clock.Now()
-	info, hasClientMetadata := r.clientSessionInfo(ctx)
+	info, hasClientMetadata, clientMetadataStored := r.clientSessionInfo(ctx)
 	if hasUserID {
 		if authInfo, ok := r.clientSessionInfoFromAuthorization(ctx, userID, effectiveAuthKeyID, info); ok {
 			info = mergeClientSessionInfo(info, authInfo)
 			hasClientMetadata = true
 			r.rememberClientSessionInfo(ctx, info)
+			clientMetadataStored = true
 		}
 	}
 	// 前置鉴权阶段（auth key 解析 / user 重校验 / client info）慢路径告警：超阈值才记，避免刷屏。
@@ -237,6 +238,9 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 		}
 	}
 	if hasClientMetadata {
+		if !clientMetadataStored {
+			r.rememberClientSessionInfoIfMissing(ctx, info)
+		}
 		if info.layer != 0 {
 			ctx = WithLayer(ctx, info.layer)
 		}
@@ -590,8 +594,8 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 				}
 				id = newID
 				if clientDrift {
-					// 客户端漂移多来自未完整 initConnection 的 DrKLO；按既有行为在
-					// 类型/层未知时兜底为 android（withAndroidCompatMetadata 自带 unknown 守卫）。
+					// 客户端漂移只能证明这是 Android 兼容路径；layer 仍以
+					// invokeWithLayer 或授权记录里的真实观测值为准。
 					ctx = r.withAndroidCompatMetadata(ctx)
 				}
 			}
@@ -675,9 +679,48 @@ func (r *Router) rememberClientInfo(ctx context.Context, info ClientInfo) {
 }
 
 func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
-	r.mutateClientSessionInfo(ctx, func(sessionInfo *clientSessionInfo) {
-		sessionInfo.layer = layer
-	})
+	if layer <= 0 {
+		return
+	}
+	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
+	if !ok {
+		return
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return
+	}
+	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
+	persistAuthLayer := false
+	r.clientInfoMu.Lock()
+	if r.clientInfo == nil {
+		r.clientInfo = make(map[clientInfoSessionKey]clientSessionInfo)
+	}
+	if hasAuthKeyID {
+		if info, ok := r.authInfo[authKeyID]; !ok || info.layer != layer {
+			persistAuthLayer = true
+		}
+	}
+	sessionKey := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	sessionInfo, exists := r.clientInfo[sessionKey]
+	sessionInfo.layer = layer
+	if !exists {
+		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
+	}
+	r.clientInfo[sessionKey] = sessionInfo
+	r.rememberAuthClientLayerLocked(rawAuthKeyID, layer)
+	if hasAuthKeyID {
+		r.rememberAuthClientLayerLocked(authKeyID, layer)
+	}
+	r.clientInfoMu.Unlock()
+	if persistAuthLayer && r.deps.Auth != nil {
+		if err := r.deps.Auth.UpdateAuthorizationLayer(ctx, authKeyID, layer); err != nil {
+			r.log.Warn("update authorization layer failed",
+				zap.Int("layer", layer),
+				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID[:])),
+				zap.Error(err))
+		}
+	}
 }
 
 // NegotiatedLayer returns the TL layer the given session negotiated via
@@ -753,6 +796,71 @@ func (r *Router) rememberClientSessionInfo(ctx context.Context, sessionInfo clie
 	}
 }
 
+func (r *Router) rememberClientSessionInfoIfMissing(ctx context.Context, sessionInfo clientSessionInfo) bool {
+	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
+	if !ok {
+		return false
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return false
+	}
+	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
+	if r.clientSessionInfoStored(rawAuthKeyID, sessionID, authKeyID, hasAuthKeyID, sessionInfo) {
+		return false
+	}
+	r.clientInfoMu.Lock()
+	defer r.clientInfoMu.Unlock()
+	if r.clientSessionInfoStoredLocked(rawAuthKeyID, sessionID, authKeyID, hasAuthKeyID, sessionInfo) {
+		return false
+	}
+	if r.clientInfo == nil {
+		r.clientInfo = make(map[clientInfoSessionKey]clientSessionInfo)
+	}
+	sessionKey := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	if _, exists := r.clientInfo[sessionKey]; !exists {
+		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
+	}
+	r.clientInfo[sessionKey] = mergeClientSessionInfo(r.clientInfo[sessionKey], sessionInfo)
+	r.rememberAuthClientInfoLocked(rawAuthKeyID, sessionInfo)
+	if hasAuthKeyID {
+		r.rememberAuthClientInfoLocked(authKeyID, sessionInfo)
+	}
+	return true
+}
+
+func (r *Router) clientSessionInfoStored(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte, hasAuthKeyID bool, required clientSessionInfo) bool {
+	r.clientInfoMu.RLock()
+	defer r.clientInfoMu.RUnlock()
+	return r.clientSessionInfoStoredLocked(rawAuthKeyID, sessionID, authKeyID, hasAuthKeyID, required)
+}
+
+func (r *Router) clientSessionInfoStoredLocked(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte, hasAuthKeyID bool, required clientSessionInfo) bool {
+	if !clientSessionInfoContains(r.clientInfo[clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}], required) {
+		return false
+	}
+	if !clientSessionInfoContains(r.authInfo[rawAuthKeyID], required) {
+		return false
+	}
+	if hasAuthKeyID && !clientSessionInfoContains(r.authInfo[authKeyID], required) {
+		return false
+	}
+	return true
+}
+
+func clientSessionInfoContains(current, required clientSessionInfo) bool {
+	if required.layer != 0 && current.layer != required.layer {
+		return false
+	}
+	if required.hasClientInfo && (!current.hasClientInfo || current.clientInfo != required.clientInfo) {
+		return false
+	}
+	if required.authorizationChecked && !current.authorizationChecked {
+		return false
+	}
+	return true
+}
+
 func (r *Router) rememberAuthClientInfoLocked(authKeyID [8]byte, info clientSessionInfo) {
 	if r.authInfo == nil {
 		r.authInfo = make(map[[8]byte]clientSessionInfo)
@@ -762,6 +870,21 @@ func (r *Router) rememberAuthClientInfoLocked(authKeyID [8]byte, info clientSess
 	}
 	current := r.authInfo[authKeyID]
 	r.authInfo[authKeyID] = mergeClientSessionInfo(current, info)
+}
+
+func (r *Router) rememberAuthClientLayerLocked(authKeyID [8]byte, layer int) {
+	if layer <= 0 {
+		return
+	}
+	if r.authInfo == nil {
+		r.authInfo = make(map[[8]byte]clientSessionInfo)
+	}
+	if _, exists := r.authInfo[authKeyID]; !exists {
+		evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+	}
+	info := r.authInfo[authKeyID]
+	info.layer = layer
+	r.authInfo[authKeyID] = info
 }
 
 // forgetClientSessionInfo 随连接下线移除该 session 的元数据缓存条目，并清掉以该 raw
@@ -786,29 +909,33 @@ func evictMapEntryIfFullLocked[K comparable, V any](m map[K]V, limit int) {
 	}
 }
 
-func (r *Router) clientSessionInfo(ctx context.Context) (clientSessionInfo, bool) {
+func (r *Router) clientSessionInfo(ctx context.Context) (clientSessionInfo, bool, bool) {
 	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
 	if !ok {
-		return clientSessionInfo{}, false
+		return clientSessionInfo{}, false, false
 	}
 	sessionID, ok := SessionIDFrom(ctx)
 	if !ok {
-		return clientSessionInfo{}, false
+		return clientSessionInfo{}, false, false
 	}
 	r.clientInfoMu.RLock()
 	defer r.clientInfoMu.RUnlock()
 	info, ok := r.clientInfo[clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}]
+	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
 	if authInfo, authOK := r.authInfo[rawAuthKeyID]; authOK {
 		info = mergeClientSessionInfo(info, authInfo)
 		ok = true
 	}
-	if authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx); hasAuthKeyID {
+	if hasAuthKeyID {
 		if authInfo, authOK := r.authInfo[authKeyID]; authOK {
 			info = mergeClientSessionInfo(info, authInfo)
 			ok = true
 		}
 	}
-	return info, ok
+	if !ok {
+		return info, false, false
+	}
+	return info, true, r.clientSessionInfoStoredLocked(rawAuthKeyID, sessionID, authKeyID, hasAuthKeyID, info)
 }
 
 func (r *Router) cachedResolvedAuthClientInfo(authKeyID [8]byte) (clientSessionInfo, bool) {
@@ -879,8 +1006,6 @@ func clientSessionInfoFromAuthorizationRecord(item domain.Authorization, current
 	if info.layer == 0 {
 		if current.layer != 0 {
 			info.layer = current.layer
-		} else if info.clientInfo.ClientType() != ClientTypeUnknown {
-			info.layer = currentClientLayer
 		}
 	}
 	return info

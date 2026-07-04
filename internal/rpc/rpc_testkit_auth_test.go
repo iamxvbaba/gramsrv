@@ -24,6 +24,7 @@ type captureAuthService struct {
 	authorizations        []domain.Authorization
 	authorizationLookups  int
 	authorizationLists    int
+	layerUpdates          int
 	loggedOutAuthKeyID    [8]byte
 	pendingPasswordUserID int64
 	pendingPassword       bool
@@ -109,6 +110,10 @@ func (s *blockingUserAuthService) LogOut(context.Context, [8]byte) error {
 
 func (s *blockingUserAuthService) Authorization(context.Context, [8]byte) (domain.Authorization, bool, error) {
 	return domain.Authorization{}, false, nil
+}
+
+func (s *blockingUserAuthService) UpdateAuthorizationLayer(context.Context, [8]byte, int) error {
+	return nil
 }
 
 func (s *blockingUserAuthService) ListAuthorizations(context.Context, int64) ([]domain.Authorization, error) {
@@ -220,6 +225,17 @@ func (s *captureAuthService) Authorization(_ context.Context, authKeyID [8]byte)
 		}
 	}
 	return domain.Authorization{}, false, nil
+}
+
+func (s *captureAuthService) UpdateAuthorizationLayer(_ context.Context, authKeyID [8]byte, layer int) error {
+	s.layerUpdates++
+	for i := range s.authorizations {
+		if s.authorizations[i].AuthKeyID == authKeyID {
+			s.authorizations[i].Layer = layer
+			return nil
+		}
+	}
+	return nil
 }
 
 func (s *captureAuthService) ListAuthorizations(context.Context, int64) ([]domain.Authorization, error) {

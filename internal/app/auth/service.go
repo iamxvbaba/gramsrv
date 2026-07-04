@@ -518,6 +518,13 @@ func (s *Service) Authorization(ctx context.Context, authKeyID [8]byte) (domain.
 	return s.auths.ByAuthKey(ctx, authKeyID)
 }
 
+func (s *Service) UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error {
+	if s == nil || s.auths == nil || authKeyID == ([8]byte{}) || layer <= 0 {
+		return nil
+	}
+	return s.auths.UpdateLayer(ctx, authKeyID, layer)
+}
+
 func (s *Service) ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error) {
 	if s == nil || s.auths == nil || userID == 0 {
 		return nil, nil
