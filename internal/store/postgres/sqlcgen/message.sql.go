@@ -3554,9 +3554,13 @@ SET body = $1::text,
     reply_markup = CASE
       WHEN $6::boolean THEN $7::jsonb
       ELSE reply_markup
+    END,
+    rich_message = CASE
+      WHEN $8::boolean THEN $9::jsonb
+      ELSE rich_message
     END
-WHERE owner_user_id = $8::bigint
-  AND box_id = $9::int
+WHERE owner_user_id = $10::bigint
+  AND box_id = $11::int
   AND NOT deleted
 RETURNING
   box_id,
@@ -3613,6 +3617,8 @@ type UpdateMessageBoxEditParams struct {
 	Pts             int32
 	SetReplyMarkup  bool
 	ReplyMarkupJson []byte
+	SetRichMessage  bool
+	RichMessageJson []byte
 	OwnerUserID     int64
 	BoxID           int32
 }
@@ -3673,6 +3679,8 @@ func (q *Queries) UpdateMessageBoxEdit(ctx context.Context, arg UpdateMessageBox
 		arg.Pts,
 		arg.SetReplyMarkup,
 		arg.ReplyMarkupJson,
+		arg.SetRichMessage,
+		arg.RichMessageJson,
 		arg.OwnerUserID,
 		arg.BoxID,
 	)
@@ -3735,9 +3743,13 @@ SET body = $1::text,
     reply_markup = CASE
       WHEN $5::boolean THEN $6::jsonb
       ELSE reply_markup
+    END,
+    rich_message = CASE
+      WHEN $7::boolean THEN $8::jsonb
+      ELSE rich_message
     END
-WHERE sender_user_id = $7::bigint
-  AND id = $8::bigint
+WHERE sender_user_id = $9::bigint
+  AND id = $10::bigint
 `
 
 type UpdatePrivateMessageEditParams struct {
@@ -3747,6 +3759,8 @@ type UpdatePrivateMessageEditParams struct {
 	HideEdited       bool
 	SetReplyMarkup   bool
 	ReplyMarkupJson  []byte
+	SetRichMessage   bool
+	RichMessageJson  []byte
 	SenderUserID     int64
 	PrivateMessageID int64
 }
@@ -3759,6 +3773,8 @@ func (q *Queries) UpdatePrivateMessageEdit(ctx context.Context, arg UpdatePrivat
 		arg.HideEdited,
 		arg.SetReplyMarkup,
 		arg.ReplyMarkupJson,
+		arg.SetRichMessage,
+		arg.RichMessageJson,
 		arg.SenderUserID,
 		arg.PrivateMessageID,
 	)

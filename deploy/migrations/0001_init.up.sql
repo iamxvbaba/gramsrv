@@ -1759,7 +1759,7 @@ CREATE TABLE public.channel_messages (
     reply_markup jsonb DEFAULT '{}'::jsonb NOT NULL,
     from_boosts_applied integer DEFAULT 0 NOT NULL,
     rich_message jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT channel_messages_content_check CHECK (((body <> ''::text) OR (action <> '{}'::jsonb) OR (media <> '{}'::jsonb))),
+    CONSTRAINT channel_messages_content_check CHECK (((body <> ''::text) OR (action <> '{}'::jsonb) OR (media <> '{}'::jsonb) OR (rich_message <> '{}'::jsonb))),
     CONSTRAINT channel_messages_peer_type_check CHECK ((((from_peer_type)::text = ANY (ARRAY[('user'::character varying)::text, ('channel'::character varying)::text])) AND ((send_as_peer_type IS NULL) OR ((send_as_peer_type)::text = ANY (ARRAY[('user'::character varying)::text, ('channel'::character varying)::text]))) AND (((reply_to_peer_type)::text = ''::text) OR ((reply_to_peer_type)::text = ANY (ARRAY[('user'::character varying)::text, ('channel'::character varying)::text])))))
 );
 
@@ -2472,7 +2472,7 @@ CREATE TABLE public.private_messages (
     reply_markup jsonb DEFAULT '{}'::jsonb NOT NULL,
     via_bot_id bigint DEFAULT 0 NOT NULL,
     rich_message jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT private_messages_nonempty_body CHECK (((body <> ''::text) OR (media <> '{}'::jsonb)))
+    CONSTRAINT private_messages_nonempty_body CHECK (((body <> ''::text) OR (media <> '{}'::jsonb) OR (rich_message <> '{}'::jsonb)))
 );
 
 
@@ -2596,6 +2596,7 @@ CREATE TABLE public.scheduled_messages (
     body text DEFAULT ''::text NOT NULL,
     entities jsonb DEFAULT '[]'::jsonb NOT NULL,
     media jsonb DEFAULT '{}'::jsonb NOT NULL,
+    rich_message jsonb DEFAULT '{}'::jsonb NOT NULL,
     silent boolean DEFAULT false NOT NULL,
     noforwards boolean DEFAULT false NOT NULL,
     reply_to_msg_id integer DEFAULT 0 NOT NULL,

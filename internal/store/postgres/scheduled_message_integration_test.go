@@ -107,4 +107,72 @@ func TestScheduledMessageEditPreservesContentWhenMessageUnset(t *testing.T) {
 	if !errors.Is(err, domain.ErrMessageEmpty) {
 		t.Fatalf("empty text scheduled edit err = %v, want ErrMessageEmpty", err)
 	}
+
+	richInitial := &domain.MessageRichMessage{Rtl: true, Blocks: []byte{1, 2, 3, 4}}
+	richOnly, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{
+		OwnerUserID:  owner.ID,
+		Peer:         peer,
+		RandomID:     7003,
+		RichMessage:  richInitial,
+		ScheduleDate: 1700021600,
+		Date:         1700000500,
+	})
+	if err != nil {
+		t.Fatalf("create rich scheduled message: %v", err)
+	}
+	if !richMessagesEqual(richOnly.RichMessage, richInitial) || richOnly.Message != "" || !richOnly.Media.IsZero() {
+		t.Fatalf("rich scheduled create = %+v, want rich-only content", richOnly)
+	}
+	gotRich, err := messages.GetScheduledMessages(ctx, domain.ScheduledMessageFilter{
+		OwnerUserID: owner.ID,
+		Peer:        peer,
+		IDs:         []int{richOnly.ID},
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("get rich scheduled message: %v", err)
+	}
+	if len(gotRich.Messages) != 1 || !richMessagesEqual(gotRich.Messages[0].RichMessage, richInitial) {
+		t.Fatalf("get rich scheduled = %+v, want original rich", gotRich.Messages)
+	}
+	richDateOnly, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
+		OwnerUserID:  owner.ID,
+		Peer:         peer,
+		ID:           richOnly.ID,
+		ScheduleDate: 1700025200,
+		Date:         1700000600,
+	})
+	if err != nil {
+		t.Fatalf("date-only edit rich scheduled message: %v", err)
+	}
+	if richDateOnly.ScheduleDate != 1700025200 || !richMessagesEqual(richDateOnly.RichMessage, richInitial) {
+		t.Fatalf("date-only rich scheduled edit = %+v, want original rich and new date", richDateOnly)
+	}
+	richEdited := &domain.MessageRichMessage{Part: true, Blocks: []byte{5, 6, 7}}
+	editedRich, err := messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
+		OwnerUserID:    owner.ID,
+		Peer:           peer,
+		ID:             richOnly.ID,
+		SetRichMessage: true,
+		RichMessage:    richEdited,
+		ScheduleDate:   1700028800,
+		Date:           1700000700,
+	})
+	if err != nil {
+		t.Fatalf("edit rich scheduled message: %v", err)
+	}
+	if !richMessagesEqual(editedRich.RichMessage, richEdited) || editedRich.ScheduleDate != 1700028800 {
+		t.Fatalf("edited rich scheduled = %+v, want replacement rich", editedRich)
+	}
+	_, err = messages.EditScheduledMessage(ctx, domain.EditScheduledMessageRequest{
+		OwnerUserID:    owner.ID,
+		Peer:           peer,
+		ID:             richOnly.ID,
+		SetRichMessage: true,
+		ScheduleDate:   1700032400,
+		Date:           1700000800,
+	})
+	if !errors.Is(err, domain.ErrMessageEmpty) {
+		t.Fatalf("clear only rich scheduled edit err = %v, want ErrMessageEmpty", err)
+	}
 }

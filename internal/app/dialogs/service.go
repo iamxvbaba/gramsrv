@@ -891,6 +891,7 @@ func cloneDraft(draft domain.DialogDraft) domain.DialogDraft {
 		webpage := *draft.WebPage
 		draft.WebPage = &webpage
 	}
+	draft.RichMessage = cloneRichMessage(draft.RichMessage)
 	return draft
 }
 
@@ -927,8 +928,51 @@ func dialogHashWithDrafts(base int64, dialogs []domain.Dialog) int64 {
 		if d.Draft.WebPage != nil {
 			_, _ = h.Write([]byte(d.Draft.WebPage.URL))
 		}
+		writeDraftRichHash(h, buf[:], d.Draft.RichMessage)
 	}
 	return int64(h.Sum64())
+}
+
+func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
+	if m == nil {
+		return nil
+	}
+	clone := *m
+	clone.Blocks = append([]byte(nil), m.Blocks...)
+	clone.Photos = append([]domain.Photo(nil), m.Photos...)
+	clone.Documents = append([]domain.Document(nil), m.Documents...)
+	return &clone
+}
+
+func writeDraftRichHash(h interface{ Write([]byte) (int, error) }, buf []byte, rich *domain.MessageRichMessage) {
+	if rich.IsZero() {
+		return
+	}
+	if rich.Rtl {
+		buf[0] = 1
+	} else {
+		buf[0] = 0
+	}
+	if rich.Part {
+		buf[1] = 1
+	} else {
+		buf[1] = 0
+	}
+	binary.LittleEndian.PutUint64(buf[2:10], uint64(len(rich.Blocks)))
+	binary.LittleEndian.PutUint64(buf[10:18], uint64(len(rich.Photos)))
+	binary.LittleEndian.PutUint64(buf[18:26], uint64(len(rich.Documents)))
+	_, _ = h.Write(buf[:26])
+	_, _ = h.Write(rich.Blocks)
+	for _, photo := range rich.Photos {
+		binary.LittleEndian.PutUint64(buf[:8], uint64(photo.ID))
+		binary.LittleEndian.PutUint64(buf[8:16], uint64(photo.AccessHash))
+		_, _ = h.Write(buf[:16])
+	}
+	for _, document := range rich.Documents {
+		binary.LittleEndian.PutUint64(buf[:8], uint64(document.ID))
+		binary.LittleEndian.PutUint64(buf[8:16], uint64(document.AccessHash))
+		_, _ = h.Write(buf[:16])
+	}
 }
 
 func mergeDialogLists(out, in domain.DialogList) domain.DialogList {

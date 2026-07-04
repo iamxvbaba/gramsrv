@@ -29,9 +29,13 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 	if blocked, ok := decoded["stargifts_blocked"].(bool); !ok || blocked {
 		t.Fatalf("stargifts_blocked = %v, want false (DrKLO GiftSheet 据此隐藏礼物网格)", decoded["stargifts_blocked"])
 	}
+	if posting, ok := decoded["rich_message_posting"].(string); !ok || posting != "enabled" {
+		t.Fatalf("rich_message_posting = %v, want enabled (TDesktop 富文本编辑入口默认打开)", decoded["rich_message_posting"])
+	}
 	wantNumbers := map[string]float64{
 		"reactions_user_max_default":          1,
 		"reactions_user_max_premium":          3,
+		"boosts_channel_level_max":            100,
 		"about_length_limit_default":          70,
 		"about_length_limit_premium":          140,
 		"dialogs_pinned_limit_default":        5,

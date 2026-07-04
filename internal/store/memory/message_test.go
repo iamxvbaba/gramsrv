@@ -9,6 +9,12 @@ import (
 	"telesrv/internal/domain"
 )
 
+var validRichMessageBlocks = []byte{
+	0x15, 0xc4, 0xb5, 0x1c, // vector
+	0x01, 0x00, 0x00, 0x00, // count
+	0x8a, 0x7e, 0x56, 0x13, // pageBlockUnsupported
+}
+
 func TestMessageStoreSendPrivateTextCreatesBothOwnerBoxes(t *testing.T) {
 	ctx := context.Background()
 	dialogs := NewDialogStore()
@@ -81,6 +87,41 @@ func TestMessageStoreSendPrivateTextCreatesBothOwnerBoxes(t *testing.T) {
 	}
 	if len(senderHistory.Messages) != 3 || len(recipientHistory.Messages) != 3 {
 		t.Fatalf("history sizes = sender %d recipient %d, want both owner partitions populated", len(senderHistory.Messages), len(recipientHistory.Messages))
+	}
+}
+
+func TestMessageStoreEditRichOnlyMessageUsesFinalContentState(t *testing.T) {
+	ctx := context.Background()
+	messages := NewMessageStore()
+	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    1000000001,
+		RecipientUserID: 1000000002,
+		RandomID:        201,
+		Date:            1700000200,
+		RichMessage:     &domain.MessageRichMessage{Blocks: validRichMessageBlocks},
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText rich-only: %v", err)
+	}
+
+	edited, err := messages.EditMessage(ctx, domain.EditMessageRequest{
+		OwnerUserID: 1000000001,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002},
+		ID:          sent.SenderMessage.ID,
+		Message:     "",
+		HideEdited:  true,
+		EditDate:    1700000210,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage rich-only hide-edit: %v", err)
+	}
+	if len(edited.Edited) != 2 {
+		t.Fatalf("edited boxes = %d, want 2", len(edited.Edited))
+	}
+	for _, item := range edited.Edited {
+		if item.Message.RichMessage.IsZero() {
+			t.Fatalf("edited rich-only box for user %d lost rich message: %+v", item.UserID, item.Message)
+		}
 	}
 }
 

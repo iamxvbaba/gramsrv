@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"reflect"
 
 	"telesrv/internal/domain"
 )
@@ -91,6 +92,13 @@ func decodeRichMessage(s string) (*domain.MessageRichMessage, error) {
 		return nil, nil
 	}
 	return &m, nil
+}
+
+func richMessagesEqual(a, b *domain.MessageRichMessage) bool {
+	if a.IsZero() && b.IsZero() {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func decodePhotoSizes(s string) ([]domain.PhotoSize, error) {

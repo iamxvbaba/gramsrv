@@ -9,7 +9,7 @@ func ChannelBannedRightsBlockMessage(req SendChannelMessageRequest, channel Chan
 		return false
 	}
 	if req.Media.IsZero() {
-		if strings.TrimSpace(req.Message) == "" {
+		if strings.TrimSpace(req.Message) == "" && req.RichMessage.IsZero() {
 			return false
 		}
 		return channelBannedRightsBlockWithBoost(channel, member.BannedRights.SendPlain, channel.DefaultBannedRights.SendPlain, selfBoostsApplied)

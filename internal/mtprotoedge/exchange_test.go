@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/gotd/td/exchange"
 	"github.com/gotd/td/mt"
 	tgproto "github.com/gotd/td/proto"
+	"github.com/gotd/td/proto/codec"
 	"github.com/gotd/td/transport"
 
 	"telesrv/internal/store"
@@ -101,6 +103,57 @@ func TestKeyExchange(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not stop after ctx cancel")
+	}
+}
+
+func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
+	const dc = 2
+	addr, pub, srv := startTestServer(t, Options{DC: dc})
+	conn := dialTransportOnly(t, addr)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := exchange.NewExchanger(conn, -dc).
+		WithTempMode(24 * 60 * 60).
+		WithRand(rand.Reader).
+		WithLogger(logzap.New(zaptest.NewLogger(t).Named("client"))).
+		Client([]exchange.PublicKey{pub}).
+		Run(ctx)
+	if err != nil {
+		t.Fatalf("client exchange: %v", err)
+	}
+
+	var saved store.AuthKeyData
+	found := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		saved, found, _ = srv.authKeys.Get(context.Background(), res.AuthKey.ID)
+		if found {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("server did not store media temp auth key %x", res.AuthKey.ID)
+	}
+	if saved.Value != [256]byte(res.AuthKey.Value) {
+		t.Fatal("server auth key value mismatch")
+	}
+	if saved.ServerSalt != res.ServerSalt {
+		t.Fatalf("server salt mismatch: server=%d client=%d", saved.ServerSalt, res.ServerSalt)
+	}
+}
+
+func TestKeyExchangeRejectsWrongNegativeTempDC(t *testing.T) {
+	ex := serverExchangeCompat{dc: 2, log: zaptest.NewLogger(t)}
+	err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: -3})
+	var exErr *exchange.ServerExchangeError
+	if !errors.As(err, &exErr) {
+		t.Fatalf("err = %T %v, want ServerExchangeError", err, err)
+	}
+	if exErr.Code != codec.CodeWrongDC {
+		t.Fatalf("error code = %d, want %d", exErr.Code, codec.CodeWrongDC)
 	}
 }
 

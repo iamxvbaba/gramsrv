@@ -12,8 +12,7 @@ import (
 )
 
 func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
-	// 空文本只在媒体替换（live location 续报/停止）时合法。
-	if req.UserID == 0 || req.ChannelID == 0 || req.ID <= 0 || (strings.TrimSpace(req.Message) == "" && req.Media == nil) {
+	if req.UserID == 0 || req.ChannelID == 0 || req.ID <= 0 {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	beginner, ok := s.db.(txBeginner)
@@ -30,6 +29,10 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, fmt.Errorf("encode channel edit reply markup: %w", err)
+	}
+	richMessageJSON, err := encodeRichMessage(req.RichMessage)
+	if err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("encode channel edit rich message: %w", err)
 	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
@@ -51,6 +54,17 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	}
 	if msg.Deleted || msg.Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
+	}
+	finalMedia := msg.Media
+	if req.Media != nil {
+		finalMedia = req.Media
+	}
+	finalRich := msg.RichMessage
+	if req.SetRichMessage {
+		finalRich = req.RichMessage
+	}
+	if strings.TrimSpace(req.Message) == "" && finalMedia.IsZero() && finalRich.IsZero() {
+		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	if req.WebPageResolve {
 		// 频道链接预览就地替换：只换 media（不碰 body/entities/edit_date）+ reserve 频道 pts +
@@ -110,7 +124,8 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 	if !canWriteEdit {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
-	if req.Media == nil && !req.SetReplyMarkup && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
+	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	ptsCount := 1
@@ -130,9 +145,10 @@ SET body = $4,
     edit_date = $6,
     pts = $7,
     reply_markup = CASE WHEN $9 THEN $10::jsonb ELSE reply_markup END,
+    rich_message = CASE WHEN $11 THEN $12::jsonb ELSE rich_message END,
     updated_at = now()
 WHERE channel_id = $1 AND id = $2 AND NOT deleted AND (sender_user_id = $3 OR $8)`,
-		req.ChannelID, req.ID, req.UserID, req.Message, entities, req.EditDate, editPts, canWriteEdit, req.SetReplyMarkup, string(replyMarkupJSON)); err != nil {
+		req.ChannelID, req.ID, req.UserID, req.Message, entities, req.EditDate, editPts, canWriteEdit, req.SetReplyMarkup, string(replyMarkupJSON), req.SetRichMessage, string(richMessageJSON)); err != nil {
 		return domain.EditChannelMessageResult{}, fmt.Errorf("update channel edit: %w", err)
 	}
 	if req.Media != nil {
@@ -158,6 +174,12 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != ni
 		msg.ReplyMarkup, err = decodeReplyMarkup(string(replyMarkupJSON))
 		if err != nil {
 			return domain.EditChannelMessageResult{}, fmt.Errorf("decode channel edit reply markup: %w", err)
+		}
+	}
+	if req.SetRichMessage {
+		msg.RichMessage, err = decodeRichMessage(string(richMessageJSON))
+		if err != nil {
+			return domain.EditChannelMessageResult{}, fmt.Errorf("decode channel edit rich message: %w", err)
 		}
 	}
 	msg.EditDate = req.EditDate

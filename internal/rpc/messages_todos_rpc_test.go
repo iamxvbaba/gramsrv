@@ -53,6 +53,59 @@ func TestSendMediaTodoEcho(t *testing.T) {
 	}
 }
 
+func TestSendMediaTodoWithEmptyReplyToTreatsReplyAsAbsent(t *testing.T) {
+	r, owner, friend := newMediaTestRouter(t)
+	req := &tg.MessagesSendMediaRequest{
+		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Media: &tg.InputMediaTodo{Todo: tg.TodoList{
+			Title: tg.TextWithEntities{Text: "web checklist", Entities: []tg.MessageEntityClass{}},
+			List: []tg.TodoItem{
+				{ID: 1, Title: tg.TextWithEntities{Text: "send item", Entities: []tg.MessageEntityClass{}}},
+			},
+		}},
+		RandomID: 7005,
+	}
+	req.SetReplyTo(&tg.InputReplyToMessage{})
+
+	updates, err := r.onMessagesSendMedia(WithUserID(context.Background(), owner.ID), req)
+	if err != nil {
+		t.Fatalf("sendMedia todo with empty reply: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+	if msg.ReplyTo != nil {
+		t.Fatalf("reply_to = %T, want nil for empty input reply", msg.ReplyTo)
+	}
+	if media, ok := msg.Media.(*tg.MessageMediaToDo); !ok || media.Todo.Title.Text != "web checklist" {
+		t.Fatalf("media = %#v, want todo checklist", msg.Media)
+	}
+}
+
+func TestSendMediaTodoAcceptsSparseLargeItemIDs(t *testing.T) {
+	r, owner, friend := newMediaTestRouter(t)
+	updates, err := r.onMessagesSendMedia(WithUserID(context.Background(), owner.ID), &tg.MessagesSendMediaRequest{
+		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Media: &tg.InputMediaTodo{Todo: tg.TodoList{
+			Title: tg.TextWithEntities{Text: "web sparse ids", Entities: []tg.MessageEntityClass{}},
+			List: []tg.TodoItem{
+				{ID: 56151290, Title: tg.TextWithEntities{Text: "first", Entities: []tg.MessageEntityClass{}}},
+				{ID: 56151305, Title: tg.TextWithEntities{Text: "second", Entities: []tg.MessageEntityClass{}}},
+			},
+		}},
+		RandomID: 7006,
+	})
+	if err != nil {
+		t.Fatalf("sendMedia todo sparse ids: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+	media, ok := msg.Media.(*tg.MessageMediaToDo)
+	if !ok {
+		t.Fatalf("media = %T, want MessageMediaToDo", msg.Media)
+	}
+	if got := media.Todo.List[0].ID; got != 56151290 {
+		t.Fatalf("first todo id = %d, want 56151290", got)
+	}
+}
+
 func TestToggleTodoCompletedAndAppend(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)

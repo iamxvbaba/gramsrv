@@ -16,10 +16,6 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 	defer func() {
 		r.metrics().MessageSend(r.clock.Now().Sub(start), duplicate, sendErr)
 	}()
-	if req.Message == "" {
-		sendErr = messageEmptyErr()
-		return nil, messageEmptyErr()
-	}
 	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
 		sendErr = messageTooLongErr()
 		return nil, sendErr
@@ -101,6 +97,10 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			return nil, sendErr
 		}
 	}
+	if req.Message == "" && richMessage == nil {
+		sendErr = messageEmptyErr()
+		return nil, sendErr
+	}
 	// 自动实体高亮：客户端未带 url/@mention/#hashtag/bot command 等「可自动识别」实体时，服务端
 	// 检测原文补充（官方服务端行为），否则 @username/链接等不渲染为可点蓝色。富文本走独立结构，不处理。
 	if richMessage == nil {
@@ -123,6 +123,7 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			replyToInput: req.ReplyTo,
 			sendAsInput:  req.SendAs,
 			clearDraft:   req.ClearDraft,
+			richMessage:  richMessage,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 		if err != nil {
 			sendErr = err
@@ -200,6 +201,9 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 		default:
 			return nil, inputConstructorInvalidErr()
 		}
+	}
+	if reply.Zero() {
+		return nil, nil
 	}
 	if _, ok := reply.GetMonoforumPeerID(); ok {
 		return nil, replyToMonoforumPeerInvalidErr()

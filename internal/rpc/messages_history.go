@@ -765,6 +765,11 @@ func messagesSearchFilterMusic(filter tg.MessagesFilterClass) bool {
 	return ok
 }
 
+func messagesSearchFilterChatPhotos(filter tg.MessagesFilterClass) bool {
+	_, ok := filter.(*tg.InputMessagesFilterChatPhotos)
+	return ok
+}
+
 func searchFilterNeedsMediaStore(filter tg.MessagesFilterClass) bool {
 	switch filter.(type) {
 	case nil, *tg.InputMessagesFilterEmpty:

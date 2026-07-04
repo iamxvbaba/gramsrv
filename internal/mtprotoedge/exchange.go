@@ -8,7 +8,6 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/log/logzap"
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/crypto"
 	"github.com/gotd/td/exchange"
@@ -54,12 +53,7 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 	}
 
 	start := s.clock.Now()
-	res, err := exchange.NewExchanger(buffered, s.dc).
-		WithClock(s.clock).
-		WithRand(s.rand).
-		WithLogger(logzap.New(s.log.Named("exchange"))).
-		Server(s.key).
-		Run(runCtx)
+	res, err := s.runServerExchange(runCtx, buffered)
 	if err != nil {
 		// gotd v0.158：握手中读到非零 auth_key_id 帧（客户端用既有 auth key 而非重新交换）
 		// 经类型化 UnexpectedEncryptedError 暴露并随附原始帧（旧版仅靠错误文案匹配，升级后失效）。

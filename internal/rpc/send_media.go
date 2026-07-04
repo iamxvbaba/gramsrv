@@ -39,7 +39,6 @@ type outgoingSend struct {
 	replyMarkup *domain.MessageReplyMarkup
 	viaBotID    int64
 	// richMessage 是 Layer 227 富文本消息快照（已解析内嵌媒体；普通消息恒 nil）。
-	// Phase 1 仅接入私聊；频道侧留 Phase 2。
 	richMessage *domain.MessageRichMessage
 	// groupedID 是相册分组 id：sendMultiMedia 同组各条共享一个非零值（客户端据此渲染
 	// 成一个相册组）；单条发送恒 0。
@@ -92,6 +91,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			ViaBotID:            p.viaBotID,
 			GroupedID:           p.groupedID,
 			ReplyMarkup:         p.replyMarkup,
+			RichMessage:         p.richMessage,
 			SendAs:              sendAs,
 			Date:                int(r.clock.Now().Unix()),
 		})

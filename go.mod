@@ -12,16 +12,16 @@ require (
 	github.com/gotd/tl v0.4.0
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/pion/datachannel v1.6.0
+	github.com/pion/datachannel v1.6.2
 	github.com/pion/dtls/v3 v3.1.4
 	github.com/pion/ice/v4 v4.2.7
 	github.com/pion/logging v0.2.4
-	github.com/pion/rtcp v1.2.16
-	github.com/pion/rtp v1.10.2
-	github.com/pion/sctp v1.10.0
-	github.com/pion/srtp/v3 v3.0.11
+	github.com/pion/rtcp v1.2.17
+	github.com/pion/rtp v1.10.3
+	github.com/pion/sctp v1.10.3
+	github.com/pion/srtp/v3 v3.0.12
 	github.com/pion/transport/v4 v4.0.2
-	github.com/pion/turn/v5 v5.0.9
+	github.com/pion/turn/v5 v5.0.10
 	github.com/redis/go-redis/v9 v9.20.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.28.0
@@ -48,13 +48,13 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ogen-go/ogen v1.22.0 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/stun/v3 v3.1.5 // indirect
+	github.com/pion/stun/v3 v3.1.6 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
@@ -70,7 +70,7 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.46.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )

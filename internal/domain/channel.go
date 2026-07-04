@@ -602,6 +602,8 @@ type ChannelMessage struct {
 	Reactions   *ChannelMessageReactions
 	Action      *ChannelMessageAction
 	Media       *MessageMedia
+	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	RichMessage *MessageRichMessage
 	// FromBoostsApplied 是发送时的 sender boost 数快照（message.from_boosts_applied）。
 	FromBoostsApplied int
 	TTLPeriod         int
@@ -1373,6 +1375,7 @@ type SendChannelMessageRequest struct {
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
+	RichMessage *MessageRichMessage
 	SendAs      *Peer
 	Action      *ChannelMessageAction
 	Date        int
@@ -1615,6 +1618,9 @@ type EditChannelMessageRequest struct {
 	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
+	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
+	SetRichMessage bool
+	RichMessage    *MessageRichMessage
 	// ViaBotEditBotID 非零时要求目标消息 via_bot_id 匹配对应 bot。
 	ViaBotEditBotID int64
 	// AllowTodoParticipantMutation 允许非作者普通成员在 checklist 的

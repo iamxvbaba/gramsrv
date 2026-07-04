@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	appConfigHash     = 13 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 15 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -38,6 +38,10 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		// stargifts_blocked=false：DrKLO 缺省 stargiftsBlocked=true 会隐藏 star gift 送礼网格。
 		{Key: "stargifts_blocked", Value: &tg.JSONBool{Value: false}},
 		{Key: "reactions_user_max_premium", Value: &tg.JSONNumber{Value: 3}},
+		// DrKLO 频道自定义 reaction 编辑页用它作为可选 reaction 数量上限。
+		{Key: "boosts_channel_level_max", Value: &tg.JSONNumber{Value: 100}},
+		// TDesktop 富文本编辑入口：官方默认缺省 disabled，显式 enabled 才显示/允许进入编辑器。
+		{Key: "rich_message_posting", Value: &tg.JSONString{Value: "enabled"}},
 		// dialog_filters_enabled=true：TDesktop 据此(或已有文件夹)才显示 Settings→Folders 入口。
 		{Key: "dialog_filters_enabled", Value: &tg.JSONBool{Value: true}},
 		{Key: "stories_stealth_future_period", Value: &tg.JSONNumber{Value: 1500}},

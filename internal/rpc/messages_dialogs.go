@@ -43,7 +43,7 @@ func (r *Router) onMessagesSaveDraft(ctx context.Context, req *tg.MessagesSaveDr
 	}
 	update := &tg.UpdateDraftMessage{
 		Peer:  peerTL,
-		Draft: tgDraftMessageFromSaveDraft(req, date),
+		Draft: tgDialogDraft(draft),
 	}
 	if draft.TopMessageID > 0 {
 		update.SetTopMsgID(draft.TopMessageID)
@@ -170,6 +170,13 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 	if err != nil {
 		return domain.DialogDraft{}, err
 	}
+	var richMessage *domain.MessageRichMessage
+	if req.RichMessage != nil {
+		richMessage, err = r.domainRichMessageFromInput(ctx, req.RichMessage)
+		if err != nil {
+			return domain.DialogDraft{}, err
+		}
+	}
 	topMessageID := 0
 	if replyTo != nil && peer.Type == domain.PeerTypeChannel && replyTo.TopMessageID > 0 {
 		topMessageID = replyTo.TopMessageID
@@ -185,6 +192,7 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 		ReplyTo:      replyTo,
 		WebPage:      webpage,
 		Effect:       req.Effect,
+		RichMessage:  richMessage,
 	}, nil
 }
 
@@ -234,7 +242,8 @@ func saveDraftIsEmpty(req *tg.MessagesSaveDraftRequest) bool {
 		len(req.Entities) == 0 &&
 		draftInputMedia(req.Media) == nil &&
 		req.Effect == 0 &&
-		req.SuggestedPost.Zero()
+		req.SuggestedPost.Zero() &&
+		req.RichMessage == nil
 }
 
 func (r *Router) usersForDraftUpdate(ctx context.Context, userID int64, peer domain.Peer) []tg.UserClass {

@@ -9,8 +9,7 @@ import (
 )
 
 func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
-	// 空文本只在媒体替换（live location 续报/停止）时合法。
-	if req.UserID == 0 || req.ChannelID == 0 || req.ID <= 0 || (strings.TrimSpace(req.Message) == "" && req.Media == nil) {
+	if req.UserID == 0 || req.ChannelID == 0 || req.ID <= 0 {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()
@@ -26,6 +25,17 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	}
 	prevMsg := s.messages[req.ChannelID][idx]
 	msg := prevMsg
+	finalMedia := msg.Media
+	if req.Media != nil {
+		finalMedia = req.Media
+	}
+	finalRich := msg.RichMessage
+	if req.SetRichMessage {
+		finalRich = req.RichMessage
+	}
+	if strings.TrimSpace(req.Message) == "" && finalMedia.IsZero() && finalRich.IsZero() {
+		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
+	}
 	// WebPageResolve：频道链接预览就地替换（服务端内部，幂等守卫即授权）。只换 media、
 	// 不碰 body/entities/edit_date，事件为 channel_web_page。
 	if req.WebPageResolve {
@@ -67,7 +77,8 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	if !viaBotEdit && msg.SenderUserID != req.UserID && !canEditChannelMessage(member) && !participantTodoEdit {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
-	if req.Media == nil && !req.SetReplyMarkup && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
+	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	pts := s.nextChannelPtsLocked(req.ChannelID)
@@ -79,6 +90,9 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	}
 	if req.SetReplyMarkup {
 		msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
+	}
+	if req.SetRichMessage {
+		msg.RichMessage = cloneRichMessage(req.RichMessage)
 	}
 	msg.EditDate = req.EditDate
 	msg.Pts = pts

@@ -83,16 +83,22 @@ func (r *Router) onChannelsReadHistory(ctx context.Context, req *tg.ChannelsRead
 	return true, nil
 }
 
-func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsRequest) (domain.ChannelReactionPolicy, error) {
+func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsRequest, current domain.ChannelReactionPolicy, defaultReactionDocuments map[int64]string) (domain.ChannelReactionPolicy, error) {
 	if req == nil || req.AvailableReactions == nil {
 		return domain.ChannelReactionPolicy{}, tgerr400("REACTION_INVALID")
 	}
-	if req.ReactionsLimit < 0 || req.ReactionsLimit > domain.MaxChannelReactionsLimit {
-		return domain.ChannelReactionPolicy{}, limitInvalidErr()
-	}
 	policy := domain.ChannelReactionPolicy{
-		Limit:       req.ReactionsLimit,
-		PaidEnabled: req.PaidEnabled,
+		Limit:       current.Limit,
+		PaidEnabled: current.PaidEnabled,
+	}
+	if limit, ok := req.GetReactionsLimit(); ok {
+		if limit < 0 || limit > domain.MaxChannelReactionsLimit {
+			return domain.ChannelReactionPolicy{}, limitInvalidErr()
+		}
+		policy.Limit = limit
+	}
+	if paidEnabled, ok := req.GetPaidEnabled(); ok {
+		policy.PaidEnabled = paidEnabled
 	}
 	switch reactions := req.AvailableReactions.(type) {
 	case *tg.ChatReactionsNone:
@@ -111,6 +117,7 @@ func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsReques
 			if err != nil {
 				return domain.ChannelReactionPolicy{}, tgerr400("REACTION_INVALID")
 			}
+			parsed = normalizeDefaultReactionDocument(parsed, defaultReactionDocuments)
 			key := parsed.Key()
 			if _, ok := seen[key]; ok {
 				continue

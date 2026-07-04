@@ -91,6 +91,52 @@ func TestMessagesForwardMessagesRecordsRequestAndReturnsUpdates(t *testing.T) {
 	}
 }
 
+func TestMessagesForwardMessagesTreatsMainThreadTopMsgSentinelAsAbsent(t *testing.T) {
+	const (
+		ownerID = int64(1000000101)
+		fromID  = int64(1000000102)
+		toID    = int64(1000000103)
+	)
+	ctx := context.Background()
+	messages := &captureMessages{list: domain.MessageList{Messages: []domain.Message{
+		{
+			ID:          8,
+			OwnerUserID: ownerID,
+			Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+			From:        domain.Peer{Type: domain.PeerTypeUser, ID: fromID},
+			Date:        1700000108,
+			Body:        "main thread source",
+		},
+	}}}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users: mapUsersService{users: map[int64]domain.User{
+			ownerID: {ID: ownerID, FirstName: "Owner"},
+			fromID:  {ID: fromID, FirstName: "From"},
+			toID:    {ID: toID, FirstName: "To"},
+		}},
+	}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerUser{UserID: fromID},
+		ToPeer:   &tg.InputPeerUser{UserID: toID},
+		ID:       []int{8},
+		RandomID: []int64{8001},
+	}
+	req.SetTopMsgID(-1)
+
+	updatesClass, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), req)
+	if err != nil {
+		t.Fatalf("forward with main thread top_msg_id sentinel: %v", err)
+	}
+	if messages.sendReq.ReplyTo != nil {
+		t.Fatalf("reply = %+v, want nil for main thread sentinel", messages.sendReq.ReplyTo)
+	}
+	updates, ok := updatesClass.(*tg.Updates)
+	if !ok || len(updates.Updates) != 2 {
+		t.Fatalf("updates = %T %+v, want updateMessageID + updateNewMessage", updatesClass, updatesClass)
+	}
+}
+
 func TestMessagesForwardMessagesLoadsPrivateSourcesInSingleBatch(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -309,6 +355,30 @@ func TestMessagesForwardMessagesInputPeerEmptyRejectsBadIDsBeforeLookup(t *testi
 	}
 	if messages.getMessagesCalls != 0 {
 		t.Fatalf("GetMessages calls = %d, want no source lookup for invalid id", messages.getMessagesCalls)
+	}
+}
+
+func TestMessagesForwardMessagesRejectsOtherNegativeTopMsgID(t *testing.T) {
+	const ownerID = int64(1780243210)
+	ctx := context.Background()
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+	}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesForwardMessagesRequest{
+		FromPeer: &tg.InputPeerUser{UserID: 1780243211},
+		ToPeer:   &tg.InputPeerUser{UserID: 1780243212},
+		ID:       []int{1},
+		RandomID: []int64{10001},
+	}
+	req.SetTopMsgID(-2)
+
+	_, err := r.onMessagesForwardMessages(WithUserID(ctx, ownerID), req)
+	if err == nil || !strings.Contains(err.Error(), "REPLY_MESSAGE_ID_INVALID") {
+		t.Fatalf("forward negative top_msg_id err = %v, want REPLY_MESSAGE_ID_INVALID", err)
+	}
+	if messages.getMessagesCalls != 0 {
+		t.Fatalf("GetMessages calls = %d, want no source lookup for invalid top_msg_id", messages.getMessagesCalls)
 	}
 }
 

@@ -21,8 +21,12 @@ func (r *Router) onMessagesGetSavedDialogs(ctx context.Context, req *tg.Messages
 	if parent, hasParent, err := r.validateSavedHistoryParentPeer(ctx, userID, req.GetParentPeer); err != nil {
 		return nil, err
 	} else if hasParent {
-		if req.Limit < 0 || req.OffsetID < 0 {
+		if req.Limit < 0 {
 			return nil, limitInvalidErr()
+		}
+		offsetID := req.OffsetID
+		if offsetID < 0 {
+			offsetID = 0
 		}
 		mono, isMono, err := r.resolveMonoforumForAdmin(ctx, userID, parent)
 		if err != nil {
@@ -38,15 +42,23 @@ func (r *Router) onMessagesGetSavedDialogs(ctx context.Context, req *tg.Messages
 			}, nil
 		}
 		// parent_peer = monoforum:返回该频道私信的订阅者子会话列表(管理员视角)。
-		return r.monoforumSavedDialogs(ctx, userID, mono, req.Limit, req.OffsetID)
+		return r.monoforumSavedDialogs(ctx, userID, mono, req.Limit, offsetID)
 	}
-	if req.Limit < 0 || req.OffsetID < 0 || req.OffsetDate < 0 {
+	if req.Limit < 0 {
 		return nil, limitInvalidErr()
+	}
+	offsetID := req.OffsetID
+	if offsetID < 0 {
+		offsetID = 0
+	}
+	offsetDate := req.OffsetDate
+	if offsetDate < 0 {
+		offsetDate = 0
 	}
 	filter := domain.SavedDialogsFilter{
 		ExcludePinned: req.ExcludePinned,
-		OffsetID:      req.OffsetID,
-		OffsetDate:    req.OffsetDate,
+		OffsetID:      offsetID,
+		OffsetDate:    offsetDate,
 		Limit:         req.Limit,
 	}
 	if req.OffsetPeer != nil {

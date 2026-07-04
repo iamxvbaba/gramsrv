@@ -113,6 +113,7 @@ type DialogDraft struct {
 	ReplyTo      *MessageReply
 	WebPage      *DialogDraftWebPage
 	Effect       int64
+	RichMessage  *MessageRichMessage
 }
 
 // Empty reports whether this draft should clear the cloud draft slot.
@@ -124,7 +125,8 @@ func (d DialogDraft) Empty() bool {
 		len(d.Entities) == 0 &&
 		(d.ReplyTo == nil || replyOnlyTopic) &&
 		d.WebPage == nil &&
-		d.Effect == 0
+		d.Effect == 0 &&
+		d.RichMessage.IsZero()
 }
 
 // DialogArchiveSummary 聚合归档（folder_id=1）状态，供主列表 getDialogs
