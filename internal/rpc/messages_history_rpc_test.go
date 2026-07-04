@@ -154,6 +154,61 @@ func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 	}
 }
 
+func TestMessagesSearchChatPhotosDoesNotReturnOrdinaryChannelHistory(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 93500, Phone: "15550093500", FirstName: "Owner"})
+	channelStore := memory.NewChannelStore()
+	channelService := appchannels.NewService(channelStore)
+	r := New(Config{}, Deps{
+		Channels: channelService,
+	}, zaptest.NewLogger(t), clock.System)
+	created, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{
+		Title: "Chat Photos Count Guard", Megagroup: true, Date: 1700034000,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channel := created.Channel
+	for i := 0; i < 7; i++ {
+		if _, err := channelService.SendMessage(ctx, owner.ID, domain.SendChannelMessageRequest{
+			ChannelID: channel.ID,
+			RandomID:  int64(1700034000 + i),
+			Message:   "ordinary channel message",
+			Date:      1700034001 + i,
+		}); err != nil {
+			t.Fatalf("send ordinary message %d: %v", i, err)
+		}
+	}
+
+	req := &tg.MessagesSearchRequest{
+		Peer:   &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Filter: &tg.InputMessagesFilterChatPhotos{},
+		Limit:  80,
+	}
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatalf("encode chat photos search: %v", err)
+	}
+	enc, err := r.Dispatch(WithUserID(ctx, owner.ID), [8]byte{}, 0, &in)
+	if err != nil {
+		t.Fatalf("dispatch chat photos search: %v", err)
+	}
+	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
+		enc = box.Messages
+	}
+	got, ok := enc.(*tg.MessagesChannelMessages)
+	if !ok {
+		t.Fatalf("chat photos search result = %T, want messages.channelMessages", enc)
+	}
+	if got.Count != 0 || len(got.Messages) != 0 {
+		t.Fatalf("chat photos search = count %d messages %d, want explicit empty stub", got.Count, len(got.Messages))
+	}
+	if len(got.Chats) != 1 {
+		t.Fatalf("chat photos search chats = %d, want current channel projection", len(got.Chats))
+	}
+}
+
 func TestMessagesGetSearchCountersUsesMediaCategoryCounts(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
