@@ -116,9 +116,7 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
-	// rich_message（Layer 227 富文本消息）：best-effort 投影；blocks 解码失败则略过
-	// （tgMessage 无 error 返回，corrupt blob 不应拖垮整条消息投影）。
-	if rich, err := tgRichMessage(m.RichMessage); err == nil && rich != nil {
+	if rich := mustTGRichMessage(m.RichMessage); rich != nil {
 		msg.SetRichMessage(*rich)
 	}
 	if m.TTLPeriod > 0 {

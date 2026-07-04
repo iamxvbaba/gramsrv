@@ -1036,6 +1036,10 @@ SET body = sqlc.arg(body)::text,
     reply_markup = CASE
       WHEN sqlc.arg(set_reply_markup)::boolean THEN sqlc.arg(reply_markup_json)::jsonb
       ELSE reply_markup
+    END,
+    rich_message = CASE
+      WHEN sqlc.arg(set_rich_message)::boolean THEN sqlc.arg(rich_message_json)::jsonb
+      ELSE rich_message
     END
 WHERE sender_user_id = sqlc.arg(sender_user_id)::bigint
   AND id = sqlc.arg(private_message_id)::bigint;
@@ -1050,6 +1054,10 @@ SET body = sqlc.arg(body)::text,
     reply_markup = CASE
       WHEN sqlc.arg(set_reply_markup)::boolean THEN sqlc.arg(reply_markup_json)::jsonb
       ELSE reply_markup
+    END,
+    rich_message = CASE
+      WHEN sqlc.arg(set_rich_message)::boolean THEN sqlc.arg(rich_message_json)::jsonb
+      ELSE rich_message
     END
 WHERE owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND box_id = sqlc.arg(box_id)::int

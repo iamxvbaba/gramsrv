@@ -193,6 +193,7 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 		Message:              p.message,
 		Entities:             domainMessageEntitiesForViewer(userID, p.entities),
 		Media:                p.media,
+		RichMessage:          p.richMessage,
 		Silent:               p.silent,
 		NoForwards:           p.noforwards,
 		ReplyTo:              replyTo,
@@ -227,12 +228,13 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	sentIDs := make([]int, 0, len(claimed))
 	for _, scheduled := range claimed {
 		updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, outgoingSend{
-			randomID:   scheduled.RandomID,
-			message:    scheduled.Message,
-			entities:   tgInputMessageEntities(scheduled.Entities),
-			media:      scheduled.Media,
-			silent:     scheduled.Silent,
-			noforwards: scheduled.NoForwards,
+			randomID:    scheduled.RandomID,
+			message:     scheduled.Message,
+			entities:    tgInputMessageEntities(scheduled.Entities),
+			media:       scheduled.Media,
+			richMessage: scheduled.RichMessage,
+			silent:      scheduled.Silent,
+			noforwards:  scheduled.NoForwards,
 		})
 		if err != nil {
 			if scheduledSvc, ok := r.deps.Messages.(scheduledMessagesService); ok {
@@ -340,6 +342,7 @@ func scheduledMessageAsDomainMessage(msg domain.ScheduledMessage, viewerUserID i
 		ReplyTo:     msg.ReplyTo,
 		Forward:     msg.Forward,
 		Media:       msg.Media,
+		RichMessage: msg.RichMessage,
 	}
 }
 
@@ -427,7 +430,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	return updates, nil
 }
 
-func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer domain.Peer, id int, message string, setMessage bool, entities []tg.MessageEntityClass, scheduleDate int) (tg.UpdatesClass, error) {
+func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer domain.Peer, id int, message string, setMessage bool, entities []tg.MessageEntityClass, richMessage *domain.MessageRichMessage, setRichMessage bool, scheduleDate int) (tg.UpdatesClass, error) {
 	if r.deps.Messages == nil {
 		return nil, messageIDInvalidErr()
 	}
@@ -440,14 +443,16 @@ func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer do
 		return nil, scheduleDateInvalidErr()
 	}
 	msg, err := scheduledSvc.EditScheduledMessage(ctx, userID, domain.EditScheduledMessageRequest{
-		OwnerUserID:  userID,
-		Peer:         peer,
-		ID:           id,
-		SetMessage:   setMessage,
-		Message:      message,
-		Entities:     domainMessageEntitiesForViewer(userID, entities),
-		ScheduleDate: scheduleDate,
-		Date:         now,
+		OwnerUserID:    userID,
+		Peer:           peer,
+		ID:             id,
+		SetMessage:     setMessage,
+		Message:        message,
+		Entities:       domainMessageEntitiesForViewer(userID, entities),
+		SetRichMessage: setRichMessage,
+		RichMessage:    richMessage,
+		ScheduleDate:   scheduleDate,
+		Date:           now,
 	})
 	if err != nil {
 		return nil, messageEditErr(err)

@@ -27,7 +27,7 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 	if req.Peer.Type != domain.PeerTypeUser && req.Peer.Type != domain.PeerTypeChannel {
 		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: invalid peer")
 	}
-	if req.Message == "" && req.Media.IsZero() {
+	if req.Message == "" && req.Media.IsZero() && req.RichMessage.IsZero() {
 		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: empty message")
 	}
 	if req.Date == 0 {
@@ -38,6 +38,10 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 		return domain.ScheduledMessage{}, err
 	}
 	media, err := encodeMessageMedia(req.Media)
+	if err != nil {
+		return domain.ScheduledMessage{}, err
+	}
+	richMessage, err := encodeRichMessage(req.RichMessage)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
@@ -87,7 +91,7 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 	if _, err := tx.Exec(ctx, `
 INSERT INTO scheduled_messages (
   owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date,
-  body, entities, media, silent, noforwards,
+  body, entities, media, rich_message, silent, noforwards,
   reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
   quote_text, quote_entities, quote_offset,
   fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
@@ -95,14 +99,14 @@ INSERT INTO scheduled_messages (
   schedule_date, schedule_repeat_period, state, created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
-  $7, $8::jsonb, $9::jsonb, $10, $11,
-  $12, $13, $14, $15,
-  $16, $17::jsonb, $18,
-  $19, $20, $21, $22,
-  $23, $24,
-  $25, $26, 'pending', $27, $27
+  $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12,
+  $13, $14, $15, $16,
+  $17, $18::jsonb, $19,
+  $20, $21, $22, $23,
+  $24, $25,
+  $26, $27, 'pending', $28, $28
 )`, req.OwnerUserID, nextID, string(req.Peer.Type), req.Peer.ID, req.RandomID, req.Date,
-		req.Message, entities, media, req.Silent, req.NoForwards,
+		req.Message, entities, media, richMessage, req.Silent, req.NoForwards,
 		meta.ReplyToMsgID, meta.ReplyToPeerType, meta.ReplyToPeerID, meta.ReplyToTopID,
 		meta.QuoteText, meta.QuoteEntitiesJSON, meta.QuoteOffset,
 		meta.FwdFromPeerType, meta.FwdFromPeerID, meta.FwdFromName, meta.FwdDate,
@@ -167,14 +171,22 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 	}
 	message := current.Message
 	entities := append([]domain.MessageEntity(nil), current.Entities...)
+	richMessage := current.RichMessage
 	if req.SetMessage {
-		if req.Message == "" && current.Media.IsZero() {
-			return domain.ScheduledMessage{}, domain.ErrMessageEmpty
-		}
 		message = req.Message
 		entities = append([]domain.MessageEntity(nil), req.Entities...)
 	}
+	if req.SetRichMessage {
+		richMessage = req.RichMessage
+	}
+	if message == "" && current.Media.IsZero() && richMessage.IsZero() {
+		return domain.ScheduledMessage{}, domain.ErrMessageEmpty
+	}
 	encodedEntities, err := encodeMessageEntities(entities)
+	if err != nil {
+		return domain.ScheduledMessage{}, err
+	}
+	encodedRichMessage, err := encodeRichMessage(richMessage)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
 	}
@@ -182,14 +194,15 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 UPDATE scheduled_messages
 SET body = $5,
     entities = $6::jsonb,
-    schedule_date = $7,
-    updated_at = $8
+    rich_message = $7::jsonb,
+    schedule_date = $8,
+    updated_at = $9
 WHERE owner_user_id = $1
   AND peer_type = $2
   AND peer_id = $3
   AND scheduled_id = $4
   AND state = 'pending'
-RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Type), req.Peer.ID, req.ID, message, encodedEntities, req.ScheduleDate, req.Date)
+RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Type), req.Peer.ID, req.ID, message, encodedEntities, encodedRichMessage, req.ScheduleDate, req.Date)
 	msg, err := scanScheduledMessage(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -472,7 +485,7 @@ LIMIT $4`, filter.OwnerUserID, string(filter.Peer.Type), filter.Peer.ID, limit)
 
 func scheduledMessageSelectColumns() string {
 	return `owner_user_id, scheduled_id, peer_type, peer_id, random_id, message_date,
-body, entities::text, media::text, silent, noforwards,
+body, entities::text, media::text, rich_message::text, silent, noforwards,
 reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
 quote_text, quote_entities::text, quote_offset,
 fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
@@ -486,7 +499,7 @@ func scheduledMessageSelectColumnsFor(alias string) string {
 	}
 	prefix := alias + "."
 	return prefix + `owner_user_id, ` + prefix + `scheduled_id, ` + prefix + `peer_type, ` + prefix + `peer_id, ` + prefix + `random_id, ` + prefix + `message_date,
-` + prefix + `body, ` + prefix + `entities::text, ` + prefix + `media::text, ` + prefix + `silent, ` + prefix + `noforwards,
+` + prefix + `body, ` + prefix + `entities::text, ` + prefix + `media::text, ` + prefix + `rich_message::text, ` + prefix + `silent, ` + prefix + `noforwards,
 ` + prefix + `reply_to_msg_id, ` + prefix + `reply_to_peer_type, ` + prefix + `reply_to_peer_id, ` + prefix + `reply_to_top_id,
 ` + prefix + `quote_text, ` + prefix + `quote_entities::text, ` + prefix + `quote_offset,
 ` + prefix + `fwd_from_peer_type, ` + prefix + `fwd_from_peer_id, ` + prefix + `fwd_from_name, ` + prefix + `fwd_date,
@@ -516,6 +529,7 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		peerType             string
 		entitiesJSON         string
 		mediaJSON            string
+		richMessageJSON      string
 		replyToMsgID         int32
 		replyToPeerType      string
 		replyToPeerID        int64
@@ -533,7 +547,7 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 	)
 	if err := scanner.Scan(
 		&msg.OwnerUserID, &msg.ID, &peerType, &msg.Peer.ID, &msg.RandomID, &msg.CreatedAt,
-		&msg.Message, &entitiesJSON, &mediaJSON, &msg.Silent, &msg.NoForwards,
+		&msg.Message, &entitiesJSON, &mediaJSON, &richMessageJSON, &msg.Silent, &msg.NoForwards,
 		&replyToMsgID, &replyToPeerType, &replyToPeerID, &replyToTopID,
 		&quoteText, &quoteEntitiesJSON, &quoteOffset,
 		&fwdFromPeerType, &fwdFromPeerID, &fwdFromName, &fwdDate,
@@ -554,6 +568,11 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled media: %w", err)
 	}
 	msg.Media = media
+	richMessage, err := decodeRichMessage(richMessageJSON)
+	if err != nil {
+		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled rich message: %w", err)
+	}
+	msg.RichMessage = richMessage
 	// scheduled_messages 不存 saved_from：到点投递经 SendPrivateText 实时
 	// 重算 saved 语义（self-chat 直发归 self），fwd saved 维度恒空。
 	_, _, reply, forward, err := messageMetadataFromFields(

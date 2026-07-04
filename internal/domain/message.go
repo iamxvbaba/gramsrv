@@ -418,6 +418,10 @@ type EditMessageRequest struct {
 	// 未置位则保留原 markup。仅 bot 编辑自己消息时由 RPC 层置位（P3）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
+	// SetRichMessage 置位时替换 rich_message（RichMessage nil/空 = 清空富文本）。
+	// TDesktop EditRichMessage 只带 f_rich_message，不带 f_message；store 不能把它误判为空编辑。
+	SetRichMessage bool
+	RichMessage    *MessageRichMessage
 	// ViaBotEditBotID 非零时允许对应 bot 编辑经由它发送的 inline 私聊消息。
 	ViaBotEditBotID int64
 	// AllowTodoParticipantMutation 允许 checklist 参与者在 others_can_* 授权下通过
@@ -598,6 +602,7 @@ type ScheduledMessage struct {
 	Message              string
 	Entities             []MessageEntity
 	Media                *MessageMedia
+	RichMessage          *MessageRichMessage
 	Silent               bool
 	NoForwards           bool
 	ReplyTo              *MessageReply
@@ -626,6 +631,7 @@ type ScheduleMessageRequest struct {
 	Message              string
 	Entities             []MessageEntity
 	Media                *MessageMedia
+	RichMessage          *MessageRichMessage
 	Silent               bool
 	NoForwards           bool
 	ReplyTo              *MessageReply
@@ -639,14 +645,16 @@ type ScheduleMessageRequest struct {
 // EditScheduledMessageRequest updates one pending scheduled message before it
 // enters normal history.
 type EditScheduledMessageRequest struct {
-	OwnerUserID  int64
-	Peer         Peer
-	ID           int
-	SetMessage   bool
-	Message      string
-	Entities     []MessageEntity
-	ScheduleDate int
-	Date         int
+	OwnerUserID    int64
+	Peer           Peer
+	ID             int
+	SetMessage     bool
+	Message        string
+	Entities       []MessageEntity
+	SetRichMessage bool
+	RichMessage    *MessageRichMessage
+	ScheduleDate   int
+	Date           int
 }
 
 // ScheduledMessageFilter selects scheduled messages for one owner/peer.

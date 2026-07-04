@@ -54,16 +54,25 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		PeerType:    string(req.Peer.Type),
 		PeerID:      req.Peer.ID,
 	})
-	// 空文本只在目标消息携带媒体（或本次写入媒体）时合法（清空 caption）；
-	// 纯文本消息清空会留下既无 body 也无 media 的空壳。
-	if err == nil && req.Message == "" && req.Media == nil && (target.MediaJson == "" || target.MediaJson == "{}") {
-		return res, domain.ErrMessageEmpty
-	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return res, domain.ErrMessageIDInvalid
 		}
 		return res, fmt.Errorf("get message for edit: %w", err)
+	}
+	targetRich, err := decodeRichMessage(target.RichMessageJson)
+	if err != nil {
+		return res, fmt.Errorf("decode target rich message: %w", err)
+	}
+	// 空文本只在目标消息携带媒体/rich（或本次写入媒体/rich）时合法（清空 caption）。
+	if req.Message == "" && req.Media == nil && (target.MediaJson == "" || target.MediaJson == "{}") {
+		if req.SetRichMessage {
+			if req.RichMessage.IsZero() {
+				return res, domain.ErrMessageEmpty
+			}
+		} else if targetRich.IsZero() {
+			return res, domain.ErrMessageEmpty
+		}
 	}
 	oldEntities, err := decodeMessageEntities(target.EntitiesJson)
 	if err != nil {
@@ -74,12 +83,17 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
 	}
-	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
+	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
+	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
 	if err != nil {
 		return res, fmt.Errorf("encode edit reply markup: %w", err)
+	}
+	richMessageJSON, err := encodeRichMessage(req.RichMessage)
+	if err != nil {
+		return res, fmt.Errorf("encode edit rich message: %w", err)
 	}
 	messageSenderID := target.MessageSenderID
 	boxes, err := qtx.ListVisibleMessageBoxesByPrivateMessage(ctx, sqlcgen.ListVisibleMessageBoxesByPrivateMessageParams{
@@ -173,6 +187,8 @@ WHERE owner_user_id = $1 AND box_id = $2`, box.OwnerUserID, box.BoxID, int32(pts
 		HideEdited:       req.HideEdited,
 		SetReplyMarkup:   req.SetReplyMarkup,
 		ReplyMarkupJson:  replyMarkupJSON,
+		SetRichMessage:   req.SetRichMessage,
+		RichMessageJson:  richMessageJSON,
 	}); err != nil {
 		return res, fmt.Errorf("update private message edit: %w", err)
 	}
@@ -210,6 +226,8 @@ WHERE message_sender_id = $1 AND private_message_id = $2`, messageSenderID, targ
 			Pts:             int32(pts),
 			SetReplyMarkup:  req.SetReplyMarkup,
 			ReplyMarkupJson: replyMarkupJSON,
+			SetRichMessage:  req.SetRichMessage,
+			RichMessageJson: richMessageJSON,
 		})
 		if err != nil {
 			return res, fmt.Errorf("update message box edit: %w", err)

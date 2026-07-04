@@ -162,6 +162,9 @@ func tgDialogDraft(d domain.DialogDraft) tg.DraftMessageClass {
 		Date:        d.Date,
 		Effect:      d.Effect,
 	}
+	if rich := mustTGRichMessage(d.RichMessage); rich != nil {
+		out.SetRichMessage(*rich)
+	}
 	return out
 }
 

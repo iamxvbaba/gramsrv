@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/binary"
 	"hash/fnv"
+	"reflect"
 	"sort"
 	"telesrv/internal/domain"
 )
@@ -116,6 +117,13 @@ func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
 	clone.Photos = append([]domain.Photo(nil), m.Photos...)
 	clone.Documents = append([]domain.Document(nil), m.Documents...)
 	return &clone
+}
+
+func richMessagesEqual(a, b *domain.MessageRichMessage) bool {
+	if a.IsZero() && b.IsZero() {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func cloneMessageReply(reply *domain.MessageReply) *domain.MessageReply {

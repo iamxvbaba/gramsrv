@@ -156,6 +156,9 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
+	if rich := mustTGRichMessage(m.RichMessage); rich != nil {
+		msg.SetRichMessage(*rich)
+	}
 	if replies := tgChannelMessageReplies(m.Replies); replies != nil {
 		msg.SetReplies(*replies)
 	}

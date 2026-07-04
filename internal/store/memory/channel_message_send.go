@@ -11,7 +11,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
-	if strings.TrimSpace(req.Message) == "" && req.Action == nil && req.Media.IsZero() {
+	if strings.TrimSpace(req.Message) == "" && req.Action == nil && req.Media.IsZero() && req.RichMessage.IsZero() {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()
@@ -83,6 +83,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 				NoForwards:   req.NoForwards || channel.NoForwards || linked.NoForwards,
 				Body:         req.Message,
 				Entities:     append([]domain.MessageEntity(nil), req.Entities...),
+				RichMessage:  cloneRichMessage(req.RichMessage),
 				Forward:      &domain.MessageForward{From: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, Date: req.Date, ChannelPost: msgID, SavedFrom: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, SavedFromMsgID: msgID},
 				ViaBotID:     req.ViaBotID,
 				GroupedID:    req.GroupedID,
@@ -131,6 +132,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		Body:              req.Message,
 		Entities:          append([]domain.MessageEntity(nil), req.Entities...),
 		Media:             req.Media,
+		RichMessage:       cloneRichMessage(req.RichMessage),
 		ReplyTo:           replyTo,
 		Forward:           cloneMessageForward(req.Forward),
 		ViaBotID:          req.ViaBotID,

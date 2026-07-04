@@ -29,11 +29,22 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		if len(entities) > maxMessageEntityCount {
 			return nil, entitiesTooLongErr()
 		}
+	} else {
+		entities = nil
+	}
+	var richMessage *domain.MessageRichMessage
+	hasRichMessage := req.RichMessage != nil
+	if hasRichMessage {
+		var richErr error
+		richMessage, richErr = r.domainRichMessageFromInput(ctx, req.RichMessage)
+		if richErr != nil {
+			return nil, richErr
+		}
+	}
+	if hasMessage && richMessage == nil {
 		// 编辑后的文本同样补服务端自动实体（url/@mention/#hashtag/bot command），与发送一致；
 		// 覆盖频道/私聊编辑与各自的定时编辑分支（editScheduledMessage 仅由本处调用）。
 		entities = augmentAutoEntities(message, entities)
-	} else {
-		entities = nil
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -50,7 +61,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		if media, ok := req.GetMedia(); ok && !editMessageMediaCanDegradeToText(media) {
 			return nil, mediaInvalidErr()
 		}
-		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, scheduleDate)
+		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, hasRichMessage, scheduleDate)
 	}
 	if media, ok := req.GetMedia(); ok {
 		// 关闭 poll 走 editMessage + InputMediaPoll(closed)（TDesktop "Stop poll" 路径）。
@@ -65,14 +76,15 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, mediaInvalidErr()
 		}
 	}
-	if !hasMessage {
+	_, hasMediaForContent := req.GetMedia()
+	if !hasMessage && !hasRichMessage && !hasMediaForContent {
 		return nil, messageEmptyErr()
 	}
-	if message == "" {
+	if message == "" && richMessage == nil {
 		// 编辑媒体消息时 message="" 是合法的清空 caption；当前文本-only
 		// 编辑模型由 store 层校验目标消息（无媒体的纯文本消息清空仍会
 		// 落 MESSAGE_EMPTY），RPC 层不再一刀切拒绝。
-		if _, hasMedia := req.GetMedia(); !hasMedia {
+		if !hasMediaForContent {
 			return nil, messageEmptyErr()
 		}
 	}
@@ -107,6 +119,8 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			Message:        message,
 			Entities:       domainMessageEntitiesForViewer(userID, entities),
 			MentionUserIDs: mentionUserIDs,
+			SetRichMessage: hasRichMessage,
+			RichMessage:    richMessage,
 			EditDate:       int(r.clock.Now().Unix()),
 		})
 		if err != nil {
@@ -141,6 +155,8 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		OriginSessionID: sessionID,
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetRichMessage:  hasRichMessage,
+		RichMessage:     richMessage,
 	})
 	if err != nil {
 		return nil, messageEditErr(err)

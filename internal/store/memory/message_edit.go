@@ -41,10 +41,19 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 			return res, domain.ErrMessageNotModified
 		}
 	}
-	if req.Message == "" && req.Media == nil && target.Media.IsZero() {
+	finalMedia := target.Media
+	if req.Media != nil {
+		finalMedia = req.Media
+	}
+	finalRich := target.RichMessage
+	if req.SetRichMessage {
+		finalRich = req.RichMessage
+	}
+	if req.Message == "" && finalMedia.IsZero() && finalRich.IsZero() {
 		return res, domain.ErrMessageEmpty
 	}
-	if req.Media == nil && !req.SetReplyMarkup && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
+	richChanged := req.SetRichMessage && !richMessagesEqual(target.RichMessage, req.RichMessage)
+	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	messageSenderID := target.From.ID
@@ -72,6 +81,9 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 				if req.SetReplyMarkup {
 					// 替换 markup（nil/空 = 清空键盘）；双盒一致。
 					msg.ReplyMarkup = cloneReplyMarkup(req.ReplyMarkup)
+				}
+				if req.SetRichMessage {
+					msg.RichMessage = cloneRichMessage(req.RichMessage)
 				}
 				msg.EditDate = req.EditDate
 				msg.HideEdited = req.HideEdited

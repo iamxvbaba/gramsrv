@@ -39,10 +39,14 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 		t.Fatalf("AppConfig(0) = %#v, want modified config with hash", got)
 	}
 	values := make(map[string]float64)
+	strings := make(map[string]string)
 	if object, ok := got.Config.(*tg.JSONObject); ok && object != nil {
 		for _, entry := range object.Value {
 			if number, ok := entry.Value.(*tg.JSONNumber); ok {
 				values[entry.Key] = number.Value
+			}
+			if str, ok := entry.Value.(*tg.JSONString); ok {
+				strings[entry.Key] = str.Value
 			}
 		}
 	}
@@ -55,6 +59,9 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 		if values[key] != expected {
 			t.Fatalf("AppConfig[%q] = %v, want %v", key, values[key], expected)
 		}
+	}
+	if strings["rich_message_posting"] != "enabled" {
+		t.Fatalf("AppConfig[rich_message_posting] = %q, want enabled", strings["rich_message_posting"])
 	}
 	if _, ok := AppConfig(got.Hash).(*tg.HelpAppConfigNotModified); !ok {
 		t.Fatalf("AppConfig(hash) = %#v, want notModified", AppConfig(got.Hash))
