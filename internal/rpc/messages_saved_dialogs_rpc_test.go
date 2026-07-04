@@ -7,6 +7,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/clock"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appcontacts "telesrv/internal/app/contacts"
@@ -249,6 +250,34 @@ func TestMessagesGetSavedDialogsPagination(t *testing.T) {
 	dialogs, _, _, _, full = savedDialogPage(t, androidFirst)
 	if !full || len(dialogs) != 2 {
 		t.Fatalf("android first page = %d full %v, want 2 full", len(dialogs), full)
+	}
+}
+
+// TestMessagesGetSavedDialogsNegativePendingOffset 验证 DrKLO Android self Saved
+// Messages 分组里出现本地 pending 负消息 id 时，下一页请求不会被误判为
+// LIMIT_INVALID。服务端持久化 top_message 仍保持正数；负 offset 仅是客户端本地
+// 游标噪声，按首页/无 offset 处理。
+func TestMessagesGetSavedDialogsNegativePendingOffset(t *testing.T) {
+	ctx := context.Background()
+	r, _, alice, _, _, _ := savedDialogsFixture(t)
+
+	res, err := r.onMessagesGetSavedDialogs(WithUserID(ctx, alice.ID), &tg.MessagesGetSavedDialogsRequest{
+		Limit:      20,
+		OffsetID:   -1001,
+		OffsetDate: -1,
+		OffsetPeer: &tg.InputPeerSelf{},
+	})
+	if err != nil {
+		t.Fatalf("negative pending offset: %v", err)
+	}
+	dialogs, _, _, _, full := savedDialogPage(t, res)
+	if !full || len(dialogs) != 2 {
+		t.Fatalf("negative pending offset page = %d full %v, want first page 2 full", len(dialogs), full)
+	}
+
+	_, err = r.onMessagesGetSavedDialogs(WithUserID(ctx, alice.ID), &tg.MessagesGetSavedDialogsRequest{Limit: -1})
+	if !tgerr.Is(err, "LIMIT_INVALID") {
+		t.Fatalf("negative limit err = %v, want LIMIT_INVALID", err)
 	}
 }
 

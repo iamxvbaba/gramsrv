@@ -204,6 +204,115 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 	assertWebViewData("recipient event", events[0].Message)
 }
 
+func TestMessageStorePhoneCallServiceFirstMessageFeedsDialogsAndUpdates(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	caller := createTestUser(t, ctx, users, "+1666"+suffix+"41", "CallFirstSender", "")
+	callee := createTestUser(t, ctx, users, "+1666"+suffix+"42", "CallFirstRecipient", "")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{caller.ID, callee.ID})
+	})
+
+	const callID int64 = 0x1020304050607080
+	messages := NewMessageStore(pool)
+	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    caller.ID,
+		RecipientUserID: callee.ID,
+		RandomID:        4041001,
+		Date:            1700000410,
+		Media: &domain.MessageMedia{
+			Kind: domain.MessageMediaKindService,
+			ServiceAction: &domain.MessageServiceAction{
+				Kind: domain.MessageServiceActionPhoneCall,
+				Call: &domain.MessagePhoneCallAction{
+					CallID: callID,
+					Reason: string(domain.PhoneCallDiscardReasonMissed),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText phone call service: %v", err)
+	}
+	if sent.SenderMessage.ID != 1 || sent.RecipientMessage.ID != 1 {
+		t.Fatalf("first phone call boxes = sender %d recipient %d, want both first message", sent.SenderMessage.ID, sent.RecipientMessage.ID)
+	}
+
+	assertPhoneCallMessage := func(name string, msg domain.Message, ownerID, peerID, fromID int64, out bool) {
+		t.Helper()
+		if msg.OwnerUserID != ownerID || msg.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: peerID}) ||
+			msg.From != (domain.Peer{Type: domain.PeerTypeUser, ID: fromID}) || msg.Out != out {
+			t.Fatalf("%s identity = owner %d peer %+v from %+v out %v", name, msg.OwnerUserID, msg.Peer, msg.From, msg.Out)
+		}
+		if msg.Media == nil || msg.Media.Kind != domain.MessageMediaKindService ||
+			msg.Media.ServiceAction == nil || msg.Media.ServiceAction.Kind != domain.MessageServiceActionPhoneCall ||
+			msg.Media.ServiceAction.Call == nil {
+			t.Fatalf("%s media = %+v, want phone_call service action", name, msg.Media)
+		}
+		call := msg.Media.ServiceAction.Call
+		if call.CallID != callID || call.Reason != string(domain.PhoneCallDiscardReasonMissed) || call.Duration != 0 {
+			t.Fatalf("%s phone call action = %+v", name, call)
+		}
+	}
+	assertPhoneCallMessage("sender box", sent.SenderMessage, caller.ID, callee.ID, caller.ID, true)
+	assertPhoneCallMessage("recipient box", sent.RecipientMessage, callee.ID, caller.ID, caller.ID, false)
+
+	dialogs := NewDialogStore(pool)
+	calleeDialogs, err := dialogs.ListByUser(ctx, callee.ID, domain.DialogFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("callee dialogs: %v", err)
+	}
+	if len(calleeDialogs.Dialogs) != 1 || calleeDialogs.Dialogs[0].TopMessage != sent.RecipientMessage.ID ||
+		calleeDialogs.Dialogs[0].UnreadCount != 1 || calleeDialogs.Dialogs[0].ReadInboxMaxID != 0 {
+		t.Fatalf("callee dialogs = %+v, want unread first call service as top", calleeDialogs.Dialogs)
+	}
+	if len(calleeDialogs.Messages) != 1 {
+		t.Fatalf("callee dialog messages = %+v, want top message payload", calleeDialogs.Messages)
+	}
+	assertPhoneCallMessage("callee dialog top", calleeDialogs.Messages[0], callee.ID, caller.ID, caller.ID, false)
+	if _, ok := findDialogUserByID(calleeDialogs.Users, caller.ID); !ok {
+		t.Fatalf("callee dialog users = %+v, want caller snapshot", calleeDialogs.Users)
+	}
+
+	calleeHistory, err := messages.ListByUser(ctx, callee.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: caller.ID},
+		Limit:   10,
+	})
+	if err != nil || len(calleeHistory.Messages) != 1 {
+		t.Fatalf("callee history = %+v err=%v, want one first call service", calleeHistory, err)
+	}
+	assertPhoneCallMessage("callee history", calleeHistory.Messages[0], callee.ID, caller.ID, caller.ID, false)
+	if _, ok := findDialogUserByID(calleeHistory.Users, caller.ID); !ok {
+		t.Fatalf("callee history users = %+v, want caller snapshot", calleeHistory.Users)
+	}
+
+	updates := NewUpdateEventStore(pool)
+	calleeEvents, err := updates.ListAfter(ctx, callee.ID, 0, 10)
+	if err != nil || len(calleeEvents) != 1 {
+		t.Fatalf("callee events = %+v err=%v, want one new_message", calleeEvents, err)
+	}
+	if calleeEvents[0].Type != domain.UpdateEventNewMessage || calleeEvents[0].Pts != sent.RecipientMessage.Pts {
+		t.Fatalf("callee event = %+v, want new_message pts %d", calleeEvents[0], sent.RecipientMessage.Pts)
+	}
+	assertPhoneCallMessage("callee difference event", calleeEvents[0].Message, callee.ID, caller.ID, caller.ID, false)
+	if _, ok := findDialogUserByID(calleeEvents[0].Users, caller.ID); !ok {
+		t.Fatalf("callee event users = %+v, want caller snapshot", calleeEvents[0].Users)
+	}
+
+	batch, err := updates.BatchByCursor(ctx, []store.EventCursor{{UserID: callee.ID, Pts: calleeEvents[0].Pts}})
+	if err != nil || len(batch) != 1 {
+		t.Fatalf("callee batch events = %+v err=%v, want one dispatch event", batch, err)
+	}
+	assertPhoneCallMessage("callee dispatch event", batch[0].Message, callee.ID, caller.ID, caller.ID, false)
+	if _, ok := findDialogUserByID(batch[0].Users, caller.ID); !ok {
+		t.Fatalf("callee batch users = %+v, want caller snapshot", batch[0].Users)
+	}
+}
+
 func TestUpdateEventStorePreservesChannelForwardRefsWithoutChannelSnapshot(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

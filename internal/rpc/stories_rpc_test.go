@@ -298,8 +298,16 @@ func TestStoriesGetAllStoriesPaginatesByPeerState(t *testing.T) {
 	finalAsCursor := &tg.StoriesGetAllStoriesRequest{}
 	finalAsCursor.SetState(next.State)
 	finalAsCursor.SetNext(true)
-	if _, err := r.onStoriesGetAllStories(ctx, finalAsCursor); err == nil || !tgerr.Is(err, "OFFSET_INVALID") {
-		t.Fatalf("final state as cursor err = %v, want OFFSET_INVALID", err)
+	finalAsCursorClass, err := r.onStoriesGetAllStories(reqCtx, finalAsCursor)
+	if err != nil {
+		t.Fatalf("final state as cursor: %v", err)
+	}
+	finalAsCursorPage, ok := finalAsCursorClass.(*tg.StoriesAllStories)
+	if !ok {
+		t.Fatalf("final state as cursor response = %T, want stories.allStories terminal page", finalAsCursorClass)
+	}
+	if finalAsCursorPage.HasMore || len(finalAsCursorPage.PeerStories) != 0 || finalAsCursorPage.Count != domain.MaxStoryListLimit+1 || finalAsCursorPage.State != next.State {
+		t.Fatalf("final state as cursor page = %+v, want empty terminal page preserving request count/state", finalAsCursorPage)
 	}
 }
 
