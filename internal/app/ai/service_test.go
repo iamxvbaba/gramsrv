@@ -91,6 +91,40 @@ func TestDefaultTonePromptsDiscourageEcho(t *testing.T) {
 	}
 }
 
+func TestDefaultTonesMatchOfficialDirectory(t *testing.T) {
+	want := []struct {
+		slug    string
+		title   string
+		emojiID int64
+	}{
+		{"formal", "Formal", defaultToneEmojiFormal},
+		{"short", "Short", defaultToneEmojiShort},
+		{"tribal", "Tribal", defaultToneEmojiTribal},
+		{"corp", "Corp", defaultToneEmojiCorp},
+		{"zen", "Zen", defaultToneEmojiZen},
+		{"biblical", "Biblical", defaultToneEmojiBiblical},
+		{"viking", "Viking", defaultToneEmojiViking},
+	}
+	got := DefaultTones()
+	if len(got) != len(want) {
+		t.Fatalf("DefaultTones len = %d, want %d", len(got), len(want))
+	}
+	for i, tone := range got {
+		if tone.Slug != want[i].slug || tone.Title != want[i].title {
+			t.Fatalf("DefaultTones[%d] = %s/%s, want %s/%s", i, tone.Slug, tone.Title, want[i].slug, want[i].title)
+		}
+		if !tone.Default {
+			t.Fatalf("DefaultTones[%d].Default = false, want true", i)
+		}
+		if tone.EmojiID != want[i].emojiID {
+			t.Fatalf("DefaultTones[%d].EmojiID = %d, want %d", i, tone.EmojiID, want[i].emojiID)
+		}
+		if tone.ExampleEnglish == nil {
+			t.Fatalf("DefaultTones[%d].ExampleEnglish = nil", i)
+		}
+	}
+}
+
 func TestComposeCallsProviderWithInstruction(t *testing.T) {
 	provider := &fakeProvider{text: "Please send the file when you have a moment."}
 	svc := NewService(memory.NewAIComposeStore(), WithProvider(provider))

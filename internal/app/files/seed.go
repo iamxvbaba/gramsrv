@@ -322,15 +322,12 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 
 	docIDs := make([]int64, 0, len(info.Result.Documents))
 	docs := make([]domain.Document, 0, len(info.Result.Documents))
-	docIDBySource := make(map[int64]int64, len(info.Result.Documents))
 	for _, dj := range info.Result.Documents {
-		sourceID := dj.ID
 		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats)
 		if err != nil {
 			return err
 		}
 		if doc.ID != 0 {
-			docIDBySource[sourceID] = doc.ID
 			docIDs = append(docIDs, doc.ID)
 			docs = append(docs, doc)
 		}
@@ -351,12 +348,12 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 		Masks:           sj.Masks,
 		Archived:        sj.Archived,
 		Installed:       seedStickerSetInstalled(kind),
-		ThumbDocumentID: seedDocumentStorageID(derefInt64(sj.ThumbDocumentID)),
+		ThumbDocumentID: derefInt64(sj.ThumbDocumentID),
 		Thumbs:          seedStickerSetPhotoSizes(sj.Thumbs),
 		ThumbDCID:       s.dc,
 		ThumbVersion:    sj.ThumbVersion,
 		DocumentIDs:     docIDs,
-		Packs:           seedStickerPacks(sj.Packs, info.Result.Packs, docIDBySource),
+		Packs:           seedStickerPacks(sj.Packs, info.Result.Packs),
 		SortOrder:       order,
 		SystemKey:       systemKey,
 	}
@@ -377,10 +374,9 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	if dj.ID == 0 {
 		return domain.Document{}, nil
 	}
-	storageID := seedDocumentStorageID(dj.ID)
 	ref, _ := hex.DecodeString(dj.FileReference)
 	doc := domain.Document{
-		ID:            storageID,
+		ID:            dj.ID,
 		AccessHash:    dj.AccessHash,
 		FileReference: ref,
 		Date:          parseSeedDate(dj.Date),
@@ -390,7 +386,7 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 		Attributes:    seedDocumentAttributes(dj.Attributes),
 	}
 
-	// 主体 blob：doc:<server-owned-id>
+	// 主体 blob：doc:<document-id>
 	if mainPath, ok := index.main[dj.ID]; ok {
 		data, err := os.ReadFile(mainPath)
 		if err != nil {
@@ -401,7 +397,7 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 			return domain.Document{}, err
 		}
 		if err := s.media.PutFileBlob(ctx, domain.FileBlob{
-			LocationKey: fmt.Sprintf("doc:%d", storageID),
+			LocationKey: fmt.Sprintf("doc:%d", doc.ID),
 			Backend:     domain.MediaBackend(s.blobs.Name()),
 			ObjectKey:   objectKey,
 			Size:        int64(len(data)),
@@ -441,7 +437,7 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 			}
 			ps.Size = len(data)
 			if err := s.media.PutFileBlob(ctx, domain.FileBlob{
-				LocationKey: fmt.Sprintf("doc:%d:%s", storageID, ps.Type),
+				LocationKey: fmt.Sprintf("doc:%d:%s", doc.ID, ps.Type),
 				Backend:     domain.MediaBackend(s.blobs.Name()),
 				ObjectKey:   objectKey,
 				Size:        int64(len(data)),
@@ -487,23 +483,8 @@ var seedThumbMarker = regexp.MustCompile(`_thumb\d+_`)
 const seedInlineCachedDocumentThumbMaxBytes = 32 * 1024
 const seedSyntheticDocumentThumbType = "m"
 
-// Exported Telegram resources keep their original id in filenames/JSON, but
-// telesrv owns the document catalog it serves. Imported high source ids are
-// normalized once at seed time so RPC/storage use one server-owned id.
-const seedExternalDocumentIDOffset int64 = 4_000_000_000_000_000_000
-
 var seedThumbType = regexp.MustCompile(`PhotoSize_type([a-z])`)
 var seedSyntheticTGStickerPreviewThumbPNG = makeSeedSyntheticTGStickerPreviewThumbPNG()
-
-func seedDocumentStorageID(sourceID int64) int64 {
-	if sourceID <= 0 {
-		return 0
-	}
-	if sourceID > seedExternalDocumentIDOffset {
-		return sourceID - seedExternalDocumentIDOffset
-	}
-	return sourceID
-}
 
 func scanSeedDir(dir string) (seedDirIndex, error) {
 	idx := seedDirIndex{main: map[int64]string{}, thumb: map[int64]map[string]string{}}
@@ -826,7 +807,7 @@ func (s *Service) documentsNeedSeedRepair(ctx context.Context, ids []int64) (boo
 	return false, nil
 }
 
-func seedStickerPacks(setPacks, resultPacks []seedStickerPackJSON, docIDBySource map[int64]int64) []domain.StickerPack {
+func seedStickerPacks(setPacks, resultPacks []seedStickerPackJSON) []domain.StickerPack {
 	packs := setPacks
 	if len(packs) == 0 {
 		packs = resultPacks
@@ -834,12 +815,8 @@ func seedStickerPacks(setPacks, resultPacks []seedStickerPackJSON, docIDBySource
 	out := make([]domain.StickerPack, 0, len(packs))
 	for _, p := range packs {
 		documents := make([]int64, 0, len(p.Documents))
-		for _, sourceID := range p.Documents {
-			if id, ok := docIDBySource[sourceID]; ok {
-				documents = append(documents, id)
-				continue
-			}
-			if id := seedDocumentStorageID(sourceID); id != 0 {
+		for _, id := range p.Documents {
+			if id > 0 {
 				documents = append(documents, id)
 			}
 		}

@@ -642,9 +642,6 @@ func TestSeedMediaFromRealExport(t *testing.T) {
 	if d, ok, _ := media.GetDocument(context.Background(), first.SelectAnimationID); !ok {
 		t.Error("reaction select animation document missing")
 	} else {
-		if d.ID > seedExternalDocumentIDOffset {
-			t.Errorf("reaction document kept external source id: %d", d.ID)
-		}
 		if d.DCID != 2 {
 			t.Errorf("document dc_id not rewritten: %d", d.DCID)
 		}
@@ -678,9 +675,6 @@ func TestSeedMediaFromRealExport(t *testing.T) {
 	if doc, ok, _ := media.GetDocument(context.Background(), sample.DocumentIDs[0]); !ok {
 		t.Fatalf("sample sticker document %d missing", sample.DocumentIDs[0])
 	} else {
-		if doc.ID > seedExternalDocumentIDOffset {
-			t.Fatalf("sample sticker kept external source id: %d", doc.ID)
-		}
 		thumb, ok := findCachedThumb(doc.Thumbs)
 		if !ok {
 			t.Fatalf("sample sticker document thumbs are not inline cached: %+v", doc.Thumbs)
@@ -729,14 +723,37 @@ func writeEffectsSeed(t *testing.T, seedDir string, sourceID int64) {
 	}
 }
 
-func TestSeedDocumentStorageIDNormalizesExternalIDs(t *testing.T) {
+func TestSeedDocumentIDsAreImportedVerbatim(t *testing.T) {
+	ctx := context.Background()
+	seedDir := t.TempDir()
 	const sourceID int64 = 5382305375846410902
-	const want int64 = 1382305375846410902
-	if got := seedDocumentStorageID(sourceID); got != want {
-		t.Fatalf("seedDocumentStorageID(%d) = %d, want %d", sourceID, got, want)
+	writeStatusPackWithoutThumbSeed(t, seedDir, sourceID, 17)
+
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
 	}
-	if got := seedDocumentStorageID(2222222); got != 2222222 {
-		t.Fatalf("small server id changed: %d", got)
+	svc := NewService(media, blobs, 2)
+	if _, err := svc.SeedMedia(ctx, seedDir, 0); err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	set, ok, err := media.GetStickerSetByShortName(ctx, "StatusPack")
+	if err != nil || !ok {
+		t.Fatalf("StatusPack ok=%v err=%v", ok, err)
+	}
+	if len(set.DocumentIDs) != 1 || set.DocumentIDs[0] != sourceID {
+		t.Fatalf("set document ids = %+v, want [%d]", set.DocumentIDs, sourceID)
+	}
+	doc, ok, err := media.GetDocument(ctx, sourceID)
+	if err != nil || !ok {
+		t.Fatalf("GetDocument(%d) ok=%v err=%v", sourceID, ok, err)
+	}
+	if doc.ID != sourceID {
+		t.Fatalf("document id = %d, want %d", doc.ID, sourceID)
+	}
+	if _, ok, err := media.GetFileBlob(ctx, fmt.Sprintf("doc:%d", sourceID)); err != nil || !ok {
+		t.Fatalf("main blob for raw id ok=%v err=%v", ok, err)
 	}
 }
 

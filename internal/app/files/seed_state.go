@@ -79,13 +79,12 @@ func writeSeedDirFingerprint(h io.Writer, dir string) error {
 }
 
 func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []string {
-	storageID := seedDocumentStorageID(dj.ID)
-	if storageID == 0 {
+	if dj.ID == 0 {
 		return nil
 	}
 	keys := make([]string, 0, 1+len(dj.Thumbs))
 	if _, ok := index.main[dj.ID]; ok {
-		keys = append(keys, fmt.Sprintf("doc:%d", storageID))
+		keys = append(keys, fmt.Sprintf("doc:%d", dj.ID))
 	}
 	for _, tj := range dj.Thumbs {
 		ps, downloadable := seedPhotoSize(tj)
@@ -93,11 +92,11 @@ func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []str
 			continue
 		}
 		if _, ok := index.thumb[dj.ID][ps.Type]; ok {
-			keys = append(keys, fmt.Sprintf("doc:%d:%s", storageID, ps.Type))
+			keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, ps.Type))
 		}
 	}
 	if seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj) {
-		keys = append(keys, fmt.Sprintf("doc:%d:%s", storageID, seedSyntheticDocumentThumbType))
+		keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, seedSyntheticDocumentThumbType))
 	}
 	return keys
 }
@@ -112,13 +111,12 @@ func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumen
 	locationKeys := make([]string, 0, len(docs))
 	seenLocationKeys := make(map[string]struct{}, len(docs))
 	for _, dj := range docs {
-		storageID := seedDocumentStorageID(dj.ID)
-		if storageID == 0 {
+		if dj.ID == 0 {
 			continue
 		}
-		if _, ok := expected[storageID]; !ok {
-			expected[storageID] = dj
-			ids = append(ids, storageID)
+		if _, ok := expected[dj.ID]; !ok {
+			expected[dj.ID] = dj
+			ids = append(ids, dj.ID)
 		}
 		for _, key := range seedDocumentJSONLocationKeys(dj, index) {
 			if _, ok := seenLocationKeys[key]; ok {

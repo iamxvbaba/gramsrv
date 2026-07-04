@@ -36,6 +36,33 @@ func TestAIComposeGetTonesReturnsDefaultsAndNotModified(t *testing.T) {
 	if tones.Hash == 0 || len(tones.Tones) == 0 {
 		t.Fatalf("getTones hash/tones = %d/%d, want non-empty", tones.Hash, len(tones.Tones))
 	}
+	want := []struct {
+		slug    string
+		emojiID int64
+	}{
+		{"formal", 4963195715414131468},
+		{"short", 5089558399201313570},
+		{"tribal", 4906965037207257780},
+		{"corp", 5103015433682813448},
+		{"zen", 5129871924314243582},
+		{"biblical", 5006296094481580688},
+		{"viking", 5102866720440189629},
+	}
+	if len(tones.Tones) < len(want) {
+		t.Fatalf("getTones defaults = %d, want at least %d", len(tones.Tones), len(want))
+	}
+	for i, expected := range want {
+		tone, ok := tones.Tones[i].(*tg.AiComposeToneDefault)
+		if !ok {
+			t.Fatalf("getTones tones[%d] = %T, want *tg.AiComposeToneDefault", i, tones.Tones[i])
+		}
+		if tone.Tone != expected.slug {
+			t.Fatalf("getTones tones[%d].Tone = %q, want %q", i, tone.Tone, expected.slug)
+		}
+		if tone.EmojiID != expected.emojiID {
+			t.Fatalf("getTones tones[%d].EmojiID = %d, want %d", i, tone.EmojiID, expected.emojiID)
+		}
+	}
 	again, err := r.onAicomposeGetTones(ctx, tones.Hash)
 	if err != nil {
 		t.Fatalf("getTones(hash): %v", err)

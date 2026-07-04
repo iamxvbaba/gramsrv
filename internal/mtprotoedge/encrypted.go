@@ -455,12 +455,17 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, body []by
 			// body 已是 enqueueRPC 入参的独立副本（dispatch 里 b.Copy()），且每个任务只 run 一次，
 			// 无需再 append 拷贝；直接复用，省掉一份 inbound 在途内存。
 			if err := s.handleRPC(taskCtx, c, msgID, &bin.Buffer{Buf: body}); err != nil {
-				s.log.Info("RPC async handler failed",
+				fields := []zap.Field{
 					zap.Int64("msg_id", msgID),
 					zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
 					zap.Int64("session_id", c.sessionID),
 					zap.Error(err),
-				)
+				}
+				if isClientDisconnect(err) {
+					s.log.Debug("RPC async handler canceled", fields...)
+				} else {
+					s.log.Info("RPC async handler failed", fields...)
+				}
 				return err
 			}
 			return nil
@@ -517,6 +522,13 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, b *bin.Buf
 		fields = append(fields, zap.Int64("user_id", userID))
 	}
 	fields = dbtrace.AppendZapFields(fields, "", dbStats.Snapshot())
+
+	if ctxErr := ctx.Err(); ctxErr != nil && err != nil {
+		// A canceled request context means the result cannot be delivered. Do not
+		// turn cancellation-derived handler errors into cacheable rpc_error replies.
+		s.log.Info("RPC canceled", append(fields, zap.NamedError("dispatch_error", err), zap.NamedError("context_error", ctxErr))...)
+		return ctxErr
+	}
 
 	if err != nil {
 		var rpcErr *tgerr.Error
