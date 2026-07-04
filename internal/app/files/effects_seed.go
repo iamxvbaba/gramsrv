@@ -84,27 +84,27 @@ func seedEffectsCatalog(parsed seedEffectsFileJSON) ([]domain.AvailableEffect, [
 		docByID[d.ID] = d
 	}
 	required := make(map[int64]struct{}, len(docByID))
-	storageID := func(sourceID int64) int64 {
-		if sourceID == 0 {
+	documentID := func(id int64) int64 {
+		if id == 0 {
 			return 0
 		}
-		if _, ok := docByID[sourceID]; !ok {
+		if _, ok := docByID[id]; !ok {
 			return 0
 		}
-		required[sourceID] = struct{}{}
-		return seedDocumentStorageID(sourceID)
+		required[id] = struct{}{}
+		return id
 	}
 	effects := make([]domain.AvailableEffect, 0, len(parsed.Result.Effects))
 	for i, ej := range parsed.Result.Effects {
 		if ej.ID == 0 || ej.EffectStickerID == 0 {
 			continue
 		}
-		staticID := storageID(ej.StaticIconID)
-		stickerID := storageID(ej.EffectStickerID)
+		staticID := documentID(ej.StaticIconID)
+		stickerID := documentID(ej.EffectStickerID)
 		if stickerID == 0 {
 			continue
 		}
-		animID := storageID(ej.EffectAnimationID)
+		animID := documentID(ej.EffectAnimationID)
 		effects = append(effects, domain.AvailableEffect{
 			ID:                ej.ID,
 			Emoticon:          ej.Emoticon,

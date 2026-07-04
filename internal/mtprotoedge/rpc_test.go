@@ -14,6 +14,7 @@ import (
 	"github.com/gotd/td/mt"
 	"github.com/gotd/td/proto"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/gotd/td/transport"
 
 	"telesrv/internal/rpc"
@@ -141,6 +142,41 @@ func TestDuplicateRPCResultAcrossReconnectUsesSessionCache(t *testing.T) {
 	}
 }
 
+func TestCanceledRPCErrorIsNotCachedAcrossReconnect(t *testing.T) {
+	const dc = 2
+	handler := &canceledInternalRPC{
+		firstDone: make(chan struct{}),
+	}
+	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	reqMsgID := clientMsgID.New(proto.MessageFromClient)
+	sendEncrypted(t, conn, cipher, auth, reqMsgID, &tg.HelpGetConfigRequest{})
+
+	_ = conn.Close()
+	select {
+	case <-handler.firstDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for canceled first rpc")
+	}
+
+	replayConn := dialTransportOnly(t, addr)
+	sendEncrypted(t, replayConn, cipher, auth, reqMsgID, &tg.HelpGetConfigRequest{})
+
+	result := readRPCResultForRequest(t, replayConn, cipher, auth.AuthKey, reqMsgID)
+	var cfg tg.Config
+	if err := cfg.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+		t.Fatalf("decode replay config: %v", err)
+	}
+	if cfg.ThisDC != dc {
+		t.Fatalf("replay config.ThisDC = %d, want %d", cfg.ThisDC, dc)
+	}
+	if calls := handler.calls.Load(); calls != 2 {
+		t.Fatalf("handler calls = %d, want 2 (canceled first result must not be cached)", calls)
+	}
+}
+
 type countingConfigRPC struct {
 	calls atomic.Int32
 }
@@ -171,6 +207,22 @@ func (h *blockingRPC) Dispatch(ctx context.Context, _ [8]byte, _ int64, _ *bin.B
 }
 
 func (h *blockingRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 227, true }
+
+type canceledInternalRPC struct {
+	calls     atomic.Int32
+	firstDone chan struct{}
+}
+
+func (h *canceledInternalRPC) Dispatch(ctx context.Context, _ [8]byte, _ int64, _ *bin.Buffer) (bin.Encoder, error) {
+	if h.calls.Add(1) == 1 {
+		<-ctx.Done()
+		close(h.firstDone)
+		return nil, tgerr.New(500, "INTERNAL_SERVER_ERROR")
+	}
+	return &tg.Config{ThisDC: 2}, nil
+}
+
+func (h *canceledInternalRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 227, true }
 
 func readRPCResultForRequest(t *testing.T, conn transport.Conn, cipher crypto.Cipher, key crypto.AuthKey, reqMsgID int64) proto.Result {
 	t.Helper()
