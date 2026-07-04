@@ -244,6 +244,37 @@ func TestMessageReplyFromInputStorySucceedsAndProjectsStoryHeader(t *testing.T) 
 	}
 }
 
+func TestMessageReplyFromInputEmptyMessageIsAbsent(t *testing.T) {
+	const userID = int64(1000000001)
+	ctx := WithUserID(context.Background(), userID)
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}
+
+	reply, err := r.messageReplyFromInput(ctx, userID, peer, &tg.InputReplyToMessage{})
+	if err != nil {
+		t.Fatalf("empty reply err = %v, want nil", err)
+	}
+	if reply != nil {
+		t.Fatalf("empty reply = %+v, want nil", reply)
+	}
+
+	topicReply := &tg.InputReplyToMessage{}
+	topicReply.SetTopMsgID(123)
+	reply, err = r.messageReplyFromInput(ctx, userID, peer, topicReply)
+	if err != nil {
+		t.Fatalf("topic-only reply err = %v, want nil", err)
+	}
+	if reply == nil || reply.MessageID != 0 || reply.TopMessageID != 123 {
+		t.Fatalf("topic-only reply = %+v, want top_msg_id=123", reply)
+	}
+
+	quoteOnly := &tg.InputReplyToMessage{}
+	quoteOnly.SetQuoteText("orphan quote")
+	if _, err := r.messageReplyFromInput(ctx, userID, peer, quoteOnly); err == nil || !strings.Contains(err.Error(), "REPLY_MESSAGE_ID_INVALID") {
+		t.Fatalf("quote-only reply err = %v, want REPLY_MESSAGE_ID_INVALID", err)
+	}
+}
+
 func TestMessageReplyFromInputUnsupportedShapesReturnExplicitErrors(t *testing.T) {
 	const userID = int64(1000000001)
 	ctx := WithUserID(context.Background(), userID)

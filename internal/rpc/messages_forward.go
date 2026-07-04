@@ -30,6 +30,9 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if !topMsgIDSet && req.TopMsgID != 0 {
 		topMsgID, topMsgIDSet = req.TopMsgID, true
 	}
+	if topMsgIDSet && topMsgID == -1 {
+		topMsgID, topMsgIDSet = 0, false
+	}
 	if topMsgIDSet && (topMsgID < 0 || topMsgID > domain.MaxMessageBoxID) {
 		return nil, replyMessageIDInvalidErr()
 	}

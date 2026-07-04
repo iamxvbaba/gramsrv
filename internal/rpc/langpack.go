@@ -72,7 +72,7 @@ func (r *Router) langpackLanguage(ctx context.Context, langPack, langCode string
 			langCode = "en"
 		}
 	}
-	langCode = strings.ToLower(langCode)
+	langCode = normalizeLangpackCode(langCode)
 	languages := r.langpackLanguages(ctx, langPack)
 	for _, lang := range languages {
 		if strings.ToLower(lang.LangCode) == langCode {
@@ -149,4 +149,12 @@ func langPackFromClient(ctx context.Context) string {
 		return "android"
 	}
 	return "tdesktop"
+}
+
+func normalizeLangpackCode(langCode string) string {
+	code := strings.ToLower(strings.TrimSpace(langCode))
+	if code == "" {
+		return "en"
+	}
+	return strings.TrimSuffix(code, "-raw")
 }

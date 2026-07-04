@@ -201,6 +201,9 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 			return nil, inputConstructorInvalidErr()
 		}
 	}
+	if reply.Zero() {
+		return nil, nil
+	}
 	if _, ok := reply.GetMonoforumPeerID(); ok {
 		return nil, replyToMonoforumPeerInvalidErr()
 	}

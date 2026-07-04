@@ -68,6 +68,11 @@ func TestLangpackGetLanguage(t *testing.T) {
 	if lang.LangCode != "zh-hans" || lang.PluralCode != "zh" {
 		t.Fatalf("language = %+v, want zh-hans", lang)
 	}
+
+	raw := r.langpackLanguage(context.Background(), "tdesktop", "en-raw")
+	if raw.LangCode != "en" {
+		t.Fatalf("language(en-raw) = %+v, want en", raw)
+	}
 }
 
 func TestLangpackAndroidPersianLanguage(t *testing.T) {

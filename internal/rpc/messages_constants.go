@@ -30,9 +30,9 @@ const (
 	maxPollVotesOffsetLength = 128
 	maxTodoItems             = 30
 	maxTodoTitleLength       = 200
-	// maxTodoItemID 是清单项 id 的防御上限：协议只要求列表内唯一正整数（客户端通常
-	// 顺序分配），不能用条目数上限当 id 边界，否则非顺序分配的合法 id 被误拒。
-	maxTodoItemID          = 1 << 16
+	// maxTodoItemID 是清单项 id 的防御上限：协议字段是 int32，WebA 会用 8 位左右
+	// 的稀疏本地 id，不能用条目数上限或顺序分配假设当 id 边界。
+	maxTodoItemID          = 1<<31 - 1
 	maxVenueTitleLength    = 256
 	maxVenueAddressLength  = 512
 	maxVenueProviderLength = 64
