@@ -126,10 +126,11 @@ type channelFullProjectionKey struct {
 }
 
 type channelFullProjection struct {
-	accessHash int64
-	full       tg.ChannelFull
-	chats      []tg.ChatClass
-	userIDs    []int64
+	accessHash    int64
+	canChangeInfo bool
+	full          tg.ChannelFull
+	chats         []tg.ChatClass
+	userIDs       []int64
 }
 
 type channelFullProjectionCache struct {
@@ -180,10 +181,11 @@ func (c *channelFullProjectionCache) DeletePair(viewerUserID, channelID int64) {
 
 func cloneChannelFullProjection(in channelFullProjection) channelFullProjection {
 	return channelFullProjection{
-		accessHash: in.accessHash,
-		full:       cloneChannelFull(in.full),
-		chats:      cloneChatClasses(in.chats),
-		userIDs:    cloneInt64s(in.userIDs),
+		accessHash:    in.accessHash,
+		canChangeInfo: in.canChangeInfo,
+		full:          cloneChannelFull(in.full),
+		chats:         cloneChatClasses(in.chats),
+		userIDs:       cloneInt64s(in.userIDs),
 	}
 }
 

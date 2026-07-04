@@ -125,6 +125,7 @@ type Router struct {
 	userFullProjectionCache      *userFullProjectionCache
 	peerSettingsProjectionCache  *peerSettingsProjectionCache
 	channelFullProjectionCache   *channelFullProjectionCache
+	availableReactionDocuments   availableReactionDocumentMapCache
 	emojiStickers                *emojiStickerIndex
 	notifySettings               *notifySettingsCache
 	stickerCatalog               *stickerCatalogCache

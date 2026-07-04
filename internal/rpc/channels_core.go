@@ -121,6 +121,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		r.applyStarGiftsCountToChannelFull(ctx, ref.ID, &full)
 		r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, ref.ID, &full)
 		r.applyNotifySettingsToChannelFull(ctx, userID, ref.ID, &full)
+		r.applyAndroidChannelReactionEditorCompat(ctx, &full, cached.canChangeInfo)
 		chats := append([]tg.ChatClass(nil), cached.chats...)
 		r.trackChannelInterest(ctx, userID, ref.ID)
 		r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
@@ -153,14 +154,17 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	// 当前频道默认已由 tgChannelFull 处理；外部频道默认（以自己拥有的别的频道身份发言）需在此投影并
 	// 带上该频道对象，否则客户端拿不到默认 chip。
 	r.applyForeignDefaultSendAsToFull(ctx, userID, view, full, &chats)
+	canChangeInfo := channelMemberCanChangeInfo(view.Self)
 	r.channelFullProjectionCache.StoreIfEpoch(userID, view.Channel.ID, channelFullProjection{
-		accessHash: view.Channel.AccessHash,
-		full:       *full,
-		chats:      append([]tg.ChatClass(nil), chats...),
-		userIDs:    userIDs,
+		accessHash:    view.Channel.AccessHash,
+		canChangeInfo: canChangeInfo,
+		full:          *full,
+		chats:         append([]tg.ChatClass(nil), chats...),
+		userIDs:       userIDs,
 	}, loadEpoch)
 	r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyNotifySettingsToChannelFull(ctx, userID, view.Channel.ID, full)
+	r.applyAndroidChannelReactionEditorCompat(ctx, full, canChangeInfo)
 	r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
 	return &tg.MessagesChatFull{
 		FullChat: full,

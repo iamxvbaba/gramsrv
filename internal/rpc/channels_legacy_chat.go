@@ -609,6 +609,9 @@ func (r *Router) onMessagesSetChatAvailableReactions(ctx context.Context, req *t
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
+	if req == nil {
+		return nil, tgerr400("REACTION_INVALID")
+	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
@@ -617,7 +620,12 @@ func (r *Router) onMessagesSetChatAvailableReactions(ctx context.Context, req *t
 	if err != nil {
 		return nil, err
 	}
-	policy, err := domainChannelReactionPolicy(req)
+	current, err := r.deps.Channels.GetChannelForChangeInfo(ctx, userID, channelID)
+	if err != nil {
+		return nil, channelAdminErr(err)
+	}
+	_, defaultReactionDocuments := r.availableReactionDocumentMaps(ctx)
+	policy, err := domainChannelReactionPolicy(req, current.Channel.ReactionPolicy, defaultReactionDocuments)
 	if err != nil {
 		return nil, err
 	}

@@ -195,6 +195,34 @@ func TestSendReactionAllowsCustomEmojiFromChannelPolicy(t *testing.T) {
 	}
 }
 
+func TestSendReactionNormalizesDefaultReactionDocumentID(t *testing.T) {
+	f := newReactionPolicyFixture(t, false)
+	f.router.deps.Files = &fakeFiles{reactions: []domain.AvailableReaction{
+		{Reaction: "\U0001f44d", ActivateAnimationID: 8801},
+	}}
+	ctx := context.Background()
+
+	if _, err := f.channelSvc.SetAvailableReactions(ctx, f.ownerID, f.channel.ID, domain.ChannelReactionPolicy{
+		Type:      domain.ChannelReactionPolicySome,
+		Emoticons: []string{"\U0001f44d"},
+	}); err != nil {
+		t.Fatalf("set emoji whitelist policy: %v", err)
+	}
+
+	updates, err := f.sendTLReactions(t, f.memberID, &tg.ReactionCustomEmoji{DocumentID: 8801})
+	if err != nil {
+		t.Fatalf("send default reaction by document id: %v", err)
+	}
+	update := reactionUpdateFromUpdates(t, updates)
+	if len(update.Reactions.Results) != 1 {
+		t.Fatalf("reaction results = %+v, want one normalized emoji result", update.Reactions.Results)
+	}
+	emoji, ok := update.Reactions.Results[0].Reaction.(*tg.ReactionEmoji)
+	if !ok || emoji.Emoticon != "\U0001f44d" {
+		t.Fatalf("normalized reaction = %T %+v, want reactionEmoji thumbs up", update.Reactions.Results[0].Reaction, update.Reactions.Results[0].Reaction)
+	}
+}
+
 func TestSendReactionEnforcesUniqueReactionsLimit(t *testing.T) {
 	f := newReactionPolicyFixture(t, false)
 	ctx := context.Background()

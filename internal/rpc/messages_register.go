@@ -363,6 +363,21 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 			if isLegacyInputPeerChat(req.Peer) {
 				return &tg.MessagesMessages{}, nil
 			}
+			if messagesSearchFilterChatPhotos(req.Filter) {
+				view, err := r.resolveInputPeerChannelView(ctx, userID, req.Peer, filter.Peer.ID)
+				if err != nil {
+					return nil, channelInvalidErr(err)
+				}
+				out := &tg.MessagesChannelMessages{
+					Pts:      view.Channel.Pts,
+					Count:    0,
+					Messages: []tg.MessageClass{},
+					Chats:    []tg.ChatClass{tgChannelChatForView(userID, view)},
+					Users:    []tg.UserClass{},
+				}
+				r.applyStoryMaxIDsToMessages(ctx, userID, out)
+				return out, nil
+			}
 			if searchFilterNeedsMediaStore(req.Filter) {
 				if mediaSearchCountOnlyRequest(req) {
 					view, err := r.resolveInputPeerChannelView(ctx, userID, req.Peer, filter.Peer.ID)
@@ -444,6 +459,12 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 				return nil, internalErr()
 			}
 			return r.tgMessagesMessages(ctx, userID, r.enrichMessageList(ctx, userID, list)), nil
+		}
+		if messagesSearchFilterChatPhotos(req.Filter) {
+			if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer); err != nil {
+				return nil, err
+			}
+			return r.tgMessagesMessages(ctx, userID, domain.MessageList{}), nil
 		}
 		if r.deps.Messages == nil {
 			return messagesNotModifiedOrEmpty(req.Hash), nil

@@ -32,6 +32,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 	wantNumbers := map[string]float64{
 		"reactions_user_max_default":          1,
 		"reactions_user_max_premium":          3,
+		"boosts_channel_level_max":            100,
 		"about_length_limit_default":          70,
 		"about_length_limit_premium":          140,
 		"dialogs_pinned_limit_default":        5,
