@@ -315,6 +315,7 @@ type UpdatesService interface {
 	GetDifference(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateDifference, error)
 	ClearAuthKey(ctx context.Context, authKeyID [8]byte) error
 	RecordNewMessage(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
+	PublishNewMessage(ctx context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordStory(ctx context.Context, authKeyID [8]byte, userID int64, story domain.Story, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordStoryFanout(ctx context.Context, userID int64, story domain.Story) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordReadStories(ctx context.Context, authKeyID [8]byte, userID int64, read domain.StoryReadResult, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
@@ -674,35 +675,36 @@ type AIComposeService interface {
 
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
-	Auth        AuthService
-	Account     AccountService
-	Privacy     PrivacyService
-	Help        HelpService
-	AICompose   AIComposeService
-	Users       UsersService
-	Updates     UpdatesService
-	Contacts    ContactsService
-	Dialogs     DialogsService
-	Messages    MessagesService
-	Stories     StoriesService
-	Channels    ChannelsService
-	Files       FilesService
-	Bots        BotsService
-	Polls       PollsService
-	Phone       PhoneService
-	GroupCalls  GroupCallsService
-	SFU         sfu.Service
-	TURN        turnsrv.Service
-	LangPack    LangPackService
-	Sessions    SessionBinder
-	Inline      store.InlineRegistryStore
-	Limiter     RateLimiter
-	Metrics     Metrics
-	SecretChats SecretChatService
-	Stars       StarsService
-	Gifts       GiftsService
-	Passkey     PasskeyService
-	Themes      ThemeService
+	Auth             AuthService
+	Account          AccountService
+	Privacy          PrivacyService
+	Help             HelpService
+	AICompose        AIComposeService
+	Users            UsersService
+	Updates          UpdatesService
+	BootstrapUpdates store.BootstrapUpdateJobStore
+	Contacts         ContactsService
+	Dialogs          DialogsService
+	Messages         MessagesService
+	Stories          StoriesService
+	Channels         ChannelsService
+	Files            FilesService
+	Bots             BotsService
+	Polls            PollsService
+	Phone            PhoneService
+	GroupCalls       GroupCallsService
+	SFU              sfu.Service
+	TURN             turnsrv.Service
+	LangPack         LangPackService
+	Sessions         SessionBinder
+	Inline           store.InlineRegistryStore
+	Limiter          RateLimiter
+	Metrics          Metrics
+	SecretChats      SecretChatService
+	Stars            StarsService
+	Gifts            GiftsService
+	Passkey          PasskeyService
+	Themes           ThemeService
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。

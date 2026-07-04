@@ -48,6 +48,45 @@ func TestRecordNewMessageFeedsGetDifference(t *testing.T) {
 	}
 }
 
+func TestPublishNewMessageIsIdempotentByMessageBoxID(t *testing.T) {
+	ctx := context.Background()
+	var authKeyID [8]byte
+	authKeyID[0] = 11
+	events := memory.NewUpdateEventStore()
+	svc := NewService(memory.NewUpdateStateStore(), events)
+	msg := domain.Message{
+		ID:          10,
+		OwnerUserID: 1000000001,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		Date:        1700000000,
+		Body:        "Login code: 12345",
+	}
+
+	firstEvent, firstState, err := svc.PublishNewMessage(ctx, msg.OwnerUserID, msg)
+	if err != nil {
+		t.Fatalf("PublishNewMessage first: %v", err)
+	}
+	secondEvent, secondState, err := svc.PublishNewMessage(ctx, msg.OwnerUserID, msg)
+	if err != nil {
+		t.Fatalf("PublishNewMessage retry: %v", err)
+	}
+	if firstEvent.Pts != 1 || firstState.Pts != 1 {
+		t.Fatalf("first event/state = %+v / %+v, want pts=1", firstEvent, firstState)
+	}
+	if secondEvent.Pts != firstEvent.Pts || secondState.Pts != firstState.Pts {
+		t.Fatalf("retry event/state = %+v / %+v, want same pts as first %+v / %+v", secondEvent, secondState, firstEvent, firstState)
+	}
+
+	diff, err := svc.GetDifference(ctx, authKeyID, msg.OwnerUserID, domain.UpdateState{})
+	if err != nil {
+		t.Fatalf("GetDifference: %v", err)
+	}
+	if diff.State.Pts != 1 || len(diff.Events) != 1 || diff.Events[0].Message.ID != msg.ID {
+		t.Fatalf("diff = %+v, want one durable login message event", diff)
+	}
+}
+
 func TestRecordReadHistoryFeedsGetDifference(t *testing.T) {
 	ctx := context.Background()
 	var authKeyID [8]byte

@@ -457,6 +457,34 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 	return out, nil
 }
 
+func (s *UpdateEventStore) FindNewMessageEvent(ctx context.Context, userID int64, messageBoxID int) (domain.UpdateEvent, bool, error) {
+	if userID == 0 || messageBoxID <= 0 {
+		return domain.UpdateEvent{}, false, nil
+	}
+	var pts int
+	if err := s.db.QueryRow(ctx, `
+SELECT pts
+FROM user_update_events
+WHERE user_id = $1
+  AND event_type = $2
+  AND message_box_id = $3
+ORDER BY pts ASC
+LIMIT 1`, userID, string(domain.UpdateEventNewMessage), messageBoxID).Scan(&pts); err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.UpdateEvent{}, false, nil
+		}
+		return domain.UpdateEvent{}, false, fmt.Errorf("find new message update event: %w", err)
+	}
+	events, err := s.ListAfter(ctx, userID, pts-1, 1)
+	if err != nil {
+		return domain.UpdateEvent{}, false, err
+	}
+	if len(events) == 0 || events[0].Pts != pts {
+		return domain.UpdateEvent{}, false, fmt.Errorf("hydrate new message update event: expected pts %d", pts)
+	}
+	return events[0], true, nil
+}
+
 // MaxContiguousPts 见 store.UpdateEventStore 接口说明。PG 写路径保证水位与
 // durable event 同事务提交；缺行代表该账号还没有 update。
 func (s *UpdateEventStore) MaxContiguousPts(ctx context.Context, userID int64) (int, error) {

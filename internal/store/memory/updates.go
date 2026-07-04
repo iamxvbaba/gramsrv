@@ -46,15 +46,7 @@ func (s *UpdateEventStore) append(userID int64, event domain.UpdateEvent, alloca
 		event.PtsCount = 1
 	}
 	event.UserID = userID
-	event.Message = cloneMessage(event.Message)
-	event.Story = cloneUpdateStory(event.Story)
-	event.MessageIDs = append([]int(nil), event.MessageIDs...)
-	event.Peers = append([]domain.Peer(nil), event.Peers...)
-	event.Users = append([]domain.User(nil), event.Users...)
-	event.Channels = append([]domain.Channel(nil), event.Channels...)
-	event.Reaction = cloneUpdateReaction(event.Reaction)
-	event.QuickReplies = cloneUpdateQuickReplies(event.QuickReplies)
-	event.QuickReplyMessage = cloneUpdateQuickReplyMessage(event.QuickReplyMessage)
+	event = cloneUpdateEvent(event)
 	s.mu.Lock()
 	if allocate {
 		current := 0
@@ -79,21 +71,39 @@ func (s *UpdateEventStore) ListAfter(_ context.Context, userID int64, pts, limit
 		if event.Pts <= pts {
 			continue
 		}
-		event.Message = cloneMessage(event.Message)
-		event.Story = cloneUpdateStory(event.Story)
-		event.MessageIDs = append([]int(nil), event.MessageIDs...)
-		event.Peers = append([]domain.Peer(nil), event.Peers...)
-		event.Users = append([]domain.User(nil), event.Users...)
-		event.Channels = append([]domain.Channel(nil), event.Channels...)
-		event.Reaction = cloneUpdateReaction(event.Reaction)
-		event.QuickReplies = cloneUpdateQuickReplies(event.QuickReplies)
-		event.QuickReplyMessage = cloneUpdateQuickReplyMessage(event.QuickReplyMessage)
-		out = append(out, event)
+		out = append(out, cloneUpdateEvent(event))
 		if limit > 0 && len(out) >= limit {
 			break
 		}
 	}
 	return out, nil
+}
+
+func (s *UpdateEventStore) FindNewMessageEvent(_ context.Context, userID int64, messageBoxID int) (domain.UpdateEvent, bool, error) {
+	if userID == 0 || messageBoxID <= 0 {
+		return domain.UpdateEvent{}, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, event := range s.events[userID] {
+		if event.Type == domain.UpdateEventNewMessage && event.Message.ID == messageBoxID {
+			return cloneUpdateEvent(event), true, nil
+		}
+	}
+	return domain.UpdateEvent{}, false, nil
+}
+
+func cloneUpdateEvent(event domain.UpdateEvent) domain.UpdateEvent {
+	event.Message = cloneMessage(event.Message)
+	event.Story = cloneUpdateStory(event.Story)
+	event.MessageIDs = append([]int(nil), event.MessageIDs...)
+	event.Peers = append([]domain.Peer(nil), event.Peers...)
+	event.Users = append([]domain.User(nil), event.Users...)
+	event.Channels = append([]domain.Channel(nil), event.Channels...)
+	event.Reaction = cloneUpdateReaction(event.Reaction)
+	event.QuickReplies = cloneUpdateQuickReplies(event.QuickReplies)
+	event.QuickReplyMessage = cloneUpdateQuickReplyMessage(event.QuickReplyMessage)
+	return event
 }
 
 func cloneUpdateStory(story domain.Story) domain.Story {
@@ -121,7 +131,6 @@ func cloneUpdateQuickReplyMessage(in domain.QuickReplyMessage) domain.QuickReply
 	out.Entities = append([]domain.MessageEntity(nil), in.Entities...)
 	return out
 }
-
 
 // MaxContiguousPts 返回从 1 起无空洞的最大 pts（内存版按 pts_count 连续扫描）。
 func (s *UpdateEventStore) MaxContiguousPts(_ context.Context, userID int64) (int, error) {

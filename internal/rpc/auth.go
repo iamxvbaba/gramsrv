@@ -20,8 +20,6 @@ import (
 // devCodeLength 是开发固定验证码长度，写入 auth.sentCode 的 type.length。
 const devCodeLength = 5
 
-const loginMessagePushDelay = 2 * time.Second
-
 // registerAuth 注册 auth.* RPC handler。
 func (r *Router) registerAuth(d *tg.ServerDispatcher) {
 	d.OnAuthBindTempAuthKey(r.onAuthBindTempAuthKey)
@@ -329,7 +327,7 @@ func (r *Router) onAuthSignIn(ctx context.Context, req *tg.AuthSignInRequest) (t
 		r.setAuthUserCache(id, u.ID, true)
 	}
 	r.bindSessionUser(ctx, u.ID)
-	r.recordAndScheduleLoginMessagePush(ctx, loginMessage)
+	r.enqueueLoginMessageBootstrap(ctx, loginMessage)
 	r.pushSignInServiceNotificationToOthers(ctx, u)
 	return &tg.AuthAuthorization{User: r.tgSelfUser(u)}, nil
 }
@@ -598,7 +596,7 @@ func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (t
 		r.setAuthUserCache(id, u.ID, true)
 	}
 	r.bindSessionUser(ctx, u.ID)
-	r.recordAndScheduleLoginMessagePush(ctx, loginMessage)
+	r.enqueueLoginMessageBootstrap(ctx, loginMessage)
 	return &tg.AuthAuthorization{User: r.tgSelfUser(u)}, nil
 }
 
@@ -732,84 +730,6 @@ func (r *Router) pushSignInServiceNotificationToOthers(ctx context.Context, u do
 			r.log.Debug("push sign-in service notification", zap.Int64("user_id", u.ID), zap.Int("sent", sent), zap.Error(err))
 		}
 	}()
-}
-
-func (r *Router) recordAndScheduleLoginMessagePush(ctx context.Context, msg domain.Message) {
-	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
-	sessionID, hasSessionID := SessionIDFrom(ctx)
-	if !hasAuthKeyID || !hasSessionID || msg.ID == 0 {
-		return
-	}
-	event := domain.UpdateEvent{Type: domain.UpdateEventNewMessage, Pts: 1, PtsCount: 1, Date: msg.Date, Message: msg}
-	state := domain.UpdateState{Pts: 1, Date: msg.Date, Seq: 0}
-	if r.deps.Updates != nil {
-		recorded, st, err := r.deps.Updates.RecordNewMessage(ctx, authKeyID, msg.OwnerUserID, msg)
-		if err != nil {
-			r.log.Warn("record login message update", zap.Error(err))
-			return
-		}
-		event = recorded
-		state = st
-	}
-	if r.deps.Sessions == nil {
-		return
-	}
-	// 提前从请求 ctx 取出 rawAuthKeyID（值类型），闭包只捕获该值、不捕获请求 ctx——
-	// 避免延迟推送的 AfterFunc 在 loginMessagePushDelay 期间延长请求 ctx 链路的存活。
-	rawAuthKeyID, _ := RawAuthKeyIDFrom(ctx)
-	time.AfterFunc(loginMessagePushDelay, func() {
-		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		r.pushLoginMessage(pushCtx, rawAuthKeyID, sessionID, event, state)
-	})
-}
-
-func (r *Router) pushLoginMessage(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, event domain.UpdateEvent, state domain.UpdateState) {
-	if r.deps.Sessions == nil || event.Message.ID == 0 {
-		return
-	}
-	updates := tgLoginMessageUpdates(event, state)
-	if updates == nil {
-		return
-	}
-	var err error
-	if scoped, ok := r.scopedSessions(); ok && rawAuthKeyID != ([8]byte{}) {
-		err = scoped.PushToSessionForAuthKey(ctx, rawAuthKeyID, sessionID, proto.MessageFromServer, updates)
-	} else {
-		err = r.deps.Sessions.PushToSession(ctx, sessionID, proto.MessageFromServer, updates)
-	}
-	if err != nil {
-		r.log.Debug("push login message", zap.Int64("session_id", sessionID), zap.Error(err))
-		return
-	}
-	r.log.Debug("pushed login message",
-		zap.Int64("session_id", sessionID),
-		zap.Int("message_id", event.Message.ID),
-		zap.Int("pts", event.Pts),
-		zap.Int("seq", state.Seq),
-	)
-}
-
-func tgLoginMessageUpdates(event domain.UpdateEvent, state domain.UpdateState) *tg.Updates {
-	item := tgMessage(event.Message)
-	if item == nil {
-		return nil
-	}
-	if state.Date == 0 {
-		state.Date = event.Date
-	}
-	return &tg.Updates{
-		Updates: []tg.UpdateClass{
-			&tg.UpdateNewMessage{
-				Message:  item,
-				Pts:      event.Pts,
-				PtsCount: event.PtsCount,
-			},
-		},
-		Users: []tg.UserClass{tgUser(domain.OfficialSystemUser())},
-		Date:  state.Date,
-		Seq:   state.Seq,
-	}
 }
 
 func (r *Router) tgSignInServiceNotification(ctx context.Context, u domain.User, authKeyID [8]byte) *tg.Updates {

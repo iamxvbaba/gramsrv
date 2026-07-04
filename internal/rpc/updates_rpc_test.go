@@ -7,19 +7,31 @@ import (
 	"time"
 
 	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
 	appupdates "telesrv/internal/app/updates"
 	"telesrv/internal/domain"
+	"telesrv/internal/postresponse"
 	"telesrv/internal/store/memory"
 )
 
-func TestPushLoginMessageSendsUpdateNewMessage(t *testing.T) {
-	sessions := &captureSessions{}
-	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
+func TestBootstrapLoginMessagePublishesNewMessageAfterReady(t *testing.T) {
+	bootstrap := memory.NewBootstrapUpdateJobStore()
+	updates := &captureUpdates{state: domain.UpdateState{Pts: 3, Date: 1700000000}}
+	messages := &captureMessages{
+		list: domain.MessageList{Messages: []domain.Message{{
+			ID:          99,
+			OwnerUserID: 1000000001,
+			Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+			From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+			Date:        1700000100,
+			Body:        "Login code: 12345",
+			Entities:    []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 11}},
+		}}},
+	}
+	r := New(Config{}, Deps{BootstrapUpdates: bootstrap, Updates: updates, Messages: messages}, zaptest.NewLogger(t), clock.System)
 	msg := domain.Message{
 		ID:          99,
 		OwnerUserID: 1000000001,
@@ -29,39 +41,78 @@ func TestPushLoginMessageSendsUpdateNewMessage(t *testing.T) {
 		Body:        "Login code: 12345",
 		Entities:    []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 11}},
 	}
-	event := domain.UpdateEvent{Type: domain.UpdateEventNewMessage, Pts: 4, PtsCount: 1, Date: msg.Date, Message: msg}
-	state := domain.UpdateState{Pts: 4, Date: 1700000100, Seq: 2}
+	authKeyID := [8]byte{1, 2, 3}
+	sessionID := int64(55)
+	ctx := WithSessionID(WithAuthKeyID(context.Background(), authKeyID), sessionID)
+	r.enqueueLoginMessageBootstrap(ctx, msg)
+	claimed := r.publishReadyBootstrapUpdates(context.Background(), 10, time.Second, zaptest.NewLogger(t))
+	if claimed != 0 || len(updates.events) != 0 {
+		t.Fatalf("published before ready = claimed %d events %d, want none", claimed, len(updates.events))
+	}
 
-	r.pushLoginMessage(context.Background(), [8]byte{}, 55, event, state)
+	ready, err := bootstrap.MarkReadyForSession(context.Background(), msg.OwnerUserID, authKeyID, sessionID)
+	if err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+	if ready != 1 {
+		t.Fatalf("ready jobs = %d, want 1", ready)
+	}
+	claimed = r.publishReadyBootstrapUpdates(context.Background(), 10, time.Second, zaptest.NewLogger(t))
+	if claimed != 1 {
+		t.Fatalf("claimed jobs = %d, want 1", claimed)
+	}
+	if len(updates.events) != 1 {
+		t.Fatalf("published events = %d, want 1", len(updates.events))
+	}
+	event := updates.events[0]
+	if event.Type != domain.UpdateEventNewMessage || event.Message.ID != msg.ID || event.Pts != 4 {
+		t.Fatalf("event = %+v, want login message pts 4", event)
+	}
+}
 
-	gotSession := sessions.snapshot()
-	if gotSession.sessionID != 55 || gotSession.messageType != proto.MessageFromServer {
-		t.Fatalf("push target = session %d type %v, want session 55 MessageFromServer", gotSession.sessionID, gotSession.messageType)
+func TestUpdatesGetStatePublishesBootstrapAfterRPCResult(t *testing.T) {
+	bootstrap := memory.NewBootstrapUpdateJobStore()
+	updates := &captureUpdates{state: domain.UpdateState{Pts: 0, Date: 1700000000}}
+	msg := domain.Message{
+		ID:          1,
+		OwnerUserID: 1780243001,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		Date:        1700000100,
+		Body:        "Login code: 12345",
 	}
-	got, ok := gotSession.message.(*tg.Updates)
-	if !ok {
-		t.Fatalf("pushed message = %T, want *tg.Updates", gotSession.message)
+	messages := &captureMessages{list: domain.MessageList{Messages: []domain.Message{msg}}}
+	r := New(Config{}, Deps{BootstrapUpdates: bootstrap, Updates: updates, Messages: messages}, zaptest.NewLogger(t), clock.System)
+	authKeyID := [8]byte{9, 8, 7}
+	sessionID := int64(5723482677041206318)
+	ctx := postresponse.WithCallbacks(
+		WithUserID(
+			WithSessionID(WithAuthKeyID(context.Background(), authKeyID), sessionID),
+			msg.OwnerUserID,
+		),
+	)
+	r.enqueueLoginMessageBootstrap(ctx, msg)
+
+	state, err := r.onUpdatesGetState(ctx)
+	if err != nil {
+		t.Fatalf("getState: %v", err)
 	}
-	if len(got.Updates) != 1 || len(got.Users) != 1 {
-		t.Fatalf("updates payload = %+v, want one update and official user", got)
+	if state.Pts != 0 {
+		t.Fatalf("state pts = %d, want 0 before bootstrap publish", state.Pts)
 	}
-	update, ok := got.Updates[0].(*tg.UpdateNewMessage)
-	if !ok {
-		t.Fatalf("update = %T, want *tg.UpdateNewMessage", got.Updates[0])
+	if claimed := r.publishReadyBootstrapUpdates(context.Background(), 10, time.Second, zaptest.NewLogger(t)); claimed != 0 {
+		t.Fatalf("bootstrap published before post-response callback: %d", claimed)
 	}
-	if update.Pts != event.Pts || update.PtsCount != event.PtsCount || got.Seq != state.Seq {
-		t.Fatalf("update state = pts %d pts_count %d seq %d, want %d/%d/%d", update.Pts, update.PtsCount, got.Seq, event.Pts, event.PtsCount, state.Seq)
+	if len(updates.events) != 0 {
+		t.Fatalf("events before post-response = %d, want 0", len(updates.events))
 	}
-	message, ok := update.Message.(*tg.Message)
-	if !ok {
-		t.Fatalf("update message = %T, want *tg.Message", update.Message)
+
+	postresponse.Run(ctx)
+	if len(updates.events) != 1 {
+		t.Fatalf("events after post-response = %d, want 1", len(updates.events))
 	}
-	if message.ID != msg.ID || message.Message != msg.Body {
-		t.Fatalf("message = %+v, want login message %+v", message, msg)
-	}
-	user, ok := got.Users[0].(*tg.User)
-	if !ok || user.ID != domain.OfficialSystemUserID || !user.Verified || !user.Support {
-		t.Fatalf("user = %#v, want verified official system user", got.Users[0])
+	if got := updates.events[0]; got.Type != domain.UpdateEventNewMessage || got.Message.ID != msg.ID {
+		t.Fatalf("event after post-response = %+v, want login message", got)
 	}
 }
 

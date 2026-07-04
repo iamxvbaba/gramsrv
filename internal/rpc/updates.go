@@ -34,6 +34,7 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 		return nil, internalErr()
 	}
 	r.markSessionReceivesUpdates(ctx, userID)
+	r.registerBootstrapAfterBaseline(ctx, userID)
 	// 密聊 qts 是设备级、独立于账号级 pts 引擎：注入当前设备已分配的 qts（无密聊设备为 0）。
 	out := tgUpdateState(st)
 	out.Qts = r.deviceEncryptedQts(ctx)
@@ -76,6 +77,7 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
 	stateUpdates, statePeerUserIDs, stateEventIDs := r.encryptedStateUpdates(ctx, userID)
 	if len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
+		r.registerBootstrapAfterBaseline(ctx, userID)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}
 	st.Events = r.enrichUpdateEvents(ctx, userID, st.Events)
@@ -87,6 +89,7 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 			_ = r.deps.SecretChats.MarkStateEventsDelivered(ctx, deviceKey, stateEventIDs)
 		}
 	}
+	r.registerBootstrapAfterBaseline(ctx, userID)
 	return diff, nil
 }
 

@@ -22,6 +22,10 @@ type dispatchingEventAppender interface {
 	AppendAllocatedWithDispatch(ctx context.Context, userID int64, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, error)
 }
 
+type newMessageEventFinder interface {
+	FindNewMessageEvent(ctx context.Context, userID int64, messageBoxID int) (domain.UpdateEvent, bool, error)
+}
+
 // ServiceOption 调整 updates 服务的运行时依赖。
 type ServiceOption func(*Service)
 
@@ -257,6 +261,37 @@ func (s *Service) RecordNewMessage(ctx context.Context, authKeyID [8]byte, userI
 		Message:  msg,
 		PtsCount: 1,
 	}, false, 0)
+}
+
+// PublishNewMessage appends an account-visible message update and enqueues
+// online dispatch without acknowledging any device-local update state.
+func (s *Service) PublishNewMessage(ctx context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
+	if userID == 0 {
+		userID = msg.OwnerUserID
+	}
+	if finder, ok := s.events.(newMessageEventFinder); ok && msg.ID > 0 {
+		event, found, err := finder.FindNewMessageEvent(ctx, userID, msg.ID)
+		if err != nil {
+			return domain.UpdateEvent{}, domain.UpdateState{}, err
+		}
+		if found {
+			st, err := s.currentState(ctx, userID)
+			if err != nil {
+				return domain.UpdateEvent{}, domain.UpdateState{}, err
+			}
+			return event, st, nil
+		}
+	}
+	date := msg.Date
+	if date == 0 {
+		date = int(time.Now().Unix())
+	}
+	return s.recordEventCore(ctx, [8]byte{}, userID, domain.UpdateEvent{
+		Type:     domain.UpdateEventNewMessage,
+		Date:     date,
+		Message:  msg,
+		PtsCount: 1,
+	}, true, 0, false)
 }
 
 // RecordMessageReactions records a durable marker for message reaction changes.

@@ -305,6 +305,7 @@ func run(logger *zap.Logger) error {
 	updateEventStore := postgres.NewUpdateEventStore(pool, postgres.WithUpdateEventLogger(logger.Named("store").Named("updates")))
 	readModelVersionStore := storepkg.NewCachedReadModelVersionStore(postgres.NewReadModelVersionStore(pool), 0, 0)
 	dispatchOutboxStore := postgres.NewDispatchOutboxStore(pool, postgres.WithLeaseTimeout(cfg.OutboxLeaseTimeout))
+	bootstrapUpdateStore := postgres.NewBootstrapUpdateJobStore(pool)
 	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
 	channelIDAllocator := redisstore.NewChannelIDAllocator(rdb, postgres.NewChannelIDCounterSource(pool))
 	channelMessageIDAllocator := redisstore.NewChannelMessageIDAllocator(rdb, postgres.NewChannelMessageIDCounterSource(pool))
@@ -595,34 +596,35 @@ func run(logger *zap.Logger) error {
 		TempKeyResolveCacheTTL:        5 * time.Second,
 		TempKeyResolveCacheMaxEntries: cfg.TempKeyResolveCacheMaxEntries,
 	}, rpc.Deps{
-		Auth:        authService,
-		Account:     accountService,
-		Privacy:     privacyService,
-		Help:        help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken)),
-		AICompose:   aiComposeService,
-		Users:       usersService,
-		Updates:     updatesService,
-		Contacts:    contactsService,
-		Dialogs:     dialogsService,
-		Messages:    messagesService,
-		Channels:    channelsService,
-		Files:       filesService,
-		Bots:        botsService,
-		Polls:       pollsapp.NewService(pollStore),
-		Stories:     storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService)),
-		Phone:       phoneService,
-		SecretChats: secretChatService,
-		Stars:       starsService,
-		Gifts:       giftsService,
-		Passkey:     passkeyService,
-		Themes:      themeService,
-		GroupCalls:  groupCallsService,
-		SFU:         sfuService,
-		TURN:        turnService,
-		LangPack:    langPackService,
-		Sessions:    activeSessions,
-		Inline:      inlineRegistryStore,
-		Limiter:     rateLimiter,
+		Auth:             authService,
+		Account:          accountService,
+		Privacy:          privacyService,
+		Help:             help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken)),
+		AICompose:        aiComposeService,
+		Users:            usersService,
+		Updates:          updatesService,
+		BootstrapUpdates: bootstrapUpdateStore,
+		Contacts:         contactsService,
+		Dialogs:          dialogsService,
+		Messages:         messagesService,
+		Channels:         channelsService,
+		Files:            filesService,
+		Bots:             botsService,
+		Polls:            pollsapp.NewService(pollStore),
+		Stories:          storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService)),
+		Phone:            phoneService,
+		SecretChats:      secretChatService,
+		Stars:            starsService,
+		Gifts:            giftsService,
+		Passkey:          passkeyService,
+		Themes:           themeService,
+		GroupCalls:       groupCallsService,
+		SFU:              sfuService,
+		TURN:             turnService,
+		LangPack:         langPackService,
+		Sessions:         activeSessions,
+		Inline:           inlineRegistryStore,
+		Limiter:          rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{
 		ReadModelVersions:  readModelVersionStore,
@@ -664,6 +666,7 @@ func run(logger *zap.Logger) error {
 		rpc.WithOutboxPushTimeout(cfg.OutboundPushTimeout),
 		rpc.WithOutboxUpdateBuilder(router.BuildOutboxUpdates),
 	).Run(ctx)
+	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewScheduledDispatcher(router, logger.Named("rpc").Named("scheduled")).Run(ctx)
 	go rpc.NewExpiryDispatcher(router, logger.Named("rpc").Named("expiry")).Run(ctx)
 	go rpc.NewPhoneExpiryDispatcher(router, logger.Named("rpc").Named("phone-expiry"), cfg.CallExpiryInterval).Run(ctx)

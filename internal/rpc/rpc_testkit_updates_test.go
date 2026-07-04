@@ -71,6 +71,19 @@ func (s *captureUpdates) RecordNewMessage(_ context.Context, authKeyID [8]byte, 
 	return event, s.state, nil
 }
 
+func (s *captureUpdates) PublishNewMessage(_ context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
+	s.userID = userID
+	s.date = msg.Date
+	event := domain.UpdateEvent{Type: domain.UpdateEventNewMessage, Pts: s.state.Pts + 1, PtsCount: 1, Date: msg.Date, Message: msg}
+	s.events = append(s.events, event)
+	st := s.state
+	st.Pts = event.Pts
+	if st.Date == 0 {
+		st.Date = msg.Date
+	}
+	return event, st, nil
+}
+
 func (s *captureUpdates) RecordStory(_ context.Context, authKeyID [8]byte, userID int64, story domain.Story, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	s.excludeSessionID = excludeSessionID
 	return s.recordCapturedEvent(authKeyID, userID, domain.UpdateEvent{
