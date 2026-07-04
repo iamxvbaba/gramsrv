@@ -22,6 +22,7 @@ import (
 
 	"telesrv/internal/compat/layerwire"
 	"telesrv/internal/observability/dbtrace"
+	"telesrv/internal/postresponse"
 	"telesrv/internal/store"
 )
 
@@ -495,6 +496,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, b *bin.Buf
 		return nil
 	}
 
+	ctx = postresponse.WithCallbacks(ctx)
 	ctx, dbStats := dbtrace.WithStats(ctx)
 	start := s.clock.Now()
 	result, err := s.rpc.Dispatch(ctx, c.authKeyID, c.sessionID, b)
@@ -547,7 +549,11 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, b *bin.Buf
 	}
 
 	s.log.Info("RPC handled", fields...)
-	return s.sendResult(ctx, c, msgID, result)
+	if err := s.sendResult(ctx, c, msgID, result); err != nil {
+		return err
+	}
+	postresponse.Run(ctx)
+	return nil
 }
 
 // sendResult 把 RPC 结果包成 rpc_result 并加密回发。
