@@ -1,13 +1,26 @@
-# gramsrv
+# gramsrv - Open Source Telegram Server / MTProto Server in Go
 
-`gramsrv` is an open-source Telegram-like MTProto server written in Go. It is
-built for real client compatibility, self-hosted chat experiments, protocol
-research, and long-running work toward a practical community server.
+`gramsrv` is an open-source Telegram server implementation and MTProto server
+written in Go. It is a Telegram-like backend for real client compatibility,
+self-hosted chat experiments, protocol research, and long-running work toward a
+practical community server.
+
+If you are looking for a **Telegram server**, **MTProto server**,
+**Telegram backend**, **Telegram clone server**, or **self-hosted
+Telegram-like chat server**, this repository is the server-side implementation
+to study, run, and improve.
 
 [Website](https://telesrv.net) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
 
 `gramsrv` is independent and unofficial. It is not affiliated with, endorsed by,
 or sponsored by Telegram or the official Telegram team.
+
+## Project Keywords
+
+`telegram server` · `telegram server implementation` · `mtproto server` ·
+`mtproto server in go` · `telegram backend` · `telegram-like server` ·
+`self-hosted telegram` · `telegram desktop compatible server` ·
+`android telegram compatible server` · `open source chat server`
 
 ## Demo Video
 
@@ -32,6 +45,7 @@ codebase.
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
 | ✅ | Private chats | Send, history, read receipts, edit, delete, forward, reply, rich entities, grouped/media messages, reactions, scheduled/TTL-oriented paths. |
+| ✅ | Rich messages | Telegram Desktop rich text messages, rich content conversion, send/edit/scheduled flows, dialog/history projections, and memory/PostgreSQL persistence. |
 | ✅ | AI compose and ChatBot | Input-box rewrite/polish, default and custom tones, addstyle previews, local and external provider chains, streamed `@ChatBot` draft replies, and Business AI reply hooks. |
 | ✅ | Supergroups and channels | Create, join, leave, invite links, participants, admins, forum topics, history, send/edit/delete/read, reactions, public search, and previews. |
 | ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
