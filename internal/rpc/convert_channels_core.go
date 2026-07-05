@@ -205,6 +205,17 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			userID = action.UserIDs[0]
 		}
 		return &tg.MessageActionChatDeleteUser{UserID: userID}
+	case domain.ChannelActionChatEditPhoto:
+		if action.Photo == nil {
+			return nil
+		}
+		photo := tgPhoto(*action.Photo)
+		if _, empty := photo.(*tg.PhotoEmpty); empty {
+			return nil
+		}
+		return &tg.MessageActionChatEditPhoto{Photo: photo}
+	case domain.ChannelActionChatDeletePhoto:
+		return &tg.MessageActionChatDeletePhoto{}
 	case domain.ChannelActionEditTitle:
 		return &tg.MessageActionChatEditTitle{Title: action.Title}
 	case domain.ChannelActionTopicCreate:

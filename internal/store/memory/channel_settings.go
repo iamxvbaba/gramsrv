@@ -219,31 +219,56 @@ func (s *ChannelStore) ResolvePublicChannelUsername(_ context.Context, viewerUse
 	return domain.Channel{}, false, nil
 }
 
-func (s *ChannelStore) SetChannelPhoto(_ context.Context, userID, channelID int64, photo *domain.Photo) (domain.Channel, error) {
+func (s *ChannelStore) SetChannelPhoto(_ context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error) {
 	if userID == 0 || channelID == 0 {
-		return domain.Channel{}, domain.ErrChannelInvalid
+		return domain.SetChannelPhotoResult{}, domain.ErrChannelInvalid
+	}
+	if date == 0 {
+		date = int(time.Now().Unix())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, err := s.channelForMemberLocked(userID, channelID)
 	if err != nil {
-		return domain.Channel{}, err
+		return domain.SetChannelPhotoResult{}, err
 	}
 	member := s.members[channelID][userID]
 	if !canChangeChannelInfo(member) {
-		return domain.Channel{}, domain.ErrChannelAdminRequired
+		return domain.SetChannelPhotoResult{}, domain.ErrChannelAdminRequired
 	}
+	var action domain.ChannelMessageAction
 	if photo != nil && photo.ID != 0 {
+		if channel.PhotoID == photo.ID {
+			return domain.SetChannelPhotoResult{}, domain.ErrChannelNotModified
+		}
+		action = domain.ChannelMessageAction{
+			Type:  domain.ChannelActionChatEditPhoto,
+			Photo: domain.ClonePhotoPtr(photo),
+		}
 		channel.PhotoID = photo.ID
 		channel.PhotoDCID = photo.DCID
 		channel.PhotoStripped = domain.StrippedFromSizes(photo.Sizes)
 	} else {
+		if channel.PhotoID == 0 {
+			return domain.SetChannelPhotoResult{}, domain.ErrChannelNotModified
+		}
+		action = domain.ChannelMessageAction{Type: domain.ChannelActionChatDeletePhoto}
 		channel.PhotoID = 0
 		channel.PhotoDCID = 0
 		channel.PhotoStripped = nil
 	}
+	msg, event := s.appendChannelServiceMessageLocked(channelID, userID, date, action)
+	channel.TopMessageID = msg.ID
+	channel.Pts = event.Pts
 	s.channels[channelID] = channel
-	return channel, nil
+	s.upsertChannelDialogLocked(userID, channel, msg, true)
+	return domain.SetChannelPhotoResult{
+		Channel:    cloneChannel(channel),
+		Message:    cloneChannelMessage(msg),
+		Event:      cloneChannelEvent(event),
+		Recipients: s.activeMemberIDsLocked(channelID, 0, 0),
+		Changed:    true,
+	}, nil
 }
 
 func (s *ChannelStore) SetSignatures(_ context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {

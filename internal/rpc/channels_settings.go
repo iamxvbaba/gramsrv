@@ -372,14 +372,43 @@ func (r *Router) onChannelsEditPhoto(ctx context.Context, req *tg.ChannelsEditPh
 	if err != nil {
 		return nil, err
 	}
-	channel, err := r.deps.Channels.SetPhoto(ctx, userID, channelID, photo)
+	res, err := r.deps.Channels.SetPhoto(ctx, userID, channelID, photo, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, channelAdminErr(err)
 	}
-	return r.channelStateMutationUpdates(ctx, userID, channel), nil
+	r.invalidateRPCProjectionForChannel(res.Channel.ID)
+	updates := r.channelPhotoUpdates(ctx, userID, res)
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+		return r.channelStateUpdates(viewerUserID, res.Channel)
+	})
+	if res.Event.Pts != 0 {
+		r.enqueueChannelMessageFanout(ctx, userID, domain.SendChannelMessageResult{
+			Channel:    res.Channel,
+			Message:    res.Message,
+			Event:      res.Event,
+			Recipients: res.Recipients,
+		}, nil)
+	}
+	return updates, nil
 }
 
 func (r *Router) channelTitleUpdates(ctx context.Context, viewerUserID int64, res domain.EditChannelTitleResult) *tg.Updates {
+	updates := []tg.UpdateClass{&tg.UpdateChannel{ChannelID: res.Channel.ID}}
+	if res.Event.Pts != 0 {
+		if update := tgChannelUpdate(viewerUserID, res.Event); update != nil {
+			updates = append(updates, update)
+		}
+	}
+	return &tg.Updates{
+		Updates: updates,
+		Users:   r.tgUsersForIDs(ctx, viewerUserID, []int64{res.Message.SenderUserID}),
+		Chats:   []tg.ChatClass{tgChannelChatMin(viewerUserID, res.Channel)},
+		Date:    int(r.clock.Now().Unix()),
+		Seq:     0,
+	}
+}
+
+func (r *Router) channelPhotoUpdates(ctx context.Context, viewerUserID int64, res domain.SetChannelPhotoResult) *tg.Updates {
 	updates := []tg.UpdateClass{&tg.UpdateChannel{ChannelID: res.Channel.ID}}
 	if res.Event.Pts != 0 {
 		if update := tgChannelUpdate(viewerUserID, res.Event); update != nil {

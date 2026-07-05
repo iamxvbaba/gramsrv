@@ -768,6 +768,83 @@ func TestCreateChatCreatesMegagroupWithChannelPts(t *testing.T) {
 	}
 }
 
+func TestSetChannelPhotoCreatesServiceMessagesAndDifference(t *testing.T) {
+	ctx := context.Background()
+	service := NewService(memory.NewChannelStore())
+
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Avatar Team",
+		MemberUserIDs: []int64{1002},
+		Date:          10,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	photo := domain.Photo{
+		ID:         9001,
+		AccessHash: 9002,
+		DCID:       2,
+		Sizes: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{1, 2, 3}},
+			{Kind: domain.PhotoSizeKindDefault, Type: "m", W: 160, H: 160, Size: 4096},
+		},
+	}
+
+	set, err := service.SetPhoto(ctx, 1001, created.Channel.ID, &photo, 11)
+	if err != nil {
+		t.Fatalf("SetPhoto: %v", err)
+	}
+	if set.Channel.PhotoID != photo.ID || set.Channel.PhotoDCID != photo.DCID || !slices.Equal(set.Channel.PhotoStripped, []byte{1, 2, 3}) {
+		t.Fatalf("set channel photo fields = %+v, want photo id/dc/stripped", set.Channel)
+	}
+	if set.Channel.TopMessageID != set.Message.ID || set.Channel.Pts != set.Event.Pts {
+		t.Fatalf("set top/pts = channel %+v message %+v event %+v, want service message as top", set.Channel, set.Message, set.Event)
+	}
+	if set.Event.Type != domain.ChannelUpdateNewMessage || set.Event.Pts != created.Event.Pts+1 || set.Event.PtsCount != 1 {
+		t.Fatalf("set event = %+v, want durable new-message pts", set.Event)
+	}
+	if set.Message.Action == nil || set.Message.Action.Type != domain.ChannelActionChatEditPhoto || set.Message.Action.Photo == nil || set.Message.Action.Photo.ID != photo.ID {
+		t.Fatalf("set action = %+v, want chat_edit_photo with photo snapshot", set.Message.Action)
+	}
+	if _, err := service.SetPhoto(ctx, 1001, created.Channel.ID, &photo, 12); !errors.Is(err, domain.ErrChannelNotModified) {
+		t.Fatalf("duplicate SetPhoto err = %v, want ErrChannelNotModified", err)
+	}
+	diff, err := service.GetDifference(ctx, 1002, domain.ChannelDifferenceRequest{ChannelID: created.Channel.ID, Pts: created.Event.Pts, Limit: 10})
+	if err != nil {
+		t.Fatalf("GetDifference set photo: %v", err)
+	}
+	if !diff.Final || diff.Pts != set.Event.Pts || len(diff.NewMessages) != 1 {
+		t.Fatalf("diff after set = %+v, want one service message through pts %d", diff, set.Event.Pts)
+	}
+	if action := diff.NewMessages[0].Action; action == nil || action.Type != domain.ChannelActionChatEditPhoto || action.Photo == nil || action.Photo.ID != photo.ID {
+		t.Fatalf("diff set action = %+v, want chat_edit_photo", action)
+	}
+
+	cleared, err := service.SetPhoto(ctx, 1001, created.Channel.ID, nil, 13)
+	if err != nil {
+		t.Fatalf("ClearPhoto: %v", err)
+	}
+	if cleared.Channel.PhotoID != 0 || cleared.Channel.PhotoDCID != 0 || len(cleared.Channel.PhotoStripped) != 0 {
+		t.Fatalf("cleared channel photo fields = %+v, want empty photo", cleared.Channel)
+	}
+	if cleared.Event.Pts != set.Event.Pts+1 || cleared.Message.Action == nil || cleared.Message.Action.Type != domain.ChannelActionChatDeletePhoto {
+		t.Fatalf("cleared = event %+v action %+v, want chat_delete_photo next pts", cleared.Event, cleared.Message.Action)
+	}
+	clearDiff, err := service.GetDifference(ctx, 1002, domain.ChannelDifferenceRequest{ChannelID: created.Channel.ID, Pts: set.Event.Pts, Limit: 10})
+	if err != nil {
+		t.Fatalf("GetDifference clear photo: %v", err)
+	}
+	if !clearDiff.Final || clearDiff.Pts != cleared.Event.Pts || len(clearDiff.NewMessages) != 1 {
+		t.Fatalf("diff after clear = %+v, want one delete-photo service message", clearDiff)
+	}
+	if action := clearDiff.NewMessages[0].Action; action == nil || action.Type != domain.ChannelActionChatDeletePhoto {
+		t.Fatalf("diff clear action = %+v, want chat_delete_photo", action)
+	}
+	if _, err := service.SetPhoto(ctx, 1001, created.Channel.ID, nil, 14); !errors.Is(err, domain.ErrChannelNotModified) {
+		t.Fatalf("duplicate ClearPhoto err = %v, want ErrChannelNotModified", err)
+	}
+}
+
 func TestGroupBotPolicies(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewChannelStore()

@@ -70,6 +70,7 @@ func cloneChannelMessageAction(in *domain.ChannelMessageAction) *domain.ChannelM
 		out.StarGift = &g
 	}
 	out.Wallpaper = domain.CloneWallpaperPtr(in.Wallpaper)
+	out.Photo = domain.ClonePhotoPtr(in.Photo)
 	return &out
 }
 

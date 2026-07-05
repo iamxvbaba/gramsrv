@@ -509,11 +509,13 @@ type ChannelDialog struct {
 type ChannelMessageActionType string
 
 const (
-	ChannelActionNone        ChannelMessageActionType = ""
-	ChannelActionCreate      ChannelMessageActionType = "channel_create"
-	ChannelActionChatAddUser ChannelMessageActionType = "chat_add_user"
-	ChannelActionChatDelete  ChannelMessageActionType = "chat_delete_user"
-	ChannelActionChatJoined  ChannelMessageActionType = "chat_joined"
+	ChannelActionNone            ChannelMessageActionType = ""
+	ChannelActionCreate          ChannelMessageActionType = "channel_create"
+	ChannelActionChatAddUser     ChannelMessageActionType = "chat_add_user"
+	ChannelActionChatDelete      ChannelMessageActionType = "chat_delete_user"
+	ChannelActionChatEditPhoto   ChannelMessageActionType = "chat_edit_photo"
+	ChannelActionChatDeletePhoto ChannelMessageActionType = "chat_delete_photo"
+	ChannelActionChatJoined      ChannelMessageActionType = "chat_joined"
 	// ChannelActionChatJoinedByLink 是经邀请链接加入的服务消息，
 	// 渲染为 "X joined the group via invite link"。
 	ChannelActionChatJoinedByLink ChannelMessageActionType = "chat_joined_by_link"
@@ -572,6 +574,8 @@ type ChannelMessageAction struct {
 	StarGift *MessageStarGiftAction
 	// Wallpaper 仅 set_chat_wallpaper 服务消息使用。
 	Wallpaper *Wallpaper
+	// Photo 仅 chat_edit_photo 服务消息使用。
+	Photo *Photo
 }
 
 // ChannelMessage is a single stored message in a channel/supergroup.
@@ -1339,6 +1343,16 @@ type UpdateChannelUsernameRequest struct {
 	UserID    int64
 	ChannelID int64
 	Username  string
+}
+
+// SetChannelPhotoResult describes a channel avatar mutation and its durable
+// service message.
+type SetChannelPhotoResult struct {
+	Channel    Channel
+	Message    ChannelMessage
+	Event      ChannelUpdateEvent
+	Recipients []int64
+	Changed    bool
 }
 
 // DeleteChannelResult describes a deleted channel.

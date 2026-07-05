@@ -1206,6 +1206,10 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("messages.addChatUser legacy wrapper: %v", err)
 	}
+	seedPhoto := domain.Photo{ID: 7701, AccessHash: 7702, DCID: 2}
+	if _, err := f.channels.SetChannelPhoto(f.ctx, owner.ID, channel.ID, &seedPhoto, 1700007701); err != nil {
+		t.Fatalf("seed channel photo before legacy clear: %v", err)
+	}
 	if _, err := r.onMessagesEditChatPhoto(ownerCtx, &tg.MessagesEditChatPhotoRequest{
 		ChatID: channel.ID,
 		Photo:  &tg.InputChatPhotoEmpty{},

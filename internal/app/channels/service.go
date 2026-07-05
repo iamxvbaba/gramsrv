@@ -516,11 +516,11 @@ func (s *Service) SetSignatures(ctx context.Context, userID, channelID int64, en
 }
 
 // SetPhoto 设置/清除频道头像（photo==nil 表示清除）。
-func (s *Service) SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo) (domain.Channel, error) {
+func (s *Service) SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
-		return domain.Channel{}, domain.ErrChannelInvalid
+		return domain.SetChannelPhotoResult{}, domain.ErrChannelInvalid
 	}
-	return s.channels.SetChannelPhoto(ctx, userID, channelID, photo)
+	return s.channels.SetChannelPhoto(ctx, userID, channelID, photo, date)
 }
 
 // SetPreHistoryHidden toggles hidden history for new supergroup members.

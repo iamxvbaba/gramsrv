@@ -255,6 +255,113 @@ func TestMessagesGetChatsUsesBatchServiceRPC(t *testing.T) {
 	}
 }
 
+func TestChannelsEditPhotoReturnsServiceMessageUpdatesRPC(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 91, Phone: "15550009101", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	member, err := userStore.Create(ctx, domain.User{AccessHash: 92, Phone: "15550009102", FirstName: "Member"})
+	if err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	channelStore := memory.NewChannelStore()
+	channelService := appchannels.NewService(channelStore)
+	created, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{
+		Title:         "Photo RPC",
+		Megagroup:     true,
+		MemberUserIDs: []int64{member.ID},
+		Date:          1700001900,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	files := &fakeFiles{}
+	photo := files.putPhoto(domain.Photo{
+		ID:         9901,
+		AccessHash: 9902,
+		DCID:       2,
+		Date:       1700001901,
+		Sizes: []domain.PhotoSize{
+			{Kind: domain.PhotoSizeKindStripped, Type: "i", Bytes: []byte{4, 5, 6}},
+			{Kind: domain.PhotoSizeKindDefault, Type: "m", W: 160, H: 160, Size: 4096},
+		},
+	})
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: channelService,
+		Files:    files,
+	}, zaptest.NewLogger(t), clock.System)
+	input := &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
+
+	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhoto{ID: &tg.InputPhoto{ID: photo.ID, AccessHash: photo.AccessHash}},
+	})
+	if err != nil {
+		t.Fatalf("channels.editPhoto set: %v", err)
+	}
+	setAction := requireChannelPhotoServiceAction(t, setResult, created.Channel.ID)
+	editPhoto, ok := setAction.(*tg.MessageActionChatEditPhoto)
+	if !ok {
+		t.Fatalf("set action = %T, want MessageActionChatEditPhoto", setAction)
+	}
+	tgPhoto, ok := editPhoto.Photo.(*tg.Photo)
+	if !ok || tgPhoto.ID != photo.ID {
+		t.Fatalf("set action photo = %#v, want tg.Photo id %d", editPhoto.Photo, photo.ID)
+	}
+
+	clearResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: input,
+		Photo:   &tg.InputChatPhotoEmpty{},
+	})
+	if err != nil {
+		t.Fatalf("channels.editPhoto clear: %v", err)
+	}
+	clearAction := requireChannelPhotoServiceAction(t, clearResult, created.Channel.ID)
+	if _, ok := clearAction.(*tg.MessageActionChatDeletePhoto); !ok {
+		t.Fatalf("clear action = %T, want MessageActionChatDeletePhoto", clearAction)
+	}
+}
+
+func requireChannelPhotoServiceAction(t *testing.T, updatesClass tg.UpdatesClass, channelID int64) tg.MessageActionClass {
+	t.Helper()
+	updates, ok := updatesClass.(*tg.Updates)
+	if !ok {
+		t.Fatalf("updates = %T, want *tg.Updates", updatesClass)
+	}
+	hasUpdateChannel := false
+	var action tg.MessageActionClass
+	for _, update := range updates.Updates {
+		switch item := update.(type) {
+		case *tg.UpdateChannel:
+			if item.ChannelID == channelID {
+				hasUpdateChannel = true
+			}
+		case *tg.UpdateNewChannelMessage:
+			service, ok := item.Message.(*tg.MessageService)
+			if !ok {
+				t.Fatalf("new channel message = %T, want MessageService", item.Message)
+			}
+			action = service.Action
+		}
+	}
+	if !hasUpdateChannel {
+		t.Fatalf("updates = %+v, want UpdateChannel for %d", updates.Updates, channelID)
+	}
+	if action == nil {
+		t.Fatalf("updates = %+v, want UpdateNewChannelMessage service action", updates.Updates)
+	}
+	if len(updates.Chats) == 0 {
+		t.Fatalf("updates chats empty, want channel projection")
+	}
+	if len(updates.Users) == 0 {
+		t.Fatalf("updates users empty, want service sender projection")
+	}
+	return action
+}
+
 func TestMessagesGetPeerSettingsUsesResolveChannelForAccessCheck(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()

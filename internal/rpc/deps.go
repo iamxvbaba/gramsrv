@@ -485,7 +485,7 @@ type ChannelsService interface {
 	ResolvePublicUsername(ctx context.Context, userID int64, username string) (domain.Channel, bool, error)
 	SearchPublicChannels(ctx context.Context, userID int64, query string, limit int) (domain.PublicChannelSearchResult, error)
 	SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
-	SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo) (domain.Channel, error)
+	SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error)
 	SetPreHistoryHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetParticipantsHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetForum(ctx context.Context, userID, channelID int64, enabled, tabs bool) (domain.Channel, error)

@@ -361,18 +361,21 @@ func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int6
 	return channel, nil
 }
 
-// SetChannelPhoto 设置/清除频道头像（反范式列）。photo==nil 表示清除。
-func (s *ChannelStore) SetChannelPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo) (domain.Channel, error) {
+// SetChannelPhoto 设置/清除频道头像，并生成对应频道服务消息。photo==nil 表示清除。
+func (s *ChannelStore) SetChannelPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error) {
 	if userID == 0 || channelID == 0 {
-		return domain.Channel{}, domain.ErrChannelInvalid
+		return domain.SetChannelPhotoResult{}, domain.ErrChannelInvalid
 	}
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
-		return domain.Channel{}, fmt.Errorf("set channel photo: db does not support transactions")
+		return domain.SetChannelPhotoResult{}, fmt.Errorf("set channel photo: db does not support transactions")
+	}
+	if date == 0 {
+		date = nowUnix()
 	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
-		return domain.Channel{}, fmt.Errorf("begin set channel photo: %w", err)
+		return domain.SetChannelPhotoResult{}, fmt.Errorf("begin set channel photo: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -382,36 +385,68 @@ func (s *ChannelStore) SetChannelPhoto(ctx context.Context, userID, channelID in
 	}()
 	channel, member, err := s.getChannelForMember(ctx, tx, userID, channelID)
 	if err != nil {
-		return domain.Channel{}, err
+		return domain.SetChannelPhotoResult{}, err
 	}
 	if !canChangeChannelInfo(member) {
-		return domain.Channel{}, domain.ErrChannelAdminRequired
+		return domain.SetChannelPhotoResult{}, domain.ErrChannelAdminRequired
 	}
 	var (
 		photoID  int64
 		dcID     int
 		stripped []byte
+		action   domain.ChannelMessageAction
 	)
 	if photo != nil && photo.ID != 0 {
+		if channel.PhotoID == photo.ID {
+			return domain.SetChannelPhotoResult{}, domain.ErrChannelNotModified
+		}
 		photoID = photo.ID
 		dcID = photo.DCID
 		stripped = domain.StrippedFromSizes(photo.Sizes)
+		action = domain.ChannelMessageAction{
+			Type:  domain.ChannelActionChatEditPhoto,
+			Photo: domain.ClonePhotoPtr(photo),
+		}
+	} else {
+		if channel.PhotoID == 0 {
+			return domain.SetChannelPhotoResult{}, domain.ErrChannelNotModified
+		}
+		action = domain.ChannelMessageAction{Type: domain.ChannelActionChatDeletePhoto}
 	}
 	if stripped == nil {
 		stripped = []byte{}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE channels SET photo_id = $2, photo_dc_id = $3, photo_stripped = $4, updated_at = now() WHERE id = $1`,
 		channelID, photoID, dcID, stripped); err != nil {
-		return domain.Channel{}, fmt.Errorf("update channel photo: %w", err)
+		return domain.SetChannelPhotoResult{}, fmt.Errorf("update channel photo: %w", err)
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
 	}
 	channel.PhotoID = photoID
 	channel.PhotoDCID = dcID
 	channel.PhotoStripped = stripped
+	msg, event, err := s.insertServiceMessage(ctx, tx, channel, userID, date, action)
+	if err != nil {
+		return domain.SetChannelPhotoResult{}, err
+	}
+	channel.TopMessageID = msg.ID
+	channel.Pts = event.Pts
+	if err := upsertChannelDialogTx(ctx, tx, userID, channel, msg, msg.ID, 0); err != nil {
+		return domain.SetChannelPhotoResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return domain.Channel{}, fmt.Errorf("commit set channel photo: %w", err)
+		return domain.SetChannelPhotoResult{}, fmt.Errorf("commit set channel photo: %w", err)
 	}
 	committed = true
-	return channel, nil
+	recipients, _ := s.ListActiveChannelMemberIDs(ctx, userID, channelID, 0)
+	return domain.SetChannelPhotoResult{
+		Channel:    channel,
+		Message:    msg,
+		Event:      event,
+		Recipients: recipients,
+		Changed:    true,
+	}, nil
 }
 
 func (s *ChannelStore) SetAutotranslation(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
