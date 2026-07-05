@@ -757,6 +757,155 @@ func TestSeedDocumentIDsAreImportedVerbatim(t *testing.T) {
 	}
 }
 
+func TestSeedMediaUsesInputSetTypeForSystemSets(t *testing.T) {
+	ctx := context.Background()
+	seedDir := t.TempDir()
+	cases := []struct {
+		name         string
+		category     string
+		dirName      string
+		inputSetType string
+		shortName    string
+		id           int64
+		docID        int64
+		emojis       bool
+		wantSystem   string
+	}{
+		{
+			name:         "default topic icons from emoji export",
+			category:     "telegram_emoji_export",
+			dirName:      "Topics_7173162320003082",
+			inputSetType: "*tg.InputStickerSetEmojiDefaultTopicIcons",
+			shortName:    "Topics",
+			id:           7173162320003082,
+			docID:        5312536423851630001,
+			emojis:       true,
+			wantSystem:   domain.StickerSetSystemKeyEmojiDefaultTopicIcons,
+		},
+		{
+			name:         "premium gifts from fetched sticker export",
+			category:     "telegram_stickers_export",
+			dirName:      "PremiumGifts_328917524764688479",
+			inputSetType: "InputStickerSetPremiumGifts",
+			shortName:    "PremiumGifts",
+			id:           328917524764688479,
+			docID:        5710643921839718407,
+			wantSystem:   domain.StickerSetSystemKeyPremiumGifts,
+		},
+		{
+			name:         "ton gifts from fetched sticker export",
+			category:     "telegram_stickers_export",
+			dirName:      "TonGifts_9000000000000001",
+			inputSetType: "*tg.InputStickerSetTonGifts",
+			shortName:    "TonGifts",
+			id:           9000000000000001,
+			docID:        9000000000000101,
+			wantSystem:   domain.StickerSetSystemKeyTonGifts,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(seedDir, tc.category, tc.dirName)
+			writeInputSetTypeSeed(t, dir, tc.inputSetType, tc.shortName, tc.id, tc.docID, tc.emojis)
+
+			media := newFakeMediaStore()
+			blobs, err := NewLocalFS(t.TempDir())
+			if err != nil {
+				t.Fatalf("local fs: %v", err)
+			}
+			svc := NewService(media, blobs, 2)
+			if _, err := svc.SeedMedia(ctx, seedDir, 0); err != nil {
+				t.Fatalf("seed media: %v", err)
+			}
+			set, found, err := media.GetStickerSetBySystemKey(ctx, tc.wantSystem)
+			if err != nil || !found {
+				t.Fatalf("GetStickerSetBySystemKey(%q) found=%v err=%v", tc.wantSystem, found, err)
+			}
+			if set.Kind != domain.StickerSetKindSystem || set.SystemKey != tc.wantSystem {
+				t.Fatalf("set meta = %+v, want system key %q", set, tc.wantSystem)
+			}
+			if set.ID != tc.id || set.ShortName != tc.shortName || len(set.DocumentIDs) != 1 || set.DocumentIDs[0] != tc.docID {
+				t.Fatalf("set = %+v, want id=%d short=%s doc=%d", set, tc.id, tc.shortName, tc.docID)
+			}
+			resolved, docs, found, err := svc.ResolveStickerSet(ctx, domain.StickerSetRef{
+				Kind:      domain.StickerSetRefBySystem,
+				SystemKey: tc.wantSystem,
+			})
+			if err != nil || !found {
+				t.Fatalf("ResolveStickerSet(%q) found=%v err=%v", tc.wantSystem, found, err)
+			}
+			if resolved.ID != tc.id || len(docs) != 1 || docs[0].ID != tc.docID {
+				t.Fatalf("resolved = set %d docs %+v, want set %d doc %d", resolved.ID, docs, tc.id, tc.docID)
+			}
+		})
+	}
+}
+
+func TestSeedMediaReclassifiesExistingSystemSetWhenHashUnchanged(t *testing.T) {
+	ctx := context.Background()
+	seedDir := t.TempDir()
+	const (
+		setID     int64 = 7173162320003082
+		docID     int64 = 5312536423851630001
+		shortName       = "Topics"
+	)
+	writeInputSetTypeSeed(t,
+		filepath.Join(seedDir, "telegram_emoji_export", "Topics_7173162320003082"),
+		"*tg.InputStickerSetEmojiDefaultTopicIcons",
+		shortName,
+		setID,
+		docID,
+		true,
+	)
+
+	media := newFakeMediaStore()
+	if err := media.PutStickerSet(ctx, domain.StickerSet{
+		ID:        setID,
+		ShortName: shortName,
+		Hash:      17,
+		Kind:      domain.StickerSetKindEmoji,
+	}); err != nil {
+		t.Fatalf("preload existing set: %v", err)
+	}
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+	if _, err := svc.SeedMedia(ctx, seedDir, 0); err != nil {
+		t.Fatalf("seed media: %v", err)
+	}
+	set, found, err := media.GetStickerSetBySystemKey(ctx, domain.StickerSetSystemKeyEmojiDefaultTopicIcons)
+	if err != nil || !found {
+		t.Fatalf("GetStickerSetBySystemKey(topic_icons) found=%v err=%v", found, err)
+	}
+	if set.Kind != domain.StickerSetKindSystem || set.SystemKey != domain.StickerSetSystemKeyEmojiDefaultTopicIcons {
+		t.Fatalf("set meta = %+v, want reclassified system set", set)
+	}
+	if len(set.DocumentIDs) != 1 || set.DocumentIDs[0] != docID {
+		t.Fatalf("set document ids = %+v, want [%d]", set.DocumentIDs, docID)
+	}
+}
+
+func writeInputSetTypeSeed(t *testing.T, setDir, inputSetType, shortName string, setID, docID int64, emojis bool) {
+	t.Helper()
+	stickersDir := filepath.Join(setDir, "stickers")
+	if err := os.MkdirAll(stickersDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	attrType := "DocumentAttributeSticker"
+	if emojis {
+		attrType = "DocumentAttributeCustomEmoji"
+	}
+	raw := fmt.Sprintf(`{"api_call":"messages.getStickerSet","input_set_type":%q,"result":{"_":"StickerSet","set":{"id":%d,"access_hash":2,"title":%q,"short_name":%q,"count":1,"hash":17,"emojis":%v},"packs":[{"emoticon":"🎁","documents":[%d]}],"documents":[{"id":%d,"access_hash":3,"file_reference":"","date":"2026-07-05T00:00:00Z","mime_type":"application/x-tgsticker","size":4,"dc_id":4,"attributes":[{"_":"DocumentAttributeImageSize","w":512,"h":512},{"_":%q,"alt":"🎁","stickerset":{"id":%d,"access_hash":2}},{"_":"DocumentAttributeFilename","file_name":"AnimatedSticker.tgs"}],"thumbs":[]}]}}`, inputSetType, setID, shortName, shortName, emojis, docID, docID, attrType, setID)
+	if err := os.WriteFile(filepath.Join(setDir, "set_info.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stickersDir, fmt.Sprintf("system_%d.tgs", docID)), []byte("tgs!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSeedStickerSetInstalledFlagNeverMarksViewerState(t *testing.T) {
 	cases := []struct {
 		name string

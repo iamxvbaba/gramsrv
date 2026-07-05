@@ -680,6 +680,8 @@ const (
 	StickerSetSystemKeyEmojiDefaultTopicIcons = "emoji_default_topic_icons"
 	// StickerSetSystemKeyPremiumGifts 对应 premium gifts 系统集。
 	StickerSetSystemKeyPremiumGifts = "premium_gifts"
+	// StickerSetSystemKeyTonGifts 对应 TON gifts 系统集。
+	StickerSetSystemKeyTonGifts = "ton_gifts"
 )
 
 // StickerSetKind 区分贴纸集用途（影响 getAllStickers / getEmojiStickers 归类）。

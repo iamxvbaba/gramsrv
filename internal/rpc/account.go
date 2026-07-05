@@ -1292,8 +1292,8 @@ func (r *Router) onAccountUpdateUsername(ctx context.Context, username string) (
 }
 
 // onAccountUpdateBirthday 持久化资料页生日（account.updateBirthday）。birthday 缺省即清除；
-// 月/日/年非法返回 BIRTHDAY_INVALID。生日落在 userFull（按隐私 PrivacyKeyBirthday 对外裁剪），
-// 故只需失效本人 userFull 投影缓存，客户端重拉 getFullUser 即见最新值。
+// 月/日/年非法返回 BIRTHDAY_INVALID。生日落在 userFull（按隐私 PrivacyKeyBirthday 对外裁剪）。
+// 写入后推 updateUser 信号给本人其它在线 session，促使已加载 full profile 的客户端重拉。
 func (r *Router) onAccountUpdateBirthday(ctx context.Context, req *tg.AccountUpdateBirthdayRequest) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -1318,6 +1318,7 @@ func (r *Router) onAccountUpdateBirthday(ctx context.Context, req *tg.AccountUpd
 		return false, internalErr()
 	}
 	r.invalidateRPCProjectionForUser(u.ID)
+	r.pushSelfUserChangedUpdate(ctx, u)
 	return true, nil
 }
 
@@ -1506,6 +1507,17 @@ func (r *Router) pushUsernameUpdate(ctx context.Context, u domain.User) {
 		}},
 		Users: []tg.UserClass{r.tgSelfUser(u)},
 		Date:  int(r.clock.Now().Unix()),
+	})
+}
+
+func (r *Router) pushSelfUserChangedUpdate(ctx context.Context, u domain.User) {
+	if u.ID == 0 {
+		return
+	}
+	r.pushUserUpdates(ctx, u.ID, &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateUser{UserID: u.ID}},
+		Users:   []tg.UserClass{r.tgSelfUser(u)},
+		Date:    int(r.clock.Now().Unix()),
 	})
 }
 

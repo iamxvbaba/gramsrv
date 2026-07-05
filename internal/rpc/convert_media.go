@@ -411,6 +411,14 @@ func tgInputStickerSetFromSystemKey(systemKey string) (tg.InputStickerSetClass, 
 		return &tg.InputStickerSetAnimatedEmojiAnimations{}, true
 	case "emoji_generic_animations":
 		return &tg.InputStickerSetEmojiGenericAnimations{}, true
+	case domain.StickerSetSystemKeyEmojiDefaultStatuses:
+		return &tg.InputStickerSetEmojiDefaultStatuses{}, true
+	case domain.StickerSetSystemKeyEmojiDefaultTopicIcons:
+		return &tg.InputStickerSetEmojiDefaultTopicIcons{}, true
+	case domain.StickerSetSystemKeyPremiumGifts:
+		return &tg.InputStickerSetPremiumGifts{}, true
+	case domain.StickerSetSystemKeyTonGifts:
+		return &tg.InputStickerSetTonGifts{}, true
 	default:
 		if strings.HasPrefix(systemKey, "dice:") {
 			return &tg.InputStickerSetDice{Emoticon: strings.TrimPrefix(systemKey, "dice:")}, true
@@ -705,6 +713,8 @@ func stickerSetRefFromInput(input tg.InputStickerSetClass) (domain.StickerSetRef
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyEmojiDefaultTopicIcons}, true
 	case *tg.InputStickerSetPremiumGifts:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyPremiumGifts}, true
+	case *tg.InputStickerSetTonGifts:
+		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: domain.StickerSetSystemKeyTonGifts}, true
 	case *tg.InputStickerSetDice:
 		return domain.StickerSetRef{Kind: domain.StickerSetRefBySystem, SystemKey: "dice:" + in.Emoticon}, true
 	default:

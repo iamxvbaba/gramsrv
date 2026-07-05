@@ -4,10 +4,13 @@
 // SeedMedia + handler 识别下发,无需改服务端代码。
 //
 // 支持的 set spec(命令行参数,可多个):
-//   short:<shortName>            按 short_name 拉(普通/mask/emoji 集)
-//   emoji_default_statuses       inputStickerSetEmojiDefaultStatuses
-//   emoji_channel_default_statuses inputStickerSetEmojiChannelDefaultStatuses
-//   emoji_default_topic_icons    inputStickerSetEmojiDefaultTopicIcons
+//
+//	short:<shortName>            按 short_name 拉(普通/mask/emoji 集)
+//	emoji_default_statuses       inputStickerSetEmojiDefaultStatuses
+//	emoji_channel_default_statuses inputStickerSetEmojiChannelDefaultStatuses
+//	emoji_default_topic_icons    inputStickerSetEmojiDefaultTopicIcons
+//	premium_gifts                inputStickerSetPremiumGifts
+//	ton_gifts                    inputStickerSetTonGifts
 //
 // 需登录会话(复用 appearancefetch 的 /tmp/appearance.session,SESSION env 可覆盖)。
 //
@@ -52,6 +55,10 @@ func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 		return &tg.InputStickerSetEmojiChannelDefaultStatuses{}, "EmojiChannelDefaultStatuses", nil
 	case spec == "emoji_default_topic_icons":
 		return &tg.InputStickerSetEmojiDefaultTopicIcons{}, "EmojiDefaultTopicIcons", nil
+	case spec == "premium_gifts":
+		return &tg.InputStickerSetPremiumGifts{}, "PremiumGifts", nil
+	case spec == "ton_gifts":
+		return &tg.InputStickerSetTonGifts{}, "TonGifts", nil
 	default:
 		return nil, "", fmt.Errorf("unknown spec %q", spec)
 	}
@@ -60,20 +67,20 @@ func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 // ---- seed JSON 结构(字段对齐 internal/app/files/seed.go 的解析) ----
 
 type attrJSON struct {
-	Type              string          `json:"_"`
-	W                 int             `json:"w,omitempty"`
-	H                 int             `json:"h,omitempty"`
-	Alt               string          `json:"alt,omitempty"`
-	Mask              bool            `json:"mask,omitempty"`
-	Free              bool            `json:"free,omitempty"`
-	TextColor         bool            `json:"text_color,omitempty"`
-	FileName          string          `json:"file_name,omitempty"`
-	Duration          float64         `json:"duration,omitempty"`
-	RoundMessage      bool            `json:"round_message,omitempty"`
-	SupportsStreaming bool            `json:"supports_streaming,omitempty"`
-	Voice             bool            `json:"voice,omitempty"`
-	Title             string          `json:"title,omitempty"`
-	Performer         string          `json:"performer,omitempty"`
+	Type              string           `json:"_"`
+	W                 int              `json:"w,omitempty"`
+	H                 int              `json:"h,omitempty"`
+	Alt               string           `json:"alt,omitempty"`
+	Mask              bool             `json:"mask,omitempty"`
+	Free              bool             `json:"free,omitempty"`
+	TextColor         bool             `json:"text_color,omitempty"`
+	FileName          string           `json:"file_name,omitempty"`
+	Duration          float64          `json:"duration,omitempty"`
+	RoundMessage      bool             `json:"round_message,omitempty"`
+	SupportsStreaming bool             `json:"supports_streaming,omitempty"`
+	Voice             bool             `json:"voice,omitempty"`
+	Title             string           `json:"title,omitempty"`
+	Performer         string           `json:"performer,omitempty"`
 	Stickerset        *inputSetRefJSON `json:"stickerset,omitempty"`
 }
 
@@ -154,7 +161,7 @@ func mapAttrs(in []tg.DocumentAttributeClass) []attrJSON {
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]\n  spec: short:<name> | emoji_default_statuses | emoji_channel_default_statuses | emoji_default_topic_icons")
+		fmt.Fprintln(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]\n  spec: short:<name> | emoji_default_statuses | emoji_channel_default_statuses | emoji_default_topic_icons | premium_gifts | ton_gifts | effects")
 		os.Exit(2)
 	}
 	out := os.Args[1]
@@ -213,8 +220,9 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 		return err
 	}
 
+	fmt.Printf("[%s] set=%q id=%d docs=%d downloading...\n", spec, setName, full.Set.ID, len(full.Documents))
 	docs := make([]documentJSON, 0, len(full.Documents))
-	for _, d := range full.Documents {
+	for i, d := range full.Documents {
 		doc, ok := d.(*tg.Document)
 		if !ok {
 			continue
@@ -227,16 +235,12 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 			ext = ".webp"
 		}
 		path := filepath.Join(stickersDir, fmt.Sprintf("%d%s", doc.ID, ext))
-		f, err := os.Create(path)
-		if err != nil {
-			return err
+		if !completeExistingFile(path, doc.Size) {
+			loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference}
+			if err := downloadToFile(ctx, dl, api, loc, stickersDir, path); err != nil {
+				return fmt.Errorf("download doc %d (%d/%d): %w", doc.ID, i+1, len(full.Documents), err)
+			}
 		}
-		loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference}
-		if _, err := dl.Download(api, loc).Stream(ctx, f); err != nil {
-			f.Close()
-			return fmt.Errorf("download doc %d: %w", doc.ID, err)
-		}
-		f.Close()
 		docs = append(docs, documentJSON{
 			ID:            doc.ID,
 			AccessHash:    doc.AccessHash,
@@ -247,6 +251,9 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 			DCID:          doc.DCID,
 			Attributes:    mapAttrs(doc.Attributes),
 		})
+		if (i+1)%25 == 0 || i+1 == len(full.Documents) {
+			fmt.Printf("[%s] docs %d/%d\n", spec, i+1, len(full.Documents))
+		}
 	}
 
 	packs := make([]packJSON, 0, len(full.Packs))
@@ -283,6 +290,37 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 	}
 	fmt.Printf("[%s] set=%q id=%d docs=%d masks=%v emojis=%v\n", spec, setName, full.Set.ID, len(docs), full.Set.Masks, full.Set.Emojis)
 	return nil
+}
+
+func completeExistingFile(path string, wantSize int64) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if wantSize > 0 {
+		return info.Size() == wantSize
+	}
+	return info.Size() > 0
+}
+
+func downloadToFile(ctx context.Context, dl *downloader.Downloader, api *tg.Client, loc tg.InputFileLocationClass, dir, path string) error {
+	tmp, err := os.CreateTemp(dir, ".download-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := dl.Download(api, loc).Stream(ctx, tmp); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(path)
+	return os.Rename(tmpPath, path)
 }
 
 // ---- 消息特效(messages.getAvailableEffects)----

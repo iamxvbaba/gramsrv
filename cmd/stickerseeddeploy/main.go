@@ -37,6 +37,7 @@ var specialSeedDirs = map[string]string{
 	"emoji_default_statuses":    "DefaultSet_EmojiDefaultStatuses",
 	"emoji_default_topic_icons": "DefaultSet_EmojiDefaultTopicIcons",
 	"premium_gifts":             "DefaultSet_PremiumGifts",
+	"ton_gifts":                 "DefaultSet_TonGifts",
 }
 
 func main() {
