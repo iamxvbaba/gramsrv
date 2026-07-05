@@ -4,28 +4,29 @@ package domain
 type MessageEntityType string
 
 const (
-	MessageEntityBold        MessageEntityType = "bold"
-	MessageEntityItalic      MessageEntityType = "italic"
-	MessageEntityUnderline   MessageEntityType = "underline"
-	MessageEntityStrike      MessageEntityType = "strike"
-	MessageEntityCode        MessageEntityType = "code"
-	MessageEntityPre         MessageEntityType = "pre"
-	MessageEntityTextURL     MessageEntityType = "text_url"
-	MessageEntityMentionName MessageEntityType = "mention_name"
-	MessageEntitySpoiler     MessageEntityType = "spoiler"
-	MessageEntityBlockquote  MessageEntityType = "blockquote"
-	MessageEntityCustomEmoji MessageEntityType = "custom_emoji"
-	MessageEntityMention     MessageEntityType = "mention"
-	MessageEntityHashtag     MessageEntityType = "hashtag"
-	MessageEntityCashtag     MessageEntityType = "cashtag"
-	MessageEntityBotCommand  MessageEntityType = "bot_command"
-	MessageEntityURL         MessageEntityType = "url"
-	MessageEntityEmail       MessageEntityType = "email"
-	MessageEntityPhone       MessageEntityType = "phone"
-	MessageEntityBankCard    MessageEntityType = "bank_card"
-	MessageEntityDiffInsert  MessageEntityType = "diff_insert"
-	MessageEntityDiffReplace MessageEntityType = "diff_replace"
-	MessageEntityDiffDelete  MessageEntityType = "diff_delete"
+	MessageEntityBold          MessageEntityType = "bold"
+	MessageEntityItalic        MessageEntityType = "italic"
+	MessageEntityUnderline     MessageEntityType = "underline"
+	MessageEntityStrike        MessageEntityType = "strike"
+	MessageEntityCode          MessageEntityType = "code"
+	MessageEntityPre           MessageEntityType = "pre"
+	MessageEntityTextURL       MessageEntityType = "text_url"
+	MessageEntityMentionName   MessageEntityType = "mention_name"
+	MessageEntitySpoiler       MessageEntityType = "spoiler"
+	MessageEntityBlockquote    MessageEntityType = "blockquote"
+	MessageEntityCustomEmoji   MessageEntityType = "custom_emoji"
+	MessageEntityMention       MessageEntityType = "mention"
+	MessageEntityHashtag       MessageEntityType = "hashtag"
+	MessageEntityCashtag       MessageEntityType = "cashtag"
+	MessageEntityBotCommand    MessageEntityType = "bot_command"
+	MessageEntityURL           MessageEntityType = "url"
+	MessageEntityEmail         MessageEntityType = "email"
+	MessageEntityPhone         MessageEntityType = "phone"
+	MessageEntityBankCard      MessageEntityType = "bank_card"
+	MessageEntityFormattedDate MessageEntityType = "formatted_date"
+	MessageEntityDiffInsert    MessageEntityType = "diff_insert"
+	MessageEntityDiffReplace   MessageEntityType = "diff_replace"
+	MessageEntityDiffDelete    MessageEntityType = "diff_delete"
 )
 
 const (
@@ -104,6 +105,15 @@ type MessageEntity struct {
 	DocumentID int64
 	// Collapsed 仅 blockquote 使用。
 	Collapsed bool
+	// Date / Relative / ShortTime / LongTime / ShortDate / LongDate / DayOfWeek
+	// 仅 formatted_date 使用。
+	Date      int
+	Relative  bool
+	ShortTime bool
+	LongTime  bool
+	ShortDate bool
+	LongDate  bool
+	DayOfWeek bool
 	// OldText 仅 AI compose diff_replace 使用；普通消息输入不会接受该实体。
 	OldText string
 }

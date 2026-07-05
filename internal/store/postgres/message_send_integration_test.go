@@ -43,7 +43,10 @@ func TestMessageStoreSendPrivateTextRoundTrip(t *testing.T) {
 		RecipientUserID: recipient.ID,
 		RandomID:        123456,
 		Message:         "hello from pg",
-		Entities:        []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 5}},
+		Entities: []domain.MessageEntity{
+			{Type: domain.MessageEntityBold, Offset: 0, Length: 5},
+			{Type: domain.MessageEntityFormattedDate, Offset: 6, Length: 4, Date: 1773436800, ShortTime: true, LongDate: true},
+		},
 		Date:            1700000200,
 		OriginAuthKeyID: originAuthKeyID,
 		OriginSessionID: 77,
@@ -72,6 +75,9 @@ func TestMessageStoreSendPrivateTextRoundTrip(t *testing.T) {
 	}
 	if len(senderHistory.Messages) != 1 || len(recipientHistory.Messages) != 1 {
 		t.Fatalf("history sizes = sender %d recipient %d, want both owner partitions populated", len(senderHistory.Messages), len(recipientHistory.Messages))
+	}
+	if !sameMessageEntities(senderHistory.Messages[0].Entities, req.Entities) || !sameMessageEntities(recipientHistory.Messages[0].Entities, req.Entities) {
+		t.Fatalf("history entities sender=%+v recipient=%+v, want %+v", senderHistory.Messages[0].Entities, recipientHistory.Messages[0].Entities, req.Entities)
 	}
 
 	events, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, 0, 10)

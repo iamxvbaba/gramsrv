@@ -1481,7 +1481,8 @@ func storyCaptionEntitySupported(entity tg.MessageEntityClass) bool {
 		*tg.MessageEntityBankCard,
 		*tg.MessageEntitySpoiler,
 		*tg.MessageEntityCustomEmoji,
-		*tg.MessageEntityBlockquote:
+		*tg.MessageEntityBlockquote,
+		*tg.MessageEntityFormattedDate:
 		return true
 	default:
 		return false

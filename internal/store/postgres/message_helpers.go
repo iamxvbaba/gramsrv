@@ -243,6 +243,13 @@ type messageEntityJSON struct {
 	Language   string `json:"language,omitempty"`
 	DocumentID int64  `json:"document_id,omitempty"`
 	Collapsed  bool   `json:"collapsed,omitempty"`
+	Date       int    `json:"date,omitempty"`
+	Relative   bool   `json:"relative,omitempty"`
+	ShortTime  bool   `json:"short_time,omitempty"`
+	LongTime   bool   `json:"long_time,omitempty"`
+	ShortDate  bool   `json:"short_date,omitempty"`
+	LongDate   bool   `json:"long_date,omitempty"`
+	DayOfWeek  bool   `json:"day_of_week,omitempty"`
 }
 
 func encodeMessageEntities(entities []domain.MessageEntity) ([]byte, error) {
@@ -260,6 +267,13 @@ func encodeMessageEntities(entities []domain.MessageEntity) ([]byte, error) {
 			Language:   entity.Language,
 			DocumentID: entity.DocumentID,
 			Collapsed:  entity.Collapsed,
+			Date:       entity.Date,
+			Relative:   entity.Relative,
+			ShortTime:  entity.ShortTime,
+			LongTime:   entity.LongTime,
+			ShortDate:  entity.ShortDate,
+			LongDate:   entity.LongDate,
+			DayOfWeek:  entity.DayOfWeek,
 		})
 	}
 	raw, err := json.Marshal(wire)
@@ -288,6 +302,13 @@ func decodeMessageEntities(raw string) ([]domain.MessageEntity, error) {
 			Language:   entity.Language,
 			DocumentID: entity.DocumentID,
 			Collapsed:  entity.Collapsed,
+			Date:       entity.Date,
+			Relative:   entity.Relative,
+			ShortTime:  entity.ShortTime,
+			LongTime:   entity.LongTime,
+			ShortDate:  entity.ShortDate,
+			LongDate:   entity.LongDate,
+			DayOfWeek:  entity.DayOfWeek,
 		})
 	}
 	return out, nil

@@ -3,6 +3,7 @@ package rpc
 import (
 	"testing"
 
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
 
 	"telesrv/internal/domain"
@@ -116,6 +117,7 @@ func TestMessageEntitiesRoundTripAllStyledTypes(t *testing.T) {
 		&tg.MessageEntityMention{Offset: 12, Length: 13},
 		&tg.MessageEntityHashtag{Offset: 13, Length: 14},
 		&tg.MessageEntityURL{Offset: 14, Length: 15},
+		&tg.MessageEntityFormattedDate{Offset: 15, Length: 16, Date: 1773436800, ShortTime: true, LongDate: true, DayOfWeek: true},
 	}
 	converted := domainMessageEntitiesForViewer(viewerID, in)
 	if len(converted) != len(in) {
@@ -133,6 +135,9 @@ func TestMessageEntitiesRoundTripAllStyledTypes(t *testing.T) {
 	if converted[11].DocumentID != 777 {
 		t.Fatalf("custom emoji document = %d, want 777", converted[11].DocumentID)
 	}
+	if formatted := converted[15]; formatted.Type != domain.MessageEntityFormattedDate || formatted.Date != 1773436800 || !formatted.ShortTime || !formatted.LongDate || !formatted.DayOfWeek {
+		t.Fatalf("formatted date entity = %+v, want date and flags preserved", formatted)
+	}
 	out := tgMessageEntities(converted)
 	if len(out) != len(in) {
 		t.Fatalf("round-trip produced %d entities, want %d", len(out), len(in))
@@ -142,5 +147,23 @@ func TestMessageEntitiesRoundTripAllStyledTypes(t *testing.T) {
 	}
 	if mention, ok := out[8].(*tg.MessageEntityMentionName); !ok || mention.UserID != viewerID {
 		t.Fatalf("self mention round-trip = %#v, want messageEntityMentionName self", out[8])
+	}
+	if formatted, ok := out[15].(*tg.MessageEntityFormattedDate); !ok || formatted.Date != 1773436800 || !formatted.ShortTime || !formatted.LongDate || !formatted.DayOfWeek {
+		t.Fatalf("formatted date round-trip = %#v, want date and flags preserved", out[15])
+	}
+}
+
+func TestMessageEntityFormattedDatePreservesFlagsOnlyInput(t *testing.T) {
+	var flags bin.Fields
+	flags.Set(1) // short_time
+	flags.Set(4) // long_date
+	converted := domainMessageEntities([]tg.MessageEntityClass{
+		&tg.MessageEntityFormattedDate{Flags: flags, Offset: 1, Length: 2, Date: 1773436800},
+	})
+	if len(converted) != 1 {
+		t.Fatalf("converted %d entities, want one", len(converted))
+	}
+	if got := converted[0]; got.Type != domain.MessageEntityFormattedDate || got.Date != 1773436800 || !got.ShortTime || !got.LongDate {
+		t.Fatalf("formatted date flags-only input = %+v, want short_time/long_date preserved", got)
 	}
 }

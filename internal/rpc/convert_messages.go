@@ -473,6 +473,18 @@ func tgMessageEntities(entities []domain.MessageEntity) []tg.MessageEntityClass 
 			out = append(out, &tg.MessageEntityPhone{Offset: entity.Offset, Length: entity.Length})
 		case domain.MessageEntityBankCard:
 			out = append(out, &tg.MessageEntityBankCard{Offset: entity.Offset, Length: entity.Length})
+		case domain.MessageEntityFormattedDate:
+			out = append(out, &tg.MessageEntityFormattedDate{
+				Offset:    entity.Offset,
+				Length:    entity.Length,
+				Date:      entity.Date,
+				Relative:  entity.Relative,
+				ShortTime: entity.ShortTime,
+				LongTime:  entity.LongTime,
+				ShortDate: entity.ShortDate,
+				LongDate:  entity.LongDate,
+				DayOfWeek: entity.DayOfWeek,
+			})
 		case domain.MessageEntityDiffInsert:
 			out = append(out, &tg.MessageEntityDiffInsert{Offset: entity.Offset, Length: entity.Length})
 		case domain.MessageEntityDiffReplace:
@@ -549,6 +561,19 @@ func domainMessageEntitiesForViewer(viewerUserID int64, entities []tg.MessageEnt
 			out = append(out, domain.MessageEntity{Type: domain.MessageEntityPhone, Offset: e.Offset, Length: e.Length})
 		case *tg.MessageEntityBankCard:
 			out = append(out, domain.MessageEntity{Type: domain.MessageEntityBankCard, Offset: e.Offset, Length: e.Length})
+		case *tg.MessageEntityFormattedDate:
+			out = append(out, domain.MessageEntity{
+				Type:      domain.MessageEntityFormattedDate,
+				Offset:    e.Offset,
+				Length:    e.Length,
+				Date:      e.Date,
+				Relative:  e.Relative || e.GetRelative(),
+				ShortTime: e.ShortTime || e.GetShortTime(),
+				LongTime:  e.LongTime || e.GetLongTime(),
+				ShortDate: e.ShortDate || e.GetShortDate(),
+				LongDate:  e.LongDate || e.GetLongDate(),
+				DayOfWeek: e.DayOfWeek || e.GetDayOfWeek(),
+			})
 		}
 	}
 	return out

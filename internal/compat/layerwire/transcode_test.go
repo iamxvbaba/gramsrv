@@ -89,6 +89,52 @@ func TestTranscodeMessageGolden(t *testing.T) {
 	}
 }
 
+func TestTranscodeFormattedDateEntityLayerBoundary(t *testing.T) {
+	const formattedDateEntityCRC = 0x904ac7c7
+	entityCRC := func(crc uint32) []byte {
+		return []byte{byte(crc), byte(crc >> 8), byte(crc >> 16), byte(crc >> 24)}
+	}
+	msg := &tg.Message{
+		ID:      7,
+		PeerID:  &tg.PeerUser{UserID: 2},
+		Date:    100,
+		Message: "Meet soon",
+		Entities: []tg.MessageEntityClass{
+			&tg.MessageEntityFormattedDate{Offset: 5, Length: 4, Date: 1773436800, ShortDate: true, ShortTime: true},
+		},
+	}
+	raw := mustEncode(t, msg)
+
+	out222, err := Transcode(raw, 222)
+	if err != nil {
+		t.Fatalf("transcode message->222: %v", err)
+	}
+	if bytes.Contains(out222, entityCRC(formattedDateEntityCRC)) {
+		t.Fatalf("layer 222 output leaked formatted-date entity")
+	}
+	if !bytes.Contains(out222, entityCRC(messageEntityUnknownID)) {
+		t.Fatalf("layer 222 output missing messageEntityUnknown fallback")
+	}
+	m222 := loadLayerModel(t, 222)
+	b222 := &bin.Buffer{Buf: append([]byte(nil), out222...)}
+	if err := m222.skipObject(b222); err != nil || b222.Len() != 0 {
+		t.Fatalf("layer 222 formatted-date fallback does not parse cleanly (err=%v left=%d)", err, b222.Len())
+	}
+
+	out223, err := Transcode(raw, 223)
+	if err != nil {
+		t.Fatalf("transcode message->223: %v", err)
+	}
+	if !bytes.Contains(out223, entityCRC(formattedDateEntityCRC)) {
+		t.Fatalf("layer 223 output did not preserve formatted-date entity")
+	}
+	m223 := loadLayerModel(t, 223)
+	b223 := &bin.Buffer{Buf: append([]byte(nil), out223...)}
+	if err := m223.skipObject(b223); err != nil || b223.Len() != 0 {
+		t.Fatalf("layer 223 formatted-date output does not parse cleanly (err=%v left=%d)", err, b223.Len())
+	}
+}
+
 // TestTranscodePassthroughNonAPI verifies that a top-level constructor absent
 // from the tg schema (an MTProto control object such as rpc_error) passes
 // through untouched at any layer.
