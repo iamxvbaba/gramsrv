@@ -396,7 +396,7 @@ func (s *Service) handleNewBotUsername(ctx context.Context, state domain.BotChat
 	if err := s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, state.UserID); err != nil {
 		s.log.Error("botfather: delete chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
 	}
-	head := fmt.Sprintf("Done! Congratulations on your new bot. You will find it at telesrv.net/%s.\n\nUse this token to access the HTTP API:\n", u.Username)
+	head := fmt.Sprintf("Done! Congratulations on your new bot. You will find it at %s.\n\nUse this token to access the HTTP API:\n", s.publicURL(u.Username))
 	return tokenReply(head, token, "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
 }
 

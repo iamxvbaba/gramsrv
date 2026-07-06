@@ -81,6 +81,32 @@ func TestHandlerServesEmojiLandingPage(t *testing.T) {
 	}
 }
 
+func TestHandlerServesChatlistLandingPage(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/addlist/zNhytIbwRwjaC2GH", nil)
+
+	NewHandler(fakeResolver{}, "http://127.0.0.1:2401").ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Shared Folder",
+		"http://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
+		"telesrv://addlist?slug=zNhytIbwRwjaC2GH",
+		"tg://addlist?slug=zNhytIbwRwjaC2GH",
+		"preview and add this shared folder",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `window.location.href = "tg://`) {
+		t.Fatalf("landing page must not auto-open tg:// and steal official Telegram:\n%s", body)
+	}
+}
+
 func TestHandlerRedirectsMismatchedKindToCanonicalURL(t *testing.T) {
 	resolver := fakeResolver{
 		"emoji_pack": {
@@ -110,6 +136,8 @@ func TestHandlerNotFoundForMissingOrInvalidShortName(t *testing.T) {
 		"/addstickers/missing_pack",
 		"/addstickers/bad-name",
 		"/addemoji/%E4%B8%AD%E6%96%87",
+		"/addlist/bad!slug",
+		"/addlist/%E4%B8%AD%E6%96%87",
 	} {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)

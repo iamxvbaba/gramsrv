@@ -234,6 +234,7 @@ func tgDialogFilter(folder domain.DialogFolder) tg.DialogFilterClass {
 	title := tg.TextWithEntities{Text: folder.Title, Entities: tgMessageEntities(folder.TitleEntities)}
 	if folder.IsChatlist {
 		out := &tg.DialogFilterChatlist{
+			HasMyInvites:   folder.HasMyInvites,
 			TitleNoanimate: folder.TitleNoanimate,
 			ID:             folder.ID,
 			Title:          title,

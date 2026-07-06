@@ -41,6 +41,7 @@ https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
 | ✅ | 登录与账号 | 开发验证码登录、sign-in、sign-up、log-out、授权设备、账号设置、SRP/password 状态、email/passkey 相关路径。 |
 | ✅ | 用户与联系人 | 用户资料、username、头像、联系人导入/搜索、block/privacy 状态、presence、last seen。 |
 | ✅ | 会话与同步 | dialog list、置顶、手动未读、folders/filters、草稿、read boundary、durable updates、在线 fan-out、离线 difference 恢复。 |
+| ✅ | Chatlists 与公开链接 | 聊天文件夹分享、chatlist invite links、加入/导入流程、撤销邀请处理，以及统一公开链接落地页。 |
 | ✅ | 私聊消息 | send、history、read receipts、edit、delete、forward、reply、富文本实体、媒体/相册消息、reactions、scheduled/TTL 相关路径。 |
 | ✅ | 富文本消息 | Telegram Desktop rich text message、富文本内容转换、send/edit/scheduled 流程、dialog/history 投影，以及 memory/PostgreSQL 持久化。 |
 | ✅ | AI 输入框与 ChatBot | 输入框改写/润色、默认和自定义 tone、addstyle 预览、本地与外部 provider 链、流式 `@ChatBot` 草稿回复、Business AI 回复钩子。 |
@@ -86,11 +87,13 @@ go build -o bin/gramsrv.exe ./cmd/telesrv
 | `TELESRV_ADVERTISE_IP` | `127.0.0.1` | 下发给兼容客户端的连接 IP |
 | `TELESRV_DC` | `2` | 自建 DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | 本地开发固定登录验证码 |
+| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | sticker/chatlist 公开链接的 canonical base URL |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL 连接串 |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis 地址 |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | 内置语言包种子目录 |
 | `TELESRV_BLOB_DIR` | `data/blobs` | 本地媒体 blob 目录 |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | 可选 sticker/reaction 种子目录 |
+| `TELESRV_PUBLIC_LINK_WEB_ADDR` | 空 | 可选的 sticker/chatlist 公开链接落地页监听地址 |
 | `TELESRV_AI_ENABLED` | `true` | 启用 AI compose 入口 |
 | `TELESRV_AI_PROVIDERS` | `local` | AI provider 调用链，例如 `local` 或 `kimi,local` |
 | `TELESRV_AI_TIMEOUT` | `15s` | 单次 AI provider 调用超时 |
@@ -128,7 +131,7 @@ go build -o bin/gramsrv.exe ./cmd/telesrv
 | 12400 | UDP | TURN/STUN 服务器 | 启用 P2P/通话 relay |
 | 12500-12999 | UDP | TURN relay 端口段 | 启用 TURN relay |
 | 可配置 | TCP | Bot API | 设置 `TELESRV_BOT_API_ADDR` 时 |
-| 可配置 | TCP | Sticker Web 深链落地页 | 设置 `TELESRV_STICKER_WEB_ADDR` 时 |
+| 可配置 | TCP | 公开链接深链落地页 | 设置 `TELESRV_PUBLIC_LINK_WEB_ADDR` 时 |
 
 ### 内部/调试端口（不要暴露到公网）
 

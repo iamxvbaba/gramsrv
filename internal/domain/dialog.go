@@ -205,6 +205,7 @@ type DialogFolder struct {
 	HasEmoticon     bool
 	Color           int
 	HasColor        bool
+	HasMyInvites    bool
 	PinnedPeers     []DialogFolderPeer
 	IncludePeers    []DialogFolderPeer
 	ExcludePeers    []DialogFolderPeer

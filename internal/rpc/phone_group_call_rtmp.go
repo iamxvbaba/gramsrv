@@ -96,7 +96,7 @@ func (r *Router) joinRtmpGroupCall(ctx context.Context, scope *groupCallScope, r
 	// updateGroupCall 必须先于 updateGroupCallConnection：TDesktop 按序 applyUpdates，
 	// 处理 connection 时若还没从 groupCall 读到 stream_dc_id 会打
 	// "Api Error: Empty stream_dc_id" 并 fallback 主 DC。
-	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage())}
+	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL)}
 	if channel.ID != 0 {
 		callUpdate.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 	}

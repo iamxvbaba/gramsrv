@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/binary"
+	"net/url"
 
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -40,7 +41,7 @@ func (r *Router) onPhoneCreateConferenceCall(ctx context.Context, req *tg.PhoneC
 		return nil, groupCallErr(err)
 	}
 	out := r.groupCallUpdateContainer(ctx, userID, domain.Channel{},
-		&tg.UpdateGroupCall{Call: tgGroupCall(call, userID, true)}, []int64{userID})
+		&tg.UpdateGroupCall{Call: tgGroupCall(call, userID, true, r.cfg.PublicBaseURL)}, []int64{userID})
 	if !req.Join {
 		return out, nil
 	}
@@ -81,7 +82,7 @@ func (r *Router) onPhoneExportGroupCallInvite(ctx context.Context, req *tg.Phone
 		return nil, groupCallInvalidErr()
 	}
 	if scope.call.Conference() {
-		link := conferenceExportInviteLink(scope.call)
+		link := conferenceExportInviteLink(scope.call, r.cfg.PublicBaseURL)
 		if link == "" {
 			return nil, groupCallInvalidErr()
 		}
@@ -93,21 +94,25 @@ func (r *Router) onPhoneExportGroupCallInvite(ctx context.Context, req *tg.Phone
 	if scope.channel.Username == "" {
 		return nil, publicChannelMissingErr()
 	}
-	return &tg.PhoneExportedGroupCallInvite{Link: "https://telesrv.net/" + scope.channel.Username}, nil
+	return &tg.PhoneExportedGroupCallInvite{Link: r.publicLink(scope.channel.Username)}, nil
 }
 
-func conferenceExportInviteLink(call domain.GroupCall) string {
-	if link := conferenceCanonicalInviteLink(call.InviteSlug); link != "" {
+func conferenceExportInviteLink(call domain.GroupCall, publicBaseURL ...string) string {
+	if link := conferenceCanonicalInviteLink(call.InviteSlug, publicBaseURL...); link != "" {
 		return link
 	}
 	return call.InviteLink
 }
 
-func conferenceCanonicalInviteLink(slug string) string {
+func conferenceCanonicalInviteLink(slug string, publicBaseURL ...string) string {
 	if slug == "" {
 		return ""
 	}
-	return "https://telesrv.net/call/" + slug + "?slug=" + slug
+	baseURL := ""
+	if len(publicBaseURL) > 0 {
+		baseURL = publicBaseURL[0]
+	}
+	return publicLinkQueryWithBaseURL(baseURL, "call/"+slug, url.Values{"slug": []string{slug}})
 }
 
 func (r *Router) onPhoneInviteConferenceCallParticipant(ctx context.Context, req *tg.PhoneInviteConferenceCallParticipantRequest) (tg.UpdatesClass, error) {
@@ -208,7 +213,7 @@ func (r *Router) onPhoneDeclineConferenceCallInvite(ctx context.Context, msgID i
 	}
 	r.pushConferenceGroupCallUpdate(ctx, call)
 	return r.groupCallUpdateContainer(ctx, userID, domain.Channel{},
-		&tg.UpdateGroupCall{Call: tgGroupCall(call, userID, userID == call.CreatorUserID)}, []int64{inv.InviterUserID, inv.InviteeUserID}), nil
+		&tg.UpdateGroupCall{Call: tgGroupCall(call, userID, userID == call.CreatorUserID, r.cfg.PublicBaseURL)}, []int64{inv.InviterUserID, inv.InviteeUserID}), nil
 }
 
 func (r *Router) onPhoneDeleteConferenceCallParticipants(ctx context.Context, req *tg.PhoneDeleteConferenceCallParticipantsRequest) (tg.UpdatesClass, error) {

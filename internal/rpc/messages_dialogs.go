@@ -966,6 +966,7 @@ func (r *Router) dialogFolderFromTG(ctx context.Context, userID int64, id int, f
 		color, hasColor := f.GetColor()
 		return domain.DialogFolder{
 			ID:             id,
+			HasMyInvites:   f.HasMyInvites,
 			TitleNoanimate: f.TitleNoanimate,
 			Title:          title,
 			TitleEntities:  domainMessageEntities(f.Title.Entities),

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"telesrv/internal/links"
 )
 
 const defaultConfigFile = ".env"
@@ -40,11 +42,12 @@ type Config struct {
 	AdminAPIAddr string
 	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
 	AdminAPIToken string
-	// StickerWebAddr 是公开 sticker/custom emoji deep link 落地页监听地址；为空关闭。
-	// 生产应只监听 loopback，并由 nginx 将 /addstickers/ 与 /addemoji/ 反代到该地址。
-	StickerWebAddr string
-	// StickerWebPublicURL 是生成 canonical telesrv.net 链接的公开根 URL。
-	StickerWebPublicURL string
+	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
+	// 生产默认 https://telesrv.net；本地可设为 http://127.0.0.1:2401。
+	PublicBaseURL string
+	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
+	// 生产应只监听 loopback，并由 nginx 将 /addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
+	PublicLinkWebAddr string
 	// Admin UI 独立进程配置项保留在统一配置中，cmd/telesrv-admin 也按同名 env 读取。
 	AdminUIAddr     string
 	AdminUIPassword string
@@ -281,6 +284,8 @@ func Load() (Config, error) {
 	envInt64Or := fileEnv.envInt64Or
 	envDurationOr := fileEnv.envDurationOr
 
+	publicBaseURL := links.NormalizeBaseURL(envOr("TELESRV_PUBLIC_BASE_URL", links.DefaultPublicBaseURL))
+
 	cfg := Config{
 		ListenAddr:      envOr("TELESRV_LISTEN", "0.0.0.0:2398"),
 		WebSocketEnable: envBoolOr("TELESRV_WEBSOCKET_ENABLE", true),
@@ -291,19 +296,19 @@ func Load() (Config, error) {
 		// AdvertiseIP 当前不影响 help.getConfig——getConfig 返回空 DCOptions，
 		// 客户端使用其写死的 static DC 地址（见 compat/tdesktop/config.go）。
 		// 字段与默认值保留，供未来需要显式下发 DC 地址时使用。
-		AdvertiseIP:         envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
-		RSAKeyPath:          envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
-		DC:                  envIntOr("TELESRV_DC", 2),
-		DebugAddr:           envOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
-		BotAPIAddr:          envOr("TELESRV_BOT_API_ADDR", ""),
-		AdminAPIAddr:        envOr("TELESRV_ADMIN_API_ADDR", ""),
-		AdminAPIToken:       envOr("TELESRV_ADMIN_API_TOKEN", ""),
-		StickerWebAddr:      envOr("TELESRV_STICKER_WEB_ADDR", ""),
-		StickerWebPublicURL: envOr("TELESRV_STICKER_WEB_PUBLIC_URL", "https://telesrv.net"),
-		AdminUIAddr:         envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
-		AdminUIPassword:     envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
-		AdminUIToken:        envOr("TELESRV_ADMIN_UI_TOKEN", ""),
-		AdminSessionKey:     envOr("TELESRV_ADMIN_SESSION_KEY", ""),
+		AdvertiseIP:       envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
+		RSAKeyPath:        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
+		DC:                envIntOr("TELESRV_DC", 2),
+		DebugAddr:         envOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
+		BotAPIAddr:        envOr("TELESRV_BOT_API_ADDR", ""),
+		AdminAPIAddr:      envOr("TELESRV_ADMIN_API_ADDR", ""),
+		AdminAPIToken:     envOr("TELESRV_ADMIN_API_TOKEN", ""),
+		PublicBaseURL:     publicBaseURL,
+		PublicLinkWebAddr: envOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
+		AdminUIAddr:       envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
+		AdminUIPassword:   envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
+		AdminUIToken:      envOr("TELESRV_ADMIN_UI_TOKEN", ""),
+		AdminSessionKey:   envOr("TELESRV_ADMIN_SESSION_KEY", ""),
 
 		// 用 127.0.0.1 而非 localhost：localhost 在 Windows 上会先解析到 IPv6 ::1，而 Docker
 		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost

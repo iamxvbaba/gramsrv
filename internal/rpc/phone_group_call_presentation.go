@@ -106,7 +106,7 @@ func (r *Router) onPhoneLeaveGroupCallPresentation(ctx context.Context, call tg.
 	// 幂等快照：未在共享/已清理时返回当前态而非报错（屏幕共享既已下架即达成目的）。
 	idempotentSnapshot := func() (tg.UpdatesClass, error) {
 		return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
-			groupCallUpdateFor(scope.channel, scope.call, scope.userID, scope.canManage()), nil), nil
+			groupCallUpdateFor(scope.channel, scope.call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL), nil), nil
 	}
 	self, found, err := r.deps.GroupCalls.Participant(ctx, scope.call.ID, scope.userID)
 	if err != nil {

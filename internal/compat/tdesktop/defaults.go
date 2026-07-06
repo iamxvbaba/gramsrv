@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	appConfigHash     = 15 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 16 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -44,6 +44,11 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "rich_message_posting", Value: &tg.JSONString{Value: "enabled"}},
 		// dialog_filters_enabled=true：TDesktop 据此(或已有文件夹)才显示 Settings→Folders 入口。
 		{Key: "dialog_filters_enabled", Value: &tg.JSONBool{Value: true}},
+		{Key: "chatlist_update_period", Value: &tg.JSONNumber{Value: 3600}},
+		{Key: "chatlist_invites_limit_default", Value: &tg.JSONNumber{Value: 3}},
+		{Key: "chatlist_invites_limit_premium", Value: &tg.JSONNumber{Value: 20}},
+		{Key: "chatlists_joined_limit_default", Value: &tg.JSONNumber{Value: 2}},
+		{Key: "chatlists_joined_limit_premium", Value: &tg.JSONNumber{Value: 20}},
 		{Key: "stories_stealth_future_period", Value: &tg.JSONNumber{Value: 1500}},
 		{Key: "stories_stealth_past_period", Value: &tg.JSONNumber{Value: 300}},
 		{Key: "stories_stealth_cooldown_period", Value: &tg.JSONNumber{Value: 10800}},

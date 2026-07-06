@@ -238,7 +238,7 @@ func (r *Router) onAccountInstallTheme(ctx context.Context, req *tg.AccountInsta
 	return true, nil
 }
 
-// onAccountGetTheme 按 id 或 slug(深链 telesrv.net/addtheme/<slug>)取主题。
+// onAccountGetTheme 按 id 或 slug(公开 addtheme 深链)取主题。
 func (r *Router) onAccountGetTheme(ctx context.Context, req *tg.AccountGetThemeRequest) (*tg.Theme, error) {
 	if req == nil {
 		return nil, themeInvalidErr()

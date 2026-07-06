@@ -12,7 +12,7 @@ import (
 
 func startParamInvalidErr() error { return tgerr.New(400, "START_PARAM_INVALID") }
 
-// onMessagesStartBot 处理 messages.startBot（深链 telesrv.net/bot?start=payload 与「启动 bot」
+// onMessagesStartBot 处理 messages.startBot（公开 bot?start 深链与「启动 bot」
 // 入口）。语义：向 bot 发送一条可见的 "/start" 或 "/start <param>" 普通私聊消息，走标准
 // SendPrivateText 双盒+outbox，返回真实 Updates（I7）。bot 经此收到 start_param。
 // P3 仅私聊启动；peer 为群（加 bot 进群）后移（P4，群内 bot）。
