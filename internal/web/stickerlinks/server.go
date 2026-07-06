@@ -15,9 +15,8 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 )
-
-const defaultPublicBaseURL = "https://telesrv.net"
 
 type Config struct {
 	Addr          string
@@ -50,9 +49,9 @@ func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logge
 		return nil, err
 	}
 	go func() {
-		logger.Info("Sticker link Web endpoint enabled", zap.String("addr", addr), zap.String("public_base_url", normalizePublicBaseURL(cfg.PublicBaseURL)))
+		logger.Info("Public link Web endpoint enabled", zap.String("addr", addr), zap.String("public_base_url", normalizePublicBaseURL(cfg.PublicBaseURL)))
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Warn("Sticker link Web endpoint exited", zap.Error(err))
+			logger.Warn("Public link Web endpoint exited", zap.Error(err))
 		}
 	}()
 	go func() {
@@ -73,6 +72,7 @@ func NewHandler(resolver Resolver, publicBaseURL string) http.Handler {
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
+	mux.HandleFunc("GET /addlist/{slug}", h.addList)
 	return mux
 }
 
@@ -92,6 +92,30 @@ func (h *handler) addStickers(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) addEmoji(w http.ResponseWriter, r *http.Request) {
 	h.serveSet(w, r, "addemoji")
+}
+
+func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
+	slug := strings.TrimSpace(r.PathValue("slug"))
+	if !validSlugPath(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	app := appURL("addlist", "slug", slug)
+	data := pageData{
+		Title:        "Shared Folder",
+		KindLabel:    "shared folder",
+		Subtitle:     slug,
+		Description:  "This page opens the app so you can preview and add this shared folder.",
+		CanonicalURL: h.publicURL("addlist", slug),
+		AppURL:       template.URL(app),
+		LegacyTgURL:  template.URL(legacyTgURL("addlist", "slug", slug)),
+	}
+	data.AppURLJS = template.JS(strconv.Quote(app))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	if err := landingTemplate.Execute(w, data); err != nil {
+		http.Error(w, "render shared folder page failed", http.StatusInternalServerError)
+	}
 }
 
 func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind string) {
@@ -114,23 +138,22 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 	}
 	canonicalKind := linkKind(set)
 	if canonicalKind != pathKind {
-		http.Redirect(w, r, h.setURL(canonicalKind, set.ShortName), http.StatusPermanentRedirect)
+		http.Redirect(w, r, h.publicURL(canonicalKind, set.ShortName), http.StatusPermanentRedirect)
 		return
 	}
 	count := set.Count
 	if count == 0 {
 		count = len(docs)
 	}
-	app := appURL(canonicalKind, set.ShortName)
+	app := appURL(canonicalKind, "set", set.ShortName)
 	data := pageData{
 		Title:        fallbackTitle(set),
-		ShortName:    set.ShortName,
-		Count:        count,
 		KindLabel:    kindLabel(set),
-		ItemNoun:     itemNoun(set, count),
-		CanonicalURL: h.setURL(canonicalKind, set.ShortName),
+		Subtitle:     fmt.Sprintf("@%s · %d %s", set.ShortName, count, itemNoun(set, count)),
+		Description:  "This page opens the app so you can preview and install the set. Files are still fetched by the app through MTProto.",
+		CanonicalURL: h.publicURL(canonicalKind, set.ShortName),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL(canonicalKind, set.ShortName)),
+		LegacyTgURL:  template.URL(legacyTgURL(canonicalKind, "set", set.ShortName)),
 	}
 	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -140,18 +163,14 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 	}
 }
 
-func (h *handler) setURL(kind, shortName string) string {
-	return h.publicBaseURL + "/" + kind + "/" + url.PathEscape(shortName)
+func (h *handler) publicURL(kind, value string) string {
+	return h.publicBaseURL + "/" + kind + "/" + url.PathEscape(value)
 }
 
 func normalizePublicBaseURL(raw string) string {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
-	if raw == "" {
-		return defaultPublicBaseURL
-	}
-	u, err := url.Parse(raw)
+	u, err := url.Parse(links.NormalizeBaseURL(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return defaultPublicBaseURL
+		return links.DefaultPublicBaseURL
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
 	u.RawQuery = ""
@@ -174,6 +193,10 @@ func validShortNamePath(shortName string) bool {
 		}
 	}
 	return true
+}
+
+func validSlugPath(slug string) bool {
+	return links.ValidChatlistSlug(slug)
 }
 
 func linkKind(set domain.StickerSet) string {
@@ -214,20 +237,23 @@ func itemNoun(set domain.StickerSet, count int) string {
 	return "stickers"
 }
 
-func appURL(kind, shortName string) string {
-	return "telesrv://" + kind + "?set=" + url.QueryEscape(shortName)
+func appURL(kind, key, value string) string {
+	return schemeURL("telesrv", kind, key, value)
 }
 
-func legacyTgURL(kind, shortName string) string {
-	return "tg://" + kind + "?set=" + url.QueryEscape(shortName)
+func legacyTgURL(kind, key, value string) string {
+	return schemeURL("tg", kind, key, value)
+}
+
+func schemeURL(scheme, kind, key, value string) string {
+	return scheme + "://" + kind + "?" + key + "=" + url.QueryEscape(value)
 }
 
 type pageData struct {
 	Title        string
-	ShortName    string
-	Count        int
 	KindLabel    string
-	ItemNoun     string
+	Subtitle     string
+	Description  string
 	CanonicalURL string
 	AppURL       template.URL
 	LegacyTgURL  template.URL
@@ -242,7 +268,7 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
   <title>{{.Title}} - telesrv</title>
   <link rel="canonical" href="{{.CanonicalURL}}">
   <meta property="og:title" content="{{.Title}}">
-  <meta property="og:description" content="{{.Count}} {{.ItemNoun}} in this {{.KindLabel}}.">
+  <meta property="og:description" content="{{.Description}}">
   <meta property="og:url" content="{{.CanonicalURL}}">
   <meta name="robots" content="noindex">
   <style>
@@ -267,9 +293,9 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
   <main>
     <p class="meta">{{.KindLabel}}</p>
     <h1>{{.Title}}</h1>
-    <p class="meta">@{{.ShortName}} · {{.Count}} {{.ItemNoun}}</p>
+    <p class="meta">{{.Subtitle}}</p>
     <p><a class="button" href="{{.AppURL}}">Open in telesrv</a></p>
-    <p>This page opens the app so you can preview and install the set. Files are still fetched by the app through MTProto.</p>
+    <p>{{.Description}}</p>
     <p class="meta">Old test clients only: <a class="raw" href="{{.LegacyTgURL}}">open with tg://</a></p>
     <p class="meta"><a class="raw" href="{{.CanonicalURL}}">{{.CanonicalURL}}</a></p>
   </main>

@@ -495,7 +495,7 @@ func (r *Router) onStoriesExportStoryLink(ctx context.Context, req *tg.StoriesEx
 			return nil, storyIDInvalidErr()
 		}
 	}
-	return &tg.ExportedStoryLink{Link: storyExportLink(peer, req.ID)}, nil
+	return &tg.ExportedStoryLink{Link: r.storyExportLink(peer, req.ID)}, nil
 }
 
 func validateStoriesExportStoryLinkRequest(req *tg.StoriesExportStoryLinkRequest) error {
@@ -3018,8 +3018,8 @@ func uniqueStoryIDs(ids []int) []int {
 	return out
 }
 
-func storyExportLink(peer domain.Peer, storyID int) string {
-	return fmt.Sprintf("https://telesrv.local/story/%s/%d/%d", peer.Type, peer.ID, storyID)
+func (r *Router) storyExportLink(peer domain.Peer, storyID int) string {
+	return r.publicLink(fmt.Sprintf("story/%s/%d/%d", peer.Type, peer.ID, storyID))
 }
 
 func (r *Router) recordStoryChange(ctx context.Context, userID int64, story domain.Story) error {

@@ -26,7 +26,7 @@ const groupCallUnmutedVideoLimit = 30
 var groupCallStreamDCID = 2
 
 // tgGroupCall 把 call 行转为 TL groupCall。
-func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.GroupCallClass {
+func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool, publicBaseURL ...string) tg.GroupCallClass {
 	if !call.Active() {
 		return &tg.GroupCallDiscarded{ID: call.ID, AccessHash: call.AccessHash, Duration: call.Duration}
 	}
@@ -64,7 +64,11 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.G
 		out.SetTitle(call.Title)
 	}
 	if call.Conference() {
-		if link := conferenceCanonicalInviteLink(call.InviteSlug); link != "" {
+		baseURL := ""
+		if len(publicBaseURL) > 0 {
+			baseURL = publicBaseURL[0]
+		}
+		if link := conferenceCanonicalInviteLink(call.InviteSlug, baseURL); link != "" {
 			out.SetInviteLink(link)
 		} else if call.InviteLink != "" {
 			out.SetInviteLink(call.InviteLink)

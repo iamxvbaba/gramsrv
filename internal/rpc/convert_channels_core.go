@@ -466,7 +466,7 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	return out
 }
 
-func tgChannelFull(view domain.ChannelView) *tg.ChannelFull {
+func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.ChannelFull {
 	ch := view.Channel
 	full := &tg.ChannelFull{
 		// 广播频道的订阅者列表仅管理员可见（官方语义）：非管理员订阅者拿到
@@ -496,7 +496,11 @@ func tgChannelFull(view domain.ChannelView) *tg.ChannelFull {
 		full.SetAvailableMinID(view.Self.AvailableMinID)
 	}
 	if view.ExportedInvite != nil && !view.ExportedInvite.Revoked {
-		full.SetExportedInvite(tgExportedChannelInvite(*view.ExportedInvite))
+		baseURL := ""
+		if len(publicBaseURL) > 0 {
+			baseURL = publicBaseURL[0]
+		}
+		full.SetExportedInvite(tgExportedChannelInvite(*view.ExportedInvite, baseURL))
 	}
 	if ch.AdminsCount > 0 {
 		full.SetAdminsCount(ch.AdminsCount)

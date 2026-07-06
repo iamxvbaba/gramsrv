@@ -12,7 +12,7 @@ import (
 // registerHelp 注册 help.* RPC handler（DC 配置、最近 DC）。
 func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 	d.OnHelpGetConfig(func(ctx context.Context) (*tg.Config, error) {
-		return tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now()), nil
+		return tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL), nil
 	})
 	d.OnHelpGetNearestDC(func(ctx context.Context) (*tg.NearestDC, error) {
 		return tdesktop.NearestDC(r.cfg.DC), nil

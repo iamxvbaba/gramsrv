@@ -400,6 +400,21 @@ type DialogsService interface {
 	EditPeerFolders(ctx context.Context, userID int64, peers []domain.FolderPeerUpdate) error
 }
 
+// ChatlistsService 抽象 Telegram shared folders / chatlists 业务。
+type ChatlistsService interface {
+	ExportInvite(ctx context.Context, userID int64, filterID int, title string, peers []domain.DialogFolderPeer, date int) (domain.DialogFolder, domain.ChatlistInvite, error)
+	ListInvites(ctx context.Context, userID int64, filterID int) ([]domain.ChatlistInvite, error)
+	EditInvite(ctx context.Context, userID int64, filterID int, slug string, title *string, peers *[]domain.DialogFolderPeer, revoke bool) (domain.ChatlistInvite, error)
+	DeleteInvite(ctx context.Context, userID int64, filterID int, slug string) (domain.DialogFolder, bool, error)
+	CheckInvite(ctx context.Context, userID int64, slug string) (domain.ChatlistInvitePreview, error)
+	JoinInvite(ctx context.Context, userID int64, slug string, peers []domain.DialogFolderPeer, date int) (domain.ChatlistJoinResult, error)
+	GetUpdates(ctx context.Context, userID int64, localFilterID int) (domain.ChatlistUpdates, error)
+	JoinUpdates(ctx context.Context, userID int64, localFilterID int, peers []domain.DialogFolderPeer, date int) (domain.ChatlistJoinResult, error)
+	HideUpdates(ctx context.Context, userID int64, localFilterID int) error
+	Leave(ctx context.Context, userID int64, localFilterID int, peers []domain.DialogFolderPeer, date int) (domain.ChatlistLeaveResult, error)
+	LeaveSuggestions(ctx context.Context, userID int64, localFilterID int) ([]domain.DialogFolderPeer, error)
+}
+
 // MessagesService 抽象消息历史、搜索与已读。
 type MessagesService interface {
 	SendPrivateText(ctx context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error)
@@ -697,6 +712,7 @@ type Deps struct {
 	BootstrapUpdates store.BootstrapUpdateJobStore
 	Contacts         ContactsService
 	Dialogs          DialogsService
+	Chatlists        ChatlistsService
 	Messages         MessagesService
 	Stories          StoriesService
 	Channels         ChannelsService

@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 	"telesrv/internal/store"
 )
 
@@ -20,6 +22,10 @@ import (
 // 清掉（version++/count--），污染断言。
 func baseNow() int {
 	return int(time.Now().Unix())
+}
+
+func conferenceInviteLink(slug string) string {
+	return links.Build(links.DefaultPublicBaseURL, "call/"+slug, url.Values{"slug": []string{slug}})
 }
 
 // GroupCallStoreFactory 为每个用例提供干净的 store 与不冲突的 channel id。
@@ -340,7 +346,7 @@ func contractConferenceChainBlocks(t *testing.T, factory GroupCallStoreFactory) 
 	slug := fmt.Sprintf("contract-chain-%d", channelID)
 	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
 		ID: channelID*100 + 51, AccessHash: channelID*100 + 58, CreatorUserID: 1,
-		InviteSlug: slug, InviteLink: "https://telesrv.net/call/" + slug + "?slug=" + slug,
+		InviteSlug: slug, InviteLink: conferenceInviteLink(slug),
 		RandomID: channelID*100 + 51, CreatedAt: now,
 	})
 	if err != nil {
@@ -388,7 +394,7 @@ func contractConferenceRecipientsTerminalAccess(t *testing.T, factory GroupCallS
 	slug := fmt.Sprintf("contract-recipient-%d", channelID)
 	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
 		ID: channelID*100 + 61, AccessHash: channelID*100 + 68, CreatorUserID: 1,
-		InviteSlug: slug, InviteLink: "https://telesrv.net/call/" + slug + "?slug=" + slug,
+		InviteSlug: slug, InviteLink: conferenceInviteLink(slug),
 		RandomID: channelID*100 + 61, CreatedAt: now,
 	})
 	if err != nil {
@@ -434,10 +440,11 @@ func contractConferenceEmptyDiscards(t *testing.T, factory GroupCallStoreFactory
 	st, channelID := factory(t)
 	ctx := context.Background()
 	now := baseNow()
+	emptySlug := fmt.Sprintf("contract-empty-%d", channelID)
 	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
 		ID: channelID*100 + 71, AccessHash: channelID*100 + 78, CreatorUserID: 1,
-		InviteSlug: fmt.Sprintf("contract-empty-%d", channelID),
-		InviteLink: fmt.Sprintf("https://telesrv.net/call/contract-empty-%d?slug=contract-empty-%d", channelID, channelID),
+		InviteSlug: emptySlug,
+		InviteLink: conferenceInviteLink(emptySlug),
 		RandomID:   channelID*100 + 71,
 		CreatedAt:  now,
 	})
@@ -464,10 +471,11 @@ func contractConferenceEmptyDiscards(t *testing.T, factory GroupCallStoreFactory
 		t.Fatalf("join empty discarded conference err = %v, want ErrGroupCallDiscarded", err)
 	}
 
+	resetSlug := fmt.Sprintf("contract-reset-empty-%d", channelID)
 	resetCall, err := st.CreateConferenceCall(ctx, domain.GroupCall{
 		ID: channelID*100 + 81, AccessHash: channelID*100 + 88, CreatorUserID: 1,
-		InviteSlug: fmt.Sprintf("contract-reset-empty-%d", channelID),
-		InviteLink: fmt.Sprintf("https://telesrv.net/call/contract-reset-empty-%d?slug=contract-reset-empty-%d", channelID, channelID),
+		InviteSlug: resetSlug,
+		InviteLink: conferenceInviteLink(resetSlug),
 		RandomID:   channelID*100 + 81,
 		CreatedAt:  now + 10,
 	})
