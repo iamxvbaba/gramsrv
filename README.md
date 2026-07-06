@@ -76,9 +76,18 @@ docker compose -f deploy/docker-compose.yml up -d
 
 Build and run the single server program:
 
+Windows (PowerShell):
+
 ```powershell
 go build -o bin/gramsrv.exe ./cmd/telesrv
 .\bin\gramsrv.exe
+```
+
+Linux / macOS:
+
+```bash
+go build -o bin/gramsrv ./cmd/telesrv
+./bin/gramsrv
 ```
 
 On first start, `gramsrv` creates `data/server_rsa.pem`, applies database

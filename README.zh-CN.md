@@ -71,9 +71,18 @@ docker compose -f deploy/docker-compose.yml up -d
 
 编译并启动唯一的 server 程序：
 
+Windows (PowerShell)：
+
 ```powershell
 go build -o bin/gramsrv.exe ./cmd/telesrv
 .\bin\gramsrv.exe
+```
+
+Linux / macOS：
+
+```bash
+go build -o bin/gramsrv ./cmd/telesrv
+./bin/gramsrv
 ```
 
 第一次启动时，`gramsrv` 会创建 `data/server_rsa.pem`，自动执行数据库 migrations，导入内置语言包，准备可选媒体资源，在 `0.0.0.0:2398` 监听 MTProto，并在同一进程里启动 updates、media、后台调度等 worker。
