@@ -41,6 +41,9 @@ func (r *Router) registerPhone(d *tg.ServerDispatcher) {
 	d.OnPhoneEditGroupCallTitle(r.onPhoneEditGroupCallTitle)
 	d.OnPhoneToggleGroupCallSettings(r.onPhoneToggleGroupCallSettings)
 	d.OnPhoneInviteToGroupCall(r.onPhoneInviteToGroupCall)
+	// 定时通话（scheduled video chat）。
+	d.OnPhoneStartScheduledGroupCall(r.onPhoneStartScheduledGroupCall)
+	d.OnPhoneToggleGroupCallStartSubscription(r.onPhoneToggleGroupCallStartSubscription)
 	// Ad-hoc E2E conference call（P2P 通话升级/拉人路径）。
 	d.OnPhoneCreateConferenceCall(r.onPhoneCreateConferenceCall)
 	d.OnPhoneInviteConferenceCallParticipant(r.onPhoneInviteConferenceCallParticipant)

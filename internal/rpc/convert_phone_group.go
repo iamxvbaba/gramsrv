@@ -20,6 +20,11 @@ import (
 // this chat」即此（TDesktop emitShareScreenError / DrKLO ChatObject.canStreamVideo）。
 const groupCallUnmutedVideoLimit = 30
 
+// groupCallStreamDCID 是写进 RTMP groupCall.stream_dc_id 的 DC 号。本服务单 DC，
+// 由 router New() 从 cfg.DC 初始化；缺省 2 与 help.getConfig 的 ThisDC 默认一致。
+// 值仅用于客户端拉流 DC 路由标记（telesrv 拉流走同连接），避免 TDesktop fallback 日志。
+var groupCallStreamDCID = 2
+
 // tgGroupCall 把 call 行转为 TL groupCall。
 func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.GroupCallClass {
 	if !call.Active() {
@@ -39,6 +44,22 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.G
 		UnmutedVideoLimit: groupCallUnmutedVideoLimit,
 		Version:           call.Version,
 	}
+	if call.RtmpStream {
+		// RTMP 直播房间：观众经 broadcast 拉流。rtmp_stream 决定 TDesktop 打开
+		// 直播 UI（而非语音聊天）；listeners_hidden 让观众数只用 participants_count
+		// 表达、不逐个下发 listener 行（RTMP 观众通常不进 participant 列表）。
+		out.RtmpStream = true
+		out.ListenersHidden = true
+		// stream_dc_id 缺省会让 TDesktop fallback 到 main DC 并打 log；本服务单 DC，
+		// 显式回填本 DC id（拉流仍走同连接，DC shift 只影响客户端路由标记）。
+		out.SetStreamDCID(groupCallStreamDCID)
+	}
+	if call.ScheduleDate > 0 {
+		// 定时通话：客户端据 schedule_date 显示倒计时面板；schedule_start_subscribed
+		// 是 per-viewer 投影（出站前由 applyScheduleSubscription 回填）。
+		out.SetScheduleDate(call.ScheduleDate)
+		out.ScheduleStartSubscribed = call.ScheduleStartSubscribed
+	}
 	if call.Title != "" {
 		out.SetTitle(call.Title)
 	}
@@ -53,13 +74,19 @@ func tgGroupCall(call domain.GroupCall, viewerUserID int64, canManage bool) tg.G
 }
 
 // tgGroupCallParticipant 按 viewer 视角转换参与者行（Self flag per-viewer）。
+// join_as 频道身份输出 PeerChannel（客户端按 participant.peer==joinAs() 匹配自己，
+// 输出用户 peer 会让以频道身份入会的本人面板出现 ghost 双行）。
 func tgGroupCallParticipant(p domain.GroupCallParticipant, viewerUserID int64) tg.GroupCallParticipant {
+	var peer tg.PeerClass = &tg.PeerUser{UserID: p.UserID}
+	if p.JoinAsChannelID != 0 {
+		peer = &tg.PeerChannel{ChannelID: p.JoinAsChannelID}
+	}
 	out := tg.GroupCallParticipant{
 		Muted:         p.Muted,
 		Left:          p.Left,
 		CanSelfUnmute: !p.MutedByAdmin,
 		Self:          p.UserID == viewerUserID,
-		Peer:          &tg.PeerUser{UserID: p.UserID},
+		Peer:          peer,
 		Date:          p.JoinDate,
 		Source:        int(int32(uint32(p.SSRC))), // uint32 按位转 int32（join JSON 同款语义）
 	}

@@ -116,6 +116,53 @@ func (r *Router) groupCallScopeFrom(ctx context.Context, in tg.InputGroupCallCla
 	return &groupCallScope{userID: userID, call: call, channel: view.Channel, member: view.Self}, nil
 }
 
+// groupCallJoinAsChannelID 解析 joinGroupCall.join_as：self（缺省/自己）→0；
+// 本频道本身且 viewer 是 admin（匿名管理员/创建者语义，TDesktop RTMP createBox
+// 对 creator 硬编码 joinAs=peer）→ channelID；其余身份返回 JOIN_AS_PEER_INVALID。
+func (r *Router) groupCallJoinAsChannelID(scope *groupCallScope, joinAs tg.InputPeerClass) (int64, error) {
+	switch v := joinAs.(type) {
+	case nil, *tg.InputPeerSelf, *tg.InputPeerEmpty:
+		return 0, nil
+	case *tg.InputPeerUser:
+		if v.UserID == scope.userID {
+			return 0, nil
+		}
+	case *tg.InputPeerChannel:
+		if !scope.call.Conference() && v.ChannelID == scope.channel.ID && channelMemberIsAdmin(scope.member) {
+			return v.ChannelID, nil
+		}
+	}
+	return 0, tgerr400("JOIN_AS_PEER_INVALID")
+}
+
+// onPhoneGetGroupCallJoinAs 返回入会可选身份：所有人可用自己；频道 admin 额外
+// 可用频道本身（匿名身份）。TDesktop 在候选 >1 时显示 "join as" 选择框。
+func (r *Router) onPhoneGetGroupCallJoinAs(ctx context.Context, peer tg.InputPeerClass) (*tg.PhoneJoinAsPeers, error) {
+	userID, err := r.phoneRequireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := &tg.PhoneJoinAsPeers{
+		Peers: []tg.PeerClass{&tg.PeerUser{UserID: userID}},
+		Chats: []tg.ChatClass{},
+		Users: r.tgUsersForIDs(ctx, userID, []int64{userID}),
+	}
+	if r.deps.Channels == nil {
+		return out, nil
+	}
+	dp, err := r.checkedDomainPeerFromInputPeer(ctx, userID, peer)
+	if err != nil || dp.Type != domain.PeerTypeChannel || dp.ID == 0 {
+		return out, nil
+	}
+	view, err := r.deps.Channels.GetChannel(ctx, userID, dp.ID)
+	if err != nil || view.Self.Status != domain.ChannelMemberActive || !channelMemberIsAdmin(view.Self) {
+		return out, nil
+	}
+	out.Peers = append(out.Peers, &tg.PeerChannel{ChannelID: view.Channel.ID})
+	out.Chats = append(out.Chats, tgChannel(userID, view.Channel, &view.Self))
+	return out, nil
+}
+
 func (r *Router) conferenceCallCanAccess(ctx context.Context, callID, userID int64) (bool, error) {
 	recipients, err := r.deps.GroupCalls.ConferenceRecipients(ctx, callID)
 	if err != nil {
@@ -140,11 +187,11 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 	if err != nil {
 		return nil, err
 	}
-	if req.RtmpStream {
-		return nil, notImplementedErr()
-	}
-	if _, ok := req.GetScheduleDate(); ok {
-		return nil, notImplementedErr()
+	now := int(r.clock.Now().Unix())
+	scheduleDate, _ := req.GetScheduleDate()
+	if scheduleDate < 0 || (scheduleDate > 0 && scheduleDate <= now) {
+		// TDesktop 选择器只给未来时间；过去时间直接拒绝（容忍在途秒差由客户端保证）。
+		return nil, tgerr400("SCHEDULE_DATE_INVALID")
 	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
@@ -160,22 +207,27 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 	if view.Self.Status != domain.ChannelMemberActive || !channelMemberIsAdmin(view.Self) {
 		return nil, tgerr400("CHAT_ADMIN_REQUIRED")
 	}
-	if !view.Channel.Megagroup {
-		// broadcast 频道的 livestream 属范围外。
-		return nil, notImplementedErr()
-	}
-	now := int(r.clock.Now().Unix())
-	call, err := r.deps.GroupCalls.Create(ctx, view.Channel.ID, userID, req.Title, now)
+	// 广播频道直播、以及任意 RTMP 直播：参与者都是纯观众（listener），入会即
+	// 强制静音且不可自解（join_muted）。RTMP 尤其关键——TDesktop 在 stream 模式下
+	// 若发现 self 行非 force-muted 会每 3s `Rejoin after unforcemute`，导致死循环。
+	joinMuted := !view.Channel.Megagroup || req.RtmpStream
+	call, err := r.deps.GroupCalls.Create(ctx, view.Channel.ID, userID, req.Title, req.RtmpStream, joinMuted, scheduleDate, now)
 	if err != nil {
 		return nil, groupCallErr(err)
 	}
-	// started 服务消息（带频道 pts，离线成员经 channels difference 补收）。
-	var serviceRes domain.SendChannelMessageResult
-	if res, err := r.deps.Channels.AppendCallServiceMessage(ctx, view.Channel.ID, userID, now, domain.ChannelMessageAction{
+	// 服务消息（带频道 pts，离线成员经 channels difference 补收）：
+	// 定时通话发 scheduled（"预约了视频聊天"），立即通话发 started。
+	serviceAction := domain.ChannelMessageAction{
 		Type:           domain.ChannelActionGroupCall,
 		CallID:         call.ID,
 		CallAccessHash: call.AccessHash,
-	}); err == nil {
+	}
+	if scheduleDate > 0 {
+		serviceAction.Type = domain.ChannelActionGroupCallScheduled
+		serviceAction.CallScheduleDate = scheduleDate
+	}
+	var serviceRes domain.SendChannelMessageResult
+	if res, err := r.deps.Channels.AppendCallServiceMessage(ctx, view.Channel.ID, userID, now, serviceAction); err == nil {
 		serviceRes = res
 		_ = r.deps.GroupCalls.SetStartedMessageID(ctx, call.ID, res.Message.ID)
 	} else {
@@ -216,6 +268,13 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 	if !scope.call.Active() {
 		return nil, groupCallAlreadyDiscardedErr()
 	}
+	if scope.call.RtmpStream {
+		return r.joinRtmpGroupCall(ctx, scope, req)
+	}
+	joinAsChannelID, err := r.groupCallJoinAsChannelID(scope, req.JoinAs)
+	if err != nil {
+		return nil, err
+	}
 	// 解析上行 join JSON（容忍 video_stopped 等 flag 与 ssrc-groups——TDesktop join 即带）。
 	offer, ssrc, err := parseGroupCallJoinPayload(req.Params.Data)
 	if err != nil {
@@ -247,15 +306,16 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 		Active:       !req.VideoStopped && len(offer.SsrcGroups) > 0,
 	}
 	mut, err := r.deps.GroupCalls.Join(ctx, domain.JoinGroupCallRequest{
-		CallID:    scope.call.ID,
-		UserID:    scope.userID,
-		SSRC:      ssrc,
-		Muted:     req.Muted,
-		IsAdmin:   scope.canManage(),
-		PublicKey: publicKey,
-		JoinBlock: joinBlock,
-		VideoJSON: encodeVideoState(videoState),
-		Now:       now,
+		CallID:          scope.call.ID,
+		UserID:          scope.userID,
+		JoinAsChannelID: joinAsChannelID,
+		SSRC:            ssrc,
+		Muted:           req.Muted,
+		IsAdmin:         scope.canManage(),
+		PublicKey:       publicKey,
+		JoinBlock:       joinBlock,
+		VideoJSON:       encodeVideoState(videoState),
+		Now:             now,
 	})
 	if err != nil {
 		return nil, groupCallErr(err)
@@ -377,6 +437,10 @@ func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCa
 		return r.groupCallUpdateContainer(ctx, scope.userID, domain.Channel{},
 			groupCallUpdateFor(domain.Channel{}, call, scope.userID, true), nil), nil
 	}
+	// RTMP 直播结束：断开推流并清空缓冲（观众后续拉流转 resync/停止）。
+	if call.RtmpStream && r.deps.LiveStreams != nil {
+		r.deps.LiveStreams.DropChannel(scope.channel.ID)
+	}
 	// 清 channel 关联 + ended 服务消息（带 duration）。
 	channel := scope.channel
 	if updated, err := r.deps.Channels.SetActiveCall(ctx, channel.ID, 0, 0, false); err == nil {
@@ -432,8 +496,10 @@ func (r *Router) onPhoneGetGroupCall(ctx context.Context, req *tg.PhoneGetGroupC
 	if !scope.call.Conference() {
 		chats = append(chats, tgChannel(scope.userID, scope.channel, &scope.member))
 	}
+	// 定时通话：回填 viewer 自己的开播提醒订阅（客户端 reload 全量重建本地状态）。
+	call := r.applyScheduleSubscription(ctx, scope.call, scope.userID)
 	return &tg.PhoneGroupCall{
-		Call:                   tgGroupCall(scope.call, scope.userID, scope.canManage()),
+		Call:                   tgGroupCall(call, scope.userID, scope.canManage()),
 		Participants:           tgGroupCallParticipants(page.Participants, scope.userID),
 		ParticipantsNextOffset: page.NextOffset,
 		Chats:                  chats,

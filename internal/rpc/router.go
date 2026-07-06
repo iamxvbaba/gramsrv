@@ -67,6 +67,9 @@ type Config struct {
 	CallForceRelay bool
 	// GroupCallMaxParticipants 是群通话单房间参与者上限；<=0 不限制。
 	GroupCallMaxParticipants int
+	// RtmpIngestURL 是 getGroupCallStreamRtmpUrl 返回给推流端（OBS）的服务器地址，
+	// 形如 "rtmp://<host>:<port>/live"。为空时回落 "rtmp://<AdvertiseIP>:2400/live"。
+	RtmpIngestURL string
 	// TempKeyResolveCacheTTL 是 PFS temp→perm auth key 解析的进程内缓存有效期。>0 时同一 temp key
 	// 在 TTL 内复用上次解析、跳过每帧 ResolveAuthKey 的 PG 查询；0（默认/测试）关闭=每帧重校验。
 	// 显式撤销会删除协议 auth key、清缓存并断开活跃连接；TTL 只影响自然过期或异常路径下的
@@ -163,6 +166,9 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, presence: newPresenceTracker(), callbacks: newCallbackRegistry(), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), instanceID: instanceID}
 	r.channelFanout = newChannelFanoutDispatcher(r, defaultChannelFanoutShards, defaultChannelFanoutBuffer)
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)
+	if cfg.DC > 0 {
+		groupCallStreamDCID = cfg.DC
+	}
 	d := tg.NewServerDispatcher(r.fallback)
 
 	r.registerHelp(d)

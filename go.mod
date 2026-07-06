@@ -23,6 +23,7 @@ require (
 	github.com/pion/transport/v4 v4.0.2
 	github.com/pion/turn/v5 v5.0.10
 	github.com/redis/go-redis/v9 v9.20.0
+	github.com/yutopp/go-rtmp v0.0.7
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.53.0
@@ -45,22 +46,28 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gotd/log v0.1.0 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/mitchellh/mapstructure v1.4.1 // indirect
 	github.com/ogen-go/ogen v1.22.0 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/stun/v3 v3.1.6 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect
+	github.com/yutopp/go-amf0 v0.1.0 // indirect
 	go.opentelemetry.io/otel v1.44.0 // indirect
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect

@@ -27,9 +27,9 @@ func NewGroupCallStore(db sqlcgen.DBTX) *GroupCallStore {
 
 const groupCallColumns = `call_id, access_hash, channel_id, creator_user_id, kind, state, title, join_muted,
 version, participants_count, created_at, discarded_at, duration, started_msg_id,
-invite_slug, invite_link, random_id, migrated_from_phone_call_id`
+invite_slug, invite_link, random_id, migrated_from_phone_call_id, rtmp_stream, schedule_date`
 
-const groupCallParticipantColumns = `call_id, user_id, ssrc, join_date, active_date, muted, muted_by_admin,
+const groupCallParticipantColumns = `call_id, user_id, join_as_channel_id, ssrc, join_date, active_date, muted, muted_by_admin,
 volume_by_admin, raise_hand_rating, video_json, presentation_json, public_key, join_block, left_call, last_check_date`
 
 func scanGroupCall(row rowScanner) (domain.GroupCall, error) {
@@ -38,7 +38,7 @@ func scanGroupCall(row rowScanner) (domain.GroupCall, error) {
 	if err := row.Scan(
 		&c.ID, &c.AccessHash, &c.ChannelID, &c.CreatorUserID, &kind, &state, &c.Title, &c.JoinMuted,
 		&c.Version, &c.ParticipantsCount, &c.CreatedAt, &c.DiscardedAt, &c.Duration, &c.StartedMsgID,
-		&c.InviteSlug, &c.InviteLink, &c.RandomID, &c.MigratedFromPhoneCallID,
+		&c.InviteSlug, &c.InviteLink, &c.RandomID, &c.MigratedFromPhoneCallID, &c.RtmpStream, &c.ScheduleDate,
 	); err != nil {
 		return domain.GroupCall{}, err
 	}
@@ -50,7 +50,7 @@ func scanGroupCall(row rowScanner) (domain.GroupCall, error) {
 func scanGroupCallParticipant(row rowScanner) (domain.GroupCallParticipant, error) {
 	var p domain.GroupCallParticipant
 	if err := row.Scan(
-		&p.CallID, &p.UserID, &p.SSRC, &p.JoinDate, &p.ActiveDate, &p.Muted, &p.MutedByAdmin,
+		&p.CallID, &p.UserID, &p.JoinAsChannelID, &p.SSRC, &p.JoinDate, &p.ActiveDate, &p.Muted, &p.MutedByAdmin,
 		&p.VolumeByAdmin, &p.RaiseHandRating, &p.VideoJSON, &p.PresentationJSON, &p.PublicKey, &p.JoinBlock, &p.Left, &p.LastCheckDate,
 	); err != nil {
 		return domain.GroupCallParticipant{}, err
@@ -73,7 +73,7 @@ func scanGroupCallInviteJoined(row rowScanner) (domain.GroupCall, domain.GroupCa
 	if err := row.Scan(
 		&c.ID, &c.AccessHash, &c.ChannelID, &c.CreatorUserID, &kind, &state, &c.Title, &c.JoinMuted,
 		&c.Version, &c.ParticipantsCount, &c.CreatedAt, &c.DiscardedAt, &c.Duration, &c.StartedMsgID,
-		&c.InviteSlug, &c.InviteLink, &c.RandomID, &c.MigratedFromPhoneCallID,
+		&c.InviteSlug, &c.InviteLink, &c.RandomID, &c.MigratedFromPhoneCallID, &c.RtmpStream, &c.ScheduleDate,
 		&inv.CallID, &inv.InviterUserID, &inv.InviteeUserID, &inv.MessageID, &status, &inv.Video, &inv.CreatedAt, &inv.UpdatedAt,
 	); err != nil {
 		return domain.GroupCall{}, domain.GroupCallInvite{}, err
@@ -155,9 +155,9 @@ func (s *GroupCallStore) CreateGroupCall(ctx context.Context, call domain.GroupC
 		call.Version = 1
 	}
 	_, err := s.db.Exec(ctx, `
-INSERT INTO group_calls (call_id, access_hash, channel_id, creator_user_id, kind, state, title, join_muted, version, participants_count, created_at)
-VALUES ($1, $2, $3, $4, 'channel', 'active', $5, $6, $7, 0, $8)`,
-		call.ID, call.AccessHash, call.ChannelID, call.CreatorUserID, call.Title, call.JoinMuted, call.Version, call.CreatedAt)
+INSERT INTO group_calls (call_id, access_hash, channel_id, creator_user_id, kind, state, title, join_muted, version, participants_count, created_at, rtmp_stream, schedule_date)
+VALUES ($1, $2, $3, $4, 'channel', 'active', $5, $6, $7, 0, $8, $9, $10)`,
+		call.ID, call.AccessHash, call.ChannelID, call.CreatorUserID, call.Title, call.JoinMuted, call.Version, call.CreatedAt, call.RtmpStream, call.ScheduleDate)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -299,14 +299,15 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 		return domain.GroupCallMutation{}, fmt.Errorf("load group call participant: %w", err)
 	}
 	p := domain.GroupCallParticipant{
-		CallID:        req.CallID,
-		UserID:        req.UserID,
-		SSRC:          req.SSRC,
-		JoinDate:      req.Now,
-		ActiveDate:    req.Now,
-		LastCheckDate: req.Now,
-		PublicKey:     append([]byte(nil), req.PublicKey...),
-		JoinBlock:     append([]byte(nil), req.JoinBlock...),
+		CallID:          req.CallID,
+		UserID:          req.UserID,
+		JoinAsChannelID: req.JoinAsChannelID,
+		SSRC:            req.SSRC,
+		JoinDate:        req.Now,
+		ActiveDate:      req.Now,
+		LastCheckDate:   req.Now,
+		PublicKey:       append([]byte(nil), req.PublicKey...),
+		JoinBlock:       append([]byte(nil), req.JoinBlock...),
 	}
 	if wasActive {
 		// 同人换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
@@ -320,9 +321,10 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 	// video_json 整体替换、presentation_json 清空（rejoin 后客户端会重发
 	// joinGroupCallPresentation，旧屏幕登记必须作废）。
 	if _, err := tx.Exec(ctx, `
-INSERT INTO group_call_participants (call_id, user_id, ssrc, join_date, active_date, muted, muted_by_admin, volume_by_admin, raise_hand_rating, video_json, public_key, join_block, left_call, last_check_date)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, $8, $9, $10, FALSE, $11)
+INSERT INTO group_call_participants (call_id, user_id, join_as_channel_id, ssrc, join_date, active_date, muted, muted_by_admin, volume_by_admin, raise_hand_rating, video_json, public_key, join_block, left_call, last_check_date)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, $9, $10, $11, FALSE, $12)
 ON CONFLICT (call_id, user_id) DO UPDATE SET
+    join_as_channel_id = EXCLUDED.join_as_channel_id,
     ssrc = EXCLUDED.ssrc,
     join_date = EXCLUDED.join_date,
     active_date = EXCLUDED.active_date,
@@ -336,7 +338,7 @@ ON CONFLICT (call_id, user_id) DO UPDATE SET
     join_block = EXCLUDED.join_block,
     left_call = FALSE,
     last_check_date = EXCLUDED.last_check_date`,
-		req.CallID, req.UserID, req.SSRC, p.JoinDate, p.ActiveDate, p.Muted, p.MutedByAdmin,
+		req.CallID, req.UserID, req.JoinAsChannelID, req.SSRC, p.JoinDate, p.ActiveDate, p.Muted, p.MutedByAdmin,
 		nullableJSON(p.VideoJSON), nullableGroupCallBytes(p.PublicKey), nullableGroupCallBytes(p.JoinBlock), p.LastCheckDate); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -1145,6 +1147,108 @@ RETURNING call_id, sub_chain_id, block_offset, author_user_id, block, created_at
 		return domain.GroupCallChainBlock{}, fmt.Errorf("append group call chain block: %w", err)
 	}
 	return block, nil
+}
+
+func (s *GroupCallStore) GetRtmpStreamKey(ctx context.Context, channelID int64) (string, bool, error) {
+	var key string
+	err := s.db.QueryRow(ctx,
+		`SELECT stream_key FROM group_call_rtmp_keys WHERE channel_id = $1`, channelID).Scan(&key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get rtmp stream key: %w", err)
+	}
+	return key, true, nil
+}
+
+func (s *GroupCallStore) SetRtmpStreamKey(ctx context.Context, channelID int64, key string, now int) error {
+	if channelID == 0 || key == "" {
+		return domain.ErrGroupCallInvalid
+	}
+	if _, err := s.db.Exec(ctx, `
+INSERT INTO group_call_rtmp_keys (channel_id, stream_key, updated_at)
+VALUES ($1, $2, $3)
+ON CONFLICT (channel_id) DO UPDATE SET stream_key = EXCLUDED.stream_key, updated_at = EXCLUDED.updated_at`,
+		channelID, key, now); err != nil {
+		return fmt.Errorf("set rtmp stream key: %w", err)
+	}
+	return nil
+}
+
+func (s *GroupCallStore) StartScheduledGroupCall(ctx context.Context, callID int64) (domain.GroupCall, bool, error) {
+	tx, err := s.begin(ctx, "start scheduled group call")
+	if err != nil {
+		return domain.GroupCall{}, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	call, err := lockGroupCallTx(ctx, tx, callID)
+	if err != nil {
+		return domain.GroupCall{}, false, err
+	}
+	if !call.Active() {
+		return domain.GroupCall{}, false, domain.ErrGroupCallDiscarded
+	}
+	if call.ScheduleDate == 0 {
+		// 幂等：已开始。
+		if err := tx.Commit(ctx); err != nil {
+			return domain.GroupCall{}, false, fmt.Errorf("commit start scheduled noop: %w", err)
+		}
+		committed = true
+		return call, false, nil
+	}
+	call, err = scanGroupCall(tx.QueryRow(ctx, `
+UPDATE group_calls SET schedule_date = 0 WHERE call_id = $1 RETURNING `+groupCallColumns, callID))
+	if err != nil {
+		return domain.GroupCall{}, false, fmt.Errorf("start scheduled group call: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.GroupCall{}, false, fmt.Errorf("commit start scheduled group call: %w", err)
+	}
+	committed = true
+	return call, true, nil
+}
+
+func (s *GroupCallStore) SetScheduleStartSubscription(ctx context.Context, callID, userID int64, subscribed bool) error {
+	if callID == 0 || userID == 0 {
+		return domain.ErrGroupCallInvalid
+	}
+	if !subscribed {
+		if _, err := s.db.Exec(ctx,
+			`DELETE FROM group_call_schedule_subscribers WHERE call_id = $1 AND user_id = $2`, callID, userID); err != nil {
+			return fmt.Errorf("clear schedule subscription: %w", err)
+		}
+		return nil
+	}
+	if _, err := s.db.Exec(ctx, `
+INSERT INTO group_call_schedule_subscribers (call_id, user_id)
+VALUES ($1, $2) ON CONFLICT DO NOTHING`, callID, userID); err != nil {
+		return fmt.Errorf("set schedule subscription: %w", err)
+	}
+	return nil
+}
+
+func (s *GroupCallStore) ListScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT user_id FROM group_call_schedule_subscribers WHERE call_id = $1 ORDER BY user_id`, callID)
+	if err != nil {
+		return nil, fmt.Errorf("list schedule subscribers: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *GroupCallStore) ListGroupCallChainBlocks(ctx context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error) {

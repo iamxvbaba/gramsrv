@@ -35,6 +35,7 @@ import (
 	groupcallsapp "telesrv/internal/app/groupcalls"
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
+	"telesrv/internal/app/livestream"
 	"telesrv/internal/app/maintenance"
 	messageapp "telesrv/internal/app/messages"
 	passkeyapp "telesrv/internal/app/passkey"
@@ -206,6 +207,15 @@ func startDebugServer(ctx context.Context, addr string, logger *zap.Logger) {
 }
 
 // externalMediaOption 按配置启用外链媒体抓取；禁用时返回 nil（NewService 跳过 nil option）。
+// liveStreamDep 把可能为 nil 的 *livestream.Service 转成 rpc.LiveStreamsService，
+// 避免 typed-nil interface（nil 具体指针装进接口后 != nil 的坑）。
+func liveStreamDep(s *livestream.Service) rpc.LiveStreamsService {
+	if s == nil {
+		return nil
+	}
+	return s
+}
+
 func externalMediaOption(cfg config.Config) filesapp.Option {
 	if !cfg.ExternalMediaEnable {
 		return nil
@@ -493,6 +503,21 @@ func run(logger *zap.Logger) error {
 		}
 		sfuService = pionSFU
 	}
+	// 频道 RTMP 直播媒体面（Live Stream）：内嵌 RTMP ingest（OBS 推流）+ ffmpeg
+	// 切段。未启用时信令仍可用，观众停留在"等待推流"占位。
+	var liveStreamService *livestream.Service
+	if cfg.LiveStreamEnable {
+		liveStreamService = livestream.NewService(livestream.Config{
+			ListenAddr:  cfg.LiveStreamRtmpAddr,
+			FFmpegPath:  cfg.LiveStreamFFmpegPath,
+			WorkDir:     cfg.LiveStreamWorkDir,
+			SegmentKeep: cfg.LiveStreamSegmentKeep,
+		}, groupCallsService, logger.Named("livestream"))
+		if err := liveStreamService.Start(); err != nil {
+			return fmt.Errorf("init live stream: %w", err)
+		}
+		defer liveStreamService.Close()
+	}
 	// 私聊通话中继（P3）：内嵌 TURN/STUN，phoneCall.connections 经 phoneConnectionWebrtc
 	// 下发。未启用时退回 P1 的纯信令 LAN 直连。
 	turnService := turnsrv.Service(turnsrv.Disabled())
@@ -591,6 +616,7 @@ func run(logger *zap.Logger) error {
 		CallSignalingMaxBytes:    cfg.CallSignalingMaxBytes,
 		CallForceRelay:           cfg.CallForceRelay,
 		GroupCallMaxParticipants: cfg.GroupCallMaxParticipants,
+		RtmpIngestURL:            cfg.LiveStreamRtmpURL,
 		// PFS temp→perm 解析缓存 5s：削减每帧 ResolveAuthKey 的 PG 查询。显式撤销会清缓存并
 		// 断开连接；re-bind 即时失效（onAuthBindTempAuthKey）。
 		TempKeyResolveCacheTTL:        5 * time.Second,
@@ -619,6 +645,7 @@ func run(logger *zap.Logger) error {
 		Passkey:          passkeyService,
 		Themes:           themeService,
 		GroupCalls:       groupCallsService,
+		LiveStreams:      liveStreamDep(liveStreamService),
 		SFU:              sfuService,
 		TURN:             turnService,
 		LangPack:         langPackService,
