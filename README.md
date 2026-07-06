@@ -111,6 +111,46 @@ The optional sticker seed directory is skipped when it does not exist.
 Optional OpenAI-compatible, Kimi/Moonshot, Gemini, and Anthropic provider
 variables are documented in `.env.example`.
 
+## Public Deployment Ports
+
+When deploying `gramsrv` on a public server, open the following ports according
+to the features you enable.
+
+### Minimal public deployment (chat only)
+
+| Port | Protocol | Purpose | Required |
+|---|---|---|---|
+| 2398 | TCP | MTProto main port; also handles WebSocket when `TELESRV_WEBSOCKET_ENABLE=true` | Yes |
+
+### With Admin backend
+
+| Port | Protocol | Purpose | Notes |
+|---|---|---|---|
+| 2399 | TCP | Admin REST API | Restrict to trusted IPs or put behind VPN |
+| 2600 | TCP | Admin Web UI | Use Nginx/reverse proxy + HTTPS in production |
+
+### Optional feature ports
+
+| Port | Protocol | Purpose | When needed |
+|---|---|---|---|
+| 2400 | TCP | RTMP live stream ingest | Live streaming |
+| 12399 | UDP | SFU/WebRTC conferencing | Voice/video group calls |
+| 12400 | UDP | TURN/STUN server | P2P/call relay |
+| 12500-12999 | UDP | TURN relay port range | TURN relay |
+| configurable | TCP | Bot API | When `TELESRV_BOT_API_ADDR` is set |
+| configurable | TCP | Sticker Web deep-link landing | When `TELESRV_STICKER_WEB_ADDR` is set |
+
+### Internal/debug ports (do not expose publicly)
+
+| Port | Default bind | Purpose |
+|---|---|---|
+| 6060 | `127.0.0.1:6060` | pprof debugging endpoint |
+| 5432 | `127.0.0.1:5432` | PostgreSQL |
+| 6399 | `127.0.0.1:6399` | Redis |
+
+Make sure `TELESRV_LISTEN=0.0.0.0:2398` is set, and `TELESRV_ADVERTISE_IP`
+points to your public IP so clients can connect.
+
 ## Client Compatibility
 
 Stock Telegram clients will not connect to `gramsrv` because they trust
