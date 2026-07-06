@@ -19,6 +19,8 @@ import (
 	"telesrv/internal/config"
 )
 
+const defaultAdminAPIAddr = "127.0.0.1:2599"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -81,7 +83,7 @@ func loadConfig() (uiConfig, error) {
 
 	adminAPIAddr := appCfg.AdminAPIAddr
 	if strings.TrimSpace(adminAPIAddr) == "" {
-		adminAPIAddr = "127.0.0.1:2399"
+		adminAPIAddr = defaultAdminAPIAddr
 	}
 
 	if appCfg.AdminUIPassword == "" && appCfg.AdminUIToken == "" {
@@ -109,7 +111,7 @@ func loadConfig() (uiConfig, error) {
 func adminAPIURL(addr string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
-		addr = "127.0.0.1:2399"
+		addr = defaultAdminAPIAddr
 	}
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
 		return strings.TrimRight(addr, "/")

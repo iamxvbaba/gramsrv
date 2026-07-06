@@ -300,7 +300,7 @@ func Load() (Config, error) {
 		AdminAPIToken:       envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		StickerWebAddr:      envOr("TELESRV_STICKER_WEB_ADDR", ""),
 		StickerWebPublicURL: envOr("TELESRV_STICKER_WEB_PUBLIC_URL", "https://telesrv.net"),
-		AdminUIAddr:         envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2400"),
+		AdminUIAddr:         envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:     envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:        envOr("TELESRV_ADMIN_UI_TOKEN", ""),
 		AdminSessionKey:     envOr("TELESRV_ADMIN_SESSION_KEY", ""),
@@ -395,7 +395,7 @@ func Load() (Config, error) {
 		SFUAdvertiseIP: envOr("TELESRV_SFU_ADVERTISE_IP", ""),
 
 		LiveStreamEnable:      envBoolOr("TELESRV_LIVESTREAM_ENABLE", true),
-		LiveStreamRtmpAddr:    envOr("TELESRV_LIVESTREAM_RTMP_ADDR", ":2600"),
+		LiveStreamRtmpAddr:    envOr("TELESRV_LIVESTREAM_RTMP_ADDR", ":2400"),
 		LiveStreamRtmpURL:     envOr("TELESRV_LIVESTREAM_RTMP_URL", ""),
 		LiveStreamFFmpegPath:  envOr("TELESRV_LIVESTREAM_FFMPEG_PATH", "ffmpeg"),
 		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),

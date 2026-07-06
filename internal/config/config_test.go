@@ -55,6 +55,25 @@ func TestLoadBusinessAIProviderDefaultsToEcho(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsAdminAndRtmpDefaultPortsSeparate(t *testing.T) {
+	t.Setenv("TELESRV_ADMIN_UI_ADDR", "")
+	t.Setenv("TELESRV_LIVESTREAM_RTMP_ADDR", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AdminUIAddr != "127.0.0.1:2600" {
+		t.Fatalf("AdminUIAddr = %q, want 127.0.0.1:2600", cfg.AdminUIAddr)
+	}
+	if cfg.LiveStreamRtmpAddr != ":2400" {
+		t.Fatalf("LiveStreamRtmpAddr = %q, want :2400", cfg.LiveStreamRtmpAddr)
+	}
+	if cfg.AdminUIAddr == "127.0.0.1"+cfg.LiveStreamRtmpAddr {
+		t.Fatalf("Admin UI and RTMP defaults conflict on %s", cfg.AdminUIAddr)
+	}
+}
+
 func TestLoadAIProviders(t *testing.T) {
 	t.Setenv("TELESRV_AI_PROVIDERS", "local,openai,gemini")
 	t.Setenv("TELESRV_AI_OPENAI_API_KEY", "openai-key")
