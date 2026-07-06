@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,8 +98,8 @@ func TestOutboxDispatcherUsesScopedAuthKeyExclusion(t *testing.T) {
 	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t))
 	dispatcher.DispatchOnce(context.Background())
 
-	if sessions.scopedAuthKeyID != excludeAuthKeyID || sessions.sessionID != 99 || sessions.userID != 1000000002 {
-		t.Fatalf("scoped push = auth %x session %d user %d, want precise outbox exclusion", sessions.scopedAuthKeyID, sessions.sessionID, sessions.userID)
+	if sessions.scopedAuthKey() != excludeAuthKeyID || sessions.sessionID != 99 || sessions.userID != 1000000002 {
+		t.Fatalf("scoped push = auth %x session %d user %d, want precise outbox exclusion", sessions.scopedAuthKey(), sessions.sessionID, sessions.userID)
 	}
 }
 
@@ -731,13 +732,34 @@ type captureDispatchOutbox struct {
 
 type captureScopedSessions struct {
 	*captureSessions
+	// scopedMu 保护本层扩展字段：presence 等异步推送 goroutine 会并发写
+	// scopedAuthKeyID，测试主 goroutine 并发读（race detector 抓过这里）。
+	scopedMu        sync.Mutex
 	scopedAuthKeyID [8]byte
 	immediatePush   bool
 }
 
+func (s *captureScopedSessions) setScopedAuthKeyID(rawAuthKeyID [8]byte) {
+	s.scopedMu.Lock()
+	s.scopedAuthKeyID = rawAuthKeyID
+	s.scopedMu.Unlock()
+}
+
+func (s *captureScopedSessions) scopedAuthKey() [8]byte {
+	s.scopedMu.Lock()
+	defer s.scopedMu.Unlock()
+	return s.scopedAuthKeyID
+}
+
+func (s *captureScopedSessions) immediatePushSeen() bool {
+	s.scopedMu.Lock()
+	defer s.scopedMu.Unlock()
+	return s.immediatePush
+}
+
 func (s *captureScopedSessions) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
 	s.BindAuthKey(sessionID, authKeyID)
-	s.scopedAuthKeyID = rawAuthKeyID
+	s.setScopedAuthKeyID(rawAuthKeyID)
 }
 
 func (s *captureScopedSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bool) {
@@ -746,7 +768,7 @@ func (s *captureScopedSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bo
 
 func (s *captureScopedSessions) BindUserForAuthKey(rawAuthKeyID [8]byte, sessionID, userID int64) {
 	s.BindUser(sessionID, userID)
-	s.scopedAuthKeyID = rawAuthKeyID
+	s.setScopedAuthKeyID(rawAuthKeyID)
 }
 
 func (s *captureScopedSessions) UserIDForAuthKey([8]byte, int64) (int64, bool) {
@@ -760,18 +782,20 @@ func (s *captureScopedSessions) UserIDResolvedForAuthKey([8]byte, int64) (int64,
 func (s *captureScopedSessions) SetReceivesUpdatesForAuthKey([8]byte, int64, bool) {}
 
 func (s *captureScopedSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
-	s.scopedAuthKeyID = rawAuthKeyID
+	s.setScopedAuthKeyID(rawAuthKeyID)
 	return s.PushToSession(context.Background(), sessionID, t, msg)
 }
 
 func (s *captureScopedSessions) PushToSessionForAuthKeyImmediate(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+	s.scopedMu.Lock()
 	s.immediatePush = true
 	s.scopedAuthKeyID = rawAuthKeyID
+	s.scopedMu.Unlock()
 	return s.PushToSession(context.Background(), sessionID, t, msg)
 }
 
 func (s *captureScopedSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
-	s.scopedAuthKeyID = excludeAuthKeyID
+	s.setScopedAuthKeyID(excludeAuthKeyID)
 	return s.PushToUserExceptSession(context.Background(), userID, excludeSessionID, t, msg)
 }
 

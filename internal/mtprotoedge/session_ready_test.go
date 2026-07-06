@@ -23,23 +23,23 @@ func TestReceivesUpdatesForAuthKeyRequiresMembershipSync(t *testing.T) {
 		t.Fatal("ready before membership sync — a failed sync would never be retried")
 	}
 
-	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{7})
+	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{7}, sm.ChannelMembershipGeneration(raw, 42))
 	if !sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("not ready after successful membership sync")
 	}
 
 	// 没有任何频道的账号：空列表的成功同步同样算就绪。
-	sm.SetSessionChannelMemberships(raw, 42, 100, nil)
+	sm.SetSessionChannelMemberships(raw, 42, 100, nil, sm.ChannelMembershipGeneration(raw, 42))
 	if !sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("not ready after successful empty membership sync")
 	}
 
 	// userID 与连接当前绑定不一致（换号竞态）时不算就绪，等正确身份重试。
-	sm.SetSessionChannelMemberships(raw, 42, 999, []int64{7})
+	sm.SetSessionChannelMemberships(raw, 42, 999, []int64{7}, sm.ChannelMembershipGeneration(raw, 42))
 	if sm.ReceivesUpdatesForAuthKey(raw, 42) {
 		t.Fatal("ready after membership sync for mismatched user")
 	}
-	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{7})
+	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{7}, sm.ChannelMembershipGeneration(raw, 42))
 
 	// 登出清除就绪标志。
 	sm.BindUserForAuthKey(raw, 42, 0)

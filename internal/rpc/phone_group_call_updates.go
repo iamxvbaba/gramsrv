@@ -17,12 +17,24 @@ import (
 
 // groupCallOnlineRecipients 返回在线群成员（含 originUserID 本人，推送时由
 // pushUserMessage 的 ctx except 排除发起 session、保留其它设备）。
-func (r *Router) groupCallOnlineRecipients(channelID int64) []int64 {
+// 在线索引候选必须过一次 PG active 复核（与 channelFanoutRecipients 同款纵深）：
+// 索引 stale（如踢人窗口）时不得把通话状态/参与者名单继续推给已非成员者。
+func (r *Router) groupCallOnlineRecipients(ctx context.Context, channelID int64) []int64 {
 	provider, ok := r.deps.Sessions.(OnlineUserProvider)
 	if !ok {
 		return nil
 	}
-	return provider.OnlineChannelMemberUserIDs(channelID, domain.MaxChannelRealtimeFanout)
+	online := provider.OnlineChannelMemberUserIDs(channelID, domain.MaxChannelRealtimeFanout)
+	if len(online) == 0 || r.deps.Channels == nil {
+		return online
+	}
+	active, err := r.deps.Channels.FilterActiveMemberIDs(ctx, channelID, online)
+	if err != nil {
+		// 复核失败宁可漏推不误推：群通话 update 无 pts，客户端靠 checkGroupCall/
+		// version 跳号自愈，漏推不丢一致性。
+		return nil
+	}
+	return active
 }
 
 // groupCallUpdateContainer 把单条 update 包进 viewer 视角的 Updates 容器。
@@ -46,7 +58,7 @@ func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel
 		r.pushConferenceGroupCallUpdate(ctx, call)
 		return
 	}
-	recipients := r.groupCallOnlineRecipients(channel.ID)
+	recipients := r.groupCallOnlineRecipients(ctx, channel.ID)
 	for _, viewerID := range recipients {
 		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, false)}
 		update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
@@ -69,7 +81,7 @@ func (r *Router) pushGroupCallParticipantsUpdate(ctx context.Context, channel do
 	for _, p := range rows {
 		userIDs = append(userIDs, p.UserID)
 	}
-	recipients := r.groupCallOnlineRecipients(channel.ID)
+	recipients := r.groupCallOnlineRecipients(ctx, channel.ID)
 	for _, viewerID := range recipients {
 		update := &tg.UpdateGroupCallParticipants{
 			Call:         &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},

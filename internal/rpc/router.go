@@ -219,6 +219,16 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 			hasClientMetadata = true
 			r.rememberClientSessionInfo(ctx, info)
 			clientMetadataStored = true
+			// 冷启动回填：授权表恢复的 layer 即时下推到连接，防止本条 RPC handler
+			// 执行期间的 push 仍按 canonical 227 发给老客户端（该分支只在元数据
+			// 尚未入缓存时走到，稳态 RPC 不经过这里）。
+			if info.layer != 0 {
+				if binder, okBinder := r.deps.Sessions.(ClientLayerBinder); okBinder {
+					if rawAuthKeyID, okRaw := RawAuthKeyIDFrom(ctx); okRaw {
+						binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, info.layer)
+					}
+				}
+			}
 		}
 	}
 	// 前置鉴权阶段（auth key 解析 / user 重校验 / client info）慢路径告警：超阈值才记，避免刷屏。
@@ -703,6 +713,12 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 	}
 	sessionKey := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
 	sessionInfo, exists := r.clientInfo[sessionKey]
+	// session 级记录缺失或 layer 变化时把新值即时下推到连接：invokeWithLayer 在
+	// Dispatch 入口被处理（早于鉴权门与 updates 就绪置位），此时下推能保证同一请求
+	// handler 执行期间触发的 pending flush / 并发 push 已按正确 layer 降级。记录已
+	// 存在且相同（如客户端每条请求都带 wrapper）时跳过——连接侧已由注册播种或此前
+	// 下推持有同值。
+	notifyConn := !exists || sessionInfo.layer != layer
 	sessionInfo.layer = layer
 	if !exists {
 		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
@@ -713,6 +729,11 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 		r.rememberAuthClientLayerLocked(authKeyID, layer)
 	}
 	r.clientInfoMu.Unlock()
+	if notifyConn {
+		if binder, ok := r.deps.Sessions.(ClientLayerBinder); ok {
+			binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, layer)
+		}
+	}
 	if persistAuthLayer && r.deps.Auth != nil {
 		if err := r.deps.Auth.UpdateAuthorizationLayer(ctx, authKeyID, layer); err != nil {
 			r.log.Warn("update authorization layer failed",

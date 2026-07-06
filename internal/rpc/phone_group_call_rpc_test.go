@@ -40,12 +40,13 @@ func (s *groupCallSessions) OnlineUserIDsForCandidates(candidateUserIDs []int64,
 	}
 	return out
 }
-func (s *groupCallSessions) TrackChannelInterest([8]byte, int64, int64, []int64)         {}
-func (s *groupCallSessions) ClearChannelInterest([8]byte, int64, int64)                  {}
-func (s *groupCallSessions) OnlineChannelUserIDs(int64, int) []int64                     { return nil }
-func (s *groupCallSessions) SetSessionChannelMemberships([8]byte, int64, int64, []int64) {}
-func (s *groupCallSessions) AddUserChannelMembership(int64, int64)                       {}
-func (s *groupCallSessions) RemoveUserChannelMembership(int64, int64)                    {}
+func (s *groupCallSessions) TrackChannelInterest([8]byte, int64, int64, []int64)                {}
+func (s *groupCallSessions) ClearChannelInterest([8]byte, int64, int64)                         {}
+func (s *groupCallSessions) OnlineChannelUserIDs(int64, int) []int64                            { return nil }
+func (s *groupCallSessions) ChannelMembershipGeneration([8]byte, int64) int64                   { return 0 }
+func (s *groupCallSessions) SetSessionChannelMemberships([8]byte, int64, int64, []int64, int64) {}
+func (s *groupCallSessions) AddUserChannelMembership(int64, int64)                              {}
+func (s *groupCallSessions) RemoveUserChannelMembership(int64, int64)                           {}
 func (s *groupCallSessions) OnlineChannelMemberUserIDs(channelID int64, limit int) []int64 {
 	return append([]int64(nil), s.online...)
 }
@@ -146,6 +147,49 @@ func findUpdate[T tg.UpdateClass](t *testing.T, updates tg.UpdatesClass) T {
 	var zero T
 	t.Fatalf("updates %v missing %T", box.Updates, zero)
 	return zero
+}
+
+// TestGroupCallPushSkipsNonMemberOnlineCandidates 验证群通话推送收件人必须过一次
+// PG active 成员复核：在线成员索引 stale（如踢人窗口内、或索引维护缺口）时，
+// 非成员绝不能收到通话状态/参与者名单（信息泄漏），真实成员照常收到。
+func TestGroupCallPushSkipsNonMemberOnlineCandidates(t *testing.T) {
+	f := newGroupCallFixture(t)
+	ownerCtx := f.userCtx(f.owner, 11)
+	// 模拟 stale 在线索引：outsider 不是频道成员却出现在候选里。
+	f.sessions.online = []int64{f.owner.ID, f.member.ID, f.outsider.ID}
+
+	createRes, err := f.router.onPhoneCreateGroupCall(ownerCtx, &tg.PhoneCreateGroupCallRequest{
+		Peer:     &tg.InputPeerChannel{ChannelID: f.channel.ID, AccessHash: f.channel.AccessHash},
+		RandomID: 1,
+	})
+	if err != nil {
+		t.Fatalf("createGroupCall: %v", err)
+	}
+	callUpdate := findUpdate[*tg.UpdateGroupCall](t, createRes)
+	call := callUpdate.Call.(*tg.GroupCall)
+	f.sessions.reset()
+
+	if _, err := f.router.onPhoneJoinGroupCall(ownerCtx, &tg.PhoneJoinGroupCallRequest{
+		Call:   &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},
+		JoinAs: &tg.InputPeerSelf{},
+		Params: groupCallJoinParams(t, 1001),
+	}); err != nil {
+		t.Fatalf("joinGroupCall: %v", err)
+	}
+
+	pushes := f.sessions.records()
+	memberGot := false
+	for _, rec := range pushes {
+		if rec.userID == f.outsider.ID {
+			t.Fatalf("group call push leaked to non-member outsider %d: %+v", f.outsider.ID, rec)
+		}
+		if rec.userID == f.member.ID {
+			memberGot = true
+		}
+	}
+	if !memberGot {
+		t.Fatalf("member %d received no group call push, fan-out broken: %+v", f.member.ID, pushes)
+	}
 }
 
 func TestGroupCallM0Lifecycle(t *testing.T) {

@@ -260,7 +260,7 @@ func TestSessionManagerChannelInterestIndex(t *testing.T) {
 	if got := sm.OnlineChannelMemberUserIDs(10, 10); len(got) != 0 {
 		t.Fatalf("channel 10 online members before membership sync = %v, want empty", got)
 	}
-	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{10, 30})
+	sm.SetSessionChannelMemberships(raw, 42, 100, []int64{10, 30}, sm.ChannelMembershipGeneration(raw, 42))
 	if got := sm.OnlineChannelMemberUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
 		t.Fatalf("channel 10 online members = %v, want [100]", got)
 	}
@@ -315,7 +315,7 @@ func TestSessionManagerClearsChannelIndexesOnAuthAndReadinessChanges(t *testing.
 
 	track := func() {
 		sm.TrackChannelInterest(raw, 42, 100, []int64{10})
-		sm.SetSessionChannelMemberships(raw, 42, 100, []int64{10})
+		sm.SetSessionChannelMemberships(raw, 42, 100, []int64{10}, sm.ChannelMembershipGeneration(raw, 42))
 		if got := sm.OnlineChannelUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
 			t.Fatalf("channel viewers before cleanup = %v, want [100]", got)
 		}
