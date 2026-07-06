@@ -42,3 +42,9 @@ func TestSPAFallbackSmoke(t *testing.T) {
 		t.Fatalf("spa body missing root: %s", rec.Body.String())
 	}
 }
+
+func TestAdminAPIURLDefaultUsesAdminAPIPort(t *testing.T) {
+	if got, want := adminAPIURL(""), "http://127.0.0.1:2599"; got != want {
+		t.Fatalf("adminAPIURL(empty) = %q, want %q", got, want)
+	}
+}
