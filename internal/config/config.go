@@ -395,7 +395,7 @@ func Load() (Config, error) {
 		SFUAdvertiseIP: envOr("TELESRV_SFU_ADVERTISE_IP", ""),
 
 		LiveStreamEnable:      envBoolOr("TELESRV_LIVESTREAM_ENABLE", true),
-		LiveStreamRtmpAddr:    envOr("TELESRV_LIVESTREAM_RTMP_ADDR", ":2400"),
+		LiveStreamRtmpAddr:    envOr("TELESRV_LIVESTREAM_RTMP_ADDR", ":2600"),
 		LiveStreamRtmpURL:     envOr("TELESRV_LIVESTREAM_RTMP_URL", ""),
 		LiveStreamFFmpegPath:  envOr("TELESRV_LIVESTREAM_FFMPEG_PATH", "ffmpeg"),
 		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),
