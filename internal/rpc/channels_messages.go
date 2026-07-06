@@ -3,12 +3,14 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/tg"
 	"sort"
 	"strconv"
 	"strings"
-	"telesrv/internal/domain"
 	"unicode/utf8"
+
+	"github.com/gotd/td/tg"
+
+	"telesrv/internal/domain"
 )
 
 func (r *Router) onChannelsExportMessageLink(ctx context.Context, req *tg.ChannelsExportMessageLinkRequest) (*tg.ExportedMessageLink, error) {
@@ -28,9 +30,9 @@ func (r *Router) onChannelsExportMessageLink(ctx context.Context, req *tg.Channe
 	}
 	link := ""
 	if view.Channel.Username != "" {
-		link = "https://telesrv.net/" + view.Channel.Username + "/" + strconv.Itoa(req.ID)
+		link = r.publicLink(view.Channel.Username + "/" + strconv.Itoa(req.ID))
 	} else {
-		link = "https://telesrv.net/c/" + strconv.FormatInt(view.Channel.ID, 10) + "/" + strconv.Itoa(req.ID)
+		link = r.publicLink("c/" + strconv.FormatInt(view.Channel.ID, 10) + "/" + strconv.Itoa(req.ID))
 	}
 	if req.Thread {
 		if rootID := channelMessageThreadRootID(history.Messages[0]); rootID > 0 && rootID != req.ID {

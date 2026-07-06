@@ -75,7 +75,7 @@ func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel
 		if subscribed != nil {
 			_, viewerCall.ScheduleStartSubscribed = subscribed[viewerID]
 		}
-		update := &tg.UpdateGroupCall{Call: tgGroupCall(viewerCall, viewerID, false)}
+		update := &tg.UpdateGroupCall{Call: tgGroupCall(viewerCall, viewerID, false, r.cfg.PublicBaseURL)}
 		update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 		r.pushUserMessage(ctx, viewerID, "group call update",
 			r.groupCallUpdateContainer(ctx, viewerID, channel, update, []int64{call.CreatorUserID}))
@@ -138,7 +138,7 @@ func (r *Router) pushConferenceGroupCallUpdate(ctx context.Context, call domain.
 func (r *Router) pushConferenceGroupCallUpdateTo(ctx context.Context, call domain.GroupCall, extraUserIDs []int64) {
 	recipients := r.conferenceCallRecipientsWith(ctx, call.ID, extraUserIDs)
 	for _, viewerID := range recipients {
-		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, viewerID == call.CreatorUserID)}
+		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, viewerID == call.CreatorUserID, r.cfg.PublicBaseURL)}
 		r.pushUserMessage(ctx, viewerID, "conference call update",
 			r.groupCallUpdateContainer(ctx, viewerID, domain.Channel{}, update, []int64{call.CreatorUserID}))
 	}

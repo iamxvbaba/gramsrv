@@ -14,7 +14,7 @@ import (
 const aiComposeToneWebPageType = "telegram_aicomposetone"
 
 func (r *Router) resolveAIComposeStyleWebPage(ctx context.Context, rawURL string) (domain.MessageWebPage, bool) {
-	link, ok := parseAIComposeStyleLink(rawURL)
+	link, ok := parseAIComposeStyleLink(rawURL, r.publicLinkHost())
 	if !ok || r.deps.AICompose == nil {
 		return domain.MessageWebPage{}, false
 	}
@@ -62,7 +62,7 @@ type aiComposeStyleLink struct {
 	slug       string
 }
 
-func parseAIComposeStyleLink(raw string) (aiComposeStyleLink, bool) {
+func parseAIComposeStyleLink(raw, publicHost string) (aiComposeStyleLink, bool) {
 	normalized, ok := domain.NormalizeWebPageURL(raw)
 	if !ok {
 		return aiComposeStyleLink{}, false
@@ -72,7 +72,7 @@ func parseAIComposeStyleLink(raw string) (aiComposeStyleLink, bool) {
 		return aiComposeStyleLink{}, false
 	}
 	host := strings.ToLower(u.Hostname())
-	if !aiComposeStyleHostAllowed(host) {
+	if !aiComposeStyleHostAllowed(host, publicHost) {
 		return aiComposeStyleLink{}, false
 	}
 	parts := strings.Split(strings.Trim(strings.ToLower(u.EscapedPath()), "/"), "/")
@@ -96,7 +96,10 @@ func parseAIComposeStyleLink(raw string) (aiComposeStyleLink, bool) {
 	return aiComposeStyleLink{normalized: normalized, display: display, slug: slug}, true
 }
 
-func aiComposeStyleHostAllowed(host string) bool {
+func aiComposeStyleHostAllowed(host, publicHost string) bool {
+	if publicHost != "" && strings.EqualFold(host, publicHost) {
+		return true
+	}
 	switch host {
 	case "t.me", "telegram.me", "telesrv.net", "localhost", "127.0.0.1":
 		return true

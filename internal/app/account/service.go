@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 	"telesrv/internal/store"
 )
 
@@ -29,7 +30,8 @@ type Service struct {
 	savedMusic  store.SavedMusicStore
 	business    store.BusinessAutomationStore
 	// users 仅用于登录邮箱的 phone→user 解析（sendCode 检测 / login-setup / reset 走 phone）。
-	users store.UserStore
+	users         store.UserStore
+	publicBaseURL string
 }
 
 // ServiceOption 调整 account 服务依赖。
@@ -91,9 +93,15 @@ func WithUsers(users store.UserStore) ServiceOption {
 	}
 }
 
+func WithPublicBaseURL(baseURL string) ServiceOption {
+	return func(s *Service) {
+		s.publicBaseURL = links.NormalizeBaseURL(baseURL)
+	}
+}
+
 // NewService 创建 account 服务。
 func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
-	s := &Service{passwords: passwords}
+	s := &Service{passwords: passwords, publicBaseURL: links.DefaultPublicBaseURL}
 	for _, opt := range opts {
 		opt(s)
 	}

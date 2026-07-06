@@ -135,7 +135,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	if err != nil {
 		return nil, err
 	}
-	full := tgChannelFull(view)
+	full := tgChannelFull(view, r.cfg.PublicBaseURL)
 	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}
 	// 注：Bots 过滤实际会返回群内 bot（TestGroupBotRPCShape 覆盖），这里据此富化 full.BotInfo。

@@ -419,6 +419,11 @@ func (r *Router) domainFolderPeerFromInputPeer(ctx context.Context, userID int64
 			return domain.Peer{}, 0, peerIDInvalidErr()
 		}
 		return out, 0, nil
+	case *tg.InputPeerChat:
+		if p.ChatID <= 0 {
+			return domain.Peer{}, 0, peerIDInvalidErr()
+		}
+		return domain.Peer{Type: domain.PeerTypeChannel, ID: p.ChatID}, 0, nil
 	case *tg.InputPeerSelf:
 		if userID == 0 {
 			return domain.Peer{}, 0, peerIDInvalidErr()

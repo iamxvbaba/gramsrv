@@ -233,7 +233,7 @@ func (r *Router) onPhoneEditGroupCallTitle(ctx context.Context, req *tg.PhoneEdi
 	}
 	r.pushGroupCallUpdate(ctx, scope.channel, call)
 	return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
-		groupCallUpdateFor(scope.channel, call, scope.userID, true), nil), nil
+		groupCallUpdateFor(scope.channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 }
 
 func (r *Router) onPhoneToggleGroupCallSettings(ctx context.Context, req *tg.PhoneToggleGroupCallSettingsRequest) (tg.UpdatesClass, error) {
@@ -261,7 +261,7 @@ func (r *Router) onPhoneToggleGroupCallSettings(ctx context.Context, req *tg.Pho
 	}
 	r.pushGroupCallUpdate(ctx, scope.channel, call)
 	return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
-		groupCallUpdateFor(scope.channel, call, scope.userID, true), nil), nil
+		groupCallUpdateFor(scope.channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 }
 
 const maxInviteToGroupCallUsers = 10

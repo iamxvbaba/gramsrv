@@ -41,6 +41,18 @@ func filterIncludeEmptyErr() error { return tgerr.New(400, "FILTER_INCLUDE_EMPTY
 
 func filterTitleEmptyErr() error { return tgerr.New(400, "FILTER_TITLE_EMPTY") }
 
+func filterNotSupportedErr() error { return tgerr.New(400, "FILTER_NOT_SUPPORTED") }
+
+func inviteSlugEmptyErr() error { return tgerr.New(400, "INVITE_SLUG_EMPTY") }
+
+func inviteSlugExpiredErr() error { return tgerr.New(400, "INVITE_SLUG_EXPIRED") }
+
+func invitesTooMuchErr() error { return tgerr.New(400, "INVITES_TOO_MUCH") }
+
+func chatlistsTooMuchErr() error { return tgerr.New(400, "CHATLISTS_TOO_MUCH") }
+
+func peersListEmptyErr() error { return tgerr.New(400, "PEERS_LIST_EMPTY") }
+
 // peerIDInvalidErr 表示目标 peer 不存在或当前阶段不支持。
 func peerIDInvalidErr() error { return tgerr.New(400, "PEER_ID_INVALID") }
 

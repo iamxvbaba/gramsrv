@@ -8,7 +8,9 @@ import (
 )
 
 func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_ADVERTISE_IP", "")
+	t.Setenv("TELESRV_PUBLIC_BASE_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -17,9 +19,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.AdvertiseIP != "127.0.0.1" {
 		t.Fatalf("AdvertiseIP = %q, want loopback default", cfg.AdvertiseIP)
 	}
+	if cfg.PublicBaseURL != "https://telesrv.net" {
+		t.Fatalf("PublicBaseURL = %q, want https://telesrv.net", cfg.PublicBaseURL)
+	}
 }
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
 
 	cfg, err := Load()
@@ -32,6 +38,7 @@ func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 }
 
 func TestLoadBusinessAIProvider(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_BUSINESS_AI_PROVIDER", "echo")
 
 	cfg, err := Load()
@@ -44,6 +51,7 @@ func TestLoadBusinessAIProvider(t *testing.T) {
 }
 
 func TestLoadBusinessAIProviderDefaultsToEcho(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_BUSINESS_AI_PROVIDER", "")
 
 	cfg, err := Load()
@@ -56,6 +64,7 @@ func TestLoadBusinessAIProviderDefaultsToEcho(t *testing.T) {
 }
 
 func TestLoadKeepsAdminAndRtmpDefaultPortsSeparate(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_ADMIN_UI_ADDR", "")
 	t.Setenv("TELESRV_LIVESTREAM_RTMP_ADDR", "")
 
@@ -75,6 +84,7 @@ func TestLoadKeepsAdminAndRtmpDefaultPortsSeparate(t *testing.T) {
 }
 
 func TestLoadAIProviders(t *testing.T) {
+	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_AI_PROVIDERS", "local,openai,gemini")
 	t.Setenv("TELESRV_AI_OPENAI_API_KEY", "openai-key")
 	t.Setenv("TELESRV_AI_OPENAI_MODEL", "gpt-test")
@@ -115,8 +125,8 @@ TELESRV_MAPBOX_TOKEN="file-token"
 TELESRV_POSTGRES_MAX_CONNS=77
 TELESRV_WEBSOCKET_ALLOWED_ORIGINS=https://one.example, https://two.example
 TELESRV_CALL_RING_TIMEOUT=2m
-TELESRV_STICKER_WEB_ADDR=127.0.0.1:2401
-TELESRV_STICKER_WEB_PUBLIC_URL=https://packs.example.test
+TELESRV_PUBLIC_BASE_URL=links.example.test/root
+TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 `)
 	t.Setenv("TELESRV_CONFIG", path)
 
@@ -136,11 +146,24 @@ TELESRV_STICKER_WEB_PUBLIC_URL=https://packs.example.test
 	if cfg.CallRingTimeout != 2*time.Minute {
 		t.Fatalf("CallRingTimeout = %v, want 2m", cfg.CallRingTimeout)
 	}
-	if cfg.StickerWebAddr != "127.0.0.1:2401" {
-		t.Fatalf("StickerWebAddr = %q, want 127.0.0.1:2401", cfg.StickerWebAddr)
+	if cfg.PublicLinkWebAddr != "127.0.0.1:2401" {
+		t.Fatalf("PublicLinkWebAddr = %q, want 127.0.0.1:2401", cfg.PublicLinkWebAddr)
 	}
-	if cfg.StickerWebPublicURL != "https://packs.example.test" {
-		t.Fatalf("StickerWebPublicURL = %q, want https://packs.example.test", cfg.StickerWebPublicURL)
+	if cfg.PublicBaseURL != "https://links.example.test/root" {
+		t.Fatalf("PublicBaseURL = %q, want https://links.example.test/root", cfg.PublicBaseURL)
+	}
+}
+
+func TestLoadNormalizesLocalPublicBaseURL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PUBLIC_BASE_URL", "http://127.0.0.1:2401/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PublicBaseURL != "http://127.0.0.1:2401" {
+		t.Fatalf("PublicBaseURL = %q, want http://127.0.0.1:2401", cfg.PublicBaseURL)
 	}
 }
 
@@ -182,4 +205,9 @@ func writeConfigFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
+}
+
+func disableDefaultConfigFile(t *testing.T) {
+	t.Helper()
+	t.Setenv("TELESRV_CONFIG", "")
 }

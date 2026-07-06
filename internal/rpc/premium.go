@@ -31,7 +31,7 @@ func (r *Router) onPremiumGetBoostsStatus(ctx context.Context, peer tg.InputPeer
 	if err != nil {
 		return nil, premiumBoostErr(err)
 	}
-	return tgPremiumBoostsStatus(view.Channel.ID, status), nil
+	return tgPremiumBoostsStatus(view.Channel.ID, status, r.cfg.PublicBaseURL), nil
 }
 
 func (r *Router) onPremiumGetBoostsList(ctx context.Context, req *tg.PremiumGetBoostsListRequest) (*tg.PremiumBoostsList, error) {
@@ -190,13 +190,13 @@ func (r *Router) currentPremiumUntil(ctx context.Context) (int64, int, error) {
 	return userID, u.PremiumUntil, nil
 }
 
-func tgPremiumBoostsStatus(channelID int64, in domain.PremiumBoostStatus) *tg.PremiumBoostsStatus {
+func tgPremiumBoostsStatus(channelID int64, in domain.PremiumBoostStatus, publicBaseURL string) *tg.PremiumBoostsStatus {
 	out := &tg.PremiumBoostsStatus{
 		MyBoost:            len(in.MyBoostSlots) > 0,
 		Level:              in.Level,
 		CurrentLevelBoosts: in.CurrentLevelBoosts,
 		Boosts:             in.Boosts,
-		BoostURL:           fmt.Sprintf("https://telesrv.net/boost?c=%d", channelID),
+		BoostURL:           publicLinkParamWithBaseURL(publicBaseURL, "boost", "c", fmt.Sprintf("%d", channelID)),
 	}
 	if in.GiftBoosts > 0 {
 		out.SetGiftBoosts(in.GiftBoosts)

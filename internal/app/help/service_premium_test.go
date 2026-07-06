@@ -50,6 +50,11 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		"channels_limit_premium":              1000,
 		"dialog_filters_limit_default":        10,
 		"dialog_filters_limit_premium":        20,
+		"chatlist_update_period":              3600,
+		"chatlist_invites_limit_default":      3,
+		"chatlist_invites_limit_premium":      20,
+		"chatlists_joined_limit_default":      2,
+		"chatlists_joined_limit_premium":      20,
 		"upload_max_fileparts_default":        4000,
 		"upload_max_fileparts_premium":        8000,
 		"aicompose_tone_examples_num":         3,
@@ -68,7 +73,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		}
 	}
 	// 未实现功能族的 key 不得下发（诱导客户端进入未实现路径）。
-	for _, forbidden := range []string{"chatlists_joined_limit_default", "stories_sent_weekly_limit_default", "premium_bot_username", "premium_invoice_slug"} {
+	for _, forbidden := range []string{"stories_sent_weekly_limit_default", "premium_bot_username", "premium_invoice_slug"} {
 		if _, ok := decoded[forbidden]; ok {
 			t.Errorf("appConfig 不应包含 %q", forbidden)
 		}

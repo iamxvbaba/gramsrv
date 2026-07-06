@@ -246,7 +246,7 @@ func (r *Router) onPhoneCreateGroupCall(ctx context.Context, req *tg.PhoneCreate
 		r.pushGroupCallServiceMessage(ctx, userID, serviceRes)
 	}
 	// 响应：updateGroupCall + 服务消息（发起设备视角）。TDesktop 创建后自行 joinGroupCall。
-	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, userID, true)}
+	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, userID, true, r.cfg.PublicBaseURL)}
 	update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 	out := r.groupCallUpdateContainer(ctx, userID, channel, update, []int64{userID})
 	if serviceRes.Event.Pts != 0 {
@@ -368,7 +368,7 @@ func (r *Router) onPhoneJoinGroupCall(ctx context.Context, req *tg.PhoneJoinGrou
 			Version:      mut.Call.Version,
 		}, []int64{scope.userID})
 	out.Updates = append(out.Updates, &tg.UpdateGroupCallConnection{Params: tg.DataJSON{Data: params}})
-	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage())}
+	callUpdate := &tg.UpdateGroupCall{Call: tgGroupCall(mut.Call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL)}
 	if channel.ID != 0 {
 		callUpdate.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 	}
@@ -395,7 +395,7 @@ func (r *Router) onPhoneLeaveGroupCall(ctx context.Context, req *tg.PhoneLeaveGr
 	if errors.Is(err, domain.ErrGroupCallNotJoined) {
 		// 幂等：重复 leave / sweeper 已清，返回当前快照。
 		return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel,
-			groupCallUpdateFor(scope.channel, scope.call, scope.userID, false), nil), nil
+			groupCallUpdateFor(scope.channel, scope.call, scope.userID, false, r.cfg.PublicBaseURL), nil), nil
 	}
 	if err != nil {
 		return nil, groupCallErr(err)
@@ -411,7 +411,7 @@ func (r *Router) onPhoneLeaveGroupCall(ctx context.Context, req *tg.PhoneLeaveGr
 			Version:      mut.Call.Version,
 		}, []int64{scope.userID})
 	if mut.Call.Conference() && !mut.Call.Active() {
-		out.Updates = append(out.Updates, groupCallUpdateFor(domain.Channel{}, mut.Call, scope.userID, scope.userID == mut.Call.CreatorUserID))
+		out.Updates = append(out.Updates, groupCallUpdateFor(domain.Channel{}, mut.Call, scope.userID, scope.userID == mut.Call.CreatorUserID, r.cfg.PublicBaseURL))
 	}
 	return out, nil
 }
@@ -435,7 +435,7 @@ func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCa
 	if call.Conference() {
 		r.pushConferenceGroupCallUpdateTo(ctx, call, groupCallParticipantUserIDs(activeBeforeDiscard))
 		return r.groupCallUpdateContainer(ctx, scope.userID, domain.Channel{},
-			groupCallUpdateFor(domain.Channel{}, call, scope.userID, true), nil), nil
+			groupCallUpdateFor(domain.Channel{}, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 	}
 	// RTMP 直播结束：断开推流并清空缓冲（观众后续拉流转 resync/停止）。
 	if call.RtmpStream && r.deps.LiveStreams != nil {
@@ -463,7 +463,7 @@ func (r *Router) onPhoneDiscardGroupCall(ctx context.Context, in tg.InputGroupCa
 		r.pushGroupCallServiceMessage(ctx, scope.userID, serviceRes)
 	}
 	out := r.groupCallUpdateContainer(ctx, scope.userID, channel,
-		groupCallUpdateFor(channel, call, scope.userID, true), nil)
+		groupCallUpdateFor(channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil)
 	if serviceRes.Event.Pts != 0 {
 		if msgUpdate := tgChannelUpdate(scope.userID, serviceRes.Event); msgUpdate != nil {
 			out.Updates = append(out.Updates, msgUpdate)
@@ -499,7 +499,7 @@ func (r *Router) onPhoneGetGroupCall(ctx context.Context, req *tg.PhoneGetGroupC
 	// 定时通话：回填 viewer 自己的开播提醒订阅（客户端 reload 全量重建本地状态）。
 	call := r.applyScheduleSubscription(ctx, scope.call, scope.userID)
 	return &tg.PhoneGroupCall{
-		Call:                   tgGroupCall(call, scope.userID, scope.canManage()),
+		Call:                   tgGroupCall(call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL),
 		Participants:           tgGroupCallParticipants(page.Participants, scope.userID),
 		ParticipantsNextOffset: page.NextOffset,
 		Chats:                  chats,
@@ -589,8 +589,8 @@ func (r *Router) onPhoneCheckGroupCall(ctx context.Context, req *tg.PhoneCheckGr
 	return out, nil
 }
 
-func groupCallUpdateFor(channel domain.Channel, call domain.GroupCall, viewerUserID int64, canManage bool) *tg.UpdateGroupCall {
-	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerUserID, canManage)}
+func groupCallUpdateFor(channel domain.Channel, call domain.GroupCall, viewerUserID int64, canManage bool, publicBaseURL ...string) *tg.UpdateGroupCall {
+	update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerUserID, canManage, publicBaseURL...)}
 	if channel.ID != 0 {
 		update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 	}

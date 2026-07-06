@@ -44,6 +44,7 @@ codebase.
 | ✅ | Login and accounts | Development login code, sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, email/passkey-oriented paths. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
+| ✅ | Chatlists and public links | Chat folder sharing, exported chatlist invite links, join/import flows, revoked invite handling, and shared public link landing pages. |
 | ✅ | Private chats | Send, history, read receipts, edit, delete, forward, reply, rich entities, grouped/media messages, reactions, scheduled/TTL-oriented paths. |
 | ✅ | Rich messages | Telegram Desktop rich text messages, rich content conversion, send/edit/scheduled flows, dialog/history projections, and memory/PostgreSQL persistence. |
 | ✅ | AI compose and ChatBot | Input-box rewrite/polish, default and custom tones, addstyle previews, local and external provider chains, streamed `@ChatBot` draft replies, and Business AI reply hooks. |
@@ -94,11 +95,13 @@ Useful local environment variables:
 | `TELESRV_ADVERTISE_IP` | `127.0.0.1` | IP advertised to compatible clients |
 | `TELESRV_DC` | `2` | self-hosted DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | fixed login code for local development |
+| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical base URL for public sticker/chatlist links |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | bundled language pack seed directory |
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
+| `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing endpoint for sticker and chatlist links |
 | `TELESRV_AI_ENABLED` | `true` | enable AI compose entry points |
 | `TELESRV_AI_PROVIDERS` | `local` | ordered AI provider chain, such as `local` or `kimi,local` |
 | `TELESRV_AI_TIMEOUT` | `15s` | per AI provider call timeout |
@@ -138,7 +141,7 @@ to the features you enable.
 | 12400 | UDP | TURN/STUN server | P2P/call relay |
 | 12500-12999 | UDP | TURN relay port range | TURN relay |
 | configurable | TCP | Bot API | When `TELESRV_BOT_API_ADDR` is set |
-| configurable | TCP | Sticker Web deep-link landing | When `TELESRV_STICKER_WEB_ADDR` is set |
+| configurable | TCP | Public link deep-link landing | When `TELESRV_PUBLIC_LINK_WEB_ADDR` is set |
 
 ### Internal/debug ports (do not expose publicly)
 

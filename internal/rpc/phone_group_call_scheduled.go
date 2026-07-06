@@ -52,7 +52,7 @@ func (r *Router) onPhoneStartScheduledGroupCall(ctx context.Context, in tg.Input
 	if !changed {
 		// 幂等：已开始，只回快照，不重复扇出/服务消息。
 		return r.groupCallUpdateContainer(ctx, scope.userID, channel,
-			groupCallUpdateFor(channel, call, scope.userID, true), nil), nil
+			groupCallUpdateFor(channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil), nil
 	}
 	now := int(r.clock.Now().Unix())
 	// started 服务消息（与即时创建的 started 同构）。
@@ -75,7 +75,7 @@ func (r *Router) onPhoneStartScheduledGroupCall(ctx context.Context, in tg.Input
 		r.pushGroupCallServiceMessage(ctx, scope.userID, serviceRes)
 	}
 	out := r.groupCallUpdateContainer(ctx, scope.userID, channel,
-		groupCallUpdateFor(channel, call, scope.userID, true), nil)
+		groupCallUpdateFor(channel, call, scope.userID, true, r.cfg.PublicBaseURL), nil)
 	if serviceRes.Event.Pts != 0 {
 		if msgUpdate := tgChannelUpdate(scope.userID, serviceRes.Event); msgUpdate != nil {
 			out.Updates = append(out.Updates, msgUpdate)
@@ -105,7 +105,7 @@ func (r *Router) onPhoneToggleGroupCallStartSubscription(ctx context.Context, re
 	call := scope.call
 	call.ScheduleStartSubscribed = req.Subscribed
 	// 订阅是 per-viewer 私有状态：响应给本设备，推送同步本人其它在线设备即可。
-	update := groupCallUpdateFor(scope.channel, call, scope.userID, scope.canManage())
+	update := groupCallUpdateFor(scope.channel, call, scope.userID, scope.canManage(), r.cfg.PublicBaseURL)
 	r.pushUserMessage(ctx, scope.userID, "schedule subscription update",
 		r.groupCallUpdateContainer(ctx, scope.userID, scope.channel, update, nil))
 	return r.groupCallUpdateContainer(ctx, scope.userID, scope.channel, update, nil), nil

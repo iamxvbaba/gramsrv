@@ -29,6 +29,7 @@ import (
 	"telesrv/internal/app/auth"
 	botsapp "telesrv/internal/app/bots"
 	channelapp "telesrv/internal/app/channels"
+	chatlistsapp "telesrv/internal/app/chatlists"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
 	filesapp "telesrv/internal/app/files"
@@ -322,6 +323,7 @@ func run(logger *zap.Logger) error {
 	secretChatIDAllocator := redisstore.NewSecretChatIDAllocator(rdb, postgres.NewSecretChatIDCounterSource(pool))
 	contactStore := userprojection.NewCachedContactStore(postgres.NewContactStore(pool), 0)
 	dialogStore := postgres.NewDialogStore(pool)
+	chatlistStore := postgres.NewChatlistStore(pool)
 	messageStore := postgres.NewMessageStore(pool,
 		postgres.WithMessageAllocators(boxIDAllocator),
 		postgres.WithMessageLogger(logger.Named("store").Named("messages")))
@@ -470,16 +472,18 @@ func run(logger *zap.Logger) error {
 		account.WithUserStickerSets(passwordStore),
 		account.WithSavedMusic(passwordStore),
 		account.WithBusinessAutomation(passwordStore),
-		account.WithUsers(userStore))
+		account.WithUsers(userStore),
+		account.WithPublicBaseURL(cfg.PublicBaseURL))
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
 		botsapp.WithBlockChecker(contactStore),
 		botsapp.WithPublicChannelUsernameResolver(channelStore),
 		botsapp.WithUserCache(userCache),
 		botsapp.WithStickerSetCreator(filesService),
-		botsapp.WithUserStickerSets(accountService))
+		botsapp.WithUserStickerSets(accountService),
+		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	groupCallStore := postgres.NewGroupCallStore(pool)
-	groupCallsService := groupcallsapp.NewService(groupCallStore)
+	groupCallsService := groupcallsapp.NewService(groupCallStore, groupcallsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	// 群通话媒体面：内嵌 pion SFU（M1+）。SFU 的 liveness reporter 把媒体面存活
 	// 回报给信令侧保活水位（sweeper 双过期判据的实现）；未启用则退化为纯信令（M0）。
 	sfuService := sfu.Service(sfu.Disabled())
@@ -591,6 +595,12 @@ func run(logger *zap.Logger) error {
 		channelapp.WithReadModelVersions(readModelVersionStore),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	chatlistsService := chatlistsapp.NewService(
+		chatlistStore,
+		dialogStore,
+		chatlistsapp.WithChannels(channelsService),
+		chatlistsapp.WithPremiumChecker(usersService.PremiumActive),
+	)
 	businessAutomationOptions := newBusinessAutomationOptions(cfg, activeSessions, aiComposeService, logger)
 	messagesService := messageapp.NewService(messageStore, dialogStore,
 		messageapp.WithContactStore(contactStore),
@@ -617,6 +627,7 @@ func run(logger *zap.Logger) error {
 		CallForceRelay:           cfg.CallForceRelay,
 		GroupCallMaxParticipants: cfg.GroupCallMaxParticipants,
 		RtmpIngestURL:            cfg.LiveStreamRtmpURL,
+		PublicBaseURL:            cfg.PublicBaseURL,
 		// PFS temp→perm 解析缓存 5s：削减每帧 ResolveAuthKey 的 PG 查询。显式撤销会清缓存并
 		// 断开连接；re-bind 即时失效（onAuthBindTempAuthKey）。
 		TempKeyResolveCacheTTL:        5 * time.Second,
@@ -632,6 +643,7 @@ func run(logger *zap.Logger) error {
 		BootstrapUpdates: bootstrapUpdateStore,
 		Contacts:         contactsService,
 		Dialogs:          dialogsService,
+		Chatlists:        chatlistsService,
 		Messages:         messagesService,
 		Channels:         channelsService,
 		Files:            filesService,
@@ -710,8 +722,8 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("start admin api: %w", err)
 	}
 	if _, err := stickerlinks.Start(ctx, stickerlinks.Config{
-		Addr:          cfg.StickerWebAddr,
-		PublicBaseURL: cfg.StickerWebPublicURL,
+		Addr:          cfg.PublicLinkWebAddr,
+		PublicBaseURL: cfg.PublicBaseURL,
 	}, filesService, logger.Named("stickerlinks")); err != nil {
 		return fmt.Errorf("start sticker links: %w", err)
 	}

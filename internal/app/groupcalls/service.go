@@ -10,21 +10,36 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 	"telesrv/internal/store"
 )
 
 // Service 是群通话业务服务。
 type Service struct {
-	store store.GroupCallStore
+	store         store.GroupCallStore
+	publicBaseURL string
+}
+
+type Option func(*Service)
+
+func WithPublicBaseURL(baseURL string) Option {
+	return func(s *Service) {
+		s.publicBaseURL = links.NormalizeBaseURL(baseURL)
+	}
 }
 
 // NewService 创建群通话服务。
-func NewService(st store.GroupCallStore) *Service {
-	return &Service{store: st}
+func NewService(st store.GroupCallStore, opts ...Option) *Service {
+	s := &Service{store: st, publicBaseURL: links.DefaultPublicBaseURL}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Create 分配 id/access_hash 并建会。rtmpStream=true 创建 RTMP 直播房间；
@@ -135,7 +150,7 @@ func (s *Service) CreateConference(ctx context.Context, creatorUserID, randomID,
 			Version:                 1,
 			CreatedAt:               now,
 			InviteSlug:              slug,
-			InviteLink:              conferenceInviteLink(slug),
+			InviteLink:              s.conferenceInviteLink(slug),
 			RandomID:                randomID,
 			MigratedFromPhoneCallID: migratedFromPhoneCallID,
 		})
@@ -265,6 +280,10 @@ func randomSlug() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
 }
 
-func conferenceInviteLink(slug string) string {
-	return "https://telesrv.net/call/" + slug + "?slug=" + slug
+func (s *Service) conferenceInviteLink(slug string) string {
+	baseURL := links.DefaultPublicBaseURL
+	if s != nil && s.publicBaseURL != "" {
+		baseURL = s.publicBaseURL
+	}
+	return links.Build(baseURL, "call/"+slug, url.Values{"slug": []string{slug}})
 }

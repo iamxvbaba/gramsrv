@@ -4,13 +4,16 @@ import (
 	"time"
 
 	"github.com/gotd/td/tg"
+
+	"telesrv/internal/links"
 )
 
 // BuildConfig 构造 help.getConfig 返回的 tg.Config，含自建 DC 的 DCOptions。
 //
 // 字段值取 Telegram 常见默认；TDesktop 联调阶段按客户端实际需要微调
 // （记录于 docs/compatibility-matrix.md）。
-func BuildConfig(dc int, ip string, port int, now time.Time) *tg.Config {
+func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL string) *tg.Config {
+	meURLPrefix := links.NormalizeBaseURL(publicBaseURL) + "/"
 	return &tg.Config{
 		Date:     int(now.Unix()),
 		Expires:  int(now.Add(time.Hour).Unix()),
@@ -47,7 +50,7 @@ func BuildConfig(dc int, ip string, port int, now time.Time) *tg.Config {
 		CallRingTimeoutMs:    90000,
 		CallConnectTimeoutMs: 30000,
 		CallPacketTimeoutMs:  10000,
-		MeURLPrefix:          "https://telesrv.net/",
+		MeURLPrefix:          meURLPrefix,
 		CaptionLengthMax:     1024,
 		MessageLengthMax:     4096,
 		WebfileDCID:          dc,

@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 	"telesrv/internal/store"
 )
 
@@ -88,6 +89,7 @@ type Service struct {
 	log                   *zap.Logger
 	now                   func() time.Time
 	chatBotStreamThrottle time.Duration
+	publicBaseURL         string
 	// replySeq 是回复 randomID 在 crypto/rand 失败时的兜底单调序列。
 	replySeq   atomic.Int64
 	replyLocks [replyLockStripes]sync.Mutex
@@ -182,6 +184,12 @@ func WithAIChatStreamThrottle(d time.Duration) Option {
 	}
 }
 
+func WithPublicBaseURL(baseURL string) Option {
+	return func(s *Service) {
+		s.publicBaseURL = links.NormalizeBaseURL(baseURL)
+	}
+}
+
 // invalidateUserCache 在 bot 的 users 行变更（含 version bump）后清缓存。
 // 失效失败只记日志：缓存最长 TTL 后自愈，不阻塞写路径。
 func (s *Service) invalidateUserCache(ctx context.Context, botUserID int64) {
@@ -252,6 +260,7 @@ func NewService(users store.UserStore, bots store.BotStore, messages store.Messa
 		log:                   zap.NewNop(),
 		now:                   time.Now,
 		chatBotStreamThrottle: defaultChatBotStreamThrottle,
+		publicBaseURL:         links.DefaultPublicBaseURL,
 	}
 	for _, opt := range opts {
 		opt(s)
