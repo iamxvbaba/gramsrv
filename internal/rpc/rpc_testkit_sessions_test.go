@@ -58,6 +58,13 @@ func (s *captureSessions) pushedUserIDs() []int64 {
 	return append([]int64(nil), s.pushUserIDs...)
 }
 
+// onlineChannelMemberIDs 返回当前登记的频道在线成员索引快照（测试断言用）。
+func (s *captureSessions) onlineChannelMemberIDs(channelID int64) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int64(nil), s.channelMembers[channelID]...)
+}
+
 // lastUserPush 返回最近一次 PushToUser* 的消息，独立于 message（后者也会被
 // pushOnlinePeerStatusesToCurrentSession 经 PushToSession 覆盖成对端状态）。
 func (s *captureSessions) lastUserPush() bin.Encoder {
@@ -239,7 +246,9 @@ func (s *captureSessions) OnlineChannelUserIDs(channelID int64, limit int) []int
 	return limitIDs(s.channelViewers[channelID], limit)
 }
 
-func (s *captureSessions) SetSessionChannelMemberships(_ [8]byte, _ int64, userID int64, channelIDs []int64) {
+func (s *captureSessions) ChannelMembershipGeneration(_ [8]byte, _ int64) int64 { return 0 }
+
+func (s *captureSessions) SetSessionChannelMemberships(_ [8]byte, _ int64, userID int64, channelIDs []int64, _ int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.channelMembers == nil {

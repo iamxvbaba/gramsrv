@@ -516,7 +516,7 @@ func TestMessagesSetTypingPushesUserTypingUpdate(t *testing.T) {
 	if got.userID != 1000000002 || got.sessionID != 55 || got.messageType != proto.MessageFromServer {
 		t.Fatalf("push = user %d exclude session %d type %v, want target/exclude/from_server", got.userID, got.sessionID, got.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != authKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != authKeyID {
 		t.Fatalf("exclude auth_key_id = %x, want %x", gotAuthKeyID, authKeyID)
 	}
 	updateShort, ok := got.message.(*tg.UpdateShort)
@@ -623,7 +623,7 @@ func TestMessagesSetTypingPushesChannelTypingTopMsgID(t *testing.T) {
 	if got.userID != memberID || got.sessionID != 77 || got.messageType != proto.MessageFromServer {
 		t.Fatalf("channel typing push = user %d exclude session %d type %v, want member/exclude/from_server", got.userID, got.sessionID, got.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != authKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != authKeyID {
 		t.Fatalf("exclude auth_key_id = %x, want %x", gotAuthKeyID, authKeyID)
 	}
 	updates, ok := got.message.(*tg.Updates)

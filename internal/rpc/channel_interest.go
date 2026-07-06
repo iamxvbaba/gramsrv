@@ -53,6 +53,10 @@ func (r *Router) syncSessionChannelMemberships(ctx context.Context, userID int64
 	if !ok {
 		return
 	}
+	// 在读取持久成员列表之前采样修订号：读取窗口内若发生增量 join/leave
+	// （AddUserChannelMembership/RemoveUserChannelMembership），全量替换会覆盖增量，
+	// SetSessionChannelMemberships 据此改走合并路径并保持未就绪重试。
+	expectedGen := provider.ChannelMembershipGeneration(rawAuthKeyID, sessionID)
 	channelIDs := make([]int64, 0, channelMembershipSyncPageSize)
 	after := int64(0)
 	for {
@@ -82,7 +86,7 @@ func (r *Router) syncSessionChannelMemberships(ctx context.Context, userID int64
 			break
 		}
 	}
-	provider.SetSessionChannelMemberships(rawAuthKeyID, sessionID, userID, channelIDs)
+	provider.SetSessionChannelMemberships(rawAuthKeyID, sessionID, userID, channelIDs, expectedGen)
 }
 
 func (r *Router) addOnlineChannelMemberships(channelID int64, userIDs ...int64) {

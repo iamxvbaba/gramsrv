@@ -115,7 +115,7 @@ func TestChannelSendHistoryAndDifferenceRPC(t *testing.T) {
 	if pushed.userID != friend.ID || pushed.sessionID != 77 || pushed.messageType != proto.MessageFromServer {
 		t.Fatalf("pushed channel update = user %d exclude session %d type %v, want friend/exclude/from_server", pushed.userID, pushed.sessionID, pushed.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != authKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != authKeyID {
 		t.Fatalf("exclude auth_key_id = %x, want %x", gotAuthKeyID, authKeyID)
 	}
 	pushedUpdates, ok := pushed.message.(*tg.Updates)
@@ -156,7 +156,7 @@ func TestChannelSendHistoryAndDifferenceRPC(t *testing.T) {
 	if contentPush.userID != friend.ID || contentPush.sessionID != 88 || contentPush.messageType != proto.MessageFromServer {
 		t.Fatalf("content-read push = user %d exclude session %d type %v, want friend/exclude/from_server", contentPush.userID, contentPush.sessionID, contentPush.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != contentAuthKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != contentAuthKeyID {
 		t.Fatalf("content-read exclude auth_key_id = %x, want %x", gotAuthKeyID, contentAuthKeyID)
 	}
 	contentUpdates, ok := contentPush.message.(*tg.Updates)
@@ -379,7 +379,7 @@ func TestChannelsReadMessageContentsClearsUnreadReactionAndPushesUpdate(t *testi
 	if pushed.userID != owner.ID || pushed.sessionID != 99 || pushed.messageType != proto.MessageFromServer {
 		t.Fatalf("reaction read push = user %d session %d type %v, want owner/exclude/from_server", pushed.userID, pushed.sessionID, pushed.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != contentAuthKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != contentAuthKeyID {
 		t.Fatalf("reaction read exclude auth_key_id = %x, want %x", gotAuthKeyID, contentAuthKeyID)
 	}
 	pushedUpdates, ok := pushed.message.(*tg.Updates)

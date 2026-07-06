@@ -477,7 +477,7 @@ func TestMessagesSaveDraftPushesDraftUpdateToOtherSessions(t *testing.T) {
 	if got.userID != userID || got.sessionID != 66 || got.messageType != proto.MessageFromServer {
 		t.Fatalf("push = user %d exclude session %d type %v, want self/exclude/from_server", got.userID, got.sessionID, got.messageType)
 	}
-	if gotAuthKeyID := sessions.scopedAuthKeyID; gotAuthKeyID != authKeyID {
+	if gotAuthKeyID := sessions.scopedAuthKey(); gotAuthKeyID != authKeyID {
 		t.Fatalf("exclude auth_key_id = %x, want %x", gotAuthKeyID, authKeyID)
 	}
 	updates, ok := got.message.(*tg.Updates)

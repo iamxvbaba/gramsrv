@@ -902,6 +902,70 @@ func TestChannelEditBannedKickNotifiesKickedViewer(t *testing.T) {
 	}
 }
 
+// TestChannelEditBannedMaintainsOnlineMembershipIndex 验证 editBanned 与 editAdmin 对称
+// 维护在线成员推送路由索引：踢出/封禁后必须立即摘除（否则被踢在线成员保留 stale
+// byMemberChannel 条目直到断线，占用实时 fan-out cap 名额，且群通话推送会继续投递）；
+// 仅限制权限（仍为 active 成员）时索引保留。
+func TestChannelEditBannedMaintainsOnlineMembershipIndex(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 61, Phone: "15550002261", FirstName: "Owner"})
+	target, _ := userStore.Create(ctx, domain.User{AccessHash: 62, Phone: "15550002262", FirstName: "Target"})
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: appchannels.NewService(memory.NewChannelStore()),
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+	created, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
+		Users: []tg.InputUserClass{&tg.InputUser{UserID: target.ID, AccessHash: target.AccessHash}},
+		Title: "Kick Index",
+	})
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	channel := created.Updates.(*tg.Updates).Chats[0].(*tg.Channel)
+	input := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
+	contains := func(ids []int64, id int64) bool {
+		for _, v := range ids {
+			if v == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains(sessions.onlineChannelMemberIDs(channel.ID), target.ID) {
+		t.Fatalf("membership index after create = %v, want target %d", sessions.onlineChannelMemberIDs(channel.ID), target.ID)
+	}
+
+	// 仅限制发言（仍为 active 成员）：索引保留。
+	if _, err := r.onChannelsEditBanned(WithUserID(ctx, owner.ID), &tg.ChannelsEditBannedRequest{
+		Channel:      input,
+		Participant:  &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
+		BannedRights: tg.ChatBannedRights{SendMessages: true},
+	}); err != nil {
+		t.Fatalf("restrict member: %v", err)
+	}
+	if !contains(sessions.onlineChannelMemberIDs(channel.ID), target.ID) {
+		t.Fatalf("membership index after restrict = %v, restricted member must stay routed", sessions.onlineChannelMemberIDs(channel.ID))
+	}
+
+	// 踢出（view_messages）：索引必须立即摘除，其他成员不受影响。
+	if _, err := r.onChannelsEditBanned(WithUserID(ctx, owner.ID), &tg.ChannelsEditBannedRequest{
+		Channel:      input,
+		Participant:  &tg.InputPeerUser{UserID: target.ID, AccessHash: target.AccessHash},
+		BannedRights: tg.ChatBannedRights{ViewMessages: true},
+	}); err != nil {
+		t.Fatalf("kick member: %v", err)
+	}
+	if contains(sessions.onlineChannelMemberIDs(channel.ID), target.ID) {
+		t.Fatalf("membership index after kick = %v, kicked member must be removed", sessions.onlineChannelMemberIDs(channel.ID))
+	}
+	if !contains(sessions.onlineChannelMemberIDs(channel.ID), owner.ID) {
+		t.Fatalf("membership index after kick = %v, owner must survive", sessions.onlineChannelMemberIDs(channel.ID))
+	}
+}
+
 func TestChannelInviteKickedMemberRPC(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()

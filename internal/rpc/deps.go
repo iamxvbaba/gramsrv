@@ -84,6 +84,14 @@ type SessionUpdatesStateProvider interface {
 	ReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64) bool
 }
 
+// ClientLayerBinder 把协商 TL layer 即时下推到连接（可选能力）。
+// invokeWithLayer 在 Dispatch 入口被观测到时立即调用，使同一请求 handler 执行期间
+// 触发的 pending flush / 并发 push 就已按正确 layer 降级；不实现时连接层只能靠
+// Dispatch 返回后的兜底刷新，重连老客户端首条 RPC 期间的推送会漏降级。
+type ClientLayerBinder interface {
+	SetClientLayerForAuthKey(rawAuthKeyID [8]byte, sessionID int64, layer int)
+}
+
 // SessionTerminator 暴露按业务 auth_key 强制断开活跃连接的能力（可选）。
 // 授权撤销（被踢设备）必须断开连接：出站推送用连接持有的密钥加密、不回查授权，
 // perm-key 连接的授权缓存也只有断开重连才会重新回查授权表。
@@ -130,7 +138,11 @@ type OnlineUserProvider interface {
 	TrackChannelInterest(rawAuthKeyID [8]byte, sessionID, userID int64, channelIDs []int64)
 	ClearChannelInterest(rawAuthKeyID [8]byte, sessionID, userID int64)
 	OnlineChannelUserIDs(channelID int64, limit int) []int64
-	SetSessionChannelMemberships(rawAuthKeyID [8]byte, sessionID, userID int64, channelIDs []int64)
+	// ChannelMembershipGeneration / SetSessionChannelMemberships 配对使用：调用方在读取
+	// 持久成员列表前采样修订号，落地时带回；期间发生增量 Add/Remove 时 Set 走合并路径
+	// 并保持未就绪，由下一条 RPC 重试全量同步（防全量替换覆盖窗口内的增量 join/leave）。
+	ChannelMembershipGeneration(rawAuthKeyID [8]byte, sessionID int64) int64
+	SetSessionChannelMemberships(rawAuthKeyID [8]byte, sessionID, userID int64, channelIDs []int64, expectedGen int64)
 	AddUserChannelMembership(userID, channelID int64)
 	RemoveUserChannelMembership(userID, channelID int64)
 	OnlineChannelMemberUserIDs(channelID int64, limit int) []int64

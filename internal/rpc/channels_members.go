@@ -450,6 +450,14 @@ func (r *Router) onChannelsEditBanned(ctx context.Context, req *tg.ChannelsEditB
 		return nil, channelAdminErr(err)
 	}
 	r.invalidateChannelFullBotInfoCacheForChannel(res.Channel.ID)
+	// 与 onChannelsEditAdmin 对称维护在线成员路由索引：踢出/封禁后立即摘除，
+	// 否则被踢在线成员会留着 stale byMemberChannel 条目直到断线（占用实时
+	// fan-out cap 名额，且群通话推送等未过 PG 复核的路径会继续投递）。
+	if res.Participant.Status == domain.ChannelMemberActive {
+		r.addOnlineChannelMemberships(res.Channel.ID, res.Participant.UserID)
+	} else {
+		r.removeOnlineChannelMemberships(res.Channel.ID, res.Participant.UserID)
+	}
 	if res.Participant.Status == domain.ChannelMemberKicked && res.Previous.Status == domain.ChannelMemberActive {
 		r.recordChannelStateForUser(ctx, res.Participant.UserID, res.Channel.ID, false)
 	}
