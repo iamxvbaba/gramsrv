@@ -1,6 +1,7 @@
 package mtprotoedge
 
 import (
+	"bufio"
 	"context"
 	"crypto/aes"
 	"errors"
@@ -165,34 +166,40 @@ func (c *Conn) sendBestEffort(ctx context.Context, t proto.MessageType, msg bin.
 		encoded:    encoded,
 		enqueuedAt: time.Now(),
 	}
+	// 快路径：非阻塞入队。fan-out 每 (conn × push) 都走这里，队列有空位时不为
+	// 本次推送分配任何 timer（此前 timeout>0 无条件 WithTimeout，稳态白建 timer）。
+	select {
+	case c.outbound <- op:
+		return nil
+	case <-c.outboundStop:
+		return ErrConnClosed
+	default:
+	}
 	if timeout == 0 {
-		select {
-		case c.outbound <- op:
-			return nil
-		case <-c.outboundStop:
-			return ErrConnClosed
-		default:
-			c.metrics.OutboundDropped("push_queue_full")
-			return ErrOutboundQueueFull
-		}
+		c.metrics.OutboundDropped("push_queue_full")
+		return ErrOutboundQueueFull
 	}
-	enqueueCtx := ctx
-	if enqueueCtx == nil {
-		enqueueCtx = context.Background()
+	c.metrics.OutboundQueueWait(len(c.outbound), cap(c.outbound))
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	var cancel context.CancelFunc
+	var timeoutC <-chan time.Time
 	if timeout > 0 {
-		enqueueCtx, cancel = context.WithTimeout(enqueueCtx, timeout)
-		defer cancel()
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timeoutC = timer.C
 	}
-	if err := c.enqueueOutbound(enqueueCtx, op); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) && timeout > 0 {
-			c.metrics.OutboundDropped("push_queue_timeout")
-			return ErrOutboundQueueFull
-		}
-		return err
+	select {
+	case c.outbound <- op:
+		return nil
+	case <-timeoutC:
+		c.metrics.OutboundDropped("push_queue_timeout")
+		return ErrOutboundQueueFull
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.outboundStop:
+		return ErrConnClosed
 	}
-	return nil
 }
 
 func (c *Conn) send(ctx context.Context, t proto.MessageType, msg bin.Encoder, control bool) error {
@@ -600,6 +607,13 @@ func (c *Conn) commitContentSeqNo() {
 	c.sentContentMessages++
 }
 
+// deadlineOutboundWriter 是可选的直管写超时接口：telesrv-owned compat transport 实现它，
+// 让 outbound actor 每帧只做一次 SetWriteDeadline，不再为写超时分配 context timer
+// （gotd transport.Conn 的 Send 本身也只消费 ctx.Deadline，不监听 ctx.Done，语义等价）。
+type deadlineOutboundWriter interface {
+	SendDeadline(deadline time.Time, b *bin.Buffer) error
+}
+
 func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -609,17 +623,30 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 		return fmt.Errorf("encrypt: %w", err)
 	}
 
-	sendCtx := ctx
-	cancel := func() {}
-	if c.writeTimeout > 0 {
-		sendCtx, cancel = context.WithTimeout(ctx, c.writeTimeout)
-	}
-	defer cancel()
 	writer := c.writer
 	if writer == nil {
 		writer = c.transport
 	}
-	if err := writer.Send(sendCtx, out); err != nil {
+	var deadline time.Time
+	if c.writeTimeout > 0 {
+		deadline = time.Now().Add(c.writeTimeout)
+	}
+	if d, ok := ctx.Deadline(); ok && (deadline.IsZero() || d.Before(deadline)) {
+		deadline = d
+	}
+	if dw, ok := writer.(deadlineOutboundWriter); ok {
+		err = dw.SendDeadline(deadline, out)
+	} else {
+		// 回落路径：gotd full codec / 测试注入 codec 仍走 ctx deadline。
+		sendCtx := ctx
+		cancel := func() {}
+		if !deadline.IsZero() {
+			sendCtx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		err = writer.Send(sendCtx, out)
+		cancel()
+	}
+	if err != nil {
 		return fmt.Errorf("send: %w", err)
 	}
 	if frame.sentAt.IsZero() {
@@ -642,7 +669,13 @@ func (c *Conn) encryptOutboundFrame(frame *outboundFrame) (*bin.Buffer, error) {
 	paddingOffset := plain.Len()
 	paddingLen := encryptedPaddingLen(paddingOffset)
 	growBinBufferLen(plain, paddingOffset+paddingLen)
-	if _, err := io.ReadFull(c.cipher.Rand(), plain.Buf[paddingOffset:]); err != nil {
+	// padding 随机数走 per-Conn 缓冲读：每帧 12..1024 字节直读 crypto/rand 是一次
+	// getrandom syscall，缓冲后按 ~1KiB 批量取。只由 outbound actor 单 goroutine 访问，
+	// 随机源本身不变（仍是 cipher 的 CSPRNG），只是预读。
+	if c.outboundRand == nil {
+		c.outboundRand = bufio.NewReaderSize(c.cipher.Rand(), 1024)
+	}
+	if _, err := io.ReadFull(c.outboundRand, plain.Buf[paddingOffset:]); err != nil {
 		return nil, err
 	}
 

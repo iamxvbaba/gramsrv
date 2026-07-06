@@ -63,6 +63,40 @@ func TestQuickAckReadFlags(t *testing.T) {
 	}
 }
 
+func TestCompatPaddedIntermediateWriteRoundTrip(t *testing.T) {
+	codec := &quickAckPaddedIntermediateCodec{}
+	// 连写多帧：验证复用写缓冲不串包，且 padding 后仍能被读端正确剥离。
+	for i := 0; i < 8; i++ {
+		var payload bin.Buffer
+		payload.PutInt32(int32(0x11220000 + i))
+		payload.PutInt32(int32(0x33440000 + i))
+
+		var out countWriteBuffer
+		if err := codec.Write(&out, &payload); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if out.writes != 1 {
+			t.Fatalf("write %d: writes = %d, want 1", i, out.writes)
+		}
+		total := binary.LittleEndian.Uint32(out.Bytes()[:4])
+		if int(total) != len(out.Bytes())-4 {
+			t.Fatalf("write %d: header length = %d, body = %d", i, total, len(out.Bytes())-4)
+		}
+
+		var got bin.Buffer
+		requested, err := readQuickAckIntermediate(bytes.NewReader(out.Bytes()), &got, true)
+		if err != nil {
+			t.Fatalf("read back %d: %v", i, err)
+		}
+		if requested {
+			t.Fatalf("read back %d: unexpected quick ack flag", i)
+		}
+		if !bytes.Equal(got.Raw(), payload.Raw()) {
+			t.Fatalf("read back %d: payload = %x, want %x", i, got.Raw(), payload.Raw())
+		}
+	}
+}
+
 func TestCompatTransportCodecsWriteSinglePacket(t *testing.T) {
 	var payload bin.Buffer
 	payload.PutInt32(0x01020304)

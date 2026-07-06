@@ -104,6 +104,42 @@ func TestOutboundActorSerializesConcurrentSends(t *testing.T) {
 	}
 }
 
+func TestSendBestEffortQueueFullBehavior(t *testing.T) {
+	c := &Conn{metrics: NopMetrics{}}
+	c.outbound = make(chan outboundOp, 1)
+	c.outboundControl = make(chan outboundOp, 1)
+	c.outboundStop = make(chan struct{})
+	// 占满普通队列，模拟出站拥塞。
+	c.outbound <- outboundOp{}
+
+	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 0); err != ErrOutboundQueueFull {
+		t.Fatalf("timeout=0 on full queue: err = %v, want ErrOutboundQueueFull", err)
+	}
+
+	start := time.Now()
+	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 30*time.Millisecond); err != ErrOutboundQueueFull {
+		t.Fatalf("timeout=30ms on full queue: err = %v, want ErrOutboundQueueFull", err)
+	}
+	if waited := time.Since(start); waited < 30*time.Millisecond {
+		t.Fatalf("timeout wait = %v, want >= 30ms", waited)
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.SendBestEffort(canceled, proto.MessageFromServer, &mt.MsgsAck{}, time.Second); err != context.Canceled {
+		t.Fatalf("canceled ctx on full queue: err = %v, want context.Canceled", err)
+	}
+
+	// 腾出队列后快路径应直接入队成功。
+	<-c.outbound
+	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 0); err != nil {
+		t.Fatalf("enqueue after drain: %v", err)
+	}
+	if got := len(c.outbound); got != 1 {
+		t.Fatalf("queued ops = %d, want 1", got)
+	}
+}
+
 func TestFrameNeedsAckServiceExceptions(t *testing.T) {
 	cases := []struct {
 		name string

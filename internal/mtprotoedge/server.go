@@ -3,6 +3,7 @@ package mtprotoedge
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -230,9 +231,11 @@ func (s *Server) newConn(tc transport.Conn, key crypto.AuthKey, sessionID, salt 
 		writeTimeout: s.writeTimeout,
 		metrics:      s.metrics,
 		authKeyID:    key.ID,
+		authKeyHex:   hex.EncodeToString(key.ID[:]),
 		sessionID:    sessionID,
 		salt:         salt,
 		key:          key,
+		createdAt:    s.clock.Now(),
 	}
 	c.startOutbound()
 	c.startInboundRPCScheduler(s.rpcInflight, s.rpcQueueSize, s.rpcTimeout)
@@ -459,6 +462,9 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 
 	cs := newConnState()
 	var b bin.Buffer
+	// plain 是本连接的复用明文缓冲：decryptClientFrame 把每帧解密进它，免去
+	// per-frame 整帧明文分配；帧内 slice 在下一帧读取前有效（RPC body 已在 dispatch 拷贝）。
+	var plain bin.Buffer
 	var replay *bin.Buffer
 	for {
 		if replay != nil {
@@ -512,15 +518,25 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 			fetchedKey = &d
 		}
 
-		current, err = s.handleEncrypted(ctx, conn, cs, current, fetchedKey, &b)
+		current, err = s.handleEncrypted(ctx, conn, cs, current, fetchedKey, &b, &plain)
 		if err != nil {
 			return err
 		}
 	}
 }
 
+// deadlineReceiver 是可选的直管读超时接口：telesrv-owned compat transport 实现它，
+// 让每帧读只做一次 SetReadDeadline，不再分配 per-frame context timer。ctx 取消仍由
+// serveConn 的 watcher 关闭底层连接来解除阻塞读（与 ctx deadline 路径行为一致）。
+type deadlineReceiver interface {
+	RecvDeadline(deadline time.Time, b *bin.Buffer) error
+}
+
 func (s *Server) recv(ctx context.Context, conn transport.Conn, b *bin.Buffer, timeout time.Duration) error {
 	b.Reset()
+	if dr, ok := conn.(deadlineReceiver); ok {
+		return dr.RecvDeadline(time.Now().Add(timeout), b)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return conn.Recv(ctx, b)

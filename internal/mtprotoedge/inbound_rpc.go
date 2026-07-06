@@ -136,15 +136,17 @@ func (c *Conn) runInboundRPC(rootCtx context.Context, task inboundRPC) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	// 合并两个取消源（task.ctx 与 rootCtx）+ 超时为最少的 context 层数：
+	// WithTimeout/WithCancel 的 cancel 直接作为 AfterFunc 回调，省掉单独的中间层。
+	var cancel context.CancelFunc
+	if c.rpcTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, c.rpcTimeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	stopRoot := context.AfterFunc(rootCtx, cancel)
 	defer stopRoot()
-	if c.rpcTimeout > 0 {
-		var timeoutCancel context.CancelFunc
-		ctx, timeoutCancel = context.WithTimeout(ctx, c.rpcTimeout)
-		defer timeoutCancel()
-	}
 	_ = task.run(ctx)
 }
 

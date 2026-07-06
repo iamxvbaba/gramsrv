@@ -1,7 +1,9 @@
 package mtprotoedge
 
 import (
+	"bufio"
 	"context"
+	"encoding/hex"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,9 +34,12 @@ type Conn struct {
 	metrics      Metrics
 
 	authKeyID [8]byte
-	sessionID int64
-	salt      int64
-	key       crypto.AuthKey
+	// authKeyHex 是 authKeyID 的 hex 缓存：每条 RPC 的结构化日志都会带它，
+	// 建连时算一次，避免热路径反复 hex 编码分配。
+	authKeyHex string
+	sessionID  int64
+	salt       int64
+	key        crypto.AuthKey
 
 	outbound        chan outboundOp
 	outboundControl chan outboundOp
@@ -62,9 +67,13 @@ type Conn struct {
 	// outboundPlain/outboundWire 只由 outbound actor 访问，用于复用出站加密缓冲。
 	outboundPlain bin.Buffer
 	outboundWire  bin.Buffer
+	// outboundRand 只由 outbound actor 访问：对 cipher 随机源的缓冲预读，
+	// 把每帧 padding 的 getrandom syscall 摊薄成 ~1KiB 一次。
+	outboundRand *bufio.Reader
 
 	identityMu              sync.RWMutex
 	businessAuthKeyID       [8]byte
+	businessAuthKeyHex      string
 	businessAuthKeyResolved bool
 	userID                  atomic.Int64
 	userIDResolved          atomic.Bool
@@ -74,6 +83,13 @@ type Conn struct {
 	// 同步失败时保持 false，让置位短路放行、下一条 RPC 重试同步，避免
 	// 「已置位但 channel 路由缺失」的 session 静默漏收超级群推送。
 	membershipsSynced atomic.Bool
+	// membershipGen 是本连接 channel membership 索引的修订号：任何增量修订
+	// （join/leave/kick 的 Add/Remove、身份切换/下线的整体清除）都递增。全量同步方
+	// 在读取持久成员列表前采样、落地时带回比对，检测「读取窗口内发生增量修订」的
+	// 丢失更新竞态（SetSessionChannelMemberships 改走合并路径并保持未就绪重试）。
+	membershipGen atomic.Int64
+	// createdAt 是连接建立时刻，供同 auth_key session 数触顶时驱逐真正最旧的连接。
+	createdAt time.Time
 	// keyDestroyed 标记本连接的 auth_key 已被 destroy_auth_key 删除。serveConn 对已建立
 	// 连接复用缓存密钥跳过每帧 AuthKeyStore 回查；置位后强制回落到 Get→AuthKeyNotFound，
 	// 维持「destroy_auth_key 发起连接下一帧自然失效」契约。只由 destroy_auth_key 处理器置位。
@@ -112,10 +128,20 @@ func (c *Conn) BusinessAuthKeyID() ([8]byte, bool) {
 	return c.businessAuthKeyID, c.businessAuthKeyResolved
 }
 
+// BusinessAuthKeyHex 返回业务视角 auth_key_id 的 hex 缓存（每 RPC 日志用，免重复编码）。
+func (c *Conn) BusinessAuthKeyHex() (string, bool) {
+	c.identityMu.RLock()
+	defer c.identityMu.RUnlock()
+	return c.businessAuthKeyHex, c.businessAuthKeyResolved
+}
+
 // SetBusinessAuthKeyID 缓存业务视角 auth_key_id。
 func (c *Conn) SetBusinessAuthKeyID(id [8]byte) {
 	c.identityMu.Lock()
 	changed := !c.businessAuthKeyResolved || c.businessAuthKeyID != id
+	if changed || c.businessAuthKeyHex == "" {
+		c.businessAuthKeyHex = hex.EncodeToString(id[:])
+	}
 	c.businessAuthKeyID = id
 	c.businessAuthKeyResolved = true
 	c.identityMu.Unlock()

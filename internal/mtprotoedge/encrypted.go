@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +32,11 @@ type connState struct {
 	order       []int64
 	minSeen     int64
 	maxSeen     int64
+	// maxContentMsgID/maxContentSeqNo 是已接受 content 消息的 msg_id / seq_no 高水位，
+	// 供 validateSeq 的 O(1) 快路径使用（客户端正常发送严格递增）。二者只增不减、
+	// 不随 seen 淘汰回退——快路径只接受「全扫描也必然接受」的子集，其余回落全扫描。
+	maxContentMsgID int64
+	maxContentSeqNo int32
 }
 
 type clientMsgRecord struct {
@@ -76,7 +80,8 @@ const (
 // fetchedKey 非 nil 表示本帧的 auth key 是刚从 AuthKeyStore 查出的（首帧/换 auth key/被销毁
 // 后回落）；为 nil 表示走快路径——serveConn 判定 current 仍持同一未销毁的 auth key，直接复用
 // current.key/current.salt 解密，既不回查 AuthKeyStore 也不重建 store.AuthKeyData。
-func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, fetchedKey *store.AuthKeyData, b *bin.Buffer) (*Conn, error) {
+// plain 是 serveConn 持有的复用明文缓冲，frame 的 slice 仅在下一帧解密前有效。
+func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
 	var key crypto.AuthKey
 	var serverSalt int64
 	if fetchedKey != nil {
@@ -88,19 +93,19 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		serverSalt = current.salt
 	}
 
-	data, err := s.cipher.DecryptFromBuffer(key, b)
+	frame, err := decryptClientFrame(key, b, plain)
 	if err != nil {
 		return current, fmt.Errorf("decrypt: %w", err)
 	}
 
-	if data.Salt != serverSalt {
+	if frame.salt != serverSalt {
 		c := current
 		temp := false
-		if c == nil || c.sessionID != data.SessionID {
-			c = s.newConn(tc, key, data.SessionID, serverSalt)
+		if c == nil || c.sessionID != frame.sessionID {
+			c = s.newConn(tc, key, frame.sessionID, serverSalt)
 			temp = true
 		}
-		err := s.sendBadServerSalt(ctx, c, data.MessageID, data.SeqNo, serverSalt)
+		err := s.sendBadServerSalt(ctx, c, frame.messageID, frame.seqNo, serverSalt)
 		if temp {
 			c.Close()
 		}
@@ -108,7 +113,7 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 	}
 
 	// 首个加密消息或 session 变化时（重新）注册连接到 SessionManager。
-	if current == nil || current.sessionID != data.SessionID {
+	if current == nil || current.sessionID != frame.sessionID {
 		if current != nil {
 			cs.reset()
 		}
@@ -116,62 +121,71 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 			s.conns.Unregister(current)
 			current.Close()
 		}
-		current = s.newConn(tc, key, data.SessionID, serverSalt)
+		current = s.newConn(tc, key, frame.sessionID, serverSalt)
+		// 注册即播种协商 layer：新 Conn 的 clientLayer 为 0（=canonical 227），若等到
+		// 首条 RPC 的 Dispatch 返回后才刷新，重连老客户端在首条 RPC handler 执行期间
+		// 收到的 pending flush / 并发 push 会漏降级。进程内重连时 rpc 层留有
+		// (auth_key, session) / auth_key 两级协商记录，这里一次查询即可闭合该空窗。
+		if s.rpc != nil {
+			if layer, ok := s.rpc.NegotiatedLayer(current.authKeyID, current.sessionID); ok {
+				current.SetClientLayer(layer)
+			}
+		}
 		s.conns.Register(current)
 	}
 
-	s.maybePersistSession(ctx, current, data.SessionID, key.ID, serverSalt)
+	s.maybePersistSession(ctx, current, frame.sessionID, key.ID, serverSalt)
 
-	body := data.Data()
+	body := frame.data
 	typeID, err := (&bin.Buffer{Buf: body}).PeekID()
 	if err != nil {
 		return current, fmt.Errorf("peek encrypted payload type id: %w", err)
 	}
-	if code := validateClientEnvelope(s.clock.Now(), data.MessageID, data.SeqNo, typeID); code != 0 {
+	if code := validateClientEnvelope(s.clock.Now(), frame.messageID, frame.seqNo, typeID); code != 0 {
 		s.log.Debug("Sending bad_msg_notification",
-			zap.Int64("msg_id", data.MessageID),
-			zap.Int32("seq_no", data.SeqNo),
+			zap.Int64("msg_id", frame.messageID),
+			zap.Int32("seq_no", frame.seqNo),
 			zap.Uint32("type_id", typeID),
 			zap.Int("code", code),
 		)
-		return current, s.sendBadMsg(ctx, current, data.MessageID, data.SeqNo, code)
+		return current, s.sendBadMsg(ctx, current, frame.messageID, frame.seqNo, code)
 	}
-	if err := sendQuickAckIfRequested(ctx, tc, key, data); err != nil {
+	if err := sendQuickAckIfRequested(ctx, tc, key, frame.plaintext); err != nil {
 		return current, err
 	}
 
 	content := clientMessageNeedsAck(typeID)
-	if record, ok := cs.seenRecord(data.MessageID); ok {
-		s.log.Debug("Duplicate msg_id; replay cached result if available", zap.Int64("msg_id", data.MessageID))
-		if err := s.replayRPCResultByRequest(ctx, current, data.MessageID); err != nil {
+	if record, ok := cs.seenRecord(frame.messageID); ok {
+		s.log.Debug("Duplicate msg_id; replay cached result if available", zap.Int64("msg_id", frame.messageID))
+		if err := s.replayRPCResultByRequest(ctx, current, frame.messageID); err != nil {
 			return current, err
 		}
 		if !record.content {
 			return current, nil
 		}
-		return current, s.sendAck(ctx, current, data.MessageID)
+		return current, s.sendAck(ctx, current, frame.messageID)
 	}
-	if code := cs.validateSeq(data.MessageID, data.SeqNo, content); code != 0 {
+	if code := cs.validateSeq(frame.messageID, frame.seqNo, content); code != 0 {
 		s.log.Debug("Sending bad_msg_notification",
-			zap.Int64("msg_id", data.MessageID),
-			zap.Int32("seq_no", data.SeqNo),
+			zap.Int64("msg_id", frame.messageID),
+			zap.Int32("seq_no", frame.seqNo),
 			zap.Uint32("type_id", typeID),
 			zap.Int("code", code),
 		)
-		return current, s.sendBadMsg(ctx, current, data.MessageID, data.SeqNo, code)
+		return current, s.sendBadMsg(ctx, current, frame.messageID, frame.seqNo, code)
 	}
-	cs.track(data.MessageID, data.SeqNo, content, msgStateReceived)
+	cs.track(frame.messageID, frame.seqNo, content, msgStateReceived)
 
 	if !cs.sentCreated {
 		cs.sentCreated = true
-		s.log.Debug("Sending new_session_created", zap.Int64("msg_id", data.MessageID), zap.Int32("seq_no", data.SeqNo))
-		if err := s.sendNewSessionCreated(ctx, current, data.MessageID); err != nil {
+		s.log.Debug("Sending new_session_created", zap.Int64("msg_id", frame.messageID), zap.Int32("seq_no", frame.seqNo))
+		if err := s.sendNewSessionCreated(ctx, current, frame.messageID); err != nil {
 			return current, err
 		}
 	}
 
 	var acks []int64
-	if err := s.dispatch(ctx, cs, current, data.MessageID, data.SeqNo, &bin.Buffer{Buf: body}, &acks); err != nil {
+	if err := s.dispatch(ctx, cs, current, frame.messageID, frame.seqNo, &bin.Buffer{Buf: body}, &acks); err != nil {
 		return current, err
 	}
 	if len(acks) > 0 {
@@ -210,28 +224,23 @@ func (s *Server) maybePersistSession(ctx context.Context, c *Conn, sessionID int
 	}
 }
 
-func sendQuickAckIfRequested(ctx context.Context, tc transport.Conn, key crypto.AuthKey, data *crypto.EncryptedMessageData) error {
+func sendQuickAckIfRequested(ctx context.Context, tc transport.Conn, key crypto.AuthKey, plaintext []byte) error {
 	q, ok := tc.(quickAckTransport)
 	if !ok || !q.ConsumeQuickAckRequested() {
 		return nil
 	}
-	token, err := clientQuickAckToken(key, data)
-	if err != nil {
-		return err
-	}
-	return q.SendQuickAck(ctx, token)
+	return q.SendQuickAck(ctx, clientQuickAckToken(key, plaintext))
 }
 
-func clientQuickAckToken(key crypto.AuthKey, data *crypto.EncryptedMessageData) (uint32, error) {
-	var plain bin.Buffer
-	if err := data.Encode(&plain); err != nil {
-		return 0, err
-	}
+// clientQuickAckToken 按 Android MTProto v2 公式计算 quick ack：SHA256(auth_key[88:120] +
+// 完整明文)[:4]。plaintext 直接来自解密复用缓冲（decryptClientFrame.plaintext），
+// 与旧实现「把解密结果重编码一遍再哈希」字节一致但零拷贝。
+func clientQuickAckToken(key crypto.AuthKey, plaintext []byte) uint32 {
 	h := sha256.New()
 	_, _ = h.Write(key.Value[88:120])
-	_, _ = h.Write(plain.Raw())
+	_, _ = h.Write(plaintext)
 	sum := h.Sum(nil)
-	return binary.LittleEndian.Uint32(sum[:4]) &^ quickAckResponseFlag, nil
+	return binary.LittleEndian.Uint32(sum[:4]) &^ quickAckResponseFlag
 }
 
 // dispatch 处理一条明文消息：解包 container/gzip，处理服务消息，其余转 RPC 路由。
@@ -397,14 +406,14 @@ func (s *Server) dispatch(ctx context.Context, cs *connState, c *Conn, msgID int
 			return err
 		}
 		ackContent()
-		s.log.Debug("Received destroy_auth_key", zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])))
+		s.log.Debug("Received destroy_auth_key", zap.String("auth_key_id", c.authKeyHex))
 		// 真正销毁：删密钥库记录（每帧回查，删除后该 key 的入站帧立即失效）并主动
 		// 断开同 key 的其他连接——出站推送用连接持有的密钥副本加密、不回查密钥库，
 		// 不断开的话被销毁 key 的空闲连接仍能持续收到推送。发起连接除外：响应要
 		// 先送达，它的下一帧会因密钥缺失自然断开。授权（authorizations）不在此清理，
 		// destroy_auth_key 是 PFS 密钥轮换的清理动作，不等于登出。
 		if err := s.authKeys.Delete(ctx, c.authKeyID); err != nil {
-			s.log.Warn("Delete auth key failed", zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])), zap.Error(err))
+			s.log.Warn("Delete auth key failed", zap.String("auth_key_id", c.authKeyHex), zap.Error(err))
 			return c.SendAsync(ctx, proto.MessageServerResponse, &destroyAuthKeyFail{})
 		}
 		// 标记密钥已销毁：发起连接被 CloseSessionsForRawAuthKeyExcept 排除（响应需先送达），
@@ -416,7 +425,7 @@ func (s *Server) dispatch(ctx context.Context, cs *connState, c *Conn, msgID int
 	default:
 		ackContent()
 		body := b.Copy()
-		return s.enqueueRPC(ctx, c, msgID, body)
+		return s.enqueueRPC(ctx, c, msgID, id, body)
 	}
 }
 
@@ -437,14 +446,15 @@ func mergeStateInfo(primary, fallback []byte) []byte {
 	return info
 }
 
-func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, body []byte) error {
-	id, _ := (&bin.Buffer{Buf: body}).PeekID()
-	method := s.typeName(id)
+// enqueueRPC 把一条 RPC 请求交给连接的 inbound 调度器。typeID 由 dispatch 传入
+// （已 PeekID 过一次），method 只解析一次并随任务透传，避免同一请求三处重复 PeekID/typeName。
+func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID uint32, body []byte) error {
+	method := s.typeName(typeID)
 	if cached, ok := s.cachedRPCResult(c, msgID); ok {
 		s.log.Info("RPC duplicate replay from session cache",
 			zap.String("method", method),
 			zap.Int64("msg_id", msgID),
-			zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
+			zap.String("auth_key_id", c.authKeyHex),
 			zap.Int64("session_id", c.sessionID),
 		)
 		return c.SendEncoded(ctx, proto.MessageServerResponse, cached)
@@ -455,10 +465,10 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, body []by
 		run: func(taskCtx context.Context) error {
 			// body 已是 enqueueRPC 入参的独立副本（dispatch 里 b.Copy()），且每个任务只 run 一次，
 			// 无需再 append 拷贝；直接复用，省掉一份 inbound 在途内存。
-			if err := s.handleRPC(taskCtx, c, msgID, &bin.Buffer{Buf: body}); err != nil {
+			if err := s.handleRPC(taskCtx, c, msgID, method, &bin.Buffer{Buf: body}); err != nil {
 				fields := []zap.Field{
 					zap.Int64("msg_id", msgID),
-					zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
+					zap.String("auth_key_id", c.authKeyHex),
 					zap.Int64("session_id", c.sessionID),
 					zap.Error(err),
 				}
@@ -476,7 +486,7 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, body []by
 		s.log.Debug("Inbound RPC queue full",
 			zap.String("method", method),
 			zap.Int64("msg_id", msgID),
-			zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
+			zap.String("auth_key_id", c.authKeyHex),
 			zap.Int64("session_id", c.sessionID),
 		)
 		return s.sendResult(ctx, c, msgID, &mt.RPCError{
@@ -488,9 +498,7 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, body []by
 }
 
 // handleRPC 把明文 RPC 请求交给 RPC 路由，并将结果或错误包成 rpc_result 回发。
-func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, b *bin.Buffer) error {
-	id, _ := b.PeekID()
-	method := s.typeName(id)
+func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method string, b *bin.Buffer) error {
 	if s.rpc == nil {
 		s.log.Warn("No RPC handler configured; dropping request", zap.String("method", method))
 		return nil
@@ -510,15 +518,16 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, b *bin.Buf
 		c.SetClientLayer(layer)
 	}
 
-	fields := []zap.Field{
+	fields := make([]zap.Field, 0, 12)
+	fields = append(fields,
 		zap.String("method", method),
-		zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
+		zap.String("auth_key_id", c.authKeyHex),
 		zap.Int64("session_id", c.sessionID),
 		zap.Int64("msg_id", msgID),
 		zap.Duration("dur", dur),
-	}
-	if businessAuthKeyID, ok := c.BusinessAuthKeyID(); ok {
-		fields = append(fields, zap.String("business_auth_key_id", hex.EncodeToString(businessAuthKeyID[:])))
+	)
+	if businessAuthKeyHex, ok := c.BusinessAuthKeyHex(); ok {
+		fields = append(fields, zap.String("business_auth_key_id", businessAuthKeyHex))
 	}
 	if userID := c.UserID(); userID != 0 {
 		fields = append(fields, zap.Int64("user_id", userID))
@@ -566,31 +575,37 @@ func (s *Server) sendResult(ctx context.Context, c *Conn, reqMsgID int64, result
 	return c.SendEncoded(ctx, proto.MessageServerResponse, encoded)
 }
 
-// encodeRPCResult 编码 rpc_result。proto.Result.Result 是裸 boxed 对象字节，故在包入
-// rpc_result 之前对其按连接协商 layer 降级（layer==227 直通，零开销）。降级失败 fail-safe：
-// 记日志并发送 canonical 字节——宁可老客户端对个别长尾对象渲染异常，也不让连接/流崩。
+// encodeRPCResult 编码 rpc_result。内层对象与 rpc_result 头（type_id + req_msg_id）
+// 一次性编码进同一 buffer——旧实现先编码内层、再经 proto.Result.Encode 整体拷贝一遍，
+// 每条响应多一份全量 body 拷贝。内层按连接协商 layer 降级（layer==227 直通，零开销），
+// 降级改写字节时才重建整条消息。降级失败 fail-safe：记日志并发送 canonical 字节——
+// 宁可老客户端对个别长尾对象渲染异常，也不让连接/流崩。
 func (s *Server) encodeRPCResult(c *Conn, reqMsgID int64, result bin.Encoder) (*encodedOutboundMessage, error) {
+	const headerLen = 4 + 8 // rpc_result#f35c6d01 type_id + req_msg_id
 	var buf bin.Buffer
+	buf.PutID(proto.ResultTypeID)
+	buf.PutLong(reqMsgID)
 	if err := result.Encode(&buf); err != nil {
 		return nil, fmt.Errorf("encode rpc result: %w", err)
 	}
-	inner := buf.Raw()
 	if layer := c.ClientLayer(); layer < layerwire.CanonicalLayer {
+		inner := buf.Buf[headerLen:]
 		if down, err := layerwire.Transcode(inner, layer); err != nil {
 			s.log.Warn("layerwire downgrade failed; sending canonical rpc_result",
 				zap.Int("layer", layer), zap.Int64("req_msg_id", reqMsgID), zap.Error(err))
-		} else {
-			inner = down
+		} else if !sameBacking(down, inner) {
+			var rebuilt bin.Buffer
+			rebuilt.PutID(proto.ResultTypeID)
+			rebuilt.PutLong(reqMsgID)
+			rebuilt.Put(down)
+			buf = rebuilt
 		}
 	}
-	encoded, err := encodeOutboundMessage(&proto.Result{
-		RequestMessageID: reqMsgID,
-		Result:           inner,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return encoded, nil
+	return &encodedOutboundMessage{
+		typeID:   proto.ResultTypeID,
+		body:     buf.Raw(),
+		reqMsgID: reqMsgID,
+	}, nil
 }
 
 func (s *Server) cachedRPCResult(c *Conn, reqMsgID int64) (*encodedOutboundMessage, bool) {
@@ -694,7 +709,7 @@ func (s *Server) sendDestroySession(ctx context.Context, c *Conn, sessionID int6
 		removed = s.conns.DestroySessionForAuthKey(c.authKeyID, sessionID)
 		if err := s.sessions.Delete(ctx, sessionID); err != nil {
 			s.log.Debug("Delete session record failed",
-				zap.String("auth_key_id", hex.EncodeToString(c.authKeyID[:])),
+				zap.String("auth_key_id", c.authKeyHex),
 				zap.Int64("session_id", sessionID),
 				zap.Error(err),
 			)
@@ -834,6 +849,11 @@ func (cs *connState) validateSeq(msgID int64, seqNo int32, content bool) int {
 	if !content {
 		return 0
 	}
+	// 快路径：msg_id 与 seq_no 都严格高于已接受 content 高水位时，任何已见记录都不可能
+	// 与本条构成 too_low/too_high 反转，免去 O(len(seen)) 全扫描（正常客户端恒命中）。
+	if msgID > cs.maxContentMsgID && seqNo > cs.maxContentSeqNo {
+		return 0
+	}
 	for seenMsgID, record := range cs.seen {
 		if !record.content {
 			continue
@@ -853,6 +873,14 @@ func (cs *connState) track(msgID int64, seqNo int32, content bool, state byte) {
 		state:   state,
 		seqNo:   seqNo,
 		content: content,
+	}
+	if content {
+		if msgID > cs.maxContentMsgID {
+			cs.maxContentMsgID = msgID
+		}
+		if seqNo > cs.maxContentSeqNo {
+			cs.maxContentSeqNo = seqNo
+		}
 	}
 	cs.order = append(cs.order, msgID)
 	if msgID < cs.minSeen {

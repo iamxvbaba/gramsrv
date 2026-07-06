@@ -1,6 +1,7 @@
 package mtprotoedge
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -128,18 +129,19 @@ type compatTransportConn struct {
 }
 
 func (c *compatTransportConn) Send(ctx context.Context, b *bin.Buffer) error {
+	deadline, _ := ctx.Deadline()
+	return c.SendDeadline(deadline, b)
+}
+
+// SendDeadline 按显式写超时发送一帧（deadline 为零值表示不设超时）。
+// 出站热路径（Conn.writeFrame）走这里，免去 per-frame context timer 分配。
+func (c *compatTransportConn) SendDeadline(deadline time.Time, b *bin.Buffer) error {
 	c.writeMux.Lock()
 	defer c.writeMux.Unlock()
 
-	if err := c.conn.SetWriteDeadline(time.Time{}); err != nil {
-		return errors.Wrap(err, "reset write deadline")
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+		return errors.Wrap(err, "set write deadline")
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := c.conn.SetWriteDeadline(deadline); err != nil {
-			return errors.Wrap(err, "set write deadline")
-		}
-	}
-
 	if err := c.codec.Write(c.conn, b); err != nil {
 		return errors.Wrap(err, "write")
 	}
@@ -163,13 +165,9 @@ func (c *compatTransportConn) SendQuickAck(ctx context.Context, token uint32) er
 	c.writeMux.Lock()
 	defer c.writeMux.Unlock()
 
-	if err := c.conn.SetWriteDeadline(time.Time{}); err != nil {
-		return errors.Wrap(err, "reset write deadline")
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := c.conn.SetWriteDeadline(deadline); err != nil {
-			return errors.Wrap(err, "set write deadline")
-		}
+	deadline, _ := ctx.Deadline()
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+		return errors.Wrap(err, "set write deadline")
 	}
 
 	raw := q.quickAckResponse(token)
@@ -180,18 +178,20 @@ func (c *compatTransportConn) SendQuickAck(ctx context.Context, token uint32) er
 }
 
 func (c *compatTransportConn) Recv(ctx context.Context, b *bin.Buffer) error {
+	deadline, _ := ctx.Deadline()
+	return c.RecvDeadline(deadline, b)
+}
+
+// RecvDeadline 按显式读超时收一帧（deadline 为零值表示不设超时）。
+// serveConn 的每帧读走这里，免去 per-frame context timer 分配；连接取消仍由
+// serveConn 的 ctx watcher 主动 Close 底层连接来解除阻塞（与旧行为一致）。
+func (c *compatTransportConn) RecvDeadline(deadline time.Time, b *bin.Buffer) error {
 	c.readMux.Lock()
 	defer c.readMux.Unlock()
 
-	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
-		return errors.Wrap(err, "reset read deadline")
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return errors.Wrap(err, "set read deadline")
 	}
-	if deadline, ok := ctx.Deadline(); ok {
-		if err := c.conn.SetReadDeadline(deadline); err != nil {
-			return errors.Wrap(err, "set read deadline")
-		}
-	}
-
 	if err := c.codec.Read(c.conn, b); err != nil {
 		return errors.Wrap(err, "read")
 	}
@@ -233,6 +233,7 @@ type quickAckCodec interface {
 
 type quickAckAbridgedCodec struct {
 	quickAckRequested bool
+	wbuf              []byte
 }
 
 func (*quickAckAbridgedCodec) WriteHeader(w io.Writer) error {
@@ -243,7 +244,7 @@ func (*quickAckAbridgedCodec) ReadHeader(r io.Reader) error {
 	return (codec.Abridged{}).ReadHeader(r)
 }
 
-func (*quickAckAbridgedCodec) Write(w io.Writer, b *bin.Buffer) error {
+func (q *quickAckAbridgedCodec) Write(w io.Writer, b *bin.Buffer) error {
 	if err := validateOutgoingCompatMessage(b); err != nil {
 		return err
 	}
@@ -260,7 +261,7 @@ func (*quickAckAbridgedCodec) Write(w io.Writer, b *bin.Buffer) error {
 		header[3] = byte(words >> 16)
 		headerLen = 4
 	}
-	return writeCompatPacket(w, header[:headerLen], b.Raw())
+	return writeCompatPacket(w, &q.wbuf, header[:headerLen], b.Raw())
 }
 
 func (q *quickAckAbridgedCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -286,6 +287,7 @@ func (*quickAckAbridgedCodec) quickAckResponse(token uint32) [4]byte {
 
 type quickAckIntermediateCodec struct {
 	quickAckRequested bool
+	wbuf              []byte
 }
 
 func (*quickAckIntermediateCodec) WriteHeader(w io.Writer) error {
@@ -296,13 +298,13 @@ func (*quickAckIntermediateCodec) ReadHeader(r io.Reader) error {
 	return (codec.Intermediate{}).ReadHeader(r)
 }
 
-func (*quickAckIntermediateCodec) Write(w io.Writer, b *bin.Buffer) error {
+func (q *quickAckIntermediateCodec) Write(w io.Writer, b *bin.Buffer) error {
 	if err := validateOutgoingCompatMessage(b); err != nil {
 		return err
 	}
 	var header [4]byte
 	binary.LittleEndian.PutUint32(header[:], uint32(b.Len()))
-	return writeCompatPacket(w, header[:], b.Raw())
+	return writeCompatPacket(w, &q.wbuf, header[:], b.Raw())
 }
 
 func (q *quickAckIntermediateCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -328,6 +330,8 @@ func (*quickAckIntermediateCodec) quickAckResponse(token uint32) [4]byte {
 
 type quickAckPaddedIntermediateCodec struct {
 	quickAckRequested bool
+	wbuf              []byte
+	rand              *bufio.Reader
 }
 
 func (*quickAckPaddedIntermediateCodec) WriteHeader(w io.Writer) error {
@@ -338,22 +342,27 @@ func (*quickAckPaddedIntermediateCodec) ReadHeader(r io.Reader) error {
 	return (codec.PaddedIntermediate{}).ReadHeader(r)
 }
 
-func (*quickAckPaddedIntermediateCodec) Write(w io.Writer, b *bin.Buffer) error {
+func (q *quickAckPaddedIntermediateCodec) Write(w io.Writer, b *bin.Buffer) error {
 	if err := validateOutgoingCompatMessage(b); err != nil {
 		return err
 	}
+	// padding 随机数走 per-codec 缓冲预读；codec 写入被 compatTransportConn.writeMux
+	// 串行化，单 goroutine 访问安全。
+	if q.rand == nil {
+		q.rand = bufio.NewReaderSize(tdcrypto.DefaultRand(), 64)
+	}
 	var padding [4]byte
-	if _, err := io.ReadFull(tdcrypto.DefaultRand(), padding[:]); err != nil {
+	if _, err := io.ReadFull(q.rand, padding[:]); err != nil {
 		return err
 	}
 	n := int(padding[0] % 4)
-	payload := b.Raw()
-	if n > 0 {
-		payload = append(append([]byte(nil), payload...), padding[:n]...)
-	}
-	var header [4]byte
-	binary.LittleEndian.PutUint32(header[:], uint32(len(payload)))
-	return writeCompatPacket(w, header[:], payload)
+	// header(4B) + payload + padding 一次拼进复用缓冲，单次 Write 出站。
+	buf := append(q.wbuf[:0], 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(buf[:4], uint32(b.Len()+n))
+	buf = append(buf, b.Raw()...)
+	buf = append(buf, padding[:n]...)
+	q.wbuf = buf
+	return writeAll(w, buf)
 }
 
 func (q *quickAckPaddedIntermediateCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -440,11 +449,13 @@ func validateOutgoingCompatMessage(b *bin.Buffer) error {
 	return nil
 }
 
-func writeCompatPacket(w io.Writer, header, payload []byte) error {
-	packet := make([]byte, 0, len(header)+len(payload))
-	packet = append(packet, header...)
-	packet = append(packet, payload...)
-	return writeAll(w, packet)
+// writeCompatPacket 把 header+payload 拼进调用方持有的复用缓冲后单次写出：
+// 保持 MTProto 帧单包出站（quick ack 尾延迟契约），同时避免每帧分配拼包缓冲。
+func writeCompatPacket(w io.Writer, scratch *[]byte, header, payload []byte) error {
+	buf := append((*scratch)[:0], header...)
+	buf = append(buf, payload...)
+	*scratch = buf
+	return writeAll(w, buf)
 }
 
 func writeAll(w io.Writer, p []byte) error {
