@@ -52,7 +52,7 @@ codebase.
 | ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
 | ✅ | Gifts and stars | Star gifts and local stars ledger foundations for compatibility and future feature work. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, minimal Bot API gateway, and demo tools. |
-| ✅ | Calls and real-time | Private call signaling foundations, group call state, SFU/TURN building blocks, liveness, and expiry workers. |
+| ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
 | ✅ | Admin and operations | Admin API/UI backend, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, and load-test helpers. |
 | ✅ | Desktop, Android, and Web focus | Telegram Desktop is the primary target, with Android and Web compatibility paths actively covered by the same server. |
 
