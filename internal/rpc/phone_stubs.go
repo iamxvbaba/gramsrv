@@ -10,18 +10,9 @@ import (
 // 通话内消息族 / scheduled / RTMP）走 router fallback：400/500 NOT_IMPLEMENTED +
 // 兼容矩阵日志，客户端不断连。
 func (r *Router) registerPhoneStubs(d *tg.ServerDispatcher) {
-	// 入会面板前置调用：返回 self 一个候选身份（空返回会卡 UI）。
-	d.OnPhoneGetGroupCallJoinAs(func(ctx context.Context, peer tg.InputPeerClass) (*tg.PhoneJoinAsPeers, error) {
-		userID, err := r.phoneRequireUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return &tg.PhoneJoinAsPeers{
-			Peers: []tg.PeerClass{&tg.PeerUser{UserID: userID}},
-			Chats: []tg.ChatClass{},
-			Users: r.tgUsersForIDs(ctx, userID, []int64{userID}),
-		}, nil
-	})
+	// 入会身份候选：真实实现见 phone_group_call.go（self + admin 的频道身份）。
+	d.OnPhoneGetGroupCallJoinAs(r.onPhoneGetGroupCallJoinAs)
+	// default join-as 偏好持久化仍是 stub（chatFull.groupcall_default_join_as 不回填）。
 	d.OnPhoneSaveDefaultGroupCallJoinAs(func(ctx context.Context, req *tg.PhoneSaveDefaultGroupCallJoinAsRequest) (bool, error) {
 		return true, nil
 	})
@@ -29,8 +20,7 @@ func (r *Router) registerPhoneStubs(d *tg.ServerDispatcher) {
 	d.OnPhoneToggleGroupCallRecord(func(ctx context.Context, req *tg.PhoneToggleGroupCallRecordRequest) (tg.UpdatesClass, error) {
 		return tgEmptyUpdates(int(r.clock.Now().Unix())), nil
 	})
-	// RTMP 直播范围外。
-	d.OnPhoneGetGroupCallStreamChannels(func(ctx context.Context, call tg.InputGroupCallClass) (*tg.PhoneGroupCallStreamChannels, error) {
-		return &tg.PhoneGroupCallStreamChannels{Channels: []tg.GroupCallStreamChannel{}}, nil
-	})
+	// RTMP 直播（Live Stream）：真实 handler 见 phone_group_call_rtmp.go。
+	d.OnPhoneGetGroupCallStreamChannels(r.onPhoneGetGroupCallStreamChannels)
+	d.OnPhoneGetGroupCallStreamRtmpURL(r.onPhoneGetGroupCallStreamRtmpURL)
 }

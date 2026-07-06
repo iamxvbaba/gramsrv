@@ -530,6 +530,9 @@ const (
 	// ChannelActionGroupCall 映射 messageActionGroupCall：started（CallDuration=0）
 	// 与 ended（CallDuration>0）共用同一构造器，官方语义即如此。
 	ChannelActionGroupCall ChannelMessageActionType = "group_call"
+	// ChannelActionGroupCallScheduled 映射 messageActionGroupCallScheduled：
+	// 定时通话创建的服务消息（"scheduled a video chat for ..."），ScheduleDate 必填。
+	ChannelActionGroupCallScheduled ChannelMessageActionType = "group_call_scheduled"
 	// ChannelActionInviteToGroupCall 映射 messageActionInviteToGroupCall（被邀请
 	// 者通过频道消息收到可点击的入会卡片，UserIDs 为受邀人）。
 	ChannelActionInviteToGroupCall ChannelMessageActionType = "invite_to_group_call"
@@ -561,6 +564,8 @@ type ChannelMessageAction struct {
 	CallID         int64
 	CallAccessHash int64
 	CallDuration   int
+	// CallScheduleDate 仅 group_call_scheduled 使用（开播时间）。
+	CallScheduleDate int
 	// Boosts 仅 boost_apply 服务消息使用。
 	Boosts int
 	// BroadcastMessagesAllowed/Stars 仅 paid_messages_price 服务消息使用。

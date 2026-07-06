@@ -705,6 +705,7 @@ type Deps struct {
 	Polls            PollsService
 	Phone            PhoneService
 	GroupCalls       GroupCallsService
+	LiveStreams      LiveStreamsService
 	SFU              sfu.Service
 	TURN             turnsrv.Service
 	LangPack         LangPackService
@@ -811,7 +812,13 @@ type PhoneService interface {
 // GroupCallsService 抽象超级群语音聊天信令（app/groupcalls）。
 // 错误集合见 domain.ErrGroupCall*（rpc 层映射为 GROUPCALL_* RPC_ERROR）。
 type GroupCallsService interface {
-	Create(ctx context.Context, channelID, creatorUserID int64, title string, now int) (domain.GroupCall, error)
+	Create(ctx context.Context, channelID, creatorUserID int64, title string, rtmpStream, joinMuted bool, scheduleDate, now int) (domain.GroupCall, error)
+	// RtmpStreamKey 取/轮换 channel 的持久 RTMP 推流密钥（rotate=true 覆盖旧 key）。
+	RtmpStreamKey(ctx context.Context, channelID int64, rotate bool, now int) (string, error)
+	// StartScheduled / SetScheduleSubscription / ScheduleSubscriberIDs 是定时通话流程。
+	StartScheduled(ctx context.Context, callID int64) (domain.GroupCall, bool, error)
+	SetScheduleSubscription(ctx context.Context, callID, userID int64, subscribed bool) error
+	ScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error)
 	CreateConference(ctx context.Context, creatorUserID, randomID, migratedFromPhoneCallID int64, now int) (domain.GroupCall, error)
 	Get(ctx context.Context, callID int64) (domain.GroupCall, bool, error)
 	GetBySlug(ctx context.Context, slug string) (domain.GroupCall, bool, error)
@@ -837,6 +844,17 @@ type GroupCallsService interface {
 	ConferenceRecipients(ctx context.Context, callID int64) ([]int64, error)
 	AppendChainBlock(ctx context.Context, block domain.GroupCallChainBlock) (domain.GroupCallChainBlock, error)
 	ChainBlocks(ctx context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error)
+}
+
+// LiveStreamsService 抽象直播媒体面（app/livestream：RTMP ingest + 切段 ring）。
+// nil = 直播媒体面未启用（信令仍可用，观众停留在"等待推流"占位）。
+type LiveStreamsService interface {
+	// StreamChannels 返回 channel 当前直播时间轴；无活跃推流返回空。
+	StreamChannels(channelID int64) []domain.LiveStreamChannel
+	// StreamPart 按 time_ms/scale 取一段打包好的 tgcalls broadcast part。
+	StreamPart(channelID int64, timeMs int64, scale int) ([]byte, error)
+	// DropChannel 断开该 channel 的推流会话并清空缓冲（discard/revoke）。
+	DropChannel(channelID int64)
 }
 
 // PollsService 抽象 poll 权威态的发送时创建与投票人列表（messages.getPollVotes）。

@@ -6,9 +6,12 @@ package groupcalls
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -24,8 +27,10 @@ func NewService(st store.GroupCallStore) *Service {
 	return &Service{store: st}
 }
 
-// Create 分配 id/access_hash 并建会。
-func (s *Service) Create(ctx context.Context, channelID, creatorUserID int64, title string, now int) (domain.GroupCall, error) {
+// Create 分配 id/access_hash 并建会。rtmpStream=true 创建 RTMP 直播房间；
+// joinMuted=true（广播频道直播）让非管理员入会即被静音且不可自解；
+// scheduleDate>0 创建定时通话（客户端倒计时等待 startScheduled）。
+func (s *Service) Create(ctx context.Context, channelID, creatorUserID int64, title string, rtmpStream, joinMuted bool, scheduleDate, now int) (domain.GroupCall, error) {
 	id, err := randomPositiveInt64()
 	if err != nil {
 		return domain.GroupCall{}, err
@@ -40,9 +45,71 @@ func (s *Service) Create(ctx context.Context, channelID, creatorUserID int64, ti
 		ChannelID:     channelID,
 		CreatorUserID: creatorUserID,
 		Title:         title,
+		RtmpStream:    rtmpStream,
+		JoinMuted:     joinMuted,
+		ScheduleDate:  scheduleDate,
 		Version:       1,
 		CreatedAt:     now,
 	})
+}
+
+// StartScheduled 把定时通话转为进行中（清 schedule_date）；changed=false 幂等。
+func (s *Service) StartScheduled(ctx context.Context, callID int64) (domain.GroupCall, bool, error) {
+	return s.store.StartScheduledGroupCall(ctx, callID)
+}
+
+// SetScheduleSubscription 写入/清除开播提醒订阅。
+func (s *Service) SetScheduleSubscription(ctx context.Context, callID, userID int64, subscribed bool) error {
+	return s.store.SetScheduleStartSubscription(ctx, callID, userID, subscribed)
+}
+
+// ScheduleSubscriberIDs 返回订阅开播提醒的 userID。
+func (s *Service) ScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error) {
+	return s.store.ListScheduleSubscriberIDs(ctx, callID)
+}
+
+// RtmpStreamKey 返回 channel 的持久 RTMP 推流密钥；不存在或 rotate=true 时生成
+// 新 key（覆盖写入，旧 key 即刻失效）。key 形如 "<channelID>_<hex>"，ingest 端
+// 据前缀定位 channel、再整串比对鉴权。
+func (s *Service) RtmpStreamKey(ctx context.Context, channelID int64, rotate bool, now int) (string, error) {
+	if !rotate {
+		key, found, err := s.store.GetRtmpStreamKey(ctx, channelID)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			return key, nil
+		}
+	}
+	var buf [24]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("groupcalls: random rtmp key: %w", err)
+	}
+	key := fmt.Sprintf("%d_%x", channelID, buf)
+	if err := s.store.SetRtmpStreamKey(ctx, channelID, key, now); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+// VerifyRtmpStreamKey 校验推流密钥并返回其所属 channelID（RTMP ingest 鉴权入口）。
+func (s *Service) VerifyRtmpStreamKey(ctx context.Context, key string) (int64, bool, error) {
+	sep := strings.IndexByte(key, '_')
+	if sep <= 0 {
+		return 0, false, nil
+	}
+	channelID, err := strconv.ParseInt(key[:sep], 10, 64)
+	if err != nil || channelID <= 0 {
+		return 0, false, nil
+	}
+	stored, found, err := s.store.GetRtmpStreamKey(ctx, channelID)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found || subtle.ConstantTimeCompare([]byte(stored), []byte(key)) != 1 {
+		return 0, false, nil
+	}
+	return channelID, true, nil
 }
 
 // CreateConference 分配 id/access_hash/slug 并创建 ad-hoc conference call。

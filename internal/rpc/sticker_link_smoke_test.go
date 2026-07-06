@@ -201,7 +201,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 	sendStickersBotText(t, r, alice, "Alice Bot Pack", 9102)
 	waitForStickersReply(t, messageStore, alice.ID, "Lottie JSON")
 	sendStickersBotDocument(t, r, alice, 401, 4401, 9103)
-	waitForStickersReply(t, messageStore, alice.ID, "emoji")
+	waitForStickersReply(t, messageStore, alice.ID, "Now send the emoji")
 	sendStickersBotText(t, r, alice, "🙂", 9104)
 	waitForStickersReply(t, messageStore, alice.ID, "Added")
 	sendStickersBotText(t, r, alice, "/publish", 9105)

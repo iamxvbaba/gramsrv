@@ -63,4 +63,15 @@ type GroupCallStore interface {
 	ListConferenceRecipientUserIDs(ctx context.Context, callID int64) ([]int64, error)
 	AppendGroupCallChainBlock(ctx context.Context, block domain.GroupCallChainBlock) (domain.GroupCallChainBlock, error)
 	ListGroupCallChainBlocks(ctx context.Context, callID int64, subChainID, offset, limit int) (domain.GroupCallChainBlockPage, error)
+	// GetRtmpStreamKey / SetRtmpStreamKey 维护 per-channel 的持久 RTMP 推流密钥。
+	// revoke 语义由上层实现：Set 覆盖旧 key，旧 key 推流即刻失效。
+	GetRtmpStreamKey(ctx context.Context, channelID int64) (string, bool, error)
+	SetRtmpStreamKey(ctx context.Context, channelID int64, key string, now int) error
+	// StartScheduledGroupCall 清零 schedule_date（定时通话正式开始）。
+	// changed=false 表示本来就已开始（幂等）；discarded 返回 ErrGroupCallDiscarded。
+	StartScheduledGroupCall(ctx context.Context, callID int64) (domain.GroupCall, bool, error)
+	// SetScheduleStartSubscription 写入/清除 userID 的开播提醒订阅。
+	SetScheduleStartSubscription(ctx context.Context, callID, userID int64, subscribed bool) error
+	// ListScheduleSubscriberIDs 返回订阅了开播提醒的 userID（升序）。
+	ListScheduleSubscriberIDs(ctx context.Context, callID int64) ([]int64, error)
 }

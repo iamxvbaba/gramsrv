@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gotd/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -67,11 +68,16 @@ func (r *Router) onUploadSaveBigFilePart(ctx context.Context, req *tg.UploadSave
 }
 
 func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileRequest) (tg.UploadFileClass, error) {
-	if r.deps.Files == nil {
-		return nil, notImplementedErr()
-	}
 	if req.Offset < 0 || req.Limit <= 0 || req.Limit > maxUploadGetFileChunkLimit {
 		return nil, limitInvalidErr()
+	}
+	// RTMP 直播拉流：inputGroupCallStream 不落 file_blobs、不依赖 Files 服务，
+	// 直连 livestream 媒体面（须先于 Files nil 检查）。
+	if loc, ok := req.Location.(*tg.InputGroupCallStream); ok {
+		return r.onUploadGetGroupCallStream(ctx, loc, req.Offset, req.Limit)
+	}
+	if r.deps.Files == nil {
+		return nil, notImplementedErr()
 	}
 	key, ok := fileLocationKey(req.Location)
 	if !ok {
@@ -93,6 +99,54 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 		}, nil
 	}
 	return nil, locationInvalidErr()
+}
+
+// onUploadGetGroupCallStream 处理 RTMP 直播观众拉流：按 time_ms/scale 取一段打包好的
+// tgcalls broadcast part，再按 offset/limit 切片返回。错误语义对齐 TDesktop 消费点
+// （calls_group_call.cpp broadcastPartStart）：
+//   - 段未就绪（时间轴还没走到）→ TIME_TOO_BIG（客户端 100ms 后原样重试）
+//   - 段已过期/无流/未加入 → GROUPCALL_JOIN_MISSING（触发客户端 rejoin 重新对时）
+func (r *Router) onUploadGetGroupCallStream(ctx context.Context, loc *tg.InputGroupCallStream, offset int64, limit int) (tg.UploadFileClass, error) {
+	if r.deps.LiveStreams == nil {
+		return nil, notImplementedErr()
+	}
+	scope, err := r.groupCallScopeFrom(ctx, loc.Call)
+	if err != nil {
+		return nil, err
+	}
+	if !scope.call.RtmpStream || scope.channel.ID == 0 {
+		return nil, groupCallInvalidErr()
+	}
+	// RTMP 观众在 stream 模式不发 checkGroupCall 心跳、也无 SFU 媒体面活性，
+	// 拉流请求（~1/s/观众）就是它的保活信号——不刷会被 sweeper 置 left，
+	// 客户端每 ~50s 报 "Rejoin after got 'left' with my ssrc" 循环重进。
+	if _, _, err := r.deps.GroupCalls.Touch(ctx, scope.call.ID, scope.userID, int(r.clock.Now().Unix())); err != nil {
+		r.log.Debug("live stream viewer touch", zap.Int64("call_id", scope.call.ID), zap.Error(err))
+	}
+	part, err := r.deps.LiveStreams.StreamPart(scope.channel.ID, loc.TimeMs, loc.Scale)
+	switch {
+	case errors.Is(err, domain.ErrLiveStreamPartNotReady):
+		// 时间轴尚未走到该段：客户端 100ms 后原样重试（Status::NotReady）。
+		return nil, tgerr400("TIME_TOO_BIG")
+	case errors.Is(err, domain.ErrLiveStreamPartExpired), errors.Is(err, domain.ErrLiveStreamNoStream):
+		// 段已淘汰/无流：客户端重新对时后 resync（Status::ResyncNeeded）。
+		return nil, tgerr400("STREAM_TIMESTAMP_EXPIRED")
+	case err != nil:
+		return nil, internalErr()
+	}
+	// offset 越界返回空 bytes（客户端已读完该段即停止续读，limit=128KiB 单次到底）。
+	if offset >= int64(len(part)) {
+		return &tg.UploadFile{Type: &tg.StorageFileUnknown{}, Bytes: []byte{}}, nil
+	}
+	end := offset + int64(limit)
+	if end > int64(len(part)) {
+		end = int64(len(part))
+	}
+	return &tg.UploadFile{
+		Type:  &tg.StorageFileUnknown{},
+		Mtime: 0,
+		Bytes: part[offset:end],
+	}, nil
 }
 
 // onUploadGetFileHashes 返回空 hash 列表：本阶段不做 CDN/分片完整性校验，客户端据空列表直接信任数据。

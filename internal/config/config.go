@@ -234,6 +234,19 @@ type Config struct {
 	// CallForceRelay 强制 p2p_allowed=false（调试 TURN 中继路径用）。
 	CallForceRelay bool
 
+	// LiveStreamEnable 为 true 时启用频道 RTMP 直播媒体面（内嵌 RTMP ingest + ffmpeg 切段）。
+	LiveStreamEnable bool
+	// LiveStreamRtmpAddr 是 RTMP ingest 的 TCP 监听地址（默认 ":2400"）。
+	LiveStreamRtmpAddr string
+	// LiveStreamRtmpURL 是返回给推流端（OBS）的服务器地址；为空回落 rtmp://<AdvertiseIP>:2400/live。
+	LiveStreamRtmpURL string
+	// LiveStreamFFmpegPath 是 ffmpeg 可执行路径（默认走 PATH 的 "ffmpeg"）。
+	LiveStreamFFmpegPath string
+	// LiveStreamWorkDir 是切段临时目录（默认系统临时目录）。
+	LiveStreamWorkDir string
+	// LiveStreamSegmentKeep 是每路流内存保留的 segment 秒数（默认 32）。
+	LiveStreamSegmentKeep int
+
 	// SFUEnable 为 false 时群通话只走信令（M0 模式，无媒体）。
 	SFUEnable bool
 	// SFUUDPPort 是内嵌 SFU 的单 UDP 端口（pion ICE UDPMux）。Windows 防火墙需放行。
@@ -380,6 +393,13 @@ func Load() (Config, error) {
 		SFUEnable:      envBoolOr("TELESRV_SFU_ENABLE", true),
 		SFUUDPPort:     envIntOr("TELESRV_SFU_UDP_PORT", 12399),
 		SFUAdvertiseIP: envOr("TELESRV_SFU_ADVERTISE_IP", ""),
+
+		LiveStreamEnable:      envBoolOr("TELESRV_LIVESTREAM_ENABLE", true),
+		LiveStreamRtmpAddr:    envOr("TELESRV_LIVESTREAM_RTMP_ADDR", ":2400"),
+		LiveStreamRtmpURL:     envOr("TELESRV_LIVESTREAM_RTMP_URL", ""),
+		LiveStreamFFmpegPath:  envOr("TELESRV_LIVESTREAM_FFMPEG_PATH", "ffmpeg"),
+		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),
+		LiveStreamSegmentKeep: envIntOr("TELESRV_LIVESTREAM_SEGMENT_KEEP", 32),
 	}
 	return cfg, nil
 }

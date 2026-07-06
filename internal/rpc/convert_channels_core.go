@@ -258,6 +258,11 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			out.SetDuration(action.CallDuration)
 		}
 		return out
+	case domain.ChannelActionGroupCallScheduled:
+		return &tg.MessageActionGroupCallScheduled{
+			Call:         &tg.InputGroupCall{ID: action.CallID, AccessHash: action.CallAccessHash},
+			ScheduleDate: action.CallScheduleDate,
+		}
 	case domain.ChannelActionInviteToGroupCall:
 		return &tg.MessageActionInviteToGroupCall{
 			Call:  &tg.InputGroupCall{ID: action.CallID, AccessHash: action.CallAccessHash},

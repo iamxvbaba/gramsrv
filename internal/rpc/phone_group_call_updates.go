@@ -53,14 +53,29 @@ func (r *Router) groupCallUpdateContainer(ctx context.Context, viewerUserID int6
 }
 
 // pushGroupCallUpdate 把 updateGroupCall（call 行变化）推给在线群成员。
+// 定时通话需 per-viewer 回填 schedule_start_subscribed：TDesktop applyCallFields
+// 无条件覆盖本地该 flag，漏填会把订阅者的"开播提醒"开关静默关掉。
 func (r *Router) pushGroupCallUpdate(ctx context.Context, channel domain.Channel, call domain.GroupCall) {
 	if call.Conference() {
 		r.pushConferenceGroupCallUpdate(ctx, call)
 		return
 	}
+	var subscribed map[int64]struct{}
+	if call.ScheduleDate > 0 {
+		if ids, err := r.deps.GroupCalls.ScheduleSubscriberIDs(ctx, call.ID); err == nil {
+			subscribed = make(map[int64]struct{}, len(ids))
+			for _, id := range ids {
+				subscribed[id] = struct{}{}
+			}
+		}
+	}
 	recipients := r.groupCallOnlineRecipients(ctx, channel.ID)
 	for _, viewerID := range recipients {
-		update := &tg.UpdateGroupCall{Call: tgGroupCall(call, viewerID, false)}
+		viewerCall := call
+		if subscribed != nil {
+			_, viewerCall.ScheduleStartSubscribed = subscribed[viewerID]
+		}
+		update := &tg.UpdateGroupCall{Call: tgGroupCall(viewerCall, viewerID, false)}
 		update.SetPeer(&tg.PeerChannel{ChannelID: channel.ID})
 		r.pushUserMessage(ctx, viewerID, "group call update",
 			r.groupCallUpdateContainer(ctx, viewerID, channel, update, []int64{call.CreatorUserID}))

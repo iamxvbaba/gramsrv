@@ -55,6 +55,15 @@ type GroupCall struct {
 	State         GroupCallState
 	Title         string
 	JoinMuted     bool
+	// RtmpStream=true 表示这是 RTMP 直播房间（推流走外部 RTMP ingest，观众经
+	// broadcast 拉流），join 不建 SFU 连接、connection params 返回 stream JSON。
+	RtmpStream bool
+	// ScheduleDate>0 表示定时通话尚未开始（客户端显示倒计时面板、不入会）；
+	// startScheduledGroupCall 清零后客户端自动 initialJoin。持久列。
+	ScheduleDate int
+	// ScheduleStartSubscribed 是 per-viewer 投影字段（非持久列）：当前 viewer 是否
+	// 订阅了开播提醒。RPC/推送出站前按 viewer 回填（与 Creator flag 同类语义）。
+	ScheduleStartSubscribed bool
 	// Version 是参与者协议版本：所有参与者变更事务内 +1，单调且持久。
 	Version           int
 	ParticipantsCount int
@@ -87,6 +96,10 @@ func (c GroupCall) Conference() bool {
 type GroupCallParticipant struct {
 	CallID int64
 	UserID int64
+	// JoinAsChannelID 非零表示以该频道/群身份入会（匿名管理员语义），TL 输出
+	// participant.peer=PeerChannel；0=以本人用户身份。身份唯一键仍是 UserID，
+	// 换身份 rejoin 是替换。
+	JoinAsChannelID int64
 	// SSRC 是客户端在 join JSON 里自报的 audio ssrc（uint32 值域，存 int64 防符号坑）。
 	SSRC       int64
 	JoinDate   int
@@ -124,13 +137,15 @@ type CreateGroupCallRequest struct {
 
 // JoinGroupCallRequest 加入/重进群通话（rejoin 同主键换新 ssrc）。
 type JoinGroupCallRequest struct {
-	CallID    int64
-	UserID    int64
-	SSRC      int64
-	Muted     bool
-	IsAdmin   bool
-	PublicKey []byte
-	JoinBlock []byte
+	CallID int64
+	UserID int64
+	// JoinAsChannelID 非零=以频道身份入会（调用方已完成权限校验）。
+	JoinAsChannelID int64
+	SSRC            int64
+	Muted           bool
+	IsAdmin         bool
+	PublicKey       []byte
+	JoinBlock       []byte
 	// VideoJSON 是本次 join 铸造的视频内部状态（endpoint+源组+active）；rejoin
 	// 整体替换并**清空旧 PresentationJSON**（客户端主连接 rejoin 后会重发
 	// joinGroupCallPresentation，旧屏幕登记必须作废）。

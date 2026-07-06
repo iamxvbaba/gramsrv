@@ -45,7 +45,9 @@ type GroupCallStore struct {
 	inviteByMessage map[inviteMessageKey]domain.GroupCallInvite
 	chainBlocks     map[chainKey][]domain.GroupCallChainBlock
 	overrides       map[overrideKey]domain.GroupCallParticipantOverride
-	raiseHandSeq    map[int64]int64 // callID → 单调举手序号
+	raiseHandSeq    map[int64]int64              // callID → 单调举手序号
+	rtmpKeys        map[int64]string             // channelID → RTMP 推流密钥
+	scheduleSubs    map[int64]map[int64]struct{} // callID → 订阅开播提醒的 userID
 	nextSyntheticID int64
 }
 
@@ -62,6 +64,8 @@ func NewGroupCallStore() *GroupCallStore {
 		chainBlocks:     make(map[chainKey][]domain.GroupCallChainBlock),
 		overrides:       make(map[overrideKey]domain.GroupCallParticipantOverride),
 		raiseHandSeq:    make(map[int64]int64),
+		rtmpKeys:        make(map[int64]string),
+		scheduleSubs:    make(map[int64]map[int64]struct{}),
 	}
 }
 
@@ -176,12 +180,13 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 	existing, rejoining := rows[req.UserID]
 	wasActive := rejoining && !existing.Left
 	p := domain.GroupCallParticipant{
-		CallID:        req.CallID,
-		UserID:        req.UserID,
-		SSRC:          req.SSRC,
-		JoinDate:      req.Now,
-		ActiveDate:    req.Now,
-		LastCheckDate: req.Now,
+		CallID:          req.CallID,
+		UserID:          req.UserID,
+		JoinAsChannelID: req.JoinAsChannelID,
+		SSRC:            req.SSRC,
+		JoinDate:        req.Now,
+		ActiveDate:      req.Now,
+		LastCheckDate:   req.Now,
 		// VideoJSON 整体替换、PresentationJSON 随全新行清空（rejoin 后客户端
 		// 会重发 joinGroupCallPresentation，旧屏幕登记必须作废）。
 		VideoJSON: append([]byte(nil), req.VideoJSON...),
@@ -801,6 +806,72 @@ func (s *GroupCallStore) ListGroupCallChainBlocks(_ context.Context, callID int6
 		}
 	}
 	return page, nil
+}
+
+func (s *GroupCallStore) StartScheduledGroupCall(_ context.Context, callID int64) (domain.GroupCall, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	call, ok := s.calls[callID]
+	if !ok {
+		return domain.GroupCall{}, false, domain.ErrGroupCallInvalid
+	}
+	if !call.Active() {
+		return domain.GroupCall{}, false, domain.ErrGroupCallDiscarded
+	}
+	if call.ScheduleDate == 0 {
+		return call, false, nil
+	}
+	call.ScheduleDate = 0
+	s.calls[callID] = call
+	return call, true, nil
+}
+
+func (s *GroupCallStore) SetScheduleStartSubscription(_ context.Context, callID, userID int64, subscribed bool) error {
+	if callID == 0 || userID == 0 {
+		return domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	subs := s.scheduleSubs[callID]
+	if subscribed {
+		if subs == nil {
+			subs = make(map[int64]struct{})
+			s.scheduleSubs[callID] = subs
+		}
+		subs[userID] = struct{}{}
+		return nil
+	}
+	delete(subs, userID)
+	return nil
+}
+
+func (s *GroupCallStore) ListScheduleSubscriberIDs(_ context.Context, callID int64) ([]int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	subs := s.scheduleSubs[callID]
+	out := make([]int64, 0, len(subs))
+	for id := range subs {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+func (s *GroupCallStore) GetRtmpStreamKey(_ context.Context, channelID int64) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.rtmpKeys[channelID]
+	return key, ok, nil
+}
+
+func (s *GroupCallStore) SetRtmpStreamKey(_ context.Context, channelID int64, key string, _ int) error {
+	if channelID == 0 || key == "" {
+		return domain.ErrGroupCallInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rtmpKeys[channelID] = key
+	return nil
 }
 
 func max(a, b int) int {
