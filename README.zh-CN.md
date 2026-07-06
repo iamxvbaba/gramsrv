@@ -102,6 +102,44 @@ go build -o bin/gramsrv.exe ./cmd/telesrv
 如果 sticker seed 目录不存在，启动时会自动跳过。
 可选的 OpenAI-compatible、Kimi/Moonshot、Gemini、Anthropic provider 变量见 `.env.example`。
 
+## 最小公网部署端口清单
+
+在公网服务器部署 `gramsrv` 时，需要根据启用的功能开放以下端口。
+
+### 最小公网部署（仅聊天）
+
+| 端口 | 协议 | 用途 | 是否必须 |
+|---|---|---|---|
+| 2398 | TCP | MTProto 主端口；`TELESRV_WEBSOCKET_ENABLE=true` 时同时处理 WebSocket | 是 |
+
+### 启用管理后台
+
+| 端口 | 协议 | 用途 | 说明 |
+|---|---|---|---|
+| 2399 | TCP | Admin REST API | 建议限制可访问 IP 或放在 VPN 后 |
+| 2600 | TCP | Admin Web UI | 生产环境建议前面加 Nginx/反向代理 + HTTPS |
+
+### 可选功能端口
+
+| 端口 | 协议 | 用途 | 何时需要 |
+|---|---|---|---|
+| 2400 | TCP | RTMP 直播推流 ingest | 启用直播 |
+| 12399 | UDP | SFU/WebRTC 群通话 | 启用语音/视频群通话 |
+| 12400 | UDP | TURN/STUN 服务器 | 启用 P2P/通话 relay |
+| 12500-12999 | UDP | TURN relay 端口段 | 启用 TURN relay |
+| 可配置 | TCP | Bot API | 设置 `TELESRV_BOT_API_ADDR` 时 |
+| 可配置 | TCP | Sticker Web 深链落地页 | 设置 `TELESRV_STICKER_WEB_ADDR` 时 |
+
+### 内部/调试端口（不要暴露到公网）
+
+| 端口 | 默认监听 | 用途 |
+|---|---|---|
+| 6060 | `127.0.0.1:6060` | pprof 调试端点 |
+| 5432 | `127.0.0.1:5432` | PostgreSQL |
+| 6399 | `127.0.0.1:6399` | Redis |
+
+确保设置 `TELESRV_LISTEN=0.0.0.0:2398`，且 `TELESRV_ADVERTISE_IP` 指向公网 IP，客户端才能正确连接。
+
 ## 客户端兼容
 
 官方 Telegram 客户端不能直接连接 `gramsrv`，因为它们信任的是 Telegram 官方 DC 列表和 RSA keys。你可以使用 [官网](https://telesrv.net) 提供的体验客户端，也可以自己做最小协议 patch。
