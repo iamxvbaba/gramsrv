@@ -1583,6 +1583,10 @@ func (r *Router) onAccountGetDefaultBackgroundEmojis(ctx context.Context, hash i
 }
 
 func defaultBackgroundEmojiDocumentIDs(ctx context.Context, files FilesService) ([]int64, error) {
+	return statusPackEmojiDocumentIDs(ctx, files, 0)
+}
+
+func statusPackEmojiDocumentIDs(ctx context.Context, files FilesService, limit int) ([]int64, error) {
 	set, _, found, err := files.ResolveStickerSet(ctx, domain.StickerSetRef{
 		Kind:      domain.StickerSetRefByShortName,
 		ShortName: "StatusPack",
@@ -1590,17 +1594,39 @@ func defaultBackgroundEmojiDocumentIDs(ctx context.Context, files FilesService) 
 	if err != nil || !found {
 		return nil, err
 	}
-	return uniquePositiveDocumentIDs(set.DocumentIDs, 0), nil
+	return uniquePositiveDocumentIDs(set.DocumentIDs, limit), nil
 }
 
 func (r *Router) defaultProfilePhotoEmojiDocumentIDs(ctx context.Context, limit int) ([]int64, error) {
-	ids, err := defaultProfilePhotoEmojiDocumentIDsFromKind(ctx, r.deps.Files, domain.StickerSetKindEmoji, limit, nil)
+	ids, err := profilePhotoEmojiDocumentIDsFromRef(ctx, r.deps.Files, domain.StickerSetRef{
+		Kind:      domain.StickerSetRefByShortName,
+		ShortName: "TelesrvDefaultStatuses",
+	}, limit)
 	if err != nil || len(ids) > 0 {
 		return ids, err
 	}
-	return defaultProfilePhotoEmojiDocumentIDsFromKind(ctx, r.deps.Files, domain.StickerSetKindSystem, limit, func(set domain.StickerSet) bool {
+	ids, err = defaultProfilePhotoEmojiDocumentIDsFromKind(ctx, r.deps.Files, domain.StickerSetKindSystem, limit, func(set domain.StickerSet) bool {
 		return set.SystemKey == "animated_emoji"
 	})
+	if err != nil || len(ids) > 0 {
+		return ids, err
+	}
+	ids, err = defaultProfilePhotoEmojiDocumentIDsFromKind(ctx, r.deps.Files, domain.StickerSetKindEmoji, limit, nil)
+	if err != nil || len(ids) > 0 {
+		return ids, err
+	}
+	return profilePhotoEmojiDocumentIDsFromRef(ctx, r.deps.Files, domain.StickerSetRef{
+		Kind:      domain.StickerSetRefByShortName,
+		ShortName: "StatusPack",
+	}, limit)
+}
+
+func profilePhotoEmojiDocumentIDsFromRef(ctx context.Context, files FilesService, ref domain.StickerSetRef, limit int) ([]int64, error) {
+	set, docs, found, err := files.ResolveStickerSet(ctx, ref)
+	if err != nil || !found {
+		return nil, err
+	}
+	return profilePhotoEmojiDocumentIDs(set.DocumentIDs, docs, limit), nil
 }
 
 func defaultProfilePhotoEmojiDocumentIDsFromKind(
@@ -1620,7 +1646,12 @@ func defaultProfilePhotoEmojiDocumentIDsFromKind(
 		if allow != nil && !allow(set) {
 			continue
 		}
-		for _, id := range set.DocumentIDs {
+		candidateIDs := uniquePositiveDocumentIDs(set.DocumentIDs, limit)
+		docs, err := files.GetDocuments(ctx, candidateIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range profilePhotoEmojiDocumentIDs(candidateIDs, docs, limit) {
 			if id == 0 {
 				continue
 			}
@@ -1638,6 +1669,40 @@ func defaultProfilePhotoEmojiDocumentIDsFromKind(
 		}
 	}
 	return ids, nil
+}
+
+func profilePhotoEmojiDocumentIDs(setIDs []int64, docs []domain.Document, limit int) []int64 {
+	textColorDocs := make(map[int64]bool, len(docs))
+	for _, doc := range docs {
+		if documentHasTextColorCustomEmoji(doc) {
+			textColorDocs[doc.ID] = true
+		}
+	}
+	out := make([]int64, 0, len(setIDs))
+	seen := make(map[int64]struct{}, len(setIDs))
+	for _, id := range setIDs {
+		if id <= 0 || textColorDocs[id] {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func documentHasTextColorCustomEmoji(doc domain.Document) bool {
+	for _, attr := range doc.Attributes {
+		if attr.Kind == domain.DocAttrCustomEmoji && attr.TextColor {
+			return true
+		}
+	}
+	return false
 }
 
 func uniquePositiveDocumentIDs(ids []int64, limit int) []int64 {

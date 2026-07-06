@@ -3,8 +3,11 @@ package rpc
 import (
 	"context"
 	"errors"
+	"time"
 
+	"github.com/gotd/td/proto"
 	"github.com/gotd/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -438,10 +441,20 @@ func (r *Router) onPhotosDeletePhotos(ctx context.Context, id []tg.InputPhotoCla
 	if len(ids) == 0 {
 		return []int64{}, nil
 	}
-	if _, err := r.deps.Files.DeleteProfilePhotos(ctx, domain.PeerTypeUser, userID, ids); err != nil {
+	deleted, err := r.deps.Files.DeleteProfilePhotos(ctx, domain.PeerTypeUser, userID, ids)
+	if err != nil {
 		return nil, internalErr()
 	}
 	r.invalidateRPCProjectionForUser(userID)
+	// 删除可能撤掉当前头像（回落到下一张或无头像）：与 uploadProfilePhoto 同一纪律，
+	// 向全部在线 session（含当前）推 updateUser + fresh self（对齐参考实现 deletePhotos 的
+	// SyncPushUpdates），否则其它设备与当前设备（DrKLO 本地删除逻辑同样不重建 has_video）
+	// 头像停留在旧状态。
+	if deleted > 0 && r.deps.Users != nil {
+		if self, err := r.deps.Users.Self(ctx, userID); err == nil {
+			r.pushSelfPhotoUpdate(ctx, self)
+		}
+	}
 	return ids, nil
 }
 
@@ -517,16 +530,66 @@ func applyProfilePhotoToUser(user *domain.User, photo domain.Photo) {
 	user.PhotoHasVideo = domain.PhotoHasVideo(photo.Sizes)
 }
 
-// pushSelfPhotoUpdate 向该账号其它在线设备推送头像变更。updateUserName 不含 photo 无法刷新
-// 头像；updateUser 只是「该 user 变了」的信号（TDesktop 仅当 peer 已 full-loaded 时才
-// forceFull 重拉）；最可靠是在 Updates.Users 带上含新 userProfilePhoto 的完整 self user，
-// TDesktop 经 processUser→setPhoto→peerUpdated(Photo) 即时刷新。当前设备同时经 RPC 返回更新。
+// pushSelfPhotoUpdate 向该账号全部在线设备（含当前 session）推送头像变更，对齐参考实现
+// SyncPushUpdates 的全 session 语义。updateUserName 不含 photo 无法刷新头像；updateUser 只是
+// 「该 user 变了」的信号（TDesktop 仅当 peer 已 full-loaded 时才 forceFull 重拉）；最可靠是在
+// Updates.Users 带上含新 userProfilePhoto 的完整 self user，TDesktop 经
+// processUser→setPhoto→peerUpdated(Photo) 即时刷新。
+//
+// 当前 session 不能只依赖 RPC 返回：DrKLO Android 的 uploadProfilePhoto 响应回调
+// （ProfileActivity/SettingsActivity.didUploadPhoto、PhotoUtilities）不消费
+// photos.photo.users，而是手工重建 userProfilePhoto——只填 photo_id/photo_small/photo_big，
+// 丢掉 has_video/stripped_thumb；emoji/sticker markup 头像的本地渲染
+// （ImageReceiver.setForUserOrChat → VectorAvatarThumbDrawable）要求
+// user.photo.has_video==true，缺推送时该设备要等到下一次拿到 fresh self user（通常是重启）
+// 才会显示 emoji 头像。当前 session 的回显延迟发送，保证到达时客户端已处理完自己的
+// RPC 响应回调（否则 Android 回调会把推送刚修好的 photo 再次覆盖回无 has_video 的形状）。
 func (r *Router) pushSelfPhotoUpdate(ctx context.Context, self domain.User) {
 	if self.ID == 0 {
 		return
 	}
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), r.tgSelfUser(self))
 	r.pushUserUpdates(ctx, self.ID, updates)
+	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+}
+
+// defaultSelfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟：
+// 必须晚于 RPC 结果写出与客户端响应回调，否则 DrKLO 的手工 photo 重建会覆盖回显内容。
+// updateUser 无 pts，晚到/丢失不影响 difference 正确性。
+const defaultSelfPhotoEchoPushDelay = 500 * time.Millisecond
+
+// pushSelfPhotoUpdateToCurrentSession 延迟向当前 session 回显头像变更 updates。
+// ctx 值在调度前捕获（请求 ctx 在 handler 返回后即失效）。
+func (r *Router) pushSelfPhotoUpdateToCurrentSession(ctx context.Context, updates *tg.Updates) {
+	if r.deps.Sessions == nil || updates == nil {
+		return
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return
+	}
+	rawAuthKeyID, hasRawAuthKeyID := RawAuthKeyIDFrom(ctx)
+	push := func() {
+		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if scoped, ok := r.scopedSessions(); ok {
+			if !hasRawAuthKeyID {
+				return
+			}
+			if err := scoped.PushToSessionForAuthKey(pushCtx, rawAuthKeyID, sessionID, proto.MessageFromServer, updates); err != nil {
+				r.log.Debug("push self photo update to current session", zap.Int64("session_id", sessionID), zap.Error(err))
+			}
+			return
+		}
+		if err := r.deps.Sessions.PushToSession(pushCtx, sessionID, proto.MessageFromServer, updates); err != nil {
+			r.log.Debug("push self photo update to current session", zap.Int64("session_id", sessionID), zap.Error(err))
+		}
+	}
+	if r.selfPhotoEchoPushDelay <= 0 {
+		push()
+		return
+	}
+	time.AfterFunc(r.selfPhotoEchoPushDelay, push)
 }
 
 func selfPhotoUpdates(self domain.User, date int, user tg.UserClass) *tg.Updates {

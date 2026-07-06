@@ -138,6 +138,9 @@ type Router struct {
 	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调
 	// resolvePendingWebPage 同步验证）。
 	webPageResolveSem chan struct{}
+	// selfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟
+	// （见 photos.go pushSelfPhotoUpdateToCurrentSession）；<=0 时同步推送（测试用）。
+	selfPhotoEchoPushDelay time.Duration
 }
 
 type clientInfoSessionKey struct {
@@ -166,6 +169,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, presence: newPresenceTracker(), callbacks: newCallbackRegistry(), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), instanceID: instanceID}
 	r.channelFanout = newChannelFanoutDispatcher(r, defaultChannelFanoutShards, defaultChannelFanoutBuffer)
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)
+	r.selfPhotoEchoPushDelay = defaultSelfPhotoEchoPushDelay
 	if cfg.DC > 0 {
 		groupCallStreamDCID = cfg.DC
 	}

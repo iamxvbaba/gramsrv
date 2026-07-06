@@ -694,11 +694,22 @@ func (f *fakeFiles) GetProfilePhotosKind(_ context.Context, _ domain.PeerType, _
 	f.lastProfileMaxID = maxID
 	return append([]domain.Photo(nil), f.profilePhotos...), f.profilePhotosTotal, nil
 }
-func (f *fakeFiles) DeleteProfilePhotos(context.Context, domain.PeerType, int64, []int64) (int, error) {
-	return 0, nil
+func (f *fakeFiles) DeleteProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerID int64, photoIDs []int64) (int, error) {
+	return f.DeleteProfilePhotosKind(ctx, ownerType, ownerID, domain.ProfilePhotoKindProfile, photoIDs)
 }
-func (f *fakeFiles) DeleteProfilePhotosKind(context.Context, domain.PeerType, int64, domain.ProfilePhotoKind, []int64) (int, error) {
-	return 0, nil
+func (f *fakeFiles) DeleteProfilePhotosKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoIDs []int64) (int, error) {
+	deleted := 0
+	key := fakeProfilePhotoKey{ownerType: ownerType, ownerID: ownerID, kind: kind}
+	for _, id := range photoIDs {
+		if _, ok := f.photos[id]; !ok {
+			continue
+		}
+		deleted++
+		if f.profile[key] == id {
+			delete(f.profile, key)
+		}
+	}
+	return deleted, nil
 }
 
 func newMediaTestRouter(t *testing.T) (*Router, domain.User, domain.User) {

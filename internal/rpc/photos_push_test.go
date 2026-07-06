@@ -71,6 +71,132 @@ func TestUploadProfilePhotoPushesUpdateToOtherDevices(t *testing.T) {
 	}
 }
 
+// TestUploadProfilePhotoEchoesUpdateToCurrentSession 守护 DrKLO Android emoji 头像回显修复：
+// 换头像后除其它设备外，当前 session 也必须收到 updateUser + Updates.Users（带 has_video 的
+// fresh self）。DrKLO 的 uploadProfilePhoto 响应回调不消费 photos.photo.users，手工重建的
+// userProfilePhoto 丢 has_video/stripped，缺该回显时 emoji/sticker markup 头像在设置设备上
+// 要重启才渲染（对齐参考实现 SyncPushUpdates 全 session 语义）。
+func TestUploadProfilePhotoEchoesUpdateToCurrentSession(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "15550001004", FirstName: "Owner"})
+	sessions := &captureSessions{}
+	files := &fakeFiles{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Users:    appusers.NewService(userStore, appusers.WithPhotoProvider(files)),
+		Files:    files,
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+	r.selfPhotoEchoPushDelay = 0 // 测试同步回显
+
+	const currentSessionID = int64(424242)
+	reqCtx := WithSessionID(WithUserID(ctx, owner.ID), currentSessionID)
+	req := &tg.PhotosUploadProfilePhotoRequest{}
+	req.SetVideoEmojiMarkup(&tg.VideoSizeEmojiMarkup{EmojiID: 99, BackgroundColors: []int{0xffffff}})
+	if _, err := r.onPhotosUploadProfilePhoto(reqCtx, req); err != nil {
+		t.Fatalf("uploadProfilePhoto: %v", err)
+	}
+
+	// PushToSession 在 PushToUserExceptSession 之后调用，snapshot().message 即当前 session 回显。
+	snap := sessions.snapshot()
+	if snap.sessionID != currentSessionID {
+		t.Fatalf("echo session = %d, want %d", snap.sessionID, currentSessionID)
+	}
+	echoed, ok := snap.message.(*tg.Updates)
+	if !ok {
+		t.Fatalf("echoed message = %T, want *tg.Updates", snap.message)
+	}
+	hasUserUpdate := false
+	for _, u := range echoed.Updates {
+		if uu, ok := u.(*tg.UpdateUser); ok && uu.UserID == owner.ID {
+			hasUserUpdate = true
+		}
+	}
+	if !hasUserUpdate {
+		t.Fatalf("echoed updates = %+v, want UpdateUser for self", echoed.Updates)
+	}
+	if len(echoed.Users) == 0 {
+		t.Fatal("echoed updates missing self user — current device cannot repair has_video")
+	}
+	echoedUser, ok := echoed.Users[0].(*tg.User)
+	if !ok {
+		t.Fatalf("echoed user = %T, want *tg.User", echoed.Users[0])
+	}
+	echoedPhoto, ok := echoedUser.Photo.(*tg.UserProfilePhoto)
+	if !ok || echoedPhoto.PhotoID != 780 || !echoedPhoto.HasVideo {
+		t.Fatalf("echoed self photo = %+v, want photo 780 has_video=true", echoedUser.Photo)
+	}
+	// 其它设备推送同样发生（同一 updates）。
+	if other, ok := sessions.lastUserPush().(*tg.Updates); !ok || len(other.Users) == 0 {
+		t.Fatalf("other-device push = %T, want *tg.Updates with users", sessions.lastUserPush())
+	}
+}
+
+// TestDeletePhotosPushesSelfUpdate 守护 deletePhotos 推送：删除生效（含撤掉当前头像回落）后
+// 必须向全部在线 session 推 updateUser + fresh self（对齐参考实现 deletePhotos 的
+// SyncPushUpdates），否则其它设备/当前设备头像停留旧状态。
+func TestDeletePhotosPushesSelfUpdate(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "15550001005", FirstName: "Owner"})
+	sessions := &captureSessions{}
+	files := &fakeFiles{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Users:    appusers.NewService(userStore, appusers.WithPhotoProvider(files)),
+		Files:    files,
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+	r.selfPhotoEchoPushDelay = 0
+
+	const currentSessionID = int64(434343)
+	reqCtx := WithSessionID(WithUserID(ctx, owner.ID), currentSessionID)
+	seedReq := &tg.PhotosUploadProfilePhotoRequest{}
+	seedReq.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "a.jpg"})
+	if _, err := r.onPhotosUploadProfilePhoto(reqCtx, seedReq); err != nil {
+		t.Fatalf("seed profile photo: %v", err)
+	}
+	sessions.clearMessages()
+
+	got, err := r.onPhotosDeletePhotos(reqCtx, []tg.InputPhotoClass{&tg.InputPhoto{ID: 778}})
+	if err != nil {
+		t.Fatalf("deletePhotos: %v", err)
+	}
+	if len(got) != 1 || got[0] != 778 {
+		t.Fatalf("deletePhotos result = %v, want [778]", got)
+	}
+	if _, found, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, owner.ID, domain.ProfilePhotoKindProfile); err != nil || found {
+		t.Fatalf("current profile photo after delete: found=%v err=%v, want removed", found, err)
+	}
+	pushed, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok {
+		t.Fatalf("other-device push after delete = %T, want *tg.Updates", sessions.lastUserPush())
+	}
+	hasUserUpdate := false
+	for _, u := range pushed.Updates {
+		if uu, ok := u.(*tg.UpdateUser); ok && uu.UserID == owner.ID {
+			hasUserUpdate = true
+		}
+	}
+	if !hasUserUpdate || len(pushed.Users) == 0 {
+		t.Fatalf("pushed updates after delete = %+v, want UpdateUser + self user", pushed)
+	}
+	pushedUser, ok := pushed.Users[0].(*tg.User)
+	if !ok {
+		t.Fatalf("pushed user = %T, want *tg.User", pushed.Users[0])
+	}
+	if _, stillHasPhoto := pushedUser.Photo.(*tg.UserProfilePhoto); stillHasPhoto {
+		t.Fatalf("pushed self photo after delete = %+v, want cleared", pushedUser.Photo)
+	}
+	// 当前 session 也收到回显（PushToSession 最后调用，覆盖 snapshot().message）。
+	snap := sessions.snapshot()
+	if snap.sessionID != currentSessionID {
+		t.Fatalf("echo session = %d, want %d", snap.sessionID, currentSessionID)
+	}
+	if _, ok := snap.message.(*tg.Updates); !ok {
+		t.Fatalf("echoed message = %T, want *tg.Updates", snap.message)
+	}
+}
+
 func TestUploadProfilePhotoSupportsAnimatedVideoAndEmojiMarkup(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
