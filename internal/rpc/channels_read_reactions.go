@@ -107,12 +107,16 @@ func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsReques
 		policy.Type = domain.ChannelReactionPolicyAll
 		policy.AllowCustom = reactions.AllowCustom
 	case *tg.ChatReactionsSome:
-		if len(reactions.Reactions) > domain.MaxChannelReactionTypes {
-			return domain.ChannelReactionPolicy{}, limitInvalidErr()
-		}
 		policy.Type = domain.ChannelReactionPolicySome
 		seen := make(map[string]struct{}, len(reactions.Reactions))
 		for _, reaction := range reactions.Reactions {
+			// TDesktop models the paid toggle as a pseudo reaction in the
+			// selector and may submit reactionPaid in chatReactionsSome. The
+			// durable paid state is carried by paid_enabled, not the normal
+			// reaction whitelist.
+			if paidReactionSentinel(reaction) {
+				continue
+			}
 			parsed, err := domainMessageReactionFromTL(reaction)
 			if err != nil {
 				return domain.ChannelReactionPolicy{}, tgerr400("REACTION_INVALID")
@@ -121,6 +125,9 @@ func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsReques
 			key := parsed.Key()
 			if _, ok := seen[key]; ok {
 				continue
+			}
+			if len(seen) >= domain.MaxChannelReactionTypes {
+				return domain.ChannelReactionPolicy{}, limitInvalidErr()
 			}
 			seen[key] = struct{}{}
 			switch parsed.Type {
@@ -134,4 +141,9 @@ func domainChannelReactionPolicy(req *tg.MessagesSetChatAvailableReactionsReques
 		return domain.ChannelReactionPolicy{}, tgerr400("REACTION_INVALID")
 	}
 	return policy, nil
+}
+
+func paidReactionSentinel(reaction tg.ReactionClass) bool {
+	paid, ok := reaction.(*tg.ReactionPaid)
+	return ok && paid != nil
 }

@@ -36,5 +36,8 @@ func (s *ChannelStore) SetAvailableReactions(ctx context.Context, userID, channe
 	}); err != nil {
 		return domain.Channel{}, err
 	}
+	if s.rowCache != nil {
+		s.rowCache.put(channel)
+	}
 	return channel, nil
 }

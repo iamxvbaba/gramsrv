@@ -16,6 +16,14 @@ import (
 
 func starGiftInvalidErr() error { return tgerr.New(400, "STARGIFT_INVALID") }
 
+func devStarsTopupOptions() []tg.StarsTopupOption {
+	return []tg.StarsTopupOption{
+		{Stars: 1000, Currency: "USD", Amount: 99},
+		{Stars: 2500, Currency: "USD", Amount: 199},
+		{Stars: 5000, Currency: "USD", Amount: 399},
+	}
+}
+
 // onPaymentsGetStarGifts 返回可购买礼物目录（hash 命中返回 NotModified）。
 func (r *Router) onPaymentsGetStarGifts(ctx context.Context, hash int) (tg.PaymentsStarGiftsClass, error) {
 	if r.deps.Gifts == nil {
@@ -41,23 +49,41 @@ func (r *Router) onPaymentsGetStarGifts(ctx context.Context, hash int) (tg.Payme
 	}, nil
 }
 
-// onPaymentsGetPaymentForm 仅处理 inputInvoiceStarGift：返回 paymentFormStarGift。
+// onPaymentsGetPaymentForm 处理 Stars 专用 invoice：
+//   - inputInvoiceStarGift 返回 paymentFormStarGift。
+//   - inputInvoiceStars(inputStorePaymentStarsTopup) 返回 paymentFormStars。
+//
 // 崩溃约束：star gift invoice 必须返 paymentFormStarGift#b425cfe1（TDesktop 单分支 match），
-// Invoice.Prices 必须非空（DrKLO/TDesktop 读 prices.front()）。
+// Stars 表单 Invoice.Prices 必须非空且 Currency=XTR（DrKLO/TDesktop 读 prices.front()）。
 func (r *Router) onPaymentsGetPaymentForm(ctx context.Context, req *tg.PaymentsGetPaymentFormRequest) (tg.PaymentsPaymentFormClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
 	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+
+	if inv, ok := req.Invoice.(*tg.InputInvoiceStars); ok {
+		purpose, ok := starsTopupPurpose(inv)
+		if !ok {
+			return nil, notImplementedErr()
+		}
+		if r.deps.Stars == nil {
+			return nil, notImplementedErr()
+		}
+		if _, _, err := r.validateStarsTopupPurpose(ctx, userID, purpose); err != nil {
+			return nil, err
+		}
+		return r.starsTopupPaymentForm(userID, purpose), nil
+	}
+
 	inv, ok := req.Invoice.(*tg.InputInvoiceStarGift)
 	if !ok {
 		return nil, notImplementedErr()
 	}
 	if r.deps.Gifts == nil {
 		return nil, notImplementedErr()
-	}
-	userID, _, err := r.currentUserID(ctx)
-	if err != nil {
-		return nil, internalErr()
 	}
 	if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, inv.Peer); err != nil {
 		return nil, err
@@ -75,20 +101,28 @@ func (r *Router) onPaymentsGetPaymentForm(ctx context.Context, req *tg.PaymentsG
 	}, nil
 }
 
-// onPaymentsSendStarsForm 仅处理 inputInvoiceStarGift：Debit→投递/记账，
-// 返回 paymentResult{updates}（含 updateStarsBalance；用户礼物还含私聊服务消息）。失败补偿退款。
+// onPaymentsSendStarsForm 处理 star gift 与 Stars topup：
+//   - star gift: Debit→投递/记账，失败补偿退款。
+//   - topup: 校验测试包白名单→Credit 本地账本。
+//
+// 返回 paymentResult{updates}（含 updateStarsBalance；用户礼物还含私聊服务消息）。
 // 崩溃约束：必须返回合法 paymentResult{非空 Updates}（DrKLO 强转）。
 func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSendStarsFormRequest) (tg.PaymentsPaymentResultClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
 	}
-	inv, ok := req.Invoice.(*tg.InputInvoiceStarGift)
-	if !ok {
-		return nil, notImplementedErr()
-	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+
+	if inv, ok := req.Invoice.(*tg.InputInvoiceStars); ok {
+		return r.sendStarsTopupForm(ctx, userID, req.FormID, inv)
+	}
+
+	inv, ok := req.Invoice.(*tg.InputInvoiceStarGift)
+	if !ok {
+		return nil, notImplementedErr()
 	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, inv.Peer)
 	if err != nil {
@@ -147,6 +181,83 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 		}
 	}
 	return &tg.PaymentsPaymentResult{Updates: updates}, nil
+}
+
+func starsTopupPurpose(inv *tg.InputInvoiceStars) (*tg.InputStorePaymentStarsTopup, bool) {
+	if inv == nil {
+		return nil, false
+	}
+	purpose, ok := inv.Purpose.(*tg.InputStorePaymentStarsTopup)
+	return purpose, ok && purpose != nil
+}
+
+func (r *Router) validateStarsTopupPurpose(ctx context.Context, userID int64, purpose *tg.InputStorePaymentStarsTopup) (tg.StarsTopupOption, domain.Peer, error) {
+	if purpose == nil || purpose.Stars <= 0 || purpose.Amount <= 0 || purpose.Currency == "" {
+		return tg.StarsTopupOption{}, domain.Peer{}, starsAmountInvalidErr()
+	}
+	var matched tg.StarsTopupOption
+	found := false
+	for _, opt := range devStarsTopupOptions() {
+		if opt.Stars == purpose.Stars && opt.Currency == purpose.Currency && opt.Amount == purpose.Amount {
+			matched = opt
+			found = true
+			break
+		}
+	}
+	if !found {
+		return tg.StarsTopupOption{}, domain.Peer{}, starsFormAmountMismatchErr()
+	}
+	peer := domain.Peer{}
+	if purpose.SpendPurposePeer != nil {
+		var err error
+		peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, purpose.SpendPurposePeer)
+		if err != nil {
+			return tg.StarsTopupOption{}, domain.Peer{}, err
+		}
+	}
+	return matched, peer, nil
+}
+
+func (r *Router) starsTopupPaymentForm(userID int64, purpose *tg.InputStorePaymentStarsTopup) *tg.PaymentsPaymentFormStars {
+	return &tg.PaymentsPaymentFormStars{
+		FormID:      starsTopupFormID(userID, purpose.Stars, purpose.Currency, purpose.Amount),
+		BotID:       domain.OfficialSystemUserID,
+		Title:       "Telegram Stars",
+		Description: "telesrv dev Stars top-up",
+		Invoice: tg.Invoice{
+			Currency: "XTR",
+			Prices:   []tg.LabeledPrice{{Label: "Telegram Stars", Amount: purpose.Stars}},
+		},
+		Users: tgUsersForViewer(userID, []domain.User{domain.OfficialSystemUser()}),
+	}
+}
+
+func (r *Router) sendStarsTopupForm(ctx context.Context, userID, formID int64, inv *tg.InputInvoiceStars) (tg.PaymentsPaymentResultClass, error) {
+	purpose, ok := starsTopupPurpose(inv)
+	if !ok {
+		return nil, notImplementedErr()
+	}
+	if formID == 0 {
+		return nil, formIDEmptyErr()
+	}
+	if r.deps.Stars == nil {
+		return nil, notImplementedErr()
+	}
+	_, peer, err := r.validateStarsTopupPurpose(ctx, userID, purpose)
+	if err != nil {
+		return nil, err
+	}
+	if formID != starsTopupFormID(userID, purpose.Stars, purpose.Currency, purpose.Amount) {
+		return nil, starsFormAmountMismatchErr()
+	}
+	if _, err := r.deps.Stars.GetBalance(ctx, userID); err != nil {
+		return nil, starsErr(err)
+	}
+	balance, err := r.deps.Stars.Credit(ctx, userID, purpose.Stars, domain.StarsReasonTopup, peer, "Stars top-up", "telesrv dev purchase")
+	if err != nil {
+		return nil, starsErr(err)
+	}
+	return &tg.PaymentsPaymentResult{Updates: starsBalanceUpdates(balance.Balance, r.clock.Now().Unix())}, nil
 }
 
 func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string) (*tg.Updates, error) {
@@ -666,6 +777,29 @@ func starGiftFormID(userID, giftID int64) int64 {
 		id = 0x5347
 	}
 	return id
+}
+
+func starsTopupFormID(userID, stars int64, currency string, amount int64) int64 {
+	id := userID*0x9e3779b1 ^ (stars << 7) ^ (amount << 13) ^ 0x5354415253
+	for _, ch := range currency {
+		id = id*131 + int64(ch)
+	}
+	if id < 0 {
+		id = ^id
+	}
+	if id == 0 {
+		id = 0x5354
+	}
+	return id
+}
+
+func starsBalanceUpdates(balance int64, unixDate int64) *tg.Updates {
+	return &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: balance}}},
+		Users:   []tg.UserClass{},
+		Chats:   []tg.ChatClass{},
+		Date:    int(unixDate),
+	}
 }
 
 func giftPriceLabel(g domain.StarGift) string {

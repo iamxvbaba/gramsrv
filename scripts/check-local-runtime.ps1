@@ -174,7 +174,11 @@ if ($schema) {
     $parts = $schema -split "\|", 2
     Write-Host "schema_version=$($parts[0])"
     Write-Host "schema_dirty=$($parts[1])"
-    if ($parts.Count -gt 1 -and $parts[1] -eq "f") {
+    $schemaDirty = ""
+    if ($parts.Count -gt 1) {
+        $schemaDirty = $parts[1].Trim().ToLowerInvariant()
+    }
+    if ($schemaDirty -in @("f", "false", "0")) {
         Write-Ok "schema is clean"
     } else {
         Add-Failure "schema_migrations is dirty"

@@ -15,7 +15,7 @@ import (
 // gift/auction/revenue 第一阶段兼容桩。
 func (r *Router) registerPayments(d *tg.ServerDispatcher) {
 	d.OnPaymentsGetStarsTopupOptions(func(ctx context.Context) ([]tg.StarsTopupOption, error) {
-		return []tg.StarsTopupOption{}, nil
+		return devStarsTopupOptions(), nil
 	})
 	// premium 订阅赠送 telesrv 不实现（无支付流），返回空选项。关键作用：TDesktop 送礼框
 	// ShowStarGiftBox 的 ready() 门控要求 getPremiumGiftCodeOptions 成功返回(on_next)才置

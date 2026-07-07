@@ -6,6 +6,7 @@ import (
 
 	"github.com/gotd/td/clock"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -381,5 +382,97 @@ func TestStarGiftInsufficientBalance(t *testing.T) {
 	// 余额未变。
 	if bal, _ := r.deps.Stars.GetBalance(ctx, sender.ID); bal.Balance != 1000 {
 		t.Fatalf("sender balance = %d, want 1000 unchanged", bal.Balance)
+	}
+}
+
+func TestStarsTopupInvoiceFallbackCreditsBalance(t *testing.T) {
+	r, sender, _, _ := starGiftTestRouter(t)
+	ctx := context.Background()
+	senderCtx := WithUserID(ctx, sender.ID)
+	opt := devStarsTopupOptions()[1]
+	inv := &tg.InputInvoiceStars{Purpose: &tg.InputStorePaymentStarsTopup{
+		Stars:    opt.Stars,
+		Currency: opt.Currency,
+		Amount:   opt.Amount,
+	}}
+
+	formRes, err := r.onPaymentsGetPaymentForm(senderCtx, &tg.PaymentsGetPaymentFormRequest{Invoice: inv})
+	if err != nil {
+		t.Fatalf("getPaymentForm topup: %v", err)
+	}
+	form, ok := formRes.(*tg.PaymentsPaymentFormStars)
+	if !ok {
+		t.Fatalf("form = %T, want *tg.PaymentsPaymentFormStars", formRes)
+	}
+	if form.FormID != starsTopupFormID(sender.ID, opt.Stars, opt.Currency, opt.Amount) {
+		t.Fatalf("form id = %d, want deterministic topup id", form.FormID)
+	}
+	if form.BotID != domain.OfficialSystemUserID || len(form.Users) != 1 {
+		t.Fatalf("form bot/users = %d/%d, want official system user", form.BotID, len(form.Users))
+	}
+	if form.Invoice.Currency != "XTR" || len(form.Invoice.Prices) != 1 || form.Invoice.Prices[0].Amount != opt.Stars {
+		t.Fatalf("form invoice = %+v, want XTR + 1 price %d", form.Invoice, opt.Stars)
+	}
+
+	if _, err := r.onPaymentsSendStarsForm(senderCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID + 1, Invoice: inv}); !tgerr.Is(err, "STARS_FORM_AMOUNT_MISMATCH") {
+		t.Fatalf("sendStarsForm bad form err = %v, want STARS_FORM_AMOUNT_MISMATCH", err)
+	}
+	if bal, _ := r.deps.Stars.GetBalance(ctx, sender.ID); bal.Balance != 1000 {
+		t.Fatalf("balance after bad form = %d, want 1000 unchanged", bal.Balance)
+	}
+
+	payRes, err := r.onPaymentsSendStarsForm(senderCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID, Invoice: inv})
+	if err != nil {
+		t.Fatalf("sendStarsForm topup: %v", err)
+	}
+	pay, ok := payRes.(*tg.PaymentsPaymentResult)
+	if !ok {
+		t.Fatalf("pay result = %T, want *tg.PaymentsPaymentResult", payRes)
+	}
+	updates, ok := pay.Updates.(*tg.Updates)
+	if !ok {
+		t.Fatalf("pay updates = %T, want *tg.Updates", pay.Updates)
+	}
+	foundBalance := false
+	for _, up := range updates.Updates {
+		if balance, ok := up.(*tg.UpdateStarsBalance); ok {
+			foundBalance = true
+			if amt, ok := balance.Balance.(*tg.StarsAmount); !ok || amt.Amount != 3500 {
+				t.Fatalf("updateStarsBalance = %#v, want 3500", balance.Balance)
+			}
+		}
+	}
+	if !foundBalance {
+		t.Fatalf("payment updates missing updateStarsBalance: %#v", updates.Updates)
+	}
+	if bal, _ := r.deps.Stars.GetBalance(ctx, sender.ID); bal.Balance != 3500 {
+		t.Fatalf("balance after topup = %d, want 3500", bal.Balance)
+	}
+	page, err := r.deps.Stars.ListTransactions(ctx, sender.ID, "", 10)
+	if err != nil {
+		t.Fatalf("list transactions: %v", err)
+	}
+	hasTopup := false
+	for _, tx := range page.Transactions {
+		if tx.Reason == domain.StarsReasonTopup && tx.Amount == opt.Stars {
+			hasTopup = true
+		}
+	}
+	if !hasTopup {
+		t.Fatalf("transactions missing topup %d: %+v", opt.Stars, page.Transactions)
+	}
+}
+
+func TestStarsTopupRejectsUnlistedAmount(t *testing.T) {
+	r, sender, _, _ := starGiftTestRouter(t)
+	ctx := WithUserID(context.Background(), sender.ID)
+	inv := &tg.InputInvoiceStars{Purpose: &tg.InputStorePaymentStarsTopup{
+		Stars:    2501,
+		Currency: "USD",
+		Amount:   199,
+	}}
+	_, err := r.onPaymentsGetPaymentForm(ctx, &tg.PaymentsGetPaymentFormRequest{Invoice: inv})
+	if !tgerr.Is(err, "STARS_FORM_AMOUNT_MISMATCH") {
+		t.Fatalf("getPaymentForm unlisted err = %v, want STARS_FORM_AMOUNT_MISMATCH", err)
 	}
 }

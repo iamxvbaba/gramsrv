@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestAppConfigPremiumKeys 断言 premium 相关 key 完整下发且 hash 已递增：
+// TestAppConfigPremiumKeys 断言 premium / Stars 相关 key 完整下发且 hash 已递增：
 // premium_purchase_blocked 必须显式为 false——客户端把 star gift「Send a Gift」入口与
 // premiumCanBuy()=!premium_purchase_blocked 耦合，置 true 会同时隐藏送礼入口；
 // reactions_user_max_premium 必须与服务端 enforcement 档位一致。
@@ -24,6 +24,10 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 	}
 	if blocked, ok := decoded["premium_purchase_blocked"].(bool); !ok || blocked {
 		t.Fatalf("premium_purchase_blocked = %v, want false (star gift 送礼入口耦合此 flag)", decoded["premium_purchase_blocked"])
+	}
+	// DrKLO 缺省 starsLocked=true；缺 key 时余额不足送礼会误弹「所在国家无法购买星星」。
+	if blocked, ok := decoded["stars_purchase_blocked"].(bool); !ok || blocked {
+		t.Fatalf("stars_purchase_blocked = %v, want false (DrKLO starsPurchaseAvailable 据此解锁充值入口)", decoded["stars_purchase_blocked"])
 	}
 	// DrKLO 缺省 stargiftsBlocked=true 会隐藏 star gift 送礼网格，必须显式下发 false。
 	if blocked, ok := decoded["stargifts_blocked"].(bool); !ok || blocked {

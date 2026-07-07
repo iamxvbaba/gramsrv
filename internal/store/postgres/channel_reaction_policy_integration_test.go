@@ -175,6 +175,71 @@ WHERE channel_id = $1 AND message_id = $2 AND reaction_type = $3`, env.channelID
 	}
 }
 
+func TestChannelStoreSetAvailableReactionsRefreshesRowCache(t *testing.T) {
+	pool := testPool(t) // 未设 DSN 会 t.Skip
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	owner, err := users.Create(ctx, domain.User{AccessHash: 94, Phone: "+1892" + suffix + "04", FirstName: "PolicyCacheOwner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	var channelID int64
+	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
+		}
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
+	})
+
+	rowCache := NewChannelRowCache(100)
+	channels := NewChannelStore(pool, WithChannelRowCache(rowCache))
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Reaction Policy Cache " + suffix,
+		Broadcast:     true,
+		Date:          1700001010,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID = created.Channel.ID
+
+	if _, err := channels.GetChannel(ctx, owner.ID, channelID); err != nil {
+		t.Fatalf("warm GetChannel: %v", err)
+	}
+	cached, ok := rowCache.get(channelID)
+	if !ok {
+		t.Fatalf("GetChannel should warm row cache")
+	}
+	if cached.ReactionPolicy.PaidEnabled {
+		t.Fatalf("cached paid enabled before update = true, want false")
+	}
+
+	if _, err := channels.SetAvailableReactions(ctx, owner.ID, channelID, domain.ChannelReactionPolicy{
+		Type:        domain.ChannelReactionPolicyAll,
+		AllowCustom: true,
+		Limit:       9,
+		PaidEnabled: true,
+	}); err != nil {
+		t.Fatalf("set paid reaction policy: %v", err)
+	}
+	view, err := channels.GetChannel(ctx, owner.ID, channelID)
+	if err != nil {
+		t.Fatalf("get channel after set policy: %v", err)
+	}
+	if !view.Channel.ReactionPolicy.PaidEnabled || view.Channel.ReactionPolicy.Limit != 9 || !view.Channel.ReactionPolicy.AllowCustom {
+		t.Fatalf("view policy after set = %+v, want paid+limit+allow_custom from write-through cache", view.Channel.ReactionPolicy)
+	}
+	cached, ok = rowCache.get(channelID)
+	if !ok {
+		t.Fatalf("row cache missing after set policy")
+	}
+	if !cached.ReactionPolicy.PaidEnabled || cached.ReactionPolicy.Limit != 9 || !cached.ReactionPolicy.AllowCustom {
+		t.Fatalf("cached policy after set = %+v, want paid+limit+allow_custom", cached.ReactionPolicy)
+	}
+}
+
 func TestChannelStoreUniqueReactionsLimitOnlyBlocksNewKinds(t *testing.T) {
 	env := newReactionPolicyTestEnv(t, false)
 	ctx := context.Background()
