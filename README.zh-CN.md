@@ -216,6 +216,11 @@ internal/sfu/             SFU 实验模块
 internal/turnsrv/         TURN/STUN building blocks
 ```
 
+## TODO LIST
+
+- 优化 Bot 适配第三方库调用，如 `python-telegram-bot`。
+- 修复一些 bug，持续加固已实现的兼容路径。
+
 ## 一起优化
 
 `gramsrv` 非常欢迎大家一起跑、一起测、一起拆问题、一起优化。尤其欢迎这些贡献：

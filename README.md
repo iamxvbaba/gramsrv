@@ -236,6 +236,11 @@ internal/sfu/             real-time SFU experiments
 internal/turnsrv/         TURN/STUN building blocks
 ```
 
+## TODO List
+
+- Improve Bot compatibility for third-party libraries, such as `python-telegram-bot`.
+- Fix known bugs and keep hardening existing compatibility paths.
+
 ## Help Improve It
 
 `gramsrv` will get better fastest if more people run it, break it, profile it,
