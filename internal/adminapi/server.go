@@ -22,6 +22,7 @@ type Config struct {
 type Service interface {
 	SetSendFrozen(ctx context.Context, req admin.SetSendFrozenRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
+	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
 	RevokeSessions(ctx context.Context, req admin.RevokeSessionsRequest) (admin.CommandResult, error)
@@ -77,6 +78,7 @@ func (s *Server) routes() http.Handler {
 	})
 	mux.HandleFunc("POST /v1/accounts/freeze-send", s.authenticated(s.handleFreezeSend))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
+	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/revoke-sessions", s.authenticated(s.handleRevokeSessions))
 	mux.HandleFunc("POST /v1/channels/set-verified", s.authenticated(s.handleSetChannelVerified))
@@ -111,6 +113,15 @@ func (s *Server) handleGrantPremium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.GrantPremium(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleGrantStars(w http.ResponseWriter, r *http.Request) {
+	var req admin.GrantStarsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.GrantStars(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

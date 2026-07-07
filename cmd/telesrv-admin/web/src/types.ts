@@ -57,6 +57,8 @@ export type AccountDetail = {
   Verified: boolean;
   Support: boolean;
   Bot: boolean;
+  StarsBalance: number;
+  StarsGranted: boolean;
   Restriction: RestrictionRow;
   HasRestriction: boolean;
   Authorizations: AuthorizationRow[];

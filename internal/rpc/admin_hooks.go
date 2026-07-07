@@ -3,6 +3,8 @@ package rpc
 import (
 	"context"
 
+	"github.com/gotd/td/tg"
+
 	"telesrv/internal/domain"
 )
 
@@ -29,5 +31,18 @@ func (r *Router) NotifyChannelChanged(ctx context.Context, ch domain.Channel) er
 		return nil
 	}
 	r.channelStateMutationUpdates(ctx, ch.CreatorUserID, ch)
+	return nil
+}
+
+// NotifyStarsBalanceChanged is the domain-only hook used by the internal Admin
+// API after the local Stars ledger balance has changed outside a client RPC.
+func (r *Router) NotifyStarsBalanceChanged(ctx context.Context, balance domain.StarsBalance) error {
+	if r == nil || balance.UserID == 0 {
+		return nil
+	}
+	r.pushUserUpdates(ctx, balance.UserID, &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: balance.Balance}}},
+		Date:    int(r.clock.Now().Unix()),
+	})
 	return nil
 }

@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, Sparkles } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, Sparkles, Star } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -15,6 +15,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [months, setMonths] = useState("1");
+  const [starsAmount, setStarsAmount] = useState("1000");
 
   async function load() {
     setBusy(true);
@@ -64,6 +65,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <Summary label={t("account.userID")} value={String(account.ID)} mono />
               <Summary label={t("account.lastActive")} value={formatUnix(detail.LastSeenAt) || "-"} />
               <Summary label={t("account.premiumUntil")} value={account.PremiumUntil > 0 ? formatUnix(account.PremiumUntil) : t("common.none")} />
+              <Summary label={t("account.starsBalance")} value={`${detail.StarsBalance} / ${detail.StarsGranted ? t("account.startingGrantApplied") : t("account.startingGrantPending")}`} />
               <Summary label={t("common.updatedAt")} value={formatDate(account.UpdatedAt) || "-"} />
               <Summary label={t("account.activeSessions")} value={String(detail.Authorizations.length)} />
               <Summary label={t("account.accountFlags")} value={`support=${detail.Support} bot=${detail.Bot}`} />
@@ -117,6 +119,25 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 tone="warn"
                 path="/api/actions/grant-premium"
                 payload={() => ({ user_id: account.ID, months: 0 })}
+                onDone={load}
+              />
+              <label className="duration-field">
+                <span>{t("account.starsAmount")}</span>
+                <input
+                  aria-label={t("account.starsAmountAria")}
+                  value={starsAmount}
+                  onChange={(event) => setStarsAmount(event.target.value)}
+                  type="number"
+                  min="1"
+                  max="1000000000"
+                />
+              </label>
+              <ActionButton
+                label={t("account.grantStars")}
+                icon={<Star size={15} />}
+                tone="warn"
+                path="/api/actions/grant-stars"
+                payload={() => ({ user_id: account.ID, amount: toInt(starsAmount) })}
                 onDone={load}
               />
               <ActionButton

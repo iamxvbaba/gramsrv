@@ -689,6 +689,8 @@ func run(logger *zap.Logger) error {
 		Auth:            authService,
 		Revoker:         router,
 		Users:           usersService,
+		Stars:           starsService,
+		StarsNotifier:   router,
 		UserNotifier:    router,
 		Channels:        channelsService,
 		ChannelNotifier: router,

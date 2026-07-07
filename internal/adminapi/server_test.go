@@ -48,6 +48,20 @@ func TestAdminAPISetVerified(t *testing.T) {
 	}
 }
 
+func TestAdminAPIGrantStars(t *testing.T) {
+	srv := &Server{token: "secret", svc: fakeService{}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/grant-stars", strings.NewReader(`{"command_id":"c-stars","actor":"ops","reason":"manual grant","dry_run":true,"user_id":1001,"amount":500}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"command_id":"c-stars"`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
 func TestAdminAPISetChannelVerified(t *testing.T) {
 	srv := &Server{token: "secret", svc: fakeService{}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/channels/set-verified", strings.NewReader(`{"command_id":"c3","actor":"ops","reason":"official","dry_run":true,"channel_id":2001,"verified":true}`))
@@ -69,6 +83,10 @@ func (fakeService) SetSendFrozen(_ context.Context, req admin.SetSendFrozenReque
 }
 
 func (fakeService) GrantPremium(_ context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) GrantStars(_ context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 

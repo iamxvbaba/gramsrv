@@ -14,6 +14,7 @@ import (
 const (
 	ActionSetSendFrozen         = "account.set_send_frozen"
 	ActionGrantPremium          = "account.grant_premium"
+	ActionGrantStars            = "account.grant_stars"
 	ActionSetVerified           = "account.set_verified"
 	ActionSetChannelVerified    = "channel.set_verified"
 	ActionRevokeSessions        = "account.revoke_sessions"
@@ -25,6 +26,7 @@ const (
 	maxReasonLength    = 1000
 	maxHistoryBatches  = 100
 	maxPremiumMonths   = 120
+	maxStarsGrant      = 1_000_000_000
 )
 
 type CommandRepository interface {
@@ -54,6 +56,14 @@ type UsersService interface {
 	SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error)
 }
 
+type StarsService interface {
+	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
+}
+
+type StarsNotifier interface {
+	NotifyStarsBalanceChanged(ctx context.Context, balance domain.StarsBalance) error
+}
+
 type UserNotifier interface {
 	NotifyUserChanged(ctx context.Context, u domain.User) error
 }
@@ -80,6 +90,8 @@ type Dependencies struct {
 	Auth            AuthService
 	Revoker         AuthKeyRevoker
 	Users           UsersService
+	Stars           StarsService
+	StarsNotifier   StarsNotifier
 	UserNotifier    UserNotifier
 	Channels        ChannelsService
 	ChannelNotifier ChannelNotifier
@@ -93,6 +105,8 @@ type Service struct {
 	auth            AuthService
 	revoker         AuthKeyRevoker
 	users           UsersService
+	stars           StarsService
+	starsNotifier   StarsNotifier
 	userNotifier    UserNotifier
 	channels        ChannelsService
 	channelNotifier ChannelNotifier
@@ -120,6 +134,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Users != nil {
 		s.users = deps.Users
+	}
+	if deps.Stars != nil {
+		s.stars = deps.Stars
+	}
+	if deps.StarsNotifier != nil {
+		s.starsNotifier = deps.StarsNotifier
 	}
 	if deps.UserNotifier != nil {
 		s.userNotifier = deps.UserNotifier
@@ -172,6 +192,12 @@ type GrantPremiumRequest struct {
 	CommandMeta
 	UserID int64 `json:"user_id"`
 	Months int   `json:"months"`
+}
+
+type GrantStarsRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	Amount int64 `json:"amount"`
 }
 
 type SetVerifiedRequest struct {
@@ -302,6 +328,46 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 			msg = "premium cleared"
 		}
 		return CommandResult{Message: msg, Details: details}, nil
+	})
+}
+
+func (s *Service) GrantStars(ctx context.Context, req GrantStarsRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if req.Amount <= 0 || req.Amount > maxStarsGrant {
+		return CommandResult{}, fmt.Errorf("amount must be between 1 and %d", maxStarsGrant)
+	}
+	if s == nil || s.users == nil || s.stars == nil {
+		return CommandResult{}, fmt.Errorf("admin stars dependencies are not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionGrantStars, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{
+			"amount":       req.Amount,
+			"username":     u.Username,
+			"phone":        u.Phone,
+			"would_credit": true,
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		balance, err := s.stars.Credit(ctx, req.UserID, req.Amount, domain.StarsReasonAdjust, domain.Peer{}, "Admin Stars grant", req.Reason)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_balance"] = balance.Balance
+		details["starting_grant_applied"] = balance.Granted
+		if err := s.notifyStarsBalanceChanged(ctx, balance); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "stars granted", Details: details}, nil
 	})
 }
 
@@ -652,6 +718,13 @@ func (s *Service) notifyUserChanged(ctx context.Context, u domain.User) error {
 		return nil
 	}
 	return s.userNotifier.NotifyUserChanged(ctx, u)
+}
+
+func (s *Service) notifyStarsBalanceChanged(ctx context.Context, balance domain.StarsBalance) error {
+	if s == nil || s.starsNotifier == nil {
+		return nil
+	}
+	return s.starsNotifier.NotifyStarsBalanceChanged(ctx, balance)
 }
 
 func (s *Service) notifyChannelChanged(ctx context.Context, ch domain.Channel) error {

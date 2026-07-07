@@ -58,6 +58,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/messages/groups/detail", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessageDetailAPI)))
 	mux.Handle("POST /api/actions/freeze-send", s.requireAuthAPI(http.HandlerFunc(s.handleFreezeSendAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
+	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetVerifiedAPI)))
 	mux.Handle("POST /api/actions/set-channel-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelVerifiedAPI)))
 	mux.Handle("POST /api/actions/revoke-sessions", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeSessionsAPI)))
@@ -428,6 +429,28 @@ func (s *server) handleGrantPremiumAPI(w http.ResponseWriter, r *http.Request) {
 		Months:      body.Months,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/grant-premium", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type grantStarsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	Amount    int64  `json:"amount"`
+}
+
+func (s *server) handleGrantStarsAPI(w http.ResponseWriter, r *http.Request) {
+	var body grantStarsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.GrantStarsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "grant-stars"),
+		UserID:      body.UserID,
+		Amount:      body.Amount,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/grant-stars", req)
 	writeCommandResultAPI(w, result, err)
 }
 

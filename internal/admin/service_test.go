@@ -103,6 +103,59 @@ func TestGrantPremiumDryRunExecuteAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestGrantStarsDryRunExecuteAndIdempotency(t *testing.T) {
+	ctx := context.Background()
+	users := &fakeUsersService{users: map[int64]domain.User{
+		1001: {ID: 1001, Phone: "1001", Username: "alice", FirstName: "Alice"},
+	}}
+	stars := &fakeStarsService{balances: map[int64]domain.StarsBalance{
+		1001: {UserID: 1001, Balance: 1000, Granted: true},
+	}}
+	notifier := &fakeStarsNotifier{}
+	svc := NewService(Dependencies{
+		Commands:      newMemoryCommandRepo(),
+		Users:         users,
+		Stars:         stars,
+		StarsNotifier: notifier,
+		Now:           fixedNow,
+	})
+
+	dry, err := svc.GrantStars(ctx, GrantStarsRequest{
+		CommandMeta: CommandMeta{CommandID: "dry-stars", Actor: "ops", Reason: "test", DryRun: true},
+		UserID:      1001,
+		Amount:      250,
+	})
+	if err != nil {
+		t.Fatalf("dry-run stars: %v", err)
+	}
+	if !dry.DryRun || stars.creditCalls != 0 || len(notifier.balances) != 0 {
+		t.Fatalf("dry=%+v creditCalls=%d notified=%v, want no mutation", dry, stars.creditCalls, notifier.balances)
+	}
+
+	req := GrantStarsRequest{
+		CommandMeta: CommandMeta{CommandID: "exec-stars", Actor: "ops", Reason: "ops grant"},
+		UserID:      1001,
+		Amount:      250,
+	}
+	exec, err := svc.GrantStars(ctx, req)
+	if err != nil {
+		t.Fatalf("execute stars: %v", err)
+	}
+	if exec.Status != string(domain.AdminCommandCompleted) || stars.creditCalls != 1 || stars.lastAmount != 250 || stars.lastReason != domain.StarsReasonAdjust || len(notifier.balances) != 1 {
+		t.Fatalf("exec=%+v creditCalls=%d amount=%d reason=%s notified=%v", exec, stars.creditCalls, stars.lastAmount, stars.lastReason, notifier.balances)
+	}
+	if exec.Details["updated_balance"] != int64(1250) {
+		t.Fatalf("updated_balance=%v, want 1250", exec.Details["updated_balance"])
+	}
+	again, err := svc.GrantStars(ctx, req)
+	if err != nil {
+		t.Fatalf("duplicate stars: %v", err)
+	}
+	if !again.AlreadyExecuted || stars.creditCalls != 1 || len(notifier.balances) != 1 {
+		t.Fatalf("again=%+v creditCalls=%d notified=%v, want idempotent replay", again, stars.creditCalls, notifier.balances)
+	}
+}
+
 func TestSetVerifiedDryRunExecuteAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	users := &fakeUsersService{users: map[int64]domain.User{
@@ -465,6 +518,47 @@ func (f *fakeUsersService) SetVerified(_ context.Context, userID int64, verified
 	u.Verified = verified
 	f.users[userID] = u
 	return u, nil
+}
+
+type fakeStarsService struct {
+	balances    map[int64]domain.StarsBalance
+	creditCalls int
+	lastUserID  int64
+	lastAmount  int64
+	lastReason  domain.StarsTransactionReason
+	lastPeer    domain.Peer
+	lastTitle   string
+	lastDesc    string
+}
+
+func (f *fakeStarsService) Credit(_ context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error) {
+	f.creditCalls++
+	f.lastUserID = userID
+	f.lastAmount = amount
+	f.lastReason = reason
+	f.lastPeer = peer
+	f.lastTitle = title
+	f.lastDesc = desc
+	if amount <= 0 {
+		return domain.StarsBalance{}, domain.ErrStarsInvalidAmount
+	}
+	if f.balances == nil {
+		f.balances = map[int64]domain.StarsBalance{}
+	}
+	balance := f.balances[userID]
+	balance.UserID = userID
+	balance.Balance += amount
+	f.balances[userID] = balance
+	return balance, nil
+}
+
+type fakeStarsNotifier struct {
+	balances []domain.StarsBalance
+}
+
+func (f *fakeStarsNotifier) NotifyStarsBalanceChanged(_ context.Context, balance domain.StarsBalance) error {
+	f.balances = append(f.balances, balance)
+	return nil
 }
 
 type fakeUserNotifier struct {
