@@ -9,6 +9,7 @@ import (
 // PasswordStore 持久化账号 2FA/SRP 配置。
 type PasswordStore interface {
 	GetByUser(ctx context.Context, userID int64) (domain.PasswordSettings, bool, error)
+	LoginEmailOwner(ctx context.Context, email string) (int64, bool, error)
 	Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error
 }
 

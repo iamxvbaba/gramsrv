@@ -18,6 +18,7 @@ import (
 	mtcrypto "github.com/gotd/td/crypto"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/mail"
 	"telesrv/internal/store"
 )
 
@@ -33,6 +34,12 @@ var (
 	ErrPhoneNumberInvalid = errors.New("phone number invalid")
 	// ErrSystemUserLoginForbidden 表示内置系统账号被尝试绑定为普通业务会话。
 	ErrSystemUserLoginForbidden = errors.New("system user login forbidden")
+)
+
+const (
+	codeChannelPhone              = "phone"
+	codeChannelEmailLogin         = "email_login"
+	codeChannelEmailSetupRequired = "email_setup_required"
 )
 
 // validPhone 校验规范化后的手机号：5-32 位纯数字（上限对齐 users.phone 列宽）。
@@ -61,19 +68,38 @@ func systemLoginPhoneForbidden(phone string) bool {
 
 // Service 实现登录/注册业务。第一阶段为开发固定验证码（不真实下发短信）。
 type Service struct {
-	users     store.UserStore
-	auths     store.AuthorizationStore
-	codes     store.CodeStore
-	authKeys  store.AuthKeyStore
-	tempKeys  store.TempAuthKeyBindingStore
-	passwords store.PasswordStore
-	messages  store.MessageStore
-	dialogs   store.DialogStore
-	bots      store.BotStore
-	fixedCode string
-	codeTTL   time.Duration
+	users                  store.UserStore
+	auths                  store.AuthorizationStore
+	codes                  store.CodeStore
+	authKeys               store.AuthKeyStore
+	tempKeys               store.TempAuthKeyBindingStore
+	passwords              store.PasswordStore
+	messages               store.MessageStore
+	dialogs                store.DialogStore
+	bots                   store.BotStore
+	fixedCode              string
+	codeTTL                time.Duration
+	codeMaxAttempts        int
+	loginEmails            loginEmailStore
+	loginEmailSender       mail.Sender
+	loginEmailEnabled      bool
+	loginEmailRequireSetup bool
+	loginEmailCodeLength   int
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
+}
+
+type loginEmailStore interface {
+	LoginEmailByPhone(ctx context.Context, phone string) (string, bool, error)
+	SetLoginEmailByPhone(ctx context.Context, phone, email string) error
+}
+
+type LoginEmailOptions struct {
+	Enabled      bool
+	RequireSetup bool
+	CodeLength   int
+	Store        loginEmailStore
+	Sender       mail.Sender
 }
 
 type authorizationRevoker interface {
@@ -114,9 +140,38 @@ func WithPremiumGrant(months int) Option {
 	}
 }
 
+func WithCodeTTL(ttl time.Duration) Option {
+	return func(s *Service) {
+		if ttl > 0 {
+			s.codeTTL = ttl
+		}
+	}
+}
+
+func WithCodeMaxAttempts(max int) Option {
+	return func(s *Service) {
+		if max > 0 {
+			s.codeMaxAttempts = max
+		}
+	}
+}
+
+func WithLoginEmail(opts LoginEmailOptions) Option {
+	return func(s *Service) {
+		s.loginEmailEnabled = opts.Enabled
+		s.loginEmailRequireSetup = opts.RequireSetup
+		s.loginEmailCodeLength = opts.CodeLength
+		if s.loginEmailCodeLength <= 0 {
+			s.loginEmailCodeLength = 6
+		}
+		s.loginEmails = opts.Store
+		s.loginEmailSender = opts.Sender
+	}
+}
+
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
-	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute}
+	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -214,7 +269,8 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte)
 	return s.auths.MarkPasswordPassed(ctx, authKeyID)
 }
 
-// SendCode 为 phone 生成 phone_code_hash，暂存（开发）固定验证码，返回 hash。
+// SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
+// 或登录邮箱 setup-required 状态，返回 hash。
 func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	phone = normalizePhone(phone)
 	if !validPhone(phone) {
@@ -223,14 +279,103 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	if systemLoginPhoneForbidden(phone) {
 		return "", ErrSystemUserLoginForbidden
 	}
+	if s.loginEmailEnabled && s.loginEmails != nil {
+		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)
+		if err != nil {
+			return "", err
+		}
+		if found && strings.TrimSpace(email) != "" {
+			return s.createEmailLoginCode(ctx, phone, email)
+		}
+		if s.loginEmailRequireSetup {
+			return s.createSetupRequiredCode(ctx, phone)
+		}
+	}
+	return s.createPhoneCode(ctx, phone)
+}
+
+func (s *Service) createPhoneCode(ctx context.Context, phone string) (string, error) {
 	hash, err := randomHex(8)
 	if err != nil {
 		return "", err
 	}
-	if err := s.codes.Set(ctx, hash, store.PhoneCode{Phone: phone, Code: s.fixedCode}, s.codeTTL); err != nil {
+	if err := s.codes.Set(ctx, hash, store.PhoneCode{
+		Phone:       phone,
+		Code:        s.fixedCode,
+		Channel:     codeChannelPhone,
+		MaxAttempts: s.codeMaxAttempts,
+	}, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store code: %w", err)
 	}
 	return hash, nil
+}
+
+func (s *Service) createSetupRequiredCode(ctx context.Context, phone string) (string, error) {
+	hash, err := randomHex(8)
+	if err != nil {
+		return "", err
+	}
+	if err := s.codes.Set(ctx, hash, store.PhoneCode{
+		Phone:       phone,
+		Channel:     codeChannelEmailSetupRequired,
+		MaxAttempts: s.codeMaxAttempts,
+	}, s.codeTTL); err != nil {
+		return "", fmt.Errorf("store code: %w", err)
+	}
+	return hash, nil
+}
+
+func (s *Service) createEmailLoginCode(ctx context.Context, phone, email string) (string, error) {
+	hash, err := randomHex(8)
+	if err != nil {
+		return "", err
+	}
+	code, err := randomDigits(s.loginEmailCodeLength)
+	if err != nil {
+		return "", err
+	}
+	rec := store.PhoneCode{
+		Phone:       phone,
+		Code:        code,
+		Channel:     codeChannelEmailLogin,
+		Email:       strings.TrimSpace(email),
+		MaxAttempts: s.codeMaxAttempts,
+	}
+	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
+		return "", fmt.Errorf("store email code: %w", err)
+	}
+	if s.loginEmailSender == nil {
+		_ = s.codes.Del(ctx, hash)
+		return "", fmt.Errorf("login email sender is not configured")
+	}
+	if err := s.loginEmailSender.SendLoginCode(ctx, rec.Email, code, s.codeTTL); err != nil {
+		_ = s.codes.Del(ctx, hash)
+		return "", fmt.Errorf("send login email code: %w", err)
+	}
+	return hash, nil
+}
+
+func (s *Service) CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error) {
+	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
+	if err != nil || !found {
+		return domain.AuthCodeDelivery{}, found, err
+	}
+	return codeDelivery(rec), true, nil
+}
+
+func codeDelivery(rec store.PhoneCode) domain.AuthCodeDelivery {
+	switch rec.Channel {
+	case codeChannelEmailLogin:
+		return domain.AuthCodeDelivery{
+			Kind:         domain.AuthCodeDeliveryEmail,
+			EmailPattern: domain.MaskEmail(rec.Email),
+			Length:       len(rec.Code),
+		}
+	case codeChannelEmailSetupRequired:
+		return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliveryEmailSetupRequired}
+	default:
+		return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliveryPhone, Length: len(rec.Code)}
+	}
 }
 
 // ResendCode invalidates an existing code hash and sends a fresh code to the same phone.
@@ -247,6 +392,12 @@ func (s *Service) ResendCode(ctx context.Context, phone, phoneCodeHash string) (
 		return "", ErrCodeInvalid
 	}
 	_ = s.codes.Del(ctx, phoneCodeHash)
+	if rec.Channel == codeChannelEmailLogin && strings.TrimSpace(rec.Email) != "" {
+		return s.createEmailLoginCode(ctx, phone, rec.Email)
+	}
+	if rec.Channel == codeChannelEmailSetupRequired {
+		return s.createSetupRequiredCode(ctx, phone)
+	}
 	return s.SendCode(ctx, phone)
 }
 
@@ -280,8 +431,14 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	if !found {
 		return domain.User{}, domain.Message{}, false, ErrCodeExpired
 	}
-	if rec.Phone != phone || rec.Code != code {
+	if rec.Phone != phone || rec.Channel == codeChannelEmailSetupRequired {
 		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
+	}
+	if rec.Channel == codeChannelEmailLogin {
+		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
+	}
+	if rec.Code != code {
+		return domain.User{}, domain.Message{}, false, s.rejectCode(ctx, phoneCodeHash, rec, ErrCodeInvalid)
 	}
 
 	existing, found, err := s.users.ByPhone(ctx, phone)
@@ -295,9 +452,10 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 }
 
 // SignInWithEmail 处理带 email_verification 的 auth.signIn：账号设置了登录邮箱后，新设备
-// 的验证码改投递到邮箱，客户端凭邮箱码（而非短信码）登录。开发环境接受任意非空邮箱码
-// （与短信固定码同口径，"随意输入"）；仍校验 phone_code_hash 有效、手机号匹配，并与短信
-// 登录共用 2FA 门控——即便走邮箱验证，开启了两步验证的账号同样会停在 SESSION_PASSWORD_NEEDED。
+// 的验证码改投递到邮箱，客户端凭邮箱码（而非短信码）登录。开启真实登录邮箱后必须匹配
+// 随机邮箱码；未开启该特性时仅保留旧开发路径的任意非空兼容。仍校验 phone_code_hash
+// 有效、手机号匹配，并与短信登录共用 2FA 门控——即便走邮箱验证，开启了两步验证的账号
+// 同样会停在 SESSION_PASSWORD_NEEDED。
 func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error) {
 	phone = normalizePhone(phone)
 	if systemLoginPhoneForbidden(phone) {
@@ -313,8 +471,15 @@ func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization
 	if rec.Phone != phone {
 		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
 	}
-	if strings.TrimSpace(code) == "" {
-		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
+	if rec.Channel != codeChannelEmailLogin {
+		if s.loginEmailEnabled {
+			return domain.User{}, domain.Message{}, false, ErrCodeInvalid
+		}
+		if strings.TrimSpace(code) == "" {
+			return domain.User{}, domain.Message{}, false, ErrCodeInvalid
+		}
+	} else if rec.Code != strings.TrimSpace(code) {
+		return domain.User{}, domain.Message{}, false, s.rejectCode(ctx, phoneCodeHash, rec, ErrCodeInvalid)
 	}
 	existing, found, err := s.users.ByPhone(ctx, phone)
 	if err != nil {
@@ -378,6 +543,12 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	if rec.Phone != phone {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
+	if rec.Channel == codeChannelEmailSetupRequired {
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" {
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
 
 	accessHash, err := randomInt64()
 	if err != nil {
@@ -397,6 +568,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	u, err := s.users.Create(ctx, newUser)
 	if err != nil {
 		return domain.User{}, domain.Message{}, err
+	}
+	if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
+		if err := s.loginEmails.SetLoginEmailByPhone(ctx, phone, rec.PendingEmail); err != nil {
+			return domain.User{}, domain.Message{}, err
+		}
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err
@@ -523,6 +699,43 @@ func (s *Service) UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byt
 		return nil
 	}
 	return s.auths.UpdateLayer(ctx, authKeyID, layer)
+}
+
+func (s *Service) AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error) {
+	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
+		return domain.AuthKeyClientInfo{}, false, nil
+	}
+	key, found, err := s.authKeys.Get(ctx, authKeyID)
+	if err != nil || !found {
+		return domain.AuthKeyClientInfo{}, found, err
+	}
+	info := domain.AuthKeyClientInfo{
+		Layer:         key.Layer,
+		DeviceModel:   key.DeviceModel,
+		Platform:      key.Platform,
+		SystemVersion: key.SystemVersion,
+		APIID:         key.APIID,
+		AppVersion:    key.AppVersion,
+	}
+	if info.Layer == 0 && info.DeviceModel == "" && info.Platform == "" &&
+		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" {
+		return domain.AuthKeyClientInfo{}, false, nil
+	}
+	return info, true, nil
+}
+
+func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error {
+	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
+		return nil
+	}
+	return s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
+		Layer:         info.Layer,
+		DeviceModel:   info.DeviceModel,
+		Platform:      info.Platform,
+		SystemVersion: info.SystemVersion,
+		APIID:         info.APIID,
+		AppVersion:    info.AppVersion,
+	})
 }
 
 func (s *Service) ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error) {
@@ -752,6 +965,20 @@ func authKeyIDInt64(id [8]byte) int64 {
 	return int64(binary.LittleEndian.Uint64(id[:]))
 }
 
+func (s *Service) rejectCode(ctx context.Context, hash string, rec store.PhoneCode, ret error) error {
+	rec.Attempts++
+	max := rec.MaxAttempts
+	if max <= 0 {
+		max = s.codeMaxAttempts
+	}
+	if max > 0 && rec.Attempts >= max {
+		_ = s.codes.Del(ctx, hash)
+		return ret
+	}
+	_ = s.codes.Update(ctx, hash, rec)
+	return ret
+}
+
 func normalizePhone(phone string) string {
 	return domain.NormalizePhone(phone)
 }
@@ -762,6 +989,22 @@ func randomHex(n int) (string, error) {
 		return "", fmt.Errorf("rand: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func randomDigits(n int) (string, error) {
+	if n <= 0 {
+		n = 6
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("rand: %w", err)
+	}
+	var out strings.Builder
+	out.Grow(n)
+	for _, v := range b {
+		out.WriteByte(byte('0') + v%10)
+	}
+	return out.String(), nil
 }
 
 func randomInt64() (int64, error) {

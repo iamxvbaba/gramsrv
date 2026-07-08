@@ -70,3 +70,62 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 		t.Fatalf("missing key: found=%v err=%v, want found=false err=nil", found, err)
 	}
 }
+
+func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	var id [8]byte
+	var val [256]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(val[:]); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(id))
+	})
+
+	keys := NewAuthKeyStore(pool)
+	if err := keys.Save(ctx, store.AuthKeyData{ID: id, Value: val, ServerSalt: 0x0badf00d}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer:         227,
+		DeviceModel:   "GooglePixel 9a",
+		Platform:      "android",
+		SystemVersion: "SDK 36",
+		APIID:         6,
+		AppVersion:    "12.8.1 (69169) pbeta",
+	}); err != nil {
+		t.Fatalf("update client info: %v", err)
+	}
+
+	got, found, err := NewAuthKeyStore(pool).Get(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !found {
+		t.Fatal("auth key not found after client info update")
+	}
+	if got.Layer != 227 || got.DeviceModel != "GooglePixel 9a" || got.Platform != "android" ||
+		got.SystemVersion != "SDK 36" || got.APIID != 6 || got.AppVersion != "12.8.1 (69169) pbeta" {
+		t.Fatalf("client info mismatch: %+v", got)
+	}
+
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{AppVersion: "12.8.2"}); err != nil {
+		t.Fatalf("partial update client info: %v", err)
+	}
+	got, found, err = NewAuthKeyStore(pool).Get(ctx, id)
+	if err != nil {
+		t.Fatalf("get after partial update: %v", err)
+	}
+	if !found {
+		t.Fatal("auth key not found after partial client info update")
+	}
+	if got.Layer != 227 || got.DeviceModel != "GooglePixel 9a" || got.Platform != "android" ||
+		got.SystemVersion != "SDK 36" || got.APIID != 6 || got.AppVersion != "12.8.2" {
+		t.Fatalf("partial client info merge mismatch: %+v", got)
+	}
+}

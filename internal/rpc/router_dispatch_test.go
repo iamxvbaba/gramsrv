@@ -188,6 +188,146 @@ func TestDispatchRemembersLayerAndClientTypeForSession(t *testing.T) {
 	}
 }
 
+func TestDispatchPersistsPreLoginClientMetadataOnInitConnection(t *testing.T) {
+	auth := &captureAuthService{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+	rawAuthKeyID := [8]byte{0x22, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
+	sessionID := int64(8103956954238395544)
+
+	req := &tg.InvokeWithLayerRequest{
+		Layer: currentClientLayer,
+		Query: &tg.InitConnectionRequest{
+			APIID:          4,
+			DeviceModel:    "GooglePixel 9a",
+			SystemVersion:  "SDK 36",
+			AppVersion:     "12.8.1 (69169) pbeta",
+			SystemLangCode: "en",
+			LangPack:       "android",
+			LangCode:       "en",
+			Query:          &tg.HelpGetConfigRequest{},
+		},
+	}
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatalf("encode init request: %v", err)
+	}
+	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, sessionID, &in); err != nil {
+		t.Fatalf("dispatch init request: %v", err)
+	}
+
+	got, ok := auth.authKeyClientInfos[rawAuthKeyID]
+	if !ok {
+		t.Fatalf("auth key client metadata was not persisted")
+	}
+	if got.Layer != currentClientLayer {
+		t.Fatalf("persisted layer = %d, want %d", got.Layer, currentClientLayer)
+	}
+	if got.Platform != string(ClientTypeAndroid) {
+		t.Fatalf("persisted platform = %q, want android", got.Platform)
+	}
+	if got.DeviceModel != "GooglePixel 9a" || got.SystemVersion != "SDK 36" || got.APIID != 4 || got.AppVersion != "12.8.1 (69169) pbeta" {
+		t.Fatalf("persisted client metadata = %+v", got)
+	}
+}
+
+func TestDispatchPersistsPreLoginClientMetadataFromSendCodeAPIID(t *testing.T) {
+	auth := &captureAuthService{}
+	rawAuthKeyID := [8]byte{0x33, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
+	const sessionID = int64(8103956954238395544)
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+
+	var sendCode bin.Buffer
+	if err := (&tg.AuthSendCodeRequest{
+		PhoneNumber: "+8618800000020",
+		APIID:       4,
+		APIHash:     "android",
+		Settings:    tg.CodeSettings{},
+	}).Encode(&sendCode); err != nil {
+		t.Fatalf("encode auth.sendCode: %v", err)
+	}
+	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, sessionID, &sendCode); err != nil {
+		t.Fatalf("dispatch auth.sendCode: %v", err)
+	}
+	persisted, ok := auth.authKeyClientInfos[rawAuthKeyID]
+	if !ok {
+		t.Fatalf("auth.sendCode did not persist auth key client metadata")
+	}
+	if persisted.APIID != 4 || persisted.Platform != string(ClientTypeAndroid) {
+		t.Fatalf("persisted client metadata = %+v, want android api_id=4", persisted)
+	}
+
+	core, logs := observer.New(zap.DebugLevel)
+	afterRestart := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zap.New(core), clock.System)
+	var help bin.Buffer
+	if err := (&tg.HelpGetConfigRequest{}).Encode(&help); err != nil {
+		t.Fatalf("encode help.getConfig: %v", err)
+	}
+	if _, err := afterRestart.Dispatch(context.Background(), rawAuthKeyID, sessionID+1, &help); err != nil {
+		t.Fatalf("dispatch help.getConfig after restart: %v", err)
+	}
+	entries := logs.FilterMessage("RPC inner handled").All()
+	if len(entries) == 0 {
+		t.Fatalf("RPC inner handled log missing")
+	}
+	fields := entries[len(entries)-1].ContextMap()
+	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
+		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)
+	}
+}
+
+func TestDispatchRestoresPreLoginAndroidMetadataFromAuthKey(t *testing.T) {
+	core, logs := observer.New(zap.DebugLevel)
+	authKeyID := [8]byte{0x22, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
+	auth := &captureAuthService{
+		authKeyClientInfos: map[[8]byte]domain.AuthKeyClientInfo{
+			authKeyID: {
+				Layer:         currentClientLayer,
+				DeviceModel:   "GooglePixel 9a",
+				Platform:      string(ClientTypeAndroid),
+				SystemVersion: "SDK 36",
+				APIID:         4,
+				AppVersion:    "12.8.1 (69169) pbeta",
+			},
+		},
+	}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zap.New(core), clock.System)
+
+	var in bin.Buffer
+	if err := (&tg.HelpGetConfigRequest{}).Encode(&in); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	const sessionID = int64(8103956954238395544)
+	if _, err := r.Dispatch(context.Background(), authKeyID, sessionID, &in); err != nil {
+		t.Fatalf("dispatch plain request: %v", err)
+	}
+
+	entries := logs.FilterMessage("RPC inner handled").All()
+	if len(entries) == 0 {
+		t.Fatalf("RPC inner handled log missing")
+	}
+	fields := entries[len(entries)-1].ContextMap()
+	if got := intLogField(fields["layer"]); got != currentClientLayer {
+		t.Fatalf("logged layer = %d fields=%v, want %d", got, fields, currentClientLayer)
+	}
+	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
+		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)
+	}
+	if got := fields["app_version"]; got != "12.8.1 (69169) pbeta" {
+		t.Fatalf("logged app_version = %v, want 12.8.1 (69169) pbeta", got)
+	}
+	if got, ok := r.NegotiatedLayer(authKeyID, sessionID+1); !ok || got != currentClientLayer {
+		t.Fatalf("auth-key fallback layer = (%d,%v), want (%d,true)", got, ok, currentClientLayer)
+	}
+}
+
 func TestAndroidLegacyCompatLogsClientMetadataWithoutInit(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zap.New(core), clock.System)
@@ -210,9 +350,10 @@ func TestAndroidLegacyCompatLogsClientMetadataWithoutInit(t *testing.T) {
 		t.Fatalf("dispatch legacy updates.getDifference: %v", err)
 	}
 
-	// The legacy android constructor is upgraded by layerwire and dispatched
-	// normally; client metadata is still applied (withAndroidCompatMetadata for
-	// client drift), now surfaced on the standard "RPC inner handled" log.
+	// The legacy Android constructor is upgraded by layerwire and dispatched
+	// normally; client metadata is still applied only because IsClientDrift
+	// positively identified a DrKLO constructor, now surfaced on the standard
+	// "RPC inner handled" log.
 	entries := logs.FilterMessage("RPC inner handled").All()
 	if len(entries) == 0 {
 		t.Fatalf("RPC inner handled log missing")
@@ -336,6 +477,16 @@ func TestClientTypeDetectsAndroidSDKVersion(t *testing.T) {
 	})
 	if got := info.ClientType(); got != ClientTypeUnknown {
 		t.Fatalf("gotd test client type = %s, want %s", got, ClientTypeUnknown)
+	}
+
+	info = normalizeClientInfo(ClientInfo{APIID: 4})
+	if got := info.ClientType(); got != ClientTypeAndroid {
+		t.Fatalf("DrKLO api_id=4 client type = %s, want %s", got, ClientTypeAndroid)
+	}
+
+	info = normalizeClientInfo(ClientInfo{APIID: 2040})
+	if got := info.ClientType(); got != ClientTypeTDesktop {
+		t.Fatalf("TDesktop api_id=2040 client type = %s, want %s", got, ClientTypeTDesktop)
 	}
 }
 
@@ -535,6 +686,28 @@ func TestDispatchCachesMissingClientMetadataAuthorizationLookup(t *testing.T) {
 	}
 	if got := fields["client_type"]; got != string(ClientTypeUnknown) {
 		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeUnknown)
+	}
+}
+
+func TestDispatchCachesMissingAuthKeyClientMetadataLookup(t *testing.T) {
+	authKeyID := [8]byte{0x68, 0x25, 0xc2, 0xee, 0xf8, 0x82, 0xef, 0x72}
+	auth := &captureAuthService{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+
+	for _, sessionID := range []int64{101, 102, 103} {
+		var in bin.Buffer
+		if err := (&tg.HelpGetConfigRequest{}).Encode(&in); err != nil {
+			t.Fatalf("encode request: %v", err)
+		}
+		if _, err := r.Dispatch(context.Background(), authKeyID, sessionID, &in); err != nil {
+			t.Fatalf("dispatch session %d: %v", sessionID, err)
+		}
+	}
+
+	if auth.authKeyInfoLookups != 1 {
+		t.Fatalf("auth key client info lookups = %d, want 1 cached miss", auth.authKeyInfoLookups)
 	}
 }
 

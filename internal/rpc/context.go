@@ -97,7 +97,23 @@ func knownClientType(t ClientType) bool {
 	}
 }
 
+func clientTypeFromAPIID(apiID int) ClientType {
+	switch apiID {
+	// DrKLO local BuildVars.APP_ID uses 4; TDesktop's active session
+	// classifier also recognizes the official Android ids below.
+	case 4, 5, 6, 24, 1026, 1083, 2458, 2521, 21724:
+		return ClientTypeAndroid
+	case 2040, 17349, 611335:
+		return ClientTypeTDesktop
+	default:
+		return ClientTypeUnknown
+	}
+}
+
 func detectClientType(info ClientInfo) ClientType {
+	if t := clientTypeFromAPIID(info.APIID); t != ClientTypeUnknown {
+		return t
+	}
 	if strings.EqualFold(info.LangPack, string(ClientTypeAndroid)) {
 		return ClientTypeAndroid
 	}

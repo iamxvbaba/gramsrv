@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS public.account_passwords_login_email_lower_unique_idx;

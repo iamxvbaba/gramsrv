@@ -2,12 +2,13 @@ package rpc
 
 import "context"
 
-// withAndroidCompatMetadata 为「客户端构造器漂移」请求仅兜底 client 类型。
-// DrKLO/OwpenGram Android 可能在不同版本使用不同 TL layer，client-private 构造器
-// 只能证明这是 Android 兼容路径，不能替代 invokeWithLayer 里的真实 layer。
-func (r *Router) withAndroidCompatMetadata(ctx context.Context) context.Context {
-	if ClientTypeFrom(ctx) == ClientTypeUnknown {
-		ctx = WithClientInfo(ctx, ClientInfo{LangPack: string(ClientTypeAndroid), Type: ClientTypeAndroid})
+// withClientDriftMetadata 只在调用方已经用 constructor drift 证明客户端来源时
+// 补最小 client 类型。它不是 unknown fallback；不能在普通裸 RPC 上调用。
+// DrKLO Android 的 client-private constructor 只能证明 Android 兼容路径，
+// 不能替代 invokeWithLayer/auth_keys/authorizations 里的真实 layer。
+func (r *Router) withClientDriftMetadata(ctx context.Context, typ ClientType) context.Context {
+	if typ == ClientTypeUnknown || ClientTypeFrom(ctx) != ClientTypeUnknown {
+		return ctx
 	}
-	return ctx
+	return WithClientInfo(ctx, ClientInfo{Type: typ})
 }

@@ -50,6 +50,25 @@ func (s *CodeStore) Get(ctx context.Context, hash string) (store.PhoneCode, bool
 	return code, true, nil
 }
 
+func (s *CodeStore) Update(ctx context.Context, hash string, code store.PhoneCode) error {
+	key := codeKey(hash)
+	ttl, err := s.c.TTL(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("redis ttl phone code: %w", err)
+	}
+	if ttl <= 0 {
+		return nil
+	}
+	v, err := json.Marshal(code)
+	if err != nil {
+		return fmt.Errorf("marshal phone code: %w", err)
+	}
+	if err := s.c.Set(ctx, key, v, ttl).Err(); err != nil {
+		return fmt.Errorf("redis update phone code: %w", err)
+	}
+	return nil
+}
+
 func (s *CodeStore) Del(ctx context.Context, hash string) error {
 	return s.c.Del(ctx, codeKey(hash)).Err()
 }

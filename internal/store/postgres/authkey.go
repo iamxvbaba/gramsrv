@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
@@ -26,11 +27,12 @@ func NewAuthKeyStore(db sqlcgen.DBTX) *AuthKeyStore {
 // Save 实现 store.AuthKeyStore。auth_key_id 以小端解释为 int64 存入 BIGINT；
 // created_at 交由 DB 默认值（now()），故传入的 CreatedAt 不落库。
 func (s *AuthKeyStore) Save(ctx context.Context, k store.AuthKeyData) error {
-	if err := s.q.UpsertAuthKey(ctx, sqlcgen.UpsertAuthKeyParams{
-		AuthKeyID:  authKeyIDToInt64(k.ID),
-		Body:       k.Value[:],
-		ServerSalt: k.ServerSalt,
-	}); err != nil {
+	if _, err := s.db.Exec(ctx, `
+INSERT INTO auth_keys (auth_key_id, body, server_salt)
+VALUES ($1, $2, $3)
+ON CONFLICT (auth_key_id) DO UPDATE
+SET body = EXCLUDED.body, server_salt = EXCLUDED.server_salt
+`, authKeyIDToInt64(k.ID), k.Value[:], k.ServerSalt); err != nil {
 		return fmt.Errorf("upsert auth key: %w", err)
 	}
 	return nil
@@ -38,22 +40,63 @@ func (s *AuthKeyStore) Save(ctx context.Context, k store.AuthKeyData) error {
 
 // Get 实现 store.AuthKeyStore。不存在时 found=false。
 func (s *AuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
-	row, err := s.q.GetAuthKey(ctx, authKeyIDToInt64(id))
+	var (
+		body          []byte
+		serverSalt    int64
+		createdAt     pgtype.Timestamptz
+		layer         int
+		deviceModel   string
+		platform      string
+		systemVersion string
+		apiID         int
+		appVersion    string
+	)
+	err := s.db.QueryRow(ctx, `
+SELECT auth_key_id, body, server_salt, created_at,
+       layer, device_model, platform, system_version, api_id, app_version
+FROM auth_keys
+WHERE auth_key_id = $1
+`, authKeyIDToInt64(id)).Scan(new(int64), &body, &serverSalt, &createdAt, &layer, &deviceModel, &platform, &systemVersion, &apiID, &appVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.AuthKeyData{}, false, nil
 		}
 		return store.AuthKeyData{}, false, fmt.Errorf("get auth key: %w", err)
 	}
-	if len(row.Body) != len(store.AuthKeyData{}.Value) {
-		return store.AuthKeyData{}, false, fmt.Errorf("auth key body length = %d, want 256", len(row.Body))
+	if len(body) != len(store.AuthKeyData{}.Value) {
+		return store.AuthKeyData{}, false, fmt.Errorf("auth key body length = %d, want 256", len(body))
 	}
-	data := store.AuthKeyData{ID: id, ServerSalt: row.ServerSalt}
-	copy(data.Value[:], row.Body)
-	if row.CreatedAt.Valid {
-		data.CreatedAt = row.CreatedAt.Time.Unix()
+	data := store.AuthKeyData{
+		ID:            id,
+		ServerSalt:    serverSalt,
+		Layer:         layer,
+		DeviceModel:   deviceModel,
+		Platform:      platform,
+		SystemVersion: systemVersion,
+		APIID:         apiID,
+		AppVersion:    appVersion,
+	}
+	copy(data.Value[:], body)
+	if createdAt.Valid {
+		data.CreatedAt = createdAt.Time.Unix()
 	}
 	return data, true, nil
+}
+
+func (s *AuthKeyStore) UpdateClientInfo(ctx context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
+	if _, err := s.db.Exec(ctx, `
+UPDATE auth_keys
+SET layer = CASE WHEN $2::integer > 0 THEN $2 ELSE layer END,
+    device_model = CASE WHEN $3::text <> '' THEN $3 ELSE device_model END,
+    platform = CASE WHEN $4::text <> '' THEN $4 ELSE platform END,
+    system_version = CASE WHEN $5::text <> '' THEN $5 ELSE system_version END,
+    api_id = CASE WHEN $6::integer <> 0 THEN $6 ELSE api_id END,
+    app_version = CASE WHEN $7::text <> '' THEN $7 ELSE app_version END
+WHERE auth_key_id = $1
+`, authKeyIDToInt64(id), info.Layer, info.DeviceModel, info.Platform, info.SystemVersion, info.APIID, info.AppVersion); err != nil {
+		return fmt.Errorf("update auth key client info: %w", err)
+	}
+	return nil
 }
 
 // Delete 实现 store.AuthKeyStore。不存在时静默成功。

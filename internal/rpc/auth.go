@@ -241,6 +241,7 @@ func (r *Router) pushLoginTokenAccepted(ctx context.Context, target loginTokenTa
 // 若该手机号账号设置了登录邮箱，验证码改投递到邮箱，返回 sentCodeTypeEmailCode
 // （客户端据此进入"输入邮箱验证码"界面，随后用 auth.signIn 的 email_verification 完成登录）。
 func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest) (tg.AuthSentCodeClass, error) {
+	r.rememberClientAPIID(ctx, req.APIID)
 	hash, err := r.deps.Auth.SendCode(ctx, req.PhoneNumber)
 	if err != nil {
 		if errors.Is(err, auth.ErrPhoneNumberInvalid) ||
@@ -249,35 +250,30 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 		}
 		return nil, internalErr()
 	}
-	if pattern, ok := r.loginEmailPattern(ctx, req.PhoneNumber); ok {
-		return tgEmailSentCode(hash, pattern), nil
-	}
-	return tgSentCode(hash), nil
-}
-
-// loginEmailPattern 返回该手机号账号已确认登录邮箱的掩码，不存在则 ok=false。
-func (r *Router) loginEmailPattern(ctx context.Context, phone string) (string, bool) {
-	if r.deps.Account == nil {
-		return "", false
-	}
-	email, found, err := r.deps.Account.LoginEmailByPhone(ctx, phone)
-	if err != nil || !found || email == "" {
-		return "", false
-	}
-	return domain.MaskEmail(email), true
+	return r.tgSentCodeForHash(ctx, hash)
 }
 
 func tgSentCode(hash string) tg.AuthSentCodeClass {
+	return tgSentCodeWithLength(hash, devCodeLength)
+}
+
+func tgSentCodeWithLength(hash string, length int) tg.AuthSentCodeClass {
+	if length <= 0 {
+		length = devCodeLength
+	}
 	return &tg.AuthSentCode{
-		Type:          &tg.AuthSentCodeTypeApp{Length: devCodeLength},
+		Type:          &tg.AuthSentCodeTypeApp{Length: length},
 		PhoneCodeHash: hash,
 	}
 }
 
-func tgEmailSentCode(hash, emailPattern string) tg.AuthSentCodeClass {
+func tgEmailSentCode(hash, emailPattern string, length int) tg.AuthSentCodeClass {
+	if length <= 0 {
+		length = devCodeLength
+	}
 	codeType := &tg.AuthSentCodeTypeEmailCode{
 		EmailPattern: emailPattern,
-		Length:       devCodeLength,
+		Length:       length,
 	}
 	// reset_available_period=0 表示可立即调用 auth.resetLoginEmail（开发环境无等待期），
 	// 让客户端的"无法访问邮箱?"逃生入口可用。
@@ -285,6 +281,34 @@ func tgEmailSentCode(hash, emailPattern string) tg.AuthSentCodeClass {
 	return &tg.AuthSentCode{
 		Type:          codeType,
 		PhoneCodeHash: hash,
+	}
+}
+
+func tgEmailSetupRequiredSentCode(hash string) tg.AuthSentCodeClass {
+	return &tg.AuthSentCode{
+		Type:          &tg.AuthSentCodeTypeSetUpEmailRequired{},
+		PhoneCodeHash: hash,
+	}
+}
+
+func (r *Router) tgSentCodeForHash(ctx context.Context, hash string) (tg.AuthSentCodeClass, error) {
+	if r.deps.Auth == nil {
+		return tgSentCode(hash), nil
+	}
+	delivery, found, err := r.deps.Auth.CodeDelivery(ctx, hash)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !found {
+		return nil, signInErr(auth.ErrCodeExpired)
+	}
+	switch delivery.Kind {
+	case domain.AuthCodeDeliveryEmail:
+		return tgEmailSentCode(hash, delivery.EmailPattern, delivery.Length), nil
+	case domain.AuthCodeDeliveryEmailSetupRequired:
+		return tgEmailSetupRequiredSentCode(hash), nil
+	default:
+		return tgSentCodeWithLength(hash, delivery.Length), nil
 	}
 }
 
@@ -302,6 +326,10 @@ func (r *Router) onAuthSignIn(ctx context.Context, req *tg.AuthSignInRequest) (t
 	} else {
 		u, loginMessage, needSignUp, err = r.deps.Auth.SignIn(ctx, r.authzFromCtx(ctx), req.PhoneNumber, req.PhoneCodeHash, req.PhoneCode)
 	}
+	return r.finishAuthSignIn(ctx, u, loginMessage, needSignUp, err)
+}
+
+func (r *Router) finishAuthSignIn(ctx context.Context, u domain.User, loginMessage domain.Message, needSignUp bool, err error) (tg.AuthAuthorizationClass, error) {
 	if err != nil {
 		if errors.Is(err, domain.ErrSessionPasswordNeeded) && u.ID != 0 {
 			if err := r.clearAuthKeyStateOnUserChange(ctx, u.ID); err != nil {
@@ -337,7 +365,7 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 	if err != nil {
 		return nil, signInErr(err)
 	}
-	return tgSentCode(hash), nil
+	return r.tgSentCodeForHash(ctx, hash)
 }
 
 func (r *Router) onAuthCancelCode(ctx context.Context, req *tg.AuthCancelCodeRequest) (bool, error) {
@@ -502,7 +530,7 @@ func (r *Router) onAuthResetLoginEmail(ctx context.Context, req *tg.AuthResetLog
 		}
 		return nil, internalErr()
 	}
-	return tgSentCode(hash), nil
+	return r.tgSentCodeForHash(ctx, hash)
 }
 
 // emailVerificationCode 从 emailVerification 取出可校验的字符串（验证码 / Google·Apple

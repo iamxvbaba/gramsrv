@@ -71,6 +71,26 @@ type Config struct {
 
 	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
 	DevAuthCode string
+	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
+	AuthCodeTTL time.Duration
+	// AuthCodeMaxAttempts 是同一 phone_code_hash / email verification code 的最大错误次数。
+	// 达到上限后验证码立即失效，用户必须重发。
+	AuthCodeMaxAttempts int
+	// LoginEmailEnable 启用手机号登录流程中的邮箱验证码投递。
+	LoginEmailEnable bool
+	// LoginEmailRequireSetup 为 true 时，没有登录邮箱的账号/新手机号会要求先设置邮箱。
+	LoginEmailRequireSetup bool
+	// LoginEmailCodeLength 是邮箱验证码长度。
+	LoginEmailCodeLength int
+	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 时必须可用。
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPFromName string
+	SMTPTLSMode  string
+	SMTPTimeout  time.Duration
 	// MapboxToken 是服务端代理地图缩略图（upload.getWebFile）请求 Mapbox Static Images API
 	// 的 access token；为空则关闭代理、回退确定性占位图。客户端选点器 token 经 appConfig
 	// `tdesktop_config_map` 下发（同源运行时配置）。
@@ -322,6 +342,19 @@ func Load() (Config, error) {
 		RedisDB:          envIntOr("TELESRV_REDIS_DB", 0),
 
 		DevAuthCode:                   envOr("TELESRV_DEV_AUTH_CODE", "12345"),
+		AuthCodeTTL:                   envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
+		AuthCodeMaxAttempts:           envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
+		LoginEmailEnable:              envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
+		LoginEmailRequireSetup:        envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
+		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		SMTPHost:                      envOr("TELESRV_SMTP_HOST", ""),
+		SMTPPort:                      envIntOr("TELESRV_SMTP_PORT", 587),
+		SMTPUsername:                  envOr("TELESRV_SMTP_USERNAME", ""),
+		SMTPPassword:                  envOr("TELESRV_SMTP_PASSWORD", ""),
+		SMTPFrom:                      envOr("TELESRV_SMTP_FROM", ""),
+		SMTPFromName:                  envOr("TELESRV_SMTP_FROM_NAME", "telesrv"),
+		SMTPTLSMode:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
+		SMTPTimeout:                   envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:               envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
 		BlobDir:                       envOr("TELESRV_BLOB_DIR", "data/blobs"),
 		StickerSeedDir:                envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
@@ -406,7 +439,46 @@ func Load() (Config, error) {
 		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),
 		LiveStreamSegmentKeep: envIntOr("TELESRV_LIVESTREAM_SEGMENT_KEEP", 32),
 	}
+	if err := validateLoginEmailConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateLoginEmailConfig(cfg Config) error {
+	if cfg.LoginEmailRequireSetup && !cfg.LoginEmailEnable {
+		return fmt.Errorf("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP requires TELESRV_LOGIN_EMAIL_ENABLE=true")
+	}
+	if cfg.AuthCodeTTL <= 0 {
+		return fmt.Errorf("TELESRV_AUTH_CODE_TTL must be positive")
+	}
+	if cfg.AuthCodeMaxAttempts <= 0 {
+		return fmt.Errorf("TELESRV_AUTH_CODE_MAX_ATTEMPTS must be positive")
+	}
+	if cfg.LoginEmailCodeLength < 4 || cfg.LoginEmailCodeLength > 10 {
+		return fmt.Errorf("TELESRV_LOGIN_EMAIL_CODE_LENGTH must be between 4 and 10")
+	}
+	switch cfg.SMTPTLSMode {
+	case "", "starttls", "tls", "none":
+	default:
+		return fmt.Errorf("TELESRV_SMTP_TLS must be starttls, tls, or none")
+	}
+	if !cfg.LoginEmailEnable {
+		return nil
+	}
+	if strings.TrimSpace(cfg.SMTPHost) == "" {
+		return fmt.Errorf("TELESRV_SMTP_HOST is required when TELESRV_LOGIN_EMAIL_ENABLE=true")
+	}
+	if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
+		return fmt.Errorf("TELESRV_SMTP_PORT must be between 1 and 65535")
+	}
+	if strings.TrimSpace(cfg.SMTPFrom) == "" && strings.TrimSpace(cfg.SMTPUsername) == "" {
+		return fmt.Errorf("TELESRV_SMTP_FROM or TELESRV_SMTP_USERNAME is required when TELESRV_LOGIN_EMAIL_ENABLE=true")
+	}
+	if cfg.SMTPTimeout <= 0 {
+		return fmt.Errorf("TELESRV_SMTP_TIMEOUT must be positive")
+	}
+	return nil
 }
 
 func loadAIProviders(env envSource) []AIProviderConfig {

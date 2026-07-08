@@ -25,6 +25,7 @@ type AuthService interface {
 	PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error)
 	CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte) error
 	SendCode(ctx context.Context, phone string) (string, error)
+	CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error)
 	ResendCode(ctx context.Context, phone, phoneCodeHash string) (string, error)
 	CancelCode(ctx context.Context, phone, phoneCodeHash string) error
 	SignIn(ctx context.Context, a domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error)
@@ -40,6 +41,8 @@ type AuthService interface {
 	LogOut(ctx context.Context, authKeyID [8]byte) error
 	Authorization(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
 	UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error
+	AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error)
+	UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	ResetAuthorization(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error)
 	ResetAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error)
@@ -262,6 +265,8 @@ type AccountService interface {
 	ResendPasswordEmail(ctx context.Context, userID int64) error
 	CancelPasswordEmail(ctx context.Context, userID int64) error
 	// 登录邮箱（独立于 2FA 恢复邮箱）：authed 走 userID，登录流程/重置走 phone。
+	SendLoginEmailCode(ctx context.Context, userID int64, phone, phoneCodeHash, email string, setup bool) (string, int, error)
+	VerifyLoginEmail(ctx context.Context, userID int64, phone, phoneCodeHash, code string, setup bool) (string, error)
 	SetLoginEmail(ctx context.Context, userID int64, email string) error
 	SetLoginEmailByPhone(ctx context.Context, phone, email string) error
 	LoginEmail(ctx context.Context, userID int64) (string, bool, error)
