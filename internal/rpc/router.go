@@ -34,8 +34,9 @@ type tempResolveResult struct {
 }
 
 const (
-	authKeyResolveSingleflightPrefix = "resolve:"
-	authClientInfoSingleflightPrefix = "authinfo:"
+	authKeyResolveSingleflightPrefix    = "resolve:"
+	authClientInfoSingleflightPrefix    = "authinfo:"
+	authKeyClientInfoSingleflightPrefix = "authkeyinfo:"
 )
 
 var (
@@ -154,6 +155,7 @@ type clientSessionInfo struct {
 	layer                int
 	clientInfo           ClientInfo
 	hasClientInfo        bool
+	authKeyInfoChecked   bool
 	authorizationChecked bool
 }
 
@@ -226,6 +228,19 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 	}
 	tUser := r.clock.Now()
 	info, hasClientMetadata, clientMetadataStored := r.clientSessionInfo(ctx)
+	if authInfo, ok := r.clientSessionInfoFromAuthKey(ctx, effectiveAuthKeyID, info); ok {
+		info = mergeClientSessionInfo(info, authInfo)
+		hasClientMetadata = true
+		r.rememberClientSessionInfo(ctx, info)
+		clientMetadataStored = true
+		if info.layer != 0 {
+			if binder, okBinder := r.deps.Sessions.(ClientLayerBinder); okBinder {
+				if rawAuthKeyID, okRaw := RawAuthKeyIDFrom(ctx); okRaw {
+					binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, info.layer)
+				}
+			}
+		}
+	}
 	if hasUserID {
 		if authInfo, ok := r.clientSessionInfoFromAuthorization(ctx, userID, effectiveAuthKeyID, info); ok {
 			info = mergeClientSessionInfo(info, authInfo)
@@ -501,6 +516,7 @@ func (r *Router) invalidateAuthUserCache(authKeyID [8]byte) {
 	r.authUserSF.Forget(key)
 	r.authUserSF.Forget(authKeyResolveSingleflightPrefix + key)
 	r.authUserSF.Forget(authClientInfoSingleflightPrefix + key)
+	r.authUserSF.Forget(authKeyClientInfoSingleflightPrefix + key)
 }
 
 func (r *Router) scopedSessions() (ScopedSessionBinder, bool) {
@@ -619,7 +635,7 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 				if clientDrift {
 					// 客户端漂移只能证明这是 Android 兼容路径；layer 仍以
 					// invokeWithLayer 或授权记录里的真实观测值为准。
-					ctx = r.withAndroidCompatMetadata(ctx)
+					ctx = r.withClientDriftMetadata(ctx, ClientTypeAndroid)
 				}
 			}
 		}
@@ -699,6 +715,17 @@ func (r *Router) rememberClientInfo(ctx context.Context, info ClientInfo) {
 			sessionInfo.layer = layer
 		}
 	})
+	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{layer: layer, clientInfo: info, hasClientInfo: true})
+}
+
+func (r *Router) rememberClientAPIID(ctx context.Context, apiID int) {
+	if apiID == 0 {
+		return
+	}
+	info := ClientInfo{APIID: apiID, Type: clientTypeFromAPIID(apiID)}
+	sessionInfo := clientSessionInfo{clientInfo: info, hasClientInfo: true}
+	r.rememberClientSessionInfo(ctx, sessionInfo)
+	r.persistAuthKeyClientInfo(ctx, sessionInfo)
 }
 
 func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
@@ -747,10 +774,41 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 			binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, layer)
 		}
 	}
+	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{layer: layer})
 	if persistAuthLayer && r.deps.Auth != nil {
 		if err := r.deps.Auth.UpdateAuthorizationLayer(ctx, authKeyID, layer); err != nil {
 			r.log.Warn("update authorization layer failed",
 				zap.Int("layer", layer),
+				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID[:])),
+				zap.Error(err))
+		}
+	}
+}
+
+func (r *Router) persistAuthKeyClientInfo(ctx context.Context, info clientSessionInfo) {
+	if r.deps.Auth == nil {
+		return
+	}
+	domainInfo := domainAuthKeyClientInfo(info)
+	if domainInfo.Layer == 0 && domainInfo.DeviceModel == "" && domainInfo.Platform == "" &&
+		domainInfo.SystemVersion == "" && domainInfo.APIID == 0 && domainInfo.AppVersion == "" {
+		return
+	}
+	seen := make(map[[8]byte]struct{}, 2)
+	if rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx); ok && rawAuthKeyID != ([8]byte{}) {
+		seen[rawAuthKeyID] = struct{}{}
+		if err := r.deps.Auth.UpdateAuthKeyClientInfo(ctx, rawAuthKeyID, domainInfo); err != nil {
+			r.log.Warn("update auth key client info failed",
+				zap.String("auth_key_id", fmt.Sprintf("%x", rawAuthKeyID[:])),
+				zap.Error(err))
+		}
+	}
+	if authKeyID, ok := AuthKeyIDFrom(ctx); ok && authKeyID != ([8]byte{}) {
+		if _, done := seen[authKeyID]; done {
+			return
+		}
+		if err := r.deps.Auth.UpdateAuthKeyClientInfo(ctx, authKeyID, domainInfo); err != nil {
+			r.log.Warn("update auth key client info failed",
 				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID[:])),
 				zap.Error(err))
 		}
@@ -892,6 +950,9 @@ func clientSessionInfoContains(current, required clientSessionInfo) bool {
 	if required.authorizationChecked && !current.authorizationChecked {
 		return false
 	}
+	if required.authKeyInfoChecked && !current.authKeyInfoChecked {
+		return false
+	}
 	return true
 }
 
@@ -982,6 +1043,43 @@ func (r *Router) cachedResolvedAuthClientInfo(authKeyID [8]byte) (clientSessionI
 	return info, true
 }
 
+func (r *Router) cachedResolvedAuthKeyClientInfo(authKeyID [8]byte) (clientSessionInfo, bool) {
+	r.clientInfoMu.RLock()
+	defer r.clientInfoMu.RUnlock()
+	info, ok := r.authInfo[authKeyID]
+	if !ok || clientSessionInfoNeedsAuthKeyInfo(info) {
+		return clientSessionInfo{}, false
+	}
+	return info, true
+}
+
+func (r *Router) clientSessionInfoFromAuthKey(ctx context.Context, authKeyID [8]byte, current clientSessionInfo) (clientSessionInfo, bool) {
+	if !clientSessionInfoNeedsAuthKeyInfo(current) || r.deps.Auth == nil || authKeyID == ([8]byte{}) {
+		return clientSessionInfo{}, false
+	}
+	v, err, _ := r.authUserSF.Do(authKeyClientInfoSingleflightPrefix+string(authKeyID[:]), func() (any, error) {
+		if cached, ok := r.cachedResolvedAuthKeyClientInfo(authKeyID); ok {
+			return cached, nil
+		}
+		info, found, err := r.deps.Auth.AuthKeyClientInfo(ctx, authKeyID)
+		if err != nil {
+			return clientSessionInfo{}, err
+		}
+		if !found {
+			return clientSessionInfo{authKeyInfoChecked: true}, nil
+		}
+		return clientSessionInfoFromAuthKeyClientInfo(info, current), nil
+	})
+	if err != nil {
+		return clientSessionInfo{}, false
+	}
+	info := v.(clientSessionInfo)
+	if info.layer == 0 && !info.hasClientInfo && !info.authKeyInfoChecked {
+		return clientSessionInfo{}, false
+	}
+	return info, true
+}
+
 func mergeClientSessionInfo(base, fallback clientSessionInfo) clientSessionInfo {
 	if base.layer == 0 {
 		base.layer = fallback.layer
@@ -993,7 +1091,46 @@ func mergeClientSessionInfo(base, fallback clientSessionInfo) clientSessionInfo 
 	if fallback.authorizationChecked {
 		base.authorizationChecked = true
 	}
+	if fallback.authKeyInfoChecked {
+		base.authKeyInfoChecked = true
+	}
 	return base
+}
+
+func clientSessionInfoFromAuthKeyClientInfo(item domain.AuthKeyClientInfo, current clientSessionInfo) clientSessionInfo {
+	info := clientSessionInfo{
+		layer:              item.Layer,
+		authKeyInfoChecked: true,
+		clientInfo: ClientInfo{
+			APIID:         item.APIID,
+			DeviceModel:   item.DeviceModel,
+			SystemVersion: item.SystemVersion,
+			AppVersion:    item.AppVersion,
+			Type:          ClientType(item.Platform),
+		},
+	}
+	info.clientInfo = normalizeClientInfo(info.clientInfo)
+	info.hasClientInfo = info.clientInfo.ClientType() != ClientTypeUnknown ||
+		info.clientInfo.DeviceModel != "" ||
+		info.clientInfo.SystemVersion != "" ||
+		info.clientInfo.AppVersion != "" ||
+		info.clientInfo.APIID != 0
+	if info.layer == 0 && current.layer != 0 {
+		info.layer = current.layer
+	}
+	return info
+}
+
+func domainAuthKeyClientInfo(info clientSessionInfo) domain.AuthKeyClientInfo {
+	out := domain.AuthKeyClientInfo{Layer: info.layer}
+	if info.hasClientInfo {
+		out.APIID = info.clientInfo.APIID
+		out.DeviceModel = info.clientInfo.DeviceModel
+		out.SystemVersion = info.clientInfo.SystemVersion
+		out.AppVersion = info.clientInfo.AppVersion
+		out.Platform = string(info.clientInfo.ClientType())
+	}
+	return out
 }
 
 func (r *Router) clientSessionInfoFromAuthorization(ctx context.Context, userID int64, authKeyID [8]byte, current clientSessionInfo) (clientSessionInfo, bool) {
@@ -1047,6 +1184,13 @@ func clientSessionInfoFromAuthorizationRecord(item domain.Authorization, current
 
 func clientSessionInfoNeedsAuthorization(info clientSessionInfo) bool {
 	if info.authorizationChecked {
+		return false
+	}
+	return info.layer == 0 || !info.hasClientInfo || info.clientInfo.ClientType() == ClientTypeUnknown
+}
+
+func clientSessionInfoNeedsAuthKeyInfo(info clientSessionInfo) bool {
+	if info.authKeyInfoChecked {
 		return false
 	}
 	return info.layer == 0 || !info.hasClientInfo || info.clientInfo.ClientType() == ClientTypeUnknown

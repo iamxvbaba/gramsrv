@@ -25,11 +25,15 @@ type captureAuthService struct {
 	authorizationLookups  int
 	authorizationLists    int
 	layerUpdates          int
+	authKeyClientInfos    map[[8]byte]domain.AuthKeyClientInfo
+	authKeyInfoLookups    int
 	loggedOutAuthKeyID    [8]byte
 	pendingPasswordUserID int64
 	pendingPassword       bool
 	completedPasswordKey  [8]byte
 	completePasswordCount int
+	codeDelivery          domain.AuthCodeDelivery
+	signInWithEmailCount  int
 }
 
 type blockingUserAuthService struct {
@@ -70,6 +74,10 @@ func (s *blockingUserAuthService) UserID(ctx context.Context, _ [8]byte) (int64,
 
 func (s *blockingUserAuthService) SendCode(context.Context, string) (string, error) {
 	return "", nil
+}
+
+func (s *blockingUserAuthService) CodeDelivery(context.Context, string) (domain.AuthCodeDelivery, bool, error) {
+	return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliveryPhone, Length: devCodeLength}, true, nil
 }
 
 func (s *blockingUserAuthService) ResendCode(context.Context, string, string) (string, error) {
@@ -116,6 +124,14 @@ func (s *blockingUserAuthService) UpdateAuthorizationLayer(context.Context, [8]b
 	return nil
 }
 
+func (s *blockingUserAuthService) AuthKeyClientInfo(context.Context, [8]byte) (domain.AuthKeyClientInfo, bool, error) {
+	return domain.AuthKeyClientInfo{}, false, nil
+}
+
+func (s *blockingUserAuthService) UpdateAuthKeyClientInfo(context.Context, [8]byte, domain.AuthKeyClientInfo) error {
+	return nil
+}
+
 func (s *blockingUserAuthService) ListAuthorizations(context.Context, int64) ([]domain.Authorization, error) {
 	return nil, nil
 }
@@ -154,6 +170,13 @@ func (s *captureAuthService) SendCode(context.Context, string) (string, error) {
 	return "", nil
 }
 
+func (s *captureAuthService) CodeDelivery(context.Context, string) (domain.AuthCodeDelivery, bool, error) {
+	if s.codeDelivery.Kind != "" {
+		return s.codeDelivery, true, nil
+	}
+	return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliveryPhone, Length: devCodeLength}, true, nil
+}
+
 func (s *captureAuthService) ResendCode(context.Context, string, string) (string, error) {
 	return "", nil
 }
@@ -170,6 +193,7 @@ func (s *captureAuthService) SignIn(context.Context, domain.Authorization, strin
 }
 
 func (s *captureAuthService) SignInWithEmail(context.Context, domain.Authorization, string, string, string) (domain.User, domain.Message, bool, error) {
+	s.signInWithEmailCount++
 	if s.signInUser.ID != 0 {
 		return s.signInUser, domain.Message{}, false, nil
 	}
@@ -235,6 +259,39 @@ func (s *captureAuthService) UpdateAuthorizationLayer(_ context.Context, authKey
 			return nil
 		}
 	}
+	return nil
+}
+
+func (s *captureAuthService) AuthKeyClientInfo(_ context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error) {
+	s.authKeyInfoLookups++
+	info, ok := s.authKeyClientInfos[authKeyID]
+	return info, ok, nil
+}
+
+func (s *captureAuthService) UpdateAuthKeyClientInfo(_ context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error {
+	if s.authKeyClientInfos == nil {
+		s.authKeyClientInfos = make(map[[8]byte]domain.AuthKeyClientInfo)
+	}
+	current := s.authKeyClientInfos[authKeyID]
+	if info.Layer > 0 {
+		current.Layer = info.Layer
+	}
+	if info.DeviceModel != "" {
+		current.DeviceModel = info.DeviceModel
+	}
+	if info.Platform != "" {
+		current.Platform = info.Platform
+	}
+	if info.SystemVersion != "" {
+		current.SystemVersion = info.SystemVersion
+	}
+	if info.APIID != 0 {
+		current.APIID = info.APIID
+	}
+	if info.AppVersion != "" {
+		current.AppVersion = info.AppVersion
+	}
+	s.authKeyClientInfos[authKeyID] = current
 	return nil
 }
 

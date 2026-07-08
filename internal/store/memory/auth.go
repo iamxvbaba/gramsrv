@@ -34,6 +34,38 @@ func (s *AuthKeyStore) Get(_ context.Context, id [8]byte) (store.AuthKeyData, bo
 	return k, ok, nil
 }
 
+func (s *AuthKeyStore) UpdateClientInfo(_ context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
+	s.mu.Lock()
+	k, ok := s.keys[id]
+	if ok {
+		mergeAuthKeyClientInfo(&k, info)
+		s.keys[id] = k
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) {
+	if info.Layer > 0 {
+		k.Layer = info.Layer
+	}
+	if info.DeviceModel != "" {
+		k.DeviceModel = info.DeviceModel
+	}
+	if info.Platform != "" {
+		k.Platform = info.Platform
+	}
+	if info.SystemVersion != "" {
+		k.SystemVersion = info.SystemVersion
+	}
+	if info.APIID != 0 {
+		k.APIID = info.APIID
+	}
+	if info.AppVersion != "" {
+		k.AppVersion = info.AppVersion
+	}
+}
+
 func (s *AuthKeyStore) Delete(_ context.Context, id [8]byte) error {
 	s.mu.Lock()
 	delete(s.keys, id)
@@ -254,6 +286,18 @@ func (s *CodeStore) Get(_ context.Context, hash string) (store.PhoneCode, bool, 
 		return store.PhoneCode{}, false, nil
 	}
 	return e.code, true, nil
+}
+
+func (s *CodeStore) Update(_ context.Context, hash string, code store.PhoneCode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.m[hash]
+	if !ok || time.Now().After(e.expires) {
+		return nil
+	}
+	e.code = code
+	s.m[hash] = e
+	return nil
 }
 
 func (s *CodeStore) Del(_ context.Context, hash string) error {

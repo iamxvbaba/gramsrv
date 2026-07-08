@@ -5,13 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
+
+const accountPasswordsLoginEmailUniqueIdx = "account_passwords_login_email_lower_unique_idx"
 
 // PasswordStore 用 PostgreSQL 实现 store.PasswordStore。
 type PasswordStore struct {
@@ -70,7 +75,29 @@ WHERE user_id = $1`, userID)
 	return settings, true, nil
 }
 
+func (s *PasswordStore) LoginEmailOwner(ctx context.Context, email string) (int64, bool, error) {
+	email = normalizeStoredLoginEmail(email)
+	if email == "" {
+		return 0, false, nil
+	}
+	row := s.db.QueryRow(ctx, `
+SELECT user_id
+FROM account_passwords
+WHERE login_email <> '' AND lower(login_email) = $1
+LIMIT 1`, email)
+	var userID int64
+	if err := row.Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("get login email owner: %w", err)
+	}
+	return userID, true, nil
+}
+
 func (s *PasswordStore) Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error {
+	settings.LoginEmail = normalizeStoredLoginEmail(settings.LoginEmail)
+	settings.LoginEmailPattern = domain.MaskEmail(settings.LoginEmail)
 	algo := settings.NewAlgo
 	if settings.CurrentAlgo != nil {
 		algo = *settings.CurrentAlgo
@@ -117,9 +144,23 @@ ON CONFLICT (user_id) DO UPDATE SET
 		settings.RecoveryEmail, settings.RecoveryCode, recoveryExpires, settings.LoginEmail,
 	)
 	if err != nil {
+		if isAccountPasswordLoginEmailUnique(err) {
+			return domain.ErrEmailOccupied
+		}
 		return fmt.Errorf("upsert account password: %w", err)
 	}
 	return nil
+}
+
+func normalizeStoredLoginEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func isAccountPasswordLoginEmailUnique(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == pgerrcode.UniqueViolation &&
+		pgErr.ConstraintName == accountPasswordsLoginEmailUniqueIdx
 }
 
 func nonNilBytea(in []byte) []byte {

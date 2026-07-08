@@ -31,8 +31,19 @@ import (
 	"telesrv/internal/store/memory"
 )
 
+type loginEmailTestSender struct {
+	to   string
+	code string
+}
+
+func (s *loginEmailTestSender) SendLoginCode(_ context.Context, to, code string, _ time.Duration) error {
+	s.to = to
+	s.code = code
+	return nil
+}
+
 // TestLoginEmailEndToEnd 端到端验证登录邮箱：设备 A 注册并设置登录邮箱（loginChange），
-// 一个全新设备 B 调 sendCode 收到 sentCodeTypeEmailCode，凭任意邮箱验证码经 signIn
+// 一个全新设备 B 调 sendCode 收到 sentCodeTypeEmailCode，凭真实邮箱验证码经 signIn
 // (email_verification) 完成登录。
 func TestLoginEmailEndToEnd(t *testing.T) {
 	const (
@@ -59,10 +70,23 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 	authKeyStore := memory.NewAuthKeyStore()
 	passwordStore := memory.NewPasswordStore()
 	helpStore := memory.NewHelpStore()
+	codeStore := memory.NewCodeStore()
+	emailSender := &loginEmailTestSender{}
+	accountService := account.NewService(passwordStore,
+		account.WithUsers(userStore),
+		account.WithLoginEmailVerification(codeStore, emailSender, 5*time.Minute, 5, 6))
+	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, memory.NewTempAuthKeyBindingStore(), code,
+		auth.WithPasswords(passwordStore),
+		auth.WithLoginEmail(auth.LoginEmailOptions{
+			Enabled:    true,
+			CodeLength: 6,
+			Store:      accountService,
+			Sender:     emailSender,
+		}))
 
 	deps := rpc.Deps{
-		Auth:    auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code, auth.WithPasswords(passwordStore)),
-		Account: account.NewService(passwordStore, account.WithUsers(userStore)),
+		Auth:    authService,
+		Account: accountService,
 		Help:    help.NewService(helpStore, helpStore),
 		Users:   users.NewService(userStore),
 		Updates: updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
@@ -125,7 +149,7 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 		}
 		verified, err := raw.AccountVerifyEmail(ctx, &tg.AccountVerifyEmailRequest{
 			Purpose:      &tg.EmailVerifyPurposeLoginChange{},
-			Verification: &tg.EmailVerificationCode{Code: "whatever"},
+			Verification: &tg.EmailVerificationCode{Code: emailSender.code},
 		})
 		if err != nil {
 			return err
@@ -176,7 +200,7 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 		signInRes, err := raw.AuthSignIn(ctx, &tg.AuthSignInRequest{
 			PhoneNumber:       phone,
 			PhoneCodeHash:     sentCode.PhoneCodeHash,
-			EmailVerification: &tg.EmailVerificationCode{Code: "any-email-code"},
+			EmailVerification: &tg.EmailVerificationCode{Code: emailSender.code},
 		})
 		if err != nil {
 			return err

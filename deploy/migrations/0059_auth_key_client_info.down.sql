@@ -1,0 +1,7 @@
+ALTER TABLE auth_keys
+  DROP COLUMN IF EXISTS app_version,
+  DROP COLUMN IF EXISTS api_id,
+  DROP COLUMN IF EXISTS system_version,
+  DROP COLUMN IF EXISTS platform,
+  DROP COLUMN IF EXISTS device_model,
+  DROP COLUMN IF EXISTS layer;

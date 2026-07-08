@@ -63,6 +63,63 @@ func TestLoadBusinessAIProviderDefaultsToEcho(t *testing.T) {
 	}
 }
 
+func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
+	disableDefaultConfigFile(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LoginEmailEnable {
+		t.Fatal("LoginEmailEnable = true, want false")
+	}
+	if cfg.LoginEmailRequireSetup {
+		t.Fatal("LoginEmailRequireSetup = true, want false")
+	}
+	if cfg.AuthCodeTTL != 5*time.Minute || cfg.AuthCodeMaxAttempts != 5 || cfg.LoginEmailCodeLength != 6 {
+		t.Fatalf("auth/login email defaults = %v/%d/%d", cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength)
+	}
+}
+
+func TestLoadLoginEmailSMTPConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+	t.Setenv("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", "true")
+	t.Setenv("TELESRV_AUTH_CODE_TTL", "3m")
+	t.Setenv("TELESRV_AUTH_CODE_MAX_ATTEMPTS", "4")
+	t.Setenv("TELESRV_LOGIN_EMAIL_CODE_LENGTH", "7")
+	t.Setenv("TELESRV_SMTP_HOST", "smtp.example.test")
+	t.Setenv("TELESRV_SMTP_PORT", "2525")
+	t.Setenv("TELESRV_SMTP_USERNAME", "smtp-user")
+	t.Setenv("TELESRV_SMTP_PASSWORD", "smtp-pass")
+	t.Setenv("TELESRV_SMTP_FROM", "noreply@example.test")
+	t.Setenv("TELESRV_SMTP_TLS", "none")
+	t.Setenv("TELESRV_SMTP_TIMEOUT", "2s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.LoginEmailEnable || !cfg.LoginEmailRequireSetup {
+		t.Fatalf("login email flags = %v/%v, want true/true", cfg.LoginEmailEnable, cfg.LoginEmailRequireSetup)
+	}
+	if cfg.AuthCodeTTL != 3*time.Minute || cfg.AuthCodeMaxAttempts != 4 || cfg.LoginEmailCodeLength != 7 {
+		t.Fatalf("auth/login email config = %v/%d/%d", cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength)
+	}
+	if cfg.SMTPHost != "smtp.example.test" || cfg.SMTPPort != 2525 || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-pass" || cfg.SMTPFrom != "noreply@example.test" || cfg.SMTPTLSMode != "none" || cfg.SMTPTimeout != 2*time.Second {
+		t.Fatalf("smtp config = %#v", cfg)
+	}
+}
+
+func TestLoadLoginEmailRequiresSMTPWhenEnabled(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with login email enabled but no SMTP host")
+	}
+}
+
 func TestLoadKeepsAdminAndRtmpDefaultPortsSeparate(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_ADMIN_UI_ADDR", "")

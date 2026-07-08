@@ -54,6 +54,7 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
+	mailpkg "telesrv/internal/mail"
 	"telesrv/internal/mtprotoedge"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
@@ -464,7 +465,7 @@ func run(logger *zap.Logger) error {
 	// userCache 与 users 服务共享同一实例：bot 元数据写入（version bump）后必须
 	// 失效缓存，否则 TTL 内 getUsers 回旧 first_name/旧 bot_info_version。
 	userCache := redisstore.NewUserCache(rdb, redisstore.DefaultUserCacheTTL)
-	accountService := account.NewService(passwordStore,
+	accountOptions := []account.ServiceOption{
 		account.WithReactionSettings(passwordStore),
 		account.WithAccountSettings(passwordStore),
 		account.WithNotifySettings(passwordStore),
@@ -473,7 +474,24 @@ func run(logger *zap.Logger) error {
 		account.WithSavedMusic(passwordStore),
 		account.WithBusinessAutomation(passwordStore),
 		account.WithUsers(userStore),
-		account.WithPublicBaseURL(cfg.PublicBaseURL))
+		account.WithPublicBaseURL(cfg.PublicBaseURL),
+	}
+	var loginEmailSender mailpkg.Sender
+	if cfg.LoginEmailEnable {
+		loginEmailSender = mailpkg.NewSMTP(mailpkg.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+			FromName: cfg.SMTPFromName,
+			TLSMode:  cfg.SMTPTLSMode,
+			Timeout:  cfg.SMTPTimeout,
+		})
+		accountOptions = append(accountOptions,
+			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
+	}
+	accountService := account.NewService(passwordStore, accountOptions...)
 	botsService := botsapp.NewService(userStore, botStore, messageStore,
 		botsapp.WithLogger(logger.Named("bots")),
 		botsapp.WithBlockChecker(contactStore),
@@ -611,7 +629,20 @@ func run(logger *zap.Logger) error {
 		messageapp.WithSendPermissionChecker(adminService),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
-	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode, auth.WithLoginMessages(messageStore, dialogStore), auth.WithPasswords(passwordStore), auth.WithBotLogin(botStore), auth.WithPremiumGrant(cfg.PremiumGrantMonths))
+	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode,
+		auth.WithLoginMessages(messageStore, dialogStore),
+		auth.WithPasswords(passwordStore),
+		auth.WithBotLogin(botStore),
+		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		auth.WithCodeTTL(cfg.AuthCodeTTL),
+		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
+		auth.WithLoginEmail(auth.LoginEmailOptions{
+			Enabled:      cfg.LoginEmailEnable,
+			RequireSetup: cfg.LoginEmailRequireSetup,
+			CodeLength:   cfg.LoginEmailCodeLength,
+			Store:        accountService,
+			Sender:       loginEmailSender,
+		}))
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,

@@ -416,8 +416,7 @@ func (r *Router) onAccountCancelPasswordEmail(ctx context.Context) (bool, error)
 }
 
 // onAccountSendVerifyEmailCode 处理 account.sendVerifyEmailCode：为登录邮箱的设置/变更
-// 发送验证码。开发环境不真正发邮件、验证码任意，故此处直接持久化待确认的登录邮箱地址，
-// 由后续 verifyEmail 做确认回显。loginChange 走已登录用户，loginSetup 走登录流程中的手机号。
+// 发送邮箱验证码。loginChange 走已登录用户，loginSetup 走登录流程中的手机号 + phone_code_hash。
 func (r *Router) onAccountSendVerifyEmailCode(ctx context.Context, req *tg.AccountSendVerifyEmailCodeRequest) (*tg.AccountSentEmailCode, error) {
 	if r.deps.Account == nil {
 		return nil, internalErr()
@@ -435,29 +434,32 @@ func (r *Router) onAccountSendVerifyEmailCode(ctx context.Context, req *tg.Accou
 		if userID == 0 {
 			return nil, authKeyUnregisteredErr()
 		}
-		if err := r.deps.Account.SetLoginEmail(ctx, userID, email); err != nil {
+		pattern, length, err := r.deps.Account.SendLoginEmailCode(ctx, userID, "", "", email, false)
+		if err != nil {
 			return nil, passwordErr(err)
 		}
+		return &tg.AccountSentEmailCode{EmailPattern: pattern, Length: length}, nil
 	case *tg.EmailVerifyPurposeLoginSetup:
-		if err := r.deps.Account.SetLoginEmailByPhone(ctx, p.PhoneNumber, email); err != nil {
+		pattern, length, err := r.deps.Account.SendLoginEmailCode(ctx, 0, p.PhoneNumber, p.PhoneCodeHash, email, true)
+		if err != nil {
 			return nil, passwordErr(err)
 		}
+		return &tg.AccountSentEmailCode{EmailPattern: pattern, Length: length}, nil
 	default:
 		return nil, emailInvalidErr()
 	}
-	return &tg.AccountSentEmailCode{EmailPattern: domain.MaskEmail(email), Length: devCodeLength}, nil
 }
 
-// onAccountVerifyEmail 处理 account.verifyEmail：确认登录邮箱（验证码任意非空即通过）。
+// onAccountVerifyEmail 处理 account.verifyEmail：确认登录邮箱验证码。
 // loginChange（已登录）返回 emailVerified{email}；loginSetup（登录流程中）返回
-// emailVerifiedLogin{email, sent_code}，其中 sent_code 是供客户端继续手机登录的新验证码。
+// emailVerifiedLogin{email, sent_code}。TDesktop 能消费嵌套 auth.sentCodeSuccess，
+// 直接进入注册/登录完成；DrKLO Android 12.8.1 该路径漏处理 sentCodeSuccess，
+// 临时降级为普通 emailCode sentCode，待 Android 补齐后移除。
 func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerifyEmailRequest) (tg.AccountEmailVerifiedClass, error) {
 	if r.deps.Account == nil {
 		return nil, internalErr()
 	}
-	if strings.TrimSpace(emailVerificationCode(req.Verification)) == "" {
-		return nil, emailCodeInvalidErr()
-	}
+	code := emailVerificationCode(req.Verification)
 	switch p := req.Purpose.(type) {
 	case *tg.EmailVerifyPurposeLoginChange:
 		userID, _, err := r.currentUserID(ctx)
@@ -467,30 +469,36 @@ func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerify
 		if userID == 0 {
 			return nil, authKeyUnregisteredErr()
 		}
-		email, found, err := r.deps.Account.LoginEmail(ctx, userID)
+		email, err := r.deps.Account.VerifyLoginEmail(ctx, userID, "", "", code, false)
 		if err != nil {
-			return nil, internalErr()
-		}
-		if !found {
-			return nil, emailCodeInvalidErr()
+			return nil, passwordErr(err)
 		}
 		return &tg.AccountEmailVerified{Email: email}, nil
 	case *tg.EmailVerifyPurposeLoginSetup:
-		email, found, err := r.deps.Account.LoginEmailByPhone(ctx, p.PhoneNumber)
-		if err != nil {
-			return nil, internalErr()
-		}
-		if !found {
-			return nil, emailCodeInvalidErr()
-		}
 		if r.deps.Auth == nil {
 			return nil, internalErr()
 		}
-		hash, err := r.deps.Auth.SendCode(ctx, p.PhoneNumber)
+		email, err := r.deps.Account.VerifyLoginEmail(ctx, 0, p.PhoneNumber, p.PhoneCodeHash, code, true)
 		if err != nil {
-			return nil, internalErr()
+			return nil, passwordErr(err)
 		}
-		return &tg.AccountEmailVerifiedLogin{Email: email, SentCode: tgSentCode(hash)}, nil
+		if ClientTypeFrom(ctx) == ClientTypeAndroid {
+			return &tg.AccountEmailVerifiedLogin{
+				Email:    email,
+				SentCode: tgEmailSentCode(p.PhoneCodeHash, domain.MaskEmail(email), len(strings.TrimSpace(code))),
+			}, nil
+		}
+		u, loginMessage, needSignUp, signInErr := r.deps.Auth.SignInWithEmail(ctx, r.authzFromCtx(ctx), p.PhoneNumber, p.PhoneCodeHash, code)
+		authorization, err := r.finishAuthSignIn(ctx, u, loginMessage, needSignUp, signInErr)
+		if err != nil {
+			return nil, err
+		}
+		return &tg.AccountEmailVerifiedLogin{
+			Email: email,
+			SentCode: &tg.AuthSentCodeSuccess{
+				Authorization: authorization,
+			},
+		}, nil
 	default:
 		return nil, emailInvalidErr()
 	}

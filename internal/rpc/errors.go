@@ -261,6 +261,7 @@ func srpPasswordChangedErr() error    { return tgerr.New(400, "SRP_PASSWORD_CHAN
 func newSettingsInvalidErr() error    { return tgerr.New(400, "NEW_SETTINGS_INVALID") }
 func newSaltInvalidErr() error        { return tgerr.New(400, "NEW_SALT_INVALID") }
 func emailInvalidErr() error          { return tgerr.New(400, "EMAIL_INVALID") }
+func emailNotAllowedErr() error       { return tgerr.New(400, "EMAIL_NOT_ALLOWED") }
 func emailCodeInvalidErr() error      { return tgerr.New(400, "CODE_INVALID") }
 func passwordRecoveryNAErr() error    { return tgerr.New(400, "PASSWORD_RECOVERY_NA") }
 
@@ -393,6 +394,10 @@ func passwordErr(err error) error {
 		return newSaltInvalidErr()
 	case errors.Is(err, domain.ErrEmailInvalid):
 		return emailInvalidErr()
+	case errors.Is(err, domain.ErrEmailOccupied):
+		return emailNotAllowedErr()
+	case errors.Is(err, domain.ErrEmailNotAllowed):
+		return emailNotAllowedErr()
 	case errors.Is(err, domain.ErrEmailCodeInvalid):
 		return emailCodeInvalidErr()
 	case errors.Is(err, domain.ErrPasswordRecoveryNA):

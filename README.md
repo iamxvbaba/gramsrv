@@ -104,6 +104,10 @@ Useful local environment variables:
 | `TELESRV_ADVERTISE_IP` | `127.0.0.1` | IP advertised to compatible clients |
 | `TELESRV_DC` | `2` | self-hosted DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | fixed login code for local development |
+| `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | `5` | wrong-code attempts before the code hash is deleted |
+| `TELESRV_LOGIN_EMAIL_ENABLE` | `false` | send login codes to confirmed login email addresses through SMTP |
+| `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | force phone login/registration to set a login email first |
+| `TELESRV_SMTP_HOST` | empty | SMTP host used when login email verification is enabled |
 | `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical base URL for public sticker/chatlist links |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |

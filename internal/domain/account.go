@@ -14,8 +14,24 @@ var (
 	ErrPasswordRecoveryNA    = errors.New("password recovery not available")
 	ErrEmailCodeInvalid      = errors.New("email code invalid")
 	ErrEmailInvalid          = errors.New("email invalid")
+	ErrEmailNotAllowed       = errors.New("email not allowed")
+	ErrEmailOccupied         = errors.New("email occupied")
 	ErrSessionPasswordNeeded = errors.New("session password needed")
 )
+
+type AuthCodeDeliveryKind string
+
+const (
+	AuthCodeDeliveryPhone              AuthCodeDeliveryKind = "phone"
+	AuthCodeDeliveryEmail              AuthCodeDeliveryKind = "email"
+	AuthCodeDeliveryEmailSetupRequired AuthCodeDeliveryKind = "email_setup_required"
+)
+
+type AuthCodeDelivery struct {
+	Kind         AuthCodeDeliveryKind
+	EmailPattern string
+	Length       int
+}
 
 // PasswordKDFAlgo 是业务层的 SRP KDF 算法描述，不依赖 tg.*。
 type PasswordKDFAlgo struct {
@@ -83,10 +99,10 @@ type PasswordSettings struct {
 	// LoginEmailPattern）。它独立于 2FA 恢复邮箱 RecoveryEmail：账号可只设登录邮箱而无 2FA。
 	LoginEmail        string
 	LoginEmailPattern string
-	NewAlgo                 PasswordKDFAlgo
-	NewSecureAlgo           SecurePasswordKDFAlgo
-	SecureRandom            []byte
-	PendingResetDate        int
+	NewAlgo           PasswordKDFAlgo
+	NewSecureAlgo     SecurePasswordKDFAlgo
+	SecureRandom      []byte
+	PendingResetDate  int
 
 	// Server-only SRP fields. They are persisted but never exposed to rpc/tg conversion.
 	SRPVerifier []byte

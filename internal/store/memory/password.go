@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"telesrv/internal/domain"
 )
@@ -75,9 +76,38 @@ func (s *PasswordStore) GetByUser(_ context.Context, userID int64) (domain.Passw
 
 func (s *PasswordStore) Save(_ context.Context, userID int64, settings domain.PasswordSettings) error {
 	s.mu.Lock()
+	settings.LoginEmail = normalizeLoginEmail(settings.LoginEmail)
+	settings.LoginEmailPattern = domain.MaskEmail(settings.LoginEmail)
+	if settings.LoginEmail != "" {
+		for ownerUserID, existing := range s.m {
+			if ownerUserID != userID && strings.EqualFold(existing.LoginEmail, settings.LoginEmail) {
+				s.mu.Unlock()
+				return domain.ErrEmailOccupied
+			}
+		}
+	}
 	s.m[userID] = clonePasswordSettings(settings)
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *PasswordStore) LoginEmailOwner(_ context.Context, email string) (int64, bool, error) {
+	email = normalizeLoginEmail(email)
+	if email == "" {
+		return 0, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for userID, settings := range s.m {
+		if strings.EqualFold(settings.LoginEmail, email) {
+			return userID, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
+func normalizeLoginEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }
 
 func clonePasswordSettings(in domain.PasswordSettings) domain.PasswordSettings {
