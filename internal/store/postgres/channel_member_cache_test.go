@@ -136,6 +136,7 @@ func TestReadModelChangeListenerInvalidatesChannelCaches(t *testing.T) {
 	rows := NewChannelRowCache(16)
 	members := NewChannelMemberCache(16)
 	fullBots := &fakeChannelFullBotReadModelCache{}
+	botMembers := &fakeChannelBotMemberReadModelCache{}
 	mediaCounts := &fakeChannelMediaCountReadModelCache{}
 	rows.put(domain.Channel{ID: 7, Title: "old"})
 	members.put(domain.ChannelMember{ChannelID: 7, UserID: 100, Status: domain.ChannelMemberActive})
@@ -146,6 +147,7 @@ func TestReadModelChangeListenerInvalidatesChannelCaches(t *testing.T) {
 		ChannelRows:        rows,
 		ChannelMembers:     members,
 		ChannelFullBots:    fullBots,
+		ChannelBotMembers:  botMembers,
 		ChannelMediaCounts: mediaCounts,
 	}, nil)
 	listener.handlePayload(`{"model":"channel_member","owner_user_id":100,"peer_type":"channel","peer_id":7,"version":2}`)
@@ -157,6 +159,9 @@ func TestReadModelChangeListenerInvalidatesChannelCaches(t *testing.T) {
 	}
 	if got := fullBots.channelsSnapshot(); len(got) != 1 || got[0] != 7 {
 		t.Fatalf("channel_member 应失效 full bot info: %+v", got)
+	}
+	if got := botMembers.channelsSnapshot(); len(got) != 1 || got[0] != 7 {
+		t.Fatalf("channel_member 应失效 bot member ids: %+v", got)
 	}
 	if got := mediaCounts.viewerSnapshot(); len(got) != 1 || got[0] != [2]int64{100, 7} {
 		t.Fatalf("channel_member 应失效该 viewer 的 media count: %+v", got)
@@ -175,8 +180,16 @@ func TestReadModelChangeListenerInvalidatesChannelCaches(t *testing.T) {
 	if got := fullBots.channelsSnapshot(); len(got) != 2 || got[1] != 7 {
 		t.Fatalf("channel_base 应失效 full bot info: %+v", got)
 	}
+	if got := botMembers.channelsSnapshot(); len(got) != 2 || got[1] != 7 {
+		t.Fatalf("channel_base 应失效 bot member ids: %+v", got)
+	}
 
-	listener.handlePayload(`{"model":"channel_media_counts","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":4}`)
+	listener.handlePayload(`{"model":"channel_participants","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":4}`)
+	if got := botMembers.channelsSnapshot(); len(got) != 3 || got[2] != 7 {
+		t.Fatalf("channel_participants 应失效 bot member ids: %+v", got)
+	}
+
+	listener.handlePayload(`{"model":"channel_media_counts","owner_user_id":0,"peer_type":"channel","peer_id":7,"version":5}`)
 	if got := mediaCounts.channelSnapshot(); len(got) != 1 || got[0] != 7 {
 		t.Fatalf("channel_media_counts 应失效该频道 media count: %+v", got)
 	}
@@ -242,6 +255,30 @@ func (f *fakeChannelFullBotReadModelCache) flushCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.flushes
+}
+
+type fakeChannelBotMemberReadModelCache struct {
+	mu       sync.Mutex
+	channels []int64
+	flushes  int
+}
+
+func (f *fakeChannelBotMemberReadModelCache) InvalidateActiveBotMemberIDsReadModel(channelID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.channels = append(f.channels, channelID)
+}
+
+func (f *fakeChannelBotMemberReadModelCache) FlushActiveBotMemberIDsReadModel() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.flushes++
+}
+
+func (f *fakeChannelBotMemberReadModelCache) channelsSnapshot() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.channels...)
 }
 
 type fakeChannelMediaCountReadModelCache struct {

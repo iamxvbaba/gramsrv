@@ -46,7 +46,7 @@ type Config struct {
 	// 生产默认 https://telesrv.net；本地可设为 http://127.0.0.1:2401。
 	PublicBaseURL string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
-	// 生产应只监听 loopback，并由 nginx 将 /addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
+	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
 	PublicLinkWebAddr string
 	// Admin UI 独立进程配置项保留在统一配置中，cmd/telesrv-admin 也按同名 env 读取。
 	AdminUIAddr     string
@@ -179,6 +179,9 @@ type Config struct {
 	ChannelNudgeMaxTargets int
 	// UpdateEventRetention 是 durable update log 保留期；只清理已被水位/state 覆盖的事件。
 	UpdateEventRetention time.Duration
+	// BotAPIUpdateRetention 是 bot_api_updates 投递队列的最大保留期（官方 Bot API 语义 24h）；
+	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
+	BotAPIUpdateRetention time.Duration
 	// RetentionInterval 是 retention worker 的运行间隔。
 	RetentionInterval time.Duration
 	// RetentionBatch 是单次 retention 最多删除的行数。
@@ -392,6 +395,7 @@ func Load() (Config, error) {
 		CatchupRateWindow:      envDurationOr("TELESRV_CATCHUP_RATE_WINDOW", time.Minute),
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),
+		BotAPIUpdateRetention:  envDurationOr("TELESRV_BOT_API_UPDATE_RETENTION", 24*time.Hour),
 		RetentionInterval:      envDurationOr("TELESRV_RETENTION_INTERVAL", time.Hour),
 		RetentionBatch:         envIntOr("TELESRV_RETENTION_BATCH", 10000),
 		UploadPartTTL:          envDurationOr("TELESRV_UPLOAD_PART_TTL", 24*time.Hour),

@@ -193,6 +193,9 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			if err != nil {
 				return nil, messageForwardErr(err)
 			}
+			if !sent.Duplicate {
+				r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, sent)
+			}
 			res.SenderMessages = append(res.SenderMessages, sent.SenderMessage)
 			res.RecipientMessages = append(res.RecipientMessages, sent.RecipientMessage)
 			res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)

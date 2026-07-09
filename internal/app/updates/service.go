@@ -99,6 +99,20 @@ func (s *Service) CurrentState(ctx context.Context, userID int64) (domain.Update
 	return s.currentState(ctx, userID)
 }
 
+// ConfirmedState returns the device-local confirmed update state, if any,
+// without bootstrapping it to the account-current pts.
+func (s *Service) ConfirmedState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error) {
+	if s == nil || s.states == nil {
+		return domain.UpdateState{}, false, nil
+	}
+	st, found, err := s.states.Get(ctx, authKeyID, userID)
+	if err != nil {
+		return domain.UpdateState{}, false, err
+	}
+	st.Seq = 0
+	return st, found, nil
+}
+
 // AcknowledgeCurrentState 返回账号当前最大连续状态，并把该设备的确认水位推进到此。
 //
 // 供 updates.getState 使用：协议语义是客户端宣告「从现在开始同步」，启动期的

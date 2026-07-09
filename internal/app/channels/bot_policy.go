@@ -106,18 +106,70 @@ func (s *Service) skippedBotDeliveryUserIDs(ctx context.Context, req domain.Send
 	if s.bots == nil || req.ChannelID == 0 || req.UserID == 0 {
 		return nil, nil
 	}
-	if lister, ok := s.channels.(activeChannelBotMemberIDLister); ok {
-		memberIDs, err := lister.ListActiveChannelBotMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxSynchronousChannelDialogFanout)
-		if err != nil {
-			return nil, err
-		}
-		return s.skippedBotDeliveryUserIDsForIDs(ctx, req, memberIDs)
-	}
-	memberIDs, err := s.channels.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxSynchronousChannelDialogFanout)
+	memberIDs, err := s.loadActiveBotMemberIDs(ctx, req.UserID, req.ChannelID, domain.MaxSynchronousChannelDialogFanout)
 	if err != nil {
 		return nil, err
 	}
 	return s.skippedBotDeliveryUserIDsForIDs(ctx, req, memberIDs)
+}
+
+// ActiveBotMemberIDs returns active bot members for non-privacy-critical producers
+// such as Bot API update queue fanout. Privacy delivery decisions use
+// loadActiveBotMemberIDs directly to avoid stale-cache leaks.
+func (s *Service) ActiveBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
+	if s == nil || s.channels == nil || viewerUserID == 0 || channelID == 0 {
+		return nil, domain.ErrChannelInvalid
+	}
+	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {
+		limit = domain.MaxSynchronousChannelDialogFanout
+	}
+	key := activeBotMemberIDsCacheKey{viewerUserID: viewerUserID, channelID: channelID, limit: limit}
+	if s.versions != nil {
+		hash, err := s.channelBotMemberIDsHash(ctx, viewerUserID, channelID, key)
+		if err != nil {
+			return nil, err
+		}
+		if hash != 0 {
+			return s.botMemberIDsCache.getOrLoadVersioned(ctx, key, hash, func() ([]int64, error) {
+				return s.loadActiveBotMemberIDs(ctx, viewerUserID, channelID, limit)
+			})
+		}
+		return s.loadActiveBotMemberIDs(ctx, viewerUserID, channelID, limit)
+	}
+	return s.botMemberIDsCache.getOrLoad(ctx, key, func() ([]int64, error) {
+		return s.loadActiveBotMemberIDs(ctx, viewerUserID, channelID, limit)
+	})
+}
+
+func (s *Service) loadActiveBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
+	if s == nil || s.channels == nil || viewerUserID == 0 || channelID == 0 {
+		return nil, domain.ErrChannelInvalid
+	}
+	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {
+		limit = domain.MaxSynchronousChannelDialogFanout
+	}
+	if lister, ok := s.channels.(activeChannelBotMemberIDLister); ok {
+		return lister.ListActiveChannelBotMemberIDs(ctx, viewerUserID, channelID, limit)
+	}
+	if s.bots == nil {
+		return nil, nil
+	}
+	memberIDs, err := s.channels.ListActiveChannelMemberIDs(ctx, viewerUserID, channelID, limit)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := s.botProfiles(ctx, memberIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(profiles))
+	for _, id := range uniqueNonZero(memberIDs) {
+		if _, found := profiles[id]; found {
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 func (s *Service) skippedBotDeliveryUserIDsForIDs(ctx context.Context, req domain.SendChannelMessageRequest, memberIDs []int64) ([]int64, error) {

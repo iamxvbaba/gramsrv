@@ -21,10 +21,15 @@ import (
 type Config struct {
 	Addr          string
 	PublicBaseURL string
+	Users         UsernameResolver
 }
 
 type Resolver interface {
 	ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error)
+}
+
+type UsernameResolver interface {
+	ByUsername(ctx context.Context, username string) (domain.User, bool, error)
 }
 
 func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logger) (*http.Server, error) {
@@ -38,7 +43,7 @@ func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logge
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	handler := NewHandler(resolver, cfg.PublicBaseURL)
+	handler := NewHandlerWithUsers(resolver, cfg.Users, cfg.PublicBaseURL)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -64,8 +69,13 @@ func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logge
 }
 
 func NewHandler(resolver Resolver, publicBaseURL string) http.Handler {
+	return NewHandlerWithUsers(resolver, nil, publicBaseURL)
+}
+
+func NewHandlerWithUsers(resolver Resolver, users UsernameResolver, publicBaseURL string) http.Handler {
 	h := &handler{
 		resolver:      resolver,
+		users:         users,
 		publicBaseURL: normalizePublicBaseURL(publicBaseURL),
 	}
 	mux := http.NewServeMux()
@@ -73,11 +83,13 @@ func NewHandler(resolver Resolver, publicBaseURL string) http.Handler {
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
+	mux.HandleFunc("GET /{username}", h.usernameLink)
 	return mux
 }
 
 type handler struct {
 	resolver      Resolver
+	users         UsernameResolver
 	publicBaseURL string
 }
 
@@ -115,6 +127,43 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	if err := landingTemplate.Execute(w, data); err != nil {
 		http.Error(w, "render shared folder page failed", http.StatusInternalServerError)
+	}
+}
+
+func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
+	username := strings.TrimSpace(r.PathValue("username"))
+	if h.users == nil || !validUsernamePath(username) {
+		http.NotFound(w, r)
+		return
+	}
+	u, found, err := h.users.ByUsername(r.Context(), username)
+	if err != nil {
+		http.Error(w, "username lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !found || !u.Bot || strings.TrimSpace(u.Username) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	title := strings.TrimSpace(u.FirstName)
+	if title == "" {
+		title = u.Username
+	}
+	app := schemeURL("telesrv", "resolve", "domain", u.Username)
+	data := pageData{
+		Title:        title,
+		KindLabel:    "bot",
+		Subtitle:     "@" + u.Username,
+		Description:  "This page opens the app so you can start a chat with this bot.",
+		CanonicalURL: h.publicUsernameURL(u.Username),
+		AppURL:       template.URL(app),
+		LegacyTgURL:  template.URL(schemeURL("tg", "resolve", "domain", u.Username)),
+	}
+	data.AppURLJS = template.JS(strconv.Quote(app))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	if err := landingTemplate.Execute(w, data); err != nil {
+		http.Error(w, "render bot page failed", http.StatusInternalServerError)
 	}
 }
 
@@ -167,6 +216,10 @@ func (h *handler) publicURL(kind, value string) string {
 	return h.publicBaseURL + "/" + kind + "/" + url.PathEscape(value)
 }
 
+func (h *handler) publicUsernameURL(username string) string {
+	return h.publicBaseURL + "/" + url.PathEscape(username)
+}
+
 func normalizePublicBaseURL(raw string) string {
 	u, err := url.Parse(links.NormalizeBaseURL(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -197,6 +250,24 @@ func validShortNamePath(shortName string) bool {
 
 func validSlugPath(slug string) bool {
 	return links.ValidChatlistSlug(slug)
+}
+
+func validUsernamePath(username string) bool {
+	if username == "" || len(username) < 5 || len(username) > 32 {
+		return false
+	}
+	for i, r := range username {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9', r == '_':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func linkKind(set domain.StickerSet) string {

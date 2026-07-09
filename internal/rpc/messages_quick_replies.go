@@ -216,6 +216,9 @@ func (r *Router) onMessagesSendQuickReplyMessages(ctx context.Context, req *tg.M
 		if err != nil {
 			return nil, messageSendErr(err)
 		}
+		if !sent.Duplicate {
+			r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, sent)
+		}
 		res.SenderMessages = append(res.SenderMessages, sent.SenderMessage)
 		res.RecipientMessages = append(res.RecipientMessages, sent.RecipientMessage)
 		res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)

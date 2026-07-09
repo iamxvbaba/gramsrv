@@ -187,6 +187,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	if !res.Duplicate {
 		// 链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
+		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	}
 	return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, p.randomID, true, users, chats), res.Duplicate, nil
 }

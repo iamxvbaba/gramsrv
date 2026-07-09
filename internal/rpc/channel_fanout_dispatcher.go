@@ -273,6 +273,7 @@ func channelMessagesFanoutOwnerIDs(results []domain.SendChannelMessageResult, ex
 // 类事件的常见形态：发送/转发单条/讨论组联动/forum topic 消息）。语义与 enqueueChannelFanout 一致，
 // 仅多了把每 viewer 投影一次性算好预热进共享 cache（O(owner)），不改变投递/排除/nudge 行为。
 func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID int64, res domain.SendChannelMessageResult, extraUserIDs []int64) {
+	r.enqueueBotAPIChannelMessageUpdate(ctx, originUserID, res)
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessageFanoutOwnerIDs(res, extraUserIDs)
 	skip := skipDeliverySet(res.SkipDeliveryUserIDs)
@@ -336,6 +337,7 @@ func channelEditMessageFanoutOwnerIDs(res domain.EditChannelMessageResult) []int
 // nudge 须带 channel 当前最高 pts 才能让 >cap 在线成员的 getChannelDifference 拉齐到末尾——用 Event.Pts
 // 会在 Event.Pts==0 时漏发 nudge、或低于真实 pts。max() 在三种形态（仅 Event/仅 ServiceEvent/两者）都正确。
 func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUserID int64, res domain.EditChannelMessageResult) {
+	r.enqueueBotAPIChannelEditMessageUpdate(ctx, originUserID, res)
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelEditMessageFanoutOwnerIDs(res)
 	nudgePts := max(res.Event.Pts, res.ServiceEvent.Pts)
@@ -352,6 +354,7 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 // 一个 Updates 内含多条 UpdateNewChannelMessage），peer refs 取全部结果并集预热。channelID/pts/
 // recipients 由调用方按批量语义给定（pts 取最后一条；recipients 受大群截断口径影响）。
 func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID, channelID int64, pts int, recipients []int64, results []domain.SendChannelMessageResult, extraUserIDs []int64) {
+	r.enqueueBotAPIChannelMessagesUpdate(ctx, originUserID, results)
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessagesFanoutOwnerIDs(results, extraUserIDs)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMembers, originUserID, channelID, pts, recipients,

@@ -37,6 +37,12 @@ func (s *captureUpdates) CurrentState(_ context.Context, userID int64) (domain.U
 	return s.state, nil
 }
 
+func (s *captureUpdates) ConfirmedState(_ context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error) {
+	s.authKeyID = authKeyID
+	s.userID = userID
+	return s.state, s.state.Pts != 0 || s.state.Date != 0, nil
+}
+
 func (s *captureUpdates) AcknowledgeCurrentState(_ context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error) {
 	s.authKeyID = authKeyID
 	s.userID = userID

@@ -17,11 +17,12 @@ type Service struct {
 	versions store.ReadModelVersionStore
 	sendGate SendPermissionChecker
 
-	viewCache        *channelViewReadModelCache
-	resolveCache     *channelResolveReadModelCache
-	mediaCountCache  *mediaCountReadModelCache
-	participantCache *participantsReadModelCache
-	activeIDsCache   *activeChannelIDsReadModelCache
+	viewCache         *channelViewReadModelCache
+	resolveCache      *channelResolveReadModelCache
+	mediaCountCache   *mediaCountReadModelCache
+	participantCache  *participantsReadModelCache
+	activeIDsCache    *activeChannelIDsReadModelCache
+	botMemberIDsCache *activeBotMemberIDsCache
 }
 
 type Option func(*Service)
@@ -33,12 +34,13 @@ type SendPermissionChecker interface {
 // NewService creates a channel service.
 func NewService(channels store.ChannelStore, opts ...Option) *Service {
 	s := &Service{
-		channels:         channels,
-		viewCache:        newChannelViewReadModelCache(defaultChannelViewReadModelTTL),
-		resolveCache:     newChannelResolveReadModelCache(defaultChannelResolveReadModelTTL),
-		mediaCountCache:  newMediaCountReadModelCache(defaultMediaCountReadModelTTL),
-		participantCache: newParticipantsReadModelCache(defaultParticipantsReadModelTTL),
-		activeIDsCache:   newActiveChannelIDsReadModelCache(defaultActiveChannelIDsReadModelTTL),
+		channels:          channels,
+		viewCache:         newChannelViewReadModelCache(defaultChannelViewReadModelTTL),
+		resolveCache:      newChannelResolveReadModelCache(defaultChannelResolveReadModelTTL),
+		mediaCountCache:   newMediaCountReadModelCache(defaultMediaCountReadModelTTL),
+		participantCache:  newParticipantsReadModelCache(defaultParticipantsReadModelTTL),
+		activeIDsCache:    newActiveChannelIDsReadModelCache(defaultActiveChannelIDsReadModelTTL),
+		botMemberIDsCache: newActiveBotMemberIDsCache(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -238,6 +240,7 @@ func (s *Service) InviteToChannel(ctx context.Context, userID, channelID int64, 
 	if err == nil {
 		s.invalidateActiveChannelIDs(activeMembershipUserIDsFromMembers(0, res.Members)...)
 		s.participantCache.invalidateChannel(channelID)
+		s.invalidateActiveBotMemberIDs(channelID)
 	}
 	return res, err
 }
@@ -251,6 +254,7 @@ func (s *Service) JoinChannel(ctx context.Context, userID, channelID int64, date
 	if err == nil {
 		s.invalidateActiveChannelIDs(userID)
 		s.participantCache.invalidateChannel(channelID)
+		s.invalidateActiveBotMemberIDs(channelID)
 	}
 	return res, err
 }
@@ -264,6 +268,7 @@ func (s *Service) LeaveChannel(ctx context.Context, userID, channelID int64, dat
 	if err == nil {
 		s.invalidateActiveChannelIDs(userID)
 		s.participantCache.invalidateChannel(channelID)
+		s.invalidateActiveBotMemberIDs(channelID)
 	}
 	return res, err
 }
@@ -325,6 +330,7 @@ func (s *Service) EditAdmin(ctx context.Context, userID int64, req domain.EditCh
 	if err == nil {
 		s.invalidateActiveChannelIDs(req.MemberID)
 		s.participantCache.invalidateChannel(req.ChannelID)
+		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
 	return res, err
 }
@@ -344,6 +350,7 @@ func (s *Service) TransferOwnership(ctx context.Context, userID int64, req domai
 	if err == nil {
 		s.invalidateActiveChannelIDs(req.UserID, req.NewOwnerID)
 		s.participantCache.invalidateChannel(req.ChannelID)
+		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
 	return res, err
 }
@@ -363,6 +370,7 @@ func (s *Service) EditMemberRank(ctx context.Context, userID int64, req domain.E
 	res, err := s.channels.EditChannelMemberRank(ctx, req)
 	if err == nil {
 		s.participantCache.invalidateChannel(req.ChannelID)
+		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
 	return res, err
 }
@@ -382,6 +390,7 @@ func (s *Service) EditBanned(ctx context.Context, userID int64, req domain.EditC
 	if err == nil {
 		s.invalidateActiveChannelIDs(req.Participant.ID)
 		s.participantCache.invalidateChannel(req.ChannelID)
+		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
 	return res, err
 }
@@ -414,6 +423,7 @@ func (s *Service) DeleteChannel(ctx context.Context, userID int64, req domain.De
 	res, err := s.channels.DeleteChannel(ctx, req)
 	if err == nil {
 		s.invalidateActiveChannelIDs(uniqueUserIDs(append([]int64{userID}, res.Recipients...)...)...)
+		s.invalidateActiveBotMemberIDs(req.ChannelID)
 	}
 	return res, err
 }
@@ -2122,6 +2132,24 @@ func (s *Service) invalidateActiveChannelIDs(userIDs ...int64) {
 		return
 	}
 	s.activeIDsCache.invalidateUsers(userIDs...)
+}
+
+func (s *Service) invalidateActiveBotMemberIDs(channelID int64) {
+	if s == nil || s.botMemberIDsCache == nil {
+		return
+	}
+	s.botMemberIDsCache.invalidateChannel(channelID)
+}
+
+func (s *Service) InvalidateActiveBotMemberIDsReadModel(channelID int64) {
+	s.invalidateActiveBotMemberIDs(channelID)
+}
+
+func (s *Service) FlushActiveBotMemberIDsReadModel() {
+	if s == nil || s.botMemberIDsCache == nil {
+		return
+	}
+	s.botMemberIDsCache.flush()
 }
 
 func normalizeChannelUsername(username string) string {

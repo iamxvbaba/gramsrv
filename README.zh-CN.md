@@ -49,7 +49,7 @@ https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
 | ✅ | 媒体与文件 | upload、download、本地 blob 存储、照片、文档、缩略图、外链媒体抓取、网页预览、地图缩略图缓存、用户/频道头像。 |
 | ✅ | Stickers 与 Reactions | sticker/reaction catalog、seed 支持、recent reactions、top reactions、default reactions、reaction moderation 相关路径。 |
 | ✅ | Gifts 与 Stars | star gifts、本地 stars ledger 基础，用于兼容和后续功能扩展。 |
-| ✅ | Bots 与 Mini Apps | bot 服务基础、callbacks、inline helpers、webview/mini-app 路径、最小 Bot API gateway、demo 工具。 |
+| ✅ | Bots 与 Mini Apps | bot 服务基础、callbacks、inline helpers、webview/mini-app 路径、适配 `python-telegram-bot` 等库的最小 Bot API gateway、持久化 `getUpdates` 投递队列和 demo 工具。 |
 | ✅ | 通话与直播 | 私聊通话信令基础、group call 状态、RTMP live stream、定时视频通话、频道 `join_as` 身份、SFU/TURN building blocks、liveness 与 expiry worker。 |
 | ✅ | 管理与运维 | Admin API/UI backend、PostgreSQL migrations、Redis 易失态、retention workers、pprof/debug hooks、load-test helpers。 |
 | ✅ | Desktop、Android 与 Web 兼容 | Telegram Desktop 是第一目标，Android 与 Web 兼容路径也由同一套 server 持续覆盖。 |
@@ -107,6 +107,8 @@ go build -o bin/gramsrv ./cmd/telesrv
 | `TELESRV_BLOB_DIR` | `data/blobs` | 本地媒体 blob 目录 |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | 可选 sticker/reaction 种子目录 |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | 空 | 可选的 sticker/chatlist 公开链接落地页监听地址 |
+| `TELESRV_BOT_API_ADDR` | 空 | 可选 HTTP Bot API gateway 监听地址，例如 `127.0.0.1:8081` |
+| `TELESRV_BOT_API_UPDATE_RETENTION` | `24h` | 未确认 Bot API `getUpdates` 队列记录的保留窗口 |
 | `TELESRV_AI_ENABLED` | `true` | 启用 AI compose 入口 |
 | `TELESRV_AI_PROVIDERS` | `local` | AI provider 调用链，例如 `local` 或 `kimi,local` |
 | `TELESRV_AI_TIMEOUT` | `15s` | 单次 AI provider 调用超时 |

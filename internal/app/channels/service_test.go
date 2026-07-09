@@ -57,15 +57,16 @@ func (p testBotProfiles) BotInfo(_ context.Context, botUserID int64) (domain.Bot
 
 type countingChannelStore struct {
 	*memory.ChannelStore
-	mu                  sync.Mutex
-	getChannelCalls     int
-	resolveChannelCalls int
-	countMediaCalls     int
-	getParticipantCalls int
-	listActiveIDsCalls  int
-	resolveStarted      chan struct{}
-	resolveRelease      <-chan struct{}
-	resolveStartOnce    sync.Once
+	mu                       sync.Mutex
+	getChannelCalls          int
+	resolveChannelCalls      int
+	countMediaCalls          int
+	getParticipantCalls      int
+	listActiveIDsCalls       int
+	listActiveMemberIDsCalls int
+	resolveStarted           chan struct{}
+	resolveRelease           <-chan struct{}
+	resolveStartOnce         sync.Once
 }
 
 func (s *countingChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelView, error) {
@@ -100,6 +101,11 @@ func (s *countingChannelStore) GetParticipants(ctx context.Context, viewerUserID
 func (s *countingChannelStore) ListActiveChannelIDsForUser(ctx context.Context, userID, afterChannelID int64, limit int) ([]int64, error) {
 	s.listActiveIDsCalls++
 	return s.ChannelStore.ListActiveChannelIDsForUser(ctx, userID, afterChannelID, limit)
+}
+
+func (s *countingChannelStore) ListActiveChannelMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
+	s.listActiveMemberIDsCalls++
+	return s.ChannelStore.ListActiveChannelMemberIDs(ctx, viewerUserID, channelID, limit)
 }
 
 type fakeReadModelVersions struct {
@@ -340,6 +346,102 @@ func TestActiveChannelIDsForUserCachesEmptyMissingReadModelHash(t *testing.T) {
 	}
 	if base.listActiveIDsCalls != 2 {
 		t.Fatalf("ListActiveChannelIDsForUser calls after second post-write read = %d, want 2", base.listActiveIDsCalls)
+	}
+}
+
+func TestActiveBotMemberIDsCachesAndInvalidatesOnMembershipWrite(t *testing.T) {
+	ctx := context.Background()
+	base := &countingChannelStore{ChannelStore: memory.NewChannelStore()}
+	bots := testBotProfiles{
+		1003: {BotUserID: 1003},
+		1004: {BotUserID: 1004},
+	}
+	service := NewService(base, WithBotProfileResolver(bots))
+	created, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Bot Cache",
+		MemberUserIDs: []int64{1002, 1003},
+		Date:          1700004115,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	channelID := created.Channel.ID
+
+	first, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout)
+	if err != nil {
+		t.Fatalf("ActiveBotMemberIDs first: %v", err)
+	}
+	if want := []int64{1003}; !slices.Equal(first, want) {
+		t.Fatalf("ActiveBotMemberIDs first = %v, want %v", first, want)
+	}
+	first[0] = 9999
+	second, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout)
+	if err != nil {
+		t.Fatalf("ActiveBotMemberIDs second: %v", err)
+	}
+	if want := []int64{1003}; !slices.Equal(second, want) {
+		t.Fatalf("ActiveBotMemberIDs cached = %v, want %v", second, want)
+	}
+	if base.listActiveMemberIDsCalls != 1 {
+		t.Fatalf("ListActiveChannelMemberIDs calls = %d, want 1 after cache hit", base.listActiveMemberIDsCalls)
+	}
+
+	if _, err := service.InviteToChannel(ctx, 1001, channelID, []int64{1004}, 1700004116); err != nil {
+		t.Fatalf("InviteToChannel bot: %v", err)
+	}
+	third, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout)
+	if err != nil {
+		t.Fatalf("ActiveBotMemberIDs after invite: %v", err)
+	}
+	if want := []int64{1003, 1004}; !slices.Equal(third, want) {
+		t.Fatalf("ActiveBotMemberIDs after invite = %v, want %v", third, want)
+	}
+	if base.listActiveMemberIDsCalls != 2 {
+		t.Fatalf("ListActiveChannelMemberIDs calls = %d, want reload after invalidation", base.listActiveMemberIDsCalls)
+	}
+}
+
+func TestActiveBotMemberIDsReloadsOnReadModelHashChange(t *testing.T) {
+	ctx := context.Background()
+	base := &countingChannelStore{ChannelStore: memory.NewChannelStore()}
+	bots := testBotProfiles{1003: {BotUserID: 1003}}
+	creator := NewService(base, WithBotProfileResolver(bots))
+	created, err := creator.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{
+		Title:         "Bot Hash",
+		MemberUserIDs: []int64{1002, 1003},
+		Date:          1700004117,
+	})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	channelID := created.Channel.ID
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}
+	baseKey := store.ReadModelKey{Model: readmodel.ModelChannelBase, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID}
+	participantsKey := store.ReadModelKey{Model: readmodel.ModelChannelParticipants, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID}
+	memberKey := store.ReadModelKey{Model: readmodel.ModelChannelMember, OwnerUserID: 1001, PeerType: peer.Type, PeerID: peer.ID}
+	versions := &fakeReadModelVersions{hashes: map[store.ReadModelKey]int64{
+		baseKey:         401,
+		participantsKey: 402,
+		memberKey:       403,
+	}}
+	service := NewService(base, WithBotProfileResolver(bots), WithReadModelVersions(versions))
+
+	if _, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout); err != nil {
+		t.Fatalf("ActiveBotMemberIDs first: %v", err)
+	}
+	if _, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout); err != nil {
+		t.Fatalf("ActiveBotMemberIDs cached: %v", err)
+	}
+	if base.listActiveMemberIDsCalls != 1 {
+		t.Fatalf("ListActiveChannelMemberIDs calls = %d, want 1 before hash change", base.listActiveMemberIDsCalls)
+	}
+
+	versions.hashes[participantsKey] = 404
+	if _, err := service.ActiveBotMemberIDs(ctx, 1001, channelID, domain.MaxSynchronousChannelDialogFanout); err != nil {
+		t.Fatalf("ActiveBotMemberIDs after hash change: %v", err)
+	}
+	if base.listActiveMemberIDsCalls != 2 {
+		t.Fatalf("ListActiveChannelMemberIDs calls = %d, want reload after hash change", base.listActiveMemberIDsCalls)
 	}
 }
 

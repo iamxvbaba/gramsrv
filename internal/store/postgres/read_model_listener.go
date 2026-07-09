@@ -27,6 +27,7 @@ type ReadModelCacheSet struct {
 	ProfilePhotos      ProfilePhotoReadModelCache
 	Stories            StoryReadModelCache
 	ChannelFullBots    ChannelFullBotReadModelCache
+	ChannelBotMembers  ChannelBotMemberReadModelCache
 	ChannelMediaCounts ChannelMediaCountReadModelCache
 	PrivateMediaCounts PrivateMediaCountReadModelCache
 	RPCProjections     RPCProjectionReadModelCache
@@ -97,6 +98,11 @@ type StoryReadModelCache interface {
 type ChannelFullBotReadModelCache interface {
 	InvalidateChannelFullBotInfoReadModel(channelID int64)
 	FlushChannelFullBotInfoReadModel()
+}
+
+type ChannelBotMemberReadModelCache interface {
+	InvalidateActiveBotMemberIDsReadModel(channelID int64)
+	FlushActiveBotMemberIDsReadModel()
 }
 
 type ChannelMediaCountReadModelCache interface {
@@ -203,6 +209,7 @@ func (l *ReadModelChangeListener) empty() bool {
 		l.caches.ProfilePhotos == nil &&
 		l.caches.Stories == nil &&
 		l.caches.ChannelFullBots == nil &&
+		l.caches.ChannelBotMembers == nil &&
 		l.caches.ChannelMediaCounts == nil &&
 		l.caches.PrivateMediaCounts == nil &&
 		l.caches.RPCProjections == nil &&
@@ -259,6 +266,10 @@ func (l *ReadModelChangeListener) flush(reasons ...string) {
 	if l.caches.ChannelFullBots != nil {
 		l.caches.ChannelFullBots.FlushChannelFullBotInfoReadModel()
 		flushed = append(flushed, "channel_full_bots")
+	}
+	if l.caches.ChannelBotMembers != nil {
+		l.caches.ChannelBotMembers.FlushActiveBotMemberIDsReadModel()
+		flushed = append(flushed, "channel_bot_members")
 	}
 	if l.caches.ChannelMediaCounts != nil {
 		l.caches.ChannelMediaCounts.FlushChannelMediaCountReadModel()
@@ -396,6 +407,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.ChannelFullBots != nil {
 				l.caches.ChannelFullBots.InvalidateChannelFullBotInfoReadModel(evt.PeerID)
 			}
+			if l.caches.ChannelBotMembers != nil {
+				l.caches.ChannelBotMembers.InvalidateActiveBotMemberIDsReadModel(evt.PeerID)
+			}
 			if l.caches.RPCProjections != nil {
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForChannel(evt.PeerID)
 			}
@@ -421,6 +435,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.ChannelFullBots != nil {
 				l.caches.ChannelFullBots.InvalidateChannelFullBotInfoReadModel(evt.PeerID)
 			}
+			if l.caches.ChannelBotMembers != nil {
+				l.caches.ChannelBotMembers.InvalidateActiveBotMemberIDsReadModel(evt.PeerID)
+			}
 			if l.caches.RPCProjections != nil {
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForChannel(evt.PeerID)
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForPeer(evt.OwnerUserID, domain.Peer{Type: domain.PeerTypeChannel, ID: evt.PeerID})
@@ -439,6 +456,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			l.caches.RPCProjections.InvalidateRPCProjectionReadModelForPeer(evt.OwnerUserID, domain.Peer{Type: domain.PeerTypeChannel, ID: evt.PeerID})
 		}
 	case "channel_participants":
+		if evt.PeerType == "channel" && evt.PeerID != 0 && l.caches.ChannelBotMembers != nil {
+			l.caches.ChannelBotMembers.InvalidateActiveBotMemberIDsReadModel(evt.PeerID)
+		}
 		if evt.PeerType == "channel" && evt.PeerID != 0 && l.caches.RPCProjections != nil {
 			l.caches.RPCProjections.InvalidateRPCProjectionReadModelForChannel(evt.PeerID)
 		}

@@ -52,7 +52,7 @@ codebase.
 | ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
 | ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
 | ✅ | Gifts and stars | Star gifts and local stars ledger foundations for compatibility and future feature work. |
-| ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, minimal Bot API gateway, and demo tools. |
+| ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
 | ✅ | Admin and operations | Admin API/UI backend, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, and load-test helpers. |
 | ✅ | Desktop, Android, and Web focus | Telegram Desktop is the primary target, with Android and Web compatibility paths actively covered by the same server. |
@@ -115,6 +115,8 @@ Useful local environment variables:
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing endpoint for sticker and chatlist links |
+| `TELESRV_BOT_API_ADDR` | empty | optional HTTP Bot API gateway listen address, for example `127.0.0.1:8081` |
+| `TELESRV_BOT_API_UPDATE_RETENTION` | `24h` | retention window for unconfirmed Bot API `getUpdates` queue entries |
 | `TELESRV_AI_ENABLED` | `true` | enable AI compose entry points |
 | `TELESRV_AI_PROVIDERS` | `local` | ordered AI provider chain, such as `local` or `kimi,local` |
 | `TELESRV_AI_TIMEOUT` | `15s` | per AI provider call timeout |

@@ -328,6 +328,7 @@ type HelpService interface {
 type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
 	CurrentState(ctx context.Context, userID int64) (domain.UpdateState, error)
+	ConfirmedState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error)
 	AcknowledgeCurrentState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
 	GetDifference(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateDifference, error)
 	ClearAuthKey(ctx context.Context, authKeyID [8]byte) error
@@ -715,6 +716,7 @@ type Deps struct {
 	Users            UsersService
 	Updates          UpdatesService
 	BootstrapUpdates store.BootstrapUpdateJobStore
+	BotAPIUpdates    store.BotAPIUpdateStore
 	Contacts         ContactsService
 	Dialogs          DialogsService
 	Chatlists        ChatlistsService
