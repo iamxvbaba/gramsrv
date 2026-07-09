@@ -79,15 +79,14 @@ func TestChannelStoreReadOutboxDoesNotRegressSenderDialogUnread(t *testing.T) {
 		t.Fatalf("send member message: %v", err)
 	}
 
-	var storedReadInbox, storedUnread int
-	if err := pool.QueryRow(ctx, `
-SELECT read_inbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&storedReadInbox, &storedUnread); err != nil {
-		t.Fatalf("read member dialog after self send: %v", err)
+	// H4a：发送不再写全员 dialog 行；sender 自己的 read_inbox 在发送事务内推进
+	// channel_members 行，读侧 GREATEST(dialog, member) 派生。
+	memberView, err := channels.GetChannelDialogs(ctx, member.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get member dialogs after self send: %v", err)
 	}
-	if storedReadInbox != memberMsg.Message.ID || storedUnread != 0 {
-		t.Fatalf("member dialog after self send read=%d unread=%d, want read %d unread 0", storedReadInbox, storedUnread, memberMsg.Message.ID)
+	if len(memberView.Dialogs) != 1 || memberView.Dialogs[0].ReadInboxMaxID != memberMsg.Message.ID || memberView.Dialogs[0].UnreadCount != 0 {
+		t.Fatalf("member derived dialog after self send = %+v, want read %d unread 0", memberView.Dialogs, memberMsg.Message.ID)
 	}
 
 	read, err := channels.ReadChannelHistory(ctx, domain.ReadChannelHistoryRequest{
@@ -102,14 +101,12 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&storedReadI
 	if len(read.OutboxUpdates) != 1 || read.OutboxUpdates[0].UserID != member.ID || read.OutboxUpdates[0].MaxID != memberMsg.Message.ID {
 		t.Fatalf("read outbox updates = %+v, want member max id %d", read.OutboxUpdates, memberMsg.Message.ID)
 	}
-	if err := pool.QueryRow(ctx, `
-SELECT read_inbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&storedReadInbox, &storedUnread); err != nil {
-		t.Fatalf("read member dialog after owner read: %v", err)
+	memberView, err = channels.GetChannelDialogs(ctx, member.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get member dialogs after owner read: %v", err)
 	}
-	if storedReadInbox != memberMsg.Message.ID || storedUnread != 0 {
-		t.Fatalf("member dialog after owner read read=%d unread=%d, want read %d unread 0", storedReadInbox, storedUnread, memberMsg.Message.ID)
+	if len(memberView.Dialogs) != 1 || memberView.Dialogs[0].ReadInboxMaxID != memberMsg.Message.ID || memberView.Dialogs[0].UnreadCount != 0 {
+		t.Fatalf("member derived dialog after owner read = %+v, want read %d unread 0", memberView.Dialogs, memberMsg.Message.ID)
 	}
 }
 
@@ -680,7 +677,7 @@ WHERE id = $1`, channelID, domain.MaxSynchronousChannelDialogFanout+1); err != n
 	}
 }
 
-func TestChannelStoreSmallMegagroupDeleteRefreshesDialogUnreadCache(t *testing.T) {
+func TestChannelStoreSmallMegagroupDeleteDerivesUnread(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -761,15 +758,13 @@ func TestChannelStoreSmallMegagroupDeleteRefreshesDialogUnreadCache(t *testing.T
 		t.Fatalf("send third message: %v", err)
 	}
 
-	var cachedTop, cachedUnread int
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&cachedTop, &cachedUnread); err != nil {
-		t.Fatalf("read cached dialog before delete: %v", err)
+	// H4a：dialog unread 读时派生，不再依赖 channel_dialogs 缓存列刷新。
+	beforeDelete, err := channels.ListChannelDialogs(ctx, member.ID, domain.DialogFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list dialogs before delete: %v", err)
 	}
-	if cachedTop != third.Message.ID || cachedUnread != 3 {
-		t.Fatalf("cached dialog before delete top=%d unread=%d, want top %d unread 3", cachedTop, cachedUnread, third.Message.ID)
+	if len(beforeDelete.Dialogs) != 1 || beforeDelete.Dialogs[0].TopMessage != third.Message.ID || beforeDelete.Dialogs[0].UnreadCount != 3 {
+		t.Fatalf("derived dialog before delete = %+v, want top %d unread 3", beforeDelete.Dialogs, third.Message.ID)
 	}
 
 	if _, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
@@ -779,15 +774,6 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&cachedTop, 
 		Date:      1700000349,
 	}); err != nil {
 		t.Fatalf("delete middle unread message: %v", err)
-	}
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&cachedTop, &cachedUnread); err != nil {
-		t.Fatalf("read cached dialog after middle delete: %v", err)
-	}
-	if cachedTop != third.Message.ID || cachedUnread != 2 {
-		t.Fatalf("cached dialog after middle delete top=%d unread=%d, want top %d unread 2", cachedTop, cachedUnread, third.Message.ID)
 	}
 	list, err := channels.ListChannelDialogs(ctx, member.ID, domain.DialogFilter{Limit: 10})
 	if err != nil {
@@ -804,15 +790,6 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&cachedTop, 
 		Date:      1700000350,
 	}); err != nil {
 		t.Fatalf("delete top unread message: %v", err)
-	}
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, member.ID).Scan(&cachedTop, &cachedUnread); err != nil {
-		t.Fatalf("read cached dialog after top delete: %v", err)
-	}
-	if cachedTop != first.Message.ID || cachedUnread != 1 {
-		t.Fatalf("cached dialog after top delete top=%d unread=%d, want top %d unread 1", cachedTop, cachedUnread, first.Message.ID)
 	}
 	list, err = channels.ListChannelDialogs(ctx, member.ID, domain.DialogFilter{Limit: 10})
 	if err != nil {

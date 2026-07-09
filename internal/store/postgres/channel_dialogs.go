@@ -902,14 +902,23 @@ func (s *ChannelStore) CountChannelArchiveUnread(ctx context.Context, userID int
 	}
 	var peers, messages int32
 	// JOIN active member：退群残留的 channel_dialogs 行不计入归档徽章。
+	// unread 读时动态派生（H4a）：不再消费 channel_dialogs.unread_count 缓存列；归档集合
+	// 有界（需显式归档建行），每行动态 COUNT 已被 cap 钳制。
+	visibleTopID := "CASE WHEN c.top_message_id > m.available_min_id THEN c.top_message_id ELSE 0 END"
+	visibleReadInbox := "GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id)"
 	if err := s.db.QueryRow(ctx, `
 SELECT
-  COUNT(*) FILTER (WHERE d.unread_count > 0 OR d.unread_mark)::int,
-  COALESCE(SUM(d.unread_count), 0)::int
-FROM channel_dialogs d
-JOIN channel_members m ON m.channel_id = d.channel_id AND m.user_id = d.user_id AND m.status = 'active'
-WHERE d.user_id = $1
-  AND COALESCE(d.folder_id, 0) = 1`, userID).Scan(&peers, &messages); err != nil {
+  COUNT(*) FILTER (WHERE t.unread_count > 0 OR t.unread_mark)::int,
+  COALESCE(SUM(t.unread_count), 0)::int
+FROM (
+  SELECT `+channelDialogVisibleUnreadCountSQL(visibleReadInbox, visibleTopID)+` AS unread_count,
+         COALESCE(d.unread_mark, m.unread_mark) AS unread_mark
+  FROM channel_dialogs d
+  JOIN channel_members m ON m.channel_id = d.channel_id AND m.user_id = d.user_id AND m.status = 'active'
+  JOIN channels c ON c.id = d.channel_id AND NOT c.deleted
+  WHERE d.user_id = $1
+    AND COALESCE(d.folder_id, 0) = 1
+) t`, userID).Scan(&peers, &messages); err != nil {
 		return 0, 0, fmt.Errorf("count channel archive unread: %w", err)
 	}
 	return int(peers), int(messages), nil
@@ -1112,61 +1121,6 @@ func cappedChannelUnreadCount(whereBody string) string {
     )`, whereBody, domain.MaxDialogUnreadCount)
 }
 
-func refreshChannelDialogsAfterDeleteTx(ctx context.Context, tx pgx.Tx, channel domain.Channel) error {
-	if channel.ID == 0 || !shouldSynchronouslyUpsertChannelDialogs(channel) {
-		return nil
-	}
-	insertUnread := cappedChannelUnreadCount(`WHERE msg.channel_id = $1
-          AND msg.id > GREATEST(active.read_inbox_max_id, active.available_min_id)
-          AND msg.id <= active.visible_top_id
-          AND NOT msg.deleted
-          AND msg.sender_user_id <> active.user_id`)
-	conflictUnread := cappedChannelUnreadCount(`WHERE msg.channel_id = channel_dialogs.channel_id
-          AND msg.id > GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id)
-          AND msg.id <= EXCLUDED.top_message_id
-          AND NOT msg.deleted
-          AND msg.sender_user_id <> channel_dialogs.user_id`)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`
-WITH active AS (
-    SELECT
-        m.user_id,
-        m.available_min_id,
-        GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id) AS read_inbox_max_id,
-        LEAST(GREATEST(c.top_message_id, 0), GREATEST(COALESCE(d.read_outbox_max_id, 0), m.read_outbox_max_id, CASE WHEN c.read_inbox_top1_user_id = m.user_id THEN c.read_inbox_top2 ELSE c.read_inbox_top1 END)) AS read_outbox_max_id,
-        COALESCE(d.unread_mark, m.unread_mark) AS unread_mark,
-        CASE WHEN $2 > m.available_min_id THEN $2 ELSE 0 END AS visible_top_id
-    FROM channel_members m
-    JOIN channels c ON c.id = m.channel_id
-    LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id
-    WHERE m.channel_id = $1
-      AND m.status = 'active'
-      AND NOT COALESCE((m.banned_rights->>'ViewMessages')::boolean, false)
-)
-INSERT INTO channel_dialogs (
-    user_id, channel_id, top_message_id, top_message_date,
-    read_inbox_max_id, read_outbox_max_id, unread_count, unread_mark
-)
-SELECT
-    user_id, $1, visible_top_id,
-    CASE WHEN visible_top_id > 0 THEN COALESCE(top_msg.message_date, $3) ELSE 0 END,
-    read_inbox_max_id, read_outbox_max_id,
-    %s,
-    unread_mark
-FROM active
-LEFT JOIN channel_messages top_msg ON top_msg.channel_id = $1 AND top_msg.id = active.visible_top_id AND NOT top_msg.deleted
-ON CONFLICT (user_id, channel_id) DO UPDATE SET
-    top_message_id = EXCLUDED.top_message_id,
-    top_message_date = EXCLUDED.top_message_date,
-    read_inbox_max_id = GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
-    read_outbox_max_id = GREATEST(channel_dialogs.read_outbox_max_id, EXCLUDED.read_outbox_max_id),
-    unread_count = %s,
-    unread_mark = EXCLUDED.unread_mark,
-    updated_at = now()`, insertUnread, conflictUnread), channel.ID, channel.TopMessageID, channel.Date); err != nil {
-		return fmt.Errorf("refresh channel dialogs after delete: %w", err)
-	}
-	return nil
-}
-
 func upsertChannelDialogTx(ctx context.Context, tx pgx.Tx, userID int64, channel domain.Channel, top domain.ChannelMessage, readInboxMaxID, readOutboxMaxID int) error {
 	topDate := top.Date
 	if topDate == 0 {
@@ -1199,6 +1153,18 @@ ON CONFLICT (user_id, channel_id) DO UPDATE SET
 	return nil
 }
 
+// upsertChannelDialogsForMessageTx 在发送事务内处理消息的收件人侧读边界副作用。
+//
+// 性能审计 H4a：不再对全员（旧闸门为 megagroup ≤ MaxSynchronousChannelDialogFanout）
+// upsert channel_dialogs——发送事务 O(成员) 行写 + 行锁是放开大群的阻断项（P1-u 残余）。
+// 所有频道（broadcast / megagroup 不分大小）统一读时派生：unread 由可见 incoming 消息
+// 重算（channelDialogDynamicUnreadCountSQL，capped），top 由 channels.top_message_id 提供，
+// read boundary 真值在 channel_members，dialog 行仅承载 pin/folder/unread_mark/draft 等
+// 用户显式状态并按需惰性建行。
+//
+// 保留的唯一逐收件人写：skipDelivery（privacy bot）成员的 read_inbox 边界推进——这些
+// 成员被排除投递，必须同步抬边界避免其未读派生把被隐藏消息计成 unread；集合有界
+// （bot-only 候选）。
 func upsertChannelDialogsForMessageTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, top domain.ChannelMessage, selfReadUserID int64, skipDeliveryUserIDs ...[]int64) error {
 	if channel.ID == 0 || top.ID == 0 {
 		return nil
@@ -1221,73 +1187,9 @@ WHERE channel_id = $1
 			return fmt.Errorf("advance skipped channel delivery boundary: %w", err)
 		}
 	}
-	if !shouldSynchronouslyUpsertChannelDialogs(channel) {
-		return nil
-	}
-	topDate := top.Date
-	if topDate == 0 {
-		topDate = channel.Date
-	}
-	// 下界用 GREATEST(read_inbox, available_min_id) 与 delete/read 路径一致:当前
-	// 全局不变量 read_inbox_max_id >= available_min_id 使其为 no-op,但该不变量未由
-	// schema 强制,对齐后即便未来有路径只抬 available_min 不抬 read 也不会 over-count。
-	insertUnread := cappedChannelUnreadCount(`WHERE msg.channel_id = $1
-          AND msg.id > GREATEST(active.read_inbox_max_id, active.available_min_id)
-          AND msg.id <= $2
-          AND NOT msg.deleted
-          AND msg.sender_user_id <> active.user_id`)
-	conflictUnread := cappedChannelUnreadCount(`WHERE msg.channel_id = channel_dialogs.channel_id
-          AND msg.id > GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id)
-          AND msg.id <= GREATEST(channel_dialogs.top_message_id, EXCLUDED.top_message_id)
-          AND NOT msg.deleted
-          AND msg.sender_user_id <> channel_dialogs.user_id`)
-	if _, err := tx.Exec(ctx, fmt.Sprintf(`
-WITH active AS (
-    SELECT
-        m.user_id,
-        CASE
-            WHEN m.user_id = $4 THEN GREATEST(m.read_inbox_max_id, $2)
-            ELSE m.read_inbox_max_id
-        END AS read_inbox_max_id,
-        m.available_min_id,
-        -- sender 的 outbox 回执水位绝不随自己发消息推进：read_outbox_max_id
-        -- 语义是"已被其他成员读到的最大 ID"，推进只能来自对端 readHistory。
-        m.read_outbox_max_id
-    FROM channel_members m
-    WHERE m.channel_id = $1
-      AND m.status = 'active'
-      AND NOT COALESCE((m.banned_rights->>'ViewMessages')::boolean, false)
-      AND $2 > m.available_min_id
-      AND NOT (m.user_id = ANY($5::bigint[]))
-)
-INSERT INTO channel_dialogs (
-    user_id, channel_id, top_message_id, top_message_date,
-    read_inbox_max_id, read_outbox_max_id, unread_count, unread_mark
-)
-SELECT
-    user_id, $1, $2, $3,
-    read_inbox_max_id, read_outbox_max_id,
-    %s,
-    false
-FROM active
-ON CONFLICT (user_id, channel_id) DO UPDATE SET
-    top_message_id = GREATEST(channel_dialogs.top_message_id, EXCLUDED.top_message_id),
-    top_message_date = GREATEST(channel_dialogs.top_message_date, EXCLUDED.top_message_date),
-    read_inbox_max_id = GREATEST(channel_dialogs.read_inbox_max_id, EXCLUDED.read_inbox_max_id),
-    read_outbox_max_id = GREATEST(channel_dialogs.read_outbox_max_id, EXCLUDED.read_outbox_max_id),
-    unread_count = %s,
-    unread_mark = CASE WHEN channel_dialogs.user_id = $4 THEN false ELSE channel_dialogs.unread_mark END,
-    updated_at = now()`, insertUnread, conflictUnread), channel.ID, top.ID, topDate, selfReadUserID, skipIDs); err != nil {
-		return fmt.Errorf("upsert channel message dialogs: %w", err)
-	}
+	// skipDelivery 成员可能已有 channel_dialogs 行（pin/归档等惰性建行），其 read_inbox
+	// 经 GREATEST(d, m) 读取——member 行已推进即可，dialog 行无需同步。
 	return nil
-}
-
-func shouldSynchronouslyUpsertChannelDialogs(channel domain.Channel) bool {
-	if channel.Broadcast {
-		return false
-	}
-	return channel.ParticipantsCount > 0 && channel.ParticipantsCount <= domain.MaxSynchronousChannelDialogFanout
 }
 
 func scanChannelDialogRow(row rowScanner, userID int64) (domain.Channel, domain.Dialog, *domain.Peer, error) {

@@ -40,22 +40,16 @@ func channelDialogDynamicUnreadExistsSQL(readInboxExpr, topIDExpr string) string
        )`, readInboxExpr, topIDExpr)
 }
 
+// channelDialogVisibleUnreadCountSQL 恒走读时动态派生（性能审计 H4a）：broadcast/大群
+// 自 P0-1 起即读时派生并经生产验证，≤1000 megagroup 也统一到同一路径后，发送事务不再
+// 对全员 upsert channel_dialogs，`channel_dialogs.unread_count` 缓存列不再被任何读路径
+// 消费（真值 = read boundary + 可见 incoming 消息重算）。
 func channelDialogVisibleUnreadCountSQL(readInboxExpr, topIDExpr string) string {
-	dynamicCount := channelDialogDynamicUnreadCountSQL(readInboxExpr, topIDExpr)
-	// LEAST 钳制缓存分支 d.unread_count（小群走缓存列，可能因逐条自增长过上界）到 P1-v 上界；
-	// 动态分支已被 LIMIT 子查询钳过，外层 LEAST 对两分支统一封顶，保证下发角标 ≤ 上界。
-	return fmt.Sprintf(`LEAST(CASE
-           WHEN c.broadcast OR c.participants_count > %d THEN %s
-           ELSE COALESCE(d.unread_count, %s)
-       END, %d)`, domain.MaxSynchronousChannelDialogFanout, dynamicCount, dynamicCount, domain.MaxDialogUnreadCount)
+	return channelDialogDynamicUnreadCountSQL(readInboxExpr, topIDExpr)
 }
 
 func channelDialogHasUnreadSQL(readInboxExpr, topIDExpr string) string {
-	dynamicUnread := channelDialogDynamicUnreadExistsSQL(readInboxExpr, topIDExpr)
-	return fmt.Sprintf(`CASE
-           WHEN c.broadcast OR c.participants_count > %d THEN %s
-           ELSE COALESCE(d.unread_count > 0, %s)
-       END`, domain.MaxSynchronousChannelDialogFanout, dynamicUnread, dynamicUnread)
+	return channelDialogDynamicUnreadExistsSQL(readInboxExpr, topIDExpr)
 }
 
 func (s *ChannelStore) SetChannelDialogUnreadMark(ctx context.Context, userID, channelID int64, unread bool) (bool, error) {

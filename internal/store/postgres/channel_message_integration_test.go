@@ -65,28 +65,27 @@ func TestChannelStoreSendMessageFansOutDialogRows(t *testing.T) {
 		t.Fatalf("send channel message: %v", err)
 	}
 
-	var friendTop, friendReadInbox, friendUnread int
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, read_inbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, friend.ID).Scan(&friendTop, &friendReadInbox, &friendUnread); err != nil {
-		t.Fatalf("read friend dialog row after send: %v", err)
+	// H4a：发送事务不再对全员 upsert channel_dialogs——dialog 投影读时派生。
+	// friend 视角：top 来自 channels.top_message_id，unread 由可见 incoming 消息动态重算。
+	friendView, err := channels.GetChannelDialogs(ctx, friend.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get friend dialogs after send: %v", err)
 	}
-	if friendTop != sent.Message.ID || friendReadInbox != 0 || friendUnread != 2 {
-		t.Fatalf("friend dialog row top=%d read=%d unread=%d, want top %d read 0 unread 2", friendTop, friendReadInbox, friendUnread, sent.Message.ID)
+	if len(friendView.Dialogs) != 1 || friendView.Dialogs[0].TopMessage != sent.Message.ID ||
+		friendView.Dialogs[0].ReadInboxMaxID != 0 || friendView.Dialogs[0].UnreadCount != 2 {
+		t.Fatalf("friend derived dialog = %+v, want top %d read 0 unread 2", friendView.Dialogs, sent.Message.ID)
 	}
 
-	var ownerTop, ownerReadInbox, ownerReadOutbox, ownerUnread int
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, read_inbox_max_id, read_outbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, owner.ID).Scan(&ownerTop, &ownerReadInbox, &ownerReadOutbox, &ownerUnread); err != nil {
-		t.Fatalf("read owner dialog row after send: %v", err)
-	}
 	// 发送者自己的 outbox 回执水位不得随发送推进：同账号另一设备会把它当成
 	// "对端已读"渲染双勾。推进只能来自 peer 的 readHistory（见下方断言）。
-	if ownerTop != sent.Message.ID || ownerReadInbox != sent.Message.ID || ownerReadOutbox != 0 || ownerUnread != 0 {
-		t.Fatalf("owner dialog row top=%d read_in=%d read_out=%d unread=%d, want top/read_in %d, read_out 0 before peer read, unread 0", ownerTop, ownerReadInbox, ownerReadOutbox, ownerUnread, sent.Message.ID)
+	ownerViewBefore, err := channels.GetChannelDialogs(ctx, owner.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get owner dialogs after send: %v", err)
+	}
+	if len(ownerViewBefore.Dialogs) != 1 || ownerViewBefore.Dialogs[0].TopMessage != sent.Message.ID ||
+		ownerViewBefore.Dialogs[0].ReadInboxMaxID != sent.Message.ID ||
+		ownerViewBefore.Dialogs[0].ReadOutboxMaxID != 0 || ownerViewBefore.Dialogs[0].UnreadCount != 0 {
+		t.Fatalf("owner derived dialog = %+v, want top/read_in %d, read_out 0 before peer read, unread 0", ownerViewBefore.Dialogs, sent.Message.ID)
 	}
 
 	var ownerMemberReadInbox, ownerMemberReadOutbox int
@@ -581,15 +580,15 @@ func TestChannelStoreSendMessageSkipDeliveryAdvancesReadBoundary(t *testing.T) {
 		t.Fatalf("hidden recipients = %+v, want bot skipped", hidden.Recipients)
 	}
 
-	var botDialogTop, botReadInbox, botUnread int
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, read_inbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, bot.ID).Scan(&botDialogTop, &botReadInbox, &botUnread); err != nil {
-		t.Fatalf("read bot dialog after hidden: %v", err)
+	// H4a：skip 成员的读边界推进只写 channel_members 行；unread 派生自动把被隐藏
+	// 消息排除（read boundary 已越过它）。
+	hiddenView, err := channels.GetChannelDialogs(ctx, bot.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get bot dialogs after hidden: %v", err)
 	}
-	if botDialogTop != created.Message.ID {
-		t.Fatalf("bot dialog after hidden top=%d, want unchanged create top %d", botDialogTop, created.Message.ID)
+	if len(hiddenView.Dialogs) != 1 || hiddenView.Dialogs[0].UnreadCount != 0 ||
+		hiddenView.Dialogs[0].ReadInboxMaxID != hidden.Message.ID {
+		t.Fatalf("bot derived dialog after hidden = %+v, want unread 0 read %d", hiddenView.Dialogs, hidden.Message.ID)
 	}
 	var memberReadInbox int
 	if err := pool.QueryRow(ctx, `
@@ -615,15 +614,14 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, bot.ID).Scan(&memberReadInbo
 	if !containsInt64ForPostgresTest(visible.Recipients, bot.ID) {
 		t.Fatalf("visible recipients = %+v, want bot", visible.Recipients)
 	}
-	if err := pool.QueryRow(ctx, `
-SELECT top_message_id, read_inbox_max_id, unread_count
-FROM channel_dialogs
-WHERE channel_id = $1 AND user_id = $2`, channelID, bot.ID).Scan(&botDialogTop, &botReadInbox, &botUnread); err != nil {
-		t.Fatalf("read bot dialog after visible: %v", err)
+	visibleView, err := channels.GetChannelDialogs(ctx, bot.ID, []int64{channelID})
+	if err != nil {
+		t.Fatalf("get bot dialogs after visible: %v", err)
 	}
-	if botDialogTop != visible.Message.ID || botReadInbox != hidden.Message.ID || botUnread != 1 {
-		t.Fatalf("bot dialog after visible top=%d read=%d unread=%d, want top %d read hidden %d unread visible-only",
-			botDialogTop, botReadInbox, botUnread, visible.Message.ID, hidden.Message.ID)
+	if len(visibleView.Dialogs) != 1 || visibleView.Dialogs[0].TopMessage != visible.Message.ID ||
+		visibleView.Dialogs[0].ReadInboxMaxID != hidden.Message.ID || visibleView.Dialogs[0].UnreadCount != 1 {
+		t.Fatalf("bot derived dialog after visible = %+v, want top %d read hidden %d unread visible-only",
+			visibleView.Dialogs, visible.Message.ID, hidden.Message.ID)
 	}
 }
 
