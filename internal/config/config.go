@@ -306,8 +306,12 @@ func Load() (Config, error) {
 	envIntOr := fileEnv.envIntOr
 	envInt64Or := fileEnv.envInt64Or
 	envDurationOr := fileEnv.envDurationOr
+	envAllowEmptyOr := fileEnv.envAllowEmptyOr
 
-	publicBaseURL := links.NormalizeBaseURL(envOr("TELESRV_PUBLIC_BASE_URL", links.DefaultPublicBaseURL))
+	publicBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_PUBLIC_BASE_URL", links.DefaultPublicBaseURL))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_BASE_URL: %w", err)
+	}
 
 	cfg := Config{
 		ListenAddr:      envOr("TELESRV_LISTEN", "0.0.0.0:2398"),
@@ -322,12 +326,12 @@ func Load() (Config, error) {
 		AdvertiseIP:       envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
 		RSAKeyPath:        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
 		DC:                envIntOr("TELESRV_DC", 2),
-		DebugAddr:         envOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
-		BotAPIAddr:        envOr("TELESRV_BOT_API_ADDR", ""),
-		AdminAPIAddr:      envOr("TELESRV_ADMIN_API_ADDR", ""),
+		DebugAddr:         envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
+		BotAPIAddr:        envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		AdminAPIAddr:      envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
 		AdminAPIToken:     envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:     publicBaseURL,
-		PublicLinkWebAddr: envOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
+		PublicLinkWebAddr: envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		AdminUIAddr:       envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:   envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:      envOr("TELESRV_ADMIN_UI_TOKEN", ""),
@@ -661,6 +665,18 @@ func (e envSource) envOr(key, def string) string {
 		return v
 	}
 	if v := e[key]; v != "" {
+		return v
+	}
+	return def
+}
+
+// envAllowEmptyOr is for nullable settings where an explicitly empty process
+// environment value must override a non-empty config-file value or default.
+func (e envSource) envAllowEmptyOr(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	if v, ok := e[key]; ok {
 		return v
 	}
 	return def

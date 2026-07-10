@@ -119,7 +119,7 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/TetrisBot", nil)
 
-	NewHandlerWithUsers(fakeResolver{}, users, "http://127.0.0.1:2401").ServeHTTP(rr, req)
+	NewHandlerWithPublicPeers(fakeResolver{}, users, nil, nil, nil, "http://127.0.0.1:2401").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -132,7 +132,10 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 		"http://127.0.0.1:2401/TetrisBot",
 		"telesrv://resolve?domain=TetrisBot",
 		"tg://resolve?domain=TetrisBot",
-		"start a chat with this bot",
+		"Start Bot",
+		"Open telesrv to start a chat with this bot.",
+		`property="og:title" content="Tetris Bot"`,
+		`property="al:android:url" content="telesrv://resolve?domain=TetrisBot"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -140,6 +143,266 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 	}
 	if strings.Contains(body, `window.location.href = "tg://`) {
 		t.Fatalf("landing page must not auto-open tg:// and steal official Telegram:\n%s", body)
+	}
+}
+
+func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
+	users := fakeUsers{
+		"alice": {
+			ID:         2001,
+			AccessHash: 987654321,
+			Phone:      "+15551234567",
+			Username:   "Alice",
+			FirstName:  "Alice",
+			LastName:   "Example",
+			About:      "Public bio",
+			Verified:   true,
+			LastSeenAt: 1700000000,
+		},
+	}
+	channels := fakeChannels{
+		"newsroom": {
+			ID:                3001,
+			Username:          "NewsRoom",
+			Title:             "News Room",
+			About:             "Public channel description",
+			Broadcast:         true,
+			ParticipantsCount: 12001,
+			Verified:          true,
+			PhotoID:           301,
+		},
+		"studygroup": {
+			ID:                3002,
+			Username:          "StudyGroup",
+			Title:             "Study Group",
+			About:             "A public supergroup",
+			Megagroup:         true,
+			ParticipantsCount: 1,
+		},
+	}
+	photos := &fakePhotos{byID: map[int64]domain.Photo{
+		301: {ID: 301, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 12}}},
+	}}
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, users, channels, nil, photos, "https://telesrv.net")
+
+	for _, tc := range []struct {
+		path  string
+		wants []string
+	}{
+		{
+			path: "/aLiCe/",
+			wants: []string{
+				"Alice Example", "Public bio", "@Alice", "Send Message", "Verified",
+				"https://telesrv.net/Alice", "telesrv://resolve?domain=Alice",
+			},
+		},
+		{
+			path: "/NewsRoom",
+			wants: []string{
+				"News Room", "Public channel description", "12 001 subscribers", "View Channel",
+				"https://telesrv.net/NewsRoom", "telesrv://resolve?domain=NewsRoom",
+				"/_public/avatar/NewsRoom/301",
+			},
+		},
+		{
+			path: "/StudyGroup",
+			wants: []string{
+				"Study Group", "A public supergroup", "1 member", "View Group",
+			},
+		},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(rr.Body.String(), want) {
+					t.Fatalf("body missing %q:\n%s", want, rr.Body.String())
+				}
+			}
+			if tc.path == "/aLiCe/" && strings.Count(rr.Body.String(), `<p class="username">@Alice</p>`) != 1 {
+				t.Fatalf("ordinary user username rendered more than once:\n%s", rr.Body.String())
+			}
+			if strings.Contains(rr.Body.String(), "+15551234567") || strings.Contains(rr.Body.String(), "987654321") || strings.Contains(rr.Body.String(), "1700000000") {
+				t.Fatalf("private protocol fields leaked into page:\n%s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandlerPreservesBoundedResolveQueryAndOverridesDomain(t *testing.T) {
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
+		"tetrisbot": {ID: 2001, Username: "TetrisBot", FirstName: "Tetris", Bot: true},
+	}, nil, nil, nil, "https://telesrv.net")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/TetrisBot?start=hello&ref=campaign&domain=EvilBot", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"telesrv://resolve?domain=TetrisBot&amp;ref=campaign&amp;start=hello",
+		"tg://resolve?domain=TetrisBot&amp;ref=campaign&amp;start=hello",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing sanitized query %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "EvilBot") {
+		t.Fatalf("caller-controlled domain leaked into page:\n%s", body)
+	}
+
+	for _, target := range []string{
+		"/TetrisBot?bad-key=value",
+		"/TetrisBot?start=" + strings.Repeat("a", maxPublicLinkValueLen+1),
+		"/TetrisBot?" + strings.Repeat("a", maxPublicLinkRawQuery+1),
+	} {
+		rr = httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		if rr.Code != http.StatusRequestURITooLong {
+			t.Fatalf("%s status = %d, want 414", target, rr.Code)
+		}
+	}
+}
+
+func TestHandlerHonorsAnonymousAboutAndPhotoPrivacy(t *testing.T) {
+	const userID int64 = 2001
+	photos := &fakePhotos{
+		photos: map[photoLookupKey]domain.Photo{
+			{ownerType: domain.PeerTypeUser, ownerID: userID, kind: domain.ProfilePhotoKindProfile}: {
+				ID: 10, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 12}},
+			},
+			{ownerType: domain.PeerTypeUser, ownerID: userID, kind: domain.ProfilePhotoKindFallback}: {
+				ID: 11, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 12}},
+			},
+		},
+	}
+	privacy := fakeAnonymousPrivacy{
+		domain.PrivacyKeyAbout:        false,
+		domain.PrivacyKeyProfilePhoto: false,
+	}
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
+		"alice": {ID: userID, Username: "Alice", FirstName: "Alice", About: "private biography"},
+	}, nil, privacy, photos, "https://telesrv.net")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/Alice", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "private biography") || strings.Contains(body, "/10") {
+		t.Fatalf("private about or main photo leaked:\n%s", body)
+	}
+	if !strings.Contains(body, "/_public/avatar/Alice/11") {
+		t.Fatalf("fallback public photo missing:\n%s", body)
+	}
+}
+
+func TestHandlerServesBoundedCurrentAvatarWithETag(t *testing.T) {
+	const userID int64 = 2001
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01}
+	photos := &fakePhotos{
+		photos: map[photoLookupKey]domain.Photo{
+			{ownerType: domain.PeerTypeUser, ownerID: userID, kind: domain.ProfilePhotoKindProfile}: {
+				ID: 99, Date: 1700000000,
+				Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: len(jpeg)}},
+			},
+		},
+		files: map[string]domain.FileChunk{
+			"photo:99:c": {Bytes: jpeg, MimeType: "image/jpeg", Total: int64(len(jpeg))},
+		},
+	}
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
+		"alice": {ID: userID, Username: "Alice", FirstName: "Alice"},
+	}, nil, nil, photos, "https://telesrv.net")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/_public/avatar/Alice/99", nil))
+	if rr.Code != http.StatusOK || rr.Header().Get("Content-Type") != "image/jpeg" || rr.Body.String() != string(jpeg) {
+		t.Fatalf("avatar response status=%d type=%q body=%x", rr.Code, rr.Header().Get("Content-Type"), rr.Body.Bytes())
+	}
+	if rr.Header().Get("ETag") == "" || rr.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("avatar headers = %+v", rr.Header())
+	}
+	etag := rr.Header().Get("ETag")
+	req := httptest.NewRequest(http.MethodGet, "/_public/avatar/Alice/99", nil)
+	req.Header.Set("If-None-Match", etag)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotModified || rr.Body.Len() != 0 {
+		t.Fatalf("conditional avatar status=%d body=%x", rr.Code, rr.Body.Bytes())
+	}
+
+	for _, path := range []string{"/_public/avatar/Alice/100", "/_public/avatar/Missing/99"} {
+		rr = httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, rr.Code)
+		}
+	}
+}
+
+func TestHandlerFailsFastForAmbiguousUsernameOwner(t *testing.T) {
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
+		"sharedname": {ID: 2001, Username: "SharedName", FirstName: "User"},
+	}, fakeChannels{
+		"sharedname": {ID: 3001, Username: "SharedName", Title: "Channel", Broadcast: true},
+	}, nil, nil, "https://telesrv.net")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/SharedName", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("ambiguous owner status = %d, want 500", rr.Code)
+	}
+}
+
+func TestHandlerReturnsTrustedUsernameNotFoundPage(t *testing.T) {
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{}, fakeChannels{}, nil, nil, "https://telesrv.net")
+	for _, path := range []string{"/MissingName", "/bad-name", "/Nope"} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "Username not found") || !strings.Contains(rr.Body.String(), "noindex,nofollow") {
+			t.Fatalf("%s status=%d body=%s", path, rr.Code, rr.Body.String())
+		}
+		if strings.Contains(rr.Body.String(), "telesrv://resolve") {
+			t.Fatalf("not-found page contains a fabricated app link: %s", rr.Body.String())
+		}
+		if rr.Header().Get("Content-Security-Policy") == "" || rr.Header().Get("X-Frame-Options") != "DENY" {
+			t.Fatalf("not-found security headers = %+v", rr.Header())
+		}
+	}
+}
+
+func TestPublicAvatarRejectsOversizedOrUnsafeBlob(t *testing.T) {
+	const userID int64 = 2001
+	photo := domain.Photo{
+		ID:    99,
+		Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 12}},
+	}
+	for _, tc := range []struct {
+		name  string
+		chunk domain.FileChunk
+	}{
+		{name: "oversized", chunk: domain.FileChunk{Bytes: []byte("x"), MimeType: "image/jpeg", Total: maxPublicAvatarBytes + 1}},
+		{name: "unsafe mime", chunk: domain.FileChunk{Bytes: []byte("<svg></svg>"), MimeType: "image/svg+xml", Total: int64(len("<svg></svg>"))}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			photos := &fakePhotos{
+				photos: map[photoLookupKey]domain.Photo{
+					{ownerType: domain.PeerTypeUser, ownerID: userID, kind: domain.ProfilePhotoKindProfile}: photo,
+				},
+				files: map[string]domain.FileChunk{"photo:99:c": tc.chunk},
+			}
+			handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
+				"alice": {ID: userID, Username: "Alice", FirstName: "Alice"},
+			}, nil, nil, photos, "https://telesrv.net")
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/_public/avatar/Alice/99", nil))
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body=%s", rr.Code, rr.Body.String())
+			}
+		})
 	}
 }
 
@@ -167,13 +430,13 @@ func TestHandlerRedirectsMismatchedKindToCanonicalURL(t *testing.T) {
 }
 
 func TestHandlerNotFoundForMissingOrInvalidShortName(t *testing.T) {
-	handler := NewHandlerWithUsers(fakeResolver{}, fakeUsers{
+	handler := NewHandlerWithPublicPeers(fakeResolver{}, fakeUsers{
 		"alice": {
 			ID:        2001,
 			Username:  "Alice",
 			FirstName: "Alice",
 		},
-	}, "https://telesrv.net")
+	}, nil, nil, nil, "https://telesrv.net")
 	for _, path := range []string{
 		"/addstickers/missing_pack",
 		"/addstickers/bad-name",
@@ -181,7 +444,6 @@ func TestHandlerNotFoundForMissingOrInvalidShortName(t *testing.T) {
 		"/addlist/bad!slug",
 		"/addlist/%E4%B8%AD%E6%96%87",
 		"/MissingBot",
-		"/Alice",
 		"/bad-name-bot",
 		"/1stBot",
 	} {
@@ -227,4 +489,48 @@ type fakeUsers map[string]domain.User
 func (f fakeUsers) ByUsername(_ context.Context, username string) (domain.User, bool, error) {
 	u, ok := f[strings.ToLower(strings.TrimPrefix(username, "@"))]
 	return u, ok, nil
+}
+
+type fakeChannels map[string]domain.Channel
+
+func (f fakeChannels) ResolvePublicChannelUsername(_ context.Context, _ int64, username string) (domain.Channel, bool, error) {
+	ch, ok := f[strings.ToLower(strings.TrimPrefix(username, "@"))]
+	return ch, ok, nil
+}
+
+type fakeAnonymousPrivacy map[domain.PrivacyKey]bool
+
+func (f fakeAnonymousPrivacy) CanSeeAnonymous(_ context.Context, _ int64, key domain.PrivacyKey) (bool, error) {
+	visible, ok := f[key]
+	if !ok {
+		return true, nil
+	}
+	return visible, nil
+}
+
+type photoLookupKey struct {
+	ownerType domain.PeerType
+	ownerID   int64
+	kind      domain.ProfilePhotoKind
+}
+
+type fakePhotos struct {
+	photos map[photoLookupKey]domain.Photo
+	byID   map[int64]domain.Photo
+	files  map[string]domain.FileChunk
+}
+
+func (f *fakePhotos) CurrentProfilePhotoKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (domain.Photo, bool, error) {
+	photo, ok := f.photos[photoLookupKey{ownerType: ownerType, ownerID: ownerID, kind: kind}]
+	return photo, ok, nil
+}
+
+func (f *fakePhotos) GetPhoto(_ context.Context, id int64) (domain.Photo, bool, error) {
+	photo, ok := f.byID[id]
+	return photo, ok, nil
+}
+
+func (f *fakePhotos) GetFile(_ context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error) {
+	chunk, ok := f.files[req.LocationKey]
+	return chunk, ok, nil
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
+	androidcompat "telesrv/internal/compat/android"
 	"telesrv/internal/compat/tdesktop"
 )
 
@@ -69,7 +70,29 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 	d.OnHelpGetDeepLinkInfo(func(ctx context.Context, path string) (tg.HelpDeepLinkInfoClass, error) {
 		return &tg.HelpDeepLinkInfoEmpty{}, nil
 	})
+	d.OnHelpDismissSuggestion(r.onHelpDismissSuggestion)
 	d.OnHelpGetPremiumPromo(r.onHelpGetPremiumPromo)
+}
+
+// onHelpDismissSuggestion 为 DrKLO 改号成功后的 suggestion 清理提供有界兼容。
+// Android 会先把 suggestion 从本地状态删除，再发送该 RPC，且 generic 500 会被
+// 连接层持续重试。当前 server 不发布 pending suggestions，故非空 dismissal
+// 无需持久化，幂等 BoolTrue 即为完整的当前边界语义。
+func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismissSuggestionRequest) (bool, error) {
+	userID, found, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if !found {
+		return false, authKeyUnregisteredErr()
+	}
+	if r.userIsBot(ctx, userID) {
+		return false, botMethodInvalidErr()
+	}
+	if req == nil {
+		return false, nil
+	}
+	return androidcompat.DismissSuggestion(req.Suggestion), nil
 }
 
 // onHelpGetPremiumPromo 返回最小真实的 Premium 状态页数据：状态文案按 viewer

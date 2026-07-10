@@ -198,9 +198,7 @@ func (s *ChannelStore) SetChannelVerified(_ context.Context, channelID int64, ve
 }
 
 func (s *ChannelStore) ResolvePublicChannelUsername(_ context.Context, viewerUserID int64, username string) (domain.Channel, bool, error) {
-	if viewerUserID == 0 {
-		return domain.Channel{}, false, domain.ErrChannelInvalid
-	}
+	_ = viewerUserID // zero is the anonymous public-web view; no membership state is projected.
 	username = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	if username == "" {
 		return domain.Channel{}, false, nil

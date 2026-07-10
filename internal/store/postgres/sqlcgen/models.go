@@ -164,10 +164,16 @@ type AttachMenuUserState struct {
 }
 
 type AuthKey struct {
-	AuthKeyID  int64
-	Body       []byte
-	ServerSalt int64
-	CreatedAt  pgtype.Timestamptz
+	AuthKeyID     int64
+	Body          []byte
+	ServerSalt    int64
+	CreatedAt     pgtype.Timestamptz
+	Layer         int32
+	DeviceModel   string
+	Platform      string
+	SystemVersion string
+	ApiID         int32
+	AppVersion    string
 }
 
 type Authorization struct {
@@ -201,6 +207,22 @@ type AvailableReaction struct {
 	SortOrder           int32
 }
 
+type BootstrapUpdateJob struct {
+	ID           int64
+	Kind         string
+	UserID       int64
+	AuthKeyID    int64
+	SessionID    int64
+	MessageBoxID int32
+	Status       string
+	Attempts     int32
+	LastError    string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ReadyAt      pgtype.Timestamptz
+	PublishedAt  pgtype.Timestamptz
+}
+
 type Bot struct {
 	BotUserID         int64
 	OwnerUserID       int64
@@ -216,6 +238,24 @@ type Bot struct {
 	MenuButtonText    string
 	MenuButtonUrl     string
 	BotInlineGeo      bool
+}
+
+type BotApiUpdate struct {
+	ID         int64
+	BotUserID  int64
+	UpdateKind string
+	PeerType   string
+	PeerID     int64
+	MessageID  int32
+	SourcePts  int32
+	Date       int32
+	CreatedAt  pgtype.Timestamptz
+}
+
+type BotApiUpdateState struct {
+	BotUserID         int64
+	ConfirmedUpdateID int64
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type BotApp struct {
@@ -663,6 +703,30 @@ type ChannelUpdateEvent struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type ChatlistInvite struct {
+	ID          int64
+	OwnerUserID int64
+	FilterID    int32
+	Slug        string
+	Title       string
+	Peers       []byte
+	Revoked     bool
+	Deleted     bool
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type ChatlistMembership struct {
+	UserID        int64
+	LocalFilterID int32
+	OwnerUserID   int64
+	OwnerFilterID int32
+	Slug          string
+	HiddenUpdates bool
+	JoinedAt      pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type Contact struct {
 	UserID            int64
 	ContactUserID     int64
@@ -857,6 +921,8 @@ type GroupCall struct {
 	InviteLink              string
 	RandomID                int64
 	MigratedFromPhoneCallID int64
+	RtmpStream              bool
+	ScheduleDate            int32
 }
 
 type GroupCallChainBlock struct {
@@ -895,6 +961,7 @@ type GroupCallParticipant struct {
 	LastCheckDate    int32
 	PublicKey        []byte
 	JoinBlock        []byte
+	JoinAsChannelID  int64
 }
 
 type GroupCallParticipantOverride struct {
@@ -903,6 +970,17 @@ type GroupCallParticipantOverride struct {
 	TargetUserID int64
 	MutedByYou   bool
 	Volume       int32
+}
+
+type GroupCallRtmpKey struct {
+	ChannelID int64
+	StreamKey string
+	UpdatedAt int32
+}
+
+type GroupCallScheduleSubscriber struct {
+	CallID int64
+	UserID int64
 }
 
 type LangPack struct {
@@ -1197,6 +1275,7 @@ type ScheduledMessage struct {
 	Body                 string
 	Entities             []byte
 	Media                []byte
+	RichMessage          []byte
 	Silent               bool
 	Noforwards           bool
 	ReplyToMsgID         int32
@@ -1555,6 +1634,7 @@ type UserUpdateEvent struct {
 	QuickReplyMessage []byte
 	StoryPayload      []byte
 	ReactionPayload   []byte
+	EventPhone        string
 }
 
 type UserUpdateWatermark struct {

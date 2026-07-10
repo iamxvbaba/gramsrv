@@ -295,8 +295,35 @@ func floodWaitErr(seconds int) error {
 // phoneNumberInvalidErr 表示手机号为空或格式非法（auth.sendCode/signIn/signUp）。
 func phoneNumberInvalidErr() error { return tgerr.New(406, "PHONE_NUMBER_INVALID") }
 
+func phoneNumberOccupiedErr() error { return tgerr.New(400, "PHONE_NUMBER_OCCUPIED") }
+func phoneCodeEmptyErr() error      { return tgerr.New(400, "PHONE_CODE_EMPTY") }
+func phoneCodeInvalidErr() error    { return tgerr.New(400, "PHONE_CODE_INVALID") }
+func phoneCodeExpiredErr() error    { return tgerr.New(400, "PHONE_CODE_EXPIRED") }
+
+func phoneChangeErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrPhoneNumberInvalid):
+		return phoneNumberInvalidErr()
+	case errors.Is(err, domain.ErrPhoneNumberOccupied):
+		return phoneNumberOccupiedErr()
+	case errors.Is(err, domain.ErrPhoneCodeEmpty):
+		return phoneCodeEmptyErr()
+	case errors.Is(err, domain.ErrPhoneCodeInvalid):
+		return phoneCodeInvalidErr()
+	case errors.Is(err, domain.ErrPhoneCodeExpired):
+		return phoneCodeExpiredErr()
+	case errors.Is(err, domain.ErrPhoneChangeAuthInvalid):
+		return authKeyUnregisteredErr()
+	case errors.Is(err, domain.ErrPhoneChangeForbidden):
+		return tgerr.New(400, "BOT_METHOD_INVALID")
+	default:
+		return internalErr()
+	}
+}
+
 // authKeyUnregisteredErr 表示请求要求登录态而当前连接未授权。
 func authKeyUnregisteredErr() error { return tgerr.New(401, "AUTH_KEY_UNREGISTERED") }
+func botMethodInvalidErr() error    { return tgerr.New(400, "BOT_METHOD_INVALID") }
 
 // 私聊通话（phone.*）错误；触发点见 internal/rpc/phone_calls.go 与 app/phone 错误映射。
 func callPeerInvalidErr() error     { return tgerr.New(400, "CALL_PEER_INVALID") }

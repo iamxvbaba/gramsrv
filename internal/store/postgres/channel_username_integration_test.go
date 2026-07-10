@@ -59,6 +59,10 @@ func TestChannelStoreResolvePublicUsernameRejectsStaleIndex(t *testing.T) {
 	if _, found, err := channels.ResolvePublicChannelUsername(ctx, viewer.ID, usernames[1]); err != nil || found {
 		t.Fatalf("resolve missing username found %v err %v, want not found", found, err)
 	}
+	anonymous, found, err := channels.ResolvePublicChannelUsername(ctx, 0, strings.ToUpper(publicUsername))
+	if err != nil || !found || anonymous.ID != publicChannel.ID {
+		t.Fatalf("anonymous resolve public username = %+v found=%v err=%v", anonymous, found, err)
+	}
 	if _, err := channels.UpdateUsername(ctx, domain.UpdateChannelUsernameRequest{
 		UserID:    owner.ID,
 		ChannelID: publicChannel.ID,

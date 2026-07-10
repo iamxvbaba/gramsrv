@@ -34,6 +34,32 @@ func TestDefaultPrivacyRules(t *testing.T) {
 	}
 }
 
+func TestCanSeeAnonymousHonorsPublicOnlyRules(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewPrivacyStore()
+	svc := NewService(store, nil)
+	const ownerID int64 = 1001
+
+	if visible, err := svc.CanSeeAnonymous(ctx, ownerID, domain.PrivacyKeyAbout); err != nil || !visible {
+		t.Fatalf("default anonymous about visibility = %v, err=%v; want true", visible, err)
+	}
+	if _, err := svc.SetRules(ctx, ownerID, domain.PrivacyKeyProfilePhoto, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
+		t.Fatalf("set contacts-only profile photo: %v", err)
+	}
+	if visible, err := svc.CanSeeAnonymous(ctx, ownerID, domain.PrivacyKeyProfilePhoto); err != nil || visible {
+		t.Fatalf("contacts-only anonymous photo visibility = %v, err=%v; want false", visible, err)
+	}
+	if _, err := svc.SetRules(ctx, ownerID, domain.PrivacyKeyProfilePhoto, []domain.PrivacyRule{
+		{Kind: domain.PrivacyRuleDisallowUsers, UserIDs: []int64{2002}},
+		{Kind: domain.PrivacyRuleAllowAll},
+	}); err != nil {
+		t.Fatalf("set public profile photo: %v", err)
+	}
+	if visible, err := svc.CanSeeAnonymous(ctx, ownerID, domain.PrivacyKeyProfilePhoto); err != nil || !visible {
+		t.Fatalf("allow-all anonymous photo visibility = %v, err=%v; want true", visible, err)
+	}
+}
+
 func TestAddAllowUserOverridesDisallowAll(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(memory.NewPrivacyStore(), memory.NewContactStore())

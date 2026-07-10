@@ -37,6 +37,9 @@ type ChannelStore interface {
 	ListAdminedPublicChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListSendAsChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
+	// ResolvePublicChannelUsername resolves an active public channel/supergroup.
+	// viewerUserID may be zero for anonymous public-link projection; this lookup
+	// never returns viewer-specific membership or dialog state.
 	ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error)
 	SearchPublicChannels(ctx context.Context, viewerUserID int64, query string, limit int) (domain.PublicChannelSearchResult, error)
 	SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)

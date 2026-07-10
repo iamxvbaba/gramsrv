@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getAuthKey = `-- name: GetAuthKey :one
@@ -15,9 +17,16 @@ FROM auth_keys
 WHERE auth_key_id = $1
 `
 
-func (q *Queries) GetAuthKey(ctx context.Context, authKeyID int64) (AuthKey, error) {
+type GetAuthKeyRow struct {
+	AuthKeyID  int64
+	Body       []byte
+	ServerSalt int64
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) GetAuthKey(ctx context.Context, authKeyID int64) (GetAuthKeyRow, error) {
 	row := q.db.QueryRow(ctx, getAuthKey, authKeyID)
-	var i AuthKey
+	var i GetAuthKeyRow
 	err := row.Scan(
 		&i.AuthKeyID,
 		&i.Body,

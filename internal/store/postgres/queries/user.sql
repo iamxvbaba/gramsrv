@@ -125,6 +125,13 @@ SET first_name = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateUserPhone :one
+UPDATE users
+SET phone = sqlc.arg(phone)::text,
+    updated_at = now()
+WHERE id = sqlc.arg(id)::bigint
+RETURNING *;
+
 -- name: SetUserPremiumUntil :one
 UPDATE users
 SET premium_expires_at = sqlc.narg(premium_expires_at)::timestamptz,

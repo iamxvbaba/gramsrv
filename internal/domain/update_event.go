@@ -27,7 +27,10 @@ const (
 	UpdateEventDialogUnreadMark UpdateEventType = "dialog_unread_mark"
 	UpdateEventPeerSettings     UpdateEventType = "peer_settings"
 	UpdateEventPeerStoryBlocked UpdateEventType = "peer_story_blocked"
-	UpdateEventDeleteMessages   UpdateEventType = "delete_messages"
+	// UpdateEventUserPhone 映射 updateUserPhone。它是账号绝对状态更新，TL
+	// 构造器不携 pts；事件仍占账号 pts，以便其它设备在线/离线保持同一水位。
+	UpdateEventUserPhone      UpdateEventType = "user_phone"
+	UpdateEventDeleteMessages UpdateEventType = "delete_messages"
 	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
 	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
 	// TL 构造器自带账号 pts/pts_count，不属于 LacksWirePts。
@@ -77,6 +80,7 @@ type UpdateEvent struct {
 	Peer             Peer
 	Peers            []Peer
 	Bool             bool
+	Phone            string
 	Settings         PeerSettings
 	MessageIDs       []int
 	MaxID            int
@@ -122,6 +126,7 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventDialogUnreadMark,
 		UpdateEventPeerSettings,
 		UpdateEventPeerStoryBlocked,
+		UpdateEventUserPhone,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,
 		UpdateEventDialogFilters,

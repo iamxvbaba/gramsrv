@@ -24,6 +24,41 @@ func TestNormalizeBaseURL(t *testing.T) {
 	}
 }
 
+func TestValidateBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default", raw: "", want: "https://telesrv.net"},
+		{name: "host and path", raw: "links.example.test/root/", want: "https://links.example.test/root"},
+		{name: "local HTTP", raw: "http://127.0.0.1:2401/", want: "http://127.0.0.1:2401"},
+		{name: "missing host", raw: "https://", wantErr: true},
+		{name: "unsupported scheme", raw: "ftp://links.example.test", wantErr: true},
+		{name: "credentials", raw: "https://user:pass@links.example.test", wantErr: true},
+		{name: "query", raw: "https://links.example.test/root?tenant=one", wantErr: true},
+		{name: "fragment", raw: "https://links.example.test/root#links", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateBaseURL(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateBaseURL(%q) succeeded with %q", tt.raw, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateBaseURL(%q): %v", tt.raw, err)
+			}
+			if got != tt.want {
+				t.Fatalf("ValidateBaseURL(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildPreservesBasePathAndQuery(t *testing.T) {
 	got := Build("http://127.0.0.1:2401/root/", "/call/abc", url.Values{"slug": []string{"abc"}})
 	if want := "http://127.0.0.1:2401/root/call/abc?slug=abc"; got != want {

@@ -46,15 +46,7 @@ const (
 // 核心目的是拒绝空/非数字 phone（防 0090 partial index 下无限铸造幽灵账号），
 // 长度上限从宽，不强求 E.164 精确位数（测试常用更长的唯一 phone）。
 func validPhone(phone string) bool {
-	if len(phone) < 5 || len(phone) > 32 {
-		return false
-	}
-	for _, r := range phone {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	return domain.ValidPhone(phone)
 }
 
 func systemUserLoginForbidden(u domain.User) bool {
@@ -364,6 +356,9 @@ func (s *Service) CodeDelivery(ctx context.Context, phoneCodeHash string) (domai
 }
 
 func codeDelivery(rec store.PhoneCode) domain.AuthCodeDelivery {
+	if rec.Purpose == store.PhoneCodePurposeChangePhone {
+		return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}
+	}
 	switch rec.Channel {
 	case codeChannelEmailLogin:
 		return domain.AuthCodeDelivery{
@@ -380,6 +375,16 @@ func codeDelivery(rec store.PhoneCode) domain.AuthCodeDelivery {
 
 // ResendCode invalidates an existing code hash and sends a fresh code to the same phone.
 func (s *Service) ResendCode(ctx context.Context, phone, phoneCodeHash string) (string, error) {
+	return s.resendCode(ctx, [8]byte{}, phone, phoneCodeHash)
+}
+
+// ResendCodeForAuthKey 对已登录敏感操作额外校验发起 auth key；普通登录码
+// 没有 AuthKeyID 作用域，行为与 ResendCode 相同。
+func (s *Service) ResendCodeForAuthKey(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) (string, error) {
+	return s.resendCode(ctx, authKeyID, phone, phoneCodeHash)
+}
+
+func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) (string, error) {
 	phone = normalizePhone(phone)
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
@@ -391,7 +396,13 @@ func (s *Service) ResendCode(ctx context.Context, phone, phoneCodeHash string) (
 	if rec.Phone != phone {
 		return "", ErrCodeInvalid
 	}
+	if rec.Purpose == store.PhoneCodePurposeChangePhone && (authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID) {
+		return "", ErrCodeInvalid
+	}
 	_ = s.codes.Del(ctx, phoneCodeHash)
+	if rec.Purpose == store.PhoneCodePurposeChangePhone {
+		return s.recreateChangePhoneCode(ctx, rec)
+	}
 	if rec.Channel == codeChannelEmailLogin && strings.TrimSpace(rec.Email) != "" {
 		return s.createEmailLoginCode(ctx, phone, rec.Email)
 	}
@@ -401,8 +412,34 @@ func (s *Service) ResendCode(ctx context.Context, phone, phoneCodeHash string) (
 	return s.SendCode(ctx, phone)
 }
 
+func (s *Service) recreateChangePhoneCode(ctx context.Context, rec store.PhoneCode) (string, error) {
+	hash, err := randomHex(8)
+	if err != nil {
+		return "", err
+	}
+	rec.Code = s.fixedCode
+	rec.Channel = codeChannelPhone
+	rec.Attempts = 0
+	if rec.MaxAttempts <= 0 {
+		rec.MaxAttempts = s.codeMaxAttempts
+	}
+	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
+		return "", fmt.Errorf("store resent phone change code: %w", err)
+	}
+	return hash, nil
+}
+
 // CancelCode invalidates a pending login code hash.
 func (s *Service) CancelCode(ctx context.Context, phone, phoneCodeHash string) error {
+	return s.cancelCode(ctx, [8]byte{}, phone, phoneCodeHash)
+}
+
+// CancelCodeForAuthKey 是 ResendCodeForAuthKey 对应的取消路径。
+func (s *Service) CancelCodeForAuthKey(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) error {
+	return s.cancelCode(ctx, authKeyID, phone, phoneCodeHash)
+}
+
+func (s *Service) cancelCode(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) error {
 	phone = normalizePhone(phone)
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
@@ -412,6 +449,9 @@ func (s *Service) CancelCode(ctx context.Context, phone, phoneCodeHash string) e
 		return ErrCodeExpired
 	}
 	if rec.Phone != phone {
+		return ErrCodeInvalid
+	}
+	if rec.Purpose == store.PhoneCodePurposeChangePhone && (authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID) {
 		return ErrCodeInvalid
 	}
 	return s.codes.Del(ctx, phoneCodeHash)

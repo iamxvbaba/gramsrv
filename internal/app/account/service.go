@@ -38,8 +38,14 @@ type Service struct {
 	business    store.BusinessAutomationStore
 	// users 仅用于登录邮箱的 phone→user 解析（sendCode 检测 / login-setup / reset 走 phone）。
 	users                     store.UserStore
+	userCache                 store.UserCache
+	authorizations            store.AuthorizationStore
+	phoneChanges              store.PhoneChangeStore
 	publicBaseURL             string
 	codes                     store.CodeStore
+	phoneChangeCode           string
+	phoneChangeCodeTTL        time.Duration
+	phoneChangeMaxAttempts    int
 	loginEmailSender          mail.Sender
 	loginEmailCodeTTL         time.Duration
 	loginEmailCodeMaxAttempts int
@@ -105,6 +111,24 @@ func WithUsers(users store.UserStore) ServiceOption {
 	}
 }
 
+// WithPhoneChange 注入改号所需的授权校验、一次性验证码、原子 user+update
+// 写入与基础用户缓存失效依赖。
+func WithPhoneChange(phoneChanges store.PhoneChangeStore, authorizations store.AuthorizationStore, codes store.CodeStore, cache store.UserCache, fixedCode string, ttl time.Duration, maxAttempts int) ServiceOption {
+	return func(s *Service) {
+		s.phoneChanges = phoneChanges
+		s.authorizations = authorizations
+		s.codes = codes
+		s.userCache = cache
+		s.phoneChangeCode = fixedCode
+		if ttl > 0 {
+			s.phoneChangeCodeTTL = ttl
+		}
+		if maxAttempts > 0 {
+			s.phoneChangeMaxAttempts = maxAttempts
+		}
+	}
+}
+
 func WithPublicBaseURL(baseURL string) ServiceOption {
 	return func(s *Service) {
 		s.publicBaseURL = links.NormalizeBaseURL(baseURL)
@@ -129,7 +153,15 @@ func WithLoginEmailVerification(codes store.CodeStore, sender mail.Sender, ttl t
 
 // NewService 创建 account 服务。
 func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
-	s := &Service{passwords: passwords, publicBaseURL: links.DefaultPublicBaseURL, loginEmailCodeTTL: 5 * time.Minute, loginEmailCodeMaxAttempts: 5, loginEmailCodeLength: 6}
+	s := &Service{
+		passwords:                 passwords,
+		publicBaseURL:             links.DefaultPublicBaseURL,
+		loginEmailCodeTTL:         5 * time.Minute,
+		loginEmailCodeMaxAttempts: 5,
+		loginEmailCodeLength:      6,
+		phoneChangeCodeTTL:        5 * time.Minute,
+		phoneChangeMaxAttempts:    5,
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

@@ -267,6 +267,16 @@ func tgSentCodeWithLength(hash string, length int) tg.AuthSentCodeClass {
 	}
 }
 
+func tgSMSSentCode(hash string, length int) tg.AuthSentCodeClass {
+	if length <= 0 {
+		length = devCodeLength
+	}
+	return &tg.AuthSentCode{
+		Type:          &tg.AuthSentCodeTypeSMS{Length: length},
+		PhoneCodeHash: hash,
+	}
+}
+
 func tgEmailSentCode(hash, emailPattern string, length int) tg.AuthSentCodeClass {
 	if length <= 0 {
 		length = devCodeLength
@@ -303,6 +313,8 @@ func (r *Router) tgSentCodeForHash(ctx context.Context, hash string) (tg.AuthSen
 		return nil, signInErr(auth.ErrCodeExpired)
 	}
 	switch delivery.Kind {
+	case domain.AuthCodeDeliverySMS:
+		return tgSMSSentCode(hash, delivery.Length), nil
 	case domain.AuthCodeDeliveryEmail:
 		return tgEmailSentCode(hash, delivery.EmailPattern, delivery.Length), nil
 	case domain.AuthCodeDeliveryEmailSetupRequired:
@@ -361,7 +373,16 @@ func (r *Router) finishAuthSignIn(ctx context.Context, u domain.User, loginMessa
 }
 
 func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeRequest) (tg.AuthSentCodeClass, error) {
-	hash, err := r.deps.Auth.ResendCode(ctx, req.PhoneNumber, req.PhoneCodeHash)
+	var hash string
+	var err error
+	if scoped, ok := r.deps.Auth.(interface {
+		ResendCodeForAuthKey(context.Context, [8]byte, string, string) (string, error)
+	}); ok {
+		authKeyID, _ := AuthKeyIDFrom(ctx)
+		hash, err = scoped.ResendCodeForAuthKey(ctx, authKeyID, req.PhoneNumber, req.PhoneCodeHash)
+	} else {
+		hash, err = r.deps.Auth.ResendCode(ctx, req.PhoneNumber, req.PhoneCodeHash)
+	}
 	if err != nil {
 		return nil, signInErr(err)
 	}
@@ -369,7 +390,16 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 }
 
 func (r *Router) onAuthCancelCode(ctx context.Context, req *tg.AuthCancelCodeRequest) (bool, error) {
-	if err := r.deps.Auth.CancelCode(ctx, req.PhoneNumber, req.PhoneCodeHash); err != nil {
+	var err error
+	if scoped, ok := r.deps.Auth.(interface {
+		CancelCodeForAuthKey(context.Context, [8]byte, string, string) error
+	}); ok {
+		authKeyID, _ := AuthKeyIDFrom(ctx)
+		err = scoped.CancelCodeForAuthKey(ctx, authKeyID, req.PhoneNumber, req.PhoneCodeHash)
+	} else {
+		err = r.deps.Auth.CancelCode(ctx, req.PhoneNumber, req.PhoneCodeHash)
+	}
+	if err != nil {
 		return false, signInErr(err)
 	}
 	return true, nil

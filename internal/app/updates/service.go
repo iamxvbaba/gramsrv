@@ -2,6 +2,7 @@ package updates
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -111,6 +112,23 @@ func (s *Service) ConfirmedState(ctx context.Context, authKeyID [8]byte, userID 
 	}
 	st.Seq = 0
 	return st, found, nil
+}
+
+// ConfirmEvent 把一个已在其它业务事务中原子提交的事件标记为当前设备已消费。
+// 典型调用是 account.changePhone：RPC result 已携最新 User，当前设备不应再收
+// updateUserPhone，但仍需把设备确认水位推进到该事件 pts。
+func (s *Service) ConfirmEvent(ctx context.Context, authKeyID [8]byte, userID int64, event domain.UpdateEvent) error {
+	if event.UserID != 0 && event.UserID != userID {
+		return fmt.Errorf("confirm update event user mismatch: event=%d caller=%d", event.UserID, userID)
+	}
+	if event.Pts <= 0 {
+		return nil
+	}
+	date := event.Date
+	if date == 0 {
+		date = int(time.Now().Unix())
+	}
+	return s.saveConfirmedState(ctx, authKeyID, userID, domain.UpdateState{Pts: event.Pts, Date: date, Seq: 0})
 }
 
 // AcknowledgeCurrentState 返回账号当前最大连续状态，并把该设备的确认水位推进到此。

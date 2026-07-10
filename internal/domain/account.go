@@ -6,23 +6,31 @@ import (
 )
 
 var (
-	ErrPasswordHashInvalid   = errors.New("password hash invalid")
-	ErrSRPIDInvalid          = errors.New("srp id invalid")
-	ErrSRPPasswordChanged    = errors.New("srp password changed")
-	ErrNewSettingsInvalid    = errors.New("new password settings invalid")
-	ErrNewSaltInvalid        = errors.New("new password salt invalid")
-	ErrPasswordRecoveryNA    = errors.New("password recovery not available")
-	ErrEmailCodeInvalid      = errors.New("email code invalid")
-	ErrEmailInvalid          = errors.New("email invalid")
-	ErrEmailNotAllowed       = errors.New("email not allowed")
-	ErrEmailOccupied         = errors.New("email occupied")
-	ErrSessionPasswordNeeded = errors.New("session password needed")
+	ErrPasswordHashInvalid    = errors.New("password hash invalid")
+	ErrSRPIDInvalid           = errors.New("srp id invalid")
+	ErrSRPPasswordChanged     = errors.New("srp password changed")
+	ErrNewSettingsInvalid     = errors.New("new password settings invalid")
+	ErrNewSaltInvalid         = errors.New("new password salt invalid")
+	ErrPasswordRecoveryNA     = errors.New("password recovery not available")
+	ErrEmailCodeInvalid       = errors.New("email code invalid")
+	ErrEmailInvalid           = errors.New("email invalid")
+	ErrEmailNotAllowed        = errors.New("email not allowed")
+	ErrEmailOccupied          = errors.New("email occupied")
+	ErrSessionPasswordNeeded  = errors.New("session password needed")
+	ErrPhoneNumberInvalid     = errors.New("phone number invalid")
+	ErrPhoneNumberOccupied    = errors.New("phone number occupied")
+	ErrPhoneCodeEmpty         = errors.New("phone code empty")
+	ErrPhoneCodeInvalid       = errors.New("phone code invalid")
+	ErrPhoneCodeExpired       = errors.New("phone code expired")
+	ErrPhoneChangeAuthInvalid = errors.New("phone change auth invalid")
+	ErrPhoneChangeForbidden   = errors.New("phone change forbidden")
 )
 
 type AuthCodeDeliveryKind string
 
 const (
 	AuthCodeDeliveryPhone              AuthCodeDeliveryKind = "phone"
+	AuthCodeDeliverySMS                AuthCodeDeliveryKind = "sms"
 	AuthCodeDeliveryEmail              AuthCodeDeliveryKind = "email"
 	AuthCodeDeliveryEmailSetupRequired AuthCodeDeliveryKind = "email_setup_required"
 )
@@ -239,4 +247,19 @@ func NormalizePhone(phone string) string {
 		return phone
 	}
 	return b.String()
+}
+
+// ValidPhone 校验 NormalizePhone 后的持久化形态：5-32 位纯数字。
+// 上限与 users.phone 列宽一致；当前开发登录/改号链路不强制精确 E.164 长度，
+// 但拒绝空串、非数字和会截断的超长输入。
+func ValidPhone(phone string) bool {
+	if len(phone) < 5 || len(phone) > 32 {
+		return false
+	}
+	for _, r := range phone {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

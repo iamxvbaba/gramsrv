@@ -285,9 +285,7 @@ func (s *ChannelStore) SetChannelVerified(ctx context.Context, channelID int64, 
 }
 
 func (s *ChannelStore) ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error) {
-	if viewerUserID == 0 {
-		return domain.Channel{}, false, domain.ErrChannelInvalid
-	}
+	_ = viewerUserID // zero is the anonymous public-web view; this query is viewer-independent.
 	usernameLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	if usernameLower == "" {
 		return domain.Channel{}, false, nil

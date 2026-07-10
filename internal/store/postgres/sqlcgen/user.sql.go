@@ -881,6 +881,56 @@ func (q *Queries) UpdateUserPersonalChannel(ctx context.Context, arg UpdateUserP
 	return i, err
 }
 
+const updateUserPhone = `-- name: UpdateUserPhone :one
+UPDATE users
+SET phone = $1::text,
+    updated_at = now()
+WHERE id = $2::bigint
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id
+`
+
+type UpdateUserPhoneParams struct {
+	Phone string
+	ID    int64
+}
+
+func (q *Queries) UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserPhone, arg.Phone, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.AccessHash,
+		&i.Phone,
+		&i.FirstName,
+		&i.LastName,
+		&i.Username,
+		&i.CountryCode,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Verified,
+		&i.Support,
+		&i.About,
+		&i.LastSeenAt,
+		&i.DefaultHistoryTtlPeriod,
+		&i.IsBot,
+		&i.BotInfoVersion,
+		&i.PremiumExpiresAt,
+		&i.EmojiStatusDocumentID,
+		&i.EmojiStatusUntil,
+		&i.ColorSet,
+		&i.Color,
+		&i.ColorBackgroundEmojiID,
+		&i.ProfileColorSet,
+		&i.ProfileColor,
+		&i.ProfileColorBackgroundEmojiID,
+		&i.BirthdayDay,
+		&i.BirthdayMonth,
+		&i.BirthdayYear,
+		&i.PersonalChannelID,
+	)
+	return i, err
+}
+
 const updateUserProfile = `-- name: UpdateUserProfile :one
 UPDATE users
 SET first_name = $2,

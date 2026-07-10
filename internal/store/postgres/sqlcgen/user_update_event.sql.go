@@ -17,6 +17,7 @@ INSERT INTO user_update_events (
   date,
   event_type,
   event_bool,
+  event_phone,
   event_peers,
   peer_settings,
   message_ids,
@@ -41,7 +42,7 @@ INSERT INTO user_update_events (
   $4,
   $5,
   $6::boolean,
-  $7::jsonb,
+  $7::text,
   $8::jsonb,
   $9::jsonb,
   $10::jsonb,
@@ -49,15 +50,16 @@ INSERT INTO user_update_events (
   $12::jsonb,
   $13::jsonb,
   $14::jsonb,
-  $15,
-  $16::text,
-  $17::bigint,
-  $18::int,
+  $15::jsonb,
+  $16,
+  $17::text,
+  $18::bigint,
   $19::int,
   $20::int,
   $21::int,
-  $22::boolean,
-  $23::int
+  $22::int,
+  $23::boolean,
+  $24::int
 )
 `
 
@@ -68,6 +70,7 @@ type AppendUserUpdateEventParams struct {
 	Date             int32
 	EventType        string
 	EventBool        bool
+	EventPhone       string
 	EventPeers       []byte
 	PeerSettings     []byte
 	MessageIds       []byte
@@ -95,6 +98,7 @@ func (q *Queries) AppendUserUpdateEvent(ctx context.Context, arg AppendUserUpdat
 		arg.Date,
 		arg.EventType,
 		arg.EventBool,
+		arg.EventPhone,
 		arg.EventPeers,
 		arg.PeerSettings,
 		arg.MessageIds,
@@ -124,6 +128,7 @@ SELECT
   e.date,
   e.event_type,
   e.event_bool,
+  e.event_phone,
   COALESCE(e.event_peers::text, '[]')::text AS event_peers_json,
   COALESCE(e.peer_settings::text, '{}')::text AS peer_settings_json,
   COALESCE(e.message_ids::text, '[]')::text AS message_ids_json,
@@ -260,6 +265,7 @@ type BatchListDispatchEventsRow struct {
 	Date                           int32
 	EventType                      string
 	EventBool                      bool
+	EventPhone                     string
 	EventPeersJson                 string
 	PeerSettingsJson               string
 	MessageIdsJson                 string
@@ -394,6 +400,7 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 			&i.Date,
 			&i.EventType,
 			&i.EventBool,
+			&i.EventPhone,
 			&i.EventPeersJson,
 			&i.PeerSettingsJson,
 			&i.MessageIdsJson,
@@ -681,6 +688,7 @@ SELECT
   e.date,
   e.event_type,
   e.event_bool,
+  e.event_phone,
   COALESCE(e.event_peers::text, '[]')::text AS event_peers_json,
   COALESCE(e.peer_settings::text, '{}')::text AS peer_settings_json,
   COALESCE(e.message_ids::text, '[]')::text AS message_ids_json,
@@ -820,6 +828,7 @@ type ListUserUpdateEventsAfterRow struct {
 	Date                           int32
 	EventType                      string
 	EventBool                      bool
+	EventPhone                     string
 	EventPeersJson                 string
 	PeerSettingsJson               string
 	MessageIdsJson                 string
@@ -952,6 +961,7 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 			&i.Date,
 			&i.EventType,
 			&i.EventBool,
+			&i.EventPhone,
 			&i.EventPeersJson,
 			&i.PeerSettingsJson,
 			&i.MessageIdsJson,

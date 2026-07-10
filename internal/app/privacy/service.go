@@ -110,6 +110,21 @@ func (s *Service) CanSee(ctx context.Context, ownerUserID, viewerUserID int64, k
 	return Evaluate(rules, evalCtx), nil
 }
 
+// CanSeeAnonymous evaluates one owner's privacy rules for an unauthenticated
+// public-web viewer. Anonymous viewers are never contacts, premium users,
+// close friends, bots, or shared-chat participants; explicit allow-all and
+// disallow rules still retain their normal precedence through Evaluate.
+func (s *Service) CanSeeAnonymous(ctx context.Context, ownerUserID int64, key domain.PrivacyKey) (bool, error) {
+	if ownerUserID == 0 {
+		return false, nil
+	}
+	rules, err := s.GetRules(ctx, ownerUserID, key)
+	if err != nil {
+		return false, err
+	}
+	return Evaluate(rules, domain.PrivacyContext{OwnerUserID: ownerUserID}), nil
+}
+
 // CanSeeBatch 批量评估多个 owner 对同一 viewer 在多个 key 上的可见性，结果等价于对每个
 // (owner,key) 调一次 CanSee，但只用一次 ListPrivacyRules + 一次 GetReverseContacts + 内存
 // Evaluate（消除 projectBatch / fan-out 投影里 per-user 3×CanSee×2行 的 N+1）。返回

@@ -254,6 +254,8 @@ type UserPremiumStatusService interface {
 
 // AccountService 抽象账号设置查询。
 type AccountService interface {
+	SendChangePhoneCode(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone string) (string, domain.AuthCodeDelivery, error)
+	ChangePhone(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone, phoneCodeHash, code string, date int) (domain.PhoneChangeResult, error)
 	GetPassword(ctx context.Context, userID int64) (domain.PasswordSettings, error)
 	GetPasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck) (domain.PrivatePasswordSettings, error)
 	UpdatePasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck, input domain.PasswordInputSettings) error
