@@ -100,13 +100,13 @@ go build -o bin/gramsrv ./cmd/telesrv
 | `TELESRV_LOGIN_EMAIL_ENABLE` | `false` | 已绑定登录邮箱的账号通过 SMTP 接收登录验证码 |
 | `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | 登录/注册时强制先设置登录邮箱 |
 | `TELESRV_SMTP_HOST` | 空 | 开启登录邮箱验证时使用的 SMTP host |
-| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | sticker/chatlist 公开链接的 canonical base URL |
+| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | username、sticker、emoji、chatlist 公开链接使用的外部 canonical base URL |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL 连接串 |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis 地址 |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | 内置语言包种子目录 |
 | `TELESRV_BLOB_DIR` | `data/blobs` | 本地媒体 blob 目录 |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | 可选 sticker/reaction 种子目录 |
-| `TELESRV_PUBLIC_LINK_WEB_ADDR` | 空 | 可选的 sticker/chatlist 公开链接落地页监听地址 |
+| `TELESRV_PUBLIC_LINK_WEB_ADDR` | 空 | 可选的公开链接落地页监听地址，例如 `127.0.0.1:2401` |
 | `TELESRV_BOT_API_ADDR` | 空 | 可选 HTTP Bot API gateway 监听地址，例如 `127.0.0.1:8081` |
 | `TELESRV_BOT_API_UPDATE_RETENTION` | `24h` | 未确认 Bot API `getUpdates` 队列记录的保留窗口 |
 | `TELESRV_AI_ENABLED` | `true` | 启用 AI compose 入口 |
@@ -146,7 +146,7 @@ go build -o bin/gramsrv ./cmd/telesrv
 | 12400 | UDP | TURN/STUN 服务器 | 启用 P2P/通话 relay |
 | 12500-12999 | UDP | TURN relay 端口段 | 启用 TURN relay |
 | 可配置 | TCP | Bot API | 设置 `TELESRV_BOT_API_ADDR` 时 |
-| 可配置 | TCP | 公开链接深链落地页 | 设置 `TELESRV_PUBLIC_LINK_WEB_ADDR` 时 |
+| 2401 示例 | TCP | username/sticker/chatlist 公开链接落地页 | 设置 `TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401` 时 |
 
 ### 内部/调试端口（不要暴露到公网）
 
@@ -157,6 +157,26 @@ go build -o bin/gramsrv ./cmd/telesrv
 | 6399 | `127.0.0.1:6399` | Redis |
 
 确保设置 `TELESRV_LISTEN=0.0.0.0:2398`，且 `TELESRV_ADVERTISE_IP` 指向公网 IP，客户端才能正确连接。
+
+## 公开链接落地页
+
+`gramsrv` 可以提供 `/<username>`、头像、`/addstickers/<shortName>`、
+`/addemoji/<shortName>`、`/addlist/<slug>` 这些公开落地页。
+
+`TELESRV_PUBLIC_LINK_WEB_ADDR` 是本机 HTTP 监听地址：
+
+```env
+TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
+```
+
+`TELESRV_PUBLIC_BASE_URL` 是生成公开链接时展示给用户的外部 canonical URL：
+
+```env
+TELESRV_PUBLIC_BASE_URL=https://your-domain.example
+```
+
+生产环境建议让 `TELESRV_PUBLIC_LINK_WEB_ADDR` 只监听 loopback，再用 HTTPS
+反向代理把公开路由转发到这个本地端口。
 
 ## 客户端兼容
 

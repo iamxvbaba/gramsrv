@@ -108,13 +108,13 @@ Useful local environment variables:
 | `TELESRV_LOGIN_EMAIL_ENABLE` | `false` | send login codes to confirmed login email addresses through SMTP |
 | `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | force phone login/registration to set a login email first |
 | `TELESRV_SMTP_HOST` | empty | SMTP host used when login email verification is enabled |
-| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical base URL for public sticker/chatlist links |
+| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical external base URL for username, sticker, emoji, and chatlist links |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | bundled language pack seed directory |
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
-| `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing endpoint for sticker and chatlist links |
+| `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing listener, for example `127.0.0.1:2401` |
 | `TELESRV_BOT_API_ADDR` | empty | optional HTTP Bot API gateway listen address, for example `127.0.0.1:8081` |
 | `TELESRV_BOT_API_UPDATE_RETENTION` | `24h` | retention window for unconfirmed Bot API `getUpdates` queue entries |
 | `TELESRV_AI_ENABLED` | `true` | enable AI compose entry points |
@@ -156,7 +156,7 @@ to the features you enable.
 | 12400 | UDP | TURN/STUN server | P2P/call relay |
 | 12500-12999 | UDP | TURN relay port range | TURN relay |
 | configurable | TCP | Bot API | When `TELESRV_BOT_API_ADDR` is set |
-| configurable | TCP | Public link deep-link landing | When `TELESRV_PUBLIC_LINK_WEB_ADDR` is set |
+| 2401 example | TCP | Public username/sticker/chatlist landing pages | When `TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401` is set |
 
 ### Internal/debug ports (do not expose publicly)
 
@@ -168,6 +168,27 @@ to the features you enable.
 
 Make sure `TELESRV_LISTEN=0.0.0.0:2398` is set, and `TELESRV_ADVERTISE_IP`
 points to your public IP so clients can connect.
+
+## Public Link Landing Pages
+
+`gramsrv` can serve public landing pages for `/<username>`, profile avatars,
+`/addstickers/<shortName>`, `/addemoji/<shortName>`, and `/addlist/<slug>`.
+
+Use `TELESRV_PUBLIC_LINK_WEB_ADDR` as the local HTTP bind address:
+
+```env
+TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
+```
+
+Use `TELESRV_PUBLIC_BASE_URL` as the external canonical URL shown in generated
+links:
+
+```env
+TELESRV_PUBLIC_BASE_URL=https://your-domain.example
+```
+
+In production, keep `TELESRV_PUBLIC_LINK_WEB_ADDR` on loopback and reverse-proxy
+the public routes to it with HTTPS.
 
 ## Client Compatibility
 
