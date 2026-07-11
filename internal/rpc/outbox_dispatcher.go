@@ -18,7 +18,10 @@ import (
 const (
 	defaultOutboxBatch    = 100
 	defaultOutboxInterval = 200 * time.Millisecond
-	defaultOutboxWorkers  = 1
+	defaultOutboxWorkers  = 4
+	// outboxLogicalShards 是稳定 user→lane 哈希空间。它不随运行时 worker 数变化，
+	// worker 只独占其中一组 shard，保证同一用户始终单 lane 串行、不同用户可并行。
+	outboxLogicalShards = store.DispatchOutboxLogicalShards
 	// defaultOutboxMaxIdleInterval 是空闲退避上界：连续空 claim 时把轮询间隔从 interval
 	// 指数退避到此上界，削减「无消息时也每 200ms 查一次 DB」的空转；一旦有活就立刻复位到
 	// interval。代价是「长时间静默后的第一条消息」最多多等这个上界——退避只在持续空闲时触及，
@@ -138,25 +141,61 @@ func (d *OutboxDispatcher) Run(ctx context.Context) {
 	if d == nil || d.events == nil || d.outbox == nil || d.sessions == nil {
 		return
 	}
-	workers := d.workers
-	if workers < 1 {
-		workers = 1
-	}
+	claimer, sharded := d.outbox.(shardedOutboxClaimer)
+	workers := normalizedOutboxWorkers(d.workers, sharded)
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
+		var shardIDs []int
+		if sharded {
+			shardIDs = logicalShardsForWorker(i, workers)
+		}
 		go func() {
 			defer wg.Done()
-			d.runWorker(ctx)
+			d.runWorker(ctx, claimer, shardIDs)
 		}()
 	}
 	wg.Wait()
 }
 
+func normalizedOutboxWorkers(workers int, sharded bool) int {
+	if workers < 1 {
+		workers = 1
+	}
+	if !sharded {
+		// 测试替身或旧 store 没有 user shard claim 时，强制单 worker，避免同一用户
+		// 的不同 pts 被并行领取。
+		return 1
+	}
+	// 多于 logical shard 的 worker 没有独占 lane。若让空 shard worker 回退全局
+	// claim，会与全部分片 worker 重叠，因此必须在启动前钳制。
+	if workers > outboxLogicalShards {
+		return outboxLogicalShards
+	}
+	return workers
+}
+
+func logicalShardsForWorker(worker, workers int) []int {
+	if workers <= 0 || worker < 0 || worker >= workers {
+		return nil
+	}
+	out := make([]int, 0, (outboxLogicalShards+workers-1)/workers)
+	for shard := worker; shard < outboxLogicalShards; shard += workers {
+		out = append(out, shard)
+	}
+	return out
+}
+
 // runWorker 是单个 claim 循环；多 worker 靠 ClaimPending 的 SKIP LOCKED 互不重叠。
 // 空闲指数退避（interval→maxIdleInterval），claim 到事件即复位到 interval：有活快、无活省。
-func (d *OutboxDispatcher) runWorker(ctx context.Context) {
-	runIdleBackoffLoop(ctx, d.interval, d.maxIdleInterval, d.DispatchOnce)
+func (d *OutboxDispatcher) runWorker(ctx context.Context, claimer shardedOutboxClaimer, shardIDs []int) {
+	dispatch := d.DispatchOnce
+	if claimer != nil && len(shardIDs) > 0 {
+		dispatch = func(ctx context.Context) bool {
+			return d.dispatchOnceShards(ctx, claimer, shardIDs)
+		}
+	}
+	runIdleBackoffLoop(ctx, d.interval, d.maxIdleInterval, dispatch)
 }
 
 // batchEventLoader 是 UpdateEventStore 的可选批量能力：一次取多条 (user,pts) 事件。
@@ -169,11 +208,24 @@ type batchOutboxMarker interface {
 	MarkDeliveredBatch(ctx context.Context, items []store.DispatchOutboxItem) error
 }
 
+type shardedOutboxClaimer interface {
+	ClaimPendingShards(ctx context.Context, shardCount int, shardIDs []int, limit int) ([]store.DispatchOutboxItem, error)
+}
+
 // DispatchOnce claim 一批 outbox 并投递，测试可直接调用。返回本次是否 claim 到事件，
 // 供 runWorker 决定快轮询还是空闲退避。
 // store 同时具备批量取事件 + 批量标记能力时走批量路径（每批 ~3 次 PG 往返），否则逐条回退。
 func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) bool {
 	items, err := d.outbox.ClaimPending(ctx, d.batch)
+	return d.dispatchClaimed(ctx, items, err)
+}
+
+func (d *OutboxDispatcher) dispatchOnceShards(ctx context.Context, claimer shardedOutboxClaimer, shardIDs []int) bool {
+	items, err := claimer.ClaimPendingShards(ctx, outboxLogicalShards, shardIDs, d.batch)
+	return d.dispatchClaimed(ctx, items, err)
+}
+
+func (d *OutboxDispatcher) dispatchClaimed(ctx context.Context, items []store.DispatchOutboxItem, err error) bool {
 	if err != nil {
 		d.log.Warn("claim dispatch outbox", zap.Error(err))
 		return false
@@ -189,8 +241,14 @@ func (d *OutboxDispatcher) DispatchOnce(ctx context.Context) bool {
 			return true
 		}
 	}
+	blockedUsers := make(map[int64]struct{})
 	for _, item := range items {
-		d.dispatchItem(ctx, item)
+		if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+			continue
+		}
+		if !d.dispatchItem(ctx, item) {
+			blockedUsers[item.TargetUserID] = struct{}{}
+		}
 	}
 	return true
 }
@@ -223,8 +281,14 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	if err != nil {
 		// 批量取失败则整批回退逐条路径，让每条各自重试/标失败，不丢进度。
 		d.log.Warn("batch load dispatch events", zap.Error(err))
+		blockedUsers := make(map[int64]struct{})
 		for _, item := range items {
-			d.dispatchItem(ctx, item)
+			if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+				continue
+			}
+			if !d.dispatchItem(ctx, item) {
+				blockedUsers[item.TargetUserID] = struct{}{}
+			}
 		}
 		return
 	}
@@ -235,10 +299,15 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	start := time.Now()
 	ready := make([]outboxDispatchReady, 0, len(items))
 	requests := make([]OutboxUpdateRequest, 0, len(items))
+	blockedUsers := make(map[int64]struct{})
 	for _, item := range items {
+		if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+			continue
+		}
 		event, ok := byKey[outboxEventKey{item.TargetUserID, item.Pts}]
 		if !ok {
 			d.markDispatchFailed(ctx, item, errMissingOutboxEvent)
+			blockedUsers[item.TargetUserID] = struct{}{}
 			continue
 		}
 		ready = append(ready, outboxDispatchReady{item: item})
@@ -246,14 +315,19 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	}
 	builtUpdates := d.buildOutboxUpdates(ctx, requests)
 	delivered := make([]store.DispatchOutboxItem, 0, len(items))
+	clear(blockedUsers)
 	for i, entry := range ready {
 		item := entry.item
+		if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+			continue
+		}
 		update := builtUpdates[i]
 		if update == nil {
 			delivered = append(delivered, item)
 			continue
 		}
 		if _, retriable, err := d.pushOutboxUpdate(ctx, item, update); err != nil {
+			blockedUsers[item.TargetUserID] = struct{}{}
 			if retriable {
 				// 出站队列拥塞：留 dispatching 行靠租约过期重投，不计入 attempts 升级。
 				// 不加入 delivered，故不会被 MarkDeliveredBatch 删除。
@@ -271,7 +345,7 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		// 批量标记失败则逐条标记，避免整批已投递却卡在 dispatching 等租约过期重投。
 		d.log.Warn("mark dispatch delivered batch", zap.Error(err))
 		for _, item := range delivered {
-			if markErr := d.outbox.MarkDelivered(ctx, item.TargetUserID, item.ID); markErr != nil {
+			if markErr := d.outbox.MarkDelivered(ctx, item); markErr != nil {
 				d.log.Warn("mark dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(markErr))
 			}
 		}
@@ -286,25 +360,25 @@ type outboxDispatchReady struct {
 	item store.DispatchOutboxItem
 }
 
-func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.DispatchOutboxItem) {
+func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.DispatchOutboxItem) bool {
 	start := time.Now()
 	events, err := d.events.ListAfter(ctx, item.TargetUserID, item.Pts-1, 1)
 	if err != nil {
 		d.markDispatchFailed(ctx, item, err)
-		return
+		return false
 	}
 	if len(events) == 0 || events[0].Pts != item.Pts {
 		d.markDispatchFailed(ctx, item, errMissingOutboxEvent)
-		return
+		return false
 	}
 	update := d.buildOutboxUpdate(ctx, item, events[0])
 	if update == nil {
-		if err := d.outbox.MarkDelivered(ctx, item.TargetUserID, item.ID); err != nil {
+		if err := d.outbox.MarkDelivered(ctx, item); err != nil {
 			d.log.Warn("mark noop dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(err))
-			return
+			return false
 		}
 		d.metrics.OutboxDelivered(time.Since(start))
-		return
+		return true
 	}
 	sent, retriable, err := d.pushOutboxUpdate(ctx, item, update)
 	if err != nil {
@@ -316,14 +390,14 @@ func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.Dispatch
 				zap.Int64("outbox_id", item.ID),
 				zap.Int("pts", item.Pts),
 			)
-			return
+			return false
 		}
 		d.markDispatchFailed(ctx, item, err)
-		return
+		return false
 	}
-	if err := d.outbox.MarkDelivered(ctx, item.TargetUserID, item.ID); err != nil {
+	if err := d.outbox.MarkDelivered(ctx, item); err != nil {
 		d.log.Warn("mark dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(err))
-		return
+		return false
 	}
 	d.metrics.OutboxDelivered(time.Since(start))
 	d.log.Debug("dispatch outbox delivered",
@@ -332,6 +406,7 @@ func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.Dispatch
 		zap.Int("pts", item.Pts),
 		zap.Int("sessions", sent),
 	)
+	return true
 }
 
 func (d *OutboxDispatcher) buildOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent) *tg.Updates {
@@ -364,19 +439,19 @@ func (d *OutboxDispatcher) buildOutboxUpdates(ctx context.Context, requests []Ou
 }
 
 // pushOutboxUpdate 投递一条 outbox update，返回 (送达的在线 session 数, 是否可重试, err)。
-// best-effort 路径（pushTimeout>0）的失败只可能是出站队列拥塞（慢消费者入队超时），属暂时性、
-// 可重试：调用方应保留 dispatching 行靠租约过期重投，而非计入 attempts 升级为 failed。
-// 可靠路径的失败是真实投递错误，retriable=false，按原逻辑退避升级。
+// 生产 SessionManager 会把 queue-full/closed 慢连接摘除并按离线处理，因此 best-effort
+// 接口剩余的非 context 错误通常是确定性的编码/构造错误，必须进入 failed，不能永久占着
+// dispatching head 靠租约空转。只有 dispatcher shutdown/deadline 属于可重试中断。
 func (d *OutboxDispatcher) pushOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, update *tg.Updates) (sent int, retriable bool, err error) {
 	var zeroAuthKeyID [8]byte
 	if d.pushTimeout > 0 {
 		if scoped, ok := d.sessions.(ScopedBestEffortSessionBinder); ok && item.ExcludeAuthKeyID != zeroAuthKeyID {
 			sent, err = scoped.PushToUserExceptAuthKeySessionBestEffort(ctx, item.TargetUserID, item.ExcludeAuthKeyID, item.ExcludeSessionID, proto.MessageFromServer, update, d.pushTimeout)
-			return sent, err != nil, err
+			return sent, outboxPushInterrupted(err), err
 		}
 		if bestEffort, ok := d.sessions.(BestEffortSessionBinder); ok {
 			sent, err = bestEffort.PushToUserExceptSessionBestEffort(ctx, item.TargetUserID, item.ExcludeSessionID, proto.MessageFromServer, update, d.pushTimeout)
-			return sent, err != nil, err
+			return sent, outboxPushInterrupted(err), err
 		}
 	}
 	if scoped, ok := d.sessions.(ScopedSessionBinder); ok && item.ExcludeAuthKeyID != zeroAuthKeyID {
@@ -387,11 +462,15 @@ func (d *OutboxDispatcher) pushOutboxUpdate(ctx context.Context, item store.Disp
 	return sent, false, err
 }
 
+func outboxPushInterrupted(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func (d *OutboxDispatcher) markDispatchFailed(ctx context.Context, item store.DispatchOutboxItem, err error) {
 	if err == nil {
 		err = errMissingOutboxEvent
 	}
-	if markErr := d.outbox.MarkFailed(ctx, item.TargetUserID, item.ID, err.Error()); markErr != nil {
+	if markErr := d.outbox.MarkFailed(ctx, item, err.Error()); markErr != nil {
 		d.log.Warn("mark dispatch failed",
 			zap.Int64("target_user_id", item.TargetUserID),
 			zap.Int64("outbox_id", item.ID),

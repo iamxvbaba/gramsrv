@@ -27,6 +27,13 @@ var (
 	ErrCodeExpired             = errors.New("phone code expired or not found")
 	ErrCodeInvalid             = errors.New("phone code invalid")
 	ErrEncryptedMessageInvalid = errors.New("encrypted message invalid")
+	// ErrLoginCodeDeliveryUnavailable 表示已有账号的 app-code 没有可用的
+	// durable message/event/outbox 投递边界。这是服务端配置错误，不能降级成
+	// “继续返回 sentCode，等 signIn 后补发”。
+	ErrLoginCodeDeliveryUnavailable = errors.New("login code durable delivery unavailable")
+	// ErrLoginCodeDeliveryFailed 表示 durable 投递未成功。SendCode/ResendCode
+	// 必须同时撤销刚写入的 CodeStore hash，防止客户拿到无法送达的码。
+	ErrLoginCodeDeliveryFailed = errors.New("login code durable delivery failed")
 	// ErrPhoneNumberInvalid 表示手机号为空或非纯数字/长度越界。
 	// 0090 把 users.phone 唯一约束改为忽略空串的部分索引（bot 行 phone=''），
 	// 因此 phone 校验必须前移到 auth 入口，否则 sendCode/signUp 可无限铸造
@@ -40,6 +47,7 @@ const (
 	codeChannelPhone              = "phone"
 	codeChannelEmailLogin         = "email_login"
 	codeChannelEmailSetupRequired = "email_setup_required"
+	loginCodeRollbackTimeout      = 2 * time.Second
 )
 
 // validPhone 校验规范化后的手机号：5-32 位纯数字（上限对齐 users.phone 列宽）。
@@ -68,6 +76,7 @@ type Service struct {
 	passwords              store.PasswordStore
 	messages               store.MessageStore
 	dialogs                store.DialogStore
+	loginCodeDelivery      store.LoginCodeDeliveryStore
 	bots                   store.BotStore
 	fixedCode              string
 	codeTTL                time.Duration
@@ -83,7 +92,7 @@ type Service struct {
 
 type loginEmailStore interface {
 	LoginEmailByPhone(ctx context.Context, phone string) (string, bool, error)
-	SetLoginEmailByPhone(ctx context.Context, phone, email string) error
+	SetLoginEmail(ctx context.Context, userID int64, email string) error
 }
 
 type LoginEmailOptions struct {
@@ -102,11 +111,22 @@ type authorizationRevoker interface {
 // Option 调整登录服务的可选依赖。
 type Option func(*Service)
 
-// WithLoginMessages 在登录成功后写入官方系统账号的登录消息与会话摘要。
+// WithLoginMessages 在新用户注册成功后写入官方系统账号的首条登录消息与会话摘要。
+// 已有账号的 app 验证码必须在 auth.sendCode/resendCode 阶段通过
+// WithLoginCodeDelivery 持久化，禁止在 signIn 成功后补发。
 func WithLoginMessages(messages store.MessageStore, dialogs store.DialogStore) Option {
 	return func(s *Service) {
 		s.messages = messages
 		s.dialogs = dialogs
+	}
+}
+
+// WithLoginCodeDelivery 注入已有账号 app-code 的 durable 投递边界。
+// 实现必须以 user_id + phone_code_hash 幂等，并原子写入 777000
+// message/dialog/user update event/dispatch outbox。
+func WithLoginCodeDelivery(delivery store.LoginCodeDeliveryStore) Option {
+	return func(s *Service) {
+		s.loginCodeDelivery = delivery
 	}
 }
 
@@ -271,53 +291,157 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	if systemLoginPhoneForbidden(phone) {
 		return "", ErrSystemUserLoginForbidden
 	}
+	existing, found, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return "", fmt.Errorf("lookup login-code recipient: %w", err)
+	}
+	if found && systemUserLoginForbidden(existing) {
+		return "", ErrSystemUserLoginForbidden
+	}
+	issuedUserID := int64(0)
+	if found {
+		issuedUserID = existing.ID
+	}
 	if s.loginEmailEnabled && s.loginEmails != nil {
 		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)
 		if err != nil {
 			return "", err
 		}
 		if found && strings.TrimSpace(email) != "" {
-			return s.createEmailLoginCode(ctx, phone, email)
+			return s.createEmailLoginCode(ctx, phone, email, issuedUserID)
 		}
 		if s.loginEmailRequireSetup {
-			return s.createSetupRequiredCode(ctx, phone)
+			return s.createSetupRequiredCode(ctx, phone, issuedUserID)
 		}
 	}
-	return s.createPhoneCode(ctx, phone)
+	return s.createPhoneCode(ctx, phone, issuedUserID)
 }
 
-func (s *Service) createPhoneCode(ctx context.Context, phone string) (string, error) {
+func (s *Service) currentPhoneOwner(ctx context.Context, phone string) (domain.User, bool, error) {
+	if s == nil || s.users == nil {
+		return domain.User{}, false, fmt.Errorf("user store is not configured")
+	}
+	return s.users.ByPhone(ctx, phone)
+}
+
+func (s *Service) issuedOwnerMatches(ctx context.Context, phone string, issuedUserID int64) (bool, error) {
+	current, found, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return false, err
+	}
+	currentUserID := int64(0)
+	if found {
+		currentUserID = current.ID
+	}
+	return currentUserID == issuedUserID, nil
+}
+
+func (s *Service) ensureIssuedOwnerAfterSet(ctx context.Context, hash string, rec store.PhoneCode) error {
+	matches, err := s.issuedOwnerMatches(ctx, rec.Phone, rec.IssuedUserID)
+	if err == nil && matches {
+		return nil
+	}
+	cause := err
+	if cause == nil {
+		cause = ErrCodeInvalid
+	}
+	return s.rollbackUndeliveredCode(ctx, hash, cause)
+}
+
+func (s *Service) invalidateLoginCodeDetached(ctx context.Context, hash, phone string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginCodeRollbackTimeout)
+	defer cancel()
+	_, _ = s.codes.InvalidateLoginCode(cleanupCtx, hash, phone)
+}
+
+func (s *Service) createPhoneCode(ctx context.Context, phone string, existingUserID int64) (string, error) {
 	hash, err := randomHex(8)
 	if err != nil {
 		return "", err
 	}
 	if err := s.codes.Set(ctx, hash, store.PhoneCode{
-		Phone:       phone,
-		Code:        s.fixedCode,
-		Channel:     codeChannelPhone,
-		MaxAttempts: s.codeMaxAttempts,
+		Version:      store.PhoneCodeVersionCurrent,
+		IssuedUserID: existingUserID,
+		Phone:        phone,
+		Code:         s.fixedCode,
+		Channel:      codeChannelPhone,
+		MaxAttempts:  s.codeMaxAttempts,
 	}, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store code: %w", err)
+	}
+	rec := store.PhoneCode{Phone: phone, IssuedUserID: existingUserID}
+	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+		return "", err
+	}
+	// 新手机号还没有 owner/dialog，只能在 SignUp 创建用户后写第一条
+	// 777000 消息。已有账号则必须在 sendCode RPC 返回前把 app-code
+	// 作为普通 incoming message + durable update/outbox 提交；登录成功不再补发。
+	if existingUserID == 0 {
+		return hash, nil
+	}
+	if err := s.deliverLoginCode(ctx, existingUserID, hash, s.fixedCode); err != nil {
+		return "", s.rollbackUndeliveredCode(ctx, hash, err)
+	}
+	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+		return "", err
 	}
 	return hash, nil
 }
 
-func (s *Service) createSetupRequiredCode(ctx context.Context, phone string) (string, error) {
+func (s *Service) deliverLoginCode(ctx context.Context, userID int64, phoneCodeHash, code string) error {
+	if s.loginCodeDelivery == nil {
+		return ErrLoginCodeDeliveryUnavailable
+	}
+	now := time.Now()
+	if _, err := s.loginCodeDelivery.DeliverLoginCodeMessage(ctx, domain.LoginCodeDeliveryRequest{
+		UserID:        userID,
+		PhoneCodeHash: phoneCodeHash,
+		Code:          code,
+		Date:          int(now.Unix()),
+		ExpiresAt:     now.Add(s.codeTTL).Unix(),
+	}); err != nil {
+		return errors.Join(ErrLoginCodeDeliveryFailed, err)
+	}
+	return nil
+}
+
+func (s *Service) rollbackUndeliveredCode(ctx context.Context, phoneCodeHash string, cause error) error {
+	// lib/pq can report an I/O failure after COMMIT reached PostgreSQL. In that
+	// state deleting the code could turn an already delivered 777000 message
+	// into an unusable login attempt. Preserve it and let the delivery receipt
+	// make the retry idempotent.
+	if errors.Is(cause, domain.ErrLoginCodeDeliveryCommitAmbiguous) {
+		return cause
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginCodeRollbackTimeout)
+	defer cancel()
+	if err := s.codes.Del(cleanupCtx, phoneCodeHash); err != nil {
+		return errors.Join(cause, fmt.Errorf("rollback undelivered login code: %w", err))
+	}
+	return cause
+}
+
+func (s *Service) createSetupRequiredCode(ctx context.Context, phone string, issuedUserID int64) (string, error) {
 	hash, err := randomHex(8)
 	if err != nil {
 		return "", err
 	}
 	if err := s.codes.Set(ctx, hash, store.PhoneCode{
-		Phone:       phone,
-		Channel:     codeChannelEmailSetupRequired,
-		MaxAttempts: s.codeMaxAttempts,
+		Version:      store.PhoneCodeVersionCurrent,
+		IssuedUserID: issuedUserID,
+		Phone:        phone,
+		Channel:      codeChannelEmailSetupRequired,
+		MaxAttempts:  s.codeMaxAttempts,
 	}, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store code: %w", err)
+	}
+	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, store.PhoneCode{Phone: phone, IssuedUserID: issuedUserID}); err != nil {
+		return "", err
 	}
 	return hash, nil
 }
 
-func (s *Service) createEmailLoginCode(ctx context.Context, phone, email string) (string, error) {
+func (s *Service) createEmailLoginCode(ctx context.Context, phone, email string, issuedUserID int64) (string, error) {
 	hash, err := randomHex(8)
 	if err != nil {
 		return "", err
@@ -327,22 +451,28 @@ func (s *Service) createEmailLoginCode(ctx context.Context, phone, email string)
 		return "", err
 	}
 	rec := store.PhoneCode{
-		Phone:       phone,
-		Code:        code,
-		Channel:     codeChannelEmailLogin,
-		Email:       strings.TrimSpace(email),
-		MaxAttempts: s.codeMaxAttempts,
+		Version:      store.PhoneCodeVersionCurrent,
+		IssuedUserID: issuedUserID,
+		Phone:        phone,
+		Code:         code,
+		Channel:      codeChannelEmailLogin,
+		Email:        strings.TrimSpace(email),
+		MaxAttempts:  s.codeMaxAttempts,
 	}
 	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store email code: %w", err)
 	}
+	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+		return "", err
+	}
 	if s.loginEmailSender == nil {
-		_ = s.codes.Del(ctx, hash)
-		return "", fmt.Errorf("login email sender is not configured")
+		return "", s.rollbackUndeliveredCode(ctx, hash, fmt.Errorf("login email sender is not configured"))
 	}
 	if err := s.loginEmailSender.SendLoginCode(ctx, rec.Email, code, s.codeTTL); err != nil {
-		_ = s.codes.Del(ctx, hash)
-		return "", fmt.Errorf("send login email code: %w", err)
+		return "", s.rollbackUndeliveredCode(ctx, hash, fmt.Errorf("send login email code: %w", err))
+	}
+	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+		return "", err
 	}
 	return hash, nil
 }
@@ -396,20 +526,53 @@ func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phon
 	if rec.Phone != phone {
 		return "", ErrCodeInvalid
 	}
-	if rec.Purpose == store.PhoneCodePurposeChangePhone && (authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID) {
+	if rec.Purpose == store.PhoneCodePurposeChangePhone {
+		if authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID {
+			return "", ErrCodeInvalid
+		}
+		consumed, ok, err := s.codes.ConsumeScoped(ctx, phoneCodeHash, rec.Scope())
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", ErrCodeExpired
+		}
+		return s.recreateChangePhoneCode(ctx, consumed)
+	}
+	if rec.Version != store.PhoneCodeVersionCurrent {
+		_, _, _ = s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+		return "", ErrCodeExpired
+	}
+	if matches, err := s.issuedOwnerMatches(ctx, phone, rec.IssuedUserID); err != nil {
+		return "", err
+	} else if !matches {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return "", ErrCodeInvalid
 	}
-	_ = s.codes.Del(ctx, phoneCodeHash)
-	if rec.Purpose == store.PhoneCodePurposeChangePhone {
-		return s.recreateChangePhoneCode(ctx, rec)
+	consumed, ok, err := s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", ErrCodeExpired
+	}
+	rec = consumed
+	if matches, err := s.issuedOwnerMatches(ctx, phone, rec.IssuedUserID); err != nil {
+		return "", err
+	} else if !matches {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return "", ErrCodeInvalid
 	}
 	if rec.Channel == codeChannelEmailLogin && strings.TrimSpace(rec.Email) != "" {
-		return s.createEmailLoginCode(ctx, phone, rec.Email)
+		return s.createEmailLoginCode(ctx, phone, rec.Email, rec.IssuedUserID)
 	}
 	if rec.Channel == codeChannelEmailSetupRequired {
-		return s.createSetupRequiredCode(ctx, phone)
+		return s.createSetupRequiredCode(ctx, phone, rec.IssuedUserID)
 	}
-	return s.SendCode(ctx, phone)
+	if rec.Channel != codeChannelPhone {
+		return "", ErrCodeInvalid
+	}
+	return s.createPhoneCode(ctx, phone, rec.IssuedUserID)
 }
 
 func (s *Service) recreateChangePhoneCode(ctx context.Context, rec store.PhoneCode) (string, error) {
@@ -439,6 +602,75 @@ func (s *Service) CancelCodeForAuthKey(ctx context.Context, authKeyID [8]byte, p
 	return s.cancelCode(ctx, authKeyID, phone, phoneCodeHash)
 }
 
+// ConsumeLoginEmailReset authorizes auth.resetLoginEmail with the exact
+// email-login hash previously issued for this phone owner. Possession of only
+// a phone number is never sufficient to remove an authentication factor.
+func (s *Service) ConsumeLoginEmailReset(ctx context.Context, phone, phoneCodeHash string) (int64, error) {
+	phone = normalizePhone(phone)
+	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, ErrCodeExpired
+	}
+	if rec.Version != store.PhoneCodeVersionCurrent {
+		_, _, _ = s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+		return 0, ErrCodeExpired
+	}
+	if rec.Purpose != "" || rec.Phone != phone || rec.Channel != codeChannelEmailLogin || rec.SignUpVerified {
+		return 0, ErrCodeInvalid
+	}
+	before, beforeFound, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return 0, err
+	}
+	if !beforeFound || systemUserLoginForbidden(before) || rec.IssuedUserID == 0 || rec.IssuedUserID != before.ID {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return 0, ErrCodeInvalid
+	}
+	consumed, consumedOK, err := s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+	if err != nil {
+		return 0, err
+	}
+	if !consumedOK {
+		return 0, ErrCodeExpired
+	}
+	if consumed.Channel != codeChannelEmailLogin || consumed.IssuedUserID != before.ID {
+		return 0, ErrCodeInvalid
+	}
+	after, afterFound, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return 0, err
+	}
+	if !afterFound || after.ID != before.ID {
+		return 0, ErrCodeInvalid
+	}
+	return before.ID, nil
+}
+
+// SendPhoneCodeAfterLoginEmailReset issues the replacement app code only for
+// the exact user selected by ConsumeLoginEmailReset. It deliberately bypasses
+// SendCode's phone→owner reclassification so an A→B transfer cannot send B a
+// code and return that hash to A's reset flow.
+func (s *Service) SendPhoneCodeAfterLoginEmailReset(ctx context.Context, phone string, expectedUserID int64) (string, error) {
+	phone = normalizePhone(phone)
+	if !validPhone(phone) {
+		return "", ErrPhoneNumberInvalid
+	}
+	if expectedUserID == 0 || systemLoginPhoneForbidden(phone) {
+		return "", ErrCodeInvalid
+	}
+	owner, found, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return "", err
+	}
+	if !found || owner.ID != expectedUserID || systemUserLoginForbidden(owner) {
+		return "", ErrCodeInvalid
+	}
+	return s.createPhoneCode(ctx, phone, expectedUserID)
+}
+
 func (s *Service) cancelCode(ctx context.Context, authKeyID [8]byte, phone, phoneCodeHash string) error {
 	phone = normalizePhone(phone)
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
@@ -451,10 +683,37 @@ func (s *Service) cancelCode(ctx context.Context, authKeyID [8]byte, phone, phon
 	if rec.Phone != phone {
 		return ErrCodeInvalid
 	}
-	if rec.Purpose == store.PhoneCodePurposeChangePhone && (authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID) {
+	if rec.Purpose == store.PhoneCodePurposeChangePhone {
+		if authKeyID == ([8]byte{}) || rec.AuthKeyID != authKeyID {
+			return ErrCodeInvalid
+		}
+		_, consumed, err := s.codes.ConsumeScoped(ctx, phoneCodeHash, rec.Scope())
+		if err != nil {
+			return err
+		}
+		if !consumed {
+			return ErrCodeExpired
+		}
+		return nil
+	}
+	if rec.Version != store.PhoneCodeVersionCurrent {
+		_, _, _ = s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+		return ErrCodeExpired
+	}
+	if matches, err := s.issuedOwnerMatches(ctx, phone, rec.IssuedUserID); err != nil {
+		return err
+	} else if !matches {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return ErrCodeInvalid
 	}
-	return s.codes.Del(ctx, phoneCodeHash)
+	_, consumed, err := s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+	if err != nil {
+		return err
+	}
+	if !consumed {
+		return ErrCodeExpired
+	}
+	return nil
 }
 
 // SignIn 校验验证码并尝试登录。
@@ -464,102 +723,164 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	if systemLoginPhoneForbidden(phone) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
-	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
-	if err != nil {
-		return domain.User{}, domain.Message{}, false, err
-	}
-	if !found {
-		return domain.User{}, domain.Message{}, false, ErrCodeExpired
-	}
-	if rec.Phone != phone || rec.Channel == codeChannelEmailSetupRequired {
-		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
-	}
-	if rec.Channel == codeChannelEmailLogin {
-		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
-	}
-	if rec.Code != code {
-		return domain.User{}, domain.Message{}, false, s.rejectCode(ctx, phoneCodeHash, rec, ErrCodeInvalid)
-	}
-
-	existing, found, err := s.users.ByPhone(ctx, phone)
-	if err != nil {
-		return domain.User{}, domain.Message{}, false, err
-	}
-	if !found {
-		return domain.User{}, domain.Message{}, true, nil // 验证码对、但需注册
-	}
-	return s.finishSignIn(ctx, auth, existing, phoneCodeHash, rec.Code)
-}
-
-// SignInWithEmail 处理带 email_verification 的 auth.signIn：账号设置了登录邮箱后，新设备
-// 的验证码改投递到邮箱，客户端凭邮箱码（而非短信码）登录。开启真实登录邮箱后必须匹配
-// 随机邮箱码；未开启该特性时仅保留旧开发路径的任意非空兼容。仍校验 phone_code_hash
-// 有效、手机号匹配，并与短信登录共用 2FA 门控——即便走邮箱验证，开启了两步验证的账号
-// 同样会停在 SESSION_PASSWORD_NEEDED。
-func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error) {
-	phone = normalizePhone(phone)
-	if systemLoginPhoneForbidden(phone) {
-		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
-	}
-	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
-	if err != nil {
-		return domain.User{}, domain.Message{}, false, err
-	}
-	if !found {
-		return domain.User{}, domain.Message{}, false, ErrCodeExpired
-	}
-	if rec.Phone != phone {
-		return domain.User{}, domain.Message{}, false, ErrCodeInvalid
-	}
-	if rec.Channel != codeChannelEmailLogin {
-		if s.loginEmailEnabled {
-			return domain.User{}, domain.Message{}, false, ErrCodeInvalid
-		}
-		if strings.TrimSpace(code) == "" {
-			return domain.User{}, domain.Message{}, false, ErrCodeInvalid
-		}
-	} else if rec.Code != strings.TrimSpace(code) {
-		return domain.User{}, domain.Message{}, false, s.rejectCode(ctx, phoneCodeHash, rec, ErrCodeInvalid)
-	}
-	existing, found, err := s.users.ByPhone(ctx, phone)
+	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, code, false)
 	if err != nil {
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if !found {
 		return domain.User{}, domain.Message{}, true, nil
 	}
-	return s.finishSignIn(ctx, auth, existing, phoneCodeHash, rec.Code)
+	return s.finishSignIn(ctx, auth, existing)
+}
+
+// SignInWithEmail 处理带 email_verification 的 auth.signIn：账号设置了登录邮箱后，新设备
+// 的验证码改投递到邮箱，客户端凭邮箱码（而非短信码）登录。开启真实登录邮箱后必须匹配
+// 随机邮箱码；未开启该特性时仍允许旧客户端把 phone channel 放进
+// email_verification，但必须精确匹配该 phone code，不能再接受任意非空值。
+// 两条路径共用 owner 绑定、原子尝试计数与 2FA 门控。
+func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error) {
+	phone = normalizePhone(phone)
+	if systemLoginPhoneForbidden(phone) {
+		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
+	}
+	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, strings.TrimSpace(code), true)
+	if err != nil {
+		return domain.User{}, domain.Message{}, false, err
+	}
+	if !found {
+		return domain.User{}, domain.Message{}, true, nil
+	}
+	return s.finishSignIn(ctx, auth, existing)
+}
+
+// verifyLoginCode closes the login-code state transition around one atomic
+// CodeStore verification. The phone owner is read both before and after that
+// linearization point. A hash issued for an unregistered number therefore can
+// never authorize whichever account happens to acquire that number later.
+func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, code string, emailPath bool) (store.PhoneCode, domain.User, bool, error) {
+	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
+	if err != nil {
+		return store.PhoneCode{}, domain.User{}, false, err
+	}
+	if !found {
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeExpired
+	}
+	if rec.Version != store.PhoneCodeVersionCurrent {
+		_, _, _ = s.codes.TakeLoginCode(ctx, phoneCodeHash, phone)
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeExpired
+	}
+	if rec.Phone != phone || rec.Purpose != "" {
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	}
+	channelAllowed := rec.Channel == codeChannelPhone && !emailPath
+	if emailPath {
+		channelAllowed = rec.Channel == codeChannelEmailLogin || (!s.loginEmailEnabled && rec.Channel == codeChannelPhone)
+	}
+	if !channelAllowed {
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	}
+
+	before, beforeFound, err := s.currentPhoneOwner(ctx, phone)
+	if err != nil {
+		return store.PhoneCode{}, domain.User{}, false, err
+	}
+	beforeUserID := int64(0)
+	if beforeFound {
+		if systemUserLoginForbidden(before) {
+			return store.PhoneCode{}, domain.User{}, false, ErrSystemUserLoginForbidden
+		}
+		beforeUserID = before.ID
+	}
+	if rec.IssuedUserID != beforeUserID {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	}
+	// A verified sign-up marker may precede auth.signIn on the email-setup
+	// path, and a normal signIn response can be lost and retried. The marker is
+	// already the durable authorization fact; return signUpRequired
+	// idempotently without asking CodeStore to verify it a second time.
+	if rec.SignUpVerified {
+		if beforeFound || rec.IssuedUserID != 0 || subtle.ConstantTimeCompare([]byte(rec.Code), []byte(code)) != 1 {
+			return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+		}
+		after, afterFound, err := s.currentPhoneOwner(ctx, phone)
+		if err != nil {
+			return store.PhoneCode{}, domain.User{}, false, err
+		}
+		if afterFound || after.ID != 0 {
+			s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+			return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+		}
+		return rec, domain.User{}, false, nil
+	}
+
+	result, err := s.codes.VerifyLogin(ctx, phoneCodeHash, phone, code, !beforeFound, s.codeMaxAttempts)
+	if err != nil {
+		return store.PhoneCode{}, domain.User{}, false, err
+	}
+	after, afterFound, ownerErr := s.currentPhoneOwner(ctx, phone)
+	if ownerErr != nil {
+		return store.PhoneCode{}, domain.User{}, false, ownerErr
+	}
+	afterUserID := int64(0)
+	if afterFound {
+		afterUserID = after.ID
+	}
+	recordOwnerMismatch := result.Status != store.LoginCodeVerifyMissing && result.Record.IssuedUserID != rec.IssuedUserID
+	if beforeUserID != afterUserID || recordOwnerMismatch {
+		// keepForSignUp may have left a verified marker behind. Remove it on
+		// owner drift so a later transfer-back cannot resurrect authorization.
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	}
+	switch result.Status {
+	case store.LoginCodeVerifyMissing:
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeExpired
+	case store.LoginCodeVerifyInvalid:
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	case store.LoginCodeVerifyAccepted:
+		if result.Record.Version != store.PhoneCodeVersionCurrent || result.Record.Phone != phone || result.Record.IssuedUserID != afterUserID {
+			return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+		}
+		if afterFound && systemUserLoginForbidden(after) {
+			return store.PhoneCode{}, domain.User{}, false, ErrSystemUserLoginForbidden
+		}
+		return result.Record, after, afterFound, nil
+	default:
+		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
+	}
 }
 
 // finishSignIn 是短信/邮箱两条登录路径在「验证码已通过、用户已存在」之后的共用收尾：
-// 处理 2FA password_pending 绑定、写登录消息、消费验证码。
-func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, existing domain.User, phoneCodeHash, loginCode string) (domain.User, domain.Message, bool, error) {
+// 验证码已由 VerifyLogin 原子消费；这里只处理 2FA password_pending 绑定。已有账号的 app-code 消息已在
+// SendCode/ResendCode 返回前持久化与入 outbox，这里绝不能再创建或补发；
+// 否则未完成登录/2FA 的真实验证码反而不会及时到达旧设备。
+func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, existing domain.User) (domain.User, domain.Message, bool, error) {
 	if systemUserLoginForbidden(existing) {
-		_ = s.codes.Del(ctx, phoneCodeHash)
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
 	// 开启两步验证的账号：把授权标记为 password_pending 再写入，业务鉴权据此拒绝该 auth_key，
 	// 直到 auth.checkPassword 通过。绝不能先以完全授权写入再返回 SESSION_PASSWORD_NEEDED，
 	// 否则客户端忽略该错误即可直接调用业务 RPC 绕过两步验证。
-	passwordNeeded := s.passwordNeeded(ctx, existing.ID)
+	passwordNeeded, err := s.passwordNeeded(ctx, existing.ID)
+	if err != nil {
+		// Password state is part of the authentication decision. Treat store
+		// failures as fail-closed and leave the auth key entirely unbound.
+		return domain.User{}, domain.Message{}, false, err
+	}
 	auth.PasswordPending = passwordNeeded
 	if err := s.bind(ctx, auth, existing.ID); err != nil {
 		return domain.User{}, domain.Message{}, false, err
 	}
 	if passwordNeeded {
-		_ = s.codes.Del(ctx, phoneCodeHash)
 		return existing, domain.Message{}, false, domain.ErrSessionPasswordNeeded
 	}
-	loginMessage, err := s.recordLoginMessage(ctx, existing.ID, loginCode)
-	if err != nil {
-		return domain.User{}, domain.Message{}, false, err
-	}
-	_ = s.codes.Del(ctx, phoneCodeHash)
-	return existing, loginMessage, false, nil
+	return existing, domain.Message{}, false, nil
 }
 
 // SignUp 在 SignIn 判定需注册后创建用户并绑定授权。
-// signUp 的 TL 请求不带验证码，这里校验 phone_code_hash 仍有效且手机号匹配。
+// signUp 的 TL 请求不带验证码，因此只消费由正确 SignIn/email setup 原子
+// 标记过的 hash。直接 SendCode→SignUp 永远不能创建账号。
 func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, firstName, lastName string) (domain.User, domain.Message, error) {
 	phone = normalizePhone(phone)
 	if !validPhone(phone) {
@@ -580,13 +901,46 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	if !found {
 		return domain.User{}, domain.Message{}, ErrCodeExpired
 	}
-	if rec.Phone != phone {
+	if rec.Version != store.PhoneCodeVersionCurrent {
+		_, _, _ = s.codes.ConsumeSignUpVerified(ctx, phoneCodeHash, phone)
+		return domain.User{}, domain.Message{}, ErrCodeExpired
+	}
+	if rec.Phone != phone || rec.Purpose != "" {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
-	if rec.Channel == codeChannelEmailSetupRequired {
+	if !rec.SignUpVerified {
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	if rec.IssuedUserID != 0 {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelEmailLogin {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" {
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {
+		return domain.User{}, domain.Message{}, err
+	} else if currentFound || current.ID != 0 {
+		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	consumed, consumedOK, err := s.codes.ConsumeSignUpVerified(ctx, phoneCodeHash, phone)
+	if err != nil {
+		return domain.User{}, domain.Message{}, err
+	}
+	if !consumedOK {
+		return domain.User{}, domain.Message{}, ErrCodeExpired
+	}
+	rec = consumed
+	if rec.IssuedUserID != 0 || !rec.SignUpVerified || (rec.Channel != codeChannelPhone && rec.Channel != codeChannelEmailLogin) {
+		return domain.User{}, domain.Message{}, ErrCodeInvalid
+	}
+	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {
+		return domain.User{}, domain.Message{}, err
+	} else if currentFound || current.ID != 0 {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 
@@ -610,18 +964,22 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, err
 	}
 	if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
-		if err := s.loginEmails.SetLoginEmailByPhone(ctx, phone, rec.PendingEmail); err != nil {
+		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
 			return domain.User{}, domain.Message{}, err
 		}
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err
 	}
-	loginMessage, err := s.recordLoginMessage(ctx, u.ID, rec.Code)
-	if err != nil {
-		return domain.User{}, domain.Message{}, err
+	loginMessage := domain.Message{}
+	// SMTP setup/login codes are secret factors, not 777000 app messages. Only
+	// the normal phone/app-code registration path creates the bootstrap dialog.
+	if rec.Channel == codeChannelPhone {
+		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
+		if err != nil {
+			return domain.User{}, domain.Message{}, err
+		}
 	}
-	_ = s.codes.Del(ctx, phoneCodeHash)
 	return u, loginMessage, nil
 }
 
@@ -865,15 +1223,21 @@ func (s *Service) authorizationsByUserExcept(ctx context.Context, userID int64, 
 
 func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID int64) error {
 	auth.UserID = userID
+	// Bind 是授权切换的持久化状态边界：生产 store 会先清同 auth key 的旧用户
+	// update state，再原子建立新用户 baseline。RPC 层不得在 Bind 成功后清整个 key，
+	// 否则会把刚建立的 retained-floor checkpoint 一并删除。
 	return s.auths.Bind(ctx, auth)
 }
 
-func (s *Service) passwordNeeded(ctx context.Context, userID int64) bool {
+func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error) {
 	if s.passwords == nil {
-		return false
+		return false, nil
 	}
 	settings, found, err := s.passwords.GetByUser(ctx, userID)
-	return err == nil && found && settings.HasPassword
+	if err != nil {
+		return false, err
+	}
+	return found && settings.HasPassword, nil
 }
 
 const loginMessageTpl = `Login code: %s. Do not give this code to anyone, even if they say they are from Telegram!
@@ -1003,20 +1367,6 @@ func authKeyIDFromInt64(v int64) [8]byte {
 
 func authKeyIDInt64(id [8]byte) int64 {
 	return int64(binary.LittleEndian.Uint64(id[:]))
-}
-
-func (s *Service) rejectCode(ctx context.Context, hash string, rec store.PhoneCode, ret error) error {
-	rec.Attempts++
-	max := rec.MaxAttempts
-	if max <= 0 {
-		max = s.codeMaxAttempts
-	}
-	if max > 0 && rec.Attempts >= max {
-		_ = s.codes.Del(ctx, hash)
-		return ret
-	}
-	_ = s.codes.Update(ctx, hash, rec)
-	return ret
 }
 
 func normalizePhone(phone string) string {

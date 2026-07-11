@@ -3,7 +3,6 @@ package redisstore
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -23,6 +22,16 @@ func rateLimitKey(key string) string {
 	return "ratelimit:" + key
 }
 
+const rateLimitIncrementScript = `
+local count = redis.call('INCRBY', KEYS[1], ARGV[1])
+local ttl_ms = redis.call('PTTL', KEYS[1])
+if ttl_ms < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  ttl_ms = tonumber(ARGV[2])
+end
+return {count, ttl_ms}
+`
+
 func (l *RateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, int, error) {
 	return l.AllowN(ctx, key, 1, limit, window)
 }
@@ -41,24 +50,29 @@ func (l *RateLimiter) AllowN(ctx context.Context, key string, cost, limit int, w
 		return false, 0, fmt.Errorf("redis rate limiter: nil client")
 	}
 	redisKey := rateLimitKey(key)
-	count, err := l.c.IncrBy(ctx, redisKey, int64(cost)).Result()
-	if err != nil {
-		return false, 0, fmt.Errorf("redis incrby rate limit: %w", err)
+	windowMillis := window.Milliseconds()
+	if windowMillis <= 0 {
+		windowMillis = 1
 	}
-	if count == int64(cost) {
-		if err := l.c.Expire(ctx, redisKey, window).Err(); err != nil {
-			return false, 0, fmt.Errorf("redis expire rate limit: %w", err)
-		}
+	value, err := l.c.Eval(ctx, rateLimitIncrementScript, []string{redisKey}, cost, windowMillis).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("redis increment rate limit: %w", err)
+	}
+	items, ok := value.([]interface{})
+	if !ok || len(items) != 2 {
+		return false, 0, fmt.Errorf("redis increment rate limit: unexpected result %T", value)
+	}
+	count, countOK := items[0].(int64)
+	ttlMillis, ttlOK := items[1].(int64)
+	if !countOK || !ttlOK || ttlMillis <= 0 {
+		return false, 0, fmt.Errorf("redis increment rate limit: invalid result %#v", items)
 	}
 	if count <= int64(limit) {
 		return true, 0, nil
 	}
-	ttl, err := l.c.TTL(ctx, redisKey).Result()
-	if err != nil {
-		return false, 0, fmt.Errorf("redis ttl rate limit: %w", err)
+	retry := (ttlMillis + 999) / 1000
+	if retry <= 0 {
+		retry = 1
 	}
-	if ttl <= 0 {
-		ttl = window
-	}
-	return false, int(math.Ceil(ttl.Seconds())), nil
+	return false, int(retry), nil
 }

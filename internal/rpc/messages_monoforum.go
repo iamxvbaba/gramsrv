@@ -191,7 +191,7 @@ func (r *Router) monoforumReplyTargetPeer(userID int64, input tg.InputReplyToCla
 
 // sendMonoforumMessage 处理向频道私信(monoforum)发送:订阅者发到自己的子会话,管理员回复到目标订阅者。
 // saved_peer 来自 reply_to 的 monoforum_peer_id;管理员可写任意订阅者子会话,普通订阅者只能写自己的。
-func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, req *tg.MessagesSendMessageRequest) (tg.UpdatesClass, error) {
+func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, req *tg.MessagesSendMessageRequest, fingerprint []byte, preflighted bool) (tg.UpdatesClass, error) {
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
@@ -215,13 +215,15 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
 	res, err := r.deps.Channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
-		MonoforumID:  mono.ID,
-		SenderUserID: userID,
-		SavedPeer:    savedPeer,
-		RandomID:     req.RandomID,
-		Message:      req.Message,
-		Entities:     domainMessageEntities(req.Entities),
-		Date:         int(r.clock.Now().Unix()),
+		MonoforumID:            mono.ID,
+		SenderUserID:           userID,
+		SavedPeer:              savedPeer,
+		RandomID:               req.RandomID,
+		IdempotencyFingerprint: fingerprint,
+		IdempotencyPreflighted: preflighted,
+		Message:                req.Message,
+		Entities:               domainMessageEntities(req.Entities),
+		Date:                   int(r.clock.Now().Unix()),
 	})
 	if err != nil {
 		return nil, messageSendErr(err)
@@ -232,7 +234,7 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 // monoforumSendUpdates 给发送者构造回声 Updates:updateMessageID(关联 random_id)+ updateNewChannelMessage
 // (monoforum 走 channel pts)。另一方经 monoforum 频道的 getChannelDifference 收取该 durable 事件。
 func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) tg.UpdatesClass {
-	updates := make([]tg.UpdateClass, 0, 2)
+	updates := make([]tg.UpdateClass, 0, 3)
 	if res.Message.RandomID != 0 {
 		updates = append(updates, &tg.UpdateMessageID{ID: res.Message.ID, RandomID: res.Message.RandomID})
 	}
@@ -243,10 +245,19 @@ func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono do
 		newMsg.Message = &tg.MessageEmpty{ID: res.Message.ID}
 	}
 	updates = append(updates, newMsg)
+	date := int(r.clock.Now().Unix())
+	if res.Duplicate && res.ReplayDeleteEvent != nil {
+		if deleted := tgChannelUpdate(userID, *res.ReplayDeleteEvent); deleted != nil {
+			updates = append(updates, deleted)
+		}
+		if res.ReplayDeleteEvent.Date > date {
+			date = res.ReplayDeleteEvent.Date
+		}
+	}
 	return &tg.Updates{
 		Updates: updates,
 		Chats:   r.monoforumChats(ctx, userID, mono),
 		Users:   r.monoforumSubscriberUsers(ctx, userID, []domain.MonoforumDialog{{SavedPeer: savedPeer}}, []domain.ChannelMessage{res.Message}),
-		Date:    int(r.clock.Now().Unix()),
+		Date:    date,
 	}
 }

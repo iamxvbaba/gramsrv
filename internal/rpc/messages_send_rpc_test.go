@@ -52,6 +52,9 @@ func TestMessagesSendMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	if messages.sendUserID != sender.ID || messages.sendReq.SenderUserID != sender.ID || messages.sendReq.RecipientUserID != recipient.ID || messages.sendReq.OriginSessionID != 77 {
 		t.Fatalf("send context = user %d req %+v, want sender/recipient/session", messages.sendUserID, messages.sendReq)
 	}
+	if len(messages.sendReq.IdempotencyFingerprint) != 32 {
+		t.Fatalf("idempotency fingerprint length = %d, want SHA-256", len(messages.sendReq.IdempotencyFingerprint))
+	}
 	if len(messages.sendReq.Entities) != 2 || messages.sendReq.Entities[0].Type != domain.MessageEntityBold {
 		t.Fatalf("entities = %+v, want bold and formatted date converted to domain", messages.sendReq.Entities)
 	}

@@ -19,6 +19,7 @@ func TestSignUpPremiumGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550004401", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{}, "+15550004401", hash, "Prem", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -41,6 +42,7 @@ func TestSignUpPremiumGrantDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550004402", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{}, "+15550004402", hash, "Free", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)

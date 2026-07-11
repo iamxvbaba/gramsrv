@@ -139,11 +139,11 @@ func (lt *layerTables) fieldDirty(f *fieldLayout) bool {
 // field drop. The leading CRC has already been consumed from in; the transform
 // reads the canonical body from in and writes the target-layer object (whose
 // constructor id is target) to out.
-type structuralFunc func(cl *ctorLayout, target uint32, in, out *bin.Buffer, layer int) error
+type structuralFunc func(cl *ctorLayout, target uint32, in, out *bin.Buffer, layer, depth int, walk *walkState) error
 
 // fallbackFunc replaces a layer-absent (227-only) constructor with an
 // equivalent the target layer understands. The leading CRC is NOT yet consumed.
-type fallbackFunc func(cl *ctorLayout, in, out *bin.Buffer, layer int) error
+type fallbackFunc func(cl *ctorLayout, in, out *bin.Buffer, layer, depth int, walk *walkState) error
 
 // structuralTransforms and the newType fallback registries are populated in
 // fallback.go. newTypeFallbacks is keyed by canonical CRC (specific override);
@@ -175,11 +175,12 @@ func Transcode(canonicalBytes []byte, layer int) ([]byte, error) {
 	}
 	in := &bin.Buffer{Buf: canonicalBytes}
 	out := &bin.Buffer{}
-	if err := lt.transcodeObject(in, out, layer); err != nil {
-		return nil, err
+	walk := newWalkState()
+	if err := lt.transcodeObject(in, out, layer, 1, walk); err != nil {
+		return nil, classifyWalkError(err)
 	}
 	if in.Len() != 0 {
-		return nil, fmt.Errorf("layerwire: %d trailing bytes after transcode to layer %d", in.Len(), layer)
+		return nil, malformedf("%d trailing bytes after transcode to layer %d", in.Len(), layer)
 	}
 	return out.Buf, nil
 }
@@ -198,7 +199,10 @@ func UpgradeMethodCRC(oldID uint32) (uint32, bool) {
 	return newID, ok
 }
 
-func (lt *layerTables) transcodeObject(in, out *bin.Buffer, layer int) error {
+func (lt *layerTables) transcodeObject(in, out *bin.Buffer, layer, depth int, walk *walkState) error {
+	if err := walk.enter(depth, "constructor"); err != nil {
+		return err
+	}
 	id, err := in.PeekID()
 	if err != nil {
 		return err
@@ -216,10 +220,10 @@ func (lt *layerTables) transcodeObject(in, out *bin.Buffer, layer int) error {
 			if fn == nil {
 				return fmt.Errorf("layerwire: no structural transform %q for %s@%d", rule.structural, cl.name, layer)
 			}
-			return fn(cl, rule.target, in, out, layer)
+			return fn(cl, rule.target, in, out, layer, depth, walk)
 		}
 		out.PutID(rule.target)
-		return lt.transcodeBody(in, out, cl, rule.keep, layer)
+		return lt.transcodeBody(in, out, cl, rule.keep, layer, depth, walk)
 	}
 	if lt.newTypes[id] {
 		fn := newTypeFallbacks[id]
@@ -229,12 +233,15 @@ func (lt *layerTables) transcodeObject(in, out *bin.Buffer, layer int) error {
 		if fn == nil {
 			return fmt.Errorf("layerwire: %s (%#08x) absent at layer %d and no fallback", cl.name, id, layer)
 		}
-		return fn(cl, in, out, layer)
+		return fn(cl, in, out, layer, depth, walk)
 	}
 	if !lt.dirty[id] {
 		// Unaffected subtree: byte-for-byte copy.
 		pre := in.Buf
-		if err := canonical.skipObject(in); err != nil {
+		if err := in.ConsumeID(id); err != nil {
+			return err
+		}
+		if err := walk.skipCtorBody(canonical, in, cl, depth); err != nil {
 			return err
 		}
 		out.Put(pre[:len(pre)-len(in.Buf)])
@@ -245,14 +252,14 @@ func (lt *layerTables) transcodeObject(in, out *bin.Buffer, layer int) error {
 		return err
 	}
 	out.PutID(id)
-	return lt.transcodeBody(in, out, cl, nil, layer)
+	return lt.transcodeBody(in, out, cl, nil, layer, depth, walk)
 }
 
 // transcodeBody re-encodes a constructor body. keep==nil means retain every
 // field (recursing into dirty descendants); otherwise only the named canonical
 // fields are written, flag integers are remasked to the retained bits, and
 // dropped fields are read-and-discarded.
-func (lt *layerTables) transcodeBody(in, out *bin.Buffer, cl *ctorLayout, keep map[string]bool, layer int) error {
+func (lt *layerTables) transcodeBody(in, out *bin.Buffer, cl *ctorLayout, keep map[string]bool, layer, depth int, walk *walkState) error {
 	kept := func(name string) bool { return keep == nil || keep[name] }
 	var flags map[string]uint32
 	for i := range cl.fields {
@@ -276,10 +283,10 @@ func (lt *layerTables) transcodeBody(in, out *bin.Buffer, cl *ctorLayout, keep m
 			continue
 		}
 		if kept(f.name) {
-			if err := lt.transcodeValue(in, out, f, layer); err != nil {
+			if err := lt.transcodeValue(in, out, f, cl, layer, depth, walk); err != nil {
 				return fmt.Errorf("%s.%s: %w", cl.name, f.name, err)
 			}
-		} else if err := canonical.skipValue(in, f); err != nil {
+		} else if err := walk.skipValue(canonical, in, f, cl, depth); err != nil {
 			return fmt.Errorf("%s.%s (drop): %w", cl.name, f.name, err)
 		}
 	}
@@ -301,10 +308,10 @@ func (lt *layerTables) keptMask(cl *ctorLayout, flagName string, kept func(strin
 
 // transcodeValue writes one present field value, recursing only into dirty
 // subtrees and byte-copying everything else.
-func (lt *layerTables) transcodeValue(in, out *bin.Buffer, f *fieldLayout, layer int) error {
+func (lt *layerTables) transcodeValue(in, out *bin.Buffer, f *fieldLayout, owner *ctorLayout, layer, depth int, walk *walkState) error {
 	if !lt.fieldDirty(f) {
 		pre := in.Buf
-		if err := canonical.skipValue(in, f); err != nil {
+		if err := walk.skipValue(canonical, in, f, owner, depth); err != nil {
 			return err
 		}
 		out.Put(pre[:len(pre)-len(in.Buf)])
@@ -312,6 +319,10 @@ func (lt *layerTables) transcodeValue(in, out *bin.Buffer, f *fieldLayout, layer
 	}
 	switch f.kind {
 	case kindVector, kindVectorBare:
+		vectorDepth := depth + 1
+		if vectorDepth <= 0 || vectorDepth > walk.limits.maxDepth {
+			return limitf("vector nesting depth %d exceeds limit %d", vectorDepth, walk.limits.maxDepth)
+		}
 		if f.kind == kindVector {
 			id, err := in.Uint32()
 			if err != nil {
@@ -326,23 +337,36 @@ func (lt *layerTables) transcodeValue(in, out *bin.Buffer, f *fieldLayout, layer
 		if err != nil {
 			return err
 		}
+		if n < 0 {
+			return malformedf("negative vector length %d", n)
+		}
+		if max := walk.vectorLimit(owner, f); n > max {
+			return limitf("vector %s.%s length %d exceeds limit %d", ownerName(owner), fieldName(f), n, max)
+		}
+		if err := walk.addUnits(n, "vector "+ownerName(owner)+"."+fieldName(f)); err != nil {
+			return err
+		}
 		out.PutInt(n)
 		for i := 0; i < n; i++ {
-			if err := lt.transcodeValue(in, out, f.elem, layer); err != nil {
+			if err := lt.transcodeValue(in, out, f.elem, nil, layer, vectorDepth, walk); err != nil {
 				return err
 			}
 		}
 		return nil
 	case kindObject:
-		return lt.transcodeObject(in, out, layer)
+		return lt.transcodeObject(in, out, layer, depth+1, walk)
 	case kindBareObject:
+		bareDepth := depth + 1
+		if err := walk.enter(bareDepth, "bare constructor"); err != nil {
+			return err
+		}
 		cl, ok := canonical.bareByT[f.typeName]
 		if !ok {
 			return fmt.Errorf("unknown bare type %q", f.typeName)
 		}
 		// Bare objects have no CRC and (within 220..227) no changed bare ctor;
 		// recurse all-kept to reach any dirty descendants.
-		return lt.transcodeBody(in, out, cl, nil, layer)
+		return lt.transcodeBody(in, out, cl, nil, layer, bareDepth, walk)
 	default:
 		// Primitive marked dirty should be impossible.
 		return fmt.Errorf("unexpected dirty primitive kind %d", f.kind)

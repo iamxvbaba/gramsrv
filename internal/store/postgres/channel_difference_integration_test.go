@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"testing"
 )
 
@@ -173,7 +174,6 @@ func TestChannelStorePublicPreviewDifferenceSkipsNonMemberMessages(t *testing.T)
 	if err != nil {
 		t.Fatalf("send channel message: %v", err)
 	}
-
 	diff, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
 		UserID:    viewer.ID,
 		ChannelID: channelID,
@@ -233,15 +233,36 @@ func TestChannelStoreDifferenceUsesDurableMessageSnapshots(t *testing.T) {
 		t.Fatalf("create channel: %v", err)
 	}
 	channelID = created.Channel.ID
-	sent, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+	sendReq := domain.SendChannelMessageRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
 		RandomID:  941,
 		Message:   "original",
 		Date:      1700000381,
-	})
+	}
+	sent, err := channels.SendChannelMessage(ctx, sendReq)
 	if err != nil {
 		t.Fatalf("send channel message: %v", err)
+	}
+	fingerprint, err := store.ChannelSendFingerprint(sendReq)
+	if err != nil {
+		t.Fatalf("fingerprint channel message: %v", err)
+	}
+	replayReq := domain.ChannelSendReplayRequest{ChannelID: channelID, SenderUserID: owner.ID, RandomID: sent.Message.RandomID, IdempotencyFingerprint: fingerprint}
+	type replayState struct {
+		pts    int
+		events int
+	}
+	loadReplayState := func() replayState {
+		t.Helper()
+		var state replayState
+		if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id = $1`, channelID).Scan(&state.pts); err != nil {
+			t.Fatalf("load channel pts: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM channel_update_events WHERE channel_id = $1`, channelID).Scan(&state.events); err != nil {
+			t.Fatalf("count channel events: %v", err)
+		}
+		return state
 	}
 	if _, err := channels.EditChannelMessage(ctx, domain.EditChannelMessageRequest{
 		UserID:    owner.ID,
@@ -261,12 +282,16 @@ func TestChannelStoreDifferenceUsesDurableMessageSnapshots(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("second edit: %v", err)
 	}
-	duplicate, found, err := channels.duplicateChannelMessage(ctx, channelID, owner.ID, sent.Message.RandomID)
+	beforeReplay := loadReplayState()
+	duplicate, found, err := channels.LookupChannelSendReplay(ctx, replayReq)
 	if err != nil {
 		t.Fatalf("duplicate channel message: %v", err)
 	}
-	if !found || !duplicate.Duplicate || duplicate.Event.Type != domain.ChannelUpdateNewMessage || duplicate.Message.Body != "original" || duplicate.Event.Message.Body != "original" {
-		t.Fatalf("duplicate after edit = %+v found=%v, want original new-message snapshot", duplicate, found)
+	if !found || !duplicate.Duplicate || duplicate.Event.Type != domain.ChannelUpdateNewMessage || duplicate.Message.Body != "second edit" || duplicate.Event.Message.Body != "second edit" || duplicate.Event.Pts != sent.Event.Pts {
+		t.Fatalf("duplicate after edit = %+v found=%v, want current snapshot with first-send pts", duplicate, found)
+	}
+	if after := loadReplayState(); after != beforeReplay {
+		t.Fatalf("edit replay mutated channel state = %+v, want %+v", after, beforeReplay)
 	}
 
 	diff, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
@@ -286,6 +311,26 @@ func TestChannelStoreDifferenceUsesDurableMessageSnapshots(t *testing.T) {
 	}
 	if diff.OtherUpdates[0].Message.Body != "first edit" || diff.OtherUpdates[1].Message.Body != "second edit" {
 		t.Fatalf("edit snapshots = %q/%q, want first edit/second edit", diff.OtherUpdates[0].Message.Body, diff.OtherUpdates[1].Message.Body)
+	}
+	deleted, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
+		UserID: owner.ID, ChannelID: channelID, IDs: []int{sent.Message.ID}, Date: 1700000384,
+	})
+	if err != nil {
+		t.Fatalf("delete channel message: %v", err)
+	}
+	beforeReplay = loadReplayState()
+	duplicate, found, err = channels.LookupChannelSendReplay(ctx, replayReq)
+	if err != nil {
+		t.Fatalf("duplicate deleted channel message: %v", err)
+	}
+	if !found || !duplicate.Duplicate || duplicate.Message.Body != "original" || duplicate.Message.Pts != sent.Message.Pts || duplicate.Event.Pts != sent.Event.Pts {
+		t.Fatalf("duplicate after delete = %+v found=%v, want immutable first-send snapshot", duplicate, found)
+	}
+	if duplicate.ReplayDeleteEvent == nil || duplicate.ReplayDeleteEvent.Pts != deleted.Event.Pts || len(duplicate.ReplayDeleteEvent.MessageIDs) != 1 || duplicate.ReplayDeleteEvent.MessageIDs[0] != sent.Message.ID {
+		t.Fatalf("duplicate delete receipt = %+v, want durable event %+v", duplicate.ReplayDeleteEvent, deleted.Event)
+	}
+	if after := loadReplayState(); after != beforeReplay {
+		t.Fatalf("delete replay mutated channel state = %+v, want %+v", after, beforeReplay)
 	}
 }
 
@@ -504,6 +549,13 @@ func TestReserveChannelPtsRollsBackWithTransaction(t *testing.T) {
 	}
 	if got != created.Channel.Pts {
 		t.Fatalf("channel pts after rollback = %d, want unchanged %d", got, created.Channel.Pts)
+	}
+	batch, err := channels.MaxChannelPtsBatch(ctx, []int64{channelID, -channelID, channelID})
+	if err != nil {
+		t.Fatalf("MaxChannelPtsBatch: %v", err)
+	}
+	if len(batch) != 1 || batch[channelID] != created.Channel.Pts {
+		t.Fatalf("batch channel pts = %v, want only %d:%d", batch, channelID, created.Channel.Pts)
 	}
 }
 

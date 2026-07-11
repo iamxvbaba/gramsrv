@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -53,6 +54,12 @@ type Config struct {
 	OutboundPushTimeout time.Duration
 	SendRateLimit       int
 	SendRateWindow      time.Duration
+	// AuthCode*RateLimit protects the unauthenticated sendCode/resendCode write path.
+	// The phone budget is keyed by SHA-256(normalized phone), never by the plaintext phone;
+	// the second budget is keyed by the physical connection's raw auth_key_id.
+	AuthCodePhoneRateLimit   int
+	AuthCodeAuthKeyRateLimit int
+	AuthCodeRateWindow       time.Duration
 	// CatchupRateLimit/CatchupRateWindow 限制 difference 类 catch-up RPC（getChannelDifference /
 	// getPeerDialogs）的每用户频率（设计 Phase 2 / §10.3）：nudge 被消费后客户端会触发这两类
 	// catch-up，放开大群 nudge 全速前需 FLOOD_WAIT 兜底防风暴打爆 PG。两类各自独立计数、共用同一
@@ -216,6 +223,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 // 再按 TypeID 路由到 typed handler。满足 mtprotoedge.RPCHandler。
 func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, error) {
 	preStart := r.clock.Now()
+	ctx = withInboundRPCBytes(ctx, b.Len())
 	ctx = WithRawAuthKeyID(ctx, authKeyID)
 	effectiveAuthKeyID, err := r.effectiveAuthKeyID(ctx, authKeyID, sessionID)
 	if err != nil {
@@ -579,8 +587,8 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		if err != nil {
 			return nil, fmt.Errorf("decode invokeAfterMsgs msg_ids: %w", err)
 		}
-		if msgIDs > maxInvokeAfterMsgIDs {
-			return nil, fmt.Errorf("decode invokeAfterMsgs msg_ids: too many ids %d", msgIDs)
+		if msgIDs < 0 || msgIDs > maxInvokeAfterMsgIDs {
+			return nil, fmt.Errorf("decode invokeAfterMsgs msg_ids: invalid count %d", msgIDs)
 		}
 		for i := 0; i < msgIDs; i++ {
 			if _, err := b.Long(); err != nil {
@@ -644,6 +652,16 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 				}
 			}
 		}
+		knownRequest, structuralErr := layerwire.ValidateRoutableRequest(b.Buf)
+		if !knownRequest {
+			if structuralErr != nil {
+				return nil, mapLayerwirePreflightError(structuralErr)
+			}
+			// Unknown methods are opaque after the bounded/alignment check above: no generated
+			// decoder will touch their body. Route them directly to the compatibility fallback
+			// so every unknown constructor is traced, including pre-login probes.
+			return r.fallback(ctx, b)
+		}
 		if r.deps.Auth != nil {
 			if _, ok := UserIDFrom(ctx); !ok && !rpcAllowedWithoutAuthorization(id) {
 				fields := append([]zap.Field{
@@ -653,6 +671,16 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 				r.log.Info("RPC rejected before authorization", fields...)
 				return nil, authKeyUnregisteredErr()
 			}
+		}
+		if err := preflightRPCRequest(id, b); err != nil {
+			return nil, err
+		}
+		// Run the same allocation-free schema walker used by layer aliases/DrKLO transforms on
+		// every canonical request before gotd's generated decoder materializes vectors/bytes.
+		// Method-specific caps above preserve exact existing RPC errors; this generic budget
+		// closes variable-offset/nested-object paths and malformed constructor recursion.
+		if structuralErr != nil {
+			return nil, mapLayerwirePreflightError(structuralErr)
 		}
 		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates
 		// 接收者。仅靠 updates.getState/getDifference 置位会漏掉 DrKLO 热恢复：
@@ -680,6 +708,13 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		}
 		return enc, err
 	}
+}
+
+func mapLayerwirePreflightError(err error) error {
+	if errors.Is(err, layerwire.ErrResourceLimit) {
+		return inputRequestTooLongErr()
+	}
+	return inputRequestInvalidErr()
 }
 
 func tlTypeName(id uint32) string {

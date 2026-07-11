@@ -44,11 +44,6 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		sendErr = err
 		return nil, sendErr
 	}
-	// 消息特效：仅接受 catalog 内的合法 effect id（非法 → EFFECT_ID_INVALID，官方行为）。
-	if r.messageEffectInvalid(ctx, req.Effect) {
-		sendErr = effectIDInvalidErr()
-		return nil, sendErr
-	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		sendErr = internalErr()
@@ -58,24 +53,72 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		sendErr = peerIDInvalidErr()
 		return nil, sendErr
 	}
-	if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
-		sendErr = err
+	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
+	if !ok || peer.ID == 0 {
+		sendErr = peerIDInvalidErr()
 		return nil, sendErr
 	}
-	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	idempotencyFingerprint, err := sendMessageIdempotencyFingerprint(req)
 	if err != nil {
-		sendErr = err
+		sendErr = internalErr()
 		return nil, sendErr
 	}
 	// 频道私信(monoforum):仅当 reply_to 带 monoforum_peer_id 时走专用发送路径(普通发送恒不带,
 	// 故此 gate 对普通发送零额外成本)。peer 解析为 monoforum 频道时按订阅者子会话发送。
 	if monoforumReplyPresent(req.ReplyTo) {
-		updates, err := r.sendMonoforumMessage(ctx, userID, peer, req)
+		savedPeer, valid := r.monoforumReplyTargetPeer(userID, req.ReplyTo)
+		if !valid || savedPeer.Type != domain.PeerTypeUser || savedPeer.ID == 0 {
+			sendErr = replyToMonoforumPeerInvalidErr()
+			return nil, sendErr
+		}
+		replay, err := r.lookupChannelSendReplay(ctx, userID, peer.ID, savedPeer, req.RandomID, idempotencyFingerprint)
+		if err != nil {
+			sendErr = err
+			return nil, err
+		}
+		if replay.found {
+			duplicate = true
+			return r.monoforumSendUpdates(ctx, userID, replay.channel.Channel, savedPeer, replay.channel), nil
+		}
+		if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
+			sendErr = err
+			return nil, sendErr
+		}
+		checkedPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+		if err != nil {
+			sendErr = err
+			return nil, sendErr
+		}
+		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, req, idempotencyFingerprint, replay.checked)
 		if err != nil {
 			sendErr = err
 			return nil, sendErr
 		}
 		return updates, nil
+	}
+	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
+	if err != nil {
+		sendErr = err
+		return nil, err
+	}
+	if replay.found {
+		duplicate = true
+		return r.outgoingReplayUpdates(ctx, userID, peer, req.RandomID, replay), nil
+	}
+	// Mutable catalog state, rate accounting and access checks are intentionally after exact
+	// replay lookup: a committed send remains acknowledgeable after those states change.
+	if r.messageEffectInvalid(ctx, req.Effect) {
+		sendErr = effectIDInvalidErr()
+		return nil, sendErr
+	}
+	if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
+		sendErr = err
+		return nil, sendErr
+	}
+	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
+		sendErr = err
+		return nil, sendErr
 	}
 	// reply_markup（bot inline keyboard）：仅 bot 账号发送被接受+校验；非 bot 静默丢弃。
 	// 仅在请求携带 markup 时才查 is_bot，避免普通发送多打一次查询。
@@ -114,16 +157,18 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 	}
 	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
 		updates, err := r.scheduleOutgoing(ctx, userID, peer, outgoingSend{
-			randomID:     req.RandomID,
-			message:      req.Message,
-			entities:     req.Entities,
-			media:        previewMedia,
-			silent:       req.Silent,
-			noforwards:   req.Noforwards,
-			replyToInput: req.ReplyTo,
-			sendAsInput:  req.SendAs,
-			clearDraft:   req.ClearDraft,
-			richMessage:  richMessage,
+			randomID:               req.RandomID,
+			idempotencyFingerprint: idempotencyFingerprint,
+			idempotencyPreflighted: replay.checked,
+			message:                req.Message,
+			entities:               req.Entities,
+			media:                  previewMedia,
+			silent:                 req.Silent,
+			noforwards:             req.Noforwards,
+			replyToInput:           req.ReplyTo,
+			sendAsInput:            req.SendAs,
+			clearDraft:             req.ClearDraft,
+			richMessage:            richMessage,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 		if err != nil {
 			sendErr = err
@@ -132,18 +177,20 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		return updates, nil
 	}
 	updates, dup, err := r.sendOutgoing(ctx, userID, peer, outgoingSend{
-		randomID:     req.RandomID,
-		message:      req.Message,
-		entities:     req.Entities,
-		media:        previewMedia,
-		silent:       req.Silent,
-		noforwards:   req.Noforwards,
-		replyToInput: req.ReplyTo,
-		sendAsInput:  req.SendAs,
-		clearDraft:   req.ClearDraft,
-		replyMarkup:  replyMarkup,
-		richMessage:  richMessage,
-		effect:       req.Effect,
+		randomID:               req.RandomID,
+		idempotencyFingerprint: idempotencyFingerprint,
+		idempotencyPreflighted: replay.checked,
+		message:                req.Message,
+		entities:               req.Entities,
+		media:                  previewMedia,
+		silent:                 req.Silent,
+		noforwards:             req.Noforwards,
+		replyToInput:           req.ReplyTo,
+		sendAsInput:            req.SendAs,
+		clearDraft:             req.ClearDraft,
+		replyMarkup:            replyMarkup,
+		richMessage:            richMessage,
+		effect:                 req.Effect,
 	})
 	duplicate = dup
 	if err != nil {
@@ -159,6 +206,8 @@ func messageSendErr(err error) error {
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()
+	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):
+		return randomIDDuplicateErr()
 	default:
 		return internalErr()
 	}
@@ -407,6 +456,33 @@ func tgPrivateMessageUpdates(event domain.UpdateEvent, msg domain.Message, rando
 		Date:    date,
 		Seq:     0, // 私聊不维护账号级 seq，恒 0（客户端仅靠 pts 同步）
 	}
+}
+
+// tgPrivateSendResultUpdates returns a complete send acknowledgement for exact
+// random_id replays. DrKLO requires UpdateNewMessage in an Updates response to
+// transition its local pending message to SENT. Visible edited messages use the
+// current snapshot; deleted messages use the immutable first snapshot followed
+// by the already-durable delete event, so the acknowledgement cannot become a
+// permanent resurrection. No replay allocates pts or emits fan-out.
+func tgPrivateSendResultUpdates(res domain.SendPrivateTextResult, randomID int64, includeMessageIDForNew bool, users []tg.UserClass, chats []tg.ChatClass) *tg.Updates {
+	if !res.Duplicate {
+		return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, randomID, includeMessageIDForNew, users, chats)
+	}
+	if randomID == 0 {
+		randomID = res.SenderMessage.RandomID
+	}
+	out := tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, randomID, randomID != 0, users, chats)
+	if event := res.ReplayDeleteEvent; event != nil && event.Pts > 0 && len(event.MessageIDs) > 0 {
+		out.Updates = append(out.Updates, &tg.UpdateDeleteMessages{
+			Messages: append([]int(nil), event.MessageIDs...),
+			Pts:      event.Pts,
+			PtsCount: event.PtsCount,
+		})
+		if event.Date > out.Date {
+			out.Date = event.Date
+		}
+	}
+	return out
 }
 
 func (r *Router) usersForMessageUpdate(ctx context.Context, ownerUserID int64, msg domain.Message) []tg.UserClass {

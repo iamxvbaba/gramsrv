@@ -3,6 +3,7 @@ package domain
 import (
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // 本文件定义媒体相关的业务值对象（文档、照片、贴纸集、可用 reaction、消息媒体）。
@@ -79,6 +80,27 @@ type UploadedFileRef struct {
 	Name        string
 	Big         bool
 	MD5         string // small file 客户端 md5_checksum（hex），可校验；big file 为空
+}
+
+// UploadedMediaKind identifies the durable object materialized from a one-shot upload file id.
+type UploadedMediaKind string
+
+const (
+	UploadedMediaPhoto    UploadedMediaKind = "photo"
+	UploadedMediaDocument UploadedMediaKind = "document"
+)
+
+// UploadedMediaReceipt makes InputMediaUploaded* replayable after transient upload parts have
+// been consumed. IntentHash binds the file id to the complete materialization intent (kind, part
+// metadata and document spec); MediaID points at the immutable Photo/Document returned on every
+// exact replay.
+type UploadedMediaReceipt struct {
+	OwnerUserID int64
+	FileID      int64
+	IntentHash  []byte
+	Kind        UploadedMediaKind
+	MediaID     int64
+	CreatedAt   time.Time
 }
 
 // DocumentSpec 描述从上传文件创建 Document 的元数据（来自 InputMediaUploadedDocument）。

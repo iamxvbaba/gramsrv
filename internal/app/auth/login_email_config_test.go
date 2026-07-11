@@ -19,8 +19,7 @@ func (s *testLoginEmailStore) LoginEmailByPhone(_ context.Context, phone string)
 	return email, ok, nil
 }
 
-func (s *testLoginEmailStore) SetLoginEmailByPhone(_ context.Context, phone, email string) error {
-	s.emails[domain.NormalizePhone(phone)] = email
+func (s *testLoginEmailStore) SetLoginEmail(_ context.Context, _ int64, _ string) error {
 	return nil
 }
 

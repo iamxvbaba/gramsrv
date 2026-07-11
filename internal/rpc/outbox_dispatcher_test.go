@@ -460,6 +460,101 @@ func TestOutboxDispatcherOrdersClaimedItemsByUserPts(t *testing.T) {
 	}
 }
 
+func TestOutboxLogicalShardsAreDisjointAndStable(t *testing.T) {
+	for _, workers := range []int{1, 2, 4, 7, 64, outboxLogicalShards} {
+		seen := make([]int, outboxLogicalShards)
+		for worker := 0; worker < workers; worker++ {
+			for _, shard := range logicalShardsForWorker(worker, workers) {
+				if shard < 0 || shard >= outboxLogicalShards {
+					t.Fatalf("workers=%d worker=%d returned invalid shard %d", workers, worker, shard)
+				}
+				seen[shard]++
+			}
+		}
+		for shard, owners := range seen {
+			if owners != 1 {
+				t.Fatalf("workers=%d shard=%d owners=%d, want exactly one", workers, shard, owners)
+			}
+		}
+	}
+	if got := normalizedOutboxWorkers(8, false); got != 1 {
+		t.Fatalf("non-sharded workers = %d, want 1", got)
+	}
+	if got := normalizedOutboxWorkers(outboxLogicalShards+100, true); got != outboxLogicalShards {
+		t.Fatalf("overprovisioned workers = %d, want clamp %d", got, outboxLogicalShards)
+	}
+}
+
+func TestOutboxDispatcherBatchFailureBlocksHigherUserPts(t *testing.T) {
+	const (
+		blockedUser = int64(1000000002)
+		otherUser   = int64(1000000003)
+	)
+	items := []store.DispatchOutboxItem{
+		{ID: 12, TargetUserID: blockedUser, Pts: 12, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 5, TargetUserID: otherUser, Pts: 5, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 11, TargetUserID: blockedUser, Pts: 11, EventType: domain.UpdateEventReadHistoryInbox},
+	}
+	events := make([]domain.UpdateEvent, 0, len(items))
+	for _, item := range items {
+		events = append(events, outboxReadEvent(item.TargetUserID, item.Pts))
+	}
+	eventStore := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
+	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
+	sessions := &selectiveFailOutboxSessions{failUserID: blockedUser, failPts: 11}
+	dispatcher := NewOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
+
+	dispatcher.DispatchOnce(context.Background())
+
+	wantAttempts := []outboxPushAttempt{{userID: blockedUser, pts: 11}, {userID: otherUser, pts: 5}}
+	if got := sessions.pushAttempts(); !reflect.DeepEqual(got, wantAttempts) {
+		t.Fatalf("push attempts = %+v, want %+v (blocked user's pts=12 must not overtake failed pts=11)", got, wantAttempts)
+	}
+	if !outbox.failed || len(outbox.deliveredBatch) != 1 || outbox.deliveredBatch[0].TargetUserID != otherUser {
+		t.Fatalf("outbox failed=%v delivered=%+v, want failed head and only other user delivered", outbox.failed, outbox.deliveredBatch)
+	}
+}
+
+func TestOutboxDispatcherBatchLoadFallbackStillBlocksHigherUserPts(t *testing.T) {
+	const (
+		blockedUser = int64(1000000004)
+		otherUser   = int64(1000000005)
+	)
+	items := []store.DispatchOutboxItem{
+		{ID: 22, TargetUserID: blockedUser, Pts: 22, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 21, TargetUserID: blockedUser, Pts: 21, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 6, TargetUserID: otherUser, Pts: 6, EventType: domain.UpdateEventReadHistoryInbox},
+	}
+	events := make([]domain.UpdateEvent, 0, len(items))
+	for _, item := range items {
+		events = append(events, outboxReadEvent(item.TargetUserID, item.Pts))
+	}
+	eventStore := &failingBatchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
+	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
+	sessions := &selectiveFailOutboxSessions{failUserID: blockedUser, failPts: 21}
+	dispatcher := NewOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
+
+	dispatcher.DispatchOnce(context.Background())
+
+	wantAttempts := []outboxPushAttempt{{userID: blockedUser, pts: 21}, {userID: otherUser, pts: 6}}
+	if got := sessions.pushAttempts(); !reflect.DeepEqual(got, wantAttempts) {
+		t.Fatalf("fallback push attempts = %+v, want %+v", got, wantAttempts)
+	}
+}
+
+func outboxReadEvent(userID int64, pts int) domain.UpdateEvent {
+	return domain.UpdateEvent{
+		UserID:           userID,
+		Type:             domain.UpdateEventReadHistoryInbox,
+		Pts:              pts,
+		PtsCount:         1,
+		Date:             1700000000 + pts,
+		Peer:             domain.Peer{Type: domain.PeerTypeUser, ID: 999},
+		MaxID:            pts,
+		StillUnreadCount: 0,
+	}
+}
+
 type outboxUsersCall struct {
 	viewerUserID int64
 	ids          []int64
@@ -602,6 +697,34 @@ type orderedOutboxCaptureSessions struct {
 	pushed []int
 }
 
+type outboxPushAttempt struct {
+	userID int64
+	pts    int
+}
+
+type selectiveFailOutboxSessions struct {
+	captureSessions
+	failUserID int64
+	failPts    int
+	attempts   []outboxPushAttempt
+}
+
+func (s *selectiveFailOutboxSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+	pts := 0
+	if updates, ok := msg.(*tg.Updates); ok {
+		pts = firstOutboxUpdatePts(updates)
+	}
+	s.attempts = append(s.attempts, outboxPushAttempt{userID: userID, pts: pts})
+	if userID == s.failUserID && pts == s.failPts {
+		return 0, errors.New("injected outbox push failure")
+	}
+	return s.captureSessions.PushToUserExceptSession(context.Background(), userID, excludeSessionID, t, msg)
+}
+
+func (s *selectiveFailOutboxSessions) pushAttempts() []outboxPushAttempt {
+	return append([]outboxPushAttempt(nil), s.attempts...)
+}
+
 func (s *orderedOutboxCaptureSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	if updates, ok := msg.(*tg.Updates); ok {
 		s.pushed = append(s.pushed, firstOutboxUpdatePts(updates))
@@ -633,6 +756,33 @@ func firstOutboxUpdatePts(updates *tg.Updates) int {
 type batchEventStore struct {
 	*captureUpdateEventStore
 	batchCursors []store.EventCursor
+}
+
+type failingBatchEventStore struct {
+	*captureUpdateEventStore
+}
+
+func (s *failingBatchEventStore) BatchByCursor(context.Context, []store.EventCursor) ([]domain.UpdateEvent, error) {
+	return nil, errors.New("injected batch event load failure")
+}
+
+func (s *failingBatchEventStore) ListAfter(_ context.Context, userID int64, pts, limit int) ([]domain.UpdateEvent, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var next domain.UpdateEvent
+	for _, event := range s.events {
+		if event.UserID != userID || event.Pts <= pts {
+			continue
+		}
+		if next.Pts == 0 || event.Pts < next.Pts {
+			next = event
+		}
+	}
+	if next.Pts == 0 {
+		return nil, nil
+	}
+	return []domain.UpdateEvent{next}, nil
 }
 
 func (s *batchEventStore) BatchByCursor(_ context.Context, cursors []store.EventCursor) ([]domain.UpdateEvent, error) {
@@ -737,6 +887,8 @@ type captureScopedSessions struct {
 	scopedMu        sync.Mutex
 	scopedAuthKeyID [8]byte
 	immediatePush   bool
+	immediateType   proto.MessageType
+	immediateMsg    bin.Encoder
 }
 
 func (s *captureScopedSessions) setScopedAuthKeyID(rawAuthKeyID [8]byte) {
@@ -755,6 +907,12 @@ func (s *captureScopedSessions) immediatePushSeen() bool {
 	s.scopedMu.Lock()
 	defer s.scopedMu.Unlock()
 	return s.immediatePush
+}
+
+func (s *captureScopedSessions) immediatePushSnapshot() (proto.MessageType, bin.Encoder) {
+	s.scopedMu.Lock()
+	defer s.scopedMu.Unlock()
+	return s.immediateType, s.immediateMsg
 }
 
 func (s *captureScopedSessions) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
@@ -790,6 +948,8 @@ func (s *captureScopedSessions) PushToSessionForAuthKeyImmediate(_ context.Conte
 	s.scopedMu.Lock()
 	s.immediatePush = true
 	s.scopedAuthKeyID = rawAuthKeyID
+	s.immediateType = t
+	s.immediateMsg = msg
 	s.scopedMu.Unlock()
 	return s.PushToSession(context.Background(), sessionID, t, msg)
 }
@@ -805,14 +965,14 @@ func (s *captureDispatchOutbox) ClaimPending(context.Context, int) ([]store.Disp
 	return items, nil
 }
 
-func (s *captureDispatchOutbox) MarkDelivered(_ context.Context, targetUserID, id int64) error {
+func (s *captureDispatchOutbox) MarkDelivered(_ context.Context, item store.DispatchOutboxItem) error {
 	s.delivered = true
-	s.deliveredUserID = targetUserID
-	s.deliveredID = id
+	s.deliveredUserID = item.TargetUserID
+	s.deliveredID = item.ID
 	return nil
 }
 
-func (s *captureDispatchOutbox) MarkFailed(_ context.Context, _ int64, _ int64, lastError string) error {
+func (s *captureDispatchOutbox) MarkFailed(_ context.Context, _ store.DispatchOutboxItem, lastError string) error {
 	s.failed = true
 	s.failedError = lastError
 	return nil
@@ -869,21 +1029,19 @@ func (m *captureOutboxMetrics) OutboxFailed(error) {
 	m.failed++
 }
 
-// queueFullBestEffortSessions 模拟出站队列拥塞：best-effort 推送总是失败（入队超时 / 队列满）。
-type queueFullBestEffortSessions struct {
+// interruptedBestEffortSessions 模拟 dispatcher context 到期：该中断可安全靠 lease 重试。
+type interruptedBestEffortSessions struct {
 	*captureSessions
 	attempts int
 }
 
-func (s *queueFullBestEffortSessions) PushToUserExceptSessionBestEffort(_ context.Context, _ int64, _ int64, _ proto.MessageType, _ bin.Encoder, _ time.Duration) (int, error) {
+func (s *interruptedBestEffortSessions) PushToUserExceptSessionBestEffort(_ context.Context, _ int64, _ int64, _ proto.MessageType, _ bin.Encoder, _ time.Duration) (int, error) {
 	s.attempts++
-	return 0, errors.New("mtproto outbound queue full")
+	return 0, context.DeadlineExceeded
 }
 
-// TestOutboxDispatcherDefersOnPushQueueFull 验证 best-effort 推送因出站队列拥塞失败时，dispatcher
-// 既不标记 delivered（任务保留，靠 dispatching 租约过期重投，满足至少一次投递语义），也不标记
-// failed（拥塞不计入 attempts 升级，避免正常满 fan-out 负载把可靠 update 误打成 failed）。
-func TestOutboxDispatcherDefersOnPushQueueFull(t *testing.T) {
+// TestOutboxDispatcherDefersOnPushInterruption 验证 shutdown/deadline 不把 lane head 误打 failed。
+func TestOutboxDispatcherDefersOnPushInterruption(t *testing.T) {
 	msg := domain.Message{
 		ID:          10,
 		OwnerUserID: 1000000002,
@@ -909,7 +1067,7 @@ func TestOutboxDispatcherDefersOnPushQueueFull(t *testing.T) {
 		EventType:        domain.UpdateEventNewMessage,
 		ExcludeSessionID: 99,
 	}}}
-	sessions := &queueFullBestEffortSessions{captureSessions: &captureSessions{}}
+	sessions := &interruptedBestEffortSessions{captureSessions: &captureSessions{}}
 	metrics := &captureOutboxMetrics{}
 	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond), WithOutboxMetrics(metrics))
 	dispatcher.DispatchOnce(context.Background())
@@ -918,12 +1076,21 @@ func TestOutboxDispatcherDefersOnPushQueueFull(t *testing.T) {
 		t.Fatalf("best-effort push attempts = %d, want 1（应走 best-effort 推送路径）", sessions.attempts)
 	}
 	if outbox.delivered {
-		t.Fatalf("outbox delivered=true, want 未投递（拥塞应保留 dispatching 行靠租约重投）")
+		t.Fatalf("outbox delivered=true, want 未投递（中断应保留 dispatching 行靠租约重投）")
 	}
 	if outbox.failed {
-		t.Fatalf("outbox failed=true, want 未失败（拥塞不计入 attempts 升级）")
+		t.Fatalf("outbox failed=true, want 未失败（context 中断不计入 attempts 升级）")
 	}
 	if metrics.failed != 0 {
-		t.Fatalf("metrics.failed=%d, want 0（拥塞不算投递失败）", metrics.failed)
+		t.Fatalf("metrics.failed=%d, want 0（context 中断不算投递失败）", metrics.failed)
+	}
+}
+
+func TestOutboxPushInterruptedRejectsDeterministicErrors(t *testing.T) {
+	if !outboxPushInterrupted(context.Canceled) || !outboxPushInterrupted(context.DeadlineExceeded) {
+		t.Fatal("context shutdown/deadline must remain retriable")
+	}
+	if outboxPushInterrupted(errors.New("encode update: invalid constructor")) {
+		t.Fatal("deterministic encoding error must fail the lane head instead of lease-retrying forever")
 	}
 }

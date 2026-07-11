@@ -57,7 +57,10 @@ func runIdleBackoffLoop(ctx context.Context, interval, maxIdleInterval time.Dura
 		case <-timer.C:
 		}
 		if dispatch(ctx) {
-			timer.Reset(backoff.ActiveDelay())
+			// 有积压时立即继续 drain；interval 只用于空闲轮询。旧逻辑每个非空
+			// batch 也固定等待 base，形成 batch/base 的人工吞吐上限。
+			_ = backoff.ActiveDelay()
+			timer.Reset(0)
 			continue
 		}
 		timer.Reset(backoff.IdleDelay())

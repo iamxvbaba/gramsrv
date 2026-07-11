@@ -61,7 +61,7 @@ func (r *Router) recordChannelDiscussionInbox(ctx context.Context, userID, chann
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		rec, _, err := r.deps.Updates.RecordChannelDiscussionInbox(ctx, authKeyID, userID, channelID, topicID, maxID, sessionID)
+		rec, _, err := r.deps.Updates.RecordChannelDiscussionInbox(ctx, authKeyID, userID, channelID, topicID, maxID, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return internalErr()
 		}

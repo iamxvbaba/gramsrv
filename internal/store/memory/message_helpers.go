@@ -21,7 +21,14 @@ func (s *MessageStore) deleteMemoryMessagesLocked(userID int64, limit int, match
 				more = true
 				continue
 			}
-			deleted = append(deleted, deletedMemoryMessage{userID: userID, peer: msg.Peer, id: msg.ID})
+			deleted = append(deleted, deletedMemoryMessage{
+				userID:           userID,
+				peer:             msg.Peer,
+				id:               msg.ID,
+				privateMessageID: msg.UID,
+				messageSenderID:  msg.From.ID,
+				randomID:         msg.RandomID,
+			})
 			if msg.UID != 0 {
 				revokeUIDs[msg.UID] = struct{}{}
 			}
@@ -45,7 +52,14 @@ func (s *MessageStore) deleteMemoryMessagesByUIDLocked(uids map[int64]struct{}, 
 		kept := messages[:0]
 		for _, msg := range messages {
 			if _, ok := uids[msg.UID]; ok {
-				deleted = append(deleted, deletedMemoryMessage{userID: userID, peer: msg.Peer, id: msg.ID})
+				deleted = append(deleted, deletedMemoryMessage{
+					userID:           userID,
+					peer:             msg.Peer,
+					id:               msg.ID,
+					privateMessageID: msg.UID,
+					messageSenderID:  msg.From.ID,
+					randomID:         msg.RandomID,
+				})
 				continue
 			}
 			kept = append(kept, msg)

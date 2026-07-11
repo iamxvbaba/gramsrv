@@ -30,6 +30,46 @@ func TestServiceSendMessageHonorsSendPermissionGate(t *testing.T) {
 	}
 }
 
+func TestServiceChannelReplayPrecedesCurrentSendPermissionGate(t *testing.T) {
+	ctx := context.Background()
+	channels := memory.NewChannelStore()
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: 1001,
+		Title:         "replay gate",
+		Megagroup:     true,
+		Date:          1_700_000_000,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	req := domain.SendChannelMessageRequest{
+		ChannelID: created.Channel.ID,
+		RandomID:  92,
+		Message:   "committed before restriction",
+		Date:      1_700_000_001,
+	}
+	allowed := NewService(channels)
+	first, err := allowed.SendMessage(ctx, 1001, req)
+	if err != nil {
+		t.Fatalf("first SendMessage: %v", err)
+	}
+
+	denied := NewService(channels, WithSendPermissionChecker(channelDenySendChecker{}))
+	req.Date++
+	replay, err := denied.SendMessage(ctx, 1001, req)
+	if err != nil {
+		t.Fatalf("replay through denied gate: %v", err)
+	}
+	if !replay.Duplicate || replay.Message.ID != first.Message.ID {
+		t.Fatalf("replay = %+v, want committed duplicate %d", replay, first.Message.ID)
+	}
+
+	req.Message = "different intent"
+	if _, err := denied.SendMessage(ctx, 1001, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting replay err=%v, want ErrMessageRandomIDDuplicate before send gate", err)
+	}
+}
+
 func TestServiceSendMonoforumMessageHonorsSendPermissionGate(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(memory.NewChannelStore(), WithSendPermissionChecker(channelDenySendChecker{}))
@@ -41,6 +81,52 @@ func TestServiceSendMonoforumMessageHonorsSendPermissionGate(t *testing.T) {
 		Message:      "blocked",
 	}); !errors.Is(err, domain.ErrUserSendRestricted) {
 		t.Fatalf("SendMonoforumMessage err=%v, want ErrUserSendRestricted", err)
+	}
+}
+
+func TestServiceMonoforumReplayPrecedesCurrentSendPermissionGate(t *testing.T) {
+	ctx := context.Background()
+	channels := memory.NewChannelStore()
+	parent, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: 1001,
+		Title:         "direct messages",
+		Broadcast:     true,
+		Date:          1_700_000_010,
+	})
+	if err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	enabled, err := channels.SetPaidMessagesPrice(ctx, 1001, parent.Channel.ID, 0, true)
+	if err != nil {
+		t.Fatalf("SetPaidMessagesPrice: %v", err)
+	}
+	req := domain.SendMonoforumMessageRequest{
+		MonoforumID:  enabled.Channel.LinkedMonoforumID,
+		SenderUserID: 1002,
+		SavedPeer:    domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		RandomID:     93,
+		Message:      "committed direct message",
+		Date:         1_700_000_011,
+	}
+	allowed := NewService(channels)
+	first, err := allowed.SendMonoforumMessage(ctx, req)
+	if err != nil {
+		t.Fatalf("first SendMonoforumMessage: %v", err)
+	}
+
+	denied := NewService(channels, WithSendPermissionChecker(channelDenySendChecker{}))
+	req.Date++
+	replay, err := denied.SendMonoforumMessage(ctx, req)
+	if err != nil {
+		t.Fatalf("monoforum replay through denied gate: %v", err)
+	}
+	if !replay.Duplicate || replay.Message.ID != first.Message.ID {
+		t.Fatalf("monoforum replay = %+v, want committed duplicate %d", replay, first.Message.ID)
+	}
+
+	req.Message = "different intent"
+	if _, err := denied.SendMonoforumMessage(ctx, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting monoforum replay err=%v, want ErrMessageRandomIDDuplicate before send gate", err)
 	}
 }
 
@@ -813,7 +899,8 @@ func TestCreateChatCreatesMegagroupWithChannelPts(t *testing.T) {
 	duplicate, err := service.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: created.Channel.ID,
 		RandomID:  99,
-		Message:   "hello again",
+		Message:   "hello",
+		ViaBotID:  1003,
 		Date:      12,
 	})
 	if err != nil {
@@ -2032,12 +2119,12 @@ func TestChannelEditDeleteAndLocalClearUseChannelPts(t *testing.T) {
 	if edited.Event.Type != domain.ChannelUpdateEditMessage || edited.Event.Pts != 4 || edited.Event.PtsCount != 1 {
 		t.Fatalf("edit event = %+v, want channel edit pts=4 count=1", edited.Event)
 	}
-	duplicate, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{ChannelID: created.Channel.ID, RandomID: 2, Message: "two retry", Date: 13})
+	duplicate, err := service.SendMessage(ctx, 1002, domain.SendChannelMessageRequest{ChannelID: created.Channel.ID, RandomID: 2, Message: "two", Date: 13})
 	if err != nil {
 		t.Fatalf("duplicate SendMessage after edit: %v", err)
 	}
-	if !duplicate.Duplicate || duplicate.Event.Type != domain.ChannelUpdateNewMessage || duplicate.Message.Body != "two" || duplicate.Event.Message.Body != "two" {
-		t.Fatalf("duplicate after edit = %+v, want original new-message snapshot", duplicate)
+	if !duplicate.Duplicate || duplicate.Event.Type != domain.ChannelUpdateNewMessage || duplicate.Message.Body != "two edited" || duplicate.Event.Message.Body != "two edited" {
+		t.Fatalf("duplicate after edit = %+v, want current message in new-message replay", duplicate)
 	}
 
 	deleted, err := service.DeleteMessages(ctx, 1001, domain.DeleteChannelMessagesRequest{

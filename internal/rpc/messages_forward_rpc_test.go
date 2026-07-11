@@ -241,6 +241,88 @@ func TestMessagesForwardMessagesLoadsPrivateSourcesInSingleBatch(t *testing.T) {
 	}
 }
 
+func TestMessagesForwardMessagesChannelReplayDoesNotRepeatRealtimePayload(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	owner, err := users.Create(ctx, domain.User{AccessHash: 51, Phone: "15550004011", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	source, err := users.Create(ctx, domain.User{AccessHash: 52, Phone: "15550004012", FirstName: "Source"})
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	channels := appchannels.NewService(memory.NewChannelStore())
+	created, err := channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Forward Replay",
+		Megagroup:     true,
+		Date:          1700001210,
+	})
+	if err != nil {
+		t.Fatalf("create target channel: %v", err)
+	}
+	messages := &captureMessages{
+		getMessagesListed: true,
+		list: domain.MessageList{Messages: []domain.Message{
+			{ID: 7, OwnerUserID: owner.ID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: source.ID}, From: domain.Peer{Type: domain.PeerTypeUser, ID: source.ID}, Date: 1700001207, Body: "seven"},
+			{ID: 5, OwnerUserID: owner.ID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: source.ID}, From: domain.Peer{Type: domain.PeerTypeUser, ID: source.ID}, Date: 1700001205, Body: "five"},
+		}},
+	}
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(users),
+		Messages: messages,
+		Channels: channels,
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+	reqCtx := WithSessionID(WithRawAuthKeyID(WithUserID(ctx, owner.ID), [8]byte{1}), 71)
+	to := &tg.InputPeerChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
+	from := &tg.InputPeerUser{UserID: source.ID, AccessHash: source.AccessHash}
+
+	firstReq := &tg.MessagesForwardMessagesRequest{FromPeer: from, ToPeer: to, ID: []int{7}, RandomID: []int64{7001}}
+	if _, err := r.onMessagesForwardMessages(reqCtx, firstReq); err != nil {
+		t.Fatalf("first forward: %v", err)
+	}
+	firstPushes := len(sessions.pushedUserIDs())
+	if firstPushes == 0 {
+		t.Fatal("first forward produced no realtime payload")
+	}
+
+	if _, err := r.onMessagesForwardMessages(reqCtx, firstReq); err != nil {
+		t.Fatalf("full replay: %v", err)
+	}
+	if got := len(sessions.pushedUserIDs()); got != firstPushes {
+		t.Fatalf("full replay realtime pushes = %d, want unchanged %d", got, firstPushes)
+	}
+
+	mixedReq := &tg.MessagesForwardMessagesRequest{
+		FromPeer: from,
+		ToPeer:   to,
+		ID:       []int{7, 5},
+		RandomID: []int64{7001, 5001},
+	}
+	if _, err := r.onMessagesForwardMessages(reqCtx, mixedReq); err != nil {
+		t.Fatalf("mixed replay: %v", err)
+	}
+	if got := len(sessions.pushedUserIDs()); got != firstPushes+1 {
+		t.Fatalf("mixed replay realtime pushes = %d, want %d", got, firstPushes+1)
+	}
+	updates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok {
+		t.Fatalf("mixed replay realtime payload = %T, want *tg.Updates", sessions.lastUserPush())
+	}
+	newMessages := 0
+	for _, update := range updates.Updates {
+		if _, ok := update.(*tg.UpdateNewChannelMessage); ok {
+			newMessages++
+		}
+	}
+	if newMessages != 1 {
+		t.Fatalf("mixed replay realtime new-message updates = %d, want only newly committed item", newMessages)
+	}
+}
+
 func TestMessagesForwardMessagesInfersPrivateSourceFromInputPeerEmpty(t *testing.T) {
 	const (
 		ownerID = int64(1780243210)

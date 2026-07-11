@@ -28,6 +28,13 @@ func conferenceInviteLink(slug string) string {
 	return links.Build(links.DefaultPublicBaseURL, "call/"+slug, url.Values{"slug": []string{slug}})
 }
 
+func contractInviteMessageID(namespace int64, suffix int) int {
+	// group_call_invites has a global (invitee_user_id, message_id) uniqueness
+	// invariant because private box IDs are per-user. Keep contract fixtures in a
+	// bounded, namespace-derived range so filtered/reordered test runs cannot collide.
+	return int(namespace%1_000_000)*1000 + suffix
+}
+
 // GroupCallStoreFactory 为每个用例提供干净的 store 与不冲突的 channel id。
 type GroupCallStoreFactory func(t *testing.T) (st store.GroupCallStore, channelID int64)
 
@@ -45,8 +52,43 @@ func RunGroupCallStoreContract(t *testing.T, factory GroupCallStoreFactory) {
 	t.Run("ResetAllParticipants", func(t *testing.T) { contractReset(t, factory) })
 	t.Run("JoinVideoStateLifecycle", func(t *testing.T) { contractJoinVideoState(t, factory) })
 	t.Run("ConferenceChainBlocks", func(t *testing.T) { contractConferenceChainBlocks(t, factory) })
+	t.Run("ConferenceInviteIdempotency", func(t *testing.T) { contractConferenceInviteIdempotency(t, factory) })
 	t.Run("ConferenceRecipientsTerminalAccess", func(t *testing.T) { contractConferenceRecipientsTerminalAccess(t, factory) })
 	t.Run("ConferenceEmptyDiscards", func(t *testing.T) { contractConferenceEmptyDiscards(t, factory) })
+}
+
+func contractConferenceInviteIdempotency(t *testing.T, factory GroupCallStoreFactory) {
+	st, channelID := factory(t)
+	ctx := context.Background()
+	now := baseNow()
+	slug := fmt.Sprintf("contract-invite-idempotency-%d", channelID)
+	call, err := st.CreateConferenceCall(ctx, domain.GroupCall{
+		ID: channelID*100 + 62, AccessHash: channelID*100 + 69, CreatorUserID: 1,
+		InviteSlug: slug, InviteLink: conferenceInviteLink(slug),
+		RandomID: channelID*100 + 62, CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("create conference call: %v", err)
+	}
+	want := domain.GroupCallInvite{
+		CallID: call.ID, InviterUserID: 1, InviteeUserID: 4, MessageID: contractInviteMessageID(channelID, 402),
+		Status: domain.GroupCallInvitePending, Video: true, CreatedAt: now + 1,
+	}
+	first, err := st.CreateConferenceInvite(ctx, want)
+	if err != nil {
+		t.Fatalf("create conference invite: %v", err)
+	}
+	replay, err := st.CreateConferenceInvite(ctx, want)
+	if err != nil {
+		t.Fatalf("replay conference invite: %v", err)
+	}
+	if replay != first {
+		t.Fatalf("replayed conference invite = %+v, want unchanged %+v", replay, first)
+	}
+	gotCall, gotInvite, found, err := st.GetGroupCallByInviteMessage(ctx, want.InviteeUserID, want.MessageID)
+	if err != nil || !found || gotCall.ID != call.ID || gotInvite != first {
+		t.Fatalf("invite lookup = call %+v invite %+v found=%v err=%v, want call %d invite %+v", gotCall, gotInvite, found, err, call.ID, first)
+	}
 }
 
 func newContractCall(t *testing.T, st store.GroupCallStore, channelID, id int64) domain.GroupCall {
@@ -406,13 +448,13 @@ func contractConferenceRecipientsTerminalAccess(t *testing.T, factory GroupCallS
 		t.Fatalf("leave historical participant: %v", err)
 	}
 	if _, err := st.CreateConferenceInvite(ctx, domain.GroupCallInvite{
-		CallID: call.ID, InviterUserID: 1, InviteeUserID: 4, MessageID: 401,
+		CallID: call.ID, InviterUserID: 1, InviteeUserID: 4, MessageID: contractInviteMessageID(channelID, 401),
 		Status: domain.GroupCallInvitePending, CreatedAt: now + 4,
 	}); err != nil {
 		t.Fatalf("create pending invite: %v", err)
 	}
 	if _, err := st.CreateConferenceInvite(ctx, domain.GroupCallInvite{
-		CallID: call.ID, InviterUserID: 1, InviteeUserID: 5, MessageID: 501,
+		CallID: call.ID, InviterUserID: 1, InviteeUserID: 5, MessageID: contractInviteMessageID(channelID, 501),
 		Status: domain.GroupCallInviteDeclined, CreatedAt: now + 5, UpdatedAt: now + 5,
 	}); err != nil {
 		t.Fatalf("create declined invite: %v", err)

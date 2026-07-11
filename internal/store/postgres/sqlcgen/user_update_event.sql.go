@@ -527,29 +527,29 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 }
 
 const claimDispatchOutbox = `-- name: ClaimDispatchOutbox :many
-WITH picked AS (
-  SELECT d.target_user_id, d.id
-  FROM dispatch_outbox d
+WITH picked_heads AS (
+  SELECT h.target_user_id, h.head_id
+  FROM dispatch_outbox_user_heads h
   WHERE (
-      d.status = 'pending'
-      AND d.next_attempt_at <= now()
-    )
-    OR (
-      d.status = 'dispatching'
-      AND d.updated_at < now() - make_interval(secs => $1::int)
-    )
-  ORDER BY d.next_attempt_at ASC, d.target_user_id ASC, d.pts ASC, d.id ASC
+        h.status = 'pending'
+        AND h.next_attempt_at <= now()
+      )
+      OR (
+        h.status = 'dispatching'
+        AND h.updated_at < now() - make_interval(secs => $1::int)
+      )
+  ORDER BY h.next_attempt_at ASC, h.target_user_id ASC, h.head_pts ASC, h.head_id ASC
   LIMIT $2
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF h SKIP LOCKED
 )
 UPDATE dispatch_outbox d
 SET
   status = 'dispatching',
   attempts = d.attempts + 1,
   updated_at = now()
-FROM picked p
+FROM picked_heads p
 WHERE d.target_user_id = p.target_user_id
-  AND d.id = p.id
+  AND d.id = p.head_id
 RETURNING
   d.id,
   d.target_user_id,
@@ -575,6 +575,8 @@ type ClaimDispatchOutboxRow struct {
 	Attempts         int32
 }
 
+// durable head 表只保留每用户一行，并同步 head 的 readiness。claim 先锁
+// lane head 再更新对应 outbox 行，既不会扫描 backlog，也不会并发领取同一用户。
 func (q *Queries) ClaimDispatchOutbox(ctx context.Context, arg ClaimDispatchOutboxParams) ([]ClaimDispatchOutboxRow, error) {
 	rows, err := q.db.Query(ctx, claimDispatchOutbox, arg.LeaseSeconds, arg.LimitCount)
 	if err != nil {
@@ -603,14 +605,100 @@ func (q *Queries) ClaimDispatchOutbox(ctx context.Context, arg ClaimDispatchOutb
 	return items, nil
 }
 
+const claimDispatchOutboxShards = `-- name: ClaimDispatchOutboxShards :many
+WITH picked_heads AS (
+  SELECT h.target_user_id, h.head_id
+  FROM dispatch_outbox_user_heads h
+  -- 256 与 store.DispatchOutboxLogicalShards、0069 generated column 是同一
+  -- schema 常量；不得随 worker 数变化。
+  WHERE h.logical_shard = ANY($1::smallint[])
+    AND (
+      (
+        h.status = 'pending'
+        AND h.next_attempt_at <= now()
+      )
+      OR (
+        h.status = 'dispatching'
+        AND h.updated_at < now() - make_interval(secs => $2::int)
+      )
+    )
+  ORDER BY h.next_attempt_at ASC, h.target_user_id ASC, h.head_pts ASC, h.head_id ASC
+  LIMIT $3
+  FOR UPDATE OF h SKIP LOCKED
+)
+UPDATE dispatch_outbox d
+SET
+  status = 'dispatching',
+  attempts = d.attempts + 1,
+  updated_at = now()
+FROM picked_heads p
+WHERE d.target_user_id = p.target_user_id
+  AND d.id = p.head_id
+RETURNING
+  d.id,
+  d.target_user_id,
+  d.pts,
+  d.event_type,
+  d.exclude_auth_key_id,
+  d.exclude_session_id,
+  d.attempts
+`
+
+type ClaimDispatchOutboxShardsParams struct {
+	ShardIds     []int16
+	LeaseSeconds int32
+	LimitCount   int32
+}
+
+type ClaimDispatchOutboxShardsRow struct {
+	ID               int64
+	TargetUserID     int64
+	Pts              int32
+	EventType        string
+	ExcludeAuthKeyID int64
+	ExcludeSessionID int64
+	Attempts         int32
+}
+
+// 固定 logical shard 由 target_user_id 决定；运行时 worker 只领取分配给自己的
+// shard 集合，因此同一用户永远只有一条串行 lane，而不同用户可并行。
+func (q *Queries) ClaimDispatchOutboxShards(ctx context.Context, arg ClaimDispatchOutboxShardsParams) ([]ClaimDispatchOutboxShardsRow, error) {
+	rows, err := q.db.Query(ctx, claimDispatchOutboxShards, arg.ShardIds, arg.LeaseSeconds, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimDispatchOutboxShardsRow
+	for rows.Next() {
+		var i ClaimDispatchOutboxShardsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TargetUserID,
+			&i.Pts,
+			&i.EventType,
+			&i.ExcludeAuthKeyID,
+			&i.ExcludeSessionID,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteFailedDispatchOutbox = `-- name: DeleteFailedDispatchOutbox :one
-WITH doomed AS (
-  SELECT target_user_id, id
-  FROM dispatch_outbox
-  WHERE status = 'failed'
-    AND updated_at < now() - make_interval(secs => $1::int)
-  ORDER BY updated_at ASC, target_user_id ASC, id ASC
+WITH doomed AS MATERIALIZED (
+  SELECT h.target_user_id, h.head_id AS id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.status = 'failed'
+    AND h.updated_at < now() - make_interval(secs => $1::int)
+  ORDER BY h.updated_at ASC, h.target_user_id ASC, h.head_id ASC
   LIMIT $2
+  FOR UPDATE OF h SKIP LOCKED
 ),
 deleted AS (
   DELETE FROM dispatch_outbox d
@@ -628,6 +716,9 @@ type DeleteFailedDispatchOutboxParams struct {
 	LimitCount       int32
 }
 
+// failed 只能成为 lane head；从 head 表开始并先锁 head，既走 0074 的小索引，也与
+// claim/completion 保持同一 user_heads→outbox 锁序。删除的只是在线任务，durable
+// user_update_events 不动，故客户端仍可经 difference 恢复。
 func (q *Queries) DeleteFailedDispatchOutbox(ctx context.Context, arg DeleteFailedDispatchOutboxParams) (int32, error) {
 	row := q.db.QueryRow(ctx, deleteFailedDispatchOutbox, arg.OlderThanSeconds, arg.LimitCount)
 	var deleted_count int32
@@ -1087,66 +1178,121 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 	return items, nil
 }
 
-const markDispatchDelivered = `-- name: MarkDispatchDelivered :exec
-DELETE FROM dispatch_outbox
-WHERE target_user_id = $1
-  AND id = $2
+const markDispatchDelivered = `-- name: MarkDispatchDelivered :execrows
+WITH locked_head AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.target_user_id = $3::bigint
+  FOR UPDATE
+)
+DELETE FROM dispatch_outbox d
+USING locked_head h
+WHERE d.target_user_id = h.target_user_id
+  AND d.id = $1::bigint
+  AND d.status = 'dispatching'
+  AND d.attempts = $2::int
 `
 
 type MarkDispatchDeliveredParams struct {
-	TargetUserID int64
-	ID           int64
+	ID               int64
+	ExpectedAttempts int32
+	TargetUserID     int64
 }
 
 // 方案 A：投递成功即删除。outbox 是任务队列，delivered 行无保留价值
 // （消息在 message_boxes、离线补偿在 user_update_events），删除让表维持「未完成任务」小稳态。
-func (q *Queries) MarkDispatchDelivered(ctx context.Context, arg MarkDispatchDeliveredParams) error {
-	_, err := q.db.Exec(ctx, markDispatchDelivered, arg.TargetUserID, arg.ID)
-	return err
+// claim 的锁序是 user_heads→outbox；completion 必须先显式锁同一 head 再删 outbox，
+// 否则租约过期 claim 与完成恰好竞争时会形成 outbox→head / head→outbox 环路。
+func (q *Queries) MarkDispatchDelivered(ctx context.Context, arg MarkDispatchDeliveredParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markDispatchDelivered, arg.ID, arg.ExpectedAttempts, arg.TargetUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markDispatchDeliveredBatch = `-- name: MarkDispatchDeliveredBatch :exec
+const markDispatchDeliveredBatch = `-- name: MarkDispatchDeliveredBatch :execrows
+WITH input AS MATERIALIZED (
+  SELECT tu.target_user_id, di.id, ea.attempts
+  FROM unnest($1::bigint[]) WITH ORDINALITY AS tu(target_user_id, ord)
+  JOIN unnest($2::bigint[]) WITH ORDINALITY AS di(id, ord) USING (ord)
+  JOIN unnest($3::int[]) WITH ORDINALITY AS ea(attempts, ord) USING (ord)
+),
+locked_heads AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  JOIN (SELECT DISTINCT target_user_id FROM input) i USING (target_user_id)
+  -- Match ClaimDispatchOutbox[Shards] exactly. A stale-lease claim may lock several
+  -- dispatching heads while this completion batch locks the same set; a different
+  -- multi-row order would merely move the deadlock one level up.
+  ORDER BY h.next_attempt_at, h.target_user_id, h.head_pts, h.head_id
+  FOR UPDATE OF h
+)
 DELETE FROM dispatch_outbox d
-USING unnest($1::bigint[]) WITH ORDINALITY AS tu(target_user_id, ord)
-JOIN unnest($2::bigint[]) WITH ORDINALITY AS di(id, ord) USING (ord)
-WHERE d.target_user_id = tu.target_user_id
-  AND d.id = di.id
+USING input i, locked_heads h
+WHERE d.target_user_id = h.target_user_id
+  AND d.target_user_id = i.target_user_id
+  AND d.id = i.id
+  AND d.status = 'dispatching'
+  AND d.attempts = i.attempts
 `
 
 type MarkDispatchDeliveredBatchParams struct {
-	TargetUserIds []int64
-	Ids           []int64
+	TargetUserIds    []int64
+	Ids              []int64
+	ExpectedAttempts []int32
 }
 
 // 批量删除一批已投递的 (target_user_id, id)；target_user_id 入 WHERE 命中唯一索引并避免串删。
-func (q *Queries) MarkDispatchDeliveredBatch(ctx context.Context, arg MarkDispatchDeliveredBatchParams) error {
-	_, err := q.db.Exec(ctx, markDispatchDeliveredBatch, arg.TargetUserIds, arg.Ids)
-	return err
+func (q *Queries) MarkDispatchDeliveredBatch(ctx context.Context, arg MarkDispatchDeliveredBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markDispatchDeliveredBatch, arg.TargetUserIds, arg.Ids, arg.ExpectedAttempts)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const markDispatchFailed = `-- name: MarkDispatchFailed :exec
-UPDATE dispatch_outbox
+const markDispatchFailed = `-- name: MarkDispatchFailed :execrows
+WITH locked_head AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.target_user_id = $4::bigint
+  FOR UPDATE
+)
+UPDATE dispatch_outbox d
 SET
-  status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'pending' END,
+  status = CASE WHEN d.attempts >= 5 THEN 'failed' ELSE 'pending' END,
   next_attempt_at = CASE
-    WHEN attempts >= 5 THEN next_attempt_at
-    ELSE now() + make_interval(secs => LEAST(60, attempts * attempts))
+    WHEN d.attempts >= 5 THEN d.next_attempt_at
+    ELSE now() + make_interval(secs => LEAST(60, d.attempts * d.attempts))
   END,
-  last_error = $3,
+  last_error = $1::text,
   updated_at = now()
-WHERE target_user_id = $1
-  AND id = $2
+FROM locked_head h
+WHERE d.target_user_id = h.target_user_id
+  AND d.id = $2::bigint
+  AND d.status = 'dispatching'
+  AND d.attempts = $3::int
 `
 
 type MarkDispatchFailedParams struct {
-	TargetUserID int64
-	ID           int64
-	LastError    string
+	LastError        string
+	ID               int64
+	ExpectedAttempts int32
+	TargetUserID     int64
 }
 
-func (q *Queries) MarkDispatchFailed(ctx context.Context, arg MarkDispatchFailedParams) error {
-	_, err := q.db.Exec(ctx, markDispatchFailed, arg.TargetUserID, arg.ID, arg.LastError)
-	return err
+func (q *Queries) MarkDispatchFailed(ctx context.Context, arg MarkDispatchFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markDispatchFailed,
+		arg.LastError,
+		arg.ID,
+		arg.ExpectedAttempts,
+		arg.TargetUserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const maxUserPts = `-- name: MaxUserPts :one

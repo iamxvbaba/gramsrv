@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS public.dispatch_outbox_user_heads_failed_cleanup_idx;

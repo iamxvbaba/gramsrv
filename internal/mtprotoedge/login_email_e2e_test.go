@@ -71,11 +71,16 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 	passwordStore := memory.NewPasswordStore()
 	helpStore := memory.NewHelpStore()
 	codeStore := memory.NewCodeStore()
+	dialogStore := memory.NewDialogStore()
+	messageStore := memory.NewMessageStore(dialogStore)
+	updateEventStore := memory.NewUpdateEventStore()
 	emailSender := &loginEmailTestSender{}
 	accountService := account.NewService(passwordStore,
 		account.WithUsers(userStore),
 		account.WithLoginEmailVerification(codeStore, emailSender, 5*time.Minute, 5, 6))
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, memory.NewTempAuthKeyBindingStore(), code,
+		auth.WithLoginMessages(messageStore, dialogStore),
+		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(passwordStore),
 		auth.WithLoginEmail(auth.LoginEmailOptions{
 			Enabled:    true,
@@ -89,10 +94,10 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 		Account: accountService,
 		Help:    help.NewService(helpStore, helpStore),
 		Users:   users.NewService(userStore),
-		Updates: updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
+		Updates: updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
 
 		Contacts: contacts.NewService(memory.NewContactStore()),
-		Dialogs:  dialogs.NewService(memory.NewDialogStore()),
+		Dialogs:  dialogs.NewService(dialogStore),
 	}
 	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
 	srv := New(Options{Logger: zaptest.NewLogger(t), DC: dc, RSAKey: rsaKey, AuthKeys: authKeyStore, RPC: router})

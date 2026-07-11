@@ -340,7 +340,6 @@ func (r *Router) deliverStarGift(ctx context.Context, senderID, recipientID int6
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	sticker := gift.Sticker
 	media := &domain.MessageMedia{
@@ -368,7 +367,7 @@ func (r *Router) deliverStarGift(ctx context.Context, senderID, recipientID int6
 		Media:            media,
 		Silent:           false,
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})

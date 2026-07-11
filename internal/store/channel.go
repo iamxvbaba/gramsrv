@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -164,6 +165,12 @@ type ChannelStore interface {
 	GeneralForumTopic(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelForumTopic, error)
 	ListMessageReadParticipants(ctx context.Context, req domain.ChannelReadParticipantsRequest) (domain.ChannelReadParticipantsResult, error)
 	ListChannelDifference(ctx context.Context, req domain.ChannelDifferenceRequest) (domain.ChannelDifference, error)
+	// PruneChannelUpdateEvents atomically removes at most limit complete event rows through throughPts
+	// and advances the channel retained floor only to the last contiguous row actually removed.
+	PruneChannelUpdateEvents(ctx context.Context, channelID int64, throughPts, limit int) (domain.ChannelUpdateRetentionResult, error)
+	// DeleteExpiredChannelUpdateEvents selects expired channel-log heads using an indexed, bounded seek
+	// and delegates each channel to the same atomic floor+delete primitive. It never uses SQL OFFSET.
+	DeleteExpiredChannelUpdateEvents(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 	ListActiveChannelIDsForUser(ctx context.Context, userID, afterChannelID int64, limit int) ([]int64, error)
 	ListDirtyActiveChannelsForUser(ctx context.Context, userID int64, sinceDate int, afterChannelID int64, limit int) ([]domain.DirtyChannel, error)
 	ListActiveChannelMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error)
@@ -171,6 +178,10 @@ type ChannelStore interface {
 	ListChannelInviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveChannelMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
 	MaxChannelPts(ctx context.Context, channelID int64) (int, error)
+	// MaxChannelPtsBatch returns existing channel watermarks with one bounded store round trip.
+	// Missing/deleted ids are omitted so a stale process-local membership key cannot poison the
+	// entire fan-out recovery sweep.
+	MaxChannelPtsBatch(ctx context.Context, channelIDs []int64) (map[int64]int, error)
 	// SetActiveCall 写入/清除（callID=0）channel 行上的活跃群通话关联
 	//（channel.call_active/call_not_empty flag 与 channelFull.call 的数据源）。
 	SetActiveCall(ctx context.Context, channelID, callID, callAccessHash int64, notEmpty bool) (domain.Channel, error)

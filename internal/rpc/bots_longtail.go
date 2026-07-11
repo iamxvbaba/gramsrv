@@ -151,7 +151,6 @@ func (r *Router) sendBotAllowedServiceMessageWith(ctx context.Context, userID, b
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	return r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
 		SenderUserID:    userID,
@@ -165,7 +164,7 @@ func (r *Router) sendBotAllowedServiceMessageWith(ctx context.Context, userID, b
 			},
 		},
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})

@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,6 +26,35 @@ func TestIdleBackoffSequenceAndReset(t *testing.T) {
 	}
 	if got := backoff.IdleDelay(); got != 100*time.Millisecond {
 		t.Fatalf("idle delay after reset = %v, want base interval", got)
+	}
+}
+
+func TestIdleBackoffLoopDrainsActiveWorkImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls atomic.Int32
+	done := make(chan struct{})
+	started := time.Now()
+	go func() {
+		defer close(done)
+		runIdleBackoffLoop(ctx, time.Second, time.Second, func(context.Context) bool {
+			if calls.Add(1) < 4 {
+				return true
+			}
+			cancel()
+			return false
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("active drain waited for idle interval")
+	}
+	if got := calls.Load(); got != 4 {
+		t.Fatalf("dispatch calls = %d, want 4 consecutive active drains", got)
+	}
+	if elapsed := time.Since(started); elapsed >= 300*time.Millisecond {
+		t.Fatalf("active drain elapsed = %v, want no 1s base delay", elapsed)
 	}
 }
 

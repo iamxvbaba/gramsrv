@@ -29,6 +29,28 @@ type Config struct {
 	RSAKeyPath string
 	// DC 是本 server 的 DC ID。
 	DC int
+	// MTProtoMaxConnections / PerIP 覆盖 raw Accept、codec sniff、握手到认证 session
+	// 的完整物理连接生命周期；负数关闭对应 admission 上限。
+	MTProtoMaxConnections      int
+	MTProtoMaxConnectionsPerIP int
+	// MTProtoMaxConcurrentHandshakes 限制昂贵 RSA/DH exchange 并发；负数关闭。
+	MTProtoMaxConcurrentHandshakes int
+	// MTProto RPC 使用 Server 共享公平调度器；per-connection 与 global 预算共同限制
+	// goroutine、排队任务和 request body 内存。
+	MTProtoRPCMaxInflight    int
+	MTProtoRPCQueueSize      int
+	MTProtoRPCTimeout        time.Duration
+	MTProtoRPCGlobalWorkers  int
+	MTProtoRPCGlobalMaxTasks int
+	MTProtoRPCGlobalMaxBytes int64
+	// MTProtoInboundFrameGlobalMaxBytes 是 transport wire + 最大解密 plaintext 的
+	// 进程级在途预算；frame 长度读出后、payload 分配前预留。
+	MTProtoInboundFrameGlobalMaxBytes int64
+	// MTProto outbound mailbox 按连接有界；resend pending body 另受 Server 全局预算约束。
+	MTProtoOutboundQueueSize             int
+	MTProtoOutboundControlQueueSize      int
+	MTProtoOutboundTrackedGlobalMaxBytes int64
+	MTProtoOutboundWriteGlobalMaxBytes   int64
 
 	// DebugAddr 是 net/http/pprof 调试端点监听地址（CPU/heap/goroutine/mutex/block 剖析）。
 	// telesrv 是宿主进程、不在 docker 内，docker stats 看不到它，性能定位主要靠此端点。
@@ -76,6 +98,12 @@ type Config struct {
 	// AuthCodeMaxAttempts 是同一 phone_code_hash / email verification code 的最大错误次数。
 	// 达到上限后验证码立即失效，用户必须重发。
 	AuthCodeMaxAttempts int
+	// AuthCodePhoneRateLimit / AuthCodeAuthKeyRateLimit 对未授权验证码签发按规范化手机号摘要
+	// 与连接实际 raw auth_key 分别限流。两个维度共用 AuthCodeRateWindow；<=0 关闭对应维度。
+	// 手机号只以 SHA-256 摘要进入限流 key，禁止把原文写入 Redis key 或日志。
+	AuthCodePhoneRateLimit   int
+	AuthCodeAuthKeyRateLimit int
+	AuthCodeRateWindow       time.Duration
 	// LoginEmailEnable 启用手机号登录流程中的邮箱验证码投递。
 	LoginEmailEnable bool
 	// LoginEmailRequireSetup 为 true 时，没有登录邮箱的账号/新手机号会要求先设置邮箱。
@@ -136,6 +164,9 @@ type Config struct {
 	AIPrivacyLogContent bool
 	// TempKeyResolveCacheMaxEntries 是 Router temp→perm 解析缓存容量。
 	TempKeyResolveCacheMaxEntries int
+	// TempKeyResolveCacheTTL 是 temp→perm 绑定的进程内复核周期。绑定/revoke 有精确
+	// 失效，TTL 作为跨进程或异常路径兜底；默认 30m 避免大连接数下每 5s 全量打 PG。
+	TempKeyResolveCacheTTL time.Duration
 
 	// ChannelRowCacheMaxEntries 是「共享频道行」进程内缓存容量(channelID→domain.Channel)。
 	// 由 channels 表 LISTEN/NOTIFY 触发器实时失效(强一致、零 TTL)。<=0 禁用缓存与监听。
@@ -153,8 +184,8 @@ type Config struct {
 	// ChannelBoostCacheTTL 是 boost 读投影在未收到写侧通知时的最大陈旧窗口。
 	ChannelBoostCacheTTL time.Duration
 
-	// OutboxWorkers 是并发 claim 的 outbox worker 数。默认 1，保证同一用户 pts update
-	// 在线投递顺序与持久化顺序一致；后续需要吞吐时应改成按 target_user_id 分片的串行 worker。
+	// OutboxWorkers 是并发 outbox worker 数。用户先稳定哈希到固定 logical shard，
+	// 每个 shard 只归一个 worker，故提高 worker 数不会破坏同一用户 pts 顺序。
 	OutboxWorkers int
 	// OutboxBatch 是 transactional outbox worker 每次 claim 的最大条数。
 	// 调大提升吞吐、增大单批 PG/推送压力；调小降低延迟抖动。配套压测见 docs/message-module.md。
@@ -164,6 +195,13 @@ type Config struct {
 	// OutboxLeaseTimeout 是 'dispatching' 行被判定为租约过期、允许其它 worker 重新 claim 的时长。
 	// 取值需大于单批投递耗时，否则会重复推送；过大则 worker 崩溃后积压恢复变慢。
 	OutboxLeaseTimeout time.Duration
+	// OutboxPoisonRetention 是 terminal failed outbox head 的隔离窗口。隔离期内保留
+	// last_error 供排障，期满只删除在线投递任务；durable user_update_events 仍保留，
+	// 客户端可经 updates.getDifference 恢复。
+	OutboxPoisonRetention time.Duration
+	// OutboxPoisonCleanupInterval 独立于大表 retention 周期清理 terminal failed head，
+	// 避免一条确定性坏事件长期冻结同账号更高 pts 的在线投递 lane。
+	OutboxPoisonCleanupInterval time.Duration
 	// OutboundPushTimeout 是 best-effort updates 推送等待 outbound 队列接受的最长时间。
 	OutboundPushTimeout time.Duration
 	// SendRateLimit 是账号级发送窗口内允许的消息条数；<=0 表示关闭发送限流。
@@ -182,6 +220,9 @@ type Config struct {
 	// BotAPIUpdateRetention 是 bot_api_updates 投递队列的最大保留期（官方 Bot API 语义 24h）；
 	// 已确认的行另按固定短宽限提前回收（性能审计 H1）。
 	BotAPIUpdateRetention time.Duration
+	// OrphanAuthKeyRetention 是握手已创建、但没有 authorization/temp binding/活跃连接的
+	// auth key 最短保留期。过期后由有界 GC 回收；客户端收到 -404 会重建 key。
+	OrphanAuthKeyRetention time.Duration
 	// RetentionInterval 是 retention worker 的运行间隔。
 	RetentionInterval time.Duration
 	// RetentionBatch 是单次 retention 最多删除的行数。
@@ -323,19 +364,33 @@ func Load() (Config, error) {
 		// AdvertiseIP 当前不影响 help.getConfig——getConfig 返回空 DCOptions，
 		// 客户端使用其写死的 static DC 地址（见 compat/tdesktop/config.go）。
 		// 字段与默认值保留，供未来需要显式下发 DC 地址时使用。
-		AdvertiseIP:       envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
-		RSAKeyPath:        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
-		DC:                envIntOr("TELESRV_DC", 2),
-		DebugAddr:         envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
-		BotAPIAddr:        envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
-		AdminAPIAddr:      envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
-		AdminAPIToken:     envOr("TELESRV_ADMIN_API_TOKEN", ""),
-		PublicBaseURL:     publicBaseURL,
-		PublicLinkWebAddr: envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
-		AdminUIAddr:       envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
-		AdminUIPassword:   envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
-		AdminUIToken:      envOr("TELESRV_ADMIN_UI_TOKEN", ""),
-		AdminSessionKey:   envOr("TELESRV_ADMIN_SESSION_KEY", ""),
+		AdvertiseIP:                          envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
+		RSAKeyPath:                           envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
+		DC:                                   envIntOr("TELESRV_DC", 2),
+		MTProtoMaxConnections:                envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
+		MTProtoMaxConnectionsPerIP:           envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
+		MTProtoMaxConcurrentHandshakes:       envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
+		MTProtoRPCMaxInflight:                envIntOr("TELESRV_MTPROTO_RPC_MAX_INFLIGHT", 32),
+		MTProtoRPCQueueSize:                  envIntOr("TELESRV_MTPROTO_RPC_QUEUE_SIZE", 64),
+		MTProtoRPCTimeout:                    envDurationOr("TELESRV_MTPROTO_RPC_TIMEOUT", 30*time.Second),
+		MTProtoRPCGlobalWorkers:              envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", 256),
+		MTProtoRPCGlobalMaxTasks:             envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", 8192),
+		MTProtoRPCGlobalMaxBytes:             envInt64Or("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", 512<<20),
+		MTProtoInboundFrameGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES", 512<<20),
+		MTProtoOutboundQueueSize:             envIntOr("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", 128),
+		MTProtoOutboundControlQueueSize:      envIntOr("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", 32),
+		MTProtoOutboundTrackedGlobalMaxBytes: envInt64Or("TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES", 512<<20),
+		MTProtoOutboundWriteGlobalMaxBytes:   envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
+		DebugAddr:                            envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
+		BotAPIAddr:                           envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		AdminAPIAddr:                         envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
+		AdminAPIToken:                        envOr("TELESRV_ADMIN_API_TOKEN", ""),
+		PublicBaseURL:                        publicBaseURL,
+		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
+		AdminUIAddr:                          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
+		AdminUIPassword:                      envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
+		AdminUIToken:                         envOr("TELESRV_ADMIN_UI_TOKEN", ""),
+		AdminSessionKey:                      envOr("TELESRV_ADMIN_SESSION_KEY", ""),
 
 		// 用 127.0.0.1 而非 localhost：localhost 在 Windows 上会先解析到 IPv6 ::1，而 Docker
 		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost
@@ -351,6 +406,9 @@ func Load() (Config, error) {
 		DevAuthCode:                   envOr("TELESRV_DEV_AUTH_CODE", "12345"),
 		AuthCodeTTL:                   envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
 		AuthCodeMaxAttempts:           envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
+		AuthCodePhoneRateLimit:        envIntOr("TELESRV_AUTH_CODE_PHONE_RATE_LIMIT", 5),
+		AuthCodeAuthKeyRateLimit:      envIntOr("TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT", 20),
+		AuthCodeRateWindow:            envDurationOr("TELESRV_AUTH_CODE_RATE_WINDOW", 10*time.Minute),
 		LoginEmailEnable:              envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:        envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
@@ -381,17 +439,22 @@ func Load() (Config, error) {
 		AIRateLimit:                   envIntOr("TELESRV_AI_RATE_LIMIT", 20),
 		AIRateWindow:                  envDurationOr("TELESRV_AI_RATE_WINDOW", time.Minute),
 		AIPrivacyLogContent:           envBoolOr("TELESRV_AI_LOG_CONTENT", false),
-		TempKeyResolveCacheMaxEntries: envIntOr("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", 4096),
+		TempKeyResolveCacheMaxEntries: envIntOr("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", 262144),
+		TempKeyResolveCacheTTL:        envDurationOr("TELESRV_TEMP_KEY_CACHE_TTL", 30*time.Minute),
 		ChannelRowCacheMaxEntries:     envIntOr("TELESRV_CHANNEL_ROW_CACHE_MAX", 50000),
 		ChannelMemberCacheMaxEntries:  envIntOr("TELESRV_CHANNEL_MEMBER_CACHE_MAX", 100000),
 		ChannelDialogCacheMaxEntries:  envIntOr("TELESRV_CHANNEL_DIALOG_CACHE_MAX", 100000),
 		ChannelBoostCacheMaxEntries:   envIntOr("TELESRV_CHANNEL_BOOST_CACHE_MAX", 100000),
 		ChannelBoostCacheTTL:          envDurationOr("TELESRV_CHANNEL_BOOST_CACHE_TTL", 10*time.Second),
 
-		OutboxWorkers:          envIntOr("TELESRV_OUTBOX_WORKERS", 1),
-		OutboxBatch:            envIntOr("TELESRV_OUTBOX_BATCH", 100),
-		OutboxInterval:         envDurationOr("TELESRV_OUTBOX_INTERVAL", 200*time.Millisecond),
-		OutboxLeaseTimeout:     envDurationOr("TELESRV_OUTBOX_LEASE_TIMEOUT", 30*time.Second),
+		OutboxWorkers:         envIntOr("TELESRV_OUTBOX_WORKERS", 4),
+		OutboxBatch:           envIntOr("TELESRV_OUTBOX_BATCH", 100),
+		OutboxInterval:        envDurationOr("TELESRV_OUTBOX_INTERVAL", 200*time.Millisecond),
+		OutboxLeaseTimeout:    envDurationOr("TELESRV_OUTBOX_LEASE_TIMEOUT", 30*time.Second),
+		OutboxPoisonRetention: envDurationOr("TELESRV_OUTBOX_POISON_RETENTION", time.Minute),
+		OutboxPoisonCleanupInterval: envDurationOr(
+			"TELESRV_OUTBOX_POISON_CLEANUP_INTERVAL", 15*time.Second,
+		),
 		OutboundPushTimeout:    envDurationOr("TELESRV_OUTBOUND_PUSH_TIMEOUT", 200*time.Millisecond),
 		SendRateLimit:          envIntOr("TELESRV_SEND_RATE_LIMIT", 30),
 		SendRateWindow:         envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
@@ -400,6 +463,7 @@ func Load() (Config, error) {
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),
 		BotAPIUpdateRetention:  envDurationOr("TELESRV_BOT_API_UPDATE_RETENTION", 24*time.Hour),
+		OrphanAuthKeyRetention: envDurationOr("TELESRV_ORPHAN_AUTH_KEY_RETENTION", 24*time.Hour),
 		RetentionInterval:      envDurationOr("TELESRV_RETENTION_INTERVAL", time.Hour),
 		RetentionBatch:         envIntOr("TELESRV_RETENTION_BATCH", 10000),
 		UploadPartTTL:          envDurationOr("TELESRV_UPLOAD_PART_TTL", 24*time.Hour),

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -180,15 +181,9 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 			},
 		},
 	}
-	dup, err := messages.SendPrivateText(ctx, dupReq)
-	if err != nil {
-		t.Fatalf("SendPrivateText duplicate: %v", err)
+	if _, err := messages.SendPrivateText(ctx, dupReq); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("changed-media duplicate err = %v, want ErrMessageRandomIDDuplicate", err)
 	}
-	if !dup.Duplicate || dup.SenderMessage.ID != got.SenderMessage.ID || dup.RecipientMessage.ID != got.RecipientMessage.ID {
-		t.Fatalf("duplicate = %+v, want original boxes", dup)
-	}
-	assertWebViewData("duplicate sender", dup.SenderMessage)
-	assertWebViewData("duplicate recipient", dup.RecipientMessage)
 
 	recipientHistory, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{
 		HasPeer: true,

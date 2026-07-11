@@ -107,15 +107,16 @@ func TestAuthLoginTokenAcceptedByAndroidBindsTargetSession(t *testing.T) {
 	if snap.sessionID != targetSession || snap.userID != scannerUserID || !snap.userResolved {
 		t.Fatalf("target session snapshot = %+v, want session/user/resolved %d/%d/true", snap, targetSession, scannerUserID)
 	}
-	if snap.messageType != proto.MessageFromServer {
-		t.Fatalf("push message type = %v, want MessageFromServer", snap.messageType)
-	}
 	if !sessions.immediatePushSeen() {
 		t.Fatal("login token update was not pushed through the immediate pre-auth path")
 	}
-	short, ok := snap.message.(*tg.UpdateShort)
+	immediateType, immediateMessage := sessions.immediatePushSnapshot()
+	if immediateType != proto.MessageFromServer {
+		t.Fatalf("immediate push message type = %v, want MessageFromServer", immediateType)
+	}
+	short, ok := immediateMessage.(*tg.UpdateShort)
 	if !ok {
-		t.Fatalf("push message = %T, want *tg.UpdateShort", snap.message)
+		t.Fatalf("immediate push message = %T, want *tg.UpdateShort", immediateMessage)
 	}
 	if _, ok := short.Update.(*tg.UpdateLoginToken); !ok {
 		t.Fatalf("pushed update = %T, want *tg.UpdateLoginToken", short.Update)

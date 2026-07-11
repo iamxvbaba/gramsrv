@@ -318,7 +318,6 @@ func (r *Router) sendSuggestedProfilePhotoMessage(ctx context.Context, userID, t
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	photoCopy := photo
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
@@ -333,7 +332,7 @@ func (r *Router) sendSuggestedProfilePhotoMessage(ctx context.Context, userID, t
 			},
 		},
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})

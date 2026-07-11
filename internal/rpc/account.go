@@ -490,8 +490,8 @@ func (r *Router) onAccountVerifyEmail(ctx context.Context, req *tg.AccountVerify
 				SentCode: tgEmailSentCode(p.PhoneCodeHash, domain.MaskEmail(email), len(strings.TrimSpace(code))),
 			}, nil
 		}
-		u, loginMessage, needSignUp, signInErr := r.deps.Auth.SignInWithEmail(ctx, r.authzFromCtx(ctx), p.PhoneNumber, p.PhoneCodeHash, code)
-		authorization, err := r.finishAuthSignIn(ctx, u, loginMessage, needSignUp, signInErr)
+		u, _, needSignUp, signInErr := r.deps.Auth.SignInWithEmail(ctx, r.authzFromCtx(ctx), p.PhoneNumber, p.PhoneCodeHash, code)
+		authorization, err := r.finishAuthSignIn(ctx, u, needSignUp, signInErr)
 		if err != nil {
 			return nil, err
 		}

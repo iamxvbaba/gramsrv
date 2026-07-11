@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"time"
 )
 
@@ -14,8 +16,27 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	if strings.TrimSpace(req.Message) == "" && req.Action == nil && req.Media.IsZero() && req.RichMessage.IsZero() {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	var fingerprint []byte
+	var err error
+	if req.RandomID != 0 {
+		fingerprint, err = store.ChannelSendFingerprint(req)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.IdempotencyFingerprint = fingerprint
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req.RandomID != 0 {
+		if replay, found, replayErr := s.lookupChannelSendReplayLocked(domain.ChannelSendReplayRequest{
+			ChannelID:              req.ChannelID,
+			SenderUserID:           req.UserID,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: fingerprint,
+		}); replayErr != nil || found {
+			return replay, replayErr
+		}
+	}
 	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
@@ -33,23 +54,6 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	}
 	if !canSendChannelMessageWithBoost(channel, member, fromBoostsApplied) {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
-	}
-	if req.RandomID != 0 {
-		if id, ok := s.randomToID[channelRandomKey{channelID: req.ChannelID, userID: req.UserID, randomID: req.RandomID}]; ok {
-			msg, ok := s.findMessageLocked(req.ChannelID, id)
-			if ok {
-				event := s.eventForMessageLocked(req.ChannelID, id)
-				if event.Message.ID != 0 {
-					msg = event.Message
-				}
-				return domain.SendChannelMessageResult{
-					Channel:   channel,
-					Message:   cloneChannelMessage(msg),
-					Event:     event,
-					Duplicate: true,
-				}, nil
-			}
-		}
 	}
 	if wait := channelSlowModeWait(channel, member, req.Date); wait > 0 {
 		return domain.SendChannelMessageResult{}, domain.NewSlowModeWaitError(wait)
@@ -99,7 +103,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 				Message:   cloneChannelMessage(discussionMsg),
 			}
 			s.messages[linked.ID] = append(s.messages[linked.ID], discussionMsg)
-			s.events[linked.ID] = append(s.events[linked.ID], discussionEvent)
+			s.appendChannelEventLocked(discussionEvent)
 			linked.TopMessageID = discussionMsgID
 			linked.Pts = discussionPts
 			s.channels[linked.ID] = linked
@@ -145,6 +149,13 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		Pts:               pts,
 	}
 	msg.Replies = s.channelMessageRepliesLocked(req.UserID, req.ChannelID, msg)
+	var sendSnapshot []byte
+	if req.RandomID != 0 {
+		sendSnapshot, err = store.EncodeChannelSendSnapshot(msg)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+	}
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    req.ChannelID,
 		Type:         domain.ChannelUpdateNewMessage,
@@ -155,7 +166,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		SenderUserID: req.UserID,
 	}
 	s.messages[req.ChannelID] = append(s.messages[req.ChannelID], msg)
-	s.events[req.ChannelID] = append(s.events[req.ChannelID], event)
+	s.appendChannelEventLocked(event)
 	if !channel.Broadcast || channel.Megagroup {
 		mentionTargets := req.MentionUserIDs
 		if msg.ReplyTo != nil && msg.ReplyTo.MessageID > 0 {
@@ -178,7 +189,11 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		})
 	}
 	if req.RandomID != 0 {
-		s.randomToID[channelRandomKey{channelID: req.ChannelID, userID: req.UserID, randomID: req.RandomID}] = msg.ID
+		key := channelRandomKey{channelID: req.ChannelID, userID: req.UserID, randomID: req.RandomID}
+		s.randomToID[key] = msg.ID
+		replayKey := channelMessageReplayKey{channelID: req.ChannelID, messageID: msg.ID}
+		s.sendSnapshots[replayKey] = sendSnapshot
+		s.sendFingerprints[replayKey] = append([]byte(nil), fingerprint...)
 	}
 	channel.TopMessageID = msg.ID
 	channel.Pts = pts
@@ -207,6 +222,85 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		MentionUserIDs:      append([]int64(nil), req.MentionUserIDs...),
 		SkipDeliveryUserIDs: append([]int64(nil), req.SkipDeliveryUserIDs...),
 	}, nil
+}
+
+// LookupChannelSendReplay returns a committed regular-channel or monoforum send receipt without
+// evaluating current membership, write permissions, slow mode or any message allocation path.
+func (s *ChannelStore) LookupChannelSendReplay(_ context.Context, req domain.ChannelSendReplayRequest) (domain.SendChannelMessageResult, bool, error) {
+	if req.ChannelID == 0 || req.SenderUserID == 0 || req.RandomID == 0 {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory channel send replay: invalid scope")
+	}
+	if req.SavedPeer.ID == 0 {
+		if req.SavedPeer.Type != "" {
+			return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory channel send replay: incomplete saved peer scope")
+		}
+	} else if req.SavedPeer.Type != domain.PeerTypeUser {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory channel send replay: invalid saved peer scope")
+	}
+	if err := store.ValidateSendFingerprint(req.IdempotencyFingerprint, "channel send replay"); err != nil {
+		return domain.SendChannelMessageResult{}, false, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lookupChannelSendReplayLocked(req)
+}
+
+func (s *ChannelStore) lookupChannelSendReplayLocked(req domain.ChannelSendReplayRequest) (domain.SendChannelMessageResult, bool, error) {
+	var id int
+	if req.SavedPeer.ID == 0 {
+		var found bool
+		id, found = s.randomToID[channelRandomKey{channelID: req.ChannelID, userID: req.SenderUserID, randomID: req.RandomID}]
+		if !found {
+			return domain.SendChannelMessageResult{}, false, nil
+		}
+	} else {
+		msg, found := s.findMonoforumDuplicateLocked(req.ChannelID, req.SenderUserID, req.SavedPeer, req.RandomID)
+		if !found {
+			return domain.SendChannelMessageResult{}, false, nil
+		}
+		id = msg.ID
+	}
+	replayKey := channelMessageReplayKey{channelID: req.ChannelID, messageID: id}
+	if !store.SameSendFingerprint(s.sendFingerprints[replayKey], req.IdempotencyFingerprint) {
+		return domain.SendChannelMessageResult{}, false, domain.ErrMessageRandomIDDuplicate
+	}
+	first, err := store.DecodeChannelSendSnapshot(s.sendSnapshots[replayKey])
+	if err != nil {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory duplicate channel message snapshot: %w", err)
+	}
+	if first.ID != id || first.ChannelID != req.ChannelID || first.SenderUserID != req.SenderUserID || first.RandomID != req.RandomID || first.SavedPeer != req.SavedPeer {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory duplicate channel message snapshot disagrees with random_id receipt")
+	}
+	replay := first
+	var replayDelete *domain.ChannelUpdateEvent
+	if current, found := s.findMessageLocked(req.ChannelID, id); found && !current.Deleted {
+		replay = cloneChannelMessage(current)
+	} else if receipt := s.deleteReceipts[replayKey]; receipt != nil {
+		cloned := cloneChannelEvent(*receipt)
+		replayDelete = &cloned
+	} else {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory duplicate channel message %d is absent without a durable delete receipt", id)
+	}
+	channel, ok := s.channels[req.ChannelID]
+	if !ok {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory duplicate channel message %d has no channel", id)
+	}
+	event := domain.ChannelUpdateEvent{
+		ChannelID:    first.ChannelID,
+		Type:         domain.ChannelUpdateNewMessage,
+		Pts:          first.Pts,
+		PtsCount:     1,
+		Date:         first.Date,
+		Message:      cloneChannelMessage(replay),
+		SenderUserID: first.SenderUserID,
+	}
+	return domain.SendChannelMessageResult{
+		Channel:           cloneChannel(channel),
+		Message:           cloneChannelMessage(replay),
+		Event:             event,
+		Duplicate:         true,
+		ReplayDeleteEvent: replayDelete,
+	}, true, nil
 }
 
 func channelDeliverySkipSet(ids []int64) map[int64]struct{} {
@@ -267,7 +361,7 @@ func (s *ChannelStore) appendChannelServiceMessageLocked(channelID, senderUserID
 		UserIDs:      append([]int64(nil), action.UserIDs...),
 	}
 	s.messages[channelID] = append(s.messages[channelID], msg)
-	s.events[channelID] = append(s.events[channelID], event)
+	s.appendChannelEventLocked(event)
 	return msg, event
 }
 

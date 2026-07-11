@@ -39,12 +39,16 @@ func (r *Router) onMessagesSendWebViewData(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return nil, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
+	idempotencyFingerprint, err := rpcRequestFingerprint(req)
+	if err != nil {
+		return nil, internalErr()
+	}
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
-		SenderUserID:    userID,
-		RecipientUserID: bot.ID,
-		RandomID:        req.RandomID,
+		SenderUserID:           userID,
+		RecipientUserID:        bot.ID,
+		RandomID:               req.RandomID,
+		IdempotencyFingerprint: idempotencyFingerprint,
 		Media: &domain.MessageMedia{
 			Kind: domain.MessageMediaKindService,
 			ServiceAction: &domain.MessageServiceAction{
@@ -56,16 +60,20 @@ func (r *Router) onMessagesSendWebViewData(ctx context.Context, req *tg.Messages
 			},
 		},
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})
 	if err != nil {
-		return nil, internalErr()
+		return nil, messageSendErr(err)
 	}
-	users := r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
-	chats := r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
-	return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, 0, false, users, chats), nil
+	var users []tg.UserClass
+	var chats []tg.ChatClass
+	if !res.Duplicate {
+		users = r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
+		chats = r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
+	}
+	return tgPrivateSendResultUpdates(res, req.RandomID, false, users, chats), nil
 }
 
 func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.MessagesSendBotRequestedPeerRequest) (tg.UpdatesClass, error) {
@@ -122,7 +130,6 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
 		SenderUserID:    userID,
@@ -139,7 +146,7 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 			},
 		},
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})
@@ -147,9 +154,13 @@ func (r *Router) onMessagesSendBotRequestedPeer(ctx context.Context, req *tg.Mes
 		return nil, internalErr()
 	}
 	_ = r.deps.Bots.DeleteRequestedWebViewButton(ctx, botUser.ID, userID, webAppReqID)
-	users := r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
-	chats := r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
-	return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, 0, false, users, chats), nil
+	var users []tg.UserClass
+	var chats []tg.ChatClass
+	if !res.Duplicate {
+		users = r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
+		chats = r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
+	}
+	return tgPrivateSendResultUpdates(res, res.SenderMessage.RandomID, false, users, chats), nil
 }
 
 func requestedPeerTypeMatches(kind string, peer domain.Peer) bool {

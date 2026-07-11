@@ -13,12 +13,13 @@ import (
 
 // UpdateStateStore 用 PostgreSQL 实现 store.UpdateStateStore。
 type UpdateStateStore struct {
-	q *sqlcgen.Queries
+	q  *sqlcgen.Queries
+	db sqlcgen.DBTX
 }
 
 // NewUpdateStateStore 基于 pgx 连接池（或事务）创建 UpdateStateStore。
 func NewUpdateStateStore(db sqlcgen.DBTX) *UpdateStateStore {
-	return &UpdateStateStore{q: sqlcgen.New(db)}
+	return &UpdateStateStore{q: sqlcgen.New(db), db: db}
 }
 
 func (s *UpdateStateStore) Get(ctx context.Context, id [8]byte, userID int64) (domain.UpdateState, bool, error) {
@@ -50,6 +51,21 @@ func (s *UpdateStateStore) Save(ctx context.Context, id [8]byte, userID int64, s
 		Seq:       int32(st.Seq),
 	}); err != nil {
 		return fmt.Errorf("upsert update state: %w", err)
+	}
+	return nil
+}
+
+func (s *UpdateStateStore) ObserveClientState(ctx context.Context, id [8]byte, userID int64, st domain.UpdateState) error {
+	if st.Pts < 0 {
+		st.Pts = 0
+	}
+	if _, err := s.db.Exec(ctx, `
+INSERT INTO update_states (auth_key_id, user_id, pts, qts, date, seq, observed_pts)
+VALUES ($1, $2, $3, $4, $5, $6, $3)
+ON CONFLICT (auth_key_id, user_id) DO UPDATE SET
+  observed_pts = GREATEST(update_states.observed_pts, EXCLUDED.observed_pts),
+  updated_at = now()`, authKeyIDToInt64(id), userID, st.Pts, st.Qts, st.Date, st.Seq); err != nil {
+		return fmt.Errorf("observe client update state: %w", err)
 	}
 	return nil
 }

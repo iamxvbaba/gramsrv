@@ -358,7 +358,7 @@ func TestSamePortWebSocketTransportRoundTrip(t *testing.T) {
 
 	serverDone := make(chan error, 1)
 	go func() {
-		l := newCompatTransportListener(nil, wsLn)
+		l := newCompatTransportListener(nil, wsLn, newInboundFrameBudget(defaultInboundFrameGlobalMaxBytes))
 		defer func() { _ = l.Close() }()
 
 		conn, err := l.Accept()

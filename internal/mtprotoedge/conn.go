@@ -46,27 +46,53 @@ type Conn struct {
 	outboundStop    chan struct{}
 	outboundDone    chan struct{}
 	outboundClose   sync.Once
+	// outboundEnqueueMu orders producer registration against terminal close. Close
+	// flips closing under this lock before waiting, so no WaitGroup Add can race Wait.
+	outboundEnqueueMu sync.Mutex
+	outboundEnqueueWG sync.WaitGroup
+	outboundClosing   bool
+	// Queue backing is intentionally small and bounded per Conn; control has a separate queue
+	// and strict actor priority. Server-created connections share outboundTrackedBudget.
+	outboundQueueSize        int
+	outboundControlQueueSize int
+	outboundTrackedBudget    *outboundTrackedBudget
+	outboundBudgetOnce       sync.Once
+	// Encoded MTProto service frames and control vectors use independent headroom: pong,
+	// new_session_created, bad_msg and msgs_ack must remain admissible when the body budget is
+	// full. Content-related control frames keep this budget while pending for resend.
+	outboundControlTrackedBudget *outboundTrackedBudget
+	outboundControlBudgetOnce    sync.Once
+	outboundScratchPool          *outboundScratchPool
+	outboundScratchOnce          sync.Once
+	// terminal 表示该 logical Conn 已停止接受新的出站操作。写失败时由
+	// outbound actor 置位并只发停止信号，不能在 actor 内等待自身退出。
+	terminal       atomic.Bool
+	transportClose sync.Once
 
-	rpcQueue   chan inboundRPC
-	rpcStop    chan struct{}
-	rpcCancel  context.CancelFunc
-	rpcClose   sync.Once
-	rpcWG      sync.WaitGroup
-	rpcTimeout time.Duration
+	rpcScheduler *inboundRPCScheduler
+	rpcCancel    context.CancelFunc
+	rpcClose     sync.Once
+	rpcMu        sync.Mutex
+	rpcWG        sync.WaitGroup
+	// rpcReservationWG 跟踪 Copy 前预算到 commit/abort 的短窗口，使 Close 返回时
+	// 全局/单连接预算都已归还或转交给明确的 queued/running task。
+	rpcReservationWG sync.WaitGroup
+	rpcTimeout       time.Duration
+	rpcQueue         []inboundRPC
+	rpcQueueSize     int
+	rpcReserved      int
+	rpcRunning       int
+	rpcReady         bool
+	rpcClosed        bool
 	// inflightRPCBytes 跟踪已入队未完成的 inbound RPC body 总字节，配合 maxInflightRPCBytes
 	// 给 RPC 队列设字节预算（不止限条数），防对抗客户端发大请求撑内存。
 	inflightRPCBytes atomic.Int64
-	// RPC worker 懒启动：首个 RPC 入队时才起 worker（ensureInboundRPCWorkers），
-	// 避免握手后静默 / 纯推送目标连接白白钉住 rpcMaxInflight 个 goroutine。
+	// 单连接只保留并发配额；实际 worker 来自 Server 共享池，避免每连接预留 goroutine。
 	rpcRootCtx     context.Context
 	rpcMaxInflight int
-	rpcWorkersOnce sync.Once
 
 	// sentContentMessages 只由 outbound actor 访问，用于生成 MTProto seq_no。
 	sentContentMessages int32
-	// outboundPlain/outboundWire 只由 outbound actor 访问，用于复用出站加密缓冲。
-	outboundPlain bin.Buffer
-	outboundWire  bin.Buffer
 	// outboundRand 只由 outbound actor 访问：对 cipher 随机源的缓冲预读，
 	// 把每帧 padding 的 getrandom syscall 摊薄成 ~1KiB 一次。
 	outboundRand *bufio.Reader

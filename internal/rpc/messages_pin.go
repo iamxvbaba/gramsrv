@@ -18,7 +18,6 @@ func (r *Router) updatePrivatePinnedMessage(ctx context.Context, userID int64, p
 	if r.deps.Messages == nil {
 		return nil, notImplementedErr()
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.PinPrivateMessage(ctx, userID, domain.PinPrivateMessageRequest{
 		OwnerUserID:     userID,
@@ -28,7 +27,7 @@ func (r *Router) updatePrivatePinnedMessage(ctx context.Context, userID int64, p
 		PmOneside:       req.PmOneside,
 		Silent:          req.Silent,
 		Date:            int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {
@@ -81,7 +80,6 @@ func (r *Router) sendPinServiceMessage(ctx context.Context, userID, peerUserID i
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	return r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
 		SenderUserID:    userID,
@@ -96,7 +94,7 @@ func (r *Router) sendPinServiceMessage(ctx context.Context, userID, peerUserID i
 		// 翻译为对端视角；客户端凭此渲染"X 置顶了「…」"预览。
 		ReplyTo:          &domain.MessageReply{MessageID: pinnedBoxID, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peerUserID}},
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})
@@ -121,7 +119,7 @@ func (r *Router) unpinAllPrivateMessages(ctx context.Context, userID int64, peer
 		OwnerUserID:     userID,
 		Peer:            peer,
 		Date:            int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {

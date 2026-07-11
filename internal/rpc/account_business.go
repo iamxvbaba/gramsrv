@@ -490,7 +490,7 @@ func (r *Router) recordConnectedBusinessPeerSettings(ctx context.Context, userID
 	}
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	event, _, err := r.deps.Updates.RecordPeerSettings(ctx, authKeyID, userID, peer, settings, sessionID)
+	event, _, err := r.deps.Updates.RecordPeerSettings(ctx, authKeyID, userID, peer, settings, rawAuthKeyIDForOrigin(ctx), sessionID)
 	if err != nil {
 		return err
 	}

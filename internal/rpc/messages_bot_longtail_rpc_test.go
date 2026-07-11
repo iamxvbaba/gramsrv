@@ -67,15 +67,22 @@ func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	repeat, err := f.router.onMessagesSendWebViewData(ownerCtx, &tg.MessagesSendWebViewDataRequest{
 		Bot:        inputUser(f.bot),
 		RandomID:   1001,
-		ButtonText: "Open changed",
-		Data:       `{"ok":false}`,
+		ButtonText: "Open",
+		Data:       `{"ok":true}`,
 	})
 	if err != nil {
 		t.Fatalf("repeat send webview data: %v", err)
 	}
-	repeatMsg := repeat.(*tg.Updates).Updates[0].(*tg.UpdateNewMessage).Message.(*tg.MessageService)
-	if repeatMsg.ID != service.ID {
-		t.Fatalf("repeat message id = %d, want original %d", repeatMsg.ID, service.ID)
+	repeatUpdates := repeat.(*tg.Updates).Updates
+	if len(repeatUpdates) != 2 {
+		t.Fatalf("repeat updates len = %d, want immutable mapping + message confirmation", len(repeatUpdates))
+	}
+	mapping, ok := repeatUpdates[0].(*tg.UpdateMessageID)
+	if !ok || mapping.ID != service.ID || mapping.RandomID != 1001 {
+		t.Fatalf("repeat mapping = %+v (%T), want random_id 1001 -> original %d", repeatUpdates[0], repeatUpdates[0], service.ID)
+	}
+	if replayed, ok := repeatUpdates[1].(*tg.UpdateNewMessage); !ok || replayed.Pts <= 0 || replayed.PtsCount != 1 {
+		t.Fatalf("repeat confirmation = %T %+v, want UpdateNewMessage", repeatUpdates[1], repeatUpdates[1])
 	}
 	botHistory, err = f.router.deps.Messages.GetHistory(ctx, f.bot.ID, domain.MessageFilter{
 		HasPeer: true,
@@ -84,6 +91,14 @@ func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	})
 	if err != nil || len(botHistory.Messages) != 1 {
 		t.Fatalf("bot history after repeat = %+v err=%v, want still one service message", botHistory, err)
+	}
+	if _, err := f.router.onMessagesSendWebViewData(ownerCtx, &tg.MessagesSendWebViewDataRequest{
+		Bot:        inputUser(f.bot),
+		RandomID:   1001,
+		ButtonText: "Open changed",
+		Data:       `{"ok":false}`,
+	}); !tgerr.Is(err, "RANDOM_ID_DUPLICATE") {
+		t.Fatalf("conflicting webview random_id err = %v, want RANDOM_ID_DUPLICATE", err)
 	}
 
 	if _, err := f.router.onMessagesSendWebViewData(ownerCtx, &tg.MessagesSendWebViewDataRequest{

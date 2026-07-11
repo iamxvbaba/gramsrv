@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"io"
 	stddraw "image/draw"
 	_ "image/jpeg" // 注册 jpeg DecodeConfig，用于读取上传头像/图片尺寸
 	"image/png"
+	"io"
 	"math"
 	"strings"
 	"time"
@@ -48,14 +48,40 @@ func (s *Service) UploadProfilePhotoKind(ctx context.Context, ownerType domain.P
 
 // CreatePhotoFromUpload 把已上传文件组装成 Photo（不绑定 profile_photos），用于频道头像 / 图片消息。
 func (s *Service) CreatePhotoFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error) {
-	data, err := s.assembleUpload(ctx, file.OwnerUserID, file.FileID, file.Parts)
+	intentHash, err := uploadedMediaIntentHash(domain.UploadedMediaPhoto, file, nil)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if photo, found, err := s.replayUploadedPhoto(ctx, file, intentHash); err != nil || found {
+		return photo, err
+	}
+	data, err := s.readUploadBytes(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
 		return domain.Photo{}, err
 	}
 	if len(data) == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
-	return s.createPhoto(ctx, data, photoSizeSpecsForMessage(data))
+	photo, err := s.createPhoto(ctx, data, photoSizeSpecsForMessage(data))
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	receipt, err := s.commitUploadedMediaReceipt(ctx, file, domain.UploadedMediaPhoto, intentHash, photo.ID)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if receipt.MediaID != photo.ID {
+		winner, found, err := s.media.GetPhoto(ctx, receipt.MediaID)
+		if err != nil {
+			return domain.Photo{}, err
+		}
+		if !found {
+			return domain.Photo{}, fmt.Errorf("concurrent upload receipt references missing photo %d", receipt.MediaID)
+		}
+		photo = winner
+	}
+	s.cleanupMaterializedUpload(ctx, file, "photo materialized")
+	return photo, nil
 }
 
 // CreatePhotoFromBytes stores already-fetched image bytes as a message Photo.
@@ -202,6 +228,13 @@ func validateAvatarMarkupSize(size domain.PhotoSize) error {
 
 // CreateDocumentFromUpload 把已上传文件组装成 Document（文件/视频/音频/gif/贴纸消息），落 blob + documents。
 func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error) {
+	intentHash, err := uploadedMediaIntentHash(domain.UploadedMediaDocument, file, &spec)
+	if err != nil {
+		return domain.Document{}, err
+	}
+	if doc, found, err := s.replayUploadedDocument(ctx, file, intentHash); err != nil || found {
+		return doc, err
+	}
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
 		return domain.Document{}, err
@@ -234,11 +267,13 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 		DCID:          s.dc,
 		Attributes:    spec.Attributes,
 	}
+	thumbMaterialized := false
 	if spec.Thumb != nil {
-		thumbData, err := s.assembleUpload(ctx, spec.Thumb.OwnerUserID, spec.Thumb.FileID, spec.Thumb.Parts)
+		thumbData, err := s.readUploadBytes(ctx, spec.Thumb.OwnerUserID, spec.Thumb.FileID, spec.Thumb.Parts)
 		if err == nil && len(thumbData) > 0 {
 			if thumb, err := s.putDocumentThumb(ctx, docID, thumbData); err == nil {
 				doc.Thumbs = []domain.PhotoSize{thumb}
+				thumbMaterialized = true
 			}
 		}
 	}
@@ -250,12 +285,23 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	if err := s.media.PutDocument(ctx, doc); err != nil {
 		return domain.Document{}, err
 	}
-	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
-		s.log.Warn("cleanup assembled document upload parts failed",
-			zap.Int64("owner_user_id", file.OwnerUserID),
-			zap.Int64("file_id", file.FileID),
-			zap.Int64("document_id", docID),
-			zap.Error(err))
+	receipt, err := s.commitUploadedMediaReceipt(ctx, file, domain.UploadedMediaDocument, intentHash, doc.ID)
+	if err != nil {
+		return domain.Document{}, err
+	}
+	if receipt.MediaID != doc.ID {
+		winner, found, err := s.media.GetDocument(ctx, receipt.MediaID)
+		if err != nil {
+			return domain.Document{}, err
+		}
+		if !found {
+			return domain.Document{}, fmt.Errorf("concurrent upload receipt references missing document %d", receipt.MediaID)
+		}
+		doc = winner
+	}
+	s.cleanupMaterializedUpload(ctx, file, "document materialized")
+	if spec.Thumb != nil && thumbMaterialized {
+		s.cleanupMaterializedUpload(ctx, *spec.Thumb, "document thumbnail materialized")
 	}
 	return doc, nil
 }
@@ -277,6 +323,7 @@ var faststartVideoMimes = map[string]bool{
 //     此时只发生几次 16 字节读，不读整段媒体。
 //  2. 仅 moov 在末尾时才重写；且优先走流式（仅 ftyp+moov 进内存，mdat 大块分块流式拼接），
 //     不把整段视频 2× 驻留内存。moov 非末尾的罕见排布回退到全量重排。
+//
 // 任何不适用/失败都返回原 body，绝不让上传失败或损坏数据。
 func (s *Service) maybeFaststartVideoBlob(ctx context.Context, mimeType string, body assembledUploadBlob) assembledUploadBlob {
 	if !faststartVideoMimes[strings.ToLower(strings.TrimSpace(mimeType))] {

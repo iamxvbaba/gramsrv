@@ -31,27 +31,42 @@ import (
 // matches this server DC.
 func (s *Server) runServerExchange(ctx context.Context, conn transport.Conn) (exchange.ServerExchangeResult, error) {
 	ex := serverExchangeCompat{
-		conn:    conn,
-		clock:   s.clock,
-		rand:    s.rand,
-		timeout: exchange.DefaultTimeout,
-		key:     s.key,
-		dc:      s.dc,
-		log:     s.log.Named("exchange"),
-		rng:     compatServerRNG{rand: s.rand},
+		conn:      conn,
+		clock:     s.clock,
+		rand:      s.rand,
+		timeout:   exchange.DefaultTimeout,
+		key:       s.key,
+		dc:        s.dc,
+		log:       s.log.Named("exchange"),
+		rng:       compatServerRNG{rand: s.rand},
+		commitKey: s.commitExchangeAuthKey,
 	}
 	return ex.run(ctx)
 }
 
+// commitExchangeAuthKey is the durable commit point of the server exchange.
+// It must complete before DhGenOk is put on the wire: after that response the
+// client is allowed to immediately use the new key, possibly on another TCP
+// connection. Persisting after the response creates a split-brain window when
+// storage fails or the process exits between those two operations.
+func (s *Server) commitExchangeAuthKey(ctx context.Context, result exchange.ServerExchangeResult) error {
+	createdAt := s.clock.Now().Unix()
+	if err := s.authKeys.Save(ctx, authKeyData(result.Key, result.ServerSalt, createdAt)); err != nil {
+		return fmt.Errorf("persist auth key before DhGenOk: %w", err)
+	}
+	return nil
+}
+
 type serverExchangeCompat struct {
-	conn    transport.Conn
-	clock   clock.Clock
-	rand    io.Reader
-	timeout time.Duration
-	key     exchange.PrivateKey
-	dc      int
-	log     *zap.Logger
-	rng     compatServerRNG
+	conn      transport.Conn
+	clock     clock.Clock
+	rand      io.Reader
+	timeout   time.Duration
+	key       exchange.PrivateKey
+	dc        int
+	log       *zap.Logger
+	rng       compatServerRNG
+	commitKey func(context.Context, exchange.ServerExchangeResult) error
 }
 
 func (s serverExchangeCompat) run(ctx context.Context) (exchange.ServerExchangeResult, error) {
@@ -193,6 +208,21 @@ SendResPQ:
 		return exchange.ServerExchangeResult{}, wrapKeyNotFound(err)
 	}
 
+	serverResult := exchange.ServerExchangeResult{
+		Key:        authKey.WithID(),
+		ServerSalt: crypto.ServerSalt(innerData.NewNonce, serverNonce),
+	}
+	// DhGenOk is the externally visible commit acknowledgement. Require a
+	// durable key commit before sending it, rather than allowing callers to
+	// persist after run returns. A nil hook is rejected so a future call site
+	// cannot accidentally reintroduce the unsafe ordering.
+	if s.commitKey == nil {
+		return exchange.ServerExchangeResult{}, gofaster.New("auth key commit hook is required before DhGenOk")
+	}
+	if err := s.commitKey(ctx, serverResult); err != nil {
+		return exchange.ServerExchangeResult{}, err
+	}
+
 	s.log.Debug("Sending DhGenOk")
 	if err := s.writeUnencrypted(ctx, b, &mt.DhGenOk{
 		Nonce:         req.Nonce,
@@ -202,11 +232,7 @@ SendResPQ:
 		return exchange.ServerExchangeResult{}, err
 	}
 
-	serverSalt := crypto.ServerSalt(innerData.NewNonce, serverNonce)
-	return exchange.ServerExchangeResult{
-		Key:        authKey.WithID(),
-		ServerSalt: serverSalt,
-	}, nil
+	return serverResult, nil
 }
 
 func (s serverExchangeCompat) validatePQInnerDataDC(d mt.PQInnerDataClass) error {
@@ -278,9 +304,14 @@ func (s serverExchangeCompat) readUnencrypted(ctx context.Context, b *bin.Buffer
 
 	var keyID [8]byte
 	if err := b.PeekN(keyID[:], len(keyID)); err == nil && keyID != ([8]byte{}) {
+		// The exchange aborts immediately on an encrypted frame, so transfer the received backing
+		// to the replay error instead of making an unbudgeted near-transport-limit copy. serveConn
+		// keeps the existing frame reservation until replay dispatch has finished.
+		frame := b.Buf
+		b.Buf = nil
 		return &exchange.UnexpectedEncryptedError{
 			AuthKeyID: keyID,
-			Frame:     append([]byte(nil), b.Buf...),
+			Frame:     frame,
 		}
 	}
 

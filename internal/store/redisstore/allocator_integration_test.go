@@ -158,4 +158,21 @@ func TestRedisRateLimiterWindow(t *testing.T) {
 	if allowed || retry <= 0 {
 		t.Fatalf("AllowN second allowed=%v retry=%d, want limited with retry", allowed, retry)
 	}
+
+	// Heal a counter left without TTL by an older split INCRBY→EXPIRE writer.
+	// Without this branch one transient crash could permanently deny login-code
+	// issuance for the affected phone/auth-key limiter dimension.
+	orphanKey := key + ":orphan-no-ttl"
+	redisOrphanKey := rateLimitKey(orphanKey)
+	t.Cleanup(func() { _ = c.Del(ctx, redisOrphanKey).Err() })
+	if err := c.Set(ctx, redisOrphanKey, 100, 0).Err(); err != nil {
+		t.Fatalf("seed no-TTL counter: %v", err)
+	}
+	allowed, retry, err = limiter.Allow(ctx, orphanKey, 1, 5*time.Second)
+	if err != nil || allowed || retry <= 0 || retry > 5 {
+		t.Fatalf("heal no-TTL counter allowed=%v retry=%d err=%v", allowed, retry, err)
+	}
+	if ttl, err := c.PTTL(ctx, redisOrphanKey).Result(); err != nil || ttl <= 0 || ttl > 5*time.Second {
+		t.Fatalf("healed counter TTL=%v err=%v, want (0,5s]", ttl, err)
+	}
 }

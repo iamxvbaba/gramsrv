@@ -174,6 +174,7 @@ type AuthKey struct {
 	SystemVersion string
 	ApiID         int32
 	AppVersion    string
+	LastUsedAt    pgtype.Timestamptz
 }
 
 type Authorization struct {
@@ -621,6 +622,11 @@ type ChannelMessage struct {
 	GroupedID           int64
 	SavedPeerType       string
 	SavedPeerID         int64
+	SendSnapshot        []byte
+	DeletePts           int32
+	DeletePtsCount      int32
+	DeleteDate          int32
+	DeleteMessageIds    []byte
 }
 
 type ChannelMessageMedium struct {
@@ -687,6 +693,14 @@ type ChannelUnreadMentionIndex struct {
 	MessageID int32
 	UserID    int64
 	CreatedAt pgtype.Timestamptz
+}
+
+type ChannelUpdateCheckpoint struct {
+	ChannelID          int64
+	RetainedThroughPts int32
+	LatestEventDate    int32
+	LatestPts          int32
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type ChannelUpdateEvent struct {
@@ -833,6 +847,16 @@ type DispatchOutbox struct {
 	LastError        string
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type DispatchOutboxUserHead struct {
+	TargetUserID  int64
+	HeadID        int64
+	HeadPts       int32
+	LogicalShard  *int16
+	Status        string
+	NextAttemptAt pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
 }
 
 type Document struct {
@@ -1160,38 +1184,49 @@ type PrivateMediaCategoryCount struct {
 }
 
 type PrivateMessage struct {
-	ID              int64
-	SenderUserID    int64
-	RecipientUserID int64
-	RandomID        int64
-	MessageDate     int32
-	Body            string
-	Entities        []byte
-	CreatedAt       pgtype.Timestamptz
-	EditDate        int32
-	Silent          bool
-	Noforwards      bool
-	ReplyToMsgID    int32
-	ReplyToPeerType string
-	ReplyToPeerID   int64
-	ReplyToTopID    int32
-	QuoteText       string
-	QuoteEntities   []byte
-	QuoteOffset     int32
-	FwdFromPeerType string
-	FwdFromPeerID   int64
-	FwdFromName     string
-	FwdDate         int32
-	Media           []byte
-	TtlPeriod       int32
-	ExpiresAt       int32
-	ReplyMarkup     []byte
-	ViaBotID        int64
-	RichMessage     []byte
-	GroupedID       int64
-	ReplyToStoryID  int32
-	Effect          int64
-	HideEdited      bool
+	ID                     int64
+	SenderUserID           int64
+	RecipientUserID        int64
+	RandomID               int64
+	MessageDate            int32
+	Body                   string
+	Entities               []byte
+	CreatedAt              pgtype.Timestamptz
+	EditDate               int32
+	Silent                 bool
+	Noforwards             bool
+	ReplyToMsgID           int32
+	ReplyToPeerType        string
+	ReplyToPeerID          int64
+	ReplyToTopID           int32
+	QuoteText              string
+	QuoteEntities          []byte
+	QuoteOffset            int32
+	FwdFromPeerType        string
+	FwdFromPeerID          int64
+	FwdFromName            string
+	FwdDate                int32
+	Media                  []byte
+	TtlPeriod              int32
+	ExpiresAt              int32
+	ReplyMarkup            []byte
+	ViaBotID               int64
+	RichMessage            []byte
+	GroupedID              int64
+	ReplyToStoryID         int32
+	Effect                 int64
+	HideEdited             bool
+	RequestFingerprint     []byte
+	RecipientDelivered     bool
+	SenderBoxID            int32
+	SenderPts              int32
+	RecipientBoxID         int32
+	RecipientPts           int32
+	SenderSnapshot         []byte
+	SenderDeletePts        int32
+	SenderDeletePtsCount   int32
+	SenderDeleteDate       int32
+	SenderDeleteMessageIds []byte
 }
 
 type PrivateMessageReaction struct {
@@ -1482,13 +1517,14 @@ type ThemeUserInstall struct {
 }
 
 type UpdateState struct {
-	AuthKeyID int64
-	Pts       int32
-	Qts       int32
-	Date      int32
-	Seq       int32
-	UpdatedAt pgtype.Timestamptz
-	UserID    int64
+	AuthKeyID   int64
+	Pts         int32
+	Qts         int32
+	Date        int32
+	Seq         int32
+	UpdatedAt   pgtype.Timestamptz
+	UserID      int64
+	ObservedPts int32
 }
 
 type UploadPart struct {
@@ -1502,6 +1538,15 @@ type UploadPart struct {
 	ObjectKey   string
 	Size        int64
 	Sha256      []byte
+}
+
+type UploadedMediaReceipt struct {
+	OwnerUserID int64
+	FileID      int64
+	IntentHash  []byte
+	MediaKind   string
+	MediaID     int64
+	CreatedAt   pgtype.Timestamptz
 }
 
 type User struct {
@@ -1635,6 +1680,13 @@ type UserUpdateEvent struct {
 	StoryPayload      []byte
 	ReactionPayload   []byte
 	EventPhone        string
+}
+
+type UserUpdateRetention struct {
+	UserID              int64
+	RetainedThroughPts  int32
+	RetainedThroughDate int32
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type UserUpdateWatermark struct {

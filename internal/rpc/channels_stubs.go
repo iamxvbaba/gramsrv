@@ -264,7 +264,7 @@ func (r *Router) recordChannelAvailableMessages(ctx context.Context, userID, cha
 	}
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	recorded, _, err := r.deps.Updates.RecordChannelAvailableMessages(ctx, authKeyID, userID, channelID, availableMinID, sessionID)
+	recorded, _, err := r.deps.Updates.RecordChannelAvailableMessages(ctx, authKeyID, userID, channelID, availableMinID, rawAuthKeyIDForOrigin(ctx), sessionID)
 	if err != nil {
 		return event
 	}
@@ -300,7 +300,7 @@ func (r *Router) recordChannelReadInbox(ctx context.Context, userID int64, read 
 			StillUnreadCount: read.StillUnreadCount,
 			ChannelPts:       read.Pts,
 			Changed:          read.Changed,
-		}, sessionID)
+		}, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return domain.UpdateEvent{}, internalErr()
 		}
@@ -673,6 +673,8 @@ func channelInvalidErr(err error) error {
 		return tgerr400("USER_ALREADY_PARTICIPANT")
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()
+	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):
+		return randomIDDuplicateErr()
 	default:
 		if seconds, ok := domain.SlowModeWaitSeconds(err); ok {
 			return tgerr.New(420, fmt.Sprintf("SLOWMODE_WAIT_%d", seconds))

@@ -195,6 +195,29 @@ func (s *MessageStore) finishDeleteMessagesTx(ctx context.Context, db sqlcgen.DB
 			Date:       date,
 			MessageIDs: ids,
 		}
+		deleteIDsJSON, err := encodeEventMessageIDs(event.MessageIDs)
+		if err != nil {
+			return res, fmt.Errorf("encode sender delete receipt ids: %w", err)
+		}
+		senderPrivateIDs := make([]int64, 0, len(rows))
+		for _, row := range rows {
+			if row.ownerUserID == userID && row.messageSenderID == userID && row.privateMessageID != 0 {
+				senderPrivateIDs = append(senderPrivateIDs, row.privateMessageID)
+			}
+		}
+		if len(senderPrivateIDs) > 0 {
+			if _, err := db.Exec(ctx, `
+UPDATE private_messages
+SET sender_delete_pts = $3,
+    sender_delete_pts_count = $4,
+    sender_delete_date = $5,
+    sender_delete_message_ids = $6::jsonb
+WHERE sender_user_id = $1
+  AND id = ANY($2::bigint[])
+  AND sender_box_id > 0`, userID, senderPrivateIDs, event.Pts, event.PtsCount, event.Date, deleteIDsJSON); err != nil {
+				return res, fmt.Errorf("save sender delete replay receipt: %w", err)
+			}
+		}
 		if err := appendDeleteMessagesEvent(ctx, q, event); err != nil {
 			return res, err
 		}

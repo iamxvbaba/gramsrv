@@ -177,7 +177,7 @@ func (r *Router) onMessagesToggleSavedDialogPin(ctx context.Context, req *tg.Mes
 		if r.deps.Updates != nil {
 			authKeyID, _ := AuthKeyIDFrom(ctx)
 			sessionID, _ := SessionIDFrom(ctx)
-			event, state, err := r.deps.Updates.RecordSavedDialogPinned(ctx, authKeyID, userID, peers[0], pinned, sessionID)
+			event, state, err := r.deps.Updates.RecordSavedDialogPinned(ctx, authKeyID, userID, peers[0], pinned, rawAuthKeyIDForOrigin(ctx), sessionID)
 			if err != nil {
 				return false, internalErr()
 			}
@@ -223,7 +223,7 @@ func (r *Router) onMessagesReorderPinnedSavedDialogs(ctx context.Context, req *t
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, state, err := r.deps.Updates.RecordPinnedSavedDialogs(ctx, authKeyID, userID, peers, sessionID)
+		event, state, err := r.deps.Updates.RecordPinnedSavedDialogs(ctx, authKeyID, userID, peers, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}

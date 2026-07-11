@@ -27,6 +27,10 @@ type newMessageEventFinder interface {
 	FindNewMessageEvent(ctx context.Context, userID int64, messageBoxID int) (domain.UpdateEvent, bool, error)
 }
 
+type userUpdateRetentionCheckpointStore interface {
+	UserUpdateRetentionCheckpoint(ctx context.Context, authKeyID [8]byte, userID int64) (pts, date int, ok bool, err error)
+}
+
 // ServiceOption 调整 updates 服务的运行时依赖。
 type ServiceOption func(*Service)
 
@@ -146,6 +150,11 @@ func (s *Service) AcknowledgeCurrentState(ctx context.Context, authKeyID [8]byte
 	if err := s.saveConfirmedState(ctx, authKeyID, userID, st); err != nil {
 		return domain.UpdateState{}, err
 	}
+	// getState 明确建立“从当前快照开始同步”的 baseline；即使响应丢失，客户端也会
+	// 重试 getState/重新拉 snapshot，而不会依赖 baseline 之前的 durable event。
+	if err := s.observeClientState(ctx, authKeyID, userID, st); err != nil {
+		return domain.UpdateState{}, err
+	}
 	return st, nil
 }
 
@@ -162,6 +171,27 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	if err != nil {
 		return domain.UpdateDifference{}, err
 	}
+	// 只把客户端在本次请求中实际带回的 cursor 记为 observed。绝不能把本次将要
+	// 返回的 State 当确认：响应可能在 socket/进程故障中丢失。恶意/损坏客户端带来的
+	// 超前 pts 钳到账号当前连续水位，避免把 retention 安全边界推过 durable truth。
+	observed := from
+	if observed.Pts < 0 {
+		observed.Pts = 0
+	}
+	if observed.Pts > st.Pts {
+		observed.Pts = st.Pts
+	}
+	if err := s.observeClientState(ctx, authKeyID, userID, observed); err != nil {
+		return domain.UpdateDifference{}, err
+	}
+	// TDesktop 不支持账号级 updates.differenceTooLong。retention 只能删除所有授权
+	// 设备都已确认的共同前缀；当前设备若仍带更旧 pts，用一个空的普通
+	// differenceSlice 把 IntermediateState 推进到已确认 checkpoint，再从 live tail 续拉。
+	if checkpoint, found, err := s.retainedPrefixCheckpoint(ctx, authKeyID, userID, from, st); err != nil {
+		return domain.UpdateDifference{}, err
+	} else if found {
+		return checkpoint, nil
+	}
 	if s.events == nil || from.Pts >= st.Pts {
 		if from.Date != 0 {
 			st.Date = from.Date
@@ -176,6 +206,17 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 		return domain.UpdateDifference{}, err
 	}
 	contiguous, gapEvent, expectedPts := contiguousPrefixAndGap(events, from.Pts)
+	// Retention may advance after the pre-read checkpoint probe and before ListAfter obtains its
+	// statement snapshot. If it removed the whole requested prefix, the read is empty or starts at a
+	// gap. Re-read the checkpoint before returning a non-advancing empty difference; otherwise a
+	// client can believe synchronization completed while retaining a cursor below deleted history.
+	if len(contiguous) == 0 && from.Pts < st.Pts {
+		if checkpoint, found, err := s.retainedPrefixCheckpoint(ctx, authKeyID, userID, from, st); err != nil {
+			return domain.UpdateDifference{}, err
+		} else if found {
+			return checkpoint, nil
+		}
+	}
 	last := from.Pts
 	if len(contiguous) > 0 {
 		last = contiguous[len(contiguous)-1].Pts
@@ -215,6 +256,32 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	}, nil
 }
 
+func (s *Service) retainedPrefixCheckpoint(ctx context.Context, authKeyID [8]byte, userID int64, from, current domain.UpdateState) (domain.UpdateDifference, bool, error) {
+	checkpoints, ok := s.events.(userUpdateRetentionCheckpointStore)
+	if !ok {
+		return domain.UpdateDifference{}, false, nil
+	}
+	pts, date, found, err := checkpoints.UserUpdateRetentionCheckpoint(ctx, authKeyID, userID)
+	if err != nil {
+		return domain.UpdateDifference{}, false, err
+	}
+	if !found || from.Pts >= pts {
+		return domain.UpdateDifference{}, false, nil
+	}
+	checkpoint := from
+	checkpoint.Pts = pts
+	checkpoint.Seq = 0
+	if date > 0 {
+		checkpoint.Date = date
+	} else if checkpoint.Date == 0 {
+		checkpoint.Date = current.Date
+	}
+	if err := s.saveConfirmedState(ctx, authKeyID, userID, checkpoint); err != nil {
+		return domain.UpdateDifference{}, false, err
+	}
+	return domain.UpdateDifference{State: checkpoint, Partial: true}, true, nil
+}
+
 func (s *Service) currentState(ctx context.Context, userID int64) (domain.UpdateState, error) {
 	current, err := s.currentPts(ctx, userID)
 	if err != nil {
@@ -233,6 +300,14 @@ func (s *Service) saveConfirmedState(ctx context.Context, authKeyID [8]byte, use
 	}
 	st.Seq = 0
 	return s.states.Save(ctx, authKeyID, userID, st)
+}
+
+func (s *Service) observeClientState(ctx context.Context, authKeyID [8]byte, userID int64, st domain.UpdateState) error {
+	if s.states == nil {
+		return nil
+	}
+	st.Seq = 0
+	return s.states.ObserveClientState(ctx, authKeyID, userID, st)
 }
 
 // contiguousPrefix 返回从 from 起 pts 严格连续（from+1, from+2, ...）的事件前缀。
@@ -287,7 +362,7 @@ func (s *Service) RecordNewMessage(ctx context.Context, authKeyID [8]byte, userI
 	if date == 0 {
 		date = int(time.Now().Unix())
 	}
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, authKeyID, [8]byte{}, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventNewMessage,
 		Date:     date,
 		Message:  msg,
@@ -318,7 +393,7 @@ func (s *Service) PublishNewMessage(ctx context.Context, userID int64, msg domai
 	if date == 0 {
 		date = int(time.Now().Unix())
 	}
-	return s.recordEventCore(ctx, [8]byte{}, userID, domain.UpdateEvent{
+	return s.recordEventCore(ctx, [8]byte{}, [8]byte{}, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventNewMessage,
 		Date:     date,
 		Message:  msg,
@@ -369,11 +444,11 @@ func (s *Service) RecordMessagePoll(ctx context.Context, authKeyID [8]byte, user
 }
 
 // RecordStory records a story snapshot change for offline difference replay.
-func (s *Service) RecordStory(ctx context.Context, authKeyID [8]byte, userID int64, story domain.Story, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordStory(ctx context.Context, stateAuthKeyID [8]byte, userID int64, story domain.Story, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 && story.Owner.Type == domain.PeerTypeUser {
 		userID = story.Owner.ID
 	}
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventStory,
 		Date:     story.Date,
 		Peer:     story.Owner,
@@ -389,7 +464,7 @@ func (s *Service) RecordStoryFanout(ctx context.Context, userID int64, story dom
 	if userID == 0 {
 		return domain.UpdateEvent{}, domain.UpdateState{}, domain.ErrStoryPeerInvalid
 	}
-	return s.recordEventCore(ctx, [8]byte{}, userID, domain.UpdateEvent{
+	return s.recordEventCore(ctx, [8]byte{}, [8]byte{}, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventStory,
 		Date:     story.Date,
 		Peer:     story.Owner,
@@ -399,11 +474,11 @@ func (s *Service) RecordStoryFanout(ctx context.Context, userID int64, story dom
 }
 
 // RecordReadStories records a read boundary update for multi-device sync.
-func (s *Service) RecordReadStories(ctx context.Context, authKeyID [8]byte, userID int64, read domain.StoryReadResult, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordReadStories(ctx context.Context, stateAuthKeyID [8]byte, userID int64, read domain.StoryReadResult, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = read.ViewerID
 	}
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventReadStories,
 		Date:     read.Date,
 		Peer:     read.Peer,
@@ -413,11 +488,11 @@ func (s *Service) RecordReadStories(ctx context.Context, authKeyID [8]byte, user
 }
 
 // RecordSentStoryReaction records the current user's story reaction for multi-device sync.
-func (s *Service) RecordSentStoryReaction(ctx context.Context, authKeyID [8]byte, userID int64, reaction domain.StoryReactionResult, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordSentStoryReaction(ctx context.Context, stateAuthKeyID [8]byte, userID int64, reaction domain.StoryReactionResult, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = reaction.ViewerID
 	}
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventSentStoryReaction,
 		Date:     reaction.Date,
 		Peer:     reaction.Peer,
@@ -432,7 +507,7 @@ func (s *Service) RecordSentStoryReaction(ctx context.Context, authKeyID [8]byte
 // sent by another user. It does not advance any owner device confirmation state:
 // the owner did not initiate the RPC, but online outbox and offline difference
 // must still see the durable event.
-func (s *Service) RecordNewStoryReaction(ctx context.Context, authKeyID [8]byte, ownerUserID int64, reaction domain.StoryReactionResult, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordNewStoryReaction(ctx context.Context, stateAuthKeyID [8]byte, ownerUserID int64, reaction domain.StoryReactionResult, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if ownerUserID == 0 && reaction.Story.Owner.Type == domain.PeerTypeUser {
 		ownerUserID = reaction.Story.Owner.ID
 	}
@@ -442,7 +517,7 @@ func (s *Service) RecordNewStoryReaction(ctx context.Context, authKeyID [8]byte,
 	if ownerUserID == 0 || reaction.ViewerID == 0 || reaction.Reaction == nil {
 		return domain.UpdateEvent{}, domain.UpdateState{}, domain.ErrStoryPeerInvalid
 	}
-	return s.recordEventCore(ctx, authKeyID, ownerUserID, domain.UpdateEvent{
+	return s.recordEventCore(ctx, stateAuthKeyID, excludeAuthKeyID, ownerUserID, domain.UpdateEvent{
 		Type:     domain.UpdateEventNewStoryReaction,
 		Date:     reaction.Date,
 		Peer:     domain.Peer{Type: domain.PeerTypeUser, ID: reaction.ViewerID},
@@ -456,7 +531,7 @@ func (s *Service) RecordNewStoryReaction(ctx context.Context, authKeyID [8]byte,
 // RecordQuickReplyMutation records account-local quick reply state changes for
 // multi-device sync. Quick-reply TL updates do not carry pts, so outbox appends
 // auxiliary pts bookkeeping just like other account settings events.
-func (s *Service) RecordQuickReplyMutation(ctx context.Context, authKeyID [8]byte, userID int64, mutation domain.QuickReplyMutation, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordQuickReplyMutation(ctx context.Context, stateAuthKeyID [8]byte, userID int64, mutation domain.QuickReplyMutation, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = mutation.List.OwnerUserID
 	}
@@ -481,16 +556,16 @@ func (s *Service) RecordQuickReplyMutation(ctx context.Context, authKeyID [8]byt
 	default:
 		event.Type = domain.UpdateEventQuickReplies
 	}
-	return s.recordEvent(ctx, authKeyID, userID, event, true, excludeSessionID)
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, event, true, excludeSessionID)
 }
 
 // RecordReadHistory 推进 update 状态并追加一条 read_history_inbox 事件。
-func (s *Service) RecordReadHistory(ctx context.Context, authKeyID [8]byte, userID int64, read domain.ReadHistoryResult, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordReadHistory(ctx context.Context, stateAuthKeyID [8]byte, userID int64, read domain.ReadHistoryResult, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = read.OwnerUserID
 	}
 	date := int(time.Now().Unix())
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:             domain.UpdateEventReadHistoryInbox,
 		Date:             date,
 		Peer:             read.Peer,
@@ -503,8 +578,8 @@ func (s *Service) RecordReadHistory(ctx context.Context, authKeyID [8]byte, user
 
 // RecordChannelState 记录当前账号与某频道成员关系变化（leave/kick），
 // 离线设备经 difference 收到 updateChannel 后重拉 channel 状态。
-func (s *Service) RecordChannelState(ctx context.Context, authKeyID [8]byte, userID, channelID int64, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordChannelState(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventChannelState,
 		Peer:     domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
 		PtsCount: 1,
@@ -512,8 +587,8 @@ func (s *Service) RecordChannelState(ctx context.Context, authKeyID [8]byte, use
 }
 
 // RecordContactsReset 记录通讯录视角变化，供离线设备通过 updates.getDifference 触发重拉。
-func (s *Service) RecordContactsReset(ctx context.Context, authKeyID [8]byte, userID int64, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordContactsReset(ctx context.Context, stateAuthKeyID [8]byte, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventContactsReset,
 		PtsCount: 1,
 	}, true, excludeSessionID)
@@ -522,8 +597,8 @@ func (s *Service) RecordContactsReset(ctx context.Context, authKeyID [8]byte, us
 // RecordDraftMessage 记录某会话云草稿变化（保存/清空都是同一事件——草稿是绝对
 // 状态，重放时按 peer 重载当前值）。updateDraftMessage 无 pts 字段，走 LacksWirePts
 // aux 簿记；topMsgID 是 forum 话题草稿键（复用 MaxID 列持久化）。
-func (s *Service) RecordDraftMessage(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDraftMessage,
 		Peer:     peer,
 		MaxID:    topMsgID,
@@ -533,8 +608,8 @@ func (s *Service) RecordDraftMessage(ctx context.Context, authKeyID [8]byte, use
 
 // RecordDialogPinned 记录单个会话置顶状态变化；folderID 是会话所在 folder
 // （0 主列表/1 归档），缺失会让离线设备把归档内置顶重放到主列表。
-func (s *Service) RecordDialogPinned(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, folderID int, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordDialogPinned(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, folderID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogPinned,
 		Peer:     peer,
 		Bool:     pinned,
@@ -544,8 +619,8 @@ func (s *Service) RecordDialogPinned(ctx context.Context, authKeyID [8]byte, use
 }
 
 // RecordPinnedDialogs 记录指定 folder 内置顶顺序变化，并把新顺序持久化给 getDifference/outbox。
-func (s *Service) RecordPinnedDialogs(ctx context.Context, authKeyID [8]byte, userID int64, folderID int, order []domain.Peer, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordPinnedDialogs(ctx context.Context, stateAuthKeyID [8]byte, userID int64, folderID int, order []domain.Peer, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPinnedDialogs,
 		Peers:    append([]domain.Peer(nil), order...),
 		FolderID: folderID,
@@ -554,8 +629,8 @@ func (s *Service) RecordPinnedDialogs(ctx context.Context, authKeyID [8]byte, us
 }
 
 // RecordSavedDialogPinned 记录收藏夹单个子会话置顶状态变化。
-func (s *Service) RecordSavedDialogPinned(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordSavedDialogPinned(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, pinned bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventSavedDialogPinned,
 		Peer:     peer,
 		Bool:     pinned,
@@ -564,8 +639,8 @@ func (s *Service) RecordSavedDialogPinned(ctx context.Context, authKeyID [8]byte
 }
 
 // RecordPinnedSavedDialogs 记录收藏夹置顶顺序变化，新顺序持久化给 getDifference/outbox。
-func (s *Service) RecordPinnedSavedDialogs(ctx context.Context, authKeyID [8]byte, userID int64, order []domain.Peer, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordPinnedSavedDialogs(ctx context.Context, stateAuthKeyID [8]byte, userID int64, order []domain.Peer, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPinnedSavedDialogs,
 		Peers:    append([]domain.Peer(nil), order...),
 		PtsCount: 1,
@@ -573,8 +648,8 @@ func (s *Service) RecordPinnedSavedDialogs(ctx context.Context, authKeyID [8]byt
 }
 
 // RecordDialogUnreadMark 记录手动未读标记变化。
-func (s *Service) RecordDialogUnreadMark(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, unread bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordDialogUnreadMark(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, unread bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogUnreadMark,
 		Peer:     peer,
 		Bool:     unread,
@@ -583,8 +658,8 @@ func (s *Service) RecordDialogUnreadMark(ctx context.Context, authKeyID [8]byte,
 }
 
 // RecordChannelViewForumAsMessages records a per-account forum presentation state change.
-func (s *Service) RecordChannelViewForumAsMessages(ctx context.Context, authKeyID [8]byte, userID, channelID int64, enabled bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordChannelViewForumAsMessages(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, enabled bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventChannelViewForum,
 		Peer:     domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
 		Bool:     enabled,
@@ -594,8 +669,8 @@ func (s *Service) RecordChannelViewForumAsMessages(ctx context.Context, authKeyI
 
 // RecordChannelDiscussionInbox 记录 forum 话题级已读（updateReadChannelDiscussionInbox），
 // 占一个账号 pts（LacksWirePts），供自己其它设备在线同步与离线差分恢复。
-func (s *Service) RecordChannelDiscussionInbox(ctx context.Context, authKeyID [8]byte, userID, channelID int64, topicID, maxID int, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordChannelDiscussionInbox(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, topicID, maxID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventReadChannelDiscussionInbox,
 		Peer:     domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
 		TopMsgID: topicID,
@@ -605,8 +680,8 @@ func (s *Service) RecordChannelDiscussionInbox(ctx context.Context, authKeyID [8
 }
 
 // RecordPeerSettings 记录 peer settings 变化。
-func (s *Service) RecordPeerSettings(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, settings domain.PeerSettings, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordPeerSettings(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, settings domain.PeerSettings, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPeerSettings,
 		Peer:     peer,
 		Settings: settings,
@@ -615,8 +690,8 @@ func (s *Service) RecordPeerSettings(ctx context.Context, authKeyID [8]byte, use
 }
 
 // RecordPeerStoryBlocked 记录当前账号 story blocklist 对某个 peer 的可见状态变化。
-func (s *Service) RecordPeerStoryBlocked(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, blocked bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordPeerStoryBlocked(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, blocked bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventPeerStoryBlocked,
 		Peer:     peer,
 		Bool:     blocked,
@@ -625,13 +700,13 @@ func (s *Service) RecordPeerStoryBlocked(ctx context.Context, authKeyID [8]byte,
 }
 
 // RecordDialogFilter 记录单个 filter 的创建、更新或删除；folder 为 nil 表示删除。
-func (s *Service) RecordDialogFilter(ctx context.Context, authKeyID [8]byte, userID int64, folderID int, folder *domain.DialogFolder, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) RecordDialogFilter(ctx context.Context, stateAuthKeyID [8]byte, userID int64, folderID int, folder *domain.DialogFolder, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	var copyFolder *domain.DialogFolder
 	if folder != nil {
 		f := *folder
 		copyFolder = &f
 	}
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:         domain.UpdateEventDialogFilter,
 		FilterID:     folderID,
 		DialogFilter: copyFolder,
@@ -640,8 +715,8 @@ func (s *Service) RecordDialogFilter(ctx context.Context, authKeyID [8]byte, use
 }
 
 // RecordDialogFilterOrder 记录 filter 顺序变化。
-func (s *Service) RecordDialogFilterOrder(ctx context.Context, authKeyID [8]byte, userID int64, order []int, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordDialogFilterOrder(ctx context.Context, stateAuthKeyID [8]byte, userID int64, order []int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:        domain.UpdateEventDialogFilterOrder,
 		FilterOrder: append([]int(nil), order...),
 		PtsCount:    1,
@@ -649,16 +724,16 @@ func (s *Service) RecordDialogFilterOrder(ctx context.Context, authKeyID [8]byte
 }
 
 // RecordDialogFiltersReload 通知其他设备重新拉取 filter 列表。
-func (s *Service) RecordDialogFiltersReload(ctx context.Context, authKeyID [8]byte, userID int64, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordDialogFiltersReload(ctx context.Context, stateAuthKeyID [8]byte, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventDialogFilters,
 		PtsCount: 1,
 	}, true, excludeSessionID)
 }
 
 // RecordFolderPeers 记录归档/还原会话的 folder_id 变化。
-func (s *Service) RecordFolderPeers(ctx context.Context, authKeyID [8]byte, userID int64, peers []domain.FolderPeerUpdate, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordFolderPeers(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peers []domain.FolderPeerUpdate, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:        domain.UpdateEventFolderPeers,
 		FolderPeers: append([]domain.FolderPeerUpdate(nil), peers...),
 		PtsCount:    1,
@@ -666,8 +741,8 @@ func (s *Service) RecordFolderPeers(ctx context.Context, authKeyID [8]byte, user
 }
 
 // RecordChannelAvailableMessages records a local channel history clear for multi-device sync.
-func (s *Service) RecordChannelAvailableMessages(ctx context.Context, authKeyID [8]byte, userID, channelID int64, availableMinID int, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEvent(ctx, authKeyID, userID, domain.UpdateEvent{
+func (s *Service) RecordChannelAvailableMessages(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, availableMinID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
 		Type:     domain.UpdateEventChannelAvailable,
 		Peer:     domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
 		MaxID:    availableMinID,
@@ -675,15 +750,15 @@ func (s *Service) RecordChannelAvailableMessages(ctx context.Context, authKeyID 
 	}, true, excludeSessionID)
 }
 
-func (s *Service) recordEvent(ctx context.Context, authKeyID [8]byte, userID int64, event domain.UpdateEvent, dispatch bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEventCore(ctx, authKeyID, userID, event, dispatch, excludeSessionID, true)
+func (s *Service) recordEvent(ctx context.Context, stateAuthKeyID, excludeAuthKeyID [8]byte, userID int64, event domain.UpdateEvent, dispatch bool, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	return s.recordEventCore(ctx, stateAuthKeyID, excludeAuthKeyID, userID, event, dispatch, excludeSessionID, true)
 }
 
 func (s *Service) recordEventWithoutState(ctx context.Context, userID int64, event domain.UpdateEvent) (domain.UpdateEvent, domain.UpdateState, error) {
-	return s.recordEventCore(ctx, [8]byte{}, userID, event, false, 0, false)
+	return s.recordEventCore(ctx, [8]byte{}, [8]byte{}, userID, event, false, 0, false)
 }
 
-func (s *Service) recordEventCore(ctx context.Context, authKeyID [8]byte, userID int64, event domain.UpdateEvent, dispatch bool, excludeSessionID int64, saveState bool) (domain.UpdateEvent, domain.UpdateState, error) {
+func (s *Service) recordEventCore(ctx context.Context, stateAuthKeyID, excludeAuthKeyID [8]byte, userID int64, event domain.UpdateEvent, dispatch bool, excludeSessionID int64, saveState bool) (domain.UpdateEvent, domain.UpdateState, error) {
 	date := event.Date
 	if date == 0 {
 		date = int(time.Now().Unix())
@@ -698,7 +773,7 @@ func (s *Service) recordEventCore(ctx context.Context, authKeyID [8]byte, userID
 		var err error
 		if dispatch {
 			if appender, ok := s.events.(dispatchingEventAppender); ok {
-				event, err = appender.AppendAllocatedWithDispatch(ctx, userID, event, authKeyID, excludeSessionID)
+				event, err = appender.AppendAllocatedWithDispatch(ctx, userID, event, excludeAuthKeyID, excludeSessionID)
 			} else {
 				event, err = s.events.AppendAllocated(ctx, userID, event)
 			}
@@ -735,7 +810,7 @@ func (s *Service) recordEventCore(ctx context.Context, authKeyID [8]byte, userID
 		st.Pts = event.Pts
 	}
 	if saveState && s.states != nil {
-		if err := s.states.Save(ctx, authKeyID, userID, st); err != nil {
+		if err := s.states.Save(ctx, stateAuthKeyID, userID, st); err != nil {
 			return domain.UpdateEvent{}, domain.UpdateState{}, err
 		}
 	}

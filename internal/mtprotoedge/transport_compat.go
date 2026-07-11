@@ -34,16 +34,21 @@ type quickAckTransport interface {
 	SendQuickAck(ctx context.Context, token uint32) error
 }
 
+type deadlineQuickAckTransport interface {
+	SendQuickAckDeadline(deadline time.Time, token uint32) error
+}
+
 type compatTransportListener struct {
 	codec    func() transport.Codec
 	listener net.Listener
+	budget   *inboundFrameBudget
 }
 
-func newCompatTransportListener(codec func() transport.Codec, listener net.Listener) transportListener {
-	if codec != nil {
-		return transport.ListenCodec(codec, listener)
+func newCompatTransportListener(codec func() transport.Codec, listener net.Listener, budget *inboundFrameBudget) transportListener {
+	if budget == nil {
+		panic("mtprotoedge: nil inbound frame budget")
 	}
-	return &compatTransportListener{listener: listener}
+	return &compatTransportListener{codec: codec, listener: listener, budget: budget}
 }
 
 // singleConnListener 是一个只产出一条「已接受」连接、随后阻塞到关闭的 net.Listener。
@@ -89,9 +94,27 @@ func (l *compatTransportListener) Accept() (_ transport.Conn, rErr error) {
 		}
 	}()
 
-	connCodec, reader, err := detectCompatCodec(conn)
-	if err != nil {
-		return nil, errors.Wrap(err, "detect codec")
+	var (
+		connCodec transport.Codec
+		reader    io.Reader = conn
+	)
+	if l.codec != nil {
+		connCodec = l.codec()
+		if classifyInboundFrameCodec(connCodec) == inboundFrameCodecUnknown {
+			// Unknown codecs are rejected before their header or first frame is read. Without an
+			// explicit preflight contract, calling Codec.Read could allocate from an attacker-
+			// controlled length before the process-wide budget can be reserved.
+			return nil, errInboundFrameCodecUnsupported
+		}
+		if err := connCodec.ReadHeader(conn); err != nil {
+			return nil, errors.Wrap(err, "read codec header")
+		}
+	} else {
+		var err error
+		connCodec, reader, err = detectCompatCodec(conn)
+		if err != nil {
+			return nil, errors.Wrap(err, "detect codec")
+		}
 	}
 
 	return &compatTransportConn{
@@ -99,7 +122,8 @@ func (l *compatTransportListener) Accept() (_ transport.Conn, rErr error) {
 			reader: reader,
 			Conn:   conn,
 		},
-		codec: connCodec,
+		codec:  connCodec,
+		budget: l.budget,
 	}, nil
 }
 
@@ -121,11 +145,17 @@ func (w wrappedCompatConn) Read(p []byte) (int, error) {
 }
 
 type compatTransportConn struct {
-	conn  net.Conn
-	codec transport.Codec
+	conn   net.Conn
+	codec  transport.Codec
+	budget *inboundFrameBudget
 
 	readMux  sync.Mutex
 	writeMux sync.Mutex
+
+	frameMu        sync.Mutex
+	heldFrameBytes int64
+	frameDelivered bool
+	closed         bool
 }
 
 func (c *compatTransportConn) Send(ctx context.Context, b *bin.Buffer) error {
@@ -157,6 +187,11 @@ func (c *compatTransportConn) ConsumeQuickAckRequested() bool {
 }
 
 func (c *compatTransportConn) SendQuickAck(ctx context.Context, token uint32) error {
+	deadline, _ := ctx.Deadline()
+	return c.SendQuickAckDeadline(deadline, token)
+}
+
+func (c *compatTransportConn) SendQuickAckDeadline(deadline time.Time, token uint32) error {
 	q, ok := c.codec.(quickAckCodec)
 	if !ok {
 		return nil
@@ -165,7 +200,6 @@ func (c *compatTransportConn) SendQuickAck(ctx context.Context, token uint32) er
 	c.writeMux.Lock()
 	defer c.writeMux.Unlock()
 
-	deadline, _ := ctx.Deadline()
 	if err := c.conn.SetWriteDeadline(deadline); err != nil {
 		return errors.Wrap(err, "set write deadline")
 	}
@@ -189,17 +223,183 @@ func (c *compatTransportConn) RecvDeadline(deadline time.Time, b *bin.Buffer) er
 	c.readMux.Lock()
 	defer c.readMux.Unlock()
 
+	// Starting the next Recv proves the previous frame slices are no longer consumed, but its
+	// reusable backing remains live. Keep the high-water reservation until the new length prefix
+	// atomically grows/reuses it; serveConn later shrinks it to the actually retained capacities.
+	c.beginInboundFrameRead()
 	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		c.releaseInboundFrame()
 		return errors.Wrap(err, "set read deadline")
 	}
-	if err := c.codec.Read(c.conn, b); err != nil {
+	if err := c.readInboundFrame(b); err != nil {
+		// A short payload or protocol error cannot escape while retaining a reservation.
+		c.releaseInboundFrame()
 		return errors.Wrap(err, "read")
 	}
 	return nil
 }
 
 func (c *compatTransportConn) Close() error {
+	c.frameMu.Lock()
+	c.closed = true
+	// Never release here: Close can race both a delivered frame owned by serveConn and a codec read
+	// still writing into b. Recv's error path or serveConn's deferred ownership release is the
+	// unique point where those backings become dead.
+	c.frameMu.Unlock()
 	return c.conn.Close()
+}
+
+func (c *compatTransportConn) readInboundFrame(b *bin.Buffer) error {
+	kind := classifyInboundFrameCodec(c.codec)
+	if kind == inboundFrameCodecUnknown {
+		return errInboundFrameCodecUnsupported
+	}
+	reserveCalls := 0
+	reserved := false
+	var reserveErr error
+	reserve := func(wireBytes, plaintextBytes int64) error {
+		reserveCalls++
+		if reserveCalls != 1 {
+			reserveErr = errors.New("inbound frame codec reserved more than once")
+			return reserveErr
+		}
+		reserveErr = c.reserveInboundFrame(wireBytes, plaintextBytes)
+		reserved = reserveErr == nil
+		return reserveErr
+	}
+
+	var err error
+	if kind == inboundFrameCodecCustom {
+		custom := unwrapInboundFrameBudgetedCodec(c.codec)
+		if custom == nil {
+			return errInboundFrameCodecUnsupported
+		}
+		err = custom.ReadWithInboundFrameBudget(c.conn, b, reserve)
+	} else {
+		preflight := &inboundFramePreflightReader{r: c.conn, kind: kind, reserve: reserve}
+		err = c.codec.Read(preflight, b)
+	}
+	if err != nil {
+		return err
+	}
+	if reserveErr != nil {
+		return reserveErr
+	}
+	if reserveCalls != 1 || !reserved {
+		return errInboundFrameNotReserved
+	}
+	return c.markInboundFrameDelivered()
+}
+
+func (c *compatTransportConn) reserveInboundFrame(wireBytes, plaintextBytes int64) error {
+	c.frameMu.Lock()
+	defer c.frameMu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
+	n, err := c.budget.growReservation(c.heldFrameBytes, wireBytes, plaintextBytes)
+	if err != nil {
+		return err
+	}
+	c.heldFrameBytes = n
+	return nil
+}
+
+func (c *compatTransportConn) beginInboundFrameRead() {
+	c.frameMu.Lock()
+	c.frameDelivered = false
+	c.frameMu.Unlock()
+}
+
+// retainInboundFrameBytes shrinks the high-water frame charge to the capacities that serveConn
+// intentionally keeps for reuse after dispatch. It may grow only to account allocator rounding;
+// callers drop both buffers and retry with zero when that extra admission is unavailable.
+func (c *compatTransportConn) retainInboundFrameBytes(n int64) bool {
+	if n < 0 {
+		return false
+	}
+	c.frameMu.Lock()
+	old := c.heldFrameBytes
+	if n > old {
+		grown, err := c.budget.growReservation(old, n, 0)
+		if err != nil {
+			c.frameMu.Unlock()
+			return false
+		}
+		c.heldFrameBytes = grown
+		c.frameMu.Unlock()
+		return true
+	}
+	c.heldFrameBytes = n
+	c.frameMu.Unlock()
+	c.budget.release(old - n)
+	return true
+}
+
+func (c *compatTransportConn) releaseInboundFrame() {
+	c.frameMu.Lock()
+	n := c.heldFrameBytes
+	c.heldFrameBytes = 0
+	c.frameDelivered = false
+	c.frameMu.Unlock()
+	c.budget.release(n)
+}
+
+func (c *compatTransportConn) markInboundFrameDelivered() error {
+	c.frameMu.Lock()
+	defer c.frameMu.Unlock()
+	if c.closed {
+		// Do not hand a frame to the consumer after Close. The read error path keeps ownership
+		// accounting until the codec has stopped touching its backing, then releases it.
+		return net.ErrClosed
+	}
+	if c.heldFrameBytes == 0 {
+		return errInboundFrameNotReserved
+	}
+	c.frameDelivered = true
+	return nil
+}
+
+type inboundFrameOwnershipReleaser interface {
+	releaseInboundFrame()
+}
+
+type inboundFrameBackingRetainer interface {
+	retainInboundFrameBytes(int64) bool
+}
+
+func releaseInboundFrameOwnership(conn transport.Conn) {
+	if releaser, ok := conn.(inboundFrameOwnershipReleaser); ok {
+		releaser.releaseInboundFrame()
+	}
+}
+
+// retainInboundFrameBackings transfers the current-frame reservation into a persistent charge
+// for reusable buffer capacities. If allocator rounding would exceed the available budget, drop
+// both backings and release the reservation rather than retaining unaccounted memory.
+func retainInboundFrameBackings(conn transport.Conn, buffers ...*bin.Buffer) {
+	retainer, ok := conn.(inboundFrameBackingRetainer)
+	if !ok {
+		return
+	}
+	var retained int64
+	for _, b := range buffers {
+		if b == nil {
+			continue
+		}
+		retained += int64(cap(b.Buf))
+	}
+	if retainer.retainInboundFrameBytes(retained) {
+		return
+	}
+	for _, b := range buffers {
+		if b != nil {
+			b.Buf = nil
+		}
+	}
+	if !retainer.retainInboundFrameBytes(0) {
+		panic("mtprotoedge: failed to release inbound frame backing reservation")
+	}
 }
 
 func detectCompatCodec(c io.Reader) (transport.Codec, io.Reader, error) {
@@ -233,7 +433,6 @@ type quickAckCodec interface {
 
 type quickAckAbridgedCodec struct {
 	quickAckRequested bool
-	wbuf              []byte
 }
 
 func (*quickAckAbridgedCodec) WriteHeader(w io.Writer) error {
@@ -261,7 +460,7 @@ func (q *quickAckAbridgedCodec) Write(w io.Writer, b *bin.Buffer) error {
 		header[3] = byte(words >> 16)
 		headerLen = 4
 	}
-	return writeCompatPacket(w, &q.wbuf, header[:headerLen], b.Raw())
+	return writeCompatPacket(w, header[:headerLen], b.Raw())
 }
 
 func (q *quickAckAbridgedCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -287,7 +486,6 @@ func (*quickAckAbridgedCodec) quickAckResponse(token uint32) [4]byte {
 
 type quickAckIntermediateCodec struct {
 	quickAckRequested bool
-	wbuf              []byte
 }
 
 func (*quickAckIntermediateCodec) WriteHeader(w io.Writer) error {
@@ -304,7 +502,7 @@ func (q *quickAckIntermediateCodec) Write(w io.Writer, b *bin.Buffer) error {
 	}
 	var header [4]byte
 	binary.LittleEndian.PutUint32(header[:], uint32(b.Len()))
-	return writeCompatPacket(w, &q.wbuf, header[:], b.Raw())
+	return writeCompatPacket(w, header[:], b.Raw())
 }
 
 func (q *quickAckIntermediateCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -330,7 +528,6 @@ func (*quickAckIntermediateCodec) quickAckResponse(token uint32) [4]byte {
 
 type quickAckPaddedIntermediateCodec struct {
 	quickAckRequested bool
-	wbuf              []byte
 	rand              *bufio.Reader
 }
 
@@ -356,13 +553,11 @@ func (q *quickAckPaddedIntermediateCodec) Write(w io.Writer, b *bin.Buffer) erro
 		return err
 	}
 	n := int(padding[0] % 4)
-	// header(4B) + payload + padding 一次拼进复用缓冲，单次 Write 出站。
-	buf := append(q.wbuf[:0], 0, 0, 0, 0)
-	binary.LittleEndian.PutUint32(buf[:4], uint32(b.Len()+n))
-	buf = append(buf, b.Raw()...)
-	buf = append(buf, padding[:n]...)
-	q.wbuf = buf
-	return writeAll(w, buf)
+	var header [4]byte
+	binary.LittleEndian.PutUint32(header[:], uint32(b.Len()+n))
+	buffers := net.Buffers{header[:], b.Raw(), padding[:n]}
+	_, err := buffers.WriteTo(w)
+	return err
 }
 
 func (q *quickAckPaddedIntermediateCodec) Read(r io.Reader, b *bin.Buffer) error {
@@ -449,13 +644,13 @@ func validateOutgoingCompatMessage(b *bin.Buffer) error {
 	return nil
 }
 
-// writeCompatPacket 把 header+payload 拼进调用方持有的复用缓冲后单次写出：
-// 保持 MTProto 帧单包出站（quick ack 尾延迟契约），同时避免每帧分配拼包缓冲。
-func writeCompatPacket(w io.Writer, scratch *[]byte, header, payload []byte) error {
-	buf := append((*scratch)[:0], header...)
-	buf = append(buf, payload...)
-	*scratch = buf
-	return writeAll(w, buf)
+// writeCompatPacket avoids a full-frame codec copy. net.Buffers uses vectored I/O for raw TCP
+// (one syscall); wrapped writers may receive ordered writes, still serialized by writeMux. The
+// outbound scratch lease keeps the encrypted payload alive until all segments finish.
+func writeCompatPacket(w io.Writer, header, payload []byte) error {
+	buffers := net.Buffers{header, payload}
+	_, err := buffers.WriteTo(w)
+	return err
 }
 
 func writeAll(w io.Writer, p []byte) error {

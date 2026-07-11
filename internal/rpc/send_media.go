@@ -22,19 +22,21 @@ const maxContactVcardLength = 8192
 
 // outgoingSend 是 sendOutgoing 的入参：一条已校验的出站消息。
 type outgoingSend struct {
-	randomID     int64
-	message      string
-	entities     []tg.MessageEntityClass
-	media        *domain.MessageMedia
-	silent       bool
-	noforwards   bool
-	replyToInput tg.InputReplyToClass
-	sendAsInput  tg.InputPeerClass
-	replyTo      *domain.MessageReply
-	replyToReady bool
-	sendAs       *domain.Peer
-	sendAsReady  bool
-	clearDraft   bool
+	randomID               int64
+	idempotencyFingerprint []byte
+	idempotencyPreflighted bool
+	message                string
+	entities               []tg.MessageEntityClass
+	media                  *domain.MessageMedia
+	silent                 bool
+	noforwards             bool
+	replyToInput           tg.InputReplyToClass
+	sendAsInput            tg.InputPeerClass
+	replyTo                *domain.MessageReply
+	replyToReady           bool
+	sendAs                 *domain.Peer
+	sendAsReady            bool
+	clearDraft             bool
 	// replyMarkup 是 bot inline keyboard（已解析+校验；非 bot 恒 nil）。
 	replyMarkup *domain.MessageReplyMarkup
 	viaBotID    int64
@@ -76,24 +78,26 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			return nil, false, err
 		}
 		res, err := r.deps.Channels.SendMessage(ctx, userID, domain.SendChannelMessageRequest{
-			UserID:              userID,
-			ChannelID:           peer.ID,
-			RandomID:            p.randomID,
-			Message:             p.message,
-			Entities:            domainMessageEntitiesForViewer(userID, p.entities),
-			Media:               p.media,
-			MentionUserIDs:      mentionUserIDs,
-			SkipRecipientLookup: true,
-			PostAuthor:          r.channelPostAuthorName(ctx, userID),
-			Silent:              p.silent,
-			NoForwards:          p.noforwards,
-			ReplyTo:             replyTo,
-			ViaBotID:            p.viaBotID,
-			GroupedID:           p.groupedID,
-			ReplyMarkup:         p.replyMarkup,
-			RichMessage:         p.richMessage,
-			SendAs:              sendAs,
-			Date:                int(r.clock.Now().Unix()),
+			UserID:                 userID,
+			ChannelID:              peer.ID,
+			RandomID:               p.randomID,
+			IdempotencyFingerprint: p.idempotencyFingerprint,
+			IdempotencyPreflighted: p.idempotencyPreflighted,
+			Message:                p.message,
+			Entities:               domainMessageEntitiesForViewer(userID, p.entities),
+			Media:                  p.media,
+			MentionUserIDs:         mentionUserIDs,
+			SkipRecipientLookup:    true,
+			PostAuthor:             r.channelPostAuthorName(ctx, userID),
+			Silent:                 p.silent,
+			NoForwards:             p.noforwards,
+			ReplyTo:                replyTo,
+			ViaBotID:               p.viaBotID,
+			GroupedID:              p.groupedID,
+			ReplyMarkup:            p.replyMarkup,
+			RichMessage:            p.richMessage,
+			SendAs:                 sendAs,
+			Date:                   int(r.clock.Now().Unix()),
 		})
 		if err != nil {
 			return nil, false, channelInvalidErr(err)
@@ -112,7 +116,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			// 频道链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 			r.maybeEnqueueWebPageResolve(userID, peer, res.Message.ID, res.Message.Media)
 		}
-		if p.clearDraft {
+		if p.clearDraft && !res.Duplicate {
 			r.clearDraftAfterSend(ctx, userID, peer, replyTo)
 		}
 		return updates, res.Duplicate, nil
@@ -143,26 +147,30 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		return nil, false, err
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	authKeyID, _ := AuthKeyIDFrom(ctx)
+	// outbox 的排除键定位的是发起 RPC 的物理连接；PFS temp key 绑定后
+	// AuthKeyIDFrom 是业务视角 perm key，不能用它代替连接实际 raw key。
+	authKeyID := rawAuthKeyIDForOrigin(ctx)
 	res, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
-		SenderUserID:     userID,
-		RecipientUserID:  peer.ID,
-		RandomID:         p.randomID,
-		Message:          p.message,
-		Entities:         domainMessageEntitiesForViewer(userID, p.entities),
-		Media:            p.media,
-		Silent:           p.silent,
-		NoForwards:       p.noforwards,
-		ReplyTo:          replyTo,
-		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
-		OriginSessionID:  sessionID,
-		RecipientBlocked: recipientBlocked,
-		ReplyMarkup:      p.replyMarkup,
-		RichMessage:      p.richMessage,
-		ViaBotID:         p.viaBotID,
-		GroupedID:        p.groupedID,
-		Effect:           p.effect,
+		SenderUserID:           userID,
+		RecipientUserID:        peer.ID,
+		RandomID:               p.randomID,
+		Message:                p.message,
+		Entities:               domainMessageEntitiesForViewer(userID, p.entities),
+		Media:                  p.media,
+		Silent:                 p.silent,
+		NoForwards:             p.noforwards,
+		ReplyTo:                replyTo,
+		Date:                   int(r.clock.Now().Unix()),
+		OriginAuthKeyID:        authKeyID,
+		OriginSessionID:        sessionID,
+		RecipientBlocked:       recipientBlocked,
+		IdempotencyFingerprint: p.idempotencyFingerprint,
+		IdempotencyPreflighted: p.idempotencyPreflighted,
+		ReplyMarkup:            p.replyMarkup,
+		RichMessage:            p.richMessage,
+		ViaBotID:               p.viaBotID,
+		GroupedID:              p.groupedID,
+		Effect:                 p.effect,
 	})
 	if err != nil {
 		fields := append(r.contextLogFields(ctx),
@@ -179,9 +187,13 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.log.Warn("messages.sendMessage private store failed", fields...)
 		return nil, false, messageSendErr(err)
 	}
-	users := r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
-	chats := r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
-	if p.clearDraft {
+	var users []tg.UserClass
+	var chats []tg.ChatClass
+	if !res.Duplicate {
+		users = r.usersForMessageUpdate(ctx, userID, res.SenderMessage)
+		chats = r.chatsForMessageUpdate(ctx, userID, res.SenderMessage)
+	}
+	if p.clearDraft && !res.Duplicate {
 		r.clearDraftAfterSend(ctx, userID, peer, replyTo)
 	}
 	if !res.Duplicate {
@@ -189,7 +201,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	}
-	return tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, p.randomID, true, users, chats), res.Duplicate, nil
+	return tgPrivateSendResultUpdates(res, p.randomID, true, users, chats), res.Duplicate, nil
 }
 
 // onMessagesUploadMedia 解析 InputMedia（上传或引用），返回可复用的 tg.MessageMedia。
@@ -244,6 +256,10 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	case *tg.InputMediaEmpty, *tg.InputMediaWebPage:
 		return r.onMessagesSendMessage(ctx, sendMessageRequestFromSendMedia(req))
 	}
+	// 指纹是幂等校验元数据，不能让一个本应由 media resolver 映射成
+	// MEDIA_INVALID 的畸形 input 因 Encode 失败提前变成 INTERNAL。合法请求会得到
+	// 原始 TL 指纹；编码失败则留空，由 store 使用 domain fallback。
+	idempotencyFingerprint, _ := sendMediaIdempotencyFingerprint(req)
 	// 媒体 caption 里的链接/@mention/#hashtag 等同样补自动高亮实体（客户端未带时）。
 	req.Entities = augmentAutoEntities(req.Message, req.Entities)
 	userID, _, err := r.currentUserID(ctx)
@@ -253,6 +269,17 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if userID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
+	if !ok || peer.ID == 0 {
+		return nil, peerIDInvalidErr()
+	}
+	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if replay.found {
+		return r.outgoingReplayUpdates(ctx, userID, peer, req.RandomID, replay), nil
+	}
 	// 消息特效：仅接受 catalog 内的合法 effect id（非法 id → EFFECT_ID_INVALID，官方行为）。
 	if r.messageEffectInvalid(ctx, req.Effect) {
 		return nil, effectIDInvalidErr()
@@ -260,7 +287,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
 		return nil, err
 	}
-	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return nil, err
 	}
@@ -281,29 +308,33 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	}
 	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
 		return r.scheduleOutgoing(ctx, userID, peer, outgoingSend{
-			randomID:     req.RandomID,
-			message:      req.Message,
-			entities:     req.Entities,
-			media:        media,
-			silent:       req.Silent,
-			noforwards:   req.Noforwards,
-			replyToInput: req.ReplyTo,
-			sendAsInput:  req.SendAs,
-			clearDraft:   req.ClearDraft,
+			randomID:               req.RandomID,
+			idempotencyFingerprint: idempotencyFingerprint,
+			idempotencyPreflighted: replay.checked,
+			message:                req.Message,
+			entities:               req.Entities,
+			media:                  media,
+			silent:                 req.Silent,
+			noforwards:             req.Noforwards,
+			replyToInput:           req.ReplyTo,
+			sendAsInput:            req.SendAs,
+			clearDraft:             req.ClearDraft,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 	}
 	updates, _, err := r.sendOutgoing(ctx, userID, peer, outgoingSend{
-		randomID:     req.RandomID,
-		message:      req.Message,
-		entities:     req.Entities,
-		media:        media,
-		silent:       req.Silent,
-		noforwards:   req.Noforwards,
-		replyToInput: req.ReplyTo,
-		sendAsInput:  req.SendAs,
-		clearDraft:   req.ClearDraft,
-		replyMarkup:  replyMarkup,
-		effect:       req.Effect,
+		randomID:               req.RandomID,
+		idempotencyFingerprint: idempotencyFingerprint,
+		idempotencyPreflighted: replay.checked,
+		message:                req.Message,
+		entities:               req.Entities,
+		media:                  media,
+		silent:                 req.Silent,
+		noforwards:             req.Noforwards,
+		replyToInput:           req.ReplyTo,
+		sendAsInput:            req.SendAs,
+		clearDraft:             req.ClearDraft,
+		replyMarkup:            replyMarkup,
+		effect:                 req.Effect,
 	})
 	if err != nil {
 		return nil, err
@@ -311,7 +342,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	return updates, nil
 }
 
-// onMessagesSendMultiMedia 发送相册（多条媒体）。本阶段不绑定 grouped_id（各条作为独立消息呈现）。
+// onMessagesSendMultiMedia 发送相册（多条媒体），并在解析媒体前持久预留 grouped_id。
 func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -323,14 +354,20 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	if len(req.MultiMedia) == 0 || len(req.MultiMedia) > maxSendMultiMediaItems {
 		return nil, limitInvalidErr()
 	}
-	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
-	if err != nil {
-		return nil, err
+	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
+	if !ok || peer.ID == 0 {
+		return nil, peerIDInvalidErr()
 	}
+	randomIDs := make(map[int64]struct{}, len(req.MultiMedia))
+	reservationItems := make([]domain.AlbumGroupReservationItem, 0, len(req.MultiMedia))
 	for _, item := range req.MultiMedia {
 		if item.RandomID == 0 {
 			return nil, randomIDEmptyErr()
 		}
+		if _, duplicate := randomIDs[item.RandomID]; duplicate {
+			return nil, randomIDDuplicateErr()
+		}
+		randomIDs[item.RandomID] = struct{}{}
 		if utf8.RuneCountInString(item.Message) > maxSendMessageTextLength {
 			return nil, mediaCaptionTooLongErr()
 		}
@@ -340,18 +377,69 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 		if item.Media == nil {
 			return nil, mediaInvalidErr()
 		}
+		intentHash, fingerprintErr := sendMultiMediaItemIdempotencyFingerprint(req, item)
+		if fingerprintErr != nil {
+			// 畸形 InputMedia 的 TL 编码失败不能变成 INTERNAL；保持 media 输入错误语义。
+			return nil, mediaInvalidErr()
+		}
+		reservationItems = append(reservationItems, domain.AlbumGroupReservationItem{
+			RandomID:   item.RandomID,
+			IntentHash: intentHash,
+		})
 	}
-	if err := r.checkSendRateLimit(ctx, userID, len(req.MultiMedia)); err != nil {
+	replays := make([]outgoingReplayLookup, len(req.MultiMedia))
+	absentCount := 0
+	for i, item := range req.MultiMedia {
+		replay, err := r.lookupOutgoingReplay(ctx, userID, peer, item.RandomID, reservationItems[i].IntentHash)
+		if err != nil {
+			return nil, err
+		}
+		replays[i] = replay
+		if !replay.found {
+			absentCount++
+		}
+	}
+	if absentCount == 0 {
+		results := make([]tg.UpdatesClass, 0, len(req.MultiMedia))
+		for i, item := range req.MultiMedia {
+			results = append(results, r.outgoingReplayUpdates(ctx, userID, peer, item.RandomID, replays[i]))
+		}
+		return combineSendUpdates(results), nil
+	}
+	if err := r.checkSendRateLimit(ctx, userID, absentCount); err != nil {
+		return nil, err
+	}
+	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
 
-	combined := make([]tg.UpdateClass, 0, len(req.MultiMedia)*2)
-	usersByID := map[int64]tg.UserClass{}
-	chatsByID := map[int64]tg.ChatClass{}
-	date := 0
-	// 整个 album 共享一个 grouped_id，客户端据此把各条渲染成一个相册组。
-	groupedID := randomNonZeroInt64()
+	// 必须在 resolveInputMedia 或发送任何 item 之前原子预留：首次请求若在第 N 条
+	// 失败，客户端只重试失败子集时仍从已绑定 random_id 恢复整包 grouped_id。
+	groupedID, err := r.reserveAlbumGroup(ctx, userID, peer, reservationItems)
+	if err != nil {
+		return nil, err
+	}
+	for _, replay := range replays {
+		if replay.found {
+			messageGroupedID := replay.private.SenderMessage.GroupedID
+			if peer.Type == domain.PeerTypeChannel {
+				messageGroupedID = replay.channel.Message.GroupedID
+			}
+			if messageGroupedID != groupedID {
+				return nil, internalErr()
+			}
+		}
+	}
+
+	results := make([]tg.UpdatesClass, 0, len(req.MultiMedia))
+	clearDraftPending := req.ClearDraft
 	for i, item := range req.MultiMedia {
+		idempotencyFingerprint := reservationItems[i].IntentHash
+		if replays[i].found {
+			results = append(results, r.outgoingReplayUpdates(ctx, userID, peer, item.RandomID, replays[i]))
+			continue
+		}
 		media, err := r.resolveInputMedia(ctx, userID, item.Media)
 		if err != nil {
 			return nil, err
@@ -360,49 +448,35 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			return nil, mediaInvalidErr()
 		}
 		p := outgoingSend{
-			randomID:     item.RandomID,
-			message:      item.Message,
-			entities:     augmentAutoEntities(item.Message, item.Entities),
-			media:        media,
-			silent:       req.Silent,
-			noforwards:   req.Noforwards,
-			replyToInput: req.ReplyTo,
-			sendAsInput:  req.SendAs,
-			clearDraft:   req.ClearDraft && i == 0,
-			groupedID:    groupedID,
+			randomID:               item.RandomID,
+			idempotencyFingerprint: idempotencyFingerprint,
+			idempotencyPreflighted: replays[i].checked,
+			message:                item.Message,
+			entities:               augmentAutoEntities(item.Message, item.Entities),
+			media:                  media,
+			silent:                 req.Silent,
+			noforwards:             req.Noforwards,
+			replyToInput:           req.ReplyTo,
+			sendAsInput:            req.SendAs,
+			clearDraft:             clearDraftPending,
+			groupedID:              groupedID,
 		}
 		var result tg.UpdatesClass
+		duplicate := false
 		if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
 			result, err = r.scheduleOutgoing(ctx, userID, peer, p, req.ScheduleDate, 0)
 		} else {
-			result, _, err = r.sendOutgoing(ctx, userID, peer, p)
+			result, duplicate, err = r.sendOutgoing(ctx, userID, peer, p)
 		}
 		if err != nil {
 			return nil, err
 		}
-		if upd, ok := result.(*tg.Updates); ok {
-			combined = append(combined, upd.Updates...)
-			for _, u := range upd.Users {
-				if id := userClassID(u); id != 0 {
-					usersByID[id] = u
-				}
-			}
-			for _, c := range upd.Chats {
-				if id := chatClassID(c); id != 0 {
-					chatsByID[id] = c
-				}
-			}
-			if upd.Date != 0 {
-				date = upd.Date
-			}
+		if p.clearDraft && !duplicate {
+			clearDraftPending = false
 		}
+		results = append(results, result)
 	}
-	return &tg.Updates{
-		Updates: combined,
-		Users:   mapValuesUsers(usersByID),
-		Chats:   mapValuesChats(chatsByID),
-		Date:    date,
-	}, nil
+	return combineSendUpdates(results), nil
 }
 
 // resolveInputMedia 把 tg.InputMedia 解析为 domain.MessageMedia（上传则落库，引用则加载）。

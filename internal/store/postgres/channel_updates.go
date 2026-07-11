@@ -37,7 +37,11 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 			Dialog:  previewChannelDialog(req.UserID, channel, member),
 		}, nil
 	}
-	if channel.Pts-req.Pts > limit {
+	checkpoint, err := getChannelUpdateCheckpoint(ctx, s.db, req.ChannelID)
+	if err != nil {
+		return domain.ChannelDifference{}, err
+	}
+	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > limit {
 		args := []any{req.ChannelID}
 		where := "channel_id = $1 AND NOT deleted"
 		if member.AvailableMinID > 0 {
@@ -210,6 +214,30 @@ func (s *ChannelStore) MaxChannelPts(ctx context.Context, channelID int64) (int,
 	return pts, err
 }
 
+func (s *ChannelStore) MaxChannelPtsBatch(ctx context.Context, channelIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(channelIDs))
+	if len(channelIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT id, pts FROM channels WHERE id = ANY($1::bigint[])`, channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var pts int
+		if err := rows.Scan(&channelID, &pts); err != nil {
+			return nil, err
+		}
+		out[channelID] = pts
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func transientChannelParticipantEvent(channelID, actorUserID int64, previous, participant domain.ChannelMember, date int) domain.ChannelUpdateEvent {
 	return domain.ChannelUpdateEvent{
 		ChannelID:    channelID,
@@ -301,6 +329,18 @@ INSERT INTO channel_update_events (
 		event.ChannelID, event.Pts, event.PtsCount, event.Date, string(event.Type), event.Message.ID,
 		ids, event.SenderUserID, userIDs, payload); err != nil {
 		return fmt.Errorf("insert channel event: %w", err)
+	}
+	// The checkpoint is updated in the same business transaction as the event row. Retention may
+	// later remove the row, but account-level dirty-channel recovery still has the latest date/pts.
+	if _, err := tx.Exec(ctx, `
+INSERT INTO channel_update_checkpoints (
+    channel_id, retained_through_pts, latest_event_date, latest_pts
+) VALUES ($1, 0, $2, $3)
+ON CONFLICT (channel_id) DO UPDATE SET
+    latest_event_date = GREATEST(channel_update_checkpoints.latest_event_date, EXCLUDED.latest_event_date),
+    latest_pts = GREATEST(channel_update_checkpoints.latest_pts, EXCLUDED.latest_pts),
+    updated_at = now()`, event.ChannelID, event.Date, event.Pts); err != nil {
+		return fmt.Errorf("upsert channel update checkpoint: %w", err)
 	}
 	return nil
 }

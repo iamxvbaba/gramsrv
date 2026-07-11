@@ -490,6 +490,12 @@ func TestMessageStoreDeleteHistoryBatchesHugeMaxID(t *testing.T) {
 		    sender_user_id,
 		    recipient_user_id,
 		    random_id,
+		    request_fingerprint,
+		    recipient_delivered,
+		    sender_box_id,
+		    sender_pts,
+		    recipient_box_id,
+		    recipient_pts,
 		    message_date,
 		    body,
 		    entities
@@ -498,6 +504,12 @@ func TestMessageStoreDeleteHistoryBatchesHugeMaxID(t *testing.T) {
 		    $1::bigint,
 		    $2::bigint,
 		    910000000 + g,
+		    decode(repeat('00', 32), 'hex'),
+		    false,
+		    g,
+		    g,
+		    0,
+		    0,
 		    1700002000 + g,
 		    'bulk history',
 		    '[]'::jsonb
@@ -530,7 +542,7 @@ func TestMessageStoreDeleteHistoryBatchesHugeMaxID(t *testing.T) {
 		  true,
 		  'bulk history',
 		  '[]'::jsonb,
-		  0
+		  (random_id - 910000000)::int
 		FROM pm
 	`, owner.ID, peerUser.ID, total); err != nil {
 		t.Fatalf("seed bulk history: %v", err)

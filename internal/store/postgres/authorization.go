@@ -28,7 +28,111 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 	if a.Hash == 0 {
 		a.Hash = authorizationHash(a.AuthKeyID)
 	}
-	_, err := s.db.Exec(ctx, `
+	bind := func(db sqlcgen.DBTX) error {
+		return bindAuthorization(ctx, db, a)
+	}
+	var err error
+	if tx, ok := s.db.(pgx.Tx); ok {
+		err = bind(tx)
+	} else {
+		err = withTx(ctx, s.db, "bind authorization", func(tx pgx.Tx) error {
+			return bind(tx)
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("upsert authorization: %w", err)
+	}
+	return nil
+}
+
+// bindAuthorization 把 auth_key→user 绑定和设备 update baseline 作为同一个状态边界提交。
+//
+// 锁顺序固定为：auth_keys 母行 → 目标 user_update_watermarks →
+// user_update_retention → 目标 update_states。前两个 user 锁与
+// pruneConfirmedUserPrefixTx 一致，使新授权的 observed baseline 和 retained floor 不会
+// 交叉提交成静默空洞。母行锁又能在首次 authorization 尚不存在时串行化同一
+// raw auth key 的并发登录/换号。
+func bindAuthorization(ctx context.Context, db sqlcgen.DBTX, a domain.Authorization) error {
+	keyID := authKeyIDToInt64(a.AuthKeyID)
+	var lockedKeyID int64
+	if err := db.QueryRow(ctx, `
+SELECT auth_key_id
+FROM auth_keys
+WHERE auth_key_id = $1
+FOR UPDATE`, keyID).Scan(&lockedKeyID); err != nil {
+		return fmt.Errorf("lock auth key for authorization: %w", err)
+	}
+
+	if _, err := db.Exec(ctx, `
+INSERT INTO user_update_watermarks (user_id, contiguous_pts)
+VALUES ($1, 0)
+ON CONFLICT (user_id) DO NOTHING`, a.UserID); err != nil {
+		return fmt.Errorf("ensure authorization user update watermark: %w", err)
+	}
+	var currentPts int
+	if err := db.QueryRow(ctx, `
+SELECT contiguous_pts
+FROM user_update_watermarks
+WHERE user_id = $1
+FOR UPDATE`, a.UserID).Scan(&currentPts); err != nil {
+		return fmt.Errorf("lock authorization user update watermark: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+INSERT INTO user_update_retention (user_id)
+VALUES ($1)
+ON CONFLICT (user_id) DO NOTHING`, a.UserID); err != nil {
+		return fmt.Errorf("ensure authorization user update retention: %w", err)
+	}
+	var retainedFloor int
+	if err := db.QueryRow(ctx, `
+SELECT retained_through_pts
+FROM user_update_retention
+WHERE user_id = $1
+FOR UPDATE`, a.UserID).Scan(&retainedFloor); err != nil {
+		return fmt.Errorf("lock authorization user update retention: %w", err)
+	}
+	if retainedFloor > currentPts {
+		return fmt.Errorf(
+			"authorization update baseline invariant violation: user %d retained floor %d exceeds contiguous watermark %d",
+			a.UserID, retainedFloor, currentPts,
+		)
+	}
+
+	// 每次 Bind 都是一次显式登录 baseline：delivered pts 推进到已锁定的账号连续水位；
+	// observed 只推进到已删除的 retained floor，不把 live tail 伪装成客户端确认。
+	// 历史遗留的 state 若超出账号 contiguous watermark，必须 fail-fast；不得用
+	// GREATEST 把非法 future cursor 保留下来。WHERE 也封住“预检后并发插入”的竞态。
+	tag, err := db.Exec(ctx, `
+INSERT INTO update_states (auth_key_id, user_id, pts, qts, date, seq, observed_pts)
+VALUES ($1, $2, $3, 0, EXTRACT(EPOCH FROM now())::int, 0, $4)
+ON CONFLICT (auth_key_id, user_id) DO UPDATE SET
+  pts = GREATEST(update_states.pts, EXCLUDED.pts),
+  qts = GREATEST(update_states.qts, EXCLUDED.qts),
+  date = GREATEST(update_states.date, EXCLUDED.date),
+  seq = GREATEST(update_states.seq, EXCLUDED.seq),
+  observed_pts = GREATEST(update_states.observed_pts, EXCLUDED.observed_pts),
+  updated_at = now()
+WHERE update_states.pts >= 0
+  AND update_states.pts <= $3
+  AND update_states.observed_pts <= $3`, keyID, a.UserID, currentPts, retainedFloor)
+	if err != nil {
+		return fmt.Errorf("upsert authorization update baseline: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"authorization update baseline invariant violation: auth key %x user %d has pts or observed_pts outside contiguous watermark %d",
+			a.AuthKeyID, a.UserID, currentPts,
+		)
+	}
+
+	if _, err := db.Exec(ctx, `
+DELETE FROM update_states
+WHERE auth_key_id = $1
+  AND user_id <> $2`, keyID, a.UserID); err != nil {
+		return fmt.Errorf("delete stale cross-user update states: %w", err)
+	}
+
+	if _, err := db.Exec(ctx, `
 INSERT INTO authorizations (auth_key_id, user_id, hash, layer, device_model, platform, system_version, api_id, app_version, ip, password_pending)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 ON CONFLICT (auth_key_id) DO UPDATE SET
@@ -43,10 +147,9 @@ ON CONFLICT (auth_key_id) DO UPDATE SET
   ip = EXCLUDED.ip,
   password_pending = EXCLUDED.password_pending,
   active_at = now()`,
-		authKeyIDToInt64(a.AuthKeyID), a.UserID, a.Hash, int32(a.Layer), a.DeviceModel, a.Platform, a.SystemVersion, int32(a.APIID), a.AppVersion, a.IP, a.PasswordPending,
-	)
-	if err != nil {
-		return fmt.Errorf("upsert authorization: %w", err)
+		keyID, a.UserID, a.Hash, int32(a.Layer), a.DeviceModel, a.Platform, a.SystemVersion, int32(a.APIID), a.AppVersion, a.IP, a.PasswordPending,
+	); err != nil {
+		return fmt.Errorf("write authorization: %w", err)
 	}
 	return nil
 }
@@ -129,7 +232,8 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 }
 
 // RevokeByHash 删除协议 auth_key 作为远程踢设备的持久化事实入口。
-// authorizations/update_states 通过 FK cascade 删除；关联 temp auth key 显式删除，避免 raw temp key 重连。
+// authorizations 通过 FK cascade 删除；update_states 没有 auth_keys FK，必须显式清理；
+// 关联 temp auth key 也显式删除，避免 raw temp key 重连。
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
 	row := s.db.QueryRow(ctx, `
 WITH target AS MATERIALIZED (
@@ -144,12 +248,18 @@ WITH target AS MATERIALIZED (
 		WHERE perm_auth_key_id IN (SELECT auth_key_id FROM target)
 	)
 	RETURNING auth_key_id
+), deleted_update_states AS (
+	DELETE FROM update_states
+	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
+	RETURNING auth_key_id
 ), deleted_keys AS (
 	DELETE FROM auth_keys
 	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
 	RETURNING auth_key_id
 ), touched AS (
-	SELECT count(*) FROM deleted_temp
+	SELECT
+		(SELECT count(*) FROM deleted_temp) +
+		(SELECT count(*) FROM deleted_update_states) AS count
 )
 SELECT target.auth_key_id, target.user_id, target.hash, target.layer, target.device_model, target.platform,
        target.system_version, target.api_id, target.app_version, target.ip, target.password_pending,
@@ -207,12 +317,18 @@ WITH target AS MATERIALIZED (
 		WHERE perm_auth_key_id IN (SELECT auth_key_id FROM target)
 	)
 	RETURNING auth_key_id
+), deleted_update_states AS (
+	DELETE FROM update_states
+	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
+	RETURNING auth_key_id
 ), deleted_keys AS (
 	DELETE FROM auth_keys
 	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
 	RETURNING auth_key_id
 ), touched AS (
-	SELECT count(*) FROM deleted_temp
+	SELECT
+		(SELECT count(*) FROM deleted_temp) +
+		(SELECT count(*) FROM deleted_update_states) AS count
 )
 SELECT target.auth_key_id, target.user_id, target.hash, target.layer, target.device_model, target.platform,
        target.system_version, target.api_id, target.app_version, target.ip, target.password_pending,

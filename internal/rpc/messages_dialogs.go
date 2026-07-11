@@ -68,7 +68,7 @@ func (r *Router) recordDraftMessageEvent(ctx context.Context, userID int64, peer
 	}
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	event, state, err := r.deps.Updates.RecordDraftMessage(ctx, authKeyID, userID, peer, topMsgID, sessionID)
+	event, state, err := r.deps.Updates.RecordDraftMessage(ctx, authKeyID, userID, peer, topMsgID, rawAuthKeyIDForOrigin(ctx), sessionID)
 	if err != nil {
 		r.log.Warn("record draft message event", zap.Int64("user_id", userID), zap.Error(err))
 		return domain.UpdateEvent{}
@@ -433,7 +433,7 @@ func (r *Router) onMessagesUpdateDialogFilter(ctx context.Context, req *tg.Messa
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, req.ID, folder, sessionID)
+		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, req.ID, folder, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}
@@ -465,7 +465,7 @@ func (r *Router) onMessagesUpdateDialogFiltersOrder(ctx context.Context, order [
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordDialogFilterOrder(ctx, authKeyID, userID, clean, sessionID)
+		event, _, err = r.deps.Updates.RecordDialogFilterOrder(ctx, authKeyID, userID, clean, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}
@@ -493,7 +493,7 @@ func (r *Router) onMessagesToggleDialogFilterTags(ctx context.Context, enabled b
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordDialogFiltersReload(ctx, authKeyID, userID, sessionID)
+		event, _, err = r.deps.Updates.RecordDialogFiltersReload(ctx, authKeyID, userID, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}
@@ -584,7 +584,7 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 		if r.deps.Updates != nil {
 			authKeyID, _ := AuthKeyIDFrom(ctx)
 			sessionID, _ := SessionIDFrom(ctx)
-			event, state, err := r.deps.Updates.RecordDialogPinned(ctx, authKeyID, userID, peers[0], pinned, folderID, sessionID)
+			event, state, err := r.deps.Updates.RecordDialogPinned(ctx, authKeyID, userID, peers[0], pinned, folderID, rawAuthKeyIDForOrigin(ctx), sessionID)
 			if err != nil {
 				return false, internalErr()
 			}
@@ -631,7 +631,7 @@ func (r *Router) toggleArchiveFolderPin(ctx context.Context, userID int64, folde
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, state, err := r.deps.Updates.RecordDialogPinned(ctx, authKeyID, userID, folderPeer, pinned, 0, sessionID)
+		event, state, err := r.deps.Updates.RecordDialogPinned(ctx, authKeyID, userID, folderPeer, pinned, 0, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}
@@ -682,7 +682,7 @@ func (r *Router) onMessagesReorderPinnedDialogs(ctx context.Context, req *tg.Mes
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, state, err := r.deps.Updates.RecordPinnedDialogs(ctx, authKeyID, userID, req.FolderID, peers, sessionID)
+		event, state, err := r.deps.Updates.RecordPinnedDialogs(ctx, authKeyID, userID, req.FolderID, peers, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}
@@ -741,7 +741,7 @@ func (r *Router) onMessagesMarkDialogUnread(ctx context.Context, req *tg.Message
 		if r.deps.Updates != nil {
 			authKeyID, _ := AuthKeyIDFrom(ctx)
 			sessionID, _ := SessionIDFrom(ctx)
-			event, state, err := r.deps.Updates.RecordDialogUnreadMark(ctx, authKeyID, userID, peers[0], unread, sessionID)
+			event, state, err := r.deps.Updates.RecordDialogUnreadMark(ctx, authKeyID, userID, peers[0], unread, rawAuthKeyIDForOrigin(ctx), sessionID)
 			if err != nil {
 				return false, internalErr()
 			}
@@ -819,7 +819,7 @@ func (r *Router) onMessagesHidePeerSettingsBar(ctx context.Context, input tg.Inp
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, state, err := r.deps.Updates.RecordPeerSettings(ctx, authKeyID, userID, peer, domain.PeerSettings{HiddenPeerSettingsBar: true}, sessionID)
+		event, state, err := r.deps.Updates.RecordPeerSettings(ctx, authKeyID, userID, peer, domain.PeerSettings{HiddenPeerSettingsBar: true}, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return false, internalErr()
 		}

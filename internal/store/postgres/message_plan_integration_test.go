@@ -194,44 +194,44 @@ ORDER BY owner_user_id ASC, box_id ASC
 	requireUniquePartitionCountAtMost(t, deleteByPrivatePlan, `message_boxes_p\d+`, 2)
 
 	dispatchPlan := explainText(t, ctx, tx, `
-WITH picked AS (
-  SELECT target_user_id, pts, id
-  FROM dispatch_outbox
-  WHERE (
-      status = 'pending'
-      AND next_attempt_at <= now()
+WITH picked_heads AS (
+  SELECT h.target_user_id, h.head_id, h.head_pts
+  FROM dispatch_outbox_user_heads h
+  WHERE h.logical_shard = ANY($1::smallint[])
+    AND (
+      (h.status = 'pending' AND h.next_attempt_at <= now())
+      OR
+      (h.status = 'dispatching' AND h.updated_at < now() - interval '30 seconds')
     )
-    OR (
-      status = 'dispatching'
-      AND updated_at < now() - interval '30 seconds'
-    )
-  ORDER BY next_attempt_at ASC, target_user_id ASC, id ASC
+  ORDER BY h.next_attempt_at ASC, h.target_user_id ASC, h.head_pts ASC, h.head_id ASC
   LIMIT 100
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF h SKIP LOCKED
 )
-SELECT target_user_id, pts, id
-FROM picked
-`)
+SELECT d.target_user_id, d.pts, d.id
+FROM picked_heads h
+JOIN dispatch_outbox d
+  ON d.target_user_id = h.target_user_id
+ AND d.id = h.head_id
+`, []int16{int16(recipient.ID % 256)})
+	requirePlanContains(t, dispatchPlan, "dispatch_outbox_user_heads_dispatching_shard_idx")
 	requirePlanContains(t, dispatchPlan, "dispatch_outbox")
 	requirePlanContains(t, dispatchPlan, "Index")
 	requirePlanNotMatches(t, dispatchPlan, `dispatch_outbox_p\d+`)
 	requirePlanNotContains(t, dispatchPlan, "Seq Scan")
 
 	failedCleanupPlan := explainText(t, ctx, tx, `
-WITH doomed AS (
-  SELECT target_user_id, id
-  FROM dispatch_outbox
+WITH doomed AS MATERIALIZED (
+  SELECT target_user_id, head_id AS id
+  FROM dispatch_outbox_user_heads
   WHERE status = 'failed'
-    AND updated_at < now() - interval '1 day'
-  ORDER BY updated_at ASC, target_user_id ASC, id ASC
+    AND updated_at < now() - interval '1 minute'
+  ORDER BY updated_at ASC, target_user_id ASC, head_id ASC
   LIMIT 100
 )
 SELECT target_user_id, id
 FROM doomed
 `)
-	requirePlanContains(t, failedCleanupPlan, "dispatch_outbox")
-	requirePlanContains(t, failedCleanupPlan, "Index")
-	requirePlanNotMatches(t, failedCleanupPlan, `dispatch_outbox_p\d+`)
+	requirePlanContains(t, failedCleanupPlan, "dispatch_outbox_user_heads_failed_cleanup_idx")
 	requirePlanNotContains(t, failedCleanupPlan, "Seq Scan")
 }
 

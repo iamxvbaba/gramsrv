@@ -836,6 +836,126 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	}
 }
 
+func TestSendMultiMediaPartialFailureSubsetRetryKeepsReservedGroupedID(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	files := r.deps.Files.(*fakeFiles)
+
+	first := tg.InputSingleMedia{
+		Media:    &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 555, AccessHash: 5}},
+		RandomID: 41001,
+		Message:  "first",
+	}
+	second := tg.InputSingleMedia{
+		// 首次请求时 556 尚不存在，使第一条已提交后第二条解析失败。
+		Media:    &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 556, AccessHash: 6}},
+		RandomID: 41002,
+		Message:  "second",
+	}
+	peer := &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash}
+	if _, err := r.onMessagesSendMultiMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMultiMediaRequest{
+		Peer:       peer,
+		MultiMedia: []tg.InputSingleMedia{first, second},
+	}); err == nil || !tgerr.Is(err, "MEDIA_INVALID") {
+		t.Fatalf("partial album err=%v, want MEDIA_INVALID after first item commit", err)
+	}
+
+	files.docs[556] = domain.Document{ID: 556, AccessHash: 6, DCID: 2, MimeType: "image/jpeg"}
+	retry, err := r.onMessagesSendMultiMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMultiMediaRequest{
+		Peer:       peer,
+		MultiMedia: []tg.InputSingleMedia{second},
+	})
+	if err != nil {
+		t.Fatalf("retry failed subset: %v", err)
+	}
+	retryMessage := newMessageFromUpdates(t, retry)
+	retryGroup, ok := retryMessage.GetGroupedID()
+	if !ok || retryGroup == 0 {
+		t.Fatalf("retry grouped_id = %d present=%v, want non-zero reservation", retryGroup, ok)
+	}
+
+	history, err := r.deps.Messages.GetHistory(ctx, owner.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: friend.ID},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("album history: %v", err)
+	}
+	groups := make(map[int64]int64, 2)
+	for _, message := range history.Messages {
+		if message.RandomID == first.RandomID || message.RandomID == second.RandomID {
+			groups[message.RandomID] = message.GroupedID
+		}
+	}
+	if len(groups) != 2 || groups[first.RandomID] != retryGroup || groups[second.RandomID] != retryGroup {
+		t.Fatalf("history album groups=%v, want both %d", groups, retryGroup)
+	}
+
+	changed := second
+	changed.Message = "changed durable intent"
+	if _, err := r.onMessagesSendMultiMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMultiMediaRequest{
+		Peer:       peer,
+		MultiMedia: []tg.InputSingleMedia{changed},
+	}); err == nil || !tgerr.Is(err, "RANDOM_ID_DUPLICATE") {
+		t.Fatalf("changed reserved item err=%v, want RANDOM_ID_DUPLICATE", err)
+	}
+}
+
+func TestSendMultiMediaChannelPartialFailureSubsetRetryKeepsReservedGroupedID(t *testing.T) {
+	f := newRPCChannelFixture(t)
+	owner := f.user(51, "15550009401", "AlbumOwner")
+	member := f.user(52, "15550009402", "AlbumMember")
+	channel := f.createLegacyMegagroup(owner, "Album Group", member)
+	messageStore := memory.NewMessageStore()
+	f.router.deps.Messages = appmessages.NewService(messageStore, nil)
+	files := &fakeFiles{docs: map[int64]domain.Document{
+		555: {ID: 555, AccessHash: 5, DCID: 2, MimeType: "image/jpeg"},
+	}, photos: map[int64]domain.Photo{}}
+	f.router.deps.Files = files
+
+	first := tg.InputSingleMedia{
+		Media: &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 555, AccessHash: 5}}, RandomID: 42001, Message: "first",
+	}
+	second := tg.InputSingleMedia{
+		Media: &tg.InputMediaDocument{ID: &tg.InputDocument{ID: 556, AccessHash: 6}}, RandomID: 42002, Message: "second",
+	}
+	peer := inputPeerChannel(channel)
+	if _, err := f.router.onMessagesSendMultiMedia(f.userCtx(owner), &tg.MessagesSendMultiMediaRequest{
+		Peer: peer, MultiMedia: []tg.InputSingleMedia{first, second},
+	}); err == nil || !tgerr.Is(err, "MEDIA_INVALID") {
+		t.Fatalf("partial channel album err=%v, want MEDIA_INVALID", err)
+	}
+	files.docs[556] = domain.Document{ID: 556, AccessHash: 6, DCID: 2, MimeType: "image/jpeg"}
+	retry, err := f.router.onMessagesSendMultiMedia(f.userCtx(owner), &tg.MessagesSendMultiMediaRequest{
+		Peer: peer, MultiMedia: []tg.InputSingleMedia{second},
+	})
+	if err != nil {
+		t.Fatalf("retry channel subset: %v", err)
+	}
+	retryMessage := newMessageFromUpdates(t, retry)
+	retryGroup, ok := retryMessage.GetGroupedID()
+	if !ok || retryGroup == 0 {
+		t.Fatalf("channel retry grouped_id=%d present=%v, want non-zero", retryGroup, ok)
+	}
+	history, err := f.router.deps.Channels.GetHistory(f.ctx, owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: channel.ID,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Fatalf("channel album history: %v", err)
+	}
+	groups := make(map[int64]int64, 2)
+	for _, message := range history.Messages {
+		if message.RandomID == first.RandomID || message.RandomID == second.RandomID {
+			groups[message.RandomID] = message.GroupedID
+		}
+	}
+	if len(groups) != 2 || groups[first.RandomID] != retryGroup || groups[second.RandomID] != retryGroup {
+		t.Fatalf("channel album groups=%v, want both %d", groups, retryGroup)
+	}
+}
+
 func TestTGMessageMediaDocumentMarksHistoricalStickerNopremium(t *testing.T) {
 	media := tgMessageMedia(&domain.MessageMedia{
 		Kind: domain.MessageMediaKindDocument,

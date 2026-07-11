@@ -107,6 +107,118 @@ func TestInboundRPCQueueFullReturnsFloodWait(t *testing.T) {
 	close(handler.release)
 }
 
+func TestInboundRPCQueuedDeadlineReturnsRPCTimeout(t *testing.T) {
+	const dc = 2
+	handler := &queueDeadlineRPC{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	addr, pub, _ := startTestServer(t, Options{
+		DC:               dc,
+		RPC:              handler,
+		RPCMaxInflight:   1,
+		RPCQueueSize:     2,
+		RPCTimeout:       60 * time.Millisecond,
+		RPCGlobalWorkers: 1,
+	})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	firstReqID := clientMsgID.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, firstReqID, 1, &tg.HelpGetConfigRequest{})
+	select {
+	case <-handler.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first rpc to start")
+	}
+
+	secondReqID := clientMsgID.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, secondReqID, 3, &tg.HelpGetConfigRequest{})
+	// 第一条故意忽略 context，使第二条越过自身从入队起计算的 deadline 后才有机会出队。
+	time.Sleep(120 * time.Millisecond)
+	close(handler.releaseFirst)
+
+	result := readRPCResultForRequest(t, conn, cipher, auth.AuthKey, secondReqID)
+	var rpcErr mt.RPCError
+	if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+		t.Fatalf("decode rpc timeout: %v", err)
+	}
+	if rpcErr.ErrorCode != 500 || rpcErr.ErrorMessage != "RPC_TIMEOUT" {
+		t.Fatalf("rpc_error = %d %q, want 500 RPC_TIMEOUT", rpcErr.ErrorCode, rpcErr.ErrorMessage)
+	}
+	if calls := handler.calls.Load(); calls != 1 {
+		t.Fatalf("handler calls = %d, want 1 (expired queued RPC must not dispatch)", calls)
+	}
+}
+
+func TestInboundRPCRunningDeadlineReturnsExactlyOneTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		honorContext bool
+	}{
+		{name: "handler_honors_context", honorContext: true},
+		{name: "handler_temporarily_ignores_context", honorContext: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const dc = 2
+			handler := &runningDeadlineRPC{
+				started:      make(chan struct{}),
+				release:      make(chan struct{}),
+				honorContext: tc.honorContext,
+			}
+			addr, pub, _ := startTestServer(t, Options{
+				DC:               dc,
+				RPC:              handler,
+				RPCMaxInflight:   1,
+				RPCQueueSize:     1,
+				RPCTimeout:       60 * time.Millisecond,
+				RPCGlobalWorkers: 1,
+			})
+			conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+			clientMsgID := proto.NewMessageIDGen(time.Now)
+			reqID := clientMsgID.New(proto.MessageFromClient)
+			sendEncryptedWithSeq(t, conn, cipher, auth, reqID, 1, &tg.HelpGetConfigRequest{})
+			select {
+			case <-handler.started:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for running rpc")
+			}
+
+			// In the ignore-context case this result must arrive before release is closed: the
+			// scheduler deadline, not eventual handler return, owns the timeout response.
+			result := readRPCResultForRequest(t, conn, cipher, auth.AuthKey, reqID)
+			var rpcErr mt.RPCError
+			if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+				t.Fatalf("decode running rpc timeout: %v", err)
+			}
+			if rpcErr.ErrorCode != 500 || rpcErr.ErrorMessage != "RPC_TIMEOUT" {
+				t.Fatalf("rpc_error = %d %q, want 500 RPC_TIMEOUT", rpcErr.ErrorCode, rpcErr.ErrorMessage)
+			}
+			close(handler.release)
+		})
+	}
+}
+
+func TestRPCResponseGateExactlyOnce(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		gate := &rpcResponseGate{}
+		results := make(chan bool, 2)
+		go func() { results <- gate.tryNormal() }()
+		go func() { results <- gate.tryTimeout() }()
+		wins := 0
+		if <-results {
+			wins++
+		}
+		if <-results {
+			wins++
+		}
+		if wins != 1 {
+			t.Fatalf("iteration %d response gate winners = %d, want 1", i, wins)
+		}
+	}
+}
+
 func TestDuplicateRPCResultAcrossReconnectUsesSessionCache(t *testing.T) {
 	const dc = 2
 	handler := &countingConfigRPC{}
@@ -207,6 +319,40 @@ func (h *blockingRPC) Dispatch(ctx context.Context, _ [8]byte, _ int64, _ *bin.B
 }
 
 func (h *blockingRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 227, true }
+
+type queueDeadlineRPC struct {
+	calls        atomic.Int32
+	firstStarted chan struct{}
+	releaseFirst chan struct{}
+}
+
+func (h *queueDeadlineRPC) Dispatch(context.Context, [8]byte, int64, *bin.Buffer) (bin.Encoder, error) {
+	if h.calls.Add(1) == 1 {
+		close(h.firstStarted)
+		<-h.releaseFirst
+	}
+	return &tg.Config{ThisDC: 2}, nil
+}
+
+func (h *queueDeadlineRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 227, true }
+
+type runningDeadlineRPC struct {
+	started      chan struct{}
+	release      chan struct{}
+	honorContext bool
+}
+
+func (h *runningDeadlineRPC) Dispatch(ctx context.Context, _ [8]byte, _ int64, _ *bin.Buffer) (bin.Encoder, error) {
+	close(h.started)
+	if h.honorContext {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	<-h.release
+	return &tg.Config{ThisDC: 2}, nil
+}
+
+func (h *runningDeadlineRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 227, true }
 
 type canceledInternalRPC struct {
 	calls     atomic.Int32

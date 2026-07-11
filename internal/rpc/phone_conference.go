@@ -146,10 +146,11 @@ func (r *Router) onPhoneInviteConferenceCallParticipant(ctx context.Context, req
 		return nil, err
 	}
 	now := int(r.clock.Now().Unix())
+	randomID := conferenceInviteRandomID(scope.call.ID, target.ID, now)
 	res, err := r.deps.Messages.SendPrivateText(ctx, scope.userID, domain.SendPrivateTextRequest{
 		SenderUserID:    scope.userID,
 		RecipientUserID: target.ID,
-		RandomID:        conferenceInviteRandomID(scope.call.ID, target.ID, now),
+		RandomID:        randomID,
 		Media: &domain.MessageMedia{
 			Kind: domain.MessageMediaKindService,
 			ServiceAction: &domain.MessageServiceAction{
@@ -164,13 +165,16 @@ func (r *Router) onPhoneInviteConferenceCallParticipant(ctx context.Context, req
 			},
 		},
 		Date:             now,
-		OriginAuthKeyID:  authKeyIDFromCtx(ctx),
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionIDFromCtx(ctx),
 		RecipientBlocked: recipientBlocked,
 	})
 	if err != nil {
 		return nil, messageSendErr(err)
 	}
+	// Message and invite index currently live in separate stores/transactions. Always
+	// retry the idempotent invite write, including an exact message replay, so a crash
+	// after SendPrivateText commit cannot leave an unrecoverable message-without-index.
 	invite, err := r.deps.GroupCalls.CreateConferenceInvite(ctx, domain.GroupCallInvite{
 		CallID:        scope.call.ID,
 		InviterUserID: scope.userID,
@@ -184,6 +188,15 @@ func (r *Router) onPhoneInviteConferenceCallParticipant(ctx context.Context, req
 		return nil, groupCallErr(err)
 	}
 	_ = invite
+	if res.Duplicate {
+		// The first transaction already created both private boxes and their durable
+		// update events. Replaying UpdateNewMessage here would reconstruct the service
+		// message from the intentionally minimal immutable receipt and push it to the
+		// invitee a second time. Only reconcile the caller's random_id and original pts;
+		// The invite write above is an idempotent saga repair only; no message/update
+		// side effect is repeated.
+		return tgPrivateSendResultUpdates(res, randomID, true, nil, nil), nil
+	}
 	users := r.tgUsersForIDs(ctx, scope.userID, []int64{scope.userID, target.ID})
 	out := tgPrivateMessageUpdates(res.SenderEvent, res.SenderMessage, 0, false, users, nil)
 	recipientUsers := r.tgUsersForIDs(ctx, target.ID, []int64{scope.userID, target.ID})

@@ -17,7 +17,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-func TestBootstrapLoginMessagePublishesNewMessageAfterReady(t *testing.T) {
+func TestSignUpBootstrapLoginMessagePublishesNewMessageAfterReady(t *testing.T) {
 	bootstrap := memory.NewBootstrapUpdateJobStore()
 	updates := &captureUpdates{state: domain.UpdateState{Pts: 3, Date: 1700000000}}
 	messages := &captureMessages{
@@ -70,7 +70,44 @@ func TestBootstrapLoginMessagePublishesNewMessageAfterReady(t *testing.T) {
 	}
 }
 
-func TestUpdatesGetStatePublishesBootstrapAfterRPCResult(t *testing.T) {
+func TestSignUpBootstrapPendingJobFollowsSameAuthKeyReconnect(t *testing.T) {
+	bootstrap := memory.NewBootstrapUpdateJobStore()
+	updates := &captureUpdates{state: domain.UpdateState{Pts: 0, Date: 1700000000}}
+	msg := domain.Message{
+		ID: 7, OwnerUserID: 1780243777,
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
+		Date: 1700000100, Body: "Login code: 12345",
+	}
+	r := New(Config{}, Deps{
+		BootstrapUpdates: bootstrap,
+		Updates:          updates,
+		Messages:         &captureMessages{list: domain.MessageList{Messages: []domain.Message{msg}}},
+	}, zaptest.NewLogger(t), clock.System)
+	authKeyID := [8]byte{4, 5, 6}
+	oldSessionID := int64(1001)
+	newSessionID := int64(2002)
+	r.enqueueLoginMessageBootstrap(
+		WithSessionID(WithAuthKeyID(context.Background(), authKeyID), oldSessionID),
+		msg,
+	)
+
+	if ready, err := bootstrap.MarkReadyForSession(context.Background(), msg.OwnerUserID, [8]byte{9}, newSessionID); err != nil || ready != 0 {
+		t.Fatalf("different auth-key ready=%d err=%v, want 0/nil", ready, err)
+	}
+	ready, err := bootstrap.MarkReadyForSession(context.Background(), msg.OwnerUserID, authKeyID, newSessionID)
+	if err != nil || ready != 1 {
+		t.Fatalf("same auth-key reconnect ready=%d err=%v, want 1/nil", ready, err)
+	}
+	if claimed := r.publishReadyBootstrapUpdates(context.Background(), 1, time.Second, zaptest.NewLogger(t)); claimed != 1 {
+		t.Fatalf("published after same-auth reconnect = %d, want 1", claimed)
+	}
+	if len(updates.events) != 1 || updates.events[0].Message.ID != msg.ID {
+		t.Fatalf("events after reconnect = %+v", updates.events)
+	}
+}
+
+func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 	bootstrap := memory.NewBootstrapUpdateJobStore()
 	updates := &captureUpdates{state: domain.UpdateState{Pts: 0, Date: 1700000000}}
 	msg := domain.Message{
@@ -86,9 +123,12 @@ func TestUpdatesGetStatePublishesBootstrapAfterRPCResult(t *testing.T) {
 	authKeyID := [8]byte{9, 8, 7}
 	sessionID := int64(5723482677041206318)
 	ctx := postresponse.WithCallbacks(
-		WithUserID(
-			WithSessionID(WithAuthKeyID(context.Background(), authKeyID), sessionID),
-			msg.OwnerUserID,
+		WithClientInfo(
+			WithUserID(
+				WithSessionID(WithAuthKeyID(context.Background(), authKeyID), sessionID),
+				msg.OwnerUserID,
+			),
+			ClientInfo{Type: ClientTypeTDesktop},
 		),
 	)
 	r.enqueueLoginMessageBootstrap(ctx, msg)
@@ -180,7 +220,7 @@ func TestLogOutClearsSessionAndUpdateState(t *testing.T) {
 	}
 }
 
-func TestSignInDifferentUserClearsAuthKeyUpdateState(t *testing.T) {
+func TestSignInDifferentUserDoesNotClearFreshlyBoundUpdateState(t *testing.T) {
 	var authKeyID [8]byte
 	authKeyID[0] = 6
 	auth := &captureAuthService{signInUser: domain.User{ID: 1000000002, FirstName: "Two"}}
@@ -197,8 +237,8 @@ func TestSignInDifferentUserClearsAuthKeyUpdateState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("auth.signIn: %v", err)
 	}
-	if updates.clearedAuthKeyID != authKeyID || !updates.cleared {
-		t.Fatalf("cleared auth key = %x cleared=%v, want %x", updates.clearedAuthKeyID, updates.cleared, authKeyID)
+	if updates.cleared {
+		t.Fatalf("router cleared auth key %x after Bind; this would delete the new user's retained-floor baseline", updates.clearedAuthKeyID)
 	}
 	gotSession := sessions.snapshot()
 	if gotSession.userID != 1000000002 {
@@ -213,7 +253,8 @@ func TestUpdatesGetStateMarksSessionReadyForPush(t *testing.T) {
 		Updates:  &captureUpdates{state: domain.UpdateState{Pts: 3, Date: 1700000000, Seq: 2}},
 	}, zaptest.NewLogger(t), clock.System)
 
-	got, err := r.onUpdatesGetState(WithSessionID(context.Background(), 77))
+	ctx := WithClientInfo(WithSessionID(context.Background(), 77), ClientInfo{Type: ClientTypeTDesktop})
+	got, err := r.onUpdatesGetState(ctx)
 	if err != nil {
 		t.Fatalf("updates.getState: %v", err)
 	}
@@ -243,7 +284,8 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 		Updates:  updates,
 	}, zaptest.NewLogger(t), clock.System)
 
-	got, err := r.onUpdatesGetState(WithSessionID(context.Background(), 77))
+	ctx := WithClientInfo(WithSessionID(context.Background(), 77), ClientInfo{Type: ClientTypeTDesktop})
+	got, err := r.onUpdatesGetState(ctx)
 	if err != nil {
 		t.Fatalf("updates.getState: %v", err)
 	}
@@ -258,6 +300,43 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 		if _, ok := msg.(*tg.UpdatesTooLong); ok {
 			t.Fatal("getState 后不应再推 updatesTooLong（会诱导 TDesktop 重放快照前差分）")
 		}
+	}
+}
+
+func TestUpdatesGetStateUnknownClientDoesNotAdvanceObservedBaseline(t *testing.T) {
+	sessions := &captureSessions{}
+	current := domain.UpdateState{Pts: 9, Date: 1700000009}
+	updates := &captureUpdates{
+		state:        domain.UpdateState{Pts: 3, Date: 1700000003},
+		currentState: &current,
+	}
+	r := New(Config{}, Deps{Sessions: sessions, Updates: updates}, zaptest.NewLogger(t), clock.System)
+
+	got, err := r.onUpdatesGetState(WithSessionID(context.Background(), 78))
+	if err != nil {
+		t.Fatalf("updates.getState unknown client: %v", err)
+	}
+	if got.Pts != current.Pts {
+		t.Fatalf("state pts = %d, want current %d", got.Pts, current.Pts)
+	}
+	if updates.acknowledged {
+		t.Fatal("unknown client advanced the observed getState baseline")
+	}
+	if !sessions.snapshot().receives {
+		t.Fatal("unknown client was not enabled for subsequent updates")
+	}
+}
+
+func TestUpdatesGetStateDrKLOEstablishesObservedBaseline(t *testing.T) {
+	updates := &captureUpdates{currentState: &domain.UpdateState{Pts: 6, Date: 1700000006}}
+	r := New(Config{}, Deps{Sessions: &captureSessions{}, Updates: updates}, zaptest.NewLogger(t), clock.System)
+	ctx := WithClientInfo(context.Background(), ClientInfo{Type: ClientTypeAndroid, AppVersion: "12.8.1"})
+
+	if _, err := r.onUpdatesGetState(ctx); err != nil {
+		t.Fatalf("updates.getState DrKLO: %v", err)
+	}
+	if !updates.acknowledged {
+		t.Fatal("DrKLO getState did not establish its explicit current-snapshot baseline")
 	}
 }
 
@@ -572,6 +651,28 @@ func TestUpdatesGetDifferenceChannelNudgeIncludesFullChat(t *testing.T) {
 	}
 	if chat.AccessHash == 0 {
 		t.Fatalf("chat access_hash = 0, want full channel access hash")
+	}
+}
+
+func TestUpdatesGetDifferenceEmptyRetentionCheckpointStaysDifferenceSlice(t *testing.T) {
+	updates := &captureUpdates{difference: &domain.UpdateDifference{
+		State:   domain.UpdateState{Pts: 42, Date: 1700000442},
+		Partial: true,
+	}}
+	r := New(Config{}, Deps{Updates: updates}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000443, 0)})
+	authKeyID := [8]byte{42}
+	ctx := WithUserID(WithAuthKeyID(context.Background(), authKeyID), 1000000042)
+
+	diff, err := r.onUpdatesGetDifference(ctx, &tg.UpdatesGetDifferenceRequest{Pts: 1, Date: 1700000400})
+	if err != nil {
+		t.Fatalf("updates.getDifference: %v", err)
+	}
+	slice, ok := diff.(*tg.UpdatesDifferenceSlice)
+	if !ok {
+		t.Fatalf("difference = %T, want *tg.UpdatesDifferenceSlice (never Empty/TooLong)", diff)
+	}
+	if slice.IntermediateState.Pts != 42 || slice.IntermediateState.Date != 1700000442 || len(slice.NewMessages) != 0 || len(slice.OtherUpdates) != 0 {
+		t.Fatalf("checkpoint slice = %+v, want empty payload at pts/date 42/1700000442", slice)
 	}
 }
 

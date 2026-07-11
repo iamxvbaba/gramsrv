@@ -8,18 +8,26 @@ import (
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 func (s *ChannelStore) SendChannelMessage(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 || (strings.TrimSpace(req.Message) == "" && req.Action == nil && req.Media.IsZero() && req.RichMessage.IsZero()) {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	requestFingerprint, err := store.ChannelSendFingerprint(req)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	// Normalize the fallback to an explicit receipt so retries of the internal
+	// transaction use exactly the same bytes as the first attempt.
+	req.IdempotencyFingerprint = requestFingerprint
 	if req.Date == 0 {
 		req.Date = nowUnix()
 	}
 	var lastErr error
 	for attempt := 0; attempt < retryableChannelTxAttempts; attempt++ {
-		res, err := s.sendChannelMessageOnce(ctx, req)
+		res, err := s.sendChannelMessageOnce(ctx, req, requestFingerprint)
 		if err == nil || !isRetryablePostgresTxError(err) || ctx.Err() != nil {
 			return res, err
 		}
@@ -28,9 +36,14 @@ func (s *ChannelStore) SendChannelMessage(ctx context.Context, req domain.SendCh
 	return domain.SendChannelMessageResult{}, lastErr
 }
 
-func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
-	if req.RandomID != 0 {
-		if dup, found, err := s.duplicateChannelMessage(ctx, req.ChannelID, req.UserID, req.RandomID); err != nil {
+func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.SendChannelMessageRequest, requestFingerprint []byte) (domain.SendChannelMessageResult, error) {
+	if req.RandomID != 0 && !req.IdempotencyPreflighted {
+		if dup, found, err := s.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+			ChannelID:              req.ChannelID,
+			SenderUserID:           req.UserID,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: requestFingerprint,
+		}); err != nil {
 			return domain.SendChannelMessageResult{}, err
 		} else if found {
 			return dup, nil
@@ -207,13 +220,30 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		Message:      msg,
 		SenderUserID: req.UserID,
 	}
-	if err := insertChannelMessageTx(ctx, tx, msg); err != nil {
+	if err := insertChannelMessageWithFingerprintTx(ctx, tx, msg, requestFingerprint); err != nil {
 		if isUniqueViolation(err) {
-			dup, found, dupErr := s.duplicateChannelMessage(ctx, req.ChannelID, req.UserID, req.RandomID)
-			if dupErr != nil || !found {
+			if req.RandomID == 0 {
+				return domain.SendChannelMessageResult{}, err
+			}
+			// A failed statement leaves the transaction aborted while its pool
+			// connection remains checked out. Release it before the winner lookup;
+			// otherwise a one-connection pool deadlocks waiting on itself.
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+				return domain.SendChannelMessageResult{}, fmt.Errorf("rollback channel random_id conflict: %w", rollbackErr)
+			}
+			committed = true // transaction is finalized by rollback; suppress deferred rollback
+			dup, found, dupErr := s.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+				ChannelID:              req.ChannelID,
+				SenderUserID:           req.UserID,
+				RandomID:               req.RandomID,
+				IdempotencyFingerprint: requestFingerprint,
+			})
+			if dupErr != nil {
 				return domain.SendChannelMessageResult{}, dupErr
 			}
-			dup.Duplicate = true
+			if !found {
+				return domain.SendChannelMessageResult{}, fmt.Errorf("channel random_id unique conflict without replay receipt")
+			}
 			return dup, nil
 		}
 		return domain.SendChannelMessageResult{}, err
@@ -320,8 +350,33 @@ func filterSkippedChannelRecipients(recipients []int64, skip map[int64]struct{})
 	return out
 }
 
-func (s *ChannelStore) duplicateChannelMessage(ctx context.Context, channelID, userID, randomID int64) (domain.SendChannelMessageResult, bool, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+channelMessageColumns+` FROM channel_messages WHERE channel_id = $1 AND sender_user_id = $2 AND random_id = $3`, channelID, userID, randomID)
+// LookupChannelSendReplay reads an immutable random_id receipt without running
+// membership, permission, slow-mode, source/media resolution or allocation. A
+// zero SavedPeer selects an ordinary channel receipt; monoforum sub-dialogs are
+// scoped by the complete saved peer.
+func (s *ChannelStore) LookupChannelSendReplay(ctx context.Context, lookup domain.ChannelSendReplayRequest) (domain.SendChannelMessageResult, bool, error) {
+	if lookup.ChannelID == 0 || lookup.SenderUserID == 0 || lookup.RandomID == 0 {
+		return domain.SendChannelMessageResult{}, false, fmt.Errorf("channel send replay: invalid scope")
+	}
+	if err := store.ValidateSendFingerprint(lookup.IdempotencyFingerprint, "channel send replay"); err != nil {
+		return domain.SendChannelMessageResult{}, false, err
+	}
+	var row pgx.Row
+	if lookup.SavedPeer.ID == 0 {
+		if lookup.SavedPeer.Type != "" {
+			return domain.SendChannelMessageResult{}, false, fmt.Errorf("channel send replay: incomplete saved peer scope")
+		}
+		row = s.db.QueryRow(ctx, `SELECT `+channelMessageColumns+` FROM channel_messages
+WHERE channel_id = $1 AND sender_user_id = $2 AND saved_peer_type = '' AND saved_peer_id = 0 AND random_id = $3`,
+			lookup.ChannelID, lookup.SenderUserID, lookup.RandomID)
+	} else {
+		if lookup.SavedPeer.Type != domain.PeerTypeUser {
+			return domain.SendChannelMessageResult{}, false, fmt.Errorf("channel send replay: invalid saved peer scope")
+		}
+		row = s.db.QueryRow(ctx, `SELECT `+channelMessageColumns+` FROM channel_messages
+WHERE channel_id = $1 AND sender_user_id = $2 AND saved_peer_type = $3 AND saved_peer_id = $4 AND random_id = $5`,
+			lookup.ChannelID, lookup.SenderUserID, string(lookup.SavedPeer.Type), lookup.SavedPeer.ID, lookup.RandomID)
+	}
 	msg, err := scanChannelMessage(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.SendChannelMessageResult{}, false, nil
@@ -329,18 +384,71 @@ func (s *ChannelStore) duplicateChannelMessage(ctx context.Context, channelID, u
 	if err != nil {
 		return domain.SendChannelMessageResult{}, false, err
 	}
-	channel, err := getChannelByID(ctx, s.db, channelID)
+	result, err := s.channelDuplicateReplayResult(ctx, msg, lookup.IdempotencyFingerprint)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, false, err
 	}
-	event, err := s.eventForChannelMessage(ctx, channelID, msg.ID)
+	result.Duplicate = true
+	return result, true, nil
+}
+
+func (s *ChannelStore) channelDuplicateReplayResult(ctx context.Context, msg domain.ChannelMessage, expectedFingerprint []byte) (domain.SendChannelMessageResult, error) {
+	var storedFingerprint []byte
+	var snapshotJSON, deleteIDsJSON string
+	var deletePts, deletePtsCount, deleteDate int
+	if err := s.db.QueryRow(ctx, `
+SELECT request_fingerprint, send_snapshot::text, delete_pts, delete_pts_count, delete_date, delete_message_ids::text
+FROM channel_messages
+WHERE channel_id = $1 AND id = $2`, msg.ChannelID, msg.ID).Scan(
+		&storedFingerprint, &snapshotJSON, &deletePts, &deletePtsCount, &deleteDate, &deleteIDsJSON,
+	); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if !store.SameSendFingerprint(storedFingerprint, expectedFingerprint) {
+		return domain.SendChannelMessageResult{}, domain.ErrMessageRandomIDDuplicate
+	}
+	first, err := store.DecodeChannelSendSnapshot([]byte(snapshotJSON))
 	if err != nil {
-		return domain.SendChannelMessageResult{}, false, err
+		return domain.SendChannelMessageResult{}, fmt.Errorf("decode duplicate channel message %d snapshot: %w", msg.ID, err)
 	}
-	if event.Message.ID != 0 {
-		msg = event.Message
+	if first.ChannelID != msg.ChannelID || first.ID != msg.ID || first.SenderUserID != msg.SenderUserID || first.RandomID != msg.RandomID || first.SavedPeer != msg.SavedPeer {
+		return domain.SendChannelMessageResult{}, fmt.Errorf("duplicate channel message %d snapshot disagrees with random_id receipt", msg.ID)
 	}
-	return domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event, Duplicate: true}, true, nil
+	channel, err := getChannelByID(ctx, s.db, msg.ChannelID)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	replay := msg
+	var replayDelete *domain.ChannelUpdateEvent
+	if msg.Deleted {
+		replay = first
+		messageIDs, err := decodeEventMessageIDs(deleteIDsJSON)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, fmt.Errorf("decode duplicate channel message %d delete ids: %w", msg.ID, err)
+		}
+		if deletePts <= 0 || deletePtsCount <= 0 || len(messageIDs) == 0 {
+			return domain.SendChannelMessageResult{}, fmt.Errorf("duplicate channel message %d is deleted without a durable delete receipt", msg.ID)
+		}
+		deleteEvent := domain.ChannelUpdateEvent{
+			ChannelID:  msg.ChannelID,
+			Type:       domain.ChannelUpdateDeleteMessages,
+			Pts:        deletePts,
+			PtsCount:   deletePtsCount,
+			Date:       deleteDate,
+			MessageIDs: messageIDs,
+		}
+		replayDelete = &deleteEvent
+	}
+	event := domain.ChannelUpdateEvent{
+		ChannelID:    msg.ChannelID,
+		Type:         domain.ChannelUpdateNewMessage,
+		Pts:          first.Pts,
+		PtsCount:     1,
+		Date:         first.Date,
+		Message:      replay,
+		SenderUserID: first.SenderUserID,
+	}
+	return domain.SendChannelMessageResult{Channel: channel, Message: replay, Event: event, Duplicate: true, ReplayDeleteEvent: replayDelete}, nil
 }
 
 func (s *ChannelStore) insertServiceMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
@@ -400,6 +508,26 @@ func channelServiceActionForMessage(channelID int64, msgID int, action domain.Ch
 }
 
 func insertChannelMessageTx(ctx context.Context, tx pgx.Tx, msg domain.ChannelMessage) error {
+	return insertChannelMessageWithFingerprintTx(ctx, tx, msg, nil)
+}
+
+// insertChannelMessageWithFingerprintTx is the only first-send write boundary
+// for client-random-id channel messages. Callers that create service/discussion
+// rows without random_id use insertChannelMessageTx and persist the legacy-safe
+// empty default instead.
+func insertChannelMessageWithFingerprintTx(ctx context.Context, tx pgx.Tx, msg domain.ChannelMessage, requestFingerprint []byte) error {
+	if msg.RandomID != 0 {
+		if err := store.ValidateSendFingerprint(requestFingerprint, "insert channel message"); err != nil {
+			return err
+		}
+	} else if len(requestFingerprint) != 0 {
+		if err := store.ValidateSendFingerprint(requestFingerprint, "insert channel message"); err != nil {
+			return err
+		}
+	}
+	if requestFingerprint == nil {
+		requestFingerprint = []byte{}
+	}
 	entities, err := encodeMessageEntities(msg.Entities)
 	if err != nil {
 		return err
@@ -427,6 +555,13 @@ func insertChannelMessageTx(ctx context.Context, tx pgx.Tx, msg domain.ChannelMe
 	richMessage, err := encodeRichMessage(msg.RichMessage)
 	if err != nil {
 		return err
+	}
+	sendSnapshot := []byte("{}")
+	if msg.RandomID != 0 {
+		sendSnapshot, err = store.EncodeChannelSendSnapshot(msg)
+		if err != nil {
+			return err
+		}
 	}
 	var sendAsType sql.NullString
 	var sendAsID sql.NullInt64
@@ -456,12 +591,12 @@ INSERT INTO channel_messages (
     channel_id, id, random_id, sender_user_id, from_peer_type, from_peer_id,
     send_as_peer_type, send_as_peer_id, message_date, edit_date, post, silent, noforwards,
     body, entities, reply_to, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
-    fwd_from, discussion_channel_id, discussion_message_id, action, pts, deleted, media, reply_markup, rich_message, ttl_period, expires_at, post_author, via_bot_id, from_boosts_applied, grouped_id, saved_peer_type, saved_peer_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)`,
+    fwd_from, discussion_channel_id, discussion_message_id, action, pts, deleted, media, reply_markup, rich_message, ttl_period, expires_at, post_author, via_bot_id, from_boosts_applied, grouped_id, saved_peer_type, saved_peer_id, send_snapshot, request_fingerprint
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38::jsonb,$39::bytea)`,
 		msg.ChannelID, msg.ID, msg.RandomID, msg.SenderUserID, string(msg.From.Type), msg.From.ID,
 		sendAsType, sendAsID, msg.Date, msg.EditDate, msg.Post, msg.Silent, msg.NoForwards,
 		msg.Body, entities, reply, replyMsgID, replyPeerType, replyPeerID, replyTopID,
-		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID); err != nil {
+		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID, sendSnapshot, requestFingerprint); err != nil {
 		return fmt.Errorf("insert channel message: %w", err)
 	}
 	// 共享媒体索引(迁移 0118):创建即按媒体类别建索引行,供 messages.search 媒体标签页。

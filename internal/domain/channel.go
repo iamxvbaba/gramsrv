@@ -11,6 +11,9 @@ const (
 	MaxChannelDifferenceLimit = 100
 	// MaxChannelDifferenceTooLongMessages limits the latest message snapshot returned by channelDifferenceTooLong.
 	MaxChannelDifferenceTooLongMessages = 100
+	// MaxChannelUpdateRetentionBatch bounds one channel durable-log pruning transaction.
+	// Retention advances the recoverable floor only through rows actually deleted in that transaction.
+	MaxChannelUpdateRetentionBatch = 10000
 	// MaxChannelParticipantsLimit limits a single participants page.
 	MaxChannelParticipantsLimit = 200
 	// MaxChannelParticipantsOffset bounds channels.getParticipants deep OFFSET work.
@@ -1184,6 +1187,23 @@ type DirtyChannel struct {
 	Pts       int
 }
 
+// ChannelUpdateRetentionCheckpoint is the durable recovery boundary for one channel.
+// Events with pts <= RetainedThroughPts may be absent; callers below that floor must receive
+// channelDifferenceTooLong. LatestEventDate/LatestPts survive event pruning and keep account-level
+// dirty-channel nudges reconstructable after the hot event rows have been removed.
+type ChannelUpdateRetentionCheckpoint struct {
+	ChannelID          int64
+	RetainedThroughPts int
+	LatestEventDate    int
+	LatestPts          int
+}
+
+// ChannelUpdateRetentionResult describes one bounded, atomic prune operation.
+type ChannelUpdateRetentionResult struct {
+	Checkpoint ChannelUpdateRetentionCheckpoint
+	Deleted    int
+}
+
 // CreateChannelRequest creates a broadcast channel or megagroup.
 type CreateChannelRequest struct {
 	CreatorUserID int64
@@ -1372,14 +1392,20 @@ type DeleteChannelResult struct {
 
 // SendChannelMessageRequest sends one channel/supergroup message.
 type SendChannelMessageRequest struct {
-	UserID              int64
-	ChannelID           int64
-	RandomID            int64
-	Message             string
-	Entities            []MessageEntity
-	Media               *MessageMedia
-	MentionUserIDs      []int64
-	SkipDeliveryUserIDs []int64
+	UserID    int64
+	ChannelID int64
+	RandomID  int64
+	// IdempotencyFingerprint is the SHA-256 of the immutable client send intent. RPC callers
+	// provide a raw-TL per-item value; internal callers leave it empty for the store fallback.
+	IdempotencyFingerprint []byte
+	// IdempotencyPreflighted is trusted internal execution metadata; see the private-send
+	// equivalent. It is deliberately excluded from the durable fingerprint.
+	IdempotencyPreflighted bool
+	Message                string
+	Entities               []MessageEntity
+	Media                  *MessageMedia
+	MentionUserIDs         []int64
+	SkipDeliveryUserIDs    []int64
 	// SkipRecipientLookup lets high-level realtime fan-out use the online member
 	// read model instead of forcing store.SendChannelMessage to synchronously
 	// return an active-member recipient list after commit.
@@ -1405,13 +1431,26 @@ type SendChannelMessageRequest struct {
 // 虚拟频道 id;SavedPeer 是订阅者子会话分组键(订阅者发=自己,管理员回复=目标订阅者);
 // SenderUserID 是实际发件人。发件权限(订阅者身份/管理员)在 RPC 层校验,store 只校验 monoforum 存在。
 type SendMonoforumMessageRequest struct {
-	MonoforumID  int64
-	SenderUserID int64
-	SavedPeer    Peer
-	RandomID     int64
-	Message      string
-	Entities     []MessageEntity
-	Date         int
+	MonoforumID            int64
+	SenderUserID           int64
+	SavedPeer              Peer
+	RandomID               int64
+	IdempotencyFingerprint []byte
+	IdempotencyPreflighted bool
+	Message                string
+	Entities               []MessageEntity
+	Date                   int
+}
+
+// ChannelSendReplayRequest addresses either a regular channel send (SavedPeer is zero) or one
+// monoforum sub-dialog send (SavedPeer is the subscriber scope).  Lookup is read-only and must
+// never re-run membership/permission checks or allocate pts/message ids.
+type ChannelSendReplayRequest struct {
+	ChannelID              int64
+	SenderUserID           int64
+	SavedPeer              Peer
+	RandomID               int64
+	IdempotencyFingerprint []byte
 }
 
 // MonoforumHistoryFilter 按订阅者子会话拉取 monoforum 私信历史。
@@ -1520,7 +1559,11 @@ type SendChannelMessageResult struct {
 	Event      ChannelUpdateEvent
 	Recipients []int64
 	Duplicate  bool
-	Discussion *SendChannelDiscussionResult
+	// ReplayDeleteEvent is the existing durable channel delete event paired
+	// with a deleted exact-random_id replay. It must be returned only to the
+	// caller echo and must never be fanned out as a fresh event.
+	ReplayDeleteEvent *ChannelUpdateEvent
+	Discussion        *SendChannelDiscussionResult
 	// MentionUserIDs 是本条消息解析出的被 @ 成员；在线 fanout 按它为
 	// 每个接收者投影 message.mentioned/media_unread。
 	MentionUserIDs []int64

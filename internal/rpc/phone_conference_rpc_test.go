@@ -799,6 +799,82 @@ func TestConferenceInviteMessageResolvesInputGroupCallInviteMessage(t *testing.T
 	}
 }
 
+func TestConferenceInviteExactReplayConfirmsImmutableMessageWithoutFanout(t *testing.T) {
+	f := newConferenceFixture(t)
+	aliceCtx := f.userCtx(f.alice, 11)
+	create, err := f.router.onPhoneCreateConferenceCall(aliceCtx, &tg.PhoneCreateConferenceCallRequest{RandomID: 89})
+	if err != nil {
+		t.Fatalf("create conference: %v", err)
+	}
+	call := findUpdate[*tg.UpdateGroupCall](t, create).Call.(*tg.GroupCall)
+	request := &tg.PhoneInviteConferenceCallParticipantRequest{
+		Call:   &tg.InputGroupCall{ID: call.ID, AccessHash: call.AccessHash},
+		UserID: &tg.InputUser{UserID: f.bob.ID, AccessHash: f.bob.AccessHash},
+	}
+	first, err := f.router.onPhoneInviteConferenceCallParticipant(aliceCtx, request)
+	if err != nil {
+		t.Fatalf("first conference invite: %v", err)
+	}
+	firstUpdate := findUpdate[*tg.UpdateNewMessage](t, first)
+	firstMessage, ok := firstUpdate.Message.(*tg.MessageService)
+	if !ok {
+		t.Fatalf("first conference message = %T, want MessageService", firstUpdate.Message)
+	}
+	bobHistory, err := f.messages.GetHistory(f.ctx, f.bob.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.alice.ID},
+		Limit:   10,
+	})
+	if err != nil || len(bobHistory.Messages) != 1 {
+		t.Fatalf("bob history after first invite len=%d err=%v, want one", len(bobHistory.Messages), err)
+	}
+	bobMessageID := bobHistory.Messages[0].ID
+	_, firstInvite, found, err := f.group.GetByInviteMessage(f.ctx, f.bob.ID, bobMessageID)
+	if err != nil || !found {
+		t.Fatalf("first durable invite = %+v found=%v err=%v", firstInvite, found, err)
+	}
+
+	f.sessions.reset()
+	replay, err := f.router.onPhoneInviteConferenceCallParticipant(aliceCtx, request)
+	if err != nil {
+		t.Fatalf("replay conference invite: %v", err)
+	}
+	replayed := findUpdate[*tg.UpdateNewMessage](t, replay)
+	replayedMessage, ok := replayed.Message.(*tg.MessageService)
+	if !ok || replayedMessage.ID != firstMessage.ID || replayed.Pts != firstUpdate.Pts || replayed.PtsCount != firstUpdate.PtsCount {
+		t.Fatalf("replay message = %+v (%T), want original confirmation %d pts %d/%d", replayed.Message, replayed.Message, firstMessage.ID, firstUpdate.Pts, firstUpdate.PtsCount)
+	}
+	mapping := findUpdate[*tg.UpdateMessageID](t, replay)
+	wantRandomID := conferenceInviteRandomID(call.ID, f.bob.ID, int(f.clock.Now().Unix()))
+	if mapping.ID != firstMessage.ID || mapping.RandomID != wantRandomID {
+		t.Fatalf("replay mapping = %+v, want id/random_id %d/%d", mapping, firstMessage.ID, wantRandomID)
+	}
+	if records := f.sessions.records(); len(records) != 0 {
+		t.Fatalf("replay must not fan out another invite, got %+v", records)
+	}
+	bobHistory, err = f.messages.GetHistory(f.ctx, f.bob.ID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: f.alice.ID},
+		Limit:   10,
+	})
+	if err != nil || len(bobHistory.Messages) != 1 {
+		t.Fatalf("bob history after replay len=%d err=%v, want original one", len(bobHistory.Messages), err)
+	}
+	_, replayInvite, found, err := f.group.GetByInviteMessage(f.ctx, f.bob.ID, bobMessageID)
+	if err != nil || !found || replayInvite != firstInvite {
+		t.Fatalf("durable invite after replay = %+v found=%v err=%v, want unchanged %+v", replayInvite, found, err, firstInvite)
+	}
+
+	conflict := *request
+	conflict.Video = true
+	if result, err := f.router.onPhoneInviteConferenceCallParticipant(aliceCtx, &conflict); result != nil || !tgerr.Is(err, "RANDOM_ID_DUPLICATE") {
+		t.Fatalf("conflicting replay = %+v err=%v, want RANDOM_ID_DUPLICATE", result, err)
+	}
+	if records := f.sessions.records(); len(records) != 0 {
+		t.Fatalf("conflicting replay must not fan out, got %+v", records)
+	}
+}
+
 func TestPhoneDiscardMigrateConferenceCarriesSlug(t *testing.T) {
 	f := newConferenceFixture(t)
 	aliceCtx := f.userCtx(f.alice, 11)

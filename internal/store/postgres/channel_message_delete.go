@@ -379,8 +379,14 @@ ORDER BY id`, channel.ID, id32)
 	deleted32 := int32s(deleted)
 	if _, err := tx.Exec(ctx, `
 UPDATE channel_messages
-SET deleted = true, pts = $3, updated_at = now()
-WHERE channel_id = $1 AND id = ANY($2::int[])`, channel.ID, deleted32, pts); err != nil {
+SET deleted = true,
+    pts = $3,
+    delete_pts = $3,
+    delete_pts_count = $4,
+    delete_date = $5,
+    delete_message_ids = to_jsonb($2::int[]),
+    updated_at = now()
+WHERE channel_id = $1 AND id = ANY($2::int[])`, channel.ID, deleted32, pts, len(deleted), date); err != nil {
 		return nil, domain.ChannelUpdateEvent{}, channel, fmt.Errorf("soft delete channel messages: %w", err)
 	}
 	if err := deleteChannelUnreadMentionsTx(ctx, tx, channel.ID, deleted); err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
@@ -19,11 +20,22 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	requestFingerprint, err := store.MonoforumSendFingerprint(req)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	req.IdempotencyFingerprint = requestFingerprint
 	if req.Date == 0 {
 		req.Date = nowUnix()
 	}
-	if req.RandomID != 0 {
-		if dup, found, err := s.duplicateMonoforumMessage(ctx, req.MonoforumID, req.SenderUserID, req.SavedPeer, req.RandomID); err != nil {
+	if req.RandomID != 0 && !req.IdempotencyPreflighted {
+		if dup, found, err := s.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+			ChannelID:              req.MonoforumID,
+			SenderUserID:           req.SenderUserID,
+			SavedPeer:              req.SavedPeer,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: requestFingerprint,
+		}); err != nil {
 			return domain.SendChannelMessageResult{}, err
 		} else if found {
 			return dup, nil
@@ -82,15 +94,32 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 		Message:      msg,
 		SenderUserID: req.SenderUserID,
 	}
-	if err := insertChannelMessageTx(ctx, tx, msg); err != nil {
+	if err := insertChannelMessageWithFingerprintTx(ctx, tx, msg, requestFingerprint); err != nil {
 		if isUniqueViolation(err) {
-			// 唯一约束按 (channel,sender,random_id) 三元组;只有同一订阅者子会话的真重发才算重复。
-			// 跨子会话复用同一 random_id(异常客户端)按 saved_peer 过滤后命中不到 → 干净返错,不串消息。
-			dup, found, dupErr := s.duplicateMonoforumMessage(ctx, req.MonoforumID, req.SenderUserID, req.SavedPeer, req.RandomID)
-			if dupErr != nil || !found {
+			if req.RandomID == 0 {
+				return domain.SendChannelMessageResult{}, err
+			}
+			// The winner lookup must not ask the pool for a second connection
+			// while this aborted transaction still owns the first one.
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil && !errors.Is(rollbackErr, pgx.ErrTxClosed) {
+				return domain.SendChannelMessageResult{}, fmt.Errorf("rollback monoforum random_id conflict: %w", rollbackErr)
+			}
+			committed = true // transaction is finalized by rollback; suppress deferred rollback
+			// The four-column unique scope is only the race fence. Acceptance
+			// still requires the exact immutable request fingerprint.
+			dup, found, dupErr := s.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+				ChannelID:              req.MonoforumID,
+				SenderUserID:           req.SenderUserID,
+				SavedPeer:              req.SavedPeer,
+				RandomID:               req.RandomID,
+				IdempotencyFingerprint: requestFingerprint,
+			})
+			if dupErr != nil {
 				return domain.SendChannelMessageResult{}, dupErr
 			}
-			dup.Duplicate = true
+			if !found {
+				return domain.SendChannelMessageResult{}, fmt.Errorf("monoforum random_id unique conflict without replay receipt")
+			}
 			return dup, nil
 		}
 		return domain.SendChannelMessageResult{}, err
@@ -181,33 +210,6 @@ func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, m
 			(member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin)
 	}
 	return mono, isAdmin, nil
-}
-
-// duplicateMonoforumMessage 按 (channel,sender,saved_peer,random_id) 查重发,确保同一发件人向不同
-// 订阅者子会话用相同 random_id 时不会互相误判为重复。
-func (s *ChannelStore) duplicateMonoforumMessage(ctx context.Context, channelID, senderUserID int64, savedPeer domain.Peer, randomID int64) (domain.SendChannelMessageResult, bool, error) {
-	row := s.db.QueryRow(ctx, `SELECT `+channelMessageColumns+` FROM channel_messages
-WHERE channel_id = $1 AND sender_user_id = $2 AND saved_peer_type = $3 AND saved_peer_id = $4 AND random_id = $5`,
-		channelID, senderUserID, string(savedPeer.Type), savedPeer.ID, randomID)
-	msg, err := scanChannelMessage(row)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.SendChannelMessageResult{}, false, nil
-	}
-	if err != nil {
-		return domain.SendChannelMessageResult{}, false, err
-	}
-	channel, err := getChannelByID(ctx, s.db, channelID)
-	if err != nil {
-		return domain.SendChannelMessageResult{}, false, err
-	}
-	event, err := s.eventForChannelMessage(ctx, channelID, msg.ID)
-	if err != nil {
-		return domain.SendChannelMessageResult{}, false, err
-	}
-	if event.Message.ID != 0 {
-		msg = event.Message
-	}
-	return domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event, Duplicate: true}, true, nil
 }
 
 // ListMonoforumDialogs 列出 monoforum 的订阅者子会话(每个 saved_peer 一条,取其 top 消息),

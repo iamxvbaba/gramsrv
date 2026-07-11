@@ -8,8 +8,9 @@ import (
 
 // UpdateStateStore 是 store.UpdateStateStore 的内存实现。
 type UpdateStateStore struct {
-	mu     sync.RWMutex
-	states map[updateStateKey]domain.UpdateState
+	mu       sync.RWMutex
+	states   map[updateStateKey]domain.UpdateState
+	observed map[updateStateKey]domain.UpdateState
 }
 
 // UpdateEventStore 是 store.UpdateEventStore 的内存实现。
@@ -157,7 +158,10 @@ func (s *UpdateEventStore) MaxContiguousPts(_ context.Context, userID int64) (in
 
 // NewUpdateStateStore 创建内存 UpdateStateStore。
 func NewUpdateStateStore() *UpdateStateStore {
-	return &UpdateStateStore{states: make(map[updateStateKey]domain.UpdateState)}
+	return &UpdateStateStore{
+		states:   make(map[updateStateKey]domain.UpdateState),
+		observed: make(map[updateStateKey]domain.UpdateState),
+	}
 }
 
 func (s *UpdateStateStore) Get(_ context.Context, id [8]byte, userID int64) (domain.UpdateState, bool, error) {
@@ -191,9 +195,39 @@ func (s *UpdateStateStore) Save(_ context.Context, id [8]byte, userID int64, st 
 	return nil
 }
 
+func (s *UpdateStateStore) ObserveClientState(_ context.Context, id [8]byte, userID int64, st domain.UpdateState) error {
+	s.mu.Lock()
+	key := updateStateKey{authKeyID: id, userID: userID}
+	prev := s.observed[key]
+	if st.Pts < prev.Pts {
+		st.Pts = prev.Pts
+	}
+	if st.Qts < prev.Qts {
+		st.Qts = prev.Qts
+	}
+	if st.Date < prev.Date {
+		st.Date = prev.Date
+	}
+	if st.Seq < prev.Seq {
+		st.Seq = prev.Seq
+	}
+	s.observed[key] = st
+	s.mu.Unlock()
+	return nil
+}
+
+// ObservedClientState 暴露给同包/服务测试验证 retention 安全水位；业务读路径仍用 Get。
+func (s *UpdateStateStore) ObservedClientState(id [8]byte, userID int64) (domain.UpdateState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st, ok := s.observed[updateStateKey{authKeyID: id, userID: userID}]
+	return st, ok
+}
+
 func (s *UpdateStateStore) Delete(_ context.Context, id [8]byte, userID int64) error {
 	s.mu.Lock()
 	delete(s.states, updateStateKey{authKeyID: id, userID: userID})
+	delete(s.observed, updateStateKey{authKeyID: id, userID: userID})
 	s.mu.Unlock()
 	return nil
 }
@@ -203,6 +237,7 @@ func (s *UpdateStateStore) DeleteAuthKey(_ context.Context, id [8]byte) error {
 	for k := range s.states {
 		if k.authKeyID == id {
 			delete(s.states, k)
+			delete(s.observed, k)
 		}
 	}
 	s.mu.Unlock()

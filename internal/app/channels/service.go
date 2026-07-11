@@ -1242,6 +1242,25 @@ func (s *Service) SendMessage(ctx context.Context, userID int64, req domain.Send
 	if req.UserID != userID {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if req.RandomID != 0 && !req.IdempotencyPreflighted {
+		fingerprint, err := store.ChannelSendFingerprint(req)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.IdempotencyFingerprint = fingerprint
+		if replayStore, ok := s.channels.(store.ChannelSendReplayStore); ok {
+			replay, found, err := replayStore.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+				ChannelID:              req.ChannelID,
+				SenderUserID:           req.UserID,
+				RandomID:               req.RandomID,
+				IdempotencyFingerprint: fingerprint,
+			})
+			if err != nil || found {
+				return replay, err
+			}
+			req.IdempotencyPreflighted = true
+		}
+	}
 	if err := s.ensureCanSend(ctx, req.UserID); err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
@@ -1251,6 +1270,25 @@ func (s *Service) SendMessage(ctx context.Context, userID int64, req domain.Send
 	}
 	req.SkipDeliveryUserIDs = mergeSkippedUserIDs(req.SkipDeliveryUserIDs, skipped)
 	return s.channels.SendChannelMessage(ctx, req)
+}
+
+// LookupChannelSendReplay reads a regular-channel or monoforum receipt without current
+// membership/send-gate checks. The authenticated caller remains bound to SenderUserID.
+func (s *Service) LookupChannelSendReplay(ctx context.Context, userID int64, req domain.ChannelSendReplayRequest) (domain.SendChannelMessageResult, bool, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return domain.SendChannelMessageResult{}, false, nil
+	}
+	if req.SenderUserID == 0 {
+		req.SenderUserID = userID
+	}
+	if req.SenderUserID != userID || req.ChannelID == 0 || req.RandomID == 0 {
+		return domain.SendChannelMessageResult{}, false, domain.ErrChannelInvalid
+	}
+	replayStore, ok := s.channels.(store.ChannelSendReplayStore)
+	if !ok {
+		return domain.SendChannelMessageResult{}, false, nil
+	}
+	return replayStore.LookupChannelSendReplay(ctx, req)
 }
 
 func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {
@@ -1754,6 +1792,26 @@ func (s *Service) SendMonoforumMessage(ctx context.Context, req domain.SendMonof
 	if s == nil || s.channels == nil || req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if req.RandomID != 0 && !req.IdempotencyPreflighted {
+		fingerprint, err := store.MonoforumSendFingerprint(req)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.IdempotencyFingerprint = fingerprint
+		if replayStore, ok := s.channels.(store.ChannelSendReplayStore); ok {
+			replay, found, err := replayStore.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+				ChannelID:              req.MonoforumID,
+				SenderUserID:           req.SenderUserID,
+				SavedPeer:              req.SavedPeer,
+				RandomID:               req.RandomID,
+				IdempotencyFingerprint: fingerprint,
+			})
+			if err != nil || found {
+				return replay, err
+			}
+			req.IdempotencyPreflighted = true
+		}
+	}
 	if err := s.ensureCanSend(ctx, req.SenderUserID); err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
@@ -2019,6 +2077,26 @@ func (s *Service) DirtyActiveChannelsForUser(ctx context.Context, userID int64, 
 		limit = domain.MaxChannelDifferenceLimit
 	}
 	return s.channels.ListDirtyActiveChannelsForUser(ctx, userID, sinceDate, afterChannelID, limit)
+}
+
+// MaxChannelPts returns the durable channel watermark used by the fan-out saturation recovery
+// sweep. It intentionally performs no viewer access check: target visibility is derived from the
+// process-local joined-membership index, while getChannelDifference performs authoritative access
+// validation when a client consumes the nudge.
+func (s *Service) MaxChannelPts(ctx context.Context, channelID int64) (int, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return 0, domain.ErrChannelInvalid
+	}
+	return s.channels.MaxChannelPts(ctx, channelID)
+}
+
+// MaxChannelPtsBatch reloads a bounded recovery page in one store call. Missing ids are omitted:
+// they represent channels deleted after the process-local online-membership snapshot was taken.
+func (s *Service) MaxChannelPtsBatch(ctx context.Context, channelIDs []int64) (map[int64]int, error) {
+	if s == nil || s.channels == nil {
+		return nil, domain.ErrChannelInvalid
+	}
+	return s.channels.MaxChannelPtsBatch(ctx, channelIDs)
 }
 
 // ActiveMemberIDs returns a bounded list for transient online fanout such as typing.

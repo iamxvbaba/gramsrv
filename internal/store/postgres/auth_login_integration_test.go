@@ -34,6 +34,7 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 		nil,
 		"12345",
 		appauth.WithLoginMessages(messages, dialogs),
+		appauth.WithLoginCodeDelivery(messages),
 	)
 
 	var authKeyID [8]byte
@@ -85,7 +86,7 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	}
 }
 
-func TestAuthSignInOfficialLoginMessagePreservesReadWatermarkPostgres(t *testing.T) {
+func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -105,6 +106,7 @@ func TestAuthSignInOfficialLoginMessagePreservesReadWatermarkPostgres(t *testing
 		nil,
 		"12345",
 		appauth.WithLoginMessages(messages, dialogs),
+		appauth.WithLoginCodeDelivery(messages),
 	)
 
 	var authKeyID [8]byte
@@ -125,6 +127,9 @@ func TestAuthSignInOfficialLoginMessagePreservesReadWatermarkPostgres(t *testing
 	hash, err := svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signup: %v", err)
+	}
+	if _, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345"); err != nil || !needSignUp {
+		t.Fatalf("SignIn before signup needSignUp=%v err=%v, want true/nil", needSignUp, err)
 	}
 	u, first, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "PgLogin", "Read")
 	if err != nil {
@@ -180,19 +185,29 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 	if err != nil {
 		t.Fatalf("SendCode signin second: %v", err)
 	}
-	_, second, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
+	secondID := first.ID + 1
+	assertOfficialDialog(secondID, first.ID, 1)
+	_, lateSecond, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
 	}
-	assertOfficialDialog(second.ID, first.ID, 1)
+	if lateSecond.ID != 0 {
+		t.Fatalf("SignIn second returned late login message %+v, want zero", lateSecond)
+	}
+	assertOfficialDialog(secondID, first.ID, 1)
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signin third: %v", err)
 	}
-	_, third, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
+	thirdID := first.ID + 2
+	assertOfficialDialog(thirdID, first.ID, 2)
+	_, lateThird, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
 	}
-	assertOfficialDialog(third.ID, first.ID, 2)
+	if lateThird.ID != 0 {
+		t.Fatalf("SignIn third returned late login message %+v, want zero", lateThird)
+	}
+	assertOfficialDialog(thirdID, first.ID, 2)
 }

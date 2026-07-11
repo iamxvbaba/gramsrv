@@ -27,7 +27,7 @@ func (r *Router) onMessagesDeleteMessages(ctx context.Context, req *tg.MessagesD
 		IDs:             req.ID,
 		Revoke:          req.GetRevoke(),
 		Date:            int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {
@@ -102,7 +102,7 @@ func (r *Router) onMessagesDeleteHistory(ctx context.Context, req *tg.MessagesDe
 		JustClear:       req.GetJustClear(),
 		Revoke:          req.GetRevoke(),
 		Date:            int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {

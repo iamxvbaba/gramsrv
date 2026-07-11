@@ -369,7 +369,11 @@ func (r *Router) recordChannelStateForUser(ctx context.Context, userID, channelI
 		authKeyID, _ = AuthKeyIDFrom(ctx)
 		excludeSessionID, _ = SessionIDFrom(ctx)
 	}
-	event, _, err := r.deps.Updates.RecordChannelState(ctx, authKeyID, userID, channelID, excludeSessionID)
+	excludeAuthKeyID := [8]byte{}
+	if excludeCurrent {
+		excludeAuthKeyID = rawAuthKeyIDForOrigin(ctx)
+	}
+	event, _, err := r.deps.Updates.RecordChannelState(ctx, authKeyID, userID, channelID, excludeAuthKeyID, excludeSessionID)
 	if err != nil {
 		return
 	}

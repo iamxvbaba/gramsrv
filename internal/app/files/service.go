@@ -514,6 +514,20 @@ func orderDocuments(docs []domain.Document, ids []int64) []domain.Document {
 // assembleUpload 把已上传分片按 part 顺序拼成完整字节，并清理分片。
 // expectedParts>0 时校验分片连续且齐全。
 func (s *Service) assembleUpload(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]byte, error) {
+	buf, err := s.readUploadBytes(ctx, ownerUserID, fileID, expectedParts)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.cleanupUploadParts(ctx, ownerUserID, fileID); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// readUploadBytes validates and reads all parts without consuming them. Message-media
+// materialization persists an upload receipt before cleanup; callers that do not need replayability
+// continue to use assembleUpload.
+func (s *Service) readUploadBytes(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]byte, error) {
 	parts, _, err := s.loadAndValidateUploadParts(ctx, ownerUserID, fileID, expectedParts)
 	if err != nil {
 		return nil, err
@@ -531,9 +545,6 @@ func (s *Service) assembleUpload(ctx context.Context, ownerUserID, fileID int64,
 			return nil, err
 		}
 		buf = append(buf, data...)
-	}
-	if err := s.cleanupUploadParts(ctx, ownerUserID, fileID); err != nil {
-		return nil, err
 	}
 	return buf, nil
 }

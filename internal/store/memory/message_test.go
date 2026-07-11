@@ -162,7 +162,7 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 	assertWebViewData("sender", got.SenderMessage)
 	assertWebViewData("recipient", got.RecipientMessage)
 
-	dup, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+	_, err = messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:    req.SenderUserID,
 		RecipientUserID: req.RecipientUserID,
 		RandomID:        req.RandomID,
@@ -178,13 +178,9 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("SendPrivateText duplicate: %v", err)
+	if !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("changed-media duplicate err = %v, want ErrMessageRandomIDDuplicate", err)
 	}
-	if !dup.Duplicate || dup.SenderMessage.ID != got.SenderMessage.ID || dup.RecipientMessage.ID != got.RecipientMessage.ID {
-		t.Fatalf("duplicate = %+v, want original boxes", dup)
-	}
-	assertWebViewData("duplicate sender", dup.SenderMessage)
 
 	recipientHistory, err := messages.ListByUser(ctx, req.RecipientUserID, domain.MessageFilter{
 		HasPeer: true,

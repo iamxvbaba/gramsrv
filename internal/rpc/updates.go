@@ -14,11 +14,11 @@ func (r *Router) registerUpdates(d *tg.ServerDispatcher) {
 	d.OnUpdatesGetDifference(r.onUpdatesGetDifference)
 }
 
-// onUpdatesGetState 处理 updates.getState：返回账号当前最新连续状态并推进该设备
-// 的确认水位。协议语义是客户端宣告「从现在开始同步」，启动期离线数据由
-// getDialogs 快照承载——返回设备旧确认水位会让 TDesktop（不持久化 pts、每次
-// 启动都调 getState）在 getDialogs 快照之上重放历史差分，未读重复累计、
-// dialog 预览被旧消息抢占。
+// onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
+// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位并推进该设备 observed。
+// 对无法识别的客户端仍返回同一 current state，但不把尚未被客户端带回的服务端快照
+// 记成 observed；这保留 durable difference tail，避免把 TDesktop/DrKLO 的兼容例外
+// 扩散成所有客户端都能跨过未实际确认事件的 retention 后门。
 func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error) {
 	id, _ := AuthKeyIDFrom(ctx)
 	userID, _, err := r.currentUserID(ctx)
@@ -29,7 +29,16 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 		r.markSessionReceivesUpdates(ctx, userID)
 		return &tg.UpdatesState{Date: int(r.clock.Now().Unix()), Qts: r.deviceEncryptedQts(ctx)}, nil
 	}
-	st, err := r.deps.Updates.AcknowledgeCurrentState(ctx, id, userID)
+	var st domain.UpdateState
+	if getStateEstablishesObservedBaseline(ctx) {
+		st, err = r.deps.Updates.AcknowledgeCurrentState(ctx, id, userID)
+	} else {
+		st, err = r.deps.Updates.CurrentState(ctx, userID)
+		if err == nil {
+			r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for unknown client",
+				r.contextLogFields(ctx)...)
+		}
+	}
 	if err != nil {
 		return nil, internalErr()
 	}
@@ -39,6 +48,15 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	out := tgUpdateState(st)
 	out.Qts = r.deviceEncryptedQts(ctx)
 	return ptr(out), nil
+}
+
+func getStateEstablishesObservedBaseline(ctx context.Context) bool {
+	switch ClientTypeFrom(ctx) {
+	case ClientTypeTDesktop, ClientTypeAndroid:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetDifferenceRequest) (tg.UpdatesDifferenceClass, error) {
@@ -76,7 +94,7 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	encMsgs, newQts := r.encryptedDifference(ctx, req.Qts)
 	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
 	stateUpdates, statePeerUserIDs, stateEventIDs := r.encryptedStateUpdates(ctx, userID)
-	if len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
+	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
 		r.registerBootstrapAfterBaseline(ctx, userID)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}

@@ -332,17 +332,12 @@ func (s *ChannelStore) ListDirtyActiveChannelsForUser(ctx context.Context, userI
 SELECT i.channel_id, c.pts
 FROM user_channel_member_index i
 JOIN channels c ON c.id = i.channel_id AND NOT c.deleted
+JOIN channel_update_checkpoints cp ON cp.channel_id = i.channel_id
 WHERE i.user_id = $1
   AND i.status = 'active'
   AND NOT i.deleted
   AND i.channel_id > $3
-  AND EXISTS (
-      SELECT 1
-      FROM channel_update_events e
-      WHERE e.channel_id = i.channel_id
-        AND e.date > $2
-      LIMIT 1
-  )
+  AND cp.latest_event_date > $2
 ORDER BY i.channel_id ASC
 LIMIT $4`, userID, sinceDate, afterChannelID, limit)
 	if err != nil {

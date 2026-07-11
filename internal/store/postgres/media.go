@@ -44,6 +44,69 @@ func bytesOrEmpty(b []byte) []byte {
 
 var _ store.MediaStore = (*MediaStore)(nil)
 
+func validUploadedMediaReceipt(receipt domain.UploadedMediaReceipt) bool {
+	if receipt.OwnerUserID == 0 || receipt.FileID == 0 || receipt.MediaID == 0 || len(receipt.IntentHash) != 32 {
+		return false
+	}
+	return receipt.Kind == domain.UploadedMediaPhoto || receipt.Kind == domain.UploadedMediaDocument
+}
+
+func (s *MediaStore) GetUploadedMediaReceipt(ctx context.Context, ownerUserID, fileID int64) (domain.UploadedMediaReceipt, bool, error) {
+	var receipt domain.UploadedMediaReceipt
+	var kind string
+	err := s.db.QueryRow(ctx, `
+SELECT owner_user_id, file_id, intent_hash, media_kind, media_id, created_at
+FROM uploaded_media_receipts
+WHERE owner_user_id = $1 AND file_id = $2`, ownerUserID, fileID).Scan(
+		&receipt.OwnerUserID,
+		&receipt.FileID,
+		&receipt.IntentHash,
+		&kind,
+		&receipt.MediaID,
+		&receipt.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.UploadedMediaReceipt{}, false, nil
+	}
+	if err != nil {
+		return domain.UploadedMediaReceipt{}, false, fmt.Errorf("get uploaded media receipt: %w", err)
+	}
+	receipt.Kind = domain.UploadedMediaKind(kind)
+	if !validUploadedMediaReceipt(receipt) {
+		return domain.UploadedMediaReceipt{}, false, fmt.Errorf(
+			"get uploaded media receipt: invalid owner=%d file=%d kind=%q media=%d hash=%d",
+			receipt.OwnerUserID, receipt.FileID, receipt.Kind, receipt.MediaID, len(receipt.IntentHash),
+		)
+	}
+	return receipt, true, nil
+}
+
+func (s *MediaStore) PutUploadedMediaReceipt(ctx context.Context, receipt domain.UploadedMediaReceipt) (domain.UploadedMediaReceipt, bool, error) {
+	if !validUploadedMediaReceipt(receipt) {
+		return domain.UploadedMediaReceipt{}, false, fmt.Errorf(
+			"put uploaded media receipt: invalid owner=%d file=%d kind=%q media=%d hash=%d",
+			receipt.OwnerUserID, receipt.FileID, receipt.Kind, receipt.MediaID, len(receipt.IntentHash),
+		)
+	}
+	tag, err := s.db.Exec(ctx, `
+INSERT INTO uploaded_media_receipts (owner_user_id, file_id, intent_hash, media_kind, media_id)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (owner_user_id, file_id) DO NOTHING`,
+		receipt.OwnerUserID, receipt.FileID, receipt.IntentHash, string(receipt.Kind), receipt.MediaID,
+	)
+	if err != nil {
+		return domain.UploadedMediaReceipt{}, false, fmt.Errorf("put uploaded media receipt: %w", err)
+	}
+	stored, found, err := s.GetUploadedMediaReceipt(ctx, receipt.OwnerUserID, receipt.FileID)
+	if err != nil {
+		return domain.UploadedMediaReceipt{}, false, err
+	}
+	if !found {
+		return domain.UploadedMediaReceipt{}, false, fmt.Errorf("put uploaded media receipt: row disappeared after insert")
+	}
+	return stored, tag.RowsAffected() == 1, nil
+}
+
 // ---- 上传分片 ----
 
 func (s *MediaStore) SaveFilePart(ctx context.Context, part domain.UploadPart) error {

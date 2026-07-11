@@ -28,7 +28,7 @@ func (r *Router) onMessagesReadMessageContents(ctx context.Context, ids []int) (
 			OwnerUserID:     userID,
 			IDs:             ids,
 			Date:            int(r.clock.Now().Unix()),
-			OriginAuthKeyID: id,
+			OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 			OriginSessionID: sessionID,
 		})
 		if err != nil {

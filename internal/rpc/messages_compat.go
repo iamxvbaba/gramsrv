@@ -140,7 +140,7 @@ func (r *Router) onMessagesDeleteSavedHistory(ctx context.Context, req *tg.Messa
 		MinDate:         minDate,
 		MaxDate:         maxDate,
 		Date:            int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 	})
 	if err != nil {

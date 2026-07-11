@@ -206,6 +206,14 @@ func (r *Router) channelMessagesUpdatesWithPeerCache(ctx context.Context, viewer
 				updates = append(updates, update)
 			}
 		}
+		if res.Duplicate && res.ReplayDeleteEvent != nil {
+			if update := tgChannelUpdate(viewerUserID, *res.ReplayDeleteEvent); update != nil {
+				updates = append(updates, update)
+			}
+			if res.ReplayDeleteEvent.Date > date {
+				date = res.ReplayDeleteEvent.Date
+			}
+		}
 		collectChannelUpdatePeerRefs(res.Event, res.Channel.ID, userIDs, channelIDs)
 		collectChannelMessagePeerRefs(res.Message, res.Channel.ID, userIDs, channelIDs)
 		if date == 0 {

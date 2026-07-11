@@ -172,7 +172,11 @@ func TestMessagesGetPeerDialogsReturnsRequestedDialogsAndState(t *testing.T) {
 func TestDialogSettingRPCsRecordDurableUpdates(t *testing.T) {
 	var authKeyID [8]byte
 	authKeyID[0] = 9
-	ctx := WithSessionID(WithAuthKeyID(WithUserID(context.Background(), 1000000001), authKeyID), 55)
+	rawAuthKeyID := [8]byte{9, 7}
+	ctx := WithRawAuthKeyID(
+		WithSessionID(WithAuthKeyID(WithUserID(context.Background(), 1000000001), authKeyID), 55),
+		rawAuthKeyID,
+	)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}
 	dialogPeer := &tg.InputDialogPeer{Peer: &tg.InputPeerUser{UserID: peer.ID}}
 	dialogs := &captureDialogs{}
@@ -186,6 +190,9 @@ func TestDialogSettingRPCsRecordDurableUpdates(t *testing.T) {
 	}
 	if len(updates.events) != 1 || updates.events[0].Type != domain.UpdateEventDialogPinned || updates.events[0].Peer != peer || !updates.events[0].Bool || updates.excludeSessionID != 55 {
 		t.Fatalf("pin event = %+v, want durable dialog_pinned", updates.events)
+	}
+	if updates.authKeyID != authKeyID || updates.excludeAuthKeyID != rawAuthKeyID {
+		t.Fatalf("durable update keys = state:%x exclude:%x, want business:%x raw:%x", updates.authKeyID, updates.excludeAuthKeyID, authKeyID, rawAuthKeyID)
 	}
 
 	if ok, err := r.onMessagesReorderPinnedDialogs(ctx, &tg.MessagesReorderPinnedDialogsRequest{Order: []tg.InputDialogPeerClass{dialogPeer}}); err != nil || !ok {

@@ -2,9 +2,24 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"time"
 )
+
+type privateSendDedupKey struct {
+	senderUserID int64
+	randomID     int64
+}
+
+type privateSendDedupRecord struct {
+	recipientUserID   int64
+	senderSnapshot    []byte
+	recipientMessage  domain.Message
+	fingerprint       []byte
+	senderDeleteEvent *domain.UpdateEvent
+}
 
 func (s *MessageStore) Create(_ context.Context, msg domain.Message) (domain.Message, error) {
 	s.mu.Lock()
@@ -30,29 +45,19 @@ func (s *MessageStore) Create(_ context.Context, msg domain.Message) (domain.Mes
 }
 
 func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+	fingerprint, err := store.PrivateSendFingerprint(req)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, msg := range s.m[req.SenderUserID] {
-		if msg.RandomID != 0 && msg.RandomID == req.RandomID {
-			recipient := domain.Message{}
-			if req.SenderUserID != req.RecipientUserID {
-				for _, peerMsg := range s.m[req.RecipientUserID] {
-					if peerMsg.UID == msg.UID {
-						recipient = peerMsg
-						break
-					}
-				}
-			} else {
-				recipient = msg
-			}
-			return domain.SendPrivateTextResult{
-				SenderMessage:    cloneMessage(msg),
-				RecipientMessage: cloneMessage(recipient),
-				SenderEvent:      newMessageEvent(msg),
-				RecipientEvent:   newMessageEvent(recipient),
-				Duplicate:        true,
-			}, nil
-		}
+	if replay, found, err := s.lookupPrivateSendReplayLocked(domain.PrivateSendReplayRequest{
+		SenderUserID:           req.SenderUserID,
+		RecipientUserID:        req.RecipientUserID,
+		RandomID:               req.RandomID,
+		IdempotencyFingerprint: fingerprint,
+	}); err != nil || found {
+		return replay, err
 	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
@@ -109,9 +114,24 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		recipient.Pts = s.nextPtsLocked(req.RecipientUserID)
 		recipient.MediaUnread = req.Media.HasUnreadPayload()
 	}
+	var senderSnapshot []byte
+	if req.RandomID != 0 {
+		senderSnapshot, err = store.EncodePrivateSendSnapshot(sender)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+	}
 	s.m[req.SenderUserID] = append(s.m[req.SenderUserID], sender)
 	if req.SenderUserID != req.RecipientUserID && !req.RecipientBlocked {
 		s.m[req.RecipientUserID] = append(s.m[req.RecipientUserID], recipient)
+	}
+	if req.RandomID != 0 {
+		s.privateSendDedup[privateSendDedupKey{senderUserID: req.SenderUserID, randomID: req.RandomID}] = privateSendDedupRecord{
+			recipientUserID:  req.RecipientUserID,
+			senderSnapshot:   senderSnapshot,
+			recipientMessage: immutablePrivateSendReceipt(recipient),
+			fingerprint:      append([]byte(nil), fingerprint...),
+		}
 	}
 	if s.dialogs != nil {
 		if recipient.ID != 0 {
@@ -126,6 +146,81 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		SenderEvent:      newMessageEvent(sender),
 		RecipientEvent:   newMessageEvent(recipient),
 	}, nil
+}
+
+// LookupPrivateSendReplay returns an existing immutable/current replay receipt without running
+// any send permission, reply resolution or allocation path.
+func (s *MessageStore) LookupPrivateSendReplay(_ context.Context, req domain.PrivateSendReplayRequest) (domain.SendPrivateTextResult, bool, error) {
+	if req.SenderUserID == 0 || req.RecipientUserID == 0 || req.RandomID == 0 {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("memory private send replay: invalid scope")
+	}
+	if err := store.ValidateSendFingerprint(req.IdempotencyFingerprint, "private send replay"); err != nil {
+		return domain.SendPrivateTextResult{}, false, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lookupPrivateSendReplayLocked(req)
+}
+
+func (s *MessageStore) lookupPrivateSendReplayLocked(req domain.PrivateSendReplayRequest) (domain.SendPrivateTextResult, bool, error) {
+	record, ok := s.privateSendDedup[privateSendDedupKey{senderUserID: req.SenderUserID, randomID: req.RandomID}]
+	if !ok {
+		return domain.SendPrivateTextResult{}, false, nil
+	}
+	if record.recipientUserID != req.RecipientUserID || !store.SameSendFingerprint(record.fingerprint, req.IdempotencyFingerprint) {
+		return domain.SendPrivateTextResult{}, false, domain.ErrMessageRandomIDDuplicate
+	}
+	firstSender, err := store.DecodePrivateSendSnapshot(record.senderSnapshot)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("memory duplicate private message snapshot: %w", err)
+	}
+	sender := firstSender
+	visible := false
+	for _, current := range s.m[req.SenderUserID] {
+		if current.UID == firstSender.UID && current.ID == firstSender.ID {
+			sender = cloneMessage(current)
+			sender.RandomID = firstSender.RandomID
+			visible = true
+			break
+		}
+	}
+	if !visible && record.senderDeleteEvent == nil {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("memory duplicate private message %d is absent without a durable sender delete receipt", firstSender.UID)
+	}
+	recipient := cloneMessage(record.recipientMessage)
+	var replayDelete *domain.UpdateEvent
+	if record.senderDeleteEvent != nil {
+		cloned := cloneUpdateEvent(*record.senderDeleteEvent)
+		replayDelete = &cloned
+	}
+	return domain.SendPrivateTextResult{
+		SenderMessage:     sender,
+		RecipientMessage:  recipient,
+		SenderEvent:       newMessageEvent(firstSender),
+		RecipientEvent:    newMessageEvent(recipient),
+		Duplicate:         true,
+		ReplayDeleteEvent: replayDelete,
+	}, true, nil
+}
+
+// immutablePrivateSendReceipt keeps the recipient allocation facts used by
+// store-level idempotency tests. The sender response snapshot is stored as a
+// versioned JSON value above so all nested media/reply graphs are immutable.
+func immutablePrivateSendReceipt(msg domain.Message) domain.Message {
+	if msg.ID == 0 {
+		return domain.Message{}
+	}
+	return domain.Message{
+		ID:          msg.ID,
+		UID:         msg.UID,
+		RandomID:    msg.RandomID,
+		OwnerUserID: msg.OwnerUserID,
+		Peer:        msg.Peer,
+		From:        msg.From,
+		Date:        msg.Date,
+		Out:         msg.Out,
+		Pts:         msg.Pts,
+	}
 }
 
 func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextRequest) (*domain.MessageReply, *domain.MessageReply, error) {

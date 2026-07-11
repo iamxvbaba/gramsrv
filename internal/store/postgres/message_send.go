@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"sort"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 	"time"
 )
@@ -50,6 +51,10 @@ func (s *MessageStore) Create(ctx context.Context, msg domain.Message) (domain.M
 }
 
 func (s *MessageStore) ensureOfficialSystemUser(ctx context.Context, msg domain.Message) error {
+	return ensureOfficialSystemUserWithDB(ctx, s.db, msg)
+}
+
+func ensureOfficialSystemUserWithDB(ctx context.Context, db sqlcgen.DBTX, msg domain.Message) error {
 	if msg.Peer.Type != domain.PeerTypeUser && msg.From.Type != domain.PeerTypeUser {
 		return nil
 	}
@@ -60,22 +65,10 @@ func (s *MessageStore) ensureOfficialSystemUser(ctx context.Context, msg domain.
 	if !ok {
 		return nil
 	}
-	if _, err := s.db.Exec(ctx, `
+	if _, err := db.Exec(ctx, `
 INSERT INTO users (id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-ON CONFLICT (id) DO UPDATE SET
-  access_hash = EXCLUDED.access_hash,
-  phone = EXCLUDED.phone,
-  first_name = EXCLUDED.first_name,
-  last_name = EXCLUDED.last_name,
-  username = EXCLUDED.username,
-  country_code = EXCLUDED.country_code,
-  verified = EXCLUDED.verified,
-  support = EXCLUDED.support,
-  about = EXCLUDED.about,
-  is_bot = EXCLUDED.is_bot,
-  bot_info_version = EXCLUDED.bot_info_version,
-  updated_at = now()
+ON CONFLICT (id) DO NOTHING
 `, u.ID, u.AccessHash, u.Phone, u.FirstName, u.LastName, u.Username, u.CountryCode, u.Verified, u.Support, u.About, u.Bot, u.BotInfoVersion); err != nil {
 		return fmt.Errorf("ensure official system user: %w", err)
 	}
@@ -128,6 +121,21 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	richMessageJSON, err := encodeRichMessage(req.RichMessage)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
+	}
+	requestFingerprint, err := store.PrivateSendFingerprint(req)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	// 常见的 lost-response 重放在开事务和拿双方 advisory lock 之前直接返回；
+	// 并发首次请求仍由事务内 unique conflict + qtx 兜底，不能只依赖本次预查。
+	// RPC/app 已完成同一只读查询时可跳过这次重复 round-trip。
+	if !req.IdempotencyPreflighted {
+		if duplicate, found, err := s.duplicateSendResult(ctx, s.q, req, requestFingerprint); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		} else if found {
+			duplicate.Duplicate = true
+			return duplicate, nil
+		}
 	}
 	senderReply, recipientReply, err := s.resolvePrivateSendReply(ctx, req)
 	if err != nil {
@@ -186,29 +194,35 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	}
 
 	privateArg := sqlcgen.CreatePrivateMessageParams{
-		SenderUserID:    req.SenderUserID,
-		RecipientUserID: req.RecipientUserID,
-		RandomID:        req.RandomID,
-		MessageDate:     int32(req.Date),
-		Body:            req.Message,
-		TtlPeriod:       int32(ttlPeriod),
-		ExpiresAt:       int32(expiresAt),
-		EntitiesJson:    entities,
-		MediaJson:       mediaJSON,
-		ReplyMarkupJson: replyMarkupJSON,
-		RichMessageJson: richMessageJSON,
-		ViaBotID:        req.ViaBotID,
-		GroupedID:       req.GroupedID,
-		Effect:          req.Effect,
+		SenderUserID:       req.SenderUserID,
+		RecipientUserID:    req.RecipientUserID,
+		RandomID:           req.RandomID,
+		RequestFingerprint: requestFingerprint,
+		RecipientDelivered: deliverRecipient,
+		MessageDate:        int32(req.Date),
+		Body:               req.Message,
+		TtlPeriod:          int32(ttlPeriod),
+		ExpiresAt:          int32(expiresAt),
+		EntitiesJson:       entities,
+		MediaJson:          mediaJSON,
+		ReplyMarkupJson:    replyMarkupJSON,
+		RichMessageJson:    richMessageJSON,
+		ViaBotID:           req.ViaBotID,
+		GroupedID:          req.GroupedID,
+		Effect:             req.Effect,
 	}
 	applyCreatePrivateMessageMetadata(&privateArg, senderMeta)
 	pm, err := qtx.CreatePrivateMessage(ctx, privateArg)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// 幂等重复：返回原消息盒；此时还没有分配 pts，重复发送不应制造额外事件。
-			dup, dupErr := s.duplicateSendResult(ctx, req.SenderUserID, req.RecipientUserID, req.RandomID)
+			// 预查与 INSERT 之间另一请求可能已提交。必须在当前 qtx 读取，
+			// 不能持事务连接/advisory lock 再从 s.q 申请第二条池连接。
+			dup, found, dupErr := s.duplicateSendResult(ctx, qtx, req, requestFingerprint)
 			if dupErr != nil {
 				return domain.SendPrivateTextResult{}, dupErr
+			}
+			if !found {
+				return domain.SendPrivateTextResult{}, fmt.Errorf("duplicate private message disappeared after unique conflict")
 			}
 			dup.Duplicate = true
 			return dup, nil
@@ -267,6 +281,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("create sender box: %w", err)
 	}
 	sender := messageFromBoxRow(senderRow)
+	sender.RandomID = req.RandomID
 	// 共享媒体索引(0118):发送者侧 box 按媒体类别建索引(peer=收件人)。
 	if err := insertMessageBoxMediaIndexTx(ctx, tx, req.SenderUserID, req.RecipientUserID, int(senderBoxID), req.Date, req.Media, req.Entities); err != nil {
 		return domain.SendPrivateTextResult{}, err
@@ -328,6 +343,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			return domain.SendPrivateTextResult{}, fmt.Errorf("create recipient box: %w", err)
 		}
 		recipient = messageFromBoxRow(recipientRow)
+		recipient.RandomID = req.RandomID
 		// 共享媒体索引(0118):收件人侧 box 按媒体类别建索引(peer=发送者)。
 		if err := insertMessageBoxMediaIndexTx(ctx, tx, req.RecipientUserID, req.SenderUserID, int(recipientBoxID), req.Date, req.Media, req.Entities); err != nil {
 			return domain.SendPrivateTextResult{}, err
@@ -355,6 +371,33 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		}
 	}
 
+	receiptRecipientBoxID, receiptRecipientPts := recipientBoxID, recipientPts
+	if selfMessage {
+		receiptRecipientBoxID, receiptRecipientPts = sender.ID, sender.Pts
+	}
+	senderSnapshot, err := store.EncodePrivateSendSnapshot(sender)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE private_messages
+SET sender_box_id = $3,
+    sender_pts = $4,
+    recipient_box_id = $5,
+    recipient_pts = $6,
+    sender_snapshot = $7::jsonb
+WHERE sender_user_id = $1
+  AND id = $2
+  AND sender_box_id = 0
+  AND sender_pts = 0
+  AND sender_snapshot = '{}'::jsonb`, req.SenderUserID, pm.ID, sender.ID, sender.Pts, receiptRecipientBoxID, receiptRecipientPts, senderSnapshot)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("save private send receipt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("save private send receipt: private message %d already has or lost its immutable receipt", pm.ID)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("commit send message tx: %w", err)
 	}
@@ -365,6 +408,28 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		SenderEvent:      eventFromMessage(sender),
 		RecipientEvent:   eventFromMessage(recipient),
 	}, nil
+}
+
+// LookupPrivateSendReplay reads an existing receipt without permission checks, source/media
+// resolution, locks or allocations.  The authenticated app/RPC layer supplies sender identity.
+func (s *MessageStore) LookupPrivateSendReplay(ctx context.Context, lookup domain.PrivateSendReplayRequest) (domain.SendPrivateTextResult, bool, error) {
+	if lookup.SenderUserID == 0 || lookup.RecipientUserID == 0 || lookup.RandomID == 0 {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("private send replay: invalid scope")
+	}
+	if err := store.ValidateSendFingerprint(lookup.IdempotencyFingerprint, "private send replay"); err != nil {
+		return domain.SendPrivateTextResult{}, false, err
+	}
+	res, found, err := s.duplicateSendResult(ctx, s.q, domain.SendPrivateTextRequest{
+		SenderUserID:           lookup.SenderUserID,
+		RecipientUserID:        lookup.RecipientUserID,
+		RandomID:               lookup.RandomID,
+		IdempotencyFingerprint: lookup.IdempotencyFingerprint,
+	}, lookup.IdempotencyFingerprint)
+	if err != nil || !found {
+		return domain.SendPrivateTextResult{}, found, err
+	}
+	res.Duplicate = true
+	return res, true, nil
 }
 
 type boxIDCounterBumper interface {
@@ -400,49 +465,96 @@ func isMessageBoxDuplicateKey(err error) bool {
 	return pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "message_boxes")
 }
 
-func (s *MessageStore) duplicateSendResult(ctx context.Context, senderUserID, recipientUserID, randomID int64) (domain.SendPrivateTextResult, error) {
-	pm, err := s.q.GetPrivateMessageByRandomID(ctx, sqlcgen.GetPrivateMessageByRandomIDParams{
-		SenderUserID: senderUserID,
-		RandomID:     randomID,
+func (s *MessageStore) duplicateSendResult(ctx context.Context, q *sqlcgen.Queries, req domain.SendPrivateTextRequest, requestFingerprint []byte) (domain.SendPrivateTextResult, bool, error) {
+	pm, err := q.GetPrivateMessageByRandomID(ctx, sqlcgen.GetPrivateMessageByRandomIDParams{
+		SenderUserID: req.SenderUserID,
+		RandomID:     req.RandomID,
 	})
 	if err != nil {
-		return domain.SendPrivateTextResult{}, fmt.Errorf("get duplicate private message: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.SendPrivateTextResult{}, false, nil
+		}
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("get duplicate private message: %w", err)
 	}
-	senderRow, err := s.q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
-		OwnerUserID:      senderUserID,
+	if pm.SenderUserID != req.SenderUserID ||
+		pm.RecipientUserID != req.RecipientUserID ||
+		!store.SamePrivateSendFingerprint(pm.RequestFingerprint, requestFingerprint) {
+		return domain.SendPrivateTextResult{}, false, domain.ErrMessageRandomIDDuplicate
+	}
+	if pm.SenderBoxID <= 0 || pm.SenderPts <= 0 {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf(
+			"duplicate private message %d has invalid immutable sender receipt box=%d pts=%d",
+			pm.ID, pm.SenderBoxID, pm.SenderPts,
+		)
+	}
+	firstSender, err := store.DecodePrivateSendSnapshot([]byte(pm.SenderSnapshotJson))
+	if err != nil {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("decode duplicate private message %d sender snapshot: %w", pm.ID, err)
+	}
+	if firstSender.ID != int(pm.SenderBoxID) || firstSender.UID != pm.ID || firstSender.RandomID != pm.RandomID ||
+		firstSender.OwnerUserID != pm.SenderUserID || firstSender.Pts != int(pm.SenderPts) {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("duplicate private message %d sender snapshot disagrees with immutable receipt", pm.ID)
+	}
+	sender := firstSender
+	currentRow, currentErr := q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
+		OwnerUserID:      pm.SenderUserID,
 		PrivateMessageID: pm.ID,
 	})
-	if err != nil {
-		return domain.SendPrivateTextResult{}, fmt.Errorf("get duplicate sender box: %w", err)
+	if currentErr == nil {
+		sender = messageFromGetBoxRow(currentRow)
+		sender.RandomID = pm.RandomID
+	} else if !errors.Is(currentErr, pgx.ErrNoRows) {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("get current duplicate private message %d sender box: %w", pm.ID, currentErr)
 	}
-	sender := messageFromGetBoxRow(senderRow)
+	var replayDelete *domain.UpdateEvent
+	if errors.Is(currentErr, pgx.ErrNoRows) {
+		messageIDs, decodeErr := decodeEventMessageIDs(pm.SenderDeleteMessageIdsJson)
+		if decodeErr != nil {
+			return domain.SendPrivateTextResult{}, false, fmt.Errorf("decode duplicate private message %d delete ids: %w", pm.ID, decodeErr)
+		}
+		if pm.SenderDeletePts <= 0 || pm.SenderDeletePtsCount <= 0 || len(messageIDs) == 0 {
+			return domain.SendPrivateTextResult{}, false, fmt.Errorf("duplicate private message %d sender box is absent without a durable delete receipt", pm.ID)
+		}
+		event := domain.UpdateEvent{
+			UserID:     pm.SenderUserID,
+			Type:       domain.UpdateEventDeleteMessages,
+			Pts:        int(pm.SenderDeletePts),
+			PtsCount:   int(pm.SenderDeletePtsCount),
+			Date:       int(pm.SenderDeleteDate),
+			MessageIDs: messageIDs,
+		}
+		replayDelete = &event
+	}
 	recipient := domain.Message{}
-	if recipientUserID == senderUserID {
+	if req.RecipientUserID == req.SenderUserID {
 		recipient = sender
 	}
-	if recipientUserID != senderUserID {
-		recipientRow, err := s.q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
-			OwnerUserID:      recipientUserID,
-			PrivateMessageID: pm.ID,
-		})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return domain.SendPrivateTextResult{
-					SenderMessage:  sender,
-					SenderEvent:    eventFromMessage(sender),
-					RecipientEvent: domain.UpdateEvent{},
-				}, nil
-			}
-			return domain.SendPrivateTextResult{}, fmt.Errorf("get duplicate recipient box: %w", err)
+	if req.RecipientUserID != req.SenderUserID && pm.RecipientDelivered {
+		if pm.RecipientBoxID <= 0 || pm.RecipientPts <= 0 {
+			return domain.SendPrivateTextResult{}, false, fmt.Errorf(
+				"duplicate private message %d declares recipient delivery with invalid immutable receipt box=%d pts=%d",
+				pm.ID, pm.RecipientBoxID, pm.RecipientPts,
+			)
 		}
-		recipient = messageFromGetBoxRow(recipientRow)
+		recipient = domain.Message{
+			ID:          int(pm.RecipientBoxID),
+			UID:         pm.ID,
+			RandomID:    pm.RandomID,
+			OwnerUserID: pm.RecipientUserID,
+			Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: pm.SenderUserID},
+			From:        domain.Peer{Type: domain.PeerTypeUser, ID: pm.SenderUserID},
+			Date:        int(pm.MessageDate),
+			Out:         false,
+			Pts:         int(pm.RecipientPts),
+		}
 	}
 	return domain.SendPrivateTextResult{
-		SenderMessage:    sender,
-		RecipientMessage: recipient,
-		SenderEvent:      eventFromMessage(sender),
-		RecipientEvent:   eventFromMessage(recipient),
-	}, nil
+		SenderMessage:     sender,
+		RecipientMessage:  recipient,
+		SenderEvent:       eventFromMessage(firstSender),
+		RecipientEvent:    eventFromMessage(recipient),
+		ReplayDeleteEvent: replayDelete,
+	}, true, nil
 }
 
 func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.SendPrivateTextRequest) (*domain.MessageReply, *domain.MessageReply, error) {

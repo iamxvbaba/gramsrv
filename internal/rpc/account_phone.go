@@ -51,10 +51,12 @@ func (r *Router) onAccountChangePhone(ctx context.Context, req *tg.AccountChange
 		return nil, authKeyUnregisteredErr()
 	}
 	sessionID, _ := SessionIDFrom(ctx)
+	originRawAuthKeyID := rawAuthKeyIDForOrigin(ctx)
 	result, err := r.deps.Account.ChangePhone(
 		ctx,
 		userID,
 		authKeyID,
+		originRawAuthKeyID,
 		sessionID,
 		req.PhoneNumber,
 		req.PhoneCodeHash,

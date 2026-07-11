@@ -26,6 +26,7 @@ type fakeMediaStore struct {
 	parts     map[string][]domain.UploadPart
 	webPages  map[int64]domain.MessageWebPage
 	seedState map[string]string
+	receipts  map[string]domain.UploadedMediaReceipt
 }
 
 func newFakeMediaStore() *fakeMediaStore {
@@ -36,7 +37,33 @@ func newFakeMediaStore() *fakeMediaStore {
 		sets:      map[int64]domain.StickerSet{},
 		parts:     map[string][]domain.UploadPart{},
 		seedState: map[string]string{},
+		receipts:  map[string]domain.UploadedMediaReceipt{},
 	}
+}
+
+func fakeUploadReceiptKey(ownerUserID, fileID int64) string {
+	return fmt.Sprintf("%d/%d", ownerUserID, fileID)
+}
+
+func (f *fakeMediaStore) GetUploadedMediaReceipt(_ context.Context, ownerUserID, fileID int64) (domain.UploadedMediaReceipt, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	receipt, ok := f.receipts[fakeUploadReceiptKey(ownerUserID, fileID)]
+	receipt.IntentHash = append([]byte(nil), receipt.IntentHash...)
+	return receipt, ok, nil
+}
+
+func (f *fakeMediaStore) PutUploadedMediaReceipt(_ context.Context, receipt domain.UploadedMediaReceipt) (domain.UploadedMediaReceipt, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := fakeUploadReceiptKey(receipt.OwnerUserID, receipt.FileID)
+	if stored, ok := f.receipts[key]; ok {
+		stored.IntentHash = append([]byte(nil), stored.IntentHash...)
+		return stored, false, nil
+	}
+	receipt.IntentHash = append([]byte(nil), receipt.IntentHash...)
+	f.receipts[key] = receipt
+	return receipt, true, nil
 }
 
 func (f *fakeMediaStore) SaveFilePart(_ context.Context, part domain.UploadPart) error {

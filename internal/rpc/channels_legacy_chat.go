@@ -445,14 +445,13 @@ func (r *Router) onMessagesSetChatTheme(ctx context.Context, req *tg.MessagesSet
 	if err != nil {
 		return nil, err
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.SetChatTheme(ctx, userID, domain.SetPrivateChatThemeRequest{
 		OwnerUserID:      userID,
 		Peer:             peer,
 		Emoticon:         emoticon,
 		Date:             int(r.clock.Now().Unix()),
-		OriginAuthKeyID:  authKeyID,
+		OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:  sessionID,
 		RecipientBlocked: recipientBlocked,
 	})
@@ -578,6 +577,7 @@ func (r *Router) enqueueChannelWallpaperFanout(ctx context.Context, originUserID
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessageFanoutOwnerIDs(sendRes, nil)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMembers, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
+		0,
 		func(bgCtx context.Context, viewers []int64) {
 			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
 		},

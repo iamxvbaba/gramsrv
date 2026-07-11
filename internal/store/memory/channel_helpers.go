@@ -319,14 +319,8 @@ func (s *ChannelStore) ListDirtyActiveChannelsForUser(_ context.Context, userID 
 		if !ok || member.Status != domain.ChannelMemberActive {
 			continue
 		}
-		dirty := false
-		for _, event := range s.events[channelID] {
-			if event.Date > sinceDate {
-				dirty = true
-				break
-			}
-		}
-		if dirty {
+		checkpoint := s.channelUpdateCheckpointLocked(channelID, channel)
+		if checkpoint.LatestEventDate > sinceDate {
 			out = append(out, domain.DirtyChannel{ChannelID: channelID, Pts: channel.Pts})
 		}
 	}

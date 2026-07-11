@@ -2,7 +2,11 @@ package memory
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
+	"time"
+
 	"telesrv/internal/domain"
 )
 
@@ -37,7 +41,8 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 			Dialog:  dialog,
 		}, nil
 	}
-	if channel.Pts-req.Pts > limit {
+	checkpoint := s.channelUpdateCheckpointLocked(req.ChannelID, channel)
+	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > limit {
 		messages := make([]domain.ChannelMessage, 0, domain.MaxChannelDifferenceTooLongMessages)
 		for i := len(s.messages[req.ChannelID]) - 1; i >= 0 && len(messages) < domain.MaxChannelDifferenceTooLongMessages; i-- {
 			msg := s.messages[req.ChannelID][i]
@@ -120,6 +125,170 @@ func (s *ChannelStore) MaxChannelPts(_ context.Context, channelID int64) (int, e
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ptsSeq[channelID], nil
+}
+
+func (s *ChannelStore) MaxChannelPtsBatch(_ context.Context, channelIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(channelIDs))
+	s.mu.RLock()
+	for _, channelID := range channelIDs {
+		if pts, ok := s.ptsSeq[channelID]; ok {
+			out[channelID] = pts
+		}
+	}
+	s.mu.RUnlock()
+	return out, nil
+}
+
+// appendChannelEventLocked is the only memory-store append boundary for channel-scoped durable
+// events. Keeping the checkpoint current here mirrors the PostgreSQL event+checkpoint transaction.
+func (s *ChannelStore) appendChannelEventLocked(event domain.ChannelUpdateEvent) {
+	s.events[event.ChannelID] = append(s.events[event.ChannelID], event)
+	checkpoint := s.retention[event.ChannelID]
+	checkpoint.ChannelID = event.ChannelID
+	if event.Pts > checkpoint.LatestPts {
+		checkpoint.LatestPts = event.Pts
+	}
+	if event.Date > checkpoint.LatestEventDate {
+		checkpoint.LatestEventDate = event.Date
+	}
+	s.retention[event.ChannelID] = checkpoint
+}
+
+func (s *ChannelStore) channelUpdateCheckpointLocked(channelID int64, channel domain.Channel) domain.ChannelUpdateRetentionCheckpoint {
+	checkpoint := s.retention[channelID]
+	checkpoint.ChannelID = channelID
+	if channel.Pts > checkpoint.LatestPts {
+		checkpoint.LatestPts = channel.Pts
+	}
+	for _, event := range s.events[channelID] {
+		if event.Pts > checkpoint.LatestPts {
+			checkpoint.LatestPts = event.Pts
+		}
+		if event.Date > checkpoint.LatestEventDate {
+			checkpoint.LatestEventDate = event.Date
+		}
+	}
+	return checkpoint
+}
+
+// PruneChannelUpdateEvents removes a bounded contiguous prefix and advances the retained floor in
+// the same memory-store critical section. throughPts may land inside a pts_count interval; that row
+// is retained because channel event rows are indivisible.
+func (s *ChannelStore) PruneChannelUpdateEvents(_ context.Context, channelID int64, throughPts, limit int) (domain.ChannelUpdateRetentionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pruneChannelUpdateEventsLocked(channelID, throughPts, 0, limit)
+}
+
+// DeleteExpiredChannelUpdateEvents uses the oldest retained event of each channel as an indexed-seek
+// analogue, then prunes candidates oldest-first. There is no offset scan and total deleted rows never
+// exceeds limit.
+func (s *ChannelStore) DeleteExpiredChannelUpdateEvents(_ context.Context, olderThan time.Duration, limit int) (int, error) {
+	if olderThan <= 0 {
+		return 0, nil
+	}
+	limit = normalizeChannelRetentionLimit(limit)
+	cutoff := int(time.Now().Add(-olderThan).Unix())
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	type candidate struct {
+		channelID int64
+		date      int
+	}
+	candidates := make([]candidate, 0)
+	for channelID, channel := range s.channels {
+		checkpoint := s.channelUpdateCheckpointLocked(channelID, channel)
+		for _, event := range s.events[channelID] {
+			if event.Pts <= checkpoint.RetainedThroughPts {
+				continue
+			}
+			if event.Date < cutoff {
+				candidates = append(candidates, candidate{channelID: channelID, date: event.Date})
+			}
+			break
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].date == candidates[j].date {
+			return candidates[i].channelID < candidates[j].channelID
+		}
+		return candidates[i].date < candidates[j].date
+	})
+
+	deleted := 0
+	for _, item := range candidates {
+		if deleted >= limit {
+			break
+		}
+		channel := s.channels[item.channelID]
+		result, err := s.pruneChannelUpdateEventsLocked(item.channelID, channel.Pts, cutoff, limit-deleted)
+		if err != nil {
+			return deleted, err
+		}
+		deleted += result.Deleted
+	}
+	return deleted, nil
+}
+
+func (s *ChannelStore) pruneChannelUpdateEventsLocked(channelID int64, throughPts, beforeDate, limit int) (domain.ChannelUpdateRetentionResult, error) {
+	channel, ok := s.channels[channelID]
+	if !ok || channelID == 0 || throughPts < 0 {
+		return domain.ChannelUpdateRetentionResult{}, domain.ErrChannelInvalid
+	}
+	limit = normalizeChannelRetentionLimit(limit)
+	checkpoint := s.channelUpdateCheckpointLocked(channelID, channel)
+	if throughPts > checkpoint.LatestPts {
+		throughPts = checkpoint.LatestPts
+	}
+	if throughPts <= checkpoint.RetainedThroughPts {
+		s.retention[channelID] = checkpoint
+		return domain.ChannelUpdateRetentionResult{Checkpoint: checkpoint}, nil
+	}
+
+	cursor := checkpoint.RetainedThroughPts
+	deleted := 0
+	keep := make([]domain.ChannelUpdateEvent, 0, len(s.events[channelID]))
+	canPrune := true
+	for _, event := range s.events[channelID] {
+		if event.Pts <= checkpoint.RetainedThroughPts {
+			keep = append(keep, event)
+			continue
+		}
+		if !canPrune || deleted >= limit || event.Pts > throughPts || (beforeDate > 0 && event.Date >= beforeDate) {
+			canPrune = false
+			keep = append(keep, event)
+			continue
+		}
+		ptsCount := event.PtsCount
+		if ptsCount <= 0 {
+			return domain.ChannelUpdateRetentionResult{}, fmt.Errorf(
+				"prune channel update events: channel %d has invalid pts_count=%d at pts=%d",
+				channelID, ptsCount, event.Pts,
+			)
+		}
+		if event.Pts != cursor+ptsCount {
+			return domain.ChannelUpdateRetentionResult{}, fmt.Errorf(
+				"prune channel update events: channel %d has gap after pts %d: event pts=%d pts_count=%d",
+				channelID, cursor, event.Pts, ptsCount,
+			)
+		}
+		cursor = event.Pts
+		deleted++
+	}
+	if deleted > 0 {
+		s.events[channelID] = keep
+		checkpoint.RetainedThroughPts = cursor
+	}
+	s.retention[channelID] = checkpoint
+	return domain.ChannelUpdateRetentionResult{Checkpoint: checkpoint, Deleted: deleted}, nil
+}
+
+func normalizeChannelRetentionLimit(limit int) int {
+	if limit <= 0 || limit > domain.MaxChannelUpdateRetentionBatch {
+		return domain.MaxChannelUpdateRetentionBatch
+	}
+	return limit
 }
 
 func (s *ChannelStore) nextChannelPtsLocked(channelID int64) int {

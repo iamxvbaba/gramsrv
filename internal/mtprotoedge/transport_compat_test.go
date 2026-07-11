@@ -75,8 +75,8 @@ func TestCompatPaddedIntermediateWriteRoundTrip(t *testing.T) {
 		if err := codec.Write(&out, &payload); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
-		if out.writes != 1 {
-			t.Fatalf("write %d: writes = %d, want 1", i, out.writes)
+		if out.writes < 2 || out.writes > 3 {
+			t.Fatalf("write %d: writes = %d, want header/payload[/padding] segments", i, out.writes)
 		}
 		total := binary.LittleEndian.Uint32(out.Bytes()[:4])
 		if int(total) != len(out.Bytes())-4 {
@@ -97,7 +97,7 @@ func TestCompatPaddedIntermediateWriteRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCompatTransportCodecsWriteSinglePacket(t *testing.T) {
+func TestCompatTransportCodecsWriteSegmentedPacketWithoutFullCopy(t *testing.T) {
 	var payload bin.Buffer
 	payload.PutInt32(0x01020304)
 	payload.PutInt32(0x05060708)
@@ -107,8 +107,8 @@ func TestCompatTransportCodecsWriteSinglePacket(t *testing.T) {
 		if err := (&quickAckAbridgedCodec{}).Write(&out, &payload); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		if out.writes != 1 {
-			t.Fatalf("writes = %d, want 1", out.writes)
+		if out.writes != 2 {
+			t.Fatalf("generic writer calls = %d, want header+payload; raw TCP uses vectored I/O", out.writes)
 		}
 		if got, want := out.Bytes()[0], byte(payload.Len()/bin.Word); got != want {
 			t.Fatalf("abridged header = %#x, want %#x", got, want)
@@ -120,8 +120,8 @@ func TestCompatTransportCodecsWriteSinglePacket(t *testing.T) {
 		if err := (&quickAckIntermediateCodec{}).Write(&out, &payload); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		if out.writes != 1 {
-			t.Fatalf("writes = %d, want 1", out.writes)
+		if out.writes != 2 {
+			t.Fatalf("generic writer calls = %d, want header+payload; raw TCP uses vectored I/O", out.writes)
 		}
 		if got, want := binary.LittleEndian.Uint32(out.Bytes()[:4]), uint32(payload.Len()); got != want {
 			t.Fatalf("intermediate length = %d, want %d", got, want)

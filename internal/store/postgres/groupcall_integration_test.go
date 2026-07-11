@@ -15,13 +15,25 @@ import (
 func TestGroupCallStoreContractPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	var nextChannel int64 = 910_000_000
+	// A run-unique namespace keeps filtered subtest runs independent from stale
+	// rows left by an interrupted older run. Per-subtest cleanup below still makes
+	// successful runs leave no state behind.
+	var nextChannel = int64(1_000_000_000 + time.Now().UnixNano()%100_000_000)
 	storetest.RunGroupCallStoreContract(t, func(t *testing.T) (store.GroupCallStore, int64) {
 		nextChannel++
 		channelID := nextChannel
-		t.Cleanup(func() {
-			_, _ = pool.Exec(ctx, "DELETE FROM group_calls WHERE channel_id = $1", channelID)
-		})
+		// Conference contract rows have channel_id=0 and derive their call IDs from
+		// this synthetic channel namespace. Clean both shapes before and after each
+		// subtest so a previous failed run cannot feed discarded calls into the next
+		// run (and so conference invite/chain rows cascade away as well).
+		cleanup := func() {
+			_, _ = pool.Exec(ctx, `
+DELETE FROM group_calls
+WHERE channel_id = $1
+   OR (call_id >= $1 * 100 AND call_id < $1 * 100 + 100)`, channelID)
+		}
+		cleanup()
+		t.Cleanup(cleanup)
 		return NewGroupCallStore(pool), channelID
 	})
 }

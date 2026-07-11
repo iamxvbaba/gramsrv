@@ -58,7 +58,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			Message:      cloneChannelMessage(msg),
 			SenderUserID: req.UserID,
 		}
-		s.events[req.ChannelID] = append(s.events[req.ChannelID], event)
+		s.appendChannelEventLocked(event)
 		return domain.EditChannelMessageResult{
 			Channel:    channel,
 			Message:    cloneChannelMessage(msg),
@@ -108,7 +108,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 		Message:      cloneChannelMessage(msg),
 		SenderUserID: req.UserID,
 	}
-	s.events[req.ChannelID] = append(s.events[req.ChannelID], event)
+	s.appendChannelEventLocked(event)
 	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
 		ChannelID:   req.ChannelID,
 		UserID:      req.UserID,
@@ -150,7 +150,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 			SenderUserID: req.UserID,
 		}
 		s.messages[req.ChannelID] = append(s.messages[req.ChannelID], serviceMsg)
-		s.events[req.ChannelID] = append(s.events[req.ChannelID], serviceEvent)
+		s.appendChannelEventLocked(serviceEvent)
 		s.updateForumTopicTopMessageLocked(req.ChannelID, serviceMsg)
 		channel.TopMessageID = serviceMsg.ID
 		channel.Pts = servicePts
@@ -303,7 +303,7 @@ func (s *ChannelStore) UpdatePinnedMessage(_ context.Context, req domain.UpdateC
 		SenderUserID: req.UserID,
 		Pinned:       req.Pinned,
 	}
-	s.events[req.ChannelID] = append(s.events[req.ChannelID], event)
+	s.appendChannelEventLocked(event)
 	logMsg := msg
 	logMsg.Pinned = req.Pinned
 	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
@@ -372,7 +372,7 @@ func (s *ChannelStore) UnpinAllChannelMessages(_ context.Context, req domain.Unp
 		SenderUserID: req.UserID,
 		Pinned:       false,
 	}
-	s.events[req.ChannelID] = append(s.events[req.ChannelID], event)
+	s.appendChannelEventLocked(event)
 	return domain.UpdateChannelPinnedMessageResult{
 		Channel:    channel,
 		Event:      cloneChannelEvent(event),

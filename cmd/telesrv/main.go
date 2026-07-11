@@ -394,7 +394,7 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("seed appearance: %w", err)
 	} else if !stats.Skipped {
 		logger.Info("外观种子导入完成",
-			zap.String("source", "orange-live"),
+			zap.String("source", "default-seed"),
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
 			zap.Int("blobs", stats.Blobs),
@@ -434,7 +434,13 @@ func run(logger *zap.Logger) error {
 		cfg.UpdateEventRetention,
 		cfg.RetentionInterval,
 		cfg.RetentionBatch,
-	).WithBotAPIUpdateRetention(botAPIUpdateStore, cfg.BotAPIUpdateRetention).Run(ctx)
+	).WithDispatchOutboxPoisonPolicy(cfg.OutboxPoisonRetention, cfg.OutboxPoisonCleanupInterval).
+		WithBotAPIUpdateRetention(botAPIUpdateStore, cfg.BotAPIUpdateRetention).
+		WithLoginCodeDeliveryRetention(messageStore).
+		WithUserUpdateRetention(updateEventStore).
+		WithChannelUpdateRetention(channelStore).
+		WithOrphanAuthKeyRetention(authKeyStore, activeSessions, cfg.OrphanAuthKeyRetention).
+		Run(ctx)
 	go filesapp.NewUploadPartGCWorker(filesService, logger.Named("files").Named("upload_gc"),
 		cfg.UploadPartTTL,
 		cfg.UploadPartGCInterval,
@@ -634,6 +640,7 @@ func run(logger *zap.Logger) error {
 	)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
+		auth.WithLoginCodeDelivery(messageStore),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
@@ -654,6 +661,9 @@ func run(logger *zap.Logger) error {
 		OutboundPushTimeout:      cfg.OutboundPushTimeout,
 		SendRateLimit:            cfg.SendRateLimit,
 		SendRateWindow:           cfg.SendRateWindow,
+		AuthCodePhoneRateLimit:   cfg.AuthCodePhoneRateLimit,
+		AuthCodeAuthKeyRateLimit: cfg.AuthCodeAuthKeyRateLimit,
+		AuthCodeRateWindow:       cfg.AuthCodeRateWindow,
 		CatchupRateLimit:         cfg.CatchupRateLimit,
 		CatchupRateWindow:        cfg.CatchupRateWindow,
 		ChannelNudgeMaxTargets:   cfg.ChannelNudgeMaxTargets,
@@ -662,9 +672,9 @@ func run(logger *zap.Logger) error {
 		GroupCallMaxParticipants: cfg.GroupCallMaxParticipants,
 		RtmpIngestURL:            cfg.LiveStreamRtmpURL,
 		PublicBaseURL:            cfg.PublicBaseURL,
-		// PFS temp→perm 解析缓存 5s：削减每帧 ResolveAuthKey 的 PG 查询。显式撤销会清缓存并
-		// 断开连接；re-bind 即时失效（onAuthBindTempAuthKey）。
-		TempKeyResolveCacheTTL:        5 * time.Second,
+		// PFS temp→perm 解析缓存：显式撤销会清缓存并断开连接，re-bind 即时失效；
+		// 配置 TTL 只承担跨进程/异常失效兜底，避免大连接数周期性打满 PG。
+		TempKeyResolveCacheTTL:        cfg.TempKeyResolveCacheTTL,
 		TempKeyResolveCacheMaxEntries: cfg.TempKeyResolveCacheMaxEntries,
 	}, rpc.Deps{
 		Auth:             authService,
@@ -772,16 +782,30 @@ func run(logger *zap.Logger) error {
 	}
 
 	srv := mtprotoedge.New(mtprotoedge.Options{
-		Logger:                  logger.Named("mtprotoedge"),
-		DC:                      cfg.DC,
-		RSAKey:                  rsaKey,
-		RPC:                     router,
-		AuthKeys:                authKeyStore,
-		Sessions:                sessionStore,
-		ActiveSessions:          activeSessions,
-		ObfuscatedTCP:           true,
-		WebSocket:               cfg.WebSocketEnable,
-		WebSocketAllowedOrigins: cfg.WebSocketAllowedOrigins,
+		Logger:                        logger.Named("mtprotoedge"),
+		DC:                            cfg.DC,
+		RSAKey:                        rsaKey,
+		RPC:                           router,
+		AuthKeys:                      authKeyStore,
+		Sessions:                      sessionStore,
+		ActiveSessions:                activeSessions,
+		ObfuscatedTCP:                 true,
+		WebSocket:                     cfg.WebSocketEnable,
+		WebSocketAllowedOrigins:       cfg.WebSocketAllowedOrigins,
+		MaxConnections:                cfg.MTProtoMaxConnections,
+		MaxConnectionsPerIP:           cfg.MTProtoMaxConnectionsPerIP,
+		MaxConcurrentHandshakes:       cfg.MTProtoMaxConcurrentHandshakes,
+		RPCMaxInflight:                cfg.MTProtoRPCMaxInflight,
+		RPCQueueSize:                  cfg.MTProtoRPCQueueSize,
+		RPCTimeout:                    cfg.MTProtoRPCTimeout,
+		RPCGlobalWorkers:              cfg.MTProtoRPCGlobalWorkers,
+		RPCGlobalMaxTasks:             cfg.MTProtoRPCGlobalMaxTasks,
+		RPCGlobalMaxBytes:             cfg.MTProtoRPCGlobalMaxBytes,
+		InboundFrameGlobalMaxBytes:    cfg.MTProtoInboundFrameGlobalMaxBytes,
+		OutboundQueueSize:             cfg.MTProtoOutboundQueueSize,
+		OutboundControlQueueSize:      cfg.MTProtoOutboundControlQueueSize,
+		OutboundTrackedGlobalMaxBytes: cfg.MTProtoOutboundTrackedGlobalMaxBytes,
+		OutboundWriteGlobalMaxBytes:   cfg.MTProtoOutboundWriteGlobalMaxBytes,
 	})
 	logger.Info("telesrv 服务就绪",
 		zap.String("listen", cfg.ListenAddr),

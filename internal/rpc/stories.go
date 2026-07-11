@@ -2372,7 +2372,7 @@ func (r *Router) onStoriesReadStories(ctx context.Context, req *tg.StoriesReadSt
 	if read.Advanced && r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		if _, _, err := r.deps.Updates.RecordReadStories(ctx, authKeyID, userID, read, sessionID); err != nil {
+		if _, _, err := r.deps.Updates.RecordReadStories(ctx, authKeyID, userID, read, rawAuthKeyIDForOrigin(ctx), sessionID); err != nil {
 			return nil, internalErr()
 		}
 	}
@@ -2689,11 +2689,11 @@ func (r *Router) onStoriesSendReaction(ctx context.Context, req *tg.StoriesSendR
 	if res.Changed && r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		if _, _, err := r.deps.Updates.RecordSentStoryReaction(ctx, authKeyID, userID, res, sessionID); err != nil {
+		if _, _, err := r.deps.Updates.RecordSentStoryReaction(ctx, authKeyID, userID, res, rawAuthKeyIDForOrigin(ctx), sessionID); err != nil {
 			return nil, internalErr()
 		}
 		if ownerUserID, ok := ownerStoryReactionNotificationUserID(res, userID); ok && res.Reaction != nil {
-			event, _, err := r.deps.Updates.RecordNewStoryReaction(ctx, [8]byte{}, ownerUserID, res, 0)
+			event, _, err := r.deps.Updates.RecordNewStoryReaction(ctx, [8]byte{}, ownerUserID, res, [8]byte{}, 0)
 			if err != nil {
 				return nil, internalErr()
 			}
@@ -3028,7 +3028,7 @@ func (r *Router) recordStoryChange(ctx context.Context, userID int64, story doma
 	}
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	if _, _, err := r.deps.Updates.RecordStory(ctx, authKeyID, userID, story, sessionID); err != nil {
+	if _, _, err := r.deps.Updates.RecordStory(ctx, authKeyID, userID, story, rawAuthKeyIDForOrigin(ctx), sessionID); err != nil {
 		return internalErr()
 	}
 	return nil

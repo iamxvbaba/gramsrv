@@ -21,6 +21,26 @@ type phoneChangeFixture struct {
 	events    *memory.UpdateEventStore
 	user      domain.User
 	authKeyID [8]byte
+	changes   *recordingPhoneChangeStore
+}
+
+type recordingPhoneChangeStore struct {
+	mu    sync.Mutex
+	inner store.PhoneChangeStore
+	last  domain.PhoneChangeRequest
+}
+
+func (s *recordingPhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChangeRequest) (domain.PhoneChangeResult, error) {
+	s.mu.Lock()
+	s.last = req
+	s.mu.Unlock()
+	return s.inner.ChangePhone(ctx, req)
+}
+
+func (s *recordingPhoneChangeStore) lastRequest() domain.PhoneChangeRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last
 }
 
 func newPhoneChangeFixture(t *testing.T) phoneChangeFixture {
@@ -38,12 +58,13 @@ func newPhoneChangeFixture(t *testing.T) phoneChangeFixture {
 	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: authKeyID, UserID: u.ID, CreatedAt: time.Now().Add(-48 * time.Hour)}); err != nil {
 		t.Fatalf("bind auth: %v", err)
 	}
+	changes := &recordingPhoneChangeStore{inner: memory.NewPhoneChangeStore(users, events)}
 	service := NewService(
 		memory.NewPasswordStore(),
 		WithUsers(users),
-		WithPhoneChange(memory.NewPhoneChangeStore(users, events), auths, codes, nil, "12345", time.Minute, 3),
+		WithPhoneChange(changes, auths, codes, nil, "12345", time.Minute, 3),
 	)
-	return phoneChangeFixture{ctx: ctx, service: service, users: users, auths: auths, codes: codes, events: events, user: u, authKeyID: authKeyID}
+	return phoneChangeFixture{ctx: ctx, service: service, users: users, auths: auths, codes: codes, events: events, user: u, authKeyID: authKeyID, changes: changes}
 }
 
 func TestPhoneChangeScopesCodeAndPersistsDurableEvent(t *testing.T) {
@@ -59,16 +80,20 @@ func TestPhoneChangeScopesCodeAndPersistsDurableEvent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("load code found=%v err=%v", found, err)
 	}
-	if rec.Purpose != store.PhoneCodePurposeChangePhone || rec.Phone != "15550012002" || rec.UserID != f.user.ID || rec.AuthKeyID != f.authKeyID || rec.SessionID != 77 {
+	if rec.Version != store.PhoneCodeVersionCurrent || rec.Purpose != store.PhoneCodePurposeChangePhone || rec.Phone != "15550012002" || rec.UserID != f.user.ID || rec.AuthKeyID != f.authKeyID || rec.SessionID != 77 {
 		t.Fatalf("scoped code = %+v", rec)
 	}
 
-	result, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 88, "+1 555 001 2002", hash, "12345", 1700000000)
+	rawAuthKeyID := [8]byte{8, 8, 8, 8}
+	result, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, rawAuthKeyID, 88, "+1 555 001 2002", hash, "12345", 1700000000)
 	if err != nil {
 		t.Fatalf("change phone after session reconnect: %v", err)
 	}
 	if !result.Changed || result.User.Phone != "15550012002" || result.Event.Type != domain.UpdateEventUserPhone || result.Event.Phone != "15550012002" || result.Event.Pts != 1 {
 		t.Fatalf("change result = %+v", result)
+	}
+	if got := f.changes.lastRequest().ExcludeAuthKeyID; got != rawAuthKeyID {
+		t.Fatalf("outbox exclusion auth key = %x, want physical raw %x", got, rawAuthKeyID)
 	}
 	if _, found, _ := f.users.ByPhone(f.ctx, "15550012001"); found {
 		t.Fatal("old phone still resolves")
@@ -103,7 +128,7 @@ func TestPhoneChangeRejectsOccupiedAndCrossAuthCode(t *testing.T) {
 	if err := f.auths.Bind(f.ctx, domain.Authorization{AuthKeyID: otherKey, UserID: occupied.ID}); err != nil {
 		t.Fatalf("bind other auth: %v", err)
 	}
-	if _, err := f.service.ChangePhone(f.ctx, occupied.ID, otherKey, 99, "15550012004", hash, "12345", 0); !errors.Is(err, domain.ErrPhoneCodeInvalid) {
+	if _, err := f.service.ChangePhone(f.ctx, occupied.ID, otherKey, otherKey, 99, "15550012004", hash, "12345", 0); !errors.Is(err, domain.ErrPhoneCodeExpired) {
 		t.Fatalf("cross-auth change err = %v", err)
 	}
 	if got, found, _ := f.users.ByID(f.ctx, occupied.ID); !found || got.Phone != "15550012003" {
@@ -118,11 +143,11 @@ func TestPhoneChangeWrongCodeExhaustsAttempts(t *testing.T) {
 		t.Fatalf("send code: %v", err)
 	}
 	for i := 0; i < 3; i++ {
-		if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 77, "15550012005", hash, "00000", 0); !errors.Is(err, domain.ErrPhoneCodeInvalid) {
+		if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 77, "15550012005", hash, "00000", 0); !errors.Is(err, domain.ErrPhoneCodeInvalid) {
 			t.Fatalf("wrong attempt %d err = %v", i+1, err)
 		}
 	}
-	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 77, "15550012005", hash, "12345", 0); !errors.Is(err, domain.ErrPhoneCodeExpired) {
+	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 77, "15550012005", hash, "12345", 0); !errors.Is(err, domain.ErrPhoneCodeExpired) {
 		t.Fatalf("exhausted code err = %v", err)
 	}
 	if got, _, _ := f.users.ByID(f.ctx, f.user.ID); got.Phone != "15550012001" {
@@ -143,10 +168,10 @@ func TestPhoneChangeNewSendInvalidatesPreviousHash(t *testing.T) {
 	if oldHash == newHash {
 		t.Fatalf("hash was not rotated: %q", oldHash)
 	}
-	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 99, "15550012006", oldHash, "12345", 1700000001); !errors.Is(err, domain.ErrPhoneCodeExpired) {
+	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 99, "15550012006", oldHash, "12345", 1700000001); !errors.Is(err, domain.ErrPhoneCodeExpired) {
 		t.Fatalf("old hash replay err = %v", err)
 	}
-	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 99, "15550012006", newHash, "12345", 1700000002); err != nil {
+	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 99, "15550012006", newHash, "12345", 1700000002); err != nil {
 		t.Fatalf("new hash change: %v", err)
 	}
 	events, err := f.events.ListAfter(f.ctx, f.user.ID, 0, 10)
@@ -168,7 +193,7 @@ func TestPhoneChangeConcurrentReplayAppendsOneEvent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, 88, "15550012007", hash, "12345", 1700000003)
+			_, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 88, "15550012007", hash, "12345", 1700000003)
 			errs <- err
 		}()
 	}

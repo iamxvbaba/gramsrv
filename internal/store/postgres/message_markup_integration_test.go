@@ -3,6 +3,7 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -193,15 +194,30 @@ func TestSendPrivateViaBotIDSurvivesReadPaths(t *testing.T) {
 		SenderUserID:    sender.ID,
 		RecipientUserID: recipient.ID,
 		RandomID:        randomID,
-		Message:         "inline via duplicate",
+		Message:         "inline via",
 		ViaBotID:        viaBotID,
 		Date:            int(time.Now().Unix()),
 	})
 	if err != nil {
 		t.Fatalf("duplicate private via bot: %v", err)
 	}
-	if !dup.Duplicate || dup.SenderMessage.ViaBotID != viaBotID || dup.RecipientMessage.ViaBotID != viaBotID {
-		t.Fatalf("duplicate via = duplicate %v sender %d recipient %d, want duplicate true via %d", dup.Duplicate, dup.SenderMessage.ViaBotID, dup.RecipientMessage.ViaBotID, viaBotID)
+	if !dup.Duplicate ||
+		dup.SenderMessage.ID != res.SenderMessage.ID || dup.SenderMessage.Pts != res.SenderMessage.Pts ||
+		dup.RecipientMessage.ID != res.RecipientMessage.ID || dup.RecipientMessage.Pts != res.RecipientMessage.Pts {
+		t.Fatalf("duplicate immutable receipt = %+v/%+v, want sender id/pts %d/%d recipient %d/%d",
+			dup.SenderMessage, dup.RecipientMessage,
+			res.SenderMessage.ID, res.SenderMessage.Pts,
+			res.RecipientMessage.ID, res.RecipientMessage.Pts)
+	}
+	if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    sender.ID,
+		RecipientUserID: recipient.ID,
+		RandomID:        randomID,
+		Message:         "inline via conflict",
+		ViaBotID:        viaBotID,
+		Date:            int(time.Now().Unix()),
+	}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting via-bot replay err = %v, want ErrMessageRandomIDDuplicate", err)
 	}
 
 	recipientHistory, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{Limit: 10})

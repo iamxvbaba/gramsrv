@@ -16,7 +16,20 @@ const (
 	sessionIDKey
 	userIDKey
 	invokeWithoutUpdatesKey
+	inboundRPCBytesKey
 )
+
+func withInboundRPCBytes(ctx context.Context, n int) context.Context {
+	if n < 0 {
+		n = 0
+	}
+	return context.WithValue(ctx, inboundRPCBytesKey, n)
+}
+
+func inboundRPCBytesFrom(ctx context.Context) int {
+	v, _ := ctx.Value(inboundRPCBytesKey).(int)
+	return v
+}
 
 const currentClientLayer = 227
 
@@ -151,6 +164,16 @@ func WithAuthKeyID(ctx context.Context, id [8]byte) context.Context {
 func AuthKeyIDFrom(ctx context.Context) ([8]byte, bool) {
 	v, ok := ctx.Value(authKeyIDKey).([8]byte)
 	return v, ok
+}
+
+// rawAuthKeyIDForOrigin 返回用于 update/outbox 当前 session 排除的物理 raw key。
+// 单测/非 edge 调用若没有注入 raw key，才回退业务 key；生产 Router context 两者都有。
+func rawAuthKeyIDForOrigin(ctx context.Context) [8]byte {
+	if id, ok := RawAuthKeyIDFrom(ctx); ok {
+		return id
+	}
+	id, _ := AuthKeyIDFrom(ctx)
+	return id
 }
 
 // WithSessionID 在 ctx 注入调用方的 MTProto session_id。

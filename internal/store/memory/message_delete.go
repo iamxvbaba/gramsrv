@@ -37,9 +37,12 @@ func (s *MessageStore) DeleteMessages(_ context.Context, req domain.DeleteMessag
 }
 
 type deletedMemoryMessage struct {
-	userID int64
-	peer   domain.Peer
-	id     int
+	userID           int64
+	peer             domain.Peer
+	id               int
+	privateMessageID int64
+	messageSenderID  int64
+	randomID         int64
 }
 
 func (s *MessageStore) finishMemoryDeleteLocked(res domain.DeleteMessagesResult, deleted []deletedMemoryMessage, date int, preserveEmptyDialogs bool) domain.DeleteMessagesResult {
@@ -82,6 +85,19 @@ func (s *MessageStore) finishMemoryDeleteLocked(res domain.DeleteMessagesResult,
 			PtsCount:   len(ids),
 			Date:       date,
 			MessageIDs: ids,
+		}
+		for _, row := range deleted {
+			if row.userID != userID || row.messageSenderID != userID || row.randomID == 0 || row.privateMessageID == 0 {
+				continue
+			}
+			key := privateSendDedupKey{senderUserID: userID, randomID: row.randomID}
+			record, ok := s.privateSendDedup[key]
+			if !ok {
+				continue
+			}
+			cloned := cloneUpdateEvent(event)
+			record.senderDeleteEvent = &cloned
+			s.privateSendDedup[key] = record
 		}
 		res.Deleted = append(res.Deleted, domain.DeletedMessagesForUser{
 			UserID:     userID,

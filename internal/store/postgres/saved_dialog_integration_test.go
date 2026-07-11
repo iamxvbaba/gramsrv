@@ -207,9 +207,17 @@ func TestSavedDialogsBackfillRule(t *testing.T) {
 		t.Helper()
 		var privateID int64
 		if err := pool.QueryRow(ctx, `
-INSERT INTO private_messages (sender_user_id, recipient_user_id, random_id, message_date, body, entities)
-VALUES ($1, $1, $2::bigint, 1700000800, 'legacy', '[]'::jsonb)
-RETURNING id`, owner.ID, 841100+boxID).Scan(&privateID); err != nil {
+INSERT INTO private_messages (
+  sender_user_id, recipient_user_id, random_id, request_fingerprint, recipient_delivered,
+  sender_box_id, sender_pts, recipient_box_id, recipient_pts,
+  message_date, body, entities
+)
+VALUES (
+  $1, $1, $2::bigint, decode(repeat('00', 32), 'hex'), false,
+  $3::int, $3::int, 0, 0,
+  1700000800, 'legacy', '[]'::jsonb
+)
+RETURNING id`, owner.ID, 841100+boxID, boxID).Scan(&privateID); err != nil {
 			t.Fatalf("insert legacy private message %d: %v", boxID, err)
 		}
 		if _, err := pool.Exec(ctx, `

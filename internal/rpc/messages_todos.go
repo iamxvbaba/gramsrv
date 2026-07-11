@@ -243,7 +243,6 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 		return nil, peerIDInvalidErr()
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID:                  userID,
 		Peer:                         peer,
@@ -252,7 +251,7 @@ func (r *Router) mutateTodoMedia(ctx context.Context, inputPeer tg.InputPeerClas
 		Entities:                     current.entities,
 		Media:                        newMedia,
 		EditDate:                     now,
-		OriginAuthKeyID:              authKeyID,
+		OriginAuthKeyID:              rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID:              sessionID,
 		AllowTodoParticipantMutation: participantEdit,
 	})

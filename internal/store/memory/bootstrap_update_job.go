@@ -67,10 +67,15 @@ func (s *BootstrapUpdateJobStore) MarkReadyForSession(_ context.Context, userID 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, job := range s.jobs {
-		if job.UserID != userID || job.AuthKeyID != authKeyID || job.SessionID != sessionID || job.Status != domain.BootstrapUpdateJobPending {
+		if job.UserID != userID || job.AuthKeyID != authKeyID || job.Status != domain.BootstrapUpdateJobPending {
 			continue
 		}
 		job.Status = domain.BootstrapUpdateJobReady
+		// A reconnect on the same physical/business auth key is the same
+		// verified device. Transfer the pending baseline fence to the session
+		// that actually completed getState/getDifference instead of orphaning
+		// the job on the disconnected signup session.
+		job.SessionID = sessionID
 		job.ReadyAt = now
 		job.UpdatedAt = now
 		s.jobs[id] = job

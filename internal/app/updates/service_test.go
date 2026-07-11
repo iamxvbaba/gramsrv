@@ -100,7 +100,7 @@ func TestRecordReadHistoryFeedsGetDifference(t *testing.T) {
 		Peer:        peer,
 		MaxID:       10,
 		Changed:     true,
-	}, 0)
+	}, [8]byte{}, 0)
 	if err != nil {
 		t.Fatalf("RecordReadHistory: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestRecordChannelReadHistoryKeepsChannelPtsPayload(t *testing.T) {
 		StillUnreadCount: 3,
 		ChannelPts:       77,
 		Changed:          true,
-	}, 0)
+	}, [8]byte{}, 0)
 	if err != nil {
 		t.Fatalf("RecordReadHistory: %v", err)
 	}
@@ -157,24 +157,24 @@ func TestRecordSettingsEventsFeedGetDifference(t *testing.T) {
 	ownerUserID := int64(1000000001)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}
 
-	if _, _, err := svc.RecordContactsReset(ctx, authKeyID, ownerUserID, 0); err != nil {
+	if _, _, err := svc.RecordContactsReset(ctx, authKeyID, ownerUserID, [8]byte{}, 0); err != nil {
 		t.Fatalf("RecordContactsReset: %v", err)
 	}
-	if _, _, err := svc.RecordDialogPinned(ctx, authKeyID, ownerUserID, peer, true, 0, 0); err != nil {
+	if _, _, err := svc.RecordDialogPinned(ctx, authKeyID, ownerUserID, peer, true, 0, [8]byte{}, 0); err != nil {
 		t.Fatalf("RecordDialogPinned: %v", err)
 	}
 	order := []domain.Peer{peer}
-	if _, _, err := svc.RecordPinnedDialogs(ctx, authKeyID, ownerUserID, 0, order, 0); err != nil {
+	if _, _, err := svc.RecordPinnedDialogs(ctx, authKeyID, ownerUserID, 0, order, [8]byte{}, 0); err != nil {
 		t.Fatalf("RecordPinnedDialogs: %v", err)
 	}
-	if _, _, err := svc.RecordDialogUnreadMark(ctx, authKeyID, ownerUserID, peer, false, 0); err != nil {
+	if _, _, err := svc.RecordDialogUnreadMark(ctx, authKeyID, ownerUserID, peer, false, [8]byte{}, 0); err != nil {
 		t.Fatalf("RecordDialogUnreadMark: %v", err)
 	}
 	settings := domain.PeerSettings{ShareContact: true}
-	if _, _, err := svc.RecordPeerSettings(ctx, authKeyID, ownerUserID, peer, settings, 0); err != nil {
+	if _, _, err := svc.RecordPeerSettings(ctx, authKeyID, ownerUserID, peer, settings, [8]byte{}, 0); err != nil {
 		t.Fatalf("RecordPeerSettings: %v", err)
 	}
-	stateEvent, state, err := svc.RecordPeerStoryBlocked(ctx, authKeyID, ownerUserID, peer, true, 0)
+	stateEvent, state, err := svc.RecordPeerStoryBlocked(ctx, authKeyID, ownerUserID, peer, true, [8]byte{}, 0)
 	if err != nil {
 		t.Fatalf("RecordPeerStoryBlocked: %v", err)
 	}
@@ -221,21 +221,28 @@ func TestRecordSettingsEventsFeedGetDifference(t *testing.T) {
 
 func TestRecordSettingsEventUsesDispatchAppender(t *testing.T) {
 	ctx := context.Background()
-	var authKeyID [8]byte
-	authKeyID[0] = 4
+	authKeyID := [8]byte{4}
+	rawAuthKeyID := [8]byte{4, 9}
 	events := &captureDispatchAppender{UpdateEventStore: memory.NewUpdateEventStore()}
-	svc := NewService(memory.NewUpdateStateStore(), events)
+	states := &captureStateStore{}
+	svc := NewService(states, events)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}
 
-	event, state, err := svc.RecordDialogPinned(ctx, authKeyID, 1000000001, peer, true, 0, 42)
+	event, state, err := svc.RecordDialogPinned(ctx, authKeyID, 1000000001, peer, true, 0, rawAuthKeyID, 42)
 	if err != nil {
 		t.Fatalf("RecordDialogPinned: %v", err)
 	}
 	if event.Pts != 1 || state.Pts != 1 {
 		t.Fatalf("event/state = %+v / %+v, want first pts", event, state)
 	}
-	if !events.dispatched || events.excludeAuthKeyID != authKeyID || events.excludeSessionID != 42 || events.event.Type != domain.UpdateEventDialogPinned || events.event.Peer != peer {
+	if !events.dispatched || events.excludeAuthKeyID != rawAuthKeyID || events.excludeSessionID != 42 || events.event.Type != domain.UpdateEventDialogPinned || events.event.Peer != peer {
 		t.Fatalf("dispatch capture = %+v exclude_auth=%v exclude_session=%d dispatched=%v, want dialog_pinned outbox", events.event, events.excludeAuthKeyID, events.excludeSessionID, events.dispatched)
+	}
+	if states.lastSaveAuthKeyID != authKeyID {
+		t.Fatalf("device state auth key = %x, want business/perm %x", states.lastSaveAuthKeyID, authKeyID)
+	}
+	if _, found, err := states.Get(ctx, rawAuthKeyID, 1000000001); err != nil || found {
+		t.Fatalf("raw temp key unexpectedly owns device state: found=%v err=%v", found, err)
 	}
 }
 
@@ -246,7 +253,7 @@ func TestRecordSettingsEventDispatchFailureDoesNotRecordEvent(t *testing.T) {
 	events := &failingDispatchAppender{UpdateEventStore: memory.NewUpdateEventStore()}
 	svc := NewService(memory.NewUpdateStateStore(), events)
 
-	_, _, err := svc.RecordDialogPinned(ctx, authKeyID, 1000000001, domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}, true, 0, 42)
+	_, _, err := svc.RecordDialogPinned(ctx, authKeyID, 1000000001, domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}, true, 0, authKeyID, 42)
 	if !errors.Is(err, errDispatchFailed) {
 		t.Fatalf("RecordDialogPinned err = %v, want dispatch failure", err)
 	}
@@ -267,7 +274,7 @@ func TestRecordPeerStoryBlockedUsesDispatchAppender(t *testing.T) {
 	svc := NewService(memory.NewUpdateStateStore(), events)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}
 
-	event, state, err := svc.RecordPeerStoryBlocked(ctx, authKeyID, 1000000001, peer, true, 91)
+	event, state, err := svc.RecordPeerStoryBlocked(ctx, authKeyID, 1000000001, peer, true, authKeyID, 91)
 	if err != nil {
 		t.Fatalf("RecordPeerStoryBlocked: %v", err)
 	}
@@ -294,7 +301,7 @@ func TestRecordStoryUsesDispatchAppenderExcludeCurrentSession(t *testing.T) {
 		Caption:    "owner story",
 	}
 
-	event, state, err := svc.RecordStory(ctx, authKeyID, owner.ID, story, 1234)
+	event, state, err := svc.RecordStory(ctx, authKeyID, owner.ID, story, authKeyID, 1234)
 	if err != nil {
 		t.Fatalf("RecordStory: %v", err)
 	}
@@ -330,7 +337,7 @@ func TestRecordStoryReadAndSentReactionExcludeCurrentSession(t *testing.T) {
 		MaxReadID: story.ID,
 		Advanced:  true,
 		Date:      1700000201,
-	}, 2233)
+	}, authKeyID, 2233)
 	if err != nil {
 		t.Fatalf("RecordReadStories: %v", err)
 	}
@@ -350,7 +357,7 @@ func TestRecordStoryReadAndSentReactionExcludeCurrentSession(t *testing.T) {
 		Reaction: reaction,
 		Changed:  true,
 		Date:     1700000202,
-	}, 2233)
+	}, authKeyID, 2233)
 	if err != nil {
 		t.Fatalf("RecordSentStoryReaction: %v", err)
 	}
@@ -384,7 +391,7 @@ func TestRecordNewStoryReactionDispatchesWithoutSavingDeviceState(t *testing.T) 
 		},
 		Reaction: reaction,
 		Date:     1700000101,
-	}, 0)
+	}, [8]byte{}, 0)
 	if err != nil {
 		t.Fatalf("RecordNewStoryReaction: %v", err)
 	}
@@ -493,7 +500,8 @@ func TestAcknowledgeCurrentStateAdvancesConfirmedWatermark(t *testing.T) {
 	authKeyID[0] = 11
 	userID := int64(1000000001)
 	events := memory.NewUpdateEventStore()
-	svc := NewService(memory.NewUpdateStateStore(), events)
+	states := memory.NewUpdateStateStore()
+	svc := NewService(states, events)
 	if err := events.Append(ctx, userID, domain.UpdateEvent{
 		UserID: userID, Type: domain.UpdateEventNewMessage, Pts: 1, PtsCount: 1,
 		Date: 1700000001, Message: domain.Message{ID: 1, OwnerUserID: userID},
@@ -527,6 +535,138 @@ func TestAcknowledgeCurrentStateAdvancesConfirmedWatermark(t *testing.T) {
 	if confirmed.Pts != 3 {
 		t.Fatalf("confirmed watermark = %d, want advanced to 3", confirmed.Pts)
 	}
+	observed, ok := states.ObservedClientState(authKeyID, userID)
+	if !ok || observed.Pts != 3 {
+		t.Fatalf("getState observed watermark = %+v/%v, want pts=3", observed, ok)
+	}
+}
+
+func TestGetDifferenceRetainsOnlyClientObservedInputCursor(t *testing.T) {
+	ctx := context.Background()
+	authKeyID := [8]byte{12}
+	const userID int64 = 1000000012
+	events := memory.NewUpdateEventStore()
+	states := memory.NewUpdateStateStore()
+	svc := NewService(states, events)
+	for pts := 1; pts <= 2; pts++ {
+		if err := events.Append(ctx, userID, domain.UpdateEvent{
+			UserID: userID, Type: domain.UpdateEventNewMessage, Pts: pts, PtsCount: 1,
+			Date: 1700000100 + pts, Message: domain.Message{ID: pts, OwnerUserID: userID},
+		}); err != nil {
+			t.Fatalf("append pts=%d: %v", pts, err)
+		}
+	}
+
+	// 服务端把 pts=1..2 放进 response，并不证明客户端收到了 response；observed 只能
+	// 保持在本次 request 实际携带的 pts=0。
+	diff, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 0, Date: 1700000100})
+	if err != nil {
+		t.Fatalf("first difference: %v", err)
+	}
+	if diff.State.Pts != 2 || len(diff.Events) != 2 {
+		t.Fatalf("first difference = %+v, want response through pts=2", diff)
+	}
+	observed, ok := states.ObservedClientState(authKeyID, userID)
+	if !ok || observed.Pts != 0 {
+		t.Fatalf("observed after merely sending response = %+v/%v, want pts=0", observed, ok)
+	}
+
+	// 客户端下一次明确带回 pts=2 后，才允许 retention 把共同安全水位推进到 2。
+	if _, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 2, Date: 1700000102}); err != nil {
+		t.Fatalf("confirming difference: %v", err)
+	}
+	observed, ok = states.ObservedClientState(authKeyID, userID)
+	if !ok || observed.Pts != 2 {
+		t.Fatalf("observed after client carried cursor = %+v/%v, want pts=2", observed, ok)
+	}
+}
+
+type retentionCheckpointEvents struct {
+	*memory.UpdateEventStore
+	pts       int
+	date      int
+	current   int
+	missFirst bool
+	calls     int
+}
+
+func (s *retentionCheckpointEvents) UserUpdateRetentionCheckpoint(_ context.Context, _ [8]byte, _ int64) (int, int, bool, error) {
+	s.calls++
+	if s.missFirst && s.calls == 1 {
+		return 0, 0, false, nil
+	}
+	return s.pts, s.date, s.pts > 0, nil
+}
+
+func (s *retentionCheckpointEvents) MaxContiguousPts(_ context.Context, _ int64) (int, error) {
+	return s.current, nil
+}
+
+func TestGetDifferenceBelowRetainedFloorUsesEmptySliceCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	authKeyID := [8]byte{13}
+	const userID int64 = 1000000013
+	base := memory.NewUpdateEventStore()
+	events := &retentionCheckpointEvents{UpdateEventStore: base, pts: 2, date: 1700000202, current: 3}
+	states := memory.NewUpdateStateStore()
+	svc := NewService(states, events)
+	// Retention already removed pts 1..2; only the live tail remains.
+	if err := base.Append(ctx, userID, domain.UpdateEvent{
+		UserID: userID, Type: domain.UpdateEventNoop, Pts: 3, PtsCount: 1, Date: 1700000203,
+	}); err != nil {
+		t.Fatalf("append live tail: %v", err)
+	}
+
+	checkpoint, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 0, Date: 1700000200})
+	if err != nil {
+		t.Fatalf("difference below retained floor: %v", err)
+	}
+	if !checkpoint.Partial || len(checkpoint.Events) != 0 || checkpoint.State.Pts != 2 || checkpoint.State.Date != 1700000202 {
+		t.Fatalf("checkpoint difference = %+v, want empty differenceSlice at pts/date 2/1700000202", checkpoint)
+	}
+
+	tail, err := svc.GetDifference(ctx, authKeyID, userID, checkpoint.State)
+	if err != nil {
+		t.Fatalf("difference from retained floor: %v", err)
+	}
+	if tail.Partial || len(tail.Events) != 1 || tail.Events[0].Pts != 3 || tail.State.Pts != 3 {
+		t.Fatalf("tail difference = %+v, want normal event pts=3", tail)
+	}
+}
+
+func TestGetDifferenceRechecksCheckpointWhenRetentionRacesEventRead(t *testing.T) {
+	ctx := context.Background()
+	authKeyID := [8]byte{14}
+	const userID int64 = 1000000014
+	base := memory.NewUpdateEventStore()
+	events := &retentionCheckpointEvents{
+		UpdateEventStore: base,
+		pts:              2,
+		date:             1700000302,
+		current:          3,
+		missFirst:        true,
+	}
+	if err := base.Append(ctx, userID, domain.UpdateEvent{
+		UserID: userID, Type: domain.UpdateEventNoop, Pts: 3, PtsCount: 1, Date: 1700000303,
+	}); err != nil {
+		t.Fatalf("append live tail: %v", err)
+	}
+
+	diff, err := NewService(memory.NewUpdateStateStore(), events).GetDifference(
+		ctx,
+		authKeyID,
+		userID,
+		domain.UpdateState{Pts: 0, Date: 1700000300},
+	)
+	if err != nil {
+		t.Fatalf("difference across retention race: %v", err)
+	}
+	if events.calls != 2 {
+		t.Fatalf("checkpoint probes = %d, want pre-read plus post-gap recheck", events.calls)
+	}
+	if !diff.Partial || len(diff.Events) != 0 || diff.State.Pts != 2 || diff.State.Date != 1700000302 {
+		t.Fatalf("race checkpoint difference = %+v, want empty differenceSlice at retained floor", diff)
+	}
 }
 
 type captureDispatchAppender struct {
@@ -559,8 +699,9 @@ func (s *failingDispatchAppender) AppendAllocatedWithDispatch(context.Context, i
 }
 
 type captureStateStore struct {
-	saveCount int
-	states    map[[16]byte]domain.UpdateState
+	saveCount         int
+	lastSaveAuthKeyID [8]byte
+	states            map[[16]byte]domain.UpdateState
 }
 
 func (s *captureStateStore) Get(_ context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error) {
@@ -576,7 +717,12 @@ func (s *captureStateStore) Save(_ context.Context, authKeyID [8]byte, userID in
 		s.states = make(map[[16]byte]domain.UpdateState)
 	}
 	s.saveCount++
+	s.lastSaveAuthKeyID = authKeyID
 	s.states[captureStateKey(authKeyID, userID)] = state
+	return nil
+}
+
+func (s *captureStateStore) ObserveClientState(_ context.Context, _ [8]byte, _ int64, _ domain.UpdateState) error {
 	return nil
 }
 

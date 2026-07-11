@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
@@ -16,25 +17,34 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	var fingerprint []byte
+	var err error
+	if req.RandomID != 0 {
+		fingerprint, err = store.MonoforumSendFingerprint(req)
+		if err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		req.IdempotencyFingerprint = fingerprint
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req.RandomID != 0 {
+		if replay, found, replayErr := s.lookupChannelSendReplayLocked(domain.ChannelSendReplayRequest{
+			ChannelID:              req.MonoforumID,
+			SenderUserID:           req.SenderUserID,
+			SavedPeer:              req.SavedPeer,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: fingerprint,
+		}); replayErr != nil || found {
+			return replay, replayErr
+		}
+	}
 	channel, ok := s.channels[req.MonoforumID]
 	if !ok || channel.Deleted || !channel.Monoforum {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
-	}
-	if req.RandomID != 0 {
-		// 去重维度 = (sender, saved_peer, random_id),与 postgres 迁移 0022 的唯一索引一致;
-		// 不复用账号级 randomToID(其按 channel+sender+random_id 三元组,会被跨子会话同 random_id 互相覆盖)。
-		if dup, ok := s.findMonoforumDuplicateLocked(req.MonoforumID, req.SenderUserID, req.SavedPeer, req.RandomID); ok {
-			event := s.eventForMessageLocked(req.MonoforumID, dup.ID)
-			if event.Message.ID != 0 {
-				dup = event.Message
-			}
-			return domain.SendChannelMessageResult{Channel: cloneChannel(channel), Message: cloneChannelMessage(dup), Event: event, Duplicate: true}, nil
-		}
 	}
 	pts := s.nextChannelPtsLocked(req.MonoforumID)
 	msgID := s.nextChannelMessageIDLocked(req.MonoforumID)
@@ -50,6 +60,14 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		Entities:     append([]domain.MessageEntity(nil), req.Entities...),
 		Pts:          pts,
 	}
+	var sendSnapshot []byte
+	if req.RandomID != 0 {
+		var snapshotErr error
+		sendSnapshot, snapshotErr = store.EncodeChannelSendSnapshot(msg)
+		if snapshotErr != nil {
+			return domain.SendChannelMessageResult{}, snapshotErr
+		}
+	}
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    req.MonoforumID,
 		Type:         domain.ChannelUpdateNewMessage,
@@ -60,7 +78,12 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		SenderUserID: req.SenderUserID,
 	}
 	s.messages[req.MonoforumID] = append(s.messages[req.MonoforumID], msg)
-	s.events[req.MonoforumID] = append(s.events[req.MonoforumID], event)
+	if req.RandomID != 0 {
+		replayKey := channelMessageReplayKey{channelID: req.MonoforumID, messageID: msg.ID}
+		s.sendSnapshots[replayKey] = sendSnapshot
+		s.sendFingerprints[replayKey] = append([]byte(nil), fingerprint...)
+	}
+	s.appendChannelEventLocked(event)
 	channel.TopMessageID = msgID
 	channel.Pts = pts
 	s.channels[req.MonoforumID] = channel
@@ -75,7 +98,7 @@ func (s *ChannelStore) findMonoforumDuplicateLocked(monoforumID, senderUserID in
 	msgs := s.messages[monoforumID]
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		if !m.Deleted && m.RandomID == randomID && m.SenderUserID == senderUserID && m.SavedPeer == savedPeer {
+		if m.RandomID == randomID && m.SenderUserID == senderUserID && m.SavedPeer == savedPeer {
 			return m, true
 		}
 	}

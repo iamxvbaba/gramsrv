@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -69,6 +70,9 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if !dup.Duplicate || dup.Message.ID != m1.Message.ID {
 		t.Fatalf("dup = %+v, want duplicate of m1 id %d", dup.Message, m1.Message.ID)
 	}
+	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 111, Message: "changed", Date: 1_700_001_004}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting monoforum replay err=%v, want ErrMessageRandomIDDuplicate", err)
+	}
 
 	hist, err := store.ListMonoforumHistory(ctx, domain.MonoforumHistoryFilter{MonoforumID: monoID, SavedPeer: sub, Limit: 10})
 	if err != nil {
@@ -130,5 +134,22 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	}
 	if dialogs.Dialogs[1].SavedPeer != sub || dialogs.Dialogs[1].TopMessageID == 0 {
 		t.Fatalf("dialogs[1] = %+v, want sub with top message", dialogs.Dialogs[1])
+	}
+	store.mu.Lock()
+	_, deleteEvent, _, err := store.deleteChannelMessagesLocked(store.channels[monoID], domain.ChannelMember{ChannelID: monoID, UserID: 1, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, 1, 1_700_001_013)
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatalf("delete monoforum message: %v", err)
+	}
+	ptsBeforeReplay, eventsBeforeReplay := store.ptsSeq[monoID], len(store.events[monoID])
+	deletedReplay, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 9001, Message: "to sub", Date: 1_700_001_014})
+	if err != nil {
+		t.Fatalf("replay deleted monoforum message: %v", err)
+	}
+	if !deletedReplay.Duplicate || deletedReplay.Message.ID != a.Message.ID || deletedReplay.Message.Body != "to sub" || deletedReplay.ReplayDeleteEvent == nil || deletedReplay.ReplayDeleteEvent.Pts != deleteEvent.Pts {
+		t.Fatalf("deleted monoforum replay = %+v, want first snapshot + durable delete %+v", deletedReplay, deleteEvent)
+	}
+	if store.ptsSeq[monoID] != ptsBeforeReplay || len(store.events[monoID]) != eventsBeforeReplay {
+		t.Fatalf("deleted monoforum replay mutated pts/events = %d/%d, want %d/%d", store.ptsSeq[monoID], len(store.events[monoID]), ptsBeforeReplay, eventsBeforeReplay)
 	}
 }

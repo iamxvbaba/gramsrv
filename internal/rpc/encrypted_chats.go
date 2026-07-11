@@ -88,7 +88,7 @@ func (r *Router) recordEncryptionEventBestEffort(ctx context.Context, chatID int
 // 全部活跃密聊，并向对端推送 encryptedChatDiscarded（在线）+ 写 durable 事件（离线 getDifference
 // 补偿）。ownerUserID 是被销毁设备的所有者，用于定位对端。best-effort：失败仅记日志，绝不阻断
 // 登出/撤销。修复 P1：此前 onAuthLogOut 等不级联 discard，对端继续往死 auth_key 投递成静默死链
-//（消息 acked=f / qts 永久积压，对端永看不到 discarded）。
+// （消息 acked=f / qts 永久积压，对端永看不到 discarded）。
 func (r *Router) discardSecretChatsForAuthKey(ctx context.Context, businessAuthKeyID, ownerUserID int64) {
 	if r.deps.SecretChats == nil || businessAuthKeyID == 0 || ownerUserID == 0 {
 		return

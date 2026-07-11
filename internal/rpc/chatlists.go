@@ -379,7 +379,7 @@ func (r *Router) recordChatlistFilterUpdate(ctx context.Context, userID int64, f
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, filterID, folder, sessionID)
+		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, filterID, folder, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return internalErr()
 		}
@@ -400,7 +400,7 @@ func (r *Router) chatlistFilterUpdates(ctx context.Context, userID int64, filter
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, filterID, folder, sessionID)
+		event, _, err = r.deps.Updates.RecordDialogFilter(ctx, authKeyID, userID, filterID, folder, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return nil, internalErr()
 		}

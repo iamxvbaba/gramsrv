@@ -53,7 +53,7 @@ func (r *Router) onFoldersEditPeerFolders(ctx context.Context, folderPeers []tg.
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordFolderPeers(ctx, authKeyID, userID, updates, sessionID)
+		event, _, err = r.deps.Updates.RecordFolderPeers(ctx, authKeyID, userID, updates, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return nil, internalErr()
 		}

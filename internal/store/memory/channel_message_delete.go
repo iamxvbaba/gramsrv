@@ -240,7 +240,16 @@ func (s *ChannelStore) deleteChannelMessagesLocked(channel domain.Channel, membe
 		MessageIDs:   append([]int(nil), deleted...),
 		SenderUserID: actorUserID,
 	}
-	s.events[channel.ID] = append(s.events[channel.ID], event)
+	s.appendChannelEventLocked(event)
+	for _, id := range deleted {
+		msg, ok := s.findMessageLocked(channel.ID, id)
+		if !ok || msg.RandomID == 0 || msg.SenderUserID == 0 {
+			continue
+		}
+		key := channelMessageReplayKey{channelID: channel.ID, messageID: msg.ID}
+		cloned := cloneChannelEvent(event)
+		s.deleteReceipts[key] = &cloned
+	}
 	return deleted, event, channel, nil
 }
 

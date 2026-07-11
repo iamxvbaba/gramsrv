@@ -124,6 +124,51 @@ func TestCreateDocumentFromUploadStreamsBodyAndCleansParts(t *testing.T) {
 	if string(body) != strings.Join(parts, "") {
 		t.Fatalf("body blob mismatch")
 	}
+	replayed, err := svc.CreateDocumentFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 200, Parts: len(parts), Name: "large.bin", Big: true},
+		domain.DocumentSpec{MimeType: "application/octet-stream"},
+	)
+	if err != nil {
+		t.Fatalf("replay CreateDocumentFromUpload after part cleanup: %v", err)
+	}
+	if replayed.ID != doc.ID || replayed.AccessHash != doc.AccessHash {
+		t.Fatalf("replayed document = %d/%d, want original %d/%d", replayed.ID, replayed.AccessHash, doc.ID, doc.AccessHash)
+	}
+	if _, err := svc.CreateDocumentFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 200, Parts: len(parts), Name: "large.bin", Big: true},
+		domain.DocumentSpec{MimeType: "text/plain"},
+	); !errors.Is(err, domain.ErrFilePartsInvalid) {
+		t.Fatalf("changed materialization intent err = %v, want ErrFilePartsInvalid", err)
+	}
+}
+
+func TestCreatePhotoFromUploadReceiptReplaysAfterPartCleanup(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	svc, _ := newUploadPartTestService(t, media, domain.UploadPartQuota{})
+	file := domain.UploadedFileRef{OwnerUserID: 10, FileID: 201, Parts: 1, Name: "photo.jpg"}
+	if _, err := svc.SaveFilePart(ctx, file.OwnerUserID, file.FileID, 0, []byte("image-bytes")); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+	first, err := svc.CreatePhotoFromUpload(ctx, file)
+	if err != nil {
+		t.Fatalf("CreatePhotoFromUpload: %v", err)
+	}
+	if remaining, err := media.LoadFileParts(ctx, file.OwnerUserID, file.FileID); err != nil || len(remaining) != 0 {
+		t.Fatalf("upload parts after photo materialization = %+v err=%v", remaining, err)
+	}
+	replayed, err := svc.CreatePhotoFromUpload(ctx, file)
+	if err != nil {
+		t.Fatalf("replay CreatePhotoFromUpload: %v", err)
+	}
+	if replayed.ID != first.ID || replayed.AccessHash != first.AccessHash {
+		t.Fatalf("replayed photo = %d/%d, want original %d/%d", replayed.ID, replayed.AccessHash, first.ID, first.AccessHash)
+	}
+	changed := file
+	changed.Name = "different.jpg"
+	if _, err := svc.CreatePhotoFromUpload(ctx, changed); !errors.Is(err, domain.ErrFilePartsInvalid) {
+		t.Fatalf("changed photo intent err = %v, want ErrFilePartsInvalid", err)
+	}
 }
 
 type countingUploadPartBackend struct {

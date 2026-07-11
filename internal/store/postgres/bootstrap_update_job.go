@@ -60,11 +60,11 @@ func (s *BootstrapUpdateJobStore) MarkReadyForSession(ctx context.Context, userI
 	tag, err := s.db.Exec(ctx, `
 UPDATE bootstrap_update_jobs
 SET status = 'ready',
+    session_id = $3,
     ready_at = now(),
     updated_at = now()
 WHERE user_id = $1
   AND auth_key_id = $2
-  AND session_id = $3
   AND status = 'pending'`,
 		userID, authKeyIDToInt64(authKeyID), sessionID)
 	if err != nil {

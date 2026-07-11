@@ -984,10 +984,10 @@ func (r *Router) recordAcceptedContactTargetUpdates(ctx context.Context, userID,
 		return internalErr()
 	}
 	var zeroAuthKeyID [8]byte
-	if err := r.recordPeerSettingsForUser(ctx, zeroAuthKeyID, targetUserID, peer, settings, 0); err != nil {
+	if err := r.recordPeerSettingsForUser(ctx, zeroAuthKeyID, targetUserID, peer, settings, zeroAuthKeyID, 0); err != nil {
 		return internalErr()
 	}
-	if err := r.recordContactsResetForUser(ctx, zeroAuthKeyID, targetUserID, 0); err != nil {
+	if err := r.recordContactsResetForUser(ctx, zeroAuthKeyID, targetUserID, zeroAuthKeyID, 0); err != nil {
 		return internalErr()
 	}
 	peerUser := domain.User{ID: userID}
@@ -1017,14 +1017,14 @@ func (r *Router) pushContactsReset(ctx context.Context, userID int64) {
 func (r *Router) recordContactsReset(ctx context.Context, userID int64) error {
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	return r.recordContactsResetForUser(ctx, authKeyID, userID, sessionID)
+	return r.recordContactsResetForUser(ctx, authKeyID, userID, rawAuthKeyIDForOrigin(ctx), sessionID)
 }
 
-func (r *Router) recordContactsResetForUser(ctx context.Context, authKeyID [8]byte, userID int64, excludeSessionID int64) error {
+func (r *Router) recordContactsResetForUser(ctx context.Context, stateAuthKeyID [8]byte, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64) error {
 	if r.deps.Updates == nil || userID == 0 {
 		return nil
 	}
-	event, _, err := r.deps.Updates.RecordContactsReset(ctx, authKeyID, userID, excludeSessionID)
+	event, _, err := r.deps.Updates.RecordContactsReset(ctx, stateAuthKeyID, userID, excludeAuthKeyID, excludeSessionID)
 	if err == nil && excludeSessionID != 0 {
 		r.bookkeepAuxPtsForCurrentSession(ctx, event)
 	}
@@ -1034,7 +1034,7 @@ func (r *Router) recordContactsResetForUser(ctx context.Context, authKeyID [8]by
 func (r *Router) recordPeerSettings(ctx context.Context, userID int64, peer domain.Peer, settings domain.PeerSettings) error {
 	authKeyID, _ := AuthKeyIDFrom(ctx)
 	sessionID, _ := SessionIDFrom(ctx)
-	return r.recordPeerSettingsForUser(ctx, authKeyID, userID, peer, settings, sessionID)
+	return r.recordPeerSettingsForUser(ctx, authKeyID, userID, peer, settings, rawAuthKeyIDForOrigin(ctx), sessionID)
 }
 
 func (r *Router) recordPeerStoryBlocked(ctx context.Context, userID int64, peer domain.Peer, blocked bool) error {
@@ -1043,18 +1043,18 @@ func (r *Router) recordPeerStoryBlocked(ctx context.Context, userID int64, peer 
 	if r.deps.Updates == nil || userID == 0 {
 		return nil
 	}
-	event, _, err := r.deps.Updates.RecordPeerStoryBlocked(ctx, authKeyID, userID, peer, blocked, sessionID)
+	event, _, err := r.deps.Updates.RecordPeerStoryBlocked(ctx, authKeyID, userID, peer, blocked, rawAuthKeyIDForOrigin(ctx), sessionID)
 	if err == nil && sessionID != 0 {
 		r.bookkeepAuxPtsForCurrentSession(ctx, event)
 	}
 	return err
 }
 
-func (r *Router) recordPeerSettingsForUser(ctx context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, settings domain.PeerSettings, excludeSessionID int64) error {
+func (r *Router) recordPeerSettingsForUser(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, settings domain.PeerSettings, excludeAuthKeyID [8]byte, excludeSessionID int64) error {
 	if r.deps.Updates == nil || userID == 0 {
 		return nil
 	}
-	event, _, err := r.deps.Updates.RecordPeerSettings(ctx, authKeyID, userID, peer, settings, excludeSessionID)
+	event, _, err := r.deps.Updates.RecordPeerSettings(ctx, stateAuthKeyID, userID, peer, settings, excludeAuthKeyID, excludeSessionID)
 	if err == nil && excludeSessionID != 0 {
 		r.bookkeepAuxPtsForCurrentSession(ctx, event)
 	}

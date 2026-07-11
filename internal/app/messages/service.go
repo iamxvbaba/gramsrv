@@ -2,6 +2,7 @@ package messages
 
 import (
 	"context"
+	"fmt"
 
 	"telesrv/internal/app/userprojection"
 	"telesrv/internal/domain"
@@ -96,6 +97,28 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 	if req.SenderUserID == 0 {
 		req.SenderUserID = userID
 	}
+	if req.SenderUserID != userID {
+		return domain.SendPrivateTextResult{}, domain.ErrUserSendRestricted
+	}
+	if req.RandomID != 0 && !req.IdempotencyPreflighted {
+		fingerprint, err := store.PrivateSendFingerprint(req)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		req.IdempotencyFingerprint = fingerprint
+		if replayStore, ok := s.messages.(store.PrivateSendReplayStore); ok {
+			replay, found, err := replayStore.LookupPrivateSendReplay(ctx, domain.PrivateSendReplayRequest{
+				SenderUserID:           req.SenderUserID,
+				RecipientUserID:        req.RecipientUserID,
+				RandomID:               req.RandomID,
+				IdempotencyFingerprint: fingerprint,
+			})
+			if err != nil || found {
+				return replay, err
+			}
+			req.IdempotencyPreflighted = true
+		}
+	}
 	if err := s.ensureCanSend(ctx, req.SenderUserID); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
@@ -111,6 +134,26 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 		s.botResponder.OnPrivateMessage(ctx, req.RecipientUserID, res.RecipientMessage)
 	}
 	return res, err
+}
+
+// LookupPrivateSendReplay exposes the immutable receipt to the RPC boundary without executing
+// send permission checks, business automation or bot responders. Sender identity is still bound
+// to the authenticated app-service caller.
+func (s *Service) LookupPrivateSendReplay(ctx context.Context, userID int64, req domain.PrivateSendReplayRequest) (domain.SendPrivateTextResult, bool, error) {
+	if s == nil || s.messages == nil || userID == 0 {
+		return domain.SendPrivateTextResult{}, false, nil
+	}
+	if req.SenderUserID == 0 {
+		req.SenderUserID = userID
+	}
+	if req.SenderUserID != userID || req.RecipientUserID == 0 || req.RandomID == 0 {
+		return domain.SendPrivateTextResult{}, false, fmt.Errorf("private send replay: invalid authenticated scope")
+	}
+	replayStore, ok := s.messages.(store.PrivateSendReplayStore)
+	if !ok {
+		return domain.SendPrivateTextResult{}, false, nil
+	}
+	return replayStore.LookupPrivateSendReplay(ctx, req)
 }
 
 func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {

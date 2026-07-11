@@ -2,9 +2,9 @@ package mtprotoedge
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"sync"
 
 	"go.uber.org/zap"
 
@@ -12,7 +12,6 @@ import (
 	"github.com/gotd/td/crypto"
 	"github.com/gotd/td/exchange"
 	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
 	"github.com/gotd/td/proto/codec"
 	"github.com/gotd/td/transport"
 
@@ -31,7 +30,8 @@ func peekAuthKeyID(b *bin.Buffer) (id [8]byte, err error) {
 // handleExchange 在收到 auth_key_id==0 的首帧后执行服务端 MTProto 密钥交换。
 //
 // first 是已读取的首帧（req_pq*），通过 bufferedConn 交还给 exchange 流程，
-// 使其能从头读取握手消息。成功后将 auth key + server salt 落入 AuthKeyStore。
+// 使其能从头读取握手消息。auth key + server salt 会在 DhGenOk 发出前落入
+// AuthKeyStore；持久化失败时不向客户端确认握手成功。
 func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first *bin.Buffer) (*bin.Buffer, error) {
 	if s.key.Zero() {
 		s.log.Error("Key exchange requested but server RSA key is not configured")
@@ -62,11 +62,6 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 		var encErr *exchange.UnexpectedEncryptedError
 		if errors.As(err, &encErr) {
 			replay := encErr.Frame
-			if len(replay) == 0 {
-				if lf := buffered.lastFrame(); lf != nil {
-					replay = lf.Buf
-				}
-			}
 			if len(replay) > 0 {
 				s.log.Debug("Key exchange interrupted by encrypted frame; replaying as existing session")
 				return &bin.Buffer{Buf: replay}, nil
@@ -99,7 +94,7 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 		zap.Duration("dur", s.clock.Now().Sub(start)),
 	)
 
-	return nil, s.authKeys.Save(ctx, authKeyData(res.Key, res.ServerSalt, s.clock.Now().Unix()))
+	return nil, nil
 }
 
 // authKeyData 把握手结果转换为 store 记录。
@@ -142,9 +137,7 @@ var errTooManyHandshakeReqPQ = errors.New("too many req_pq frames in one handsha
 // 用于密钥交换：serveConn 已读首帧用于 peek auth_key_id，再 push 回来交给 exchange。
 type bufferedConn struct {
 	transport.Conn
-	mu         sync.Mutex
 	pending    []bin.Buffer
-	last       bin.Buffer
 	reqPQCount int // 本次握手已见 req_pq(_multi) 帧数；只在握手期访问（Recv 单 goroutine）
 }
 
@@ -153,32 +146,38 @@ func newBufferedConn(conn transport.Conn) *bufferedConn {
 }
 
 func (c *bufferedConn) push(b *bin.Buffer) {
-	c.mu.Lock()
-	c.pending = append(c.pending, bin.Buffer{Buf: b.Copy()})
-	c.mu.Unlock()
+	if b == nil {
+		return
+	}
+	// serveConn is synchronously blocked in handleExchange, so the first frame's
+	// backing remains stable until the exchange returns. Keep a slice view instead
+	// of copying an attacker-sized transport frame.
+	buf := b.Buf
+	b.Buf = nil // transfer ownership; serveConn must not pin the frame after next Recv releases it
+	c.pending = append(c.pending, bin.Buffer{Buf: buf})
 }
 
 // Recv 优先返回已 push 的帧（FIFO），耗尽后读取底层连接。
 func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
 	for {
-		c.mu.Lock()
 		if len(c.pending) > 0 {
 			e := c.pending[0]
+			c.pending[0] = bin.Buffer{}
 			c.pending = c.pending[1:]
-			c.last.ResetTo(e.Copy())
-			c.mu.Unlock()
 			b.ResetTo(e.Buf)
 		} else {
-			c.mu.Unlock()
 			if err := c.Conn.Recv(ctx, b); err != nil {
 				return err
 			}
-			c.mu.Lock()
-			c.last.ResetTo(b.Copy())
-			c.mu.Unlock()
 		}
 
 		if isUnencryptedMsgsAckFrame(b) {
+			// The ack is intentionally ignored during exchange. Drop its transport
+			// backing and shrink the retained high-water charge before the next Recv;
+			// otherwise a large trailing frame can consume global admission budget for
+			// the rest of a CPU-heavy key exchange even though no backing remains live.
+			b.Buf = nil
+			retainInboundFrameBackings(c.Conn, b)
 			continue
 		}
 		// req_pq 计数上界：仅在握手期生效（bufferedConn 只用于密钥交换），且 payload id 探测
@@ -196,21 +195,17 @@ func (c *bufferedConn) Recv(ctx context.Context, b *bin.Buffer) error {
 // unencryptedPayloadID 返回未加密消息（auth_key_id==0）内层 TL payload 的 type id。
 // 非未加密消息 / 解码失败时 ok=false。
 func unencryptedPayloadID(frame *bin.Buffer) (uint32, bool) {
-	authKeyID, err := peekAuthKeyID(frame)
-	if err != nil || authKeyID != emptyAuthKeyID {
+	if frame == nil || len(frame.Buf) < 24 {
 		return 0, false
 	}
-	var msg proto.UnencryptedMessage
-	cp := &bin.Buffer{Buf: frame.Copy()}
-	if err := msg.Decode(cp); err != nil {
+	if binary.LittleEndian.Uint64(frame.Buf[:8]) != 0 {
 		return 0, false
 	}
-	payload := &bin.Buffer{Buf: msg.MessageData}
-	id, err := payload.PeekID()
-	if err != nil {
+	dataLen := int64(int32(binary.LittleEndian.Uint32(frame.Buf[16:20])))
+	if dataLen < 4 || dataLen > int64(len(frame.Buf)-20) {
 		return 0, false
 	}
-	return id, true
+	return binary.LittleEndian.Uint32(frame.Buf[20:24]), true
 }
 
 func isUnencryptedMsgsAckFrame(frame *bin.Buffer) bool {
@@ -221,13 +216,4 @@ func isUnencryptedMsgsAckFrame(frame *bin.Buffer) bool {
 func isUnencryptedReqPQFrame(frame *bin.Buffer) bool {
 	id, ok := unencryptedPayloadID(frame)
 	return ok && (id == mt.ReqPqRequestTypeID || id == mt.ReqPqMultiRequestTypeID)
-}
-
-func (c *bufferedConn) lastFrame() *bin.Buffer {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.last.Len() == 0 {
-		return nil
-	}
-	return &bin.Buffer{Buf: c.last.Copy()}
 }

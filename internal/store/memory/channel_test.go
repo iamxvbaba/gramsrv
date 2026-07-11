@@ -1093,8 +1093,12 @@ func TestChannelMessageReplyMarkupSurvivesReadPaths(t *testing.T) {
 		UserID:    1,
 		ChannelID: created.Channel.ID,
 		RandomID:  38_001,
-		Message:   "duplicate must not replace",
-		Date:      1_700_000_382,
+		Message:   "via inline keyboard",
+		ViaBotID:  99,
+		ReplyMarkup: &domain.MessageReplyMarkup{Inline: [][]domain.MarkupButton{{
+			{Type: domain.MarkupButtonCallback, Text: "Open", Data: []byte{0x00, 0xff, 0x42}},
+		}}},
+		Date: 1_700_000_382,
 	})
 	if err != nil {
 		t.Fatalf("duplicate send: %v", err)

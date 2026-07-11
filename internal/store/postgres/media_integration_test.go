@@ -220,6 +220,43 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUploadedMediaReceiptFirstWriterWinsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	media := NewMediaStore(pool)
+	userID := createRevokeTestUser(t, ctx, pool, "upload-receipt")
+	const fileID = int64(880055501)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM uploaded_media_receipts WHERE owner_user_id = $1 AND file_id = $2", userID, fileID)
+	})
+	first := domain.UploadedMediaReceipt{
+		OwnerUserID: userID,
+		FileID:      fileID,
+		IntentHash:  bytes.Repeat([]byte{1}, 32),
+		Kind:        domain.UploadedMediaPhoto,
+		MediaID:     7001,
+	}
+	stored, created, err := media.PutUploadedMediaReceipt(ctx, first)
+	if err != nil || !created || stored.MediaID != first.MediaID || !bytes.Equal(stored.IntentHash, first.IntentHash) {
+		t.Fatalf("first receipt = %+v created=%v err=%v", stored, created, err)
+	}
+	second := first
+	second.IntentHash = bytes.Repeat([]byte{2}, 32)
+	second.Kind = domain.UploadedMediaDocument
+	second.MediaID = 7002
+	stored, created, err = media.PutUploadedMediaReceipt(ctx, second)
+	if err != nil || created {
+		t.Fatalf("conflicting receipt created=%v err=%v", created, err)
+	}
+	if stored.Kind != first.Kind || stored.MediaID != first.MediaID || !bytes.Equal(stored.IntentHash, first.IntentHash) {
+		t.Fatalf("conflicting receipt replaced first writer: %+v", stored)
+	}
+	got, found, err := media.GetUploadedMediaReceipt(ctx, userID, fileID)
+	if err != nil || !found || got.MediaID != first.MediaID {
+		t.Fatalf("get receipt = %+v found=%v err=%v", got, found, err)
+	}
+}
+
 func TestMediaStoreDocumentCacheCopiesAndRefreshes(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

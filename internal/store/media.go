@@ -18,6 +18,11 @@ type MediaStore interface {
 	LoadFileParts(ctx context.Context, ownerUserID, fileID int64) ([]domain.UploadPart, error)
 	DeleteFileParts(ctx context.Context, ownerUserID, fileID int64) ([]string, error)
 	DeleteExpiredUploadParts(ctx context.Context, before time.Time, limit int) ([]string, error)
+	// Uploaded media receipts survive transient part cleanup so messages.sendMedia can replay an
+	// InputMediaUploadedPhoto/Document after a lost response. Put returns the durable winner; when
+	// created=false another concurrent materializer won the (owner,file_id) key.
+	GetUploadedMediaReceipt(ctx context.Context, ownerUserID, fileID int64) (domain.UploadedMediaReceipt, bool, error)
+	PutUploadedMediaReceipt(ctx context.Context, receipt domain.UploadedMediaReceipt) (stored domain.UploadedMediaReceipt, created bool, err error)
 
 	// blob 索引。
 	PutFileBlob(ctx context.Context, blob domain.FileBlob) error

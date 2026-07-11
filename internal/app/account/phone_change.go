@@ -3,7 +3,6 @@ package account
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -51,9 +50,10 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 		return "", domain.AuthCodeDelivery{}, err
 	}
 	rec := store.PhoneCode{
+		Version:     store.PhoneCodeVersionCurrent,
 		Phone:       phone,
 		Code:        s.phoneChangeCode,
-		Channel:     "phone",
+		Channel:     store.PhoneCodeChannelPhone,
 		Purpose:     store.PhoneCodePurposeChangePhone,
 		UserID:      userID,
 		AuthKeyID:   authKeyID,
@@ -68,7 +68,7 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 
 // ChangePhone 验证作用域和验证码后执行原子改号。返回事件用于当前 session 的
 // pts 簿记；其它 session 由 transactional outbox 投递 updateUserPhone。
-func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone, phoneCodeHash, code string, date int) (domain.PhoneChangeResult, error) {
+func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, originRawAuthKeyID [8]byte, sessionID int64, phone, phoneCodeHash, code string, date int) (domain.PhoneChangeResult, error) {
 	if strings.TrimSpace(phoneCodeHash) == "" || strings.TrimSpace(code) == "" {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeEmpty
 	}
@@ -82,51 +82,45 @@ func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID [8]by
 	if s.codes == nil || s.phoneChanges == nil {
 		return domain.PhoneChangeResult{}, fmt.Errorf("phone change service is not configured")
 	}
-	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
+	scope := store.PhoneCodeScope{
+		Purpose:   store.PhoneCodePurposeChangePhone,
+		UserID:    userID,
+		AuthKeyID: authKeyID,
+		Phone:     phone,
+	}
+	verified, err := s.codes.VerifyScoped(ctx, phoneCodeHash, scope, strings.TrimSpace(code), s.phoneChangeMaxAttempts)
 	if err != nil {
 		return domain.PhoneChangeResult{}, err
 	}
-	if !found {
+	switch verified.Status {
+	case store.LoginCodeVerifyMissing:
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeExpired
-	}
-	if rec.Purpose != store.PhoneCodePurposeChangePhone || rec.Phone != phone || rec.UserID != userID || rec.AuthKeyID != authKeyID {
+	case store.LoginCodeVerifyInvalid:
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeInvalid
-	}
-	code = strings.TrimSpace(code)
-	if subtle.ConstantTimeCompare([]byte(rec.Code), []byte(code)) != 1 {
-		return domain.PhoneChangeResult{}, s.rejectPhoneChangeCode(ctx, phoneCodeHash, rec)
+	case store.LoginCodeVerifyAccepted:
+	default:
+		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeInvalid
 	}
 	if existing, occupied, err := s.users.ByPhone(ctx, phone); err != nil {
 		return domain.PhoneChangeResult{}, err
 	} else if occupied && existing.ID != userID {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
 	}
-	// 正确 code 必须在进入持久化事务前原子消费。并发重放中只有一个请求能
-	// 获得记录，其余请求不得再次推进 pts 或追加 user_phone event。
-	consumed, found, err := s.codes.ConsumeScoped(ctx, phoneCodeHash, store.PhoneCodeScope{
-		Purpose:   store.PhoneCodePurposeChangePhone,
-		UserID:    userID,
-		AuthKeyID: authKeyID,
-		Phone:     phone,
-	})
-	if err != nil {
-		return domain.PhoneChangeResult{}, err
-	}
-	if !found {
-		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeExpired
-	}
-	if consumed.Purpose != rec.Purpose || consumed.UserID != rec.UserID || consumed.AuthKeyID != rec.AuthKeyID || consumed.Phone != rec.Phone ||
-		subtle.ConstantTimeCompare([]byte(consumed.Code), []byte(code)) != 1 {
+	consumed := verified.Record
+	if consumed.Version != store.PhoneCodeVersionCurrent || consumed.Scope() != scope || consumed.Channel != store.PhoneCodeChannelPhone {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeInvalid
 	}
 	if date == 0 {
 		date = int(time.Now().Unix())
 	}
 	result, err := s.phoneChanges.ChangePhone(ctx, domain.PhoneChangeRequest{
-		UserID:           userID,
-		Phone:            phone,
-		Date:             date,
-		ExcludeAuthKeyID: authKeyID,
+		UserID: userID,
+		Phone:  phone,
+		Date:   date,
+		// Authorization/code scope is the stable business (perm) key, while dispatch exclusion
+		// must use the physical raw key.  They differ on PFS/temp connections; conflating them
+		// echoes updateUserPhone back to the initiating device and suppresses the wrong session.
+		ExcludeAuthKeyID: originRawAuthKeyID,
 		ExcludeSessionID: sessionID,
 	})
 	if err != nil {
@@ -160,20 +154,6 @@ func (s *Service) phoneChangeCaller(ctx context.Context, userID int64, authKeyID
 		return domain.User{}, domain.ErrPhoneChangeForbidden
 	}
 	return u, nil
-}
-
-func (s *Service) rejectPhoneChangeCode(ctx context.Context, hash string, rec store.PhoneCode) error {
-	rec.Attempts++
-	max := rec.MaxAttempts
-	if max <= 0 {
-		max = s.phoneChangeMaxAttempts
-	}
-	if max > 0 && rec.Attempts >= max {
-		_ = s.codes.Del(ctx, hash)
-		return domain.ErrPhoneCodeInvalid
-	}
-	_ = s.codes.Update(ctx, hash, rec)
-	return domain.ErrPhoneCodeInvalid
 }
 
 func phoneChangeHash() (string, error) {

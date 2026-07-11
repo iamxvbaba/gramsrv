@@ -43,11 +43,80 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if userID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, req.ID, req.RandomID)
+	if !forwardMessageIDsValid(req.ID, req.RandomID) {
+		return nil, messageIDInvalidErr()
+	}
+	seenRandomIDs := make(map[int64]struct{}, len(req.RandomID))
+	for _, randomID := range req.RandomID {
+		if _, duplicate := seenRandomIDs[randomID]; duplicate {
+			return nil, randomIDDuplicateErr()
+		}
+		seenRandomIDs[randomID] = struct{}{}
+	}
+	toPeer, ok := r.domainPeerFromInputPeer(userID, req.ToPeer)
+	if !ok || toPeer.ID == 0 {
+		return nil, peerIDInvalidErr()
+	}
+	idempotencyFingerprints := make([][]byte, len(req.ID))
+	for i := range req.ID {
+		idempotencyFingerprints[i], err = forwardMessagesItemIdempotencyFingerprint(req, req.ID[i], req.RandomID[i])
+		if err != nil {
+			return nil, internalErr()
+		}
+	}
+	immediate := req.ScheduleDate == 0 || scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix()))
+	replays := make([]outgoingReplayLookup, len(req.ID))
+	absentIndexes := make([]int, 0, len(req.ID))
+	if immediate {
+		for i := range req.ID {
+			replay, err := r.lookupOutgoingReplay(ctx, userID, toPeer, req.RandomID[i], idempotencyFingerprints[i])
+			if err != nil {
+				return nil, err
+			}
+			replays[i] = replay
+			if !replay.found {
+				absentIndexes = append(absentIndexes, i)
+			}
+		}
+	} else {
+		for i := range req.ID {
+			absentIndexes = append(absentIndexes, i)
+		}
+	}
+	if len(absentIndexes) == 0 {
+		if toPeer.Type == domain.PeerTypeChannel {
+			results := make([]domain.SendChannelMessageResult, len(replays))
+			for i := range replays {
+				results[i] = replays[i].channel
+			}
+			return r.channelMessagesUpdatesWithPeerCache(ctx, userID, results, req.RandomID, true, nil, newViewerPeerCache(r)), nil
+		}
+		res := domain.ForwardPrivateMessagesResult{OwnerUserID: userID}
+		for i := range replays {
+			sent := replays[i].private
+			res.SenderMessages = append(res.SenderMessages, sent.SenderMessage)
+			res.RecipientMessages = append(res.RecipientMessages, sent.RecipientMessage)
+			res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)
+			res.RecipientEvents = append(res.RecipientEvents, sent.RecipientEvent)
+			res.Duplicates = append(res.Duplicates, true)
+			res.ReplayDeleteEvents = append(res.ReplayDeleteEvents, sent.ReplayDeleteEvent)
+		}
+		return tgForwardMessagesUpdates(res, req.RandomID, r.usersForMessageUpdates(ctx, userID, res.SenderMessages), r.chatsForMessageUpdates(ctx, userID, res.SenderMessages)), nil
+	}
+	if err := r.checkSendRateLimit(ctx, userID, len(absentIndexes)); err != nil {
+		return nil, err
+	}
+	toPeer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.ToPeer)
 	if err != nil {
 		return nil, err
 	}
-	toPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.ToPeer)
+	absentIDs := make([]int, len(absentIndexes))
+	absentRandomIDs := make([]int64, len(absentIndexes))
+	for i, originalIndex := range absentIndexes {
+		absentIDs[i] = req.ID[originalIndex]
+		absentRandomIDs[i] = req.RandomID[originalIndex]
+	}
+	fromPeer, preloadedSources, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, absentIDs, absentRandomIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -75,59 +144,77 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			}
 		}
 	}
-	if !forwardMessageIDsValid(req.ID, req.RandomID) {
-		return nil, messageIDInvalidErr()
-	}
-	if err := r.checkSendRateLimit(ctx, userID, len(req.ID)); err != nil {
-		return nil, err
-	}
 	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
 		return r.scheduleForwardMessages(ctx, userID, fromPeer, toPeer, req, replyTo, sendAs, preloadedSources)
+	}
+	absentSources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, absentIDs, preloadedSources)
+	if err != nil {
+		return nil, messageForwardErr(err)
+	}
+	sources := make([]forwardSource, len(req.ID))
+	for i, originalIndex := range absentIndexes {
+		sources[originalIndex] = absentSources[i]
 	}
 	if toPeer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
 		}
-		sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloadedSources)
-		if err != nil {
-			return nil, messageForwardErr(err)
-		}
 		recipients := make([]int64, 0)
 		results := make([]domain.SendChannelMessageResult, 0, len(sources))
 		extraUserIDs := make([]int64, 0, len(sources))
+		fanoutResults := make([]domain.SendChannelMessageResult, 0, len(sources))
+		fanoutExtraUserIDs := make([]int64, 0, len(sources))
 		for i, source := range sources {
+			if replays[i].found {
+				results = append(results, replays[i].channel)
+				continue
+			}
 			forward := source.forward
 			if req.DropAuthor {
 				forward = nil
 			}
 			mentionUserIDs := r.mentionUserIDsFromDomain(ctx, userID, source.body, source.entities)
 			res, err := r.deps.Channels.SendMessage(ctx, userID, domain.SendChannelMessageRequest{
-				UserID:         userID,
-				ChannelID:      toPeer.ID,
-				RandomID:       req.RandomID[i],
-				Message:        source.body,
-				Entities:       source.entities,
-				Media:          source.media,
-				MentionUserIDs: mentionUserIDs,
-				Silent:         req.Silent,
-				NoForwards:     req.Noforwards,
-				ReplyTo:        replyTo,
-				Forward:        forward,
-				SendAs:         sendAs,
-				Date:           int(r.clock.Now().Unix()),
+				UserID:                 userID,
+				ChannelID:              toPeer.ID,
+				RandomID:               req.RandomID[i],
+				IdempotencyFingerprint: idempotencyFingerprints[i],
+				IdempotencyPreflighted: replays[i].checked,
+				Message:                source.body,
+				Entities:               source.entities,
+				Media:                  source.media,
+				MentionUserIDs:         mentionUserIDs,
+				Silent:                 req.Silent,
+				NoForwards:             req.Noforwards,
+				ReplyTo:                replyTo,
+				Forward:                forward,
+				SendAs:                 sendAs,
+				Date:                   int(r.clock.Now().Unix()),
 			})
 			if err != nil {
 				return nil, channelInvalidErr(err)
 			}
 			results = append(results, res)
+			sourceUserID := source.userID()
+			if sourceUserID != 0 {
+				extraUserIDs = append(extraUserIDs, sourceUserID)
+			}
+			// An exact random_id replay must still appear in the caller's echo, but it must not
+			// emit the old channel pts as a fresh realtime payload/Bot API update/discussion push.
+			// Mixed batches therefore fan out only newly committed results while preserving the
+			// complete result vector for TDesktop's random_id -> message-id reconciliation.
+			if res.Duplicate {
+				continue
+			}
+			fanoutResults = append(fanoutResults, res)
+			if sourceUserID != 0 {
+				fanoutExtraUserIDs = append(fanoutExtraUserIDs, sourceUserID)
+			}
 			// 收件人是该频道的活跃成员集，对本次转发的每条源都相同；只取一次，
 			// 避免一次转发 ≤100 条到 N 成员大群时把 recipients 累积成 ~100×N 条目
 			// 的巨大临时切片（N=10^5 时约千万级）。
 			if len(recipients) == 0 {
 				recipients = res.Recipients
-			}
-			if sourceUserID := source.userID(); sourceUserID != 0 {
-				extraUserIDs = append(extraUserIDs, sourceUserID)
 			}
 		}
 		// echo 与 fan-out 用各自独立 cache（RPC vs worker goroutine 防竞态）。多条转发汇成
@@ -135,12 +222,11 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		// 由同 channel 分片 FIFO 原子投递。
 		echoCache := newViewerPeerCache(r)
 		updates := r.channelMessagesUpdatesWithPeerCache(ctx, userID, results, req.RandomID, true, extraUserIDs, echoCache)
-		fanoutPts := 0
-		if n := len(results); n > 0 {
-			fanoutPts = results[n-1].Event.Pts
+		if n := len(fanoutResults); n > 0 {
+			fanoutPts := fanoutResults[n-1].Event.Pts
+			r.enqueueChannelMessagesFanout(ctx, userID, toPeer.ID, fanoutPts, recipients, fanoutResults, fanoutExtraUserIDs)
 		}
-		r.enqueueChannelMessagesFanout(ctx, userID, toPeer.ID, fanoutPts, recipients, results, extraUserIDs)
-		for _, res := range results {
+		for _, res := range fanoutResults {
 			r.pushChannelDiscussionUpdate(ctx, userID, res.Discussion)
 		}
 		return updates, nil
@@ -153,17 +239,20 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 		if err != nil {
 			return nil, err
 		}
-		// 私聊源与频道源统一经 forwardSources 取源：首次生成的 forward header 在
-		// forwardSources 内已按原作者 PrivacyKeyForwards 降级（不允许链接回账号时仅保
-		// 留 from_name），避免私聊→私聊路径泄漏原作者可点击账号；media 也随 source 透传。
-		sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloadedSources)
-		if err != nil {
-			return nil, messageForwardErr(err)
-		}
 		sessionID, _ := SessionIDFrom(ctx)
-		authKeyID, _ := AuthKeyIDFrom(ctx)
+		authKeyID := rawAuthKeyIDForOrigin(ctx)
 		res := domain.ForwardPrivateMessagesResult{OwnerUserID: userID}
 		for i, source := range sources {
+			if replays[i].found {
+				sent := replays[i].private
+				res.SenderMessages = append(res.SenderMessages, sent.SenderMessage)
+				res.RecipientMessages = append(res.RecipientMessages, sent.RecipientMessage)
+				res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)
+				res.RecipientEvents = append(res.RecipientEvents, sent.RecipientEvent)
+				res.Duplicates = append(res.Duplicates, true)
+				res.ReplayDeleteEvents = append(res.ReplayDeleteEvents, sent.ReplayDeleteEvent)
+				continue
+			}
 			forward := source.forward
 			if req.DropAuthor {
 				forward = nil
@@ -175,20 +264,22 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				forward = &saved
 			}
 			sent, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
-				SenderUserID:     userID,
-				RecipientUserID:  toPeer.ID,
-				RandomID:         req.RandomID[i],
-				Message:          source.body,
-				Entities:         source.entities,
-				Media:            source.media,
-				Silent:           req.Silent,
-				NoForwards:       req.Noforwards,
-				ReplyTo:          replyTo,
-				Forward:          forward,
-				Date:             int(r.clock.Now().Unix()),
-				OriginAuthKeyID:  authKeyID,
-				OriginSessionID:  sessionID,
-				RecipientBlocked: recipientBlocked,
+				SenderUserID:           userID,
+				RecipientUserID:        toPeer.ID,
+				RandomID:               req.RandomID[i],
+				Message:                source.body,
+				Entities:               source.entities,
+				Media:                  source.media,
+				Silent:                 req.Silent,
+				NoForwards:             req.Noforwards,
+				ReplyTo:                replyTo,
+				Forward:                forward,
+				Date:                   int(r.clock.Now().Unix()),
+				OriginAuthKeyID:        authKeyID,
+				OriginSessionID:        sessionID,
+				RecipientBlocked:       recipientBlocked,
+				IdempotencyFingerprint: idempotencyFingerprints[i],
+				IdempotencyPreflighted: replays[i].checked,
 			})
 			if err != nil {
 				return nil, messageForwardErr(err)
@@ -201,6 +292,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 			res.SenderEvents = append(res.SenderEvents, sent.SenderEvent)
 			res.RecipientEvents = append(res.RecipientEvents, sent.RecipientEvent)
 			res.Duplicates = append(res.Duplicates, sent.Duplicate)
+			res.ReplayDeleteEvents = append(res.ReplayDeleteEvents, sent.ReplayDeleteEvent)
 		}
 		return tgForwardMessagesUpdates(res, req.RandomID, r.usersForMessageUpdates(ctx, userID, res.SenderMessages), r.chatsForMessageUpdates(ctx, userID, res.SenderMessages)), nil
 	}
@@ -497,6 +589,8 @@ func messageForwardErr(err error) error {
 		return chatForwardsRestrictedErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()
+	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):
+		return randomIDDuplicateErr()
 	default:
 		return internalErr()
 	}
@@ -532,6 +626,18 @@ func tgForwardMessagesUpdates(res domain.ForwardPrivateMessagesResult, randomIDs
 			Pts:      pts,
 			PtsCount: ptsCount,
 		})
+		if i < len(res.ReplayDeleteEvents) {
+			if deleted := res.ReplayDeleteEvents[i]; deleted != nil && deleted.Pts > 0 && len(deleted.MessageIDs) > 0 {
+				updates = append(updates, &tg.UpdateDeleteMessages{
+					Messages: append([]int(nil), deleted.MessageIDs...),
+					Pts:      deleted.Pts,
+					PtsCount: deleted.PtsCount,
+				})
+				if deleted.Date > date {
+					date = deleted.Date
+				}
+			}
+		}
 		if date == 0 {
 			date = event.Date
 		}

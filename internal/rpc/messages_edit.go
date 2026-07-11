@@ -143,7 +143,6 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		return nil, messageEditForbiddenErr()
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	authKeyID, _ := AuthKeyIDFrom(ctx)
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
 		OwnerUserID:     userID,
 		Peer:            peer,
@@ -151,7 +150,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		Message:         message,
 		Entities:        domainMessageEntitiesForViewer(userID, entities),
 		EditDate:        int(r.clock.Now().Unix()),
-		OriginAuthKeyID: authKeyID,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionID,
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,

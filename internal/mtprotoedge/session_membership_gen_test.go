@@ -1,11 +1,61 @@
 package mtprotoedge
 
 import (
+	"slices"
 	"testing"
 	"time"
 
 	"go.uber.org/zap/zaptest"
 )
+
+func TestOnlineChannelIDsSnapshotAndDiagnosticPagesStableAscending(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	raw := [8]byte{4, 5, 6}
+	c := &Conn{sessionID: 77, authKeyID: raw}
+	sm.Register(c)
+	sm.BindUserForAuthKey(raw, 77, 100)
+	sm.SetSessionChannelMemberships(raw, 77, 100, []int64{50, 10, 30, 20, 40}, sm.ChannelMembershipGeneration(raw, 77))
+	want := []int64{10, 20, 30, 40, 50}
+	snapshot := sm.OnlineChannelIDsSnapshot()
+	if !slices.Equal(snapshot, want) {
+		t.Fatalf("online channel snapshot = %v, want %v", snapshot, want)
+	}
+
+	var got []int64
+	after := int64(0)
+	for {
+		page := sm.OnlineChannelIDsAfter(after, 2)
+		if len(page) == 0 {
+			break
+		}
+		for _, channelID := range page {
+			if channelID <= after {
+				t.Fatalf("page %v not strictly after cursor %d", page, after)
+			}
+			after = channelID
+			got = append(got, channelID)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("paged online channels = %v, want %v", got, want)
+	}
+	// The recovery actor owns a stable copy: later membership changes are visible to the next
+	// generation, not spliced into the in-flight sorted snapshot.
+	sm.AddUserChannelMembership(100, 5)
+	if !slices.Equal(snapshot, want) {
+		t.Fatalf("owned snapshot mutated after membership insert: %v", snapshot)
+	}
+	if current := sm.OnlineChannelIDsSnapshot(); !slices.Equal(current, []int64{5, 10, 20, 30, 40, 50}) {
+		t.Fatalf("next online channel snapshot = %v", current)
+	}
+
+	// Removing the only live session must immediately remove all channel ids from the recovery
+	// enumeration; stale membership map entries are never enough without a live bySession key.
+	sm.Unregister(c)
+	if got := sm.OnlineChannelIDsAfter(0, 10); len(got) != 0 {
+		t.Fatalf("online channels after unregister = %v, want empty", got)
+	}
+}
 
 // TestSetSessionChannelMembershipsDetectsConcurrentIncrementalUpdates 验证全量
 // membership 同步的丢失更新防护：同步方在读持久成员列表前采样修订号，读取窗口内
@@ -67,13 +117,18 @@ func TestRegisterEvictsOldestSessionAtCap(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 
 	const oldestSession = int64(100)
+	oldestTransport := &closeCountingTransport{}
 	for i := 0; i < maxSessionsPerAuthKey; i++ {
 		sid := int64(i + 1)
 		created := base.Add(time.Duration(i+1) * time.Second)
 		if sid == oldestSession {
 			created = base // 唯一早于所有其它连接的时间戳，且故意不在注册顺序首位。
 		}
-		sm.Register(&Conn{sessionID: sid, authKeyID: raw, createdAt: created})
+		c := &Conn{sessionID: sid, authKeyID: raw, createdAt: created}
+		if sid == oldestSession {
+			c.transport = oldestTransport
+		}
+		sm.Register(c)
 	}
 
 	sm.Register(&Conn{sessionID: 9999, authKeyID: raw, createdAt: base.Add(time.Hour)})
@@ -91,5 +146,8 @@ func TestRegisterEvictsOldestSessionAtCap(t *testing.T) {
 	}
 	if total != maxSessionsPerAuthKey {
 		t.Fatalf("sessions for auth key = %d, want cap %d", total, maxSessionsPerAuthKey)
+	}
+	if oldestTransport.closes != 1 {
+		t.Fatalf("evicted transport closes = %d, want 1", oldestTransport.closes)
 	}
 }

@@ -260,8 +260,18 @@ type SendPrivateTextRequest struct {
 	OriginAuthKeyID  [8]byte
 	OriginSessionID  int64
 	RecipientBlocked bool
-	TTLPeriod        int
-	ViaBotID         int64
+	// IdempotencyFingerprint 是调用边界对原始、不可变发送请求计算的 SHA-256。
+	// RPC 层应优先填入原始 TL 请求指纹，避免链接预览、骰子结果、上传媒体
+	// 等服务端派生字段让合法重放看起来不同；内部调用留空时 store 会基于
+	// domain command 的不可变字段生成等价指纹。
+	IdempotencyFingerprint []byte
+	// IdempotencyPreflighted is internal execution metadata.  A trusted caller sets it only
+	// after a read-only replay lookup returned absent, allowing the app/store layers to avoid
+	// repeating the same indexed lookup.  The transactional unique-key path still fences a
+	// concurrent first writer; this flag is never part of the durable request fingerprint.
+	IdempotencyPreflighted bool
+	TTLPeriod              int
+	ViaBotID               int64
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID int64
 	// Effect 消息特效 id（私聊专属，0 表无特效；调用方已对 catalog 校验过合法性）。
@@ -275,6 +285,16 @@ type SendPrivateTextRequest struct {
 	RichMessage *MessageRichMessage
 }
 
+// PrivateSendReplayRequest identifies one already-committed private send without carrying any
+// mutable or resolver-derived message fields.  The fingerprint is computed at the original
+// request boundary and must be a complete SHA-256 value.
+type PrivateSendReplayRequest struct {
+	SenderUserID           int64
+	RecipientUserID        int64
+	RandomID               int64
+	IdempotencyFingerprint []byte
+}
+
 // SendPrivateTextResult 描述一次私聊文本发送的双端结果。
 type SendPrivateTextResult struct {
 	SenderMessage    Message
@@ -282,6 +302,10 @@ type SendPrivateTextResult struct {
 	SenderEvent      UpdateEvent
 	RecipientEvent   UpdateEvent
 	Duplicate        bool
+	// ReplayDeleteEvent is the already-durable sender-side deletion that must
+	// follow the first-send snapshot in an exact random_id replay. It never
+	// represents a newly allocated event.
+	ReplayDeleteEvent *UpdateEvent
 }
 
 // SetPrivateChatThemeRequest changes the shared theme token for a private dialog.
@@ -351,12 +375,13 @@ type ForwardPrivateMessagesRequest struct {
 
 // ForwardPrivateMessagesResult 描述一次私聊转发的 owner 维度结果。
 type ForwardPrivateMessagesResult struct {
-	OwnerUserID       int64
-	SenderMessages    []Message
-	RecipientMessages []Message
-	SenderEvents      []UpdateEvent
-	RecipientEvents   []UpdateEvent
-	Duplicates        []bool
+	OwnerUserID        int64
+	SenderMessages     []Message
+	RecipientMessages  []Message
+	SenderEvents       []UpdateEvent
+	RecipientEvents    []UpdateEvent
+	Duplicates         []bool
+	ReplayDeleteEvents []*UpdateEvent
 }
 
 // ReadHistoryRequest 是账号视角的 messages.readHistory 命令。

@@ -29,6 +29,38 @@ func TestServiceSendPrivateTextHonorsSendPermissionGate(t *testing.T) {
 	}
 }
 
+func TestServicePrivateReplayPrecedesCurrentSendPermissionGate(t *testing.T) {
+	ctx := context.Background()
+	messages := memory.NewMessageStore()
+	allowed := NewService(messages, nil)
+	req := domain.SendPrivateTextRequest{
+		SenderUserID:    1001,
+		RecipientUserID: 1002,
+		RandomID:        91,
+		Message:         "committed before restriction",
+		Date:            1_700_000_000,
+	}
+	first, err := allowed.SendPrivateText(ctx, 1001, req)
+	if err != nil {
+		t.Fatalf("first SendPrivateText: %v", err)
+	}
+
+	denied := NewService(messages, nil, WithSendPermissionChecker(denySendChecker{}))
+	req.Date++ // execution time is not part of the immutable send intent.
+	replay, err := denied.SendPrivateText(ctx, 1001, req)
+	if err != nil {
+		t.Fatalf("replay through denied gate: %v", err)
+	}
+	if !replay.Duplicate || replay.SenderMessage.ID != first.SenderMessage.ID {
+		t.Fatalf("replay = %+v, want committed duplicate %d", replay, first.SenderMessage.ID)
+	}
+
+	req.Message = "different intent"
+	if _, err := denied.SendPrivateText(ctx, 1001, req); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("conflicting replay err=%v, want ErrMessageRandomIDDuplicate before send gate", err)
+	}
+}
+
 func TestServiceForwardPrivateMessagesHonorsSendPermissionGate(t *testing.T) {
 	ctx := context.Background()
 	store := &gateMessageStore{}

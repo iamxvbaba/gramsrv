@@ -84,12 +84,24 @@ WITH pm AS (
     sender_user_id,
     recipient_user_id,
     random_id,
+    request_fingerprint,
+    recipient_delivered,
+    sender_box_id,
+    sender_pts,
+    recipient_box_id,
+    recipient_pts,
     message_date,
     body,
     entities
   ) VALUES (
     $1,
     $2,
+    0,
+    '\x'::bytea,
+    false,
+    0,
+    0,
+    0,
     0,
     $3,
     $4,
@@ -530,6 +542,12 @@ INSERT INTO private_messages (
   sender_user_id,
   recipient_user_id,
   random_id,
+  request_fingerprint,
+  recipient_delivered,
+  sender_box_id,
+  sender_pts,
+  recipient_box_id,
+  recipient_pts,
   message_date,
   ttl_period,
   expires_at,
@@ -556,27 +574,29 @@ INSERT INTO private_messages (
   grouped_id,
   effect
 ) VALUES (
-  $1, $2, $3, $4, $6::int, $7::int, $5, $8::jsonb,
-  $9::boolean,
-  $10::boolean,
-  $11::int,
-  $12::text,
-  $13::bigint,
-  $14::int,
-  $15::int,
-  $16::text,
-  $17::jsonb,
-  $18::int,
-  $19::text,
-  $20::bigint,
+  $1, $2, $3, $6::bytea, $7::boolean,
+  0, 0, 0, 0,
+  $4, $8::int, $9::int, $5, $10::jsonb,
+  $11::boolean,
+  $12::boolean,
+  $13::int,
+  $14::text,
+  $15::bigint,
+  $16::int,
+  $17::int,
+  $18::text,
+  $19::jsonb,
+  $20::int,
   $21::text,
-  $22::int,
-  $23::jsonb,
-  $24::jsonb,
+  $22::bigint,
+  $23::text,
+  $24::int,
   $25::jsonb,
-  $26::bigint,
-  $27::bigint,
-  $28::bigint
+  $26::jsonb,
+  $27::jsonb,
+  $28::bigint,
+  $29::bigint,
+  $30::bigint
 )
 ON CONFLICT (sender_user_id, random_id) WHERE random_id <> 0 DO NOTHING
 RETURNING
@@ -593,34 +613,36 @@ RETURNING
 `
 
 type CreatePrivateMessageParams struct {
-	SenderUserID      int64
-	RecipientUserID   int64
-	RandomID          int64
-	MessageDate       int32
-	Body              string
-	TtlPeriod         int32
-	ExpiresAt         int32
-	EntitiesJson      []byte
-	Silent            bool
-	Noforwards        bool
-	ReplyToMsgID      int32
-	ReplyToPeerType   string
-	ReplyToPeerID     int64
-	ReplyToTopID      int32
-	ReplyToStoryID    int32
-	QuoteText         string
-	QuoteEntitiesJson []byte
-	QuoteOffset       int32
-	FwdFromPeerType   string
-	FwdFromPeerID     int64
-	FwdFromName       string
-	FwdDate           int32
-	MediaJson         []byte
-	ReplyMarkupJson   []byte
-	RichMessageJson   []byte
-	ViaBotID          int64
-	GroupedID         int64
-	Effect            int64
+	SenderUserID       int64
+	RecipientUserID    int64
+	RandomID           int64
+	MessageDate        int32
+	Body               string
+	RequestFingerprint []byte
+	RecipientDelivered bool
+	TtlPeriod          int32
+	ExpiresAt          int32
+	EntitiesJson       []byte
+	Silent             bool
+	Noforwards         bool
+	ReplyToMsgID       int32
+	ReplyToPeerType    string
+	ReplyToPeerID      int64
+	ReplyToTopID       int32
+	ReplyToStoryID     int32
+	QuoteText          string
+	QuoteEntitiesJson  []byte
+	QuoteOffset        int32
+	FwdFromPeerType    string
+	FwdFromPeerID      int64
+	FwdFromName        string
+	FwdDate            int32
+	MediaJson          []byte
+	ReplyMarkupJson    []byte
+	RichMessageJson    []byte
+	ViaBotID           int64
+	GroupedID          int64
+	Effect             int64
 }
 
 type CreatePrivateMessageRow struct {
@@ -643,6 +665,8 @@ func (q *Queries) CreatePrivateMessage(ctx context.Context, arg CreatePrivateMes
 		arg.RandomID,
 		arg.MessageDate,
 		arg.Body,
+		arg.RequestFingerprint,
+		arg.RecipientDelivered,
 		arg.TtlPeriod,
 		arg.ExpiresAt,
 		arg.EntitiesJson,
@@ -1969,6 +1993,17 @@ SELECT
   sender_user_id,
   recipient_user_id,
   random_id,
+  request_fingerprint,
+  recipient_delivered,
+  sender_box_id,
+  sender_pts,
+  recipient_box_id,
+  recipient_pts,
+  sender_snapshot::text AS sender_snapshot_json,
+  sender_delete_pts,
+  sender_delete_pts_count,
+  sender_delete_date,
+  sender_delete_message_ids::text AS sender_delete_message_ids_json,
   message_date,
   ttl_period,
   expires_at,
@@ -1987,16 +2022,27 @@ type GetPrivateMessageByRandomIDParams struct {
 }
 
 type GetPrivateMessageByRandomIDRow struct {
-	ID              int64
-	SenderUserID    int64
-	RecipientUserID int64
-	RandomID        int64
-	MessageDate     int32
-	TtlPeriod       int32
-	ExpiresAt       int32
-	EditDate        int32
-	Body            string
-	EntitiesJson    string
+	ID                         int64
+	SenderUserID               int64
+	RecipientUserID            int64
+	RandomID                   int64
+	RequestFingerprint         []byte
+	RecipientDelivered         bool
+	SenderBoxID                int32
+	SenderPts                  int32
+	RecipientBoxID             int32
+	RecipientPts               int32
+	SenderSnapshotJson         string
+	SenderDeletePts            int32
+	SenderDeletePtsCount       int32
+	SenderDeleteDate           int32
+	SenderDeleteMessageIdsJson string
+	MessageDate                int32
+	TtlPeriod                  int32
+	ExpiresAt                  int32
+	EditDate                   int32
+	Body                       string
+	EntitiesJson               string
 }
 
 func (q *Queries) GetPrivateMessageByRandomID(ctx context.Context, arg GetPrivateMessageByRandomIDParams) (GetPrivateMessageByRandomIDRow, error) {
@@ -2007,6 +2053,17 @@ func (q *Queries) GetPrivateMessageByRandomID(ctx context.Context, arg GetPrivat
 		&i.SenderUserID,
 		&i.RecipientUserID,
 		&i.RandomID,
+		&i.RequestFingerprint,
+		&i.RecipientDelivered,
+		&i.SenderBoxID,
+		&i.SenderPts,
+		&i.RecipientBoxID,
+		&i.RecipientPts,
+		&i.SenderSnapshotJson,
+		&i.SenderDeletePts,
+		&i.SenderDeletePtsCount,
+		&i.SenderDeleteDate,
+		&i.SenderDeleteMessageIdsJson,
 		&i.MessageDate,
 		&i.TtlPeriod,
 		&i.ExpiresAt,

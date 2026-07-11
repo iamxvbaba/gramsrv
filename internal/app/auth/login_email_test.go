@@ -9,13 +9,17 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestSignInWithEmailCompletesLogin 验证带 email_verification 的登录：注册账号→登出→
-// 重新 sendCode→用任意邮箱验证码经 SignInWithEmail 完成登录。
+// TestSignInWithEmailCompletesLogin 验证旧客户端把 phone channel 放进
+// email_verification 时仍可登录，但验证码必须精确匹配，不能用任意非空值绕过。
 func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
 	authz := memory.NewAuthorizationStore()
-	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345")
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messages, memory.NewUpdateEventStore())),
+	)
 	var key [8]byte
 	key[0] = 0x42
 
@@ -23,6 +27,7 @@ func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signup: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550009001", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550009001", hash, "Email", "Login")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -35,7 +40,10 @@ func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signin: %v", err)
 	}
-	got, _, needSignUp, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009001", hash, "anything-goes")
+	if _, _, _, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009001", hash, "anything-goes"); !errors.Is(err, ErrCodeInvalid) {
+		t.Fatalf("SignInWithEmail arbitrary nonempty code err=%v, want ErrCodeInvalid", err)
+	}
+	got, _, needSignUp, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009001", hash, "12345")
 	if err != nil {
 		t.Fatalf("SignInWithEmail: %v", err)
 	}
@@ -48,7 +56,7 @@ func TestSignInWithEmailCompletesLogin(t *testing.T) {
 	}
 }
 
-// TestSignInWithEmailRejectsEmptyCode 空邮箱验证码必须被拒（即使开发环境码任意，也不能空）。
+// TestSignInWithEmailRejectsEmptyCode 空邮箱验证码必须被拒。
 func TestSignInWithEmailRejectsEmptyCode(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345")
@@ -66,7 +74,12 @@ func TestSignInWithEmailRejectsEmptyCode(t *testing.T) {
 func TestSignInWithEmailStillHonorsTwoFactor(t *testing.T) {
 	ctx := context.Background()
 	passwords := memory.NewPasswordStore()
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345", WithPasswords(passwords))
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithPasswords(passwords),
+		WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messages, memory.NewUpdateEventStore())),
+	)
 	var key [8]byte
 	key[0] = 0x43
 
@@ -74,6 +87,7 @@ func TestSignInWithEmailStillHonorsTwoFactor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signup: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550009003", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550009003", hash, "Two", "Factor")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -89,7 +103,7 @@ func TestSignInWithEmailStillHonorsTwoFactor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signin: %v", err)
 	}
-	got, _, _, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009003", hash, "any-email-code")
+	got, _, _, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009003", hash, "12345")
 	if !errors.Is(err, domain.ErrSessionPasswordNeeded) {
 		t.Fatalf("SignInWithEmail err = %v, want ErrSessionPasswordNeeded", err)
 	}

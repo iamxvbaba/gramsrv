@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // TestSendMonoforumMessageAndHistoryPostgres 回归频道私信(monoforum)发送+读历史的 PG 实现:
@@ -95,6 +97,16 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 	if !dup.Duplicate || dup.Message.ID != m1.Message.ID {
 		t.Fatalf("dup = %+v, want duplicate of m1 id %d", dup.Message, m1.Message.ID)
 	}
+	if _, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: sub.ID, SavedPeer: subPeer, RandomID: 111, Message: "changed", Date: 1700001004}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("changed monoforum intent err = %v, want ErrMessageRandomIDDuplicate", err)
+	}
+	var monoforumFingerprint []byte
+	if err := pool.QueryRow(ctx, `SELECT request_fingerprint FROM channel_messages WHERE channel_id=$1 AND id=$2`, monoID, m1.Message.ID).Scan(&monoforumFingerprint); err != nil {
+		t.Fatalf("load monoforum fingerprint: %v", err)
+	}
+	if len(monoforumFingerprint) != 32 {
+		t.Fatalf("monoforum fingerprint length = %d, want 32", len(monoforumFingerprint))
+	}
 
 	// 历史(经 scanChannelMessage 读回 saved_peer)。
 	hist, err := channels.ListMonoforumHistory(ctx, domain.MonoforumHistoryFilter{MonoforumID: monoID, SavedPeer: subPeer, Limit: 10})
@@ -136,6 +148,20 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 	if b.Duplicate || b.Message.ID == a.Message.ID {
 		t.Fatalf("cross-sublist same random_id wrongly deduped: a=%d b=%d dup=%v", a.Message.ID, b.Message.ID, b.Duplicate)
 	}
+	// SavedPeer belongs both to the lookup scope and to the fallback intent.
+	// Cross-sublist sends remain legal, while presenting another sublist's
+	// fingerprint for an existing scope must be rejected rather than replayed.
+	otherIntentFingerprint, err := store.MonoforumSendFingerprint(domain.SendMonoforumMessageRequest{
+		MonoforumID: monoID, SenderUserID: owner.ID, SavedPeer: otherPeer, RandomID: 9001, Message: "to sub",
+	})
+	if err != nil {
+		t.Fatalf("fingerprint mismatched saved peer: %v", err)
+	}
+	if _, _, err := channels.LookupChannelSendReplay(ctx, domain.ChannelSendReplayRequest{
+		ChannelID: monoID, SenderUserID: owner.ID, SavedPeer: subPeer, RandomID: 9001, IdempotencyFingerprint: otherIntentFingerprint,
+	}); !errors.Is(err, domain.ErrMessageRandomIDDuplicate) {
+		t.Fatalf("mismatched saved-peer fingerprint err = %v, want ErrMessageRandomIDDuplicate", err)
+	}
 	// 同一子会话真重发仍去重。
 	again, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: owner.ID, SavedPeer: subPeer, RandomID: 9001, Message: "to sub", Date: 1700001012})
 	if err != nil {
@@ -158,5 +184,46 @@ func TestSendMonoforumMessageAndHistoryPostgres(t *testing.T) {
 	}
 	if dialogs.Dialogs[1].SavedPeer != subPeer || dialogs.Dialogs[1].TopMessageID == 0 {
 		t.Fatalf("dialogs[1] = %+v, want sub with top message", dialogs.Dialogs[1])
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin monoforum delete: %v", err)
+	}
+	mono, err := getChannelByID(ctx, tx, monoID)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("load monoforum for delete: %v", err)
+	}
+	_, deleteEvent, _, err := channels.deleteChannelMessagesTx(ctx, tx, mono, domain.ChannelMember{ChannelID: monoID, UserID: owner.ID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive}, []int{a.Message.ID}, owner.ID, 1700001013)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("delete monoforum message: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit monoforum delete: %v", err)
+	}
+	var ptsBeforeReplay, eventsBeforeReplay int
+	if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id = $1`, monoID).Scan(&ptsBeforeReplay); err != nil {
+		t.Fatalf("load monoforum pts: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM channel_update_events WHERE channel_id = $1`, monoID).Scan(&eventsBeforeReplay); err != nil {
+		t.Fatalf("count monoforum events: %v", err)
+	}
+	deletedReplay, err := channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: owner.ID, SavedPeer: subPeer, RandomID: 9001, Message: "to sub", Date: 1700001014})
+	if err != nil {
+		t.Fatalf("replay deleted monoforum message: %v", err)
+	}
+	if !deletedReplay.Duplicate || deletedReplay.Message.ID != a.Message.ID || deletedReplay.Message.Body != "to sub" || deletedReplay.ReplayDeleteEvent == nil || deletedReplay.ReplayDeleteEvent.Pts != deleteEvent.Pts {
+		t.Fatalf("deleted monoforum replay = %+v, want first snapshot + durable delete %+v", deletedReplay, deleteEvent)
+	}
+	var ptsAfterReplay, eventsAfterReplay int
+	if err := pool.QueryRow(ctx, `SELECT pts FROM channels WHERE id = $1`, monoID).Scan(&ptsAfterReplay); err != nil {
+		t.Fatalf("reload monoforum pts: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM channel_update_events WHERE channel_id = $1`, monoID).Scan(&eventsAfterReplay); err != nil {
+		t.Fatalf("recount monoforum events: %v", err)
+	}
+	if ptsAfterReplay != ptsBeforeReplay || eventsAfterReplay != eventsBeforeReplay {
+		t.Fatalf("deleted monoforum replay mutated pts/events = %d/%d, want %d/%d", ptsAfterReplay, eventsAfterReplay, ptsBeforeReplay, eventsBeforeReplay)
 	}
 }

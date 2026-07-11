@@ -96,17 +96,22 @@ func TestPasskeyEndToEnd(t *testing.T) {
 	userStore := memory.NewUserStore()
 	authKeyStore := memory.NewAuthKeyStore()
 	helpStore := memory.NewHelpStore()
+	dialogStore := memory.NewDialogStore()
+	messageStore := memory.NewMessageStore(dialogStore)
+	updateEventStore := memory.NewUpdateEventStore()
 	passkeyService := passkeyapp.NewService(memory.NewPasskeyStore(), memory.NewPasskeyChallengeStore(), rpID, dc)
 
 	deps := rpc.Deps{
-		Auth:    auth.NewService(userStore, memory.NewAuthorizationStore(), memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code),
+		Auth: auth.NewService(userStore, memory.NewAuthorizationStore(), memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code,
+			auth.WithLoginMessages(messageStore, dialogStore),
+			auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore))),
 		Account: account.NewService(memory.NewPasswordStore(), account.WithUsers(userStore)),
 		Help:    help.NewService(helpStore, helpStore),
 		Users:   users.NewService(userStore),
-		Updates: updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
+		Updates: updates.NewService(memory.NewUpdateStateStore(), updateEventStore),
 
 		Contacts: contacts.NewService(memory.NewContactStore()),
-		Dialogs:  dialogs.NewService(memory.NewDialogStore()),
+		Dialogs:  dialogs.NewService(dialogStore),
 		Passkey:  passkeyService,
 	}
 	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)

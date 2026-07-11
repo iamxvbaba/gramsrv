@@ -47,15 +47,18 @@ var driftFieldRenames = map[string]string{
 // fieldConverter rewrites one field whose wire type changed between the old and
 // canonical layout. Keyed by "<oldTypeSig>-><newTypeSig>"; raw is the old field's
 // encoded bytes. Reusable across any method with the same type change.
-type fieldConverter func(raw []byte, out *bin.Buffer) error
+type fieldConverter func(raw []byte, out *bin.Buffer, walk *walkState, owner *ctorLayout, field *fieldLayout) error
 
 var fieldConverters = map[string]fieldConverter{
 	// id:Vector<int> -> id:Vector<InputMessage> (wrap each int in inputMessageID).
-	"Vector<int>->Vector<InputMessage>": func(raw []byte, out *bin.Buffer) error {
+	"Vector<int>->Vector<InputMessage>": func(raw []byte, out *bin.Buffer, walk *walkState, owner *ctorLayout, field *fieldLayout) error {
 		in := &bin.Buffer{Buf: raw}
 		n, err := in.VectorHeader()
 		if err != nil {
 			return err
+		}
+		if max := walk.vectorLimit(owner, field); n > max {
+			return limitf("vector %s.%s length %d exceeds limit %d", ownerName(owner), fieldName(field), n, max)
 		}
 		out.PutVectorHeader(n)
 		for i := 0; i < n; i++ {
@@ -66,10 +69,13 @@ var fieldConverters = map[string]fieldConverter{
 			out.PutID(inputMessageID)
 			out.PutInt(v)
 		}
+		if in.Len() != 0 {
+			return malformedf("%d trailing bytes in Vector<int> converter", in.Len())
+		}
 		return nil
 	},
 	// bot_id:long -> bot:InputUser{user_id, access_hash=0}.
-	"long->InputUser": func(raw []byte, out *bin.Buffer) error {
+	"long->InputUser": func(raw []byte, out *bin.Buffer, walk *walkState, owner *ctorLayout, field *fieldLayout) error {
 		in := &bin.Buffer{Buf: raw}
 		id, err := in.Long()
 		if err != nil {
@@ -78,11 +84,14 @@ var fieldConverters = map[string]fieldConverter{
 		out.PutID(inputUserID)
 		out.PutLong(id)
 		out.PutLong(0)
+		if in.Len() != 0 {
+			return malformedf("%d trailing bytes in long converter", in.Len())
+		}
 		return nil
 	},
 	// channel:InputChannel -> peer:InputPeer for the old channels.editCreator
 	// Android constructor. Concrete layouts are otherwise byte-compatible.
-	"InputChannel->InputPeer": func(raw []byte, out *bin.Buffer) error {
+	"InputChannel->InputPeer": func(raw []byte, out *bin.Buffer, walk *walkState, owner *ctorLayout, field *fieldLayout) error {
 		in := &bin.Buffer{Buf: raw}
 		id, err := in.ID()
 		if err != nil {
@@ -116,8 +125,12 @@ var fieldConverters = map[string]fieldConverter{
 // id + body) is what to dispatch.
 func UpgradeInbound(id uint32, in *bin.Buffer) (*bin.Buffer, bool, error) {
 	if newID, ok := UpgradeMethodCRC(id); ok {
-		if len(in.Buf) < 4 {
-			return nil, false, fmt.Errorf("layerwire: short inbound buffer for %#08x", id)
+		target := canonical.byCRC[newID]
+		if target == nil || !target.isFunc {
+			return nil, true, malformedf("alias %#08x targets unknown canonical method %#08x", id, newID)
+		}
+		if err := validateAliasedMethod(id, target, in.Buf); err != nil {
+			return nil, true, err
 		}
 		// Copy rather than rewrite in place: never mutate the caller's buffer
 		// (matches the body-transform path, which also returns a fresh buffer).
@@ -126,13 +139,34 @@ func UpgradeInbound(id uint32, in *bin.Buffer) (*bin.Buffer, bool, error) {
 		return out, true, nil
 	}
 	if old := driftModel.byCRC[id]; old != nil {
-		out, err := upgradeFromDrift(old, in)
+		out, err := upgradeFromDrift(old, in, newWalkState())
 		if err != nil {
-			return nil, false, fmt.Errorf("layerwire: upgrade %s (%#08x): %w", old.name, id, err)
+			return nil, true, classifyWalkError(fmt.Errorf("layerwire: upgrade %s (%#08x): %w", old.name, id, err))
 		}
 		return out, true, nil
 	}
 	return nil, false, nil
+}
+
+// validateAliasedMethod validates the old-id/canonical-body shape before
+// allocating the replacement buffer. The body is walked against the canonical
+// target layout while the original constructor id remains untouched.
+func validateAliasedMethod(oldID uint32, target *ctorLayout, raw []byte) error {
+	walk := newWalkState()
+	if err := walk.enter(1, "constructor"); err != nil {
+		return err
+	}
+	b := &bin.Buffer{Buf: raw}
+	if err := b.ConsumeID(oldID); err != nil {
+		return classifyWalkError(err)
+	}
+	if err := walk.skipCtorBody(canonical, b, target, 1); err != nil {
+		return classifyWalkError(err)
+	}
+	if b.Len() != 0 {
+		return malformedf("%d trailing bytes after aliased method %s", b.Len(), target.name)
+	}
+	return nil
 }
 
 // IsClientDrift reports whether id is a client-private constructor (DrKLO
@@ -146,10 +180,13 @@ func IsClientDrift(id uint32) bool {
 
 // upgradeFromDrift rebuilds a canonical (227) request from an old client-drift
 // body, comparing the declared old layout to the canonical layout field by field.
-func upgradeFromDrift(old *ctorLayout, in *bin.Buffer) (*bin.Buffer, error) {
+func upgradeFromDrift(old *ctorLayout, in *bin.Buffer, walk *walkState) (*bin.Buffer, error) {
 	target := canonical.byName[old.name]
 	if target == nil {
 		return nil, fmt.Errorf("no canonical method %q", old.name)
+	}
+	if err := walk.enter(1, "constructor"); err != nil {
+		return nil, err
 	}
 	if err := in.ConsumeID(old.crc); err != nil {
 		return nil, err
@@ -179,7 +216,7 @@ func upgradeFromDrift(old *ctorLayout, in *bin.Buffer) (*bin.Buffer, error) {
 			continue
 		}
 		pre := in.Buf
-		if err := canonical.skipValue(in, f); err != nil {
+		if err := walk.skipValue(canonical, in, f, old, 1); err != nil {
 			return nil, fmt.Errorf("decode old field %q: %w", f.name, err)
 		}
 		vals[f.name] = pre[:len(pre)-len(in.Buf)]
@@ -208,7 +245,7 @@ func upgradeFromDrift(old *ctorLayout, in *bin.Buffer) (*bin.Buffer, error) {
 				if conv == nil {
 					return nil, fmt.Errorf("field %q: no converter %s->%s", nf.name, typeSig(of), typeSig(nf))
 				}
-				if err := conv(vals[oldName], out); err != nil {
+				if err := conv(vals[oldName], out, walk, old, of); err != nil {
 					return nil, fmt.Errorf("field %q convert: %w", nf.name, err)
 				}
 			} else {

@@ -42,7 +42,7 @@ func (r *Router) onChannelsToggleViewForumAsMessages(ctx context.Context, req *t
 	if r.deps.Updates != nil {
 		authKeyID, _ := AuthKeyIDFrom(ctx)
 		sessionID, _ := SessionIDFrom(ctx)
-		event, _, err = r.deps.Updates.RecordChannelViewForumAsMessages(ctx, authKeyID, userID, channelID, req.Enabled, sessionID)
+		event, _, err = r.deps.Updates.RecordChannelViewForumAsMessages(ctx, authKeyID, userID, channelID, req.Enabled, rawAuthKeyIDForOrigin(ctx), sessionID)
 		if err != nil {
 			return nil, internalErr()
 		}

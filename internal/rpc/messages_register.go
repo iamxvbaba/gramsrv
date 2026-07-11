@@ -330,7 +330,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 				Peer:            peer,
 				MaxID:           req.MaxID,
 				Date:            int(r.clock.Now().Unix()),
-				OriginAuthKeyID: id,
+				OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 				OriginSessionID: sessionID,
 			})
 			if err != nil {

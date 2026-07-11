@@ -276,6 +276,11 @@ func NewCodeStore() *CodeStore {
 }
 
 func (s *CodeStore) Set(_ context.Context, hash string, code store.PhoneCode, ttl time.Duration) error {
+	revision, err := store.NewPhoneCodeRevisionToken()
+	if err != nil {
+		return err
+	}
+	code.Revision = revision
 	s.mu.Lock()
 	scope := code.Scope()
 	if scope.Valid() {
@@ -303,6 +308,11 @@ func (s *CodeStore) Get(_ context.Context, hash string) (store.PhoneCode, bool, 
 }
 
 func (s *CodeStore) Update(_ context.Context, hash string, code store.PhoneCode) error {
+	revision, err := store.NewPhoneCodeRevisionToken()
+	if err != nil {
+		return err
+	}
+	code.Revision = revision
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.m[hash]
@@ -343,7 +353,13 @@ func (s *CodeStore) ConsumeScoped(_ context.Context, hash string, scope store.Ph
 		}
 		return store.PhoneCode{}, false, nil
 	}
-	if e.code.Scope() != scope {
+	if e.code.Version != store.PhoneCodeVersionCurrent || e.code.Scope() != scope {
+		delete(s.m, hash)
+		delete(s.scopes, scope)
+		actualScope := e.code.Scope()
+		if actualScope.Valid() && s.scopes[actualScope] == hash {
+			delete(s.scopes, actualScope)
+		}
 		return store.PhoneCode{}, false, nil
 	}
 	s.deleteCodeLocked(hash, e.code)

@@ -208,29 +208,31 @@ INSERT INTO dispatch_outbox (
 ON CONFLICT DO NOTHING;
 
 -- name: ClaimDispatchOutbox :many
-WITH picked AS (
-  SELECT d.target_user_id, d.id
-  FROM dispatch_outbox d
+-- durable head 表只保留每用户一行，并同步 head 的 readiness。claim 先锁
+-- lane head 再更新对应 outbox 行，既不会扫描 backlog，也不会并发领取同一用户。
+WITH picked_heads AS (
+  SELECT h.target_user_id, h.head_id
+  FROM dispatch_outbox_user_heads h
   WHERE (
-      d.status = 'pending'
-      AND d.next_attempt_at <= now()
-    )
-    OR (
-      d.status = 'dispatching'
-      AND d.updated_at < now() - make_interval(secs => sqlc.arg(lease_seconds)::int)
-    )
-  ORDER BY d.next_attempt_at ASC, d.target_user_id ASC, d.pts ASC, d.id ASC
+        h.status = 'pending'
+        AND h.next_attempt_at <= now()
+      )
+      OR (
+        h.status = 'dispatching'
+        AND h.updated_at < now() - make_interval(secs => sqlc.arg(lease_seconds)::int)
+      )
+  ORDER BY h.next_attempt_at ASC, h.target_user_id ASC, h.head_pts ASC, h.head_id ASC
   LIMIT sqlc.arg(limit_count)
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF h SKIP LOCKED
 )
 UPDATE dispatch_outbox d
 SET
   status = 'dispatching',
   attempts = d.attempts + 1,
   updated_at = now()
-FROM picked p
+FROM picked_heads p
 WHERE d.target_user_id = p.target_user_id
-  AND d.id = p.id
+  AND d.id = p.head_id
 RETURNING
   d.id,
   d.target_user_id,
@@ -240,25 +242,85 @@ RETURNING
   d.exclude_session_id,
   d.attempts;
 
--- name: MarkDispatchDelivered :exec
+-- name: ClaimDispatchOutboxShards :many
+-- 固定 logical shard 由 target_user_id 决定；运行时 worker 只领取分配给自己的
+-- shard 集合，因此同一用户永远只有一条串行 lane，而不同用户可并行。
+WITH picked_heads AS (
+  SELECT h.target_user_id, h.head_id
+  FROM dispatch_outbox_user_heads h
+  -- 256 与 store.DispatchOutboxLogicalShards、0069 generated column 是同一
+  -- schema 常量；不得随 worker 数变化。
+  WHERE h.logical_shard = ANY(sqlc.arg(shard_ids)::smallint[])
+    AND (
+      (
+        h.status = 'pending'
+        AND h.next_attempt_at <= now()
+      )
+      OR (
+        h.status = 'dispatching'
+        AND h.updated_at < now() - make_interval(secs => sqlc.arg(lease_seconds)::int)
+      )
+    )
+  ORDER BY h.next_attempt_at ASC, h.target_user_id ASC, h.head_pts ASC, h.head_id ASC
+  LIMIT sqlc.arg(limit_count)
+  FOR UPDATE OF h SKIP LOCKED
+)
+UPDATE dispatch_outbox d
+SET
+  status = 'dispatching',
+  attempts = d.attempts + 1,
+  updated_at = now()
+FROM picked_heads p
+WHERE d.target_user_id = p.target_user_id
+  AND d.id = p.head_id
+RETURNING
+  d.id,
+  d.target_user_id,
+  d.pts,
+  d.event_type,
+  d.exclude_auth_key_id,
+  d.exclude_session_id,
+  d.attempts;
+
+-- name: MarkDispatchDelivered :execrows
 -- 方案 A：投递成功即删除。outbox 是任务队列，delivered 行无保留价值
 -- （消息在 message_boxes、离线补偿在 user_update_events），删除让表维持「未完成任务」小稳态。
-DELETE FROM dispatch_outbox
-WHERE target_user_id = $1
-  AND id = $2;
+-- claim 的锁序是 user_heads→outbox；completion 必须先显式锁同一 head 再删 outbox，
+-- 否则租约过期 claim 与完成恰好竞争时会形成 outbox→head / head→outbox 环路。
+WITH locked_head AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.target_user_id = sqlc.arg(target_user_id)::bigint
+  FOR UPDATE
+)
+DELETE FROM dispatch_outbox d
+USING locked_head h
+WHERE d.target_user_id = h.target_user_id
+  AND d.id = sqlc.arg(id)::bigint
+  AND d.status = 'dispatching'
+  AND d.attempts = sqlc.arg(expected_attempts)::int;
 
--- name: MarkDispatchFailed :exec
-UPDATE dispatch_outbox
+-- name: MarkDispatchFailed :execrows
+WITH locked_head AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.target_user_id = sqlc.arg(target_user_id)::bigint
+  FOR UPDATE
+)
+UPDATE dispatch_outbox d
 SET
-  status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'pending' END,
+  status = CASE WHEN d.attempts >= 5 THEN 'failed' ELSE 'pending' END,
   next_attempt_at = CASE
-    WHEN attempts >= 5 THEN next_attempt_at
-    ELSE now() + make_interval(secs => LEAST(60, attempts * attempts))
+    WHEN d.attempts >= 5 THEN d.next_attempt_at
+    ELSE now() + make_interval(secs => LEAST(60, d.attempts * d.attempts))
   END,
-  last_error = $3,
+  last_error = sqlc.arg(last_error)::text,
   updated_at = now()
-WHERE target_user_id = $1
-  AND id = $2;
+FROM locked_head h
+WHERE d.target_user_id = h.target_user_id
+  AND d.id = sqlc.arg(id)::bigint
+  AND d.status = 'dispatching'
+  AND d.attempts = sqlc.arg(expected_attempts)::int;
 
 -- name: BatchListDispatchEvents :many
 -- 按 (user_id, pts) 精确批量取账号事件，供 outbox worker 一次性加载一批 claim 的事件详情，
@@ -394,22 +456,44 @@ LEFT JOIN users from_u ON from_u.id = m.from_user_id
 LEFT JOIN users fwd_u ON m.fwd_from_peer_type = 'user' AND fwd_u.id = m.fwd_from_peer_id
 LEFT JOIN users reply_u ON m.reply_to_peer_type = 'user' AND reply_u.id = m.reply_to_peer_id;
 
--- name: MarkDispatchDeliveredBatch :exec
+-- name: MarkDispatchDeliveredBatch :execrows
 -- 批量删除一批已投递的 (target_user_id, id)；target_user_id 入 WHERE 命中唯一索引并避免串删。
+WITH input AS MATERIALIZED (
+  SELECT tu.target_user_id, di.id, ea.attempts
+  FROM unnest(@target_user_ids::bigint[]) WITH ORDINALITY AS tu(target_user_id, ord)
+  JOIN unnest(@ids::bigint[]) WITH ORDINALITY AS di(id, ord) USING (ord)
+  JOIN unnest(@expected_attempts::int[]) WITH ORDINALITY AS ea(attempts, ord) USING (ord)
+),
+locked_heads AS MATERIALIZED (
+  SELECT h.target_user_id
+  FROM dispatch_outbox_user_heads h
+  JOIN (SELECT DISTINCT target_user_id FROM input) i USING (target_user_id)
+  -- Match ClaimDispatchOutbox[Shards] exactly. A stale-lease claim may lock several
+  -- dispatching heads while this completion batch locks the same set; a different
+  -- multi-row order would merely move the deadlock one level up.
+  ORDER BY h.next_attempt_at, h.target_user_id, h.head_pts, h.head_id
+  FOR UPDATE OF h
+)
 DELETE FROM dispatch_outbox d
-USING unnest(@target_user_ids::bigint[]) WITH ORDINALITY AS tu(target_user_id, ord)
-JOIN unnest(@ids::bigint[]) WITH ORDINALITY AS di(id, ord) USING (ord)
-WHERE d.target_user_id = tu.target_user_id
-  AND d.id = di.id;
+USING input i, locked_heads h
+WHERE d.target_user_id = h.target_user_id
+  AND d.target_user_id = i.target_user_id
+  AND d.id = i.id
+  AND d.status = 'dispatching'
+  AND d.attempts = i.attempts;
 
 -- name: DeleteFailedDispatchOutbox :one
-WITH doomed AS (
-  SELECT target_user_id, id
-  FROM dispatch_outbox
-  WHERE status = 'failed'
-    AND updated_at < now() - make_interval(secs => sqlc.arg(older_than_seconds)::int)
-  ORDER BY updated_at ASC, target_user_id ASC, id ASC
+-- failed 只能成为 lane head；从 head 表开始并先锁 head，既走 0074 的小索引，也与
+-- claim/completion 保持同一 user_heads→outbox 锁序。删除的只是在线任务，durable
+-- user_update_events 不动，故客户端仍可经 difference 恢复。
+WITH doomed AS MATERIALIZED (
+  SELECT h.target_user_id, h.head_id AS id
+  FROM dispatch_outbox_user_heads h
+  WHERE h.status = 'failed'
+    AND h.updated_at < now() - make_interval(secs => sqlc.arg(older_than_seconds)::int)
+  ORDER BY h.updated_at ASC, h.target_user_id ASC, h.head_id ASC
   LIMIT sqlc.arg(limit_count)
+  FOR UPDATE OF h SKIP LOCKED
 ),
 deleted AS (
   DELETE FROM dispatch_outbox d

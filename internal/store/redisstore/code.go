@@ -68,12 +68,39 @@ if not raw then
   redis.call('DEL', KEYS[2])
   return false
 end
+local decoded, record = pcall(cjson.decode, raw)
+if not decoded or type(record) ~= 'table'
+    or tonumber(record.Version or 0) ~= tonumber(ARGV[2]) then
+  redis.call('DEL', KEYS[1])
+  redis.call('DEL', KEYS[2])
+  return false
+end
 redis.call('DEL', KEYS[1])
 redis.call('DEL', KEYS[2])
 return raw
 `
 
+const updatePhoneCodeScript = `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'KEEPTTL')
+return 1
+`
+
+const deleteUndecodablePhoneCodeScript = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`
+
 func (s *CodeStore) Set(ctx context.Context, hash string, code store.PhoneCode, ttl time.Duration) error {
+	revision, err := store.NewPhoneCodeRevisionToken()
+	if err != nil {
+		return err
+	}
+	code.Revision = revision
 	v, err := json.Marshal(code)
 	if err != nil {
 		return fmt.Errorf("marshal phone code: %w", err)
@@ -113,25 +140,30 @@ func (s *CodeStore) Get(ctx context.Context, hash string) (store.PhoneCode, bool
 	}
 	var code store.PhoneCode
 	if err := json.Unmarshal(raw, &code); err != nil {
-		return store.PhoneCode{}, false, fmt.Errorf("unmarshal phone code: %w", err)
+		// Version-zero records used JSON numbers for int64 fields. Once those
+		// fields became quoted strings, such a record is intentionally unusable;
+		// compare-and-delete it so a concurrent Set successor cannot be removed.
+		// Its scope cannot be decoded here; a stale scope index is harmless and is
+		// removed by the next scoped Set, ConsumeScoped, or VerifyScoped.
+		if deleteErr := s.c.Eval(ctx, deleteUndecodablePhoneCodeScript, []string{codeKey(hash)}, string(raw)).Err(); deleteErr != nil {
+			return store.PhoneCode{}, false, fmt.Errorf("delete undecodable phone code after %v: %w", err, deleteErr)
+		}
+		return store.PhoneCode{}, false, nil
 	}
 	return code, true, nil
 }
 
 func (s *CodeStore) Update(ctx context.Context, hash string, code store.PhoneCode) error {
-	key := codeKey(hash)
-	ttl, err := s.c.PTTL(ctx, key).Result()
+	revision, err := store.NewPhoneCodeRevisionToken()
 	if err != nil {
-		return fmt.Errorf("redis ttl phone code: %w", err)
+		return err
 	}
-	if ttl <= 0 {
-		return nil
-	}
+	code.Revision = revision
 	v, err := json.Marshal(code)
 	if err != nil {
 		return fmt.Errorf("marshal phone code: %w", err)
 	}
-	if err := s.c.Set(ctx, key, v, ttl).Err(); err != nil {
+	if err := s.c.Eval(ctx, updatePhoneCodeScript, []string{codeKey(hash)}, string(v)).Err(); err != nil {
 		return fmt.Errorf("redis update phone code: %w", err)
 	}
 	return nil
@@ -169,6 +201,7 @@ func (s *CodeStore) ConsumeScoped(ctx context.Context, hash string, scope store.
 		consumeScopedCodeScript,
 		[]string{codeKey(hash), codeScopeKey(scope)},
 		hash,
+		store.PhoneCodeVersionCurrent,
 	).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -187,7 +220,7 @@ func (s *CodeStore) ConsumeScoped(ctx context.Context, hash string, scope store.
 	if err := json.Unmarshal([]byte(raw), &code); err != nil {
 		return store.PhoneCode{}, false, fmt.Errorf("unmarshal consumed phone code: %w", err)
 	}
-	if code.Scope() != scope {
+	if code.Version != store.PhoneCodeVersionCurrent || code.Scope() != scope {
 		return store.PhoneCode{}, false, fmt.Errorf("consumed phone code scope mismatch")
 	}
 	return code, true, nil

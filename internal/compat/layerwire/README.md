@@ -20,6 +20,7 @@
 | `schema/canonical-227.tl` | **embed**，运行期 walker 的 227 字段布局（= gotd `td/_schema/tdesktop.tl` 的副本） | gotd 升级时 re-sync |
 | `_schema/layer-2NN.tl` | 历史层官方 schema（从 TDesktop git 抽，**仅生成期用**，下划线=不编译/不 embed） | 升级/下探 floor 时抽取 |
 | `schema/client-drift.tl` | **声明式**：客户端发的旧构造器老布局（body 与 227 不同的） | 发现客户端漂移时 +1 行 |
+| `schema/routable-compat.tl` | **仅结构预检**：已有 RPC fallback adapter 的非 canonical wire 布局（当前只含 4 个 DrKLO theme 构造器）；与 canonical 图合并后完整 walk，但不自动升级 | 收敛既有手写 adapter 时维护，禁止借此新增业务 fallback |
 | `client_aliases.go` | 客户端漂移里 **body 与 227 字节一致**的，纯 `老CRC→227CRC` | 发现纯换 CRC 漂移时 +1 条 |
 | `tables_gen.go` | **生成产物**（勿手改）：官方层降级表 + 入站升级表 + 新类型集 | 跑 `gen` 重生成 |
 | `gen/main.go` | 生成器：对拍 schema、证明机械性、产 `tables_gen.go` | 升级逻辑变更时 |
@@ -95,7 +96,7 @@ gofmt -w internal/compat/layerwire/ && go build ./... && go vet ./internal/...
    - 绿 = 通用引擎已能自动升级（复制共享字段 + 插 flags=0 + 按 kind 补默认）。**完事**。
    - `TestInboundDriftCoverage` 报 `needs converter A->B` = 有字段类型变更 → 往 `inbound.go fieldConverters` 加一条 `"A->B"`（可复用，参照 `Vector<int>->Vector<InputMessage>`）。
    - 报 `field X not defaultable` 或字段**改名** → 往 `inbound.go driftFieldRenames` 加 `"<method>\x00<227字段>": "<老字段>"`（参照 `bots.exportBotToken\x00bot`）。
-4. **绝不**为此写一个新的 `handleLegacyXxx` 解码 handler——那是旧做法，已全删。统一走数据 + 通用引擎。
+4. **绝不**为此写一个新的 `handleLegacyXxx` 解码 handler——统一走数据 + 通用引擎。`routable-compat.tl` 只给既存 DrKLO theme fallback 补 dispatcher 前结构门禁，不是新增 adapter 的入口。
 
 ## 操作 4：出站 `TestCoverageGate` 失败
 

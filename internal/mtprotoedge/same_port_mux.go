@@ -40,6 +40,13 @@ type samePortMux struct {
 
 	closed chan struct{}
 	once   sync.Once
+
+	// sniffing contains only sockets still owned by dispatch while it reads the first four
+	// bytes. Keeping an explicit registry lets Close interrupt every slow-loris read without a
+	// second cancellation goroutine per raw connection. A socket is removed under sniffMu before
+	// successful child-listener hand-off, establishing the ownership barrier.
+	sniffMu  sync.Mutex
+	sniffing map[net.Conn]struct{}
 }
 
 func newSamePortMux(base net.Listener, sniffTimeout time.Duration) *samePortMux {
@@ -51,6 +58,7 @@ func newSamePortMux(base net.Listener, sniffTimeout time.Duration) *samePortMux 
 		addr:         base.Addr(),
 		sniffTimeout: sniffTimeout,
 		closed:       make(chan struct{}),
+		sniffing:     make(map[net.Conn]struct{}),
 	}
 	m.tcp = newSamePortMuxListener(m.addr, m.closed)
 	m.http = newSamePortMuxListener(m.addr, m.closed)
@@ -69,7 +77,15 @@ func (m *samePortMux) HTTP() net.Listener {
 
 func (m *samePortMux) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Every exit path must publish cancellation and close both child listeners before waiting
+	// for sniff/delivery goroutines. A permanent Accept error can otherwise leave a dispatch
+	// blocked on a full child backlog while the old defer order waits for it before canceling.
+	var wg sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = m.Close()
+		wg.Wait()
+	}()
 
 	go func() {
 		<-ctx.Done()
@@ -77,17 +93,23 @@ func (m *samePortMux) Serve(ctx context.Context) error {
 	}()
 
 	// 每条连接一个窥探 goroutine：wg 让 Serve 在退出前等待在途窥探把连接交接完成。
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
+	var tempDelay time.Duration
 	for {
 		conn, err := m.base.Accept()
 		if err != nil {
 			if ctx.Err() != nil || isSamePortMuxClosed(m.closed) || isNetClosed(err) {
 				return nil
 			}
+			if isTemporaryAcceptError(err) {
+				tempDelay = nextAcceptRetryDelay(tempDelay)
+				if !waitAcceptRetry(ctx, tempDelay) {
+					return nil
+				}
+				continue
+			}
 			return err
 		}
+		tempDelay = 0
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -99,6 +121,19 @@ func (m *samePortMux) Serve(ctx context.Context) error {
 func (m *samePortMux) Close() error {
 	m.once.Do(func() {
 		close(m.closed)
+		// Snapshot under the ownership lock, then close outside it. finishSniff observes
+		// m.closed and refuses hand-off even after the map is cleared, so dispatch cannot race
+		// this snapshot and deliver a socket that Close is about to terminate.
+		m.sniffMu.Lock()
+		sniffing := make([]net.Conn, 0, len(m.sniffing))
+		for conn := range m.sniffing {
+			sniffing = append(sniffing, conn)
+			delete(m.sniffing, conn)
+		}
+		m.sniffMu.Unlock()
+		for _, conn := range sniffing {
+			_ = conn.Close()
+		}
 		_ = m.tcp.Close()
 		_ = m.http.Close()
 		_ = m.base.Close()
@@ -109,6 +144,20 @@ func (m *samePortMux) Close() error {
 // dispatch 窥探单条连接的前 4 字节并把它交给 tcp 或 http 子 listener。窥探带 sniffTimeout
 // 读上界，慢/半开连接最多占用本 goroutine sniffTimeout 后即被回收。
 func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
+	// SetReadDeadline bounds an otherwise healthy slow-loris connection, but Close only owns
+	// the base listener, not sockets Accept has already returned. Register temporary ownership so
+	// mux shutdown can close this read immediately. finishSniff removes the socket before hand-off.
+	if !m.beginSniff(conn) {
+		_ = conn.Close()
+		return
+	}
+	finishedSniff := false
+	defer func() {
+		if !finishedSniff {
+			m.finishSniff(conn)
+		}
+	}()
+
 	var header [4]byte
 	if err := conn.SetReadDeadline(time.Now().Add(m.sniffTimeout)); err != nil {
 		_ = conn.Close()
@@ -118,6 +167,14 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	// From this point onward deliver/child-listener closure owns cancellation. Removing the
+	// registry entry under sniffMu is the hand-off barrier: Close either captured and closed this
+	// socket, or it can no longer find it. A concurrently closed mux refuses delivery.
+	if !m.finishSniff(conn) {
+		_ = conn.Close()
+		return
+	}
+	finishedSniff = true
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		_ = conn.Close()
 		return
@@ -135,6 +192,30 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 	if !target.deliver(ctx, wrapped) {
 		_ = conn.Close()
 	}
+}
+
+func (m *samePortMux) beginSniff(conn net.Conn) bool {
+	m.sniffMu.Lock()
+	defer m.sniffMu.Unlock()
+	if isSamePortMuxClosed(m.closed) {
+		return false
+	}
+	if m.sniffing == nil {
+		m.sniffing = make(map[net.Conn]struct{})
+	}
+	m.sniffing[conn] = struct{}{}
+	return true
+}
+
+// finishSniff returns true only when dispatch still owned the socket and the mux remained open
+// through the ownership barrier. A false result means Close captured the socket; dispatch must
+// not hand it to a child listener.
+func (m *samePortMux) finishSniff(conn net.Conn) bool {
+	m.sniffMu.Lock()
+	defer m.sniffMu.Unlock()
+	_, owned := m.sniffing[conn]
+	delete(m.sniffing, conn)
+	return owned && !isSamePortMuxClosed(m.closed)
 }
 
 // isHTTPHeaderPrefix 判断前 4 字节是否是 HTTP 请求行起始。
@@ -243,6 +324,10 @@ type samePortMuxListener struct {
 	ch     chan net.Conn
 	closed chan struct{}
 	once   sync.Once
+
+	deliveryMu sync.Mutex
+	closing    bool
+	deliveryWG sync.WaitGroup
 }
 
 func newSamePortMuxListener(addr net.Addr, parentClosed <-chan struct{}) *samePortMuxListener {
@@ -273,7 +358,25 @@ func (l *samePortMuxListener) Accept() (net.Conn, error) {
 
 func (l *samePortMuxListener) Close() error {
 	l.once.Do(func() {
+		// Add and Wait on a WaitGroup must not race while the counter may still be zero.
+		// The delivery gate serializes the final Add with the transition to closing; after
+		// closing becomes true no producer can enter, so waiting and draining are safe.
+		l.deliveryMu.Lock()
+		l.closing = true
 		close(l.closed)
+		l.deliveryMu.Unlock()
+
+		l.deliveryWG.Wait()
+		for {
+			select {
+			case conn := <-l.ch:
+				if conn != nil {
+					_ = conn.Close()
+				}
+			default:
+				return
+			}
+		}
 	})
 	return nil
 }
@@ -283,6 +386,11 @@ func (l *samePortMuxListener) Addr() net.Addr {
 }
 
 func (l *samePortMuxListener) deliver(ctx context.Context, conn net.Conn) bool {
+	if !l.beginDelivery() {
+		return false
+	}
+	defer l.deliveryWG.Done()
+
 	select {
 	case <-l.closed:
 		return false
@@ -291,4 +399,14 @@ func (l *samePortMuxListener) deliver(ctx context.Context, conn net.Conn) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+func (l *samePortMuxListener) beginDelivery() bool {
+	l.deliveryMu.Lock()
+	defer l.deliveryMu.Unlock()
+	if l.closing {
+		return false
+	}
+	l.deliveryWG.Add(1)
+	return true
 }

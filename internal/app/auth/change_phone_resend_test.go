@@ -15,6 +15,7 @@ func TestResendCodePreservesChangePhoneScopeAndSMSDelivery(t *testing.T) {
 	codes := memory.NewCodeStore()
 	authKeyID := [8]byte{8, 7, 6}
 	rec := store.PhoneCode{
+		Version:     store.PhoneCodeVersionCurrent,
 		Phone:       "15550014001",
 		Code:        "old",
 		Channel:     codeChannelPhone,
@@ -67,5 +68,36 @@ func TestResendCodePreservesChangePhoneScopeAndSMSDelivery(t *testing.T) {
 	}
 	if _, found, _ := codes.Get(ctx, hash); found {
 		t.Fatal("scoped cancel left hash valid")
+	}
+}
+
+func TestResendAndCancelRejectLegacyChangePhoneCode(t *testing.T) {
+	ctx := context.Background()
+	codes := memory.NewCodeStore()
+	authKeyID := [8]byte{8, 8, 8}
+	legacy := store.PhoneCode{
+		Version: 0, Phone: "15550014002", Code: "12345", Channel: codeChannelPhone,
+		Purpose: store.PhoneCodePurposeChangePhone, UserID: 43, AuthKeyID: authKeyID,
+	}
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), codes, nil, nil, "12345", WithCodeTTL(time.Minute))
+
+	if err := codes.Set(ctx, "legacy-resend", legacy, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResendCodeForAuthKey(ctx, authKeyID, legacy.Phone, "legacy-resend"); err != ErrCodeExpired {
+		t.Fatalf("legacy resend err=%v, want ErrCodeExpired", err)
+	}
+	if _, found, _ := codes.Get(ctx, "legacy-resend"); found {
+		t.Fatal("legacy resend left code active")
+	}
+
+	if err := codes.Set(ctx, "legacy-cancel", legacy, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CancelCodeForAuthKey(ctx, authKeyID, legacy.Phone, "legacy-cancel"); err != ErrCodeExpired {
+		t.Fatalf("legacy cancel err=%v, want ErrCodeExpired", err)
+	}
+	if _, found, _ := codes.Get(ctx, "legacy-cancel"); found {
+		t.Fatal("legacy cancel left code active")
 	}
 }

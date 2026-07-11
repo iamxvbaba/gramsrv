@@ -178,6 +178,14 @@ func TestPhoneCodeAcceptsTDesktopDigitsOnlySignIn(t *testing.T) {
 	}
 }
 
+func verifyCodeForSignUp(t *testing.T, svc *Service, phone, hash, code string) {
+	t.Helper()
+	got, msg, needSignUp, err := svc.SignIn(context.Background(), domain.Authorization{}, phone, hash, code)
+	if err != nil || !needSignUp || got.ID != 0 || msg.ID != 0 {
+		t.Fatalf("SignIn before SignUp user=%+v message=%+v needSignUp=%v err=%v, want empty/empty/true/nil", got, msg, needSignUp, err)
+	}
+}
+
 func TestSystemUserPhoneCannotLoginOrSignUp(t *testing.T) {
 	ctx := context.Background()
 	codes := memory.NewCodeStore()
@@ -257,6 +265,7 @@ func TestMultipleAuthKeysKeepSeparateUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode user1: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550005001", hash1, "12345")
 	user1, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key1}, "+15550005001", hash1, "One", "")
 	if err != nil {
 		t.Fatalf("SignUp user1: %v", err)
@@ -265,6 +274,7 @@ func TestMultipleAuthKeysKeepSeparateUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode user2: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550005002", hash2, "12345")
 	user2, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key2}, "+15550005002", hash2, "Two", "")
 	if err != nil {
 		t.Fatalf("SignUp user2: %v", err)
@@ -294,6 +304,7 @@ func TestLogOutThenSignInSameAuthKeySwitchesUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode user1: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550006001", hash1, "12345")
 	user1, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550006001", hash1, "One", "")
 	if err != nil {
 		t.Fatalf("SignUp user1: %v", err)
@@ -312,6 +323,7 @@ func TestLogOutThenSignInSameAuthKeySwitchesUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode user2: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550006002", hash2, "12345")
 	user2, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550006002", hash2, "Two", "")
 	if err != nil {
 		t.Fatalf("SignUp user2: %v", err)
@@ -337,6 +349,7 @@ func TestResetAuthorizationDeletesProtocolAuthKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550007001", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550007001", hash, "One", "")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -375,6 +388,7 @@ func TestResetAuthorizationsDeletesOnlyRevokedProtocolAuthKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550007002", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: keep}, "+15550007002", hash, "Two", "")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -399,15 +413,26 @@ func TestSignUpWritesOfficialLoginMessage(t *testing.T) {
 	ctx := context.Background()
 	dialogs := memory.NewDialogStore()
 	messages := memory.NewMessageStore(dialogs)
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345", WithLoginMessages(messages, dialogs))
+	delivery := &captureLoginCodeDelivery{}
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginMessages(messages, dialogs),
+		WithLoginCodeDelivery(delivery),
+	)
 
 	hash, err := svc.SendCode(ctx, "+15550004311")
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
 	}
+	if len(delivery.requests) != 0 {
+		t.Fatalf("unregistered SendCode delivered before user exists: %+v", delivery.requests)
+	}
+	verifyCodeForSignUp(t, svc, "+15550004311", hash, "12345")
 	u, msg, err := svc.SignUp(ctx, domain.Authorization{}, "+15550004311", hash, "Test", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
+	}
+	if len(delivery.requests) != 0 {
+		t.Fatalf("SignUp unexpectedly used existing-account delivery: %+v", delivery.requests)
 	}
 
 	list, err := dialogs.ListByUser(ctx, u.ID, domain.DialogFilter{Limit: 10})
@@ -431,17 +456,23 @@ func TestSignUpWritesOfficialLoginMessage(t *testing.T) {
 	}
 }
 
-func TestSignInLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) {
+func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) {
 	ctx := context.Background()
 	dialogs := memory.NewDialogStore()
 	messages := memory.NewMessageStore(dialogs)
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345", WithLoginMessages(messages, dialogs))
+	events := memory.NewUpdateEventStore()
+	delivery := memory.NewLoginCodeDeliveryStore(messages, events)
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginMessages(messages, dialogs),
+		WithLoginCodeDelivery(delivery),
+	)
 	phone := "+15550004312"
 
 	hash, err := svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signup: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, phone, hash, "12345")
 	u, first, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "Test", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -451,15 +482,6 @@ func TestSignInLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) {
 		t.Fatalf("MarkRead first login message: %v", err)
 	} else if read.MaxID != first.ID || read.StillUnreadCount != 0 {
 		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
-	}
-
-	hash, err = svc.SendCode(ctx, phone)
-	if err != nil {
-		t.Fatalf("SendCode signin second: %v", err)
-	}
-	_, second, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
-	if err != nil || needSignUp {
-		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
 	}
 	assertOfficialDialog := func(wantTop, wantRead, wantUnread int) {
 		t.Helper()
@@ -475,15 +497,53 @@ func TestSignInLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) {
 			t.Fatalf("dialog = %+v, want top=%d read=%d unread=%d", got, wantTop, wantRead, wantUnread)
 		}
 	}
+	latestLoginMessage := func(wantCount int) domain.Message {
+		t.Helper()
+		history, err := messages.ListByUser(ctx, u.ID, domain.MessageFilter{
+			HasPeer: true,
+			Peer:    peer,
+			Limit:   10,
+		})
+		if err != nil || len(history.Messages) != wantCount {
+			t.Fatalf("official history count=%d err=%v, want %d", len(history.Messages), err, wantCount)
+		}
+		latest := history.Messages[0]
+		for _, msg := range history.Messages[1:] {
+			if msg.ID > latest.ID {
+				latest = msg
+			}
+		}
+		return latest
+	}
+
+	hash, err = svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode signin second: %v", err)
+	}
+	second := latestLoginMessage(2)
+	// 核心时序：SendCode 返回时 message/dialog/unread 已提交，尚未 SignIn。
+	assertOfficialDialog(second.ID, first.ID, 1)
+	_, signInMessage, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
+	if err != nil || needSignUp {
+		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
+	}
+	if signInMessage.ID != 0 {
+		t.Fatalf("SignIn second returned a late login message %+v", signInMessage)
+	}
 	assertOfficialDialog(second.ID, first.ID, 1)
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
 		t.Fatalf("SendCode signin third: %v", err)
 	}
-	_, third, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
+	third := latestLoginMessage(3)
+	assertOfficialDialog(third.ID, first.ID, 2)
+	_, signInMessage, needSignUp, err = svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
+	}
+	if signInMessage.ID != 0 {
+		t.Fatalf("SignIn third returned a late login message %+v", signInMessage)
 	}
 	assertOfficialDialog(third.ID, first.ID, 2)
 }
@@ -491,7 +551,13 @@ func TestSignInLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) {
 func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 	ctx := context.Background()
 	passwords := memory.NewPasswordStore()
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345", WithPasswords(passwords))
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	delivery := memory.NewLoginCodeDeliveryStore(messages, memory.NewUpdateEventStore())
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithPasswords(passwords),
+		WithLoginCodeDelivery(delivery),
+	)
 	var key [8]byte
 	key[0] = 7
 
@@ -499,6 +565,7 @@ func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signup: %v", err)
 	}
+	verifyCodeForSignUp(t, svc, "+15550004312", hash, "12345")
 	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: key}, "+15550004312", hash, "Two", "Factor")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
@@ -514,12 +581,15 @@ func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendCode signin: %v", err)
 	}
-	got, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: key}, "+15550004312", hash, "12345")
+	got, signInMessage, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: key}, "+15550004312", hash, "12345")
 	if !errors.Is(err, domain.ErrSessionPasswordNeeded) {
 		t.Fatalf("SignIn err = %v, want ErrSessionPasswordNeeded", err)
 	}
 	if needSignUp || got.ID != u.ID {
 		t.Fatalf("SignIn user=%+v needSignUp=%v, want existing 2FA user", got, needSignUp)
+	}
+	if signInMessage.ID != 0 {
+		t.Fatalf("2FA SignIn returned a late login message %+v", signInMessage)
 	}
 	// 两步验证未完成：业务鉴权（UserID）必须视为未登录，避免绕过 2FA。
 	bound, found, err := svc.UserID(ctx, key)
@@ -538,6 +608,10 @@ func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 	bound, found, err = svc.UserID(ctx, key)
 	if err != nil || !found || bound != u.ID {
 		t.Fatalf("UserID after 2FA passed = %d found=%v err=%v, want %d", bound, found, err, u.ID)
+	}
+	list, err := dialogs.ListByUser(ctx, u.ID, domain.DialogFilter{Limit: 10})
+	if err != nil || len(list.Messages) != 1 {
+		t.Fatalf("2FA login-code messages after password = %+v err=%v, want exactly the SendCode message", list.Messages, err)
 	}
 }
 
