@@ -67,6 +67,13 @@ type Config struct {
 	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
 	// 生产默认 https://telesrv.net；本地可设为 http://127.0.0.1:2401。
 	PublicBaseURL string
+	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
+	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
+	PublicAppScheme string
+	// PublicWebBaseURL 是公开 username 页面“Open in Web”按钮指向的 Web 客户端根 URL。
+	PublicWebBaseURL string
+	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
+	PublicAppName string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
 	PublicLinkWebAddr string
@@ -353,6 +360,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_BASE_URL: %w", err)
 	}
+	publicAppScheme, err := links.ValidateAppScheme(envOr("TELESRV_PUBLIC_APP_SCHEME", links.DefaultAppScheme))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_SCHEME: %w", err)
+	}
+	publicWebBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_PUBLIC_WEB_BASE_URL", links.DefaultWebBaseURL))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_WEB_BASE_URL: %w", err)
+	}
+	publicAppName, err := links.ValidateAppName(envOr("TELESRV_PUBLIC_APP_NAME", links.DefaultAppName))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_NAME: %w", err)
+	}
 
 	cfg := Config{
 		ListenAddr:      envOr("TELESRV_LISTEN", "0.0.0.0:2398"),
@@ -386,6 +405,9 @@ func Load() (Config, error) {
 		AdminAPIAddr:                         envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
 		AdminAPIToken:                        envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:                        publicBaseURL,
+		PublicAppScheme:                      publicAppScheme,
+		PublicWebBaseURL:                     publicWebBaseURL,
+		PublicAppName:                        publicAppName,
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		AdminUIAddr:                          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:                      envOr("TELESRV_ADMIN_UI_PASSWORD", ""),

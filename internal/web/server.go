@@ -1,4 +1,5 @@
-package stickerlinks
+// Package web serves telesrv's read-only public link landing pages.
+package web
 
 import (
 	"context"
@@ -22,13 +23,17 @@ import (
 type Config struct {
 	Addr          string
 	PublicBaseURL string
+	AppScheme     string
+	WebBaseURL    string
+	AppName       string
+	StickerSets   StickerSetResolver
 	Users         UsernameResolver
 	Channels      PublicChannelResolver
 	Privacy       AnonymousPrivacyResolver
 	Photos        ProfilePhotoResolver
 }
 
-type Resolver interface {
+type StickerSetResolver interface {
 	ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error)
 }
 
@@ -52,18 +57,18 @@ type ProfilePhotoResolver interface {
 	GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error)
 }
 
-func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logger) (*http.Server, error) {
+func Start(ctx context.Context, cfg Config, logger *zap.Logger) (*http.Server, error) {
 	addr := strings.TrimSpace(cfg.Addr)
 	if addr == "" {
 		return nil, nil
 	}
-	if resolver == nil {
-		return nil, fmt.Errorf("sticker links resolver is nil")
-	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	handler := newHandler(resolver, cfg.Users, cfg.Channels, cfg.Privacy, cfg.Photos, cfg.PublicBaseURL, logger)
+	handler, err := newHandler(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -78,7 +83,11 @@ func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logge
 		return nil, err
 	}
 	go func() {
-		logger.Info("Public link Web endpoint enabled", zap.String("addr", addr), zap.String("public_base_url", normalizePublicBaseURL(cfg.PublicBaseURL)))
+		logger.Info("Public link Web endpoint enabled",
+			zap.String("addr", addr),
+			zap.String("public_base_url", cfg.PublicBaseURL),
+			zap.String("app_scheme", cfg.AppScheme),
+			zap.String("web_base_url", cfg.WebBaseURL))
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Warn("Public link Web endpoint exited", zap.Error(err))
 		}
@@ -92,44 +101,46 @@ func Start(ctx context.Context, cfg Config, resolver Resolver, logger *zap.Logge
 	return srv, nil
 }
 
-func NewHandler(resolver Resolver, publicBaseURL string) http.Handler {
-	return newHandler(resolver, nil, nil, nil, nil, publicBaseURL, zap.NewNop())
+func NewHandler(cfg Config) (http.Handler, error) {
+	return newHandler(cfg, zap.NewNop())
 }
 
-func NewHandlerWithUsers(resolver Resolver, users UsernameResolver, publicBaseURL string) http.Handler {
-	return newHandler(resolver, users, nil, nil, nil, publicBaseURL, zap.NewNop())
-}
-
-func NewHandlerWithPublicPeers(
-	resolver Resolver,
-	users UsernameResolver,
-	channels PublicChannelResolver,
-	privacy AnonymousPrivacyResolver,
-	photos ProfilePhotoResolver,
-	publicBaseURL string,
-) http.Handler {
-	return newHandler(resolver, users, channels, privacy, photos, publicBaseURL, zap.NewNop())
-}
-
-func newHandler(
-	resolver Resolver,
-	users UsernameResolver,
-	channels PublicChannelResolver,
-	privacy AnonymousPrivacyResolver,
-	photos ProfilePhotoResolver,
-	publicBaseURL string,
-	logger *zap.Logger,
-) http.Handler {
+func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
+	var err error
+	if cfg.StickerSets == nil {
+		return nil, fmt.Errorf("public Web sticker set resolver is nil")
+	}
+	if strings.TrimSpace(cfg.WebBaseURL) == "" {
+		cfg.WebBaseURL = links.DefaultWebBaseURL
+	}
+	if strings.TrimSpace(cfg.AppName) == "" {
+		cfg.AppName = links.DefaultAppName
+	}
+	if cfg.PublicBaseURL, err = links.ValidateBaseURL(cfg.PublicBaseURL); err != nil {
+		return nil, fmt.Errorf("public base URL: %w", err)
+	}
+	if cfg.AppScheme, err = links.ValidateAppScheme(cfg.AppScheme); err != nil {
+		return nil, fmt.Errorf("app scheme: %w", err)
+	}
+	if cfg.WebBaseURL, err = links.ValidateBaseURL(cfg.WebBaseURL); err != nil {
+		return nil, fmt.Errorf("Web base URL: %w", err)
+	}
+	if cfg.AppName, err = links.ValidateAppName(cfg.AppName); err != nil {
+		return nil, fmt.Errorf("app name: %w", err)
+	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	h := &handler{
-		resolver:      resolver,
-		users:         users,
-		channels:      channels,
-		privacy:       privacy,
-		photos:        photos,
-		publicBaseURL: normalizePublicBaseURL(publicBaseURL),
+		stickerSets:   cfg.StickerSets,
+		users:         cfg.Users,
+		channels:      cfg.Channels,
+		privacy:       cfg.Privacy,
+		photos:        cfg.Photos,
+		publicBaseURL: cfg.PublicBaseURL,
+		appScheme:     cfg.AppScheme,
+		webBaseURL:    cfg.WebBaseURL,
+		appName:       cfg.AppName,
 		logger:        logger,
 	}
 	mux := http.NewServeMux()
@@ -140,16 +151,19 @@ func newHandler(
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)
-	return publicSecurityHeaders(mux)
+	return publicSecurityHeaders(mux), nil
 }
 
 type handler struct {
-	resolver      Resolver
+	stickerSets   StickerSetResolver
 	users         UsernameResolver
 	channels      PublicChannelResolver
 	privacy       AnonymousPrivacyResolver
 	photos        ProfilePhotoResolver
 	publicBaseURL string
+	appScheme     string
+	webBaseURL    string
+	appName       string
 	logger        *zap.Logger
 }
 
@@ -172,8 +186,9 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	app := appURL("addlist", "slug", slug)
+	app := h.appURL("addlist", "slug", slug)
 	data := pageData{
+		AppName:      h.appName,
 		Title:        "Shared Folder",
 		KindLabel:    "shared folder",
 		Subtitle:     slug,
@@ -212,13 +227,15 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params.Set("domain", peer.username)
-	app := schemeURLValues("telesrv", "resolve", params)
+	app := schemeURLValues(h.appScheme, "resolve", params)
 	legacy := schemeURLValues("tg", "resolve", params)
 	description := peer.about
 	if description == "" {
-		description = peer.fallbackDescription()
+		description = peer.fallbackDescription(h.appName)
 	}
 	data := usernamePageData{
+		AppName:      h.appName,
+		AppInitial:   appInitial(h.appName),
 		Title:        peer.title,
 		Username:     peer.username,
 		Verified:     peer.verified,
@@ -228,7 +245,7 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 		HomeURL:      h.publicBaseURL + "/",
 		AppURL:       template.URL(app),
 		LegacyTgURL:  template.URL(legacy),
-		WebURL:       template.URL(publicWebAppURL(legacy)),
+		WebURL:       template.URL(publicWebAppURL(h.webBaseURL, legacy)),
 		ButtonLabel:  peer.buttonLabel(),
 		Initials:     peer.initials(),
 	}
@@ -319,7 +336,7 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 		http.NotFound(w, r)
 		return
 	}
-	set, docs, found, err := h.resolver.ResolveStickerSet(r.Context(), domain.StickerSetRef{
+	set, docs, found, err := h.stickerSets.ResolveStickerSet(r.Context(), domain.StickerSetRef{
 		Kind:      domain.StickerSetRefByShortName,
 		ShortName: shortName,
 	})
@@ -340,8 +357,9 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 	if count == 0 {
 		count = len(docs)
 	}
-	app := appURL(canonicalKind, "set", set.ShortName)
+	app := h.appURL(canonicalKind, "set", set.ShortName)
 	data := pageData{
+		AppName:      h.appName,
 		Title:        fallbackTitle(set),
 		KindLabel:    kindLabel(set),
 		Subtitle:     fmt.Sprintf("@%s · %d %s", set.ShortName, count, itemNoun(set, count)),
@@ -548,16 +566,16 @@ func (p publicPeer) extra() string {
 	}
 }
 
-func (p publicPeer) fallbackDescription() string {
+func (p publicPeer) fallbackDescription(appName string) string {
 	switch p.kind {
 	case publicPeerBot:
-		return "Open telesrv to start a chat with this bot."
+		return "Open " + appName + " to start a chat with this bot."
 	case publicPeerChannel:
-		return "Open telesrv to view and join this channel."
+		return "Open " + appName + " to view and join this channel."
 	case publicPeerSupergroup:
-		return "Open telesrv to view and join this group."
+		return "Open " + appName + " to view and join this group."
 	default:
-		return "Open telesrv to send a message to @" + p.username + "."
+		return "Open " + appName + " to send a message to @" + p.username + "."
 	}
 }
 
@@ -596,6 +614,13 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+func appInitial(name string) string {
+	for _, r := range name {
+		return strings.ToUpper(string(r))
+	}
+	return "T"
 }
 
 const (
@@ -703,8 +728,8 @@ func schemeURLValues(scheme, kind string, values url.Values) string {
 	return (&url.URL{Scheme: scheme, Host: kind, RawQuery: values.Encode()}).String()
 }
 
-func publicWebAppURL(legacyURL string) string {
-	return "https://web.telesrv.net/#?tgaddr=" + url.QueryEscape(legacyURL)
+func publicWebAppURL(webBaseURL, legacyURL string) string {
+	return strings.TrimRight(webBaseURL, "/") + "/#?tgaddr=" + url.QueryEscape(legacyURL)
 }
 
 func publicSecurityHeaders(next http.Handler) http.Handler {
@@ -716,14 +741,6 @@ func publicSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})
-}
-
-func normalizePublicBaseURL(raw string) string {
-	normalized, err := links.ValidateBaseURL(raw)
-	if err != nil {
-		return links.DefaultPublicBaseURL
-	}
-	return normalized
 }
 
 func validShortNamePath(shortName string) bool {
@@ -803,8 +820,8 @@ func itemNoun(set domain.StickerSet, count int) string {
 	return "stickers"
 }
 
-func appURL(kind, key, value string) string {
-	return schemeURL("telesrv", kind, key, value)
+func (h *handler) appURL(kind, key, value string) string {
+	return schemeURL(h.appScheme, kind, key, value)
 }
 
 func legacyTgURL(kind, key, value string) string {
@@ -816,6 +833,7 @@ func schemeURL(scheme, kind, key, value string) string {
 }
 
 type pageData struct {
+	AppName      string
 	Title        string
 	KindLabel    string
 	Subtitle     string
@@ -827,6 +845,8 @@ type pageData struct {
 }
 
 type usernamePageData struct {
+	AppName      string
+	AppInitial   string
 	Title        string
 	Username     string
 	Verified     bool
@@ -850,7 +870,8 @@ func (h *handler) serveUsernameNotFound(w http.ResponseWriter, username string) 
 	if err := usernameNotFoundTemplate.Execute(w, struct {
 		Username string
 		HomeURL  string
-	}{Username: username, HomeURL: h.publicBaseURL + "/"}); err != nil {
+		AppName  string
+	}{Username: username, HomeURL: h.publicBaseURL + "/", AppName: h.appName}); err != nil {
 		h.logger.Error("Render public username not-found page failed", zap.String("username", username), zap.Error(err))
 	}
 }
@@ -861,12 +882,12 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0e1621">
-  <title>{{.Title}} (@{{.Username}}) - telesrv</title>
+  <title>{{.Title}} (@{{.Username}}) - {{.AppName}}</title>
   <meta name="description" content="{{.Description}}">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="{{.CanonicalURL}}">
   <meta property="og:type" content="profile">
-  <meta property="og:site_name" content="telesrv">
+  <meta property="og:site_name" content="{{.AppName}}">
   <meta property="og:title" content="{{.Title}}">
   <meta property="og:description" content="{{.Description}}">
   <meta property="og:url" content="{{.CanonicalURL}}">
@@ -922,7 +943,7 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
 </head>
 <body>
   <div class="shell">
-    <a class="brand" href="{{.HomeURL}}" aria-label="telesrv home"><span class="brand-mark">t</span><span>telesrv</span></a>
+    <a class="brand" href="{{.HomeURL}}" aria-label="{{.AppName}} home"><span class="brand-mark">{{.AppInitial}}</span><span>{{.AppName}}</span></a>
     <main>
       <article class="card">
         <div class="avatar">{{if .PhotoURL}}<img src="{{.PhotoURL}}" alt="{{.Title}} profile photo" width="112" height="112">{{else}}<span class="initials" aria-hidden="true">{{.Initials}}</span>{{end}}</div>
@@ -937,7 +958,7 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
         <p class="legacy">Old test clients only: <a href="{{.LegacyTgURL}}">open with tg://</a></p>
       </article>
     </main>
-    <footer>If you have telesrv, this page can open the chat directly.</footer>
+    <footer>If you have {{.AppName}}, this page can open the chat directly.</footer>
   </div>
   <script>window.setTimeout(function () { window.location.href = {{.AppURLJS}}; }, 250);</script>
 </body>
@@ -946,16 +967,16 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
 
 var usernameNotFoundTemplate = template.Must(template.New("username-not-found").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>Username not found - telesrv</title>
+<meta name="robots" content="noindex,nofollow"><title>Username not found - {{.AppName}}</title>
 <style>:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px;background:#0e1621;color:#f5f8fb}.card{width:min(100%,420px);padding:34px 28px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:#17212b;text-align:center}h1{margin:0 0 12px;font-size:26px}p{margin:0;color:#9fb0bf;line-height:1.55;overflow-wrap:anywhere}a{display:inline-block;margin-top:24px;color:#67bff9;text-decoration:none}</style>
-</head><body><main class="card"><h1>Username not found</h1><p>{{if .Username}}@{{.Username}} is not an active public telesrv username.{{else}}This is not a valid public telesrv username.{{end}}</p><a href="{{.HomeURL}}">Back to telesrv</a></main></body></html>`))
+</head><body><main class="card"><h1>Username not found</h1><p>{{if .Username}}@{{.Username}} is not an active public {{.AppName}} username.{{else}}This is not a valid public {{.AppName}} username.{{end}}</p><a href="{{.HomeURL}}">Back to {{.AppName}}</a></main></body></html>`))
 
 var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} - telesrv</title>
+  <title>{{.Title}} - {{.AppName}}</title>
   <link rel="canonical" href="{{.CanonicalURL}}">
   <meta property="og:title" content="{{.Title}}">
   <meta property="og:description" content="{{.Description}}">
@@ -984,7 +1005,7 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
     <p class="meta">{{.KindLabel}}</p>
     <h1>{{.Title}}</h1>
     <p class="meta">{{.Subtitle}}</p>
-    <p><a class="button" href="{{.AppURL}}">Open in telesrv</a></p>
+    <p><a class="button" href="{{.AppURL}}">Open in {{.AppName}}</a></p>
     <p>{{.Description}}</p>
     <p class="meta">Old test clients only: <a class="raw" href="{{.LegacyTgURL}}">open with tg://</a></p>
     <p class="meta"><a class="raw" href="{{.CanonicalURL}}">{{.CanonicalURL}}</a></p>

@@ -98,10 +98,14 @@ workers in the same process.
 
 Useful local environment variables:
 
+See the complete [English configuration reference](docs/configuration.en.md) or
+the [Chinese configuration reference](docs/configuration.zh-CN.md). `.env.example`
+is a copyable development template, not an exhaustive parameter dictionary.
+
 | Variable | Default | Meaning |
 |---|---:|---|
 | `TELESRV_LISTEN` | `0.0.0.0:2398` | MTProto listen address |
-| `TELESRV_ADVERTISE_IP` | `127.0.0.1` | IP advertised to compatible clients |
+| `TELESRV_ADVERTISE_IP` | `127.0.0.1` | client-reachable fallback IP for media and calls |
 | `TELESRV_DC` | `2` | self-hosted DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | fixed login code for local development |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | `5` | wrong-code attempts before the code hash is deleted |
@@ -109,6 +113,9 @@ Useful local environment variables:
 | `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | force phone login/registration to set a login email first |
 | `TELESRV_SMTP_HOST` | empty | SMTP host used when login email verification is enabled |
 | `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical external base URL for username, sticker, emoji, and chatlist links |
+| `TELESRV_PUBLIC_APP_SCHEME` | `telesrv` | custom URL scheme opened by public landing pages |
+| `TELESRV_PUBLIC_WEB_BASE_URL` | `https://web.telesrv.net` | Web client base URL shown on public landing pages |
+| `TELESRV_PUBLIC_APP_NAME` | `telesrv` | display product name for public landing pages |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | bundled language pack seed directory |
@@ -185,6 +192,9 @@ links:
 
 ```env
 TELESRV_PUBLIC_BASE_URL=https://your-domain.example
+TELESRV_PUBLIC_APP_SCHEME=yourapp
+TELESRV_PUBLIC_WEB_BASE_URL=https://web.your-domain.example
+TELESRV_PUBLIC_APP_NAME=YourApp
 ```
 
 In production, keep `TELESRV_PUBLIC_LINK_WEB_ADDR` on loopback and reverse-proxy

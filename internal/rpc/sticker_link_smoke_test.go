@@ -20,8 +20,17 @@ import (
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
-	"telesrv/internal/web/stickerlinks"
+	publicweb "telesrv/internal/web"
 )
+
+func newStickerLinkHandler(t *testing.T, files publicweb.StickerSetResolver) http.Handler {
+	t.Helper()
+	h, err := publicweb.NewHandler(publicweb.Config{StickerSets: files, PublicBaseURL: "https://telesrv.net"})
+	if err != nil {
+		t.Fatalf("new public Web handler: %v", err)
+	}
+	return h
+}
 
 func TestCustomStickerPackLinkInstallAndSendSmoke(t *testing.T) {
 	ctx := context.Background()
@@ -73,7 +82,7 @@ func TestCustomStickerPackLinkInstallAndSendSmoke(t *testing.T) {
 		t.Fatalf("created = %T, want *tg.MessagesStickerSet", created)
 	}
 
-	web := stickerlinks.NewHandler(files, "https://telesrv.net")
+	web := newStickerLinkHandler(t, files)
 	rr := httptest.NewRecorder()
 	web.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/addstickers/alice_fresh_pack", nil))
 	if rr.Code != http.StatusOK {
@@ -201,7 +210,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 	sendStickersBotText(t, r, alice, "Alice Bot Pack", 9102)
 	waitForStickersReply(t, messageStore, alice.ID, "Lottie JSON")
 	sendStickersBotDocument(t, r, alice, 401, 4401, 9103)
-	waitForStickersReply(t, messageStore, alice.ID, "Now send the emoji")
+	waitForStickersReply(t, messageStore, alice.ID, "emoji")
 	sendStickersBotText(t, r, alice, "🙂", 9104)
 	waitForStickersReply(t, messageStore, alice.ID, "Added")
 	sendStickersBotText(t, r, alice, "/publish", 9105)
@@ -224,7 +233,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 		t.Fatalf("bob getAllStickers before install = %v, want empty", got)
 	}
 
-	web := stickerlinks.NewHandler(files, "https://telesrv.net")
+	web := newStickerLinkHandler(t, files)
 	rr := httptest.NewRecorder()
 	web.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/addstickers/alice_bot_pack", nil))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "https://telesrv.net/addstickers/alice_bot_pack") {

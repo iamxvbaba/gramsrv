@@ -6,8 +6,51 @@ import (
 	"strings"
 )
 
-const DefaultPublicBaseURL = "https://telesrv.net"
+const (
+	DefaultPublicBaseURL = "https://telesrv.net"
+	DefaultWebBaseURL    = "https://web.telesrv.net"
+	DefaultAppScheme     = "telesrv"
+	DefaultAppName       = "telesrv"
+)
 const MaxChatlistSlugBytes = 128
+
+// ValidateAppScheme normalizes the client-visible custom URL scheme used by
+// public landing pages. Standard Web schemes and Telegram's official tg scheme
+// are deliberately rejected: the latter remains a manual compatibility link
+// and must never become the automatic open target.
+func ValidateAppScheme(raw string) (string, error) {
+	scheme := strings.ToLower(strings.TrimSpace(raw))
+	if scheme == "" {
+		scheme = DefaultAppScheme
+	}
+	for i, r := range scheme {
+		if (r >= 'a' && r <= 'z') || (i > 0 && ((r >= '0' && r <= '9') || r == '+' || r == '-' || r == '.')) {
+			continue
+		}
+		return "", fmt.Errorf("must match [a-z][a-z0-9+.-]*")
+	}
+	switch scheme {
+	case "http", "https", "tg":
+		return "", fmt.Errorf("reserved scheme %q is not allowed", scheme)
+	}
+	return scheme, nil
+}
+
+func ValidateAppName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("must not be empty")
+	}
+	if len([]rune(name)) > 64 {
+		return "", fmt.Errorf("must not exceed 64 characters")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("must not contain control characters")
+		}
+	}
+	return name, nil
+}
 
 func NormalizeBaseURL(raw string) string {
 	raw = strings.TrimSpace(raw)

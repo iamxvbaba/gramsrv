@@ -90,10 +90,14 @@ go build -o bin/gramsrv ./cmd/telesrv
 
 常用本地环境变量：
 
+完整说明见[中文配置参数手册](docs/configuration.zh-CN.md)和
+[英文配置参数手册](docs/configuration.en.md)。`.env.example` 只作为可直接复制的开发模板，
+不再承担完整参数字典的职责。
+
 | 变量 | 默认值 | 说明 |
 |---|---:|---|
 | `TELESRV_LISTEN` | `0.0.0.0:2398` | MTProto 监听地址 |
-| `TELESRV_ADVERTISE_IP` | `127.0.0.1` | 下发给兼容客户端的连接 IP |
+| `TELESRV_ADVERTISE_IP` | `127.0.0.1` | 媒体与通话使用的客户端可达回退 IP |
 | `TELESRV_DC` | `2` | 自建 DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | 本地开发固定登录验证码 |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | `5` | 同一验证码 hash 允许的错误次数，达到后删除并要求重发 |
@@ -101,6 +105,9 @@ go build -o bin/gramsrv ./cmd/telesrv
 | `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | 登录/注册时强制先设置登录邮箱 |
 | `TELESRV_SMTP_HOST` | 空 | 开启登录邮箱验证时使用的 SMTP host |
 | `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | username、sticker、emoji、chatlist 公开链接使用的外部 canonical base URL |
+| `TELESRV_PUBLIC_APP_SCHEME` | `telesrv` | 公开落地页唤起客户端使用的自定义 URL scheme |
+| `TELESRV_PUBLIC_WEB_BASE_URL` | `https://web.telesrv.net` | 公开落地页展示的 Web 客户端根地址 |
+| `TELESRV_PUBLIC_APP_NAME` | `telesrv` | 公开落地页展示的产品名 |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL 连接串 |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis 地址 |
 | `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | 内置语言包种子目录 |
@@ -173,6 +180,9 @@ TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 
 ```env
 TELESRV_PUBLIC_BASE_URL=https://your-domain.example
+TELESRV_PUBLIC_APP_SCHEME=yourapp
+TELESRV_PUBLIC_WEB_BASE_URL=https://web.your-domain.example
+TELESRV_PUBLIC_APP_NAME=YourApp
 ```
 
 生产环境建议让 `TELESRV_PUBLIC_LINK_WEB_ADDR` 只监听 loopback，再用 HTTPS

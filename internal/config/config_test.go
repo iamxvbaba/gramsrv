@@ -22,6 +22,15 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicBaseURL != "https://telesrv.net" {
 		t.Fatalf("PublicBaseURL = %q, want https://telesrv.net", cfg.PublicBaseURL)
 	}
+	if cfg.PublicAppScheme != "telesrv" {
+		t.Fatalf("PublicAppScheme = %q, want telesrv", cfg.PublicAppScheme)
+	}
+	if cfg.PublicWebBaseURL != "https://web.telesrv.net" {
+		t.Fatalf("PublicWebBaseURL = %q, want https://web.telesrv.net", cfg.PublicWebBaseURL)
+	}
+	if cfg.PublicAppName != "telesrv" {
+		t.Fatalf("PublicAppName = %q, want telesrv", cfg.PublicAppName)
+	}
 }
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
@@ -248,6 +257,9 @@ TELESRV_POSTGRES_MAX_CONNS=77
 TELESRV_WEBSOCKET_ALLOWED_ORIGINS=https://one.example, https://two.example
 TELESRV_CALL_RING_TIMEOUT=2m
 TELESRV_PUBLIC_BASE_URL=links.example.test/root
+TELESRV_PUBLIC_APP_SCHEME=example-chat
+TELESRV_PUBLIC_WEB_BASE_URL=web.example.test/client
+TELESRV_PUBLIC_APP_NAME=Example Chat
 TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 `)
 	t.Setenv("TELESRV_CONFIG", path)
@@ -274,6 +286,15 @@ TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 	if cfg.PublicBaseURL != "https://links.example.test/root" {
 		t.Fatalf("PublicBaseURL = %q, want https://links.example.test/root", cfg.PublicBaseURL)
 	}
+	if cfg.PublicAppScheme != "example-chat" {
+		t.Fatalf("PublicAppScheme = %q, want example-chat", cfg.PublicAppScheme)
+	}
+	if cfg.PublicWebBaseURL != "https://web.example.test/client" {
+		t.Fatalf("PublicWebBaseURL = %q, want https://web.example.test/client", cfg.PublicWebBaseURL)
+	}
+	if cfg.PublicAppName != "Example Chat" {
+		t.Fatalf("PublicAppName = %q, want Example Chat", cfg.PublicAppName)
+	}
 }
 
 func TestLoadNormalizesLocalPublicBaseURL(t *testing.T) {
@@ -295,6 +316,29 @@ func TestLoadRejectsInvalidPublicBaseURL(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a query-bearing public base URL")
+	}
+}
+
+func TestLoadRejectsInvalidPublicLinkClientConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "official scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "tg"},
+		{name: "malformed scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "bad scheme"},
+		{name: "invalid web base", key: "TELESRV_PUBLIC_WEB_BASE_URL", value: "file:///tmp/client"},
+		{name: "empty app name after trim", key: "TELESRV_PUBLIC_APP_NAME", value: "   "},
+		{name: "control in app name", key: "TELESRV_PUBLIC_APP_NAME", value: "bad\nname"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(tc.key, tc.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load succeeded with %s=%q", tc.key, tc.value)
+			}
+		})
 	}
 }
 

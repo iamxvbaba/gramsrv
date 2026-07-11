@@ -64,7 +64,7 @@ import (
 	"telesrv/internal/store/postgres"
 	"telesrv/internal/store/redisstore"
 	"telesrv/internal/turnsrv"
-	"telesrv/internal/web/stickerlinks"
+	"telesrv/internal/web"
 )
 
 func main() {
@@ -770,15 +770,19 @@ func run(logger *zap.Logger) error {
 	if _, err := adminapi.Start(ctx, adminapi.Config{Addr: cfg.AdminAPIAddr, Token: cfg.AdminAPIToken}, adminService, logger.Named("adminapi")); err != nil {
 		return fmt.Errorf("start admin api: %w", err)
 	}
-	if _, err := stickerlinks.Start(ctx, stickerlinks.Config{
+	if _, err := web.Start(ctx, web.Config{
 		Addr:          cfg.PublicLinkWebAddr,
 		PublicBaseURL: cfg.PublicBaseURL,
+		AppScheme:     cfg.PublicAppScheme,
+		WebBaseURL:    cfg.PublicWebBaseURL,
+		AppName:       cfg.PublicAppName,
+		StickerSets:   filesService,
 		Users:         userStore,
 		Channels:      channelStore,
 		Privacy:       privacyService,
 		Photos:        filesService,
-	}, filesService, logger.Named("stickerlinks")); err != nil {
-		return fmt.Errorf("start sticker links: %w", err)
+	}, logger.Named("public-web")); err != nil {
+		return fmt.Errorf("start public Web: %w", err)
 	}
 
 	srv := mtprotoedge.New(mtprotoedge.Options{
