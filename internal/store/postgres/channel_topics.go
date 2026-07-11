@@ -586,7 +586,7 @@ ORDER BY pinned DESC, pinned_order DESC, date DESC, topic_id DESC`, channelID, m
 }
 
 func (s *ChannelStore) ListChannelReplies(ctx context.Context, viewerUserID int64, filter domain.ChannelRepliesFilter) (domain.ChannelHistory, error) {
-	source, member, err := s.getChannelForMember(ctx, s.db, viewerUserID, filter.ChannelID)
+	source, member, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, filter.ChannelID)
 	if err != nil {
 		return domain.ChannelHistory{}, err
 	}

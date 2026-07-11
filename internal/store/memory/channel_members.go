@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,14 +12,13 @@ import (
 func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	channel, err := s.channelForMemberLocked(viewerUserID, channelID)
+	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}
 	if limit <= 0 || limit > domain.MaxChannelParticipantsLimit {
 		limit = domain.MaxChannelParticipantsLimit
 	}
-	viewer := s.members[channelID][viewerUserID]
 	// 广播频道订阅者列表仅管理员可枚举（与隐藏成员同一门控）：admins filter 仍放行（徽章数据源）。
 	if channel.MembersListAdminOnly() && !isChannelAdmin(viewer) {
 		switch filter.Kind {
@@ -75,9 +75,14 @@ func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelI
 func (s *ChannelStore) GetParticipant(_ context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, err := s.channelForMemberLocked(viewerUserID, channelID); err != nil {
+	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
+	if err != nil {
 		return domain.ChannelMember{}, err
 	}
+	if viewerUserID == participantUserID && viewer.Guest {
+		return viewer, nil
+	}
+	_ = channel
 	member, ok := s.members[channelID][participantUserID]
 	if !ok {
 		return domain.ChannelMember{}, domain.ErrChannelPrivate
@@ -824,7 +829,7 @@ func (s *ChannelStore) recordPublicJoinRequestLocked(channel domain.Channel, use
 func (s *ChannelStore) ListActiveChannelMemberIDs(_ context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, err := s.channelForMemberLocked(viewerUserID, channelID); err != nil {
+	if _, _, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID); err != nil {
 		return nil, err
 	}
 	return s.activeMemberIDsLocked(channelID, 0, limit), nil
@@ -863,7 +868,7 @@ func (s *ChannelStore) FilterActiveChannelMemberIDs(_ context.Context, channelID
 func (s *ChannelStore) ListActiveChannelMembers(_ context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	channel, viewer, err := s.channelAndMemberLocked(viewerUserID, channelID)
+	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, nil, err
 	}
@@ -903,6 +908,57 @@ func (s *ChannelStore) channelAndMemberLocked(userID, channelID int64) (domain.C
 		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelUserBanned
 	}
 	return channel, member, nil
+}
+
+func (s *ChannelStore) channelAndMemberOrLinkedGuestLocked(userID, channelID int64) (domain.Channel, domain.ChannelMember, error) {
+	channel, member, err := s.channelAndMemberLocked(userID, channelID)
+	if !errors.Is(err, domain.ErrChannelPrivate) {
+		return channel, member, err
+	}
+	target, ok := s.channels[channelID]
+	if !ok || target.Deleted {
+		return domain.Channel{}, domain.ChannelMember{}, domain.ErrChannelInvalid
+	}
+	guest, allowed, guestErr := s.linkedDiscussionGuestLocked(userID, target)
+	if guestErr != nil {
+		return domain.Channel{}, domain.ChannelMember{}, guestErr
+	}
+	if !allowed {
+		return domain.Channel{}, domain.ChannelMember{}, err
+	}
+	return target, guest, nil
+}
+
+// linkedDiscussionGuestLocked authorizes a discussion-group view through the
+// viewer's active membership in its bidirectionally linked broadcast. It never
+// materializes a channel_members row. Explicit target bans always win.
+func (s *ChannelStore) linkedDiscussionGuestLocked(userID int64, target domain.Channel) (domain.ChannelMember, bool, error) {
+	if target.Broadcast || !target.Megagroup || target.LinkedChatID == 0 {
+		return domain.ChannelMember{}, false, nil
+	}
+	if existing, ok := s.members[target.ID][userID]; ok {
+		if existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages {
+			return domain.ChannelMember{}, false, domain.ErrChannelUserBanned
+		}
+		if existing.Status == domain.ChannelMemberActive {
+			return existing, false, nil
+		}
+	}
+	source, ok := s.channels[target.LinkedChatID]
+	if !ok || source.Deleted || !source.Broadcast || source.LinkedChatID != target.ID {
+		return domain.ChannelMember{}, false, nil
+	}
+	sourceMember, ok := s.members[source.ID][userID]
+	if !ok || sourceMember.Status != domain.ChannelMemberActive || sourceMember.BannedRights.ViewMessages {
+		return domain.ChannelMember{}, false, nil
+	}
+	return domain.ChannelMember{
+		ChannelID: target.ID,
+		UserID:    userID,
+		Status:    domain.ChannelMemberLeft,
+		Role:      domain.ChannelRoleMember,
+		Guest:     true,
+	}, true, nil
 }
 
 func (s *ChannelStore) activeMemberIDsLocked(channelID, excludeUserID int64, limit int) []int64 {

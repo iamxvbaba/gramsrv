@@ -109,12 +109,15 @@ func (s *ChannelStore) ReadChannelTopicHistory(_ context.Context, req domain.Rea
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	channel, member, err := s.channelAndMemberLocked(req.UserID, req.ChannelID)
+	channel, member, err := s.channelAndMemberOrLinkedGuestLocked(req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.ReadChannelTopicHistoryResult{}, err
 	}
 	if !channel.Forum {
 		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelForumMissing
+	}
+	if member.Guest {
+		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelPrivate
 	}
 	topMax := s.channelTopicTopMessageIDLocked(req.ChannelID, req.TopicID, member.AvailableMinID)
 	maxID := req.MaxID

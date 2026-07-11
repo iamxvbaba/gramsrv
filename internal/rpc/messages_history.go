@@ -371,14 +371,33 @@ func (r *Router) onMessagesReadDiscussion(ctx context.Context, req *tg.MessagesR
 	if !errors.Is(terr, domain.ErrChannelForumMissing) {
 		return false, channelInvalidErr(terr)
 	}
-	// 非 forum（频道-讨论组 linked comments）：保持原频道级已读链路。
-	discussion, err := r.deps.Channels.GetDiscussionMessage(ctx, userID, peer.ID, req.MsgID)
-	if err != nil {
-		return false, channelInvalidErr(err)
-	}
+	// 非 forum（频道-讨论组 linked comments）：只解析 target/root/boundary，禁止为了一个
+	// 已读请求加载完整 discussion message、reply stats、reactions 与 unread aggregates。
 	readChannelID := peer.ID
-	if discussion.DiscussionChannel.ID != 0 {
-		readChannelID = discussion.DiscussionChannel.ID
+	if provider, ok := r.deps.Channels.(interface {
+		ResolveDiscussionReadTarget(context.Context, int64, int64, int, int) (domain.ChannelDiscussionReadTarget, error)
+	}); ok {
+		target, resolveErr := provider.ResolveDiscussionReadTarget(ctx, userID, peer.ID, req.MsgID, req.ReadMaxID)
+		if resolveErr != nil {
+			return false, channelInvalidErr(resolveErr)
+		}
+		if target.AlreadyRead {
+			return false, nil
+		}
+		if target.Guest {
+			// Linked discussion guests have no channel_members/dialog row. Reading
+			// comments is therefore an authorized, durable-state-free no-op.
+			return false, nil
+		}
+		readChannelID = target.ChannelID
+	} else {
+		discussion, resolveErr := r.deps.Channels.GetDiscussionMessage(ctx, userID, peer.ID, req.MsgID)
+		if resolveErr != nil {
+			return false, channelInvalidErr(resolveErr)
+		}
+		if discussion.DiscussionChannel.ID != 0 {
+			readChannelID = discussion.DiscussionChannel.ID
+		}
 	}
 	read, err := r.deps.Channels.ReadHistory(ctx, userID, domain.ReadChannelHistoryRequest{
 		UserID:    userID,

@@ -371,6 +371,11 @@ func (s *ChannelStore) getChannelForViewer(ctx context.Context, db sqlcgen.DBTX,
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, false, err
 	}
+	if guest, ok, guestErr := s.getLinkedDiscussionGuest(ctx, db, viewerUserID, ch); guestErr != nil {
+		return domain.Channel{}, domain.ChannelMember{}, false, guestErr
+	} else if ok {
+		return ch, guest, true, nil
+	}
 	if member, _, ok, err := s.monoforumAdminPreview(ctx, db, viewerUserID, ch); err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, false, err
 	} else if ok {

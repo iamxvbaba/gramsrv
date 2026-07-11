@@ -449,7 +449,7 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 		// 的 Creator/admin 无关。服务端的私信发送鉴权走母频道 membership,不依赖此 flag。
 		out.Creator = false
 	} else if self != nil {
-		if self.Status == domain.ChannelMemberLeft {
+		if self.Status == domain.ChannelMemberLeft || self.Guest {
 			out.Left = true
 		}
 		switch self.Role {

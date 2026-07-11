@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"telesrv/internal/domain"
@@ -37,11 +38,22 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 			return replay, replayErr
 		}
 	}
-	channel, err := s.channelForMemberLocked(req.UserID, req.ChannelID)
+	channel, member, err := s.channelAndMemberLocked(req.UserID, req.ChannelID)
+	if errors.Is(err, domain.ErrChannelPrivate) {
+		if candidate, ok := s.channels[req.ChannelID]; ok && !candidate.Deleted {
+			var guest bool
+			member, guest, err = s.linkedDiscussionGuestLocked(req.UserID, candidate)
+			if guest {
+				channel = candidate
+			}
+		}
+	}
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
-	member := s.members[req.ChannelID][req.UserID]
+	if member.Guest && channel.JoinToSend {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
+	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
 	}
@@ -198,8 +210,10 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 	channel.TopMessageID = msg.ID
 	channel.Pts = pts
 	s.channels[req.ChannelID] = channel
-	member.SlowmodeLastSendDate = req.Date
-	s.members[req.ChannelID][req.UserID] = member
+	if !member.Guest {
+		member.SlowmodeLastSendDate = req.Date
+		s.members[req.ChannelID][req.UserID] = member
+	}
 	for userID, member := range s.members[req.ChannelID] {
 		if member.Status == domain.ChannelMemberActive {
 			if _, skip := skipDelivery[userID]; skip && userID != req.UserID {

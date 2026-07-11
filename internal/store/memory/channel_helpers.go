@@ -359,6 +359,11 @@ func (s *ChannelStore) channelForViewerLocked(userID, channelID int64) (domain.C
 	if found && (existing.Status == domain.ChannelMemberBanned || existing.Status == domain.ChannelMemberKicked || existing.BannedRights.ViewMessages) {
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelUserBanned
 	}
+	if guest, ok, guestErr := s.linkedDiscussionGuestLocked(userID, channel); guestErr != nil {
+		return domain.Channel{}, domain.ChannelMember{}, false, guestErr
+	} else if ok {
+		return channel, guest, true, nil
+	}
 	if channel.Monoforum && channel.LinkedMonoforumID != 0 {
 		parentMember, ok := s.members[channel.LinkedMonoforumID][userID]
 		if ok && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember) {

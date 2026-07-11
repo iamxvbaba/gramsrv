@@ -565,6 +565,165 @@ func (s *ChannelStore) GetDiscussionMessage(ctx context.Context, viewerUserID, c
 	return result, nil
 }
 
+// ResolveDiscussionReadTarget resolves source post -> linked discussion root
+// and checks the durable read boundary in one indexed query. It is the hot path
+// for messages.readDiscussion and must not load reply stats, reactions or peer
+// payloads used by messages.getDiscussionMessage.
+func (s *ChannelStore) ResolveDiscussionReadTarget(ctx context.Context, userID, sourceChannelID int64, sourceMessageID, readMaxID int) (domain.ChannelDiscussionReadTarget, error) {
+	var out domain.ChannelDiscussionReadTarget
+	var readInboxMaxID int
+	var unreadMark bool
+	var targetVisible bool
+	var targetGuest bool
+	var targetTopMessageID int
+	err := s.db.QueryRow(ctx, `
+WITH source AS (
+    SELECT c.broadcast,
+           m.discussion_channel_id,
+           m.discussion_message_id,
+           (
+               c.megagroup
+               AND NOT c.broadcast
+               AND c.linked_chat_id <> 0
+               AND (viewer.user_id IS NULL OR viewer.status = 'left')
+               AND NOT COALESCE((viewer.banned_rights->>'ViewMessages')::boolean, false)
+               AND EXISTS (
+                   SELECT 1
+                   FROM channels parent
+                   JOIN channel_members parent_member
+                     ON parent_member.channel_id = parent.id
+                    AND parent_member.user_id = $1
+                    AND parent_member.status = 'active'
+                    AND NOT COALESCE((parent_member.banned_rights->>'ViewMessages')::boolean, false)
+                   WHERE parent.id = c.linked_chat_id
+                     AND parent.broadcast
+                     AND NOT parent.deleted
+                     AND parent.linked_chat_id = c.id
+               )
+           ) AS linked_guest
+    FROM channels c
+    LEFT JOIN channel_members viewer
+      ON viewer.channel_id = c.id
+     AND viewer.user_id = $1
+    JOIN channel_messages m
+      ON m.channel_id = c.id
+     AND m.id = $3
+     AND NOT m.deleted
+     AND m.id > COALESCE(viewer.available_min_id, 0)
+    WHERE c.id = $2 AND NOT c.deleted
+      AND (
+          (
+              viewer.status = 'active'
+              AND NOT COALESCE((viewer.banned_rights->>'ViewMessages')::boolean, false)
+          )
+          OR (
+              c.megagroup
+              AND NOT c.broadcast
+              AND c.linked_chat_id <> 0
+              AND (viewer.user_id IS NULL OR viewer.status = 'left')
+              AND NOT COALESCE((viewer.banned_rights->>'ViewMessages')::boolean, false)
+              AND EXISTS (
+                  SELECT 1
+                  FROM channels parent
+                  JOIN channel_members parent_member
+                    ON parent_member.channel_id = parent.id
+                   AND parent_member.user_id = $1
+                   AND parent_member.status = 'active'
+                   AND NOT COALESCE((parent_member.banned_rights->>'ViewMessages')::boolean, false)
+                  WHERE parent.id = c.linked_chat_id
+                    AND parent.broadcast
+                    AND NOT parent.deleted
+                    AND parent.linked_chat_id = c.id
+              )
+          )
+      )
+), target AS (
+    SELECT CASE
+             WHEN broadcast AND discussion_channel_id <> 0 AND discussion_message_id <> 0
+               THEN discussion_channel_id
+             ELSE $2
+           END AS channel_id,
+           CASE
+             WHEN broadcast AND discussion_channel_id <> 0 AND discussion_message_id <> 0
+               THEN discussion_message_id
+             ELSE $3
+           END AS root_id,
+           broadcast,
+           linked_guest,
+           discussion_channel_id,
+           discussion_message_id
+    FROM source
+)
+SELECT target.channel_id, target.root_id,
+       target_channel.top_message_id,
+       COALESCE(target_member.read_inbox_max_id, 0),
+       COALESCE(target_member.unread_mark, false),
+       COALESCE(
+           target_member.status = 'active'
+           AND NOT COALESCE((target_member.banned_rights->>'ViewMessages')::boolean, false),
+           false
+       ) OR target.linked_guest OR (
+           target.channel_id <> $2
+           AND target.broadcast
+           AND target_channel.linked_chat_id = $2
+           AND (
+               target_member.user_id IS NULL
+               OR target_member.status = 'left'
+           )
+       ) AS target_visible,
+       (
+           target.linked_guest OR (
+               target.channel_id <> $2
+               AND target.broadcast
+               AND target_channel.linked_chat_id = $2
+               AND (
+                   target_member.user_id IS NULL
+                   OR target_member.status = 'left'
+               )
+           )
+       ) AS target_guest
+FROM target
+JOIN channels target_channel
+  ON target_channel.id = target.channel_id
+ AND NOT target_channel.deleted
+LEFT JOIN channel_members target_member
+  ON target_member.channel_id = target.channel_id
+ AND target_member.user_id = $1
+WHERE (
+    NOT target.broadcast
+    OR (target.discussion_channel_id = 0 AND target.discussion_message_id = 0)
+    OR (
+        target.discussion_channel_id <> 0
+        AND target.discussion_message_id <> 0
+        AND target_channel.megagroup
+        AND NOT target_channel.broadcast
+        AND EXISTS (
+            SELECT 1
+            FROM channel_messages root
+            WHERE root.channel_id = target.channel_id
+              AND root.id = target.root_id
+              AND NOT root.deleted
+        )
+    )
+)`, userID, sourceChannelID, sourceMessageID).Scan(&out.ChannelID, &out.RootID, &targetTopMessageID, &readInboxMaxID, &unreadMark, &targetVisible, &targetGuest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ChannelDiscussionReadTarget{}, domain.ErrMessageIDInvalid
+	}
+	if err != nil {
+		return domain.ChannelDiscussionReadTarget{}, fmt.Errorf("resolve discussion read target: %w", err)
+	}
+	if !targetVisible {
+		return domain.ChannelDiscussionReadTarget{}, domain.ErrChannelPrivate
+	}
+	effectiveMaxID := readMaxID
+	if effectiveMaxID <= 0 || effectiveMaxID > targetTopMessageID {
+		effectiveMaxID = targetTopMessageID
+	}
+	out.AlreadyRead = effectiveMaxID <= readInboxMaxID && !unreadMark
+	out.Guest = targetGuest
+	return out, nil
+}
+
 func (s *ChannelStore) readChannelHistoryOnce(ctx context.Context, req domain.ReadChannelHistoryRequest) (domain.ReadChannelHistoryResult, error) {
 	channel, _, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID)
 	if err != nil {

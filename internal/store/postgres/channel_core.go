@@ -252,6 +252,38 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 	return domain.ChannelView{Channel: channel, Self: member, Dialog: dialog, SelfBoostsApplied: selfBoosts, ExportedInvite: exportedInvite}, nil
 }
 
+// GetLinkedDiscussionChannel projects a private discussion peer through the
+// viewer's active membership in the source broadcast channel. This is a
+// peer-discovery boundary only; it never creates discussion-group membership.
+func (s *ChannelStore) GetLinkedDiscussionChannel(ctx context.Context, viewerUserID, sourceChannelID int64) (domain.ChannelView, error) {
+	source, _, err := s.getChannelForMember(ctx, s.db, viewerUserID, sourceChannelID)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	if !source.Broadcast || source.LinkedChatID == 0 {
+		return domain.ChannelView{}, domain.ErrChannelInvalid
+	}
+	linked, err := s.channelByID(ctx, s.db, source.LinkedChatID)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	if !linked.Megagroup || linked.Broadcast {
+		return domain.ChannelView{}, domain.ErrChannelInvalid
+	}
+	self, guest, guestErr := s.getLinkedDiscussionGuest(ctx, s.db, viewerUserID, linked)
+	if guestErr != nil {
+		return domain.ChannelView{}, guestErr
+	}
+	if !guest {
+		if member, memberErr := s.getChannelMember(ctx, s.db, linked.ID, viewerUserID); memberErr == nil {
+			self = member
+		} else {
+			return domain.ChannelView{}, memberErr
+		}
+	}
+	return domain.ChannelView{Channel: linked, Self: self}, nil
+}
+
 // ResolveChannel 是 GetChannel 的轻量版：只做访问校验并返回 Channel(含 access_hash)+Self，
 // 跳过 dialog top message / 读态 / boost 求和这 3 条额外 PG 查询。供 inputPeerFor 等只需
 // access_hash / 频道标志的纯解析路径用——它们此前为拿一个 access_hash 付了完整 4 查询投影。

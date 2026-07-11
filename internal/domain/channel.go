@@ -486,6 +486,10 @@ type ChannelMember struct {
 	ReadOutboxMaxID      int
 	UnreadMark           bool
 	SlowmodeLastSendDate int
+	// Guest is a computed, non-persisted view used for subscribers accessing a
+	// private linked discussion group without joining it. Guest must never be
+	// written to channel_members and is still projected to clients as left.
+	Guest bool
 }
 
 // ChannelDialog is the current user's owner-view dialog state for a channel.
@@ -832,6 +836,18 @@ type SavedReactionTag struct {
 type ChannelDiscussionRef struct {
 	ChannelID int64
 	MessageID int
+}
+
+// ChannelDiscussionReadTarget is the minimal authoritative projection needed
+// by messages.readDiscussion. It intentionally excludes message/reply/reaction
+// payloads used only by messages.getDiscussionMessage.
+type ChannelDiscussionReadTarget struct {
+	ChannelID   int64
+	RootID      int
+	AlreadyRead bool
+	// Guest means the viewer is authorized through the linked broadcast and has
+	// no discussion-group member row whose read boundary can be advanced.
+	Guest bool
 }
 
 // ChannelMessageReplies describes thread/comment counters without depending on TL types.

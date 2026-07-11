@@ -108,12 +108,15 @@ func (s *ChannelStore) ReadChannelTopicHistory(ctx context.Context, req domain.R
 	if req.UserID == 0 || req.ChannelID == 0 || req.TopicID <= 0 {
 		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelInvalid
 	}
-	channel, member, err := s.getChannelForMember(ctx, s.db, req.UserID, req.ChannelID)
+	channel, member, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.ReadChannelTopicHistoryResult{}, err
 	}
 	if !channel.Forum {
 		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelForumMissing
+	}
+	if member.Guest {
+		return domain.ReadChannelTopicHistoryResult{}, domain.ErrChannelPrivate
 	}
 	topMax, err := s.channelTopicTopMessageID(ctx, req.ChannelID, req.TopicID, member.AvailableMinID)
 	if err != nil {

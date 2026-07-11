@@ -42,7 +42,16 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 		return nil, channelInvalidErr(err)
 	}
 	diff = r.enrichChannelDifference(ctx, userID, diff)
-	return tgChannelDifference(userID, diff), nil
+	out := tgChannelDifference(userID, diff)
+	if linked, ok := r.linkedDiscussionChat(ctx, userID, channelID); ok {
+		switch value := out.(type) {
+		case *tg.UpdatesChannelDifference:
+			value.Chats = replaceTGChat(value.Chats, linked)
+		case *tg.UpdatesChannelDifferenceTooLong:
+			value.Chats = replaceTGChat(value.Chats, linked)
+		}
+	}
+	return out, nil
 }
 
 func (r *Router) channelOperationUpdates(ctx context.Context, viewerUserID int64, res domain.CreateChannelResult) *tg.Updates {
@@ -226,6 +235,7 @@ func (r *Router) channelMessagesUpdatesWithPeerCache(ctx context.Context, viewer
 	chats := []tg.ChatClass(nil)
 	if channel.ID != 0 {
 		chats = []tg.ChatClass{tgChannelChatMin(viewerUserID, channel)}
+		chats = r.appendLinkedDiscussionChat(ctx, viewerUserID, channel.ID, chats)
 	}
 	chats = append(chats, tgChannels(viewerUserID, cache.channelsForIDs(ctx, viewerUserID, peerIDsExcept(peerIDMapKeys(channelIDs), channel.ID)))...)
 	if date == 0 {

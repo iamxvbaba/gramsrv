@@ -64,8 +64,22 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		}
 	}()
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+	if errors.Is(err, domain.ErrChannelPrivate) {
+		if candidate, candidateErr := s.channelByID(ctx, tx, req.ChannelID); candidateErr == nil {
+			var guest bool
+			member, guest, err = s.getLinkedDiscussionGuest(ctx, tx, req.UserID, candidate)
+			if guest {
+				channel = candidate
+			}
+		} else {
+			err = candidateErr
+		}
+	}
 	if err != nil {
 		return domain.SendChannelMessageResult{}, err
+	}
+	if member.Guest && channel.JoinToSend {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelWriteForbidden
 	}
 	fromBoostsApplied := 0
 	if channel.Megagroup {

@@ -12,7 +12,7 @@ import (
 )
 
 func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
-	channel, viewer, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}
@@ -170,8 +170,12 @@ WHERE channel_id = $1
 }
 
 func (s *ChannelStore) GetParticipant(ctx context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error) {
-	if _, _, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID); err != nil {
+	_, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
+	if err != nil {
 		return domain.ChannelMember{}, err
+	}
+	if viewerUserID == participantUserID && viewer.Guest {
+		return viewer, nil
 	}
 	return s.getChannelMember(ctx, s.db, channelID, participantUserID)
 }
@@ -200,7 +204,7 @@ func (s *ChannelStore) ListActiveChannelMemberIDs(ctx context.Context, viewerUse
 }
 
 func (s *ChannelStore) ListActiveChannelMembers(ctx context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error) {
-	channel, viewer, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, nil, err
 	}
@@ -233,7 +237,7 @@ LIMIT $2`, channelID, limit)
 }
 
 func (s *ChannelStore) ListActiveChannelBotMembers(ctx context.Context, viewerUserID, channelID int64, offset, limit int) (domain.ChannelParticipantList, error) {
-	channel, viewer, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}
@@ -279,7 +283,7 @@ OFFSET $2 LIMIT $3`, channelID, offset, limit)
 }
 
 func (s *ChannelStore) ListActiveChannelBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
-	if _, _, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID); err != nil {
+	if _, _, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > domain.MaxSynchronousChannelDialogFanout {

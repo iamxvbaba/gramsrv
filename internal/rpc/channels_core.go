@@ -123,6 +123,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		r.applyNotifySettingsToChannelFull(ctx, userID, ref.ID, &full)
 		r.applyAndroidChannelReactionEditorCompat(ctx, &full, cached.canChangeInfo)
 		chats := append([]tg.ChatClass(nil), cached.chats...)
+		chats = r.appendLinkedDiscussionChat(ctx, userID, ref.ID, chats)
 		r.trackChannelInterest(ctx, userID, ref.ID)
 		r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
 		return &tg.MessagesChatFull{
@@ -148,6 +149,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	r.trackChannelInterest(ctx, userID, view.Channel.ID)
 	chats := []tg.ChatClass{tgChannelChatForView(userID, view)}
+	chats = r.appendLinkedDiscussionChat(ctx, userID, view.Channel.ID, chats)
 	if mono, ok := r.linkedMonoforumForChannelState(ctx, userID, view.Channel); ok {
 		chats = appendUniqueTGChats(chats, tgChannelChat(userID, mono, nil))
 	}

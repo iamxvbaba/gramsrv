@@ -125,12 +125,25 @@ func (r *Router) tgMessagesMessages(ctx context.Context, viewerUserID int64, lis
 
 func (r *Router) tgChannelHistoryMessages(ctx context.Context, viewerUserID int64, history domain.ChannelHistory) tg.MessagesMessagesClass {
 	out := tgChannelHistoryMessages(viewerUserID, history)
+	if linked, ok := r.linkedDiscussionChat(ctx, viewerUserID, history.Channel.ID); ok {
+		switch value := out.(type) {
+		case *tg.MessagesChannelMessages:
+			value.Chats = replaceTGChat(value.Chats, linked)
+		case *tg.MessagesMessagesSlice:
+			value.Chats = replaceTGChat(value.Chats, linked)
+		case *tg.MessagesMessages:
+			value.Chats = replaceTGChat(value.Chats, linked)
+		}
+	}
 	r.applyStoryMaxIDsToMessages(ctx, viewerUserID, out)
 	return out
 }
 
 func (r *Router) tgMessagesDiscussionMessage(ctx context.Context, viewerUserID int64, discussion domain.ChannelDiscussionMessage) *tg.MessagesDiscussionMessage {
 	out := tgMessagesDiscussionMessage(viewerUserID, discussion)
+	if linked, ok := r.linkedDiscussionChat(ctx, viewerUserID, discussion.PostChannel.ID); ok {
+		out.Chats = replaceTGChat(out.Chats, linked)
+	}
 	// 用带 presence + self 标志的投影覆盖裸 tgUsers，防止 viewer 自己以 self=false
 	// 进入 Users（Android putUsers 会覆盖 currentUser）。
 	out.Users = r.tgUsersForViewer(viewerUserID, discussion.Users)

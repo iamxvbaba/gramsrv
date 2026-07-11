@@ -124,6 +124,38 @@ func (s *ChannelStore) GetChannel(_ context.Context, viewerUserID, channelID int
 	}, nil
 }
 
+// GetLinkedDiscussionChannel returns the discussion peer through an active
+// membership in its source broadcast channel. It deliberately does not turn
+// the viewer into a discussion-group member: callers need the Left projection
+// so clients can show the comment entry and, when needed, the Join Group gate.
+func (s *ChannelStore) GetLinkedDiscussionChannel(_ context.Context, viewerUserID, sourceChannelID int64) (domain.ChannelView, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	source, _, err := s.channelAndMemberLocked(viewerUserID, sourceChannelID)
+	if err != nil {
+		return domain.ChannelView{}, err
+	}
+	if !source.Broadcast || source.LinkedChatID == 0 {
+		return domain.ChannelView{}, domain.ErrChannelInvalid
+	}
+	linked, ok := s.channels[source.LinkedChatID]
+	if !ok || linked.Deleted || !linked.Megagroup || linked.Broadcast {
+		return domain.ChannelView{}, domain.ErrChannelInvalid
+	}
+	self, guest, guestErr := s.linkedDiscussionGuestLocked(viewerUserID, linked)
+	if guestErr != nil {
+		return domain.ChannelView{}, guestErr
+	}
+	if !guest {
+		if member, ok := s.members[linked.ID][viewerUserID]; ok {
+			self = member
+		} else {
+			return domain.ChannelView{}, domain.ErrChannelPrivate
+		}
+	}
+	return domain.ChannelView{Channel: cloneChannel(linked), Self: self}, nil
+}
+
 // ResolveChannel 是 GetChannel 的轻量版：只做访问校验并返回 Channel+Self，跳过 dialog/boost。
 // 与 postgres 实现语义一致（内存侧 dialog/boost 本就便宜，但保持接口行为对齐）。
 func (s *ChannelStore) ResolveChannel(_ context.Context, viewerUserID, channelID int64) (domain.ChannelView, error) {

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"telesrv/internal/domain"
@@ -411,6 +412,53 @@ func (s *ChannelStore) GetDiscussionMessage(_ context.Context, viewerUserID, cha
 	result.UnreadCount = s.channelThreadUnreadCountLocked(viewerUserID, targetChannel.ID, targetMsg.ID, targetMember.ReadInboxMaxID)
 	result.Messages = items
 	return result, nil
+}
+
+// ResolveDiscussionReadTarget returns the minimal linked-thread mapping and
+// current read boundary without building reply/reaction aggregates.
+func (s *ChannelStore) ResolveDiscussionReadTarget(_ context.Context, viewerUserID, sourceChannelID int64, sourceMessageID, readMaxID int) (domain.ChannelDiscussionReadTarget, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	source, sourceMember, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, sourceChannelID)
+	if err != nil {
+		return domain.ChannelDiscussionReadTarget{}, err
+	}
+	msg, ok := s.findMessageLocked(sourceChannelID, sourceMessageID)
+	if !ok || msg.Deleted || msg.ID <= sourceMember.AvailableMinID {
+		return domain.ChannelDiscussionReadTarget{}, domain.ErrMessageIDInvalid
+	}
+	targetChannelID, rootID := sourceChannelID, sourceMessageID
+	if source.Broadcast && msg.Discussion != nil {
+		if msg.Discussion.ChannelID == 0 || msg.Discussion.MessageID == 0 {
+			return domain.ChannelDiscussionReadTarget{}, domain.ErrMessageIDInvalid
+		}
+		linked, exists := s.channels[msg.Discussion.ChannelID]
+		root, rootExists := s.findMessageLocked(msg.Discussion.ChannelID, msg.Discussion.MessageID)
+		if !exists || linked.Deleted || !linked.Megagroup || linked.Broadcast || !rootExists || root.Deleted {
+			return domain.ChannelDiscussionReadTarget{}, domain.ErrMessageIDInvalid
+		}
+		targetChannelID, rootID = linked.ID, root.ID
+	}
+	targetMember := sourceMember
+	if targetChannelID != sourceChannelID {
+		_, targetMember, err = s.channelAndMemberLocked(viewerUserID, targetChannelID)
+		if errors.Is(err, domain.ErrChannelPrivate) {
+			targetMember, _, err = s.linkedDiscussionGuestLocked(viewerUserID, s.channels[targetChannelID])
+		}
+	}
+	if err != nil {
+		return domain.ChannelDiscussionReadTarget{}, err
+	}
+	effectiveMaxID := readMaxID
+	if target := s.channels[targetChannelID]; effectiveMaxID <= 0 || effectiveMaxID > target.TopMessageID {
+		effectiveMaxID = target.TopMessageID
+	}
+	return domain.ChannelDiscussionReadTarget{
+		ChannelID:   targetChannelID,
+		RootID:      rootID,
+		AlreadyRead: effectiveMaxID <= targetMember.ReadInboxMaxID && !targetMember.UnreadMark,
+		Guest:       targetMember.Guest,
+	}, nil
 }
 
 func (s *ChannelStore) findMessageLocked(channelID int64, id int) (domain.ChannelMessage, bool) {

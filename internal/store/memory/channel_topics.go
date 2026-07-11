@@ -499,7 +499,7 @@ func (s *ChannelStore) GetForumTopicsByID(_ context.Context, viewerUserID, chann
 func (s *ChannelStore) ListChannelReplies(_ context.Context, viewerUserID int64, filter domain.ChannelRepliesFilter) (domain.ChannelHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	source, member, err := s.channelAndMemberLocked(viewerUserID, filter.ChannelID)
+	source, member, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, filter.ChannelID)
 	if err != nil {
 		return domain.ChannelHistory{}, err
 	}
