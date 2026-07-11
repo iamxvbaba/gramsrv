@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -242,6 +243,10 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	if body.Size == 0 {
 		return domain.Document{}, domain.ErrDocumentInvalid
 	}
+	body, spec, err = s.normalizeUploadedGIF(ctx, body, spec)
+	if err != nil {
+		return domain.Document{}, err
+	}
 	// faststart：MP4 视频若 moov 在末尾，搬到文件头以支持流式播放。普通 Telegram 客户端
 	// 上传前会做这步；DrKLO 发 story 视频不转码导致 moov 在末尾，TDesktop 流式播放路径
 	// 无法解复用（av_read_frame Invalid data）。不转码、保留原编码（含 HEVC）。
@@ -304,6 +309,55 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 		s.cleanupMaterializedUpload(ctx, *spec.Thumb, "document thumbnail materialized")
 	}
 	return doc, nil
+}
+
+func (s *Service) normalizeUploadedGIF(ctx context.Context, body assembledUploadBlob, spec domain.DocumentSpec) (assembledUploadBlob, domain.DocumentSpec, error) {
+	if !strings.EqualFold(strings.TrimSpace(spec.MimeType), "image/gif") || spec.ForceFile {
+		return body, spec, nil
+	}
+	if s.gifs == nil || body.Size <= 0 || body.Size > gifTranscodeMaxInputBytes {
+		return assembledUploadBlob{}, domain.DocumentSpec{}, domain.ErrDocumentInvalid
+	}
+	data, total, err := s.blobs.GetRange(ctx, body.ObjectKey, 0, gifTranscodeMaxInputBytes+1)
+	if err != nil || total != body.Size || int64(len(data)) != body.Size {
+		return assembledUploadBlob{}, domain.DocumentSpec{}, domain.ErrDocumentInvalid
+	}
+	started := time.Now()
+	converted, err := s.gifs.Transcode(ctx, data)
+	if err != nil || len(converted.Data) == 0 || converted.Width <= 0 || converted.Height <= 0 || converted.Duration <= 0 {
+		s.log.Warn("GIF to MP4 conversion failed", zap.Int64("input_bytes", body.Size), zap.Error(err))
+		return assembledUploadBlob{}, domain.DocumentSpec{}, domain.ErrDocumentInvalid
+	}
+	objectKey, err := s.blobs.Put(ctx, converted.Data)
+	if err != nil {
+		return assembledUploadBlob{}, domain.DocumentSpec{}, err
+	}
+	sum := sha256.Sum256(converted.Data)
+	body = assembledUploadBlob{ObjectKey: objectKey, Size: int64(len(converted.Data)), SHA256: append([]byte(nil), sum[:]...)}
+	spec.MimeType = "video/mp4"
+	spec.Attributes = canonicalGIFVideoAttributes(spec.Attributes, converted, spec.NosoundVideo)
+	s.log.Info("GIF normalized to MP4",
+		zap.Int64("input_bytes", total), zap.Int("output_bytes", len(converted.Data)),
+		zap.Int("width", converted.Width), zap.Int("height", converted.Height),
+		zap.Float64("duration", converted.Duration), zap.Duration("dur", time.Since(started)))
+	return body, spec, nil
+}
+
+func canonicalGIFVideoAttributes(attrs []domain.DocumentAttribute, video GIFVideo, nosoundVideo bool) []domain.DocumentAttribute {
+	out := make([]domain.DocumentAttribute, 0, 3)
+	for _, attr := range attrs {
+		if attr.Kind == domain.DocAttrFilename {
+			out = append(out, attr)
+		}
+	}
+	if !nosoundVideo {
+		out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrAnimated})
+	}
+	out = append(out, domain.DocumentAttribute{
+		Kind: domain.DocAttrVideo, W: video.Width, H: video.Height,
+		Duration: video.Duration, SupportsStreaming: true, NoSound: true, VideoCodec: "h264",
+	})
+	return out
 }
 
 // maxFaststartBytes 限制 faststart 一次性载入内存的视频大小；超过则跳过（流式 faststart
@@ -422,6 +476,18 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 	}
 	if strings.TrimSpace(spec.MimeType) == "" {
 		spec.MimeType = "application/octet-stream"
+	}
+	if strings.EqualFold(strings.TrimSpace(spec.MimeType), "image/gif") && !spec.ForceFile {
+		if s.gifs == nil || len(data) > gifTranscodeMaxInputBytes {
+			return domain.Document{}, domain.ErrDocumentInvalid
+		}
+		converted, err := s.gifs.Transcode(ctx, data)
+		if err != nil || len(converted.Data) == 0 || converted.Width <= 0 || converted.Height <= 0 || converted.Duration <= 0 {
+			return domain.Document{}, domain.ErrDocumentInvalid
+		}
+		data = converted.Data
+		spec.MimeType = "video/mp4"
+		spec.Attributes = canonicalGIFVideoAttributes(spec.Attributes, converted, spec.NosoundVideo)
 	}
 	objectKey, size, sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
 	if err != nil {

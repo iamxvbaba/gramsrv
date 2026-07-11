@@ -109,6 +109,9 @@ type DocumentSpec struct {
 	Attributes []DocumentAttribute
 	Thumb      *UploadedFileRef // 可选缩略图上传，生成 doc:<id>:m
 	ForceFile  bool
+	// NosoundVideo 对应 inputMediaUploadedDocument.nosound_video。真实 GIF 仍会
+	// 转成 MP4，但该标志存在时按普通无声视频落库，不附 animated 属性（album 路径）。
+	NosoundVideo bool
 }
 
 // FileDownloadRequest 是 upload.getFile 解析后的下载请求；
@@ -205,6 +208,8 @@ type DocumentAttribute struct {
 	Duration          float64 `json:"duration,omitempty"`
 	RoundMessage      bool    `json:"round_message,omitempty"`
 	SupportsStreaming bool    `json:"supports_streaming,omitempty"`
+	NoSound           bool    `json:"no_sound,omitempty"`
+	VideoCodec        string  `json:"video_codec,omitempty"`
 
 	// audio
 	AudioDuration int    `json:"audio_duration,omitempty"`
@@ -350,14 +355,24 @@ func (d Document) stickerMaterialMimeOrExt() string {
 	return mimeType
 }
 
-// IsGif reports whether the document is a savable GIF (documentAttributeAnimated).
+// IsGif reports whether the document is a canonical, savable Telegram GIFv.
+// Telegram 的 GIF 是无声 MP4；仅有 animated 属性的 raw image/gif 不是合法 saved GIF。
 func (d Document) IsGif() bool {
+	if !strings.EqualFold(strings.TrimSpace(d.MimeType), "video/mp4") {
+		return false
+	}
+	var animated, video bool
 	for _, attr := range d.Attributes {
-		if attr.Kind == DocAttrAnimated {
-			return true
+		switch attr.Kind {
+		case DocAttrAnimated:
+			animated = true
+		case DocAttrVideo:
+			if !attr.RoundMessage && attr.W > 0 && attr.H > 0 && attr.Duration > 0 {
+				video = true
+			}
 		}
 	}
-	return false
+	return animated && video
 }
 
 // Photo 是已存储的 Telegram 照片（头像或图片消息）。

@@ -14,6 +14,76 @@ import (
 	"telesrv/internal/domain"
 )
 
+func TestCreateDocumentFromUploadNormalizesGIFToGIFv(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	transcoder := &fakeGIFTranscoder{result: GIFVideo{Data: []byte("fake-mp4"), Width: 320, Height: 240, Duration: 1.5}}
+	svc := NewService(media, blobs, 2, WithGIFTranscoder(transcoder), WithVideoThumbnailer(nil))
+	if _, err := svc.SaveFilePart(ctx, 10, 90, 0, []byte("GIF89a-fake")); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+	doc, err := svc.CreateDocumentFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 90, Parts: 1, Name: "animation.gif"},
+		domain.DocumentSpec{MimeType: "image/gif", Attributes: []domain.DocumentAttribute{
+			{Kind: domain.DocAttrFilename, FileName: "animation.gif"},
+			{Kind: domain.DocAttrImageSize, W: 320, H: 240},
+		}})
+	if err != nil {
+		t.Fatalf("CreateDocumentFromUpload: %v", err)
+	}
+	if transcoder.calls != 1 || doc.MimeType != "video/mp4" || !doc.IsGif() || doc.Size != int64(len("fake-mp4")) {
+		t.Fatalf("document = %+v calls=%d, want canonical GIFv", doc, transcoder.calls)
+	}
+	blob, ok, err := media.GetFileBlob(ctx, fmt.Sprintf("doc:%d", doc.ID))
+	if err != nil || !ok || blob.MimeType != "video/mp4" {
+		t.Fatalf("gifv blob = %+v ok=%v err=%v", blob, ok, err)
+	}
+	got, err := blobs.Get(ctx, blob.ObjectKey)
+	if err != nil || !bytes.Equal(got, []byte("fake-mp4")) {
+		t.Fatalf("gifv bytes=%q err=%v", got, err)
+	}
+}
+
+func TestCreateDocumentFromUploadGIFFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      domain.DocumentSpec
+		wantMime  string
+		wantGIF   bool
+		wantCalls int
+	}{
+		{name: "album nosound is normal video", spec: domain.DocumentSpec{MimeType: "image/gif", NosoundVideo: true}, wantMime: "video/mp4", wantGIF: false, wantCalls: 1},
+		{name: "force file preserves original", spec: domain.DocumentSpec{MimeType: "image/gif", ForceFile: true}, wantMime: "image/gif", wantGIF: false, wantCalls: 0},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			media := newFakeMediaStore()
+			blobs, err := NewLocalFS(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			transcoder := &fakeGIFTranscoder{result: GIFVideo{Data: []byte("mp4"), Width: 10, Height: 12, Duration: 1}}
+			svc := NewService(media, blobs, 2, WithGIFTranscoder(transcoder), WithVideoThumbnailer(nil))
+			fileID := int64(910 + i)
+			if _, err := svc.SaveFilePart(ctx, 10, fileID, 0, []byte("gif")); err != nil {
+				t.Fatal(err)
+			}
+			doc, err := svc.CreateDocumentFromUpload(ctx, domain.UploadedFileRef{OwnerUserID: 10, FileID: fileID, Parts: 1}, tc.spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if doc.MimeType != tc.wantMime || doc.IsGif() != tc.wantGIF || transcoder.calls != tc.wantCalls {
+				t.Fatalf("doc=%+v calls=%d", doc, transcoder.calls)
+			}
+		})
+	}
+}
+
 func TestCreateDocumentFromUploadGeneratesVideoThumbWhenMissing(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -186,6 +256,26 @@ func TestCreateDocumentFromBytesStoresBodyAndAttributes(t *testing.T) {
 	}
 	if !bytes.Equal(got, data) || blob.MimeType != "application/pdf" {
 		t.Fatalf("document blob mime=%q bytes=%q", blob.MimeType, got)
+	}
+}
+
+func TestCreateDocumentFromBytesNormalizesExternalGIF(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcoder := &fakeGIFTranscoder{result: GIFVideo{Data: []byte("external-mp4"), Width: 20, Height: 10, Duration: 2}}
+	svc := NewService(media, blobs, 2, WithGIFTranscoder(transcoder), WithVideoThumbnailer(nil))
+	doc, err := svc.CreateDocumentFromBytes(ctx, []byte("external-gif"), domain.DocumentSpec{
+		MimeType: "image/gif", Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrFilename, FileName: "x.gif"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !doc.IsGif() || doc.MimeType != "video/mp4" || transcoder.calls != 1 {
+		t.Fatalf("doc=%+v calls=%d", doc, transcoder.calls)
 	}
 }
 
@@ -440,6 +530,17 @@ type fakeVideoThumbnailer struct {
 	calls int
 	thumb []byte
 	err   error
+}
+
+type fakeGIFTranscoder struct {
+	result GIFVideo
+	err    error
+	calls  int
+}
+
+func (f *fakeGIFTranscoder) Transcode(_ context.Context, _ []byte) (GIFVideo, error) {
+	f.calls++
+	return f.result, f.err
 }
 
 func (f *fakeVideoThumbnailer) Extract(context.Context, []byte, string) ([]byte, error) {

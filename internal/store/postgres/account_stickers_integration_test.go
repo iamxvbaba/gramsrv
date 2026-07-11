@@ -38,6 +38,17 @@ func TestStickerCollectionsRoundTripPostgres(t *testing.T) {
 		t.Fatalf("faved after re-fave = %v, want 101 first", ids)
 	}
 
+	// used_at 只有秒精度：同秒保存仍必须严格按最后一次 mutation 排序。
+	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 102, false, 3000, 100); err != nil {
+		t.Fatalf("same-second fave 102: %v", err)
+	}
+	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 101, false, 3000, 100); err != nil {
+		t.Fatalf("same-second re-fave 101: %v", err)
+	}
+	if ids := stickerIDs(t, store, ctx, owner, faved); len(ids) != 2 || ids[0] != 101 || ids[1] != 102 {
+		t.Fatalf("same-second order = %v, want [101 102]", ids)
+	}
+
 	// 截断：max=2，加第 3 个挤掉最旧。
 	if err := store.SaveStickerCollectionItem(ctx, owner, faved, 103, false, 1003, 2); err != nil {
 		t.Fatalf("fave 103 (max 2): %v", err)

@@ -246,7 +246,11 @@ func TestMessagesGetSearchCountersUsesMediaCategoryCounts(t *testing.T) {
 	send(4, "music", docMedia(4, domain.DocumentAttribute{Kind: domain.DocAttrAudio, Title: "song"}), nil)
 	send(5, "voice", docMedia(5, domain.DocumentAttribute{Kind: domain.DocAttrAudio, Voice: true}), nil)
 	send(6, "round", docMedia(6, domain.DocumentAttribute{Kind: domain.DocAttrVideo, RoundMessage: true}), nil)
-	send(7, "gif", docMedia(7, domain.DocumentAttribute{Kind: domain.DocAttrAnimated}), nil)
+	gif := docMedia(7,
+		domain.DocumentAttribute{Kind: domain.DocAttrAnimated},
+		domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: 320, H: 240, Duration: 1})
+	gif.Document.MimeType = "video/mp4"
+	send(7, "gif", gif, nil)
 	send(8, "poll", &domain.MessageMedia{Kind: domain.MessageMediaKindPoll}, nil)
 
 	filters := []tg.MessagesFilterClass{

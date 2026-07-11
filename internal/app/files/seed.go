@@ -648,7 +648,7 @@ func seedDocumentAttributes(attrs []seedAttrJSON) []domain.DocumentAttribute {
 			}
 			out = append(out, attr)
 		case "DocumentAttributeVideo":
-			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: a.W, H: a.H, Duration: a.Duration, RoundMessage: a.RoundMessage, SupportsStreaming: a.SupportsStreaming})
+			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: a.W, H: a.H, Duration: a.Duration, RoundMessage: a.RoundMessage, SupportsStreaming: a.SupportsStreaming, NoSound: a.NoSound, VideoCodec: a.VideoCodec})
 		case "DocumentAttributeAudio":
 			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrAudio, AudioDuration: int(a.Duration), Voice: a.Voice, Title: a.Title, Performer: a.Performer})
 		case "DocumentAttributeFilename":
@@ -889,6 +889,8 @@ type seedAttrJSON struct {
 	Duration          float64                  `json:"duration"`
 	RoundMessage      bool                     `json:"round_message"`
 	SupportsStreaming bool                     `json:"supports_streaming"`
+	NoSound           bool                     `json:"nosound"`
+	VideoCodec        string                   `json:"video_codec"`
 	Voice             bool                     `json:"voice"`
 	Title             string                   `json:"title"`
 	Performer         string                   `json:"performer"`

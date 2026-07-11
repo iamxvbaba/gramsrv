@@ -459,13 +459,18 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
 			})
 		case domain.DocAttrVideo:
-			out = append(out, &tg.DocumentAttributeVideo{
+			video := &tg.DocumentAttributeVideo{
 				RoundMessage:      a.RoundMessage,
 				SupportsStreaming: a.SupportsStreaming,
+				Nosound:           a.NoSound,
 				Duration:          a.Duration,
 				W:                 a.W,
 				H:                 a.H,
-			})
+			}
+			if a.VideoCodec != "" {
+				video.SetVideoCodec(a.VideoCodec)
+			}
+			out = append(out, video)
 		case domain.DocAttrAudio:
 			attr := &tg.DocumentAttributeAudio{
 				Voice:     a.Voice,

@@ -540,17 +540,19 @@ func (s *PasswordStore) SaveStickerCollectionItem(ctx context.Context, userID in
 		if _, err := tx.Exec(ctx, `
 INSERT INTO user_sticker_collections (owner_user_id, kind, document_id, used_at)
 VALUES ($1, $2, $3, $4)
-ON CONFLICT (owner_user_id, kind, document_id) DO UPDATE SET used_at = EXCLUDED.used_at`,
+ON CONFLICT (owner_user_id, kind, document_id) DO UPDATE
+SET used_at = EXCLUDED.used_at,
+    order_key = nextval('user_sticker_collections_order_key_seq')`,
 			userID, string(kind), documentID, now); err != nil {
 			return fmt.Errorf("upsert sticker collection item: %w", err)
 		}
 		// 截断超上界：单次有序窗口扫描（索引 user_sticker_collections_order_idx 服务
-		// used_at DESC 排序），按 ctid 删除排名 > max 的旧项，避免 NOT IN 双扫全集。
+		// order_key DESC 排序），按 ctid 删除排名 > max 的旧项，避免 NOT IN 双扫全集。
 		if _, err := tx.Exec(ctx, `
 DELETE FROM user_sticker_collections
 WHERE ctid IN (
   SELECT ctid FROM (
-    SELECT ctid, ROW_NUMBER() OVER (ORDER BY used_at DESC, document_id DESC) AS rn
+    SELECT ctid, ROW_NUMBER() OVER (ORDER BY order_key DESC) AS rn
     FROM user_sticker_collections
     WHERE owner_user_id = $1 AND kind = $2
   ) t WHERE rn > $3
@@ -572,7 +574,7 @@ func (s *PasswordStore) ListStickerCollection(ctx context.Context, userID int64,
 SELECT document_id, used_at
 FROM user_sticker_collections
 WHERE owner_user_id = $1 AND kind = $2
-ORDER BY used_at DESC, document_id DESC
+ORDER BY order_key DESC
 LIMIT $3`, userID, string(kind), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list sticker collection: %w", err)

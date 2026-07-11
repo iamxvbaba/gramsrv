@@ -95,8 +95,8 @@ func ClassifyMediaCategories(media *MessageMedia, entities []MessageEntity) []Me
 }
 
 // classifyDocumentCategory 按 TL DocumentAttribute 判定一个文档落入哪个媒体类别。
-// 客户端的标签页 UI 以 TL 属性（而非 MIME）为准，故这里也只看属性。优先级：
-// sticker（不入任何标签页）> animated(GIF) > audio(music/voice) > video(video/round) > 通用文件。
+// 客户端的标签页 UI 以 TL 属性和 GIFv MIME 共同判定。优先级：sticker（不入任何标签页）>
+// canonical animated MP4 (GIF) > audio(music/voice) > video(video/round) > 通用文件。
 func classifyDocumentCategory(doc *Document) (MediaCategory, bool) {
 	if doc == nil {
 		return MediaCategoryNone, false
@@ -130,7 +130,7 @@ func classifyDocumentCategory(doc *Document) (MediaCategory, bool) {
 	switch {
 	case hasSticker:
 		return MediaCategoryNone, false // 贴纸/自定义 emoji 不出现在共享媒体
-	case hasAnimated:
+	case hasAnimated && doc.IsGif():
 		return MediaCategoryGif, true
 	case hasAudio:
 		if audioVoice {

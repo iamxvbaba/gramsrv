@@ -530,9 +530,10 @@ func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.I
 			return nil, fileReferenceInvalidErr()
 		}
 		spec := domain.DocumentSpec{
-			MimeType:   in.MimeType,
-			Attributes: domainDocumentAttributes(in.Attributes),
-			ForceFile:  in.ForceFile,
+			MimeType:     in.MimeType,
+			Attributes:   domainDocumentAttributes(in.Attributes),
+			ForceFile:    in.ForceFile,
+			NosoundVideo: in.NosoundVideo,
 		}
 		if thumb, ok := in.GetThumb(); ok {
 			if tref, ok := uploadedFileRef(userID, thumb); ok {
@@ -951,7 +952,7 @@ func domainDocumentAttributes(attrs []tg.DocumentAttributeClass) []domain.Docume
 			}
 			out = append(out, attr)
 		case *tg.DocumentAttributeVideo:
-			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: v.W, H: v.H, Duration: v.Duration, RoundMessage: v.RoundMessage, SupportsStreaming: v.SupportsStreaming})
+			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: v.W, H: v.H, Duration: v.Duration, RoundMessage: v.RoundMessage, SupportsStreaming: v.SupportsStreaming, NoSound: v.Nosound, VideoCodec: v.VideoCodec})
 		case *tg.DocumentAttributeAudio:
 			out = append(out, domain.DocumentAttribute{Kind: domain.DocAttrAudio, AudioDuration: v.Duration, Voice: v.Voice, Title: v.Title, Performer: v.Performer, Waveform: v.Waveform})
 		case *tg.DocumentAttributeFilename:

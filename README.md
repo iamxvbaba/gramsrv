@@ -49,8 +49,8 @@ codebase.
 | ✅ | Rich messages | Telegram Desktop rich text messages, rich content conversion, send/edit/scheduled flows, dialog/history projections, and memory/PostgreSQL persistence. |
 | ✅ | AI compose and ChatBot | Input-box rewrite/polish, default and custom tones, addstyle previews, local and external provider chains, streamed `@ChatBot` draft replies, and Business AI reply hooks. |
 | ✅ | Supergroups and channels | Create, join, leave, invite links, participants, admins, forum topics, history, send/edit/delete/read, reactions, public search, and previews. |
-| ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
-| ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
+| ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, canonical GIFv conversion, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
+| ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, saved GIFs, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
 | ✅ | Gifts and stars | Star gifts and local stars ledger foundations for compatibility and future feature work. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |

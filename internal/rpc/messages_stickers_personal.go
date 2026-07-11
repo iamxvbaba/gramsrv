@@ -1,7 +1,9 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/gotd/td/tg"
 
@@ -27,6 +29,9 @@ func (r *Router) stickerCollectionSvc() (stickerCollectionService, bool) {
 func (r *Router) stickerDocumentFromInput(ctx context.Context, input tg.InputDocumentClass, requireGif bool) (domain.Document, error) {
 	in, ok := input.(*tg.InputDocument)
 	if !ok || in.ID == 0 || r.deps.Files == nil {
+		if requireGif {
+			return domain.Document{}, gifIDInvalidErr()
+		}
 		return domain.Document{}, stickerInvalidErr()
 	}
 	doc, found, err := r.deps.Files.GetDocument(ctx, in.ID)
@@ -34,6 +39,9 @@ func (r *Router) stickerDocumentFromInput(ctx context.Context, input tg.InputDoc
 		return domain.Document{}, internalErr()
 	}
 	ok = found && doc.AccessHash == in.AccessHash
+	if ok && len(in.FileReference) > 0 && !bytes.Equal(in.FileReference, doc.FileReference) {
+		ok = false
+	}
 	if ok {
 		if requireGif {
 			ok = doc.IsGif()
@@ -42,6 +50,9 @@ func (r *Router) stickerDocumentFromInput(ctx context.Context, input tg.InputDoc
 		}
 	}
 	if !ok {
+		if requireGif {
+			return domain.Document{}, gifIDInvalidErr()
+		}
 		return domain.Document{}, stickerInvalidErr()
 	}
 	return doc, nil
@@ -95,7 +106,7 @@ func (r *Router) onMessagesSaveRecentSticker(ctx context.Context, req *tg.Messag
 
 func (r *Router) onMessagesSaveGif(ctx context.Context, req *tg.MessagesSaveGifRequest) (bool, error) {
 	if req == nil {
-		return false, stickerInvalidErr()
+		return false, gifIDInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -137,7 +148,10 @@ func (r *Router) onMessagesGetFavedStickers(ctx context.Context, hash int64) (tg
 	if err != nil {
 		return nil, internalErr()
 	}
-	docs := r.stickerCollectionDocuments(ctx, userID, domain.StickerCollectionFaved, nil)
+	docs, err := r.stickerCollectionDocuments(ctx, userID, domain.StickerCollectionFaved, nil)
+	if err != nil {
+		return nil, internalErr()
+	}
 	catalogHash := stickerDocumentsHash(docs)
 	if hash != 0 && hash == catalogHash {
 		return &tg.MessagesFavedStickersNotModified{}, nil
@@ -159,7 +173,10 @@ func (r *Router) onMessagesGetRecentStickers(ctx context.Context, req *tg.Messag
 		kind = domain.StickerCollectionRecentAttached
 	}
 	var dates []int
-	docs := r.stickerCollectionDocuments(ctx, userID, kind, &dates)
+	docs, err := r.stickerCollectionDocuments(ctx, userID, kind, &dates)
+	if err != nil {
+		return nil, internalErr()
+	}
 	catalogHash := stickerDocumentsHash(docs)
 	if req != nil && req.Hash != 0 && req.Hash == catalogHash {
 		return &tg.MessagesRecentStickersNotModified{}, nil
@@ -177,7 +194,10 @@ func (r *Router) onMessagesGetSavedGifs(ctx context.Context, hash int64) (tg.Mes
 	if err != nil {
 		return nil, internalErr()
 	}
-	docs := r.stickerCollectionDocuments(ctx, userID, domain.StickerCollectionGif, nil)
+	docs, err := r.stickerCollectionDocuments(ctx, userID, domain.StickerCollectionGif, nil)
+	if err != nil {
+		return nil, internalErr()
+	}
 	catalogHash := stickerDocumentsHash(docs)
 	if hash != 0 && hash == catalogHash {
 		return &tg.MessagesSavedGifsNotModified{}, nil
@@ -186,21 +206,24 @@ func (r *Router) onMessagesGetSavedGifs(ctx context.Context, hash int64) (tg.Mes
 }
 
 // stickerCollectionDocuments 取某集合并解析为完整文档（最新在前，顺序与集合一致）。
-// 解析不到的文档（已删/不可用）跳过。若 datesOut 非 nil，按相同顺序填充 used_at。
-func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, kind domain.StickerCollectionKind, datesOut *[]int) []domain.Document {
+// 集合引用缺失或类型错误属于坏数据并 fail-fast；若 datesOut 非 nil，按相同顺序填充 used_at。
+func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, kind domain.StickerCollectionKind, datesOut *[]int) ([]domain.Document, error) {
 	svc, ok := r.stickerCollectionSvc()
 	if !ok || r.deps.Files == nil {
 		if datesOut != nil {
 			*datesOut = []int{}
 		}
-		return nil
+		return nil, nil
 	}
 	items, err := svc.ListStickerCollection(ctx, userID, kind, domain.MaxStickerCollectionItems(kind))
-	if err != nil || len(items) == 0 {
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
 		if datesOut != nil {
 			*datesOut = []int{}
 		}
-		return nil
+		return nil, nil
 	}
 	ids := make([]int64, 0, len(items))
 	dateByID := make(map[int64]int, len(items))
@@ -210,10 +233,7 @@ func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, k
 	}
 	resolved, err := r.deps.Files.GetDocuments(ctx, ids)
 	if err != nil {
-		if datesOut != nil {
-			*datesOut = []int{}
-		}
-		return nil
+		return nil, err
 	}
 	byID := documentsByID(resolved)
 	docs := make([]domain.Document, 0, len(items))
@@ -221,7 +241,13 @@ func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, k
 	for _, id := range ids { // 保持集合顺序（最新在前）
 		doc, ok := byID[id]
 		if !ok {
-			continue
+			return nil, fmt.Errorf("sticker collection %s references missing document %d", kind, id)
+		}
+		if kind == domain.StickerCollectionGif && !doc.IsGif() {
+			return nil, fmt.Errorf("saved gif collection references non-GIFv document %d", id)
+		}
+		if kind != domain.StickerCollectionGif && !doc.IsSticker() {
+			return nil, fmt.Errorf("sticker collection %s references non-sticker document %d", kind, id)
 		}
 		docs = append(docs, doc)
 		dates = append(dates, dateByID[id])
@@ -229,7 +255,7 @@ func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, k
 	if datesOut != nil {
 		*datesOut = dates
 	}
-	return docs
+	return docs, nil
 }
 
 func stickerDocumentsHash(docs []domain.Document) int64 {

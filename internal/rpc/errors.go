@@ -100,6 +100,9 @@ func stickersetInvalidErr() error { return tgerr.New(406, "STICKERSET_INVALID") 
 // stickerInvalidErr 表示输入文档不是合法贴纸/GIF（faveSticker/saveRecentSticker/saveGif）。
 func stickerInvalidErr() error { return tgerr.New(400, "STICKER_DOCUMENT_INVALID") }
 
+// gifIDInvalidErr 表示 messages.saveGif 引用的文档不存在或不是规范 GIFv。
+func gifIDInvalidErr() error { return tgerr.New(400, "GIF_ID_INVALID") }
+
 func mediaCaptionTooLongErr() error { return tgerr.New(400, "MEDIA_CAPTION_TOO_LONG") }
 
 func replyMarkupInvalidErr() error { return tgerr.New(400, "REPLY_MARKUP_INVALID") }

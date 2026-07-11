@@ -52,6 +52,8 @@ type Service struct {
 	log         *zap.Logger
 	thumbs      VideoThumbnailer
 	thumbsSet   bool
+	gifs        GIFTranscoder
+	gifsSet     bool
 	blobCache   *blobMetaCache
 	byteCache   *blobBytesCache
 	// blobMetaSF/blobBytesSF 合并对同一热 blob 的并发首次访问：否则每个并发 getFile 都各打
@@ -88,6 +90,14 @@ func WithVideoThumbnailer(thumbnailer VideoThumbnailer) Option {
 	return func(s *Service) {
 		s.thumbs = thumbnailer
 		s.thumbsSet = true
+	}
+}
+
+// WithGIFTranscoder 覆盖真实 GIF→MP4 规范化器。传 nil 可用于测试不可用路径。
+func WithGIFTranscoder(transcoder GIFTranscoder) Option {
+	return func(s *Service) {
+		s.gifs = transcoder
+		s.gifsSet = true
 	}
 }
 
@@ -133,6 +143,14 @@ func NewService(media store.MediaStore, blobs BlobBackend, dc int, opts ...Optio
 			s.log.Warn("ffmpeg not found; server-side video thumbnail fallback disabled", zap.Error(err))
 		} else {
 			s.thumbs = thumbnailer
+		}
+	}
+	if !s.gifsSet {
+		transcoder, err := NewFFmpegGIFTranscoder()
+		if err != nil {
+			s.log.Warn("ffmpeg/ffprobe not found; GIF uploads will be rejected", zap.Error(err))
+		} else {
+			s.gifs = transcoder
 		}
 	}
 	return s
