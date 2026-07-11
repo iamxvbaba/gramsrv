@@ -172,7 +172,7 @@ func (o *Options) setDefaults() {
 		o.RPCGlobalWorkers = 256
 	}
 	if o.RPCGlobalMaxTasks <= 0 {
-		o.RPCGlobalMaxTasks = 8192
+		o.RPCGlobalMaxTasks = rpcResultFlightDefaultMaxPending
 	}
 	if o.RPCGlobalMaxBytes <= 0 {
 		o.RPCGlobalMaxBytes = 512 << 20
@@ -295,7 +295,7 @@ func New(opts Options) *Server {
 		clock:                    opts.Clock,
 		rand:                     opts.Rand,
 		types:                    tmap.New(tg.TypesMap(), mt.TypesMap(), proto.TypesMap()),
-		rpcResults:               newRPCResultCache(opts.Clock.Now),
+		rpcResults:               newRPCResultCacheWithFlightLimit(opts.Clock.Now, opts.RPCGlobalMaxTasks),
 		admission:                newAdmissionController(opts.MaxConnections, opts.MaxConnectionsPerIP, opts.MaxConcurrentHandshakes),
 	}
 }
@@ -307,8 +307,33 @@ func (s *Server) Conns() *SessionManager {
 
 // newConn 基于一次解密结果创建一个可发送的连接对象。
 func (s *Server) newConn(tc transport.Conn, key crypto.AuthKey, sessionID, salt int64) *Conn {
+	if lease, ok := tc.(*physicalTransportLease); ok {
+		return s.newConnWithLease(lease, key, sessionID, salt)
+	}
+	if tc != nil {
+		_, lease := newPhysicalTransportOwner(tc)
+		return s.newConnWithLease(lease, key, sessionID, salt)
+	}
+	// Preserve the nil transport used by construction-only tests.
+	return s.buildConn(nil, nil, key, sessionID, salt)
+}
+
+// newConnWithLease attaches a logical Conn to an explicitly owned physical
+// transport generation. Production session replacement must Transfer the old
+// lease first; it must never wrap the same raw transport in a second owner.
+func (s *Server) newConnWithLease(lease *physicalTransportLease, key crypto.AuthKey, sessionID, salt int64) *Conn {
+	if lease == nil {
+		panic("mtprotoedge: nil physical transport lease")
+	}
+	c := s.buildConn(lease, lease, key, sessionID, salt)
+	lease.bindLogicalConn(c)
+	return c
+}
+
+func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key crypto.AuthKey, sessionID, salt int64) *Conn {
 	c := &Conn{
 		transport:                    tc,
+		transportLease:               lease,
 		writer:                       tc,
 		cipher:                       s.cipher,
 		msgID:                        proto.NewMessageIDGen(s.clock.Now),
@@ -558,7 +583,8 @@ func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, err
 //   - auth_key_id 未注册：回 AuthKeyNotFound，促使客户端重新握手。
 //
 // 连接建立 session 后注册到 SessionManager，结束时注销。
-func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error) {
+func (s *Server) serveConn(ctx context.Context, raw transport.Conn) (err error) {
+	transportOwner, conn := newPhysicalTransportOwner(raw)
 	s.metrics.ConnOpened()
 	s.log.Debug("Connection accepted")
 
@@ -568,9 +594,13 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 		// this stack has stopped using b/plain; transport.Close may have raced us earlier and must
 		// not return that memory budget prematurely.
 		releaseInboundFrameOwnership(conn)
-		// 先同步关闭物理 socket，解除可能阻塞在 writer.Send 的 outbound actor；
-		// 再停止 logical Conn，避免 Close 等 actor 时反过来等到 write deadline。
-		_ = conn.Close()
+		// Publish the terminal/RPC-cancel gates before index removal or lifecycle
+		// observers. Physical close then releases a writer already inside Send; the
+		// final Close only waits for the now-fenced actors to converge.
+		if current != nil {
+			current.beginTerminalShutdown()
+		}
+		_ = transportOwner.CloseAny()
 		if current != nil {
 			s.conns.Unregister(current)
 			current.Close()
@@ -584,7 +614,7 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 	defer cancel()
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		_ = transportOwner.CloseAny()
 	}()
 
 	cs := newConnState()
@@ -601,7 +631,7 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 			// 建立 session 前（current==nil，握手 + 首个加密消息之前）用较短的 handshakeTimeout
 			// 快速回收静默的半开 / 异常连接；建立 session 后用 readTimeout（客户端有 ping 心跳）。
 			timeout := s.readTimeout
-			if current == nil {
+			if current == nil || !current.isActive() {
 				timeout = s.handshakeTimeout
 			}
 			if err := s.recv(ctx, conn, &b, timeout); err != nil {
@@ -618,6 +648,12 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 		}
 
 		if authKeyID == emptyAuthKeyID {
+			// A physical socket may perform key exchange only before it owns an
+			// encrypted logical session. Mixing the direct exchange writer with an
+			// active outbound actor would bypass generation/write serialization.
+			if current != nil {
+				return errors.New("unencrypted exchange on established encrypted connection")
+			}
 			releaseHandshake, admitted := s.admission.tryAcquireHandshake()
 			if !admitted {
 				if err := s.sendProtoError(ctx, conn, codec.CodeTransportFlood); err != nil {
@@ -647,7 +683,9 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 		// 已建立连接复用缓存密钥走快路径（fetchedKey=nil）：避开每帧回查 AuthKeyStore——
 		// 这是 mtprotoedge 层最热的库访问点。密钥材料创建后不可变；销毁(destroy_auth_key)/
 		// 撤销由 SessionManager 主动 Close 连接保证失效，不依赖此被动回查。仅 destroy_auth_key
-		// 的发起连接置 keyDestroyed，使其下一帧回落到 Get→AuthKeyNotFound，维持原契约。
+		// 的发起连接置 keyDestroyed，使其下一帧回落到 Get→AuthKeyNotFound。尚未进入
+		// SessionManager 的 bad-salt provisional 会在 handleEncrypted 建立 activation claim
+		// 后精确复查一次，既把撤销与激活线性化，也不把 salt storm 放大成 PG 写风暴。
 		var fetchedKey *store.AuthKeyData
 		if current == nil || current.authKeyID != authKeyID || current.keyDestroyed.Load() {
 			d, found, err := s.authKeys.Get(ctx, authKeyID)
@@ -655,7 +693,11 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 				return fmt.Errorf("lookup auth key: %w", err)
 			}
 			if !found {
-				if err := s.sendProtoError(ctx, conn, codec.CodeAuthKeyNotFound); err != nil {
+				writer := transport.Conn(conn)
+				if current != nil {
+					writer = current.transport
+				}
+				if err := s.sendProtoError(ctx, writer, codec.CodeAuthKeyNotFound); err != nil {
 					return err
 				}
 				// -404 对 TDesktop 是 terminal key failure；继续保留 socket 只会允许
@@ -666,6 +708,11 @@ func (s *Server) serveConn(ctx context.Context, conn transport.Conn) (err error)
 		}
 
 		current, err = s.handleEncrypted(ctx, conn, cs, current, fetchedKey, &b, &plain)
+		if errors.Is(err, errActivationAuthKeyRejected) {
+			// handleEncrypted writes -404 while its activation claim still owns the
+			// physical writer, then its deferred abort removes/closes the claim.
+			return nil
+		}
 		if err != nil {
 			return err
 		}

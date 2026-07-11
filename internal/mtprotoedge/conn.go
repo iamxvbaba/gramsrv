@@ -25,13 +25,31 @@ type outboundWriter interface {
 	Send(context.Context, *bin.Buffer) error
 }
 
+type connLifecycle uint32
+
+const (
+	// The zero value is deliberately provisional so test/embedded Conn values start
+	// outside every SessionManager index until they complete activation.
+	connLifecycleProvisional connLifecycle = iota
+	connLifecycleClaiming
+	connLifecycleActive
+	// retired is terminal and irreversible. A physical connection that lost an
+	// activation claim must never become visible again, even if its read goroutine
+	// was already between preflight and publish when a replacement arrived.
+	connLifecycleRetired
+)
+
 type Conn struct {
-	transport    transport.Conn
-	writer       outboundWriter
-	cipher       crypto.Cipher
-	msgID        *proto.MessageIDGen
-	writeTimeout time.Duration
-	metrics      Metrics
+	transport transport.Conn
+	// transportLease owns exactly one generation of the physical transport.
+	// It is nil only for directly constructed test/embedded Conns that retain
+	// the legacy raw-transport close fallback.
+	transportLease *physicalTransportLease
+	writer         outboundWriter
+	cipher         crypto.Cipher
+	msgID          *proto.MessageIDGen
+	writeTimeout   time.Duration
+	metrics        Metrics
 
 	authKeyID [8]byte
 	// authKeyHex 是 authKeyID 的 hex 缓存：每条 RPC 的结构化日志都会带它，
@@ -66,7 +84,11 @@ type Conn struct {
 	outboundScratchOnce          sync.Once
 	// terminal 表示该 logical Conn 已停止接受新的出站操作。写失败时由
 	// outbound actor 置位并只发停止信号，不能在 actor 内等待自身退出。
-	terminal       atomic.Bool
+	terminal atomic.Bool
+	// lifecycle is a monotonic activation state machine. In particular, retired
+	// never transitions back to claiming/active; this closes the stale-read-loop
+	// ABA where an evicted Conn observed "not active" and registered itself again.
+	lifecycle      atomic.Uint32
 	transportClose sync.Once
 
 	rpcScheduler *inboundRPCScheduler
@@ -128,6 +150,63 @@ type Conn struct {
 	// 在每次 Dispatch 后从 RPC 注册表刷新。出站(rpc_result/push)按此把 227 对象降级给老客户端；
 	// 0 表示尚未协商，按 canonical(227) 处理=不降级。
 	clientLayer atomic.Int32
+}
+
+func (c *Conn) lifecycleState() connLifecycle {
+	if c == nil {
+		return connLifecycleRetired
+	}
+	return connLifecycle(c.lifecycle.Load())
+}
+
+func (c *Conn) beginActivationClaim() bool {
+	if c == nil || c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+		return false
+	}
+	if !c.lifecycle.CompareAndSwap(uint32(connLifecycleProvisional), uint32(connLifecycleClaiming)) {
+		return false
+	}
+	// Physical close can win after the pre-check but before the lifecycle CAS.
+	// Do not let a doomed claimant enter SessionManager and retire a healthy old
+	// owner for the same logical session.
+	if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+		c.lifecycle.Store(uint32(connLifecycleRetired))
+		return false
+	}
+	return true
+}
+
+func (c *Conn) publishActivation() bool {
+	if c == nil || c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+		return false
+	}
+	if !c.lifecycle.CompareAndSwap(uint32(connLifecycleClaiming), uint32(connLifecycleActive)) {
+		return false
+	}
+	// A concurrent transport failure can retire the Conn between the first
+	// terminal check and the CAS. Never let that intermediate active value escape.
+	if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+		c.lifecycle.Store(uint32(connLifecycleRetired))
+		return false
+	}
+	return true
+}
+
+func (c *Conn) isActive() bool {
+	return c != nil && !c.terminal.Load() && c.lifecycleState() == connLifecycleActive
+}
+
+// transferTransportOwnership hands this Conn's physical socket to the next
+// logical generation. The caller must have fenced and drained the old writer.
+func (c *Conn) transferTransportOwnership() (*physicalTransportLease, bool) {
+	if c == nil || c.transportLease == nil {
+		return nil, false
+	}
+	return c.transportLease.Transfer()
+}
+
+func (c *Conn) isPhysicalTransportCurrentOpen() bool {
+	return c != nil && (c.transportLease == nil || c.transportLease.IsCurrentOpen())
 }
 
 // ClientLayer 返回连接协商的 TL layer；未协商时返回 canonical layer（227，不降级）。

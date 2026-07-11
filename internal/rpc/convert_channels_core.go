@@ -22,8 +22,15 @@ func tgChannelChatsWithPrimarySelf(viewerUserID int64, primary domain.Channel, e
 			continue
 		}
 		seen[ch.ID] = struct{}{}
+		if ch.ID != primary.ID {
+			// Companion channels have no matching viewer membership in
+			// ChannelHistory. Keep them minimal so they cannot overwrite the
+			// client's cached left/creator/admin/banned state.
+			out = append(out, tgChannelChatMin(viewerUserID, ch))
+			continue
+		}
 		var self *domain.ChannelMember
-		if ch.ID == primary.ID && primarySelf.ChannelID == ch.ID && primarySelf.UserID == viewerUserID {
+		if primarySelf.ChannelID == ch.ID && primarySelf.UserID == viewerUserID {
 			self = &primarySelf
 		}
 		out = append(out, tgChannelChat(viewerUserID, ch, self))

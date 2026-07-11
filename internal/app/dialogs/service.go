@@ -336,7 +336,12 @@ func (s *Service) appendMissingChannelPeerPreviews(ctx context.Context, userID i
 		if !ok || view.Forbidden {
 			continue
 		}
-		if view.Self.Status != domain.ChannelMemberActive {
+		// Linked discussion guests need a transient peer-dialog snapshot so
+		// TDesktop can finish materializing the comments History after
+		// requestSelf. ChannelLeft keeps the snapshot out of the main chat list,
+		// and Guest guarantees this path never turns an ordinary public preview
+		// into a dialog.
+		if view.Self.Status != domain.ChannelMemberActive && !view.Self.Guest {
 			continue
 		}
 		history, err := s.channels.ListChannelHistory(ctx, userID, domain.ChannelHistoryFilter{

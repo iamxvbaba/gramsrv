@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/gotd/td/crypto"
 	"github.com/gotd/td/mt"
 	"github.com/gotd/td/proto"
+	"github.com/gotd/td/proto/codec"
 	"github.com/gotd/td/tgerr"
 	"github.com/gotd/td/transport"
 
@@ -30,11 +32,16 @@ import (
 
 // connState 是单连接的 MTProto 运行态。
 type connState struct {
-	sentCreated bool
-	seen        map[int64]clientMsgRecord // 已处理的 client msg_id，用于幂等和 msgs_state_req
-	order       []int64
-	minSeen     int64
-	maxSeen     int64
+	// createdFloor is the smallest client msg_id covered by the latest
+	// new_session_created notification for this server-side session generation.
+	// It only moves down: official clients resend every request below first_msg_id,
+	// so advertising an outer container id while accepting smaller inner ids would
+	// orphan the original rpc_result messages.
+	createdFloor int64
+	seen         map[int64]clientMsgRecord // 已处理的 client msg_id，用于幂等和 msgs_state_req
+	order        []int64
+	minSeen      int64
+	maxSeen      int64
 	// maxContentMsgID/maxContentSeqNo 是已接受 content 消息的 msg_id / seq_no 高水位，
 	// 供 validateSeq 的 O(1) 快路径使用（客户端正常发送严格递增）。二者只增不减、
 	// 不随 seen 淘汰回退——快路径只接受「全扫描也必然接受」的子集，其余回落全扫描。
@@ -46,6 +53,9 @@ type clientMsgRecord struct {
 	state   byte
 	seqNo   int32
 	content bool
+	// service is the constructor class admitted with this msg_id. A duplicate
+	// uses this committed class and never decodes/executes its replacement body.
+	service bool
 }
 
 func newConnState() *connState {
@@ -76,11 +86,11 @@ const (
 	// MTProto service vectors operate on bounded connection tracking tables. Accepting more IDs
 	// only burns decode/CPU and cannot improve the result.
 	maxServiceMessageIDs = 4096
-	// A decoded container descriptor is 48 bytes on 64-bit Go today. Charge 64 bytes per entry
-	// before allocating the exact-size slice so allocator rounding and future field growth remain
-	// inside the process-wide inbound budget. Message bodies stay as zero-copy views of the already
-	// charged plaintext frame/gzip expansion.
-	containerDescriptorBudgetBytes = 64
+	// Charge each container entry for the decoded proto.Message view plus the staged connState,
+	// action and ACK descriptors retained by the single-pass inbound plan. Bodies remain zero-copy
+	// views of the already charged plaintext frame/gzip expansion; RPC copies have a separate batch
+	// admission budget.
+	containerDescriptorBudgetBytes = 192
 
 	msgStateUnknown         byte = 1
 	msgStateNotReceived     byte = 2
@@ -97,11 +107,14 @@ const (
 	badMsgContainer     = 64
 )
 
+var errActivationAuthKeyRejected = errors.New("activation auth key no longer exists")
+
 // handleEncrypted 解密加密消息，按需注册连接，处理服务消息并分发明文 payload。
 // 返回（可能新建/更新的）当前连接对象，供 serveConn 维护生命周期。
 // fetchedKey 非 nil 表示本帧的 auth key 是刚从 AuthKeyStore 查出的（首帧/换 auth key/被销毁
-// 后回落）；为 nil 表示走快路径——serveConn 判定 current 仍持同一未销毁的 auth key，直接复用
-// current.key/current.salt 解密，既不回查 AuthKeyStore 也不重建 store.AuthKeyData。
+// 后回落）；为 nil 表示走连接缓存快路径——serveConn 判定 current 仍持同一未销毁的 auth key，
+// 直接复用 current.key/current.salt 解密。任何 provisional 在 claim 建立后、发 required
+// control 前都会最终回查 AuthKeyStore，使外部撤销与 activation 线性化。
 // plain 是 serveConn 持有的复用明文缓冲，frame 的 slice 仅在下一帧解密前有效。
 func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
 	var key crypto.AuthKey
@@ -120,30 +133,27 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		return current, fmt.Errorf("decrypt: %w", err)
 	}
 
-	if frame.salt != serverSalt {
-		c := current
-		temp := false
-		if c == nil || c.sessionID != frame.sessionID || c.authKeyID != key.ID {
-			c = s.newConn(tc, key, frame.sessionID, serverSalt)
-			temp = true
-		}
-		err := s.sendBadServerSalt(ctx, c, frame.messageID, frame.seqNo, serverSalt)
-		if temp {
-			c.Close()
-		}
-		return current, err
-	}
-
-	// 首个加密消息或 session 变化时（重新）注册连接到 SessionManager。
+	// 首个加密消息（即使 salt 尚未修正）或 session 变化时创建并保留唯一的
+	// provisional Conn。同一物理 transport 换 session 必须先不可逆地 fence/drain
+	// 旧 writer，再把物理 lease 原子转交给新 generation。为每个 bad_server_salt
+	// 临时创建 Conn 会在同一 socket 上启动多个 outbound actor，Android 的启动重试
+	// 风暴随即变成并发写和重复结果放大。
 	if current == nil || current.sessionID != frame.sessionID || current.authKeyID != key.ID {
 		if current != nil {
 			cs.reset()
-		}
-		if current != nil {
+			current.beginTerminalShutdown()
 			s.conns.Unregister(current)
-			current.Close()
+			if !current.waitOutboundShutdownUntil(forceCloseBatchTimeout) {
+				return current, errors.New("previous session outbound writer did not stop")
+			}
+			nextLease, ok := current.transferTransportOwnership()
+			if !ok {
+				return current, ErrConnClosed
+			}
+			current = s.newConnWithLease(nextLease, key, frame.sessionID, serverSalt)
+		} else {
+			current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		}
-		current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		// 注册即播种协商 layer：新 Conn 的 clientLayer 为 0（=canonical 227），若等到
 		// 首条 RPC 的 Dispatch 返回后才刷新，重连老客户端在首条 RPC handler 执行期间
 		// 收到的 pending flush / 并发 push 会漏降级。进程内重连时 rpc 层留有
@@ -153,67 +163,119 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 				current.SetClientLayer(layer)
 			}
 		}
-		s.conns.Register(current)
 	}
 
-	s.maybePersistSession(ctx, current, frame.sessionID, key.ID, serverSalt)
+	if frame.salt != serverSalt {
+		// bad_server_salt 是修正后重试的物理屏障：payload 与加密 envelope 都必须携带
+		// 同一个权威 salt，写失败则该 provisional/active Conn 不得继续接收状态。
+		return current, s.sendBadServerSalt(ctx, current, frame.messageID, frame.seqNo, serverSalt)
+	}
 
 	body := frame.data
 	typeID, err := (&bin.Buffer{Buf: body}).PeekID()
 	if err != nil {
 		return current, fmt.Errorf("peek encrypted payload type id: %w", err)
 	}
-	if code := validateClientEnvelope(s.clock.Now(), frame.messageID, frame.seqNo, typeID); code != 0 {
-		s.log.Debug("Sending bad_msg_notification",
-			zap.Int64("msg_id", frame.messageID),
-			zap.Int32("seq_no", frame.seqNo),
-			zap.Uint32("type_id", typeID),
-			zap.Int("code", code),
-		)
-		return current, s.sendBadMsg(ctx, current, frame.messageID, frame.seqNo, code)
+	plan, err := s.preflightInbound(cs, frame.messageID, frame.seqNo, body)
+	if err != nil {
+		var bad *dispatchBadMsgError
+		if errors.As(err, &bad) {
+			s.log.Debug("Sending bad_msg_notification",
+				zap.Int64("msg_id", bad.msgID),
+				zap.Int32("seq_no", bad.seqNo),
+				zap.Uint32("type_id", typeID),
+				zap.Int("code", bad.code),
+			)
+			return current, s.sendBadMsg(ctx, current, bad.msgID, bad.seqNo, bad.code)
+		}
+		return current, err
 	}
-	if err := sendQuickAckIfRequested(ctx, tc, key, frame.plaintext, s.writeTimeout); err != nil {
+	defer plan.close()
+	if err := s.prepareInboundRPCBatch(ctx, current, plan); err != nil {
+		return current, err
+	}
+	if err := sendQuickAckIfRequested(ctx, current.transport, key, frame.plaintext, s.writeTimeout); err != nil {
 		return current, err
 	}
 
-	content := clientMessageNeedsAck(typeID)
-	if record, ok := cs.seenRecord(frame.messageID); ok {
-		s.log.Debug("Duplicate msg_id; replay cached result if available", zap.Int64("msg_id", frame.messageID))
-		if err := s.replayRPCResultByRequest(ctx, current, frame.messageID); err != nil {
+	moveCreatedFloor := cs.createdFloor == 0 || plan.logicalMin < cs.createdFloor
+	claimPending := false
+	if current.lifecycleState() == connLifecycleProvisional {
+		if !moveCreatedFloor {
+			return current, errors.New("provisional session has no new_session_created boundary")
+		}
+		if err := s.conns.BeginActivation(current); err != nil {
 			return current, err
 		}
-		if !record.content {
-			return current, nil
+		claimPending = true
+		defer func() {
+			if claimPending {
+				s.conns.AbortActivation(current)
+			}
+		}()
+
+		// BeginActivation has installed current in claimsByAuth, which is the shared
+		// linearization domain with auth-key revocation. A delete that completed before
+		// the claim is visible here as !found; a delete after this read must observe and
+		// fence the claim. This final check intentionally covers every activation path:
+		// first correct-salt frame, retained bad-salt provisional and session transfer.
+		fresh, found, getErr := s.authKeys.Get(ctx, current.authKeyID)
+		if getErr != nil {
+			return current, fmt.Errorf("revalidate activation auth key: %w", getErr)
 		}
-		return current, s.sendAck(ctx, current, frame.messageID)
+		if !found || fresh.ID != current.authKeyID || fresh.Value != [256]byte(current.key.Value) {
+			// Send the terminal protocol error while the claim still owns a live writer;
+			// the deferred abort then fences and removes it before serveConn returns.
+			if sendErr := s.sendProtoError(ctx, current.transport, codec.CodeAuthKeyNotFound); sendErr != nil {
+				return current, sendErr
+			}
+			return current, errActivationAuthKeyRejected
+		}
+		if current.terminal.Load() || !current.isPhysicalTransportCurrentOpen() {
+			return current, ErrConnClosed
+		}
 	}
-	if code := cs.validateSeq(frame.messageID, frame.seqNo, content); code != 0 {
-		s.log.Debug("Sending bad_msg_notification",
-			zap.Int64("msg_id", frame.messageID),
+	if moveCreatedFloor {
+		s.log.Debug("Sending new_session_created",
+			zap.Int64("first_msg_id", plan.logicalMin),
+			zap.Int64("outer_msg_id", frame.messageID),
 			zap.Int32("seq_no", frame.seqNo),
-			zap.Uint32("type_id", typeID),
-			zap.Int("code", code),
 		)
-		return current, s.sendBadMsg(ctx, current, frame.messageID, frame.seqNo, code)
-	}
-	cs.track(frame.messageID, frame.seqNo, content, msgStateReceived)
-
-	if !cs.sentCreated {
-		cs.sentCreated = true
-		s.log.Debug("Sending new_session_created", zap.Int64("msg_id", frame.messageID), zap.Int32("seq_no", frame.seqNo))
-		if err := s.sendNewSessionCreated(ctx, current, frame.messageID); err != nil {
+		if err := s.sendNewSessionCreated(ctx, current, plan.logicalMin); err != nil {
 			return current, err
 		}
 	}
+	if !current.isPhysicalTransportCurrentOpen() {
+		return current, ErrConnClosed
+	}
+	if claimPending {
+		if err := s.conns.PublishActivation(current); err != nil {
+			return current, err
+		}
+		claimPending = false
+	}
+	if moveCreatedFloor {
+		cs.createdFloor = plan.logicalMin
+	}
+	plan.commitState(cs)
+	s.maybePersistSession(ctx, current, frame.sessionID, key.ID, serverSalt)
 
-	var acks []int64
-	if err := s.dispatch(ctx, cs, current, frame.messageID, frame.seqNo, &bin.Buffer{Buf: body}, &acks); err != nil {
+	if err := s.executeInboundPlan(ctx, cs, current, plan); err != nil {
 		return current, err
 	}
-	if len(acks) > 0 {
-		if err := s.sendAck(ctx, current, acks...); err != nil {
+	if err := plan.commitRPCBatch(); err != nil {
+		return current, err
+	}
+	if len(plan.ackIDs) > 0 {
+		if err := s.sendAck(ctx, current, plan.ackIDs...); err != nil {
 			return current, err
 		}
+	}
+	// An overlapping cross-connection owner may run until RPCTimeout. ACK the
+	// accepted duplicate before joining it so the new client does not build a
+	// retransmit storm while its read loop waits for the shared result.
+	if err := s.executePendingRPCReplays(ctx, current, plan); err != nil {
+		return current, err
 	}
 	return current, nil
 }
@@ -284,236 +346,37 @@ func clientQuickAckToken(key crypto.AuthKey, plaintext []byte) uint32 {
 // dispatch 处理一条明文消息：解包 container/gzip，处理服务消息，其余转 RPC 路由。
 // content-related 消息（ping、RPC）的 msg_id 会收集到 acks 以便统一确认。
 func (s *Server) dispatch(ctx context.Context, cs *connState, c *Conn, msgID int64, seqNo int32, b *bin.Buffer, acks *[]int64) error {
-	expanded := 0
-	return s.dispatchWithBudget(ctx, cs, c, msgID, seqNo, b, acks, dispatchBudget{expanded: &expanded})
-}
-
-type dispatchBudget struct {
-	depth          int
-	containerDepth int
-	expanded       *int
-}
-
-func (s *Server) dispatchWithBudget(ctx context.Context, cs *connState, c *Conn, msgID int64, seqNo int32, b *bin.Buffer, acks *[]int64, budget dispatchBudget) error {
-	if budget.depth > maxDispatchDepth {
-		return fmt.Errorf("mtproto wrapper depth %d exceeds %d", budget.depth, maxDispatchDepth)
-	}
-	id, err := b.PeekID()
+	plan, err := s.preflightInbound(cs, msgID, seqNo, b.Buf)
 	if err != nil {
-		return fmt.Errorf("peek type id: %w", err)
+		var bad *dispatchBadMsgError
+		if errors.As(err, &bad) && c != nil {
+			return s.sendBadMsg(ctx, c, bad.msgID, bad.seqNo, bad.code)
+		}
+		return err
 	}
-	ackContent := func() {
-		if clientMessageNeedsAck(id) {
-			*acks = append(*acks, msgID)
-		}
-	}
+	defer plan.close()
+	plan.commitState(cs)
+	*acks = append(*acks, plan.ackIDs...)
+	return s.executeInboundPlan(ctx, cs, c, plan)
+}
 
-	switch id {
-	case proto.GZIPTypeID:
-		data, releaseExpansion, err := s.decodeGZIPWithGlobalBudget(b)
-		if err != nil {
-			return fmt.Errorf("decode gzip: %w", err)
-		}
-		defer releaseExpansion()
-		*budget.expanded += len(data)
-		if *budget.expanded > maxDispatchExpandedBytes {
-			return fmt.Errorf("cumulative gzip expansion %d exceeds %d", *budget.expanded, maxDispatchExpandedBytes)
-		}
-		budget.depth++
-		return s.dispatchWithBudget(ctx, cs, c, msgID, seqNo, &bin.Buffer{Buf: data}, acks, budget)
+// dispatchBadMsgError carries a protocol-level rejection discovered during the
+// side-effect-free wrapper/container preflight. The caller emits the single
+// bad_msg_notification only after the whole container has been inspected.
+type dispatchBadMsgError struct {
+	msgID int64
+	seqNo int32
+	code  int
+}
 
-	case proto.MessageContainerTypeID:
-		if budget.containerDepth != 0 {
-			return s.sendBadMsg(ctx, c, msgID, seqNo, badMsgContainer)
-		}
-		count, err := containerMessageCount(b)
-		if err != nil {
-			return fmt.Errorf("decode container count: %w", err)
-		}
-		if count > maxContainerMessages {
-			return s.sendBadMsg(ctx, c, msgID, seqNo, badMsgContainer)
-		}
-		container, releaseContainer, err := s.decodeMessageContainerViews(b, count)
-		if err != nil {
-			return fmt.Errorf("decode container: %w", err)
-		}
-		defer releaseContainer()
-		if code := validateClientContainer(msgID, seqNo, container); code != 0 {
-			return s.sendBadMsg(ctx, c, msgID, seqNo, code)
-		}
-		budget.depth++
-		budget.containerDepth++
-		for i := range container.Messages {
-			m := container.Messages[i]
-			typeID, err := (&bin.Buffer{Buf: m.Body}).PeekID()
-			if err != nil {
-				return fmt.Errorf("peek container message type id: %w", err)
-			}
-			content := clientMessageNeedsAck(typeID)
-			if record, ok := cs.seenRecord(m.ID); ok {
-				if err := s.replayRPCResultByRequest(ctx, c, m.ID); err != nil {
-					return err
-				}
-				if record.content {
-					*acks = append(*acks, m.ID)
-				}
-				continue
-			}
-			if code := cs.validateSeq(m.ID, int32(m.SeqNo), content); code != 0 {
-				return s.sendBadMsg(ctx, c, m.ID, int32(m.SeqNo), code)
-			}
-			cs.track(m.ID, int32(m.SeqNo), content, msgStateReceived)
-			if err := s.dispatchWithBudget(ctx, cs, c, m.ID, int32(m.SeqNo), &bin.Buffer{Buf: m.Body}, acks, budget); err != nil {
-				return err
-			}
-		}
-		return nil
-
-	case mt.PingRequestTypeID:
-		var ping mt.PingRequest
-		if err := ping.Decode(b); err != nil {
-			return fmt.Errorf("decode ping: %w", err)
-		}
-		ackContent()
-		return s.sendPong(ctx, c, msgID, ping.PingID)
-
-	case mt.PingDelayDisconnectRequestTypeID:
-		var ping mt.PingDelayDisconnectRequest
-		if err := ping.Decode(b); err != nil {
-			return fmt.Errorf("decode ping_delay_disconnect: %w", err)
-		}
-		ackContent()
-		return s.sendPong(ctx, c, msgID, ping.PingID)
-
-	case mt.GetFutureSaltsRequestTypeID:
-		var req mt.GetFutureSaltsRequest
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode get_future_salts: %w", err)
-		}
-		ackContent()
-		return s.sendFutureSalts(ctx, c, msgID, req.Num)
-
-	case mt.MsgsAckTypeID:
-		if err := validateFirstVectorCount(b, maxServiceMessageIDs); err != nil {
-			return fmt.Errorf("msgs_ack vector: %w", err)
-		}
-		var ack mt.MsgsAck
-		if err := ack.Decode(b); err != nil {
-			return fmt.Errorf("decode msgs_ack: %w", err)
-		}
-		c.AckServerMessages(ack.MsgIDs)
-		s.log.Debug("Received msgs_ack", zap.Int64s("msg_ids", ack.MsgIDs))
-		return nil
-
-	case mt.MsgsStateReqTypeID:
-		if err := validateFirstVectorCount(b, maxServiceMessageIDs); err != nil {
-			return fmt.Errorf("msgs_state_req vector: %w", err)
-		}
-		var req mt.MsgsStateReq
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode msgs_state_req: %w", err)
-		}
-		ackContent()
-		outgoing, err := c.OutgoingStateInfo(ctx, req.MsgIDs)
-		if err != nil {
-			return err
-		}
-		return s.sendMsgsStateInfo(ctx, c, msgID, mergeStateInfo(outgoing, cs.stateInfo(req.MsgIDs)))
-
-	case mt.MsgResendReqTypeID:
-		if err := validateFirstVectorCount(b, maxServiceMessageIDs); err != nil {
-			return fmt.Errorf("msg_resend_req vector: %w", err)
-		}
-		var req mt.MsgResendReq
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode msg_resend_req: %w", err)
-		}
-		ackContent()
-		outgoing, err := c.ResendMessages(ctx, req.MsgIDs)
-		if err != nil {
-			return err
-		}
-		return s.sendMsgsStateInfo(ctx, c, msgID, mergeStateInfo(outgoing, cs.stateInfo(req.MsgIDs)))
-
-	case mt.MsgsStateInfoTypeID:
-		reqMsgID, info, err := msgsStateInfoView(b)
-		if err != nil {
-			return fmt.Errorf("decode msgs_state_info: %w", err)
-		}
-		s.log.Debug("Received msgs_state_info", zap.Int64("req_msg_id", reqMsgID), zap.Int("len", len(info)))
-		return nil
-
-	case mt.MsgsAllInfoTypeID:
-		count, info, err := msgsAllInfoView(b)
-		if err != nil {
-			return fmt.Errorf("decode msgs_all_info: %w", err)
-		}
-		if len(info) != count {
-			return fmt.Errorf("decode msgs_all_info: info length %d does not match msg_ids %d", len(info), count)
-		}
-		s.log.Debug("Received msgs_all_info", zap.Int("msg_ids", count), zap.Int("len", len(info)))
-		return nil
-
-	case mt.DestroySessionRequestTypeID:
-		var req mt.DestroySessionRequest
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode destroy_session: %w", err)
-		}
-		ackContent()
-		return s.sendDestroySession(ctx, c, req.SessionID)
-
-	case mt.HTTPWaitRequestTypeID:
-		var req mt.HTTPWaitRequest
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode http_wait: %w", err)
-		}
-		s.log.Debug("Received http_wait",
-			zap.Int("max_delay", req.MaxDelay),
-			zap.Int("wait_after", req.WaitAfter),
-			zap.Int("max_wait", req.MaxWait),
-		)
-		return nil
-
-	case mt.RPCDropAnswerRequestTypeID:
-		var req mt.RPCDropAnswerRequest
-		if err := req.Decode(b); err != nil {
-			return fmt.Errorf("decode rpc_drop_answer: %w", err)
-		}
-		ackContent()
-		s.log.Debug("Received rpc_drop_answer", zap.Int64("req_msg_id", req.ReqMsgID))
-		return s.sendResult(ctx, c, msgID, &mt.RPCAnswerUnknown{})
-
-	case destroyAuthKeyRequestTypeID:
-		var req destroyAuthKeyRequest
-		if err := req.Decode(b); err != nil {
-			return err
-		}
-		ackContent()
-		s.log.Debug("Received destroy_auth_key", zap.String("auth_key_id", c.authKeyHex))
-		// 真正销毁：删密钥库记录（每帧回查，删除后该 key 的入站帧立即失效）并主动
-		// 断开同 key 的其他连接——出站推送用连接持有的密钥副本加密、不回查密钥库，
-		// 不断开的话被销毁 key 的空闲连接仍能持续收到推送。发起连接除外：响应要
-		// 先送达，它的下一帧会因密钥缺失自然断开。授权（authorizations）不在此清理，
-		// destroy_auth_key 是 PFS 密钥轮换的清理动作，不等于登出。
-		if err := s.authKeys.Delete(ctx, c.authKeyID); err != nil {
-			s.log.Warn("Delete auth key failed", zap.String("auth_key_id", c.authKeyHex), zap.Error(err))
-			return c.SendAsync(ctx, proto.MessageServerResponse, &destroyAuthKeyFail{})
-		}
-		// 标记密钥已销毁：发起连接被 CloseSessionsForRawAuthKeyExcept 排除（响应需先送达），
-		// 它下一帧不能再走 serveConn 的密钥复用快路径，须回落到 Get→AuthKeyNotFound 自然失效。
-		c.keyDestroyed.Store(true)
-		s.conns.CloseSessionsForRawAuthKeyExcept(c.authKeyID, c.sessionID)
-		return c.SendAsync(ctx, proto.MessageServerResponse, &destroyAuthKeyOk{})
-
-	default:
-		ackContent()
-		return s.enqueueRPC(ctx, c, msgID, id, b)
-	}
+func (e *dispatchBadMsgError) Error() string {
+	return fmt.Sprintf("bad client message %d/%d: code %d", e.msgID, e.seqNo, e.code)
 }
 
 // decodeGZIPWithGlobalBudget reserves the maximum single-wrapper output before
 // decompression starts. Once the actual size is known the excess reservation is
-// returned, while the actual output remains charged through recursive dispatch.
+// returned, while the actual output remains charged until the inbound plan is
+// executed or aborted.
 // This closes the gap where every connection read goroutine could otherwise hold
 // an unaccounted 10 MiB expansion before the shared RPC scheduler saw the body.
 func (s *Server) decodeGZIPWithGlobalBudget(b *bin.Buffer) ([]byte, func(), error) {
@@ -571,8 +434,14 @@ func gzipPackedBytesView(b *bin.Buffer) ([]byte, error) {
 	if binary.LittleEndian.Uint32(b.Buf[:4]) != proto.GZIPTypeID {
 		return nil, fmt.Errorf("unexpected gzip constructor %#x", binary.LittleEndian.Uint32(b.Buf[:4]))
 	}
-	payload, _, err := tlBytesView(b.Buf[4:], -1)
-	return payload, err
+	payload, consumed, err := tlBytesView(b.Buf[4:], -1)
+	if err != nil {
+		return nil, err
+	}
+	if 4+consumed != len(b.Buf) {
+		return nil, fmt.Errorf("gzip_packed has %d trailing bytes", len(b.Buf)-(4+consumed))
+	}
+	return payload, nil
 }
 
 // tlBytesView validates one TL bytes envelope and returns a view into the caller-owned buffer.
@@ -604,9 +473,9 @@ func tlBytesView(raw []byte, maxPayload int) ([]byte, int, error) {
 }
 
 // decodeMessageContainerViews parses the container without proto.Message.Decode's per-body
-// copies. Bodies are immutable views of b and stay alive only for this synchronous dispatch;
-// enqueueRPC takes its own budgeted copy before returning. Only the exact-size descriptor slice
-// is new memory, and that allocation is reserved globally first.
+// copies. Bodies stay as immutable views through the single-pass inbound plan; batch admission
+// takes independent RPC copies before the backing frame/expansion is released. The descriptor
+// reservation also covers staged state, actions and ACK metadata retained by that plan.
 func (s *Server) decodeMessageContainerViews(b *bin.Buffer, count int) (proto.MessageContainer, func(), error) {
 	release := func() {}
 	if b == nil || len(b.Buf) < 8 {
@@ -663,6 +532,10 @@ func (s *Server) decodeMessageContainerViews(b *bin.Buffer, count int) (proto.Me
 		}
 		offset = bodyEnd
 	}
+	if offset != len(b.Buf) {
+		release()
+		return proto.MessageContainer{}, func() {}, fmt.Errorf("message container has %d trailing bytes", len(b.Buf)-offset)
+	}
 	return proto.MessageContainer{Messages: messages}, release, nil
 }
 
@@ -673,9 +546,12 @@ func msgsStateInfoView(b *bin.Buffer) (int64, []byte, error) {
 	if got := binary.LittleEndian.Uint32(b.Buf[:4]); got != mt.MsgsStateInfoTypeID {
 		return 0, nil, fmt.Errorf("unexpected constructor %#x", got)
 	}
-	info, _, err := tlBytesView(b.Buf[12:], maxServiceMessageIDs)
+	info, consumed, err := tlBytesView(b.Buf[12:], maxServiceMessageIDs)
 	if err != nil {
 		return 0, nil, err
+	}
+	if 12+consumed != len(b.Buf) {
+		return 0, nil, fmt.Errorf("msgs_state_info has %d trailing bytes", len(b.Buf)-(12+consumed))
 	}
 	return int64(binary.LittleEndian.Uint64(b.Buf[4:12])), info, nil
 }
@@ -691,9 +567,12 @@ func msgsAllInfoView(b *bin.Buffer) (int, []byte, error) {
 		return 0, nil, io.ErrUnexpectedEOF
 	}
 	offset := 12 + count*8
-	info, _, err := tlBytesView(b.Buf[offset:], maxServiceMessageIDs)
+	info, consumed, err := tlBytesView(b.Buf[offset:], maxServiceMessageIDs)
 	if err != nil {
 		return 0, nil, err
+	}
+	if offset+consumed != len(b.Buf) {
+		return 0, nil, fmt.Errorf("msgs_all_info has %d trailing bytes", len(b.Buf)-(offset+consumed))
 	}
 	return count, info, nil
 }
@@ -750,15 +629,41 @@ func mergeStateInfo(primary, fallback []byte) []byte {
 // （已 PeekID 过一次），method 只解析一次并随任务透传，避免同一请求三处重复 PeekID/typeName。
 func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID uint32, request *bin.Buffer) error {
 	method := s.typeName(typeID)
-	if cached, ok := s.cachedRPCResult(c, msgID); ok {
+	claim, err := s.rpcResults.Acquire(c.authKeyID, c.sessionID, msgID)
+	if err != nil {
+		if errors.Is(err, ErrRPCResultFlightCapacity) {
+			c.metrics.InboundRPCDropped(method, "flight_capacity")
+			return s.handleInboundRPCAdmissionError(ctx, c, msgID, method, ErrInboundRPCQueueFull)
+		}
+		return err
+	}
+	switch claim.state {
+	case rpcResultAcquireCompleted:
 		s.log.Info("RPC duplicate replay from session cache",
 			zap.String("method", method),
 			zap.Int64("msg_id", msgID),
 			zap.String("auth_key_id", c.authKeyHex),
 			zap.Int64("session_id", c.sessionID),
 		)
-		return c.SendEncoded(ctx, proto.MessageServerResponse, cached)
+		return s.sendCachedRPCResult(ctx, c, claim.encoded)
+	case rpcResultAcquirePending:
+		encoded, ok, waitErr := claim.waiter.Wait(ctx)
+		if waitErr != nil || !ok || encoded == nil {
+			return waitErr
+		}
+		return s.sendCachedRPCResult(ctx, c, encoded)
+	case rpcResultAcquireOwner:
+		// Ownership transfers to the queued task only after commit succeeds.
+	default:
+		return ErrRPCResultFlightInvalid
 	}
+	owner := claim.owner
+	transferred := false
+	defer func() {
+		if !transferred {
+			owner.Abort()
+		}
+	}()
 	// 两级条数/字节预算必须先于 Copy：对抗客户端不能用大量满尺寸请求在“判断队列满”
 	// 之前制造一轮无上限的临时 body 分配。reservation 在 commit/abort 间唯一持有预算。
 	reservation, err := c.reserveInboundRPC(ctx, method, request.Len())
@@ -767,11 +672,21 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID ui
 	}
 	defer reservation.abort()
 	body := request.Copy()
-	responseGate := &rpcResponseGate{}
+	err = reservation.commit(s.newInboundRPCTask(c, msgID, method, body, owner))
+	transferred = err == nil
+	return s.handleInboundRPCAdmissionError(ctx, c, msgID, method, err)
+}
+
+// newInboundRPCTask builds the exactly-once timeout/result gate shared by the
+// single-message and atomic container-batch admission paths. body must already
+// be an independently owned, budgeted copy.
+func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []byte, owner *rpcResultOwnerLease) inboundRPC {
+	responseGate := newRPCResponseGate()
 	timeoutResponse := func() {
 		if !responseGate.tryTimeout() {
 			return
 		}
+		defer responseGate.finish()
 		// 原 task context 已到期，使用有界的新 context 回显明确的可重试超时；
 		// 500 保持 TDesktop 默认重试语义，错误名区分于容量型 FLOOD_WAIT。
 		writeTimeout := c.writeTimeout
@@ -793,10 +708,29 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID ui
 			)
 		}
 	}
-	err = reservation.commit(inboundRPC{
+	return inboundRPC{
 		method:    method,
 		size:      len(body),
 		onTimeout: timeoutResponse,
+		release: func() {
+			if owner == nil {
+				return
+			}
+			// A running deadline callback owns the same terminal flight but executes
+			// on context.AfterFunc's goroutine. Let its bounded delivery complete before
+			// deciding that the task produced no result; otherwise release could Abort
+			// the owner while RPC_TIMEOUT is already inside the physical writer.
+			if !responseGate.wait(requiredControlMaxWait + time.Second) {
+				c.fenceUndeliveredRPCResult()
+			}
+			if owner.Abort() {
+				// connState already remembers this request. If a committed task exits
+				// without publishing any terminal rpc_result, a same-Conn retransmit
+				// would otherwise be ACKed forever. Force a fresh physical generation
+				// where the request can be admitted again.
+				c.fenceUndeliveredRPCResult()
+			}
+		},
 		run: func(taskCtx context.Context) error {
 			// body 是预算成功后生成的独立副本，且每个任务只 run 一次，
 			// 无需再 append 拷贝；直接复用，省掉一份 inbound 在途内存。
@@ -816,8 +750,7 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID ui
 			}
 			return nil
 		},
-	})
-	return s.handleInboundRPCAdmissionError(ctx, c, msgID, method, err)
+	}
 }
 
 func (s *Server) handleInboundRPCAdmissionError(ctx context.Context, c *Conn, msgID int64, method string, err error) error {
@@ -839,8 +772,18 @@ func (s *Server) handleInboundRPCAdmissionError(ctx context.Context, c *Conn, ms
 // handleRPC 把明文 RPC 请求交给 RPC 路由，并将结果或错误包成 rpc_result 回发。
 func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method string, b *bin.Buffer, responseGate *rpcResponseGate) error {
 	if s.rpc == nil {
-		s.log.Warn("No RPC handler configured; dropping request", zap.String("method", method))
-		return nil
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if responseGate != nil && !responseGate.tryNormal() {
+			return context.DeadlineExceeded
+		}
+		defer responseGate.finish()
+		s.log.Warn("No RPC handler configured", zap.String("method", method))
+		return s.sendResult(ctx, c, msgID, &mt.RPCError{
+			ErrorCode:    500,
+			ErrorMessage: "NOT_IMPLEMENTED",
+		})
 	}
 
 	ctx = postresponse.WithCallbacks(ctx)
@@ -874,10 +817,48 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	fields = dbtrace.AppendZapFields(fields, "", dbStats.Snapshot())
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		// A canceled request context means neither a success nor an error can be delivered
-		// with this expired context. In particular, do not cache a late successful result and
-		// hand it to outbound: a past write deadline would correctly poison that transport and
-		// could prevent the scheduler's fresh-context RPC_TIMEOUT response from being sent.
+		// The old physical Conn may have been replaced after the business transaction
+		// committed. Never write with the expired context itself: a fenced generation
+		// publishes cache-only for its replacement, while a still-live generation uses
+		// a fresh bounded delivery context. A deadline callback that already won
+		// responseGate has published RPC_TIMEOUT and prevents this late result from
+		// overwriting it.
+		// Only a successful business result proves useful work completed. Errors
+		// observed after cancellation may themselves be cancellation-derived or
+		// transient and must remain retryable rather than poisoning the replay cache.
+		var terminal bin.Encoder
+		if err == nil && result != nil {
+			terminal = result
+		}
+		if terminal != nil && (responseGate == nil || responseGate.tryNormal()) {
+			defer responseGate.finish()
+			if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+				// Replacement/shutdown already fenced this logical generation. Cache-only
+				// publication is safe and lets the replacement join the completed flight.
+				if encoded, encodeErr := s.encodeRPCResult(c, msgID, terminal); encodeErr != nil {
+					s.log.Warn("Encode canceled RPC result for replay failed", append(fields, zap.Error(encodeErr))...)
+				} else {
+					s.storeRPCResult(c, msgID, encoded)
+					postresponse.Run(context.WithoutCancel(ctx))
+				}
+			} else {
+				// An individual RPC deadline can expire while the physical connection is
+				// still healthy. Use a fresh bounded delivery context; publishing cache-only
+				// here would strand same-Conn duplicates behind an ACK with no result.
+				writeTimeout := c.writeTimeout
+				if writeTimeout <= 0 || writeTimeout > 5*time.Second {
+					writeTimeout = 5 * time.Second
+				}
+				responseCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+				sendErr := s.sendResult(responseCtx, c, msgID, terminal)
+				cancel()
+				if sendErr != nil {
+					s.log.Debug("Send canceled RPC result failed", append(fields, zap.Error(sendErr))...)
+				} else {
+					postresponse.Run(context.WithoutCancel(ctx))
+				}
+			}
+		}
 		cancelFields := append(fields, zap.NamedError("context_error", ctxErr))
 		if err != nil {
 			cancelFields = append(cancelFields, zap.NamedError("dispatch_error", err))
@@ -891,6 +872,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 		s.log.Info("RPC result suppressed after timeout", fields...)
 		return context.DeadlineExceeded
 	}
+	defer responseGate.finish()
 
 	if err != nil {
 		var rpcErr *tgerr.Error
@@ -921,6 +903,12 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 // first owns the response, and the other path becomes a no-op.
 type rpcResponseGate struct {
 	state atomic.Uint32
+	done  chan struct{}
+	once  sync.Once
+}
+
+func newRPCResponseGate() *rpcResponseGate {
+	return &rpcResponseGate{done: make(chan struct{})}
 }
 
 func (g *rpcResponseGate) tryNormal() bool {
@@ -931,14 +919,84 @@ func (g *rpcResponseGate) tryTimeout() bool {
 	return g != nil && g.state.CompareAndSwap(0, 2)
 }
 
+func (g *rpcResponseGate) finish() {
+	if g == nil || g.done == nil {
+		return
+	}
+	g.once.Do(func() { close(g.done) })
+}
+
+// wait returns once there is no response owner, the winning response has
+// completed deliver-or-fence publication, or the bounded safety deadline wins.
+func (g *rpcResponseGate) wait(timeout time.Duration) bool {
+	if g == nil || g.state.Load() == 0 {
+		return true
+	}
+	if g.done == nil {
+		return false
+	}
+	if timeout <= 0 {
+		<-g.done
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-g.done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 // sendResult 把 RPC 结果包成 rpc_result 并加密回发。
 func (s *Server) sendResult(ctx context.Context, c *Conn, reqMsgID int64, result bin.Encoder) error {
+	if result == nil {
+		result = &mt.RPCError{ErrorCode: 500, ErrorMessage: "INTERNAL"}
+	}
 	encoded, err := s.encodeRPCResult(c, reqMsgID, result)
 	if err != nil {
+		// The business operation has already crossed atomic admission. Convert an
+		// invalid result encoder into one deterministic terminal RPC error instead of
+		// aborting the flight and allowing a reconnect to execute the operation again.
+		s.log.Warn("Encode RPC result failed; sending INTERNAL", zap.Int64("req_msg_id", reqMsgID), zap.Error(err))
+		encoded, err = s.encodeRPCResult(c, reqMsgID, &mt.RPCError{
+			ErrorCode:    500,
+			ErrorMessage: "INTERNAL",
+		})
+		if err != nil {
+			c.fenceUndeliveredRPCResult()
+			return err
+		}
+	}
+	if err := c.SendEncoded(ctx, proto.MessageServerResponse, encoded); err != nil {
+		// A completed result may be published before delivery only after this logical
+		// Conn is irreversibly fenced. SendEncoded has non-writing failure paths
+		// (queue/context/scratch deadline); without this terminal barrier a later
+		// same-Conn duplicate would be ACKed while no result can ever arrive.
+		c.fenceUndeliveredRPCResult()
+		s.storeRPCResult(c, reqMsgID, encoded)
 		return err
 	}
+	// On a live Conn, completed means the rpc_result has reached the reliable byte
+	// stream. Same-physical duplicates can therefore be ACK-only without data loss.
 	s.storeRPCResult(c, reqMsgID, encoded)
-	return c.SendEncoded(ctx, proto.MessageServerResponse, encoded)
+	return nil
+}
+
+// sendCachedRPCResult preserves the delivery half of the rpc_result invariant
+// for completed-flight replays: either the cached result reaches this physical
+// byte stream, or this logical Conn is fenced so a replacement may retry it.
+func (s *Server) sendCachedRPCResult(ctx context.Context, c *Conn, encoded *encodedOutboundMessage) error {
+	if encoded == nil {
+		c.fenceUndeliveredRPCResult()
+		return errors.New("nil cached rpc_result")
+	}
+	if err := c.SendEncoded(ctx, proto.MessageServerResponse, encoded); err != nil {
+		c.fenceUndeliveredRPCResult()
+		return err
+	}
+	return nil
 }
 
 // encodeRPCResult 编码 rpc_result。内层对象与 rpc_result 头（type_id + req_msg_id）
@@ -986,13 +1044,14 @@ func (s *Server) replayRPCResultByRequest(ctx context.Context, c *Conn, reqMsgID
 		return nil
 	}
 	if resent, err := c.ResendByRequest(ctx, reqMsgID); err != nil {
+		c.fenceUndeliveredRPCResult()
 		return err
 	} else if resent {
 		s.log.Debug("Resent connection cached rpc_result for duplicate msg_id", zap.Int64("msg_id", reqMsgID))
 		return nil
 	}
 	if cached, ok := s.cachedRPCResult(c, reqMsgID); ok {
-		if err := c.SendEncoded(ctx, proto.MessageServerResponse, cached); err != nil {
+		if err := s.sendCachedRPCResult(ctx, c, cached); err != nil {
 			return err
 		}
 		s.log.Debug("Resent session cached rpc_result for duplicate msg_id", zap.Int64("msg_id", reqMsgID))
@@ -1044,7 +1103,10 @@ func (s *Server) sendFutureSalts(ctx context.Context, c *Conn, reqMsgID int64, n
 // 复用同一值会让断线重连后的 new_session_created 被吞掉，错过的差分补拉
 // （Android 收到后才调 getDifference）随之丢失。
 func (s *Server) sendNewSessionCreated(ctx context.Context, c *Conn, firstMsgID int64) error {
-	return c.SendAsync(ctx, proto.MessageFromServer, &mt.NewSessionCreated{
+	// This notification changes the client's request map and update recovery
+	// state. Unlike best-effort ack/pong traffic, it must be written successfully
+	// before the corresponding RPC batch starts executing.
+	return c.SendRequiredControl(ctx, proto.MessageFromServer, &mt.NewSessionCreated{
 		FirstMsgID: firstMsgID,
 		UniqueID:   s.newServerSessionUID(),
 		ServerSalt: c.salt,
@@ -1098,7 +1160,7 @@ func (s *Server) sendBadMsg(ctx context.Context, c *Conn, badMsgID int64, badSeq
 
 // sendBadServerSalt 通知客户端修正 server_salt（error_code 48）。
 func (s *Server) sendBadServerSalt(ctx context.Context, c *Conn, badMsgID int64, badSeqno int32, newSalt int64) error {
-	return c.SendPriority(ctx, proto.MessageFromServer, &mt.BadServerSalt{
+	return c.SendRequiredControl(ctx, proto.MessageFromServer, &mt.BadServerSalt{
 		BadMsgID:      badMsgID,
 		BadMsgSeqno:   int(badSeqno),
 		ErrorCode:     48,
@@ -1134,25 +1196,6 @@ func validateClientEnvelope(now time.Time, msgID int64, seqNo int32, typeID uint
 		}
 	} else if seqNo%2 != 0 {
 		return badMsgSeqNotEven
-	}
-	return 0
-}
-
-func validateClientContainer(containerMsgID int64, containerSeqNo int32, container proto.MessageContainer) int {
-	for _, m := range container.Messages {
-		if m.ID >= containerMsgID || int32(m.SeqNo) > containerSeqNo {
-			return badMsgContainer
-		}
-		typeID, err := (&bin.Buffer{Buf: m.Body}).PeekID()
-		if err != nil {
-			return badMsgContainer
-		}
-		if typeID == proto.MessageContainerTypeID {
-			return badMsgContainer
-		}
-		if code := validateClientContainerEnvelope(m.ID, int32(m.SeqNo), typeID); code != 0 {
-			return badMsgContainer
-		}
 	}
 	return 0
 }
@@ -1235,10 +1278,15 @@ func (cs *connState) validateSeq(msgID int64, seqNo int32, content bool) int {
 }
 
 func (cs *connState) track(msgID int64, seqNo int32, content bool, state byte) {
+	cs.trackInbound(msgID, seqNo, content, false, state)
+}
+
+func (cs *connState) trackInbound(msgID int64, seqNo int32, content, service bool, state byte) {
 	cs.seen[msgID] = clientMsgRecord{
 		state:   state,
 		seqNo:   seqNo,
 		content: content,
+		service: service,
 	}
 	if content {
 		if msgID > cs.maxContentMsgID {

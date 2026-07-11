@@ -190,12 +190,82 @@ func collectReplies(t *testing.T, conn transport.Conn, cipher crypto.Cipher, key
 	return got
 }
 
+// serverReplyFrame preserves the wire order and encrypted envelope of a server
+// reply. Tests which exercise session boundaries must not collapse replies into
+// a TypeID-keyed map: both duplicate response types and their order are part of
+// the observable protocol behavior.
+type serverReplyFrame struct {
+	Message *crypto.EncryptedMessageData
+	TypeID  uint32
+	Plain   *bin.Buffer
+}
+
+// collectReplyFrames reads ordered server replies until every requested TypeID
+// has been observed the requested number of times. Unrequested frames are kept
+// in the returned slice so callers can assert ordering around control messages.
+func collectReplyFrames(
+	t *testing.T,
+	conn transport.Conn,
+	cipher crypto.Cipher,
+	key crypto.AuthKey,
+	wantCounts map[uint32]int,
+) []serverReplyFrame {
+	t.Helper()
+
+	remaining := make(map[uint32]int, len(wantCounts))
+	required := 0
+	for typeID, count := range wantCounts {
+		if count <= 0 {
+			continue
+		}
+		remaining[typeID] = count
+		required += count
+	}
+	if required == 0 {
+		return nil
+	}
+
+	// Keep the helper bounded while allowing unrelated control replies (notably
+	// msgs_ack) to be interleaved with the frames under test.
+	// One shared deadline bounds the whole collection. A per-frame deadline would
+	// multiply a missing-result failure by the maximum number of unrelated frames.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	frames := make([]serverReplyFrame, 0, required)
+	for i := 0; i < required+16; i++ {
+		message, typeID, plain := readServerMessageContext(t, ctx, conn, cipher, key)
+		frames = append(frames, serverReplyFrame{
+			Message: message,
+			TypeID:  typeID,
+			Plain:   plain,
+		})
+		if count, ok := remaining[typeID]; ok {
+			if count == 1 {
+				delete(remaining, typeID)
+			} else {
+				remaining[typeID] = count - 1
+			}
+		}
+		if len(remaining) == 0 {
+			return frames
+		}
+	}
+
+	t.Fatalf("missing reply counts after %d frames: %+v", len(frames), remaining)
+	return nil
+}
+
 func readServerMessage(t *testing.T, conn transport.Conn, cipher crypto.Cipher, key crypto.AuthKey) (*crypto.EncryptedMessageData, uint32, *bin.Buffer) {
 	t.Helper()
-	var buf bin.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return readServerMessageContext(t, ctx, conn, cipher, key)
+}
+
+func readServerMessageContext(t *testing.T, ctx context.Context, conn transport.Conn, cipher crypto.Cipher, key crypto.AuthKey) (*crypto.EncryptedMessageData, uint32, *bin.Buffer) {
+	t.Helper()
+	var buf bin.Buffer
 	err := conn.Recv(ctx, &buf)
-	cancel()
 	if err != nil {
 		t.Fatalf("recv server message: %v", err)
 	}

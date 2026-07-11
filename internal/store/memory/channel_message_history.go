@@ -443,7 +443,16 @@ func (s *ChannelStore) ResolveDiscussionReadTarget(_ context.Context, viewerUser
 	if targetChannelID != sourceChannelID {
 		_, targetMember, err = s.channelAndMemberLocked(viewerUserID, targetChannelID)
 		if errors.Is(err, domain.ErrChannelPrivate) {
-			targetMember, _, err = s.linkedDiscussionGuestLocked(viewerUserID, s.channels[targetChannelID])
+			guestMember, allowed, guestErr := s.linkedDiscussionGuestLocked(viewerUserID, s.channels[targetChannelID])
+			switch {
+			case guestErr != nil:
+				err = guestErr
+			case allowed:
+				targetMember = guestMember
+				err = nil
+			default:
+				err = domain.ErrChannelPrivate
+			}
 		}
 	}
 	if err != nil {

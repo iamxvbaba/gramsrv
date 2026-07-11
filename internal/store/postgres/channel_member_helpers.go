@@ -96,6 +96,72 @@ func (s *ChannelStore) getLinkedDiscussionGuest(ctx context.Context, db sqlcgen.
 	return guest, true, nil
 }
 
+// listLinkedDiscussionGuests is the bounded batch equivalent of
+// getLinkedDiscussionGuest. GetChannels uses it after loading the requested
+// channel rows so messages.getPeerDialogs can materialize linked discussion
+// histories without an N+1 query per requested peer.
+//
+// The target membership predicate deliberately excludes active, kicked,
+// banned and view-messages-banned rows. Active members were projected by the
+// primary GetChannels query; explicit target denial must always win over the
+// source broadcast membership. Returned members are transient and are never
+// persisted to channel_members/channel_dialogs.
+func (s *ChannelStore) listLinkedDiscussionGuests(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, targetIDs []int64) (map[int64]domain.ChannelMember, error) {
+	out := make(map[int64]domain.ChannelMember)
+	if viewerUserID == 0 || len(targetIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(ctx, `
+SELECT target.id
+FROM channels target
+JOIN channels source
+  ON source.id = target.linked_chat_id
+ AND NOT source.deleted
+ AND source.broadcast
+ AND source.linked_chat_id = target.id
+JOIN channel_members source_member
+  ON source_member.channel_id = source.id
+ AND source_member.user_id = $1
+ AND source_member.status = 'active'
+ AND NOT COALESCE((source_member.banned_rights->>'ViewMessages')::boolean, false)
+LEFT JOIN channel_members target_member
+  ON target_member.channel_id = target.id
+ AND target_member.user_id = $1
+WHERE target.id = ANY($2::bigint[])
+  AND NOT target.deleted
+  AND target.megagroup
+  AND NOT target.broadcast
+  AND (
+    target_member.user_id IS NULL
+    OR (
+      target_member.status NOT IN ('active', 'banned', 'kicked')
+      AND NOT COALESCE((target_member.banned_rights->>'ViewMessages')::boolean, false)
+    )
+  )
+ORDER BY target.id`, viewerUserID, targetIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list linked discussion guests: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		if err := rows.Scan(&channelID); err != nil {
+			return nil, fmt.Errorf("scan linked discussion guest: %w", err)
+		}
+		out[channelID] = domain.ChannelMember{
+			ChannelID: channelID,
+			UserID:    viewerUserID,
+			Status:    domain.ChannelMemberLeft,
+			Role:      domain.ChannelRoleMember,
+			Guest:     true,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate linked discussion guests: %w", err)
+	}
+	return out, nil
+}
+
 func (s *ChannelStore) getPublicPreviewMember(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, ch domain.Channel) (domain.ChannelMember, error) {
 	member, err := s.getChannelMember(ctx, db, ch.ID, viewerUserID)
 	if err != nil {

@@ -22,6 +22,11 @@ var ErrSessionNotFound = errors.New("session not found")
 // ErrSessionAmbiguous 表示仅用 session_id 无法唯一定位连接。
 var ErrSessionAmbiguous = errors.New("session id is shared by multiple auth keys")
 
+var (
+	ErrSessionActivationSuperseded = errors.New("session activation superseded")
+	ErrSessionActivationFence      = errors.New("session activation could not fence previous writer")
+)
+
 const (
 	maxPendingPushesPerSession = 32
 	// maxFlushAttempts / flushRetryBackoff：排空暂存推送时 c.Send 失败（出站拥塞 5s 超时
@@ -117,8 +122,13 @@ type SessionLifecycleObserver interface {
 // 它管理运行态的在线连接，与持久化的 store.SessionStore 互补：后者记录 session 数据，
 // 前者持有可发送的活跃连接。所有方法并发安全。
 type SessionManager struct {
-	mu                sync.RWMutex
-	bySession         map[sessionKey]*Conn
+	mu        sync.RWMutex
+	bySession map[sessionKey]*Conn
+	// claims owns the provisional -> active gap. A claimant is intentionally
+	// absent from every push/online index until its required session control frame
+	// is on the wire and PublishActivation validates the same owner.
+	claims            map[sessionKey]*Conn
+	claimsByAuth      map[[8]byte]map[int64]*Conn // raw authKeyID -> sessionID -> provisional claim
 	bySessionID       map[int64]map[[8]byte]*Conn // sessionID → raw authKeyID → Conn，用于兼容旧 API 的唯一性检查
 	byAuthKey         map[[8]byte]map[int64]*Conn // raw authKeyID → sessionID → Conn
 	byBusinessAuthKey map[[8]byte]map[sessionKey]*Conn
@@ -142,6 +152,8 @@ func NewSessionManager(log *zap.Logger) *SessionManager {
 	}
 	return &SessionManager{
 		bySession:         make(map[sessionKey]*Conn),
+		claims:            make(map[sessionKey]*Conn),
+		claimsByAuth:      make(map[[8]byte]map[int64]*Conn),
 		bySessionID:       make(map[int64]map[[8]byte]*Conn),
 		byAuthKey:         make(map[[8]byte]map[int64]*Conn),
 		byBusinessAuthKey: make(map[[8]byte]map[sessionKey]*Conn),
@@ -164,32 +176,94 @@ func (m *SessionManager) SetLifecycleObserver(observer SessionLifecycleObserver)
 	m.mu.Unlock()
 }
 
-// Register 注册一个活跃连接。若同 raw auth_key_id + session_id 已存在（重连），旧连接被替换并移除索引。
-func (m *SessionManager) Register(c *Conn) {
-	m.mu.Lock()
+// BeginActivation atomically claims auth_key_id + session_id without publishing the
+// new Conn. Under the manager lock it irreversibly fences every previous owner,
+// removes active indexes and closes producer/RPC admission gates. Physical close and
+// outbound-actor convergence happen outside the lock; the caller may send the
+// required new_session_created frame only after this method returns nil.
+func (m *SessionManager) BeginActivation(c *Conn) error {
+	if c == nil || !c.beginActivationClaim() {
+		return ErrSessionActivationSuperseded
+	}
 
 	key := connSessionKey(c)
-	var replaced *Conn
-	var evicted *Conn
-	if old, ok := m.bySession[key]; ok && old != c {
-		replaced = old
-		m.removeLocked(old, false)
-	} else if existing := m.byAuthKey[c.authKeyID]; len(existing) >= maxSessionsPerAuthKey {
-		// 同 raw auth_key 的 session 数达上限且本次是新 session：驱逐建连最早的 session 让位，
-		// 防对抗客户端用海量 session_id 撑爆索引。驱逐对象与新连接同属一个设备凭据，
-		// 触顶基本是该凭据自身异常；选最旧而非 map 随机，避免误杀刚建立的活跃下载/主连接。
-		// 被驱逐连接的 serveConn 会在下一帧因 actor 已关而退出。O(cap) 扫描仅在触顶时发生。
-		for _, ec := range existing {
-			if evicted == nil || ec.createdAt.Before(evicted.createdAt) {
-				evicted = ec
-			}
+	retired := make([]*Conn, 0, 2)
+	m.mu.Lock()
+	if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() || c.lifecycleState() != connLifecycleClaiming {
+		c.beginTerminalShutdown()
+		m.mu.Unlock()
+		return ErrConnClosed
+	}
+	if oldClaim := m.claims[key]; oldClaim != nil && oldClaim != c {
+		m.retireClaimLocked(key, oldClaim, false)
+		retired = append(retired, oldClaim)
+	}
+	if old := m.bySession[key]; old != nil && old != c {
+		m.retireConnLocked(old, false)
+		retired = append(retired, old)
+	}
+
+	// Claims reserve a cap slot just like published sessions. Otherwise many
+	// concurrent handshakes could all pass the old byAuthKey-only check and publish
+	// beyond maxSessionsPerAuthKey.
+	for len(m.byAuthKey[c.authKeyID])+m.claimCountForAuthLocked(c.authKeyID) >= maxSessionsPerAuthKey {
+		victimKey, victim, isClaim := m.oldestAuthOwnerLocked(c.authKeyID, c)
+		if victim == nil {
+			break
 		}
-		m.removeLocked(evicted, true)
-		m.log.Debug("Evicted oldest session for auth key at cap",
+		if isClaim {
+			m.retireClaimLocked(victimKey, victim, true)
+		} else {
+			m.retireConnLocked(victim, true)
+		}
+		retired = append(retired, victim)
+		m.log.Debug("Evicted oldest session activation for auth key at cap",
 			zap.String("auth_key_id", sessionKeyLog(c.authKeyID)),
 			zap.Int("cap", maxSessionsPerAuthKey),
 		)
 	}
+	m.addClaimLocked(key, c)
+	m.mu.Unlock()
+
+	// Do not wait for old business handlers: their root context/admission gate is
+	// already canceled. We only need the old physical writer and outbound actor to
+	// converge before the new Conn is allowed to write the session barrier.
+	if !closeConnBatch(retired, forceCloseBatchTimeout, false) {
+		m.AbortActivation(c)
+		return ErrSessionActivationFence
+	}
+	return nil
+}
+
+// PublishActivation makes the current claim visible to push/online lookups. It is
+// deliberately a separate operation from BeginActivation so required protocol
+// control can be written while the Conn remains provisional and unindexed.
+func (m *SessionManager) PublishActivation(c *Conn) error {
+	if c == nil {
+		return ErrSessionActivationSuperseded
+	}
+	key := connSessionKey(c)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.claims[key] != c {
+		return ErrSessionActivationSuperseded
+	}
+	if c.terminal.Load() || c.lifecycleState() != connLifecycleClaiming {
+		m.removeClaimLocked(key, c)
+		return ErrConnClosed
+	}
+	if old := m.bySession[key]; old != nil && old != c {
+		// An active owner without this claim can only be a stale/unsafe publisher.
+		// Never reverse-replace it from here; the caller must reconnect and claim again.
+		m.removeClaimLocked(key, c)
+		c.beginTerminalShutdown()
+		return ErrSessionActivationSuperseded
+	}
+	if !c.publishActivation() {
+		m.removeClaimLocked(key, c)
+		return ErrConnClosed
+	}
+	m.removeClaimLocked(key, c)
 	m.bySession[key] = c
 	addSessionIDIndex(m.bySessionID, c.sessionID, c.authKeyID, c)
 	addConnIndex(m.byAuthKey, c.authKeyID, c.sessionID, c)
@@ -200,34 +274,88 @@ func (m *SessionManager) Register(c *Conn) {
 		c.userIDResolved.Store(true)
 		addUserIndex(m.byUser, uid, key, c)
 	}
-	m.log.Debug("Session registered",
+	m.log.Debug("Session activated",
 		zap.String("auth_key_id", sessionKeyLog(key.authKeyID)),
 		zap.Int64("session_id", c.sessionID),
 		zap.Int("online", len(m.bySession)),
 	)
-	m.mu.Unlock()
+	return nil
+}
 
-	// 同 identity 的新物理连接已经原子接管索引；立即关闭旧 transport，不能只停
-	// actor 后让旧 FD/read goroutine 滞留到 read timeout。replacement 与 cap eviction
-	// 共用一个并发关闭批次，不能把每条 Conn 的 RPC 等待上界串行相加。
-	if replaced != nil || evicted != nil {
-		if !forceCloseConnBatch([]*Conn{replaced, evicted}, forceCloseBatchTimeout) {
-			m.log.Warn("Session replacement/eviction close exceeded shared deadline")
-		}
+// AbortActivation removes a claim only when c still owns it, then terminally
+// retires the provisional Conn. A superseded caller cannot delete the newer claim.
+func (m *SessionManager) AbortActivation(c *Conn) {
+	if c == nil {
+		return
 	}
+	key := connSessionKey(c)
+	owned := false
+	m.mu.Lock()
+	if m.claims[key] == c {
+		c.beginTerminalShutdown()
+		m.removeClaimLocked(key, c)
+		if m.bySession[key] == nil {
+			m.deletePendingLocked(key)
+			delete(m.flushing, key)
+		}
+		owned = true
+	}
+	m.mu.Unlock()
+	if owned {
+		_ = closeConnBatch([]*Conn{c}, forceCloseBatchTimeout, false)
+	}
+}
+
+// Register is retained for tests and embedders that do not have a wire-level
+// required-control barrier. Production encrypted traffic uses the explicit
+// BeginActivation -> SendRequiredControl -> PublishActivation sequence.
+func (m *SessionManager) Register(c *Conn) error {
+	if c == nil {
+		return ErrSessionActivationSuperseded
+	}
+	if c.isActive() {
+		m.mu.RLock()
+		current := m.bySession[connSessionKey(c)]
+		m.mu.RUnlock()
+		if current == c {
+			return nil
+		}
+		return ErrSessionActivationSuperseded
+	}
+	if err := m.BeginActivation(c); err != nil {
+		return err
+	}
+	if err := m.PublishActivation(c); err != nil {
+		m.AbortActivation(c)
+		return err
+	}
+	return nil
 }
 
 // Unregister 注销一个连接（仅当它仍是当前注册的同一对象，避免误删重连后的新连接）。
 // 观察者对未登录连接（userID=0）也回调：业务层据此清理按 session 维度的缓存条目，
 // 否则未登录连接的元数据只能等容量上限驱逐。
 func (m *SessionManager) Unregister(c *Conn) {
+	if c == nil {
+		return
+	}
+	// Close admission/outbound producer gates before removing indexes or invoking
+	// a lifecycle observer. An observer may block, but no old RPC/push may continue
+	// to write or enqueue work during that interval.
+	c.beginTerminalShutdown()
 	m.mu.Lock()
 	var (
 		observer    SessionLifecycleObserver
 		offlineUser int64
 		lastForUser bool
 	)
-	if cur, ok := m.bySession[connSessionKey(c)]; ok && cur == c {
+	key := connSessionKey(c)
+	if m.claims[key] == c {
+		m.removeClaimLocked(key, c)
+		m.deletePendingLocked(key)
+		delete(m.flushing, key)
+	}
+	if cur, ok := m.bySession[key]; ok && cur == c {
 		offlineUser = m.removeLocked(c, true)
 		if offlineUser != 0 {
 			lastForUser = len(m.byUser[offlineUser]) == 0
@@ -256,7 +384,7 @@ func (m *SessionManager) DestroySession(sessionID int64) bool {
 		m.mu.Unlock()
 		return false
 	}
-	offlineUser := m.removeLocked(c, true)
+	offlineUser := m.retireConnLocked(c, true)
 	lastForUser := offlineUser != 0 && len(m.byUser[offlineUser]) == 0
 	observer := m.lifecycle
 	m.log.Debug("Session destroyed",
@@ -283,11 +411,22 @@ func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID i
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
 	c, ok := m.bySession[key]
 	if !ok {
+		if claim := m.claims[key]; claim != nil {
+			m.retireClaimLocked(key, claim, true)
+			m.mu.Unlock()
+			if !forceCloseConnBatch([]*Conn{claim}, forceCloseBatchTimeout) {
+				m.log.Warn("Claimed session close exceeded shared deadline",
+					zap.String("auth_key_id", sessionKeyLog(authKeyID)),
+					zap.Int64("session_id", sessionID),
+				)
+			}
+			return true
+		}
 		m.deletePendingLocked(key)
 		m.mu.Unlock()
 		return false
 	}
-	offlineUser := m.removeLocked(c, true)
+	offlineUser := m.retireConnLocked(c, true)
 	lastForUser := offlineUser != 0 && len(m.byUser[offlineUser]) == 0
 	observer := m.lifecycle
 	m.log.Debug("Session destroyed",
@@ -505,9 +644,16 @@ func (m *SessionManager) CloseSessionsForBusinessAuthKey(authKeyID [8]byte) int 
 		if !connUsesBusinessAuthKey(c, authKeyID) {
 			continue
 		}
-		uid := m.removeLocked(c, true)
+		uid := m.retireConnLocked(c, true)
 		conns = append(conns, c)
 		events = append(events, offlineEvent{key: key, userID: uid, last: uid != 0 && len(m.byUser[uid]) == 0})
+	}
+	for key, c := range m.claims {
+		if !connUsesBusinessAuthKey(c, authKeyID) {
+			continue
+		}
+		m.retireClaimLocked(key, c, true)
+		conns = append(conns, c)
 	}
 	observer := m.lifecycle
 	if len(conns) > 0 {
@@ -531,10 +677,26 @@ func (m *SessionManager) CloseSessionsForBusinessAuthKey(authKeyID [8]byte) int 
 	return len(conns)
 }
 
-// CloseSessionsForRawAuthKeyExcept 强制断开指定 raw auth_key 的活跃连接，可排除
-// 一个 session（destroy_auth_key 的发起连接：响应要先送达，它的密钥已删，下一帧
-// 自然失效）。出站推送不回查密钥库，必须主动断开底层 transport 才能让销毁立即生效。
+// CloseSessionsForRawAuthKeyExcept 强制断开指定 raw auth_key 的活跃连接，可按
+// session ID 排除一个 session。该接口供业务层授权撤销使用；wire-level
+// destroy_auth_key 必须改用精确 Conn 排除，避免同 session replacement 被误放过。
 func (m *SessionManager) CloseSessionsForRawAuthKeyExcept(authKeyID [8]byte, exceptSessionID int64) int {
+	return m.closeSessionsForRawAuthKey(authKeyID, func(sessionID int64, _ *Conn) bool {
+		return sessionID == exceptSessionID
+	})
+}
+
+// CloseSessionsForRawAuthKeyExceptConn closes every active/claiming owner for a raw
+// auth key except the exact Conn executing destroy_auth_key. A session ID is not an
+// identity: a concurrent replacement may already own the same logical session while
+// the retired request handler finishes deletion.
+func (m *SessionManager) CloseSessionsForRawAuthKeyExceptConn(authKeyID [8]byte, except *Conn) int {
+	return m.closeSessionsForRawAuthKey(authKeyID, func(_ int64, c *Conn) bool {
+		return c == except
+	})
+}
+
+func (m *SessionManager) closeSessionsForRawAuthKey(authKeyID [8]byte, skip func(int64, *Conn) bool) int {
 	type offlineEvent struct {
 		key    sessionKey
 		userID int64
@@ -544,13 +706,21 @@ func (m *SessionManager) CloseSessionsForRawAuthKeyExcept(authKeyID [8]byte, exc
 	var conns []*Conn
 	var events []offlineEvent
 	for sessionID, c := range m.byAuthKey[authKeyID] {
-		if sessionID == exceptSessionID {
+		if skip != nil && skip(sessionID, c) {
 			continue
 		}
 		key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
-		uid := m.removeLocked(c, true)
+		uid := m.retireConnLocked(c, true)
 		conns = append(conns, c)
 		events = append(events, offlineEvent{key: key, userID: uid, last: uid != 0 && len(m.byUser[uid]) == 0})
+	}
+	for sessionID, c := range m.claimsByAuth[authKeyID] {
+		if skip != nil && skip(sessionID, c) {
+			continue
+		}
+		key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
+		m.retireClaimLocked(key, c, true)
+		conns = append(conns, c)
 	}
 	observer := m.lifecycle
 	m.mu.Unlock()
@@ -574,6 +744,14 @@ func (m *SessionManager) CloseSessionsForRawAuthKeyExcept(authKeyID [8]byte, exc
 // deadline, but no timed-out Conn can enqueue more work in that interval. Nil/duplicate entries are
 // removed so Register's replacement/eviction slots cannot close the same Conn twice.
 func forceCloseConnBatch(conns []*Conn, timeout time.Duration) bool {
+	return closeConnBatch(conns, timeout, true)
+}
+
+// closeConnBatch always converges physical writers/outbound actors. waitInbound
+// is reserved for destructive control-plane operations; activation takeover sets
+// it false so a canceled business handler that ignores its context cannot stall a
+// healthy replacement. Its admission and response writer are already terminal.
+func closeConnBatch(conns []*Conn, timeout time.Duration, waitInbound bool) bool {
 	if len(conns) == 0 {
 		return true
 	}
@@ -640,7 +818,7 @@ func forceCloseConnBatch(conns []*Conn, timeout time.Duration) bool {
 		if remaining <= 0 {
 			return false
 		}
-		if c.rpcScheduler != nil && !c.waitInboundShutdown(remaining) {
+		if waitInbound && c.rpcScheduler != nil && !c.waitInboundShutdown(remaining) {
 			return false
 		}
 		if c.outboundDone == nil {
@@ -1631,6 +1809,9 @@ func (m *SessionManager) onlineChannelUsers(index map[int64]map[sessionKey]int64
 
 func (m *SessionManager) removeLocked(c *Conn, dropPending bool) int64 {
 	key := connSessionKey(c)
+	if m.bySession[key] != c {
+		return 0
+	}
 	delete(m.bySession, key)
 	removeSessionIDIndex(m.bySessionID, c.sessionID, c.authKeyID)
 	removeConnIndex(m.byAuthKey, c.authKeyID, c.sessionID)
@@ -1648,6 +1829,75 @@ func (m *SessionManager) removeLocked(c *Conn, dropPending bool) int64 {
 	}
 	delete(m.flushing, key)
 	return uid
+}
+
+// retireConnLocked closes every admission/producer gate before the Conn leaves
+// manager indexes. Callers may close the physical transport and wait outside m.mu,
+// but no pointer collected by an earlier fan-out can enqueue after this returns.
+func (m *SessionManager) retireConnLocked(c *Conn, dropPending bool) int64 {
+	if c == nil {
+		return 0
+	}
+	c.beginTerminalShutdown()
+	return m.removeLocked(c, dropPending)
+}
+
+func (m *SessionManager) retireClaimLocked(key sessionKey, c *Conn, dropPending bool) {
+	if c == nil || m.claims[key] != c {
+		return
+	}
+	c.beginTerminalShutdown()
+	m.removeClaimLocked(key, c)
+	if dropPending && m.bySession[key] == nil {
+		m.deletePendingLocked(key)
+	}
+	delete(m.flushing, key)
+}
+
+func (m *SessionManager) claimCountForAuthLocked(authKeyID [8]byte) int {
+	return len(m.claimsByAuth[authKeyID])
+}
+
+func (m *SessionManager) oldestAuthOwnerLocked(authKeyID [8]byte, exclude *Conn) (sessionKey, *Conn, bool) {
+	var (
+		oldestKey sessionKey
+		oldest    *Conn
+		isClaim   bool
+	)
+	for sessionID, candidate := range m.byAuthKey[authKeyID] {
+		if candidate == nil || candidate == exclude {
+			continue
+		}
+		if oldest == nil || candidate.createdAt.Before(oldest.createdAt) {
+			oldestKey = sessionKey{authKeyID: authKeyID, sessionID: sessionID}
+			oldest = candidate
+			isClaim = false
+		}
+	}
+	for sessionID, candidate := range m.claimsByAuth[authKeyID] {
+		if candidate == nil || candidate == exclude {
+			continue
+		}
+		if oldest == nil || candidate.createdAt.Before(oldest.createdAt) {
+			oldestKey = sessionKey{authKeyID: authKeyID, sessionID: sessionID}
+			oldest = candidate
+			isClaim = true
+		}
+	}
+	return oldestKey, oldest, isClaim
+}
+
+func (m *SessionManager) addClaimLocked(key sessionKey, c *Conn) {
+	m.claims[key] = c
+	addConnIndex(m.claimsByAuth, key.authKeyID, key.sessionID, c)
+}
+
+func (m *SessionManager) removeClaimLocked(key sessionKey, c *Conn) {
+	if m.claims[key] != c {
+		return
+	}
+	delete(m.claims, key)
+	removeConnIndex(m.claimsByAuth, key.authKeyID, key.sessionID)
 }
 
 func (m *SessionManager) businessAuthKeyCandidatesLocked(authKeyID [8]byte) map[sessionKey]*Conn {

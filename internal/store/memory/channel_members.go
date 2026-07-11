@@ -12,7 +12,7 @@ import (
 func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
+	channel, viewer, _, err := s.channelForViewerLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}
@@ -75,17 +75,16 @@ func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelI
 func (s *ChannelStore) GetParticipant(_ context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
+	_, viewer, _, err := s.channelForViewerLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelMember{}, err
 	}
 	if viewerUserID == participantUserID && viewer.Guest {
-		return viewer, nil
+		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
-	_ = channel
 	member, ok := s.members[channelID][participantUserID]
-	if !ok {
-		return domain.ChannelMember{}, domain.ErrChannelPrivate
+	if !ok || (participantUserID == viewerUserID && member.Status == domain.ChannelMemberLeft) {
+		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
 	return member, nil
 }
@@ -868,7 +867,7 @@ func (s *ChannelStore) FilterActiveChannelMemberIDs(_ context.Context, channelID
 func (s *ChannelStore) ListActiveChannelMembers(_ context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	channel, viewer, err := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, channelID)
+	channel, viewer, _, err := s.channelForViewerLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, nil, err
 	}

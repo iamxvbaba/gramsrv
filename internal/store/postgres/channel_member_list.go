@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,7 +13,7 @@ import (
 )
 
 func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
-	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, _, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}
@@ -170,14 +171,21 @@ WHERE channel_id = $1
 }
 
 func (s *ChannelStore) GetParticipant(ctx context.Context, viewerUserID, channelID, participantUserID int64) (domain.ChannelMember, error) {
-	_, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
+	_, viewer, _, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelMember{}, err
 	}
 	if viewerUserID == participantUserID && viewer.Guest {
-		return viewer, nil
+		return domain.ChannelMember{}, domain.ErrUserNotParticipant
 	}
-	return s.getChannelMember(ctx, s.db, channelID, participantUserID)
+	member, err := s.getChannelMember(ctx, s.db, channelID, participantUserID)
+	if errors.Is(err, domain.ErrChannelPrivate) {
+		return domain.ChannelMember{}, domain.ErrUserNotParticipant
+	}
+	if err == nil && participantUserID == viewerUserID && member.Status == domain.ChannelMemberLeft {
+		return domain.ChannelMember{}, domain.ErrUserNotParticipant
+	}
+	return member, err
 }
 
 func (s *ChannelStore) ListActiveChannelMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error) {
@@ -204,7 +212,7 @@ func (s *ChannelStore) ListActiveChannelMemberIDs(ctx context.Context, viewerUse
 }
 
 func (s *ChannelStore) ListActiveChannelMembers(ctx context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error) {
-	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, _, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.Channel{}, domain.ChannelMember{}, nil, err
 	}
@@ -237,7 +245,7 @@ LIMIT $2`, channelID, limit)
 }
 
 func (s *ChannelStore) ListActiveChannelBotMembers(ctx context.Context, viewerUserID, channelID int64, offset, limit int) (domain.ChannelParticipantList, error) {
-	channel, viewer, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, channelID)
+	channel, viewer, _, err := s.getChannelForViewer(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelParticipantList{}, err
 	}

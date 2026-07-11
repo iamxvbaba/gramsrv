@@ -66,10 +66,18 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if errors.Is(err, domain.ErrChannelPrivate) {
 		if candidate, candidateErr := s.channelByID(ctx, tx, req.ChannelID); candidateErr == nil {
-			var guest bool
-			member, guest, err = s.getLinkedDiscussionGuest(ctx, tx, req.UserID, candidate)
-			if guest {
+			guestMember, guest, guestErr := s.getLinkedDiscussionGuest(ctx, tx, req.UserID, candidate)
+			switch {
+			case guestErr != nil:
+				err = guestErr
+			case guest:
 				channel = candidate
+				member = guestMember
+				err = nil
+			default:
+				// A clean "not a linked guest" result is not authorization.
+				// Preserve the original private-member error and fail closed.
+				err = domain.ErrChannelPrivate
 			}
 		} else {
 			err = candidateErr

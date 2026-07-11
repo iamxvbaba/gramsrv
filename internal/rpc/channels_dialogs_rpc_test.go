@@ -5,6 +5,7 @@ import (
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/clock"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"go.uber.org/zap/zaptest"
 	"strconv"
 	"strings"
@@ -36,7 +37,8 @@ func TestLinkedDiscussionGuestCanCommentWithoutMembership(t *testing.T) {
 	subscriber, _ := users.Create(ctx, domain.User{AccessHash: 302, Phone: "15550003002", FirstName: "Subscriber"})
 	channelStore := memory.NewChannelStore()
 	channels := appchannels.NewService(channelStore, appchannels.WithBotProfileResolver(emptyDiscussionBotProfiles{}))
-	r := New(Config{}, Deps{Users: appusers.NewService(users), Channels: channels}, zaptest.NewLogger(t), clock.System)
+	dialogs := appdialogs.NewService(memory.NewDialogStore(), channelStore)
+	r := New(Config{}, Deps{Users: appusers.NewService(users), Channels: channels, Dialogs: dialogs}, zaptest.NewLogger(t), clock.System)
 
 	broadcast, err := channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: "Private channel", Broadcast: true, Date: 1700003001})
 	if err != nil {
@@ -78,14 +80,11 @@ func TestLinkedDiscussionGuestCanCommentWithoutMembership(t *testing.T) {
 	if _, err := r.onChannelsGetFullChannel(WithUserID(ctx, subscriber.ID), inputGroup); err != nil {
 		t.Fatalf("get linked group full as guest: %v", err)
 	}
-	participant, err := r.onChannelsGetParticipant(WithUserID(ctx, subscriber.ID), &tg.ChannelsGetParticipantRequest{
+	_, err = r.onChannelsGetParticipant(WithUserID(ctx, subscriber.ID), &tg.ChannelsGetParticipantRequest{
 		Channel: inputGroup, Participant: &tg.InputPeerSelf{},
 	})
-	if err != nil {
-		t.Fatalf("get linked guest participant: %v", err)
-	}
-	if _, ok := participant.Participant.(*tg.ChannelParticipantLeft); !ok {
-		t.Fatalf("linked guest participant = %T, want channelParticipantLeft", participant.Participant)
+	if !tgerr.Is(err, "USER_NOT_PARTICIPANT") {
+		t.Fatalf("get linked guest self participant err = %v, want USER_NOT_PARTICIPANT", err)
 	}
 	if _, err := r.onChannelsGetParticipants(WithUserID(ctx, subscriber.ID), &tg.ChannelsGetParticipantsRequest{
 		Channel: inputGroup, Filter: &tg.ChannelParticipantsRecent{}, Limit: 20,
@@ -97,10 +96,67 @@ func TestLinkedDiscussionGuestCanCommentWithoutMembership(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("get linked group bot participants as guest: %v", err)
 	}
-	if _, err := r.onMessagesGetReplies(WithUserID(ctx, subscriber.ID), &tg.MessagesGetRepliesRequest{
+	directReplies, err := r.onMessagesGetReplies(WithUserID(ctx, subscriber.ID), &tg.MessagesGetRepliesRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: group.Channel.ID, AccessHash: group.Channel.AccessHash}, MsgID: root.ID, Limit: 20,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("get linked group replies as guest: %v", err)
+	}
+	directPage, ok := directReplies.(*tg.MessagesChannelMessages)
+	if !ok || len(directPage.Chats) != 1 {
+		t.Fatalf("direct linked guest replies = %T %+v, want one channel chat", directReplies, directReplies)
+	}
+	directGroup, ok := directPage.Chats[0].(*tg.Channel)
+	if !ok || directGroup.ID != group.Channel.ID || directGroup.Min || !directGroup.Left {
+		t.Fatalf("direct linked guest replies chat = %T %+v, want full left group %d", directPage.Chats[0], directPage.Chats[0], group.Channel.ID)
+	}
+	viaBroadcastReplies, err := r.onMessagesGetReplies(WithUserID(ctx, subscriber.ID), &tg.MessagesGetRepliesRequest{
+		Peer: &tg.InputPeerChannel{ChannelID: broadcast.Channel.ID, AccessHash: broadcast.Channel.AccessHash}, MsgID: post.ID, Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("get linked replies through broadcast as guest: %v", err)
+	}
+	viaBroadcastPage, ok := viaBroadcastReplies.(*tg.MessagesChannelMessages)
+	if !ok || len(viaBroadcastPage.Chats) != 2 {
+		t.Fatalf("broadcast linked guest replies = %T %+v, want primary group plus source channel", viaBroadcastReplies, viaBroadcastReplies)
+	}
+	viaBroadcastGroup, ok := viaBroadcastPage.Chats[0].(*tg.Channel)
+	if !ok || viaBroadcastGroup.ID != group.Channel.ID || viaBroadcastGroup.Min || !viaBroadcastGroup.Left {
+		t.Fatalf("broadcast linked guest primary chat = %T %+v, want full left group %d", viaBroadcastPage.Chats[0], viaBroadcastPage.Chats[0], group.Channel.ID)
+	}
+	viaBroadcastSource, ok := viaBroadcastPage.Chats[1].(*tg.Channel)
+	if !ok || viaBroadcastSource.ID != broadcast.Channel.ID || !viaBroadcastSource.Min {
+		t.Fatalf("broadcast linked guest companion chat = %T %+v, want min source %d", viaBroadcastPage.Chats[1], viaBroadcastPage.Chats[1], broadcast.Channel.ID)
+	}
+	peerDialogsReq := &tg.MessagesGetPeerDialogsRequest{Peers: []tg.InputDialogPeerClass{
+		&tg.InputDialogPeer{Peer: &tg.InputPeerChannel{ChannelID: group.Channel.ID, AccessHash: group.Channel.AccessHash}},
+	}}
+	var peerDialogsIn bin.Buffer
+	if err := peerDialogsReq.Encode(&peerDialogsIn); err != nil {
+		t.Fatalf("encode linked guest getPeerDialogs: %v", err)
+	}
+	peerDialogsEnc, err := r.Dispatch(WithUserID(ctx, subscriber.ID), [8]byte{}, 0, &peerDialogsIn)
+	if err != nil {
+		t.Fatalf("dispatch linked guest getPeerDialogs: %v", err)
+	}
+	peerDialogs, ok := peerDialogsEnc.(*tg.MessagesPeerDialogs)
+	if !ok || len(peerDialogs.Dialogs) != 1 || len(peerDialogs.Chats) != 1 || len(peerDialogs.Messages) == 0 {
+		t.Fatalf("linked guest peer dialogs = %T %+v, want one transient dialog/chat with top message", peerDialogsEnc, peerDialogsEnc)
+	}
+	dialog, ok := peerDialogs.Dialogs[0].(*tg.Dialog)
+	if !ok || dialog.TopMessage == 0 {
+		t.Fatalf("linked guest dialog = %T %+v, want non-zero top message", peerDialogs.Dialogs[0], peerDialogs.Dialogs[0])
+	}
+	guestDialogView, err := channels.GetChannel(ctx, subscriber.ID, group.Channel.ID)
+	if err != nil {
+		t.Fatalf("get linked guest view for dialog pts: %v", err)
+	}
+	if pts, ok := dialog.GetPts(); !ok || pts != guestDialogView.Channel.Pts {
+		t.Fatalf("linked guest dialog pts = %d (set=%v), want %d", pts, ok, guestDialogView.Channel.Pts)
+	}
+	chat, ok := peerDialogs.Chats[0].(*tg.Channel)
+	if !ok || !chat.Left || chat.ID != group.Channel.ID {
+		t.Fatalf("linked guest peer dialog chat = %T %+v, want left group %d", peerDialogs.Chats[0], peerDialogs.Chats[0], group.Channel.ID)
 	}
 	if changed, err := r.onMessagesReadDiscussion(WithUserID(ctx, subscriber.ID), &tg.MessagesReadDiscussionRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: group.Channel.ID, AccessHash: group.Channel.AccessHash}, MsgID: root.ID, ReadMaxID: group.Channel.TopMessageID,
@@ -117,6 +173,112 @@ func TestLinkedDiscussionGuestCanCommentWithoutMembership(t *testing.T) {
 	req.RandomID = 3003
 	if _, err := r.onMessagesSendMessage(WithUserID(ctx, subscriber.ID), req); err == nil || !strings.Contains(err.Error(), "CHAT_WRITE_FORBIDDEN") {
 		t.Fatalf("guest send with join_to_send err = %v, want CHAT_WRITE_FORBIDDEN", err)
+	}
+}
+
+func TestPublicChannelAndMegagroupPreviewStayReadableForNonMember(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	owner, _ := users.Create(ctx, domain.User{AccessHash: 401, Phone: "15550004001", FirstName: "Owner"})
+	viewer, _ := users.Create(ctx, domain.User{AccessHash: 402, Phone: "15550004002", FirstName: "Viewer"})
+	channels := appchannels.NewService(memory.NewChannelStore())
+	r := New(Config{}, Deps{Users: appusers.NewService(users), Channels: channels}, zaptest.NewLogger(t), clock.System)
+
+	tests := []struct {
+		name      string
+		broadcast bool
+		username  string
+	}{
+		{name: "broadcast", broadcast: true, username: "public_rpc_broadcast"},
+		{name: "megagroup", username: "public_rpc_megagroup"},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var created domain.CreateChannelResult
+			var err error
+			if test.broadcast {
+				created, err = channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: test.name, Broadcast: true, Date: 1700004000 + i})
+			} else {
+				created, err = channels.CreateMegagroupFromCreateChat(ctx, owner.ID, domain.CreateChannelRequest{Title: test.name, Date: 1700004000 + i})
+			}
+			if err != nil {
+				t.Fatalf("create public peer: %v", err)
+			}
+			public, err := channels.UpdateUsername(ctx, owner.ID, domain.UpdateChannelUsernameRequest{
+				UserID: owner.ID, ChannelID: created.Channel.ID, Username: test.username,
+			})
+			if err != nil {
+				t.Fatalf("make public: %v", err)
+			}
+			if _, err := channels.SendMessage(ctx, owner.ID, domain.SendChannelMessageRequest{
+				ChannelID: public.ID, RandomID: int64(4000 + i), Message: "public history", Date: 1700004010 + i,
+			}); err != nil {
+				t.Fatalf("seed public history: %v", err)
+			}
+			inputChannel := &tg.InputChannel{ChannelID: public.ID, AccessHash: public.AccessHash}
+			full, err := r.onChannelsGetFullChannel(WithUserID(ctx, viewer.ID), inputChannel)
+			if err != nil {
+				t.Fatalf("getFullChannel preview: %v", err)
+			}
+			var preview *tg.Channel
+			for _, chat := range full.Chats {
+				if channel, ok := chat.(*tg.Channel); ok && channel.ID == public.ID {
+					preview = channel
+				}
+			}
+			if preview == nil || !preview.Left {
+				t.Fatalf("full chats = %+v, want public peer projected left", full.Chats)
+			}
+			history := dispatchMessagesPayload(t, r, WithUserID(ctx, viewer.ID), &tg.MessagesGetHistoryRequest{
+				Peer: &tg.InputPeerChannel{ChannelID: public.ID, AccessHash: public.AccessHash}, Limit: 20,
+			})
+			messages, _, _ := searchMessagesPayload(t, history)
+			if len(messages) == 0 {
+				t.Fatal("public preview history is empty")
+			}
+			if _, err := r.onChannelsGetParticipants(WithUserID(ctx, viewer.ID), &tg.ChannelsGetParticipantsRequest{
+				Channel: inputChannel, Filter: &tg.ChannelParticipantsRecent{}, Limit: 20,
+			}); err != nil {
+				t.Fatalf("getParticipants preview: %v", err)
+			}
+			if _, err := r.onChannelsGetParticipant(WithUserID(ctx, viewer.ID), &tg.ChannelsGetParticipantRequest{
+				Channel: inputChannel, Participant: &tg.InputPeerSelf{},
+			}); !tgerr.Is(err, "USER_NOT_PARTICIPANT") {
+				t.Fatalf("self participant preview err = %v, want USER_NOT_PARTICIPANT", err)
+			}
+			if _, err := channels.GetChannel(ctx, viewer.ID, public.ID); err != nil {
+				t.Fatalf("public preview became forbidden after participant miss: %v", err)
+			}
+			if _, err := channels.JoinChannel(ctx, viewer.ID, public.ID, 1700004020+i); err != nil {
+				t.Fatalf("join public peer: %v", err)
+			}
+			if _, err := channels.LeaveChannel(ctx, viewer.ID, public.ID, 1700004030+i); err != nil {
+				t.Fatalf("leave public peer: %v", err)
+			}
+			if _, err := r.onChannelsGetParticipant(WithUserID(ctx, viewer.ID), &tg.ChannelsGetParticipantRequest{
+				Channel: inputChannel, Participant: &tg.InputPeerSelf{},
+			}); !tgerr.Is(err, "USER_NOT_PARTICIPANT") {
+				t.Fatalf("left self participant err = %v, want USER_NOT_PARTICIPANT", err)
+			}
+			if _, err := channels.GetHistory(ctx, viewer.ID, domain.ChannelHistoryFilter{ChannelID: public.ID, Limit: 20}); err != nil {
+				t.Fatalf("public history after leave: %v", err)
+			}
+		})
+	}
+
+	private, err := channels.CreateMegagroupFromCreateChat(ctx, owner.ID, domain.CreateChannelRequest{Title: "private", Date: 1700004050})
+	if err != nil {
+		t.Fatalf("create private group: %v", err)
+	}
+	privateReq := &tg.MessagesGetHistoryRequest{
+		Peer: &tg.InputPeerChannel{ChannelID: private.Channel.ID, AccessHash: private.Channel.AccessHash}, Limit: 20,
+	}
+	var privateIn bin.Buffer
+	if err := privateReq.Encode(&privateIn); err != nil {
+		t.Fatalf("encode private history: %v", err)
+	}
+	if _, err := r.Dispatch(WithUserID(ctx, viewer.ID), [8]byte{}, 0, &privateIn); !tgerr.Is(err, "CHANNEL_PRIVATE") {
+		t.Fatalf("private non-member history err = %v, want CHANNEL_PRIVATE", err)
 	}
 }
 

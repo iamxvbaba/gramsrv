@@ -513,23 +513,19 @@ func (s *ChannelStore) ListChannelReplies(_ context.Context, viewerUserID int64,
 	extraChannels := []domain.Channel(nil)
 	if source.Broadcast {
 		if root.Discussion == nil || root.Discussion.ChannelID == 0 || root.Discussion.MessageID == 0 {
-			return domain.ChannelHistory{Channel: source, Count: 0}, nil
+			return domain.ChannelHistory{Channel: source, Self: member, Count: 0}, nil
 		}
-		linked, ok := s.channels[root.Discussion.ChannelID]
-		if !ok || linked.Deleted {
-			return domain.ChannelHistory{Channel: source, Count: 0}, nil
+		linked, linkedMember, linkedErr := s.channelAndMemberOrLinkedGuestLocked(viewerUserID, root.Discussion.ChannelID)
+		if linkedErr != nil {
+			return domain.ChannelHistory{}, linkedErr
 		}
 		targetChannel = linked
+		targetMember = linkedMember
 		rootID = root.Discussion.MessageID
-		if linkedMember, ok := s.members[linked.ID][viewerUserID]; ok {
-			targetMember = linkedMember
-		} else {
-			targetMember = domain.ChannelMember{}
-		}
 		extraChannels = append(extraChannels, source)
 	}
 	if targetRoot, ok := s.findMessageLocked(targetChannel.ID, rootID); !ok || targetRoot.Deleted {
-		return domain.ChannelHistory{Channel: targetChannel, Channels: extraChannels, Count: 0}, nil
+		return domain.ChannelHistory{Channel: targetChannel, Self: targetMember, Channels: extraChannels, Count: 0}, nil
 	}
 	limit := filter.Limit
 	if limit <= 0 || limit > domain.MaxChannelRepliesLimit {
@@ -570,7 +566,7 @@ func (s *ChannelStore) ListChannelReplies(_ context.Context, viewerUserID int64,
 			topics = append(topics, cloneChannelForumTopic(topic))
 		}
 	}
-	return domain.ChannelHistory{Channel: targetChannel, Channels: extraChannels, Topics: topics, Messages: out, Count: len(base)}, nil
+	return domain.ChannelHistory{Channel: targetChannel, Self: targetMember, Channels: extraChannels, Topics: topics, Messages: out, Count: len(base)}, nil
 }
 
 func (s *ChannelStore) populateChannelMessageRepliesLocked(viewerUserID, channelID int64, messages []domain.ChannelMessage) {

@@ -61,8 +61,8 @@ func TestMetricsHooks(t *testing.T) {
 	if got := m.inbound.Load(); got != 1 {
 		t.Errorf("InboundRPCStarted called %d times, want 1", got)
 	}
-	// new_session_created / ack 走 fire-and-forget（异步），可能在 client 收到 rpc_result 后
-	// 才被 outbound actor 处理；轮询等其最终发送完成。M5 验证发送计数，不约束同步时序。
+	// new_session_created 已经跨过 required-control 物理写屏障；msgs_ack 仍是异步控制帧，
+	// 因而这里只轮询等待最终发送计数。具体 boundary→RPC 顺序由 session boundary 测试锁定。
 	deadline := time.Now().Add(2 * time.Second)
 	for m.outbound.Load() < 3 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)

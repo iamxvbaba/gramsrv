@@ -40,6 +40,11 @@ const (
 	defaultOutboundControlQueueSize = 32
 	defaultOutboundTrackedMaxBytes  = int64(512 << 20) // 512 MiB / Server
 	defaultOutboundControlMaxBytes  = int64(64 << 20)  // ack/state/resend vectors / Server
+	// requiredControlMaxWait bounds protocol barriers such as new_session_created from
+	// the beginning of encoding through the completed physical write. These frames gate
+	// subsequent session state transitions, so timing out must close the connection instead
+	// of degrading to the best-effort control path.
+	requiredControlMaxWait = 5 * time.Second
 
 	maxTrackedServerMsgIDs = 4096
 	maxTrackedAckedMsgIDs  = 1024
@@ -332,6 +337,9 @@ func (c *Conn) Close() {
 // transport.Close call, so a timed-out batch close cannot keep accepting memory/work.
 func (c *Conn) beginTerminalShutdown() {
 	c.terminal.Store(true)
+	// Retirement is irreversible. SessionManager activation only uses CAS from
+	// provisional/claiming, so a stale goroutine cannot publish this Conn again.
+	c.lifecycle.Store(uint32(connLifecycleRetired))
 	c.signalOutboundStop()
 	c.beginCloseInboundRPCScheduler()
 }
@@ -339,6 +347,23 @@ func (c *Conn) beginTerminalShutdown() {
 func (c *Conn) waitOutboundShutdown() {
 	if c.outboundDone != nil {
 		<-c.outboundDone
+	}
+}
+
+func (c *Conn) waitOutboundShutdownUntil(timeout time.Duration) bool {
+	if c == nil || c.outboundDone == nil {
+		return true
+	}
+	if timeout <= 0 {
+		return false
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-c.outboundDone:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 
@@ -355,6 +380,13 @@ func (c *Conn) ForceClose() {
 // closeTransport 只关闭物理 transport，不等待 outbound actor。写失败路径运行在
 // actor 自身 goroutine 中，若在这里调用 Close 会等待 outboundDone 而自锁。
 func (c *Conn) closeTransport() {
+	if c == nil {
+		return
+	}
+	if c.transportLease != nil {
+		_ = c.transportLease.Close()
+		return
+	}
 	c.transportClose.Do(func() {
 		if c.transport != nil {
 			_ = c.transport.Close()
@@ -370,6 +402,38 @@ func (c *Conn) failTransport() {
 	// Close, but it must not keep accepting queued bodies or RPC work meanwhile.
 	c.beginTerminalShutdown()
 	c.closeTransport()
+}
+
+// fenceUndeliveredRPCResult is the no-reentry terminal path used from a task's
+// release callback. That callback may itself run while rpcClose.Do is draining
+// queued tasks, so calling beginCloseInboundRPCScheduler again would deadlock on
+// sync.Once. Closing the socket wakes serveConn, whose ordinary defer completes
+// scheduler/index cleanup; when shutdown already owns the callback, that cleanup
+// is already in progress.
+func (c *Conn) fenceUndeliveredRPCResult() {
+	if c == nil {
+		return
+	}
+	// A replacement/shutdown that already published terminal owns physical
+	// lifecycle cleanup (and may intentionally transfer the lease). Only the
+	// resultless task that wins false->true is allowed to close this generation.
+	if !c.terminal.CompareAndSwap(false, true) {
+		return
+	}
+	c.lifecycle.Store(uint32(connLifecycleRetired))
+	c.signalOutboundStop()
+	if c.transportLease != nil {
+		c.transportLease.startCloseAlreadyFenced()
+		return
+	}
+	// Legacy construction-only Conns have no owner callback graph, so their
+	// exact transport close cannot re-enter logical lifecycle cleanup. Keep a
+	// pathological Close outside the shared RPC worker just like the lease path.
+	go c.transportClose.Do(func() {
+		if c.transport != nil {
+			_ = c.transport.Close()
+		}
+	})
 }
 
 // dropSlowConsumer 把出站队列持续拥塞的连接降级为离线连接。它不能等待 outbound
@@ -400,6 +464,41 @@ func (c *Conn) Send(ctx context.Context, t proto.MessageType, msg bin.Encoder) e
 // SendPriority 加密并优先发送一条 server 控制消息。
 func (c *Conn) SendPriority(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
 	return c.send(ctx, t, msg, true)
+}
+
+// SendRequiredControl writes a protocol-critical control message before the caller commits
+// the state transition guarded by that message. One absolute deadline covers encode admission,
+// body-budget reservation, control-queue admission and the physical transport write. A failure
+// is terminal: continuing on the same connection could expose state whose required notification
+// never reached the client.
+//
+// Success only confirms the physical write; it does not wait for the client's msgs_ack.
+func (c *Conn) SendRequiredControl(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now()
+	deadline := now.Add(requiredControlMaxWait)
+	if c.writeTimeout > 0 {
+		if writeDeadline := now.Add(c.writeTimeout); writeDeadline.Before(deadline) {
+			deadline = writeDeadline
+		}
+	}
+	if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
+		deadline = parentDeadline
+	}
+	requiredCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	if err := requiredCtx.Err(); err != nil {
+		c.failTransport()
+		return err
+	}
+
+	err := c.sendOutbound(requiredCtx, t, msg, nil, true)
+	if err != nil {
+		c.failTransport()
+	}
+	return err
 }
 
 // SendBestEffort 只等待消息进入普通 outbound 队列，不等待网络写完成。
@@ -519,14 +618,27 @@ func (c *Conn) sendOutbound(ctx context.Context, t proto.MessageType, msg bin.En
 	case res := <-op.done:
 		return res.err
 	case <-ctx.Done():
+		// A physical write can complete at the same instant as the caller's
+		// deadline. Prefer the actor's terminal result when it is already
+		// available so required-control callers do not poison a healthy Conn.
+		select {
+		case res := <-op.done:
+			return res.err
+		default:
+		}
 		return ctx.Err()
 	case <-c.outboundStop:
+		select {
+		case res := <-op.done:
+			return res.err
+		default:
+		}
 		return ErrConnClosed
 	}
 }
 
 // SendAsync 入队一条 server 消息但不等待发送结果（fire-and-forget），用于读循环里的控制消息
-// （ack/pong/new_session_created/bad_msg/future_salts/state_info）：避免读循环被 outbound 写
+// （ack/pong/bad_msg/future_salts/state_info）：避免读循环被 outbound 写
 // 阻塞而连带卡死。走优先(control)队列保证不被普通 push 拖后；队列满时丢弃并记 metrics——此时
 // 连接多已严重拥塞，控制消息丢失由客户端重传 / 读写超时兜底。返回非 nil 仅表示连接已关闭。
 func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
@@ -1038,7 +1150,10 @@ func (c *Conn) failOutboundBudget(err error) {
 	if c.metrics != nil {
 		c.metrics.OutboundDropped("tracked_global_byte_budget")
 	}
-	c.failTransport()
+	// No socket bytes exist yet. If an intentional session handoff already won
+	// the terminal CAS, it owns close/transfer and this old producer must not close
+	// the still-current lease. A live connection still gets fenced and closed.
+	c.fenceUndeliveredRPCResult()
 }
 
 func (c *Conn) ensureOutboundTrackedBudget() *outboundTrackedBudget {

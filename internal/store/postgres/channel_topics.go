@@ -595,28 +595,27 @@ func (s *ChannelStore) ListChannelReplies(ctx context.Context, viewerUserID int6
 		return domain.ChannelHistory{}, domain.ErrMessageIDInvalid
 	}
 	target := source
-	availableMinID := member.AvailableMinID
+	targetMember := member
+	availableMinID := targetMember.AvailableMinID
 	extraChannels := []domain.Channel(nil)
 	rootID := root.ID
 	if source.Broadcast {
 		if root.Discussion == nil || root.Discussion.ChannelID == 0 || root.Discussion.MessageID == 0 {
-			return domain.ChannelHistory{Channel: source}, nil
+			return domain.ChannelHistory{Channel: source, Self: member}, nil
 		}
-		linked, err := getChannelByID(ctx, s.db, root.Discussion.ChannelID)
+		linked, linkedMember, err := s.getChannelForMemberOrLinkedGuest(ctx, s.db, viewerUserID, root.Discussion.ChannelID)
 		if err != nil {
-			return domain.ChannelHistory{Channel: source}, nil
+			return domain.ChannelHistory{}, err
 		}
 		target = linked
+		targetMember = linkedMember
 		rootID = root.Discussion.MessageID
-		availableMinID = 0
-		if linkedMember, err := s.getChannelMember(ctx, s.db, linked.ID, viewerUserID); err == nil && validateChannelMemberVisible(linkedMember) == nil {
-			availableMinID = linkedMember.AvailableMinID
-		}
+		availableMinID = targetMember.AvailableMinID
 		extraChannels = append(extraChannels, source)
 	}
 	targetRoot, err := s.getChannelMessage(ctx, s.db, target.ID, rootID)
 	if err != nil || targetRoot.Deleted || targetRoot.ID <= availableMinID {
-		return domain.ChannelHistory{Channel: target, Channels: extraChannels}, nil
+		return domain.ChannelHistory{Channel: target, Self: targetMember, Channels: extraChannels}, nil
 	}
 	limit := filter.Limit
 	if limit <= 0 || limit > domain.MaxChannelRepliesLimit {
@@ -646,7 +645,7 @@ func (s *ChannelStore) ListChannelReplies(ctx context.Context, viewerUserID int6
 			return domain.ChannelHistory{}, err
 		}
 	}
-	return domain.ChannelHistory{Channel: target, Channels: extraChannels, Topics: topics, Messages: messages, Count: count}, nil
+	return domain.ChannelHistory{Channel: target, Self: targetMember, Channels: extraChannels, Topics: topics, Messages: messages, Count: count}, nil
 }
 
 func (s *ChannelStore) getForumTopic(ctx context.Context, db sqlcgen.DBTX, channelID int64, topicID int) (domain.ChannelForumTopic, error) {

@@ -377,7 +377,20 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 	if err != nil {
 		return nil, err
 	}
+	linkedGuests, err := s.listLinkedDiscussionGuests(ctx, s.db, viewerUserID, remaining)
+	if err != nil {
+		return nil, err
+	}
 	for _, channel := range channels {
+		if member, ok := linkedGuests[channel.ID]; ok {
+			views[channel.ID] = domain.ChannelView{
+				Channel:           channel,
+				Self:              member,
+				Dialog:            previewChannelDialog(viewerUserID, channel, member),
+				SelfBoostsApplied: 0,
+			}
+			continue
+		}
 		if member, _, ok, err := s.monoforumAdminPreview(ctx, s.db, viewerUserID, channel); err != nil {
 			return nil, err
 		} else if ok {
