@@ -1279,6 +1279,10 @@ type deadlineOutboundWriter interface {
 	SendDeadline(deadline time.Time, b *bin.Buffer) error
 }
 
+type deadlineOutboundScratchWriter interface {
+	SendDeadlineWithScratch(deadline time.Time, b *bin.Buffer, scratch *[]byte) error
+}
+
 func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1309,7 +1313,9 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 	if writer == nil {
 		writer = c.transport
 	}
-	if dw, ok := writer.(deadlineOutboundWriter); ok {
+	if sw, ok := writer.(deadlineOutboundScratchWriter); ok {
+		err = sw.SendDeadlineWithScratch(deadline, out, &scratch.codec)
+	} else if dw, ok := writer.(deadlineOutboundWriter); ok {
 		err = dw.SendDeadline(deadline, out)
 	} else {
 		// 回落路径：gotd full codec / 测试注入 codec 仍走 ctx deadline。

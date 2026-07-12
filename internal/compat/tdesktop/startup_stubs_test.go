@@ -40,6 +40,7 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 	}
 	values := make(map[string]float64)
 	strings := make(map[string]string)
+	arrays := make(map[string]*tg.JSONArray)
 	if object, ok := got.Config.(*tg.JSONObject); ok && object != nil {
 		for _, entry := range object.Value {
 			if number, ok := entry.Value.(*tg.JSONNumber); ok {
@@ -47,6 +48,9 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 			}
 			if str, ok := entry.Value.(*tg.JSONString); ok {
 				strings[entry.Key] = str.Value
+			}
+			if array, ok := entry.Value.(*tg.JSONArray); ok {
+				arrays[entry.Key] = array
 			}
 		}
 	}
@@ -63,8 +67,19 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 	if strings["rich_message_posting"] != "enabled" {
 		t.Fatalf("AppConfig[rich_message_posting] = %q, want enabled", strings["rich_message_posting"])
 	}
+	fragmentPrefixes := arrays["fragment_prefixes"]
+	if fragmentPrefixes == nil || len(fragmentPrefixes.Value) != 1 {
+		t.Fatalf("AppConfig[fragment_prefixes] = %#v, want one-element array", fragmentPrefixes)
+	}
+	prefix, ok := fragmentPrefixes.Value[0].(*tg.JSONString)
+	if !ok || prefix.Value != "888" {
+		t.Fatalf("AppConfig[fragment_prefixes][0] = %#v, want \"888\"", fragmentPrefixes.Value[0])
+	}
 	if _, ok := AppConfig(got.Hash).(*tg.HelpAppConfigNotModified); !ok {
 		t.Fatalf("AppConfig(hash) = %#v, want notModified", AppConfig(got.Hash))
+	}
+	if _, ok := AppConfig(got.Hash - 1).(*tg.HelpAppConfig); !ok {
+		t.Fatalf("AppConfig(old hash) = %#v, want refreshed config", AppConfig(got.Hash-1))
 	}
 }
 

@@ -13,10 +13,10 @@ const (
 )
 
 // outboundScratchPool bounds and reuses the encrypted wire buffer across connections. A lease
-// reserves a conservative 3x wire size while writing (wire + codec/obfuscation copies), then
-// shrinks to the actual retained capacity while idle in the bounded pool. Large one-off frames are
-// dropped on return. This removes attacker-warmable per-Conn MiB buffers without returning to an
-// unbounded allocation-per-message design.
+// reserves wire + codec/obfuscation copies plus their bounded transport overhead, then shrinks to
+// the actual retained capacity while idle in the bounded pool. Large one-off frames are dropped on
+// return. This removes attacker-warmable per-Conn MiB buffers without returning to an unbounded
+// allocation-per-message design.
 type outboundScratchPool struct {
 	budget *outboundTrackedBudget
 	idle   chan *outboundScratch
@@ -24,6 +24,7 @@ type outboundScratchPool struct {
 
 type outboundScratch struct {
 	wire     bin.Buffer
+	codec    []byte
 	reserved int
 }
 
@@ -45,7 +46,7 @@ func (p *outboundScratchPool) acquireUntil(ctx context.Context, stop <-chan stru
 	if p == nil || wireBytes <= 0 {
 		return nil, ErrOutboundMessageTooLarge
 	}
-	peak := wireBytes * 3
+	peak := wireBytes*3 + 2*maxCompatPacketOverhead
 	if peak < wireBytes { // int overflow
 		return nil, ErrOutboundMessageTooLarge
 	}
@@ -79,6 +80,7 @@ func (p *outboundScratchPool) acquireUntil(ctx context.Context, stop <-chan stru
 	// that would fit after replacement.
 	old := scratch.reserved
 	scratch.wire.Buf = nil
+	scratch.codec = nil
 	scratch.reserved = 0
 	p.budget.release(old)
 	if err := p.budget.waitReserveUntil(ctx, stop, peak, deadline); err != nil {
@@ -93,10 +95,11 @@ func (p *outboundScratchPool) release(scratch *outboundScratch) {
 	if p == nil || scratch == nil {
 		return
 	}
-	retained := cap(scratch.wire.Buf)
+	retained := cap(scratch.wire.Buf) + cap(scratch.codec)
 	if retained > maxRetainedConnBuffer {
 		p.budget.release(scratch.reserved)
 		scratch.wire.Buf = nil
+		scratch.codec = nil
 		scratch.reserved = 0
 		return
 	}
@@ -105,6 +108,7 @@ func (p *outboundScratchPool) release(scratch *outboundScratch) {
 		scratch.reserved = retained
 	}
 	scratch.wire.Buf = scratch.wire.Buf[:0]
+	scratch.codec = scratch.codec[:0]
 	p.putIdle(scratch)
 }
 
@@ -114,6 +118,7 @@ func (p *outboundScratchPool) putIdle(scratch *outboundScratch) {
 	default:
 		p.budget.release(scratch.reserved)
 		scratch.wire.Buf = nil
+		scratch.codec = nil
 		scratch.reserved = 0
 	}
 }
