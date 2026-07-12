@@ -143,6 +143,14 @@ func langPackFromClient(ctx context.Context) string {
 		return string(ClientTypeAndroid)
 	case ClientTypeTDesktop:
 		return string(ClientTypeTDesktop)
+	case ClientTypeIOS:
+		return string(ClientTypeIOS)
+	case ClientTypeMacOS:
+		return string(ClientTypeMacOS)
+	case ClientTypeTWeb:
+		return "webk"
+	case ClientTypeTelegramTT:
+		return "weba"
 	}
 	client := strings.ToLower(info.DeviceModel + " " + info.SystemVersion + " " + info.AppVersion)
 	if strings.Contains(client, "android") {

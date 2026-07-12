@@ -22,6 +22,7 @@ func TestClassifyMediaCategories(t *testing.T) {
 		{"nil media no entities", nil, nil, []MediaCategory{}},
 		{"photo", &MessageMedia{Kind: MessageMediaKindPhoto, Photo: &Photo{}}, nil, []MediaCategory{MediaCategoryPhoto}},
 		{"poll", &MessageMedia{Kind: MessageMediaKindPoll}, nil, []MediaCategory{MediaCategoryPoll}},
+		{"live location", &MessageMedia{Kind: MessageMediaKindGeoLive, GeoLive: &MessageGeoLive{}}, nil, []MediaCategory{MediaCategoryGeoLive}},
 		{"video", doc(DocumentAttribute{Kind: DocAttrVideo}), nil, []MediaCategory{MediaCategoryVideo}},
 		{"round video note", doc(DocumentAttribute{Kind: DocAttrVideo, RoundMessage: true}), nil, []MediaCategory{MediaCategoryRoundVideo}},
 		{"gif animation", &MessageMedia{Kind: MessageMediaKindDocument, Document: &Document{MimeType: "video/mp4", Attributes: []DocumentAttribute{{Kind: DocAttrAnimated}, {Kind: DocAttrVideo, W: 320, H: 240, Duration: 1}}}}, nil, []MediaCategory{MediaCategoryGif}},

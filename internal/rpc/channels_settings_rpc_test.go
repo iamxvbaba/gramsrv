@@ -916,6 +916,11 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 		t.Fatalf("toggle forum chat = %+v, want forum+forum_tabs", forumUpdates.(*tg.Updates).Chats[0])
 	}
 	forumPeer := &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
+	if _, err := r.onMessagesGetForumTopicsByID(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsByIDRequest{
+		Peer: forumPeer,
+	}); err == nil || !strings.Contains(err.Error(), "TOPICS_EMPTY") {
+		t.Fatalf("messages.getForumTopicsByID empty topics err = %v, want TOPICS_EMPTY", err)
+	}
 	forumTopics, err := r.onMessagesGetForumTopics(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsRequest{
 		Peer:  forumPeer,
 		Limit: 10,
@@ -1001,15 +1006,25 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if !foundCreated {
 		t.Fatalf("messages.getForumTopics topics = %+v, want created topic id %d", forumTopicsWithCreated.Topics, topicID)
 	}
+	missingTopicID := topicID + 1000
 	forumTopicsByID, err = r.onMessagesGetForumTopicsByID(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsByIDRequest{
 		Peer:   forumPeer,
-		Topics: []int{forumGeneralTopicID, topicID},
+		Topics: []int{topicID, missingTopicID, forumGeneralTopicID, topicID},
 	})
 	if err != nil {
 		t.Fatalf("messages.getForumTopicsByID with created topic: %v", err)
 	}
-	if forumTopicsByID.Count != 2 || len(forumTopicsByID.Topics) != 2 || len(forumTopicsByID.Messages) == 0 {
-		t.Fatalf("messages.getForumTopicsByID with created topic = %+v, want General + created topic", forumTopicsByID)
+	if forumTopicsByID.Count != 3 || len(forumTopicsByID.Topics) != 3 || len(forumTopicsByID.Messages) == 0 {
+		t.Fatalf("messages.getForumTopicsByID with created/missing/duplicate topics = %+v, want three unique results", forumTopicsByID)
+	}
+	if topic, ok := forumTopicsByID.Topics[0].(*tg.ForumTopic); !ok || topic.ID != topicID {
+		t.Fatalf("messages.getForumTopicsByID result[0] = %T %+v, want live topic %d", forumTopicsByID.Topics[0], forumTopicsByID.Topics[0], topicID)
+	}
+	if topic, ok := forumTopicsByID.Topics[1].(*tg.ForumTopicDeleted); !ok || topic.ID != missingTopicID {
+		t.Fatalf("messages.getForumTopicsByID result[1] = %T %+v, want deleted placeholder %d", forumTopicsByID.Topics[1], forumTopicsByID.Topics[1], missingTopicID)
+	}
+	if topic, ok := forumTopicsByID.Topics[2].(*tg.ForumTopic); !ok || topic.ID != forumGeneralTopicID {
+		t.Fatalf("messages.getForumTopicsByID result[2] = %T %+v, want General", forumTopicsByID.Topics[2], forumTopicsByID.Topics[2])
 	}
 	topicReply := &tg.InputReplyToMessage{ReplyToMsgID: 0}
 	topicReply.SetTopMsgID(topicID)
@@ -1216,6 +1231,19 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	}
 	if forumTopicsAfterDelete.Count != 1 || len(forumTopicsAfterDelete.Topics) != 1 {
 		t.Fatalf("messages.getForumTopics after delete topic = %+v, want General only", forumTopicsAfterDelete)
+	}
+	deletedByID, err := r.onMessagesGetForumTopicsByID(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsByIDRequest{
+		Peer:   forumPeer,
+		Topics: []int{topicID},
+	})
+	if err != nil {
+		t.Fatalf("messages.getForumTopicsByID after delete topic: %v", err)
+	}
+	if deletedByID.Count != 1 || len(deletedByID.Topics) != 1 {
+		t.Fatalf("messages.getForumTopicsByID after delete = %+v, want one deleted placeholder", deletedByID)
+	}
+	if topic, ok := deletedByID.Topics[0].(*tg.ForumTopicDeleted); !ok || topic.ID != topicID {
+		t.Fatalf("messages.getForumTopicsByID after delete result = %T %+v, want deleted topic %d", deletedByID.Topics[0], deletedByID.Topics[0], topicID)
 	}
 	antiSpamUpdates, err := r.onChannelsToggleAntiSpam(WithUserID(ctx, owner.ID), &tg.ChannelsToggleAntiSpamRequest{Channel: input, Enabled: true})
 	if err != nil {

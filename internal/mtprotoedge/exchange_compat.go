@@ -1,6 +1,7 @@
 package mtprotoedge
 
 import (
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/hex"
@@ -69,6 +70,17 @@ type serverExchangeCompat struct {
 	commitKey func(context.Context, exchange.ServerExchangeResult) error
 }
 
+const pqInnerDataTempTypeID uint32 = 0x3c6a84d4
+
+// compatPQInnerData is the normalized handshake input accepted at the MTProto
+// edge. gotd v0.158.0 does not generate p_q_inner_data_temp#3c6a84d4, which is
+// still emitted by Telegram-iOS for PFS temporary auth keys.
+type compatPQInnerData struct {
+	Data      mt.PQInnerData
+	Temp      bool
+	ExpiresIn int
+}
+
 func (s serverExchangeCompat) run(ctx context.Context) (exchange.ServerExchangeResult, error) {
 	wrapKeyNotFound := func(err error) error {
 		return exchangeError(codec.CodeAuthKeyNotFound, err)
@@ -119,28 +131,36 @@ SendResPQ:
 
 	var innerData mt.PQInnerData
 	{
+		if dhParams.DH.Nonce != req.Nonce {
+			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params nonce does not match req_pq")
+		}
+		if dhParams.DH.ServerNonce != serverNonce {
+			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params server_nonce does not match resPQ")
+		}
+		if dhParams.DH.PublicKeyFingerprint != s.key.Fingerprint() {
+			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params public key fingerprint does not match server key")
+		}
+
 		r, err := crypto.DecodeRSAPad(dhParams.DH.EncryptedData, s.key.RSA)
 		if err != nil {
 			return exchange.ServerExchangeResult{}, wrapKeyNotFound(err)
 		}
 		b.ResetTo(r)
 
-		d, err := mt.DecodePQInnerData(b)
+		d, generated, err := decodeCompatPQInnerData(b)
 		if err != nil {
 			return exchange.ServerExchangeResult{}, err
 		}
-		if err := s.validatePQInnerDataDC(d); err != nil {
+		if generated != nil {
+			if err := s.validatePQInnerDataDC(generated); err != nil {
+				return exchange.ServerExchangeResult{}, err
+			}
+		}
+		if err := validatePQInnerData(d, req, dhParams.DH, serverNonce, pq); err != nil {
 			return exchange.ServerExchangeResult{}, err
 		}
 
-		innerData = mt.PQInnerData{
-			Pq:          d.GetPq(),
-			P:           d.GetP(),
-			Q:           d.GetQ(),
-			Nonce:       d.GetNonce(),
-			ServerNonce: d.GetServerNonce(),
-			NewNonce:    d.GetNewNonce(),
-		}
+		innerData = d.Data
 	}
 
 	dhPrime, err := s.rng.DhPrime()
@@ -188,6 +208,12 @@ SendResPQ:
 		return exchange.ServerExchangeResult{}, err
 	}
 	s.log.Debug("Received client SetClientDHParamsRequest")
+	if clientDhParams.Nonce != req.Nonce {
+		return exchange.ServerExchangeResult{}, gofaster.New("set_client_DH_params nonce does not match req_pq")
+	}
+	if clientDhParams.ServerNonce != serverNonce {
+		return exchange.ServerExchangeResult{}, gofaster.New("set_client_DH_params server_nonce does not match resPQ")
+	}
 
 	decrypted, err := crypto.DecryptExchangeAnswer(clientDhParams.EncryptedData, key, iv)
 	if err != nil {
@@ -199,6 +225,12 @@ SendResPQ:
 	var clientInnerData mt.ClientDHInnerData
 	if err := clientInnerData.Decode(b); err != nil {
 		return exchange.ServerExchangeResult{}, wrapKeyNotFound(err)
+	}
+	if clientInnerData.Nonce != req.Nonce {
+		return exchange.ServerExchangeResult{}, gofaster.New("client_DH_inner_data nonce does not match req_pq")
+	}
+	if clientInnerData.ServerNonce != serverNonce {
+		return exchange.ServerExchangeResult{}, gofaster.New("client_DH_inner_data server_nonce does not match resPQ")
 	}
 
 	gB := big.NewInt(0).SetBytes(clientInnerData.GB)
@@ -233,6 +265,68 @@ SendResPQ:
 	}
 
 	return serverResult, nil
+}
+
+func decodeCompatPQInnerData(b *bin.Buffer) (compatPQInnerData, mt.PQInnerDataClass, error) {
+	id, err := b.PeekID()
+	if err != nil {
+		return compatPQInnerData{}, nil, err
+	}
+	if id == pqInnerDataTempTypeID {
+		if err := b.ConsumeID(pqInnerDataTempTypeID); err != nil {
+			return compatPQInnerData{}, nil, err
+		}
+		var data mt.PQInnerData
+		if err := data.DecodeBare(b); err != nil {
+			return compatPQInnerData{}, nil, fmt.Errorf("decode p_q_inner_data_temp: %w", err)
+		}
+		expiresIn, err := b.Int()
+		if err != nil {
+			return compatPQInnerData{}, nil, fmt.Errorf("decode p_q_inner_data_temp expires_in: %w", err)
+		}
+		return compatPQInnerData{Data: data, Temp: true, ExpiresIn: expiresIn}, nil, nil
+	}
+
+	generated, err := mt.DecodePQInnerData(b)
+	if err != nil {
+		return compatPQInnerData{}, nil, err
+	}
+	result := compatPQInnerData{Data: mt.PQInnerData{
+		Pq:          generated.GetPq(),
+		P:           generated.GetP(),
+		Q:           generated.GetQ(),
+		Nonce:       generated.GetNonce(),
+		ServerNonce: generated.GetServerNonce(),
+		NewNonce:    generated.GetNewNonce(),
+	}}
+	if temp, ok := generated.(*mt.PQInnerDataTempDC); ok {
+		result.Temp = true
+		result.ExpiresIn = temp.ExpiresIn
+	}
+	return result, generated, nil
+}
+
+func validatePQInnerData(d compatPQInnerData, req compatReqPQ, dh mt.ReqDHParamsRequest, serverNonce bin.Int128, pq *big.Int) error {
+	if d.Data.Nonce != req.Nonce {
+		return gofaster.New("p_q_inner_data nonce does not match req_pq")
+	}
+	if d.Data.ServerNonce != serverNonce {
+		return gofaster.New("p_q_inner_data server_nonce does not match resPQ")
+	}
+	if !bytes.Equal(d.Data.Pq, pq.Bytes()) {
+		return gofaster.New("p_q_inner_data pq does not match resPQ")
+	}
+	if !bytes.Equal(d.Data.P, dh.P) || !bytes.Equal(d.Data.Q, dh.Q) {
+		return gofaster.New("p_q_inner_data factors do not match req_DH_params")
+	}
+	product := new(big.Int).Mul(new(big.Int).SetBytes(d.Data.P), new(big.Int).SetBytes(d.Data.Q))
+	if product.Cmp(pq) != 0 {
+		return gofaster.New("p_q_inner_data factors do not multiply to pq")
+	}
+	if d.Temp && d.ExpiresIn <= 0 {
+		return gofaster.New("p_q_inner_data temporary key expires_in must be positive")
+	}
+	return nil
 }
 
 func (s serverExchangeCompat) validatePQInnerDataDC(d mt.PQInnerDataClass) error {

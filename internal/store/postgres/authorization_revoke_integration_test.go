@@ -110,6 +110,49 @@ func TestAuthorizationStoreRevokeByUserExceptDeletesOnlyRevokedKeysPostgres(t *t
 	assertRevokeTestMissingAuthKey(t, ctx, keys, tempForTwo)
 }
 
+func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userID := createRevokeTestUser(t, ctx, pool, "client-info")
+	id := revokeTestAuthKeyID(0xb1)
+	keys := NewAuthKeyStore(pool)
+	auths := NewAuthorizationStore(pool)
+	saveRevokeTestAuthKey(t, ctx, keys, id)
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID:   id,
+		UserID:      userID,
+		Hash:        9201,
+		Platform:    "unknown",
+		DeviceModel: "legacy",
+		IP:          "127.0.0.1",
+	}); err != nil {
+		t.Fatalf("bind authorization: %v", err)
+	}
+	if err := auths.UpdateClientInfo(ctx, id, domain.AuthKeyClientInfo{
+		Layer:         227,
+		DeviceModel:   "iPhone Simulator",
+		Platform:      "ios",
+		SystemVersion: "26.5",
+		APIID:         1,
+		AppVersion:    "12.8 (10000)",
+	}); err != nil {
+		t.Fatalf("update client info: %v", err)
+	}
+	// Empty/zero values are a partial update and must not erase strong metadata.
+	if err := auths.UpdateClientInfo(ctx, id, domain.AuthKeyClientInfo{AppVersion: "12.8.1"}); err != nil {
+		t.Fatalf("partial update client info: %v", err)
+	}
+
+	got, found, err := auths.ByAuthKey(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get authorization: found=%v err=%v", found, err)
+	}
+	if got.Layer != 227 || got.DeviceModel != "iPhone Simulator" || got.Platform != "ios" ||
+		got.SystemVersion != "26.5" || got.APIID != 1 || got.AppVersion != "12.8.1" {
+		t.Fatalf("merged client info = %+v", got)
+	}
+}
+
 func createRevokeTestUser(t *testing.T, ctx context.Context, db *pgxpool.Pool, suffix string) int64 {
 	t.Helper()
 	phone := fmt.Sprintf("+1555%09d", time.Now().UnixNano()%1_000_000_000)

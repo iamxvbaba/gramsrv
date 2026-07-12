@@ -18,6 +18,9 @@ const (
 	MediaCategoryRoundVideo MediaCategory = 7 // document 含 video 属性且 round_message=true（视频消息）
 	MediaCategoryURL        MediaCategory = 8 // 文本含 url/text_url/email 实体或 messageMediaWebPage
 	MediaCategoryPoll       MediaCategory = 9 // media.kind=poll
+	// MediaCategoryGeoLive 是 messages.getRecentLocations 的内部索引类别。
+	// 它不映射到普通共享媒体筛选器，只用于按 peer 有界读取 live-location 消息。
+	MediaCategoryGeoLive MediaCategory = 10 // media.kind=geo_live
 )
 
 // MediaCategoryCounts 是共享媒体索引按基础类别聚合出的精确计数。
@@ -84,6 +87,8 @@ func ClassifyMediaCategories(media *MessageMedia, entities []MessageEntity) []Me
 			}
 		case MessageMediaKindPoll:
 			add(MediaCategoryPoll)
+		case MessageMediaKindGeoLive:
+			add(MediaCategoryGeoLive)
 		case MessageMediaKindWebPage:
 			add(MediaCategoryURL)
 		}

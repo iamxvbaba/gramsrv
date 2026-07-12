@@ -16,9 +16,9 @@ func (r *Router) registerUpdates(d *tg.ServerDispatcher) {
 
 // onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
 // 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位并推进该设备 observed。
-// 对无法识别的客户端仍返回同一 current state，但不把尚未被客户端带回的服务端快照
-// 记成 observed；这保留 durable difference tail，避免把 TDesktop/DrKLO 的兼容例外
-// 扩散成所有客户端都能跨过未实际确认事件的 retention 后门。
+// 对尚未审计 baseline 语义的客户端仍返回同一 current state，但不把尚未被客户端带回
+// 的服务端快照记成 observed；这保留 durable difference tail，避免把 TDesktop/DrKLO
+// 的兼容例外扩散成所有客户端都能跨过未实际确认事件的 retention 后门。
 func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error) {
 	id, _ := AuthKeyIDFrom(ctx)
 	userID, _, err := r.currentUserID(ctx)
@@ -35,7 +35,7 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	} else {
 		st, err = r.deps.Updates.CurrentState(ctx, userID)
 		if err == nil {
-			r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for unknown client",
+			r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for client without audited baseline policy",
 				r.contextLogFields(ctx)...)
 		}
 	}

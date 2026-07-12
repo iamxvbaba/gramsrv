@@ -1126,14 +1126,20 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
 		return nil
 	}
-	return s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
+	if err := s.authKeys.UpdateClientInfo(ctx, authKeyID, store.AuthKeyClientInfo{
 		Layer:         info.Layer,
 		DeviceModel:   info.DeviceModel,
 		Platform:      info.Platform,
 		SystemVersion: info.SystemVersion,
 		APIID:         info.APIID,
 		AppVersion:    info.AppVersion,
-	})
+	}); err != nil {
+		return err
+	}
+	if s.auths != nil {
+		return s.auths.UpdateClientInfo(ctx, authKeyID, info)
+	}
+	return nil
 }
 
 func (s *Service) ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error) {

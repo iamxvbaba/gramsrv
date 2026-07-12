@@ -183,6 +183,25 @@ UPDATE authorizations SET layer = $2, active_at = now() WHERE auth_key_id = $1`,
 	return nil
 }
 
+func (s *AuthorizationStore) UpdateClientInfo(ctx context.Context, id [8]byte, info domain.AuthKeyClientInfo) error {
+	if _, err := s.db.Exec(ctx, `
+UPDATE authorizations SET
+  layer = CASE WHEN $2 > 0 THEN $2 ELSE layer END,
+  device_model = CASE WHEN $3 <> '' THEN $3 ELSE device_model END,
+  platform = CASE WHEN $4 <> '' THEN $4 ELSE platform END,
+  system_version = CASE WHEN $5 <> '' THEN $5 ELSE system_version END,
+  api_id = CASE WHEN $6 <> 0 THEN $6 ELSE api_id END,
+  app_version = CASE WHEN $7 <> '' THEN $7 ELSE app_version END,
+  active_at = now()
+WHERE auth_key_id = $1`,
+		authKeyIDToInt64(id), int32(info.Layer), info.DeviceModel, info.Platform,
+		info.SystemVersion, int32(info.APIID), info.AppVersion,
+	); err != nil {
+		return fmt.Errorf("update authorization client info: %w", err)
+	}
+	return nil
+}
+
 // MarkPasswordPassed 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。
 func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte) error {
 	if _, err := s.db.Exec(ctx, `

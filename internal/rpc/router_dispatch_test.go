@@ -281,6 +281,52 @@ func TestDispatchPersistsPreLoginClientMetadataFromSendCodeAPIID(t *testing.T) {
 	}
 }
 
+func TestSendCodeAPIIDDoesNotOverwriteStrongTWebIdentity(t *testing.T) {
+	auth := &captureAuthService{}
+	rawAuthKeyID := [8]byte{0x34, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
+	const sessionID = int64(8103956954238395545)
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{Auth: auth}, zaptest.NewLogger(t), clock.System)
+
+	initReq := &tg.InvokeWithLayerRequest{
+		Layer: currentClientLayer,
+		Query: &tg.InitConnectionRequest{
+			APIID:          2040,
+			DeviceModel:    "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36",
+			SystemVersion:  "Win32",
+			AppVersion:     "2.2",
+			SystemLangCode: "en-US",
+			LangPack:       "webk",
+			LangCode:       "en",
+			Query:          &tg.HelpGetConfigRequest{},
+		},
+	}
+	var initBuf bin.Buffer
+	if err := initReq.Encode(&initBuf); err != nil {
+		t.Fatalf("encode init request: %v", err)
+	}
+	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, sessionID, &initBuf); err != nil {
+		t.Fatalf("dispatch init request: %v", err)
+	}
+
+	var sendCode bin.Buffer
+	if err := (&tg.AuthSendCodeRequest{
+		PhoneNumber: "+8618800000021",
+		APIID:       2040,
+		APIHash:     "tweb-local",
+		Settings:    tg.CodeSettings{},
+	}).Encode(&sendCode); err != nil {
+		t.Fatalf("encode auth.sendCode: %v", err)
+	}
+	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, sessionID, &sendCode); err != nil {
+		t.Fatalf("dispatch auth.sendCode: %v", err)
+	}
+
+	persisted := auth.authKeyClientInfos[rawAuthKeyID]
+	if persisted.Platform != string(ClientTypeTWeb) || persisted.DeviceModel != initReq.Query.(*tg.InitConnectionRequest).DeviceModel {
+		t.Fatalf("API id fallback overwrote strong TWeb identity: %+v", persisted)
+	}
+}
+
 func TestDispatchRestoresPreLoginAndroidMetadataFromAuthKey(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	authKeyID := [8]byte{0x22, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
@@ -460,33 +506,96 @@ func TestInvokeWithLayerPersistsClientLayerUpgrade(t *testing.T) {
 	}
 }
 
-func TestClientTypeDetectsAndroidSDKVersion(t *testing.T) {
-	info := normalizeClientInfo(ClientInfo{
-		DeviceModel:   "GooglePixel 9a",
-		SystemVersion: "SDK 36",
-		AppVersion:    "12.7.3 (67509) pbeta",
-	})
-	if got := info.ClientType(); got != ClientTypeAndroid {
-		t.Fatalf("client type = %s, want %s", got, ClientTypeAndroid)
+func TestClientTypeDetectionUsesStrongEvidenceBeforeAPIID(t *testing.T) {
+	tests := []struct {
+		name string
+		info ClientInfo
+		want ClientType
+	}{
+		{
+			name: "iOS 12.8 simulator",
+			info: ClientInfo{APIID: 1, DeviceModel: "iPhone Simulator", SystemVersion: "26.5", AppVersion: "12.8 (10000)", LangPack: "ios"},
+			want: ClientTypeIOS,
+		},
+		{
+			name: "restored iOS without lang pack",
+			info: ClientInfo{DeviceModel: "iPhone 16 Pro", SystemVersion: "18.5", Type: ClientTypeUnknown},
+			want: ClientTypeIOS,
+		},
+		{
+			name: "TWeb WebK",
+			info: ClientInfo{APIID: 1025907, DeviceModel: "Mozilla/5.0 Chrome/138.0", SystemVersion: "Win32", LangPack: "webk"},
+			want: ClientTypeTWeb,
+		},
+		{
+			name: "telegram-tt WebA",
+			info: ClientInfo{APIID: 2040, DeviceModel: "Mozilla/5.0 Chrome/150.0", SystemVersion: "Windows", AppVersion: "12.0.32 A", LangPack: "weba"},
+			want: ClientTypeTelegramTT,
+		},
+		{
+			name: "TWeb borrowed TDesktop API id",
+			info: ClientInfo{APIID: 2040, DeviceModel: "Mozilla/5.0 AppleWebKit/537.36", SystemVersion: "Win32", Type: ClientTypeTDesktop},
+			want: ClientTypeTWeb,
+		},
+		{
+			name: "mobile TWeb is not native Android",
+			info: ClientInfo{APIID: 2040, DeviceModel: "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36", LangPack: "webk"},
+			want: ClientTypeTWeb,
+		},
+		{
+			name: "Android SDK version",
+			info: ClientInfo{DeviceModel: "GooglePixel 9a", SystemVersion: "SDK 36", AppVersion: "12.7.3 (67509) pbeta"},
+			want: ClientTypeAndroid,
+		},
+		{name: "DrKLO API fallback", info: ClientInfo{APIID: 4}, want: ClientTypeAndroid},
+		{name: "TDesktop API fallback", info: ClientInfo{APIID: 2040}, want: ClientTypeTDesktop},
+		{name: "official iOS API fallback", info: ClientInfo{APIID: 8}, want: ClientTypeIOS},
+		{name: "official TWeb API fallback", info: ClientInfo{APIID: 2496}, want: ClientTypeTWeb},
+		{name: "macOS lang pack", info: ClientInfo{LangPack: "macos"}, want: ClientTypeMacOS},
+		{name: "stored known type", info: ClientInfo{Type: ClientTypeIOS}, want: ClientTypeIOS},
+		{
+			name: "gotd remains unknown",
+			info: ClientInfo{DeviceModel: "go1.26.2", SystemVersion: "windows", AppVersion: "v0.144.0"},
+			want: ClientTypeUnknown,
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeClientInfo(tt.info).ClientType(); got != tt.want {
+				t.Fatalf("client type = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
 
-	info = normalizeClientInfo(ClientInfo{
-		DeviceModel:   "go1.26.2",
-		SystemVersion: "windows",
-		AppVersion:    "v0.144.0",
+func TestRestoredUnknownClientInfoIsNotReclassifiedFromHistoricalFields(t *testing.T) {
+	info := restoreClientInfo(ClientInfo{
+		APIID:         2040,
+		DeviceModel:   "Mozilla/5.0 AppleWebKit/537.36",
+		SystemVersion: "Windows",
+		AppVersion:    "12.0.32 A",
+		Type:          ClientTypeUnknown,
 	})
 	if got := info.ClientType(); got != ClientTypeUnknown {
-		t.Fatalf("gotd test client type = %s, want %s", got, ClientTypeUnknown)
+		t.Fatalf("restored historical client type = %s, want unknown until fresh initConnection", got)
 	}
 
-	info = normalizeClientInfo(ClientInfo{APIID: 4})
-	if got := info.ClientType(); got != ClientTypeAndroid {
-		t.Fatalf("DrKLO api_id=4 client type = %s, want %s", got, ClientTypeAndroid)
+	info = restoreClientInfo(ClientInfo{
+		DeviceModel:   "GooglePixel 9a",
+		SystemVersion: "SDK 36",
+		Type:          ClientTypeUnknown,
+	})
+	if got := info.ClientType(); got != ClientTypeUnknown {
+		t.Fatalf("restored historical Android client type = %s, want unknown until fresh initConnection", got)
 	}
 
-	info = normalizeClientInfo(ClientInfo{APIID: 2040})
-	if got := info.ClientType(); got != ClientTypeTDesktop {
-		t.Fatalf("TDesktop api_id=2040 client type = %s, want %s", got, ClientTypeTDesktop)
+	info = restoreClientInfo(ClientInfo{
+		DeviceModel: "Mozilla/5.0 AppleWebKit/537.36",
+		AppVersion:  "12.0.32 A",
+		Type:        ClientTypeTelegramTT,
+	})
+	if got := info.ClientType(); got != ClientTypeTelegramTT {
+		t.Fatalf("restored persisted telegram-tt client type = %s, want %s", got, ClientTypeTelegramTT)
 	}
 }
 
@@ -1092,6 +1201,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 		{name: "help.getTermsOfServiceUpdate", req: &tg.HelpGetTermsOfServiceUpdateRequest{}},
 		{name: "help.getPremiumPromo", req: &tg.HelpGetPremiumPromoRequest{}},
 		{name: "help.getInviteText", req: &tg.HelpGetInviteTextRequest{}},
+		{name: "help.getAppUpdate", req: &tg.HelpGetAppUpdateRequest{}},
 		{name: "auth.initPasskeyLogin", req: &tg.AuthInitPasskeyLoginRequest{APIID: 4, APIHash: "test"}},
 		{name: "account.getPassword", req: &tg.AccountGetPasswordRequest{}},
 		{name: "account.getNotifySettings", req: &tg.AccountGetNotifySettingsRequest{Peer: &tg.InputNotifyUsers{}}},
@@ -1124,6 +1234,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 		{name: "account.getSavedRingtones", req: &tg.AccountGetSavedRingtonesRequest{}},
 		{name: "account.resetPassword", req: &tg.AccountResetPasswordRequest{}},
 		{name: "account.updateStatus", req: &tg.AccountUpdateStatusRequest{Offline: true}},
+		{name: "account.updateDeviceLocked", req: &tg.AccountUpdateDeviceLockedRequest{Period: 60}},
 		{name: "payments.getStarsTopupOptions", req: &tg.PaymentsGetStarsTopupOptionsRequest{}},
 		{name: "payments.getStarsStatus", req: &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerSelf{}}},
 		{name: "updates.getDifference", req: &tg.UpdatesGetDifferenceRequest{}},
@@ -1155,6 +1266,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 		{name: "messages.getPeerSettings", req: &tg.MessagesGetPeerSettingsRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}}},
 		{name: "messages.setChatWallPaper", req: &tg.MessagesSetChatWallPaperRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}, Wallpaper: &tg.InputWallPaperNoFile{ID: 930000000000000000}}},
 		{name: "messages.getHistory", req: &tg.MessagesGetHistoryRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}, Limit: 20}},
+		{name: "messages.getRecentLocations", req: &tg.MessagesGetRecentLocationsRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}, Limit: 20}},
 		{name: "messages.readHistory", req: &tg.MessagesReadHistoryRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}}},
 		{name: "messages.search", req: &tg.MessagesSearchRequest{Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash}, Filter: &tg.InputMessagesFilterEmpty{}, Limit: 20}},
 		{name: "messages.searchGlobal", req: &tg.MessagesSearchGlobalRequest{Q: "login", Filter: &tg.InputMessagesFilterEmpty{}, OffsetPeer: &tg.InputPeerEmpty{}, Limit: 20}},

@@ -38,9 +38,13 @@ var androidSDKVersionRE = regexp.MustCompile(`\bsdk\s+\d+\b`)
 type ClientType string
 
 const (
-	ClientTypeUnknown  ClientType = "unknown"
-	ClientTypeTDesktop ClientType = "tdesktop"
-	ClientTypeAndroid  ClientType = "android"
+	ClientTypeUnknown    ClientType = "unknown"
+	ClientTypeTDesktop   ClientType = "tdesktop"
+	ClientTypeAndroid    ClientType = "android"
+	ClientTypeIOS        ClientType = "ios"
+	ClientTypeMacOS      ClientType = "macos"
+	ClientTypeTWeb       ClientType = "tweb"
+	ClientTypeTelegramTT ClientType = "telegram-tt"
 )
 
 // ClientInfo 是 initConnection 携带的客户端信息。
@@ -53,6 +57,10 @@ type ClientInfo struct {
 	LangPack       string
 	LangCode       string
 	Type           ClientType
+	// typeResolved distinguishes current-connection classification from raw
+	// metadata restored from storage. A persisted unknown remains unknown until
+	// a fresh initConnection supplies authoritative wire evidence.
+	typeResolved bool
 }
 
 // WithLayer 在 ctx 注入客户端 layer（来自 invokeWithLayer）。
@@ -88,22 +96,32 @@ func ClientTypeFrom(ctx context.Context) ClientType {
 }
 
 func normalizeClientInfo(info ClientInfo) ClientInfo {
-	if !knownClientType(info.Type) {
-		info.Type = detectClientType(info)
-	}
+	info.Type = detectClientType(info)
+	info.typeResolved = true
 	return info
 }
 
 func (info ClientInfo) ClientType() ClientType {
-	if knownClientType(info.Type) {
-		return info.Type
+	if info.typeResolved {
+		if knownClientType(info.Type) {
+			return info.Type
+		}
+		return ClientTypeUnknown
 	}
 	return detectClientType(info)
 }
 
+func restoreClientInfo(info ClientInfo) ClientInfo {
+	if !knownClientType(info.Type) {
+		info.Type = ClientTypeUnknown
+	}
+	info.typeResolved = true
+	return info
+}
+
 func knownClientType(t ClientType) bool {
 	switch t {
-	case ClientTypeTDesktop, ClientTypeAndroid:
+	case ClientTypeTDesktop, ClientTypeAndroid, ClientTypeIOS, ClientTypeMacOS, ClientTypeTWeb, ClientTypeTelegramTT:
 		return true
 	default:
 		return false
@@ -118,25 +136,55 @@ func clientTypeFromAPIID(apiID int) ClientType {
 		return ClientTypeAndroid
 	case 2040, 17349, 611335:
 		return ClientTypeTDesktop
+	case 8:
+		return ClientTypeIOS
+	case 2496, 1025907:
+		return ClientTypeTWeb
 	default:
 		return ClientTypeUnknown
 	}
 }
 
 func detectClientType(info ClientInfo) ClientType {
-	if t := clientTypeFromAPIID(info.APIID); t != ClientTypeUnknown {
+	// Wire evidence wins over stored/explicit type and API id. In particular,
+	// local TWeb builds may reuse api_id=2040 (the official TDesktop id), while
+	// lang_pack=webk and a browser UA unambiguously identify the web client.
+	if t := clientTypeFromStrongEvidence(info); t != ClientTypeUnknown {
 		return t
 	}
-	if strings.EqualFold(info.LangPack, string(ClientTypeAndroid)) {
-		return ClientTypeAndroid
+	if knownClientType(info.Type) {
+		return info.Type
 	}
-	if strings.EqualFold(info.LangPack, string(ClientTypeTDesktop)) {
+	return clientTypeFromAPIID(info.APIID)
+}
+
+func clientTypeFromStrongEvidence(info ClientInfo) ClientType {
+	langPack := strings.ToLower(strings.TrimSpace(info.LangPack))
+	switch langPack {
+	case "weba":
+		return ClientTypeTelegramTT
+	case "web", "webk":
+		return ClientTypeTWeb
+	case string(ClientTypeAndroid):
+		return ClientTypeAndroid
+	case string(ClientTypeIOS):
+		return ClientTypeIOS
+	case string(ClientTypeMacOS):
+		return ClientTypeMacOS
+	case string(ClientTypeTDesktop):
 		return ClientTypeTDesktop
 	}
 	client := strings.ToLower(info.DeviceModel + " " + info.SystemVersion + " " + info.AppVersion)
 	switch {
+	case strings.Contains(client, "mozilla/"), strings.Contains(client, "applewebkit/"),
+		strings.Contains(client, "telegram web"), strings.Contains(client, "webogram"):
+		return ClientTypeTWeb
 	case strings.Contains(client, "android"), androidSDKVersionRE.MatchString(client):
 		return ClientTypeAndroid
+	case strings.Contains(client, "iphone"), strings.Contains(client, "ipad"),
+		strings.Contains(client, "ipod"), strings.Contains(client, "ipados"),
+		strings.Contains(client, "ios "):
+		return ClientTypeIOS
 	case strings.Contains(client, "tdesktop"), strings.Contains(client, "desktop"):
 		return ClientTypeTDesktop
 	default:

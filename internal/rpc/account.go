@@ -7,6 +7,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
+	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
@@ -18,6 +19,12 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 	})
 	d.OnAccountUnregisterDevice(func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (bool, error) {
 		return true, nil
+	})
+	d.OnAccountUpdateDeviceLocked(func(ctx context.Context, period int) (bool, error) {
+		if _, _, err := r.currentUserID(ctx); err != nil {
+			return false, internalErr()
+		}
+		return ioscompat.DeviceLockedUpdated(), nil
 	})
 	d.OnAccountSendChangePhoneCode(r.onAccountSendChangePhoneCode)
 	d.OnAccountChangePhone(r.onAccountChangePhone)

@@ -321,6 +321,9 @@ func (r *Router) onMessagesGetForumTopicsByID(ctx context.Context, req *tg.Messa
 	if err != nil {
 		return nil, internalErr()
 	}
+	if len(req.Topics) == 0 {
+		return nil, topicsEmptyErr()
+	}
 	if len(req.Topics) > maxForumTopicIDs {
 		return nil, limitInvalidErr()
 	}
@@ -332,11 +335,18 @@ func (r *Router) onMessagesGetForumTopicsByID(ctx context.Context, req *tg.Messa
 		return nil, channelForumMissingErr()
 	}
 	includeGeneral := false
+	requestedIDs := make([]int, 0, len(req.Topics))
 	ids := make([]int, 0, len(req.Topics))
+	seen := make(map[int]struct{}, len(req.Topics))
 	for _, topicID := range req.Topics {
 		if topicID <= 0 || topicID > domain.MaxMessageBoxID {
 			return nil, messageIDInvalidErr()
 		}
+		if _, ok := seen[topicID]; ok {
+			continue
+		}
+		seen[topicID] = struct{}{}
+		requestedIDs = append(requestedIDs, topicID)
 		if topicID == forumGeneralTopicID {
 			includeGeneral = true
 			continue
@@ -350,7 +360,34 @@ func (r *Router) onMessagesGetForumTopicsByID(ctx context.Context, req *tg.Messa
 			return nil, forumTopicError(err)
 		}
 	}
-	return r.forumTopicsResponse(ctx, userID, view, list, includeGeneral), nil
+	return r.forumTopicsByIDResponse(ctx, userID, view, list, includeGeneral, requestedIDs), nil
+}
+
+// forumTopicsByIDResponse keeps the request's unique ID order and returns one
+// constructor for every requested topic. Telegram clients use
+// forumTopicDeleted as a positive deletion/missing confirmation; silently
+// omitting an ID leaves their local thread state stale and causes repeat reads.
+func (r *Router) forumTopicsByIDResponse(ctx context.Context, userID int64, view domain.ChannelView, list domain.ChannelForumTopicList, includeGeneral bool, requestedIDs []int) *tg.MessagesForumTopics {
+	response := r.forumTopicsResponse(ctx, userID, view, list, includeGeneral)
+	live := make(map[int]tg.ForumTopicClass, len(response.Topics))
+	for _, topic := range response.Topics {
+		switch topic := topic.(type) {
+		case *tg.ForumTopic:
+			live[topic.ID] = topic
+		case *tg.ForumTopicDeleted:
+			live[topic.ID] = topic
+		}
+	}
+	response.Topics = make([]tg.ForumTopicClass, 0, len(requestedIDs))
+	for _, topicID := range requestedIDs {
+		if topic, ok := live[topicID]; ok {
+			response.Topics = append(response.Topics, topic)
+		} else {
+			response.Topics = append(response.Topics, &tg.ForumTopicDeleted{ID: topicID})
+		}
+	}
+	response.Count = len(response.Topics)
+	return response
 }
 
 func (r *Router) forumTopicPeerView(ctx context.Context, userID int64, peer tg.InputPeerClass) (domain.ChannelView, error) {

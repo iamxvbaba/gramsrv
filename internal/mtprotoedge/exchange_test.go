@@ -1,11 +1,13 @@
 package mtprotoedge
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -363,6 +365,99 @@ func TestKeyExchangeRejectsWrongNegativeTempDC(t *testing.T) {
 	}
 	if exErr.Code != codec.CodeWrongDC {
 		t.Fatalf("error code = %d, want %d", exErr.Code, codec.CodeWrongDC)
+	}
+}
+
+func TestDecodeCompatPQInnerDataTemp(t *testing.T) {
+	want := mt.PQInnerData{
+		Pq:          []byte{0x0f},
+		P:           []byte{0x03},
+		Q:           []byte{0x05},
+		Nonce:       bin.Int128{1, 2, 3},
+		ServerNonce: bin.Int128{4, 5, 6},
+		NewNonce:    bin.Int256{7, 8, 9},
+	}
+	b := new(bin.Buffer)
+	b.PutID(pqInnerDataTempTypeID)
+	if err := want.EncodeBare(b); err != nil {
+		t.Fatalf("encode bare: %v", err)
+	}
+	b.PutInt(86400)
+
+	got, generated, err := decodeCompatPQInnerData(b)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if generated != nil {
+		t.Fatalf("generated class = %T, want nil for iOS temp compatibility type", generated)
+	}
+	if !got.Temp || got.ExpiresIn != 86400 {
+		t.Fatalf("temp metadata = (%v, %d), want (true, 86400)", got.Temp, got.ExpiresIn)
+	}
+	if !bytes.Equal(got.Data.Pq, want.Pq) || !bytes.Equal(got.Data.P, want.P) || !bytes.Equal(got.Data.Q, want.Q) ||
+		got.Data.Nonce != want.Nonce || got.Data.ServerNonce != want.ServerNonce || got.Data.NewNonce != want.NewNonce {
+		t.Fatalf("decoded data = %+v, want %+v", got.Data, want)
+	}
+}
+
+func TestDecodeCompatPQInnerDataTempRejectsTruncatedData(t *testing.T) {
+	b := new(bin.Buffer)
+	b.PutID(pqInnerDataTempTypeID)
+	b.PutBytes([]byte{0x0f})
+	if _, _, err := decodeCompatPQInnerData(b); err == nil {
+		t.Fatal("truncated p_q_inner_data_temp decoded successfully")
+	}
+}
+
+func TestValidatePQInnerDataInvariants(t *testing.T) {
+	nonce := bin.Int128{1}
+	serverNonce := bin.Int128{2}
+	pq := big.NewInt(15)
+	valid := compatPQInnerData{
+		Data: mt.PQInnerData{
+			Pq:          pq.Bytes(),
+			P:           []byte{3},
+			Q:           []byte{5},
+			Nonce:       nonce,
+			ServerNonce: serverNonce,
+		},
+		Temp:      true,
+		ExpiresIn: 86400,
+	}
+	req := compatReqPQ{Nonce: nonce}
+	dh := mt.ReqDHParamsRequest{P: []byte{3}, Q: []byte{5}}
+	if err := validatePQInnerData(valid, req, dh, serverNonce, pq); err != nil {
+		t.Fatalf("valid inner data: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*compatPQInnerData)
+	}{
+		{name: "nonce", mutate: func(d *compatPQInnerData) { d.Data.Nonce = bin.Int128{9} }},
+		{name: "server nonce", mutate: func(d *compatPQInnerData) { d.Data.ServerNonce = bin.Int128{9} }},
+		{name: "pq", mutate: func(d *compatPQInnerData) { d.Data.Pq = []byte{21} }},
+		{name: "outer factors", mutate: func(d *compatPQInnerData) { d.Data.P = []byte{5} }},
+		{name: "factor product", mutate: func(d *compatPQInnerData) { d.Data.P = []byte{2}; dh.P = []byte{2} }},
+		{name: "expiry", mutate: func(d *compatPQInnerData) { d.ExpiresIn = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := valid
+			candidate.Data.Pq = bytes.Clone(valid.Data.Pq)
+			candidate.Data.P = bytes.Clone(valid.Data.P)
+			candidate.Data.Q = bytes.Clone(valid.Data.Q)
+			localDH := dh
+			if tt.name == "factor product" {
+				candidate.Data.P = []byte{2}
+				localDH.P = []byte{2}
+			} else {
+				tt.mutate(&candidate)
+			}
+			if err := validatePQInnerData(candidate, req, localDH, serverNonce, pq); err == nil {
+				t.Fatal("invalid inner data validated successfully")
+			}
+		})
 	}
 }
 

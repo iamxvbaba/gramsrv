@@ -294,6 +294,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.tgMessagesMessages(ctx, userID, r.enrichMessageList(ctx, userID, list)), nil
 	})
+	d.OnMessagesGetRecentLocations(r.onMessagesGetRecentLocations)
 	d.OnMessagesReadHistory(func(ctx context.Context, req *tg.MessagesReadHistoryRequest) (*tg.MessagesAffectedMessages, error) {
 		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)

@@ -2,6 +2,8 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
+	"hash/fnv"
 
 	"github.com/gotd/td/tg"
 	"go.uber.org/zap"
@@ -24,15 +26,16 @@ func (r *Router) onMessagesGetAvailableReactions(ctx context.Context, hash int) 
 	if len(reactions) == 0 {
 		return tdesktop.AvailableReactions(hash), nil
 	}
-	catalogHash := availableReactionsHash(reactions)
-	if hash == catalogHash {
-		return &tg.MessagesAvailableReactionsNotModified{}, nil
-	}
 	docs, err := r.deps.Files.GetDocuments(ctx, reactionDocumentIDs(reactions))
 	if err != nil {
 		return nil, internalErr()
 	}
-	return tgAvailableReactions(reactions, documentsByID(docs), catalogHash), nil
+	docByID := documentsByID(docs)
+	catalogHash := availableReactionsHash(reactions, docByID)
+	if hash == catalogHash {
+		return &tg.MessagesAvailableReactionsNotModified{}, nil
+	}
+	return tgAvailableReactions(reactions, docByID, catalogHash), nil
 }
 
 // onMessagesGetAvailableEffects 返回消息发送特效目录(全局静态,seed 进内存)。镜像
@@ -457,24 +460,34 @@ func documentsByID(docs []domain.Document) map[int64]domain.Document {
 	return m
 }
 
-// availableReactionsHash 用 reaction 的核心字段算稳定 hash（供 *NotModified 缓存判定）。
-func availableReactionsHash(reactions []domain.AvailableReaction) int {
-	values := make([]int64, 0, len(reactions)*10)
+// availableReactionsHash covers every domain field that contributes to the TL
+// response, including the embedded documents. A repaired file reference,
+// attribute, thumbnail, title, or emoji must invalidate clients which cached an
+// older response; hashing only document ids leaves those clients permanently on
+// stale resources after a seed repair.
+func availableReactionsHash(reactions []domain.AvailableReaction, docByID map[int64]domain.Document) int {
+	h := fnv.New32a()
 	for _, r := range reactions {
-		values = append(values,
-			int64(len([]rune(r.Reaction))),
-			boolHashValue(r.Inactive),
-			boolHashValue(r.Premium),
-			r.StaticIconID,
-			r.AppearAnimationID,
-			r.SelectAnimationID,
-			r.ActivateAnimationID,
-			r.EffectAnimationID,
-			r.AroundAnimationID,
-			r.CenterIconID,
-		)
+		encoded, _ := json.Marshal(r)
+		_, _ = h.Write(encoded)
+		_, _ = h.Write([]byte{0xff})
+		for _, id := range r.DocumentIDs() {
+			doc, ok := docByID[id]
+			if !ok {
+				// Missing mandatory/optional documents are part of the response as
+				// documentEmpty{id}; keep that state hashable as well.
+				doc.ID = id
+			}
+			encoded, _ = json.Marshal(doc)
+			_, _ = h.Write(encoded)
+			_, _ = h.Write([]byte{0xfe})
+		}
 	}
-	return int(tdesktopCountHash(values) & 0x7fffffff)
+	sum := int(h.Sum32() & 0x7fffffff)
+	if sum == 0 {
+		return 1
+	}
+	return sum
 }
 
 func stickerSetsCatalogHash(sets []domain.StickerSet) int64 {

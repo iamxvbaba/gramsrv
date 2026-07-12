@@ -565,6 +565,42 @@ func TestMessagesGetAvailableReactionsNotModified(t *testing.T) {
 	}
 }
 
+func TestMessagesGetAvailableReactionsDocumentRepairInvalidatesHash(t *testing.T) {
+	ctx := context.Background()
+	reactions := []domain.AvailableReaction{{
+		Reaction: "❤", Title: "Heart", StaticIconID: 101, AppearAnimationID: 102,
+		SelectAnimationID: 103, ActivateAnimationID: 104, EffectAnimationID: 105,
+	}}
+	docs := map[int64]domain.Document{}
+	for _, id := range reactions[0].DocumentIDs() {
+		docs[id] = domain.Document{ID: id, AccessHash: id + 1000, DCID: 2, MimeType: "application/x-tgsticker", Size: 10}
+	}
+	files := &fakeFiles{reactions: reactions, docs: docs}
+	r := &Router{deps: Deps{Files: files}}
+
+	first, err := r.onMessagesGetAvailableReactions(ctx, 0)
+	if err != nil {
+		t.Fatalf("first getAvailableReactions: %v", err)
+	}
+	oldHash := first.(*tg.MessagesAvailableReactions).Hash
+
+	repaired := docs[103]
+	repaired.FileReference = []byte("repaired-reference")
+	repaired.Size = 11
+	docs[103] = repaired
+	second, err := r.onMessagesGetAvailableReactions(ctx, oldHash)
+	if err != nil {
+		t.Fatalf("getAvailableReactions after repair: %v", err)
+	}
+	full, ok := second.(*tg.MessagesAvailableReactions)
+	if !ok {
+		t.Fatalf("after document repair = %T, want full response", second)
+	}
+	if full.Hash == oldHash {
+		t.Fatalf("document repair kept hash %d", oldHash)
+	}
+}
+
 func TestTGDocumentCompactsCachedThumbToDownloadableSize(t *testing.T) {
 	doc := tgDocument(domain.Document{
 		ID:         100,

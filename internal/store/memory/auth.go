@@ -172,6 +172,34 @@ func (s *AuthorizationStore) UpdateLayer(_ context.Context, id [8]byte, layer in
 	return nil
 }
 
+func (s *AuthorizationStore) UpdateClientInfo(_ context.Context, id [8]byte, info domain.AuthKeyClientInfo) error {
+	s.mu.Lock()
+	if a, ok := s.m[id]; ok {
+		if info.Layer > 0 {
+			a.Layer = info.Layer
+		}
+		if info.DeviceModel != "" {
+			a.DeviceModel = info.DeviceModel
+		}
+		if info.Platform != "" {
+			a.Platform = info.Platform
+		}
+		if info.SystemVersion != "" {
+			a.SystemVersion = info.SystemVersion
+		}
+		if info.APIID != 0 {
+			a.APIID = info.APIID
+		}
+		if info.AppVersion != "" {
+			a.AppVersion = info.AppVersion
+		}
+		a.ActiveAt = time.Now()
+		s.m[id] = a
+	}
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *AuthorizationStore) MarkPasswordPassed(_ context.Context, id [8]byte) error {
 	s.mu.Lock()
 	if a, ok := s.m[id]; ok {

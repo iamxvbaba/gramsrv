@@ -716,9 +716,15 @@ func (r *Router) rememberClientAPIID(ctx context.Context, apiID int) {
 	if apiID == 0 {
 		return
 	}
-	info := ClientInfo{APIID: apiID, Type: clientTypeFromAPIID(apiID)}
+	info := normalizeClientInfo(ClientInfo{APIID: apiID, Type: clientTypeFromAPIID(apiID)})
 	sessionInfo := clientSessionInfo{clientInfo: info, hasClientInfo: true}
 	r.rememberClientSessionInfo(ctx, sessionInfo)
+	// api_id is weak evidence. If initConnection (or durable restoration) has
+	// already supplied stronger client metadata, persist that effective session
+	// fact instead of letting auth.sendCode overwrite it on an id collision.
+	if effective, ok, _ := r.clientSessionInfo(ctx); ok {
+		sessionInfo = effective
+	}
 	r.persistAuthKeyClientInfo(ctx, sessionInfo)
 }
 
@@ -1103,7 +1109,7 @@ func clientSessionInfoFromAuthKeyClientInfo(item domain.AuthKeyClientInfo, curre
 			Type:          ClientType(item.Platform),
 		},
 	}
-	info.clientInfo = normalizeClientInfo(info.clientInfo)
+	info.clientInfo = restoreClientInfo(info.clientInfo)
 	info.hasClientInfo = info.clientInfo.ClientType() != ClientTypeUnknown ||
 		info.clientInfo.DeviceModel != "" ||
 		info.clientInfo.SystemVersion != "" ||
@@ -1162,7 +1168,7 @@ func clientSessionInfoFromAuthorizationRecord(item domain.Authorization, current
 			Type:          ClientType(item.Platform),
 		},
 	}
-	info.clientInfo = normalizeClientInfo(info.clientInfo)
+	info.clientInfo = restoreClientInfo(info.clientInfo)
 	info.hasClientInfo = info.clientInfo.ClientType() != ClientTypeUnknown ||
 		info.clientInfo.DeviceModel != "" ||
 		info.clientInfo.SystemVersion != "" ||

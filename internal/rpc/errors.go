@@ -290,6 +290,7 @@ func channelForumMissingErr() error { return tgerr.New(400, "CHANNEL_FORUM_MISSI
 
 func topicTitleEmptyErr() error { return tgerr.New(400, "TOPIC_TITLE_EMPTY") }
 func topicIDInvalidErr() error  { return tgerr.New(400, "TOPIC_ID_INVALID") }
+func topicsEmptyErr() error     { return tgerr.New(400, "TOPICS_EMPTY") }
 
 // randomIDEmptyErr 表示发送消息缺少 random_id。
 func randomIDEmptyErr() error { return tgerr.New(400, "RANDOM_ID_EMPTY") }

@@ -71,6 +71,48 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 	}
 }
 
+func TestUpdateAuthKeyClientInfoConvergesAuthorizationMetadata(t *testing.T) {
+	ctx := context.Background()
+	keys := memory.NewAuthKeyStore()
+	authz := memory.NewAuthorizationStore()
+	key := testAuthKey(0x23)
+	saveAuthKey(t, keys, key)
+	if err := authz.Bind(ctx, domain.Authorization{
+		AuthKeyID: key.ID,
+		UserID:    1780243200,
+		Platform:  "unknown",
+	}); err != nil {
+		t.Fatalf("bind authorization: %v", err)
+	}
+	svc := NewService(memory.NewUserStore(), authz, memory.NewCodeStore(), keys, nil, "12345")
+
+	info := domain.AuthKeyClientInfo{
+		Layer:         227,
+		DeviceModel:   "iPhone Simulator",
+		Platform:      "ios",
+		SystemVersion: "26.5",
+		APIID:         1,
+		AppVersion:    "12.8 (10000)",
+	}
+	if err := svc.UpdateAuthKeyClientInfo(ctx, key.ID, info); err != nil {
+		t.Fatalf("update auth key client info: %v", err)
+	}
+
+	storedKey, found, err := keys.Get(ctx, key.ID)
+	if err != nil || !found {
+		t.Fatalf("get auth key: found=%v err=%v", found, err)
+	}
+	storedAuth, found, err := authz.ByAuthKey(ctx, key.ID)
+	if err != nil || !found {
+		t.Fatalf("get authorization: found=%v err=%v", found, err)
+	}
+	if storedKey.Platform != "ios" || storedAuth.Platform != "ios" ||
+		storedKey.DeviceModel != info.DeviceModel || storedAuth.DeviceModel != info.DeviceModel ||
+		storedKey.AppVersion != info.AppVersion || storedAuth.AppVersion != info.AppVersion {
+		t.Fatalf("client metadata did not converge: key=%+v authorization=%+v", storedKey, storedAuth)
+	}
+}
+
 func TestResolveAuthKeyUsesValidTempBinding(t *testing.T) {
 	ctx := context.Background()
 	tempBindings := memory.NewTempAuthKeyBindingStore()
