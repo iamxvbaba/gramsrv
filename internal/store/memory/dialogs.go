@@ -19,6 +19,12 @@ type DialogStore struct {
 	folderTags  map[int64]bool
 	// archivePinned 记录 archive folder 行置顶状态；无记录时官方默认 true。
 	archivePinned map[int64]bool
+	translations  map[translationPreferenceKey]bool
+}
+
+type translationPreferenceKey struct {
+	userID int64
+	peer   domain.Peer
 }
 
 type dialogDraftKey struct {
@@ -36,6 +42,7 @@ func NewDialogStore() *DialogStore {
 		folderOrder:   make(map[int64][]int),
 		folderTags:    make(map[int64]bool),
 		archivePinned: make(map[int64]bool),
+		translations:  make(map[translationPreferenceKey]bool),
 	}
 }
 
@@ -427,6 +434,26 @@ func (s *DialogStore) PeerSettingsBarHidden(_ context.Context, userID int64, pee
 		}
 	}
 	return false, nil
+}
+
+func (s *DialogStore) SetTranslationDisabled(_ context.Context, userID int64, peer domain.Peer, disabled bool) (bool, error) {
+	key := translationPreferenceKey{userID: userID, peer: peer}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.translations[key]
+	if disabled {
+		s.translations[key] = true
+	} else {
+		delete(s.translations, key)
+	}
+	return previous != disabled, nil
+}
+
+func (s *DialogStore) TranslationDisabled(_ context.Context, userID int64, peer domain.Peer) (bool, error) {
+	s.mu.RLock()
+	disabled := s.translations[translationPreferenceKey{userID: userID, peer: peer}]
+	s.mu.RUnlock()
+	return disabled, nil
 }
 
 func (s *DialogStore) ListFolders(_ context.Context, userID int64) (domain.DialogFolderList, error) {

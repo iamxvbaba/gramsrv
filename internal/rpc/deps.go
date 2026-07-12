@@ -456,6 +456,14 @@ type MessagesService interface {
 	DeleteSavedHistory(ctx context.Context, userID int64, req domain.DeleteSavedHistoryRequest) (domain.DeleteSavedHistoryResult, error)
 }
 
+// TranslationService owns read-only translation and the durable per-account
+// peer preference. It only exposes domain values to the RPC edge.
+type TranslationService interface {
+	Translate(ctx context.Context, req domain.TranslationRequest) (domain.TranslationResult, error)
+	SetPeerDisabled(ctx context.Context, userID int64, peer domain.Peer, disabled bool) (bool, error)
+	PeerDisabled(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
+}
+
 // AlbumGroupService 是 MessagesService 的可选、生产必备能力：sendMultiMedia 在
 // 解析任何媒体或落第一条消息前，持久预留整批 random_id 的 grouped_id。
 // 单独定义可避免让不触发 sendMultiMedia 的轻量测试替身实现无关方法。
@@ -731,6 +739,7 @@ type Deps struct {
 	Dialogs          DialogsService
 	Chatlists        ChatlistsService
 	Messages         MessagesService
+	Translation      TranslationService
 	Stories          StoriesService
 	Channels         ChannelsService
 	Files            FilesService

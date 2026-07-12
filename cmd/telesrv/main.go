@@ -48,6 +48,7 @@ import (
 	"telesrv/internal/app/stars"
 	storiesapp "telesrv/internal/app/stories"
 	themesapp "telesrv/internal/app/themes"
+	translationapp "telesrv/internal/app/translation"
 	"telesrv/internal/app/updates"
 	"telesrv/internal/app/userprojection"
 	"telesrv/internal/app/users"
@@ -164,6 +165,47 @@ func newAIComposeOptions(cfg config.Config, limiter aiapp.RateLimiter, premium a
 	}
 	if len(providers) > 0 {
 		opts = append(opts, aiapp.WithProviders(providers...))
+	}
+	return opts
+}
+
+func newTranslationOptions(cfg config.Config, limiter translationapp.RateLimiter, logger *zap.Logger) []translationapp.Option {
+	opts := []translationapp.Option{
+		translationapp.WithEnabled(cfg.TranslationEnabled),
+		translationapp.WithTimeout(cfg.TranslationTimeout),
+		translationapp.WithRateLimiter(limiter, cfg.TranslationRateLimit, cfg.TranslationRateWindow),
+	}
+	selected := make(map[string]struct{}, len(cfg.TranslationProviders))
+	for _, name := range cfg.TranslationProviders {
+		selected[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	providers := make([]translationapp.Provider, 0, len(cfg.AIProviders))
+	for _, pc := range cfg.AIProviders {
+		if aiapp.ProviderKind(pc.Kind) == aiapp.ProviderKindLocal {
+			continue
+		}
+		if len(selected) > 0 {
+			if _, ok := selected[strings.ToLower(pc.Name)]; !ok {
+				continue
+			}
+		}
+		provider, err := aiapp.NewProviderFromConfig(aiapp.ProviderConfig{
+			Name: pc.Name, Kind: aiapp.ProviderKind(pc.Kind), BaseURL: pc.BaseURL,
+			APIKey: pc.APIKey, Model: pc.Model, Timeout: cfg.TranslationTimeout,
+			MaxOutputTokens: max(pc.MaxOutputTokens, 8192), Temperature: pc.Temperature,
+			OmitTemperature: pc.OmitTemperature, Thinking: pc.Thinking,
+		})
+		if err != nil {
+			logger.Warn("translation provider 已跳过", zap.String("provider", pc.Name), zap.Error(err))
+			continue
+		}
+		providers = append(providers, translationapp.NewAIProvider(provider))
+		logger.Info("translation provider 已启用", zap.String("provider", provider.Name()), zap.String("kind", pc.Kind))
+	}
+	if len(providers) > 0 {
+		opts = append(opts, translationapp.WithProviders(providers...))
+	} else if cfg.TranslationEnabled {
+		logger.Warn("translation 已启用但没有远程 provider；messages.translateText 将返回 TRANSLATIONS_DISABLED")
 	}
 	return opts
 }
@@ -638,6 +680,12 @@ func run(logger *zap.Logger) error {
 		messageapp.WithSendPermissionChecker(adminService),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
+	translationService := translationapp.NewService(
+		messagesService,
+		channelsService,
+		dialogStore,
+		newTranslationOptions(cfg, rateLimiter, logger)...,
+	)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
@@ -690,6 +738,7 @@ func run(logger *zap.Logger) error {
 		Dialogs:          dialogsService,
 		Chatlists:        chatlistsService,
 		Messages:         messagesService,
+		Translation:      translationService,
 		Channels:         channelsService,
 		Files:            filesService,
 		Bots:             botsService,

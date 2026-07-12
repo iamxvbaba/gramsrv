@@ -276,6 +276,14 @@ func inputRequestInvalidErr() error { return tgerr.New(400, "INPUT_REQUEST_INVAL
 
 func inputRequestTooLongErr() error { return tgerr.New(400, "INPUT_REQUEST_TOO_LONG") }
 
+func inputTextEmptyErr() error            { return tgerr.New(400, "INPUT_TEXT_EMPTY") }
+func inputTextTooLongErr() error          { return tgerr.New(400, "INPUT_TEXT_TOO_LONG") }
+func toLangInvalidErr() error             { return tgerr.New(400, "TO_LANG_INVALID") }
+func translateReqFailedErr() error        { return tgerr.New(500, "TRANSLATE_REQ_FAILED") }
+func translateReqQuotaExceededErr() error { return tgerr.New(400, "TRANSLATE_REQ_QUOTA_EXCEEDED") }
+func translationsDisabledErr() error      { return tgerr.New(406, "TRANSLATIONS_DISABLED") }
+func translationTimeoutErr() error        { return tgerr.New(500, "TRANSLATION_TIMEOUT") }
+
 func persistentTimestampInvalidErr() error { return tgerr.New(400, "PERSISTENT_TIMESTAMP_INVALID") }
 
 func channelForumMissingErr() error { return tgerr.New(400, "CHANNEL_FORUM_MISSING") }

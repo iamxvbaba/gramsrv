@@ -699,6 +699,50 @@ func (s *DialogStore) PeerSettingsBarHidden(ctx context.Context, userID int64, p
 	return hidden, nil
 }
 
+func (s *DialogStore) SetTranslationDisabled(ctx context.Context, userID int64, peer domain.Peer, disabled bool) (bool, error) {
+	if !disabled {
+		tag, err := s.db.Exec(ctx, `
+DELETE FROM peer_translation_settings
+WHERE user_id = $1 AND peer_type = $2 AND peer_id = $3`, userID, string(peer.Type), peer.ID)
+		if err != nil {
+			return false, fmt.Errorf("enable peer translations: %w", err)
+		}
+		return tag.RowsAffected() > 0, nil
+	}
+	var changed bool
+	err := s.db.QueryRow(ctx, `
+WITH changed AS (
+  INSERT INTO peer_translation_settings (user_id, peer_type, peer_id, disabled)
+  VALUES ($1, $2, $3, true)
+  ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE
+    SET disabled = true, updated_at = now()
+    WHERE peer_translation_settings.disabled IS DISTINCT FROM true
+  RETURNING true
+)
+SELECT EXISTS (SELECT 1 FROM changed)`,
+		userID, string(peer.Type), peer.ID).Scan(&changed)
+	if err != nil {
+		return false, fmt.Errorf("set translation disabled: %w", err)
+	}
+	return changed, nil
+}
+
+func (s *DialogStore) TranslationDisabled(ctx context.Context, userID int64, peer domain.Peer) (bool, error) {
+	var disabled bool
+	err := s.db.QueryRow(ctx, `
+SELECT disabled
+FROM peer_translation_settings
+WHERE user_id = $1 AND peer_type = $2 AND peer_id = $3`,
+		userID, string(peer.Type), peer.ID).Scan(&disabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get translation disabled: %w", err)
+	}
+	return disabled, nil
+}
+
 func (s *DialogStore) ListFolders(ctx context.Context, userID int64) (domain.DialogFolderList, error) {
 	rows, err := s.q.ListDialogFolders(ctx, userID)
 	if err != nil {

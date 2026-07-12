@@ -31,6 +31,10 @@ type DialogStore interface {
 	SetChatTheme(ctx context.Context, userID int64, peer domain.Peer, emoticon string) (bool, error)
 	SetPeerSettingsBarHidden(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 	PeerSettingsBarHidden(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
+	// SetTranslationDisabled persists the per-account peer preference used by
+	// messages.togglePeerTranslations without creating a synthetic dialog.
+	SetTranslationDisabled(ctx context.Context, userID int64, peer domain.Peer, disabled bool) (bool, error)
+	TranslationDisabled(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 	ListFolders(ctx context.Context, userID int64) (domain.DialogFolderList, error)
 	GetFolder(ctx context.Context, userID int64, folderID int) (domain.DialogFolder, bool, error)
 	UpsertFolder(ctx context.Context, userID int64, folder domain.DialogFolder) error

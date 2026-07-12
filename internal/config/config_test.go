@@ -249,6 +249,25 @@ func TestLoadAIProviders(t *testing.T) {
 	}
 }
 
+func TestLoadTranslationConfig(t *testing.T) {
+	t.Setenv("TELESRV_CONFIG", "")
+	t.Setenv("TELESRV_TRANSLATION_ENABLED", "true")
+	t.Setenv("TELESRV_TRANSLATION_PROVIDERS", "openai,gemini")
+	t.Setenv("TELESRV_TRANSLATION_TIMEOUT", "9s")
+	t.Setenv("TELESRV_TRANSLATION_RATE_LIMIT", "17")
+	t.Setenv("TELESRV_TRANSLATION_RATE_WINDOW", "2m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TranslationEnabled || len(cfg.TranslationProviders) != 2 || cfg.TranslationProviders[0] != "openai" || cfg.TranslationProviders[1] != "gemini" {
+		t.Fatalf("translation providers = %#v", cfg.TranslationProviders)
+	}
+	if cfg.TranslationTimeout != 9*time.Second || cfg.TranslationRateLimit != 17 || cfg.TranslationRateWindow != 2*time.Minute {
+		t.Fatalf("translation limits = %v/%d/%v", cfg.TranslationTimeout, cfg.TranslationRateLimit, cfg.TranslationRateWindow)
+	}
+}
+
 func TestLoadReadsEnvStyleConfigFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "telesrv.env")
 	writeConfigFile(t, path, `

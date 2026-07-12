@@ -169,6 +169,14 @@ type Config struct {
 	AIRateWindow time.Duration
 	// AIPrivacyLogContent 为 false 时日志只写长度/provider/状态，不写用户输入和生成文本。
 	AIPrivacyLogContent bool
+	// Translation* controls messages.translateText. Remote provider credentials
+	// are reused from AIProviders; TranslationProviders optionally selects names
+	// from that list. The deterministic local provider is never used.
+	TranslationEnabled    bool
+	TranslationProviders  []string
+	TranslationTimeout    time.Duration
+	TranslationRateLimit  int
+	TranslationRateWindow time.Duration
 	// TempKeyResolveCacheMaxEntries 是 Router temp→perm 解析缓存容量。
 	TempKeyResolveCacheMaxEntries int
 	// TempKeyResolveCacheTTL 是 temp→perm 绑定的进程内复核周期。绑定/revoke 有精确
@@ -461,6 +469,11 @@ func Load() (Config, error) {
 		AIRateLimit:                   envIntOr("TELESRV_AI_RATE_LIMIT", 20),
 		AIRateWindow:                  envDurationOr("TELESRV_AI_RATE_WINDOW", time.Minute),
 		AIPrivacyLogContent:           envBoolOr("TELESRV_AI_LOG_CONTENT", false),
+		TranslationEnabled:            envBoolOr("TELESRV_TRANSLATION_ENABLED", true),
+		TranslationProviders:          envListOr("TELESRV_TRANSLATION_PROVIDERS", []string{}),
+		TranslationTimeout:            envDurationOr("TELESRV_TRANSLATION_TIMEOUT", 15*time.Second),
+		TranslationRateLimit:          envIntOr("TELESRV_TRANSLATION_RATE_LIMIT", 60),
+		TranslationRateWindow:         envDurationOr("TELESRV_TRANSLATION_RATE_WINDOW", time.Minute),
 		TempKeyResolveCacheMaxEntries: envIntOr("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", 262144),
 		TempKeyResolveCacheTTL:        envDurationOr("TELESRV_TEMP_KEY_CACHE_TTL", 30*time.Minute),
 		ChannelRowCacheMaxEntries:     envIntOr("TELESRV_CHANNEL_ROW_CACHE_MAX", 50000),

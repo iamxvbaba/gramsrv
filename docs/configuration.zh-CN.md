@@ -126,6 +126,13 @@
 | `TELESRV_AI_RATE_LIMIT` | int / `20` | 单账号每窗口 compose 次数。 |
 | `TELESRV_AI_RATE_WINDOW` | duration / `1m` | compose AI 限流窗口。 |
 | `TELESRV_AI_LOG_CONTENT` | bool / `false` | false 时日志只写长度/provider/状态；开启可能暴露用户输入和生成文本。 |
+| `TELESRV_TRANSLATION_ENABLED` | bool / `true` | 启用 `messages.translateText`；仍需至少一个远程 AI provider，local 回显 provider 不会被用作翻译。 |
+| `TELESRV_TRANSLATION_PROVIDERS` | list / 空 | 从 `TELESRV_AI_PROVIDERS` 选择用于翻译的 provider 名；空表示使用其中全部远程 provider。 |
+| `TELESRV_TRANSLATION_TIMEOUT` | duration / `15s` | 一批翻译的总超时；批内最多 20 条、provider 并发固定为 4。 |
+| `TELESRV_TRANSLATION_RATE_LIMIT` | int / `60` | 单账号每窗口允许的翻译文本条数；一批 20 条计 20，防止批量请求放大 provider 调用。 |
+| `TELESRV_TRANSLATION_RATE_WINDOW` | duration / `1m` | 翻译限流窗口。 |
+
+聊天翻译会把用户主动选择翻译的消息正文发送给所配置的外部 provider。默认日志不记录正文，但部署者仍应在隐私政策中披露上游处理方；只配置 `local` 时服务端返回 `TRANSLATIONS_DISABLED`，不会回原文冒充译文。
 
 对 `TELESRV_AI_PROVIDERS` 中的每个名称，telesrv 会转大写并把非字母数字字符替换为 `_`，再读取下列动态参数。例如 `openai-compatible` 对应 suffix `OPENAI_COMPATIBLE`。
 

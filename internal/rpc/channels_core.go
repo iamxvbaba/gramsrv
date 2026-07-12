@@ -118,6 +118,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 			return nil, channelInvalidErr(domain.ErrChannelPrivate)
 		}
 		full := cached.full
+		if err := r.applyTranslationDisabledToChannelFull(ctx, userID, ref.ID, &full); err != nil {
+			return nil, err
+		}
 		r.applyStarGiftsCountToChannelFull(ctx, ref.ID, &full)
 		r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, ref.ID, &full)
 		r.applyNotifySettingsToChannelFull(ctx, userID, ref.ID, &full)
@@ -164,6 +167,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		chats:         append([]tg.ChatClass(nil), chats...),
 		userIDs:       userIDs,
 	}, loadEpoch)
+	if err := r.applyTranslationDisabledToChannelFull(ctx, userID, view.Channel.ID, full); err != nil {
+		return nil, err
+	}
 	r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyNotifySettingsToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyAndroidChannelReactionEditorCompat(ctx, full, canChangeInfo)

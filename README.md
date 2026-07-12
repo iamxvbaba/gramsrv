@@ -48,6 +48,7 @@ codebase.
 | ✅ | Private chats | Send, history, read receipts, edit, delete, forward, reply, rich entities, grouped/media messages, reactions, scheduled/TTL-oriented paths. |
 | ✅ | Rich messages | Telegram Desktop rich text messages, rich content conversion, send/edit/scheduled flows, dialog/history projections, and memory/PostgreSQL persistence. |
 | ✅ | AI compose and ChatBot | Input-box rewrite/polish, default and custom tones, addstyle previews, local and external provider chains, streamed `@ChatBot` draft replies, and Business AI reply hooks. |
+| ✅ | Message translation | Telegram `messages.translateText`, provider-backed batch translation, peer language settings, per-account rate limits, and privacy-conscious logging defaults. |
 | ✅ | Supergroups and channels | Create, join, leave, invite links, participants, admins, forum topics, linked discussion guests, history, send/edit/delete/read, reactions, public search, and previews. |
 | ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, canonical GIFv conversion, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
 | ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, saved GIFs, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
@@ -130,6 +131,9 @@ is a copyable development template, not an exhaustive parameter dictionary.
 | `TELESRV_AI_RATE_LIMIT` | `20` | per-account AI compose request budget |
 | `TELESRV_AI_RATE_WINDOW` | `1m` | AI compose rate-limit window |
 | `TELESRV_AI_LOG_CONTENT` | `false` | whether logs may include prompt/generated text |
+| `TELESRV_TRANSLATION_ENABLED` | `true` | enable Telegram message translation RPCs |
+| `TELESRV_TRANSLATION_PROVIDERS` | empty | optional subset of configured remote AI providers for translation |
+| `TELESRV_TRANSLATION_RATE_LIMIT` | `60` | per-account translated text item budget |
 | `TELESRV_BUSINESS_AI_PROVIDER` | `echo` | Business automation reply provider |
 
 The optional sticker seed directory is skipped when it does not exist.

@@ -45,6 +45,7 @@ https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
 | ✅ | 私聊消息 | send、history、read receipts、edit、delete、forward、reply、富文本实体、媒体/相册消息、reactions、scheduled/TTL 相关路径。 |
 | ✅ | 富文本消息 | Telegram Desktop rich text message、富文本内容转换、send/edit/scheduled 流程、dialog/history 投影，以及 memory/PostgreSQL 持久化。 |
 | ✅ | AI 输入框与 ChatBot | 输入框改写/润色、默认和自定义 tone、addstyle 预览、本地与外部 provider 链、流式 `@ChatBot` 草稿回复、Business AI 回复钩子。 |
+| ✅ | 消息翻译 | Telegram `messages.translateText`、provider-backed 批量翻译、peer 语言设置、单账号限流，以及默认不记录正文的日志策略。 |
 | ✅ | 超级群与频道 | create、join、leave、邀请链接、成员、管理员、forum topics、关联讨论组 guest 访问、history、send/edit/delete/read、reactions、公开搜索和预览。 |
 | ✅ | 媒体与文件 | upload、download、本地 blob 存储、照片、文档、缩略图、规范 GIFv 转换、外链媒体抓取、网页预览、地图缩略图缓存、用户/频道头像。 |
 | ✅ | Stickers 与 Reactions | sticker/reaction catalog、seed 支持、saved GIFs、recent reactions、top reactions、default reactions、reaction moderation 相关路径。 |
@@ -122,6 +123,9 @@ go build -o bin/gramsrv ./cmd/telesrv
 | `TELESRV_AI_RATE_LIMIT` | `20` | 每个账号的 AI compose 请求额度 |
 | `TELESRV_AI_RATE_WINDOW` | `1m` | AI compose 限流窗口 |
 | `TELESRV_AI_LOG_CONTENT` | `false` | 日志是否允许记录 prompt/生成文本 |
+| `TELESRV_TRANSLATION_ENABLED` | `true` | 启用 Telegram 消息翻译 RPC |
+| `TELESRV_TRANSLATION_PROVIDERS` | 空 | 可选指定用于翻译的远程 AI provider 子集 |
+| `TELESRV_TRANSLATION_RATE_LIMIT` | `60` | 每个账号的翻译文本条数额度 |
 | `TELESRV_BUSINESS_AI_PROVIDER` | `echo` | Business automation 回复 provider |
 
 如果 sticker seed 目录不存在，启动时会自动跳过。

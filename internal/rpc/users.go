@@ -140,6 +140,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, []tg.UserClass{user}, nil)
 	loadEpoch := r.userFullProjectionCache.LoadEpoch()
 	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
+		if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
+			return nil, err
+		}
 		r.applyStoriesPinnedAvailableToUserFull(ctx, currentUserID, u.ID, &full)
 		r.applyNotifySettingsToUserFull(ctx, currentUserID, u.ID, &full)
 		chats := r.applyPersonalChannelToUserFull(ctx, currentUserID, u.PersonalChannelID, &full)
@@ -154,6 +157,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		return nil, err
 	}
 	r.userFullProjectionCache.StoreIfEpoch(currentUserID, u.ID, full, loadEpoch)
+	if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
+		return nil, err
+	}
 	r.applyStoriesPinnedAvailableToUserFull(ctx, currentUserID, u.ID, &full)
 	r.applyNotifySettingsToUserFull(ctx, currentUserID, u.ID, &full)
 	chats := r.applyPersonalChannelToUserFull(ctx, currentUserID, u.PersonalChannelID, &full)

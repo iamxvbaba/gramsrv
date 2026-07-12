@@ -126,6 +126,13 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_AI_RATE_LIMIT` | int / `20` | Per-account compose operations per window. |
 | `TELESRV_AI_RATE_WINDOW` | duration / `1m` | Compose AI rate-limit window. |
 | `TELESRV_AI_LOG_CONTENT` | bool / `false` | When false, logs contain lengths/provider/status only. Enabling may expose user prompts and generated text. |
+| `TELESRV_TRANSLATION_ENABLED` | bool / `true` | Enables `messages.translateText`; at least one remote AI provider is still required, and the local echo provider is never treated as translation. |
+| `TELESRV_TRANSLATION_PROVIDERS` | list / empty | Selects provider names from `TELESRV_AI_PROVIDERS`; empty uses every configured remote provider. |
+| `TELESRV_TRANSLATION_TIMEOUT` | duration / `15s` | Total timeout for one batch; batches contain at most 20 texts and use fixed provider concurrency of 4. |
+| `TELESRV_TRANSLATION_RATE_LIMIT` | int / `60` | Per-account translated text items per window; a 20-item batch costs 20 to prevent provider-call amplification. |
+| `TELESRV_TRANSLATION_RATE_WINDOW` | duration / `1m` | Translation rate-limit window. |
+
+Chat translation sends message bodies explicitly selected by the user to the configured external provider. Default logs omit content, but deployments should still disclose the upstream processor in their privacy policy. With only `local` configured, telesrv returns `TRANSLATIONS_DISABLED` instead of presenting source text as a translation.
 
 For each name in `TELESRV_AI_PROVIDERS`, telesrv uppercases it, converts non-alphanumeric characters to `_`, and reads the following dynamic keys. Example: provider `openai-compatible` uses suffix `OPENAI_COMPATIBLE`.
 
