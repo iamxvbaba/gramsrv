@@ -18,6 +18,10 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 	if cfg.Hash != defaultAppConfigHash || cfg.Hash < 10 {
 		t.Fatalf("hash = %d, want defaultAppConfigHash(≥10)", cfg.Hash)
 	}
+	oldCfg, oldNotModified, err := (*Service)(nil).GetAppConfig(context.Background(), defaultAppConfigHash-1)
+	if err != nil || oldNotModified || oldCfg.Hash != defaultAppConfigHash {
+		t.Fatalf("GetAppConfig(old hash) = hash %d notModified %v err %v, want refreshed config", oldCfg.Hash, oldNotModified, err)
+	}
 	var decoded map[string]any
 	if err := json.Unmarshal(cfg.JSON, &decoded); err != nil {
 		t.Fatalf("app config json invalid: %v", err)
@@ -35,6 +39,10 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 	}
 	if posting, ok := decoded["rich_message_posting"].(string); !ok || posting != "enabled" {
 		t.Fatalf("rich_message_posting = %v, want enabled (TDesktop 富文本编辑入口默认打开)", decoded["rich_message_posting"])
+	}
+	fragmentPrefixes, ok := decoded["fragment_prefixes"].([]any)
+	if !ok || len(fragmentPrefixes) != 1 || fragmentPrefixes[0] != "888" {
+		t.Fatalf("fragment_prefixes = %#v, want [\"888\"]", decoded["fragment_prefixes"])
 	}
 	wantNumbers := map[string]float64{
 		"reactions_user_max_default":          1,

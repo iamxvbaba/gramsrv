@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	appConfigHash     = 16 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 17 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -31,6 +31,9 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "quote_length_max", Value: &tg.JSONNumber{Value: 1024}},
 		{Key: "telegram_antispam_group_size_min", Value: &tg.JSONNumber{Value: 200}},
 		{Key: "telegram_antispam_user_id", Value: &tg.JSONString{Value: "5434988373"}},
+		{Key: "fragment_prefixes", Value: &tg.JSONArray{Value: []tg.JSONValueClass{
+			&tg.JSONString{Value: "888"},
+		}}},
 		// premium_purchase_blocked=false：客户端把 star gift「Send a Gift」入口与
 		// premiumCanBuy()=!premium_purchase_blocked 耦合，置 true 会同时隐藏送礼入口
 		// （详见 app/help/service.go 主配置注释）。这里是无 HelpService 时的最小回退。

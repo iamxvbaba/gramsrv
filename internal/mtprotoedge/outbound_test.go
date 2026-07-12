@@ -237,8 +237,8 @@ func TestEncodedControlFramesUseIndependentBudgetForQueuedAndPendingLifetime(t *
 }
 
 func TestOutboundScratchPoolBoundsConcurrentWireCopies(t *testing.T) {
-	pool := newOutboundScratchPool(300)
-	first, err := pool.acquire(context.Background(), nil, 100) // 3x peak = full budget.
+	pool := newOutboundScratchPool(300 + 2*maxCompatPacketOverhead)
+	first, err := pool.acquire(context.Background(), nil, 100) // Full wire+codec+obfuscation budget.
 	if err != nil {
 		t.Fatalf("acquire first scratch: %v", err)
 	}
@@ -261,9 +261,31 @@ func TestOutboundScratchPoolBoundsConcurrentWireCopies(t *testing.T) {
 	}
 }
 
+func TestOutboundScratchPoolAccountsRetainedCodecScratch(t *testing.T) {
+	pool := newOutboundScratchPool(300 + 2*maxCompatPacketOverhead)
+	scratch, err := pool.acquire(context.Background(), nil, 100)
+	if err != nil {
+		t.Fatalf("acquire scratch: %v", err)
+	}
+	scratch.codec = make([]byte, 0, 80)
+	pool.release(scratch)
+	if got := pool.snapshot(); got != 180 {
+		t.Fatalf("retained wire+codec scratch = %d, want 180", got)
+	}
+
+	reused, err := pool.acquire(context.Background(), nil, 100)
+	if err != nil {
+		t.Fatalf("reuse scratch: %v", err)
+	}
+	if cap(reused.codec) != 80 {
+		t.Fatalf("reused codec scratch capacity = %d, want 80", cap(reused.codec))
+	}
+	pool.release(reused)
+}
+
 func TestOutboundScratchAdmissionUsesWriteTimeoutWithoutClosingHealthyConnection(t *testing.T) {
 	wireBytes := encryptedOutboundWireLen(4)
-	pool := newOutboundScratchPool(int64(wireBytes * 3))
+	pool := newOutboundScratchPool(int64(wireBytes*3 + 2*maxCompatPacketOverhead))
 	blocker, err := pool.acquire(context.Background(), nil, wireBytes)
 	if err != nil {
 		t.Fatalf("occupy shared scratch budget: %v", err)

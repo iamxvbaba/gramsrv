@@ -383,7 +383,8 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	// 触发客户端 6s 重连风暴并误判「后端不健康」回退到外部 DNS。per-conn goroutine 模型已消解
 	// slow-loris 接入饥饿，故嗅探用满 handshakeTimeout 是安全的。
 	mux := newSamePortMux(ln, s.handshakeTimeout)
-	wsLn, wsHandler := transport.WebsocketListener(ln.Addr())
+	wsRawLn, wsHandler := transport.WebsocketListener(ln.Addr())
+	wsLn := newTransportPacketMessageListener(wsRawLn)
 
 	httpServer := &http.Server{
 		Handler:           websocketRouteHandler(wsHandler, s.websocketOrigins),

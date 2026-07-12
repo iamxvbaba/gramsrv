@@ -3,10 +3,39 @@ package mtprotoedge
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/gotd/td/bin"
 )
+
+type messageWriteTestConn struct {
+	bytes.Buffer
+	writes   int
+	maxWrite int
+}
+
+func (c *messageWriteTestConn) Read([]byte) (int, error) { return 0, io.EOF }
+func (c *messageWriteTestConn) Write(p []byte) (int, error) {
+	c.writes++
+	if c.maxWrite > 0 && len(p) > c.maxWrite {
+		p = p[:c.maxWrite]
+	}
+	return c.Buffer.Write(p)
+}
+func (*messageWriteTestConn) Close() error                     { return nil }
+func (*messageWriteTestConn) LocalAddr() net.Addr              { return messageWriteTestAddr("local") }
+func (*messageWriteTestConn) RemoteAddr() net.Addr             { return messageWriteTestAddr("remote") }
+func (*messageWriteTestConn) SetDeadline(time.Time) error      { return nil }
+func (*messageWriteTestConn) SetReadDeadline(time.Time) error  { return nil }
+func (*messageWriteTestConn) SetWriteDeadline(time.Time) error { return nil }
+
+type messageWriteTestAddr string
+
+func (a messageWriteTestAddr) Network() string { return "message-write-test" }
+func (a messageWriteTestAddr) String() string  { return string(a) }
 
 type countWriteBuffer struct {
 	bytes.Buffer
@@ -127,4 +156,72 @@ func TestCompatTransportCodecsWriteSegmentedPacketWithoutFullCopy(t *testing.T) 
 			t.Fatalf("intermediate length = %d, want %d", got, want)
 		}
 	})
+}
+
+func TestCompatTransportWebSocketWritesOneMessagePerPacket(t *testing.T) {
+	var payload bin.Buffer
+	payload.PutInt32(0x01020304)
+	payload.PutInt32(0x05060708)
+
+	raw := &messageWriteTestConn{}
+	conn := &compatTransportConn{
+		conn:                    &transportPacketMessageConn{Conn: raw},
+		codec:                   &quickAckAbridgedCodec{},
+		transportPacketMessages: true,
+	}
+	var scratch []byte
+	if err := conn.SendDeadlineWithScratch(time.Time{}, &payload, &scratch); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if raw.writes != 1 {
+		t.Fatalf("websocket writes = %d, want one complete message", raw.writes)
+	}
+	want := append([]byte{byte(payload.Len() / bin.Word)}, payload.Raw()...)
+	if !bytes.Equal(raw.Bytes(), want) {
+		t.Fatalf("websocket message = %x, want %x", raw.Bytes(), want)
+	}
+	if len(scratch) != len(want) {
+		t.Fatalf("shared scratch length = %d, want %d", len(scratch), len(want))
+	}
+}
+
+func TestCompatTransportWebSocketDirectWriteUsesBoundedFallback(t *testing.T) {
+	var payload bin.Buffer
+	payload.PutInt32(0x11223344)
+	payload.PutInt32(0x55667788)
+
+	raw := &messageWriteTestConn{}
+	conn := &compatTransportConn{
+		conn:                    &transportPacketMessageConn{Conn: raw},
+		codec:                   &quickAckAbridgedCodec{},
+		transportPacketMessages: true,
+	}
+	if err := conn.SendDeadline(time.Time{}, &payload); err != nil {
+		t.Fatalf("direct send: %v", err)
+	}
+	if raw.writes != 1 {
+		t.Fatalf("direct websocket writes = %d, want one complete message", raw.writes)
+	}
+	if cap(conn.directMessageScratch) == 0 || cap(conn.directMessageScratch) > maxRetainedDirectMessageScratch {
+		t.Fatalf("direct scratch capacity = %d, want bounded retained buffer", cap(conn.directMessageScratch))
+	}
+}
+
+func TestCompatTransportWebSocketDoesNotRetryShortMessageWrite(t *testing.T) {
+	var payload bin.Buffer
+	payload.PutInt32(0x01020304)
+	payload.PutInt32(0x05060708)
+
+	raw := &messageWriteTestConn{maxWrite: 1}
+	conn := &compatTransportConn{
+		conn:                    &transportPacketMessageConn{Conn: raw},
+		codec:                   &quickAckAbridgedCodec{},
+		transportPacketMessages: true,
+	}
+	if err := conn.SendDeadline(time.Time{}, &payload); err == nil {
+		t.Fatal("short websocket message write unexpectedly succeeded")
+	}
+	if raw.writes != 1 {
+		t.Fatalf("short websocket writes = %d, want no multi-message retry", raw.writes)
+	}
 }

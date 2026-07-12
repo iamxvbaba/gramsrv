@@ -144,6 +144,26 @@ func (l *physicalTransportLease) SendDeadline(deadline time.Time, b *bin.Buffer)
 	})
 }
 
+// SendDeadlineWithScratch forwards the globally budgeted codec scratch through the generation
+// lease while preserving the same write-ownership barrier as SendDeadline.
+func (l *physicalTransportLease) SendDeadlineWithScratch(deadline time.Time, b *bin.Buffer, scratch *[]byte) error {
+	return l.withCurrentWriter(func(raw transport.Conn) error {
+		if writer, ok := raw.(deadlineOutboundScratchWriter); ok {
+			return writer.SendDeadlineWithScratch(deadline, b, scratch)
+		}
+		if writer, ok := raw.(deadlineOutboundWriter); ok {
+			return writer.SendDeadline(deadline, b)
+		}
+		ctx := context.Background()
+		cancel := func() {}
+		if !deadline.IsZero() {
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		defer cancel()
+		return raw.Send(ctx, b)
+	})
+}
+
 func (l *physicalTransportLease) withCurrentWriter(send func(transport.Conn) error) error {
 	if l == nil || l.owner == nil || l.owner.raw == nil {
 		return ErrConnClosed
