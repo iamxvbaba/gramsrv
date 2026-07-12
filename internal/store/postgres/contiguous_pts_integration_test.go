@@ -169,7 +169,7 @@ func TestDispatchOutboxLifecycleKeepsDurableEvents(t *testing.T) {
 			Peer:     domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID + int64(pts)},
 			Bool:     pts%2 == 0,
 		}
-		if _, err := events.AppendAllocatedWithDispatch(ctx, owner.ID, event, [8]byte{}, sessionID); err != nil {
+		if _, err := events.AppendAllocatedWithDispatch(ctx, owner.ID, event, [8]byte{1}, sessionID); err != nil {
 			t.Fatalf("AppendAllocatedWithDispatch pts=%d: %v", pts, err)
 		}
 		if _, err := tx.Exec(ctx, `

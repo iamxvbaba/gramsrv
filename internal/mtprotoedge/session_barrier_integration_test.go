@@ -81,8 +81,8 @@ func TestBadServerSaltRetainsOneProvisionalConnUntilCorrected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first bad salt: %v", err)
 	}
-	if firstConn == nil || firstConn.lifecycleState() != connLifecycleProvisional || firstConn.terminal.Load() {
-		t.Fatalf("first correction lifecycle conn=%p state=%v terminal=%v", firstConn, firstConn.lifecycleState(), firstConn.terminal.Load())
+	if firstConn == nil || firstConn.lifecycleState() != connLifecycleProvisional {
+		t.Fatalf("first correction lifecycle conn=%p state=%v", firstConn, firstConn.lifecycleState())
 	}
 	if cs.createdFloor != 0 || len(cs.seen) != 0 || handler.calls.Load() != 0 {
 		t.Fatalf("bad salt admitted state: floor=%d seen=%d calls=%d", cs.createdFloor, len(cs.seen), handler.calls.Load())
@@ -192,8 +192,8 @@ func TestWrongSaltSessionChangeTransfersPhysicalOwnership(t *testing.T) {
 	if newConn == nil || newConn == oldConn || newConn.lifecycleState() != connLifecycleProvisional {
 		t.Fatalf("replacement conn old=%p new=%p state=%v", oldConn, newConn, newConn.lifecycleState())
 	}
-	if !oldConn.terminal.Load() || tr.closed.Load() {
-		t.Fatalf("transfer state old_terminal=%v raw_closed=%v", oldConn.terminal.Load(), tr.closed.Load())
+	if !oldConn.isRetired() || tr.closed.Load() {
+		t.Fatalf("transfer state old_lifecycle=%v raw_closed=%v", oldConn.lifecycleState(), tr.closed.Load())
 	}
 	// A delayed stale close must not tear down the generation already transferred
 	// to the new logical session.
@@ -483,10 +483,10 @@ func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testin
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for !firstConn.terminal.Load() && time.Now().Before(deadline) {
+	for !firstConn.isRetired() && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if !firstConn.terminal.Load() {
+	if !firstConn.isRetired() {
 		t.Fatal("replacement did not fence the first physical connection")
 	}
 	if got := handler.calls.Load(); got != 1 {
@@ -612,8 +612,8 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	if resultCount != 1 {
 		t.Fatalf("sequential retry result count = %d, want 1", resultCount)
 	}
-	if !firstConn.terminal.Load() || secondConn == nil || !secondConn.isActive() {
-		t.Fatalf("replacement lifecycle = old terminal:%v new:%p active:%v", firstConn.terminal.Load(), secondConn, secondConn != nil && secondConn.isActive())
+	if !firstConn.isRetired() || secondConn == nil || !secondConn.isActive() {
+		t.Fatalf("replacement lifecycle = old:%v new:%p active:%v", firstConn.lifecycleState(), secondConn, secondConn != nil && secondConn.isActive())
 	}
 	secondConn.ForceClose()
 }

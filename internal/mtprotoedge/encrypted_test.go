@@ -1,6 +1,7 @@
 package mtprotoedge
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -414,7 +415,7 @@ func TestPingDelayDisconnectOddSeqAccepted(t *testing.T) {
 // 避免 TDesktop 清理旧 key 时落到业务 RPC fallback。
 func TestDestroyAuthKey(t *testing.T) {
 	const dc = 2
-	addr, pub, _ := startTestServer(t, Options{DC: dc})
+	addr, pub, srv := startTestServer(t, Options{DC: dc})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
@@ -423,6 +424,15 @@ func TestDestroyAuthKey(t *testing.T) {
 
 	replies := collectReplies(t, conn, cipher, auth.AuthKey, destroyAuthKeyOkTypeID)
 	mustHave(t, replies, destroyAuthKeyOkTypeID, "destroy_auth_key_ok")
+	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || found {
+		t.Fatalf("auth key after destroy: found=%v err=%v", found, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var frame bin.Buffer
+	if err := conn.Recv(ctx, &frame); err == nil {
+		t.Fatal("destroy_auth_key requester remained readable after required ok")
+	}
 }
 
 // TestBadServerSalt 验证客户端带错 server_salt 时 server 返回 bad_server_salt，

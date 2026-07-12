@@ -73,38 +73,6 @@ func (s *AuthKeyStore) Delete(_ context.Context, id [8]byte) error {
 	return nil
 }
 
-// SessionStore 是 store.SessionStore 的内存实现。
-type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[int64]store.SessionData
-}
-
-// NewSessionStore 创建内存 SessionStore。
-func NewSessionStore() *SessionStore {
-	return &SessionStore{sessions: make(map[int64]store.SessionData)}
-}
-
-func (s *SessionStore) Save(_ context.Context, d store.SessionData) error {
-	s.mu.Lock()
-	s.sessions[d.ID] = d
-	s.mu.Unlock()
-	return nil
-}
-
-func (s *SessionStore) Get(_ context.Context, id int64) (store.SessionData, bool, error) {
-	s.mu.RLock()
-	d, ok := s.sessions[id]
-	s.mu.RUnlock()
-	return d, ok, nil
-}
-
-func (s *SessionStore) Delete(_ context.Context, id int64) error {
-	s.mu.Lock()
-	delete(s.sessions, id)
-	s.mu.Unlock()
-	return nil
-}
-
 // TempAuthKeyBindingStore 是 store.TempAuthKeyBindingStore 的内存实现。
 type TempAuthKeyBindingStore struct {
 	mu sync.RWMutex

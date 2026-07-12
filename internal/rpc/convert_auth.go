@@ -29,26 +29,12 @@ func (r *Router) currentUserID(ctx context.Context) (int64, bool, error) {
 	}
 	if r.deps.Sessions != nil {
 		if sessionID, ok := SessionIDFrom(ctx); ok {
-			if scoped, ok := r.scopedSessions(); ok {
-				if rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx); ok {
-					if userID, resolved := scoped.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
-						if userID == 0 {
-							if authKeyID, ok := AuthKeyIDFrom(ctx); ok {
-								if cachedUserID, ok := r.positiveCachedAuthUser(authKeyID); ok {
-									scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, cachedUserID)
-									r.announceSessionOnline(ctx, cachedUserID)
-									return cachedUserID, true, nil
-								}
-							}
-						}
-						return userID, userID != 0, nil
-					}
-				}
-			} else if userID, resolved := r.deps.Sessions.UserIDResolved(sessionID); resolved {
+			rawAuthKeyID := rawAuthKeyIDForOrigin(ctx)
+			if userID, resolved := r.deps.Sessions.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
 				if userID == 0 {
 					if authKeyID, ok := AuthKeyIDFrom(ctx); ok {
 						if cachedUserID, ok := r.positiveCachedAuthUser(authKeyID); ok {
-							r.deps.Sessions.BindUser(sessionID, cachedUserID)
+							r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, cachedUserID)
 							r.announceSessionOnline(ctx, cachedUserID)
 							return cachedUserID, true, nil
 						}

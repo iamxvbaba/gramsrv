@@ -2061,7 +2061,8 @@ CREATE TABLE public.dispatch_outbox (
     last_error text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT dispatch_outbox_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('dispatching'::character varying)::text, ('failed'::character varying)::text])))
+    CONSTRAINT dispatch_outbox_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('dispatching'::character varying)::text, ('failed'::character varying)::text]))),
+    CONSTRAINT dispatch_outbox_exclusion_pair_check CHECK ((((exclude_auth_key_id = 0) AND (exclude_session_id = 0)) OR ((exclude_auth_key_id <> 0) AND (exclude_session_id <> 0))))
 );
 
 

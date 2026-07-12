@@ -192,13 +192,7 @@ func (r *Router) markSessionReceivesUpdates(ctx context.Context, userID int64) {
 	if !ok {
 		return
 	}
-	if scoped, ok := r.scopedSessions(); ok {
-		if rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx); ok {
-			scoped.SetReceivesUpdatesForAuthKey(rawAuthKeyID, sessionID, true)
-			return
-		}
-	}
-	r.deps.Sessions.SetReceivesUpdates(sessionID, true)
+	r.deps.Sessions.SetReceivesUpdatesForAuthKey(rawAuthKeyIDForOrigin(ctx), sessionID, true)
 }
 
 func ptr[T any](v T) *T { return &v }

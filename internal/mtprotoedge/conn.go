@@ -82,12 +82,9 @@ type Conn struct {
 	outboundControlBudgetOnce    sync.Once
 	outboundScratchPool          *outboundScratchPool
 	outboundScratchOnce          sync.Once
-	// terminal 表示该 logical Conn 已停止接受新的出站操作。写失败时由
-	// outbound actor 置位并只发停止信号，不能在 actor 内等待自身退出。
-	terminal atomic.Bool
-	// lifecycle is a monotonic activation state machine. In particular, retired
-	// never transitions back to claiming/active; this closes the stale-read-loop
-	// ABA where an evicted Conn observed "not active" and registered itself again.
+	// lifecycle is the sole monotonic activation/retirement state machine.
+	// retired never transitions back to claiming/active; one atomic state avoids
+	// contradictory activation and shutdown observations.
 	lifecycle      atomic.Uint32
 	transportClose sync.Once
 
@@ -138,14 +135,6 @@ type Conn struct {
 	membershipGen atomic.Int64
 	// createdAt 是连接建立时刻，供同 auth_key session 数触顶时驱逐真正最旧的连接。
 	createdAt time.Time
-	// keyDestroyed 标记本连接的 auth_key 已被 destroy_auth_key 删除。serveConn 对已建立
-	// 连接复用缓存密钥跳过每帧 AuthKeyStore 回查；置位后强制回落到 Get→AuthKeyNotFound，
-	// 维持「destroy_auth_key 发起连接下一帧自然失效」契约。只由 destroy_auth_key 处理器置位。
-	keyDestroyed atomic.Bool
-	// lastSessionSaveUnix 是上次把本连接 session 持久化到 SessionStore 的 unix 秒，用于把
-	// 每帧 Save 去抖到固定间隔——session 持久化是软状态（生产无热读路径，仅观测/未来用）。
-	// 只由单连接的读循环 goroutine 访问。
-	lastSessionSaveUnix atomic.Int64
 	// clientLayer 是本连接协商的 TL layer（invokeWithLayer/initConnection），由 handleRPC
 	// 在每次 Dispatch 后从 RPC 注册表刷新。出站(rpc_result/push)按此把 227 对象降级给老客户端；
 	// 0 表示尚未协商，按 canonical(227) 处理=不降级。
@@ -159,8 +148,29 @@ func (c *Conn) lifecycleState() connLifecycle {
 	return connLifecycle(c.lifecycle.Load())
 }
 
+func (c *Conn) isRetired() bool {
+	return c == nil || c.lifecycleState() == connLifecycleRetired
+}
+
+// retire irreversibly fences the logical connection. The caller that wins the
+// transition may additionally own one-shot physical cleanup.
+func (c *Conn) retire() bool {
+	if c == nil {
+		return false
+	}
+	for {
+		state := c.lifecycle.Load()
+		if connLifecycle(state) == connLifecycleRetired {
+			return false
+		}
+		if c.lifecycle.CompareAndSwap(state, uint32(connLifecycleRetired)) {
+			return true
+		}
+	}
+}
+
 func (c *Conn) beginActivationClaim() bool {
-	if c == nil || c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+	if c == nil || !c.isPhysicalTransportCurrentOpen() {
 		return false
 	}
 	if !c.lifecycle.CompareAndSwap(uint32(connLifecycleProvisional), uint32(connLifecycleClaiming)) {
@@ -169,31 +179,31 @@ func (c *Conn) beginActivationClaim() bool {
 	// Physical close can win after the pre-check but before the lifecycle CAS.
 	// Do not let a doomed claimant enter SessionManager and retire a healthy old
 	// owner for the same logical session.
-	if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
-		c.lifecycle.Store(uint32(connLifecycleRetired))
+	if c.lifecycleState() != connLifecycleClaiming || !c.isPhysicalTransportCurrentOpen() {
+		c.retire()
 		return false
 	}
 	return true
 }
 
 func (c *Conn) publishActivation() bool {
-	if c == nil || c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+	if c == nil || !c.isPhysicalTransportCurrentOpen() {
 		return false
 	}
 	if !c.lifecycle.CompareAndSwap(uint32(connLifecycleClaiming), uint32(connLifecycleActive)) {
 		return false
 	}
 	// A concurrent transport failure can retire the Conn between the first
-	// terminal check and the CAS. Never let that intermediate active value escape.
-	if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
-		c.lifecycle.Store(uint32(connLifecycleRetired))
+	// physical check and the CAS. Never let that intermediate active value escape.
+	if c.lifecycleState() != connLifecycleActive || !c.isPhysicalTransportCurrentOpen() {
+		c.retire()
 		return false
 	}
 	return true
 }
 
 func (c *Conn) isActive() bool {
-	return c != nil && !c.terminal.Load() && c.lifecycleState() == connLifecycleActive
+	return c != nil && c.lifecycleState() == connLifecycleActive && c.isPhysicalTransportCurrentOpen()
 }
 
 // transferTransportOwnership hands this Conn's physical socket to the next

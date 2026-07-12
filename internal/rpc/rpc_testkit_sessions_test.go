@@ -9,6 +9,7 @@ import (
 
 type captureSessions struct {
 	mu              sync.Mutex
+	rawAuthKeyID    [8]byte
 	sessionID       int64
 	userID          int64
 	userResolved    bool
@@ -81,39 +82,35 @@ func (s *captureSessions) clearMessages() {
 	s.pushUserIDs = nil
 }
 
-func (s *captureSessions) BindAuthKey(sessionID int64, authKeyID [8]byte) {
+func (s *captureSessions) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.authKeyResolved && s.authKeyID != authKeyID {
 		s.userID = 0
 		s.userResolved = false
 	}
+	s.rawAuthKeyID = rawAuthKeyID
 	s.sessionID = sessionID
 	s.authKeyID = authKeyID
 	s.authKeyResolved = true
 }
 
-func (s *captureSessions) AuthKeyID(int64) ([8]byte, bool) {
+func (s *captureSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.authKeyID, s.authKeyResolved
 }
 
-func (s *captureSessions) BindUser(sessionID, userID int64) {
+func (s *captureSessions) BindUserForAuthKey(rawAuthKeyID [8]byte, sessionID, userID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.rawAuthKeyID = rawAuthKeyID
 	s.sessionID = sessionID
 	s.userID = userID
 	s.userResolved = true
 }
 
-func (s *captureSessions) UserID(int64) (int64, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.userID, s.userID != 0
-}
-
-func (s *captureSessions) UserIDResolved(int64) (int64, bool) {
+func (s *captureSessions) UserIDResolvedForAuthKey([8]byte, int64) (int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.userID, s.userResolved
@@ -130,26 +127,29 @@ func (s *captureSessions) UnbindAuthKey(authKeyID [8]byte) int {
 	return 0
 }
 
-func (s *captureSessions) SetReceivesUpdates(sessionID int64, receives bool) {
+func (s *captureSessions) SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64, receives bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.rawAuthKeyID = rawAuthKeyID
 	s.sessionID = sessionID
 	s.receives = receives
 }
 
-func (s *captureSessions) PushToSession(_ context.Context, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+func (s *captureSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.rawAuthKeyID = rawAuthKeyID
 	s.sessionID = sessionID
 	s.messageType = t
 	s.message = msg
 	return nil
 }
 
-func (s *captureSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *captureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.userID = userID
+	s.rawAuthKeyID = excludeAuthKeyID
 	s.sessionID = excludeSessionID
 	s.messageType = t
 	s.message = msg

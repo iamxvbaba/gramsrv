@@ -120,8 +120,6 @@ type Options struct {
 	RSAKey *rsa.PrivateKey
 	// AuthKeys 持久化 auth key。默认内存实现。
 	AuthKeys store.AuthKeyStore
-	// Sessions 记录在线 MTProto session（持久化数据）。默认内存实现。
-	Sessions store.SessionStore
 	// ActiveSessions 管理活跃连接。默认新建；传入时可让 RPC 层共享同一注册表。
 	ActiveSessions *SessionManager
 	// RPC 是 typed RPC 路由。nil 时加密 RPC 被丢弃并记录。
@@ -198,9 +196,6 @@ func (o *Options) setDefaults() {
 	if o.AuthKeys == nil {
 		o.AuthKeys = memory.NewAuthKeyStore()
 	}
-	if o.Sessions == nil {
-		o.Sessions = memory.NewSessionStore()
-	}
 	if o.Metrics == nil {
 		o.Metrics = NopMetrics{}
 	}
@@ -241,7 +236,6 @@ type Server struct {
 	dc        int
 	key       exchange.PrivateKey
 	authKeys  store.AuthKeyStore
-	sessions  store.SessionStore
 	conns     *SessionManager
 	rpc       RPCHandler
 	metrics   Metrics
@@ -287,7 +281,6 @@ func New(opts Options) *Server {
 		dc:                       opts.DC,
 		key:                      exchange.PrivateKey{RSA: opts.RSAKey},
 		authKeys:                 opts.AuthKeys,
-		sessions:                 opts.Sessions,
 		conns:                    conns,
 		rpc:                      opts.RPC,
 		metrics:                  opts.Metrics,
@@ -298,11 +291,6 @@ func New(opts Options) *Server {
 		rpcResults:               newRPCResultCacheWithFlightLimit(opts.Clock.Now, opts.RPCGlobalMaxTasks),
 		admission:                newAdmissionController(opts.MaxConnections, opts.MaxConnectionsPerIP, opts.MaxConcurrentHandshakes),
 	}
-}
-
-// Conns 返回活跃连接注册表，供业务层主动推送（updates 等）。
-func (s *Server) Conns() *SessionManager {
-	return s.conns
 }
 
 // newConn 基于一次解密结果创建一个可发送的连接对象。
@@ -682,12 +670,11 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn) (err error) 
 
 		// 已建立连接复用缓存密钥走快路径（fetchedKey=nil）：避开每帧回查 AuthKeyStore——
 		// 这是 mtprotoedge 层最热的库访问点。密钥材料创建后不可变；销毁(destroy_auth_key)/
-		// 撤销由 SessionManager 主动 Close 连接保证失效，不依赖此被动回查。仅 destroy_auth_key
-		// 的发起连接置 keyDestroyed，使其下一帧回落到 Get→AuthKeyNotFound。尚未进入
-		// SessionManager 的 bad-salt provisional 会在 handleEncrypted 建立 activation claim
+		// 撤销由 SessionManager 主动 Close 连接保证失效，不依赖被动的“下一帧 -404”。
+		// 尚未进入 SessionManager 的 bad-salt provisional 会在 handleEncrypted 建立 activation claim
 		// 后精确复查一次，既把撤销与激活线性化，也不把 salt storm 放大成 PG 写风暴。
 		var fetchedKey *store.AuthKeyData
-		if current == nil || current.authKeyID != authKeyID || current.keyDestroyed.Load() {
+		if current == nil || current.authKeyID != authKeyID {
 			d, found, err := s.authKeys.Get(ctx, authKeyID)
 			if err != nil {
 				return fmt.Errorf("lookup auth key: %w", err)

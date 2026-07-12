@@ -141,7 +141,7 @@ func (s *MessageStore) PinPrivateMessage(ctx context.Context, req domain.PinPriv
 			dispatchAuthKeyID = req.OriginAuthKeyID
 			dispatchSessionID = req.OriginSessionID
 		}
-		if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+		if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 			TargetUserID:     side.userID,
 			Pts:              int32(pts),
 			EventType:        string(domain.UpdateEventPinnedMessages),
@@ -286,7 +286,7 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 			dispatchAuthKeyID = req.OriginAuthKeyID
 			dispatchSessionID = req.OriginSessionID
 		}
-		if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+		if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 			TargetUserID:     side.userID,
 			Pts:              int32(pts),
 			EventType:        string(domain.UpdateEventPinnedMessages),

@@ -151,7 +151,7 @@ func TestInboundRPCQueuedDeadlineReturnsRPCTimeout(t *testing.T) {
 	}
 }
 
-func TestInboundRPCRunningDeadlineReturnsExactlyOneTimeout(t *testing.T) {
+func TestInboundRPCRunningDeadlineWaitsForHandlerTerminalResult(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		honorContext bool
@@ -185,37 +185,30 @@ func TestInboundRPCRunningDeadlineReturnsExactlyOneTimeout(t *testing.T) {
 				t.Fatal("timed out waiting for running rpc")
 			}
 
-			// In the ignore-context case this result must arrive before release is closed: the
-			// scheduler deadline, not eventual handler return, owns the timeout response.
+			if !tc.honorContext {
+				// Let the deadline expire while Dispatch is still running. No early timeout
+				// may win; after the handler reports committed success, that success is the
+				// sole terminal result.
+				time.Sleep(120 * time.Millisecond)
+				close(handler.release)
+			}
 			result := readRPCResultForRequest(t, conn, cipher, auth.AuthKey, reqID)
-			var rpcErr mt.RPCError
-			if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
-				t.Fatalf("decode running rpc timeout: %v", err)
+			if tc.honorContext {
+				var rpcErr mt.RPCError
+				if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+					t.Fatalf("decode converged rpc timeout: %v", err)
+				}
+				if rpcErr.ErrorCode != 500 || rpcErr.ErrorMessage != "RPC_TIMEOUT" {
+					t.Fatalf("rpc_error = %d %q, want 500 RPC_TIMEOUT", rpcErr.ErrorCode, rpcErr.ErrorMessage)
+				}
+				close(handler.release)
+			} else {
+				var config tg.Config
+				if err := config.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+					t.Fatalf("decode committed success after deadline: %v", err)
+				}
 			}
-			if rpcErr.ErrorCode != 500 || rpcErr.ErrorMessage != "RPC_TIMEOUT" {
-				t.Fatalf("rpc_error = %d %q, want 500 RPC_TIMEOUT", rpcErr.ErrorCode, rpcErr.ErrorMessage)
-			}
-			close(handler.release)
 		})
-	}
-}
-
-func TestRPCResponseGateExactlyOnce(t *testing.T) {
-	for i := 0; i < 100; i++ {
-		gate := &rpcResponseGate{}
-		results := make(chan bool, 2)
-		go func() { results <- gate.tryNormal() }()
-		go func() { results <- gate.tryTimeout() }()
-		wins := 0
-		if <-results {
-			wins++
-		}
-		if <-results {
-			wins++
-		}
-		if wins != 1 {
-			t.Fatalf("iteration %d response gate winners = %d, want 1", i, wins)
-		}
 	}
 }
 

@@ -89,7 +89,7 @@ func TestSendRequiredControlWaitsForPhysicalWriteAndReturnsBudget(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("SendRequiredControl did not return after physical write")
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		t.Fatal("successful required control terminally closed the connection")
 	}
 	if got := controlBudget.snapshot(); got != 0 {
@@ -163,7 +163,7 @@ func TestSendRequiredControlQueueDeadlineTerminatesAndReturnsBudget(t *testing.T
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("full control queue waited %v, want parent-deadline-bounded admission", elapsed)
 	}
-	if !c.terminal.Load() {
+	if !c.isRetired() {
 		t.Fatal("required control queue failure did not terminally close the connection")
 	}
 	if got := tr.sends.Load(); got != 0 {
@@ -197,7 +197,7 @@ func TestSendRequiredControlBlockedWriteUsesWholeOperationDeadline(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("outbound actor did not stop after required-control write timeout")
 	}
-	if !c.terminal.Load() {
+	if !c.isRetired() {
 		t.Fatal("blocked required control did not terminally close the connection")
 	}
 	if got := tr.closes.Load(); got != 1 {
@@ -224,7 +224,7 @@ func TestSendRequiredControlWriteFailureTerminatesAndReturnsBudget(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("outbound actor did not stop after required-control write failure")
 	}
-	if !c.terminal.Load() {
+	if !c.isRetired() {
 		t.Fatal("write-failed required control did not terminally close the connection")
 	}
 	if got := tr.closes.Load(); got != 1 {
@@ -250,7 +250,7 @@ func TestSendRequiredControlBudgetFailureIsTerminal(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("outbound actor did not stop after required-control budget failure")
 	}
-	if !c.terminal.Load() {
+	if !c.isRetired() {
 		t.Fatal("required-control budget failure did not terminally close the connection")
 	}
 	if got := tr.sends.Load(); got != 0 {

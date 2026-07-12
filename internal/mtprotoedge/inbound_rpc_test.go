@@ -3,57 +3,10 @@ package mtprotoedge
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
-
-func TestStopInboundRPCTaskJoinsStartedDeadlineCallback(t *testing.T) {
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancel()
-	started := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	ticket := &inboundRPCTicket{}
-	ticket.onTimeout = func() {
-		once.Do(func() {
-			close(started)
-			<-release
-		})
-	}
-	task := inboundRPC{
-		ctx:         ctx,
-		ticket:      ticket,
-		stopTimeout: func() bool { return false }, // runtime callback already scheduled
-	}
-	handoff := stopInboundRPCTask(task)
-	if handoff == nil {
-		t.Fatal("started deadline callback did not produce handoff")
-	}
-	go ticket.onTimeout()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("deadline callback did not start")
-	}
-	joined := make(chan struct{})
-	go func() {
-		handoff()
-		close(joined)
-	}()
-	select {
-	case <-joined:
-		t.Fatal("handoff returned before in-flight callback completed")
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	select {
-	case <-joined:
-	case <-time.After(time.Second):
-		t.Fatal("handoff did not join completed callback")
-	}
-}
 
 func newInboundTestConn(s *inboundRPCScheduler, maxInflight, queueSize int, timeout time.Duration) *Conn {
 	c := &Conn{metrics: NopMetrics{}}
@@ -438,7 +391,7 @@ func TestInboundRPCCloseDisarmsQueuedTimeout(t *testing.T) {
 	}
 }
 
-func TestInboundRPCRunningTimeoutSignalsWithoutReleasingBodyEarly(t *testing.T) {
+func TestInboundRPCRunningDeadlineCancelsWithoutEarlyTimeout(t *testing.T) {
 	scheduler := newInboundRPCScheduler(1, 8, 1<<20)
 	scheduler.start()
 	c := newInboundTestConn(scheduler, 1, 4, 30*time.Millisecond)
@@ -465,10 +418,11 @@ func TestInboundRPCRunningTimeoutSignalsWithoutReleasingBodyEarly(t *testing.T) 
 		t.Fatalf("enqueue running task: %v", err)
 	}
 	<-started
+	time.Sleep(80 * time.Millisecond)
 	select {
 	case <-timedOut:
-	case <-time.After(time.Second):
-		t.Fatal("running task did not signal timeout while handler ignored cancellation")
+		t.Fatal("running task emitted an early timeout before handler convergence")
+	default:
 	}
 	if tasks, bytes := scheduler.budgetSnapshot(); tasks != 1 || bytes != 7 {
 		t.Fatalf("running body budget after timeout = (%d, %d), want retained (1, 7)", tasks, bytes)

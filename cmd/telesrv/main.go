@@ -277,7 +277,8 @@ func run(logger *zap.Logger) error {
 	// goroutine/锁竞争的定位全靠此端点。早于重负载初始化启动，连 seed/预热阶段也可剖析。
 	startDebugServer(ctx, cfg.DebugAddr, logger)
 
-	// 持久化依赖：先迁移 schema，再建立连接。auth_key 落 PostgreSQL、session 落 Redis。
+	// 持久化依赖：先迁移 schema，再建立连接。auth key 与业务事实落 PostgreSQL，
+	// Redis 只承载可重建的短 TTL 状态、缓存、计数器和限流。
 	// 依赖由 deploy/docker-compose.yml 启动；连不上则启动失败（开发期须先 docker compose up）。
 	migrationStatus, err := postgres.MigrateAndStatus(cfg.PostgresDSN)
 	if err != nil {
@@ -421,7 +422,6 @@ func run(logger *zap.Logger) error {
 	helpStore := postgres.NewHelpStore(pool)
 	aiComposeStore := postgres.NewAIComposeStore(pool)
 	tempAuthKeyStore := postgres.NewTempAuthKeyBindingStore(pool)
-	sessionStore := redisstore.NewSessionStore(rdb, redisstore.DefaultSessionTTL)
 	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
 	codeStore := redisstore.NewCodeStore(rdb)
 	rateLimiter := redisstore.NewRateLimiter(rdb)
@@ -791,7 +791,6 @@ func run(logger *zap.Logger) error {
 		RSAKey:                        rsaKey,
 		RPC:                           router,
 		AuthKeys:                      authKeyStore,
-		Sessions:                      sessionStore,
 		ActiveSessions:                activeSessions,
 		ObfuscatedTCP:                 true,
 		WebSocket:                     cfg.WebSocketEnable,

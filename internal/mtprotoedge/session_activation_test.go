@@ -46,8 +46,8 @@ func TestSessionActivationGatesReplacementBeforePublishing(t *testing.T) {
 	if !newConn.isActive() {
 		t.Fatal("replacement was not activated")
 	}
-	if oldConn.lifecycleState() != connLifecycleRetired || !oldConn.terminal.Load() {
-		t.Fatalf("old connection gates = lifecycle:%v terminal:%v", oldConn.lifecycleState(), oldConn.terminal.Load())
+	if !oldConn.isRetired() {
+		t.Fatalf("old connection lifecycle=%v", oldConn.lifecycleState())
 	}
 	if err := oldConn.SendAsync(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}); !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("stale old connection send error = %v, want ErrConnClosed", err)
@@ -80,8 +80,8 @@ func TestSessionActivationClaimPreemptionCannotReversePublish(t *testing.T) {
 	if err := manager.BeginActivation(second); err != nil {
 		t.Fatalf("begin superseding activation: %v", err)
 	}
-	if first.lifecycleState() != connLifecycleRetired || !first.terminal.Load() {
-		t.Fatalf("superseded first lifecycle=%v terminal=%v", first.lifecycleState(), first.terminal.Load())
+	if !first.isRetired() {
+		t.Fatalf("superseded first lifecycle=%v", first.lifecycleState())
 	}
 	if err := manager.PublishActivation(first); !errors.Is(err, ErrSessionActivationSuperseded) {
 		t.Fatalf("stale publish error = %v, want superseded", err)
@@ -205,8 +205,8 @@ func TestRawAuthKeyCloseExactConnDoesNotExcludeSameSessionReplacement(t *testing
 	manager.mu.RLock()
 	active, claim := manager.bySession[sessionKey{authKeyID: key, sessionID: sessionID}], manager.claims[sessionKey{authKeyID: key, sessionID: sessionID}]
 	manager.mu.RUnlock()
-	if active != nil || claim != nil || !replacement.terminal.Load() {
-		t.Fatalf("same-session replacement escaped exact exclusion: active=%p claim=%p terminal=%v", active, claim, replacement.terminal.Load())
+	if active != nil || claim != nil || !replacement.isRetired() {
+		t.Fatalf("same-session replacement escaped exact exclusion: active=%p claim=%p lifecycle=%v", active, claim, replacement.lifecycleState())
 	}
 }
 

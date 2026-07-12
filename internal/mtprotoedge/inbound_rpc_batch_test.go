@@ -130,9 +130,8 @@ func TestInboundRPCBatchAbortReturnsEveryReservationExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestInboundRPCBatchCommitAppendsAllAndDefersSchedule(t *testing.T) {
+func TestInboundRPCBatchCommitAppendsAllAndSchedulesAtomically(t *testing.T) {
 	scheduler := newInboundRPCScheduler(1, 8, 1<<20)
-	scheduler.start()
 	c := newInboundTestConn(scheduler, 1, 4, time.Second)
 	defer func() {
 		c.closeInboundRPCScheduler()
@@ -159,12 +158,8 @@ func TestInboundRPCBatchCommitAppendsAllAndDefersSchedule(t *testing.T) {
 			return nil
 		}
 	}
-	activate, err := reservation.commit(tasks, true)
-	if err != nil {
+	if err := reservation.commit(tasks); err != nil {
 		t.Fatalf("commit batch: %v", err)
-	}
-	if activate == nil {
-		t.Fatal("deferred commit did not return an activation function")
 	}
 	c.rpcMu.Lock()
 	queued := len(c.rpcQueue)
@@ -173,17 +168,16 @@ func TestInboundRPCBatchCommitAppendsAllAndDefersSchedule(t *testing.T) {
 	if queued != len(specs) || !ready {
 		t.Fatalf("atomic queue state after commit = queued %d ready %v, want %d/true", queued, ready, len(specs))
 	}
-	if got := scheduler.readyLen(); got != 0 {
-		t.Fatalf("scheduler ready tokens before activation = %d, want zero", got)
+	if got := scheduler.readyLen(); got != 1 {
+		t.Fatalf("scheduler ready tokens after commit = %d, want one", got)
 	}
 	select {
 	case method := <-runs:
-		t.Fatalf("RPC %q ran before deferred activation", method)
+		t.Fatalf("RPC %q ran before scheduler start", method)
 	default:
 	}
 
-	activate()
-	activate() // activation is idempotent.
+	scheduler.start()
 	for _, want := range []string{"one", "two", "three"} {
 		select {
 		case got := <-runs:
@@ -212,7 +206,7 @@ func TestInboundRPCBatchCommitMismatchReleasesAllWithoutEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reserve batch: %v", err)
 	}
-	if _, err := reservation.commit([]inboundRPC{{}}, false); !errors.Is(err, errInboundRPCBatchTaskCount) {
+	if err := reservation.commit([]inboundRPC{{}}); !errors.Is(err, errInboundRPCBatchTaskCount) {
 		t.Fatalf("commit task mismatch err = %v, want %v", err, errInboundRPCBatchTaskCount)
 	}
 	if tasks, bytes := scheduler.budgetSnapshot(); tasks != 0 || bytes != 0 {
@@ -250,7 +244,7 @@ func TestInboundRPCBatchCommitRacingCloseNeverPartiallyEnqueues(t *testing.T) {
 	}()
 	waitInboundRPCBatchConnClosed(t, c)
 
-	if _, err := reservation.commit(make([]inboundRPC, 3), false); !errors.Is(err, ErrConnClosed) {
+	if err := reservation.commit(make([]inboundRPC, 3)); !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("commit after close err = %v, want ErrConnClosed", err)
 	}
 	select {
@@ -290,8 +284,8 @@ func TestInboundRPCBatchCommitAfterTerminalFenceRejectsAll(t *testing.T) {
 	// Session replacement and revocation publish terminal before the slower
 	// physical-close path. A reservation held across that fence must not be able
 	// to append even one stale task.
-	c.terminal.Store(true)
-	if _, err := reservation.commit(make([]inboundRPC, 2), false); !errors.Is(err, ErrConnClosed) {
+	c.retire()
+	if err := reservation.commit(make([]inboundRPC, 2)); !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("commit after terminal fence err = %v, want ErrConnClosed", err)
 	}
 

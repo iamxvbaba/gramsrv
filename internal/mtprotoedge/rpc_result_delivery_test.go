@@ -102,8 +102,8 @@ func TestRPCResultPrewriteFailureFencesConnBeforeCachePublication(t *testing.T) 
 	for !tr.closed.Load() && time.Now().Before(closeDeadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if !c.terminal.Load() || !tr.closed.Load() || c.isPhysicalTransportCurrentOpen() {
-		t.Fatalf("failed delivery did not fence Conn: terminal=%v closed=%v current_open=%v", c.terminal.Load(), tr.closed.Load(), c.isPhysicalTransportCurrentOpen())
+	if !c.isRetired() || !tr.closed.Load() || c.isPhysicalTransportCurrentOpen() {
+		t.Fatalf("failed delivery did not fence Conn: retired=%v closed=%v current_open=%v", c.isRetired(), tr.closed.Load(), c.isPhysicalTransportCurrentOpen())
 	}
 	completed, acquireErr := s.rpcResults.Acquire(key.ID, c.sessionID, reqMsgID)
 	if acquireErr != nil || completed.state != rpcResultAcquireCompleted || completed.encoded == nil {

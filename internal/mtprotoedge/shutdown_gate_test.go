@@ -40,7 +40,7 @@ func TestTerminalFailurePathsCloseGatesBeforeBlockingTransportClose(t *testing.T
 			if tr.closes.Load() == 0 {
 				t.Fatal("terminal path did not enter transport.Close")
 			}
-			if !c.terminal.Load() {
+			if !c.isRetired() {
 				t.Fatal("producer terminal gate was not published before blocking Close")
 			}
 			select {

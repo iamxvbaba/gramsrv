@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -231,7 +229,7 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 			}
 			return current, errActivationAuthKeyRejected
 		}
-		if current.terminal.Load() || !current.isPhysicalTransportCurrentOpen() {
+		if current.isRetired() || !current.isPhysicalTransportCurrentOpen() {
 			return current, ErrConnClosed
 		}
 	}
@@ -258,7 +256,6 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		cs.createdFloor = plan.logicalMin
 	}
 	plan.commitState(cs)
-	s.maybePersistSession(ctx, current, frame.sessionID, key.ID, serverSalt)
 
 	if err := s.executeInboundPlan(ctx, cs, current, plan); err != nil {
 		return current, err
@@ -278,34 +275,6 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		return current, err
 	}
 	return current, nil
-}
-
-// sessionSaveMinInterval 是单连接持久化 session 记录的最小间隔。把原本「每帧一次 Redis SET」
-// 去抖到固定间隔——session 是软状态（生产无热读路径），只需周期刷新 last_seen/续 TTL。
-const sessionSaveMinInterval = 30 * time.Second
-
-// maybePersistSession 按 sessionSaveMinInterval 去抖持久化 session，失败只告警不断连。
-// 原实现每帧同步 Save 且失败即断连：N 连接×帧率的 Redis 写放大 + Redis 抖动级联断连。
-func (s *Server) maybePersistSession(ctx context.Context, c *Conn, sessionID int64, authKeyID [8]byte, salt int64) {
-	if c == nil {
-		return
-	}
-	now := s.clock.Now().Unix()
-	if last := c.lastSessionSaveUnix.Load(); last != 0 && now-last < int64(sessionSaveMinInterval/time.Second) {
-		return
-	}
-	c.lastSessionSaveUnix.Store(now)
-	if err := s.sessions.Save(ctx, store.SessionData{
-		ID:        sessionID,
-		AuthKeyID: authKeyID,
-		Salt:      salt,
-		LastSeen:  now,
-	}); err != nil {
-		s.log.Warn("Persist session failed (non-fatal)",
-			zap.Int64("session_id", sessionID),
-			zap.Error(err),
-		)
-	}
 }
 
 func sendQuickAckIfRequested(ctx context.Context, tc transport.Conn, key crypto.AuthKey, plaintext []byte, writeTimeout time.Duration) error {
@@ -341,23 +310,6 @@ func clientQuickAckToken(key crypto.AuthKey, plaintext []byte) uint32 {
 	_, _ = h.Write(plaintext)
 	sum := h.Sum(nil)
 	return binary.LittleEndian.Uint32(sum[:4]) &^ quickAckResponseFlag
-}
-
-// dispatch 处理一条明文消息：解包 container/gzip，处理服务消息，其余转 RPC 路由。
-// content-related 消息（ping、RPC）的 msg_id 会收集到 acks 以便统一确认。
-func (s *Server) dispatch(ctx context.Context, cs *connState, c *Conn, msgID int64, seqNo int32, b *bin.Buffer, acks *[]int64) error {
-	plan, err := s.preflightInbound(cs, msgID, seqNo, b.Buf)
-	if err != nil {
-		var bad *dispatchBadMsgError
-		if errors.As(err, &bad) && c != nil {
-			return s.sendBadMsg(ctx, c, bad.msgID, bad.seqNo, bad.code)
-		}
-		return err
-	}
-	defer plan.close()
-	plan.commitState(cs)
-	*acks = append(*acks, plan.ackIDs...)
-	return s.executeInboundPlan(ctx, cs, c, plan)
 }
 
 // dispatchBadMsgError carries a protocol-level rejection discovered during the
@@ -625,8 +577,8 @@ func mergeStateInfo(primary, fallback []byte) []byte {
 	return info
 }
 
-// enqueueRPC 把一条 RPC 请求交给连接的 inbound 调度器。typeID 由 dispatch 传入
-// （已 PeekID 过一次），method 只解析一次并随任务透传，避免同一请求三处重复 PeekID/typeName。
+// enqueueRPC 重试一个旧 owner 未发布结果的请求。正常收包统一走 container batch；
+// 这里也用长度为 1 的 batch，避免维护第二套预算/commit 状态机。
 func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID uint32, request *bin.Buffer) error {
 	method := s.typeName(typeID)
 	claim, err := s.rpcResults.Acquire(c.authKeyID, c.sessionID, msgID)
@@ -666,13 +618,13 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID ui
 	}()
 	// 两级条数/字节预算必须先于 Copy：对抗客户端不能用大量满尺寸请求在“判断队列满”
 	// 之前制造一轮无上限的临时 body 分配。reservation 在 commit/abort 间唯一持有预算。
-	reservation, err := c.reserveInboundRPC(ctx, method, request.Len())
+	reservation, err := c.reserveInboundRPCBatch(ctx, []inboundRPCSpec{{method: method, size: request.Len()}})
 	if err != nil {
 		return s.handleInboundRPCAdmissionError(ctx, c, msgID, method, err)
 	}
 	defer reservation.abort()
 	body := request.Copy()
-	err = reservation.commit(s.newInboundRPCTask(c, msgID, method, body, owner))
+	err = reservation.commit([]inboundRPC{s.newInboundRPCTask(c, msgID, method, body, owner)})
 	transferred = err == nil
 	return s.handleInboundRPCAdmissionError(ctx, c, msgID, method, err)
 }
@@ -681,14 +633,10 @@ func (s *Server) enqueueRPC(ctx context.Context, c *Conn, msgID int64, typeID ui
 // single-message and atomic container-batch admission paths. body must already
 // be an independently owned, budgeted copy.
 func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []byte, owner *rpcResultOwnerLease) inboundRPC {
-	responseGate := newRPCResponseGate()
 	timeoutResponse := func() {
-		if !responseGate.tryTimeout() {
-			return
-		}
-		defer responseGate.finish()
-		// 原 task context 已到期，使用有界的新 context 回显明确的可重试超时；
-		// 500 保持 TDesktop 默认重试语义，错误名区分于容量型 FLOOD_WAIT。
+		// 只有尚未进入 handler 的排队请求会走这里。运行中的请求只取消
+		// context，等 handler 收敛后再决定成功或 RPC_TIMEOUT，避免客户端用
+		// 新 msg_id 重试时与旧业务提交并发。
 		writeTimeout := c.writeTimeout
 		if writeTimeout <= 0 || writeTimeout > 5*time.Second {
 			writeTimeout = 5 * time.Second
@@ -716,13 +664,6 @@ func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []b
 			if owner == nil {
 				return
 			}
-			// A running deadline callback owns the same terminal flight but executes
-			// on context.AfterFunc's goroutine. Let its bounded delivery complete before
-			// deciding that the task produced no result; otherwise release could Abort
-			// the owner while RPC_TIMEOUT is already inside the physical writer.
-			if !responseGate.wait(requiredControlMaxWait + time.Second) {
-				c.fenceUndeliveredRPCResult()
-			}
 			if owner.Abort() {
 				// connState already remembers this request. If a committed task exits
 				// without publishing any terminal rpc_result, a same-Conn retransmit
@@ -734,7 +675,7 @@ func (s *Server) newInboundRPCTask(c *Conn, msgID int64, method string, body []b
 		run: func(taskCtx context.Context) error {
 			// body 是预算成功后生成的独立副本，且每个任务只 run 一次，
 			// 无需再 append 拷贝；直接复用，省掉一份 inbound 在途内存。
-			if err := s.handleRPC(taskCtx, c, msgID, method, &bin.Buffer{Buf: body}, responseGate); err != nil {
+			if err := s.handleRPC(taskCtx, c, msgID, method, &bin.Buffer{Buf: body}); err != nil {
 				fields := []zap.Field{
 					zap.Int64("msg_id", msgID),
 					zap.String("auth_key_id", c.authKeyHex),
@@ -770,15 +711,11 @@ func (s *Server) handleInboundRPCAdmissionError(ctx context.Context, c *Conn, ms
 }
 
 // handleRPC 把明文 RPC 请求交给 RPC 路由，并将结果或错误包成 rpc_result 回发。
-func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method string, b *bin.Buffer, responseGate *rpcResponseGate) error {
+func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method string, b *bin.Buffer) error {
 	if s.rpc == nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if responseGate != nil && !responseGate.tryNormal() {
-			return context.DeadlineExceeded
-		}
-		defer responseGate.finish()
 		s.log.Warn("No RPC handler configured", zap.String("method", method))
 		return s.sendResult(ctx, c, msgID, &mt.RPCError{
 			ErrorCode:    500,
@@ -817,29 +754,29 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	fields = dbtrace.AppendZapFields(fields, "", dbStats.Snapshot())
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		// The old physical Conn may have been replaced after the business transaction
-		// committed. Never write with the expired context itself: a fenced generation
-		// publishes cache-only for its replacement, while a still-live generation uses
-		// a fresh bounded delivery context. A deadline callback that already won
-		// responseGate has published RPC_TIMEOUT and prevents this late result from
-		// overwriting it.
-		// Only a successful business result proves useful work completed. Errors
-		// observed after cancellation may themselves be cancellation-derived or
-		// transient and must remain retryable rather than poisoning the replay cache.
+		// A running request owns its terminal response until Dispatch returns. If
+		// useful work completed despite cancellation, preserve that success; otherwise
+		// a deadline becomes RPC_TIMEOUT only now, after the handler has converged.
+		// Plain connection cancellation remains retryable on the replacement.
 		var terminal bin.Encoder
+		runPostResponse := false
 		if err == nil && result != nil {
 			terminal = result
+			runPostResponse = true
+		} else if errors.Is(ctxErr, context.DeadlineExceeded) {
+			terminal = &mt.RPCError{ErrorCode: 500, ErrorMessage: "RPC_TIMEOUT"}
 		}
-		if terminal != nil && (responseGate == nil || responseGate.tryNormal()) {
-			defer responseGate.finish()
-			if c.terminal.Load() || !c.isPhysicalTransportCurrentOpen() {
+		if terminal != nil {
+			if c.isRetired() || !c.isPhysicalTransportCurrentOpen() {
 				// Replacement/shutdown already fenced this logical generation. Cache-only
 				// publication is safe and lets the replacement join the completed flight.
 				if encoded, encodeErr := s.encodeRPCResult(c, msgID, terminal); encodeErr != nil {
 					s.log.Warn("Encode canceled RPC result for replay failed", append(fields, zap.Error(encodeErr))...)
 				} else {
 					s.storeRPCResult(c, msgID, encoded)
-					postresponse.Run(context.WithoutCancel(ctx))
+					if runPostResponse {
+						postresponse.Run(context.WithoutCancel(ctx))
+					}
 				}
 			} else {
 				// An individual RPC deadline can expire while the physical connection is
@@ -854,7 +791,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 				cancel()
 				if sendErr != nil {
 					s.log.Debug("Send canceled RPC result failed", append(fields, zap.Error(sendErr))...)
-				} else {
+				} else if runPostResponse {
 					postresponse.Run(context.WithoutCancel(ctx))
 				}
 			}
@@ -866,13 +803,6 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 		s.log.Info("RPC canceled", cancelFields...)
 		return ctxErr
 	}
-	// A deadline callback may have already emitted RPC_TIMEOUT while Dispatch was returning.
-	// Claim the single normal-response slot before serializing any success/error rpc_result.
-	if responseGate != nil && !responseGate.tryNormal() {
-		s.log.Info("RPC result suppressed after timeout", fields...)
-		return context.DeadlineExceeded
-	}
-	defer responseGate.finish()
 
 	if err != nil {
 		var rpcErr *tgerr.Error
@@ -896,57 +826,6 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	}
 	postresponse.Run(ctx)
 	return nil
-}
-
-// rpcResponseGate guarantees exactly one terminal rpc_result per request.  A running deadline
-// races legitimately with a handler completing at the boundary; whichever path claims state
-// first owns the response, and the other path becomes a no-op.
-type rpcResponseGate struct {
-	state atomic.Uint32
-	done  chan struct{}
-	once  sync.Once
-}
-
-func newRPCResponseGate() *rpcResponseGate {
-	return &rpcResponseGate{done: make(chan struct{})}
-}
-
-func (g *rpcResponseGate) tryNormal() bool {
-	return g == nil || g.state.CompareAndSwap(0, 1)
-}
-
-func (g *rpcResponseGate) tryTimeout() bool {
-	return g != nil && g.state.CompareAndSwap(0, 2)
-}
-
-func (g *rpcResponseGate) finish() {
-	if g == nil || g.done == nil {
-		return
-	}
-	g.once.Do(func() { close(g.done) })
-}
-
-// wait returns once there is no response owner, the winning response has
-// completed deliver-or-fence publication, or the bounded safety deadline wins.
-func (g *rpcResponseGate) wait(timeout time.Duration) bool {
-	if g == nil || g.state.Load() == 0 {
-		return true
-	}
-	if g.done == nil {
-		return false
-	}
-	if timeout <= 0 {
-		<-g.done
-		return true
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-g.done:
-		return true
-	case <-timer.C:
-		return false
-	}
 }
 
 // sendResult 把 RPC 结果包成 rpc_result 并加密回发。
@@ -1135,13 +1014,6 @@ func (s *Server) sendDestroySession(ctx context.Context, c *Conn, sessionID int6
 	removed := false
 	if sessionID != c.sessionID {
 		removed = s.conns.DestroySessionForAuthKey(c.authKeyID, sessionID)
-		if err := s.sessions.Delete(ctx, sessionID); err != nil {
-			s.log.Debug("Delete session record failed",
-				zap.String("auth_key_id", c.authKeyHex),
-				zap.Int64("session_id", sessionID),
-				zap.Error(err),
-			)
-		}
 	}
 	if removed {
 		return c.Send(ctx, proto.MessageServerResponse, &mt.DestroySessionOk{SessionID: sessionID})
@@ -1275,10 +1147,6 @@ func (cs *connState) validateSeq(msgID int64, seqNo int32, content bool) int {
 		}
 	}
 	return 0
-}
-
-func (cs *connState) track(msgID int64, seqNo int32, content bool, state byte) {
-	cs.trackInbound(msgID, seqNo, content, false, state)
 }
 
 func (cs *connState) trackInbound(msgID int64, seqNo int32, content, service bool, state byte) {

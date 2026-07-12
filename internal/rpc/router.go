@@ -308,12 +308,7 @@ func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, s
 		hasCached bool
 	)
 	if r.deps.Sessions != nil {
-		if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-			if id, ok := scoped.AuthKeyIDForSession(rawAuthKeyID, sessionID); ok {
-				cached = id
-				hasCached = true
-			}
-		} else if id, ok := r.deps.Sessions.AuthKeyID(sessionID); ok {
+		if id, ok := r.deps.Sessions.AuthKeyIDForSession(rawAuthKeyID, sessionID); ok {
 			cached = id
 			hasCached = true
 		}
@@ -381,39 +376,22 @@ func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, s
 
 func (r *Router) bindEffectiveAuthKey(rawAuthKeyID [8]byte, sessionID int64, effective [8]byte) {
 	if r.deps.Sessions != nil {
-		if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-			scoped.BindAuthKeyForSession(rawAuthKeyID, sessionID, effective)
-		} else {
-			r.deps.Sessions.BindAuthKey(sessionID, effective)
-		}
+		r.deps.Sessions.BindAuthKeyForSession(rawAuthKeyID, sessionID, effective)
 	}
 }
 
 func (r *Router) effectiveUserID(ctx context.Context, rawAuthKeyID, authKeyID [8]byte, sessionID int64) (int64, bool, error) {
 	if userID, ok := UserIDFrom(ctx); ok {
-		if scoped, ok := r.scopedSessions(); ok {
-			scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
-		} else if r.deps.Sessions != nil {
-			r.deps.Sessions.BindUser(sessionID, userID)
+		if r.deps.Sessions != nil {
+			r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
 		}
 		return userID, true, nil
 	}
 	if r.deps.Sessions != nil {
-		if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-			if userID, resolved := scoped.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
-				if userID == 0 {
-					if cachedUserID, ok := r.positiveCachedAuthUser(authKeyID); ok {
-						scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, cachedUserID)
-						r.announceSessionOnline(ctx, cachedUserID)
-						return cachedUserID, true, nil
-					}
-				}
-				return userID, userID != 0, nil
-			}
-		} else if userID, resolved := r.deps.Sessions.UserIDResolved(sessionID); resolved {
+		if userID, resolved := r.deps.Sessions.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
 			if userID == 0 {
 				if cachedUserID, ok := r.positiveCachedAuthUser(authKeyID); ok {
-					r.deps.Sessions.BindUser(sessionID, cachedUserID)
+					r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, cachedUserID)
 					r.announceSessionOnline(ctx, cachedUserID)
 					return cachedUserID, true, nil
 				}
@@ -434,32 +412,16 @@ func (r *Router) effectiveUserID(ctx context.Context, rawAuthKeyID, authKeyID [8
 		return 0, false, err
 	}
 	if r.deps.Sessions != nil {
-		if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-			if cachedUserID, resolved := scoped.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
-				if cachedUserID != 0 || !found {
-					return cachedUserID, cachedUserID != 0, nil
-				}
-			}
-		} else {
-			if cachedUserID, resolved := r.deps.Sessions.UserIDResolved(sessionID); resolved {
-				if cachedUserID != 0 || !found {
-					return cachedUserID, cachedUserID != 0, nil
-				}
+		if cachedUserID, resolved := r.deps.Sessions.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID); resolved {
+			if cachedUserID != 0 || !found {
+				return cachedUserID, cachedUserID != 0, nil
 			}
 		}
 		if found {
-			if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-				scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
-			} else {
-				r.deps.Sessions.BindUser(sessionID, userID)
-			}
+			r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
 			r.announceSessionOnline(ctx, userID)
 		} else {
-			if scoped, ok := r.deps.Sessions.(ScopedSessionBinder); ok {
-				scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, 0)
-			} else {
-				r.deps.Sessions.BindUser(sessionID, 0)
-			}
+			r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, 0)
 		}
 	}
 	return userID, found, nil
@@ -530,14 +492,6 @@ func (r *Router) invalidateAuthUserCache(authKeyID [8]byte) {
 	r.authUserSF.Forget(authKeyResolveSingleflightPrefix + key)
 	r.authUserSF.Forget(authClientInfoSingleflightPrefix + key)
 	r.authUserSF.Forget(authKeyClientInfoSingleflightPrefix + key)
-}
-
-func (r *Router) scopedSessions() (ScopedSessionBinder, bool) {
-	if r.deps.Sessions == nil {
-		return nil, false
-	}
-	scoped, ok := r.deps.Sessions.(ScopedSessionBinder)
-	return scoped, ok
 }
 
 func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.Encoder, error) {

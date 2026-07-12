@@ -29,7 +29,10 @@ const (
 	defaultOutboxMaxIdleInterval = 1 * time.Second
 )
 
-var errMissingOutboxEvent = errors.New("missing outbox update event")
+var (
+	errMissingOutboxEvent         = errors.New("missing outbox update event")
+	errInvalidOutboxExclusionPair = errors.New("outbox exclusion requires both raw auth key and session id")
+)
 
 // OutboxDispatcher 把 PG transactional outbox 中的 update 批量推给在线 session。
 // 多 worker 并发 claim：ClaimPending 用 FOR UPDATE SKIP LOCKED，worker 间认领不重叠。
@@ -273,6 +276,23 @@ type outboxEventKey struct {
 
 // dispatchBatch 批量加载已 claim 事件、逐条 push、批量标记 delivered；失败项单独退避重试。
 func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.DispatchOutboxItem, loader batchEventLoader, marker batchOutboxMarker) {
+	valid := make([]store.DispatchOutboxItem, 0, len(items))
+	blockedUsers := make(map[int64]struct{})
+	for _, item := range items {
+		if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+			continue
+		}
+		if err := validateOutboxExclusionPair(item); err != nil {
+			d.markDispatchFailed(ctx, item, err)
+			blockedUsers[item.TargetUserID] = struct{}{}
+			continue
+		}
+		valid = append(valid, item)
+	}
+	if len(valid) == 0 {
+		return
+	}
+	items = valid
 	cursors := make([]store.EventCursor, len(items))
 	for i, item := range items {
 		cursors[i] = store.EventCursor{UserID: item.TargetUserID, Pts: item.Pts}
@@ -299,7 +319,7 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 	start := time.Now()
 	ready := make([]outboxDispatchReady, 0, len(items))
 	requests := make([]OutboxUpdateRequest, 0, len(items))
-	blockedUsers := make(map[int64]struct{})
+	clear(blockedUsers)
 	for _, item := range items {
 		if _, blocked := blockedUsers[item.TargetUserID]; blocked {
 			continue
@@ -362,6 +382,10 @@ type outboxDispatchReady struct {
 
 func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.DispatchOutboxItem) bool {
 	start := time.Now()
+	if err := validateOutboxExclusionPair(item); err != nil {
+		d.markDispatchFailed(ctx, item, err)
+		return false
+	}
 	events, err := d.events.ListAfter(ctx, item.TargetUserID, item.Pts-1, 1)
 	if err != nil {
 		d.markDispatchFailed(ctx, item, err)
@@ -443,23 +467,29 @@ func (d *OutboxDispatcher) buildOutboxUpdates(ctx context.Context, requests []Ou
 // 接口剩余的非 context 错误通常是确定性的编码/构造错误，必须进入 failed，不能永久占着
 // dispatching head 靠租约空转。只有 dispatcher shutdown/deadline 属于可重试中断。
 func (d *OutboxDispatcher) pushOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, update *tg.Updates) (sent int, retriable bool, err error) {
-	var zeroAuthKeyID [8]byte
+	if err := validateOutboxExclusionPair(item); err != nil {
+		return 0, false, errInvalidOutboxExclusionPair
+	}
+
 	if d.pushTimeout > 0 {
-		if scoped, ok := d.sessions.(ScopedBestEffortSessionBinder); ok && item.ExcludeAuthKeyID != zeroAuthKeyID {
-			sent, err = scoped.PushToUserExceptAuthKeySessionBestEffort(ctx, item.TargetUserID, item.ExcludeAuthKeyID, item.ExcludeSessionID, proto.MessageFromServer, update, d.pushTimeout)
-			return sent, outboxPushInterrupted(err), err
-		}
 		if bestEffort, ok := d.sessions.(BestEffortSessionBinder); ok {
-			sent, err = bestEffort.PushToUserExceptSessionBestEffort(ctx, item.TargetUserID, item.ExcludeSessionID, proto.MessageFromServer, update, d.pushTimeout)
+			sent, err = bestEffort.PushToUserExceptAuthKeySessionBestEffort(ctx, item.TargetUserID, item.ExcludeAuthKeyID, item.ExcludeSessionID, proto.MessageFromServer, update, d.pushTimeout)
 			return sent, outboxPushInterrupted(err), err
 		}
 	}
-	if scoped, ok := d.sessions.(ScopedSessionBinder); ok && item.ExcludeAuthKeyID != zeroAuthKeyID {
-		sent, err = scoped.PushToUserExceptAuthKeySession(ctx, item.TargetUserID, item.ExcludeAuthKeyID, item.ExcludeSessionID, proto.MessageFromServer, update)
-		return sent, false, err
+	sent, err = d.sessions.PushToUserExceptAuthKeySession(ctx, item.TargetUserID, item.ExcludeAuthKeyID, item.ExcludeSessionID, proto.MessageFromServer, update)
+	if err != nil {
+		return sent, outboxPushInterrupted(err), err
 	}
-	sent, err = d.sessions.PushToUserExceptSession(ctx, item.TargetUserID, item.ExcludeSessionID, proto.MessageFromServer, update)
-	return sent, false, err
+	return sent, false, nil
+}
+
+func validateOutboxExclusionPair(item store.DispatchOutboxItem) error {
+	var zeroAuthKeyID [8]byte
+	if (item.ExcludeAuthKeyID != zeroAuthKeyID) != (item.ExcludeSessionID != 0) {
+		return errInvalidOutboxExclusionPair
+	}
+	return nil
 }
 
 func outboxPushInterrupted(err error) bool {

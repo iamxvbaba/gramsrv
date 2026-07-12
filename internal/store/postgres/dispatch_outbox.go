@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,6 +18,21 @@ const (
 	defaultDispatchPoisonCleanupBatch = 256
 	maxDispatchPoisonCleanupBatch     = 1000
 )
+
+var errInvalidDispatchOutboxExclusionPair = errors.New("dispatch outbox exclusion requires both raw auth key and session id")
+
+// enqueueDispatch is the only production write boundary for dispatch_outbox.
+// A zero pair means no originating session is excluded; a non-zero pair identifies
+// one exact physical raw-auth/session tuple. A half pair is never meaningful because
+// session IDs are not globally unique and must fail the surrounding transaction.
+func enqueueDispatch(ctx context.Context, q *sqlcgen.Queries, arg sqlcgen.EnqueueDispatchParams) error {
+	hasAuthKey := arg.ExcludeAuthKeyID != 0
+	hasSession := arg.ExcludeSessionID != 0
+	if hasAuthKey != hasSession {
+		return errInvalidDispatchOutboxExclusionPair
+	}
+	return q.EnqueueDispatch(ctx, arg)
+}
 
 // DispatchOutboxStore 用 PostgreSQL 实现 transactional outbox。
 type DispatchOutboxStore struct {

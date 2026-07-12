@@ -33,6 +33,7 @@ func TestOutboxDispatcherPushesNewMessageAndMarksDelivered(t *testing.T) {
 		TargetUserID:     msg.OwnerUserID,
 		Pts:              msg.Pts,
 		EventType:        domain.UpdateEventNewMessage,
+		ExcludeAuthKeyID: [8]byte{1},
 		ExcludeSessionID: 99,
 	}}}
 	events := &captureUpdateEventStore{events: []domain.UpdateEvent{{
@@ -103,6 +104,78 @@ func TestOutboxDispatcherUsesScopedAuthKeyExclusion(t *testing.T) {
 	}
 }
 
+func TestOutboxDispatcherRejectsPartialSessionExclusion(t *testing.T) {
+	tests := []struct {
+		name      string
+		authKeyID [8]byte
+		sessionID int64
+	}{
+		{name: "auth key only", authKeyID: [8]byte{1}},
+		{name: "session only", sessionID: 99},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const userID = int64(1000000002)
+			outbox := &captureDispatchOutbox{items: []store.DispatchOutboxItem{{
+				ID:               58,
+				TargetUserID:     userID,
+				Pts:              10,
+				EventType:        domain.UpdateEventPeerSettings,
+				ExcludeAuthKeyID: tt.authKeyID,
+				ExcludeSessionID: tt.sessionID,
+			}}}
+			// No event exists: exclusion shape must win before event loading so a bad
+			// durable row is not mislabeled as merely missing its payload.
+			events := &captureUpdateEventStore{}
+			sessions := &captureSessions{}
+			metrics := &captureOutboxMetrics{}
+			dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
+			dispatcher.DispatchOnce(context.Background())
+
+			if !outbox.failed || outbox.delivered {
+				t.Fatalf("outbox failed=%v delivered=%v, want failed without delivery", outbox.failed, outbox.delivered)
+			}
+			if outbox.failedError != errInvalidOutboxExclusionPair.Error() {
+				t.Fatalf("failed error = %q, want %q", outbox.failedError, errInvalidOutboxExclusionPair)
+			}
+			if sessions.message != nil {
+				t.Fatalf("invalid exclusion unexpectedly pushed %T", sessions.message)
+			}
+			if metrics.failed != 1 || metrics.delivered != 0 {
+				t.Fatalf("metrics failed=%d delivered=%d, want 1/0", metrics.failed, metrics.delivered)
+			}
+		})
+	}
+}
+
+func TestOutboxDispatcherBatchRejectsPartialExclusionBeforeNoop(t *testing.T) {
+	const userID = int64(1000000002)
+	events := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: []domain.UpdateEvent{{
+		UserID: userID,
+		Type:   domain.UpdateEventNoop,
+		Pts:    10,
+	}}}}
+	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: []store.DispatchOutboxItem{{
+		ID:               59,
+		TargetUserID:     userID,
+		Pts:              10,
+		EventType:        domain.UpdateEventNoop,
+		ExcludeAuthKeyID: [8]byte{1},
+	}}}}
+	dispatcher := NewOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t))
+	dispatcher.DispatchOnce(context.Background())
+
+	if !outbox.failed || outbox.delivered || len(outbox.deliveredBatch) != 0 {
+		t.Fatalf("batch invalid pair failed=%v delivered=%v batch=%v", outbox.failed, outbox.delivered, outbox.deliveredBatch)
+	}
+	if outbox.failedError != errInvalidOutboxExclusionPair.Error() {
+		t.Fatalf("failed error = %q, want %q", outbox.failedError, errInvalidOutboxExclusionPair)
+	}
+	if len(events.batchCursors) != 0 {
+		t.Fatalf("invalid pair reached batch event loader: %+v", events.batchCursors)
+	}
+}
+
 // TestOutboxDispatcherBatchPath 覆盖生产批量路径：store 同时具备 BatchByCursor + MarkDeliveredBatch
 // 时，DispatchOnce 一次批量取事件、推送、再批量标记 delivered，而非逐条。
 func TestOutboxDispatcherBatchPath(t *testing.T) {
@@ -129,6 +202,7 @@ func TestOutboxDispatcherBatchPath(t *testing.T) {
 		TargetUserID:     msg.OwnerUserID,
 		Pts:              msg.Pts,
 		EventType:        domain.UpdateEventNewMessage,
+		ExcludeAuthKeyID: [8]byte{1},
 		ExcludeSessionID: 99,
 	}}}}
 	sessions := &captureSessions{}
@@ -661,22 +735,34 @@ func TestOutboxDispatcherUsesBestEffortPush(t *testing.T) {
 		Message:  msg,
 		Users:    []domain.User{{ID: msg.From.ID, FirstName: "Sender"}},
 	}}}
-	outbox := &captureDispatchOutbox{items: []store.DispatchOutboxItem{{
-		ID:               55,
-		TargetUserID:     msg.OwnerUserID,
-		Pts:              msg.Pts,
-		EventType:        domain.UpdateEventNewMessage,
-		ExcludeSessionID: 99,
-	}}}
-	sessions := &captureBestEffortSessions{captureSessions: &captureSessions{}}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond))
-	dispatcher.DispatchOnce(context.Background())
+	for _, tt := range []struct {
+		name      string
+		authKeyID [8]byte
+		sessionID int64
+	}{
+		{name: "exclude origin", authKeyID: [8]byte{1}, sessionID: 99},
+		{name: "exclude none"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			outbox := &captureDispatchOutbox{items: []store.DispatchOutboxItem{{
+				ID:               55,
+				TargetUserID:     msg.OwnerUserID,
+				Pts:              msg.Pts,
+				EventType:        domain.UpdateEventNewMessage,
+				ExcludeAuthKeyID: tt.authKeyID,
+				ExcludeSessionID: tt.sessionID,
+			}}}
+			sessions := &captureBestEffortSessions{captureSessions: &captureSessions{}}
+			dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond))
+			dispatcher.DispatchOnce(context.Background())
 
-	if !sessions.bestEffort || sessions.timeout != 50*time.Millisecond {
-		t.Fatalf("best-effort push = %v timeout %v, want true/50ms", sessions.bestEffort, sessions.timeout)
-	}
-	if !outbox.delivered || outbox.failed {
-		t.Fatalf("outbox delivered=%v failed=%v, want delivered after accepted best-effort push", outbox.delivered, outbox.failed)
+			if !sessions.bestEffort || sessions.timeout != 50*time.Millisecond {
+				t.Fatalf("best-effort push = %v timeout %v, want true/50ms", sessions.bestEffort, sessions.timeout)
+			}
+			if !outbox.delivered || outbox.failed {
+				t.Fatalf("outbox delivered=%v failed=%v, want delivered after accepted best-effort push", outbox.delivered, outbox.failed)
+			}
+		})
 	}
 }
 
@@ -686,10 +772,10 @@ type captureBestEffortSessions struct {
 	timeout    time.Duration
 }
 
-func (s *captureBestEffortSessions) PushToUserExceptSessionBestEffort(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
+func (s *captureBestEffortSessions) PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
 	s.bestEffort = true
 	s.timeout = timeout
-	return s.PushToUserExceptSession(ctx, userID, excludeSessionID, t, msg)
+	return s.PushToUserExceptAuthKeySession(ctx, userID, excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
 type orderedOutboxCaptureSessions struct {
@@ -709,7 +795,7 @@ type selectiveFailOutboxSessions struct {
 	attempts   []outboxPushAttempt
 }
 
-func (s *selectiveFailOutboxSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *selectiveFailOutboxSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	pts := 0
 	if updates, ok := msg.(*tg.Updates); ok {
 		pts = firstOutboxUpdatePts(updates)
@@ -718,18 +804,18 @@ func (s *selectiveFailOutboxSessions) PushToUserExceptSession(_ context.Context,
 	if userID == s.failUserID && pts == s.failPts {
 		return 0, errors.New("injected outbox push failure")
 	}
-	return s.captureSessions.PushToUserExceptSession(context.Background(), userID, excludeSessionID, t, msg)
+	return s.captureSessions.PushToUserExceptAuthKeySession(context.Background(), userID, excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
 func (s *selectiveFailOutboxSessions) pushAttempts() []outboxPushAttempt {
 	return append([]outboxPushAttempt(nil), s.attempts...)
 }
 
-func (s *orderedOutboxCaptureSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *orderedOutboxCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	if updates, ok := msg.(*tg.Updates); ok {
 		s.pushed = append(s.pushed, firstOutboxUpdatePts(updates))
 	}
-	return s.captureSessions.PushToUserExceptSession(context.Background(), userID, excludeSessionID, t, msg)
+	return s.captureSessions.PushToUserExceptAuthKeySession(context.Background(), userID, excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
 func (s *orderedOutboxCaptureSessions) pushedPts() []int {
@@ -916,32 +1002,30 @@ func (s *captureScopedSessions) immediatePushSnapshot() (proto.MessageType, bin.
 }
 
 func (s *captureScopedSessions) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte) {
-	s.BindAuthKey(sessionID, authKeyID)
+	s.captureSessions.BindAuthKeyForSession(rawAuthKeyID, sessionID, authKeyID)
 	s.setScopedAuthKeyID(rawAuthKeyID)
 }
 
-func (s *captureScopedSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bool) {
-	return s.AuthKeyID(0)
+func (s *captureScopedSessions) AuthKeyIDForSession(rawAuthKeyID [8]byte, sessionID int64) ([8]byte, bool) {
+	return s.captureSessions.AuthKeyIDForSession(rawAuthKeyID, sessionID)
 }
 
 func (s *captureScopedSessions) BindUserForAuthKey(rawAuthKeyID [8]byte, sessionID, userID int64) {
-	s.BindUser(sessionID, userID)
+	s.captureSessions.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
 	s.setScopedAuthKeyID(rawAuthKeyID)
 }
 
-func (s *captureScopedSessions) UserIDForAuthKey([8]byte, int64) (int64, bool) {
-	return s.UserID(0)
+func (s *captureScopedSessions) UserIDResolvedForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (int64, bool) {
+	return s.captureSessions.UserIDResolvedForAuthKey(rawAuthKeyID, sessionID)
 }
 
-func (s *captureScopedSessions) UserIDResolvedForAuthKey([8]byte, int64) (int64, bool) {
-	return s.UserIDResolved(0)
+func (s *captureScopedSessions) SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64, receives bool) {
+	s.captureSessions.SetReceivesUpdatesForAuthKey(rawAuthKeyID, sessionID, receives)
 }
-
-func (s *captureScopedSessions) SetReceivesUpdatesForAuthKey([8]byte, int64, bool) {}
 
 func (s *captureScopedSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
 	s.setScopedAuthKeyID(rawAuthKeyID)
-	return s.PushToSession(context.Background(), sessionID, t, msg)
+	return s.captureSessions.PushToSessionForAuthKey(context.Background(), rawAuthKeyID, sessionID, t, msg)
 }
 
 func (s *captureScopedSessions) PushToSessionForAuthKeyImmediate(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
@@ -951,12 +1035,12 @@ func (s *captureScopedSessions) PushToSessionForAuthKeyImmediate(_ context.Conte
 	s.immediateType = t
 	s.immediateMsg = msg
 	s.scopedMu.Unlock()
-	return s.PushToSession(context.Background(), sessionID, t, msg)
+	return s.captureSessions.PushToSessionForAuthKey(context.Background(), rawAuthKeyID, sessionID, t, msg)
 }
 
 func (s *captureScopedSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	s.setScopedAuthKeyID(excludeAuthKeyID)
-	return s.PushToUserExceptSession(context.Background(), userID, excludeSessionID, t, msg)
+	return s.captureSessions.PushToUserExceptAuthKeySession(context.Background(), userID, excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
 func (s *captureDispatchOutbox) ClaimPending(context.Context, int) ([]store.DispatchOutboxItem, error) {
@@ -1035,7 +1119,7 @@ type interruptedBestEffortSessions struct {
 	attempts int
 }
 
-func (s *interruptedBestEffortSessions) PushToUserExceptSessionBestEffort(_ context.Context, _ int64, _ int64, _ proto.MessageType, _ bin.Encoder, _ time.Duration) (int, error) {
+func (s *interruptedBestEffortSessions) PushToUserExceptAuthKeySessionBestEffort(_ context.Context, _ int64, _ [8]byte, _ int64, _ proto.MessageType, _ bin.Encoder, _ time.Duration) (int, error) {
 	s.attempts++
 	return 0, context.DeadlineExceeded
 }
@@ -1065,6 +1149,7 @@ func TestOutboxDispatcherDefersOnPushInterruption(t *testing.T) {
 		TargetUserID:     msg.OwnerUserID,
 		Pts:              msg.Pts,
 		EventType:        domain.UpdateEventNewMessage,
+		ExcludeAuthKeyID: [8]byte{1},
 		ExcludeSessionID: 99,
 	}}}
 	sessions := &interruptedBestEffortSessions{captureSessions: &captureSessions{}}

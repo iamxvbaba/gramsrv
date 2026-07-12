@@ -65,7 +65,7 @@ func newRecoveryFanoutSessions(onlineChannels []int64, release <-chan struct{}) 
 	}
 }
 
-func (s *recoveryFanoutSessions) PushToUserExceptSession(ctx context.Context, _ int64, _ int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *recoveryFanoutSessions) PushToUserExceptAuthKeySession(ctx context.Context, _ int64, _ [8]byte, _ int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
 	s.startOnce.Do(func() { close(s.pushStarted) })
 	if s.pushRelease != nil {
 		select {
@@ -397,7 +397,7 @@ func newOverflowNudgeSessions(onlineByChannel map[int64][]int64) *overflowNudgeS
 	}
 }
 
-func (s *overflowNudgeSessions) PushToUserExceptSession(ctx context.Context, userID, excludeSessionID int64, typ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *overflowNudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, typ proto.MessageType, msg bin.Encoder) (int, error) {
 	if updates, ok := msg.(*tg.Updates); ok && len(updates.Updates) == 1 {
 		if nudge, ok := updates.Updates[0].(*tg.UpdateChannelTooLong); ok {
 			pts, _ := nudge.GetPts()
@@ -407,7 +407,7 @@ func (s *overflowNudgeSessions) PushToUserExceptSession(ctx context.Context, use
 			s.mu.Unlock()
 		}
 	}
-	return s.captureSessions.PushToUserExceptSession(ctx, userID, excludeSessionID, typ, msg)
+	return s.captureSessions.PushToUserExceptAuthKeySession(ctx, userID, excludeAuthKeyID, excludeSessionID, typ, msg)
 }
 
 func (s *overflowNudgeSessions) OnlineChannelMemberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64 {
@@ -445,11 +445,11 @@ func newNudgeSessions(online []int64) *nudgeSessions {
 	return &nudgeSessions{captureSessions: &captureSessions{}, online: online, byUser: map[int64]bin.Encoder{}}
 }
 
-func (s *nudgeSessions) PushToUserExceptSession(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *nudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	s.mu.Lock()
 	s.byUser[userID] = msg
 	s.mu.Unlock()
-	return s.captureSessions.PushToUserExceptSession(ctx, userID, excludeSessionID, t, msg)
+	return s.captureSessions.PushToUserExceptAuthKeySession(ctx, userID, excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
 func (s *nudgeSessions) OnlineChannelMemberUserIDsExcluding(_ int64, exclude map[int64]struct{}, limit int) []int64 {
