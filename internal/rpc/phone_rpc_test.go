@@ -25,6 +25,7 @@ import (
 // phonePushRecord 记录一次定向推送（目标用户、被排除的 session、载荷）。
 type phonePushRecord struct {
 	userID         int64
+	targetSession  int64
 	excludeSession int64
 	msg            bin.Encoder
 }
@@ -35,18 +36,25 @@ type phoneCaptureSessions struct {
 	log []phonePushRecord
 }
 
-func (s *phoneCaptureSessions) BindAuthKey(int64, [8]byte)         {}
-func (s *phoneCaptureSessions) AuthKeyID(int64) ([8]byte, bool)    { return [8]byte{}, false }
-func (s *phoneCaptureSessions) BindUser(int64, int64)              {}
-func (s *phoneCaptureSessions) UserID(int64) (int64, bool)         { return 0, false }
-func (s *phoneCaptureSessions) UserIDResolved(int64) (int64, bool) { return 0, false }
-func (s *phoneCaptureSessions) UnbindAuthKey([8]byte) int          { return 0 }
-func (s *phoneCaptureSessions) SetReceivesUpdates(int64, bool)     {}
-func (s *phoneCaptureSessions) PushToSession(context.Context, int64, proto.MessageType, bin.Encoder) error {
+func (s *phoneCaptureSessions) BindAuthKeyForSession([8]byte, int64, [8]byte) {}
+func (s *phoneCaptureSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bool) {
+	return [8]byte{}, false
+}
+func (s *phoneCaptureSessions) BindUserForAuthKey([8]byte, int64, int64) {}
+func (s *phoneCaptureSessions) UserIDResolvedForAuthKey([8]byte, int64) (int64, bool) {
+	return 0, false
+}
+func (s *phoneCaptureSessions) UnbindAuthKey([8]byte) int                         { return 0 }
+func (s *phoneCaptureSessions) SetReceivesUpdatesForAuthKey([8]byte, int64, bool) {}
+
+func (s *phoneCaptureSessions) PushToSessionForAuthKey(_ context.Context, _ [8]byte, sessionID int64, _ proto.MessageType, msg bin.Encoder) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.log = append(s.log, phonePushRecord{targetSession: sessionID, msg: msg})
 	return nil
 }
 
-func (s *phoneCaptureSessions) PushToUserExceptSession(_ context.Context, userID, excludeSessionID int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *phoneCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, excludeSessionID int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log = append(s.log, phonePushRecord{userID: userID, excludeSession: excludeSessionID, msg: msg})
@@ -308,8 +316,8 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("sendSignalingData = %v err=%v", okSig, err)
 	}
 	pushes = f.sessions.records()
-	if len(pushes) != 1 || pushes[0].userID != f.callee.ID {
-		t.Fatalf("signaling pushes = %+v, want one to callee", pushes)
+	if len(pushes) != 1 || pushes[0].targetSession != phoneCalleeSession {
+		t.Fatalf("signaling pushes = %+v, want one to callee session", pushes)
 	}
 	sigUpdates := pushes[0].msg.(*tg.Updates)
 	sig, ok := sigUpdates.Updates[0].(*tg.UpdatePhoneCallSignalingData)

@@ -1,4 +1,4 @@
-// Package redisstore 用 Redis 实现高频易失态的存储接口（第一阶段：SessionStore）。
+// Package redisstore 用 Redis 实现高频、易失且可重建的短状态、缓存、计数器与限流。
 //
 // 职责边界见 docs/persistence-layer.md §1：Redis 存「态与计数」，丢失可由 PG/协议恢复。
 package redisstore

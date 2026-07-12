@@ -92,7 +92,7 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 	if err := appendUserUpdateEvent(ctx, tx, qtx, req.UserID, event); err != nil {
 		return domain.PhoneChangeResult{}, fmt.Errorf("append phone change event: %w", err)
 	}
-	if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+	if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 		TargetUserID:     req.UserID,
 		Pts:              int32(event.Pts),
 		EventType:        string(event.Type),

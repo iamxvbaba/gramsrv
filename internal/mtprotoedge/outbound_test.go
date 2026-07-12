@@ -286,7 +286,7 @@ func TestOutboundScratchAdmissionUsesWriteTimeoutWithoutClosingHealthyConnection
 	if got := tr.sends.Load(); got != 0 {
 		t.Fatalf("writer called %d times without scratch, want 0", got)
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		t.Fatal("scratch admission timeout terminally closed a healthy connection")
 	}
 	select {

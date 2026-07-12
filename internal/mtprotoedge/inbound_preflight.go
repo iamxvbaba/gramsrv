@@ -68,7 +68,6 @@ type inboundPlan struct {
 	logicalMin int64
 	releases   []func()
 
-	rpcPrepared    bool
 	rpcReservation *inboundRPCBatchReservation
 	rpcTasks       []inboundRPC
 	rpcOwners      []*rpcResultOwnerLease
@@ -101,7 +100,7 @@ func (p *inboundPlan) commitRPCBatch() error {
 	// batch is runnable immediately; using the old deferred scheduler token here
 	// was not a real barrier on a busy Conn because an existing ready token could
 	// dequeue newly appended tasks before activateRPCBatch ran.
-	_, err := p.rpcReservation.commit(p.rpcTasks, false)
+	err := p.rpcReservation.commit(p.rpcTasks)
 	if err != nil {
 		return err
 	}
@@ -619,7 +618,6 @@ func preflightInboundItem(msgID int64, seqNo int32, typeID uint32, content bool,
 // into one consistent terminal FLOOD_WAIT result per uncached RPC; no business
 // handler from the batch is allowed to start in that case.
 func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inboundPlan) error {
-	plan.rpcPrepared = true
 	// Keep service-only frames (ping/ack/http_wait) allocation-free here. These
 	// collections are needed only after the first real API RPC acquires ownership.
 	var indices []int
@@ -815,18 +813,22 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			s.log.Debug("Received destroy_auth_key", zap.String("auth_key_id", c.authKeyHex))
 			if err := s.authKeys.Delete(ctx, c.authKeyID); err != nil {
 				s.log.Warn("Delete auth key failed", zap.String("auth_key_id", c.authKeyHex), zap.Error(err))
-				return c.SendAsync(ctx, proto.MessageServerResponse, &destroyAuthKeyFail{})
+				return c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyFail{})
 			}
-			c.keyDestroyed.Store(true)
+			// Fence every other active/claiming generation before acknowledging the
+			// deletion. The exact requester remains writable only long enough to put the
+			// required destroy_auth_key_ok frame on the wire.
 			s.conns.CloseSessionsForRawAuthKeyExceptConn(c.authKeyID, c)
-			return c.SendAsync(ctx, proto.MessageServerResponse, &destroyAuthKeyOk{})
-		case inboundItemRPC:
-			if plan.rpcPrepared {
-				continue
-			}
-			if err := s.enqueueRPC(ctx, c, item.msgID, item.typeID, &bin.Buffer{Buf: item.body}); err != nil {
+			if err := c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyOk{}); err != nil {
 				return err
 			}
+			c.beginTerminalShutdown()
+			c.closeTransport()
+			return nil
+		case inboundItemRPC:
+			// prepareInboundRPCBatch owns every fresh RPC before synchronous service
+			// execution begins; commitRPCBatch publishes them after all protocol barriers.
+			continue
 		case inboundItemCapacityError:
 			if err := s.sendResult(ctx, c, item.msgID, &mt.RPCError{
 				ErrorCode:    420,

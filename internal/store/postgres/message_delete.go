@@ -227,7 +227,7 @@ WHERE sender_user_id = $1
 			dispatchAuthKeyID = excludeAuthKeyID
 			dispatchSessionID = excludeSessionID
 		}
-		if err := q.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+		if err := enqueueDispatch(ctx, q, sqlcgen.EnqueueDispatchParams{
 			TargetUserID:     userID,
 			Pts:              int32(deletePts),
 			EventType:        string(domain.UpdateEventDeleteMessages),
@@ -256,7 +256,7 @@ WHERE sender_user_id = $1
 			}); err != nil {
 				return res, fmt.Errorf("advance dialog read inbox after delete correction: %w", err)
 			}
-			if err := q.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+			if err := enqueueDispatch(ctx, q, sqlcgen.EnqueueDispatchParams{
 				TargetUserID: userID,
 				Pts:          int32(correction.Pts),
 				EventType:    string(domain.UpdateEventReadHistoryInbox),

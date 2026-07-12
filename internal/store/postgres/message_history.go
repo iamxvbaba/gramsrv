@@ -379,7 +379,7 @@ func (s *MessageStore) ReadHistory(ctx context.Context, req domain.ReadHistoryRe
 	if err := appendUserUpdateEvent(ctx, tx, qtx, req.OwnerUserID, res.InboxEvent); err != nil {
 		return res, fmt.Errorf("append read inbox event: %w", err)
 	}
-	if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+	if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 		TargetUserID:     req.OwnerUserID,
 		Pts:              int32(readerPts),
 		EventType:        string(domain.UpdateEventReadHistoryInbox),
@@ -414,7 +414,7 @@ func (s *MessageStore) ReadHistory(ctx context.Context, req domain.ReadHistoryRe
 			if err := appendUserUpdateEvent(ctx, tx, qtx, candidate.SenderOwnerUserID, res.OutboxEvent); err != nil {
 				return res, fmt.Errorf("append read outbox event: %w", err)
 			}
-			if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+			if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 				TargetUserID:     candidate.SenderOwnerUserID,
 				Pts:              int32(senderPts),
 				EventType:        string(domain.UpdateEventReadHistoryOutbox),

@@ -55,10 +55,6 @@ type rpcResultCacheShard struct {
 	pending map[rpcResultCacheKey]*rpcResultFlight
 }
 
-func newRPCResultCache(now func() time.Time) *rpcResultCache {
-	return newRPCResultCacheWithFlightLimit(now, rpcResultFlightDefaultMaxPending)
-}
-
 func newRPCResultCacheWithFlightLimit(now func() time.Time, maxPending int) *rpcResultCache {
 	if now == nil {
 		now = time.Now

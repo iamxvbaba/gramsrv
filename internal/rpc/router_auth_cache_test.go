@@ -26,7 +26,7 @@ func newAuthBindingCaptureSessions() *authBindingCaptureSessions {
 	return &authBindingCaptureSessions{captureSessions: &captureSessions{}}
 }
 
-func (s *authBindingCaptureSessions) PushToUserExceptSession(_ context.Context, userID, _ int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *authBindingCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, _ int64, t proto.MessageType, msg bin.Encoder) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.messageType = t
@@ -43,8 +43,8 @@ func TestDispatchPromotesNegativeSessionCacheFromPositiveAuthCache(t *testing.T)
 		userID    = int64(1000000001)
 	)
 	sessions := newAuthBindingCaptureSessions()
-	sessions.BindAuthKey(sessionID, authKeyID)
-	sessions.BindUser(sessionID, 0)
+	sessions.BindAuthKeyForSession(authKeyID, sessionID, authKeyID)
+	sessions.BindUserForAuthKey(authKeyID, sessionID, 0)
 	auth := &captureAuthService{}
 	r := New(Config{}, Deps{
 		Auth:     auth,

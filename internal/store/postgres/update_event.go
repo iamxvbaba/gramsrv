@@ -122,7 +122,7 @@ func (s *UpdateEventStore) appendInTx(ctx context.Context, db sqlcgen.DBTX, q *s
 		return domain.UpdateEvent{}, fmt.Errorf("append update event: %w", err)
 	}
 	if dispatch {
-		if err := q.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+		if err := enqueueDispatch(ctx, q, sqlcgen.EnqueueDispatchParams{
 			TargetUserID:     userID,
 			Pts:              int32(event.Pts),
 			EventType:        string(event.Type),

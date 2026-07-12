@@ -186,7 +186,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 	if err := appendNewMessageEvent(ctx, qtx, msg); err != nil {
 		return domain.LoginCodeDeliveryResult{}, err
 	}
-	if err := qtx.EnqueueDispatch(ctx, sqlcgen.EnqueueDispatchParams{
+	if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 		TargetUserID:     req.UserID,
 		Pts:              int32(msg.Pts),
 		EventType:        string(domain.UpdateEventNewMessage),

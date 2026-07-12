@@ -77,12 +77,7 @@ func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTemp
 		r.tempKeyResolveCache.Delete(id)
 	}
 	if r.deps.Sessions != nil {
-		if scoped, ok := r.scopedSessions(); ok {
-			rawAuthKeyID, _ := RawAuthKeyIDFrom(ctx)
-			scoped.BindAuthKeyForSession(rawAuthKeyID, sessionID, authKeyIDFromInt64(req.PermAuthKeyID))
-		} else {
-			r.deps.Sessions.BindAuthKey(sessionID, authKeyIDFromInt64(req.PermAuthKeyID))
-		}
+		r.deps.Sessions.BindAuthKeyForSession(id, sessionID, authKeyIDFromInt64(req.PermAuthKeyID))
 	}
 	r.invalidateAuthUserCache(id)
 	return true, nil
@@ -192,14 +187,8 @@ func (r *Router) bindLoginTokenTarget(target loginTokenTarget, userID int64) {
 	if r.deps.Sessions == nil || target.sessionID == 0 {
 		return
 	}
-	if scoped, ok := r.scopedSessions(); ok && target.rawAuthKeyID != ([8]byte{}) {
-		scoped.BindAuthKeyForSession(target.rawAuthKeyID, target.sessionID, target.authKeyID)
-		scoped.BindUserForAuthKey(target.rawAuthKeyID, target.sessionID, userID)
-		r.announceSessionOnline(loginTokenTargetContext(target, userID), userID)
-		return
-	}
-	r.deps.Sessions.BindAuthKey(target.sessionID, target.authKeyID)
-	r.deps.Sessions.BindUser(target.sessionID, userID)
+	r.deps.Sessions.BindAuthKeyForSession(target.rawAuthKeyID, target.sessionID, target.authKeyID)
+	r.deps.Sessions.BindUserForAuthKey(target.rawAuthKeyID, target.sessionID, userID)
 	r.announceSessionOnline(loginTokenTargetContext(target, userID), userID)
 }
 
@@ -220,19 +209,13 @@ func (r *Router) pushLoginTokenAccepted(ctx context.Context, target loginTokenTa
 		Update: &tg.UpdateLoginToken{},
 		Date:   int(r.clock.Now().Unix()),
 	}
-	if immediate, ok := r.deps.Sessions.(ScopedImmediateSessionPusher); ok && target.rawAuthKeyID != ([8]byte{}) {
+	if immediate, ok := r.deps.Sessions.(ImmediateSessionPusher); ok {
 		if err := immediate.PushToSessionForAuthKeyImmediate(ctx, target.rawAuthKeyID, target.sessionID, proto.MessageFromServer, updates); err != nil {
 			r.log.Debug("push login token accepted immediate", zap.Int64("session_id", target.sessionID), zap.Error(err))
 		}
 		return
 	}
-	if scoped, ok := r.scopedSessions(); ok && target.rawAuthKeyID != ([8]byte{}) {
-		if err := scoped.PushToSessionForAuthKey(ctx, target.rawAuthKeyID, target.sessionID, proto.MessageFromServer, updates); err != nil {
-			r.log.Debug("push login token accepted", zap.Int64("session_id", target.sessionID), zap.Error(err))
-		}
-		return
-	}
-	if err := r.deps.Sessions.PushToSession(ctx, target.sessionID, proto.MessageFromServer, updates); err != nil {
+	if err := r.deps.Sessions.PushToSessionForAuthKey(ctx, target.rawAuthKeyID, target.sessionID, proto.MessageFromServer, updates); err != nil {
 		r.log.Debug("push login token accepted", zap.Int64("session_id", target.sessionID), zap.Error(err))
 	}
 }
@@ -713,13 +696,7 @@ func (r *Router) bindSessionUser(ctx context.Context, userID int64) {
 	if !ok {
 		return
 	}
-	if scoped, ok := r.scopedSessions(); ok {
-		rawAuthKeyID, _ := RawAuthKeyIDFrom(ctx)
-		scoped.BindUserForAuthKey(rawAuthKeyID, sessionID, userID)
-		r.announceSessionOnline(ctx, userID)
-		return
-	}
-	r.deps.Sessions.BindUser(sessionID, userID)
+	r.deps.Sessions.BindUserForAuthKey(rawAuthKeyIDForOrigin(ctx), sessionID, userID)
 	r.announceSessionOnline(ctx, userID)
 }
 
@@ -776,13 +753,7 @@ func (r *Router) pushSignInServiceNotificationToOthers(ctx context.Context, u do
 	go func() {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if scoped, ok := r.scopedSessions(); ok {
-			if sent, err := scoped.PushToUserExceptAuthKeySession(pushCtx, u.ID, rawAuthKeyID, sessionID, proto.MessageFromServer, notification); err != nil {
-				r.log.Debug("push sign-in service notification", zap.Int64("user_id", u.ID), zap.Int("sent", sent), zap.Error(err))
-			}
-			return
-		}
-		if sent, err := r.deps.Sessions.PushToUserExceptSession(pushCtx, u.ID, sessionID, proto.MessageFromServer, notification); err != nil {
+		if sent, err := r.deps.Sessions.PushToUserExceptAuthKeySession(pushCtx, u.ID, rawAuthKeyID, sessionID, proto.MessageFromServer, notification); err != nil {
 			r.log.Debug("push sign-in service notification", zap.Int64("user_id", u.ID), zap.Int("sent", sent), zap.Error(err))
 		}
 	}()

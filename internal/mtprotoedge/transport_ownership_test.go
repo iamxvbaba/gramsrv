@@ -148,8 +148,8 @@ func TestPhysicalCloseFencesActivationPublication(t *testing.T) {
 	if c.publishActivation() {
 		t.Fatal("closed physical transport published active Conn")
 	}
-	if !c.terminal.Load() || c.lifecycleState() != connLifecycleRetired {
-		t.Fatalf("closed Conn terminal=%v lifecycle=%v", c.terminal.Load(), c.lifecycleState())
+	if !c.isRetired() {
+		t.Fatalf("closed Conn lifecycle=%v", c.lifecycleState())
 	}
 	c.Close()
 }
@@ -161,7 +161,7 @@ func TestPhysicalCloseBitPreventsActivationClaimBeforeLogicalFence(t *testing.T)
 	c := s.newConnWithLease(lease, newTestAuthKey(t), 73002, 1)
 
 	// Hold the binding lock so CloseAny can linearize the physical closed bit but
-	// cannot yet publish c.terminal. beginActivationClaim must inspect the lease
+	// cannot yet retire the logical Conn. beginActivationClaim must inspect the lease
 	// itself and refuse this otherwise-dangerous window.
 	owner.bindingMu.Lock()
 	closeDone := make(chan error, 1)
@@ -174,7 +174,7 @@ func TestPhysicalCloseBitPreventsActivationClaimBeforeLogicalFence(t *testing.T)
 		owner.bindingMu.Unlock()
 		t.Fatal("CloseAny did not publish closed bit")
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		owner.bindingMu.Unlock()
 		t.Fatal("logical fence escaped held binding lock")
 	}
@@ -191,8 +191,8 @@ func TestPhysicalCloseBitPreventsActivationClaimBeforeLogicalFence(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("CloseAny did not finish")
 	}
-	if !c.terminal.Load() || c.lifecycleState() != connLifecycleRetired {
-		t.Fatalf("logical fence terminal=%v lifecycle=%v", c.terminal.Load(), c.lifecycleState())
+	if !c.isRetired() {
+		t.Fatalf("logical fence lifecycle=%v", c.lifecycleState())
 	}
 	c.Close()
 }

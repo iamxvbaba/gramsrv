@@ -49,36 +49,26 @@ type AuthService interface {
 }
 
 // SessionBinder 抽象登录后 session 与 user 的在线绑定。
+//
+// MTProto session 的完整身份是 raw auth_key_id + session_id。所有定位单个 session
+// 的方法都必须携带这两个值；禁止退回只按 session_id 查询，否则不同 auth key 复用
+// 同一随机 session_id 时会产生跨账号绑定、排除或推送歧义。
 type SessionBinder interface {
-	BindAuthKey(sessionID int64, authKeyID [8]byte)
-	AuthKeyID(sessionID int64) ([8]byte, bool)
-	BindUser(sessionID, userID int64)
-	UserID(sessionID int64) (int64, bool)
-	UserIDResolved(sessionID int64) (userID int64, resolved bool)
-	UnbindAuthKey(authKeyID [8]byte) int
-	SetReceivesUpdates(sessionID int64, receives bool)
-	PushToSession(ctx context.Context, sessionID int64, t proto.MessageType, msg bin.Encoder) error
-	PushToUserExceptSession(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error)
-}
-
-// ScopedSessionBinder 是 SessionBinder 的精确版本：所有定位都带 raw auth_key_id + session_id。
-// 生产 mtprotoedge.SessionManager 实现它；测试替身和旧实现可以只实现 SessionBinder。
-type ScopedSessionBinder interface {
 	BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID int64, authKeyID [8]byte)
 	AuthKeyIDForSession(rawAuthKeyID [8]byte, sessionID int64) ([8]byte, bool)
 	BindUserForAuthKey(rawAuthKeyID [8]byte, sessionID, userID int64)
-	UserIDForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (int64, bool)
 	UserIDResolvedForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (userID int64, resolved bool)
+	UnbindAuthKey(authKeyID [8]byte) int
 	SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64, receives bool)
 	PushToSessionForAuthKey(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
-	// excludeAuthKeyID is the physical/raw auth key, paired with session_id.
+	// excludeAuthKeyID/excludeSessionID 必须同时为零（不排除）或同时非零（精确排除）。
 	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error)
 }
 
-// ScopedImmediateSessionPusher 是可选的登录前信号直推能力。
+// ImmediateSessionPusher 是可选的登录前信号直推能力。
 // 它绕过登录后 updates-ready 队列，只能用于会解锁登录流程本身的握手消息，
 // 例如 updateLoginToken。
-type ScopedImmediateSessionPusher interface {
+type ImmediateSessionPusher interface {
 	PushToSessionForAuthKeyImmediate(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
 }
 
@@ -110,13 +100,9 @@ type RawSessionTerminator interface {
 	CloseSessionsForRawAuthKeyExcept(authKeyID [8]byte, exceptSessionID int64) int
 }
 
-// BestEffortSessionBinder 是 updates fanout 的短超时推送接口；不用于 RPC result/ack。
+// BestEffortSessionBinder 是带 raw auth_key_id 精确排除当前设备的短超时推送接口；
+// 不用于 RPC result/ack。
 type BestEffortSessionBinder interface {
-	PushToUserExceptSessionBestEffort(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
-}
-
-// ScopedBestEffortSessionBinder 是带 raw auth_key_id 精确排除当前设备的 best-effort 版本。
-type ScopedBestEffortSessionBinder interface {
 	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
 }
 

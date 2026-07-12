@@ -336,10 +336,7 @@ func (c *Conn) Close() {
 // close. It closes both producer gates and cancels RPC work before any potentially blocking
 // transport.Close call, so a timed-out batch close cannot keep accepting memory/work.
 func (c *Conn) beginTerminalShutdown() {
-	c.terminal.Store(true)
-	// Retirement is irreversible. SessionManager activation only uses CAS from
-	// provisional/claiming, so a stale goroutine cannot publish this Conn again.
-	c.lifecycle.Store(uint32(connLifecycleRetired))
+	c.retire()
 	c.signalOutboundStop()
 	c.beginCloseInboundRPCScheduler()
 }
@@ -367,16 +364,6 @@ func (c *Conn) waitOutboundShutdownUntil(timeout time.Duration) bool {
 	}
 }
 
-// ForceClose 停止连接并关闭底层 transport。
-// 仅用于授权撤销 / destroy_auth_key 这类“必须让对端立即断线”的路径；普通生命周期仍由
-// serveConn 统一关闭 transport，避免正常 push/索引清理把长连接误伤成硬断。
-func (c *Conn) ForceClose() {
-	c.beginTerminalShutdown()
-	c.closeTransport()
-	c.closeInboundRPCScheduler()
-	c.waitOutboundShutdown()
-}
-
 // closeTransport 只关闭物理 transport，不等待 outbound actor。写失败路径运行在
 // actor 自身 goroutine 中，若在这里调用 Close 会等待 outboundDone 而自锁。
 func (c *Conn) closeTransport() {
@@ -395,7 +382,7 @@ func (c *Conn) closeTransport() {
 }
 
 // failTransport 把不可恢复的写错误提升为连接级 terminal failure。它只负责
-// 标记 terminal + 关闭 socket；handleOutboundOp 返回后，actor 自己发停止信号并退出，
+// 把 lifecycle 推进到 retired 并关闭 socket；handleOutboundOp 返回后，actor 自己发停止信号并退出，
 // serveConn 被 Close 解开 Recv 后负责注销索引。
 func (c *Conn) failTransport() {
 	// Publish both producer gates before Close: a custom/broken transport may block in
@@ -417,10 +404,9 @@ func (c *Conn) fenceUndeliveredRPCResult() {
 	// A replacement/shutdown that already published terminal owns physical
 	// lifecycle cleanup (and may intentionally transfer the lease). Only the
 	// resultless task that wins false->true is allowed to close this generation.
-	if !c.terminal.CompareAndSwap(false, true) {
+	if !c.retire() {
 		return
 	}
-	c.lifecycle.Store(uint32(connLifecycleRetired))
 	c.signalOutboundStop()
 	if c.transportLease != nil {
 		c.transportLease.startCloseAlreadyFenced()
@@ -459,11 +445,6 @@ func (c *Conn) signalOutboundStop() {
 // Send 加密并发送一条 server 消息。
 func (c *Conn) Send(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
 	return c.send(ctx, t, msg, false)
-}
-
-// SendPriority 加密并优先发送一条 server 控制消息。
-func (c *Conn) SendPriority(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
-	return c.send(ctx, t, msg, true)
 }
 
 // SendRequiredControl writes a protocol-critical control message before the caller commits
@@ -515,7 +496,7 @@ func (c *Conn) sendBestEffort(ctx context.Context, t proto.MessageType, msg bin.
 	if c.outbound == nil || c.outboundControl == nil {
 		return ErrConnClosed
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		return ErrConnClosed
 	}
 	writeCtx := context.Background()
@@ -645,7 +626,7 @@ func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encod
 	if c.outbound == nil || c.outboundControl == nil {
 		return ErrConnClosed
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		return ErrConnClosed
 	}
 	op, err := c.newOutboundSendOp(ctx, t, msg, nil, true)
@@ -677,7 +658,7 @@ func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encod
 
 // AckServerMessages 接收客户端 msgs_ack，释放已确认的 server 出站消息。
 func (c *Conn) AckServerMessages(ids []int64) {
-	if len(ids) == 0 || c.outbound == nil || c.outboundControl == nil || c.terminal.Load() {
+	if len(ids) == 0 || c.outbound == nil || c.outboundControl == nil || c.isRetired() {
 		return
 	}
 	op, err := c.newOutboundVectorOp(outboundAck, ids)
@@ -790,7 +771,7 @@ func (c *Conn) enqueueOutboundRegistered(ctx context.Context, op outboundOp) err
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if c.terminal.Load() {
+	if c.isRetired() {
 		return ErrConnClosed
 	}
 	q := c.outbound
@@ -820,7 +801,7 @@ func (c *Conn) enqueueOutboundRegistered(ctx context.Context, op outboundOp) err
 func (c *Conn) beginOutboundEnqueue() bool {
 	c.outboundEnqueueMu.Lock()
 	defer c.outboundEnqueueMu.Unlock()
-	if c.outboundClosing || c.terminal.Load() {
+	if c.outboundClosing || c.isRetired() {
 		return false
 	}
 	c.outboundEnqueueWG.Add(1)
@@ -840,14 +821,14 @@ func (c *Conn) outboundLoop() {
 		close(c.outboundDone)
 	}()
 	for {
-		if c.terminal.Load() {
+		if c.isRetired() {
 			c.signalOutboundStop()
 			c.drainOutbound()
 			return
 		}
 		select {
 		case op := <-c.outboundControl:
-			if c.terminal.Load() {
+			if c.isRetired() {
 				op.releaseReservation(c.outboundTrackedBudget)
 				op.finish(outboundResult{err: ErrConnClosed})
 				c.signalOutboundStop()
@@ -855,7 +836,7 @@ func (c *Conn) outboundLoop() {
 				return
 			}
 			c.handleOutboundOp(state, op)
-			if c.terminal.Load() {
+			if c.isRetired() {
 				c.signalOutboundStop()
 				c.drainOutbound()
 				return
@@ -868,7 +849,7 @@ func (c *Conn) outboundLoop() {
 			c.drainOutbound()
 			return
 		case op := <-c.outboundControl:
-			if c.terminal.Load() {
+			if c.isRetired() {
 				op.releaseReservation(c.outboundTrackedBudget)
 				op.finish(outboundResult{err: ErrConnClosed})
 				c.signalOutboundStop()
@@ -877,7 +858,7 @@ func (c *Conn) outboundLoop() {
 			}
 			c.handleOutboundOp(state, op)
 		case op := <-c.outbound:
-			if c.terminal.Load() {
+			if c.isRetired() {
 				op.releaseReservation(c.outboundTrackedBudget)
 				op.finish(outboundResult{err: ErrConnClosed})
 				c.signalOutboundStop()
@@ -886,7 +867,7 @@ func (c *Conn) outboundLoop() {
 			}
 			c.handleOutboundOp(state, op)
 		}
-		if c.terminal.Load() {
+		if c.isRetired() {
 			c.signalOutboundStop()
 			c.drainOutbound()
 			return

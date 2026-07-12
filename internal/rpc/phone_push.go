@@ -63,11 +63,9 @@ func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64,
 		Date:  int(r.clock.Now().Unix()),
 		Seq:   0,
 	}
-	if !device.Zero() {
-		if scoped, ok := r.scopedSessions(); ok {
-			if err := scoped.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd); err == nil {
-				return
-			}
+	if !device.Zero() && r.deps.Sessions != nil {
+		if err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd); err == nil {
+			return
 		}
 	}
 	r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)

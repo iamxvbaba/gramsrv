@@ -282,11 +282,11 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 	if got := len(healthy.outbound); got != 1 {
 		t.Fatalf("healthy queued ops = %d, want 1", got)
 	}
-	if healthy.terminal.Load() {
+	if healthy.isRetired() {
 		t.Fatal("healthy session was terminalized")
 	}
 	for i, c := range slow {
-		if !c.terminal.Load() {
+		if !c.isRetired() {
 			t.Fatalf("slow session %d was not terminalized", i)
 		}
 		if tr := c.transport.(*closeCountingTransport); tr.closes != 1 {
@@ -343,6 +343,15 @@ func TestSessionManagerScopesSameSessionIDByAuthKey(t *testing.T) {
 	}
 	if got := len(sm.pending[sessionKey{authKeyID: raw2, sessionID: 42}]); got != 1 {
 		t.Fatalf("raw2 pending pushes = %d, want 1", got)
+	}
+	if !sm.DestroySessionForAuthKey(raw1, 42) {
+		t.Fatal("scoped destroy did not remove raw1 session")
+	}
+	if _, ok := sm.AuthKeyIDForSession(raw1, 42); ok {
+		t.Fatal("raw1 session survived scoped destroy")
+	}
+	if _, ok := sm.AuthKeyIDForSession(raw2, 42); !ok {
+		t.Fatal("same session_id under raw2 was removed by scoped destroy")
 	}
 }
 
@@ -513,7 +522,7 @@ func TestForceCloseBatchTimeoutStillClosesProducerAndRPCGates(t *testing.T) {
 		t.Fatalf("timed batch close blocked for %v", elapsed)
 	}
 	for i, c := range conns {
-		if !c.terminal.Load() {
+		if !c.isRetired() {
 			t.Fatalf("connection %d producer gate remains open after batch timeout", i)
 		}
 		select {
@@ -609,12 +618,12 @@ func TestPushToUserAuthKeyUsesOneDeadlineAndDropsOnlySlowPFSConnections(t *testi
 	if elapsed > 100*time.Millisecond {
 		t.Fatalf("elapsed = %v, want one shared deadline rather than per-session waits", elapsed)
 	}
-	if !slowOne.terminal.Load() || !slowTwo.terminal.Load() || slowOneTransport.closes != 1 || slowTwoTransport.closes != 1 {
+	if !slowOne.isRetired() || !slowTwo.isRetired() || slowOneTransport.closes != 1 || slowTwoTransport.closes != 1 {
 		t.Fatalf("slow connections not terminal/closed: one=%v/%d two=%v/%d",
-			slowOne.terminal.Load(), slowOneTransport.closes, slowTwo.terminal.Load(), slowTwoTransport.closes)
+			slowOne.isRetired(), slowOneTransport.closes, slowTwo.isRetired(), slowTwoTransport.closes)
 	}
-	if healthy.terminal.Load() || healthyTransport.closes != 0 {
-		t.Fatalf("healthy connection was dropped: terminal=%v closes=%d", healthy.terminal.Load(), healthyTransport.closes)
+	if healthy.isRetired() || healthyTransport.closes != 0 {
+		t.Fatalf("healthy connection was dropped: lifecycle=%v closes=%d", healthy.lifecycleState(), healthyTransport.closes)
 	}
 	select {
 	case <-healthy.outbound:
@@ -834,7 +843,7 @@ func TestPendingFlushGlobalBodyPressureDoesNotTerminateHealthyConnection(t *test
 	// Enter at the final retry so the test exercises the durable-difference fallback without
 	// waiting for the production backoff timer.
 	sm.runFlush(c, key, userID, maxFlushAttempts-1)
-	if c.terminal.Load() {
+	if c.isRetired() {
 		t.Fatal("shared body pressure terminated a healthy pending-flush connection")
 	}
 	if !c.receivesUpdates.Load() {
