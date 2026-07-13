@@ -369,6 +369,7 @@ func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key
 		msgID:                        proto.NewMessageIDGen(s.clock.Now),
 		writeTimeout:                 s.writeTimeout,
 		metrics:                      s.metrics,
+		now:                          s.clock.Now,
 		authKeyID:                    key.ID,
 		authKeyHex:                   hex.EncodeToString(key.ID[:]),
 		sessionID:                    sessionID,
@@ -770,6 +771,19 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 		// 撤销由 SessionManager 主动 Close 连接保证失效，不依赖被动的“下一帧 -404”。
 		// 尚未进入 SessionManager 的 bad-salt provisional 会在 handleEncrypted 建立 activation claim
 		// 后精确复查一次，既把撤销与激活线性化，也不把 salt storm 放大成 PG 写风暴。
+		// temporary key 的绝对 expiry 缓存在 Conn 上，逐帧只做内存比较；到期必须在
+		// RPC 前返回 -404，让官方客户端仅轮换 temp key。绝不能落到 Router 后退化为
+		// raw business identity，再以会触发整账号退出的 401 结束。
+		if current != nil && current.authKeyID == authKeyID && authKeyProtocolUnavailable(current.authKeyExpiresAt, s.clock.Now()) {
+			s.log.Info("Rejecting unavailable temporary or legacy auth key",
+				zap.String("auth_key_id", current.authKeyHex),
+				zap.Int("expires_at", current.authKeyExpiresAt),
+			)
+			if err := s.sendTerminalProtoError(ctx, current, codec.CodeAuthKeyNotFound); err != nil {
+				return err
+			}
+			return nil
+		}
 		var fetchedKey *store.AuthKeyData
 		if current == nil || current.authKeyID != authKeyID {
 			d, found, err := s.authKeys.Get(ctx, authKeyID)
@@ -777,15 +791,33 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 				return fmt.Errorf("lookup auth key: %w", err)
 			}
 			if !found {
-				writer := transport.Conn(conn)
+				var sendErr error
 				if current != nil {
-					writer = current.transport
+					sendErr = s.sendTerminalProtoError(ctx, current, codec.CodeAuthKeyNotFound)
+				} else {
+					sendErr = s.sendProtoError(ctx, conn, codec.CodeAuthKeyNotFound)
 				}
-				if err := s.sendProtoError(ctx, writer, codec.CodeAuthKeyNotFound); err != nil {
-					return err
+				if sendErr != nil {
+					return sendErr
 				}
 				// -404 对 TDesktop 是 terminal key failure；继续保留 socket 只会允许
 				// 同一客户端反复触发 AuthKeyStore 查询。回包一次后立即断开。
+				return nil
+			}
+			if authKeyProtocolUnavailable(d.ExpiresAt, s.clock.Now()) {
+				s.log.Info("Rejecting unavailable temporary or legacy auth key",
+					zap.String("auth_key_id", hex.EncodeToString(d.ID[:])),
+					zap.Int("expires_at", d.ExpiresAt),
+				)
+				var sendErr error
+				if current != nil {
+					sendErr = s.sendTerminalProtoError(ctx, current, codec.CodeAuthKeyNotFound)
+				} else {
+					sendErr = s.sendProtoError(ctx, conn, codec.CodeAuthKeyNotFound)
+				}
+				if sendErr != nil {
+					return sendErr
+				}
 				return nil
 			}
 			fetchedKey = &d
@@ -804,6 +836,12 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, loca
 		trimOversizedInboundBuffer(&plain)
 		retainInboundFrameBackings(conn, &b, &plain)
 	}
+}
+
+func authKeyProtocolUnavailable(expiresAt int, now time.Time) bool {
+	// -1 is migration 0086's explicit legacy-unknown sentinel. Reject it once
+	// instead of guessing permanent and allowing account authorization on a temp key.
+	return expiresAt < 0 || (expiresAt > 0 && int64(expiresAt) <= now.Unix())
 }
 
 // maxRetainedConnBuffer keeps normal upload/download frames allocation-free while preventing one

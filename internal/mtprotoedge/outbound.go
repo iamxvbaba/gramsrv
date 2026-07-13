@@ -567,6 +567,18 @@ func (c *Conn) failTransport() {
 	c.closeTransport()
 }
 
+// fenceUnavailableAuthKey turns protocol expiry into a connection-level terminal
+// boundary. Outbound producers may discover expiry before the read loop sees the
+// client's next frame; in that case the socket is closed so the client reconnects
+// and receives the ordinary -404 admission response for the stale raw key.
+func (c *Conn) fenceUnavailableAuthKey() {
+	if c == nil || !c.authKeyProtocolUnavailableNow() {
+		return
+	}
+	c.beginTerminalShutdown()
+	c.closeTransport()
+}
+
 // fenceUndeliveredRPCResult is the no-reentry terminal path used from a task's
 // release callback. That callback may itself run while rpcClose.Do is draining
 // queued tasks, so calling beginCloseInboundRPCScheduler again would deadlock on
@@ -1022,6 +1034,13 @@ func (c *Conn) outboundQueue(op outboundOp) chan outboundOp {
 }
 
 func (c *Conn) beginOutboundEnqueue() bool {
+	// A temporary key is unusable for both inbound RPCs and server-originated
+	// updates at the same absolute boundary. Reject before encoding admission;
+	// the actor and write path repeat this check to close the two race windows.
+	if c.authKeyProtocolUnavailableNow() {
+		c.fenceUnavailableAuthKey()
+		return false
+	}
 	c.outboundEnqueueMu.Lock()
 	defer c.outboundEnqueueMu.Unlock()
 	if c.outboundClosing || c.isRetired() {
@@ -1146,6 +1165,14 @@ func (c *Conn) drainOutbound() {
 }
 
 func (c *Conn) handleOutboundOp(state *outboundState, op outboundOp) {
+	// An operation can sit in a bounded queue across the protocol expiry instant.
+	// It must be failed and released without touching the wire.
+	if c.authKeyProtocolUnavailableNow() {
+		op.releaseReservation(state.budget)
+		op.finish(outboundResult{err: ErrConnClosed})
+		c.fenceUnavailableAuthKey()
+		return
+	}
 	if op.kind != outboundSend {
 		defer op.releaseReservation(state.budget)
 	}
@@ -1570,7 +1597,20 @@ type deadlineOutboundScratchWriter interface {
 	SendDeadlineWithScratch(deadline time.Time, b *bin.Buffer, scratch *[]byte) error
 }
 
+type deadlineOutboundGuardedScratchWriter interface {
+	SendDeadlineWithScratchGuarded(deadline time.Time, b *bin.Buffer, scratch *[]byte, guard func() error) error
+}
+
+var (
+	errAuthKeyUnavailableAtPhysicalWrite = errors.New("auth key unavailable at physical write admission")
+	errConnRetiredAtPhysicalWrite        = errors.New("connection retired at physical write admission")
+)
+
 func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
+	if c.authKeyProtocolUnavailableNow() {
+		c.fenceUnavailableAuthKey()
+		return ErrConnClosed
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1595,12 +1635,28 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 	if err := prewriteDeadlineError(ctx, deadline); err != nil {
 		return fmt.Errorf("outbound deadline before write: %w", err)
 	}
+	// Scratch admission and encryption may straddle expires_at. Recheck at the
+	// final pre-write barrier so neither fresh sends nor resends use a stale key.
+	if c.authKeyProtocolUnavailableNow() {
+		c.fenceUnavailableAuthKey()
+		return ErrConnClosed
+	}
 
 	writer := c.writer
 	if writer == nil {
 		writer = c.transport
 	}
-	if sw, ok := writer.(deadlineOutboundScratchWriter); ok {
+	if guarded, ok := writer.(deadlineOutboundGuardedScratchWriter); ok {
+		err = guarded.SendDeadlineWithScratchGuarded(deadline, out, &scratch.codec, func() error {
+			if c.isRetired() {
+				return errConnRetiredAtPhysicalWrite
+			}
+			if c.authKeyProtocolUnavailableNow() {
+				return errAuthKeyUnavailableAtPhysicalWrite
+			}
+			return nil
+		})
+	} else if sw, ok := writer.(deadlineOutboundScratchWriter); ok {
 		err = sw.SendDeadlineWithScratch(deadline, out, &scratch.codec)
 	} else if dw, ok := writer.(deadlineOutboundWriter); ok {
 		err = dw.SendDeadline(deadline, out)
@@ -1613,6 +1669,18 @@ func (c *Conn) writeFrame(ctx context.Context, frame *outboundFrame) error {
 		}
 		err = writer.Send(sendCtx, out)
 		cancel()
+	}
+	if errors.Is(err, errAuthKeyUnavailableAtPhysicalWrite) {
+		// The guarded lease has already released physical write ownership and no
+		// raw bytes were emitted. Fence outside writeMu so Close cannot deadlock.
+		c.fenceUnavailableAuthKey()
+		return ErrConnClosed
+	}
+	if errors.Is(err, errConnRetiredAtPhysicalWrite) {
+		// Terminal shutdown already owns lifecycle/transport close. Do not call
+		// failTransport here: sendTerminalProtoError is waiting for this actor to
+		// drain and must retain the lease long enough to write the final bare -404.
+		return ErrConnClosed
 	}
 	if err != nil {
 		// 任一 partial write / timeout 都可能破坏 MTProto 帧边界；该 socket

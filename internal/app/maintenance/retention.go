@@ -12,7 +12,7 @@ type DispatchOutboxRetentionStore interface {
 	DeleteFailed(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
 
-// TempAuthKeyRetentionStore 回收过期的 PFS temp auth key 绑定。
+// TempAuthKeyRetentionStore 回收过期的 PFS temp auth key（含未绑定 key）。
 type TempAuthKeyRetentionStore interface {
 	DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error)
 }
@@ -64,9 +64,9 @@ type LoginCodeDeliveryRetentionStore interface {
 // getUpdates 读取（fromID 恒 > confirmed），宽限仅防御 offset 回拨调试；回收目标是清堆积。
 const botAPIConfirmedGrace = 15 * time.Minute
 
-// tempAuthKeyExpiryGrace 是 temp key 过期后的回收宽限：ResolveAuthKey 对
-// 「已过期但 perm 已授权」的绑定是容忍的，立即删除会突然断掉这批宽限中的
-// 连接；回收目标是清堆积，晚一天无妨。
+// tempAuthKeyExpiryGrace 只是一段数据库物理回收宽限。MTProto edge 在 expires_at
+// 到点即停止入站 RPC、主动推送和重发，并断开连接；ResolveAuthKey 不容忍过期 key。
+// 晚一天删除用于吸收客户端轮换/诊断窗口，不会延长协议有效期。
 const tempAuthKeyExpiryGrace = 24 * time.Hour
 
 const (

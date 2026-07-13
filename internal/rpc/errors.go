@@ -399,6 +399,8 @@ func signInErr(err error) error {
 		return tgerr.New(400, "PHONE_CODE_INVALID")
 	case errors.Is(err, auth.ErrCodeExpired):
 		return tgerr.New(400, "PHONE_CODE_EXPIRED")
+	case errors.Is(err, auth.ErrAuthKeyPermEmpty):
+		return tgerr.New(401, "AUTH_KEY_PERM_EMPTY")
 	case errors.Is(err, domain.ErrFirstNameInvalid):
 		return firstNameInvalidErr()
 	case errors.Is(err, domain.ErrSessionPasswordNeeded):
@@ -455,8 +457,14 @@ func passwordErr(err error) error {
 // bindTempAuthKeyErr 映射 PFS temp auth key 绑定错误。
 func bindTempAuthKeyErr(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrExpiresAtInvalid):
+		return tgerr.New(400, "EXPIRES_AT_INVALID")
+	case errors.Is(err, auth.ErrTempAuthKeyEmpty):
+		return tgerr.New(400, "TEMP_AUTH_KEY_EMPTY")
 	case errors.Is(err, auth.ErrEncryptedMessageInvalid):
 		return tgerr.New(400, "ENCRYPTED_MESSAGE_INVALID")
+	case errors.Is(err, auth.ErrTempAuthKeyAlreadyBound):
+		return tgerr.New(400, "TEMP_AUTH_KEY_ALREADY_BOUND")
 	default:
 		return internalErr()
 	}

@@ -77,7 +77,12 @@ func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTemp
 		r.tempKeyResolveCache.Delete(id)
 	}
 	if r.deps.Sessions != nil {
-		r.deps.Sessions.BindAuthKeyForSession(id, sessionID, authKeyIDFromInt64(req.PermAuthKeyID))
+		permID := authKeyIDFromInt64(req.PermAuthKeyID)
+		if all, ok := r.deps.Sessions.(RawAuthKeySessionBinder); ok {
+			all.BindAuthKeyForRawAuthKey(id, permID)
+		} else {
+			r.deps.Sessions.BindAuthKeyForSession(id, sessionID, permID)
+		}
 	}
 	r.invalidateAuthUserCache(id)
 	return true, nil

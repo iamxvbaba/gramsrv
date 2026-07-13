@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"telesrv/internal/store"
@@ -28,13 +29,23 @@ func NewAuthKeyStore(db sqlcgen.DBTX) *AuthKeyStore {
 // Save 实现 store.AuthKeyStore。auth_key_id 以小端解释为 int64 存入 BIGINT；
 // created_at/last_used_at 交由 DB 默认值（now()），故传入的 CreatedAt 不落库。
 func (s *AuthKeyStore) Save(ctx context.Context, k store.AuthKeyData) error {
-	if _, err := s.db.Exec(ctx, `
-INSERT INTO auth_keys (auth_key_id, body, server_salt)
-VALUES ($1, $2, $3)
+	if !store.ValidNewAuthKeyProtocolExpiry(k.ExpiresAt) {
+		return store.ErrInvalidAuthKeyProtocolExpiry
+	}
+	tag, err := s.db.Exec(ctx, `
+INSERT INTO auth_keys (auth_key_id, body, server_salt, expires_at)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (auth_key_id) DO UPDATE
-SET body = EXCLUDED.body, server_salt = EXCLUDED.server_salt, last_used_at = now()
-`, authKeyIDToInt64(k.ID), k.Value[:], k.ServerSalt); err != nil {
+SET server_salt = EXCLUDED.server_salt,
+    last_used_at = now()
+WHERE auth_keys.body = EXCLUDED.body
+  AND auth_keys.expires_at = EXCLUDED.expires_at
+`, authKeyIDToInt64(k.ID), k.Value[:], k.ServerSalt, k.ExpiresAt)
+	if err != nil {
 		return fmt.Errorf("upsert auth key: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return store.ErrAuthKeyProtocolMetadataConflict
 	}
 	return nil
 }
@@ -47,6 +58,7 @@ func (s *AuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, 
 	var (
 		body          []byte
 		serverSalt    int64
+		expiresAt     int
 		createdAt     pgtype.Timestamptz
 		layer         int
 		deviceModel   string
@@ -60,8 +72,8 @@ UPDATE auth_keys
 SET last_used_at = now()
 WHERE auth_key_id = $1
 RETURNING auth_key_id, body, server_salt, created_at,
-       layer, device_model, platform, system_version, api_id, app_version
-`, authKeyIDToInt64(id)).Scan(new(int64), &body, &serverSalt, &createdAt, &layer, &deviceModel, &platform, &systemVersion, &apiID, &appVersion)
+       expires_at, layer, device_model, platform, system_version, api_id, app_version
+`, authKeyIDToInt64(id)).Scan(new(int64), &body, &serverSalt, &createdAt, &expiresAt, &layer, &deviceModel, &platform, &systemVersion, &apiID, &appVersion)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.AuthKeyData{}, false, nil
@@ -74,6 +86,7 @@ RETURNING auth_key_id, body, server_salt, created_at,
 	data := store.AuthKeyData{
 		ID:            id,
 		ServerSalt:    serverSalt,
+		ExpiresAt:     expiresAt,
 		Layer:         layer,
 		DeviceModel:   deviceModel,
 		Platform:      platform,
@@ -154,10 +167,26 @@ WHERE auth_key_id = $1
 // 手写 SQL 而非 sqlc 生成：避免触碰 sqlcgen 再生成链路。
 //
 // 同时清理把本 key 当作 perm key 的 temp auth key 行：temp_auth_key_bindings.temp_auth_key_id
-// 侧有外键 ON DELETE CASCADE，删除 temp key 会自动清绑定；perm_auth_key_id 列无外键，
-// 因此被踢/登出删除 perm key 时必须先把关联 temp key 一并删掉。否则 Web/上传连接用
+// 侧有外键 ON DELETE CASCADE，删除 temp key 会自动清绑定；perm_auth_key_id 侧由
+// RESTRICT FK 防止悬空，因此被踢/销毁 perm key 时必须先把关联 temp key 一并删掉。否则 Web/上传连接用
 // raw temp key 重连时仍能进入 RPC 层，只得到 AUTH_KEY_UNREGISTERED，而不是连接层 404。
 func (s *AuthKeyStore) Delete(ctx context.Context, id [8]byte) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		err := s.deleteAuthKeyOnce(ctx, id)
+		if err == nil {
+			return nil
+		}
+		if !isPermAuthKeyDeleteRace(err) {
+			return err
+		}
+		if _, inTx := s.db.(pgx.Tx); inTx {
+			return err
+		}
+	}
+	return fmt.Errorf("delete auth key: permanent-key binding changed during all retries")
+}
+
+func (s *AuthKeyStore) deleteAuthKeyOnce(ctx context.Context, id [8]byte) error {
 	keyID := authKeyIDToInt64(id)
 	var touched int
 	if err := s.db.QueryRow(ctx, `
@@ -177,15 +206,30 @@ WITH doomed_temp AS MATERIALIZED (
 	RETURNING auth_key_id
 ), deleted_temp AS (
 	DELETE FROM auth_keys
-	WHERE auth_key_id IN (SELECT auth_key_id FROM doomed_keys)
+	WHERE auth_key_id IN (SELECT temp_auth_key_id FROM doomed_temp)
+	RETURNING auth_key_id
+), deleted_key AS (
+	DELETE FROM auth_keys
+	WHERE auth_key_id = $1
+	  AND (SELECT count(*) FROM deleted_temp) >= 0
 	RETURNING auth_key_id
 )
 SELECT
 	(SELECT count(*) FROM deleted_update_states)::int +
-	(SELECT count(*) FROM deleted_temp)::int`, keyID).Scan(&touched); err != nil {
+	(SELECT count(*) FROM deleted_temp)::int +
+	(SELECT count(*) FROM deleted_key)::int`, keyID).Scan(&touched); err != nil {
 		return fmt.Errorf("delete auth key and temp bindings: %w", err)
 	}
 	return nil
+}
+
+const tempAuthKeyPermFKConstraint = "temp_auth_key_bindings_perm_auth_key_id_fkey"
+
+func isPermAuthKeyDeleteRace(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23503" &&
+		pgErr.ConstraintName == tempAuthKeyPermFKConstraint
 }
 
 // DeleteOrphaned 回收握手已落库、但从未形成 authorization/temp binding 且当前没有

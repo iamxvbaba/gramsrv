@@ -505,8 +505,8 @@ RETURNING id
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
 	})
 	if _, err := pool.Exec(ctx, `
-INSERT INTO auth_keys (auth_key_id, body, server_salt)
-SELECT id, decode(repeat('00', 256), 'hex'), 0
+INSERT INTO auth_keys (auth_key_id, body, server_salt, expires_at)
+SELECT id, decode(repeat('00', 256), 'hex'), 0, 0
 FROM unnest($1::bigint[]) AS id`, authKeyIDs); err != nil {
 		t.Fatalf("bulk insert old-tail auth keys: %v", err)
 	}

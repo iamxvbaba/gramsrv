@@ -18,11 +18,12 @@ import (
 func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 	ctx := context.Background()
 	keys := memory.NewAuthKeyStore()
-	tempBindings := memory.NewTempAuthKeyBindingStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
 	permKey := testAuthKey(0x11)
 	tempKey := testAuthKey(0x55)
+	expiresAt := int(time.Now().Add(time.Hour).Unix())
 	saveAuthKey(t, keys, permKey)
-	saveAuthKey(t, keys, tempKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, expiresAt)
 
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), keys, tempBindings, "12345")
 
@@ -31,7 +32,6 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 		sessionID = int64(0x1020304050)
 		msgID     = int64(0x0102030405060708)
 	)
-	expiresAt := int(time.Now().Add(time.Hour).Unix())
 	encrypted, err := mtcrypto.EncryptBindMessage(
 		bytes.NewReader(bytes.Repeat([]byte{0xCD}, 128)),
 		permKey,
@@ -68,6 +68,70 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 	})
 	if !errors.Is(err, ErrEncryptedMessageInvalid) {
 		t.Fatalf("BindTempAuthKey wrong session err = %v, want ErrEncryptedMessageInvalid", err)
+	}
+
+	// TDesktop intentionally adds a 30-second bind grace to the expiry it
+	// derived from p_q_inner_data_temp. The request is valid, but the durable
+	// binding must be normalized back to the server handshake expiry.
+	extendedExpiry := expiresAt + 30
+	extendedEncrypted, err := mtcrypto.EncryptBindMessage(
+		bytes.NewReader(bytes.Repeat([]byte{0xCE}, 128)),
+		permKey,
+		msgID+4,
+		&mtcrypto.BindAuthKeyInner{
+			Nonce:         nonce,
+			TempAuthKeyID: tempKey.IntID(),
+			PermAuthKeyID: permKey.IntID(),
+			TempSessionID: sessionID,
+			ExpiresAt:     extendedExpiry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("encrypt extended bind message: %v", err)
+	}
+	err = svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
+		TempAuthKeyID:    tempKey.ID,
+		PermAuthKeyID:    permKey.IntID(),
+		Nonce:            nonce,
+		ExpiresAt:        extendedExpiry,
+		EncryptedMessage: extendedEncrypted,
+	})
+	if err != nil {
+		t.Fatalf("BindTempAuthKey TDesktop grace expiry: %v", err)
+	}
+	stored, found, getErr := tempBindings.GetByTemp(ctx, tempKey.ID)
+	if getErr != nil || !found || stored.ExpiresAt != expiresAt {
+		t.Fatalf("stored binding after extension attempt = %+v found=%v err=%v", stored, found, getErr)
+	}
+}
+
+func TestBindTempAuthKeyClassifiesExpiryWithoutDestroyingPermanentKey(t *testing.T) {
+	ctx := context.Background()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
+	permKey := testAuthKey(0x31)
+	tempKey := testAuthKey(0x32)
+	saveAuthKey(t, keys, permKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, int(time.Now().Add(-time.Second).Unix()))
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), keys, tempBindings, "12345")
+
+	request := domain.TempAuthKeyBinding{
+		TempAuthKeyID: tempKey.ID,
+		PermAuthKeyID: permKey.IntID(),
+		ExpiresAt:     int(time.Now().Add(time.Hour).Unix()),
+	}
+	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
+		t.Fatalf("expired protocol temp key err = %v, want ErrTempAuthKeyEmpty", err)
+	}
+
+	request.TempAuthKeyID = testAuthKey(0x33).ID
+	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
+		t.Fatalf("missing protocol temp key err = %v, want ErrTempAuthKeyEmpty", err)
+	}
+
+	request.ExpiresAt = int(time.Now().Add(-time.Second).Unix())
+	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrExpiresAtInvalid) {
+		t.Fatalf("expired request proof err = %v, want ErrExpiresAtInvalid", err)
 	}
 }
 
@@ -115,15 +179,19 @@ func TestUpdateAuthKeyClientInfoConvergesAuthorizationMetadata(t *testing.T) {
 
 func TestResolveAuthKeyUsesValidTempBinding(t *testing.T) {
 	ctx := context.Background()
-	tempBindings := memory.NewTempAuthKeyBindingStore()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
 	permKey := testAuthKey(0x11)
 	tempKey := testAuthKey(0x55)
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, tempBindings, "12345")
+	expiresAt := int(time.Now().Add(time.Hour).Unix())
+	saveAuthKey(t, keys, permKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, expiresAt)
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), keys, tempBindings, "12345")
 
 	if err := tempBindings.Save(ctx, domain.TempAuthKeyBinding{
 		TempAuthKeyID: tempKey.ID,
 		PermAuthKeyID: permKey.IntID(),
-		ExpiresAt:     int(time.Now().Add(time.Hour).Unix()),
+		ExpiresAt:     expiresAt,
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
@@ -139,11 +207,15 @@ func TestResolveAuthKeyUsesValidTempBinding(t *testing.T) {
 
 func TestResolveAuthKeyAllowsExpiredTempBindingForAuthorizedPermKey(t *testing.T) {
 	ctx := context.Background()
-	tempBindings := memory.NewTempAuthKeyBindingStore()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
 	authz := memory.NewAuthorizationStore()
 	permKey := testAuthKey(0x21)
 	tempKey := testAuthKey(0x65)
-	svc := NewService(memory.NewUserStore(), authz, memory.NewCodeStore(), nil, tempBindings, "12345")
+	expiresAt := int(time.Now().Add(-time.Minute).Unix())
+	saveAuthKey(t, keys, permKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, expiresAt)
+	svc := NewService(memory.NewUserStore(), authz, memory.NewCodeStore(), keys, tempBindings, "12345")
 
 	if err := authz.Bind(ctx, domain.Authorization{AuthKeyID: permKey.ID, UserID: 1000000001}); err != nil {
 		t.Fatalf("bind authorization: %v", err)
@@ -151,7 +223,7 @@ func TestResolveAuthKeyAllowsExpiredTempBindingForAuthorizedPermKey(t *testing.T
 	if err := tempBindings.Save(ctx, domain.TempAuthKeyBinding{
 		TempAuthKeyID: tempKey.ID,
 		PermAuthKeyID: permKey.IntID(),
-		ExpiresAt:     int(time.Now().Add(-time.Minute).Unix()),
+		ExpiresAt:     expiresAt,
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
@@ -165,17 +237,21 @@ func TestResolveAuthKeyAllowsExpiredTempBindingForAuthorizedPermKey(t *testing.T
 	}
 }
 
-func TestResolveAuthKeyRejectsExpiredTempBindingWithoutAuthorizedPermKey(t *testing.T) {
+func TestResolveAuthKeyKeepsExpiredBindingCanonicalWithoutAuthorization(t *testing.T) {
 	ctx := context.Background()
-	tempBindings := memory.NewTempAuthKeyBindingStore()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
 	permKey := testAuthKey(0x31)
 	tempKey := testAuthKey(0x75)
-	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, tempBindings, "12345")
+	expiresAt := int(time.Now().Add(-time.Minute).Unix())
+	saveAuthKey(t, keys, permKey)
+	saveAuthKeyWithExpiry(t, keys, tempKey, expiresAt)
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), keys, tempBindings, "12345")
 
 	if err := tempBindings.Save(ctx, domain.TempAuthKeyBinding{
 		TempAuthKeyID: tempKey.ID,
 		PermAuthKeyID: permKey.IntID(),
-		ExpiresAt:     int(time.Now().Add(-time.Minute).Unix()),
+		ExpiresAt:     expiresAt,
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
@@ -184,8 +260,87 @@ func TestResolveAuthKeyRejectsExpiredTempBindingWithoutAuthorizedPermKey(t *test
 	if err != nil {
 		t.Fatalf("ResolveAuthKey: %v", err)
 	}
-	if ok || got != ([8]byte{}) {
-		t.Fatalf("resolved = %x ok=%v, want expired unresolved", got, ok)
+	if !ok || got != permKey.ID {
+		t.Fatalf("resolved = %x ok=%v, want canonical perm %x even while logged out", got, ok, permKey.ID)
+	}
+}
+
+func TestExpiredTempLogoutReloginNeverAuthorizesRawTempKey(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	keys := memory.NewAuthKeyStore()
+	tempBindings := memory.NewTempAuthKeyBindingStore(keys)
+	permKey := testAuthKey(0x41)
+	tempKey := testAuthKey(0x81)
+	expiresAt := int(time.Now().Add(-time.Minute).Unix())
+	if err := keys.Save(ctx, store.AuthKeyData{ID: permKey.ID}); err != nil {
+		t.Fatalf("save perm key: %v", err)
+	}
+	if err := keys.Save(ctx, store.AuthKeyData{
+		ID: tempKey.ID, ExpiresAt: expiresAt,
+	}); err != nil {
+		t.Fatalf("save temp key: %v", err)
+	}
+	if err := tempBindings.Save(ctx, domain.TempAuthKeyBinding{
+		TempAuthKeyID: tempKey.ID,
+		PermAuthKeyID: permKey.IntID(),
+		ExpiresAt:     expiresAt,
+	}); err != nil {
+		t.Fatalf("save temp binding: %v", err)
+	}
+	bob, err := users.Create(ctx, domain.User{Phone: "15550008101", FirstName: "Bob"})
+	if err != nil {
+		t.Fatalf("create Bob: %v", err)
+	}
+	alice, err := users.Create(ctx, domain.User{Phone: "15550008102", FirstName: "Alice"})
+	if err != nil {
+		t.Fatalf("create Alice: %v", err)
+	}
+	if err := authz.Bind(ctx, domain.Authorization{AuthKeyID: permKey.ID, UserID: bob.ID}); err != nil {
+		t.Fatalf("authorize Bob: %v", err)
+	}
+
+	svc := NewService(users, authz, memory.NewCodeStore(), keys, tempBindings, "12345")
+	if err := svc.LogOut(ctx, permKey.ID); err != nil {
+		t.Fatalf("logout Bob: %v", err)
+	}
+	resolved, ok, err := svc.ResolveAuthKey(ctx, tempKey.ID)
+	if err != nil || !ok || resolved != permKey.ID {
+		t.Fatalf("resolve after logout = %x/%v/%v, want perm", resolved, ok, err)
+	}
+	if _, err := svc.BindVerifiedLogin(ctx, domain.Authorization{AuthKeyID: resolved}, alice.ID); err != nil {
+		t.Fatalf("relogin Alice on canonical perm: %v", err)
+	}
+	if a, found, err := authz.ByAuthKey(ctx, permKey.ID); err != nil || !found || a.UserID != alice.ID {
+		t.Fatalf("perm authorization = %+v found=%v err=%v, want Alice", a, found, err)
+	}
+	if a, found, err := authz.ByAuthKey(ctx, tempKey.ID); err != nil || found {
+		t.Fatalf("temp authorization = %+v found=%v err=%v, want absent", a, found, err)
+	}
+}
+
+func TestAuthorizationBindRejectsTemporaryProtocolKey(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	keys := memory.NewAuthKeyStore()
+	tempKey := testAuthKey(0x82)
+	if err := keys.Save(ctx, store.AuthKeyData{
+		ID: tempKey.ID, ExpiresAt: int(time.Now().Add(time.Hour).Unix()),
+	}); err != nil {
+		t.Fatalf("save temp key: %v", err)
+	}
+	u, err := users.Create(ctx, domain.User{Phone: "15550008201", FirstName: "Alice"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	svc := NewService(users, authz, memory.NewCodeStore(), keys, memory.NewTempAuthKeyBindingStore(keys), "12345")
+	if _, err := svc.BindVerifiedLogin(ctx, domain.Authorization{AuthKeyID: tempKey.ID}, u.ID); !errors.Is(err, ErrAuthKeyPermEmpty) {
+		t.Fatalf("bind temp authorization err = %v, want ErrAuthKeyPermEmpty", err)
+	}
+	if _, found, err := authz.ByAuthKey(ctx, tempKey.ID); err != nil || found {
+		t.Fatalf("temp authorization found=%v err=%v, want absent", found, err)
 	}
 }
 
@@ -666,10 +821,14 @@ func testAuthKey(seed byte) mtcrypto.AuthKey {
 }
 
 func saveAuthKey(t *testing.T, keys store.AuthKeyStore, key mtcrypto.AuthKey) {
+	saveAuthKeyWithExpiry(t, keys, key, 0)
+}
+
+func saveAuthKeyWithExpiry(t *testing.T, keys store.AuthKeyStore, key mtcrypto.AuthKey, expiresAt int) {
 	t.Helper()
 	var value [256]byte
 	copy(value[:], key.Value[:])
-	if err := keys.Save(context.Background(), store.AuthKeyData{ID: key.ID, Value: value}); err != nil {
+	if err := keys.Save(context.Background(), store.AuthKeyData{ID: key.ID, Value: value, ExpiresAt: expiresAt}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
 }

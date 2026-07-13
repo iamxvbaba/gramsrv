@@ -164,7 +164,35 @@ func (l *physicalTransportLease) SendDeadlineWithScratch(deadline time.Time, b *
 	})
 }
 
+// SendDeadlineWithScratchGuarded evaluates guard while holding the physical
+// write-ownership lock, immediately before entering the raw writer. Conn-level
+// checks performed before this call are insufficient: a quick ACK or protocol
+// write may hold writeMu across a temporary-key expiry boundary. The guard must
+// not close/fence the connection itself because that would re-enter transport
+// shutdown while writeMu is held; callers handle its error after the lock drops.
+func (l *physicalTransportLease) SendDeadlineWithScratchGuarded(deadline time.Time, b *bin.Buffer, scratch *[]byte, guard func() error) error {
+	return l.withCurrentWriterGuarded(guard, func(raw transport.Conn) error {
+		if writer, ok := raw.(deadlineOutboundScratchWriter); ok {
+			return writer.SendDeadlineWithScratch(deadline, b, scratch)
+		}
+		if writer, ok := raw.(deadlineOutboundWriter); ok {
+			return writer.SendDeadline(deadline, b)
+		}
+		ctx := context.Background()
+		cancel := func() {}
+		if !deadline.IsZero() {
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		defer cancel()
+		return raw.Send(ctx, b)
+	})
+}
+
 func (l *physicalTransportLease) withCurrentWriter(send func(transport.Conn) error) error {
+	return l.withCurrentWriterGuarded(nil, send)
+}
+
+func (l *physicalTransportLease) withCurrentWriterGuarded(guard func() error, send func(transport.Conn) error) error {
 	if l == nil || l.owner == nil || l.owner.raw == nil {
 		return ErrConnClosed
 	}
@@ -173,6 +201,11 @@ func (l *physicalTransportLease) withCurrentWriter(send func(transport.Conn) err
 	defer owner.writeMu.Unlock()
 	if owner.state.Load() != l.generation {
 		return ErrConnClosed
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return err
+		}
 	}
 	return send(owner.raw)
 }

@@ -46,7 +46,7 @@ func TestTelegramClientEndToEnd(t *testing.T) {
 	authzStore := memory.NewAuthorizationStore()
 	authKeyStore := memory.NewAuthKeyStore()
 	deps := rpc.Deps{
-		Auth:    auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), "12345"),
+		Auth:    auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), "12345"),
 		Users:   users.NewService(userStore),
 		Updates: updates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
 	}

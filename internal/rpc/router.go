@@ -324,8 +324,24 @@ func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, s
 		}
 	}
 	if hasCached {
-		if cached == rawAuthKeyID || r.deps.Auth == nil {
+		if r.deps.Auth == nil {
 			return cached, nil
+		}
+		if cached == rawAuthKeyID {
+			// raw==business is a permanent-key fast path only when the edge confirms
+			// the raw key has no protocol expiry. A temporary session may have cached
+			// raw before another concurrent session completes auth.bindTempAuthKey;
+			// it must keep resolving until the durable binding becomes visible.
+			metadata, ok := r.deps.Sessions.(RawAuthKeyMetadataProvider)
+			if ok {
+				expiresAt, found := metadata.AuthKeyExpiresAtForSession(rawAuthKeyID, sessionID)
+				if found && expiresAt == 0 {
+					return cached, nil
+				}
+			}
+			// Missing metadata and a session lookup miss both fail closed to the
+			// durable resolver. Treating either as proof of permanence recreates the
+			// raw-temp identity split when an alternate SessionBinder is installed.
 		}
 		// temp→perm 解析缓存：PFS 连接每帧都要解析一次 temp key（ResolveAuthKey 打 PG）。TTL 内复用
 		// 上次解析、跳过 DB。仅当缓存的 perm 仍等于 session binder 当前 perm 才用（rebind 会改 binder

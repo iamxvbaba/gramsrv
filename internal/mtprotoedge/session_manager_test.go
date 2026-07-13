@@ -109,6 +109,40 @@ func TestSessionManagerRegistry(t *testing.T) {
 	}
 }
 
+func TestBindAuthKeyForRawAuthKeyUpdatesEveryTemporarySession(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	raw := [8]byte{0x71}
+	perm := [8]byte{0x31}
+	expiresAt := int(time.Now().Add(time.Hour).Unix())
+	c1 := &Conn{sessionID: 101, authKeyID: raw, authKeyExpiresAt: expiresAt}
+	c2 := &Conn{sessionID: 102, authKeyID: raw, authKeyExpiresAt: expiresAt}
+	if err := sm.Register(c1); err != nil {
+		t.Fatalf("register c1: %v", err)
+	}
+	if err := sm.Register(c2); err != nil {
+		t.Fatalf("register c2: %v", err)
+	}
+	sm.BindAuthKeyForSession(raw, c1.sessionID, raw)
+	sm.BindAuthKeyForSession(raw, c2.sessionID, raw)
+	sm.BindUserForAuthKey(raw, c1.sessionID, 1001)
+	sm.BindUserForAuthKey(raw, c2.sessionID, 1001)
+
+	if got := sm.BindAuthKeyForRawAuthKey(raw, perm); got != 2 {
+		t.Fatalf("bound sessions = %d, want 2", got)
+	}
+	for _, sessionID := range []int64{c1.sessionID, c2.sessionID} {
+		if got, ok := sm.AuthKeyIDForSession(raw, sessionID); !ok || got != perm {
+			t.Fatalf("session %d business key = %x/%v, want perm %x", sessionID, got, ok, perm)
+		}
+		if userID, resolved := sm.UserIDResolvedForAuthKey(raw, sessionID); resolved || userID != 0 {
+			t.Fatalf("session %d user after identity switch = %d/%v, want unresolved", sessionID, userID, resolved)
+		}
+		if got, found := sm.AuthKeyExpiresAtForSession(raw, sessionID); !found || got != expiresAt {
+			t.Fatalf("session %d raw expiry = %d/%v, want %d", sessionID, got, found, expiresAt)
+		}
+	}
+}
+
 func TestSessionManagerReplacementClosesOldPhysicalTransport(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}

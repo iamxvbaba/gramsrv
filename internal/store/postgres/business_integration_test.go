@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -26,15 +27,32 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 	if _, err := rand.Read(authBody[:]); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewAuthKeyStore(pool).Save(ctx, store.AuthKeyData{
+	authExpiry := int(time.Now().Add(time.Hour).Unix())
+	keys := NewAuthKeyStore(pool)
+	if err := keys.Save(ctx, store.AuthKeyData{
 		ID:         authID,
 		Value:      authBody,
 		ServerSalt: 42,
+		ExpiresAt:  authExpiry,
 	}); err != nil {
 		t.Fatalf("save auth key: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(authID))
+		_ = keys.Delete(ctx, authID)
+	})
+	var permAuthID [8]byte
+	var permAuthBody [256]byte
+	if _, err := rand.Read(permAuthID[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(permAuthBody[:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.Save(ctx, store.AuthKeyData{ID: permAuthID, Value: permAuthBody}); err != nil {
+		t.Fatalf("save permanent auth key: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = keys.Delete(ctx, permAuthID)
 	})
 
 	users := NewUserStore(pool)
@@ -164,10 +182,10 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 
 	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, domain.TempAuthKeyBinding{
 		TempAuthKeyID:    authID,
-		PermAuthKeyID:    12345,
+		PermAuthKeyID:    authKeyIDToInt64(permAuthID),
 		Nonce:            67890,
 		TempSessionID:    24680,
-		ExpiresAt:        111,
+		ExpiresAt:        authExpiry,
 		EncryptedMessage: []byte("binding"),
 	}); err != nil {
 		t.Fatalf("save temp auth key binding: %v", err)

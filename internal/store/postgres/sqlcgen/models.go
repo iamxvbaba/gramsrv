@@ -175,6 +175,7 @@ type AuthKey struct {
 	ApiID         int32
 	AppVersion    string
 	LastUsedAt    pgtype.Timestamptz
+	ExpiresAt     int32
 }
 
 type Authorization struct {

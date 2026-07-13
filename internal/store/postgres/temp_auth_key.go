@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
@@ -22,24 +25,44 @@ func NewTempAuthKeyBindingStore(db sqlcgen.DBTX) *TempAuthKeyBindingStore {
 }
 
 func (s *TempAuthKeyBindingStore) Save(ctx context.Context, b domain.TempAuthKeyBinding) error {
-	if err := s.q.UpsertTempAuthKeyBinding(ctx, sqlcgen.UpsertTempAuthKeyBindingParams{
+	if b.ExpiresAt <= 0 || int64(b.ExpiresAt) > math.MaxInt32 {
+		return store.ErrAuthKeyBindingInvalid
+	}
+	n, err := s.q.UpsertTempAuthKeyBinding(ctx, sqlcgen.UpsertTempAuthKeyBindingParams{
 		TempAuthKeyID:    authKeyIDToInt64(b.TempAuthKeyID),
 		PermAuthKeyID:    b.PermAuthKeyID,
 		Nonce:            b.Nonce,
 		TempSessionID:    b.TempSessionID,
 		ExpiresAt:        int32(b.ExpiresAt),
 		EncryptedMessage: b.EncryptedMessage,
-	}); err != nil {
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return store.ErrAuthKeyBindingInvalid
+		}
 		return fmt.Errorf("upsert temp auth key binding: %w", err)
+	}
+	if n == 0 {
+		if current, found, getErr := s.GetByTemp(ctx, b.TempAuthKeyID); getErr != nil {
+			return getErr
+		} else if found && current.PermAuthKeyID != b.PermAuthKeyID {
+			return store.ErrTempAuthKeyAlreadyBound
+		}
+		return store.ErrAuthKeyBindingInvalid
 	}
 	return nil
 }
 
-// DeleteExpired 实现 store.TempAuthKeyBindingStore：删除 auth_keys 中过期的 temp key，
-// temp_auth_key_bindings 经 ON DELETE CASCADE 一并清除，过期 key 的入站帧随之失效。
+// DeleteExpired 实现 store.TempAuthKeyBindingStore：按 auth_keys.expires_at 的部分索引
+// 有界删除所有过期 temp key（含从未绑定的握手 key），binding 经 CASCADE 一并清除。
+// Edge 已在准确协议时刻停止使用 key；这里的 24h 宽限只控制数据库物理回收。
 func (s *TempAuthKeyBindingStore) DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, nil
+	}
+	if expiredBefore <= 0 || expiredBefore > math.MaxInt32 {
+		return 0, fmt.Errorf("delete expired temp auth keys: invalid expiry cutoff %d", expiredBefore)
 	}
 	n, err := s.q.DeleteExpiredTempAuthKeys(ctx, sqlcgen.DeleteExpiredTempAuthKeysParams{
 		ExpiresAt: int32(expiredBefore),

@@ -117,13 +117,16 @@ var errActivationAuthKeyRejected = errors.New("activation auth key no longer exi
 func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
 	var key crypto.AuthKey
 	var serverSalt int64
+	var authKeyExpiresAt int
 	if fetchedKey != nil {
 		key = crypto.AuthKey{Value: crypto.Key(fetchedKey.Value), ID: fetchedKey.ID}
 		serverSalt = fetchedKey.ServerSalt
+		authKeyExpiresAt = fetchedKey.ExpiresAt
 	} else {
 		// 快路径：复用已建立连接缓存的密钥与盐（同一 auth key 的后续帧，含同连接换 session）。
 		key = current.key
 		serverSalt = current.salt
+		authKeyExpiresAt = current.authKeyExpiresAt
 	}
 
 	frame, err := decryptClientFrame(key, b, plain)
@@ -152,6 +155,7 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		} else {
 			current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		}
+		current.authKeyExpiresAt = authKeyExpiresAt
 		// 注册即播种协商 layer：新 Conn 的 clientLayer 为 0（=canonical 227），若等到
 		// 首条 RPC 的 Dispatch 返回后才刷新，重连老客户端在首条 RPC handler 执行期间
 		// 收到的 pending flush / 并发 push 会漏降级。进程内重连时 rpc 层留有
@@ -221,10 +225,10 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		if getErr != nil {
 			return current, fmt.Errorf("revalidate activation auth key: %w", getErr)
 		}
-		if !found || fresh.ID != current.authKeyID || fresh.Value != [256]byte(current.key.Value) {
+		if !found || fresh.ID != current.authKeyID || fresh.Value != [256]byte(current.key.Value) || authKeyProtocolUnavailable(fresh.ExpiresAt, s.clock.Now()) {
 			// Send the terminal protocol error while the claim still owns a live writer;
 			// the deferred abort then fences and removes it before serveConn returns.
-			if sendErr := s.sendProtoError(ctx, current.transport, codec.CodeAuthKeyNotFound); sendErr != nil {
+			if sendErr := s.sendTerminalProtoError(ctx, current, codec.CodeAuthKeyNotFound); sendErr != nil {
 				return current, sendErr
 			}
 			return current, errActivationAuthKeyRejected

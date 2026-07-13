@@ -17,22 +17,23 @@ func TestAuthKeyStoreDeleteOrphanedIsBoundedAndProtectsReferencesPostgres(t *tes
 	auths := NewAuthorizationStore(pool)
 	userID := createRevokeTestUser(t, ctx, pool, "orphan-auth-key")
 
-	newKey := func() [8]byte {
+	newKey := func(expiresAt int) [8]byte {
 		var id [8]byte
 		if _, err := rand.Read(id[:]); err != nil {
 			t.Fatalf("random auth key id: %v", err)
 		}
-		if err := keys.Save(ctx, store.AuthKeyData{ID: id}); err != nil {
+		if err := keys.Save(ctx, store.AuthKeyData{ID: id, ExpiresAt: expiresAt}); err != nil {
 			t.Fatalf("save auth key %x: %v", id, err)
 		}
 		t.Cleanup(func() { _ = keys.Delete(ctx, id) })
 		return id
 	}
-	orphanOne, orphanTwo := newKey(), newKey()
-	recent := newKey()
-	authorized := newKey()
-	temp, perm := newKey(), newKey()
-	active := newKey()
+	tempExpiry := int(time.Now().Add(time.Hour).Unix())
+	orphanOne, orphanTwo := newKey(0), newKey(0)
+	recent := newKey(0)
+	authorized := newKey(0)
+	temp, perm := newKey(tempExpiry), newKey(0)
+	active := newKey(0)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO update_states (auth_key_id, user_id, pts, observed_pts)
 VALUES ($1, $3, 0, 0), ($2, $3, 0, 0)`,
@@ -45,7 +46,7 @@ VALUES ($1, $3, 0, 0), ($2, $3, 0, 0)`,
 	}
 	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, domain.TempAuthKeyBinding{
 		TempAuthKeyID: temp, PermAuthKeyID: authKeyIDToInt64(perm), Nonce: 1,
-		TempSessionID: 2, ExpiresAt: int(time.Now().Add(time.Hour).Unix()), EncryptedMessage: []byte{1},
+		TempSessionID: 2, ExpiresAt: tempExpiry, EncryptedMessage: []byte{1},
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
@@ -107,8 +108,9 @@ func TestAuthKeyStoreDeleteCleansPermanentAndTempUpdateStatesPostgres(t *testing
 	userID := createRevokeTestUser(t, ctx, pool, "auth-key-delete-state")
 	perm := randomUpdateRetentionAuthKey(t)
 	temp := randomUpdateRetentionAuthKey(t)
-	for _, id := range [][8]byte{perm, temp} {
-		if err := keys.Save(ctx, store.AuthKeyData{ID: id}); err != nil {
+	tempExpiry := int(time.Now().Add(time.Hour).Unix())
+	for id, expiresAt := range map[[8]byte]int{perm: 0, temp: tempExpiry} {
+		if err := keys.Save(ctx, store.AuthKeyData{ID: id, ExpiresAt: expiresAt}); err != nil {
 			t.Fatalf("save auth key %x: %v", id, err)
 		}
 		id := id
@@ -119,7 +121,7 @@ func TestAuthKeyStoreDeleteCleansPermanentAndTempUpdateStatesPostgres(t *testing
 		PermAuthKeyID:    authKeyIDToInt64(perm),
 		Nonce:            31,
 		TempSessionID:    32,
-		ExpiresAt:        int(time.Now().Add(time.Hour).Unix()),
+		ExpiresAt:        tempExpiry,
 		EncryptedMessage: []byte{1},
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
@@ -144,6 +146,61 @@ SELECT
 	}
 	if keyRows != 0 || stateRows != 0 {
 		t.Fatalf("remaining key/state rows = %d/%d, want 0/0", keyRows, stateRows)
+	}
+}
+
+func TestTempAuthKeyRetentionUsesAuthKeyExpiryForBoundAndUnboundKeysPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	keys := NewAuthKeyStore(pool)
+	bindings := NewTempAuthKeyBindingStore(pool)
+	cutoff := int64(time.Now().Add(-time.Hour).Unix())
+	unbound := randomUpdateRetentionAuthKey(t)
+	bound := randomUpdateRetentionAuthKey(t)
+	live := randomUpdateRetentionAuthKey(t)
+	perm := randomUpdateRetentionAuthKey(t)
+	expiries := map[[8]byte]int{
+		unbound: int(cutoff - 2),
+		bound:   int(cutoff - 1),
+		live:    int(cutoff + 1),
+		perm:    0,
+	}
+	for id, expiresAt := range expiries {
+		if err := keys.Save(ctx, store.AuthKeyData{ID: id, ExpiresAt: expiresAt}); err != nil {
+			t.Fatalf("save key %x: %v", id, err)
+		}
+		id := id
+		t.Cleanup(func() { _ = keys.Delete(ctx, id) })
+	}
+	if err := bindings.Save(ctx, domain.TempAuthKeyBinding{
+		TempAuthKeyID: bound, PermAuthKeyID: authKeyIDToInt64(perm), Nonce: 41,
+		TempSessionID: 42, ExpiresAt: expiries[bound], EncryptedMessage: []byte{1},
+	}); err != nil {
+		t.Fatalf("save expired bound key: %v", err)
+	}
+
+	deleted, err := bindings.DeleteExpired(ctx, cutoff, 1)
+	if err != nil || deleted != 1 {
+		t.Fatalf("first bounded expiry delete = %d/%v, want 1/nil", deleted, err)
+	}
+	if _, found, err := keys.Get(ctx, unbound); err != nil || found {
+		t.Fatalf("earliest unbound temp found=%v err=%v, want deleted", found, err)
+	}
+	if _, found, err := keys.Get(ctx, bound); err != nil || !found {
+		t.Fatalf("second expired bound temp found=%v err=%v, want retained after limit=1", found, err)
+	}
+
+	deleted, err = bindings.DeleteExpired(ctx, cutoff, 10)
+	if err != nil || deleted != 1 {
+		t.Fatalf("second expiry delete = %d/%v, want 1/nil", deleted, err)
+	}
+	if _, found, err := bindings.GetByTemp(ctx, bound); err != nil || found {
+		t.Fatalf("binding after temp key cascade found=%v err=%v, want absent", found, err)
+	}
+	for name, id := range map[string][8]byte{"live temp": live, "permanent": perm} {
+		if _, found, err := keys.Get(ctx, id); err != nil || !found {
+			t.Fatalf("%s found=%v err=%v, want retained", name, found, err)
+		}
 	}
 }
 

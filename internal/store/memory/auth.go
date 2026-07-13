@@ -4,44 +4,60 @@ import (
 	"context"
 	"encoding/binary"
 	"sync"
+	"time"
+
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
-	"time"
 )
+
+type authKeyState struct {
+	mu       sync.RWMutex
+	keys     map[[8]byte]store.AuthKeyData
+	bindings map[[8]byte]domain.TempAuthKeyBinding
+}
 
 // AuthKeyStore 是 store.AuthKeyStore 的内存实现。
 type AuthKeyStore struct {
-	mu   sync.RWMutex
-	keys map[[8]byte]store.AuthKeyData
+	state *authKeyState
 }
 
 // NewAuthKeyStore 创建内存 AuthKeyStore。
 func NewAuthKeyStore() *AuthKeyStore {
-	return &AuthKeyStore{keys: make(map[[8]byte]store.AuthKeyData)}
+	return &AuthKeyStore{state: &authKeyState{
+		keys:     make(map[[8]byte]store.AuthKeyData),
+		bindings: make(map[[8]byte]domain.TempAuthKeyBinding),
+	}}
 }
 
 func (s *AuthKeyStore) Save(_ context.Context, k store.AuthKeyData) error {
-	s.mu.Lock()
-	s.keys[k.ID] = k
-	s.mu.Unlock()
+	if !store.ValidNewAuthKeyProtocolExpiry(k.ExpiresAt) {
+		return store.ErrInvalidAuthKeyProtocolExpiry
+	}
+	s.state.mu.Lock()
+	if current, ok := s.state.keys[k.ID]; ok && (current.Value != k.Value || current.ExpiresAt != k.ExpiresAt) {
+		s.state.mu.Unlock()
+		return store.ErrAuthKeyProtocolMetadataConflict
+	}
+	s.state.keys[k.ID] = k
+	s.state.mu.Unlock()
 	return nil
 }
 
 func (s *AuthKeyStore) Get(_ context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
-	s.mu.RLock()
-	k, ok := s.keys[id]
-	s.mu.RUnlock()
+	s.state.mu.RLock()
+	k, ok := s.state.keys[id]
+	s.state.mu.RUnlock()
 	return k, ok, nil
 }
 
 func (s *AuthKeyStore) UpdateClientInfo(_ context.Context, id [8]byte, info store.AuthKeyClientInfo) error {
-	s.mu.Lock()
-	k, ok := s.keys[id]
+	s.state.mu.Lock()
+	k, ok := s.state.keys[id]
 	if ok {
 		mergeAuthKeyClientInfo(&k, info)
-		s.keys[id] = k
+		s.state.keys[id] = k
 	}
-	s.mu.Unlock()
+	s.state.mu.Unlock()
 	return nil
 }
 
@@ -67,35 +83,64 @@ func mergeAuthKeyClientInfo(k *store.AuthKeyData, info store.AuthKeyClientInfo) 
 }
 
 func (s *AuthKeyStore) Delete(_ context.Context, id [8]byte) error {
-	s.mu.Lock()
-	delete(s.keys, id)
-	s.mu.Unlock()
+	s.state.mu.Lock()
+	deleting, exists := s.state.keys[id]
+	if !exists {
+		s.state.mu.Unlock()
+		return nil
+	}
+	if deleting.ExpiresAt > 0 {
+		delete(s.state.bindings, id)
+	} else {
+		permID := int64(binary.LittleEndian.Uint64(id[:]))
+		for tempID, binding := range s.state.bindings {
+			if binding.PermAuthKeyID != permID {
+				continue
+			}
+			delete(s.state.bindings, tempID)
+			delete(s.state.keys, tempID)
+		}
+	}
+	delete(s.state.keys, id)
+	s.state.mu.Unlock()
 	return nil
 }
 
 // TempAuthKeyBindingStore 是 store.TempAuthKeyBindingStore 的内存实现。
 type TempAuthKeyBindingStore struct {
-	mu sync.RWMutex
-	m  map[[8]byte]domain.TempAuthKeyBinding
+	state *authKeyState
 }
 
 // NewTempAuthKeyBindingStore 创建内存 TempAuthKeyBindingStore。
-func NewTempAuthKeyBindingStore() *TempAuthKeyBindingStore {
-	return &TempAuthKeyBindingStore{m: make(map[[8]byte]domain.TempAuthKeyBinding)}
+func NewTempAuthKeyBindingStore(authKeys *AuthKeyStore) *TempAuthKeyBindingStore {
+	if authKeys == nil {
+		panic("memory.NewTempAuthKeyBindingStore requires a non-nil AuthKeyStore")
+	}
+	return &TempAuthKeyBindingStore{state: authKeys.state}
 }
 
 func (s *TempAuthKeyBindingStore) Save(_ context.Context, b domain.TempAuthKeyBinding) error {
 	b.EncryptedMessage = append([]byte(nil), b.EncryptedMessage...)
-	s.mu.Lock()
-	s.m[b.TempAuthKeyID] = b
-	s.mu.Unlock()
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+	if current, ok := s.state.bindings[b.TempAuthKeyID]; ok && current.PermAuthKeyID != b.PermAuthKeyID {
+		return store.ErrTempAuthKeyAlreadyBound
+	}
+	temp, tempFound := s.state.keys[b.TempAuthKeyID]
+	var permID [8]byte
+	binary.LittleEndian.PutUint64(permID[:], uint64(b.PermAuthKeyID))
+	perm, permFound := s.state.keys[permID]
+	if !tempFound || !permFound || temp.ExpiresAt <= 0 || perm.ExpiresAt != 0 || b.ExpiresAt != temp.ExpiresAt {
+		return store.ErrAuthKeyBindingInvalid
+	}
+	s.state.bindings[b.TempAuthKeyID] = b
 	return nil
 }
 
 func (s *TempAuthKeyBindingStore) GetByTemp(_ context.Context, tempAuthKeyID [8]byte) (domain.TempAuthKeyBinding, bool, error) {
-	s.mu.RLock()
-	b, ok := s.m[tempAuthKeyID]
-	s.mu.RUnlock()
+	s.state.mu.RLock()
+	b, ok := s.state.bindings[tempAuthKeyID]
+	s.state.mu.RUnlock()
 	if !ok {
 		return domain.TempAuthKeyBinding{}, false, nil
 	}
@@ -107,17 +152,19 @@ func (s *TempAuthKeyBindingStore) DeleteExpired(_ context.Context, expiredBefore
 	if limit <= 0 {
 		return 0, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
 	deleted := 0
-	for id, b := range s.m {
+	for id, key := range s.state.keys {
 		if deleted >= limit {
 			break
 		}
-		if int64(b.ExpiresAt) < expiredBefore {
-			delete(s.m, id)
-			deleted++
+		if key.ExpiresAt <= 0 || int64(key.ExpiresAt) >= expiredBefore {
+			continue
 		}
+		delete(s.state.bindings, id)
+		delete(s.state.keys, id)
+		deleted++
 	}
 	return deleted, nil
 }

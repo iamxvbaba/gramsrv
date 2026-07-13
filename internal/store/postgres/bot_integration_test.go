@@ -205,7 +205,7 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 		appauth.WithBotLogin(bots))
 	var authKeyID [8]byte
 	copy(authKeyID[:], fmt.Sprintf("%08d", suffix%100000000))
-	if _, err := pool.Exec(ctx, "INSERT INTO auth_keys (auth_key_id, body, server_salt) VALUES ($1, $2, 0) ON CONFLICT DO NOTHING",
+	if _, err := pool.Exec(ctx, "INSERT INTO auth_keys (auth_key_id, body, server_salt, expires_at) VALUES ($1, $2, 0, 0) ON CONFLICT DO NOTHING",
 		authKeyIDToInt64(authKeyID), make([]byte, 256)); err != nil {
 		t.Fatalf("seed auth key: %v", err)
 	}

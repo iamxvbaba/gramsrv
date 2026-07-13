@@ -102,7 +102,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 	passkeyService := passkeyapp.NewService(memory.NewPasskeyStore(), memory.NewPasskeyChallengeStore(), rpID, dc)
 
 	deps := rpc.Deps{
-		Auth: auth.NewService(userStore, memory.NewAuthorizationStore(), memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code,
+		Auth: auth.NewService(userStore, memory.NewAuthorizationStore(), memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), code,
 			auth.WithLoginMessages(messageStore, dialogStore),
 			auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore))),
 		Account: account.NewService(memory.NewPasswordStore(), account.WithUsers(userStore)),

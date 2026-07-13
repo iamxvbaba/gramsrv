@@ -27,6 +27,10 @@ var (
 	ErrCodeExpired             = errors.New("phone code expired or not found")
 	ErrCodeInvalid             = errors.New("phone code invalid")
 	ErrEncryptedMessageInvalid = errors.New("encrypted message invalid")
+	ErrExpiresAtInvalid        = errors.New("temporary auth key request expiry invalid")
+	ErrTempAuthKeyEmpty        = errors.New("temporary auth key missing or expired")
+	ErrTempAuthKeyAlreadyBound = errors.New("temporary auth key already bound")
+	ErrAuthKeyPermEmpty        = errors.New("permanent auth key required")
 	// ErrLoginCodeDeliveryUnavailable 表示已有账号的 app-code 没有可用的
 	// durable message/event/outbox 投递边界。这是服务端配置错误，不能降级成
 	// “继续返回 sentCode，等 signIn 后补发”。
@@ -193,26 +197,44 @@ func NewService(users store.UserStore, auths store.AuthorizationStore, codes sto
 // BindTempAuthKey 校验并记录 TDesktop PFS temp→perm auth key 绑定。
 func (s *Service) BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) error {
 	if s.authKeys != nil {
-		inner, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
+		inner, protocolExpiresAt, err := s.validateBindTempAuthKey(ctx, sessionID, binding)
 		if err != nil {
 			return err
 		}
 		binding.TempSessionID = inner.TempSessionID
+		// The bind request's expires_at is a signed client assertion. TDesktop
+		// intentionally adds a small grace interval, while Android derives its
+		// value at handshake completion. Retention and edge admission must use the
+		// server's p_q_inner_data_temp lifetime, never the client value.
+		binding.ExpiresAt = protocolExpiresAt
+	}
+	if binding.ExpiresAt <= int(time.Now().Unix()) {
+		// The edge may admit the frame immediately before the temporary key's
+		// absolute boundary and the encrypted proof may cross it. This is a temp-key
+		// rotation condition, never a destructive permanent-key proof failure.
+		return ErrTempAuthKeyEmpty
 	}
 	if s.tempKeys == nil {
 		return nil
 	}
-	return s.tempKeys.Save(ctx, binding)
+	if err := s.tempKeys.Save(ctx, binding); err != nil {
+		if errors.Is(err, store.ErrTempAuthKeyAlreadyBound) {
+			return ErrTempAuthKeyAlreadyBound
+		}
+		if errors.Is(err, store.ErrAuthKeyBindingInvalid) {
+			return s.classifyBindingStoreInvalid(ctx, binding)
+		}
+		return err
+	}
+	return nil
 }
 
 // ResolveAuthKey 将已绑定的 temp auth_key 解析为对应 perm auth_key。
 //
-// 过期处理是有意的连续性权衡（见 TestResolveAuthKeyAllowsExpiredTempBindingForAuthorizedPermKey）：
-// temp 绑定 expires_at 已过时，仅当 perm key 也未授权才拒绝；perm 仍授权则继续解析，
-// 避免已登录会话因 temp key 过期而被强制踢下线。严格 PFS 要求过期 temp key 一律失效
-// （不以 perm 授权豁免），但收紧前需先核实目标客户端（TDesktop/DrKLO）会在过期前主动
-// 轮换 temp key 并优雅处理拒绝，否则会造成在线会话掉线。RetentionWorker 的 DeleteExpired
-// 已把残留窗口限制在 expires_at + 宽限（约 24h）内。收紧为显式硬化任务，需客户端验证。
+// temp→perm 是握手/绑定形成的协议身份关系，与 perm 当前是否登录完全无关。即使
+// auth.logOut 已删除 authorization，只要绑定仍存在，后续登录 RPC 也必须继续落到同一
+// perm key，绝不能把 raw temp key 当成新的业务身份。协议过期由 mtprotoedge 在解密/RPC
+// 之前返回 -404 并关闭连接；这里不再用 authorization 状态猜测 key 类型。
 func (s *Service) ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byte, bool, error) {
 	if s == nil || s.tempKeys == nil {
 		return [8]byte{}, false, nil
@@ -221,19 +243,7 @@ func (s *Service) ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byt
 	if err != nil || !found {
 		return [8]byte{}, found, err
 	}
-	permID := authKeyIDFromInt64(binding.PermAuthKeyID)
-	if binding.ExpiresAt <= int(time.Now().Unix()) && !s.permAuthKeyAuthorized(ctx, permID) {
-		return [8]byte{}, false, nil
-	}
-	return permID, true, nil
-}
-
-func (s *Service) permAuthKeyAuthorized(ctx context.Context, authKeyID [8]byte) bool {
-	if s == nil || s.auths == nil {
-		return false
-	}
-	_, found, err := s.auths.ByAuthKey(ctx, authKeyID)
-	return err == nil && found
+	return authKeyIDFromInt64(binding.PermAuthKeyID), true, nil
 }
 
 // UserID 返回 auth_key 当前绑定的用户。未登录、或两步验证未完成时 found=false。
@@ -1228,11 +1238,29 @@ func (s *Service) authorizationsByUserExcept(ctx context.Context, userID int64, 
 }
 
 func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID int64) error {
+	if s.authKeys != nil {
+		key, found, err := s.authKeys.Get(ctx, auth.AuthKeyID)
+		if err != nil {
+			return err
+		}
+		// Defense in depth: Router normally converts a bound temp key to its perm
+		// identity and edge rejects expired temp keys. Never let an unbound/sticky
+		// temp key create authorization even if either outer boundary regresses.
+		if !found || key.ExpiresAt != 0 {
+			return ErrAuthKeyPermEmpty
+		}
+	}
 	auth.UserID = userID
 	// Bind 是授权切换的持久化状态边界：生产 store 会先清同 auth key 的旧用户
 	// update state，再原子建立新用户 baseline。RPC 层不得在 Bind 成功后清整个 key，
 	// 否则会把刚建立的 retained-floor checkpoint 一并删除。
-	return s.auths.Bind(ctx, auth)
+	if err := s.auths.Bind(ctx, auth); err != nil {
+		if errors.Is(err, store.ErrAuthKeyNotPermanent) {
+			return ErrAuthKeyPermEmpty
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error) {
@@ -1282,32 +1310,60 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 	return msg, nil
 }
 
-func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, error) {
+func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, error) {
 	if binding.ExpiresAt <= int(time.Now().Unix()) {
-		return mtcrypto.BindAuthKeyInner{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrExpiresAtInvalid
+	}
+	temp, found, err := s.authKeys.Get(ctx, binding.TempAuthKeyID)
+	if err != nil {
+		return mtcrypto.BindAuthKeyInner{}, 0, err
+	}
+	// expires_at in auth.bindTempAuthKey is client-supplied and must only attest
+	// to a still-live binding. It may never create or reclassify a protocol key;
+	// the caller normalizes durable retention to this handshake-authoritative
+	// temp.ExpiresAt instead of trusting the client value.
+	if !found || temp.ExpiresAt <= int(time.Now().Unix()) {
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrTempAuthKeyEmpty
 	}
 
 	permID := authKeyIDFromInt64(binding.PermAuthKeyID)
 	perm, found, err := s.authKeys.Get(ctx, permID)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, err
+		return mtcrypto.BindAuthKeyInner{}, 0, err
 	}
-	if !found {
-		return mtcrypto.BindAuthKeyInner{}, ErrEncryptedMessageInvalid
+	if !found || perm.ExpiresAt != 0 {
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrEncryptedMessageInvalid
 	}
 
 	inner, err := decryptBindAuthKeyInner(perm, binding.EncryptedMessage)
 	if err != nil {
-		return mtcrypto.BindAuthKeyInner{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrEncryptedMessageInvalid
 	}
 	if inner.Nonce != binding.Nonce ||
 		inner.TempAuthKeyID != authKeyIDInt64(binding.TempAuthKeyID) ||
 		inner.PermAuthKeyID != binding.PermAuthKeyID ||
 		inner.TempSessionID != sessionID ||
 		inner.ExpiresAt != binding.ExpiresAt {
-		return mtcrypto.BindAuthKeyInner{}, ErrEncryptedMessageInvalid
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrEncryptedMessageInvalid
 	}
-	return inner, nil
+	if temp.ExpiresAt <= int(time.Now().Unix()) {
+		return mtcrypto.BindAuthKeyInner{}, 0, ErrTempAuthKeyEmpty
+	}
+	return inner, temp.ExpiresAt, nil
+}
+
+func (s *Service) classifyBindingStoreInvalid(ctx context.Context, binding domain.TempAuthKeyBinding) error {
+	if s == nil || s.authKeys == nil {
+		return ErrEncryptedMessageInvalid
+	}
+	temp, found, err := s.authKeys.Get(ctx, binding.TempAuthKeyID)
+	if err != nil {
+		return err
+	}
+	if !found || temp.ExpiresAt <= int(time.Now().Unix()) {
+		return ErrTempAuthKeyEmpty
+	}
+	return ErrEncryptedMessageInvalid
 }
 
 func decryptBindAuthKeyInner(perm store.AuthKeyData, encrypted []byte) (mtcrypto.BindAuthKeyInner, error) {

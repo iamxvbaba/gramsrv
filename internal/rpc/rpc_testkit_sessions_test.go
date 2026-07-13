@@ -101,6 +101,12 @@ func (s *captureSessions) AuthKeyIDForSession([8]byte, int64) ([8]byte, bool) {
 	return s.authKeyID, s.authKeyResolved
 }
 
+// captureSessions models an ordinary permanent-key connection unless a test
+// wraps/overrides it with temporary-key metadata.
+func (s *captureSessions) AuthKeyExpiresAtForSession([8]byte, int64) (int, bool) {
+	return 0, true
+}
+
 func (s *captureSessions) BindUserForAuthKey(rawAuthKeyID [8]byte, sessionID, userID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

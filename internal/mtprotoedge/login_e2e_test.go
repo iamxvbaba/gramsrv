@@ -83,7 +83,7 @@ func TestLoginRegisterFlow(t *testing.T) {
 		t.Fatalf("seed langpack: %v", err)
 	}
 	deps := rpc.Deps{
-		Auth:     auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code),
+		Auth:     auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), code),
 		Account:  account.NewService(memory.NewPasswordStore()),
 		Help:     help.NewService(helpStore, helpStore),
 		Users:    users.NewService(userStore),
@@ -302,7 +302,7 @@ func TestPrivateMessageRoundTripFlow(t *testing.T) {
 	messageStore := memory.NewMessageStore(dialogStore)
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	deps := rpc.Deps{
-		Auth:     auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(), code),
+		Auth:     auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), code),
 		Account:  account.NewService(memory.NewPasswordStore()),
 		Help:     help.NewService(helpStore, helpStore),
 		Users:    users.NewService(userStore),

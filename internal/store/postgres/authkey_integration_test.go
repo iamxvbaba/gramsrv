@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"os"
 	"testing"
 
@@ -47,7 +48,12 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 		_, _ = pool.Exec(ctx, "DELETE FROM auth_keys WHERE auth_key_id = $1", authKeyIDToInt64(id))
 	})
 
-	want := store.AuthKeyData{ID: id, Value: val, ServerSalt: 0x0badf00d}
+	want := store.AuthKeyData{
+		ID:         id,
+		Value:      val,
+		ServerSalt: 0x0badf00d,
+		ExpiresAt:  1_799_999_999,
+	}
 	if err := NewAuthKeyStore(pool).Save(ctx, want); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -59,9 +65,18 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 	if !found {
 		t.Fatal("auth key not found after save (重启后丢失)")
 	}
-	if got.ID != want.ID || got.Value != want.Value || got.ServerSalt != want.ServerSalt {
-		t.Fatalf("round trip mismatch: got salt=%#x value[:4]=%x, want salt=%#x value[:4]=%x",
-			got.ServerSalt, got.Value[:4], want.ServerSalt, want.Value[:4])
+	if got.ID != want.ID || got.Value != want.Value || got.ServerSalt != want.ServerSalt || got.ExpiresAt != want.ExpiresAt {
+		t.Fatalf("round trip mismatch: got salt=%#x expires_at=%d value[:4]=%x, want salt=%#x expires_at=%d value[:4]=%x",
+			got.ServerSalt, got.ExpiresAt, got.Value[:4], want.ServerSalt, want.ExpiresAt, want.Value[:4])
+	}
+	conflicting := want
+	conflicting.ExpiresAt++
+	if err := NewAuthKeyStore(pool).Save(ctx, conflicting); !errors.Is(err, store.ErrAuthKeyProtocolMetadataConflict) {
+		t.Fatalf("reclassify auth key error = %v, want %v", err, store.ErrAuthKeyProtocolMetadataConflict)
+	}
+	got, found, err = NewAuthKeyStore(pool).Get(ctx, id)
+	if err != nil || !found || got.ExpiresAt != want.ExpiresAt {
+		t.Fatalf("auth key expiry changed after rejected reclassification: got=%d found=%v err=%v", got.ExpiresAt, found, err)
 	}
 
 	var missing [8]byte

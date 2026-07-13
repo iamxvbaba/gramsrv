@@ -69,7 +69,7 @@ func newBotCallbackEnv(t *testing.T, ctx context.Context) *botCallbackEnv {
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	deps := rpc.Deps{
 		Auth: auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore,
-			memory.NewTempAuthKeyBindingStore(), "12345", auth.WithBotLogin(botStore)),
+			memory.NewTempAuthKeyBindingStore(authKeyStore), "12345", auth.WithBotLogin(botStore)),
 		Account:  account.NewService(memory.NewPasswordStore()),
 		Help:     help.NewService(helpStore, helpStore),
 		Users:    users.NewService(userStore),

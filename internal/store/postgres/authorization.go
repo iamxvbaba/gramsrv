@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
@@ -54,13 +55,19 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 // raw auth key 的并发登录/换号。
 func bindAuthorization(ctx context.Context, db sqlcgen.DBTX, a domain.Authorization) error {
 	keyID := authKeyIDToInt64(a.AuthKeyID)
-	var lockedKeyID int64
+	var (
+		lockedKeyID int64
+		expiresAt   int
+	)
 	if err := db.QueryRow(ctx, `
-SELECT auth_key_id
+SELECT auth_key_id, expires_at
 FROM auth_keys
 WHERE auth_key_id = $1
-FOR UPDATE`, keyID).Scan(&lockedKeyID); err != nil {
+FOR UPDATE`, keyID).Scan(&lockedKeyID, &expiresAt); err != nil {
 		return fmt.Errorf("lock auth key for authorization: %w", err)
+	}
+	if expiresAt != 0 {
+		return store.ErrAuthKeyNotPermanent
 	}
 
 	if _, err := db.Exec(ctx, `
@@ -254,43 +261,81 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 // authorizations 通过 FK cascade 删除；update_states 没有 auth_keys FK，必须显式清理；
 // 关联 temp auth key 也显式删除，避免 raw temp key 重连。
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
-	row := s.db.QueryRow(ctx, `
-WITH target AS MATERIALIZED (
-	SELECT auth_key_id, user_id, hash, layer, device_model, platform, system_version, api_id, app_version, ip, password_pending, created_at, active_at
-	FROM authorizations
-	WHERE user_id = $1 AND hash = $2
-), deleted_temp AS (
-	DELETE FROM auth_keys
-	WHERE auth_key_id IN (
-		SELECT temp_auth_key_id
-		FROM temp_auth_key_bindings
-		WHERE perm_auth_key_id IN (SELECT auth_key_id FROM target)
-	)
-	RETURNING auth_key_id
-), deleted_update_states AS (
-	DELETE FROM update_states
-	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
-	RETURNING auth_key_id
-), deleted_keys AS (
-	DELETE FROM auth_keys
-	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
-	RETURNING auth_key_id
-), touched AS (
-	SELECT
-		(SELECT count(*) FROM deleted_temp) +
-		(SELECT count(*) FROM deleted_update_states) AS count
-)
-SELECT target.auth_key_id, target.user_id, target.hash, target.layer, target.device_model, target.platform,
-       target.system_version, target.api_id, target.app_version, target.ip, target.password_pending,
-       target.created_at, target.active_at
-FROM target
-JOIN deleted_keys USING (auth_key_id)
-CROSS JOIN touched`, userID, hash)
-	a, found, err := scanRevokedAuthorization(row)
-	if err != nil {
-		return domain.Authorization{}, false, fmt.Errorf("revoke authorization by hash: %w", err)
+	for attempt := 0; attempt < 3; attempt++ {
+		var (
+			a     domain.Authorization
+			found bool
+		)
+		err := s.withRevocationTx(ctx, "revoke authorization by hash", func(tx pgx.Tx) error {
+			var err error
+			a, found, err = revokeByHashTx(ctx, tx, userID, hash)
+			return err
+		})
+		if err == nil {
+			return a, found, nil
+		}
+		if !isPermAuthKeyDeleteRace(err) {
+			return domain.Authorization{}, false, err
+		}
+		if _, inTx := s.db.(pgx.Tx); inTx {
+			return domain.Authorization{}, false, err
+		}
 	}
-	return a, found, nil
+	return domain.Authorization{}, false, fmt.Errorf("revoke authorization by hash: permanent-key binding changed during all retries")
+}
+
+func (s *AuthorizationStore) withRevocationTx(ctx context.Context, op string, fn func(pgx.Tx) error) error {
+	if tx, ok := s.db.(pgx.Tx); ok {
+		return fn(tx)
+	}
+	return withTx(ctx, s.db, op, fn)
+}
+
+// revokeByHashTx deliberately uses separate READ COMMITTED statements. The first
+// lookup is only a candidate. Bind locks auth_keys before changing authorization
+// ownership, so revocation must lock the same parent row and then re-read the
+// owner/hash from a fresh statement snapshot. Otherwise an A->B re-login that
+// commits while revoke waits can be deleted using A's stale target snapshot.
+func revokeByHashTx(ctx context.Context, tx pgx.Tx, userID, hash int64) (domain.Authorization, bool, error) {
+	var candidate int64
+	if err := tx.QueryRow(ctx, `
+SELECT auth_key_id
+FROM authorizations
+WHERE user_id = $1 AND hash = $2`, userID, hash).Scan(&candidate); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Authorization{}, false, nil
+		}
+		return domain.Authorization{}, false, fmt.Errorf("select revoke candidate by hash: %w", err)
+	}
+
+	var locked int64
+	if err := tx.QueryRow(ctx, `
+SELECT auth_key_id
+FROM auth_keys
+WHERE auth_key_id = $1
+FOR UPDATE`, candidate).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Authorization{}, false, nil
+		}
+		return domain.Authorization{}, false, fmt.Errorf("lock revoke auth key by hash: %w", err)
+	}
+
+	a, found, err := scanRevokedAuthorization(tx.QueryRow(ctx, `
+SELECT auth_key_id, user_id, hash, layer, device_model, platform, system_version,
+       api_id, app_version, ip, password_pending, created_at, active_at
+FROM authorizations
+WHERE auth_key_id = $1 AND user_id = $2 AND hash = $3
+FOR UPDATE`, candidate, userID, hash))
+	if err != nil {
+		return domain.Authorization{}, false, fmt.Errorf("revalidate revoke authorization by hash: %w", err)
+	}
+	if !found {
+		return domain.Authorization{}, false, nil
+	}
+	if err := deleteRevocationTargetsTx(ctx, tx, []int64{candidate}); err != nil {
+		return domain.Authorization{}, false, err
+	}
+	return a, true, nil
 }
 
 func (s *AuthorizationStore) DeleteByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
@@ -323,55 +368,146 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 
 // RevokeByUserExcept 批量删除协议 auth_key，保留 keepAuthKeyID 对应的当前设备。
 func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
-	rows, err := s.db.Query(ctx, `
-WITH target AS MATERIALIZED (
-	SELECT auth_key_id, user_id, hash, layer, device_model, platform, system_version, api_id, app_version, ip, password_pending, created_at, active_at
-	FROM authorizations
-	WHERE user_id = $1 AND auth_key_id <> $2
-), deleted_temp AS (
-	DELETE FROM auth_keys
-	WHERE auth_key_id IN (
-		SELECT temp_auth_key_id
-		FROM temp_auth_key_bindings
-		WHERE perm_auth_key_id IN (SELECT auth_key_id FROM target)
-	)
-	RETURNING auth_key_id
-), deleted_update_states AS (
-	DELETE FROM update_states
-	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
-	RETURNING auth_key_id
-), deleted_keys AS (
-	DELETE FROM auth_keys
-	WHERE auth_key_id IN (SELECT auth_key_id FROM target)
-	RETURNING auth_key_id
-), touched AS (
-	SELECT
-		(SELECT count(*) FROM deleted_temp) +
-		(SELECT count(*) FROM deleted_update_states) AS count
-)
-SELECT target.auth_key_id, target.user_id, target.hash, target.layer, target.device_model, target.platform,
-       target.system_version, target.api_id, target.app_version, target.ip, target.password_pending,
-       target.created_at, target.active_at
-FROM target
-JOIN deleted_keys USING (auth_key_id)
-CROSS JOIN touched
-ORDER BY target.created_at, target.auth_key_id`, userID, authKeyIDToInt64(keepAuthKeyID))
-	if err != nil {
-		return nil, fmt.Errorf("revoke authorizations by user: %w", err)
+	for attempt := 0; attempt < 3; attempt++ {
+		var out []domain.Authorization
+		err := s.withRevocationTx(ctx, "revoke authorizations by user", func(tx pgx.Tx) error {
+			var err error
+			out, err = revokeByUserExceptTx(ctx, tx, userID, authKeyIDToInt64(keepAuthKeyID))
+			return err
+		})
+		if err == nil {
+			return out, nil
+		}
+		if !isPermAuthKeyDeleteRace(err) {
+			return nil, err
+		}
+		if _, inTx := s.db.(pgx.Tx); inTx {
+			return nil, err
+		}
 	}
-	defer rows.Close()
+	return nil, fmt.Errorf("revoke authorizations by user: permanent-key binding changed during all retries")
+}
+
+func revokeByUserExceptTx(ctx context.Context, tx pgx.Tx, userID, keepAuthKeyID int64) ([]domain.Authorization, error) {
+	candidateRows, err := tx.Query(ctx, `
+SELECT auth_key_id
+FROM authorizations
+WHERE user_id = $1 AND auth_key_id <> $2
+ORDER BY auth_key_id`, userID, keepAuthKeyID)
+	if err != nil {
+		return nil, fmt.Errorf("select revoke candidates by user: %w", err)
+	}
+	candidates := make([]int64, 0)
+	for candidateRows.Next() {
+		var id int64
+		if err := candidateRows.Scan(&id); err != nil {
+			candidateRows.Close()
+			return nil, fmt.Errorf("scan revoke candidate by user: %w", err)
+		}
+		candidates = append(candidates, id)
+	}
+	if err := candidateRows.Err(); err != nil {
+		candidateRows.Close()
+		return nil, fmt.Errorf("iterate revoke candidates by user: %w", err)
+	}
+	candidateRows.Close()
+	if len(candidates) == 0 {
+		return []domain.Authorization{}, nil
+	}
+
+	// Stable parent-row lock order matches every concurrent batch revocation and
+	// serializes each candidate with Bind's auth_keys-first ownership change.
+	lockRows, err := tx.Query(ctx, `
+SELECT auth_key_id
+FROM auth_keys
+WHERE auth_key_id = ANY($1::bigint[])
+ORDER BY auth_key_id
+FOR UPDATE`, candidates)
+	if err != nil {
+		return nil, fmt.Errorf("lock revoke auth keys by user: %w", err)
+	}
+	for lockRows.Next() {
+		var ignored int64
+		if err := lockRows.Scan(&ignored); err != nil {
+			lockRows.Close()
+			return nil, fmt.Errorf("scan locked revoke auth key: %w", err)
+		}
+	}
+	if err := lockRows.Err(); err != nil {
+		lockRows.Close()
+		return nil, fmt.Errorf("iterate locked revoke auth keys: %w", err)
+	}
+	lockRows.Close()
+
+	// This is intentionally a new statement snapshot after all parent locks.
+	// Keys that changed owner while waiting are omitted and must remain intact.
+	rows, err := tx.Query(ctx, `
+SELECT auth_key_id, user_id, hash, layer, device_model, platform, system_version,
+       api_id, app_version, ip, password_pending, created_at, active_at
+FROM authorizations
+WHERE user_id = $1
+  AND auth_key_id <> $2
+  AND auth_key_id = ANY($3::bigint[])
+ORDER BY created_at, auth_key_id
+FOR UPDATE`, userID, keepAuthKeyID, candidates)
+	if err != nil {
+		return nil, fmt.Errorf("revalidate revoke authorizations by user: %w", err)
+	}
 	out := make([]domain.Authorization, 0)
 	for rows.Next() {
 		a, err := scanRevokedAuthorizationRow(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("iterate revoked authorizations: %w", err)
 	}
+	rows.Close()
+	if len(out) == 0 {
+		return out, nil
+	}
+	targets := make([]int64, len(out))
+	for i := range out {
+		targets[i] = authKeyIDToInt64(out[i].AuthKeyID)
+	}
+	if err := deleteRevocationTargetsTx(ctx, tx, targets); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func deleteRevocationTargetsTx(ctx context.Context, tx pgx.Tx, authKeyIDs []int64) error {
+	if len(authKeyIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM auth_keys
+WHERE auth_key_id IN (
+	SELECT temp_auth_key_id
+	FROM temp_auth_key_bindings
+	WHERE perm_auth_key_id = ANY($1::bigint[])
+)`, authKeyIDs); err != nil {
+		return fmt.Errorf("delete revoked temporary auth keys: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM update_states
+WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs); err != nil {
+		return fmt.Errorf("delete revoked update states: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+DELETE FROM auth_keys
+WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs)
+	if err != nil {
+		return fmt.Errorf("delete revoked permanent auth keys: %w", err)
+	}
+	if tag.RowsAffected() != int64(len(authKeyIDs)) {
+		return fmt.Errorf("delete revoked permanent auth keys: deleted %d of %d locked targets", tag.RowsAffected(), len(authKeyIDs))
+	}
+	return nil
 }
 
 func authorizationFromRow(row sqlcgen.Authorization) domain.Authorization {

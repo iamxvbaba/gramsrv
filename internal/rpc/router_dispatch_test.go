@@ -15,6 +15,7 @@ import (
 	appauth "telesrv/internal/app/auth"
 	appdialogs "telesrv/internal/app/dialogs"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 	"testing"
 	"time"
@@ -913,17 +914,25 @@ func TestDispatchUnknownReturnsError(t *testing.T) {
 func TestDispatchResolvesBoundTempAuthKey(t *testing.T) {
 	var tempAuthKeyID = [8]byte{0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55}
 	var permAuthKeyID = [8]byte{0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11}
-	tempBindings := memory.NewTempAuthKeyBindingStore()
+	expiresAt := int(time.Now().Add(time.Hour).Unix())
+	authKeys := memory.NewAuthKeyStore()
+	if err := authKeys.Save(context.Background(), store.AuthKeyData{ID: tempAuthKeyID, ExpiresAt: expiresAt}); err != nil {
+		t.Fatalf("save temporary auth key: %v", err)
+	}
+	if err := authKeys.Save(context.Background(), store.AuthKeyData{ID: permAuthKeyID}); err != nil {
+		t.Fatalf("save permanent auth key: %v", err)
+	}
+	tempBindings := memory.NewTempAuthKeyBindingStore(authKeys)
 	if err := tempBindings.Save(context.Background(), domain.TempAuthKeyBinding{
 		TempAuthKeyID: tempAuthKeyID,
 		PermAuthKeyID: int64(binary.LittleEndian.Uint64(permAuthKeyID[:])),
-		ExpiresAt:     int(time.Now().Add(time.Hour).Unix()),
+		ExpiresAt:     expiresAt,
 	}); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
 	sessions := &captureSessions{}
 	r := New(Config{}, Deps{
-		Auth:     appauth.NewService(nil, nil, nil, nil, tempBindings, "12345"),
+		Auth:     appauth.NewService(nil, nil, nil, authKeys, tempBindings, "12345"),
 		Sessions: sessions,
 	}, zaptest.NewLogger(t), clock.System)
 	req := &tg.HelpGetConfigRequest{}

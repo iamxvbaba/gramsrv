@@ -443,6 +443,27 @@ func (m *SessionManager) BindAuthKeyForSession(rawAuthKeyID [8]byte, sessionID i
 	m.bindAuthKeyLocked(c, key, authKeyID)
 }
 
+// BindAuthKeyForRawAuthKey 把同一 raw temporary key 的全部活跃 session 绑定到
+// canonical permanent key。Android/TDesktop 会在一个 temp key 上并发创建多个
+// session；bind 只发生在其中一个 session，其他 session 不能继续把 raw temp 当业务 key。
+func (m *SessionManager) BindAuthKeyForRawAuthKey(rawAuthKeyID [8]byte, authKeyID [8]byte) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	bound := 0
+	for sessionID, c := range m.byAuthKey[rawAuthKeyID] {
+		if c == nil {
+			continue
+		}
+		key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
+		if m.bySession[key] != c {
+			continue
+		}
+		m.bindAuthKeyLocked(c, key, authKeyID)
+		bound++
+	}
+	return bound
+}
+
 func (m *SessionManager) bindAuthKeyLocked(c *Conn, key sessionKey, authKeyID [8]byte) {
 	oldAuthKeyID, resolved := c.BusinessAuthKeyID()
 	changed := !resolved || oldAuthKeyID != authKeyID
@@ -475,6 +496,17 @@ func (m *SessionManager) AuthKeyIDForSession(rawAuthKeyID [8]byte, sessionID int
 		return [8]byte{}, false
 	}
 	return c.BusinessAuthKeyID()
+}
+
+// AuthKeyExpiresAtForSession 返回 raw key 的握手协议失效时间；0 表示 permanent。
+func (m *SessionManager) AuthKeyExpiresAtForSession(rawAuthKeyID [8]byte, sessionID int64) (int, bool) {
+	m.mu.RLock()
+	c, ok := m.bySession[sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}]
+	m.mu.RUnlock()
+	if !ok {
+		return 0, false
+	}
+	return c.AuthKeyExpiresAt(), true
 }
 
 // CloseSessionsForBusinessAuthKey 强制断开指定业务 auth_key 的全部活跃连接，

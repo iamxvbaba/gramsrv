@@ -72,7 +72,7 @@ func TestBotManagementRPCFlow(t *testing.T) {
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	deps := rpc.Deps{
 		Auth: auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore,
-			memory.NewTempAuthKeyBindingStore(), code, auth.WithBotLogin(botStore)),
+			memory.NewTempAuthKeyBindingStore(authKeyStore), code, auth.WithBotLogin(botStore)),
 		Account:  account.NewService(memory.NewPasswordStore()),
 		Help:     help.NewService(helpStore, helpStore),
 		Users:    users.NewService(userStore),
@@ -308,7 +308,7 @@ func TestBotFatherCreateAndBotLoginFlow(t *testing.T) {
 	activeSessions := NewSessionManager(zaptest.NewLogger(t).Named("sessions"))
 	deps := rpc.Deps{
 		Auth: auth.NewService(userStore, authzStore, memory.NewCodeStore(), authKeyStore,
-			memory.NewTempAuthKeyBindingStore(), code, auth.WithBotLogin(botStore)),
+			memory.NewTempAuthKeyBindingStore(authKeyStore), code, auth.WithBotLogin(botStore)),
 		Account:  account.NewService(memory.NewPasswordStore()),
 		Help:     help.NewService(helpStore, helpStore),
 		Users:    users.NewService(userStore),

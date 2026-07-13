@@ -65,6 +65,20 @@ type SessionBinder interface {
 	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error)
 }
 
+// RawAuthKeySessionBinder 在 auth.bindTempAuthKey 成功后，把同一 raw temporary key
+// 已建立的所有 session 一次性切到 canonical permanent identity。只更新当前 session
+// 会让并发启动的其它连接永久粘在 raw identity。
+type RawAuthKeySessionBinder interface {
+	BindAuthKeyForRawAuthKey(rawAuthKeyID [8]byte, authKeyID [8]byte) int
+}
+
+// RawAuthKeyMetadataProvider 暴露握手时确定的 raw key protocol expiry。0 表示
+// permanent key；正值表示 temporary key。Router 只用它判断 cached==raw 是否可作为
+// permanent 快路径，协议过期的实际拒绝仍由 mtprotoedge 完成。
+type RawAuthKeyMetadataProvider interface {
+	AuthKeyExpiresAtForSession(rawAuthKeyID [8]byte, sessionID int64) (expiresAt int, found bool)
+}
+
 // ImmediateSessionPusher 是可选的登录前信号直推能力。
 // 它绕过登录后 updates-ready 队列，只能用于会解锁登录流程本身的握手消息，
 // 例如 updateLoginToken。

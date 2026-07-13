@@ -318,15 +318,19 @@ func TestKeyExchangeAuthKeySaveUsesHandshakeDeadline(t *testing.T) {
 }
 
 func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
-	const dc = 2
+	const (
+		dc        = 2
+		expiresIn = 24 * 60 * 60
+	)
 	addr, pub, srv := startTestServer(t, Options{DC: dc})
 	conn := dialTransportOnly(t, addr)
 	t.Cleanup(func() { _ = conn.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	startedAt := time.Now()
 	res, err := exchange.NewExchanger(conn, -dc).
-		WithTempMode(24 * 60 * 60).
+		WithTempMode(expiresIn).
 		WithRand(rand.Reader).
 		WithLogger(logzap.New(zaptest.NewLogger(t).Named("client"))).
 		Client([]exchange.PublicKey{pub}).
@@ -334,6 +338,7 @@ func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client exchange: %v", err)
 	}
+	completedAt := time.Now()
 
 	var saved store.AuthKeyData
 	found := false
@@ -353,6 +358,11 @@ func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
 	}
 	if saved.ServerSalt != res.ServerSalt {
 		t.Fatalf("server salt mismatch: server=%d client=%d", saved.ServerSalt, res.ServerSalt)
+	}
+	minExpiresAt := int(startedAt.Unix()) + expiresIn
+	maxExpiresAt := int(completedAt.Unix()) + expiresIn
+	if saved.ExpiresAt < minExpiresAt || saved.ExpiresAt > maxExpiresAt {
+		t.Fatalf("server temp auth key expires_at = %d, want absolute unix time in [%d, %d]", saved.ExpiresAt, minExpiresAt, maxExpiresAt)
 	}
 }
 
