@@ -397,8 +397,8 @@ func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
 		c := &Conn{metrics: NopMetrics{}}
 		c.startOutbound()
 		defer c.Close()
-		if got := cap(c.outbound); got != defaultOutboundQueueSize {
-			t.Fatalf("normal queue cap = %d, want %d", got, defaultOutboundQueueSize)
+		if got := cap(c.outbound) + cap(c.outboundCritical) + cap(c.outboundBulk); got != defaultOutboundQueueSize {
+			t.Fatalf("ordinary lane total cap = %d, want %d", got, defaultOutboundQueueSize)
 		}
 		if got := cap(c.outboundControl); got != defaultOutboundControlQueueSize {
 			t.Fatalf("control queue cap = %d, want %d", got, defaultOutboundControlQueueSize)
@@ -413,8 +413,8 @@ func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
 		}
 		c.startOutbound()
 		defer c.Close()
-		if got := cap(c.outbound); got != 7 {
-			t.Fatalf("normal queue cap = %d, want 7", got)
+		if got := cap(c.outbound) + cap(c.outboundCritical) + cap(c.outboundBulk); got != 7 {
+			t.Fatalf("ordinary lane total cap = %d, want 7", got)
 		}
 		if got := cap(c.outboundControl); got != 3 {
 			t.Fatalf("control queue cap = %d, want 3", got)
@@ -446,9 +446,11 @@ func TestServerNewConnectionsShareOutboundBudgetAndQueueLimits(t *testing.T) {
 	defer c1.Close()
 	defer c2.Close()
 
-	if cap(c1.outbound) != 7 || cap(c1.outboundControl) != 3 || cap(c2.outbound) != 7 || cap(c2.outboundControl) != 3 {
+	c1Ordinary := cap(c1.outbound) + cap(c1.outboundCritical) + cap(c1.outboundBulk)
+	c2Ordinary := cap(c2.outbound) + cap(c2.outboundCritical) + cap(c2.outboundBulk)
+	if c1Ordinary != 7 || cap(c1.outboundControl) != 3 || c2Ordinary != 7 || cap(c2.outboundControl) != 3 {
 		t.Fatalf("server queue caps = %d/%d and %d/%d, want 7/3",
-			cap(c1.outbound), cap(c1.outboundControl), cap(c2.outbound), cap(c2.outboundControl))
+			c1Ordinary, cap(c1.outboundControl), c2Ordinary, cap(c2.outboundControl))
 	}
 	if c1.outboundTrackedBudget != srv.outboundTrackedBudget || c2.outboundTrackedBudget != srv.outboundTrackedBudget {
 		t.Fatal("server connections did not receive the shared outbound tracking budget")

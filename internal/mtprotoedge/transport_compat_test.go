@@ -13,8 +13,9 @@ import (
 
 type messageWriteTestConn struct {
 	bytes.Buffer
-	writes   int
-	maxWrite int
+	writes    int
+	maxWrite  int
+	deadlines []time.Time
 }
 
 func (c *messageWriteTestConn) Read([]byte) (int, error) { return 0, io.EOF }
@@ -25,12 +26,15 @@ func (c *messageWriteTestConn) Write(p []byte) (int, error) {
 	}
 	return c.Buffer.Write(p)
 }
-func (*messageWriteTestConn) Close() error                     { return nil }
-func (*messageWriteTestConn) LocalAddr() net.Addr              { return messageWriteTestAddr("local") }
-func (*messageWriteTestConn) RemoteAddr() net.Addr             { return messageWriteTestAddr("remote") }
-func (*messageWriteTestConn) SetDeadline(time.Time) error      { return nil }
-func (*messageWriteTestConn) SetReadDeadline(time.Time) error  { return nil }
-func (*messageWriteTestConn) SetWriteDeadline(time.Time) error { return nil }
+func (*messageWriteTestConn) Close() error                    { return nil }
+func (*messageWriteTestConn) LocalAddr() net.Addr             { return messageWriteTestAddr("local") }
+func (*messageWriteTestConn) RemoteAddr() net.Addr            { return messageWriteTestAddr("remote") }
+func (*messageWriteTestConn) SetDeadline(time.Time) error     { return nil }
+func (*messageWriteTestConn) SetReadDeadline(time.Time) error { return nil }
+func (c *messageWriteTestConn) SetWriteDeadline(d time.Time) error {
+	c.deadlines = append(c.deadlines, d)
+	return nil
+}
 
 type messageWriteTestAddr string
 
@@ -40,6 +44,33 @@ func (a messageWriteTestAddr) String() string  { return string(a) }
 type countWriteBuffer struct {
 	bytes.Buffer
 	writes int
+}
+
+func TestProgressiveDeadlineWriterChunksLargeRawPacket(t *testing.T) {
+	raw := &messageWriteTestConn{maxWrite: 8 << 10}
+	hard := time.Now().Add(time.Minute)
+	w := &progressiveDeadlineWriter{
+		conn: raw, hardDeadline: hard, idleTimeout: time.Second, chunkBytes: 32 << 10,
+	}
+	payload := bytes.Repeat([]byte{0x5a}, 192<<10)
+	n, err := w.Write(payload)
+	if err != nil {
+		t.Fatalf("progressive write: %v", err)
+	}
+	if n != len(payload) || !bytes.Equal(raw.Bytes(), payload) {
+		t.Fatalf("progressive write bytes = %d/%d", n, len(raw.Bytes()))
+	}
+	if raw.writes < len(payload)/(8<<10) {
+		t.Fatalf("physical chunks = %d, want progress across partial writes", raw.writes)
+	}
+	if len(raw.deadlines) != raw.writes {
+		t.Fatalf("deadline refreshes = %d, writes = %d", len(raw.deadlines), raw.writes)
+	}
+	for _, deadline := range raw.deadlines {
+		if deadline.After(hard) {
+			t.Fatalf("idle deadline %v exceeded hard deadline %v", deadline, hard)
+		}
+	}
 }
 
 func (w *countWriteBuffer) Write(p []byte) (int, error) {
@@ -156,6 +187,30 @@ func TestCompatTransportCodecsWriteSegmentedPacketWithoutFullCopy(t *testing.T) 
 			t.Fatalf("intermediate length = %d, want %d", got, want)
 		}
 	})
+}
+
+func TestCompatRawTransportUsesProgressiveWriterForLargePacket(t *testing.T) {
+	var payload bin.Buffer
+	payload.Put(bytes.Repeat([]byte{0x6b}, 192<<10))
+	raw := &messageWriteTestConn{maxWrite: 8 << 10}
+	conn := &compatTransportConn{conn: raw, codec: &quickAckAbridgedCodec{}}
+	if err := conn.SendDeadline(time.Now().Add(time.Minute), &payload); err != nil {
+		t.Fatalf("send large raw packet: %v", err)
+	}
+	if raw.writes < 20 {
+		t.Fatalf("large raw packet writes = %d, want observable progressive chunks", raw.writes)
+	}
+	if len(raw.deadlines) != raw.writes+1 { // initial hard deadline + one per progress write.
+		t.Fatalf("large packet deadline updates = %d, writes = %d", len(raw.deadlines), raw.writes)
+	}
+	var decoded bin.Buffer
+	requested, err := readQuickAckAbridged(bytes.NewReader(raw.Bytes()), &decoded)
+	if err != nil {
+		t.Fatalf("read large packet: %v", err)
+	}
+	if requested || !bytes.Equal(decoded.Raw(), payload.Raw()) {
+		t.Fatal("progressive raw write changed transport packet")
+	}
 }
 
 func TestCompatTransportWebSocketWritesOneMessagePerPacket(t *testing.T) {

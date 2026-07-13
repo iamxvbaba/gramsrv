@@ -30,6 +30,24 @@ type Metrics interface {
 	OutboundQueueWait(len, cap int)
 }
 
+// RPCResultMetrics is an optional extension for the detached response pipeline.
+// Keeping it separate preserves lightweight embedders while production exporters
+// can observe preparation/compression and end-to-end delivery independently from
+// business handler latency.
+type RPCResultMetrics interface {
+	RPCResultPrepared(method, priority string, innerBytes, wireBytes int, compressed bool)
+	RPCResultDelivered(method string, egressLatency time.Duration, wireBytes int, err error)
+}
+
+// ConnectionIntakeMetrics is an optional extension for the pre-session
+// connection pipeline. stage is one of raw_accept, mux_sniff, mux_delivery,
+// transport_dispatch, transport_promote, or first_frame; outcome is a bounded
+// value suitable for metrics labels. Remote addresses are deliberately kept in
+// structured logs only so exporters cannot create unbounded cardinality.
+type ConnectionIntakeMetrics interface {
+	ConnectionIntake(stage, outcome string, duration time.Duration)
+}
+
 // NopMetrics 是 Metrics 的空实现。
 type NopMetrics struct{}
 

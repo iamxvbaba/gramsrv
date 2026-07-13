@@ -347,11 +347,6 @@ func run(logger *zap.Logger) error {
 	defer func() { _ = rdb.Close() }()
 	logger.Info("持久化依赖就绪", zap.String("redis", cfg.RedisAddr))
 
-	ln, err := net.Listen("tcp", cfg.ListenAddr)
-	if err != nil {
-		return fmt.Errorf("listen %q: %w", cfg.ListenAddr, err)
-	}
-
 	authKeyStore := postgres.NewAuthKeyStore(pool)
 	userStore := postgres.NewUserStore(pool)
 	authzStore := postgres.NewAuthorizationStore(pool)
@@ -858,14 +853,18 @@ func run(logger *zap.Logger) error {
 		OutboundControlQueueSize:      cfg.MTProtoOutboundControlQueueSize,
 		OutboundTrackedGlobalMaxBytes: cfg.MTProtoOutboundTrackedGlobalMaxBytes,
 		OutboundWriteGlobalMaxBytes:   cfg.MTProtoOutboundWriteGlobalMaxBytes,
+		OnServing: func(_ net.Addr) {
+			logger.Info("telesrv 服务就绪",
+				zap.String("listen", cfg.ListenAddr),
+				zap.String("advertise", net.JoinHostPort(cfg.AdvertiseIP, portStr)),
+				zap.Int("pid", os.Getpid()),
+				zap.String("git_commit", buildMeta.Commit),
+				zap.Uint("schema_version", migrationStatus.Version),
+				zap.String("blob_backend", "localfs"),
+			)
+		},
 	})
-	logger.Info("telesrv 服务就绪",
-		zap.String("listen", cfg.ListenAddr),
-		zap.String("advertise", net.JoinHostPort(cfg.AdvertiseIP, portStr)),
-		zap.Int("pid", os.Getpid()),
-		zap.String("git_commit", buildMeta.Commit),
-		zap.Uint("schema_version", migrationStatus.Version),
-		zap.String("blob_backend", "localfs"),
-	)
-	return srv.Serve(ctx, ln)
+	// This is intentionally the final startup operation. ListenAndServe owns the
+	// public listener so no seed/prewarm work can run after port 2398 is exposed.
+	return srv.ListenAndServe(ctx, cfg.ListenAddr)
 }

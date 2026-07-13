@@ -218,23 +218,31 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	return r
 }
 
-// Dispatch 路由一条 RPC 请求：先剥离 invokeWithLayer / initConnection /
-// invokeWithoutUpdates / invokeAfter* 等 wrapper（注入 layer / 客户端信息到 ctx），
-// 再按 TypeID 路由到 typed handler。满足 mtprotoedge.RPCHandler。
+// Dispatch routes one RPC and preserves the historical two-value API used by
+// domain/RPC tests. The MTProto edge uses DispatchWithMethod so outbound
+// scheduling sees the canonical inner method rather than an invoke wrapper.
 func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, error) {
+	enc, _, err := r.DispatchWithMethod(ctx, authKeyID, sessionID, b)
+	return enc, err
+}
+
+// DispatchWithMethod 路由一条 RPC 请求：先剥离 invokeWithLayer / initConnection /
+// invokeWithoutUpdates / invokeAfter* 等 wrapper（注入 layer / 客户端信息到 ctx），
+// 再按 TypeID 路由到 typed handler，并返回 canonical innermost method。
+func (r *Router) DispatchWithMethod(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, string, error) {
 	preStart := r.clock.Now()
 	ctx = withInboundRPCBytes(ctx, b.Len())
 	ctx = WithRawAuthKeyID(ctx, authKeyID)
 	effectiveAuthKeyID, err := r.effectiveAuthKeyID(ctx, authKeyID, sessionID)
 	if err != nil {
-		return nil, internalErr()
+		return nil, "", internalErr()
 	}
 	tAuth := r.clock.Now()
 	ctx = WithAuthKeyID(ctx, effectiveAuthKeyID)
 	ctx = WithSessionID(ctx, sessionID)
 	userID, hasUserID, err := r.effectiveUserID(ctx, authKeyID, effectiveAuthKeyID, sessionID)
 	if err != nil {
-		return nil, internalErr()
+		return nil, "", internalErr()
 	}
 	if hasUserID {
 		ctx = WithUserID(ctx, userID)
@@ -299,7 +307,9 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 			ctx = WithClientInfo(ctx, info.clientInfo)
 		}
 	}
-	return r.dispatch(ctx, b, 0)
+	meta := rpcDispatchMetadata{}
+	enc, err := r.dispatch(ctx, b, 0, &meta)
+	return enc, meta.method, err
 }
 
 func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64) ([8]byte, error) {
@@ -494,7 +504,11 @@ func (r *Router) invalidateAuthUserCache(authKeyID [8]byte) {
 	r.authUserSF.Forget(authKeyClientInfoSingleflightPrefix + key)
 }
 
-func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.Encoder, error) {
+type rpcDispatchMetadata struct {
+	method string
+}
+
+func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *rpcDispatchMetadata) (bin.Encoder, error) {
 	if depth > maxWrapperDepth {
 		return nil, wrapperTooDeepErr()
 	}
@@ -516,13 +530,13 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		// query 紧跟 layer，buffer 剩余即内层请求。
 		ctx = WithLayer(ctx, layer)
 		r.rememberClientLayer(ctx, layer)
-		return r.dispatch(ctx, b, depth+1)
+		return r.dispatch(ctx, b, depth+1, meta)
 
 	case tg.InvokeWithoutUpdatesRequestTypeID:
 		if err := b.ConsumeID(id); err != nil {
 			return nil, err
 		}
-		return r.dispatch(withInvokeWithoutUpdates(ctx), b, depth+1)
+		return r.dispatch(withInvokeWithoutUpdates(ctx), b, depth+1, meta)
 
 	case tg.InvokeAfterMsgRequestTypeID:
 		if err := b.ConsumeID(id); err != nil {
@@ -531,7 +545,7 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		if _, err := b.Long(); err != nil {
 			return nil, fmt.Errorf("decode invokeAfterMsg msg_id: %w", err)
 		}
-		return r.dispatch(ctx, b, depth+1)
+		return r.dispatch(ctx, b, depth+1, meta)
 
 	case tg.InvokeAfterMsgsRequestTypeID:
 		if err := b.ConsumeID(id); err != nil {
@@ -549,7 +563,7 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 				return nil, fmt.Errorf("decode invokeAfterMsgs msg_ids[%d]: %w", i, err)
 			}
 		}
-		return r.dispatch(ctx, b, depth+1)
+		return r.dispatch(ctx, b, depth+1, meta)
 
 	case tg.InitConnectionRequestTypeID:
 		req := &tg.InitConnectionRequest{Query: &rawObject{}}
@@ -578,7 +592,7 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 		if !ok {
 			return nil, fmt.Errorf("initConnection query: unexpected type %T", req.Query)
 		}
-		return r.dispatch(ctx, &bin.Buffer{Buf: inner.data}, depth+1)
+		return r.dispatch(ctx, &bin.Buffer{Buf: inner.data}, depth+1, meta)
 
 	default:
 		// 入站兼容统一入口（先于鉴权门/dispatcher）：layerwire 把老客户端请求升级为
@@ -605,6 +619,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int) (bin.En
 					ctx = r.withClientDriftMetadata(ctx, ClientTypeAndroid)
 				}
 			}
+		}
+		if meta != nil {
+			meta.method = tlTypeName(id)
 		}
 		knownRequest, structuralErr := layerwire.ValidateRoutableRequest(b.Buf)
 		if !knownRequest {
@@ -832,6 +849,37 @@ func (r *Router) NegotiatedLayer(authKeyID [8]byte, sessionID int64) (int, bool)
 		return info.layer, true
 	}
 	return currentClientLayer, false
+}
+
+// ObserveInitConnection records the protocol metadata of an initConnection
+// whose inner request was aliased by mtprotoedge to an already-running naked
+// request. It deliberately performs no handler dispatch and therefore cannot
+// repeat business side effects.
+func (r *Router) ObserveInitConnection(
+	ctx context.Context,
+	rawAuthKeyID [8]byte,
+	sessionID int64,
+	layer, apiID int,
+	deviceModel, systemVersion, appVersion, systemLangCode, langPack, langCode string,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = WithRawAuthKeyID(ctx, rawAuthKeyID)
+	effectiveAuthKeyID, err := r.effectiveAuthKeyID(ctx, rawAuthKeyID, sessionID)
+	if err != nil {
+		return err
+	}
+	ctx = WithAuthKeyID(ctx, effectiveAuthKeyID)
+	ctx = WithSessionID(ctx, sessionID)
+	ctx = WithLayer(ctx, layer)
+	r.rememberClientLayer(ctx, layer)
+	r.rememberClientInfo(ctx, ClientInfo{
+		APIID: apiID, DeviceModel: deviceModel, SystemVersion: systemVersion,
+		AppVersion: appVersion, SystemLangCode: systemLangCode,
+		LangPack: langPack, LangCode: langCode,
+	})
+	return nil
 }
 
 // mutateClientSessionInfo 在单个临界区内完成「读旧值-修改-写回」，避免

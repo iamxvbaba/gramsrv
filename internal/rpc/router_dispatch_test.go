@@ -49,9 +49,12 @@ func TestDispatchUnwrapsWrappers(t *testing.T) {
 		t.Fatalf("encode wrapped request: %v", err)
 	}
 
-	enc, err := r.Dispatch(context.Background(), [8]byte{}, 0, &b)
+	enc, method, err := r.DispatchWithMethod(context.Background(), [8]byte{}, 0, &b)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
+	}
+	if method != "help.getConfig" {
+		t.Fatalf("effective method = %q, want help.getConfig", method)
 	}
 	cfg, ok := enc.(*tg.Config)
 	if !ok {

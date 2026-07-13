@@ -34,7 +34,10 @@ const (
 	inboundItemDestroyAuthKey
 	inboundItemRPC
 	inboundItemCapacityError
-	inboundItemPendingRPC
+	// inboundItemRewrappedRPC is an initConnection retry whose exact inner TL
+	// request is already executing (or completed) under the client's old msg_id.
+	// It never dispatches business code a second time.
+	inboundItemRewrappedRPC
 	// inboundItemReplayRPC is a request first observed by this physical Conn whose
 	// terminal result already exists in the cross-connection cache. It is distinct
 	// from inboundItemDuplicate: a duplicate already present in this Conn's seen
@@ -71,6 +74,8 @@ type inboundPlan struct {
 	rpcReservation *inboundRPCBatchReservation
 	rpcTasks       []inboundRPC
 	rpcOwners      []*rpcResultOwnerLease
+	rewrapAliases  []*rpcRewrapAlias
+	rewrapIndices  []int
 }
 
 func (p *inboundPlan) close() {
@@ -85,10 +90,40 @@ func (p *inboundPlan) close() {
 		owner.Abort()
 	}
 	p.rpcOwners = nil
+	for _, alias := range p.rewrapAliases {
+		alias.releaseCandidate()
+		if alias != nil && alias.newOwner != nil {
+			alias.newOwner.Abort()
+		}
+	}
+	p.rewrapAliases = nil
+	p.rewrapIndices = nil
 	for i := len(p.releases) - 1; i >= 0; i-- {
 		p.releases[i]()
 	}
 	p.releases = nil
+}
+
+func (p *inboundPlan) commitRewrapAliases(s *Server) error {
+	if p == nil || len(p.rewrapAliases) == 0 {
+		return nil
+	}
+	for i, alias := range p.rewrapAliases {
+		if err := alias.activate(s); err != nil {
+			for _, pending := range p.rewrapAliases[i:] {
+				pending.releaseCandidate()
+				if pending != nil && pending.newOwner != nil {
+					pending.newOwner.Abort()
+				}
+			}
+			p.rewrapAliases = nil
+			p.rewrapIndices = nil
+			return err
+		}
+	}
+	p.rewrapAliases = nil
+	p.rewrapIndices = nil
+	return nil
 }
 
 func (p *inboundPlan) commitRPCBatch() error {
@@ -624,6 +659,7 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 	var specs []inboundRPCSpec
 	var ownersInPlan map[int64]*rpcResultOwnerLease
 	flightCapacity := false
+	clearedPostInitCandidates := false
 	for i := range plan.items {
 		item := &plan.items[i]
 		if item.kind != inboundItemRPC && item.kind != inboundItemDuplicate {
@@ -638,6 +674,71 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 			continue
 		}
 		method := s.typeName(item.typeID)
+		init, isInitRewrap := decodeRPCRewrapInit(item.body)
+		if isInitRewrap {
+			firstInit := !c.rpcRewrapInitialized.Swap(true)
+			c.SetClientLayer(init.layer)
+			if candidate := s.rpcRewrap.claim(c, init.inner); candidate != nil {
+				claim, err := s.rpcResults.Acquire(c.authKeyID, c.sessionID, item.msgID)
+				if errors.Is(err, ErrRPCResultFlightCapacity) {
+					s.rpcRewrap.release(candidate)
+					c.metrics.InboundRPCDropped(candidate.method, "flight_capacity")
+					flightCapacity = true
+					item.kind = inboundItemCapacityError
+					continue
+				}
+				if err != nil {
+					s.rpcRewrap.release(candidate)
+					return err
+				}
+				switch claim.state {
+				case rpcResultAcquireCompleted:
+					s.rpcRewrap.commit(candidate)
+					item.kind = inboundItemReplayRPC
+					item.payload = claim.encoded
+				case rpcResultAcquirePending:
+					s.rpcRewrap.commit(candidate)
+					item.kind = inboundItemRewrappedRPC
+					item.payload = claim.waiter
+					plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
+						conn: c, newReqID: item.msgID, method: candidate.method,
+						oldWaiter: claim.waiter, observeInit: firstInit, init: init,
+					})
+					plan.rewrapIndices = append(plan.rewrapIndices, i)
+				case rpcResultAcquireOwner:
+					if ownersInPlan == nil {
+						ownersInPlan = make(map[int64]*rpcResultOwnerLease)
+					}
+					ownersInPlan[item.msgID] = claim.owner
+					item.kind = inboundItemRewrappedRPC
+					item.payload = claim.owner
+					plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
+						conn: c, newReqID: item.msgID, method: candidate.method,
+						oldWaiter: candidate.waiter, newOwner: claim.owner,
+						sourceConn: candidate.source, sourceOwner: candidate.owner,
+						observeInit: firstInit, init: init,
+						candidate: candidate, registry: s.rpcRewrap,
+					})
+					plan.rewrapIndices = append(plan.rewrapIndices, i)
+				default:
+					s.rpcRewrap.release(candidate)
+					return ErrRPCResultFlightInvalid
+				}
+				s.log.Info("RPC init rewrap matched",
+					zap.String("method", candidate.method),
+					zap.Int64("old_req_msg_id", candidate.reqMsgID),
+					zap.Int64("new_req_msg_id", item.msgID),
+					zap.Bool("same_connection", candidate.source == c),
+					zap.String("auth_key_id", c.authKeyHex), zap.Int64("session_id", c.sessionID))
+				continue
+			}
+		} else if c.rpcRewrapInitialized.Load() && !clearedPostInitCandidates {
+			// A naked request after this connection has observed initConnection is
+			// event-level proof that the client finished moving its old running set.
+			// Retire any unmatched candidates without a timer.
+			s.rpcRewrap.clearSession(c)
+			clearedPostInitCandidates = true
+		}
 		claim, err := s.rpcResults.Acquire(c.authKeyID, c.sessionID, item.msgID)
 		if errors.Is(err, ErrRPCResultFlightCapacity) {
 			if item.kind == inboundItemRPC {
@@ -669,8 +770,11 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 				item.kind = inboundItemDuplicate
 				item.payload = nil
 			} else {
-				item.kind = inboundItemPendingRPC
+				item.kind = inboundItemRewrappedRPC
 				item.payload = claim.waiter
+				plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
+					conn: c, newReqID: item.msgID, method: method, oldWaiter: claim.waiter,
+				})
 			}
 		case rpcResultAcquireOwner:
 			if item.kind == inboundItemDuplicate {
@@ -689,6 +793,9 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 			item.payload = claim.owner
 			indices = append(indices, i)
 			specs = append(specs, inboundRPCSpec{method: method, size: len(item.body)})
+			if !c.rpcRewrapInitialized.Load() && !isInitRewrap {
+				s.rpcRewrap.register(c, item.body, item.msgID, method, claim.owner)
+			}
 		default:
 			return ErrRPCResultFlightInvalid
 		}
@@ -700,6 +807,17 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 		for _, index := range indices {
 			plan.items[index].kind = inboundItemCapacityError
 		}
+		for _, index := range plan.rewrapIndices {
+			plan.items[index].kind = inboundItemCapacityError
+		}
+		for _, alias := range plan.rewrapAliases {
+			alias.releaseCandidate()
+			if alias.newOwner != nil {
+				alias.newOwner.Abort()
+			}
+		}
+		plan.rewrapAliases = nil
+		plan.rewrapIndices = nil
 		return nil
 	}
 	if len(specs) == 0 {
@@ -712,6 +830,17 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 			for _, index := range indices {
 				plan.items[index].kind = inboundItemCapacityError
 			}
+			for _, index := range plan.rewrapIndices {
+				plan.items[index].kind = inboundItemCapacityError
+			}
+			for _, alias := range plan.rewrapAliases {
+				alias.releaseCandidate()
+				if alias.newOwner != nil {
+					alias.newOwner.Abort()
+				}
+			}
+			plan.rewrapAliases = nil
+			plan.rewrapIndices = nil
 			return nil
 		}
 		return err
@@ -751,10 +880,10 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			} else if err := s.replayRPCResultByRequest(ctx, c, item.msgID); err != nil {
 				return err
 			}
-		case inboundItemPendingRPC:
-			// Wait only after this plan's fresh RPC batch has become runnable; see
-			// executePendingRPCReplays. Blocking here could otherwise deadlock on
-			// an owner appended by the same container.
+		case inboundItemRewrappedRPC:
+			// Activation is deferred until every session/control barrier has
+			// committed. It subscribes to the original result event and never waits
+			// or dispatches the business handler again.
 			continue
 		case inboundItemPing:
 			if err := s.sendPong(ctx, c, item.msgID, item.payload.(mt.PingRequest).PingID); err != nil {
@@ -838,44 +967,6 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			}
 		default:
 			return fmt.Errorf("unknown inbound item kind %d", item.kind)
-		}
-	}
-	return nil
-}
-
-// executePendingRPCReplays joins owners already running on another physical
-// connection for the same MTProto session. It never dispatches business code:
-// owner Put publishes the immutable result to every waiter; owner Abort leaves
-// the client free to retry after the old execution has definitely stopped.
-func (s *Server) executePendingRPCReplays(ctx context.Context, c *Conn, plan *inboundPlan) error {
-	for _, item := range plan.items {
-		if item.kind != inboundItemPendingRPC {
-			continue
-		}
-		waiter, _ := item.payload.(*rpcResultWaiter)
-		if waiter == nil {
-			continue
-		}
-		encoded, ok, err := waiter.Wait(ctx)
-		if err != nil {
-			return err
-		}
-		if !ok || encoded == nil {
-			// The old owner stopped without publishing a result (normally because
-			// replacement cancellation reached the handler before it committed).
-			// A fresh-connection item still owns the decoded request body, so reacquire
-			// only after the prior flight is definitively gone. This is sequential
-			// retry, never concurrent business execution. Same-Conn seen duplicates
-			// have no body here and rely on the client's ordinary resend path.
-			if len(item.body) > 0 {
-				if err := s.enqueueRPC(ctx, c, item.msgID, item.typeID, &bin.Buffer{Buf: item.body}); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-		if err := s.sendCachedRPCResult(ctx, c, encoded); err != nil {
-			return err
 		}
 	}
 	return nil

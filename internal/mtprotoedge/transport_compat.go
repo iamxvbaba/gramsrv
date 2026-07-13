@@ -26,6 +26,9 @@ const quickAckResponseFlag = uint32(1 << 31)
 const (
 	maxCompatPacketOverhead         = 7 // 4-byte header + up to 3 bytes padded-intermediate padding.
 	maxRetainedDirectMessageScratch = 64 << 10
+	progressiveWriteMinBytes        = 64 << 10
+	progressiveWriteChunkBytes      = 32 << 10
+	progressiveWriteIdleTimeout     = 10 * time.Second
 )
 
 type transportListener interface {
@@ -237,10 +240,81 @@ func (c *compatTransportConn) sendDeadline(deadline time.Time, b *bin.Buffer, sc
 		}
 		return nil
 	}
-	if err := c.codec.Write(c.conn, b); err != nil {
+	writer := io.Writer(c.conn)
+	// A transport packet is still physically serialized as one uninterrupted
+	// byte sequence. Only large raw-TCP payloads use bounded chunks so progress
+	// refreshes the idle deadline and a stalled link reports how far it got.
+	if b.Len() >= progressiveWriteMinBytes {
+		writer = &progressiveDeadlineWriter{
+			conn: c.conn, hardDeadline: deadline,
+			idleTimeout: progressiveWriteIdleTimeout, chunkBytes: progressiveWriteChunkBytes,
+		}
+	}
+	if err := c.codec.Write(writer, b); err != nil {
 		return errors.Wrap(err, "write")
 	}
 	return nil
+}
+
+type progressiveWriteError struct {
+	Written int
+	Chunks  int
+	Err     error
+}
+
+func (e *progressiveWriteError) Error() string {
+	return fmt.Sprintf("progressive transport write after %d bytes/%d chunks: %v", e.Written, e.Chunks, e.Err)
+}
+
+func (e *progressiveWriteError) Unwrap() error { return e.Err }
+
+type progressiveDeadlineWriter struct {
+	conn         net.Conn
+	hardDeadline time.Time
+	idleTimeout  time.Duration
+	chunkBytes   int
+	written      int
+	chunks       int
+}
+
+func (w *progressiveDeadlineWriter) Write(p []byte) (int, error) {
+	if w == nil || w.conn == nil {
+		return 0, io.ErrClosedPipe
+	}
+	startWritten := w.written
+	chunkBytes := w.chunkBytes
+	if chunkBytes <= 0 {
+		chunkBytes = progressiveWriteChunkBytes
+	}
+	for len(p) > 0 {
+		deadline := w.hardDeadline
+		if w.idleTimeout > 0 {
+			idle := time.Now().Add(w.idleTimeout)
+			if deadline.IsZero() || idle.Before(deadline) {
+				deadline = idle
+			}
+		}
+		if err := w.conn.SetWriteDeadline(deadline); err != nil {
+			return w.written - startWritten, &progressiveWriteError{Written: w.written, Chunks: w.chunks, Err: err}
+		}
+		chunk := p
+		if len(chunk) > chunkBytes {
+			chunk = chunk[:chunkBytes]
+		}
+		n, err := w.conn.Write(chunk)
+		w.written += n
+		if n > 0 {
+			w.chunks++
+			p = p[n:]
+		}
+		if err != nil {
+			return w.written - startWritten, &progressiveWriteError{Written: w.written, Chunks: w.chunks, Err: err}
+		}
+		if n == 0 {
+			return w.written - startWritten, &progressiveWriteError{Written: w.written, Chunks: w.chunks, Err: io.ErrShortWrite}
+		}
+	}
+	return w.written - startWritten, nil
 }
 
 func (c *compatTransportConn) writeTransportPacketMessage(b *bin.Buffer, scratch *[]byte) error {

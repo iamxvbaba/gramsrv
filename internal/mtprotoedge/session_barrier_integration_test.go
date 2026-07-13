@@ -492,29 +492,28 @@ func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testin
 	if got := handler.calls.Load(); got != 1 {
 		t.Fatalf("overlapping reconnect executed %d business handlers, want 1", got)
 	}
-	select {
-	case got := <-secondDone:
-		t.Fatalf("duplicate reconnect returned before owner completion: %v", got.err)
-	default:
-	}
-
-	close(handler.release)
 	var second handleResult
 	select {
 	case second = <-secondDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("duplicate reconnect did not receive owner result")
+	case <-time.After(time.Second):
+		t.Fatal("event-driven duplicate admission blocked the replacement read loop")
 	}
 	if second.err != nil {
 		t.Fatalf("second handleEncrypted: %v", second.err)
 	}
 	if second.conn == nil || !second.conn.isActive() {
-		t.Fatalf("second connection was not active after replay: %p", second.conn)
+		t.Fatalf("second connection was not active after non-blocking admission: %p", second.conn)
 	}
+
+	close(handler.release)
 	if got := handler.calls.Load(); got != 1 {
 		t.Fatalf("cross-connection duplicate business calls = %d, want 1", got)
 	}
 
+	deadline = time.Now().Add(3 * time.Second)
+	for len(secondTransport.snapshot()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	resultCount := 0
 	for _, wire := range secondTransport.snapshot() {
 		data, decryptErr := crypto.NewClientCipher(rand.Reader).DecryptFromBuffer(key, &bin.Buffer{Buf: wire})
@@ -582,8 +581,33 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	secondState := newConnState()
 	var secondPlain bin.Buffer
 	secondConn, err := s.handleEncrypted(context.Background(), secondTransport, secondState, nil, &stored, secondFrame, &secondPlain)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("second handleEncrypted: %v", err)
+	}
+	if secondConn == nil {
+		t.Fatal("second handleEncrypted returned no logical connection")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for (handler.active.Load() != 0 || !secondConn.isRetired()) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := handler.calls.Load(); got != 1 {
+		t.Fatalf("event subscription re-executed aborted owner: calls=%d", got)
+	}
+	if handler.active.Load() != 0 || secondConn == nil || !secondConn.isRetired() {
+		t.Fatalf("abort convergence = active:%d second:%p state:%v", handler.active.Load(), secondConn, secondConn.lifecycleState())
+	}
+
+	// The aborted owner has now definitively stopped and the subscribed
+	// replacement generation is fenced. A fresh physical retry may acquire the
+	// same msg_id and execute, still with max concurrency one.
+	thirdFrame, _ := encryptedRPCFrameForBarrierTest(t, key, salt, sessionID, msgID)
+	thirdTransport := &collectingSessionTransport{}
+	thirdState := newConnState()
+	var thirdPlain bin.Buffer
+	thirdConn, err := s.handleEncrypted(context.Background(), thirdTransport, thirdState, nil, &stored, thirdFrame, &thirdPlain)
+	if err != nil {
+		t.Fatalf("third handleEncrypted: %v", err)
 	}
 	waitForAtomicCalls(t, &handler.calls, 2)
 	waitInboundRPCBatchBudget(t, s.rpcScheduler, 0, 0)
@@ -595,7 +619,11 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	}
 
 	resultCount := 0
-	for _, wire := range secondTransport.snapshot() {
+	deadline = time.Now().Add(2 * time.Second)
+	for len(thirdTransport.snapshot()) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	for _, wire := range thirdTransport.snapshot() {
 		data, decryptErr := crypto.NewClientCipher(rand.Reader).DecryptFromBuffer(key, &bin.Buffer{Buf: wire})
 		if decryptErr != nil {
 			t.Fatalf("decrypt sequential-retry reply: %v", decryptErr)
@@ -612,10 +640,10 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	if resultCount != 1 {
 		t.Fatalf("sequential retry result count = %d, want 1", resultCount)
 	}
-	if !firstConn.isRetired() || secondConn == nil || !secondConn.isActive() {
-		t.Fatalf("replacement lifecycle = old:%v new:%p active:%v", firstConn.lifecycleState(), secondConn, secondConn != nil && secondConn.isActive())
+	if !firstConn.isRetired() || !secondConn.isRetired() || thirdConn == nil || !thirdConn.isActive() {
+		t.Fatalf("replacement lifecycle = first:%v second:%v third:%p active:%v", firstConn.lifecycleState(), secondConn.lifecycleState(), thirdConn, thirdConn != nil && thirdConn.isActive())
 	}
-	secondConn.ForceClose()
+	thirdConn.ForceClose()
 }
 
 func waitForAtomicCalls(t *testing.T, calls interface{ Load() int32 }, want int32) {

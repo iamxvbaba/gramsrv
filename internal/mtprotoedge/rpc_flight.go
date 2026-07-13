@@ -3,6 +3,7 @@ package mtprotoedge
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 )
 
@@ -41,12 +42,15 @@ type rpcResultAcquire struct {
 // done channel is closed exactly once while holding the owning cache shard lock;
 // channel close publishes encoded/ok to all waiters without a waiter goroutine.
 type rpcResultFlight struct {
-	done    chan struct{}
-	encoded *encodedOutboundMessage
-	ok      bool
+	done        chan struct{}
+	encoded     *encodedOutboundMessage
+	ok          bool
+	subscribers []func(*encodedOutboundMessage, bool)
 }
 
 type rpcResultWaiter struct {
+	cache  *rpcResultCache
+	key    rpcResultCacheKey
 	flight *rpcResultFlight
 }
 
@@ -78,10 +82,115 @@ func (w *rpcResultWaiter) Wait(ctx context.Context) (encoded *encodedOutboundMes
 	}
 }
 
+// Subscribe registers an event callback without creating a goroutine or
+// occupying an RPC worker. The callback is invoked after the cache shard lock is
+// released; it must remain non-blocking.
+func (w *rpcResultWaiter) Subscribe(fn func(*encodedOutboundMessage, bool)) error {
+	if w == nil || w.cache == nil || w.flight == nil || fn == nil {
+		return ErrRPCResultFlightInvalid
+	}
+	s := w.cache.shard(w.key)
+	var (
+		encoded *encodedOutboundMessage
+		ok      bool
+		ready   bool
+	)
+	s.mu.Lock()
+	if flight, exists := s.pending[w.key]; exists && flight == w.flight {
+		flight.subscribers = append(flight.subscribers, fn)
+		s.mu.Unlock()
+		return nil
+	}
+	select {
+	case <-w.flight.done:
+		encoded, ok, ready = w.flight.encoded, w.flight.ok, true
+	default:
+	}
+	s.mu.Unlock()
+	if !ready {
+		return ErrRPCResultFlightInvalid
+	}
+	fn(encoded, ok)
+	return nil
+}
+
 type rpcResultOwnerLease struct {
-	cache  *rpcResultCache
-	key    rpcResultCacheKey
-	flight *rpcResultFlight
+	cache     *rpcResultCache
+	key       rpcResultCacheKey
+	flight    *rpcResultFlight
+	delivery  *rpcResultDelivery
+	hookMu    sync.Mutex
+	abortHook func()
+	// handedOff means the inbound worker transferred terminal-result ownership to
+	// the bounded egress pipeline. Its ordinary release callback must no longer
+	// abort the flight merely because the socket write is still pending.
+	handedOff atomic.Bool
+}
+
+func (l *rpcResultOwnerLease) SetAbortHook(fn func()) {
+	if l == nil {
+		return
+	}
+	l.hookMu.Lock()
+	l.abortHook = fn
+	l.hookMu.Unlock()
+}
+
+// InstallAbortHook installs fn only while this lease still owns the pending
+// flight. The shard lock linearizes installation with Abort/Put so a registry
+// cannot publish a candidate after its owner has already disappeared.
+func (l *rpcResultOwnerLease) InstallAbortHook(fn func()) bool {
+	if l == nil || l.cache == nil || l.flight == nil || fn == nil {
+		return false
+	}
+	s := l.cache.shard(l.key)
+	s.mu.Lock()
+	flight, ok := s.pending[l.key]
+	if !ok || flight != l.flight {
+		s.mu.Unlock()
+		return false
+	}
+	l.hookMu.Lock()
+	l.abortHook = fn
+	l.hookMu.Unlock()
+	s.mu.Unlock()
+	return true
+}
+
+func (l *rpcResultOwnerLease) Waiter() *rpcResultWaiter {
+	if l == nil || l.cache == nil || l.flight == nil {
+		return nil
+	}
+	return &rpcResultWaiter{cache: l.cache, key: l.key, flight: l.flight}
+}
+
+func (l *rpcResultOwnerLease) TryRetarget(reqMsgID int64) bool {
+	return l != nil && l.delivery != nil && (&encodedOutboundMessage{delivery: l.delivery}).tryRetarget(reqMsgID)
+}
+
+func (l *rpcResultOwnerLease) Delivery() *rpcResultDelivery {
+	if l == nil {
+		return nil
+	}
+	return l.delivery
+}
+
+// HandOff transfers completion responsibility from the inbound RPC task to an
+// already-admitted egress operation. The egress terminal callback must resolve
+// the flight through Put on both successful delivery and fenced failure.
+func (l *rpcResultOwnerLease) HandOff() bool {
+	if l == nil || l.cache == nil || l.flight == nil {
+		return false
+	}
+	s := l.cache.shard(l.key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	flight, ok := s.pending[l.key]
+	if !ok || flight != l.flight {
+		return false
+	}
+	l.handedOff.Store(true)
+	return true
 }
 
 // Abort releases an unfinished owner claim and wakes every waiter with no
@@ -91,17 +200,37 @@ func (l *rpcResultOwnerLease) Abort() bool {
 	if l == nil || l.cache == nil || l.flight == nil {
 		return false
 	}
+	if l.handedOff.Load() {
+		return false
+	}
 	s := l.cache.shard(l.key)
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if l.handedOff.Load() {
+		s.mu.Unlock()
+		return false
+	}
 
 	flight, ok := s.pending[l.key]
 	if !ok || flight != l.flight {
+		s.mu.Unlock()
 		return false
 	}
 	delete(s.pending, l.key)
 	l.cache.flightLimit.release()
+	subscribers := append([]func(*encodedOutboundMessage, bool){}, flight.subscribers...)
+	flight.subscribers = nil
 	close(flight.done)
+	s.mu.Unlock()
+	l.hookMu.Lock()
+	abortHook := l.abortHook
+	l.abortHook = nil
+	l.hookMu.Unlock()
+	if abortHook != nil {
+		abortHook()
+	}
+	for _, subscriber := range subscribers {
+		subscriber(nil, false)
+	}
 	return true
 }
 
@@ -168,7 +297,7 @@ func (c *rpcResultCache) Acquire(authKeyID [8]byte, sessionID, reqMsgID int64) (
 	if flight, ok := s.pending[key]; ok {
 		return rpcResultAcquire{
 			state:  rpcResultAcquirePending,
-			waiter: &rpcResultWaiter{flight: flight},
+			waiter: &rpcResultWaiter{cache: c, key: key, flight: flight},
 		}, nil
 	}
 	if !c.flightLimit.reserve() {
@@ -181,7 +310,9 @@ func (c *rpcResultCache) Acquire(authKeyID [8]byte, sessionID, reqMsgID int64) (
 	s.pending[key] = flight
 	return rpcResultAcquire{
 		state: rpcResultAcquireOwner,
-		owner: &rpcResultOwnerLease{cache: c, key: key, flight: flight},
+		owner: &rpcResultOwnerLease{
+			cache: c, key: key, flight: flight, delivery: newRPCResultDelivery(reqMsgID),
+		},
 	}, nil
 }
 
@@ -191,17 +322,20 @@ func (c *rpcResultCache) completeRPCResultFlightLocked(
 	s *rpcResultCacheShard,
 	key rpcResultCacheKey,
 	encoded *encodedOutboundMessage,
-) {
+) []func(*encodedOutboundMessage, bool) {
 	if c == nil || s == nil || encoded == nil {
-		return
+		return nil
 	}
 	flight, ok := s.pending[key]
 	if !ok {
-		return
+		return nil
 	}
 	delete(s.pending, key)
 	flight.encoded = encoded
 	flight.ok = true
 	c.flightLimit.release()
+	subscribers := append([]func(*encodedOutboundMessage, bool){}, flight.subscribers...)
+	flight.subscribers = nil
 	close(flight.done)
+	return subscribers
 }

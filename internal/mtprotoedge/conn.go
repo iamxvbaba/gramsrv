@@ -61,9 +61,13 @@ type Conn struct {
 
 	outbound        chan outboundOp
 	outboundControl chan outboundOp
-	outboundStop    chan struct{}
-	outboundDone    chan struct{}
-	outboundClose   sync.Once
+	// Critical RPC results (session/difference convergence) and large bulk
+	// responses have independent bounded lanes. The actor remains the sole writer.
+	outboundCritical chan outboundOp
+	outboundBulk     chan outboundOp
+	outboundStop     chan struct{}
+	outboundDone     chan struct{}
+	outboundClose    sync.Once
 	// outboundEnqueueMu orders producer registration against terminal close. Close
 	// flips closing under this lock before waiting, so no WaitGroup Add can race Wait.
 	outboundEnqueueMu sync.Mutex
@@ -103,6 +107,12 @@ type Conn struct {
 	rpcRunning       int
 	rpcReady         bool
 	rpcClosed        bool
+	// Rewrap aliasing never delays execution. initialized stops collecting
+	// candidates after the first valid init wrapper on this physical generation.
+	rpcRewrapInitialized atomic.Bool
+	// rpcResultAcked is invoked by the sole outbound actor after it resolves an
+	// acknowledged server frame back to the rpc_result request msg_id.
+	rpcResultAcked func(*Conn, int64)
 	// inflightRPCBytes 跟踪已入队未完成的 inbound RPC body 总字节，配合 maxInflightRPCBytes
 	// 给 RPC 队列设字节预算（不止限条数），防对抗客户端发大请求撑内存。
 	inflightRPCBytes atomic.Int64

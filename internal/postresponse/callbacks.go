@@ -39,15 +39,34 @@ func Register(ctx context.Context, cb func()) bool {
 }
 
 func Run(ctx context.Context) {
+	run := Take(ctx)
+	if run != nil {
+		run()
+	}
+}
+
+// Take transfers ownership of every currently registered callback to the caller.
+// The returned function is idempotent and may safely outlive the request context.
+// MTProto uses this to release a business worker after admitting rpc_result while
+// still delaying follow-up updates until the result reaches the reliable stream.
+func Take(ctx context.Context) func() {
 	cbs, ok := ctx.Value(callbacksKey{}).(*callbacks)
 	if !ok || cbs == nil {
-		return
+		return nil
 	}
 	cbs.mu.Lock()
 	list := append([]callback(nil), cbs.list...)
 	cbs.list = nil
 	cbs.mu.Unlock()
-	for _, cb := range list {
-		cb()
+	if len(list) == 0 {
+		return nil
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for _, cb := range list {
+				cb()
+			}
+		})
 	}
 }

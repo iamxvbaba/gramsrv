@@ -43,6 +43,27 @@ type RPCHandler interface {
 	NegotiatedLayer(authKeyID [8]byte, sessionID int64) (int, bool)
 }
 
+// RPCHandlerWithMethod returns the canonical innermost RPC method after the
+// router has peeled invokeWithLayer/initConnection/invokeAfter wrappers. Egress
+// scheduling must use this identity: the outer wrapper is not a useful signal
+// for prioritizing updates convergence over catalog/media responses.
+type RPCHandlerWithMethod interface {
+	DispatchWithMethod(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, string, error)
+}
+
+// RPCInitConnectionObserver records wrapper metadata when the edge aliases an
+// initConnection reissue to an already-running request and therefore correctly
+// skips a second business Dispatch.
+type RPCInitConnectionObserver interface {
+	ObserveInitConnection(
+		ctx context.Context,
+		authKeyID [8]byte,
+		sessionID int64,
+		layer, apiID int,
+		deviceModel, systemVersion, appVersion, systemLangCode, langPack, langCode string,
+	) error
+}
+
 // Options 配置 Server。
 type Options struct {
 	// Logger 日志器。默认 zap.NewNop()。
@@ -126,6 +147,10 @@ type Options struct {
 	RPC RPCHandler
 	// Metrics 接收连接层指标。默认 NopMetrics。
 	Metrics Metrics
+	// OnServing is called after the connection intake loops have been installed.
+	// It is a platform-neutral observation hook; all slow initialization must
+	// finish before ListenAndServe is entered.
+	OnServing func(net.Addr)
 	// Clock 用于消息 ID 与时间戳。默认 clock.System。
 	Clock clock.Clock
 	// Rand 随机源。默认 crypto.DefaultRand()。
@@ -239,6 +264,7 @@ type Server struct {
 	conns     *SessionManager
 	rpc       RPCHandler
 	metrics   Metrics
+	onServing func(net.Addr)
 	cipher    crypto.Cipher
 	clock     clock.Clock
 	rand      io.Reader
@@ -246,6 +272,7 @@ type Server struct {
 	admission *admissionController
 
 	rpcResults *rpcResultCache
+	rpcRewrap  *rpcRewrapRegistry
 
 	// onFrame 是测试钩子：收到一帧时回调其字节数；生产为 nil。
 	onFrame func(n int)
@@ -284,13 +311,28 @@ func New(opts Options) *Server {
 		conns:                    conns,
 		rpc:                      opts.RPC,
 		metrics:                  opts.Metrics,
+		onServing:                opts.OnServing,
 		cipher:                   crypto.NewServerCipher(opts.Rand),
 		clock:                    opts.Clock,
 		rand:                     opts.Rand,
 		types:                    tmap.New(tg.TypesMap(), mt.TypesMap(), proto.TypesMap()),
 		rpcResults:               newRPCResultCacheWithFlightLimit(opts.Clock.Now, opts.RPCGlobalMaxTasks),
+		rpcRewrap:                newRPCRewrapRegistry(opts.RPCGlobalMaxTasks),
 		admission:                newAdmissionController(opts.MaxConnections, opts.MaxConnectionsPerIP, opts.MaxConcurrentHandshakes),
 	}
+}
+
+// ListenAndServe binds the public MTProto socket and immediately enters Serve.
+// Keeping listener ownership at the connection edge prevents callers from
+// exposing a TCP port and then performing slow seed/cache initialization while
+// clients are already completing handshakes into an unread accept backlog.
+func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %q: %w", addr, err)
+	}
+	return s.Serve(ctx, ln)
 }
 
 // newConn 基于一次解密结果创建一个可发送的连接对象。
@@ -338,6 +380,7 @@ func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key
 		outboundTrackedBudget:        s.outboundTrackedBudget,
 		outboundControlTrackedBudget: s.outboundControlBudget,
 		outboundScratchPool:          s.outboundScratchPool,
+		rpcResultAcked:               s.rpcRewrap.acknowledge,
 	}
 	c.startOutbound()
 	c.startInboundRPCScheduler(s.rpcScheduler, s.rpcInflight, s.rpcQueueSize, s.rpcTimeout)
@@ -354,7 +397,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	defer s.rpcScheduler.stop(rpcCloseWaitTimeout)
 	// 只在最外层 listener 包一次，确保 same-port mux 的 sniff/HTTP upgrade 也计入
 	// raw admission，而不是等连接已经分流后才计数。
-	ln = s.admission.wrapListener(ln)
+	ln = s.observeRawAccepts(s.admission.wrapListener(ln))
 	if s.websocket {
 		return s.serveMixed(ctx, ln)
 	}
@@ -367,8 +410,12 @@ func (s *Server) serveTCP(ctx context.Context, ln net.Listener) error {
 
 	s.log.Info("Serving", zap.String("addr", ln.Addr().String()), zap.Int("dc", s.dc), zap.Bool("obfuscated_tcp", s.obfuscated))
 	defer s.log.Info("Stopped")
-
-	return s.acceptLoop(ctx, ln, s.obfuscated)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.acceptLoop(ctx, ln, s.obfuscated)
+	}()
+	s.signalServing(ln.Addr())
+	return <-errCh
 }
 
 func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
@@ -382,7 +429,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	// minDuration(5s,...) 把嗅探压到 5s，比非 mux 路径激进 12 倍，会把这些暖连接在 5s 误杀，
 	// 触发客户端 6s 重连风暴并误判「后端不健康」回退到外部 DNS。per-conn goroutine 模型已消解
 	// slow-loris 接入饥饿，故嗅探用满 handshakeTimeout 是安全的。
-	mux := newSamePortMux(ln, s.handshakeTimeout)
+	mux := newSamePortMux(ln, s.handshakeTimeout, s.observeConnectionIntake)
 	wsRawLn, wsHandler := transport.WebsocketListener(ln.Addr())
 	wsLn := newTransportPacketMessageListener(wsRawLn)
 
@@ -430,7 +477,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	// WebSocket：gotd 升级处理器已剥离 obfuscated2 并补回 codec tag，这里只需探测 codec。
 	go func() {
 		defer wg.Done()
-		errCh <- s.acceptLoop(ctx, wsLn, false)
+		errCh <- s.acceptLoopTransport(ctx, wsLn, false, "websocket")
 	}()
 	go func() {
 		defer wg.Done()
@@ -444,6 +491,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 		}
 		errCh <- nil
 	}()
+	s.signalServing(ln.Addr())
 
 	// The four services form one lifecycle: even a clean/closed-listener return from any one
 	// component means the remaining three can no longer make forward progress as a complete
@@ -468,6 +516,10 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 // 整个监听循环。obfuscated 为 true 时先走 obfuscated2 去混淆（裸 MTProto TCP）；WebSocket
 // 连接传 false（gotd 升级处理器已完成去混淆）。
 func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, obfuscated bool) error {
+	return s.acceptLoopTransport(ctx, ln, obfuscated, intakeTransport(obfuscated))
+}
+
+func (s *Server) acceptLoopTransport(ctx context.Context, ln net.Listener, obfuscated bool, transportName string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	defer func() {
@@ -505,7 +557,14 @@ func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, obfuscated boo
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.serveDetectedConn(ctx, raw, obfuscated)
+			s.observeConnectionIntake(connectionIntakeEvent{
+				stage:     "transport_dispatch",
+				outcome:   "accepted",
+				transport: transportName,
+				remote:    connRemote(raw),
+				local:     connLocal(raw),
+			})
+			s.serveDetectedConn(ctx, raw, obfuscated, transportName)
 		}()
 	}
 }
@@ -513,7 +572,9 @@ func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, obfuscated boo
 // serveDetectedConn 把一条裸连接提升为 transport.Conn（去混淆 + codec 探测）后运行 MTProto
 // 连接循环。提升过程的读取放在本 goroutine、且受握手读超时约束，而非塞在 accept 循环里，
 // 这样慢连接不会阻塞其他连接接入，去混淆/codec 握手本身也有时间上界。
-func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated bool) {
+func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated bool, transportName string) {
+	started := time.Now()
+	remote, local := connRemote(raw), connLocal(raw)
 	// 握手读超时只覆盖去混淆 + codec 探测这一小段；用真实墙钟时间（SetReadDeadline 语义），
 	// 不走可能被测试注入的逻辑 clock。
 	if err := raw.SetReadDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
@@ -536,21 +597,37 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 	conn, err := s.promoteConn(raw, obfuscated)
 	close(promoted)
 	if err != nil {
-		// 去混淆/codec 探测失败（读超时、客户端中途断开、坏 init 等）只影响这一条连接，
-		// 记 debug 即可。
-		if !isClientDisconnect(err) {
-			s.log.Debug("Transport handshake failed", zap.Error(err))
+		outcome := "error"
+		if isClientDisconnect(err) {
+			outcome = "client_disconnect"
 		}
+		s.observeConnectionIntake(connectionIntakeEvent{
+			stage:     "transport_promote",
+			outcome:   outcome,
+			transport: transportName,
+			remote:    remote,
+			local:     local,
+			duration:  time.Since(started),
+			err:       err,
+		})
 		_ = raw.Close()
 		return
 	}
+	s.observeConnectionIntake(connectionIntakeEvent{
+		stage:     "transport_promote",
+		outcome:   "ready",
+		transport: transportName,
+		remote:    remote,
+		local:     local,
+		duration:  time.Since(started),
+	})
 	// 探测完成，撤掉握手读超时；后续每帧读写由 serveConn / 传输层各自管理超时。
 	if err := raw.SetReadDeadline(time.Time{}); err != nil {
 		_ = conn.Close()
 		return
 	}
-	if err := s.serveConn(ctx, conn); err != nil && !isClientDisconnect(err) {
-		s.log.Info("Connection closed with error", zap.Error(err))
+	if err := s.serveConn(ctx, conn, remote, local); err != nil && !isClientDisconnect(err) {
+		s.log.Info("Connection closed with error", zap.String("remote_addr", remote), zap.String("local_addr", local), zap.Error(err))
 	}
 }
 
@@ -572,12 +649,14 @@ func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, err
 //   - auth_key_id 未注册：回 AuthKeyNotFound，促使客户端重新握手。
 //
 // 连接建立 session 后注册到 SessionManager，结束时注销。
-func (s *Server) serveConn(ctx context.Context, raw transport.Conn) (err error) {
+func (s *Server) serveConn(ctx context.Context, raw transport.Conn, remote, local string) (err error) {
 	transportOwner, conn := newPhysicalTransportOwner(raw)
 	s.metrics.ConnOpened()
-	s.log.Debug("Connection accepted")
+	s.log.Debug("MTProto connection loop started", zap.String("remote_addr", remote), zap.String("local_addr", local))
 
 	var current *Conn
+	firstFrameStarted := time.Now()
+	firstFrameSeen := false
 	defer func() {
 		// A successful Recv transfers the frame reservation to serveConn. Release it only after
 		// this stack has stopped using b/plain; transport.Close may have raced us earlier and must
@@ -595,7 +674,7 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn) (err error) 
 			current.Close()
 		}
 		s.metrics.ConnClosed()
-		s.log.Debug("Connection closed", zap.Error(err))
+		s.log.Debug("Connection closed", zap.String("remote_addr", remote), zap.String("local_addr", local), zap.Error(err))
 	}()
 
 	// ctx 取消或处理结束时关闭连接，解除 Recv 阻塞。
@@ -624,7 +703,24 @@ func (s *Server) serveConn(ctx context.Context, raw transport.Conn) (err error) 
 				timeout = s.handshakeTimeout
 			}
 			if err := s.recv(ctx, conn, &b, timeout); err != nil {
+				if !firstFrameSeen {
+					outcome := "error"
+					if isClientDisconnect(err) {
+						outcome = "client_disconnect"
+					}
+					s.observeConnectionIntake(connectionIntakeEvent{
+						stage: "first_frame", outcome: outcome, remote: remote, local: local,
+						duration: time.Since(firstFrameStarted), err: err,
+					})
+				}
 				return err
+			}
+			if !firstFrameSeen {
+				firstFrameSeen = true
+				s.observeConnectionIntake(connectionIntakeEvent{
+					stage: "first_frame", outcome: "ready", remote: remote, local: local,
+					duration: time.Since(firstFrameStarted), bytes: b.Len(),
+				})
 			}
 			if s.onFrame != nil {
 				s.onFrame(b.Len())
@@ -742,6 +838,7 @@ func (s *Server) recv(ctx context.Context, conn transport.Conn, b *bin.Buffer, t
 func isClientDisconnect(err error) bool {
 	switch {
 	case errors.Is(err, io.EOF),
+		errors.Is(err, io.ErrUnexpectedEOF),
 		errors.Is(err, net.ErrClosed),
 		errors.Is(err, context.Canceled),
 		errors.Is(err, context.DeadlineExceeded):

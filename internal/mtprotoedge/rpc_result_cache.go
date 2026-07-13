@@ -118,7 +118,6 @@ func (c *rpcResultCache) Put(authKeyID [8]byte, sessionID, reqMsgID int64, encod
 	now := s.now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if cacheable {
 		s.expireLocked(now)
@@ -139,7 +138,11 @@ func (c *rpcResultCache) Put(authKeyID [8]byte, sessionID, reqMsgID int64, encod
 	// Resolve the independent in-flight entry only after the completed cache has
 	// been published. Waiters awakened by this close can therefore immediately
 	// observe either the shared encoded result or the completed Get entry.
-	c.completeRPCResultFlightLocked(s, key, encoded)
+	subscribers := c.completeRPCResultFlightLocked(s, key, encoded)
+	s.mu.Unlock()
+	for _, subscriber := range subscribers {
+		subscriber(encoded, true)
+	}
 }
 
 func (s *rpcResultCacheShard) expireLocked(now time.Time) {

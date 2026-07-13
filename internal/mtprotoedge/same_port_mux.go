@@ -34,6 +34,7 @@ type samePortMux struct {
 	base         net.Listener
 	addr         net.Addr
 	sniffTimeout time.Duration
+	observe      func(connectionIntakeEvent)
 
 	tcp  *samePortMuxListener
 	http *samePortMuxListener
@@ -49,7 +50,7 @@ type samePortMux struct {
 	sniffing map[net.Conn]struct{}
 }
 
-func newSamePortMux(base net.Listener, sniffTimeout time.Duration) *samePortMux {
+func newSamePortMux(base net.Listener, sniffTimeout time.Duration, observers ...func(connectionIntakeEvent)) *samePortMux {
 	if sniffTimeout <= 0 {
 		sniffTimeout = 5 * time.Second
 	}
@@ -59,6 +60,9 @@ func newSamePortMux(base net.Listener, sniffTimeout time.Duration) *samePortMux 
 		sniffTimeout: sniffTimeout,
 		closed:       make(chan struct{}),
 		sniffing:     make(map[net.Conn]struct{}),
+	}
+	if len(observers) > 0 {
+		m.observe = observers[0]
 	}
 	m.tcp = newSamePortMuxListener(m.addr, m.closed)
 	m.http = newSamePortMuxListener(m.addr, m.closed)
@@ -144,10 +148,13 @@ func (m *samePortMux) Close() error {
 // dispatch 窥探单条连接的前 4 字节并把它交给 tcp 或 http 子 listener。窥探带 sniffTimeout
 // 读上界，慢/半开连接最多占用本 goroutine sniffTimeout 后即被回收。
 func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
+	started := time.Now()
+	remote, local := connRemote(conn), connLocal(conn)
 	// SetReadDeadline bounds an otherwise healthy slow-loris connection, but Close only owns
 	// the base listener, not sockets Accept has already returned. Register temporary ownership so
 	// mux shutdown can close this read immediately. finishSniff removes the socket before hand-off.
 	if !m.beginSniff(conn) {
+		m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: "closed", remote: remote, local: local, duration: time.Since(started)})
 		_ = conn.Close()
 		return
 	}
@@ -160,10 +167,16 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 
 	var header [4]byte
 	if err := conn.SetReadDeadline(time.Now().Add(m.sniffTimeout)); err != nil {
+		m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: "error", remote: remote, local: local, duration: time.Since(started), err: err})
 		_ = conn.Close()
 		return
 	}
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		outcome := "error"
+		if isClientDisconnect(err) {
+			outcome = "client_disconnect"
+		}
+		m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: outcome, remote: remote, local: local, duration: time.Since(started), err: err})
 		_ = conn.Close()
 		return
 	}
@@ -171,11 +184,13 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 	// registry entry under sniffMu is the hand-off barrier: Close either captured and closed this
 	// socket, or it can no longer find it. A concurrently closed mux refuses delivery.
 	if !m.finishSniff(conn) {
+		m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: "closed", remote: remote, local: local, duration: time.Since(started)})
 		_ = conn.Close()
 		return
 	}
 	finishedSniff = true
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: "error", remote: remote, local: local, duration: time.Since(started), err: err})
 		_ = conn.Close()
 		return
 	}
@@ -186,11 +201,21 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 	}
 
 	target := m.tcp
+	transport := "tcp"
 	if isHTTPHeaderPrefix(header) {
 		target = m.http
+		transport = "websocket"
 	}
+	m.observeEvent(connectionIntakeEvent{stage: "mux_sniff", outcome: "ready", transport: transport, remote: remote, local: local, duration: time.Since(started), bytes: len(header)})
 	if !target.deliver(ctx, wrapped) {
+		m.observeEvent(connectionIntakeEvent{stage: "mux_delivery", outcome: "closed", transport: transport, remote: remote, local: local, duration: time.Since(started)})
 		_ = conn.Close()
+	}
+}
+
+func (m *samePortMux) observeEvent(event connectionIntakeEvent) {
+	if m.observe != nil {
+		m.observe(event)
 	}
 }
 
