@@ -6,8 +6,8 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestPushTransientSkipsNotReadySession 锁定不变量：transient 推送（typing/presence）对

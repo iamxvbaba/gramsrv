@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/rpc"
 )
@@ -42,7 +42,7 @@ func TestMetricsHooks(t *testing.T) {
 	const dc = 2
 	m := &countingMetrics{}
 	router := rpc.New(rpc.Config{DC: dc, IP: "127.0.0.1", Port: 2398}, rpc.Deps{}, zaptest.NewLogger(t), clock.System)
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: router, Metrics: m})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: router, Metrics: m})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)

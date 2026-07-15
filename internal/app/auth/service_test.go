@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	mtcrypto "github.com/gotd/td/crypto"
+	mtcrypto "github.com/iamxvbaba/td/crypto"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -135,7 +135,7 @@ func TestBindTempAuthKeyClassifiesExpiryWithoutDestroyingPermanentKey(t *testing
 	}
 }
 
-func TestUpdateAuthKeyClientInfoConvergesAuthorizationMetadata(t *testing.T) {
+func TestUpdateAuthKeyClientInfoConvergesMemoryAuthorizationToAuthKeyLayerAuthority(t *testing.T) {
 	ctx := context.Background()
 	keys := memory.NewAuthKeyStore()
 	authz := memory.NewAuthorizationStore()
@@ -144,6 +144,7 @@ func TestUpdateAuthKeyClientInfoConvergesAuthorizationMetadata(t *testing.T) {
 	if err := authz.Bind(ctx, domain.Authorization{
 		AuthKeyID: key.ID,
 		UserID:    1780243200,
+		Layer:     220,
 		Platform:  "unknown",
 	}); err != nil {
 		t.Fatalf("bind authorization: %v", err)
@@ -171,6 +172,7 @@ func TestUpdateAuthKeyClientInfoConvergesAuthorizationMetadata(t *testing.T) {
 		t.Fatalf("get authorization: found=%v err=%v", found, err)
 	}
 	if storedKey.Platform != "ios" || storedAuth.Platform != "ios" ||
+		storedKey.Layer != info.Layer || storedAuth.Layer != info.Layer ||
 		storedKey.DeviceModel != info.DeviceModel || storedAuth.DeviceModel != info.DeviceModel ||
 		storedKey.AppVersion != info.AppVersion || storedAuth.AppVersion != info.AppVersion {
 		t.Fatalf("client metadata did not converge: key=%+v authorization=%+v", storedKey, storedAuth)

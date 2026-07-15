@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	androidcompat "telesrv/internal/compat/android"
 	ioscompat "telesrv/internal/compat/ios"

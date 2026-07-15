@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestRunFlushDiscardsBatchOnIdentitySwitch 验证排空进行中连接易主（登出/换号致

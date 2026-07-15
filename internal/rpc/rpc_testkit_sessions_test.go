@@ -2,9 +2,11 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
 	"sync"
+
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 type captureSessions struct {
@@ -16,6 +18,7 @@ type captureSessions struct {
 	authKeyID       [8]byte
 	authKeyResolved bool
 	receives        bool
+	receivesCalls   int
 	messageType     proto.MessageType
 	message         bin.Encoder
 	userMessage     bin.Encoder // 最近一次 PushToUser* 的消息（与 message 区分：message 也被 PushToSession 覆盖）
@@ -34,6 +37,7 @@ type captureSessionsSnapshot struct {
 	authKeyID       [8]byte
 	authKeyResolved bool
 	receives        bool
+	receivesCalls   int
 	messageType     proto.MessageType
 	message         bin.Encoder
 }
@@ -48,6 +52,7 @@ func (s *captureSessions) snapshot() captureSessionsSnapshot {
 		authKeyID:       s.authKeyID,
 		authKeyResolved: s.authKeyResolved,
 		receives:        s.receives,
+		receivesCalls:   s.receivesCalls,
 		messageType:     s.messageType,
 		message:         s.message,
 	}
@@ -139,9 +144,10 @@ func (s *captureSessions) SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, ses
 	s.rawAuthKeyID = rawAuthKeyID
 	s.sessionID = sessionID
 	s.receives = receives
+	s.receivesCalls++
 }
 
-func (s *captureSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+func (s *captureSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rawAuthKeyID = rawAuthKeyID
@@ -151,7 +157,7 @@ func (s *captureSessions) PushToSessionForAuthKey(_ context.Context, rawAuthKeyI
 	return nil
 }
 
-func (s *captureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *captureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.userID = userID

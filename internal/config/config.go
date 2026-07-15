@@ -36,13 +36,23 @@ type Config struct {
 	// MTProtoMaxConcurrentHandshakes 限制昂贵 RSA/DH exchange 并发；负数关闭。
 	MTProtoMaxConcurrentHandshakes int
 	// MTProto RPC 使用 Server 共享公平调度器；per-connection 与 global 预算共同限制
-	// goroutine、排队任务和 request body 内存。
+	// goroutine、排队任务和 request memory charge。legacy charge 等于 copied body，
+	// exact charge 是 typed decode 前的保守 materialization 上界，不等同 wire bytes。
 	MTProtoRPCMaxInflight    int
 	MTProtoRPCQueueSize      int
 	MTProtoRPCTimeout        time.Duration
 	MTProtoRPCGlobalWorkers  int
 	MTProtoRPCGlobalMaxTasks int
 	MTProtoRPCGlobalMaxBytes int64
+	// Pending ownership and completed rpc_result replay state share a three-level
+	// global/raw-auth/session budget over the full MTProto duplicate horizon.
+	MTProtoRPCResultCacheMaxEntries        int
+	MTProtoRPCResultCacheMaxBytes          int64
+	MTProtoRPCResultCacheAuthMaxEntries    int
+	MTProtoRPCResultCacheAuthMaxBytes      int64
+	MTProtoRPCResultCacheSessionMaxEntries int
+	MTProtoRPCResultCacheSessionMaxBytes   int64
+	MTProtoRPCResultPendingPerAuth         int
 	// MTProtoInboundFrameGlobalMaxBytes 是 transport wire + 最大解密 plaintext 的
 	// 进程级在途预算；frame 长度读出后、payload 分配前预留。
 	MTProtoInboundFrameGlobalMaxBytes int64
@@ -391,18 +401,29 @@ func Load() (Config, error) {
 		// AdvertiseIP 当前不影响 help.getConfig——getConfig 返回空 DCOptions，
 		// 客户端使用其写死的 static DC 地址（见 compat/tdesktop/config.go）。
 		// 字段与默认值保留，供未来需要显式下发 DC 地址时使用。
-		AdvertiseIP:                          envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
-		RSAKeyPath:                           envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
-		DC:                                   envIntOr("TELESRV_DC", 2),
-		MTProtoMaxConnections:                envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
-		MTProtoMaxConnectionsPerIP:           envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
-		MTProtoMaxConcurrentHandshakes:       envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
-		MTProtoRPCMaxInflight:                envIntOr("TELESRV_MTPROTO_RPC_MAX_INFLIGHT", 32),
-		MTProtoRPCQueueSize:                  envIntOr("TELESRV_MTPROTO_RPC_QUEUE_SIZE", 64),
-		MTProtoRPCTimeout:                    envDurationOr("TELESRV_MTPROTO_RPC_TIMEOUT", 30*time.Second),
-		MTProtoRPCGlobalWorkers:              envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", 256),
-		MTProtoRPCGlobalMaxTasks:             envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", 8192),
-		MTProtoRPCGlobalMaxBytes:             envInt64Or("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", 512<<20),
+		AdvertiseIP:                         envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
+		RSAKeyPath:                          envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
+		DC:                                  envIntOr("TELESRV_DC", 2),
+		MTProtoMaxConnections:               envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
+		MTProtoMaxConnectionsPerIP:          envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
+		MTProtoMaxConcurrentHandshakes:      envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
+		MTProtoRPCMaxInflight:               envIntOr("TELESRV_MTPROTO_RPC_MAX_INFLIGHT", 32),
+		MTProtoRPCQueueSize:                 envIntOr("TELESRV_MTPROTO_RPC_QUEUE_SIZE", 64),
+		MTProtoRPCTimeout:                   envDurationOr("TELESRV_MTPROTO_RPC_TIMEOUT", 30*time.Second),
+		MTProtoRPCGlobalWorkers:             envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", 256),
+		MTProtoRPCGlobalMaxTasks:            envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", 8192),
+		MTProtoRPCGlobalMaxBytes:            envInt64Or("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", 512<<20),
+		MTProtoRPCResultCacheMaxEntries:     envIntOr("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", 1<<18),
+		MTProtoRPCResultCacheMaxBytes:       envInt64Or("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES", 64<<20),
+		MTProtoRPCResultCacheAuthMaxEntries: envIntOr("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES", 1<<15),
+		MTProtoRPCResultCacheAuthMaxBytes:   envInt64Or("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", 32<<20),
+		MTProtoRPCResultCacheSessionMaxEntries: envIntOr(
+			"TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES", 1<<14,
+		),
+		MTProtoRPCResultCacheSessionMaxBytes: envInt64Or(
+			"TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", 16<<20,
+		),
+		MTProtoRPCResultPendingPerAuth:       envIntOr("TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", 1<<11),
 		MTProtoInboundFrameGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES", 512<<20),
 		MTProtoOutboundQueueSize:             envIntOr("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", 128),
 		MTProtoOutboundControlQueueSize:      envIntOr("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", 32),
@@ -549,7 +570,43 @@ func Load() (Config, error) {
 	if err := validateLoginEmailConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateRPCResultCacheConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+const mtProtoRPCResultMinBytes = int64((1 << 24) - (2 << 10))
+
+func validateRPCResultCacheConfig(cfg Config) error {
+	if cfg.MTProtoRPCResultCacheMaxEntries <= 0 || cfg.MTProtoRPCResultCacheAuthMaxEntries <= 0 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries <= 0 {
+		return fmt.Errorf("MTProto rpc_result entry limits must be positive")
+	}
+	if cfg.MTProtoRPCResultCacheMaxEntries < cfg.MTProtoRPCResultCacheAuthMaxEntries ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries < cfg.MTProtoRPCResultCacheSessionMaxEntries {
+		return fmt.Errorf("MTProto rpc_result entry hierarchy must satisfy global >= auth >= session: %d/%d/%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxEntries)
+	}
+	if cfg.MTProtoRPCResultCacheMaxBytes < mtProtoRPCResultMinBytes ||
+		cfg.MTProtoRPCResultCacheAuthMaxBytes < mtProtoRPCResultMinBytes ||
+		cfg.MTProtoRPCResultCacheSessionMaxBytes < mtProtoRPCResultMinBytes {
+		return fmt.Errorf("MTProto rpc_result byte limits must each be at least %d: %d/%d/%d",
+			mtProtoRPCResultMinBytes, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxBytes, cfg.MTProtoRPCResultCacheSessionMaxBytes)
+	}
+	if cfg.MTProtoRPCResultCacheMaxBytes < cfg.MTProtoRPCResultCacheAuthMaxBytes ||
+		cfg.MTProtoRPCResultCacheAuthMaxBytes < cfg.MTProtoRPCResultCacheSessionMaxBytes {
+		return fmt.Errorf("MTProto rpc_result byte hierarchy must satisfy global >= auth >= session: %d/%d/%d",
+			cfg.MTProtoRPCResultCacheMaxBytes, cfg.MTProtoRPCResultCacheAuthMaxBytes, cfg.MTProtoRPCResultCacheSessionMaxBytes)
+	}
+	if cfg.MTProtoRPCGlobalMaxTasks <= 0 || cfg.MTProtoRPCResultPendingPerAuth <= 0 ||
+		cfg.MTProtoRPCResultPendingPerAuth > cfg.MTProtoRPCGlobalMaxTasks ||
+		cfg.MTProtoRPCResultPendingPerAuth > cfg.MTProtoRPCResultCacheAuthMaxEntries {
+		return fmt.Errorf("MTProto rpc_result pending-per-auth %d must be positive and <= global pending %d and auth entries %d",
+			cfg.MTProtoRPCResultPendingPerAuth, cfg.MTProtoRPCGlobalMaxTasks, cfg.MTProtoRPCResultCacheAuthMaxEntries)
+	}
+	return nil
 }
 
 func validateLoginEmailConfig(cfg Config) error {

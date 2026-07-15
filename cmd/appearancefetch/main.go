@@ -1,5 +1,5 @@
 // Command appearancefetch 从官方 Telegram 拉取墙纸 + 聊天主题,下载文档/缩略图,
-// 生成 telesrv 外观 seed(default_appearance_seed.json + default_wallpapers/{documents,thumbs/m}/*.dat)。
+// 生成 telesrv 外观 seed(Default_appearance_seed.json + Default_wallpapers/{documents,thumbs/m}/*.dat)。
 // 复用 internal/seed/appearance 的结构体保证 schema 完全一致。peer_colors 从现有 JSON 沿用。
 //
 // 需登录(墙纸/主题接口非免登)。api 凭据用 TDesktop 开源公开的 id/hash。
@@ -21,10 +21,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/telegram/auth"
-	"github.com/gotd/td/telegram/downloader"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/auth"
+	"github.com/iamxvbaba/td/telegram/downloader"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/seed/appearance"
 )
@@ -114,8 +114,8 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 	}
 
 	api := client.API()
-	docsDir := filepath.Join(outDir, "default_wallpapers", "documents")
-	thumbsDir := filepath.Join(outDir, "default_wallpapers", "thumbs", "m")
+	docsDir := filepath.Join(outDir, "Default_wallpapers", "documents")
+	thumbsDir := filepath.Join(outDir, "Default_wallpapers", "thumbs", "m")
 	if err := os.MkdirAll(docsDir, 0o755); err != nil {
 		return err
 	}
@@ -169,7 +169,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 			return appearance.Document{}, err
 		}
 		sum := sha256.Sum256(data)
-		out.Path = "default_wallpapers/documents/" + name
+		out.Path = "Default_wallpapers/documents/" + name
 		out.SHA256 = hex.EncodeToString(sum[:])
 		// "m" 缩略图
 		for _, t := range doc.Thumbs {
@@ -187,7 +187,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 			tsum := sha256.Sum256(tdata)
 			out.Thumbs = append(out.Thumbs, appearance.PhotoSize{
 				Kind: "size", Type: "m", W: ps.W, H: ps.H, Size: ps.Size,
-				Path: "default_wallpapers/thumbs/m/" + name, SHA256: hex.EncodeToString(tsum[:]),
+				Path: "Default_wallpapers/thumbs/m/" + name, SHA256: hex.EncodeToString(tsum[:]),
 			})
 			break
 		}
@@ -390,7 +390,7 @@ func doFetch(ctx context.Context, client *telegram.Client, outDir string) error 
 	if err != nil {
 		return err
 	}
-	jsonPath := filepath.Join(outDir, "default_appearance_seed.json")
+	jsonPath := filepath.Join(outDir, "Default_appearance_seed.json")
 	if err := os.WriteFile(jsonPath, out, 0o644); err != nil {
 		return err
 	}

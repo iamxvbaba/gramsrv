@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
+	"github.com/iamxvbaba/td/bin"
 )
 
 type messageWriteTestConn struct {

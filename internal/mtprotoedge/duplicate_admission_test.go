@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 type blockingDuplicateRPC struct {
@@ -53,7 +53,7 @@ func TestPendingSameConnectionDuplicateDoesNotBlockFreshRequest(t *testing.T) {
 	defer handler.unblock()
 	addr, pub, server := startTestServer(t, Options{
 		DC:               dc,
-		RPC:              handler,
+		legacyRPC:        handler,
 		RPCMaxInflight:   2,
 		RPCGlobalWorkers: 2,
 		RPCQueueSize:     8,

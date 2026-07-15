@@ -12,15 +12,15 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/gotd/log/logzap"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
 )
 
 func TestAuthKeyProtocolUnavailable(t *testing.T) {
@@ -118,9 +118,9 @@ func TestActiveTemporaryAuthKeyExpiresBeforeNextRPCDispatch(t *testing.T) {
 	testClock := newExpiryTestClock(now)
 	handler := &admissionCountingRPC{}
 	addr, pub, srv := startTestServer(t, Options{
-		DC:    dc,
-		Clock: testClock,
-		RPC:   handler,
+		DC:        dc,
+		Clock:     testClock,
+		legacyRPC: handler,
 	})
 	conn, auth, cipher := dialTemporaryHandshakeForExpiryTest(t, addr, dc, expiresIn, pub)
 
@@ -179,7 +179,7 @@ func TestExpiredTemporaryAuthKeyRejectsServerPushWithoutWireWrite(t *testing.T) 
 	c.authKeyExpiresAt = int(now.Unix())
 
 	err := c.SendBestEffortEncoded(context.Background(), proto.MessageFromServer,
-		&encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}}, 0)
+		exactTestUpdatesTooLong(t, c), 0)
 	if !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("push on expired temp key = %v, want ErrConnClosed", err)
 	}
@@ -198,7 +198,7 @@ func TestQueuedPushCannotCrossTemporaryAuthKeyExpiry(t *testing.T) {
 	c := newOutboundTestConn(t, tr, nil)
 	c.now = clock.Now
 	c.authKeyExpiresAt = int(now.Add(time.Minute).Unix())
-	encoded := &encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}}
+	encoded := exactTestUpdatesTooLong(t, c)
 
 	if err := c.SendBestEffortEncoded(context.Background(), proto.MessageFromServer, encoded, 0); err != nil {
 		t.Fatalf("enqueue first push: %v", err)
@@ -247,7 +247,7 @@ func TestTemporaryAuthKeyExpiryWhileWaitingForPhysicalWriterSkipsRawSend(t *test
 		t.Fatal("direct protocol write did not acquire physical writer")
 	}
 
-	encoded := &encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}}
+	encoded := exactTestUpdatesTooLong(t, c)
 	actorDone := make(chan error, 1)
 	go func() {
 		actorDone <- c.SendEncoded(context.Background(), proto.MessageFromServer, encoded)
@@ -295,9 +295,9 @@ func TestRetiredActorWaitingForPhysicalWriterDoesNotDefeatLeaseTransfer(t *testi
 	}
 
 	actorDone := make(chan error, 1)
+	encoded := exactTestUpdatesTooLong(t, c)
 	go func() {
-		actorDone <- c.SendEncoded(context.Background(), proto.MessageFromServer,
-			&encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}})
+		actorDone <- c.SendEncoded(context.Background(), proto.MessageFromServer, encoded)
 	}()
 	select {
 	case <-signaling.entered:
@@ -350,9 +350,9 @@ func TestTerminalAuthKeyNotFoundSurvivesActorWaitingForPhysicalWriter(t *testing
 	case <-time.After(time.Second):
 		t.Fatal("direct protocol write did not acquire physical writer")
 	}
+	encoded := exactTestUpdatesTooLong(t, c)
 	go func() {
-		_ = c.SendEncoded(context.Background(), proto.MessageFromServer,
-			&encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}})
+		_ = c.SendEncoded(context.Background(), proto.MessageFromServer, encoded)
 	}()
 	select {
 	case <-signaling.entered:
@@ -402,7 +402,7 @@ func TestTerminalAuthKeyNotFoundWaitsForOutboundAndIsLastFrame(t *testing.T) {
 	c.transportLease = lease
 	c.now = clock.Now
 	c.authKeyExpiresAt = int(now.Add(time.Minute).Unix())
-	encoded := &encodedOutboundMessage{typeID: tg.UpdatesTooLongTypeID, body: []byte{0x0b, 0xa1, 0x01, 0xe3}}
+	encoded := exactTestUpdatesTooLong(t, c)
 	if err := c.SendBestEffortEncoded(context.Background(), proto.MessageFromServer, encoded, 0); err != nil {
 		t.Fatalf("enqueue blocked push: %v", err)
 	}

@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 )
 
 type layerBinderCall struct {
@@ -37,10 +37,11 @@ func (s *layerCaptureSessions) layerCallsSnapshot() []layerBinderCall {
 	return append([]layerBinderCall(nil), s.layerCalls...)
 }
 
-// TestDispatchInvokeWithLayerPushesLayerToSessionBinder 验证 invokeWithLayer 在
-// Dispatch 入口把新观测的 layer 即时下推到连接层（ClientLayerBinder），且仅在
-// 首次观测或 layer 变化时下推——每条请求都带 wrapper 的客户端不会造成逐 RPC 下推。
-func TestDispatchInvokeWithLayerPushesLayerToSessionBinder(t *testing.T) {
+// TestLegacyDispatchInvokeWithLayerAppliesOrderedSessionCorrection verifies the
+// legacy facade follows the same explicit correction semantics as generated
+// admission. A repeated selector is idempotent; a new selector updates exactly
+// this session and notifies the connection once.
+func TestLegacyDispatchInvokeWithLayerAppliesOrderedSessionCorrection(t *testing.T) {
 	sessions := &layerCaptureSessions{}
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
 	rawAuthKeyID := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
@@ -73,10 +74,13 @@ func TestDispatchInvokeWithLayerPushesLayerToSessionBinder(t *testing.T) {
 		t.Fatalf("layer binder calls after repeat = %d, want 1", len(calls))
 	}
 
-	// layer 变化：再次下推。
+	// A later explicit selector is a valid ordered correction.
 	dispatchWithLayer(226)
 	calls = sessions.layerCallsSnapshot()
-	if len(calls) != 2 || calls[1].layer != 226 {
-		t.Fatalf("layer binder calls after change = %+v, want second call with layer 226", calls)
+	if len(calls) != 2 || calls[1] != (layerBinderCall{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID, layer: 226}) {
+		t.Fatalf("layer binder calls after correction = %+v", calls)
+	}
+	if layer, ok := r.NegotiatedSessionLayer(rawAuthKeyID, sessionID); !ok || layer != 226 {
+		t.Fatalf("corrected exact session profile = (%d,%v), want (226,true)", layer, ok)
 	}
 }

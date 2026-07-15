@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	accountapp "telesrv/internal/app/account"

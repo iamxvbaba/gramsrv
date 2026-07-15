@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestSendEncryptedFileFlow：sendEncryptedFile 铸造 EncryptedFile、随消息投递、返回

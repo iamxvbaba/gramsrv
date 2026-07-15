@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/clock"
+	"github.com/iamxvbaba/td/clock"
 
 	"telesrv/internal/domain"
 )

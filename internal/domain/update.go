@@ -8,3 +8,14 @@ type UpdateState struct {
 	Date int
 	Seq  int
 }
+
+// UpdateStateCommitMode describes what a physically delivered update-state
+// response proves. Every delivered baseline advances the device-local
+// confirmed cursor; only an explicitly audited getState baseline also proves
+// that retention may advance the client-observed cursor to the same point.
+type UpdateStateCommitMode uint8
+
+const (
+	UpdateStateCommitDeliveredOnly UpdateStateCommitMode = iota + 1
+	UpdateStateCommitDeliveredAndObservedBaseline
+)

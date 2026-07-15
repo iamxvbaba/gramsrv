@@ -2,7 +2,7 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 	"unicode/utf8"

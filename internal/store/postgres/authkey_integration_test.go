@@ -144,3 +144,69 @@ func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {
 		t.Fatalf("partial client info merge mismatch: %+v", got)
 	}
 }
+
+func TestAuthKeyStoreUpdateClientInfoProtectsObservedLayerPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	keys := NewAuthKeyStore(pool)
+
+	var id [8]byte
+	var value [256]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rand.Read(value[:]); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = keys.Delete(ctx, id) })
+	if err := keys.Save(ctx, store.AuthKeyData{ID: id, Value: value}); err != nil {
+		t.Fatalf("save auth key: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE auth_keys
+SET layer = 227, layer_observation_id = 91,
+    device_model = 'before', platform = 'tdesktop'
+WHERE auth_key_id = $1`, authKeyIDToInt64(id)); err != nil {
+		t.Fatalf("seed ordered layer: %v", err)
+	}
+
+	err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 220, DeviceModel: "must-not-merge", AppVersion: "must-not-merge",
+	})
+	if !errors.Is(err, store.ErrAuthKeySessionLayerConflict) {
+		t.Fatalf("conflicting layer update error = %v, want %v", err, store.ErrAuthKeySessionLayerConflict)
+	}
+	got, found, err := keys.Get(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get after conflict: found=%v err=%v", found, err)
+	}
+	if got.Layer != 227 || got.LayerObservationID != 91 || got.DeviceModel != "before" ||
+		got.Platform != "tdesktop" || got.AppVersion != "" {
+		t.Fatalf("conflicting update changed row: %+v", got)
+	}
+
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 227, DeviceModel: "same-layer", AppVersion: "1.0",
+	}); err != nil {
+		t.Fatalf("same observed layer metadata merge: %v", err)
+	}
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Platform: "windows", SystemVersion: "11",
+	}); err != nil {
+		t.Fatalf("layerless metadata merge: %v", err)
+	}
+	got, found, err = keys.Get(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get guarded metadata merge: found=%v err=%v", found, err)
+	}
+	if got.Layer != 227 || got.LayerObservationID != 91 || got.DeviceModel != "same-layer" ||
+		got.Platform != "windows" || got.SystemVersion != "11" || got.AppVersion != "1.0" {
+		t.Fatalf("guarded metadata merge = %+v", got)
+	}
+
+	missing := id
+	missing[0] ^= 0xff
+	if err := keys.UpdateClientInfo(ctx, missing, store.AuthKeyClientInfo{Layer: 227}); !errors.Is(err, store.ErrAuthKeyNotFound) {
+		t.Fatalf("missing primary update error = %v, want %v", err, store.ErrAuthKeyNotFound)
+	}
+}

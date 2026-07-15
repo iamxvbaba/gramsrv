@@ -8,8 +8,8 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
 )
 
 func newSessionActivationTestConn(t *testing.T, authKeyID [8]byte, sessionID int64) *Conn {
@@ -222,7 +222,7 @@ func TestDestroyFencesOutboundAndReservedRPCBeforeRemoval(t *testing.T) {
 
 	reservation, err := c.reserveInboundRPC(context.Background(), "test.destroyFence", 8)
 	if err != nil {
-		t.Fatalf("reserve inbound RPC: %v", err)
+		t.Fatalf("reserve inbound legacyRPC: %v", err)
 	}
 	destroyed := make(chan bool, 1)
 	go func() {

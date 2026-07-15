@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // 回归：TDesktop 创建 poll 的真实请求形状（kDefaultPollCreateFlags 默认带

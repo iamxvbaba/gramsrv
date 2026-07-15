@@ -10,9 +10,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 type inboundItemKind uint8
@@ -34,6 +35,7 @@ const (
 	inboundItemDestroyAuthKey
 	inboundItemRPC
 	inboundItemCapacityError
+	inboundItemRPCAdmissionError
 	// inboundItemRewrappedRPC is an initConnection retry whose exact inner TL
 	// request is already executing (or completed) under the client's old msg_id.
 	// It never dispatches business code a second time.
@@ -48,13 +50,33 @@ const (
 )
 
 type inboundItem struct {
-	kind    inboundItemKind
-	msgID   int64
-	seqNo   int32
-	typeID  uint32
-	content bool
-	body    []byte
-	payload any
+	kind                          inboundItemKind
+	msgID                         int64
+	admissionSeq                  uint64
+	seqNo                         int32
+	typeID                        uint32
+	content                       bool
+	body                          []byte
+	payload                       any
+	admitted                      tg.LayerRequest
+	method                        string
+	replayAfterSuccessfulDelivery func() error
+	layerProfileEvidenceFreshness inboundLayerProfileEvidenceFreshness
+}
+
+type inboundLayerProfileEvidenceFreshness uint8
+
+const (
+	// Unspecified is retained for focused force-style unit tests which construct
+	// inboundItem directly, outside MTProto envelope preflight. Production items
+	// are always classified from the frame's one clock sample.
+	inboundLayerProfileEvidenceFreshnessUnspecified inboundLayerProfileEvidenceFreshness = iota
+	inboundLayerProfileEvidenceFresh
+	inboundLayerProfileEvidenceRequestBound
+)
+
+func (i inboundItem) profileEvidenceFresh() bool {
+	return i.layerProfileEvidenceFreshness != inboundLayerProfileEvidenceRequestBound
 }
 
 type stagedClientMessage struct {
@@ -75,13 +97,23 @@ type inboundPlan struct {
 	rpcTasks       []inboundRPC
 	rpcOwners      []*rpcResultOwnerLease
 	rewrapAliases  []*rpcRewrapAlias
-	rewrapIndices  []int
 }
 
 func (p *inboundPlan) close() {
 	if p == nil {
 		return
 	}
+	// Drop exact typed request graphs and uncommitted task closures before their
+	// materialization reservation becomes reusable. Otherwise an abort could
+	// advertise the same bytes to another connection while this plan still kept
+	// the old graph reachable until its caller returned.
+	for i := range p.items {
+		p.items[i].admitted = tg.LayerRequest{}
+	}
+	for i := range p.rpcTasks {
+		p.rpcTasks[i] = inboundRPC{}
+	}
+	p.rpcTasks = nil
 	if p.rpcReservation != nil {
 		p.rpcReservation.abort()
 		p.rpcReservation = nil
@@ -97,7 +129,6 @@ func (p *inboundPlan) close() {
 		}
 	}
 	p.rewrapAliases = nil
-	p.rewrapIndices = nil
 	for i := len(p.releases) - 1; i >= 0; i-- {
 		p.releases[i]()
 	}
@@ -117,13 +148,45 @@ func (p *inboundPlan) commitRewrapAliases(s *Server) error {
 				}
 			}
 			p.rewrapAliases = nil
-			p.rewrapIndices = nil
 			return err
 		}
 	}
 	p.rewrapAliases = nil
-	p.rewrapIndices = nil
 	return nil
+}
+
+// rejectNewRPCOwners turns only ownership acquired by this batch into bounded
+// capacity responses. Existing completed replays and pending joins remain
+// active: canceling them would either lose a response or publish into another
+// request's flight.
+func (p *inboundPlan) rejectNewRPCOwners(indices []int) {
+	if p == nil {
+		return
+	}
+	for _, index := range indices {
+		if index >= 0 && index < len(p.items) {
+			p.items[index].kind = inboundItemCapacityError
+		}
+	}
+	kept := p.rewrapAliases[:0]
+	for _, alias := range p.rewrapAliases {
+		if alias == nil || alias.newOwner == nil {
+			kept = append(kept, alias)
+			continue
+		}
+		if alias.itemIndex >= 0 && alias.itemIndex < len(p.items) {
+			p.items[alias.itemIndex].kind = inboundItemCapacityError
+			p.items[alias.itemIndex].payload = nil
+		}
+		alias.releaseCandidate()
+		// This owner was acquired by the rejected batch and is not present in
+		// plan.rpcOwners because it belonged to a rewrap alias. Abort it here
+		// before dropping the alias, otherwise the exact flight remains pending
+		// forever with no task or publisher able to complete it.
+		alias.newOwner.Abort()
+		alias.newOwner = nil
+	}
+	p.rewrapAliases = kept
 }
 
 func (p *inboundPlan) commitRPCBatch() error {
@@ -405,6 +468,14 @@ func (s *Server) walkInbound(
 	if err != nil {
 		return err
 	}
+	if validateInboundMessageID(budget.now, msgID, false) == 0 {
+		item.layerProfileEvidenceFreshness = inboundLayerProfileEvidenceFresh
+	} else {
+		// Inner container messages deliberately bypass the wall-clock rejection
+		// above, but old/future ids are request-bound and cannot publish mutable
+		// Layer/init/readiness/auth-bind evidence.
+		item.layerProfileEvidenceFreshness = inboundLayerProfileEvidenceRequestBound
+	}
 	plan.items = append(plan.items, item)
 	if content {
 		plan.ackIDs = append(plan.ackIDs, msgID)
@@ -413,7 +484,7 @@ func (s *Server) walkInbound(
 }
 
 func validateInboundMessageID(now time.Time, msgID int64, insideContainer bool) int {
-	if msgID == 0 || proto.MessageID(msgID).Type() != proto.MessageFromClient {
+	if !validClientMessageIDBits(msgID) {
 		return badMsgIDInvalidBits
 	}
 	// A container's outer envelope supplies the wall-clock admission boundary for
@@ -430,6 +501,11 @@ func validateInboundMessageID(now time.Time, msgID int64, insideContainer bool) 
 		return badMsgIDTooHigh
 	}
 	return 0
+}
+
+func validClientMessageIDBits(msgID int64) bool {
+	return msgID > 0 && uint32(msgID) != 0 &&
+		proto.MessageID(msgID).Type() == proto.MessageFromClient
 }
 
 func appendInboundDuplicate(plan *inboundPlan, msgID int64, seqNo int32, typeID uint32, record clientMsgRecord) error {
@@ -653,6 +729,9 @@ func preflightInboundItem(msgID int64, seqNo int32, typeID uint32, content bool,
 // into one consistent terminal FLOOD_WAIT result per uncached RPC; no business
 // handler from the batch is allowed to start in that case.
 func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inboundPlan) error {
+	if s.layerRPC != nil {
+		return s.prepareInboundLayerRPCBatch(ctx, c, plan)
+	}
 	// Keep service-only frames (ping/ack/http_wait) allocation-free here. These
 	// collections are needed only after the first real API RPC acquires ownership.
 	var indices []int
@@ -676,8 +755,11 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 		method := s.typeName(item.typeID)
 		init, isInitRewrap := decodeRPCRewrapInit(item.body)
 		if isInitRewrap {
-			firstInit := !c.rpcRewrapInitialized.Swap(true)
-			c.SetClientLayer(init.layer)
+			firstInit := false
+			if item.profileEvidenceFresh() {
+				firstInit = !c.rpcRewrapInitialized.Swap(true)
+				c.setLegacyClientLayer(init.layer)
+			}
 			if candidate := s.rpcRewrap.claim(c, init.inner); candidate != nil {
 				claim, err := s.rpcResults.Acquire(c.authKeyID, c.sessionID, item.msgID)
 				if errors.Is(err, ErrRPCResultFlightCapacity) {
@@ -701,10 +783,9 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 					item.kind = inboundItemRewrappedRPC
 					item.payload = claim.waiter
 					plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
-						conn: c, newReqID: item.msgID, method: candidate.method,
+						conn: c, itemIndex: i, newReqID: item.msgID, method: candidate.method,
 						oldWaiter: claim.waiter, observeInit: firstInit, init: init,
 					})
-					plan.rewrapIndices = append(plan.rewrapIndices, i)
 				case rpcResultAcquireOwner:
 					if ownersInPlan == nil {
 						ownersInPlan = make(map[int64]*rpcResultOwnerLease)
@@ -713,13 +794,12 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 					item.kind = inboundItemRewrappedRPC
 					item.payload = claim.owner
 					plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
-						conn: c, newReqID: item.msgID, method: candidate.method,
+						conn: c, itemIndex: i, newReqID: item.msgID, method: candidate.method,
 						oldWaiter: candidate.waiter, newOwner: claim.owner,
 						sourceConn: candidate.source, sourceOwner: candidate.owner,
 						observeInit: firstInit, init: init,
 						candidate: candidate, registry: s.rpcRewrap,
 					})
-					plan.rewrapIndices = append(plan.rewrapIndices, i)
 				default:
 					s.rpcRewrap.release(candidate)
 					return ErrRPCResultFlightInvalid
@@ -732,7 +812,7 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 					zap.String("auth_key_id", c.authKeyHex), zap.Int64("session_id", c.sessionID))
 				continue
 			}
-		} else if c.rpcRewrapInitialized.Load() && !clearedPostInitCandidates {
+		} else if item.profileEvidenceFresh() && c.rpcRewrapInitialized.Load() && !clearedPostInitCandidates {
 			// A naked request after this connection has observed initConnection is
 			// event-level proof that the client finished moving its old running set.
 			// Retire any unmatched candidates without a timer.
@@ -773,7 +853,7 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 				item.kind = inboundItemRewrappedRPC
 				item.payload = claim.waiter
 				plan.rewrapAliases = append(plan.rewrapAliases, &rpcRewrapAlias{
-					conn: c, newReqID: item.msgID, method: method, oldWaiter: claim.waiter,
+					conn: c, itemIndex: i, newReqID: item.msgID, method: method, oldWaiter: claim.waiter,
 				})
 			}
 		case rpcResultAcquireOwner:
@@ -807,17 +887,7 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 		for _, index := range indices {
 			plan.items[index].kind = inboundItemCapacityError
 		}
-		for _, index := range plan.rewrapIndices {
-			plan.items[index].kind = inboundItemCapacityError
-		}
-		for _, alias := range plan.rewrapAliases {
-			alias.releaseCandidate()
-			if alias.newOwner != nil {
-				alias.newOwner.Abort()
-			}
-		}
-		plan.rewrapAliases = nil
-		plan.rewrapIndices = nil
+		plan.rejectNewRPCOwners(indices)
 		return nil
 	}
 	if len(specs) == 0 {
@@ -830,17 +900,7 @@ func (s *Server) prepareInboundRPCBatch(ctx context.Context, c *Conn, plan *inbo
 			for _, index := range indices {
 				plan.items[index].kind = inboundItemCapacityError
 			}
-			for _, index := range plan.rewrapIndices {
-				plan.items[index].kind = inboundItemCapacityError
-			}
-			for _, alias := range plan.rewrapAliases {
-				alias.releaseCandidate()
-				if alias.newOwner != nil {
-					alias.newOwner.Abort()
-				}
-			}
-			plan.rewrapAliases = nil
-			plan.rewrapIndices = nil
+			plan.rejectNewRPCOwners(indices)
 			return nil
 		}
 		return err
@@ -874,7 +934,7 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			}
 		case inboundItemReplayRPC:
 			if encoded, _ := item.payload.(*encodedOutboundMessage); encoded != nil {
-				if err := s.sendCachedRPCResult(ctx, c, encoded); err != nil {
+				if err := s.sendCachedRPCResultWithHook(ctx, c, encoded, item.replayAfterSuccessfulDelivery); err != nil {
 					return err
 				}
 			} else if err := s.replayRPCResultByRequest(ctx, c, item.msgID); err != nil {
@@ -942,13 +1002,22 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			s.log.Debug("Received destroy_auth_key", zap.String("auth_key_id", c.authKeyHex))
 			if err := s.authKeys.Delete(ctx, c.authKeyID); err != nil {
 				s.log.Warn("Delete auth key failed", zap.String("auth_key_id", c.authKeyHex), zap.Error(err))
-				return c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyFail{})
+				return c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyRPCResult{
+					RequestMessageID: item.msgID,
+					ResultTypeID:     destroyAuthKeyFailTypeID,
+				})
+			}
+			if registry, ok := s.layerRPC.(LayerRPCSessionProfileRegistry); ok {
+				registry.ForgetNegotiatedAuthKey(c.authKeyID)
 			}
 			// Fence every other active/claiming generation before acknowledging the
 			// deletion. The exact requester remains writable only long enough to put the
-			// required destroy_auth_key_ok frame on the wire.
+			// request-correlated rpc_result(destroy_auth_key_ok) frame on the wire.
 			s.conns.CloseSessionsForRawAuthKeyExceptConn(c.authKeyID, c)
-			if err := c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyOk{}); err != nil {
+			if err := c.SendRequiredControl(ctx, proto.MessageServerResponse, &destroyAuthKeyRPCResult{
+				RequestMessageID: item.msgID,
+				ResultTypeID:     destroyAuthKeyOkTypeID,
+			}); err != nil {
 				return err
 			}
 			c.beginTerminalShutdown()
@@ -959,10 +1028,21 @@ func (s *Server) executeInboundPlan(ctx context.Context, cs *connState, c *Conn,
 			// execution begins; commitRPCBatch publishes them after all protocol barriers.
 			continue
 		case inboundItemCapacityError:
+			if owner, _ := item.payload.(*rpcResultOwnerLease); owner != nil {
+				owner.CompleteExecution(false)
+			}
 			if err := s.sendResult(ctx, c, item.msgID, &mt.RPCError{
 				ErrorCode:    420,
 				ErrorMessage: "FLOOD_WAIT_1",
 			}); err != nil {
+				return err
+			}
+		case inboundItemRPCAdmissionError:
+			rpcErr, _ := item.payload.(*mt.RPCError)
+			if rpcErr == nil {
+				rpcErr = &mt.RPCError{ErrorCode: 400, ErrorMessage: "INPUT_REQUEST_INVALID"}
+			}
+			if err := s.sendResult(ctx, c, item.msgID, rpcErr); err != nil {
 				return err
 			}
 		default:

@@ -13,14 +13,14 @@ import (
 	gofaster "github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/transport"
 )
 
 // runServerExchange is a gotd server exchange compatibility shim.
@@ -425,7 +425,7 @@ func (s serverExchangeCompat) readUnencrypted(ctx context.Context, b *bin.Buffer
 	if err := msg.Decode(b); err != nil {
 		return err
 	}
-	if proto.MessageID(msg.MessageID).Type() != proto.MessageFromClient {
+	if !validClientMessageIDBits(msg.MessageID) {
 		return gofaster.New("bad msg type")
 	}
 	b.ResetTo(msg.MessageData)

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"

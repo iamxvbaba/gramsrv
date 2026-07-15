@@ -135,27 +135,34 @@ func (s *Service) ConfirmEvent(ctx context.Context, authKeyID [8]byte, userID in
 	return s.saveConfirmedState(ctx, authKeyID, userID, domain.UpdateState{Pts: event.Pts, Date: date, Seq: 0})
 }
 
-// AcknowledgeCurrentState 返回账号当前最大连续状态，并把该设备的确认水位推进到此。
-//
-// 供 updates.getState 使用：协议语义是客户端宣告「从现在开始同步」，启动期的
-// 离线数据由 getDialogs 快照承载（TDesktop 不持久化 pts，每次启动都走此路径）。
-// 若改为返回设备旧确认水位，客户端会在 getDialogs 最新快照之上再重放历史差分，
-// 造成未读重复累计、dialog 预览被旧消息抢占。持久化 pts 的客户端（Android）
-// 启动时直接带本地 pts 调 getDifference，不经过 getState，不受影响。
-func (s *Service) AcknowledgeCurrentState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error) {
-	st, err := s.currentState(ctx, userID)
+// ObserveDifferenceRequest records only the cursor a client carried into this
+// request. It is deliberately independent from response delivery: even when
+// encoding or the socket write later fails, the request still proves the client
+// already owned this (clamped) cursor before contacting us.
+func (s *Service) ObserveDifferenceRequest(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateState, error) {
+	current, err := s.currentState(ctx, userID)
 	if err != nil {
 		return domain.UpdateState{}, err
 	}
-	if err := s.saveConfirmedState(ctx, authKeyID, userID, st); err != nil {
+	from = clampDifferenceState(from, current)
+	if err := s.observeClientState(ctx, authKeyID, userID, from); err != nil {
 		return domain.UpdateState{}, err
 	}
-	// getState 明确建立“从当前快照开始同步”的 baseline；即使响应丢失，客户端也会
-	// 重试 getState/重新拉 snapshot，而不会依赖 baseline 之前的 durable event。
-	if err := s.observeClientState(ctx, authKeyID, userID, st); err != nil {
-		return domain.UpdateState{}, err
+	return from, nil
+}
+
+// CommitDeliveredState persists the exact cursor justified by a physically
+// delivered RPC result. The store owns the atomic/monotonic invariant because
+// delivery callbacks from different responses may complete out of order.
+func (s *Service) CommitDeliveredState(ctx context.Context, authKeyID [8]byte, userID int64, st domain.UpdateState, mode domain.UpdateStateCommitMode) error {
+	if s.states == nil {
+		return nil
 	}
-	return st, nil
+	if mode != domain.UpdateStateCommitDeliveredOnly && mode != domain.UpdateStateCommitDeliveredAndObservedBaseline {
+		return fmt.Errorf("invalid delivered update state commit mode %d", mode)
+	}
+	st.Seq = 0
+	return s.states.CommitDeliveredState(ctx, authKeyID, userID, st, mode)
 }
 
 // getDifferenceLimit 是单次 getDifference 返回的最大连续事件数；超出置 Partial 让客户端翻页。
@@ -171,19 +178,9 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	if err != nil {
 		return domain.UpdateDifference{}, err
 	}
-	// 只把客户端在本次请求中实际带回的 cursor 记为 observed。绝不能把本次将要
-	// 返回的 State 当确认：响应可能在 socket/进程故障中丢失。恶意/损坏客户端带来的
-	// 超前 pts 钳到账号当前连续水位，避免把 retention 安全边界推过 durable truth。
-	observed := from
-	if observed.Pts < 0 {
-		observed.Pts = 0
-	}
-	if observed.Pts > st.Pts {
-		observed.Pts = st.Pts
-	}
-	if err := s.observeClientState(ctx, authKeyID, userID, observed); err != nil {
-		return domain.UpdateDifference{}, err
-	}
+	// Computation is pure with respect to device confirmed/observed state. The
+	// request observer and physical-delivery commit are explicit caller phases.
+	from = clampDifferenceState(from, st)
 	// TDesktop 不支持账号级 updates.differenceTooLong。retention 只能删除所有授权
 	// 设备都已确认的共同前缀；当前设备若仍带更旧 pts，用一个空的普通
 	// differenceSlice 把 IntermediateState 推进到已确认 checkpoint，再从 live tail 续拉。
@@ -195,9 +192,6 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	if s.events == nil || from.Pts >= st.Pts {
 		if from.Date != 0 {
 			st.Date = from.Date
-		}
-		if err := s.saveConfirmedState(ctx, authKeyID, userID, st); err != nil {
-			return domain.UpdateDifference{}, err
 		}
 		return domain.UpdateDifference{State: st}, nil
 	}
@@ -246,9 +240,6 @@ func (s *Service) GetDifference(ctx context.Context, authKeyID [8]byte, userID i
 	if len(contiguous) > 0 {
 		out.Date = contiguous[len(contiguous)-1].Date
 	}
-	if err := s.saveConfirmedState(ctx, authKeyID, userID, out); err != nil {
-		return domain.UpdateDifference{}, err
-	}
 	return domain.UpdateDifference{
 		State:   out,
 		Events:  contiguous,
@@ -276,10 +267,18 @@ func (s *Service) retainedPrefixCheckpoint(ctx context.Context, authKeyID [8]byt
 	} else if checkpoint.Date == 0 {
 		checkpoint.Date = current.Date
 	}
-	if err := s.saveConfirmedState(ctx, authKeyID, userID, checkpoint); err != nil {
-		return domain.UpdateDifference{}, false, err
-	}
 	return domain.UpdateDifference{State: checkpoint, Partial: true}, true, nil
+}
+
+func clampDifferenceState(from, current domain.UpdateState) domain.UpdateState {
+	if from.Pts < 0 {
+		from.Pts = 0
+	}
+	if from.Pts > current.Pts {
+		from.Pts = current.Pts
+	}
+	from.Seq = 0
+	return from
 }
 
 func (s *Service) currentState(ctx context.Context, userID int64) (domain.UpdateState, error) {

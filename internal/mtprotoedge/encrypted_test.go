@@ -2,16 +2,72 @@ package mtprotoedge
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
+
+	"telesrv/internal/store/memory"
 )
+
+type durableDestroyLayerRPC struct {
+	*admissionOnlyLayerRPC
+	mu        sync.Mutex
+	deleted   bool
+	err       error
+	authKeyID [8]byte
+	sessionID int64
+}
+
+type deleteFailAuthKeyStore struct {
+	*memory.AuthKeyStore
+	err error
+}
+
+type trailingDestroyAuthKeyRequest struct{}
+
+func (*trailingDestroyAuthKeyRequest) Encode(b *bin.Buffer) error {
+	b.PutID(destroyAuthKeyRequestTypeID)
+	b.PutID(0xdeadbeef)
+	return nil
+}
+
+func (*trailingDestroyAuthKeyRequest) Decode(b *bin.Buffer) error {
+	if err := b.ConsumeID(destroyAuthKeyRequestTypeID); err != nil {
+		return err
+	}
+	_, err := b.ID()
+	return err
+}
+
+func (s *deleteFailAuthKeyStore) Delete(context.Context, [8]byte) error {
+	return s.err
+}
+
+func (h *durableDestroyLayerRPC) DeleteNegotiatedSessionLayerEvidence(
+	_ context.Context,
+	authKeyID [8]byte,
+	sessionID int64,
+) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.authKeyID = authKeyID
+	h.sessionID = sessionID
+	return h.deleted, h.err
+}
+
+func (h *durableDestroyLayerRPC) deletion() ([8]byte, int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.authKeyID, h.sessionID
+}
 
 // TestEncryptedPingPong 验证 M2/M4：握手后 client 加密 ping，
 // server 回 new_session_created + pong + msgs_ack。
@@ -47,7 +103,7 @@ func TestEncryptedPingPong(t *testing.T) {
 func TestDuplicateMsgIDIdempotent(t *testing.T) {
 	const dc = 2
 	handler := &admissionCountingRPC{}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
@@ -231,8 +287,65 @@ func TestDestroySession(t *testing.T) {
 	}
 }
 
+func TestDestroySessionAcknowledgesOfflineDurableEvidenceDeletion(t *testing.T) {
+	const dc = 2
+	handler := &durableDestroyLayerRPC{
+		admissionOnlyLayerRPC: newAdmissionOnlyLayerRPC(),
+		deleted:               true,
+	}
+	addr, pub, _ := startTestServer(t, Options{DC: dc, LayerRPC: handler})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	reqMsgID := clientMsgID.New(proto.MessageFromClient)
+	targetSessionID := auth.SessionID + 4
+	sendEncrypted(t, conn, cipher, auth, reqMsgID, &mt.DestroySessionRequest{SessionID: targetSessionID})
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, mt.DestroySessionOkTypeID)
+	buf := mustHave(t, replies, mt.DestroySessionOkTypeID, "destroy_session_ok")
+	var res mt.DestroySessionOk
+	if err := res.Decode(buf); err != nil {
+		t.Fatal(err)
+	}
+	if res.SessionID != targetSessionID {
+		t.Fatalf("destroy_session_ok.session_id = %d, want %d", res.SessionID, targetSessionID)
+	}
+	authKeyID, deletedSessionID := handler.deletion()
+	if authKeyID == ([8]byte{}) || deletedSessionID != targetSessionID {
+		t.Fatalf("durable deletion = auth:%x session:%d", authKeyID, deletedSessionID)
+	}
+}
+
+func TestDestroySessionDurabilityFailureDoesNotAcknowledgeOrRetireLiveSession(t *testing.T) {
+	boom := errors.New("database unavailable")
+	handler := &durableDestroyLayerRPC{
+		admissionOnlyLayerRPC: newAdmissionOnlyLayerRPC(),
+		err:                   boom,
+	}
+	manager := NewSessionManager(nil)
+	authKeyID := [8]byte{0xd3, 0x57}
+	target := &Conn{authKeyID: authKeyID, sessionID: 2, metrics: NopMetrics{}}
+	if err := manager.Register(target); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Unregister(target)
+	s := New(Options{DC: 2, LayerRPC: handler, ActiveSessions: manager})
+	current := &Conn{authKeyID: authKeyID, sessionID: 1, metrics: NopMetrics{}}
+
+	err := s.sendDestroySession(context.Background(), current, target.sessionID)
+	if !errors.Is(err, boom) {
+		t.Fatalf("destroy durability error = %v, want %v", err, boom)
+	}
+	manager.mu.RLock()
+	stillCurrent := manager.bySession[connSessionKey(target)] == target
+	manager.mu.RUnlock()
+	if !stillCurrent {
+		t.Fatal("durability failure retired the live target session")
+	}
+}
+
 // TestRPCDropAnswer 验证 rpc_drop_answer 以 rpc_result 包装 RpcDropAnswer 返回，
-// 与 gotd/td 和 TDesktop 的请求/响应模型对齐。
+// 与 iamxvbaba/td 和 TDesktop 的请求/响应模型对齐。
 func TestRPCDropAnswer(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
@@ -411,27 +524,218 @@ func TestPingDelayDisconnectOddSeqAccepted(t *testing.T) {
 	}
 }
 
-// TestDestroyAuthKey 验证 MTProto service message destroy_auth_key 由连接层直接响应，
-// 避免 TDesktop 清理旧 key 时落到业务 RPC fallback。
+// TestDestroyAuthKey 验证 MTProto service message destroy_auth_key 无论裸发，
+// 还是沿官方客户端的 invokeWithLayer/initConnection 路径发送，都由连接层
+// 直接处理，并以绑定原请求的 rpc_result 回复。
 func TestDestroyAuthKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		layer   int
+		wrapped bool
+	}{
+		{name: "bare"},
+		{name: "layer225_wrapped", layer: 225, wrapped: true},
+		{name: "layer226_wrapped", layer: 226, wrapped: true},
+		{name: "layer227_wrapped", layer: 227, wrapped: true},
+		{name: "layer228_wrapped", layer: 228, wrapped: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const dc = 2
+			addr, pub, srv := startTestServer(t, Options{DC: dc, LayerRPC: newAdmissionOnlyLayerRPC()})
+			conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+			var request bin.Encoder = &destroyAuthKeyRequest{}
+			if test.wrapped {
+				request = &tg.InvokeWithLayerRequest{
+					Layer: test.layer,
+					Query: &tg.InitConnectionRequest{
+						APIID:          1,
+						DeviceModel:    "destroy-key-test",
+						SystemVersion:  "test",
+						AppVersion:     "test",
+						SystemLangCode: "en",
+						LangCode:       "en",
+						Query:          &destroyAuthKeyRequest{},
+					},
+				}
+			}
+
+			clientMsgID := proto.NewMessageIDGen(time.Now)
+			reqMsgID := clientMsgID.New(proto.MessageFromClient)
+			sendEncrypted(t, conn, cipher, auth, reqMsgID, request)
+
+			replies := collectReplies(t, conn, cipher, auth.AuthKey, proto.ResultTypeID)
+			assertDestroyAuthKeyRPCResult(t, mustHave(t, replies, proto.ResultTypeID, "destroy_auth_key rpc_result"), reqMsgID, destroyAuthKeyOkTypeID)
+			if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || found {
+				t.Fatalf("auth key after destroy: found=%v err=%v", found, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var frame bin.Buffer
+			if err := conn.Recv(ctx, &frame); err == nil {
+				t.Fatal("destroy_auth_key requester remained readable after required rpc_result(ok)")
+			}
+		})
+	}
+}
+
+func assertDestroyAuthKeyRPCResult(t *testing.T, b *bin.Buffer, reqMsgID int64, wantInner uint32) {
+	t.Helper()
+	var result proto.Result
+	if err := result.Decode(b); err != nil {
+		t.Fatalf("decode destroy_auth_key rpc_result: %v", err)
+	}
+	if result.RequestMessageID != reqMsgID {
+		t.Fatalf("destroy_auth_key rpc_result.req_msg_id = %d, want %d", result.RequestMessageID, reqMsgID)
+	}
+	inner := &bin.Buffer{Buf: result.Result}
+	innerID, err := inner.PeekID()
+	if err != nil {
+		t.Fatalf("peek destroy_auth_key rpc_result inner: %v", err)
+	}
+	if innerID != wantInner || inner.Len() != bin.Word {
+		t.Fatalf("destroy_auth_key rpc_result inner = %#x/%d bytes, want %#x/%d", innerID, inner.Len(), wantInner, bin.Word)
+	}
+}
+
+func TestDestroyAuthKeyDeleteFailureReturnsCorrelatedFailAndKeepsConnection(t *testing.T) {
 	const dc = 2
-	addr, pub, srv := startTestServer(t, Options{DC: dc})
+	deleteErr := errors.New("delete auth key failed")
+	keys := &deleteFailAuthKeyStore{AuthKeyStore: memory.NewAuthKeyStore(), err: deleteErr}
+	addr, pub, srv := startTestServer(t, Options{DC: dc, AuthKeys: keys, LayerRPC: newAdmissionOnlyLayerRPC()})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
-	clientMsgID := proto.NewMessageIDGen(time.Now)
-	reqMsgID := clientMsgID.New(proto.MessageFromClient)
-	sendEncrypted(t, conn, cipher, auth, reqMsgID, &destroyAuthKeyRequest{})
+	ids := proto.NewMessageIDGen(time.Now)
+	destroyReqMsgID := ids.New(proto.MessageFromClient)
+	sendEncrypted(t, conn, cipher, auth, destroyReqMsgID, &destroyAuthKeyRequest{})
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, proto.ResultTypeID)
+	assertDestroyAuthKeyRPCResult(t, mustHave(t, replies, proto.ResultTypeID, "destroy_auth_key fail rpc_result"), destroyReqMsgID, destroyAuthKeyFailTypeID)
 
-	replies := collectReplies(t, conn, cipher, auth.AuthKey, destroyAuthKeyOkTypeID)
-	mustHave(t, replies, destroyAuthKeyOkTypeID, "destroy_auth_key_ok")
-	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || found {
-		t.Fatalf("auth key after destroy: found=%v err=%v", found, err)
+	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || !found {
+		t.Fatalf("auth key after failed delete: found=%v err=%v", found, err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	var frame bin.Buffer
-	if err := conn.Recv(ctx, &frame); err == nil {
-		t.Fatal("destroy_auth_key requester remained readable after required ok")
+	pingReqMsgID := ids.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, pingReqMsgID, 3, &mt.PingRequest{PingID: 99})
+	pongReplies := collectReplies(t, conn, cipher, auth.AuthKey, mt.PongTypeID)
+	var pong mt.Pong
+	if err := pong.Decode(mustHave(t, pongReplies, mt.PongTypeID, "pong after failed destroy_auth_key")); err != nil {
+		t.Fatalf("decode pong after failed destroy_auth_key: %v", err)
+	}
+	if pong.MsgID != pingReqMsgID || pong.PingID != 99 {
+		t.Fatalf("pong after failed destroy_auth_key = %+v", pong)
+	}
+}
+
+func TestWrappedDestroyAuthKeyTrailingBytesDoNotDelete(t *testing.T) {
+	const dc = 2
+	addr, pub, srv := startTestServer(t, Options{DC: dc, LayerRPC: newAdmissionOnlyLayerRPC()})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+	ids := proto.NewMessageIDGen(time.Now)
+	reqMsgID := ids.New(proto.MessageFromClient)
+	request := &tg.InvokeWithLayerRequest{
+		Layer: 228,
+		Query: &tg.InitConnectionRequest{
+			APIID: 1, DeviceModel: "malformed-destroy-key-test", SystemVersion: "test",
+			AppVersion: "test", SystemLangCode: "en", LangCode: "en",
+			Query: &trailingDestroyAuthKeyRequest{},
+		},
+	}
+	sendEncrypted(t, conn, cipher, auth, reqMsgID, request)
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, proto.ResultTypeID)
+	var result proto.Result
+	if err := result.Decode(mustHave(t, replies, proto.ResultTypeID, "malformed destroy_auth_key rpc_result")); err != nil {
+		t.Fatalf("decode malformed destroy_auth_key rpc_result: %v", err)
+	}
+	if result.RequestMessageID != reqMsgID {
+		t.Fatalf("malformed destroy_auth_key req_msg_id = %d, want %d", result.RequestMessageID, reqMsgID)
+	}
+	var rpcErr mt.RPCError
+	if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+		t.Fatalf("decode malformed destroy_auth_key RPC error: %v", err)
+	}
+	if rpcErr.ErrorCode != 400 || rpcErr.ErrorMessage != "INPUT_REQUEST_INVALID" {
+		t.Fatalf("malformed destroy_auth_key RPC error = %+v", rpcErr)
+	}
+	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || !found {
+		t.Fatalf("auth key after malformed wrapped destroy: found=%v err=%v", found, err)
+	}
+}
+
+func TestWrappedDestroyAuthKeySemanticWrapperDoesNotDelete(t *testing.T) {
+	const dc = 2
+	addr, pub, srv := startTestServer(t, Options{DC: dc, LayerRPC: newAdmissionOnlyLayerRPC()})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+	ids := proto.NewMessageIDGen(time.Now)
+	reqMsgID := ids.New(proto.MessageFromClient)
+	request := &tg.InvokeWithLayerRequest{
+		Layer: 228,
+		Query: &tg.InitConnectionRequest{
+			APIID: 1, DeviceModel: "semantic-wrapper-destroy-key-test", SystemVersion: "test",
+			AppVersion: "test", SystemLangCode: "en", LangCode: "en",
+			Query: &tg.InvokeAfterMsgRequest{
+				MsgID: 1,
+				Query: &destroyAuthKeyRequest{},
+			},
+		},
+	}
+	sendEncrypted(t, conn, cipher, auth, reqMsgID, request)
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, proto.ResultTypeID)
+	var result proto.Result
+	if err := result.Decode(mustHave(t, replies, proto.ResultTypeID, "semantic-wrapper destroy_auth_key rpc_result")); err != nil {
+		t.Fatalf("decode semantic-wrapper destroy_auth_key rpc_result: %v", err)
+	}
+	if result.RequestMessageID != reqMsgID {
+		t.Fatalf("semantic-wrapper destroy_auth_key req_msg_id = %d, want %d", result.RequestMessageID, reqMsgID)
+	}
+	var rpcErr mt.RPCError
+	if err := rpcErr.Decode(&bin.Buffer{Buf: result.Result}); err != nil {
+		t.Fatalf("decode semantic-wrapper destroy_auth_key RPC error: %v", err)
+	}
+	if rpcErr.ErrorCode != 400 || rpcErr.ErrorMessage != "INPUT_REQUEST_INVALID" {
+		t.Fatalf("semantic-wrapper destroy_auth_key RPC error = %+v", rpcErr)
+	}
+	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || !found {
+		t.Fatalf("auth key after semantic-wrapper destroy_auth_key: found=%v err=%v", found, err)
+	}
+}
+
+func TestWrappedDestroyAuthKeyMixedContainerIsRejectedAtomically(t *testing.T) {
+	const dc = 2
+	addr, pub, srv := startTestServer(t, Options{DC: dc, LayerRPC: newAdmissionOnlyLayerRPC()})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+	ids := proto.NewMessageIDGen(time.Now)
+
+	destroyBody := encodeClientMessageBodyForTest(t, &tg.InvokeWithLayerRequest{
+		Layer: 228,
+		Query: &tg.InitConnectionRequest{
+			APIID: 1, DeviceModel: "mixed-destroy-key-test", SystemVersion: "test",
+			AppVersion: "test", SystemLangCode: "en", LangCode: "en",
+			Query: &destroyAuthKeyRequest{},
+		},
+	})
+	pingBody := encodeClientMessageBodyForTest(t, &mt.PingRequest{PingID: 7})
+	destroyMsgID := ids.New(proto.MessageFromClient)
+	pingMsgID := ids.New(proto.MessageFromClient)
+	outerMsgID := ids.New(proto.MessageFromClient)
+	container := &proto.MessageContainer{Messages: []proto.Message{
+		{ID: destroyMsgID, SeqNo: 1, Bytes: len(destroyBody), Body: destroyBody},
+		{ID: pingMsgID, SeqNo: 3, Bytes: len(pingBody), Body: pingBody},
+	}}
+	sendEncrypted(t, conn, cipher, auth, outerMsgID, container)
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, mt.BadMsgNotificationTypeID)
+	var bad mt.BadMsgNotification
+	if err := bad.Decode(mustHave(t, replies, mt.BadMsgNotificationTypeID, "bad_msg for mixed destroy_auth_key container")); err != nil {
+		t.Fatalf("decode mixed destroy_auth_key bad_msg: %v", err)
+	}
+	if bad.BadMsgID != outerMsgID || bad.ErrorCode != badMsgContainer {
+		t.Fatalf("mixed destroy_auth_key bad_msg = %+v, want msg_id=%d code=%d", bad, outerMsgID, badMsgContainer)
+	}
+	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || !found {
+		t.Fatalf("auth key after mixed destroy_auth_key container: found=%v err=%v", found, err)
 	}
 }
 

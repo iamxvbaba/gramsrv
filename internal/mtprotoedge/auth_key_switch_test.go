@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
 )
 
 func TestEncryptedConnectionSwitchesAuthKeyEvenWhenSessionIDIsReused(t *testing.T) {

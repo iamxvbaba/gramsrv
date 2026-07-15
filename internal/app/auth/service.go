@@ -14,8 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gotd/ige"
-	"github.com/gotd/td/bin"
-	mtcrypto "github.com/gotd/td/crypto"
+	"github.com/iamxvbaba/td/bin"
+	mtcrypto "github.com/iamxvbaba/td/crypto"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/mail"
@@ -188,6 +188,9 @@ func WithLoginEmail(opts LoginEmailOptions) Option {
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
 	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6}
+	if linker, ok := auths.(store.AuthKeyAuthorityLinker); ok && authKeys != nil {
+		linker.LinkAuthKeyAuthority(authKeys)
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -1102,13 +1105,6 @@ func (s *Service) Authorization(ctx context.Context, authKeyID [8]byte) (domain.
 	return s.auths.ByAuthKey(ctx, authKeyID)
 }
 
-func (s *Service) UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error {
-	if s == nil || s.auths == nil || authKeyID == ([8]byte{}) || layer <= 0 {
-		return nil
-	}
-	return s.auths.UpdateLayer(ctx, authKeyID, layer)
-}
-
 func (s *Service) AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error) {
 	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
 		return domain.AuthKeyClientInfo{}, false, nil
@@ -1118,12 +1114,13 @@ func (s *Service) AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (dom
 		return domain.AuthKeyClientInfo{}, found, err
 	}
 	info := domain.AuthKeyClientInfo{
-		Layer:         key.Layer,
-		DeviceModel:   key.DeviceModel,
-		Platform:      key.Platform,
-		SystemVersion: key.SystemVersion,
-		APIID:         key.APIID,
-		AppVersion:    key.AppVersion,
+		Layer:              key.Layer,
+		LayerObservationID: key.LayerObservationID,
+		DeviceModel:        key.DeviceModel,
+		Platform:           key.Platform,
+		SystemVersion:      key.SystemVersion,
+		APIID:              key.APIID,
+		AppVersion:         key.AppVersion,
 	}
 	if info.Layer == 0 && info.DeviceModel == "" && info.Platform == "" &&
 		info.SystemVersion == "" && info.APIID == 0 && info.AppVersion == "" {
@@ -1147,7 +1144,15 @@ func (s *Service) UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte
 		return err
 	}
 	if s.auths != nil {
-		return s.auths.UpdateClientInfo(ctx, authKeyID, info)
+		// Layer is an ordered protocol fact. Its authorization-table mirror is
+		// advanced atomically by the durable Layer evidence/bind transactions.
+		// A generic metadata update is deliberately two-store and can race such
+		// a transaction, so it must never write an older Layer after the primary
+		// auth_keys row has already advanced.
+		authorizationInfo := info
+		authorizationInfo.Layer = 0
+		authorizationInfo.LayerObservationID = 0
+		return s.auths.UpdateClientInfo(ctx, authKeyID, authorizationInfo)
 	}
 	return nil
 }

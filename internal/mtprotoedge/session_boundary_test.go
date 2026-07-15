@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestFirstContainerBoundaryKeepsAndroidRequestMap models DrKLO's
@@ -120,7 +120,7 @@ func TestContainerRPCAdmissionFailureIsAtomic(t *testing.T) {
 	handler := &admissionCountingRPC{}
 	addr, pub, _ := startTestServer(t, Options{
 		DC:               dc,
-		RPC:              handler,
+		legacyRPC:        handler,
 		RPCMaxInflight:   1,
 		RPCQueueSize:     1,
 		RPCGlobalWorkers: 1,
@@ -176,7 +176,7 @@ func TestContainerRPCAdmissionFailureIsAtomic(t *testing.T) {
 func TestGZIPWrappedRPCUsesLogicalEnvelopeBoundary(t *testing.T) {
 	const dc = 2
 	handler := &admissionCountingRPC{}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	requestBody := mustEncodeTL(t, &tg.HelpGetConfigRequest{})
@@ -251,7 +251,7 @@ func TestEmptyContainerUsesOuterBoundary(t *testing.T) {
 func TestDuplicateContainerAcksWithoutBusinessReexecution(t *testing.T) {
 	const dc = 2
 	handler := &admissionCountingRPC{}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	ids := proto.NewMessageIDGen(time.Now)
@@ -322,7 +322,7 @@ func TestAndroidStartupBurstKeepsAllLargeRPCResultsAddressable(t *testing.T) {
 		requests = 30
 	)
 	handler := &largeStartupBurstRPC{body: strings.Repeat("x", 192<<10)}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	ids := proto.NewMessageIDGen(time.Now)

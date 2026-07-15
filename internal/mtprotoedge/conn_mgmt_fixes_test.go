@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestPushSkipsConnReboundToOtherUser 锁定跨账号投递窗口的修复：pushToUserWithSender 在锁外
@@ -28,6 +28,9 @@ func TestPushSkipsConnReboundToOtherUser(t *testing.T) {
 		c.userID.Store(userA)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
+		if err := c.FreezeLayerProfile(tg.LayerProfileCanonical); err != nil {
+			t.Fatal(err)
+		}
 		sm.Register(c)
 		return c
 	}

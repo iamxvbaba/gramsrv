@@ -3,12 +3,12 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 )
 
-func (r *Router) pushUserMessage(ctx context.Context, userID int64, logMessage string, msg bin.Encoder) int {
+func (r *Router) pushUserMessage(ctx context.Context, userID int64, logMessage string, msg tg.UpdatesClass) int {
 	if r.deps.Sessions == nil || userID == 0 || msg == nil {
 		return 0
 	}
@@ -36,7 +36,7 @@ func (r *Router) pushUserMessage(ctx context.Context, userID int64, logMessage s
 // pushUserMessageTransient 推送 transient（typing/presence）update：未就绪的 session 直接
 // 跳过、不进 pending。实现未提供 TransientSessionBinder 能力时回退到普通 pushUserMessage
 // （退化为旧行为：会进 pending，但仍不影响 durable 正确性）。
-func (r *Router) pushUserMessageTransient(ctx context.Context, userID int64, logMessage string, msg bin.Encoder) int {
+func (r *Router) pushUserMessageTransient(ctx context.Context, userID int64, logMessage string, msg tg.UpdatesClass) int {
 	if r.deps.Sessions == nil || userID == 0 || msg == nil {
 		return 0
 	}
@@ -52,7 +52,7 @@ func (r *Router) pushUserMessageTransient(ctx context.Context, userID int64, log
 	return r.pushUserMessage(ctx, userID, logMessage, msg)
 }
 
-func (r *Router) pushCurrentSessionMessage(ctx context.Context, logMessage string, msg bin.Encoder) {
+func (r *Router) pushCurrentSessionMessage(ctx context.Context, logMessage string, msg tg.UpdatesClass) {
 	if r.deps.Sessions == nil || msg == nil {
 		return
 	}

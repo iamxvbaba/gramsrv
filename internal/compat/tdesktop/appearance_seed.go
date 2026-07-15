@@ -5,7 +5,7 @@ import (
 
 	"telesrv/internal/seed/appearance"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 const appearanceSeedDCID = 2
@@ -18,16 +18,16 @@ var peerColorOptionsCache = struct {
 	profile     []tg.HelpPeerColorOption
 }{}
 
-func seedWallPapers() []tg.WallPaperClass {
+func DefaultWallPapers() []tg.WallPaperClass {
 	catalog := appearance.Default()
 	out := make([]tg.WallPaperClass, 0, len(catalog.Wallpapers))
 	for _, wallpaper := range catalog.Wallpapers {
-		out = append(out, seedWallPaper(wallpaper))
+		out = append(out, DefaultWallPaper(wallpaper))
 	}
 	return out
 }
 
-// LookupWallPaper resolves a cloud wallpaper from the default seed catalog.
+// LookupWallPaper resolves a cloud wallpaper from the Default seed catalog.
 func LookupWallPaper(input tg.InputWallPaperClass) (tg.WallPaperClass, bool) {
 	if in, ok := input.(*tg.InputWallPaperNoFile); ok {
 		return &tg.WallPaperNoFile{ID: in.ID}, true
@@ -35,13 +35,13 @@ func LookupWallPaper(input tg.InputWallPaperClass) (tg.WallPaperClass, bool) {
 	catalog := appearance.Default()
 	for _, wallpaper := range catalog.Wallpapers {
 		if inputWallPaperMatches(input, wallpaper) {
-			return seedWallPaper(wallpaper), true
+			return DefaultWallPaper(wallpaper), true
 		}
 	}
 	return nil, false
 }
 
-// LookupWallPapers resolves multiple wallpapers from the default seed catalog.
+// LookupWallPapers resolves multiple wallpapers from the Default seed catalog.
 func LookupWallPapers(inputs []tg.InputWallPaperClass) ([]tg.WallPaperClass, bool) {
 	out := make([]tg.WallPaperClass, 0, len(inputs))
 	for _, input := range inputs {
@@ -65,28 +65,28 @@ func inputWallPaperMatches(input tg.InputWallPaperClass, wallpaper appearance.Wa
 	}
 }
 
-func seedWallPaper(in appearance.Wallpaper) tg.WallPaperClass {
+func DefaultWallPaper(in appearance.Wallpaper) tg.WallPaperClass {
 	if in.Type == 1 || in.Document.ID == 0 {
 		out := &tg.WallPaperNoFile{ID: in.ID}
 		out.SetDefault(in.Default)
 		out.SetDark(in.Dark)
-		out.SetSettings(seedWallPaperSettings(in.Settings))
+		out.SetSettings(DefaultWallPaperSettings(in.Settings))
 		return out
 	}
 	out := &tg.WallPaper{
 		ID:         in.ID,
 		AccessHash: in.AccessHash,
 		Slug:       in.Slug,
-		Document:   seedDocument(in.Document),
+		Document:   DefaultDocument(in.Document),
 	}
 	out.SetDefault(in.Default)
 	out.SetPattern(in.Pattern)
 	out.SetDark(in.Dark)
-	out.SetSettings(seedWallPaperSettings(in.Settings))
+	out.SetSettings(DefaultWallPaperSettings(in.Settings))
 	return out
 }
 
-func seedWallPaperSettings(in appearance.WallpaperSettings) tg.WallPaperSettings {
+func DefaultWallPaperSettings(in appearance.WallpaperSettings) tg.WallPaperSettings {
 	var out tg.WallPaperSettings
 	out.SetBlur(in.Blur)
 	out.SetMotion(in.Motion)
@@ -111,7 +111,7 @@ func seedWallPaperSettings(in appearance.WallpaperSettings) tg.WallPaperSettings
 	return out
 }
 
-func seedDocument(in appearance.Document) tg.DocumentClass {
+func DefaultDocument(in appearance.Document) tg.DocumentClass {
 	if in.ID == 0 {
 		return &tg.DocumentEmpty{}
 	}
@@ -121,14 +121,14 @@ func seedDocument(in appearance.Document) tg.DocumentClass {
 		Date:          in.Date,
 		MimeType:      in.MimeType,
 		Size:          in.Size,
-		Thumbs:        seedPhotoSizes(in.Thumbs),
+		Thumbs:        DefaultPhotoSizes(in.Thumbs),
 		DCID:          appearanceSeedDCID,
-		Attributes:    seedDocumentAttributes(in.Attributes),
+		Attributes:    DefaultDocumentAttributes(in.Attributes),
 		FileReference: nil,
 	}
 }
 
-func seedPhotoSizes(in []appearance.PhotoSize) []tg.PhotoSizeClass {
+func DefaultPhotoSizes(in []appearance.PhotoSize) []tg.PhotoSizeClass {
 	out := make([]tg.PhotoSizeClass, 0, len(in))
 	for _, size := range in {
 		switch size.Kind {
@@ -144,7 +144,7 @@ func seedPhotoSizes(in []appearance.PhotoSize) []tg.PhotoSizeClass {
 	return out
 }
 
-func seedDocumentAttributes(in []appearance.DocumentAttribute) []tg.DocumentAttributeClass {
+func DefaultDocumentAttributes(in []appearance.DocumentAttribute) []tg.DocumentAttributeClass {
 	out := make([]tg.DocumentAttributeClass, 0, len(in))
 	for _, attr := range in {
 		switch attr.Kind {
@@ -159,20 +159,20 @@ func seedDocumentAttributes(in []appearance.DocumentAttribute) []tg.DocumentAttr
 	return out
 }
 
-func seedPeerColorOptions(profile bool) []tg.HelpPeerColorOption {
+func DefaultPeerColorOptions(profile bool) []tg.HelpPeerColorOption {
 	if profile {
 		peerColorOptionsCache.profileOnce.Do(func() {
-			peerColorOptionsCache.profile = buildSeedPeerColorOptions(true)
+			peerColorOptionsCache.profile = buildDefaultPeerColorOptions(true)
 		})
 		return clonePeerColorOptions(peerColorOptionsCache.profile)
 	}
 	peerColorOptionsCache.regularOnce.Do(func() {
-		peerColorOptionsCache.regular = buildSeedPeerColorOptions(false)
+		peerColorOptionsCache.regular = buildDefaultPeerColorOptions(false)
 	})
 	return clonePeerColorOptions(peerColorOptionsCache.regular)
 }
 
-func buildSeedPeerColorOptions(profile bool) []tg.HelpPeerColorOption {
+func buildDefaultPeerColorOptions(profile bool) []tg.HelpPeerColorOption {
 	catalog := appearance.Default()
 	source := catalog.PeerColors
 	if profile {
@@ -193,10 +193,10 @@ func buildSeedPeerColorOptions(profile bool) []tg.HelpPeerColorOption {
 		if groupMin > 0 {
 			option.SetGroupMinLevel(groupMin)
 		}
-		if colors := seedPeerColorSet(color.Colors); colors != nil {
+		if colors := DefaultPeerColorSet(color.Colors); colors != nil {
 			option.SetColors(colors)
 		}
-		if colors := seedPeerColorSet(color.DarkColors); colors != nil {
+		if colors := DefaultPeerColorSet(color.DarkColors); colors != nil {
 			option.SetDarkColors(colors)
 		}
 		out = append(out, option)
@@ -246,7 +246,7 @@ func boundedPeerColorMinLevel(level int) int {
 	return level
 }
 
-func seedPeerColorID(id int, profile bool) (bool, bool) {
+func DefaultPeerColorID(id int, profile bool) (bool, bool) {
 	catalog := appearance.Default()
 	source := catalog.PeerColors
 	if profile {
@@ -263,7 +263,7 @@ func seedPeerColorID(id int, profile bool) (bool, bool) {
 	return false, true
 }
 
-func seedPeerColorSet(in *appearance.ColorSet) tg.HelpPeerColorSetClass {
+func DefaultPeerColorSet(in *appearance.ColorSet) tg.HelpPeerColorSetClass {
 	if in == nil {
 		return nil
 	}

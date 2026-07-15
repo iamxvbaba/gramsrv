@@ -490,11 +490,10 @@ func TestDeleteMessagesPtsRangeFeedsGetDifference(t *testing.T) {
 	}
 }
 
-// TestAcknowledgeCurrentStateAdvancesConfirmedWatermark 验证 updates.getState
-// 的语义：返回账号当前最新连续 pts（而非设备旧确认水位），并把确认水位推进
-// 到此——TDesktop 不持久化 pts，启动靠 getState+getDialogs 快照对齐，返回旧
-// 水位会诱导其重放快照前差分（未读重复累计、dialog 预览被旧消息抢占）。
-func TestAcknowledgeCurrentStateAdvancesConfirmedWatermark(t *testing.T) {
+// TestCurrentStateCommitsAuditedBaselineOnlyAfterDelivery verifies that
+// computing a getState result is side-effect free and that its physically
+// delivered baseline advances confirmed+observed atomically.
+func TestCurrentStateCommitsAuditedBaselineOnlyAfterDelivery(t *testing.T) {
 	ctx := context.Background()
 	var authKeyID [8]byte
 	authKeyID[0] = 11
@@ -509,8 +508,8 @@ func TestAcknowledgeCurrentStateAdvancesConfirmedWatermark(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 	// 设备确认水位停在 pts=1 后账号又推进两格。
-	if _, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 1}); err != nil {
-		t.Fatalf("GetDifference: %v", err)
+	if err := states.Save(ctx, authKeyID, userID, domain.UpdateState{Pts: 1, Date: 1700000001}); err != nil {
+		t.Fatalf("seed confirmed state: %v", err)
 	}
 	for pts := 2; pts <= 3; pts++ {
 		if err := events.Append(ctx, userID, domain.UpdateEvent{
@@ -521,23 +520,33 @@ func TestAcknowledgeCurrentStateAdvancesConfirmedWatermark(t *testing.T) {
 		}
 	}
 
-	st, err := svc.AcknowledgeCurrentState(ctx, authKeyID, userID)
+	st, err := svc.CurrentState(ctx, userID)
 	if err != nil {
-		t.Fatalf("AcknowledgeCurrentState: %v", err)
+		t.Fatalf("CurrentState: %v", err)
 	}
 	if st.Pts != 3 {
-		t.Fatalf("acknowledged state pts = %d, want account current 3", st.Pts)
+		t.Fatalf("current state pts = %d, want account current 3", st.Pts)
 	}
-	confirmed, err := svc.GetState(ctx, authKeyID, userID)
+	confirmed, _, err := svc.ConfirmedState(ctx, authKeyID, userID)
 	if err != nil {
-		t.Fatalf("GetState after acknowledge: %v", err)
+		t.Fatalf("ConfirmedState before delivery: %v", err)
 	}
-	if confirmed.Pts != 3 {
-		t.Fatalf("confirmed watermark = %d, want advanced to 3", confirmed.Pts)
+	if confirmed.Pts != 1 {
+		t.Fatalf("confirmed before delivery = %d, want 1", confirmed.Pts)
+	}
+	if _, ok := states.ObservedClientState(authKeyID, userID); ok {
+		t.Fatal("computed getState unexpectedly advanced observed")
+	}
+	if err := svc.CommitDeliveredState(ctx, authKeyID, userID, st, domain.UpdateStateCommitDeliveredAndObservedBaseline); err != nil {
+		t.Fatalf("CommitDeliveredState: %v", err)
+	}
+	confirmed, _, err = svc.ConfirmedState(ctx, authKeyID, userID)
+	if err != nil || confirmed.Pts != 3 {
+		t.Fatalf("confirmed after delivery = %+v err=%v, want pts=3", confirmed, err)
 	}
 	observed, ok := states.ObservedClientState(authKeyID, userID)
 	if !ok || observed.Pts != 3 {
-		t.Fatalf("getState observed watermark = %+v/%v, want pts=3", observed, ok)
+		t.Fatalf("observed after delivered baseline = %+v/%v, want pts=3", observed, ok)
 	}
 }
 
@@ -559,7 +568,11 @@ func TestGetDifferenceRetainsOnlyClientObservedInputCursor(t *testing.T) {
 
 	// 服务端把 pts=1..2 放进 response，并不证明客户端收到了 response；observed 只能
 	// 保持在本次 request 实际携带的 pts=0。
-	diff, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 0, Date: 1700000100})
+	from, err := svc.ObserveDifferenceRequest(ctx, authKeyID, userID, domain.UpdateState{Pts: 0, Date: 1700000100})
+	if err != nil {
+		t.Fatalf("observe first request: %v", err)
+	}
+	diff, err := svc.GetDifference(ctx, authKeyID, userID, from)
 	if err != nil {
 		t.Fatalf("first difference: %v", err)
 	}
@@ -570,10 +583,23 @@ func TestGetDifferenceRetainsOnlyClientObservedInputCursor(t *testing.T) {
 	if !ok || observed.Pts != 0 {
 		t.Fatalf("observed after merely sending response = %+v/%v, want pts=0", observed, ok)
 	}
+	if _, found, err := svc.ConfirmedState(ctx, authKeyID, userID); err != nil || found {
+		t.Fatalf("computed response advanced confirmed: found=%v err=%v", found, err)
+	}
+	if err := svc.CommitDeliveredState(ctx, authKeyID, userID, diff.State, domain.UpdateStateCommitDeliveredOnly); err != nil {
+		t.Fatalf("commit delivered difference: %v", err)
+	}
+	if confirmed, found, err := svc.ConfirmedState(ctx, authKeyID, userID); err != nil || !found || confirmed.Pts != 2 {
+		t.Fatalf("confirmed after delivery = %+v/%v err=%v, want pts=2", confirmed, found, err)
+	}
+	observed, _ = states.ObservedClientState(authKeyID, userID)
+	if observed.Pts != 0 {
+		t.Fatalf("delivered difference advanced observed to %d, want 0", observed.Pts)
+	}
 
 	// 客户端下一次明确带回 pts=2 后，才允许 retention 把共同安全水位推进到 2。
-	if _, err := svc.GetDifference(ctx, authKeyID, userID, domain.UpdateState{Pts: 2, Date: 1700000102}); err != nil {
-		t.Fatalf("confirming difference: %v", err)
+	if _, err := svc.ObserveDifferenceRequest(ctx, authKeyID, userID, domain.UpdateState{Pts: 2, Date: 1700000102}); err != nil {
+		t.Fatalf("observing next request: %v", err)
 	}
 	observed, ok = states.ObservedClientState(authKeyID, userID)
 	if !ok || observed.Pts != 2 {
@@ -623,6 +649,15 @@ func TestGetDifferenceBelowRetainedFloorUsesEmptySliceCheckpoint(t *testing.T) {
 	}
 	if !checkpoint.Partial || len(checkpoint.Events) != 0 || checkpoint.State.Pts != 2 || checkpoint.State.Date != 1700000202 {
 		t.Fatalf("checkpoint difference = %+v, want empty differenceSlice at pts/date 2/1700000202", checkpoint)
+	}
+	if _, found, err := svc.ConfirmedState(ctx, authKeyID, userID); err != nil || found {
+		t.Fatalf("computed checkpoint advanced confirmed: found=%v err=%v", found, err)
+	}
+	if err := svc.CommitDeliveredState(ctx, authKeyID, userID, checkpoint.State, domain.UpdateStateCommitDeliveredOnly); err != nil {
+		t.Fatalf("commit delivered checkpoint: %v", err)
+	}
+	if confirmed, found, err := svc.ConfirmedState(ctx, authKeyID, userID); err != nil || !found || confirmed.Pts != 2 {
+		t.Fatalf("confirmed checkpoint = %+v/%v err=%v, want pts=2", confirmed, found, err)
 	}
 
 	tail, err := svc.GetDifference(ctx, authKeyID, userID, checkpoint.State)
@@ -720,6 +755,10 @@ func (s *captureStateStore) Save(_ context.Context, authKeyID [8]byte, userID in
 	s.lastSaveAuthKeyID = authKeyID
 	s.states[captureStateKey(authKeyID, userID)] = state
 	return nil
+}
+
+func (s *captureStateStore) CommitDeliveredState(ctx context.Context, authKeyID [8]byte, userID int64, state domain.UpdateState, _ domain.UpdateStateCommitMode) error {
+	return s.Save(ctx, authKeyID, userID, state)
 }
 
 func (s *captureStateStore) ObserveClientState(_ context.Context, _ [8]byte, _ int64, _ domain.UpdateState) error {

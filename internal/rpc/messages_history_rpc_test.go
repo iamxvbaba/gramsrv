@@ -3,10 +3,11 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
@@ -15,6 +16,21 @@ import (
 	"telesrv/internal/store/memory"
 	"testing"
 )
+
+func TestMessagesSearchGlobalRejectsUnsupportedCommunityScope(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesSearchGlobalRequest{
+		Q:          "scoped",
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      20,
+	}
+	req.SetCommunity(&tg.InputChannel{ChannelID: 42, AccessHash: 84})
+
+	if _, err := r.onMessagesSearchGlobal(WithUserID(context.Background(), 1000000001), req); !tgerr.Is(err, "CHANNEL_INVALID") {
+		t.Fatalf("community-scoped messages.searchGlobal err = %v, want CHANNEL_INVALID", err)
+	}
+}
 
 func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 	ctx := context.Background()

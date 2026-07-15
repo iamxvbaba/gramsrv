@@ -12,8 +12,10 @@ import (
 // ErrInboundRPCQueueFull 表示 inbound RPC 已触达单连接或进程级预算。
 var ErrInboundRPCQueueFull = errors.New("inbound rpc queue full")
 
-// maxInflightRPCBytes 是单连接所有已预留、排队和执行中 RPC body 的总字节上限。
-// 进程级预算在 Copy 前先兜底；这里再隔离单个连接，避免一个客户端独占全局内存。
+// maxInflightRPCBytes 是单连接所有已预留、排队和执行中 RPC 的内存 charge 上限。
+// legacy 路径的 charge 等于 copied body；exact 路径在 typed decode 前按 wire 大小、
+// 生成对象/向量/interface/string/bytes 放大保守计费。它不是可接收 wire bytes 上限。
+// 进程级预算先兜底；这里再隔离单个连接，避免一个客户端独占全局内存。
 const maxInflightRPCBytes = 32 << 20 // 32 MiB
 
 // rpcCloseWaitTimeout 是连接/Server 关闭时等待在途 RPC 或共享 worker 退出的上限。
@@ -37,7 +39,48 @@ type inboundRPC struct {
 	release func()
 	budget  *inboundRPCGlobalReservation
 	ticket  *inboundRPCTicket
+	gate    *inboundRPCGate
 }
+
+// inboundRPCGate keeps dependency waits out of the shared worker pool. A
+// gated task remains within the ordinary queue/task/byte budgets, but workers
+// skip it until every prerequisite publishes its terminal execution outcome.
+type inboundRPCGate struct {
+	remaining atomic.Int32
+	failed    atomic.Bool
+	ready     atomic.Bool
+	wake      func()
+}
+
+func newInboundRPCGate(prerequisites int, wake func()) *inboundRPCGate {
+	if prerequisites < 0 {
+		prerequisites = 0
+	}
+	g := &inboundRPCGate{wake: wake}
+	// One sentinel keeps the gate closed while subscribers are installed; the
+	// caller resolves it after registration is complete.
+	g.remaining.Store(int32(prerequisites + 1))
+	return g
+}
+
+func (g *inboundRPCGate) resolve(success bool) {
+	if g == nil {
+		return
+	}
+	if !success {
+		g.failed.Store(true)
+	}
+	remaining := g.remaining.Add(-1)
+	if remaining < 0 {
+		panic("mtproto inbound RPC gate counter underflow")
+	}
+	if remaining == 0 && g.ready.CompareAndSwap(false, true) && g.wake != nil {
+		g.wake()
+	}
+}
+
+func (g *inboundRPCGate) runnable() bool { return g == nil || g.ready.Load() }
+func (g *inboundRPCGate) success() bool  { return g == nil || (g.ready.Load() && !g.failed.Load()) }
 
 type inboundRPCTicket struct {
 	onTimeout func()
@@ -78,7 +121,8 @@ type inboundRPCGlobalReservation struct {
 }
 
 // inboundRPCSpec 是 container preflight 与 RPC scheduler 之间的有界 admission 描述。
-// method 仅用于 metrics，size 是在 Copy 之前必须预留的 request body 字节数。
+// method 仅用于 metrics；size 是 materialization charge。legacy 路径等于 Copy 前
+// request body 字节数，exact 路径是 typed decode 前计算的保守内存上界。
 type inboundRPCSpec struct {
 	method string
 	size   int
@@ -102,6 +146,7 @@ type inboundRPCBatchReservation struct {
 }
 
 var errInboundRPCBatchTaskCount = errors.New("inbound rpc batch task count mismatch")
+var errInboundRPCBatchSelection = errors.New("inbound rpc batch selection is invalid")
 
 func newInboundRPCScheduler(workers, maxTasks int, maxBytes int64) *inboundRPCScheduler {
 	if workers <= 0 {
@@ -499,6 +544,76 @@ func (c *Conn) dropInboundRPCSpecs(specs []inboundRPCSpec, reason string) {
 	}
 }
 
+// retain keeps a subset of a provisional batch on the original connection and
+// global reservations. Exact-layer admission uses this after typed decode has
+// classified completed replays, pending joins, admission errors, and fresh
+// owners. A retained fresh owner therefore never passes through a release then
+// reacquire window where another connection could consume its memory/task
+// budget. Entries not retained are returned immediately as one batch.
+//
+// indices are reservation-entry indices, must be strictly increasing, and have
+// a one-to-one correspondence with specs. The original conservative byte
+// charge is intentionally retained; a typed request remains reachable from its
+// scheduler task until completion, so shrinking it to the wire size would make
+// the materialized graph unaccounted.
+func (r *inboundRPCBatchReservation) retain(indices []int, specs []inboundRPCSpec) error {
+	if r == nil || len(indices) != len(specs) || len(indices) > len(r.entries) {
+		return errInboundRPCBatchSelection
+	}
+	retained := make([]inboundRPCBatchEntry, len(indices))
+	removed := make([]*inboundRPCGlobalReservation, 0, len(r.entries)-len(indices))
+	var (
+		previous     = -1
+		retainedSize int64
+		removedSize  int64
+	)
+	selected := 0
+	for output, index := range indices {
+		if index <= previous || index < 0 || index >= len(r.entries) {
+			return errInboundRPCBatchSelection
+		}
+		previous = index
+		for selected < index {
+			entry := r.entries[selected]
+			removed = append(removed, entry.global)
+			removedSize += int64(entry.size)
+			selected++
+		}
+		entry := r.entries[index]
+		// The caller may improve the provisional metric label but may not increase
+		// or replace its byte charge after materialization has started.
+		if specs[output].size > entry.size {
+			return errInboundRPCBatchSelection
+		}
+		entry.method = specs[output].method
+		retained[output] = entry
+		retainedSize += int64(entry.size)
+		selected = index + 1
+	}
+	for selected < len(r.entries) {
+		entry := r.entries[selected]
+		removed = append(removed, entry.global)
+		removedSize += int64(entry.size)
+		selected++
+	}
+
+	c := r.conn
+	c.rpcMu.Lock()
+	c.rpcReserved -= len(removed)
+	c.inflightRPCBytes.Add(-removedSize)
+	r.entries = retained
+	r.totalSize = retainedSize
+	c.rpcMu.Unlock()
+	releaseInboundRPCGlobalBatch(removed)
+
+	if len(retained) == 0 {
+		// Finish the one reservation waiter as part of the same ownership
+		// transition. abort sees an empty batch and is therefore accounting-only.
+		r.abort()
+	}
+	return nil
+}
+
 // commit 在一次 rpcMu 临界区内把整批 task append 到队列并立即发布 ready token。
 // 协议 barrier 必须在调用 commit 前完成；延迟发布 token 无法阻止已有 worker
 // 从同一连接队列取走新任务，因此不提供虚假的 deferred-schedule 模式。
@@ -581,7 +696,7 @@ func (r *inboundRPCBatchReservation) commit(tasks []inboundRPC) (result error) {
 			firstQueueLen = len(c.rpcQueue) + 1
 			c.rpcQueue = append(c.rpcQueue, prepared...)
 			queueCap = c.rpcQueueSize
-			if len(prepared) > 0 && c.rpcRunning < c.rpcMaxInflight && !c.rpcReady {
+			if c.rpcRunning < c.rpcMaxInflight && !c.rpcReady && c.hasRunnableInboundRPCLocked() {
 				c.rpcReady = true
 				reschedule = true
 			}
@@ -636,19 +751,119 @@ func (c *Conn) takeInboundRPC() (task inboundRPC, ok, reschedule bool) {
 	if c.rpcClosed || len(c.rpcQueue) == 0 || c.rpcRunning >= c.rpcMaxInflight {
 		return inboundRPC{}, false, false
 	}
-	task = c.rpcQueue[0]
-	c.rpcQueue[0] = inboundRPC{}
-	c.rpcQueue = c.rpcQueue[1:]
+	index := -1
+	for i := range c.rpcQueue {
+		if c.rpcQueue[i].gate.runnable() {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return inboundRPC{}, false, false
+	}
+	task = c.rpcQueue[index]
+	if index == 0 {
+		// The overwhelmingly common FIFO path advances the slice head in O(1).
+		// Clear the departed element first so its request graph and closures are
+		// not retained by the shared backing array.
+		c.rpcQueue[0] = inboundRPC{}
+		c.rpcQueue = c.rpcQueue[1:]
+	} else {
+		copy(c.rpcQueue[index:], c.rpcQueue[index+1:])
+		last := len(c.rpcQueue) - 1
+		c.rpcQueue[last] = inboundRPC{}
+		c.rpcQueue = c.rpcQueue[:last]
+	}
 	if len(c.rpcQueue) == 0 {
 		c.rpcQueue = nil
 	}
 	c.rpcRunning++
 	c.rpcWG.Add(1)
-	if len(c.rpcQueue) > 0 && c.rpcRunning < c.rpcMaxInflight {
+	if c.rpcRunning < c.rpcMaxInflight && c.hasRunnableInboundRPCLocked() {
 		c.rpcReady = true
 		reschedule = true
 	}
 	return task, true, reschedule
+}
+
+func (c *Conn) hasRunnableInboundRPCLocked() bool {
+	if c.rpcReplayRestores > 0 {
+		return false
+	}
+	for i := range c.rpcQueue {
+		if c.rpcQueue[i].gate.runnable() {
+			return true
+		}
+	}
+	return false
+}
+
+// beginRPCReplayRestore installs a scheduler-level barrier without occupying a
+// global RPC worker. The returned idempotent completion function wakes queued
+// work only after the last overlapping restore has finished.
+func (c *Conn) beginRPCReplayRestore() func() {
+	if c == nil {
+		return func() {}
+	}
+	active := false
+	unschedule := false
+	c.rpcMu.Lock()
+	if !c.rpcClosed && !c.isRetired() {
+		c.rpcReplayRestores++
+		active = true
+		if c.rpcReady {
+			c.rpcReady = false
+			unschedule = true
+		}
+	}
+	c.rpcMu.Unlock()
+	if unschedule && c.rpcScheduler != nil {
+		c.rpcScheduler.unschedule(c)
+	}
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if !active {
+				return
+			}
+			reschedule := false
+			c.rpcMu.Lock()
+			c.rpcReplayRestores--
+			if c.rpcReplayRestores < 0 {
+				c.rpcMu.Unlock()
+				panic("mtproto inbound RPC replay restore barrier underflow")
+			}
+			if c.rpcReplayRestores == 0 && !c.rpcClosed && c.rpcRunning < c.rpcMaxInflight &&
+				!c.rpcReady && c.hasRunnableInboundRPCLocked() {
+				c.rpcReady = true
+				reschedule = true
+			}
+			c.rpcMu.Unlock()
+			if reschedule && c.rpcScheduler != nil {
+				c.rpcScheduler.schedule(c)
+			}
+		})
+	}
+}
+
+// wakeInboundRPC is safe from a flight completion callback. It does no work
+// while the gate's task has not been committed yet; commit performs the same
+// runnable scan and publishes the initial scheduler token.
+func (c *Conn) wakeInboundRPC() {
+	if c == nil || c.rpcScheduler == nil {
+		return
+	}
+	reschedule := false
+	c.rpcMu.Lock()
+	if !c.rpcClosed && c.rpcRunning < c.rpcMaxInflight && !c.rpcReady && c.hasRunnableInboundRPCLocked() {
+		c.rpcReady = true
+		reschedule = true
+	}
+	c.rpcMu.Unlock()
+	if reschedule {
+		c.rpcScheduler.schedule(c)
+	}
 }
 
 func (c *Conn) runInboundRPC(task inboundRPC) {
@@ -681,7 +896,7 @@ func (c *Conn) finishInboundRPC(task inboundRPC) {
 	c.rpcMu.Lock()
 	c.rpcRunning--
 	c.inflightRPCBytes.Add(-int64(task.size))
-	if !c.rpcClosed && len(c.rpcQueue) > 0 && c.rpcRunning < c.rpcMaxInflight && !c.rpcReady {
+	if !c.rpcClosed && c.rpcRunning < c.rpcMaxInflight && !c.rpcReady && c.hasRunnableInboundRPCLocked() {
 		c.rpcReady = true
 		reschedule = true
 	}

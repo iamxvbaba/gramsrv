@@ -4,18 +4,24 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
 	"telesrv/internal/domain"
 )
 
+const (
+	legacyCreateThemeID  = 0x8432c21f
+	legacyUpdateThemeID  = 0x5cb367d5
+	legacyInstallThemeID = 0x7ae43737
+	legacyGetThemeID     = 0x8d9d742b
+)
+
 // TestLegacyThemeWireDispatch 验证 DrKLO theme 构造器经过 Router.Dispatch 的完整链路：
-// layerwire 结构预检 -> gotd dispatcher fallback -> compat 解码 -> 现有 handler。
-// 不能只直调 tryLegacyThemeRPC，否则会掩盖预检早于 fallback 的路由回归。
+// generated static overlay -> canonical request -> gotd dispatcher -> 现有 handler。
 func TestLegacyThemeWireDispatch(t *testing.T) {
 	const userID = 1000010
 	ctx := WithUserID(context.Background(), userID)
@@ -105,11 +111,15 @@ func TestLegacyThemeWireDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("installTheme legacy dispatch: %v", err)
 	}
-	if _, ok := enc.(*tg.BoolTrue); !ok {
-		t.Fatalf("installTheme legacy result = %T, want *tg.BoolTrue", enc)
+	var boolWire bin.Buffer
+	if err := enc.Encode(&boolWire); err != nil {
+		t.Fatalf("encode installTheme legacy result: %v", err)
+	}
+	if id, err := boolWire.ID(); err != nil || id != tg.BoolTrueTypeID {
+		t.Fatalf("installTheme legacy wire id = %#x err=%v, want boolTrue", id, err)
 	}
 
-	// 已声明 legacy 方法仍必须精确消费完整结构，截断字段不能到手写 decoder。
+	// 已声明 legacy 方法仍必须由静态 decoder 精确消费完整结构。
 	var malformed bin.Buffer
 	malformed.PutID(legacyCreateThemeID)
 	malformed.PutInt32(0)

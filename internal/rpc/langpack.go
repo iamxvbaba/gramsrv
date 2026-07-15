@@ -4,12 +4,12 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // registerLangpack 注册 langpack.* RPC handler。
 //
-// 老客户端（DrKLO）发的是不带 lang_pack 参数的旧构造器，已由 layerwire 入站升级为 227
+// 老客户端（DrKLO）发的是不带 lang_pack 参数的旧构造器，已由 gotdgen client overlay 入站升级为 canonical
 // 形态并把 lang_pack 置空；故这里 lang_pack 为空时回退到按 client 信息派生（langPackFromClient），
 // 与历史 handleLegacyLangpack* 的行为一致。
 func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
@@ -56,7 +56,7 @@ func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
 	})
 }
 
-// langPackOrClient 返回请求里的 lang_pack；为空（老客户端经 layerwire 升级而来）时按 client 派生。
+// langPackOrClient 返回请求里的 lang_pack；为空（老客户端经生成 overlay 升级而来）时按 client 派生。
 func langPackOrClient(ctx context.Context, langPack string) string {
 	if langPack != "" {
 		return langPack

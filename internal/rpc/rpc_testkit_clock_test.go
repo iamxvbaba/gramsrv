@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	"github.com/gotd/td/clock"
+	"github.com/iamxvbaba/td/clock"
 	"time"
 )
 

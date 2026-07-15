@@ -5,32 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap/zaptest"
-
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
-
-func TestSessionManagerSetClientLayerForAuthKey(t *testing.T) {
-	sm := NewSessionManager(zaptest.NewLogger(t))
-	c := &Conn{sessionID: 42, authKeyID: [8]byte{1, 2, 3}}
-	sm.Register(c)
-	defer sm.Unregister(c)
-
-	sm.SetClientLayerForAuthKey([8]byte{1, 2, 3}, 42, 225)
-	if got := c.ClientLayer(); got != 225 {
-		t.Fatalf("ClientLayer = %d, want 225", got)
-	}
-	// 未注册 session：no-op，不 panic。
-	sm.SetClientLayerForAuthKey([8]byte{9}, 1, 220)
-	// 非法 layer：忽略，保留已有值。
-	sm.SetClientLayerForAuthKey([8]byte{1, 2, 3}, 42, 0)
-	if got := c.ClientLayer(); got != 225 {
-		t.Fatalf("ClientLayer after layer=0 = %d, want 225", got)
-	}
-}
 
 type seededLayerRPC struct{}
 
@@ -45,7 +24,7 @@ func (seededLayerRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 225, 
 // 而不是等首条 RPC 的 Dispatch 返回后才刷新——否则重连老客户端在首条 RPC handler
 // 执行期间收到的 pending flush / 并发 push 会按 canonical 227 漏降级。
 func TestRegisterSeedsNegotiatedLayerBeforeFirstRPC(t *testing.T) {
-	addr, pub, srv := startTestServer(t, Options{DC: 2, RPC: seededLayerRPC{}})
+	addr, pub, srv := startTestServer(t, Options{DC: 2, legacyRPC: seededLayerRPC{}})
 	conn, auth, cipher := dialHandshake(t, addr, 2, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
@@ -67,7 +46,7 @@ func TestRegisterSeedsNegotiatedLayerBeforeFirstRPC(t *testing.T) {
 	if c == nil {
 		t.Fatal("connection not registered")
 	}
-	if got := c.ClientLayer(); got != 225 {
+	if got := c.legacyClientLayer(); got != 225 {
 		t.Fatalf("ClientLayer after registration = %d, want seeded 225", got)
 	}
 }

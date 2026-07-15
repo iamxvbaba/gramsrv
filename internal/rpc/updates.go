@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )
@@ -15,38 +15,35 @@ func (r *Router) registerUpdates(d *tg.ServerDispatcher) {
 }
 
 // onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
-// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位并推进该设备 observed。
-// 对尚未审计 baseline 语义的客户端仍返回同一 current state，但不把尚未被客户端带回
-// 的服务端快照记成 observed；这保留 durable difference tail，避免把 TDesktop/DrKLO
-// 的兼容例外扩散成所有客户端都能跨过未实际确认事件的 retention 后门。
+// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位，并且只在 rpc_result
+// 物理交付后原子推进该设备 confirmed + observed。对尚未审计 baseline 语义的客户端
+// 仍返回同一 current state，但交付后只推进 confirmed；这保留 observed/durable
+// difference tail，避免把 TDesktop/DrKLO 的兼容例外扩散成所有客户端都能跨过未实际
+// 确认事件的 retention 后门。
 func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error) {
-	id, _ := AuthKeyIDFrom(ctx)
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
 	}
 	if r.deps.Updates == nil {
-		r.markSessionReceivesUpdates(ctx, userID)
+		r.stageUpdatesBaselineAfterDelivery(ctx, userID, nil, 0, nil, false)
 		return &tg.UpdatesState{Date: int(r.clock.Now().Unix()), Qts: r.deviceEncryptedQts(ctx)}, nil
 	}
-	var st domain.UpdateState
+	st, err := r.deps.Updates.CurrentState(ctx, userID)
+	mode := domain.UpdateStateCommitDeliveredOnly
 	if getStateEstablishesObservedBaseline(ctx) {
-		st, err = r.deps.Updates.AcknowledgeCurrentState(ctx, id, userID)
-	} else {
-		st, err = r.deps.Updates.CurrentState(ctx, userID)
-		if err == nil {
-			r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for client without audited baseline policy",
-				r.contextLogFields(ctx)...)
-		}
+		mode = domain.UpdateStateCommitDeliveredAndObservedBaseline
+	} else if err == nil {
+		r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for client without audited baseline policy",
+			r.contextLogFields(ctx)...)
 	}
 	if err != nil {
 		return nil, internalErr()
 	}
-	r.markSessionReceivesUpdates(ctx, userID)
-	r.registerBootstrapAfterBaseline(ctx, userID)
 	// 密聊 qts 是设备级、独立于账号级 pts 引擎：注入当前设备已分配的 qts（无密聊设备为 0）。
+	st.Qts = r.deviceEncryptedQts(ctx)
+	r.stageUpdatesBaselineAfterDelivery(ctx, userID, &st, mode, nil, true)
 	out := tgUpdateState(st)
-	out.Qts = r.deviceEncryptedQts(ctx)
 	return ptr(out), nil
 }
 
@@ -67,20 +64,10 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	}
 	if r.deps.Updates == nil {
 		now := int(r.clock.Now().Unix())
-		r.markSessionReceivesUpdates(ctx, userID)
+		r.stageUpdatesBaselineAfterDelivery(ctx, userID, nil, 0, nil, false)
 		return &tg.UpdatesDifferenceEmpty{Date: now}, nil
 	}
-	// pts_total_limit 是客户端显式请求的 fast-skip：差距超限时返回
-	// differenceTooLong{pts}，客户端据此整体重置会话列表而不是串行翻
-	// 上千页 slice。不传该参数的客户端（TDesktop）永远不会收到 tooLong。
-	if limit, ok := req.GetPtsTotalLimit(); ok && limit > 0 && req.Pts > 0 {
-		current, err := r.deps.Updates.CurrentState(ctx, userID)
-		if err == nil && current.Pts-req.Pts > limit {
-			r.markSessionReceivesUpdates(ctx, userID)
-			return &tg.UpdatesDifferenceTooLong{Pts: current.Pts}, nil
-		}
-	}
-	st, err := r.deps.Updates.GetDifference(ctx, id, userID, domain.UpdateState{
+	from, err := r.deps.Updates.ObserveDifferenceRequest(ctx, id, userID, domain.UpdateState{
 		Pts:  req.Pts,
 		Qts:  req.Qts,
 		Date: req.Date,
@@ -88,26 +75,44 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 	if err != nil {
 		return nil, internalErr()
 	}
-	r.markSessionReceivesUpdates(ctx, userID)
+	// pts_total_limit 是客户端显式请求的 fast-skip：差距超限时返回
+	// differenceTooLong{pts}，客户端据此整体重置会话列表而不是串行翻
+	// 上千页 slice。不传该参数的客户端（TDesktop）永远不会收到 tooLong。
+	if limit, ok := req.GetPtsTotalLimit(); ok && limit > 0 && req.Pts > 0 {
+		current, err := r.deps.Updates.CurrentState(ctx, userID)
+		if err == nil && current.Pts-from.Pts > limit {
+			// differenceTooLong carries only the replacement pts. Preserve the
+			// request-proven qts/date instead of over-confirming fields that were
+			// not present on wire.
+			returnedCursor := from
+			returnedCursor.Pts = current.Pts
+			r.stageUpdatesBaselineAfterDelivery(ctx, userID, &returnedCursor, domain.UpdateStateCommitDeliveredOnly, nil, false)
+			return &tg.UpdatesDifferenceTooLong{Pts: current.Pts}, nil
+		}
+	}
+	st, err := r.deps.Updates.GetDifference(ctx, id, userID, from)
+	if err != nil {
+		return nil, internalErr()
+	}
 	st.ChannelNudges = r.accountChannelDifferenceNudges(ctx, userID, req.Date)
 	// 密聊设备级 qts 消息（独立于账号级 pts 事件）：按当前设备 req.Qts 补回。
 	encMsgs, newQts := r.encryptedDifference(ctx, req.Qts)
 	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
 	stateUpdates, statePeerUserIDs, stateEventIDs := r.encryptedStateUpdates(ctx, userID)
 	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
-		r.registerBootstrapAfterBaseline(ctx, userID)
+		// differenceEmpty carries no pts/qts. Both audited clients retain their
+		// request cursor, so only that normalized cursor is proven delivered.
+		emptyCursor := domain.UpdateState{Pts: from.Pts, Qts: from.Qts, Date: st.State.Date, Seq: st.State.Seq}
+		r.stageUpdatesBaselineAfterDelivery(ctx, userID, &emptyCursor, domain.UpdateStateCommitDeliveredOnly, nil, true)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}
 	st.Events = r.enrichUpdateEvents(ctx, userID, st.Events)
 	diff := r.tgUpdatesDifference(ctx, userID, st)
 	diff = injectEncryptedMessages(diff, encMsgs, newQts)
 	diff = r.injectEncryptedOtherUpdates(ctx, userID, diff, stateUpdates, statePeerUserIDs)
-	if len(stateEventIDs) > 0 {
-		if deviceKey, ok := businessAuthKeyIDFrom(ctx); ok {
-			_ = r.deps.SecretChats.MarkStateEventsDelivered(ctx, deviceKey, stateEventIDs)
-		}
-	}
-	r.registerBootstrapAfterBaseline(ctx, userID)
+	returnedCursor := st.State
+	returnedCursor.Qts = newQts
+	r.stageUpdatesBaselineAfterDelivery(ctx, userID, &returnedCursor, domain.UpdateStateCommitDeliveredOnly, stateEventIDs, true)
 	return diff, nil
 }
 
@@ -163,8 +168,9 @@ func (r *Router) accountChannelDifferenceNudges(ctx context.Context, userID int6
 
 // maybeMarkSessionReceivesUpdates 把已登录连接发出的裸 RPC（未包 invokeWithoutUpdates）
 // 视为该 session 的 updates 接收声明，对齐官方语义：客户端只在主连接上发裸请求，
-// media/temp 连接一律带 invokeWithoutUpdates 包装。已在接收的 session 直接短路，
-// 避免每条 RPC 重复同步 channel membership。
+// media/temp 连接一律带 invokeWithoutUpdates 包装。这里只登记交付计划；membership
+// sync、SetReceivesUpdates 与 pending flush 必须等成功 rpc_result 物理交付后才执行。
+// 已在接收的 session 直接短路，避免每条 RPC 重复同步 channel membership。
 func (r *Router) maybeMarkSessionReceivesUpdates(ctx context.Context) {
 	if invokeWithoutUpdatesFrom(ctx) {
 		return
@@ -180,10 +186,10 @@ func (r *Router) maybeMarkSessionReceivesUpdates(ctx context.Context) {
 			return
 		}
 	}
-	r.markSessionReceivesUpdates(ctx, userID)
+	r.stageSessionUpdatesReadyAfterDelivery(ctx, userID)
 }
 
-func (r *Router) markSessionReceivesUpdates(ctx context.Context, userID int64) {
+func (r *Router) markSessionReceivesUpdatesNow(ctx context.Context, userID int64) {
 	if r.deps.Sessions == nil {
 		return
 	}

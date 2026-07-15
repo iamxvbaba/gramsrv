@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -296,6 +296,7 @@ func TestInvalidMessageIDRejectsBeforeGZIPExpansion(t *testing.T) {
 		{name: "stale", msgID: proto.NewMessageIDGen(func() time.Time { return time.Now().Add(-10 * time.Minute) }).New(proto.MessageFromClient), badCode: badMsgIDTooLow},
 		{name: "future", msgID: proto.NewMessageIDGen(func() time.Time { return time.Now().Add(time.Minute) }).New(proto.MessageFromClient), badCode: badMsgIDTooHigh},
 		{name: "invalid bits", msgID: current + 1, badCode: badMsgIDInvalidBits},
+		{name: "empty fractional bits", msgID: time.Now().Unix() << 32, badCode: badMsgIDInvalidBits},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

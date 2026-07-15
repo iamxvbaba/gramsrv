@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -59,7 +59,7 @@ func TestBadSaltStormRevalidatesStoreOnlyAtActivationBoundary(t *testing.T) {
 	const dc = 2
 	keys := &countingAuthKeyStore{AuthKeyStore: memory.NewAuthKeyStore()}
 	handler := &admissionCountingRPC{}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, AuthKeys: keys, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, AuthKeys: keys, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 	ids := proto.NewMessageIDGen(time.Now)
 	firstID := ids.New(proto.MessageFromClient)
@@ -104,7 +104,7 @@ func TestActivationFinalAuthKeyCheckRunsAfterClaim(t *testing.T) {
 		}
 	}()
 	handler := &admissionCountingRPC{}
-	addr, pub, srv := startTestServer(t, Options{DC: dc, AuthKeys: keys, RPC: handler})
+	addr, pub, srv := startTestServer(t, Options{DC: dc, AuthKeys: keys, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 	msgID := proto.NewMessageIDGen(time.Now).New(proto.MessageFromClient)
 
@@ -148,7 +148,7 @@ func TestActivationFinalAuthKeyCheckRunsAfterClaim(t *testing.T) {
 func TestBadSaltProvisionalCannotReactivateDeletedAuthKey(t *testing.T) {
 	const dc = 2
 	handler := &admissionCountingRPC{}
-	addr, pub, srv := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, srv := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	provisional, auth, cipher := dialHandshake(t, addr, dc, pub)
 	ids := proto.NewMessageIDGen(time.Now)
 	reqMsgID := ids.New(proto.MessageFromClient)
@@ -174,12 +174,13 @@ func TestBadSaltProvisionalCannotReactivateDeletedAuthKey(t *testing.T) {
 	destroyer := dialTransportOnly(t, addr)
 	destroySessionID := auth.SessionID ^ 1
 	destroyBody := encodeClientMessageBodyForTest(t, &destroyAuthKeyRequest{})
+	destroyReqMsgID := ids.New(proto.MessageFromClient)
 	sendEncryptedWithSessionSaltAndSeq(
 		t, destroyer, cipher, auth, destroySessionID, auth.ServerSalt,
-		ids.New(proto.MessageFromClient), 1, destroyBody,
+		destroyReqMsgID, 1, destroyBody,
 	)
-	destroyReplies := collectReplies(t, destroyer, cipher, auth.AuthKey, destroyAuthKeyOkTypeID)
-	mustHave(t, destroyReplies, destroyAuthKeyOkTypeID, "destroy_auth_key_ok")
+	destroyReplies := collectReplies(t, destroyer, cipher, auth.AuthKey, proto.ResultTypeID)
+	assertDestroyAuthKeyRPCResult(t, mustHave(t, destroyReplies, proto.ResultTypeID, "destroy_auth_key rpc_result"), destroyReqMsgID, destroyAuthKeyOkTypeID)
 	if _, found, err := srv.authKeys.Get(context.Background(), auth.AuthKey.ID); err != nil || found {
 		t.Fatalf("auth key after destroy: found=%v err=%v", found, err)
 	}

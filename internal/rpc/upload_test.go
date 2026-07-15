@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 )
 
 func TestStorageFileTypePrefersMagicOverMime(t *testing.T) {
@@ -74,6 +74,11 @@ func TestFileLocationKeyMapsLegacyAndroidPhotoLocations(t *testing.T) {
 			want:     "photo:3999:a",
 		},
 		{
+			name:     "plain transient response avatar",
+			location: &tg.InputFileLocation{VolumeID: -3999, LocalID: int('s')},
+			want:     "photo:3999:s",
+		},
+		{
 			name:     "plain big avatar",
 			location: &tg.InputFileLocation{VolumeID: -3999, LocalID: int('c')},
 			want:     "photo:3999:c",
@@ -92,6 +97,16 @@ func TestFileLocationKeyMapsLegacyAndroidPhotoLocations(t *testing.T) {
 			name:     "peer legacy big",
 			location: &tg.InputPeerPhotoFileLocationLegacy{VolumeID: -4002, LocalID: int('a'), Big: true, Peer: &tg.InputPeerSelf{}},
 			want:     "photo:4002:c",
+		},
+		{
+			name:     "modern response transient size",
+			location: &tg.InputPhotoFileLocation{ID: 4003, ThumbSize: "s"},
+			want:     "photo:4003:s",
+		},
+		{
+			name:     "modern peer small remains canonical a",
+			location: &tg.InputPeerPhotoFileLocation{PhotoID: 4004, Peer: &tg.InputPeerSelf{}},
+			want:     "photo:4004:a",
 		},
 		{
 			name:     "document thumb",

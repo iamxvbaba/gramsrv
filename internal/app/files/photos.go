@@ -10,7 +10,7 @@ import (
 	"image"
 	"image/color"
 	stddraw "image/draw"
-	_ "image/jpeg" // 注册 jpeg DecodeConfig，用于读取上传头像/图片尺寸
+	"image/jpeg"
 	"image/png"
 	"io"
 	"math"
@@ -24,8 +24,8 @@ import (
 	_ "golang.org/x/image/webp" // 注册 webp Decode，用于 custom emoji / sticker 静态缩略图合成
 )
 
-// 头像与图片消息共用的尺寸 type：'a' 小图（≤160），'c' 大图，'x' 通用下载尺寸。
-// 同一份上传字节在多个 location_key 下建 blob（不做实际缩放，dev 主路径足够）。
+// 头像使用真实的 's'(≤150)/'a'(≤160)/'c'(原图) rendition；图片消息使用
+// 'm' 缩略与 'x' 大图。每个头像 location_key 的元数据尺寸必须与实际 blob 一致。
 
 // UploadProfilePhoto 把已上传文件组装成头像 Photo，落 blob/photos/profile_photos，并设为当前头像。
 func (s *Service) UploadProfilePhoto(ctx context.Context, ownerType domain.PeerType, ownerID int64, file domain.UploadedFileRef, date int) (domain.Photo, error) {
@@ -103,8 +103,8 @@ func (s *Service) GetDocument(ctx context.Context, id int64) (domain.Document, b
 	return s.media.GetDocument(ctx, id)
 }
 
-// CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'a'/'c' 尺寸，匹配 InputPeerPhotoFileLocation
-// big/small 与 channelFull 合成尺寸的下载路径），不绑定 profile_photos。用于频道 editPhoto。
+// CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配
+// InputPeerPhotoFileLocation big/small 与 channelFull 下载路径），不绑定 profile_photos。用于频道 editPhoto。
 func (s *Service) CreateAvatarFromUpload(ctx context.Context, file domain.UploadedFileRef) (domain.Photo, error) {
 	data, err := s.assembleUpload(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
@@ -113,7 +113,7 @@ func (s *Service) CreateAvatarFromUpload(ctx context.Context, file domain.Upload
 	if len(data) == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
-	return s.createPhoto(ctx, data, photoSizeSpecsForAvatar(data))
+	return s.createAvatarPhoto(ctx, data)
 }
 
 // CreateAvatarVideoFromUpload stores an animated profile video as photo.video_sizes.
@@ -151,7 +151,7 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 	}
 	s.blobCache.put(blob.LocationKey, blob)
 	stillBytes := s.avatarVideoStill(ctx, body, extraSizes)
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, stillBytes, photoSizeSpecsForAvatar(stillBytes))
+	sizes, err := s.putAvatarStaticSizes(ctx, photoID, stillBytes, photoSizeSpecsForAvatar(stillBytes))
 	if err != nil {
 		return domain.Photo{}, err
 	}
@@ -192,7 +192,7 @@ func (s *Service) CreateAvatarMarkup(ctx context.Context, size domain.PhotoSize)
 	}
 	photoID := randomID()
 	stillBytes := s.generatedAvatarStill(ctx, size)
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, stillBytes, photoSizeSpecsForAvatar(stillBytes))
+	sizes, err := s.putAvatarStaticSizes(ctx, photoID, stillBytes, photoSizeSpecsForAvatar(stillBytes))
 	if err != nil {
 		return domain.Photo{}, err
 	}
@@ -605,6 +605,26 @@ func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSiz
 	return photo, nil
 }
 
+func (s *Service) createAvatarPhoto(ctx context.Context, data []byte) (domain.Photo, error) {
+	photoID := randomID()
+	sizes, err := s.putAvatarStaticSizes(ctx, photoID, data, photoSizeSpecsForAvatar(data))
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	photo := domain.Photo{
+		ID:            photoID,
+		AccessHash:    randomID(),
+		FileReference: randomFileReference(),
+		Date:          int(time.Now().Unix()),
+		DCID:          s.dc,
+		Sizes:         sizes,
+	}
+	if err := s.media.PutPhoto(ctx, photo); err != nil {
+		return domain.Photo{}, err
+	}
+	return photo, nil
+}
+
 func (s *Service) putPhotoStaticSizes(ctx context.Context, photoID int64, data []byte, specs []photoSizeSpec) ([]domain.PhotoSize, error) {
 	objectKey, err := s.blobs.Put(ctx, data)
 	if err != nil {
@@ -628,6 +648,87 @@ func (s *Service) putPhotoStaticSizes(ctx context.Context, photoID int64, data [
 	}
 	s.prewarmSmallBlob(objectKey, data)
 	return sizes, nil
+}
+
+// putAvatarStaticSizes stores independently rendered avatar sizes. DrKLO uses the
+// photos.uploadProfilePhoto response's closest 150px size as an immediate local
+// location, while UserProfilePhoto updates synthesize the canonical 'a' location.
+// Keeping a real 's' rendition therefore gives those two states distinct keys and,
+// more importantly, keeps every advertised size backed by matching image bytes.
+func (s *Service) putAvatarStaticSizes(ctx context.Context, photoID int64, data []byte, specs []photoSizeSpec) ([]domain.PhotoSize, error) {
+	src, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil || src.Bounds().Dx() <= 0 || src.Bounds().Dy() <= 0 {
+		return nil, domain.ErrPhotoInvalid
+	}
+	sizes := make([]domain.PhotoSize, 0, len(specs))
+	for _, spec := range specs {
+		rendition, err := avatarRendition(data, src, format, spec)
+		if err != nil {
+			return nil, err
+		}
+		objectKey, err := s.blobs.Put(ctx, rendition)
+		if err != nil {
+			return nil, err
+		}
+		blob := domain.FileBlob{
+			LocationKey: fmt.Sprintf("photo:%d:%s", photoID, spec.Type),
+			Backend:     domain.MediaBackend(s.blobs.Name()),
+			ObjectKey:   objectKey,
+			Size:        int64(len(rendition)),
+			MimeType:    imageMimeType(rendition),
+		}
+		if err := s.media.PutFileBlob(ctx, blob); err != nil {
+			return nil, err
+		}
+		s.blobCache.put(blob.LocationKey, blob)
+		s.prewarmSmallBlob(objectKey, rendition)
+		sizes = append(sizes, domain.PhotoSize{
+			Kind: domain.PhotoSizeKindDefault,
+			Type: spec.Type,
+			W:    spec.W,
+			H:    spec.H,
+			Size: len(rendition),
+		})
+	}
+	return sizes, nil
+}
+
+func avatarRendition(original []byte, src image.Image, format string, spec photoSizeSpec) ([]byte, error) {
+	bounds := src.Bounds()
+	if bounds.Dx() == spec.W && bounds.Dy() == spec.H {
+		return append([]byte(nil), original...), nil
+	}
+	if spec.W <= 0 || spec.H <= 0 {
+		return nil, domain.ErrPhotoInvalid
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, spec.W, spec.H))
+	srcRect := centerCropRect(bounds, spec.W, spec.H)
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, srcRect, xdraw.Src, nil)
+
+	var buf bytes.Buffer
+	if format == "jpeg" {
+		if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 90}); err != nil {
+			return nil, err
+		}
+	} else if err := png.Encode(&buf, dst); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func centerCropRect(bounds image.Rectangle, targetW, targetH int) image.Rectangle {
+	sourceW, sourceH := bounds.Dx(), bounds.Dy()
+	if int64(sourceW)*int64(targetH) > int64(sourceH)*int64(targetW) {
+		cropW := maxInt(1, sourceH*targetW/targetH)
+		x := bounds.Min.X + (sourceW-cropW)/2
+		return image.Rect(x, bounds.Min.Y, x+cropW, bounds.Max.Y)
+	}
+	if int64(sourceW)*int64(targetH) < int64(sourceH)*int64(targetW) {
+		cropH := maxInt(1, sourceW*targetH/targetW)
+		y := bounds.Min.Y + (sourceH-cropH)/2
+		return image.Rect(bounds.Min.X, y, bounds.Max.X, y+cropH)
+	}
+	return bounds
 }
 
 func (s *Service) putDocumentThumb(ctx context.Context, docID int64, thumbData []byte) (domain.PhotoSize, error) {
@@ -723,12 +824,15 @@ type photoSizeSpec struct {
 
 func photoSizeSpecsForAvatar(data []byte) []photoSizeSpec {
 	w, h := imageDimensions(data, 640, 640)
-	small := 160
-	if w < small {
-		small = w
+	shortSide := w
+	if h < shortSide {
+		shortSide = h
 	}
+	sSize := minInt(shortSide, 150)
+	aSize := minInt(shortSide, 160)
 	return []photoSizeSpec{
-		{Type: "a", W: small, H: small},
+		{Type: "s", W: sSize, H: sSize},
+		{Type: "a", W: aSize, H: aSize},
 		{Type: "c", W: w, H: h},
 	}
 }
@@ -767,10 +871,14 @@ const (
 	avatarMarkupMaxSourceBytes = 2 << 20 // emoji/sticker thumb 小对象保护线。
 )
 
-// avatarVideoStill 生成动画头像的静态尺寸字节：优先抽取上传视频首帧——动画头像
-// （emoji/sticker 构造器或自选视频）的首帧就是用户在客户端看到的真实画面（彩色
-// emoji、圆角、布局都一致）；抽帧不可用时回退到按 markup 服务端合成。
+// avatarVideoStill 生成动画头像的静态尺寸字节。emoji/sticker markup 能解析到
+// 服务端缩略图时优先合成：DrKLO 生成的 MP4 第一帧可能只有背景渐变，直接抽第一帧
+// 会让静态头像永久缺少 emoji。普通视频或 markup 资源不可用时才回退 ffmpeg 首帧。
 func (s *Service) avatarVideoStill(ctx context.Context, body assembledUploadBlob, extraSizes []domain.PhotoSize) []byte {
+	markup := avatarStillMarkup(extraSizes)
+	if still, ok := s.generatedAvatarMarkupStill(ctx, markup); ok {
+		return still
+	}
 	if s.thumbs != nil && body.Size > 0 && body.Size <= videoThumbnailMaxInputBytes {
 		data, total, err := s.blobs.GetRange(ctx, body.ObjectKey, 0, body.Size)
 		if err == nil && int64(len(data)) == total && total == body.Size {
@@ -789,15 +897,28 @@ func (s *Service) avatarVideoStill(ctx context.Context, body assembledUploadBlob
 				zap.Error(err))
 		}
 	}
-	return s.generatedAvatarStill(ctx, avatarStillMarkup(extraSizes))
+	return s.generatedAvatarStill(ctx, markup)
 }
 
 func (s *Service) generatedAvatarStill(ctx context.Context, markup domain.PhotoSize) []byte {
 	img := generatedAvatarBackground(markup.BackgroundColors)
-	if overlay, tintWhite, ok := s.avatarMarkupOverlay(ctx, markup); ok {
-		drawAvatarMarkup(img, overlay, tintWhite)
+	if still, ok := s.generatedAvatarMarkupStillOnBackground(ctx, markup, img); ok {
+		return still
 	}
 	return encodeAvatarPNG(img)
+}
+
+func (s *Service) generatedAvatarMarkupStill(ctx context.Context, markup domain.PhotoSize) ([]byte, bool) {
+	return s.generatedAvatarMarkupStillOnBackground(ctx, markup, generatedAvatarBackground(markup.BackgroundColors))
+}
+
+func (s *Service) generatedAvatarMarkupStillOnBackground(ctx context.Context, markup domain.PhotoSize, img *image.RGBA) ([]byte, bool) {
+	overlay, tintWhite, ok := s.avatarMarkupOverlay(ctx, markup)
+	if !ok {
+		return nil, false
+	}
+	drawAvatarMarkup(img, overlay, tintWhite)
+	return encodeAvatarPNG(img), true
 }
 
 func generatedAvatarBackground(colors []int) *image.RGBA {
@@ -863,6 +984,11 @@ func (s *Service) avatarMarkupOverlay(ctx context.Context, markup domain.PhotoSi
 			zap.Int64("document_id", doc.ID),
 			zap.String("mime_type", doc.MimeType),
 			zap.Error(err))
+		return nil, false, false
+	}
+	// Seed 的 1x1 透明图只是“没有可用静态资源”的显式占位，不是可合成
+	// 内容。把它视为 unavailable，交给调用方回退到 ffmpeg 视频首帧。
+	if img.Bounds().Dx() <= 1 || img.Bounds().Dy() <= 1 {
 		return nil, false, false
 	}
 	return img, documentIsTextColorEmoji(doc), true

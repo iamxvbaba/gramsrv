@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/binary"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 	"testing"
 	"time"
@@ -26,7 +26,7 @@ func newAuthBindingCaptureSessions() *authBindingCaptureSessions {
 	return &authBindingCaptureSessions{captureSessions: &captureSessions{}}
 }
 
-func (s *authBindingCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, _ int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *authBindingCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, _ int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.messageType = t

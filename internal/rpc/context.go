@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 	"strings"
+
+	"github.com/iamxvbaba/td/tg"
 )
 
 type ctxKey int
@@ -31,7 +33,7 @@ func inboundRPCBytesFrom(ctx context.Context) int {
 	return v
 }
 
-const currentClientLayer = 227
+const currentClientLayer = tg.Layer
 
 var androidSDKVersionRE = regexp.MustCompile(`\bsdk\s+\d+\b`)
 

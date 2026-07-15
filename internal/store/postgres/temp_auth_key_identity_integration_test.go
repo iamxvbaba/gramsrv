@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -131,6 +130,90 @@ func TestTempAuthKeyBindingStorePreservesHandshakeExpiryAndRejectsRebindPostgres
 	}
 	assertTempIdentityBinding(t, ctx, bindings, replayed)
 	assertTempIdentityAuthKeyExpiry(t, ctx, keys, temp, handshakeExpiry)
+}
+
+func TestTempAuthKeyBindingStoreAtomicallyMergesLayerObservationsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	tests := []struct {
+		name      string
+		tempLayer int
+		tempObs   int64
+		permLayer int
+		permObs   int64
+		wantLayer int
+		wantObs   int64
+		wantErr   error
+	}{
+		{name: "temporary newer", tempLayer: 227, tempObs: 20, permLayer: 220, permObs: 10, wantLayer: 227, wantObs: 20},
+		{name: "permanent newer", tempLayer: 220, tempObs: 10, permLayer: 227, permObs: 20, wantLayer: 227, wantObs: 20},
+		{name: "equal ordered same layer", tempLayer: 225, tempObs: 30, permLayer: 225, permObs: 30, wantLayer: 225, wantObs: 30},
+		{name: "equal ordered conflict", tempLayer: 220, tempObs: 30, permLayer: 227, permObs: 30, wantErr: store.ErrAuthKeySessionLayerConflict},
+		{name: "legacy permanent wins", tempLayer: 220, permLayer: 227, wantLayer: 227},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := createRevokeTestUser(t, ctx, pool, fmt.Sprintf("layer-merge-%d", i))
+			keys := NewAuthKeyStore(pool)
+			bindings := NewTempAuthKeyBindingStore(pool)
+			auths := NewAuthorizationStore(pool)
+			handshakeExpiry := int(time.Now().Add(time.Hour).Unix()) + i
+			tempID := saveTempIdentityTestAuthKey(t, ctx, pool, keys, handshakeExpiry)
+			permID := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+			if err := auths.Bind(ctx, domain.Authorization{
+				AuthKeyID: permID, UserID: userID, Layer: tt.permLayer,
+			}); err != nil {
+				t.Fatalf("bind permanent authorization: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `
+UPDATE auth_keys SET layer = $2, layer_observation_id = $3
+WHERE auth_key_id = $1`, authKeyIDToInt64(tempID), tt.tempLayer, tt.tempObs); err != nil {
+				t.Fatalf("seed temporary layer observation: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `
+UPDATE auth_keys SET layer = $2, layer_observation_id = $3
+WHERE auth_key_id = $1`, authKeyIDToInt64(permID), tt.permLayer, tt.permObs); err != nil {
+				t.Fatalf("seed permanent layer observation: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `
+UPDATE authorizations SET layer = $2 WHERE auth_key_id = $1`, authKeyIDToInt64(permID), tt.permLayer); err != nil {
+				t.Fatalf("seed authorization layer mirror: %v", err)
+			}
+
+			binding := domain.TempAuthKeyBinding{
+				TempAuthKeyID:    tempID,
+				PermAuthKeyID:    authKeyIDToInt64(permID),
+				Nonce:            int64(1_000 + i),
+				TempSessionID:    int64(2_000 + i),
+				ExpiresAt:        handshakeExpiry,
+				EncryptedMessage: []byte("layer merge proof"),
+			}
+			err := bindings.Save(ctx, binding)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("bind error = %v, want %v", err, tt.wantErr)
+				}
+				if _, found, getErr := bindings.GetByTemp(ctx, tempID); getErr != nil || found {
+					t.Fatalf("conflicting binding found=%v err=%v, want absent", found, getErr)
+				}
+				assertTempIdentityLayerTuple(t, ctx, pool, tempID, tt.tempLayer, tt.tempObs)
+				assertTempIdentityLayerTuple(t, ctx, pool, permID, tt.permLayer, tt.permObs)
+				assertTempIdentityAuthorizationLayer(t, ctx, pool, permID, tt.permLayer)
+				return
+			}
+			if err != nil {
+				t.Fatalf("bind: %v", err)
+			}
+			// A normalized proof replay is idempotent and repeats the same merge.
+			binding.Nonce++
+			if err := bindings.Save(ctx, binding); err != nil {
+				t.Fatalf("replay merged binding: %v", err)
+			}
+			assertTempIdentityLayerTuple(t, ctx, pool, tempID, tt.wantLayer, tt.wantObs)
+			assertTempIdentityLayerTuple(t, ctx, pool, permID, tt.wantLayer, tt.wantObs)
+			assertTempIdentityAuthorizationLayer(t, ctx, pool, permID, tt.wantLayer)
+		})
+	}
 }
 
 func TestTempAuthKeyBindingStoreConcurrentFirstBindKeepsHandshakeExpiryPostgres(t *testing.T) {
@@ -303,131 +386,6 @@ func TestTempAuthKeyBindingConcurrentWithPermanentDeleteLeavesNoDanglingStatePos
 	}
 }
 
-func TestAuthKeyStoreDeleteRetriesDeterministicPermanentBindingFKRacePostgres(t *testing.T) {
-	pool := testPool(t)
-	testCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	t.Cleanup(cancel)
-	keys := NewAuthKeyStore(pool)
-	bindings := NewTempAuthKeyBindingStore(pool)
-	auths := NewAuthorizationStore(pool)
-
-	handshakeExpiry := int(time.Now().Add(time.Hour).Unix())
-	temp := saveTempIdentityTestAuthKey(t, testCtx, pool, keys, handshakeExpiry)
-	perm := saveTempIdentityTestAuthKey(t, testCtx, pool, keys, 0)
-	userID := createRevokeTestUser(t, testCtx, pool, "deterministic-bind-delete-race")
-	if err := auths.Bind(testCtx, domain.Authorization{
-		AuthKeyID: perm,
-		UserID:    userID,
-		Hash:      9401,
-	}); err != nil {
-		t.Fatalf("bind permanent authorization: %v", err)
-	}
-	candidate := domain.TempAuthKeyBinding{
-		TempAuthKeyID:    temp,
-		PermAuthKeyID:    authKeyIDToInt64(perm),
-		Nonce:            901,
-		TempSessionID:    902,
-		ExpiresAt:        handshakeExpiry,
-		EncryptedMessage: []byte("deterministic FK retry barrier"),
-	}
-
-	deleteConn, err := pool.Acquire(testCtx)
-	if err != nil {
-		t.Fatalf("acquire dedicated delete connection: %v", err)
-	}
-	defer deleteConn.Release()
-	var deletePID int
-	if err := deleteConn.QueryRow(testCtx, "SELECT pg_backend_pid()").Scan(&deletePID); err != nil {
-		t.Fatalf("get delete backend pid: %v", err)
-	}
-
-	blocker, err := pool.Begin(testCtx)
-	if err != nil {
-		t.Fatalf("begin key-share blocker: %v", err)
-	}
-	defer func() { _ = blocker.Rollback(context.Background()) }()
-	var lockedPermID int64
-	if err := blocker.QueryRow(testCtx, `
-SELECT auth_key_id
-FROM auth_keys
-WHERE auth_key_id = $1
-FOR KEY SHARE`, authKeyIDToInt64(perm)).Scan(&lockedPermID); err != nil {
-		t.Fatalf("lock permanent key FOR KEY SHARE: %v", err)
-	}
-	if lockedPermID != authKeyIDToInt64(perm) {
-		t.Fatalf("locked permanent key = %d, want %d", lockedPermID, authKeyIDToInt64(perm))
-	}
-
-	observedDeleteDB := &permanentKeyFKRetryObservingDB{Conn: deleteConn}
-	deleteResult := make(chan error, 1)
-	go func() {
-		deleteResult <- NewAuthKeyStore(observedDeleteDB).Delete(testCtx, perm)
-	}()
-	waitForPostgresBackendLockWait(t, testCtx, pool, deletePID)
-
-	// This transaction already owns the compatible KEY SHARE lock needed by the
-	// FK check, so it can commit a new binding while the first DELETE statement
-	// remains blocked with a snapshot that cannot see that binding.
-	if err := NewTempAuthKeyBindingStore(blocker).Save(testCtx, candidate); err != nil {
-		t.Fatalf("save binding behind delete snapshot barrier: %v", err)
-	}
-	if err := blocker.Commit(testCtx); err != nil {
-		t.Fatalf("commit binding and release delete blocker: %v", err)
-	}
-
-	select {
-	case err := <-deleteResult:
-		if err != nil {
-			t.Fatalf("delete after deterministic FK retry: %v", err)
-		}
-	case <-testCtx.Done():
-		t.Fatalf("delete did not finish after releasing FK barrier: %v", testCtx.Err())
-	}
-	if observedDeleteDB.attempts != 2 || observedDeleteDB.fkViolations != 1 {
-		t.Fatalf(
-			"delete attempts/FK violations = %d/%d, want 2/1",
-			observedDeleteDB.attempts,
-			observedDeleteDB.fkViolations,
-		)
-	}
-
-	if _, found, err := bindings.GetByTemp(testCtx, temp); err != nil || found {
-		t.Fatalf("binding after deterministic retry found=%v err=%v, want absent", found, err)
-	}
-	assertTempIdentityAuthKeyMissing(t, testCtx, keys, temp)
-	assertTempIdentityAuthKeyMissing(t, testCtx, keys, perm)
-	assertRevokeTestNoAuthorization(t, testCtx, auths, perm)
-}
-
-type permanentKeyFKRetryObservingDB struct {
-	*pgxpool.Conn
-	attempts     int
-	fkViolations int
-}
-
-func (db *permanentKeyFKRetryObservingDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
-	db.attempts++
-	return &permanentKeyFKRetryObservingRow{Row: db.Conn.QueryRow(ctx, sql, args...), db: db}
-}
-
-func (db *permanentKeyFKRetryObservingDB) observeFKViolation(err error) {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == tempAuthKeyPermFKConstraint {
-		db.fkViolations++
-	}
-}
-
-type permanentKeyFKRetryObservingRow struct {
-	pgx.Row
-	db *permanentKeyFKRetryObservingDB
-}
-
-func (row *permanentKeyFKRetryObservingRow) Scan(dest ...any) error {
-	err := row.Row.Scan(dest...)
-	row.db.observeFKViolation(err)
-	return err
-}
-
 func waitForPostgresBackendLockWait(
 	t *testing.T,
 	ctx context.Context,
@@ -550,5 +508,49 @@ func assertTempIdentityAuthKeyMissing(
 	t.Helper()
 	if _, found, err := keys.Get(ctx, id); err != nil || found {
 		t.Fatalf("auth key %x found=%v err=%v, want absent", id, found, err)
+	}
+}
+
+func assertTempIdentityLayerTuple(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	authKeyID [8]byte,
+	wantLayer int,
+	wantObservationID int64,
+) {
+	t.Helper()
+	var (
+		layer         int
+		observationID int64
+	)
+	if err := pool.QueryRow(ctx, `
+SELECT layer, layer_observation_id
+FROM auth_keys
+WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID)).Scan(&layer, &observationID); err != nil {
+		t.Fatalf("read auth-key layer tuple: %v", err)
+	}
+	if layer != wantLayer || observationID != wantObservationID {
+		t.Fatalf("auth-key layer tuple = (%d,%d), want (%d,%d)", layer, observationID, wantLayer, wantObservationID)
+	}
+}
+
+func assertTempIdentityAuthorizationLayer(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	authKeyID [8]byte,
+	wantLayer int,
+) {
+	t.Helper()
+	var layer int
+	if err := pool.QueryRow(ctx, `
+SELECT layer
+FROM authorizations
+WHERE auth_key_id = $1`, authKeyIDToInt64(authKeyID)).Scan(&layer); err != nil {
+		t.Fatalf("read authorization layer mirror: %v", err)
+	}
+	if layer != wantLayer {
+		t.Fatalf("authorization layer mirror = %d, want %d", layer, wantLayer)
 	}
 }

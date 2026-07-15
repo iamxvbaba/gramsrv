@@ -11,12 +11,96 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/gotd/log/logzap"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
 )
+
+// legacyCanonicalTestConn explicitly declares the canonical-only profile used
+// by old connection-state tests. Production exact-path tests must instead call
+// FreezeLayerProfile/SeedLayerProfile with protocol evidence.
+func legacyCanonicalTestConn(t testing.TB, c *Conn) *Conn {
+	return legacyLayerWireTestConn(t, c, int(tg.LayerProfileCanonical))
+}
+
+// legacyLayerWireTestConn preserves only the old tests' profile setup. It does
+// not enable any wire conversion; application values still need an exact
+// generated binding at the outbound boundary.
+func legacyLayerWireTestConn(t testing.TB, c *Conn, layer int) *Conn {
+	t.Helper()
+	if c == nil {
+		t.Fatal("nil legacy exact-layer test Conn")
+	}
+	profile, ok := tg.ResolveLayerProfile(layer)
+	if !ok {
+		t.Fatalf("unsupported generated test Layer %d", layer)
+	}
+	if err := c.FreezeLayerProfile(profile); err != nil {
+		t.Fatalf("freeze generated test Layer %d: %v", layer, err)
+	}
+	c.setLegacyClientLayer(layer)
+	return c
+}
+
+// exactTestUpdatesEncoded gives transport/state-machine tests an explicit
+// generated session binding without invoking the production fan-out cache.
+// Tests which assert wire conversion use layerUpdatesFanout directly instead.
+func exactTestUpdatesEncoded(t testing.TB, c *Conn, body []byte) *encodedOutboundMessage {
+	t.Helper()
+	if c == nil {
+		t.Fatal("nil exact test Conn")
+	}
+	state := c.LayerProfileState()
+	if state.Origin == LayerProfileUnknown {
+		t.Fatal("exact test Conn has no generated Layer profile")
+	}
+	return &encodedOutboundMessage{
+		body:   append([]byte(nil), body...),
+		typeID: tg.UpdatesTooLongTypeID,
+		layer: &outboundLayerBinding{
+			profile: state.Profile,
+			typ:     tg.LayerClassUpdatesType().Ref(),
+			epoch:   state.Epoch,
+		},
+	}
+}
+
+func exactTestUpdatesTooLong(t testing.TB, c *Conn) *encodedOutboundMessage {
+	t.Helper()
+	var body bin.Buffer
+	if err := (&tg.UpdatesTooLong{}).Encode(&body); err != nil {
+		t.Fatalf("encode exact test updatesTooLong: %v", err)
+	}
+	return exactTestUpdatesEncoded(t, c, body.Raw())
+}
+
+// opaqueExactTestRPCResult is an explicit request-bound capability for tests
+// of compression, retention and delivery mechanics. Semantic result conversion
+// is covered by generated dispatcher tests; no production path constructs it.
+type opaqueExactTestRPCResult struct{ result bin.Encoder }
+
+func (r *opaqueExactTestRPCResult) Encode(b *bin.Buffer) error { return r.result.Encode(b) }
+
+func (r *opaqueExactTestRPCResult) exactLayerRPCResultBinding() outboundLayerBinding {
+	return outboundLayerBinding{
+		profile: tg.LayerProfileCanonical,
+		typ:     tg.LayerClassUpdatesType().Ref(),
+		kind:    outboundLayerBindingRequest,
+	}
+}
+
+func exactTestRPCResult(result bin.Encoder) bin.Encoder {
+	if result == nil || isLayerInvariantRPCResultEncoder(result) {
+		return result
+	}
+	if _, ok := result.(exactLayerRPCResultEncoder); ok {
+		return result
+	}
+	return &opaqueExactTestRPCResult{result: result}
+}
 
 // startTestServer 生成 RSA key、监听随机端口并启动 Server，返回监听地址与公钥。
 // 通过 t.Cleanup 自动取消并校验优雅退出。opts 的 RSAKey/Logger/DC 会被补默认。
@@ -90,6 +174,27 @@ func dialTransportOnly(t *testing.T, addr string) transport.Conn {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
+}
+
+// freezeActiveTestSessionProfile gives low-level transport fixtures the exact
+// profile that a production invokeWithLayer admission would have proven. It is
+// intentionally explicit: handshake/new_session_created alone never implies a
+// TL Layer, and production push code must keep failing closed in that state.
+func freezeActiveTestSessionProfile(t *testing.T, sessions *SessionManager, authKeyID [8]byte, sessionID int64, profile tg.LayerProfile) {
+	t.Helper()
+	if sessions == nil {
+		t.Fatal("freeze test session profile on nil SessionManager")
+	}
+	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
+	sessions.mu.RLock()
+	c := sessions.bySession[key]
+	sessions.mu.RUnlock()
+	if c == nil {
+		t.Fatalf("active test session %x/%d is missing", authKeyID, sessionID)
+	}
+	if err := c.FreezeLayerProfile(profile); err != nil {
+		t.Fatalf("freeze active test session profile %d: %v", profile, err)
+	}
 }
 
 // sendEncrypted 用 client cipher 加密并发送一条带 msgID 的消息。

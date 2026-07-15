@@ -1,6 +1,7 @@
 package files
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -463,8 +464,8 @@ func TestSeedMediaRepairsPartialReactionBlobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair seed: %v", err)
 	}
-	if stats.Reactions != 1 || stats.Blobs != 3 || stats.Skipped {
-		t.Fatalf("repair stats = %+v, want repair import", stats)
+	if stats.Reactions != 1 || stats.Blobs != 2 || stats.Skipped {
+		t.Fatalf("repair stats = %+v, want two missing/revalidated main blobs without rewriting intact preview", stats)
 	}
 	if _, ok, _ := media.GetFileBlob(context.Background(), "doc:2222222"); !ok {
 		t.Fatal("missing reaction blob was not repaired")
@@ -609,8 +610,113 @@ func TestSeedMediaSkipsUnchangedEffectsDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair seed: %v", err)
 	}
-	if repaired.Effects != 1 || repaired.Documents != 1 || repaired.Blobs != 2 {
-		t.Fatalf("repair stats = %+v, want missing blob to force reimport", repaired)
+	if repaired.Effects != 1 || repaired.Documents != 1 || repaired.Blobs != 1 {
+		t.Fatalf("repair stats = %+v, want missing main blob repaired without rewriting intact preview", repaired)
+	}
+}
+
+func TestSeedEffectsDoesNotDowngradeSharedStickerPreview(t *testing.T) {
+	ctx := context.Background()
+	seedDir := t.TempDir()
+	const sourceID int64 = 7777777
+	realThumb := writeStatusPackWithThumbSeed(t, seedDir, sourceID, 29)
+	writeEffectsSeed(t, seedDir, sourceID)
+
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+	first, err := svc.SeedMedia(ctx, seedDir, 0)
+	if err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	if first.StickerSets != 1 || first.Effects != 1 {
+		t.Fatalf("first stats = %+v, want shared sticker and effect catalogs", first)
+	}
+
+	doc, ok, err := media.GetDocument(ctx, sourceID)
+	if err != nil || !ok {
+		t.Fatalf("shared document ok=%v err=%v", ok, err)
+	}
+	thumb, ok := findCachedThumb(doc.Thumbs)
+	if !ok {
+		t.Fatalf("shared document thumbs = %+v, want real cached preview", doc.Thumbs)
+	}
+	if thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, realThumb) || seedSyntheticTGStickerPreviewThumb(thumb) {
+		t.Fatalf("shared preview = %+v, want original 128x128 catalog thumbnail", thumb)
+	}
+	blob, ok, err := media.GetFileBlob(ctx, fmt.Sprintf("doc:%d:m", sourceID))
+	if err != nil || !ok {
+		t.Fatalf("shared preview blob ok=%v err=%v", ok, err)
+	}
+	if blob.MimeType != "image/jpeg" || blob.Size != int64(len(realThumb)) {
+		t.Fatalf("shared preview blob = %+v, want real JPEG metadata", blob)
+	}
+	chunk, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: fmt.Sprintf("doc:%d:m", sourceID), Limit: 1024})
+	if err != nil || !ok {
+		t.Fatalf("get shared preview ok=%v err=%v", ok, err)
+	}
+	if !bytes.Equal(chunk.Bytes, realThumb) {
+		t.Fatalf("downloaded shared preview = %x, want %x", chunk.Bytes, realThumb)
+	}
+
+	second, err := svc.SeedMedia(ctx, seedDir, 0)
+	if err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+	if second.Documents != 0 || second.Blobs != 0 {
+		t.Fatalf("second stats = %+v, want shared rich preview to satisfy effects readiness", second)
+	}
+}
+
+func TestSeedMediaMigratesSyntheticStickerPreviewToExportedThumbnail(t *testing.T) {
+	ctx := context.Background()
+	seedDir := t.TempDir()
+	const sourceID int64 = 8888888
+	realThumb := writeStatusPackWithThumbSeed(t, seedDir, sourceID, 31)
+
+	media := newFakeMediaStore()
+	if err := media.PutDocument(ctx, domain.Document{
+		ID:       sourceID,
+		MimeType: "application/x-tgsticker",
+		Thumbs: []domain.PhotoSize{{
+			Kind: domain.PhotoSizeKindCached, Type: seedSyntheticDocumentThumbType,
+			W: 1, H: 1, Bytes: append([]byte(nil), seedSyntheticTGStickerPreviewThumbPNG...),
+		}},
+	}); err != nil {
+		t.Fatalf("put stale document: %v", err)
+	}
+	if err := media.PutStickerSet(ctx, domain.StickerSet{
+		ID: 773947703670341676, AccessHash: 1, ShortName: "StatusPack", Title: "Status Pack",
+		Hash: 31, Kind: domain.StickerSetKindEmoji, Emojis: true, DocumentIDs: []int64{sourceID},
+	}); err != nil {
+		t.Fatalf("put stale sticker set: %v", err)
+	}
+
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+	stats, err := svc.SeedMedia(ctx, seedDir, 0)
+	if err != nil {
+		t.Fatalf("migration seed: %v", err)
+	}
+	if stats.StickerSets != 1 || stats.Documents != 1 {
+		t.Fatalf("migration stats = %+v, want forced sticker document rebuild", stats)
+	}
+	doc, ok, err := media.GetDocument(ctx, sourceID)
+	if err != nil || !ok {
+		t.Fatalf("migrated document ok=%v err=%v", ok, err)
+	}
+	thumb, ok := findCachedThumb(doc.Thumbs)
+	if !ok || thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, realThumb) {
+		t.Fatalf("migrated thumbs = %+v, want exported 128x128 preview", doc.Thumbs)
+	}
+	if state, ok, err := media.GetSeedState(ctx, seedStickerPreviewStateKey); err != nil || !ok || state == "" {
+		t.Fatalf("preview migration state = %q ok=%v err=%v", state, ok, err)
 	}
 }
 
@@ -733,6 +839,28 @@ func writeStatusPackWithoutThumbSeed(t *testing.T, seedDir string, sourceID int6
 	if err := os.WriteFile(filepath.Join(stickersDir, fmt.Sprintf("status_%d.tgs", sourceID)), []byte("tgs!"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeStatusPackWithThumbSeed(t *testing.T, seedDir string, sourceID int64, setHash int) []byte {
+	t.Helper()
+	setDir := filepath.Join(seedDir, "telegram_emoji_export", "StatusPack_773947703670341676")
+	stickersDir := filepath.Join(setDir, "stickers")
+	if err := os.MkdirAll(stickersDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realThumb := []byte{0xff, 0xd8, 0xff, 0xdb, 0, 4, 0xff, 0xd9}
+	raw := fmt.Sprintf(`{"result":{"set":{"id":773947703670341676,"access_hash":1,"title":"Status Pack","short_name":"StatusPack","count":1,"hash":%d,"emojis":true,"packs":[{"emoticon":"👋","documents":[%d]}]},"packs":[{"emoticon":"👋","documents":[%d]}],"documents":[{"id":%d,"access_hash":2,"file_reference":"","date":"2026-06-29T00:00:00Z","mime_type":"application/x-tgsticker","size":4,"dc_id":4,"attributes":[{"_":"DocumentAttributeImageSize","w":512,"h":512},{"_":"DocumentAttributeCustomEmoji","alt":"👋","text_color":true,"stickerset":{"id":773947703670341676,"access_hash":1}},{"_":"DocumentAttributeFilename","file_name":"AnimatedSticker.tgs"}],"thumbs":[{"_":"PhotoPathSize","type":"j","bytes":"01"},{"_":"PhotoSize","type":"m","w":128,"h":128,"size":%d}]}]}}`, setHash, sourceID, sourceID, sourceID, len(realThumb))
+	if err := os.WriteFile(filepath.Join(setDir, "set_info.json"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stickersDir, fmt.Sprintf("status_%d.tgs", sourceID)), []byte("tgs!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	thumbName := fmt.Sprintf("status_%d_thumb1_PhotoSize_typem_128x128.jpg", sourceID)
+	if err := os.WriteFile(filepath.Join(stickersDir, thumbName), realThumb, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return realThumb
 }
 
 func writeEffectsSeed(t *testing.T, seedDir string, sourceID int64) {
@@ -992,7 +1120,7 @@ func TestDocumentsNeedInlineCachedThumbsDetectsStaleMime(t *testing.T) {
 	if err := media.PutDocument(ctx, doc); err != nil {
 		t.Fatalf("put doc: %v", err)
 	}
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", MimeType: "image/jpeg"}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", Size: int64(len(webp)), MimeType: "image/jpeg"}); err != nil {
 		t.Fatalf("put blob: %v", err)
 	}
 	svc := NewService(media, nil, 2)
@@ -1004,7 +1132,7 @@ func TestDocumentsNeedInlineCachedThumbsDetectsStaleMime(t *testing.T) {
 		t.Fatal("expected stale mime to require repair")
 	}
 
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", MimeType: "image/webp"}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", Size: int64(len(webp)), MimeType: "image/webp"}); err != nil {
 		t.Fatalf("put repaired blob: %v", err)
 	}
 	stale, err = svc.documentsNeedInlineCachedThumbs(ctx, []int64{doc.ID})

@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // registerChannels 注册超级群/频道相关 RPC。messages.createChat 在这里注册，

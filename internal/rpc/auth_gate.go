@@ -1,6 +1,6 @@
 package rpc
 
-import "github.com/gotd/td/tg"
+import "github.com/iamxvbaba/td/tg"
 
 // rpcAllowedWithoutAuthorization returns true for methods that are valid before
 // an auth key is bound to a user. Everything else must fail with

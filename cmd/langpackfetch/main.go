@@ -3,8 +3,9 @@
 // 开源公开的 id/hash。
 //
 // 用法:
-//   langpackfetch languages [pack]                 列出某 pack(默认 android)的可用语言
-//   langpackfetch <out_dir> <langCode> [pack...]   拉取语言包(默认 packs = android ios macos)
+//
+//	langpackfetch languages [pack]                 列出某 pack(默认 android)的可用语言
+//	langpackfetch <out_dir> <langCode> [pack...]   拉取语言包(默认 packs = android ios macos)
 package main
 
 import (
@@ -16,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/tg"
 )
 
 const (

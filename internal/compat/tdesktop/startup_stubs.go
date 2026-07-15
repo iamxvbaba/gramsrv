@@ -3,7 +3,7 @@ package tdesktop
 import (
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/seed/appearance"
 	"telesrv/internal/seed/catalog"
@@ -147,7 +147,7 @@ func catalogThemeSettings(s appearance.ThemeSettings, base tg.BaseThemeClass) tg
 		ts.SetMessageColors(append([]int(nil), s.MessageColors...))
 	}
 	if s.Wallpaper.ID != 0 || s.Wallpaper.Document.ID != 0 {
-		ts.SetWallpaper(seedWallPaper(s.Wallpaper))
+		ts.SetWallpaper(DefaultWallPaper(s.Wallpaper))
 	}
 	return ts
 }
@@ -194,13 +194,13 @@ func UniqueGiftChatThemes(hash int64) tg.AccountChatThemesClass {
 	}
 }
 
-// WallPapers returns the read-only default wallpaper catalog. User wallpaper
+// WallPapers returns the read-only Default wallpaper catalog. User wallpaper
 // upload/save/install remains outside the current TDesktop compatibility scope.
 func WallPapers(hash int64) tg.AccountWallPapersClass {
 	if hash == wallPapersHash {
 		return &tg.AccountWallPapersNotModified{}
 	}
-	wallpapers := seedWallPapers()
+	wallpapers := DefaultWallPapers()
 	return &tg.AccountWallPapers{
 		Hash:       wallPapersHash,
 		Wallpapers: wallpapers,
@@ -425,7 +425,7 @@ var defaultPeerColors = []defaultPeerColor{
 
 // IsPeerColorID reports whether id is in the TDesktop-compatible peer color palette.
 func IsPeerColorID(id int) bool {
-	if found, seeded := seedPeerColorID(id, false); seeded {
+	if found, seeded := DefaultPeerColorID(id, false); seeded {
 		return found
 	}
 	for _, color := range defaultPeerColors {
@@ -438,7 +438,7 @@ func IsPeerColorID(id int) bool {
 
 // IsPeerProfileColorID reports whether id is in the profile background palette.
 func IsPeerProfileColorID(id int) bool {
-	if found, seeded := seedPeerColorID(id, true); seeded {
+	if found, seeded := DefaultPeerColorID(id, true); seeded {
 		return found
 	}
 	return IsPeerColorID(id)
@@ -448,7 +448,7 @@ func PeerColors(hash int) tg.HelpPeerColorsClass {
 	if hash == peerColorsHash {
 		return &tg.HelpPeerColorsNotModified{}
 	}
-	colors := seedPeerColorOptions(false)
+	colors := DefaultPeerColorOptions(false)
 	if len(colors) == 0 {
 		colors = make([]tg.HelpPeerColorOption, 0, len(defaultPeerColors))
 		for _, color := range defaultPeerColors {
@@ -468,7 +468,7 @@ func PeerProfileColors(hash int) tg.HelpPeerColorsClass {
 	if hash == peerProfileColorsHash {
 		return &tg.HelpPeerColorsNotModified{}
 	}
-	colors := seedPeerColorOptions(true)
+	colors := DefaultPeerColorOptions(true)
 	if len(colors) == 0 {
 		colors = make([]tg.HelpPeerColorOption, 0, len(defaultPeerColors))
 		for _, color := range defaultPeerColors {

@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"
@@ -54,6 +54,12 @@ func (r *Router) registerAuth(d *tg.ServerDispatcher) {
 
 // onAuthBindTempAuthKey 记录 TDesktop 的 PFS temp→perm auth key 绑定。
 func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTempAuthKeyRequest) (bool, error) {
+	if !layerRPCProfileEvidenceFresh(ctx) {
+		// The inner request is outside MTProto's mutable msg_id window. It may be
+		// decoded request-locally, but acknowledging it would mutate the durable
+		// temp→perm identity and every live session from stale replay evidence.
+		return false, bindTempAuthKeyErr(auth.ErrTempAuthKeyEmpty)
+	}
 	if r.deps.Auth == nil {
 		return true, nil
 	}
@@ -71,21 +77,93 @@ func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTemp
 	}); err != nil {
 		return false, bindTempAuthKeyErr(err)
 	}
+	permID := authKeyIDFromInt64(req.PermAuthKeyID)
 	// temp key (re)bind 后立即作废其 temp→perm 解析缓存，确保下一帧按新绑定重新解析，
 	// 不被 TTL 内的旧 perm 缓存命中（防跨账号串号）。
 	if id != ([8]byte{}) {
 		r.tempKeyResolveCache.Delete(id)
 	}
+	// Save atomically merged raw/permanent Layer observations. Both identities
+	// must now re-read that durable permanent primary; pre-bind process caches
+	// are not ordering evidence and cannot overwrite the transaction's winner.
+	r.invalidateAuthUserCache(id)
+	r.invalidateAuthUserCache(permID)
+	unlockLayerCommit := r.lockAuthLayerCommit(id, permID)
+	defer unlockLayerCommit()
+	r.invalidateBoundAuthKeyLayerResolution(id, permID)
 	if r.deps.Sessions != nil {
-		permID := authKeyIDFromInt64(req.PermAuthKeyID)
 		if all, ok := r.deps.Sessions.(RawAuthKeySessionBinder); ok {
 			all.BindAuthKeyForRawAuthKey(id, permID)
 		} else {
 			r.deps.Sessions.BindAuthKeyForSession(id, sessionID, permID)
 		}
 	}
-	r.invalidateAuthUserCache(id)
+	layer, _, err := r.resolveAuthKeyLayerDefault(ctx, permID)
+	if err != nil {
+		if clearer, ok := r.deps.Sessions.(AuthKeyInheritedLayerClearer); ok {
+			clearer.ClearInheritedLayerForRawAuthKey(id)
+		}
+		if r.log != nil {
+			r.log.Warn("reload merged permanent layer after temp auth key bind failed",
+				zap.String("raw_auth_key_id", fmt.Sprintf("%x", id[:])),
+				zap.String("perm_auth_key_id", fmt.Sprintf("%x", permID[:])),
+				zap.Error(err))
+		}
+		return false, internalErr()
+	}
+	r.cacheBoundAuthKeyLayerResolution(id, permID)
+	if isSupportedLayer(layer) {
+		if refresher, ok := r.deps.Sessions.(AuthKeyLayerRefresher); ok {
+			refresher.RefreshInheritedLayerForRawAuthKey(id, layer)
+		} else if binder, ok := r.deps.Sessions.(AuthKeyLayerBinder); ok {
+			binder.SeedInheritedLayerForRawAuthKey(id, layer)
+		}
+	} else if clearer, ok := r.deps.Sessions.(AuthKeyInheritedLayerClearer); ok {
+		clearer.ClearInheritedLayerForRawAuthKey(id)
+	}
 	return true, nil
+}
+
+func (r *Router) invalidateBoundAuthKeyLayerResolution(authKeyIDs ...[8]byte) {
+	r.clientInfoMu.Lock()
+	defer r.clientInfoMu.Unlock()
+	for _, authKeyID := range authKeyIDs {
+		if info, ok := r.authInfo[authKeyID]; ok {
+			info.layer = 0
+			info.layerObservationID = 0
+			info.layerAdmissionSeq = 0
+			info.authKeyInfoChecked = false
+			info.authorizationChecked = false
+			info.layerBlocked = false
+			info.layerBlockedByAuthKey = false
+			r.authInfo[authKeyID] = info
+		}
+	}
+}
+
+func (r *Router) cacheBoundAuthKeyLayerResolution(rawAuthKeyID, permAuthKeyID [8]byte) {
+	r.clientInfoMu.Lock()
+	defer r.clientInfoMu.Unlock()
+	if r.authInfo == nil {
+		r.authInfo = make(map[[8]byte]clientSessionInfo)
+	}
+	if _, exists := r.authInfo[rawAuthKeyID]; !exists {
+		evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+	}
+	canonical := r.authInfo[permAuthKeyID]
+	info := r.authInfo[rawAuthKeyID]
+	// The bind transaction made the permanent row authoritative for both
+	// identities. Copy its complete resolution tuple: a Layer without the same
+	// observation token (or a stale blocked bit) would let later cache merging
+	// manufacture an ordering state that never existed durably.
+	info.layer = canonical.layer
+	info.layerObservationID = canonical.layerObservationID
+	info.layerAdmissionSeq = canonical.layerAdmissionSeq
+	info.layerBlocked = canonical.layerBlocked
+	info.layerBlockedByAuthKey = canonical.layerBlockedByAuthKey
+	info.authKeyInfoChecked = canonical.authKeyInfoChecked
+	info.authorizationChecked = canonical.authorizationChecked
+	r.authInfo[rawAuthKeyID] = info
 }
 
 // onAuthExportLoginToken 给 QR 登录请求方返回短期 token；扫码端接受后，同一目标

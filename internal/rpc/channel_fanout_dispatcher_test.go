@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"
@@ -65,7 +65,7 @@ func newRecoveryFanoutSessions(onlineChannels []int64, release <-chan struct{}) 
 	}
 }
 
-func (s *recoveryFanoutSessions) PushToUserExceptAuthKeySession(ctx context.Context, _ int64, _ [8]byte, _ int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *recoveryFanoutSessions) PushToUserExceptAuthKeySession(ctx context.Context, _ int64, _ [8]byte, _ int64, _ proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	s.startOnce.Do(func() { close(s.pushStarted) })
 	if s.pushRelease != nil {
 		select {
@@ -397,7 +397,7 @@ func newOverflowNudgeSessions(onlineByChannel map[int64][]int64) *overflowNudgeS
 	}
 }
 
-func (s *overflowNudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, typ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *overflowNudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, typ proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	if updates, ok := msg.(*tg.Updates); ok && len(updates.Updates) == 1 {
 		if nudge, ok := updates.Updates[0].(*tg.UpdateChannelTooLong); ok {
 			pts, _ := nudge.GetPts()
@@ -445,7 +445,7 @@ func newNudgeSessions(online []int64) *nudgeSessions {
 	return &nudgeSessions{captureSessions: &captureSessions{}, online: online, byUser: map[int64]bin.Encoder{}}
 }
 
-func (s *nudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *nudgeSessions) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	s.mu.Lock()
 	s.byUser[userID] = msg
 	s.mu.Unlock()

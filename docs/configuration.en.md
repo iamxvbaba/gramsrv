@@ -33,6 +33,13 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_MTPROTO_RPC_GLOBAL_WORKERS` | int / `256` | Shared fair-scheduler worker count. |
 | `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `8192` | Process-wide scheduled/in-flight RPC task cap. |
 | `TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Process-wide queued/in-flight RPC request-body budget. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES` | int / `262144` | Global ownership entries for pending owners, completed results, and tombstones during the in-process 331-second replay window. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES` | int64 bytes / `67108864` | Global retained-byte budget. Owner admission reserves one byte; Put transfers it to a body or tombstone. Must be at least `16775168`. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES` | int / `32768` | Per raw-auth-key ownership entries; charged together with global and session scopes. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES` | int64 bytes / `33554432` | Per raw-auth-key retained bytes. Limits must satisfy `global >= auth >= session`. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES` | int / `16384` | Per `raw auth key + session_id` ownership entries. |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES` | int64 bytes / `16777216` | Per `raw auth key + session_id` retained bytes; large enough for one legal outbound body. |
+| `TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH` | int / `2048` | Additional active-owner cap per raw auth key; no greater than global pending tasks or auth entries. |
 | `TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Process-wide reservation for transport wire bytes plus maximum decrypted plaintext, acquired before payload allocation. |
 | `TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE` | int / `128` | Per-connection normal outbound mailbox capacity. |
 | `TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE` | int / `32` | Per-connection control-message mailbox capacity. |

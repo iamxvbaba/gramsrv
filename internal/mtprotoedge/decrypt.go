@@ -8,8 +8,8 @@ import (
 
 	"github.com/gotd/ige"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
 )
 
 // clientFrame 是解密后的单帧客户端消息视图。data/plaintext 引用调用方持有的复用明文

@@ -223,6 +223,57 @@ func TestCreatePhotoFromBytesStoresDownloadableMessageSizes(t *testing.T) {
 	}
 }
 
+func TestCreateAvatarFromUploadStoresRealSizedRenditions(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+	data := testJPEG(t, 640, 480)
+	if _, err := svc.SaveFilePart(ctx, 10, 301, 0, data); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+
+	photo, err := svc.CreateAvatarFromUpload(ctx, domain.UploadedFileRef{
+		OwnerUserID: 10,
+		FileID:      301,
+		Parts:       1,
+		Name:        "avatar.jpg",
+	})
+	if err != nil {
+		t.Fatalf("CreateAvatarFromUpload: %v", err)
+	}
+	wants := map[string]image.Point{
+		"s": {X: 150, Y: 150},
+		"a": {X: 160, Y: 160},
+		"c": {X: 640, Y: 480},
+	}
+	if len(photo.Sizes) != len(wants) {
+		t.Fatalf("avatar sizes = %+v, want s/a/c", photo.Sizes)
+	}
+	objectKeys := map[string]struct{}{}
+	for _, size := range photo.Sizes {
+		want, ok := wants[size.Type]
+		if !ok || size.W != want.X || size.H != want.Y {
+			t.Fatalf("avatar size = %+v, want one of %v", size, wants)
+		}
+		assertAvatarImageSize(t, svc, photo.ID, size.Type, want.X, want.Y, "image/jpeg")
+		blob, found, err := media.GetFileBlob(ctx, fmt.Sprintf("photo:%d:%s", photo.ID, size.Type))
+		if err != nil || !found {
+			t.Fatalf("avatar %s blob found=%v err=%v", size.Type, found, err)
+		}
+		if blob.Size != int64(size.Size) {
+			t.Fatalf("avatar %s blob size=%d metadata size=%d", size.Type, blob.Size, size.Size)
+		}
+		objectKeys[blob.ObjectKey] = struct{}{}
+	}
+	if len(objectKeys) != 3 {
+		t.Fatalf("avatar object keys = %v, want distinct s/a/c renditions", objectKeys)
+	}
+}
+
 func TestCreateDocumentFromBytesStoresBodyAndAttributes(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
@@ -299,8 +350,9 @@ func TestCreateAvatarMarkupGeneratesDownloadableStaticSizes(t *testing.T) {
 	if !domain.PhotoHasVideo(photo.Sizes) {
 		t.Fatalf("avatar markup photo sizes = %+v, want video markup", photo.Sizes)
 	}
-	assertDownloadableAvatarSize(t, svc, photo.ID, "a")
-	assertDownloadableAvatarSize(t, svc, photo.ID, "c")
+	assertDownloadableAvatarSize(t, svc, photo.ID, "s", 150)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "a", 160)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "c", 640)
 }
 
 // TestCreateAvatarMarkupComposesEmojiThumbIntoStaticSizes 守护两个行为：
@@ -433,8 +485,9 @@ func TestCreateAvatarVideoMarkupGeneratesDownloadableStaticSizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAvatarVideoMarkupFromUpload: %v", err)
 	}
-	assertDownloadableAvatarSize(t, svc, photo.ID, "a")
-	assertDownloadableAvatarSize(t, svc, photo.ID, "c")
+	assertDownloadableAvatarSize(t, svc, photo.ID, "s", 150)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "a", 160)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "c", 640)
 	chunk, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{
 		LocationKey: fmt.Sprintf("photo:%d:u", photo.ID),
 		Offset:      0,
@@ -448,9 +501,9 @@ func TestCreateAvatarVideoMarkupGeneratesDownloadableStaticSizes(t *testing.T) {
 	}
 }
 
-// TestCreateAvatarVideoMarkupStillUsesVideoFirstFrame 守护动画头像静态尺寸优先取
-// 上传视频首帧（客户端真实渲染画面），而不是服务端合成的近似 still。
-func TestCreateAvatarVideoMarkupStillUsesVideoFirstFrame(t *testing.T) {
+// TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame 守护 markup document/thumb
+// 不可用时仍可从上传视频抽帧，不能让普通动画头像失去静态尺寸。
+func TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
 	blobs, err := NewLocalFS(t.TempDir())
@@ -479,7 +532,7 @@ func TestCreateAvatarVideoMarkupStillUsesVideoFirstFrame(t *testing.T) {
 		t.Fatalf("thumbnailer calls = %d, want 1", thumbnailer.calls)
 	}
 	chunk, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{
-		LocationKey: fmt.Sprintf("photo:%d:a", photo.ID),
+		LocationKey: fmt.Sprintf("photo:%d:c", photo.ID),
 		Offset:      0,
 		Limit:       1 << 20,
 	})
@@ -492,9 +545,112 @@ func TestCreateAvatarVideoMarkupStillUsesVideoFirstFrame(t *testing.T) {
 	if chunk.MimeType != "image/jpeg" {
 		t.Fatalf("avatar still mime = %q, want image/jpeg from extracted frame", chunk.MimeType)
 	}
+	assertAvatarImageSize(t, svc, photo.ID, "s", 150, 150, "image/jpeg")
+	assertAvatarImageSize(t, svc, photo.ID, "a", 160, 160, "image/jpeg")
 }
 
-func assertDownloadableAvatarSize(t *testing.T, svc *Service, photoID int64, sizeType string) {
+func TestCreateAvatarVideoMarkupRejectsSyntheticPreviewAndFallsBackToVideo(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	const emojiID = int64(78)
+	if err := media.PutDocument(ctx, domain.Document{
+		ID:       emojiID,
+		MimeType: "application/x-tgsticker",
+		Thumbs: []domain.PhotoSize{{
+			Kind: domain.PhotoSizeKindCached, Type: "m", W: 1, H: 1,
+			Bytes: append([]byte(nil), seedSyntheticTGStickerPreviewThumbPNG...),
+		}},
+	}); err != nil {
+		t.Fatalf("PutDocument: %v", err)
+	}
+	frame := testJPEG(t, 640, 640)
+	thumbnailer := &fakeVideoThumbnailer{thumb: frame}
+	svc := NewService(media, blobs, 2, WithVideoThumbnailer(thumbnailer))
+	if _, err := svc.SaveFilePart(ctx, 10, 503, 0, []byte("profile-video-without-server-preview")); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+	photo, err := svc.CreateAvatarVideoMarkupFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 503, Parts: 1, Name: "avatar.mp4"},
+		0,
+		domain.PhotoSize{Kind: domain.PhotoSizeKindVideoEmojiMarkup, EmojiID: emojiID, BackgroundColors: []int{0x112233}})
+	if err != nil {
+		t.Fatalf("CreateAvatarVideoMarkupFromUpload: %v", err)
+	}
+	if thumbnailer.calls != 1 {
+		t.Fatalf("thumbnailer calls = %d, want synthetic preview rejected and video fallback used", thumbnailer.calls)
+	}
+	chunk, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: fmt.Sprintf("photo:%d:c", photo.ID), Limit: 1 << 20})
+	if err != nil || !found {
+		t.Fatalf("avatar c blob found=%v err=%v", found, err)
+	}
+	if !bytes.Equal(chunk.Bytes, frame) {
+		t.Fatal("avatar still did not use extracted video frame after rejecting synthetic preview")
+	}
+}
+
+// TestCreateAvatarVideoMarkupPrefersComposedStill 守护 DrKLO emoji 构造器边界：
+// 客户端生成 MP4 的第一帧可能只有渐变背景；只要 markup thumb 可解析，静态头像
+// 必须用服务端合成结果，确保 emoji 在当前 session 回显和冷启动中都可见。
+func TestCreateAvatarVideoMarkupPrefersComposedStill(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	const emojiID = int64(501)
+	if err := media.PutDocument(ctx, domain.Document{
+		ID:       emojiID,
+		MimeType: "application/x-tgsticker",
+		Thumbs: []domain.PhotoSize{{
+			Kind:  domain.PhotoSizeKindCached,
+			Type:  "m",
+			W:     64,
+			H:     64,
+			Bytes: testTransparentThumbPNG(t),
+		}},
+	}); err != nil {
+		t.Fatalf("PutDocument: %v", err)
+	}
+	thumbnailer := &fakeVideoThumbnailer{thumb: testJPEG(t, 320, 320)}
+	svc := NewService(media, blobs, 2, WithVideoThumbnailer(thumbnailer))
+	if _, err := svc.SaveFilePart(ctx, 10, 502, 0, []byte("background-only-profile-video")); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+
+	photo, err := svc.CreateAvatarVideoMarkupFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 502, Parts: 1, Name: "avatar.mp4"},
+		0,
+		domain.PhotoSize{
+			Kind:             domain.PhotoSizeKindVideoEmojiMarkup,
+			EmojiID:          emojiID,
+			BackgroundColors: []int{0x112233, 0x445566},
+		})
+	if err != nil {
+		t.Fatalf("CreateAvatarVideoMarkupFromUpload: %v", err)
+	}
+	if thumbnailer.calls != 0 {
+		t.Fatalf("thumbnailer calls = %d, want 0 when markup still is available", thumbnailer.calls)
+	}
+	r, g, b, _ := avatarStillCenterPixel(t, svc, photo.ID)
+	if r < 200 || g > 90 || b > 90 {
+		t.Fatalf("composed center pixel rgb=(%d,%d,%d), want visible red emoji overlay", r, g, b)
+	}
+	assertDownloadableAvatarSize(t, svc, photo.ID, "s", 150)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "a", 160)
+	assertDownloadableAvatarSize(t, svc, photo.ID, "c", 640)
+}
+
+func assertDownloadableAvatarSize(t *testing.T, svc *Service, photoID int64, sizeType string, side int) {
+	t.Helper()
+	assertAvatarImageSize(t, svc, photoID, sizeType, side, side, "image/png")
+}
+
+func assertAvatarImageSize(t *testing.T, svc *Service, photoID int64, sizeType string, wantW, wantH int, wantMime string) {
 	t.Helper()
 	chunk, found, err := svc.GetFile(context.Background(), domain.FileDownloadRequest{
 		LocationKey: fmt.Sprintf("photo:%d:%s", photoID, sizeType),
@@ -504,8 +660,15 @@ func assertDownloadableAvatarSize(t *testing.T, svc *Service, photoID int64, siz
 	if err != nil || !found {
 		t.Fatalf("avatar %s blob found=%v err=%v", sizeType, found, err)
 	}
-	if len(chunk.Bytes) == 0 || chunk.MimeType != "image/png" {
-		t.Fatalf("avatar %s chunk mime=%q bytes=%d, want image/png bytes", sizeType, chunk.MimeType, len(chunk.Bytes))
+	if len(chunk.Bytes) == 0 || chunk.MimeType != wantMime {
+		t.Fatalf("avatar %s chunk mime=%q bytes=%d, want %s bytes", sizeType, chunk.MimeType, len(chunk.Bytes), wantMime)
+	}
+	img, _, err := image.Decode(bytes.NewReader(chunk.Bytes))
+	if err != nil {
+		t.Fatalf("decode avatar %s: %v", sizeType, err)
+	}
+	if gotW, gotH := img.Bounds().Dx(), img.Bounds().Dy(); gotW != wantW || gotH != wantH {
+		t.Fatalf("avatar %s pixels=%dx%d, want %dx%d", sizeType, gotW, gotH, wantW, wantH)
 	}
 }
 

@@ -11,11 +11,12 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
-	"telesrv/internal/compat/layerwire"
+	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/domain"
 	"telesrv/internal/observability/dbtrace"
 )
@@ -91,32 +92,46 @@ type Config struct {
 
 // Router 把解密后的 RPC 请求按 TypeID 路由到 typed handler（tg.ServerDispatcher）。
 //
-// handler 输入输出均为 gotd/td/tg 类型，各业务域的 handler
+// handler 输入输出均为 iamxvbaba/td/tg 类型，各业务域的 handler
 // 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
 // 剥离 invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*，并兜底未注册 RPC。
 type Router struct {
-	cfg              Config
-	log              *zap.Logger
-	clock            clock.Clock
-	deps             Deps
-	dispatcher       *tg.ServerDispatcher
-	clientInfoMu     sync.RWMutex
-	clientInfo       map[clientInfoSessionKey]clientSessionInfo
-	authInfo         map[[8]byte]clientSessionInfo
-	authUserMu       sync.RWMutex
-	authUsers        map[[8]byte]authUserCacheEntry
-	authUserSF       singleflight.Group
-	mediaCountSF     singleflight.Group
-	dialogsPinnedSF  singleflight.Group
-	channelFullBotSF singleflight.Group
-	presence         *presenceTracker
-	callbacks        *callbackRegistry
-	inlines          *inlineRegistry
-	webviews         *webViewRegistry
-	loginTokens      *loginTokenRegistry
-	botAPIUpdates    *botAPIUpdateNotifier
-	instanceID       string
-	channelFanout    *channelFanoutDispatcher
+	cfg               Config
+	log               *zap.Logger
+	clock             clock.Clock
+	deps              Deps
+	dispatcher        *tg.ServerDispatcher
+	clientInfoMu      sync.RWMutex
+	clientInfo        map[clientInfoSessionKey]clientSessionInfo
+	authInfo          map[[8]byte]clientSessionInfo
+	authLayerEvidence map[[8]byte]authLayerDefaultEvidence
+	authLayerCommit   [authLayerCommitStripes]sync.Mutex
+	// authLayerSafeEvictionFloor is the monotonic lower bound supplied by the
+	// edge-owned exact admission tracker. Evidence below this sequence has no
+	// live owner that can still enter publication and is therefore capacity-
+	// evictable. clientInfoMu protects it together with authLayerEvidence.
+	authLayerSafeEvictionFloor uint64
+	exactProfileMu             sync.RWMutex
+	exactProfiles              map[clientInfoSessionKey]exactSessionProfileEntry
+	// exactProfileEarliestExpiry is a conservative lower bound. Refresh/deletes
+	// may leave it earlier than the true minimum (safe); a capacity scan
+	// recomputes it exactly. This makes the normal all-live full-capacity reject
+	// O(1) without a heap on every refresh.
+	exactProfileEarliestExpiry time.Time
+	authUserMu                 sync.RWMutex
+	authUsers                  map[[8]byte]authUserCacheEntry
+	authUserSF                 singleflight.Group
+	mediaCountSF               singleflight.Group
+	dialogsPinnedSF            singleflight.Group
+	channelFullBotSF           singleflight.Group
+	presence                   *presenceTracker
+	callbacks                  *callbackRegistry
+	inlines                    *inlineRegistry
+	webviews                   *webViewRegistry
+	loginTokens                *loginTokenRegistry
+	botAPIUpdates              *botAPIUpdateNotifier
+	instanceID                 string
+	channelFanout              *channelFanoutDispatcher
 	// botAPIEnqueueQueue 把 user→bot 私聊消息的 bot_api_updates 写入移出发送者 RPC 同步
 	// 路径（性能审计 H2）；队列满同步回退，绝不丢（队列行是 Bot API 投递真值）。
 	botAPIEnqueueQueue *botAPIEnqueueDispatcher
@@ -163,11 +178,51 @@ type clientInfoSessionKey struct {
 }
 
 type clientSessionInfo struct {
-	layer                int
-	clientInfo           ClientInfo
-	hasClientInfo        bool
-	authKeyInfoChecked   bool
-	authorizationChecked bool
+	layer int
+	// layerObservationID is the durable cross-restart ordering token from
+	// auth_keys. It is independent from process-local admission sequence.
+	layerObservationID int64
+	// layerAdmissionSeq is the server-assigned admission order of explicit
+	// invokeWithLayer evidence. It is retained on auth-key defaults and on the
+	// exact raw-session metadata shadow written by admission publication. Client
+	// msg_id is deliberately not used because its ordering is session-local.
+	layerAdmissionSeq      uint64
+	wrapperMsgID           int64
+	clientInfoAdmissionSeq uint64
+	clientInfo             ClientInfo
+	hasClientInfo          bool
+	authKeyInfoChecked     bool
+	authorizationChecked   bool
+	layerBlocked           bool
+	layerBlockedByAuthKey  bool
+}
+
+type exactSessionProfileEntry struct {
+	layer         int
+	msgID         int64
+	observationID int64
+	expiresAt     time.Time
+}
+
+// ExactSessionProfileCapacityError reports that the bounded replay/profile
+// registry contains only still-live logical sessions. Callers must fail closed
+// for shared profile mutation; no unexpired msg_id watermark was evicted.
+// The marker method lets mtprotoedge recognize the condition without importing
+// the higher-level rpc package.
+type ExactSessionProfileCapacityError struct {
+	Limit int
+}
+
+func (e *ExactSessionProfileCapacityError) Error() string {
+	return fmt.Sprintf("exact session profile capacity exhausted (limit %d)", e.Limit)
+}
+
+func (*ExactSessionProfileCapacityError) ExactSessionProfileCapacity() {}
+
+type authLayerDefaultEvidence struct {
+	layer    int
+	sequence uint64
+	durable  bool
 }
 
 type authUserCacheEntry struct {
@@ -181,7 +236,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("%016x", randomNonZeroInt64())
 	}
-	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, presence: newPresenceTracker(), callbacks: newCallbackRegistry(), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), instanceID: instanceID}
+	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), instanceID: instanceID}
 	r.channelFanout = newChannelFanoutDispatcher(r, defaultChannelFanoutShards, defaultChannelFanoutBuffer)
 	r.botAPIEnqueueQueue = newBotAPIEnqueueDispatcher(log, defaultBotAPIEnqueueBuffer)
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)
@@ -190,6 +245,11 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 		groupCallStreamDCID = cfg.DC
 	}
 	d := tg.NewServerDispatcher(r.fallback)
+	if err := registerLayerRPCAdmissionFieldPreflights(d); err != nil {
+		panic(fmt.Sprintf("register exact layer RPC admission policy: %v", err))
+	}
+	r.registerAndroidLayerRPCAdapter(d)
+	d.OnLayerRPCWrappers(r.consumeLayerRPCWrappers)
 
 	r.registerHelp(d)
 	r.registerAuth(d)
@@ -220,7 +280,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 
 // Dispatch routes one RPC and preserves the historical two-value API used by
 // domain/RPC tests. The MTProto edge uses DispatchWithMethod so outbound
-// scheduling sees the canonical inner method rather than an invoke wrapper.
+// scheduling sees the exact innermost method rather than an invoke wrapper.
 func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, error) {
 	enc, _, err := r.DispatchWithMethod(ctx, authKeyID, sessionID, b)
 	return enc, err
@@ -228,87 +288,24 @@ func (r *Router) Dispatch(ctx context.Context, authKeyID [8]byte, sessionID int6
 
 // DispatchWithMethod 路由一条 RPC 请求：先剥离 invokeWithLayer / initConnection /
 // invokeWithoutUpdates / invokeAfter* 等 wrapper（注入 layer / 客户端信息到 ctx），
-// 再按 TypeID 路由到 typed handler，并返回 canonical innermost method。
+// 再按 TypeID 路由到 typed handler，并返回 exact innermost method。
 func (r *Router) DispatchWithMethod(ctx context.Context, authKeyID [8]byte, sessionID int64, b *bin.Buffer) (bin.Encoder, string, error) {
-	preStart := r.clock.Now()
-	ctx = withInboundRPCBytes(ctx, b.Len())
-	ctx = WithRawAuthKeyID(ctx, authKeyID)
-	effectiveAuthKeyID, err := r.effectiveAuthKeyID(ctx, authKeyID, sessionID)
+	if b == nil {
+		return nil, "", inputRequestInvalidErr()
+	}
+	method := "unknown"
+	if id, peekErr := b.PeekID(); peekErr == nil {
+		method = tlTypeName(id)
+	}
+	ctx, updatesDelivery, err := r.prepareRPCDispatchContext(ctx, authKeyID, sessionID, b.Len(), method)
 	if err != nil {
-		return nil, "", internalErr()
-	}
-	tAuth := r.clock.Now()
-	ctx = WithAuthKeyID(ctx, effectiveAuthKeyID)
-	ctx = WithSessionID(ctx, sessionID)
-	userID, hasUserID, err := r.effectiveUserID(ctx, authKeyID, effectiveAuthKeyID, sessionID)
-	if err != nil {
-		return nil, "", internalErr()
-	}
-	if hasUserID {
-		ctx = WithUserID(ctx, userID)
-	}
-	tUser := r.clock.Now()
-	info, hasClientMetadata, clientMetadataStored := r.clientSessionInfo(ctx)
-	if authInfo, ok := r.clientSessionInfoFromAuthKey(ctx, effectiveAuthKeyID, info); ok {
-		info = mergeClientSessionInfo(info, authInfo)
-		hasClientMetadata = true
-		r.rememberClientSessionInfo(ctx, info)
-		clientMetadataStored = true
-		if info.layer != 0 {
-			if binder, okBinder := r.deps.Sessions.(ClientLayerBinder); okBinder {
-				if rawAuthKeyID, okRaw := RawAuthKeyIDFrom(ctx); okRaw {
-					binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, info.layer)
-				}
-			}
-		}
-	}
-	if hasUserID {
-		if authInfo, ok := r.clientSessionInfoFromAuthorization(ctx, userID, effectiveAuthKeyID, info); ok {
-			info = mergeClientSessionInfo(info, authInfo)
-			hasClientMetadata = true
-			r.rememberClientSessionInfo(ctx, info)
-			clientMetadataStored = true
-			// 冷启动回填：授权表恢复的 layer 即时下推到连接，防止本条 RPC handler
-			// 执行期间的 push 仍按 canonical 227 发给老客户端（该分支只在元数据
-			// 尚未入缓存时走到，稳态 RPC 不经过这里）。
-			if info.layer != 0 {
-				if binder, okBinder := r.deps.Sessions.(ClientLayerBinder); okBinder {
-					if rawAuthKeyID, okRaw := RawAuthKeyIDFrom(ctx); okRaw {
-						binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, info.layer)
-					}
-				}
-			}
-		}
-	}
-	// 前置鉴权阶段（auth key 解析 / user 重校验 / client info）慢路径告警：超阈值才记，避免刷屏。
-	// 常驻观测——正常应 ≪50ms；再现 >50ms 时按 auth_resolve / user_resolve / client_info 三段拆分
-	// 即可定位（历史上 client_info ~1s 的根因是 DSN 用 localhost 触发 IPv6 连接回退，已改 127.0.0.1）。
-	if r.log != nil {
-		if tInfo := r.clock.Now(); tInfo.Sub(preStart) > 50*time.Millisecond {
-			id, _ := b.PeekID()
-			r.log.Info("slow pre-handler",
-				zap.String("method", tlTypeName(id)),
-				zap.Duration("pre_total", tInfo.Sub(preStart)),
-				zap.Duration("auth_resolve", tAuth.Sub(preStart)),
-				zap.Duration("user_resolve", tUser.Sub(tAuth)),
-				zap.Duration("client_info", tInfo.Sub(tUser)),
-				zap.Int64("session_id", sessionID),
-			)
-		}
-	}
-	if hasClientMetadata {
-		if !clientMetadataStored {
-			r.rememberClientSessionInfoIfMissing(ctx, info)
-		}
-		if info.layer != 0 {
-			ctx = WithLayer(ctx, info.layer)
-		}
-		if info.hasClientInfo {
-			ctx = WithClientInfo(ctx, info.clientInfo)
-		}
+		return nil, "", err
 	}
 	meta := rpcDispatchMetadata{}
 	enc, err := r.dispatch(ctx, b, 0, &meta)
+	if err == nil && enc != nil {
+		r.registerUpdatesDeliveryPlan(ctx, updatesDelivery)
+	}
 	return enc, meta.method, err
 }
 
@@ -511,13 +508,24 @@ func (r *Router) invalidateAuthUserCache(authKeyID [8]byte) {
 	delete(r.authUsers, authKeyID)
 	r.authUserMu.Unlock()
 	r.clientInfoMu.Lock()
-	delete(r.authInfo, authKeyID)
+	if info, ok := r.authInfo[authKeyID]; ok {
+		// Authorization membership can change independently of protocol
+		// metadata. Preserve the Layer/default ordering watermark so an older
+		// in-flight publisher cannot roll durable state back after login/logout.
+		info.authorizationChecked = false
+		if !info.layerBlockedByAuthKey {
+			info.layerBlocked = false
+		}
+		r.authInfo[authKeyID] = info
+	}
 	r.clientInfoMu.Unlock()
 	key := string(authKeyID[:])
 	r.authUserSF.Forget(key)
 	r.authUserSF.Forget(authKeyResolveSingleflightPrefix + key)
 	r.authUserSF.Forget(authClientInfoSingleflightPrefix + key)
 	r.authUserSF.Forget(authKeyClientInfoSingleflightPrefix + key)
+	r.authUserSF.Forget(inheritedAuthKeyLayerSingleflightPrefix + key)
+	r.authUserSF.Forget(durableInheritedAuthKeyLayerSingleflightPrefix + key)
 }
 
 type rpcDispatchMetadata struct {
@@ -611,27 +619,28 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		return r.dispatch(ctx, &bin.Buffer{Buf: inner.data}, depth+1, meta)
 
 	default:
-		// 入站兼容统一入口（先于鉴权门/dispatcher）：layerwire 把老客户端请求升级为
-		// canonical(227) 形态——①官方层漂移（生成表，flag-gated 新增→换 4 字节 id）
-		// ②客户端构造器漂移（client_aliases 纯换 id / client-drift.tl 通用 body 变换：
-		// 插 flags、按 kind 补默认、类型转换、改名映射）。替代了原先散落在 rpc 的
-		// dispatchCompat + 各 handleLegacy* 解码器。提前到鉴权门之前，使后续一切只面对 227
-		// 形态（鉴权白名单、dispatcher 均无需再认旧构造器 id）。
+		// Router.Dispatch is a legacy test seam. Production uses generated exact
+		// Layer admission, whose unknown-method view invokes the same static DrKLO
+		// overlay while sharing the outer request budget.
 		if id != 0 {
-			clientDrift := layerwire.IsClientDrift(id)
-			if up, ok, err := layerwire.UpgradeInbound(id, b); ok {
-				if err != nil {
-					return nil, err
-				}
-				b = up
-				newID, err := b.PeekID()
-				if err != nil {
-					return nil, err
-				}
-				id = newID
-				if clientDrift {
-					// 客户端漂移只能证明这是 Android 兼容路径；layer 仍以
-					// invokeWithLayer 或授权记录里的真实观测值为准。
+			profile := tg.LayerProfileCanonical
+			if selected, ok := tg.ResolveLayerProfile(LayerFrom(ctx)); ok {
+				profile = selected
+			}
+			_, official := tg.LayerSemanticForWireID(profile, id)
+			if !official {
+				if up, ok, err := compatandroid.UpgradePrivateLayerRPC(profile, b, tg.LayerDecodeLimits{}); ok {
+					if err != nil {
+						return nil, inputRequestInvalidErr()
+					}
+					b = up
+					newID, err := b.PeekID()
+					if err != nil {
+						return nil, err
+					}
+					id = newID
+					// A private constructor identifies the DrKLO compatibility seam but
+					// never selects or changes the connection's Layer profile.
 					ctx = r.withClientDriftMetadata(ctx, ClientTypeAndroid)
 				}
 			}
@@ -639,14 +648,13 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if meta != nil {
 			meta.method = tlTypeName(id)
 		}
-		knownRequest, structuralErr := layerwire.ValidateRoutableRequest(b.Buf)
+		semantic, knownRequest := tg.LayerSemanticForWireID(tg.LayerProfileCanonical, id)
+		if knownRequest {
+			category, _, named := tg.LayerSemanticName(semantic)
+			knownRequest = named && category == "function"
+		}
 		if !knownRequest {
-			if structuralErr != nil {
-				return nil, mapLayerwirePreflightError(structuralErr)
-			}
-			// Unknown methods are opaque after the bounded/alignment check above: no generated
-			// decoder will touch their body. Route them directly to the compatibility fallback
-			// so every unknown constructor is traced, including pre-login probes.
+			// Unknown methods remain opaque and go to the compatibility trace.
 			return r.fallback(ctx, b)
 		}
 		if r.deps.Auth != nil {
@@ -661,13 +669,6 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		}
 		if err := preflightRPCRequest(id, b); err != nil {
 			return nil, err
-		}
-		// Run the same allocation-free schema walker used by layer aliases/DrKLO transforms on
-		// every canonical request before gotd's generated decoder materializes vectors/bytes.
-		// Method-specific caps above preserve exact existing RPC errors; this generic budget
-		// closes variable-offset/nested-object paths and malformed constructor recursion.
-		if structuralErr != nil {
-			return nil, mapLayerwirePreflightError(structuralErr)
 		}
 		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates
 		// 接收者。仅靠 updates.getState/getDifference 置位会漏掉 DrKLO 热恢复：
@@ -697,13 +698,6 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 	}
 }
 
-func mapLayerwirePreflightError(err error) error {
-	if errors.Is(err, layerwire.ErrResourceLimit) {
-		return inputRequestTooLongErr()
-	}
-	return inputRequestInvalidErr()
-}
-
 func tlTypeName(id uint32) string {
 	tlTypeNamesOnce.Do(func() {
 		names := tg.NamesMap()
@@ -721,11 +715,22 @@ func tlTypeName(id uint32) string {
 // maxClientInfoEntries / maxAuthInfoEntries 是客户端元数据缓存的容量上限兜底。
 // 条目含客户端可控字符串且 session_id 由客户端任意生成，无上限时恶意客户端
 // 在单连接上反复换 session_id / 轮换 temp auth key 可线速膨胀直至 OOM。
-// 达到上限后驱逐任意旧条目：受害条目只损失 layer/clientType 缓存，
-// 下一次 initConnection 或 authorization 回填即恢复。
+// 达到上限后驱逐任意旧条目：受害条目只损失进程内默认/客户端描述缓存，
+// 下一次 auth-key resolver、initConnection 或 authorization 回填即可恢复。
+// exact profile 由下方独立的 same-session registry 管理，永远优先于默认。
 const (
 	maxClientInfoEntries = 1 << 16
 	maxAuthInfoEntries   = 1 << 16
+	// exactSessionProfileLegacyTTL covers the normal 300-second client msg_id
+	// window plus the allowed 30-second future skew and a one-second equality
+	// margin. Ordered evidence uses its own msg_id timestamp instead of blindly
+	// refreshing this TTL on duplicate replay.
+	exactSessionProfileLegacyTTL = 331 * time.Second
+	// exactSessionProfileTTL remains the maximum/legacy force-path retention
+	// used by focused registry tests. Real ordered evidence uses the expiry
+	// derived above from its msg_id.
+	exactSessionProfileTTL        = exactSessionProfileLegacyTTL
+	maxExactSessionProfileEntries = 1 << 16
 	// maxAuthUsersCached 给 authUsers 授权缓存设容量上界，与 clientInfo/authInfo 一致。
 	// 原本无任何上限：设备轮换 temp 键而不显式登出时每个新 authKeyID 永久累积一条，
 	// 只靠 logout/reset 的显式 invalidate 清理。达上限驱逐任意旧条目，下次按需回查回填。
@@ -733,16 +738,80 @@ const (
 )
 
 func (r *Router) rememberClientInfo(ctx context.Context, info ClientInfo) {
+	r.rememberClientInfoAt(ctx, info, 0)
+}
+
+func (r *Router) rememberClientInfoAt(ctx context.Context, info ClientInfo, admissionSeq uint64) {
 	info = normalizeClientInfo(info)
-	layer := LayerFrom(ctx)
-	r.mutateClientSessionInfo(ctx, func(sessionInfo *clientSessionInfo) {
-		sessionInfo.clientInfo = info
-		sessionInfo.hasClientInfo = true
-		if layer != 0 {
-			sessionInfo.layer = layer
+	rawAuthKeyID, hasRawAuthKeyID := RawAuthKeyIDFrom(ctx)
+	sessionID, hasSessionID := SessionIDFrom(ctx)
+	if !hasRawAuthKeyID || !hasSessionID {
+		return
+	}
+	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
+	if !hasAuthKeyID {
+		authKeyID = rawAuthKeyID
+	}
+	unlockCommit := r.lockAuthLayerCommit(rawAuthKeyID, authKeyID)
+	defer unlockCommit()
+
+	r.clientInfoMu.Lock()
+	if r.clientInfo == nil {
+		r.clientInfo = make(map[clientInfoSessionKey]clientSessionInfo)
+	}
+	key := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	sessionInfo, exists := r.clientInfo[key]
+	if !exists {
+		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
+	}
+	sessionInfo.clientInfo = info
+	sessionInfo.hasClientInfo = true
+	if admissionSeq > 0 {
+		sessionInfo.clientInfoAdmissionSeq = admissionSeq
+	}
+	r.clientInfo[key] = sessionInfo
+
+	publishAuthMetadata := true
+	for _, id := range [][8]byte{rawAuthKeyID, authKeyID} {
+		current := r.authInfo[id]
+		if current.clientInfoAdmissionSeq > admissionSeq ||
+			(admissionSeq == 0 && current.clientInfoAdmissionSeq > 0) {
+			publishAuthMetadata = false
+			break
 		}
-	})
-	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{layer: layer, clientInfo: info, hasClientInfo: true})
+		if admissionSeq > 0 && current.clientInfoAdmissionSeq == admissionSeq &&
+			current.hasClientInfo && current.clientInfo != info {
+			publishAuthMetadata = false
+			break
+		}
+	}
+	if publishAuthMetadata {
+		for _, id := range [][8]byte{rawAuthKeyID, authKeyID} {
+			if id == ([8]byte{}) {
+				continue
+			}
+			if r.authInfo == nil {
+				r.authInfo = make(map[[8]byte]clientSessionInfo)
+			}
+			if _, exists := r.authInfo[id]; !exists {
+				evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+			}
+			current := r.authInfo[id]
+			current.clientInfo = info
+			current.hasClientInfo = true
+			if admissionSeq > 0 {
+				current.clientInfoAdmissionSeq = admissionSeq
+			}
+			r.authInfo[id] = current
+		}
+	}
+	r.clientInfoMu.Unlock()
+	// initConnection metadata is not fresh Layer evidence when admitted under an
+	// inherited default. Only rememberClientLayer (explicit invokeWithLayer)
+	// advances the auth-key-wide durable default.
+	if publishAuthMetadata {
+		r.persistAuthKeyClientInfo(ctx, clientSessionInfo{clientInfo: info, hasClientInfo: true})
+	}
 }
 
 func (r *Router) rememberClientAPIID(ctx context.Context, apiID int) {
@@ -758,10 +827,15 @@ func (r *Router) rememberClientAPIID(ctx context.Context, apiID int) {
 	if effective, ok, _ := r.clientSessionInfo(ctx); ok {
 		sessionInfo = effective
 	}
+	sessionInfo.layer = 0
 	r.persistAuthKeyClientInfo(ctx, sessionInfo)
 }
 
 func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
+	r.rememberClientLayerAt(ctx, layer, 0)
+}
+
+func (r *Router) rememberClientLayerAt(ctx context.Context, layer int, msgID int64) {
 	if layer <= 0 {
 		return
 	}
@@ -773,16 +847,36 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 	if !ok {
 		return
 	}
+	if _, err := r.FreezeNegotiatedSessionLayerAt(rawAuthKeyID, sessionID, layer, msgID); err != nil {
+		// Only invalid identities and profiles not generated into this binary can
+		// fail. Never clamp a future persisted/wire Layer to canonical.
+		if r.log != nil {
+			r.log.Warn("refuse unsupported exact session layer",
+				zap.Int("layer", layer),
+				zap.Int64("session_id", sessionID),
+				zap.String("auth_key_id", fmt.Sprintf("%x", rawAuthKeyID[:])),
+				zap.Error(err))
+		}
+		return
+	}
 	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
-	persistAuthLayer := false
+	if !hasAuthKeyID {
+		authKeyID = rawAuthKeyID
+	}
+	unlockCommit := r.lockAuthLayerCommit(rawAuthKeyID, authKeyID)
+	defer unlockCommit()
+	if msgID > 0 {
+		currentLayer, currentMsgID, exists := r.NegotiatedSessionLayerEvidence(rawAuthKeyID, sessionID)
+		if !exists || currentLayer != layer || currentMsgID != msgID {
+			// A greater msg_id won after this request was admitted or while it
+			// waited for the auth-key commit stripe. The request remains valid,
+			// but its mutable default/binder effects are stale.
+			return
+		}
+	}
 	r.clientInfoMu.Lock()
 	if r.clientInfo == nil {
 		r.clientInfo = make(map[clientInfoSessionKey]clientSessionInfo)
-	}
-	if hasAuthKeyID {
-		if info, ok := r.authInfo[authKeyID]; !ok || info.layer != layer {
-			persistAuthLayer = true
-		}
 	}
 	sessionKey := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
 	sessionInfo, exists := r.clientInfo[sessionKey]
@@ -797,9 +891,26 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
 	}
 	r.clientInfo[sessionKey] = sessionInfo
-	r.rememberAuthClientLayerLocked(rawAuthKeyID, layer)
+	publishDefault := r.authInfo[rawAuthKeyID].layerAdmissionSeq == 0
+	if _, ordered := r.authLayerEvidence[rawAuthKeyID]; ordered {
+		publishDefault = false
+	}
+	if hasAuthKeyID && r.authInfo[authKeyID].layerAdmissionSeq != 0 {
+		publishDefault = false
+	}
 	if hasAuthKeyID {
-		r.rememberAuthClientLayerLocked(authKeyID, layer)
+		if _, ordered := r.authLayerEvidence[authKeyID]; ordered {
+			publishDefault = false
+		}
+	}
+	defaultChanged := false
+	if publishDefault {
+		defaultChanged = r.authClientLayerLocked(rawAuthKeyID) != layer
+		r.rememberAuthClientLayerLocked(rawAuthKeyID, layer)
+		if hasAuthKeyID {
+			defaultChanged = defaultChanged || r.authClientLayerLocked(authKeyID) != layer
+			r.rememberAuthClientLayerLocked(authKeyID, layer)
+		}
 	}
 	r.clientInfoMu.Unlock()
 	if notifyConn {
@@ -807,14 +918,11 @@ func (r *Router) rememberClientLayer(ctx context.Context, layer int) {
 			binder.SetClientLayerForAuthKey(rawAuthKeyID, sessionID, layer)
 		}
 	}
-	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{layer: layer})
-	if persistAuthLayer && r.deps.Auth != nil {
-		if err := r.deps.Auth.UpdateAuthorizationLayer(ctx, authKeyID, layer); err != nil {
-			r.log.Warn("update authorization layer failed",
-				zap.Int("layer", layer),
-				zap.String("auth_key_id", fmt.Sprintf("%x", authKeyID[:])),
-				zap.Error(err))
-		}
+	// The newest explicit observation becomes the default for future sessions.
+	// A repeat from an older live session may legitimately move that default
+	// back without changing any sibling session's already-selected profile.
+	if publishDefault && (notifyConn || defaultChanged) {
+		r.persistAuthKeyClientInfo(ctx, clientSessionInfo{layer: layer})
 	}
 }
 
@@ -848,23 +956,216 @@ func (r *Router) persistAuthKeyClientInfo(ctx context.Context, info clientSessio
 	}
 }
 
-// NegotiatedLayer returns the TL layer the given session negotiated via
-// invokeWithLayer/initConnection. It is keyed first by (auth_key, session) then
-// falls back to the stable auth_key — so a reconnect with a new session_id still
-// inherits the layer within the process lifetime. ok=false means no layer was
-// ever observed (cold connection, or the in-memory entry was evicted): callers
-// MUST NOT overwrite a connection's last-known layer in that case, only treat it
-// as canonical (227) when no value was ever recorded.
+// NegotiatedLayer is the legacy exact-session lookup. Auth-key-wide inheritance
+// is intentionally exposed separately by ResolveInheritedAuthKeyLayer so the
+// edge can retain the source distinction and let a later explicit selector
+// correct an inherited Conn profile.
 func (r *Router) NegotiatedLayer(authKeyID [8]byte, sessionID int64) (int, bool) {
-	r.clientInfoMu.RLock()
-	defer r.clientInfoMu.RUnlock()
-	if info, ok := r.clientInfo[clientInfoSessionKey{rawAuthKeyID: authKeyID, sessionID: sessionID}]; ok && info.layer != 0 {
-		return info.layer, true
-	}
-	if info, ok := r.authInfo[authKeyID]; ok && info.layer != 0 {
-		return info.layer, true
+	if layer, ok := r.NegotiatedSessionLayer(authKeyID, sessionID); ok {
+		return layer, true
 	}
 	return currentClientLayer, false
+}
+
+// NegotiatedSessionLayer returns only an exact same-session observation. The
+// profile registry is deliberately independent from transient client metadata:
+// ordinary transport offline removes presence/device cache entries but must not
+// erase the immutable profile needed by same-session naked RPC replay.
+func (r *Router) NegotiatedSessionLayer(authKeyID [8]byte, sessionID int64) (int, bool) {
+	layer, _, ok := r.NegotiatedSessionLayerEvidence(authKeyID, sessionID)
+	return layer, ok
+}
+
+// NegotiatedSessionLayerEvidence returns the latest explicit profile together
+// with the MTProto message id that linearized it. msgID=0 denotes a legacy
+// caller that had no wire-order evidence.
+func (r *Router) NegotiatedSessionLayerEvidence(authKeyID [8]byte, sessionID int64) (layer int, msgID int64, ok bool) {
+	if r == nil || authKeyID == ([8]byte{}) || sessionID == 0 {
+		return 0, 0, false
+	}
+	key := clientInfoSessionKey{rawAuthKeyID: authKeyID, sessionID: sessionID}
+	now := r.clock.Now()
+	r.exactProfileMu.RLock()
+	entry, ok := r.exactProfiles[key]
+	r.exactProfileMu.RUnlock()
+	if !ok || entry.layer == 0 {
+		return 0, 0, false
+	}
+	if now.Before(entry.expiresAt) {
+		return entry.layer, entry.msgID, true
+	}
+	// Expiry is a state transition, not a read-time fallback. Delete only the
+	// value observed above so a concurrent refresh cannot be lost.
+	r.exactProfileMu.Lock()
+	if current, exists := r.exactProfiles[key]; exists && current == entry && !now.Before(current.expiresAt) {
+		delete(r.exactProfiles, key)
+	}
+	r.exactProfileMu.Unlock()
+	return 0, 0, false
+}
+
+// FreezeNegotiatedSessionLayer atomically records the latest explicit profile
+// proven for one MTProto (raw auth key, session) identity. A later valid
+// invokeWithLayer is an ordered correction, not a connection conflict: replace
+// the old value and refresh its retention. Request/result encoding remains
+// bound to each admitted request's immutable profile outside this registry.
+func (r *Router) FreezeNegotiatedSessionLayer(authKeyID [8]byte, sessionID int64, layer int) error {
+	_, err := r.FreezeNegotiatedSessionLayerAt(authKeyID, sessionID, layer, 0)
+	return err
+}
+
+// FreezeNegotiatedSessionLayerAt linearizes explicit invokeWithLayer evidence
+// by MTProto message id. Older evidence is ignored; the same message id is
+// idempotent only for the same profile; a greater id may correct the session.
+// msgID=0 is the legacy force API. Repeating the current layer through that API
+// refreshes TTL without erasing a positive ordering watermark.
+func (r *Router) FreezeNegotiatedSessionLayerAt(authKeyID [8]byte, sessionID int64, layer int, msgID int64) (bool, error) {
+	if r == nil || authKeyID == ([8]byte{}) || sessionID == 0 {
+		return false, errors.New("invalid exact session profile identity")
+	}
+	profile, ok := tg.ResolveLayerProfile(layer)
+	if !ok || int(profile) != layer {
+		return false, fmt.Errorf("unsupported exact session profile %d", layer)
+	}
+	if msgID < 0 {
+		return false, fmt.Errorf("invalid exact session profile message id %d", msgID)
+	}
+	unlockCommit := r.lockAuthLayerCommit(authKeyID)
+	defer unlockCommit()
+	now := r.clock.Now()
+	expiresAt := exactSessionLayerEvidenceExpiry(now, msgID)
+	key := clientInfoSessionKey{rawAuthKeyID: authKeyID, sessionID: sessionID}
+	r.exactProfileMu.Lock()
+	defer r.exactProfileMu.Unlock()
+	if r.exactProfiles == nil {
+		r.exactProfiles = make(map[clientInfoSessionKey]exactSessionProfileEntry)
+	}
+	if current, exists := r.exactProfiles[key]; exists && now.Before(current.expiresAt) {
+		if msgID == 0 {
+			if current.layer == layer {
+				current.expiresAt = expiresAt
+				r.exactProfiles[key] = current
+				r.noteExactSessionProfileExpiryLocked(current.expiresAt)
+				return false, nil
+			}
+			current = exactSessionProfileEntry{layer: layer, expiresAt: expiresAt}
+			r.exactProfiles[key] = current
+			r.noteExactSessionProfileExpiryLocked(current.expiresAt)
+			return true, nil
+		}
+		if current.msgID > msgID {
+			return false, nil
+		}
+		if current.msgID == msgID {
+			if current.layer != layer {
+				return false, fmt.Errorf("exact session profile conflict at msg_id %d: current=%d requested=%d", msgID, current.layer, layer)
+			}
+			// Duplicate replay never extends the original selector's mutable
+			// window; otherwise a client could retain exact state forever.
+			return false, nil
+		}
+		current = exactSessionProfileEntry{layer: layer, msgID: msgID, expiresAt: expiresAt}
+		r.exactProfiles[key] = current
+		r.noteExactSessionProfileExpiryLocked(current.expiresAt)
+		return true, nil
+	}
+	delete(r.exactProfiles, key)
+	if len(r.exactProfiles) >= maxExactSessionProfileEntries {
+		if r.exactProfileEarliestExpiry.IsZero() || !now.Before(r.exactProfileEarliestExpiry) {
+			r.purgeExpiredExactSessionProfilesLocked(now)
+		}
+		if len(r.exactProfiles) >= maxExactSessionProfileEntries {
+			return false, &ExactSessionProfileCapacityError{Limit: maxExactSessionProfileEntries}
+		}
+	}
+	entry := exactSessionProfileEntry{layer: layer, msgID: msgID, expiresAt: expiresAt}
+	r.exactProfiles[key] = entry
+	if len(r.exactProfiles) == 1 {
+		r.exactProfileEarliestExpiry = entry.expiresAt
+	} else {
+		r.noteExactSessionProfileExpiryLocked(entry.expiresAt)
+	}
+	return true, nil
+}
+
+func exactSessionLayerEvidenceExpiry(now time.Time, msgID int64) time.Time {
+	if msgID <= 0 {
+		return now.Add(exactSessionProfileLegacyTTL)
+	}
+	expiresAt := proto.MessageID(msgID).Time().Add(300*time.Second + time.Second)
+	if !now.Before(expiresAt) {
+		// Production freshness admission prevents this branch. Keep the force
+		// API/test seam short-lived instead of manufacturing a long watermark
+		// from an ancient or synthetic msg_id.
+		return now.Add(time.Second)
+	}
+	return expiresAt
+}
+
+func (r *Router) purgeExpiredExactSessionProfilesLocked(now time.Time) {
+	earliest := time.Time{}
+	for key, entry := range r.exactProfiles {
+		if !now.Before(entry.expiresAt) {
+			delete(r.exactProfiles, key)
+			continue
+		}
+		if earliest.IsZero() || entry.expiresAt.Before(earliest) {
+			earliest = entry.expiresAt
+		}
+	}
+	r.exactProfileEarliestExpiry = earliest
+}
+
+func (r *Router) noteExactSessionProfileExpiryLocked(expiry time.Time) {
+	if r.exactProfileEarliestExpiry.IsZero() || expiry.Before(r.exactProfileEarliestExpiry) {
+		r.exactProfileEarliestExpiry = expiry
+	}
+}
+
+// ForgetNegotiatedSessionLayer is reserved for explicit destroy_session.
+func (r *Router) ForgetNegotiatedSessionLayer(authKeyID [8]byte, sessionID int64) {
+	if r == nil {
+		return
+	}
+	r.exactProfileMu.Lock()
+	delete(r.exactProfiles, clientInfoSessionKey{rawAuthKeyID: authKeyID, sessionID: sessionID})
+	r.exactProfileMu.Unlock()
+	r.clientInfoMu.Lock()
+	delete(r.clientInfo, clientInfoSessionKey{rawAuthKeyID: authKeyID, sessionID: sessionID})
+	r.clientInfoMu.Unlock()
+}
+
+// ForgetNegotiatedAuthKey is reserved for physical auth-key destruction. A
+// business authorization logout/revoke must not call it: Layer is protocol
+// metadata and survives authorization state. This is intentionally cold
+// O(capacity); hot lookup and refresh stay O(1).
+func (r *Router) ForgetNegotiatedAuthKey(authKeyID [8]byte) {
+	if r == nil || authKeyID == ([8]byte{}) {
+		return
+	}
+	r.exactProfileMu.Lock()
+	for key := range r.exactProfiles {
+		if key.rawAuthKeyID == authKeyID {
+			delete(r.exactProfiles, key)
+		}
+	}
+	r.exactProfileMu.Unlock()
+	r.clientInfoMu.Lock()
+	delete(r.authInfo, authKeyID)
+	delete(r.authLayerEvidence, authKeyID)
+	for key := range r.clientInfo {
+		if key.rawAuthKeyID == authKeyID {
+			delete(r.clientInfo, key)
+		}
+	}
+	r.clientInfoMu.Unlock()
+}
+
+// SessionDestroyed is the explicit lifecycle callback. SessionOffline must not
+// call this: a physical TCP loss is not destruction of the logical MTProto
+// session.
+func (r *Router) SessionDestroyed(rawAuthKeyID [8]byte, sessionID int64) {
+	r.ForgetNegotiatedSessionLayer(rawAuthKeyID, sessionID)
 }
 
 // ObserveInitConnection records the protocol metadata of an initConnection
@@ -889,7 +1190,10 @@ func (r *Router) ObserveInitConnection(
 	ctx = WithAuthKeyID(ctx, effectiveAuthKeyID)
 	ctx = WithSessionID(ctx, sessionID)
 	ctx = WithLayer(ctx, layer)
-	r.rememberClientLayer(ctx, layer)
+	// Exact Layer/default publication belongs to generated admission and has
+	// already happened before a rewrap alias can reach this legacy metadata
+	// observer. Replaying it here would have no msg_id/admission sequence and
+	// could reset a newer exact profile.
 	r.rememberClientInfo(ctx, ClientInfo{
 		APIID: apiID, DeviceModel: deviceModel, SystemVersion: systemVersion,
 		AppVersion: appVersion, SystemLangCode: systemLangCode,
@@ -921,9 +1225,13 @@ func (r *Router) mutateClientSessionInfo(ctx context.Context, mutate func(*clien
 		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
 	}
 	r.clientInfo[sessionKey] = sessionInfo
-	r.rememberAuthClientInfoLocked(rawAuthKeyID, sessionInfo)
+	authInfo := sessionInfo
+	authInfo.layer = 0
+	authInfo.layerAdmissionSeq = 0
+	authInfo.clientInfoAdmissionSeq = 0
+	r.rememberAuthClientInfoLocked(rawAuthKeyID, authInfo)
 	if authKeyID, ok := AuthKeyIDFrom(ctx); ok {
-		r.rememberAuthClientInfoLocked(authKeyID, sessionInfo)
+		r.rememberAuthClientInfoLocked(authKeyID, authInfo)
 	}
 }
 
@@ -995,10 +1303,15 @@ func (r *Router) clientSessionInfoStoredLocked(rawAuthKeyID [8]byte, sessionID i
 	if !clientSessionInfoContains(r.clientInfo[clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}], required) {
 		return false
 	}
-	if !clientSessionInfoContains(r.authInfo[rawAuthKeyID], required) {
+	// authInfo is deliberately auth-key-wide and can only cache the client
+	// description/check markers. Exact-session Layer is not a required fact in
+	// either auth-key fallback entry.
+	authRequired := required
+	authRequired.layer = 0
+	if !clientSessionInfoContains(r.authInfo[rawAuthKeyID], authRequired) {
 		return false
 	}
-	if hasAuthKeyID && !clientSessionInfoContains(r.authInfo[authKeyID], required) {
+	if hasAuthKeyID && !clientSessionInfoContains(r.authInfo[authKeyID], authRequired) {
 		return false
 	}
 	return true
@@ -1021,6 +1334,15 @@ func clientSessionInfoContains(current, required clientSessionInfo) bool {
 }
 
 func (r *Router) rememberAuthClientInfoLocked(authKeyID [8]byte, info clientSessionInfo) {
+	if authKeyID == ([8]byte{}) {
+		return
+	}
+	// Wrapper ordering is a logical-session fact and must never leak into an
+	// auth-key-wide metadata/default entry. Ordered Layer publication uses
+	// rememberAuthClientLayerAtLocked directly.
+	info.wrapperMsgID = 0
+	info.layerAdmissionSeq = 0
+	info.clientInfoAdmissionSeq = 0
 	if r.authInfo == nil {
 		r.authInfo = make(map[[8]byte]clientSessionInfo)
 	}
@@ -1032,7 +1354,11 @@ func (r *Router) rememberAuthClientInfoLocked(authKeyID [8]byte, info clientSess
 }
 
 func (r *Router) rememberAuthClientLayerLocked(authKeyID [8]byte, layer int) {
-	if layer <= 0 {
+	r.rememberAuthClientLayerAtLocked(authKeyID, layer, 0)
+}
+
+func (r *Router) rememberAuthClientLayerAtLocked(authKeyID [8]byte, layer int, admissionSeq uint64) {
+	if authKeyID == ([8]byte{}) || !isSupportedLayer(layer) {
 		return
 	}
 	if r.authInfo == nil {
@@ -1042,20 +1368,106 @@ func (r *Router) rememberAuthClientLayerLocked(authKeyID [8]byte, layer int) {
 		evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
 	}
 	info := r.authInfo[authKeyID]
+	if admissionSeq == 0 && info.layerObservationID > 0 {
+		// An unordered restoration/shadow write can never replace a durable
+		// observation. In particular, do not manufacture (new observation,
+		// old layer) by changing only the layer field.
+		return
+	}
+	if admissionSeq == 0 && info.layerAdmissionSeq > 0 {
+		// Store restoration and legacy callers carry no cross-session order and
+		// must not overwrite a default established by a fresh admission.
+		return
+	}
+	if admissionSeq > 0 && info.layerAdmissionSeq > admissionSeq {
+		return
+	}
 	info.layer = layer
+	info.layerBlocked = false
+	info.layerBlockedByAuthKey = false
+	if admissionSeq > 0 {
+		info.layerAdmissionSeq = admissionSeq
+	}
 	r.authInfo[authKeyID] = info
 }
 
-// forgetClientSessionInfo 随连接下线移除该 session 的元数据缓存条目，并清掉以该 raw
-// auth_key 为键的 authInfo 兜底条目，使 authInfo 收敛到活跃 raw auth key（主导的单
-// session/key 场景下严格回收）。共享同一 raw auth_key 的其它 session 若仍在线，会在下一次
-// initConnection/authorization 回填——authInfo 只是廉价的元数据兜底。temp→perm 解析后以
-// 业务 perm key 为键的条目仍靠容量上限兜底（SessionOffline 不带业务 key，无法在此精确清理）。
+func (r *Router) rememberAuthClientLayerObservationLocked(authKeyID [8]byte, layer int, observationID int64) {
+	if authKeyID == ([8]byte{}) || !isSupportedLayer(layer) || observationID <= 0 {
+		return
+	}
+	if r.authInfo == nil {
+		r.authInfo = make(map[[8]byte]clientSessionInfo)
+	}
+	if _, exists := r.authInfo[authKeyID]; !exists {
+		evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+	}
+	info := r.authInfo[authKeyID]
+	if info.layerObservationID > observationID {
+		return
+	}
+	if info.layerObservationID == observationID && info.layerObservationID > 0 && info.layer != 0 && info.layer != layer {
+		return
+	}
+	info.layer = layer
+	info.layerObservationID = observationID
+	// Durable database order supersedes any process-local admission order for
+	// the shared default. Exact request/session ordering remains in its own
+	// msg_id/flight structures.
+	info.layerAdmissionSeq = 0
+	info.layerBlocked = false
+	info.layerBlockedByAuthKey = false
+	r.authInfo[authKeyID] = info
+}
+
+func (r *Router) authClientLayerLocked(authKeyID [8]byte) int {
+	return r.authInfo[authKeyID].layer
+}
+
+// forgetClientSessionInfo removes only transport/session-local metadata. The
+// auth-key default is durable protocol state and stays cached across ordinary
+// disconnects; the bounded authInfo map handles eviction.
 func (r *Router) forgetClientSessionInfo(rawAuthKeyID [8]byte, sessionID int64) {
 	r.clientInfoMu.Lock()
-	delete(r.clientInfo, clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID})
-	delete(r.authInfo, rawAuthKeyID)
+	key := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	if current := r.clientInfo[key]; current.wrapperMsgID > 0 || current.layerAdmissionSeq > 0 {
+		// Preserve only the bounded ordering watermark across a physical
+		// reconnect; metadata is restored from the auth-key default/store.
+		r.clientInfo[key] = clientSessionInfo{
+			layerAdmissionSeq: current.layerAdmissionSeq,
+			wrapperMsgID:      current.wrapperMsgID,
+		}
+	} else {
+		delete(r.clientInfo, key)
+	}
 	r.clientInfoMu.Unlock()
+}
+
+func (r *Router) claimSessionWrapperEffects(rawAuthKeyID [8]byte, sessionID, msgID int64) bool {
+	if msgID <= 0 {
+		return true
+	}
+	if rawAuthKeyID == ([8]byte{}) || sessionID == 0 {
+		return false
+	}
+	key := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	r.clientInfoMu.Lock()
+	defer r.clientInfoMu.Unlock()
+	if r.clientInfo == nil {
+		r.clientInfo = make(map[clientInfoSessionKey]clientSessionInfo)
+	}
+	current, exists := r.clientInfo[key]
+	if current.wrapperMsgID > msgID {
+		return false
+	}
+	if current.wrapperMsgID == msgID {
+		return true
+	}
+	if !exists {
+		evictMapEntryIfFullLocked(r.clientInfo, maxClientInfoEntries)
+	}
+	current.wrapperMsgID = msgID
+	r.clientInfo[key] = current
+	return true
 }
 
 func evictMapEntryIfFullLocked[K comparable, V any](m map[K]V, limit int) {
@@ -1081,15 +1493,17 @@ func (r *Router) clientSessionInfo(ctx context.Context) (clientSessionInfo, bool
 	defer r.clientInfoMu.RUnlock()
 	info, ok := r.clientInfo[clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}]
 	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
-	if authInfo, authOK := r.authInfo[rawAuthKeyID]; authOK {
-		info = mergeClientSessionInfo(info, authInfo)
-		ok = true
-	}
+	// For a bound temporary key, the permanent/business auth key is the
+	// canonical shared default. The raw shadow is only a pre-bind/restart aid.
 	if hasAuthKeyID {
 		if authInfo, authOK := r.authInfo[authKeyID]; authOK {
 			info = mergeClientSessionInfo(info, authInfo)
 			ok = true
 		}
+	}
+	if authInfo, authOK := r.authInfo[rawAuthKeyID]; authOK {
+		info = mergeClientSessionInfo(info, authInfo)
+		ok = true
 	}
 	if !ok {
 		return info, false, false
@@ -1132,7 +1546,7 @@ func (r *Router) clientSessionInfoFromAuthKey(ctx context.Context, authKeyID [8]
 		if !found {
 			return clientSessionInfo{authKeyInfoChecked: true}, nil
 		}
-		return clientSessionInfoFromAuthKeyClientInfo(info, current), nil
+		return clientSessionInfoFromAuthKeyClientInfo(info), nil
 	})
 	if err != nil {
 		return clientSessionInfo{}, false
@@ -1145,7 +1559,13 @@ func (r *Router) clientSessionInfoFromAuthKey(ctx context.Context, authKeyID [8]
 }
 
 func mergeClientSessionInfo(base, fallback clientSessionInfo) clientSessionInfo {
-	if base.layer == 0 {
+	switch {
+	case fallback.layerObservationID > base.layerObservationID:
+		base.layer = fallback.layer
+		base.layerObservationID = fallback.layerObservationID
+		base.layerBlocked = fallback.layerBlocked
+		base.layerBlockedByAuthKey = fallback.layerBlockedByAuthKey
+	case fallback.layerObservationID == base.layerObservationID && base.layer == 0:
 		base.layer = fallback.layer
 	}
 	if !base.hasClientInfo && fallback.hasClientInfo {
@@ -1158,13 +1578,26 @@ func mergeClientSessionInfo(base, fallback clientSessionInfo) clientSessionInfo 
 	if fallback.authKeyInfoChecked {
 		base.authKeyInfoChecked = true
 	}
+	if fallback.layerBlocked && base.layer == 0 {
+		base.layerBlocked = true
+	}
+	if fallback.layerBlockedByAuthKey && base.layer == 0 {
+		base.layerBlockedByAuthKey = true
+	}
+	if base.layer != 0 {
+		base.layerBlocked = false
+		base.layerBlockedByAuthKey = false
+	}
+	if fallback.wrapperMsgID > base.wrapperMsgID {
+		base.wrapperMsgID = fallback.wrapperMsgID
+	}
 	return base
 }
 
-func clientSessionInfoFromAuthKeyClientInfo(item domain.AuthKeyClientInfo, current clientSessionInfo) clientSessionInfo {
+func clientSessionInfoFromAuthKeyClientInfo(item domain.AuthKeyClientInfo) clientSessionInfo {
 	info := clientSessionInfo{
-		layer:              item.Layer,
 		authKeyInfoChecked: true,
+		layerObservationID: item.LayerObservationID,
 		clientInfo: ClientInfo{
 			APIID:         item.APIID,
 			DeviceModel:   item.DeviceModel,
@@ -1173,15 +1606,22 @@ func clientSessionInfoFromAuthKeyClientInfo(item domain.AuthKeyClientInfo, curre
 			Type:          ClientType(item.Platform),
 		},
 	}
+	if isSupportedLayer(item.Layer) {
+		info.layer = item.Layer
+	} else if item.Layer != 0 {
+		// A non-zero auth_keys.layer is primary even when this binary has not
+		// generated it. Mark the mirror checked so an older authorization.layer
+		// cannot silently downgrade the future value.
+		info.authorizationChecked = true
+		info.layerBlocked = true
+		info.layerBlockedByAuthKey = true
+	}
 	info.clientInfo = restoreClientInfo(info.clientInfo)
 	info.hasClientInfo = info.clientInfo.ClientType() != ClientTypeUnknown ||
 		info.clientInfo.DeviceModel != "" ||
 		info.clientInfo.SystemVersion != "" ||
 		info.clientInfo.AppVersion != "" ||
 		info.clientInfo.APIID != 0
-	if info.layer == 0 && current.layer != 0 {
-		info.layer = current.layer
-	}
 	return info
 }
 
@@ -1212,7 +1652,7 @@ func (r *Router) clientSessionInfoFromAuthorization(ctx context.Context, userID 
 		if !found || item.UserID != userID || item.PasswordPending {
 			return clientSessionInfo{authorizationChecked: true}, nil
 		}
-		return clientSessionInfoFromAuthorizationRecord(item, current), nil
+		return clientSessionInfoFromAuthorizationRecord(item), nil
 	})
 	if err != nil {
 		return clientSessionInfo{}, false
@@ -1220,9 +1660,8 @@ func (r *Router) clientSessionInfoFromAuthorization(ctx context.Context, userID 
 	return v.(clientSessionInfo), true
 }
 
-func clientSessionInfoFromAuthorizationRecord(item domain.Authorization, current clientSessionInfo) clientSessionInfo {
+func clientSessionInfoFromAuthorizationRecord(item domain.Authorization) clientSessionInfo {
 	info := clientSessionInfo{
-		layer:                item.Layer,
 		authorizationChecked: true,
 		clientInfo: ClientInfo{
 			APIID:         item.APIID,
@@ -1232,17 +1671,16 @@ func clientSessionInfoFromAuthorizationRecord(item domain.Authorization, current
 			Type:          ClientType(item.Platform),
 		},
 	}
+	// authorizations.layer is only a materialized device-list projection.
+	// Protocol inheritance is exclusively sourced from auth_keys.layer with its
+	// observation watermark; promoting this mirror would fabricate provenance
+	// when the primary is zero or has been repaired independently.
 	info.clientInfo = restoreClientInfo(info.clientInfo)
 	info.hasClientInfo = info.clientInfo.ClientType() != ClientTypeUnknown ||
 		info.clientInfo.DeviceModel != "" ||
 		info.clientInfo.SystemVersion != "" ||
 		info.clientInfo.AppVersion != "" ||
 		info.clientInfo.APIID != 0
-	if info.layer == 0 {
-		if current.layer != 0 {
-			info.layer = current.layer
-		}
-	}
 	return info
 }
 
@@ -1263,11 +1701,6 @@ func clientSessionInfoNeedsAuthKeyInfo(info clientSessionInfo) bool {
 // fallback 处理未注册的 RPC：记录到 compatibility trace（落兼容矩阵），
 // 返回 NOT_IMPLEMENTED rpc_error 让客户端继续运行而非断连。
 func (r *Router) fallback(ctx context.Context, b *bin.Buffer) (bin.Encoder, error) {
-	// DrKLO 12.8.1 的 theme 方法构造器比 gotd schema 新,dispatcher 匹配不上;
-	// 在落到「未实现」前先按 DrKLO 字段序手动解码处理。
-	if enc, handled, err := r.tryLegacyThemeRPC(ctx, b); handled {
-		return enc, err
-	}
 	id, _ := b.PeekID()
 	fields := append([]zap.Field{
 		zap.String("method", tlTypeName(id)),

@@ -5,6 +5,11 @@ written in Go. It is a Telegram-like backend for real client compatibility,
 self-hosted chat experiments, protocol research, and long-running work toward a
 practical community server.
 
+The protocol stack is built on the published
+[`github.com/iamxvbaba/td`](https://github.com/iamxvbaba/td) module
+(`v1.0.0`), using a canonical Layer 228 schema with exact Layer 225-228
+compatibility profiles.
+
 If you are looking for a **Telegram server**, **MTProto server**,
 **Telegram backend**, **Telegram clone server**, or **self-hosted
 Telegram-like chat server**, this repository is the server-side implementation
@@ -40,7 +45,7 @@ codebase.
 
 | Status | Feature | What works today |
 |---|---|---|
-| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, and layer compatibility helpers. |
+| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 228, and exact Layer 225-228 compatibility profiles. |
 | ✅ | Login and accounts | Development login code, sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, email/passkey-oriented paths. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
@@ -214,7 +219,8 @@ minimal protocol patch.
 Current Telegram Desktop baseline:
 
 - Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
-- TL layer: 227
+- Canonical TL layer: 228
+- Exact compatibility profiles: Layer 225-228
 - Local DC: `127.0.0.1:2398`, DC id `2`
 
 After `gramsrv` generates `data/server_rsa.pem`, export the matching public key:

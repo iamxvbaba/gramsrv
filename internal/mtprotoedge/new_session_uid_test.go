@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // TestNewSessionCreatedUniqueIDPerSession 验证两次 session 建立收到的

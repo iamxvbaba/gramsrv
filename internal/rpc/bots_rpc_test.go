@@ -8,8 +8,8 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 
 	botsapp "telesrv/internal/app/bots"
 	appusers "telesrv/internal/app/users"

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appmessages "telesrv/internal/app/messages"
@@ -538,7 +538,7 @@ func (f *fakeFiles) CreatePhotoFromBytes(_ context.Context, data []byte) (domain
 	return f.putPhoto(photo), nil
 }
 func (f *fakeFiles) CreateAvatarFromUpload(_ context.Context, _ domain.UploadedFileRef) (domain.Photo, error) {
-	photo := domain.Photo{ID: 778, AccessHash: 7, DCID: 2, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "a", W: 160, H: 160}, {Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640}}}
+	photo := domain.Photo{ID: 778, AccessHash: 7, DCID: 2, Sizes: fakeAvatarStaticSizes()}
 	return f.putPhoto(photo), nil
 }
 func (f *fakeFiles) CreateAvatarVideoFromUpload(_ context.Context, _ domain.UploadedFileRef, videoStartTs float64) (domain.Photo, error) {
@@ -558,6 +558,7 @@ func (f *fakeFiles) CreateAvatarMarkup(_ context.Context, size domain.PhotoSize)
 
 func fakeAvatarStaticSizes() []domain.PhotoSize {
 	return []domain.PhotoSize{
+		{Kind: domain.PhotoSizeKindDefault, Type: "s", W: 150, H: 150, Size: 900},
 		{Kind: domain.PhotoSizeKindDefault, Type: "a", W: 160, H: 160, Size: 1024},
 		{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 1024},
 	}

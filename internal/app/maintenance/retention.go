@@ -17,6 +17,13 @@ type TempAuthKeyRetentionStore interface {
 	DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error)
 }
 
+// AuthKeySessionLayerRetentionStore reclaims expired short-lived Layer
+// watermarks. Selector freshness, not retention timing, is the correctness
+// gate; this worker only bounds durable storage.
+type AuthKeySessionLayerRetentionStore interface {
+	DeleteExpiredSessionLayers(ctx context.Context, limit int) (int, error)
+}
+
 // OrphanAuthKeyRetentionStore 回收从未形成授权/temp binding 的旧握手 key。
 // protected 是当前连接注册表实际使用的 raw auth_key_id 快照。
 type OrphanAuthKeyRetentionStore interface {
@@ -86,7 +93,8 @@ const (
 // updates 服务通过普通 differenceSlice checkpoint 推进，不发送 differenceTooLong。
 type RetentionWorker struct {
 	outbox                 DispatchOutboxRetentionStore
-	tempKeys               TempAuthKeyRetentionStore  // 可为 nil（不回收 temp key 绑定）
+	tempKeys               TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
+	authKeySessionLayers   AuthKeySessionLayerRetentionStore
 	botAPIUpdates          BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
 	userUpdates            UserUpdateEventRetentionStore
 	channelUpdates         ChannelUpdateEventRetentionStore
@@ -176,6 +184,13 @@ func (w *RetentionWorker) WithLoginCodeDeliveryRetention(store LoginCodeDelivery
 	return w
 }
 
+// WithAuthKeySessionLayerRetention enables bounded seek cleanup for expired
+// per-session Layer evidence.
+func (w *RetentionWorker) WithAuthKeySessionLayerRetention(store AuthKeySessionLayerRetentionStore) *RetentionWorker {
+	w.authKeySessionLayers = store
+	return w
+}
+
 // WithOrphanAuthKeyRetention 启用未授权握手 key 的有界回收。active 必须提供 raw key，
 // 不能提供 temp→perm business key；否则未登录或 PFS 连接会被误判为 orphan。
 func (w *RetentionWorker) WithOrphanAuthKeyRetention(store OrphanAuthKeyRetentionStore, active ActiveRawAuthKeyProvider, retention time.Duration) *RetentionWorker {
@@ -243,6 +258,14 @@ func (w *RetentionWorker) runOutboxPoisonOnce(ctx context.Context) {
 }
 
 func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
+	if w.authKeySessionLayers != nil {
+		deleted, err := w.authKeySessionLayers.DeleteExpiredSessionLayers(ctx, w.batch)
+		if err != nil {
+			w.logger.Warn("回收过期 auth-key session Layer 证据失败", zap.Error(err))
+		} else if deleted > 0 {
+			w.logger.Info("回收过期 auth-key session Layer 证据完成", zap.Int("deleted", deleted))
+		}
+	}
 	if w.loginCodeDeliveries != nil {
 		deleted, err := w.loginCodeDeliveries.DeleteExpiredLoginCodeDeliveries(ctx, time.Now(), w.batch)
 		if err != nil {

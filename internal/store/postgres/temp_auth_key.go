@@ -16,19 +16,99 @@ import (
 
 // TempAuthKeyBindingStore 用 PostgreSQL 实现 store.TempAuthKeyBindingStore。
 type TempAuthKeyBindingStore struct {
-	q *sqlcgen.Queries
+	db sqlcgen.DBTX
+	q  *sqlcgen.Queries
 }
 
 // NewTempAuthKeyBindingStore 基于 pgx 连接池（或事务）创建 TempAuthKeyBindingStore。
 func NewTempAuthKeyBindingStore(db sqlcgen.DBTX) *TempAuthKeyBindingStore {
-	return &TempAuthKeyBindingStore{q: sqlcgen.New(db)}
+	return &TempAuthKeyBindingStore{db: db, q: sqlcgen.New(db)}
 }
 
 func (s *TempAuthKeyBindingStore) Save(ctx context.Context, b domain.TempAuthKeyBinding) error {
 	if b.ExpiresAt <= 0 || int64(b.ExpiresAt) > math.MaxInt32 {
 		return store.ErrAuthKeyBindingInvalid
 	}
-	n, err := s.q.UpsertTempAuthKeyBinding(ctx, sqlcgen.UpsertTempAuthKeyBindingParams{
+	return withAuthIdentityTx(ctx, s.db, "save temp auth key binding", func(tx pgx.Tx) error {
+		return s.saveTx(ctx, tx, b)
+	})
+}
+
+func (s *TempAuthKeyBindingStore) saveTx(ctx context.Context, tx pgx.Tx, b domain.TempAuthKeyBinding) error {
+	rawID := authKeyIDToInt64(b.TempAuthKeyID)
+	permID := b.PermAuthKeyID
+	// Every operation that may bridge temp and permanent rows enters the
+	// permanent identity gate before taking the raw-key row lock. This is the
+	// same gate/order used by selector advance and permanent revocation.
+	if err := lockPermanentAuthIdentities(ctx, tx, []int64{permID}); err != nil {
+		return err
+	}
+	var (
+		tempExpiry        int
+		tempLayer         int
+		tempObservationID int64
+	)
+	if err := tx.QueryRow(ctx, `
+SELECT expires_at, layer, layer_observation_id
+FROM auth_keys
+WHERE auth_key_id = $1
+FOR UPDATE
+`, rawID).Scan(&tempExpiry, &tempLayer, &tempObservationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrAuthKeyBindingInvalid
+		}
+		return fmt.Errorf("lock temporary auth key for binding: %w", err)
+	}
+	if tempExpiry <= 0 || tempExpiry != b.ExpiresAt || rawID == permID {
+		return store.ErrAuthKeyBindingInvalid
+	}
+
+	// The raw row serializes first bind and rebind attempts. Read the binding
+	// only after taking that lock, so a concurrent winner is either visible or
+	// still waiting behind us. A different permanent identity is immutable.
+	var currentPermID int64
+	err := tx.QueryRow(ctx, `
+SELECT perm_auth_key_id
+FROM temp_auth_key_bindings
+WHERE temp_auth_key_id = $1
+`, rawID).Scan(&currentPermID)
+	switch {
+	case err == nil && currentPermID != permID:
+		return store.ErrTempAuthKeyAlreadyBound
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return fmt.Errorf("read existing temporary auth key binding: %w", err)
+	}
+
+	var (
+		permExpiry        int
+		permLayer         int
+		permObservationID int64
+	)
+	if err := tx.QueryRow(ctx, `
+SELECT expires_at, layer, layer_observation_id
+FROM auth_keys
+WHERE auth_key_id = $1
+FOR UPDATE
+`, permID).Scan(&permExpiry, &permLayer, &permObservationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrAuthKeyBindingInvalid
+		}
+		return fmt.Errorf("lock permanent auth key for binding: %w", err)
+	}
+	if permExpiry != 0 {
+		return store.ErrAuthKeyBindingInvalid
+	}
+
+	mergedLayer, mergedObservationID, err := store.MergeAuthKeyLayerObservations(
+		tempLayer, tempObservationID,
+		permLayer, permObservationID,
+	)
+	if err != nil {
+		return err
+	}
+
+	q := s.q.WithTx(tx)
+	n, err := q.UpsertTempAuthKeyBinding(ctx, sqlcgen.UpsertTempAuthKeyBindingParams{
 		TempAuthKeyID:    authKeyIDToInt64(b.TempAuthKeyID),
 		PermAuthKeyID:    b.PermAuthKeyID,
 		Nonce:            b.Nonce,
@@ -44,12 +124,27 @@ func (s *TempAuthKeyBindingStore) Save(ctx context.Context, b domain.TempAuthKey
 		return fmt.Errorf("upsert temp auth key binding: %w", err)
 	}
 	if n == 0 {
-		if current, found, getErr := s.GetByTemp(ctx, b.TempAuthKeyID); getErr != nil {
-			return getErr
-		} else if found && current.PermAuthKeyID != b.PermAuthKeyID {
-			return store.ErrTempAuthKeyAlreadyBound
-		}
 		return store.ErrAuthKeyBindingInvalid
+	}
+	keyIDs := []int64{rawID, permID}
+	tag, err := tx.Exec(ctx, `
+UPDATE auth_keys
+SET layer = $2,
+    layer_observation_id = $3
+WHERE auth_key_id = ANY($1::bigint[])
+`, keyIDs, mergedLayer, mergedObservationID)
+	if err != nil {
+		return fmt.Errorf("merge bound auth key layer defaults: %w", err)
+	}
+	if tag.RowsAffected() != int64(len(keyIDs)) {
+		return fmt.Errorf("merge bound auth key layer defaults: updated %d of %d locked keys", tag.RowsAffected(), len(keyIDs))
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE authorizations
+SET layer = $2
+WHERE auth_key_id = ANY($1::bigint[])
+`, keyIDs, mergedLayer); err != nil {
+		return fmt.Errorf("mirror bound auth key layer default: %w", err)
 	}
 	return nil
 }

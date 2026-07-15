@@ -2,78 +2,82 @@ package mtprotoedge
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 )
 
-// TestConnDowngradedClone verifies the outbound seam downgrades a canonical
-// (227) object to the connection's negotiated layer, is a no-op for 227, and
-// — critically for push fan-out — never mutates the shared input message (one
-// pre-encoded update is reused across many connections of differing layers).
-func TestConnDowngradedClone(t *testing.T) {
-	const (
-		message227CRC = 0x7600b9d3
-		message220CRC = 0xb92f76cf
-	)
-	msg := &tg.Message{
-		ID:      2,
-		FromID:  &tg.PeerUser{UserID: 3},
-		PeerID:  &tg.PeerUser{UserID: 3},
-		Date:    1,
-		Message: "hi",
-	}
+type countingLayerRPCResult struct {
+	inner        tg.LayerRPCResult
+	encodeCalls  atomic.Int32
+	prepareCalls atomic.Int32
+}
 
-	// layer 220: returns a NEW message rewritten to the 220 constructor id,
-	// leaving the shared input untouched (227).
-	enc, err := encodeOutboundMessage(msg)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	c := &Conn{metrics: NopMetrics{}}
-	c.SetClientLayer(220)
-	out := c.downgradedClone(enc)
+const (
+	testChannelWireID227 uint32 = 0x1c32b11c
+	testChannelWireID228 uint32 = 0xd49f34c6
+)
 
-	if id, _ := (&bin.Buffer{Buf: out.body}).PeekID(); id != message220CRC {
-		t.Fatalf("downgraded id = %#08x, want %#08x", id, message220CRC)
+func testChannelWireID(profile tg.LayerProfile) uint32 {
+	if profile == tg.LayerProfile228 {
+		return testChannelWireID228
 	}
-	if out.typeID != message220CRC {
-		t.Fatalf("downgraded typeID = %#08x, want %#08x", out.typeID, message220CRC)
-	}
-	// Input must be unmodified — this is what makes shared push fan-out safe.
-	if id, _ := (&bin.Buffer{Buf: enc.body}).PeekID(); id != message227CRC {
-		t.Fatalf("input message was mutated: id now %#08x, want 227 %#08x", id, message227CRC)
-	}
+	return testChannelWireID227
+}
 
-	// Two connections sharing one pre-encoded message get independent results.
-	encShared, _ := encodeOutboundMessage(msg)
-	c220 := &Conn{metrics: NopMetrics{}}
-	c220.SetClientLayer(220)
-	c227 := &Conn{metrics: NopMetrics{}} // ClientLayer() defaults to 227
-	out220 := c220.downgradedClone(encShared)
-	out227 := c227.downgradedClone(encShared)
-	if id, _ := (&bin.Buffer{Buf: out220.body}).PeekID(); id != message220CRC {
-		t.Fatalf("shared->220 id = %#08x, want %#08x", id, message220CRC)
+func testOtherChannelWireID(profile tg.LayerProfile) uint32 {
+	if profile == tg.LayerProfile228 {
+		return testChannelWireID227
 	}
-	if out227 != encShared {
-		t.Errorf("227 connection should pass the shared message through unchanged (same pointer)")
-	}
-	if !bytes.Equal(encShared.body, out227.body) {
-		t.Errorf("227 passthrough altered bytes")
+	return testChannelWireID228
+}
+
+func testLayerChannel() *tg.Channel {
+	return &tg.Channel{
+		ID:    100,
+		Title: "layer proof",
+		Photo: &tg.ChatPhotoEmpty{},
+		Date:  1,
 	}
 }
 
-func TestEncodeRPCResultDowngradesDifferenceMessagesForNegotiatedLayer225(t *testing.T) {
-	const (
-		message227CRC = 0x7600b9d3
-		message225CRC = 0x95ef6f2b
-	)
-	c := &Conn{metrics: NopMetrics{}}
-	c.SetClientLayer(225)
+func (r *countingLayerRPCResult) Encode(b *bin.Buffer) error {
+	r.encodeCalls.Add(1)
+	return r.inner.Encode(b)
+}
+
+func (r *countingLayerRPCResult) Prepared() tg.LayerPreparedCall { return r.inner.Prepared() }
+
+func (r *countingLayerRPCResult) WireInvariant() bool { return r.inner.WireInvariant() }
+
+func (r *countingLayerRPCResult) Freeze() (tg.LayerFrozenResult, error) {
+	return r.inner.Freeze()
+}
+
+func (r *countingLayerRPCResult) Prepare() (tg.LayerPreparedResult, error) {
+	r.prepareCalls.Add(1)
+	return r.inner.Prepare()
+}
+
+func TestExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T) {
+	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227, tg.LayerProfile228} {
+		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
+			testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t, profile)
+		})
+	}
+}
+
+func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, profile tg.LayerProfile) {
+	t.Helper()
 	diff := &tg.UpdatesDifference{
 		NewMessages: []tg.MessageClass{
 			&tg.Message{
@@ -86,116 +90,190 @@ func TestEncodeRPCResultDowngradesDifferenceMessagesForNegotiatedLayer225(t *tes
 		},
 		NewEncryptedMessages: []tg.EncryptedMessageClass{},
 		OtherUpdates:         []tg.UpdateClass{},
-		Chats:                []tg.ChatClass{},
+		Chats:                []tg.ChatClass{testLayerChannel()},
 		Users:                []tg.UserClass{},
 		State:                tg.UpdatesState{Pts: 2, Date: 1},
 	}
 
+	dispatcher := tg.NewServerDispatcher(nil)
+	dispatcher.OnUpdatesGetDifference(func(context.Context, *tg.UpdatesGetDifferenceRequest) (tg.UpdatesDifferenceClass, error) {
+		return diff, nil
+	})
+	outbound, err := tg.PrepareLayerOutboundCall(profile, &tg.UpdatesGetDifferenceRequest{Pts: 1, Date: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestBody bin.Buffer
+	if err := outbound.Encode(&requestBody); err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := dispatcher.AdmitLayer(profile, &requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverResult, err := dispatcher.DispatchAdmitted(context.Background(), admitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := &countingLayerRPCResult{inner: serverResult}
+	exact := &layerRPCResultEncoder{call: counted.Prepared().Call(), result: counted}
+
+	c := &Conn{metrics: NopMetrics{}, msgID: proto.NewMessageIDGen(time.Now)}
+	if err := c.FreezeLayerProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate an invokeWithLayer correction admitted while this handler was
+	// still running. The result must retain the request's admitted profile.
+	corrected := tg.LayerProfile227
+	if profile == tg.LayerProfile227 {
+		corrected = tg.LayerProfile225
+	}
+	if err := c.FreezeLayerProfile(corrected); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{log: zaptest.NewLogger(t)}
-	encoded, err := s.encodeRPCResult(c, 12345, diff)
+	encoded, err := s.encodeRPCResult(c, 12345, exact)
 	if err != nil {
 		t.Fatalf("encode rpc_result: %v", err)
 	}
-	var result proto.Result
-	if err := result.Decode(&bin.Buffer{Buf: encoded.body}); err != nil {
+	if got := counted.prepareCalls.Load(); got != 0 {
+		t.Fatalf("generated Prepare calls = %d, want 0; inbound workers must not snapshot result bytes", got)
+	}
+	if got := counted.encodeCalls.Load(); got != 1 {
+		t.Fatalf("generated Encode calls = %d, want exactly 1 under outbound admission", got)
+	}
+	if encoded.layer == nil || encoded.layer.profile != profile || encoded.layer.typ != admitted.Call().WireResultType() {
+		t.Fatalf("result binding = %#v, want profile %d and admitted result TypeRef", encoded.layer, profile)
+	}
+	if encoded.layer.kind != outboundLayerBindingRequest {
+		t.Fatalf("exact RPC result binding kind = %d, want request-bound", encoded.layer.kind)
+	}
+	beforeFrame := append([]byte(nil), encoded.body...)
+	frame, err := c.buildFrame(context.Background(), proto.MessageServerResponse, nil, encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(frame.body, beforeFrame) {
+		t.Fatal("exact RPC result was transcoded after generated preparation")
+	}
+	var rpcEnvelope proto.Result
+	if err := rpcEnvelope.Decode(&bin.Buffer{Buf: frame.body}); err != nil {
 		t.Fatalf("decode rpc_result: %v", err)
 	}
-	if result.RequestMessageID != 12345 {
-		t.Fatalf("req_msg_id = %d, want 12345", result.RequestMessageID)
+	if rpcEnvelope.RequestMessageID != 12345 {
+		t.Fatalf("req_msg_id = %d, want 12345", rpcEnvelope.RequestMessageID)
 	}
-	if !bytes.Contains(result.Result, littleEndianID(message225CRC)) {
-		t.Fatalf("rpc_result inner object does not contain layer 225 message id %#08x", message225CRC)
+	wantChannelID := testChannelWireID(profile)
+	if !bytes.Contains(rpcEnvelope.Result, littleEndianID(wantChannelID)) {
+		t.Fatalf("profile %d offline difference lacks channel constructor %#08x", profile, wantChannelID)
 	}
-	if bytes.Contains(result.Result, littleEndianID(message227CRC)) {
-		t.Fatalf("rpc_result inner object still contains canonical message id %#08x", message227CRC)
+	if otherChannelID := testOtherChannelWireID(profile); bytes.Contains(rpcEnvelope.Result, littleEndianID(otherChannelID)) {
+		t.Fatalf("profile %d offline difference leaked channel constructor %#08x", profile, otherChannelID)
+	}
+	inner := bin.Buffer{Buf: rpcEnvelope.Result}
+	decoded, err := tg.DecodeLayer(profile, tg.LayerClassUpdatesDifferenceType(), &inner)
+	if err != nil {
+		t.Fatalf("decode exact difference: %v", err)
+	}
+	if inner.Len() != 0 {
+		t.Fatalf("exact difference left %d bytes", inner.Len())
+	}
+	got, ok := decoded.(*tg.UpdatesDifference)
+	message, messageOK := func() (*tg.Message, bool) {
+		if !ok || len(got.NewMessages) != 1 {
+			return nil, false
+		}
+		value, valueOK := got.NewMessages[0].(*tg.Message)
+		return value, valueOK
+	}()
+	if !messageOK || message.ID != 2 {
+		t.Fatalf("decoded exact difference = %#v", decoded)
+	}
+	if len(got.Chats) != 1 {
+		t.Fatalf("decoded exact difference chats = %#v", got.Chats)
+	}
+	channel, channelOK := got.Chats[0].(*tg.Channel)
+	if !channelOK || channel.ID != 100 {
+		t.Fatalf("decoded exact difference channel = %#v", got.Chats)
 	}
 }
 
-func TestEncodeRPCResultDowngradesDialogMessagesForNegotiatedLayer225(t *testing.T) {
-	const (
-		message227CRC = 0x7600b9d3
-		message225CRC = 0x95ef6f2b
-	)
-	c := &Conn{metrics: NopMetrics{}}
-	c.SetClientLayer(225)
-	dialogs := &tg.MessagesDialogs{
-		Dialogs: []tg.DialogClass{
-			&tg.Dialog{
-				Peer:           &tg.PeerUser{UserID: 3},
-				TopMessage:     2,
-				NotifySettings: tg.PeerNotifySettings{},
-			},
-		},
-		Messages: []tg.MessageClass{
-			&tg.Message{
-				ID:      2,
-				FromID:  &tg.PeerUser{UserID: 3},
-				PeerID:  &tg.PeerUser{UserID: 3},
-				Date:    1,
-				Message: "hi",
-			},
-		},
-		Chats: []tg.ChatClass{},
-		Users: []tg.UserClass{
-			&tg.User{ID: 3, AccessHash: 5, FirstName: "A"},
-		},
-	}
-
-	s := &Server{log: zaptest.NewLogger(t)}
-	encoded, err := s.encodeRPCResult(c, 12345, dialogs)
+func TestExactLayerRPCResultUsesHistoricalMethodResultType(t *testing.T) {
+	const profile = tg.LayerProfile225
+	dispatcher := tg.NewServerDispatcher(nil)
+	dispatcher.OnChannelsJoinChannel(func(context.Context, tg.InputChannelClass) (tg.MessagesChatInviteJoinResultClass, error) {
+		return &tg.MessagesChatInviteJoinResultOk{Updates: &tg.UpdatesTooLong{}}, nil
+	})
+	outbound, err := tg.PrepareLayerOutboundCall(profile, &tg.ChannelsJoinChannelRequest{Channel: &tg.InputChannelEmpty{}})
 	if err != nil {
-		t.Fatalf("encode rpc_result: %v", err)
+		t.Fatal(err)
 	}
-	var result proto.Result
-	if err := result.Decode(&bin.Buffer{Buf: encoded.body}); err != nil {
-		t.Fatalf("decode rpc_result: %v", err)
+	var requestBody bin.Buffer
+	if err := outbound.Encode(&requestBody); err != nil {
+		t.Fatal(err)
 	}
-	if !bytes.Contains(result.Result, littleEndianID(message225CRC)) {
-		t.Fatalf("rpc_result inner object does not contain layer 225 message id %#08x", message225CRC)
+	admitted, err := dispatcher.AdmitLayer(profile, &requestBody)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(result.Result, littleEndianID(message227CRC)) {
-		t.Fatalf("rpc_result inner object still contains canonical message id %#08x", message227CRC)
+	if admitted.Call().WireID() == tg.ChannelsJoinChannelRequestTypeID {
+		t.Fatal("historical request unexpectedly retained canonical method id")
+	}
+	serverResult, err := dispatcher.DispatchAdmitted(context.Background(), admitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact := &layerRPCResultEncoder{call: serverResult.Prepared().Call(), result: serverResult}
+	c := &Conn{metrics: NopMetrics{}}
+	if err := c.FreezeLayerProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := (&Server{log: zaptest.NewLogger(t)}).encodeRPCResult(c, 67890, exact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rpcEnvelope proto.Result
+	if err := rpcEnvelope.Decode(&bin.Buffer{Buf: encoded.body}); err != nil {
+		t.Fatal(err)
+	}
+	inner := bin.Buffer{Buf: rpcEnvelope.Result}
+	updates, err := tg.DecodeLayer(profile, tg.LayerClassUpdatesType(), &inner)
+	if err != nil {
+		t.Fatalf("decode historical channels.joinChannel result: %v", err)
+	}
+	if inner.Len() != 0 {
+		t.Fatalf("historical result left %d bytes", inner.Len())
+	}
+	if _, ok := updates.(*tg.UpdatesTooLong); !ok {
+		t.Fatalf("historical result = %T, want Updates", updates)
 	}
 }
 
-func TestConnDowngradedCloneDowngradesUpdateNewMessageForLayer225(t *testing.T) {
-	const (
-		message227CRC = 0x7600b9d3
-		message225CRC = 0x95ef6f2b
-	)
-	updates := &tg.Updates{
-		Updates: []tg.UpdateClass{
-			&tg.UpdateNewMessage{
-				Message: &tg.Message{
-					ID:      2,
-					FromID:  &tg.PeerUser{UserID: 3},
-					PeerID:  &tg.PeerUser{UserID: 3},
-					Date:    1,
-					Message: "hi",
-				},
-				Pts:      2,
-				PtsCount: 1,
-			},
-		},
-		Users: []tg.UserClass{
-			&tg.User{ID: 3, AccessHash: 5, FirstName: "A"},
-		},
-		Chats: []tg.ChatClass{},
-		Date:  1,
-		Seq:   1,
-	}
-	enc, err := encodeOutboundMessage(updates)
-	if err != nil {
-		t.Fatalf("encode updates: %v", err)
-	}
+func TestProductionUnboundApplicationResultFailsClosedForLayer227(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}}
-	c.SetClientLayer(225)
-	out := c.downgradedClone(enc)
-	if !bytes.Contains(out.body, littleEndianID(message225CRC)) {
-		t.Fatalf("push update does not contain layer 225 message id %#08x", message225CRC)
+	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Contains(out.body, littleEndianID(message227CRC)) {
-		t.Fatalf("push update still contains canonical message id %#08x", message227CRC)
+	encoded, err := (&Server{log: zaptest.NewLogger(t)}).encodeRPCResult(c, 12345, testLayerChannel())
+	if !errors.Is(err, ErrOutboundLayerBindingRequired) {
+		t.Fatalf("unbound Layer 228 result error = %v, want %v", err, ErrOutboundLayerBindingRequired)
+	}
+	if encoded != nil {
+		t.Fatalf("unbound result produced %d wire bytes", len(encoded.body))
+	}
+}
+
+func TestProductionUnboundApplicationPushFailsClosedForLayer227(t *testing.T) {
+	c := &Conn{metrics: NopMetrics{}}
+	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := c.buildFrame(context.Background(), proto.MessageFromServer, testLayerChannelUpdatesValue(321), nil)
+	if !errors.Is(err, ErrOutboundLayerBindingRequired) {
+		t.Fatalf("unbound Layer 228 push error = %v, want %v", err, ErrOutboundLayerBindingRequired)
+	}
+	if frame != nil {
+		t.Fatalf("unbound push produced frame %#v", frame)
 	}
 }
 

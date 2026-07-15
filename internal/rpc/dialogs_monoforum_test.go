@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )

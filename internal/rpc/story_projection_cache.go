@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"golang.org/x/sync/singleflight"
 
 	"telesrv/internal/domain"

@@ -3,10 +3,11 @@ package rpc
 import (
 	"context"
 	"encoding/binary"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"fmt"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
@@ -182,7 +183,7 @@ func TestDispatchRemembersLayerAndClientTypeForSession(t *testing.T) {
 	entries = logs.FilterMessage("RPC inner handled").All()
 	fields = entries[len(entries)-1].ContextMap()
 	if got := intLogField(fields["layer"]); got != layer {
-		t.Fatalf("new session logged layer = %d fields=%v, want %d", got, fields, layer)
+		t.Fatalf("new session logged layer = %d fields=%v, want inherited %d", got, fields, layer)
 	}
 	if got := fields["client_type"]; got != string(ClientTypeTDesktop) {
 		t.Fatalf("new session logged client_type = %v, want %s", got, ClientTypeTDesktop)
@@ -331,7 +332,7 @@ func TestSendCodeAPIIDDoesNotOverwriteStrongTWebIdentity(t *testing.T) {
 	}
 }
 
-func TestDispatchRestoresPreLoginAndroidMetadataFromAuthKey(t *testing.T) {
+func TestDispatchRestoresPreLoginAndroidDescriptionWithoutLayer(t *testing.T) {
 	core, logs := observer.New(zap.DebugLevel)
 	authKeyID := [8]byte{0x22, 0xdb, 0xcf, 0xc8, 0x0d, 0x4c, 0x77, 0x97}
 	auth := &captureAuthService{
@@ -365,7 +366,7 @@ func TestDispatchRestoresPreLoginAndroidMetadataFromAuthKey(t *testing.T) {
 	}
 	fields := entries[len(entries)-1].ContextMap()
 	if got := intLogField(fields["layer"]); got != currentClientLayer {
-		t.Fatalf("logged layer = %d fields=%v, want %d", got, fields, currentClientLayer)
+		t.Fatalf("logged layer = %d fields=%v, want restored %d", got, fields, currentClientLayer)
 	}
 	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
 		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)
@@ -373,8 +374,8 @@ func TestDispatchRestoresPreLoginAndroidMetadataFromAuthKey(t *testing.T) {
 	if got := fields["app_version"]; got != "12.8.1 (69169) pbeta" {
 		t.Fatalf("logged app_version = %v, want 12.8.1 (69169) pbeta", got)
 	}
-	if got, ok := r.NegotiatedLayer(authKeyID, sessionID+1); !ok || got != currentClientLayer {
-		t.Fatalf("auth-key fallback layer = (%d,%v), want (%d,true)", got, ok, currentClientLayer)
+	if got, ok := r.NegotiatedLayer(authKeyID, sessionID); ok || got != currentClientLayer {
+		t.Fatalf("metadata-only negotiated layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 }
 
@@ -400,7 +401,7 @@ func TestAndroidLegacyCompatLogsClientMetadataWithoutInit(t *testing.T) {
 		t.Fatalf("dispatch legacy updates.getDifference: %v", err)
 	}
 
-	// The legacy Android constructor is upgraded by layerwire and dispatched
+	// The legacy Android constructor is upgraded by the gotdgen client overlay and dispatched
 	// normally; client metadata is still applied only because IsClientDrift
 	// positively identified a DrKLO constructor, now surfaced on the standard
 	// "RPC inner handled" log.
@@ -420,11 +421,10 @@ func TestAndroidLegacyCompatLogsClientMetadataWithoutInit(t *testing.T) {
 	}
 }
 
-// TestNegotiatedLayerStickyContract pins the (layer, ok) contract that keeps the
-// edge from clobbering a live connection's layer: unknown ⇒ ok=false (edge keeps
-// last-known), a recorded layer ⇒ ok=true, and a reconnect with a NEW session_id
-// still inherits the layer via the stable auth_key fallback.
-func TestNegotiatedLayerStickyContract(t *testing.T) {
+// TestNegotiatedLayerExactSessionContract pins the protocol-only boundary:
+// unknown ⇒ ok=false, invokeWithLayer evidence is sticky for the same logical
+// session, and another session on the same auth key remains unknown.
+func TestNegotiatedLayerExactSessionContract(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	authKey := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
 	const session = int64(42)
@@ -434,14 +434,20 @@ func TestNegotiatedLayerStickyContract(t *testing.T) {
 	}
 
 	ctx := WithSessionID(WithRawAuthKeyID(context.Background(), authKey), session)
-	r.rememberClientLayer(ctx, 220)
+	r.rememberClientLayer(ctx, 225)
 
-	if l, ok := r.NegotiatedLayer(authKey, session); !ok || l != 220 {
-		t.Fatalf("recorded = (%d,%v), want (220,true)", l, ok)
+	if l, ok := r.NegotiatedLayer(authKey, session); !ok || l != 225 {
+		t.Fatalf("recorded = (%d,%v), want (225,true)", l, ok)
 	}
-	// Reconnect: new session_id, same auth_key → inherits 220 (no re-invokeWithLayer).
-	if l, ok := r.NegotiatedLayer(authKey, 999); !ok || l != 220 {
-		t.Fatalf("reconnect new session = (%d,%v), want (220,true)", l, ok)
+	if l, ok := r.NegotiatedSessionLayer(authKey, session); !ok || l != 225 {
+		t.Fatalf("exact session seed = (%d,%v), want (225,true)", l, ok)
+	}
+	// A different logical session must provide its own protocol evidence.
+	if l, ok := r.NegotiatedLayer(authKey, 999); ok || l != currentClientLayer {
+		t.Fatalf("new session = (%d,%v), want (%d,false)", l, ok, currentClientLayer)
+	}
+	if l, ok := r.NegotiatedSessionLayer(authKey, 999); ok || l != 0 {
+		t.Fatalf("new-session exact seed = (%d,%v), want (0,false)", l, ok)
 	}
 	// Unrelated auth_key stays unknown.
 	if _, ok := r.NegotiatedLayer([8]byte{9, 9}, session); ok {
@@ -449,7 +455,7 @@ func TestNegotiatedLayerStickyContract(t *testing.T) {
 	}
 }
 
-func TestObservedClientLayerOverridesStaleAuthFallback(t *testing.T) {
+func TestObservedClientLayerNeverLeaksAcrossAuthKeySessions(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	rawAuthKey := [8]byte{0x68, 0x25, 0x7a, 0x01}
 	effectiveAuthKey := [8]byte{0x8b, 0x6f, 0x26, 0x17}
@@ -464,11 +470,11 @@ func TestObservedClientLayerOverridesStaleAuthFallback(t *testing.T) {
 	if got, ok := r.NegotiatedLayer(rawAuthKey, 100); !ok || got != 225 {
 		t.Fatalf("exact session layer = (%d,%v), want (225,true)", got, ok)
 	}
-	if got, ok := r.NegotiatedLayer(rawAuthKey, 101); !ok || got != 225 {
-		t.Fatalf("raw auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	if got, ok := r.NegotiatedLayer(rawAuthKey, 101); ok || got != currentClientLayer {
+		t.Fatalf("raw auth new-session layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
-	if got, ok := r.NegotiatedLayer(effectiveAuthKey, 101); !ok || got != 225 {
-		t.Fatalf("effective auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	if got, ok := r.NegotiatedLayer(effectiveAuthKey, 101); ok || got != currentClientLayer {
+		t.Fatalf("effective auth metadata layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 }
 
@@ -499,14 +505,17 @@ func TestInvokeWithLayerPersistsClientLayerUpgrade(t *testing.T) {
 		t.Fatalf("dispatch invokeWithLayer: %v", err)
 	}
 
-	if auth.layerUpdates != 1 {
-		t.Fatalf("layer update calls = %d, want 1", auth.layerUpdates)
+	if got := auth.authKeyClientInfos[authKeyID].Layer; got != currentClientLayer {
+		t.Fatalf("persisted auth-key layer = %d, want %d", got, currentClientLayer)
 	}
-	if got := auth.authorizations[0].Layer; got != currentClientLayer {
-		t.Fatalf("persisted layer = %d, want %d", got, currentClientLayer)
+	if got := auth.authorizations[0].Layer; got != 225 {
+		t.Fatalf("unordered authorization mirror changed to %d, want 225", got)
 	}
-	if got, ok := r.NegotiatedLayer(authKeyID, 101); !ok || got != currentClientLayer {
-		t.Fatalf("new session negotiated layer = (%d,%v), want (%d,true)", got, ok, currentClientLayer)
+	if got, ok := r.NegotiatedLayer(authKeyID, 100); !ok || got != currentClientLayer {
+		t.Fatalf("same session negotiated layer = (%d,%v), want (%d,true)", got, ok, currentClientLayer)
+	}
+	if got, ok := r.NegotiatedLayer(authKeyID, 101); ok || got != currentClientLayer {
+		t.Fatalf("new session negotiated layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 }
 
@@ -637,8 +646,8 @@ func TestDispatchRestoresClientMetadataFromAuthorization(t *testing.T) {
 		t.Fatalf("RPC inner handled log missing")
 	}
 	fields := entries[len(entries)-1].ContextMap()
-	if got := intLogField(fields["layer"]); got != currentClientLayer {
-		t.Fatalf("logged layer = %d fields=%v, want %d", got, fields, currentClientLayer)
+	if got := intLogField(fields["layer"]); got != 0 {
+		t.Fatalf("logged layer = %d fields=%v, want unknown without auth_keys evidence", got, fields)
 	}
 	if got := fields["client_type"]; got != string(ClientTypeAndroid) {
 		t.Fatalf("logged client_type = %v, want %s", got, ClientTypeAndroid)
@@ -659,7 +668,7 @@ func TestDispatchRestoresClientMetadataFromAuthorization(t *testing.T) {
 	}
 }
 
-func TestDispatchCopiesEffectiveAuthLayerToRawTempSession(t *testing.T) {
+func TestDispatchCopiesPermanentAuthorizationMetadataWithoutLayerEvidence(t *testing.T) {
 	rawAuthKeyID := [8]byte{0x1a, 0x2d, 0x2d, 0x3d, 0x4b, 0x38, 0x62, 0xc0}
 	permAuthKeyID := [8]byte{0x5b, 0x1c, 0x12, 0x24, 0x98, 0x85, 0x60, 0xc1}
 	userID := int64(1780243218)
@@ -688,8 +697,8 @@ func TestDispatchCopiesEffectiveAuthLayerToRawTempSession(t *testing.T) {
 	if _, err := r.Dispatch(context.Background(), permAuthKeyID, 11, &warm); err != nil {
 		t.Fatalf("dispatch warm perm request: %v", err)
 	}
-	if got, ok := r.NegotiatedLayer(permAuthKeyID, 12); !ok || got != 225 {
-		t.Fatalf("perm auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	if got, ok := r.NegotiatedLayer(permAuthKeyID, 11); ok || got != currentClientLayer {
+		t.Fatalf("perm metadata layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 
 	var firstTempRequest bin.Buffer
@@ -700,19 +709,19 @@ func TestDispatchCopiesEffectiveAuthLayerToRawTempSession(t *testing.T) {
 	if _, err := r.Dispatch(context.Background(), rawAuthKeyID, tempSessionID, &firstTempRequest); err != nil {
 		t.Fatalf("dispatch first temp request: %v", err)
 	}
-	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID); !ok || got != 225 {
-		t.Fatalf("raw temp exact session layer = (%d,%v), want (225,true)", got, ok)
+	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID); ok || got != currentClientLayer {
+		t.Fatalf("raw temp metadata layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
-	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID+1); !ok || got != 225 {
-		t.Fatalf("raw temp auth fallback layer = (%d,%v), want (225,true)", got, ok)
+	if got, ok := r.NegotiatedLayer(rawAuthKeyID, tempSessionID+1); ok || got != currentClientLayer {
+		t.Fatalf("raw temp new-session layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
 	}
 	hotCtx := WithAuthKeyID(
 		WithSessionID(WithRawAuthKeyID(context.Background(), rawAuthKeyID), tempSessionID),
 		permAuthKeyID,
 	)
 	info, ok, stored := r.clientSessionInfo(hotCtx)
-	if !ok || info.layer != 225 {
-		t.Fatalf("cached temp session info = (%+v,%v), want layer 225", info, ok)
+	if !ok || info.layer != 0 || !info.hasClientInfo || info.clientInfo.ClientType() != ClientTypeAndroid {
+		t.Fatalf("cached temp session info = (%+v,%v), want Android metadata with unknown Layer", info, ok)
 	}
 	if !stored {
 		t.Fatalf("cached temp session metadata is not fully materialized for hot path")
@@ -1200,7 +1209,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 
 	tests := []struct {
 		name string
-		req  bin.Encoder
+		req  bin.Object
 	}{
 		{name: "auth.bindTempAuthKey", req: &tg.AuthBindTempAuthKeyRequest{PermAuthKeyID: 1, Nonce: 2, ExpiresAt: 3, EncryptedMessage: []byte("binding")}},
 		{name: "auth.exportLoginToken", req: &tg.AuthExportLoginTokenRequest{APIID: 1, APIHash: "hash"}},
@@ -1324,23 +1333,133 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var in bin.Buffer
-			if err := tt.req.Encode(&in); err != nil {
-				t.Fatalf("encode request: %v", err)
-			}
 			ctx := WithUserID(context.Background(), 1000000001)
-			enc, err := r.Dispatch(ctx, [8]byte{}, 0, &in)
-			if err != nil {
-				t.Fatalf("dispatch: %v", err)
+			result, method := dispatchExactLayerRPCTest(t, r, ctx, tg.LayerProfileCanonical, tt.req)
+			if method != tt.name {
+				t.Fatalf("dispatched method = %q, want %q", method, tt.name)
 			}
 			var out bin.Buffer
-			if err := enc.Encode(&out); err != nil {
+			if err := result.Encode(&out); err != nil {
 				t.Fatalf("encode response: %v", err)
 			}
 			if out.Len() == 0 {
 				t.Fatal("encoded response is empty")
 			}
 		})
+	}
+}
+
+func dispatchExactLayerRPCTest(
+	t *testing.T,
+	r *Router,
+	ctx context.Context,
+	profile tg.LayerProfile,
+	request bin.Object,
+) (tg.LayerRPCResult, string) {
+	t.Helper()
+	body := encodeExactLayerRPC(t, profile, request)
+	admitted, err := r.AdmitLayer(profile, &body, tg.LayerDecodeLimits{})
+	if err != nil {
+		t.Fatalf("admit exact Layer %d request: %v", profile, err)
+	}
+	if body.Len() != 0 {
+		t.Fatalf("exact Layer %d admission left %d bytes", profile, body.Len())
+	}
+	result, method, err := r.DispatchAdmitted(ctx, [8]byte{}, 0, 0, 0, admitted)
+	if err != nil {
+		t.Fatalf("dispatch exact Layer %d request: %v", profile, err)
+	}
+	if result == nil {
+		t.Fatalf("dispatch exact Layer %d request returned nil result", profile)
+	}
+	return result, method
+}
+
+func TestMessagesSearchGlobalExactLayerProfiles(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 1000000001)
+	for _, tc := range []struct {
+		profile tg.LayerProfile
+		wireID  uint32
+	}{
+		{profile: tg.LayerProfile227, wireID: 0x4bc6589a},
+		{profile: tg.LayerProfile228, wireID: 0x6126a43c},
+	} {
+		t.Run(fmt.Sprintf("layer_%d", tc.profile), func(t *testing.T) {
+			request := &tg.MessagesSearchGlobalRequest{
+				Q:          "login",
+				Filter:     &tg.InputMessagesFilterEmpty{},
+				OffsetPeer: &tg.InputPeerEmpty{},
+				Limit:      20,
+			}
+			body := encodeExactLayerRPC(t, tc.profile, request)
+			if got := binary.LittleEndian.Uint32(body.Raw()); got != tc.wireID {
+				t.Fatalf("Layer %d wire id = %#x, want %#x", tc.profile, got, tc.wireID)
+			}
+			admitted, err := r.AdmitLayer(tc.profile, &body, tg.LayerDecodeLimits{})
+			if err != nil {
+				t.Fatalf("admit Layer %d searchGlobal: %v", tc.profile, err)
+			}
+			if body.Len() != 0 {
+				t.Fatalf("Layer %d admission left %d bytes", tc.profile, body.Len())
+			}
+			call := admitted.Call()
+			if call.Profile() != tc.profile || call.WireID() != tc.wireID || call.Method() != tg.LayerSemanticMethodMessagesSearchGlobal {
+				t.Fatalf("Layer %d call = profile:%d wire:%#x semantic:%#x", tc.profile, call.Profile(), call.WireID(), call.Method())
+			}
+			result, method, err := r.DispatchAdmitted(ctx, [8]byte{}, 0, 0, 0, admitted)
+			if err != nil {
+				t.Fatalf("dispatch Layer %d searchGlobal: %v", tc.profile, err)
+			}
+			if method != "messages.searchGlobal" || result == nil {
+				t.Fatalf("Layer %d result = method:%q value:%T", tc.profile, method, result)
+			}
+			bound := result.Prepared().Call()
+			if bound.Identity() != call.Identity() || bound.Profile() != tc.profile || bound.WireID() != tc.wireID {
+				t.Fatalf("Layer %d result binding = profile:%d wire:%#x identity:%#v, want request-bound %#v", tc.profile, bound.Profile(), bound.WireID(), bound.Identity(), call.Identity())
+			}
+			var encoded bin.Buffer
+			if err := result.Encode(&encoded); err != nil {
+				t.Fatalf("encode Layer %d result: %v", tc.profile, err)
+			}
+			if encoded.Len() == 0 {
+				t.Fatalf("Layer %d result encoded empty", tc.profile)
+			}
+		})
+	}
+}
+
+func TestMessagesSearchGlobalCommunityProjectionFailsClosedForLayer227(t *testing.T) {
+	request := &tg.MessagesSearchGlobalRequest{
+		Q:          "scoped",
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      20,
+	}
+	request.SetCommunity(&tg.InputChannel{ChannelID: 42, AccessHash: 84})
+
+	// The Layer 228 shape is valid and carries the new field.
+	body228 := encodeExactLayerRPC(t, tg.LayerProfile228, request)
+	if got := binary.LittleEndian.Uint32(body228.Raw()); got != 0x6126a43c {
+		t.Fatalf("Layer 228 wire id = %#x, want %#x", got, uint32(0x6126a43c))
+	}
+	if _, err := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System).AdmitLayer(tg.LayerProfile228, &body228, tg.LayerDecodeLimits{}); err != nil {
+		t.Fatalf("admit Layer 228 community search: %v", err)
+	}
+	if body228.Len() != 0 {
+		t.Fatalf("Layer 228 community admission left %d bytes", body228.Len())
+	}
+
+	outbound227, err := tg.PrepareLayerOutboundCall(tg.LayerProfile227, request)
+	if err != nil {
+		t.Fatalf("prepare Layer 227 searchGlobal projection: %v", err)
+	}
+	var body227 bin.Buffer
+	if err := outbound227.Encode(&body227); err == nil {
+		t.Fatal("Layer 227 projection accepted a Layer 228-only community scope")
+	}
+	if body227.Len() != 0 {
+		t.Fatalf("failed Layer 227 projection emitted %d partial bytes", body227.Len())
 	}
 }
 

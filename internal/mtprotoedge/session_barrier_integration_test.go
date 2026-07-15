@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/store"
 )
@@ -44,7 +44,7 @@ func encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 		MessageDataLen:         int32(len(body)),
 		MessageDataWithPadding: body,
 	}, &frame); err != nil {
-		t.Fatalf("encrypt client RPC: %v", err)
+		t.Fatalf("encrypt client legacyRPC: %v", err)
 	}
 	return &frame, store.AuthKeyData{
 		ID:         key.ID,
@@ -55,7 +55,7 @@ func encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 
 func TestBadServerSaltRetainsOneProvisionalConnUntilCorrected(t *testing.T) {
 	handler := &admissionCountingRPC{}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 
@@ -149,7 +149,7 @@ func TestWrongSaltSessionChangeTransfersPhysicalOwnership(t *testing.T) {
 	// owner Abort must observe the already-published terminal gate and must not
 	// close the physical lease that is about to transfer to the new session.
 	handler := &cancelThenRetryRPC{started: make(chan struct{})}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 
@@ -294,7 +294,7 @@ func (*cancelThenRetryRPC) NegotiatedLayer([8]byte, int64) (int, bool) { return 
 
 func TestHandleEncryptedRequiredSessionBarrierPrecedesStateRegistrationAndRPC(t *testing.T) {
 	handler := &admissionCountingRPC{}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 
@@ -374,7 +374,7 @@ func TestHandleEncryptedRequiredSessionBarrierPrecedesStateRegistrationAndRPC(t 
 
 func TestHandleEncryptedRequiredSessionBarrierFailureIsAtomic(t *testing.T) {
 	handler := &admissionCountingRPC{}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 
@@ -441,7 +441,7 @@ func TestHandleEncryptedRequiredSessionBarrierFailureIsAtomic(t *testing.T) {
 
 func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testing.T) {
 	handler := &reconnectFlightRPC{started: make(chan struct{}), release: make(chan struct{})}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second, RPCTimeout: 5 * time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second, RPCTimeout: 5 * time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 
@@ -549,7 +549,7 @@ func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testin
 
 func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T) {
 	handler := &cancelThenRetryRPC{started: make(chan struct{})}
-	s := New(Options{RPC: handler, WriteTimeout: time.Second, RPCTimeout: 5 * time.Second})
+	s := New(Options{legacyRPC: handler, WriteTimeout: time.Second, RPCTimeout: 5 * time.Second})
 	s.rpcScheduler.start()
 	t.Cleanup(func() { s.rpcScheduler.stop(time.Second) })
 

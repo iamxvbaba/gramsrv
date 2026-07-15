@@ -9,16 +9,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-
-	"telesrv/internal/compat/layerwire"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
 )
 
 var (
@@ -108,12 +107,111 @@ type outboundOp struct {
 	terminal func(error)
 }
 
+// outboundBodyReservation bridges the only gap between producing an immutable
+// encoded body and handing it to the outbound actor. Exact RPC results acquire
+// this retained-byte reservation before releasing the process-wide encode slot,
+// so completed large bodies can never accumulate unaccounted in RPC workers.
+// Ownership is transferred into an outboundOp or released by the producer on
+// every earlier failure. A failed queue admission may roll it back exactly once;
+// the synchronized release request prevents watchdog/rollback resurrection.
+type outboundBodyReservation struct {
+	mu               sync.Mutex
+	budget           *outboundTrackedBudget
+	bytes            int
+	taken            bool
+	releaseRequested bool
+}
+
+func (r *outboundBodyReservation) release() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.bytes <= 0 {
+		// The actor may already own the raw reservation while queue admission is
+		// still in progress. Remember a racing watchdog/producer release so a
+		// later admission rollback cannot restore bytes after that owner is gone.
+		if r.taken {
+			r.releaseRequested = true
+		}
+		r.mu.Unlock()
+		return
+	}
+	bytes := r.bytes
+	budget := r.budget
+	r.bytes = 0
+	r.budget = nil
+	r.mu.Unlock()
+	budget.release(bytes)
+}
+
+func (r *outboundBodyReservation) take(encoded *encodedOutboundMessage) (outboundOp, error) {
+	if r == nil {
+		return outboundOp{}, errors.New("invalid outbound body reservation")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.budget == nil || r.bytes <= 0 || r.taken || r.releaseRequested || encoded == nil || len(encoded.body) != r.bytes {
+		return outboundOp{}, errors.New("invalid outbound body reservation")
+	}
+	op := outboundOp{
+		kind:              outboundSend,
+		msgType:           proto.MessageServerResponse,
+		encoded:           encoded,
+		priority:          classifyOutboundPriority(encoded, false),
+		reservedBytes:     r.bytes,
+		reservationBudget: r.budget,
+	}
+	r.bytes = 0
+	r.budget = nil
+	r.taken = true
+	return op, nil
+}
+
+// reclaim moves an op reservation back to the producer when queue admission
+// failed before the actor could observe the op. This preserves accounting until
+// the producer has retained the immutable body elsewhere (usually completed
+// cache) and its deferred release runs.
+func (r *outboundBodyReservation) reclaim(op *outboundOp) bool {
+	if r == nil || op == nil || op.reservedBytes <= 0 || op.reservationBudget == nil {
+		return false
+	}
+	r.mu.Lock()
+	if r.bytes != 0 || r.budget != nil || !r.taken {
+		r.mu.Unlock()
+		return false
+	}
+	bytes := op.reservedBytes
+	budget := op.reservationBudget
+	op.reservedBytes = 0
+	op.reservationBudget = nil
+	r.taken = false
+	if r.releaseRequested {
+		r.mu.Unlock()
+		budget.release(bytes)
+		return true
+	}
+	r.bytes = bytes
+	r.budget = budget
+	r.mu.Unlock()
+	return true
+}
+
 type encodedOutboundMessage struct {
-	body              []byte
-	typeID            uint32
-	reqMsgID          int64
-	priority          outboundPriority
-	delivery          *rpcResultDelivery
+	body     []byte
+	typeID   uint32
+	reqMsgID int64
+	priority outboundPriority
+	delivery *rpcResultDelivery
+	// layerInvariant is set only from a closed Go-type proof for an mt.* leaf or
+	// an rpc_result whose complete inner value is an invariant mt.* service
+	// result. A constructor ID alone is insufficient proof because RPC envelopes
+	// and application schemas can contain nested/profiled values.
+	layerInvariant bool
+	// layer binds already-prepared TL bytes to the exact generated profile that
+	// produced them. It is intentionally absent for MTProto control envelopes;
+	// a bound value must never be transcoded or sent to another profile.
+	layer             *outboundLayerBinding
 	compressed        bool
 	uncompressedBytes int
 }
@@ -135,17 +233,259 @@ type rpcResultDelivery struct {
 	// writtenReqMsgID is the actor's immutable snapshot for the physical frame.
 	targetReqMsgID  int64
 	writtenReqMsgID int64
-	once            sync.Once
-	fn              func()
+	coordinator     *rpcResultDeliveryCoordinator
+	hookTicket      *rpcDeliveryHookTicket
+	// attemptHook is connection-local replay state. Unlike the coordinator's
+	// logical-result hook it must run only when this particular physical attempt
+	// succeeds, even if another replay of the same cached result wins first.
+	attemptHook func()
 }
 
-func newRPCResultDelivery(reqMsgID ...int64) *rpcResultDelivery {
-	d := &rpcResultDelivery{}
-	if len(reqMsgID) > 0 {
-		d.targetReqMsgID = reqMsgID[0]
+type rpcResultDeliveryHookState uint8
+
+const (
+	rpcResultDeliveryHookUnset rpcResultDeliveryHookState = iota
+	rpcResultDeliveryHookPending
+	rpcResultDeliveryHookClaimed
+	rpcResultDeliveryHookInProgress
+	rpcResultDeliveryHookDone
+)
+
+// rpcResultDeliveryCoordinator is logical-result state. Equivalent old/new
+// req_msg_id representations and every replay share it, while each physical
+// attempt owns a separate rpcResultDelivery state machine and hook ticket.
+type rpcResultDeliveryCoordinator struct {
+	mu      sync.Mutex
+	fn      func()
+	state   rpcResultDeliveryHookState
+	claim   *rpcResultDeliveryHookClaim
+	changed chan struct{}
+	// deferredToReplay is sticky while a successful initConnection retarget owns
+	// the logical hook. The ordinary source terminal may mark physical delivery,
+	// but only the alias restore barrier may claim the hook. On terminal alias
+	// failure the flag is released so a later completed-cache replay can retry.
+	deferredToReplay bool
+}
+
+// rpcResultDeliveryHookClaim is an ownership token, not merely the hook
+// function. Pointer identity prevents an abandoned claimed hook from running
+// after a replacement replay has acquired a newer claim. The coordinator keeps
+// claimed and in-progress distinct so another physical replay can wait for the
+// exact logical transition instead of mistaking ownership for completion.
+type rpcResultDeliveryHookClaim struct {
+	coordinator *rpcResultDeliveryCoordinator
+	fn          func()
+}
+
+func newRPCResultDelivery(reqMsgID int64, coordinator ...*rpcResultDeliveryCoordinator) *rpcResultDelivery {
+	c := &rpcResultDeliveryCoordinator{changed: make(chan struct{})}
+	if len(coordinator) > 0 && coordinator[0] != nil {
+		c = coordinator[0]
+	}
+	d := &rpcResultDelivery{coordinator: c}
+	if reqMsgID != 0 {
+		d.targetReqMsgID = reqMsgID
 	}
 	d.state.Store(uint32(rpcResultDeliveryPrepared))
 	return d
+}
+
+func (c *rpcResultDeliveryCoordinator) setHook(fn func()) {
+	if c == nil || fn == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.fn == nil && c.state != rpcResultDeliveryHookDone {
+		c.fn = fn
+		c.state = rpcResultDeliveryHookPending
+		c.signalLocked()
+	}
+	c.mu.Unlock()
+}
+
+func (c *rpcResultDeliveryCoordinator) pendingHook() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	pending := c.fn != nil && c.state != rpcResultDeliveryHookDone
+	c.mu.Unlock()
+	return pending
+}
+
+func (c *rpcResultDeliveryCoordinator) pendingAsyncHook() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	pending := c.fn != nil && c.state == rpcResultDeliveryHookPending && !c.deferredToReplay
+	c.mu.Unlock()
+	return pending
+}
+
+func (c *rpcResultDeliveryCoordinator) signalLocked() {
+	if c.changed == nil {
+		c.changed = make(chan struct{})
+		return
+	}
+	close(c.changed)
+	if c.state == rpcResultDeliveryHookDone {
+		c.changed = nil
+	} else {
+		c.changed = make(chan struct{})
+	}
+}
+
+func (c *rpcResultDeliveryCoordinator) claimLocked(allowDeferred bool) *rpcResultDeliveryHookClaim {
+	if c.fn == nil || c.state != rpcResultDeliveryHookPending ||
+		(c.deferredToReplay && !allowDeferred) {
+		return nil
+	}
+	claim := &rpcResultDeliveryHookClaim{coordinator: c, fn: c.fn}
+	c.claim = claim
+	c.state = rpcResultDeliveryHookClaimed
+	if allowDeferred {
+		c.deferredToReplay = false
+	}
+	c.signalLocked()
+	return claim
+}
+
+func (c *rpcResultDeliveryCoordinator) claimAsyncDeliveredHook() *rpcResultDeliveryHookClaim {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	claim := c.claimLocked(false)
+	c.mu.Unlock()
+	return claim
+}
+
+// claimReplayDeliveredHook waits for an existing claim to finish, or acquires
+// the pending hook itself. allowDeferred is reserved for the initConnection
+// alias that installed the sticky retarget deferral. Every state transition
+// closes changed, giving waiters a concrete happens-before edge to Done.
+func (c *rpcResultDeliveryCoordinator) claimReplayDeliveredHook(
+	ctx context.Context,
+	allowDeferred bool,
+) (*rpcResultDeliveryHookClaim, error) {
+	if c == nil {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		c.mu.Lock()
+		if c.fn == nil || c.state == rpcResultDeliveryHookDone {
+			c.mu.Unlock()
+			return nil, nil
+		}
+		if claim := c.claimLocked(allowDeferred); claim != nil {
+			c.mu.Unlock()
+			return claim, nil
+		}
+		changed := c.changed
+		if changed == nil {
+			changed = make(chan struct{})
+			c.changed = changed
+		}
+		c.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			c.mu.Lock()
+			done := c.fn == nil || c.state == rpcResultDeliveryHookDone
+			c.mu.Unlock()
+			if done {
+				return nil, nil
+			}
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func (c *rpcResultDeliveryCoordinator) releaseDeferredHook() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.deferredToReplay {
+		c.deferredToReplay = false
+		c.signalLocked()
+	}
+	c.mu.Unlock()
+}
+
+func (c *rpcResultDeliveryCoordinator) deferHookToReplay() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.state != rpcResultDeliveryHookDone && !c.deferredToReplay {
+		c.deferredToReplay = true
+		c.signalLocked()
+	}
+	c.mu.Unlock()
+}
+
+func (c *rpcResultDeliveryCoordinator) hookState() rpcResultDeliveryHookState {
+	if c == nil {
+		return rpcResultDeliveryHookUnset
+	}
+	c.mu.Lock()
+	state := c.state
+	c.mu.Unlock()
+	return state
+}
+
+func (claim *rpcResultDeliveryHookClaim) run() {
+	if claim == nil || claim.coordinator == nil {
+		return
+	}
+	c := claim.coordinator
+	c.mu.Lock()
+	if c.claim != claim || c.state != rpcResultDeliveryHookClaimed {
+		c.mu.Unlock()
+		return
+	}
+	c.state = rpcResultDeliveryHookInProgress
+	c.signalLocked()
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		if c.claim == claim && c.state == rpcResultDeliveryHookInProgress {
+			c.claim = nil
+			c.fn = nil
+			c.deferredToReplay = false
+			c.state = rpcResultDeliveryHookDone
+			c.signalLocked()
+		}
+		c.mu.Unlock()
+	}()
+	if claim.fn != nil {
+		claim.fn()
+	}
+}
+
+// abandon makes a hook claim retryable only while its function has not begun.
+// Once InProgress is visible, at-most-once semantics forbid another replay from
+// guessing whether a non-cooperative callback partially applied its effects.
+func (claim *rpcResultDeliveryHookClaim) abandon() bool {
+	if claim == nil || claim.coordinator == nil {
+		return false
+	}
+	c := claim.coordinator
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.claim != claim || c.state != rpcResultDeliveryHookClaimed {
+		return false
+	}
+	c.claim = nil
+	c.state = rpcResultDeliveryHookPending
+	c.signalLocked()
+	return true
 }
 
 func (m *encodedOutboundMessage) deliveryState() rpcResultDeliveryState {
@@ -191,12 +531,25 @@ func (m *encodedOutboundMessage) tryRetarget(reqMsgID int64) bool {
 		return false
 	}
 	m.delivery.mu.Lock()
-	defer m.delivery.mu.Unlock()
 	state := m.deliveryState()
 	if state != rpcResultDeliveryPrepared && state != rpcResultDeliveryQueued {
+		m.delivery.mu.Unlock()
 		return false
 	}
+	// Retarget and logical-hook deferral are one transition with beginWriting.
+	// If admission already reserved a global executor ticket, detach it while the
+	// actor is still unable to enter Writing; the alias barrier owns the hook now.
+	coordinator := m.delivery.coordinator
+	if coordinator != nil {
+		coordinator.deferHookToReplay()
+	}
+	ticket := m.delivery.hookTicket
+	m.delivery.hookTicket = nil
 	m.delivery.targetReqMsgID = reqMsgID
+	m.delivery.mu.Unlock()
+	if ticket != nil {
+		ticket.release()
+	}
 	return true
 }
 
@@ -227,7 +580,13 @@ func (m *encodedOutboundMessage) markReplayable() {
 	if m.deliveryState() != rpcResultDeliveryDelivered {
 		m.delivery.state.Store(uint32(rpcResultDeliveryReplayable))
 	}
+	ticket := m.delivery.hookTicket
+	m.delivery.hookTicket = nil
+	m.delivery.attemptHook = nil
 	m.delivery.mu.Unlock()
+	if ticket != nil {
+		ticket.release()
+	}
 }
 
 func (m *encodedOutboundMessage) markDelivered() {
@@ -236,27 +595,168 @@ func (m *encodedOutboundMessage) markDelivered() {
 	}
 	m.delivery.mu.Lock()
 	m.delivery.state.Store(uint32(rpcResultDeliveryDelivered))
+	ticket := m.delivery.hookTicket
+	m.delivery.hookTicket = nil
+	coordinator := m.delivery.coordinator
+	attemptHook := m.delivery.attemptHook
+	m.delivery.attemptHook = nil
 	m.delivery.mu.Unlock()
-	if m.delivery.fn != nil {
-		m.delivery.once.Do(func() { scheduleRPCDeliveryHook(m.delivery.fn) })
+	logicalClaim := coordinator.claimAsyncDeliveredHook()
+	if logicalClaim == nil && attemptHook == nil {
+		if ticket != nil {
+			ticket.release()
+		}
+		return
 	}
+	if ticket == nil {
+		// Production write paths reserve before admission. This fallback preserves
+		// old direct-test callers without ever waiting in the socket writer.
+		ticket, _ = defaultRPCDeliveryHookExecutor.reserve()
+	}
+	if ticket == nil {
+		logicalClaim.abandon()
+		log.Printf("mtprotoedge: delivered rpc_result without reserved delivery-hook capacity")
+		return
+	}
+	if !ticket.submit(func() {
+		if logicalClaim != nil {
+			logicalClaim.run()
+		}
+		if attemptHook != nil {
+			attemptHook()
+		}
+	}) {
+		logicalClaim.abandon()
+		ticket.release()
+		log.Printf("mtprotoedge: reserved rpc delivery hook ticket could not be submitted")
+	}
+}
+
+func (m *encodedOutboundMessage) setDeliveryHook(fn func()) {
+	if m == nil || m.delivery == nil || m.delivery.coordinator == nil {
+		return
+	}
+	m.delivery.coordinator.setHook(fn)
+}
+
+// pendingLogicalDeliveryHook reports whether this logical rpc_result still owns
+// delivery-gated state from its original successful handler. Cached replay uses
+// this before physical admission so it can install a per-Conn scheduler barrier
+// without reserving the process-wide asynchronous hook executor.
+func (m *encodedOutboundMessage) pendingLogicalDeliveryHook() bool {
+	return m != nil && m.delivery != nil && m.delivery.coordinator != nil &&
+		m.delivery.coordinator.pendingHook()
+}
+
+// claimLogicalDeliveryHook transfers the logical post-response hook only after
+// a replay attempt has physically reached the replacement stream. Calling it
+// before markDelivered makes the latter a pure attempt-state transition, so no
+// global hook ticket is required on the ordered replay path.
+func (m *encodedOutboundMessage) claimLogicalDeliveryHook(
+	ctx context.Context,
+	allowDeferred bool,
+) (*rpcResultDeliveryHookClaim, error) {
+	if m == nil || m.delivery == nil || m.delivery.coordinator == nil {
+		return nil, nil
+	}
+	return m.delivery.coordinator.claimReplayDeliveredHook(ctx, allowDeferred)
+}
+
+func (m *encodedOutboundMessage) releaseDeferredLogicalDeliveryHook() {
+	if m != nil && m.delivery != nil && m.delivery.coordinator != nil {
+		m.delivery.coordinator.releaseDeferredHook()
+	}
+}
+
+func (m *encodedOutboundMessage) setAttemptDeliveryHook(fn func()) {
+	if m == nil || m.delivery == nil || fn == nil {
+		return
+	}
+	m.delivery.mu.Lock()
+	if m.delivery.attemptHook == nil {
+		m.delivery.attemptHook = fn
+	}
+	m.delivery.mu.Unlock()
+}
+
+func (m *encodedOutboundMessage) prepareDeliveryHook(executor *rpcDeliveryHookExecutor) error {
+	if m == nil || m.delivery == nil {
+		return nil
+	}
+	m.delivery.mu.Lock()
+	pending := m.delivery.attemptHook != nil || (m.delivery.coordinator != nil && m.delivery.coordinator.pendingAsyncHook())
+	if m.delivery.hookTicket != nil || !pending {
+		m.delivery.mu.Unlock()
+		return nil
+	}
+	ticket, ok := executor.reserve()
+	if !ok {
+		m.delivery.mu.Unlock()
+		return ErrRPCDeliveryHookCapacity
+	}
+	pending = m.delivery.attemptHook != nil || (m.delivery.coordinator != nil && m.delivery.coordinator.pendingAsyncHook())
+	if !pending {
+		m.delivery.mu.Unlock()
+		ticket.release()
+		return nil
+	}
+	m.delivery.hookTicket = ticket
+	m.delivery.mu.Unlock()
+	return nil
 }
 
 func cloneRPCResultForRequest(encoded *encodedOutboundMessage, reqMsgID int64, shareDelivery bool) (*encodedOutboundMessage, error) {
 	if encoded == nil || encoded.typeID != proto.ResultTypeID || len(encoded.body) < 12 || reqMsgID == 0 {
 		return nil, errors.New("invalid rpc_result retarget")
 	}
-	body := append([]byte(nil), encoded.body...)
-	binary.LittleEndian.PutUint64(body[4:12], uint64(reqMsgID))
-	delivery := newRPCResultDelivery(reqMsgID)
+	body := encoded.body
+	if int64(binary.LittleEndian.Uint64(body[4:12])) != reqMsgID {
+		body = append([]byte(nil), body...)
+		binary.LittleEndian.PutUint64(body[4:12], uint64(reqMsgID))
+	}
+	var coordinator *rpcResultDeliveryCoordinator
+	if encoded.delivery != nil {
+		coordinator = encoded.delivery.coordinator
+	}
+	delivery := newRPCResultDelivery(reqMsgID, coordinator)
 	if shareDelivery {
 		delivery = encoded.delivery
 	}
 	return &encodedOutboundMessage{
 		body: body, typeID: encoded.typeID, reqMsgID: reqMsgID,
 		priority: encoded.priority, delivery: delivery, compressed: encoded.compressed,
+		layer: encoded.layer, layerInvariant: encoded.layerInvariant,
 		uncompressedBytes: encoded.uncompressedBytes,
 	}, nil
+}
+
+// cloneRPCResultForRequestReserved charges the target connection's retained-body
+// budget before a retarget copy can exist. Even the same-req_id zero-copy case
+// needs a reservation: the replay/rewrap owner may outlive cache eviction while
+// it is queued, so its immutable body must remain independently pinned.
+func (c *Conn) cloneRPCResultForRequestReserved(
+	encoded *encodedOutboundMessage,
+	reqMsgID int64,
+	shareDelivery bool,
+) (*encodedOutboundMessage, *outboundBodyReservation, error) {
+	if c == nil || encoded == nil || encoded.typeID != proto.ResultTypeID || len(encoded.body) < 12 || reqMsgID == 0 {
+		return nil, nil, errors.New("invalid rpc_result retarget")
+	}
+	bytes := len(encoded.body)
+	if bytes > maxOutboundBodyBytes {
+		return nil, nil, fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, bytes, maxOutboundBodyBytes)
+	}
+	budget := c.outboundMessageBudget(encoded.typeID, false)
+	if !budget.reserve(bytes) {
+		return nil, nil, ErrOutboundTrackedBudget
+	}
+	reserved := &outboundBodyReservation{budget: budget, bytes: bytes}
+	clone, err := cloneRPCResultForRequest(encoded, reqMsgID, shareDelivery)
+	if err != nil {
+		reserved.release()
+		return nil, nil, err
+	}
+	return clone, reserved, nil
 }
 
 type outboundResult struct {
@@ -276,8 +776,11 @@ type outboundFrame struct {
 	// but their bytes must remain on the independent control budget for the full lifetime.
 	reservationBudget *outboundTrackedBudget
 	reqMsgID          int64
-	sentAt            time.Time
-	sends             int
+	// layer is retained only for proactive session-bound frames so a later
+	// msg_resend_req cannot replay bytes from an obsolete profile epoch.
+	layer  *outboundLayerBinding
+	sentAt time.Time
+	sends  int
 }
 
 type outboundState struct {
@@ -758,7 +1261,16 @@ func (c *Conn) send(ctx context.Context, t proto.MessageType, msg bin.Encoder, c
 }
 
 func (c *Conn) SendEncoded(ctx context.Context, t proto.MessageType, encoded *encodedOutboundMessage) error {
-	return c.sendOutbound(ctx, t, nil, encoded, false)
+	if encoded != nil {
+		if err := encoded.prepareDeliveryHook(defaultRPCDeliveryHookExecutor); err != nil {
+			return err
+		}
+	}
+	err := c.sendOutbound(ctx, t, nil, encoded, false)
+	if err != nil && encoded != nil {
+		encoded.markReplayable()
+	}
+	return err
 }
 
 // enqueueEncodedDelivery transfers an immutable body to the bounded egress actor
@@ -771,16 +1283,52 @@ func (c *Conn) enqueueEncodedDelivery(
 	priority outboundPriority,
 	terminal func(error),
 ) error {
+	return c.enqueueEncodedDeliveryReserved(ctx, t, encoded, priority, terminal, nil)
+}
+
+// enqueueEncodedDeliveryReserved accepts an optional byte reservation acquired
+// while the caller still owned outboundEncodeSlots. Passing nil preserves the
+// ordinary pre-encoded path used by callers that did not allocate a retained clone.
+func (c *Conn) enqueueEncodedDeliveryReserved(
+	ctx context.Context,
+	t proto.MessageType,
+	encoded *encodedOutboundMessage,
+	priority outboundPriority,
+	terminal func(error),
+	reserved *outboundBodyReservation,
+) error {
 	if c.outbound == nil || c.outboundControl == nil || c.outboundCritical == nil || c.outboundBulk == nil {
 		return ErrConnClosed
 	}
-	op, err := c.newOutboundSendOp(ctx, t, nil, encoded, false)
+	if encoded != nil {
+		if err := encoded.prepareDeliveryHook(defaultRPCDeliveryHookExecutor); err != nil {
+			return err
+		}
+	}
+	var op outboundOp
+	var err error
+	if reserved == nil {
+		op, err = c.newOutboundSendOp(ctx, t, nil, encoded, false)
+	} else {
+		op, err = reserved.take(encoded)
+		if err == nil {
+			op.msgType = t
+		}
+	}
 	if err != nil {
+		if encoded != nil {
+			encoded.markReplayable()
+		}
 		c.failOutboundBudget(err)
 		return err
 	}
 	if !c.beginOutboundEnqueue() {
-		op.releaseReservation(c.outboundTrackedBudget)
+		if reserved == nil || !reserved.reclaim(&op) {
+			op.releaseReservation(c.outboundTrackedBudget)
+		}
+		if encoded != nil {
+			encoded.markReplayable()
+		}
 		return ErrConnClosed
 	}
 	op.priority = priority
@@ -788,8 +1336,13 @@ func (c *Conn) enqueueEncodedDelivery(
 	op.enqueuedAt = time.Now()
 	op.terminal = terminal
 	if err := c.enqueueOutboundRegistered(ctx, op); err != nil {
-		op.releaseReservation(c.outboundTrackedBudget)
+		if reserved == nil || !reserved.reclaim(&op) {
+			op.releaseReservation(c.outboundTrackedBudget)
+		}
 		c.endOutboundEnqueue()
+		if encoded != nil {
+			encoded.markReplayable()
+		}
 		return err
 	}
 	c.endOutboundEnqueue()
@@ -797,25 +1350,86 @@ func (c *Conn) enqueueEncodedDelivery(
 }
 
 func (c *Conn) sendOutbound(ctx context.Context, t proto.MessageType, msg bin.Encoder, encoded *encodedOutboundMessage, control bool) error {
+	return c.sendOutboundWithTerminal(ctx, t, msg, encoded, control, nil)
+}
+
+// sendOutboundWithTerminal is the synchronous actor path with an optional
+// terminal callback. Once queue admission succeeds, terminal runs on the sole
+// actor after the transport has definitively reported write success/failure and
+// before the caller's done notification. Early admission failures invoke it in
+// the caller, so a waiter always observes exactly one terminal outcome.
+func (c *Conn) sendOutboundWithTerminal(
+	ctx context.Context,
+	t proto.MessageType,
+	msg bin.Encoder,
+	encoded *encodedOutboundMessage,
+	control bool,
+	terminal func(error),
+) error {
+	return c.sendOutboundWithTerminalReserved(ctx, t, msg, encoded, control, terminal, nil)
+}
+
+// sendOutboundWithTerminalReserved is the synchronous counterpart of
+// enqueueEncodedDeliveryReserved. A replay/rewrap producer reserves before it
+// clones; take atomically transfers that charge to the actor so a racing
+// watchdog can either release the still-owned reservation or observe that the
+// actor has already become its sole owner, never both.
+func (c *Conn) sendOutboundWithTerminalReserved(
+	ctx context.Context,
+	t proto.MessageType,
+	msg bin.Encoder,
+	encoded *encodedOutboundMessage,
+	control bool,
+	terminal func(error),
+	reserved *outboundBodyReservation,
+) error {
 	if c.outbound == nil || c.outboundControl == nil {
+		if terminal != nil {
+			terminal(ErrConnClosed)
+		}
 		return ErrConnClosed
 	}
-	op, err := c.newOutboundSendOp(ctx, t, msg, encoded, control)
+	var op outboundOp
+	var err error
+	if reserved == nil {
+		op, err = c.newOutboundSendOp(ctx, t, msg, encoded, control)
+	} else {
+		op, err = reserved.take(encoded)
+		if err == nil {
+			op.msgType = t
+			op.msg = msg
+			op.priority = classifyOutboundPriority(encoded, control)
+		}
+	}
 	if err != nil {
 		c.failOutboundBudget(err)
+		if terminal != nil {
+			terminal(err)
+		}
 		return err
 	}
 	if !c.beginOutboundEnqueue() {
-		op.releaseReservation(c.outboundTrackedBudget)
+		if reserved == nil || !reserved.reclaim(&op) {
+			op.releaseReservation(c.outboundTrackedBudget)
+		}
+		if terminal != nil {
+			terminal(ErrConnClosed)
+		}
 		return ErrConnClosed
 	}
 	op.control = control
 	op.ctx = ctx
 	op.enqueuedAt = time.Now()
 	op.done = make(chan outboundResult, 1)
+	op.terminal = terminal
 	if err := c.enqueueOutboundRegistered(ctx, op); err != nil {
-		op.releaseReservation(c.outboundTrackedBudget)
+		if reserved == nil || !reserved.reclaim(&op) {
+			op.releaseReservation(c.outboundTrackedBudget)
+		}
 		c.endOutboundEnqueue()
+		if terminal != nil {
+			terminal(err)
+		}
 		return err
 	}
 	c.endOutboundEnqueue()
@@ -1075,8 +1689,8 @@ func (c *Conn) outboundLoop() {
 			return
 		}
 		if c.isRetired() {
-			op.releaseReservation(c.outboundTrackedBudget)
 			op.finish(outboundResult{err: ErrConnClosed})
+			op.releaseReservation(c.outboundTrackedBudget)
 			c.signalOutboundStop()
 			c.drainOutbound()
 			return
@@ -1147,17 +1761,17 @@ func (c *Conn) drainOutbound() {
 	for {
 		select {
 		case op := <-c.outboundControl:
-			op.releaseReservation(c.outboundTrackedBudget)
 			op.finish(outboundResult{err: ErrConnClosed})
+			op.releaseReservation(c.outboundTrackedBudget)
 		case op := <-c.outboundCritical:
-			op.releaseReservation(c.outboundTrackedBudget)
 			op.finish(outboundResult{err: ErrConnClosed})
+			op.releaseReservation(c.outboundTrackedBudget)
 		case op := <-c.outbound:
-			op.releaseReservation(c.outboundTrackedBudget)
 			op.finish(outboundResult{err: ErrConnClosed})
+			op.releaseReservation(c.outboundTrackedBudget)
 		case op := <-c.outboundBulk:
-			op.releaseReservation(c.outboundTrackedBudget)
 			op.finish(outboundResult{err: ErrConnClosed})
+			op.releaseReservation(c.outboundTrackedBudget)
 		default:
 			return
 		}
@@ -1168,8 +1782,8 @@ func (c *Conn) handleOutboundOp(state *outboundState, op outboundOp) {
 	// An operation can sit in a bounded queue across the protocol expiry instant.
 	// It must be failed and released without touching the wire.
 	if c.authKeyProtocolUnavailableNow() {
-		op.releaseReservation(state.budget)
 		op.finish(outboundResult{err: ErrConnClosed})
+		op.releaseReservation(state.budget)
 		c.fenceUnavailableAuthKey()
 		return
 	}
@@ -1199,17 +1813,17 @@ func (c *Conn) handleOutboundOp(state *outboundState, op outboundOp) {
 }
 
 func (c *Conn) handleOutboundSend(state *outboundState, op outboundOp) {
-	var err error
+	var binding *outboundLayerBinding
 	if op.encoded != nil {
-		targetReqMsgID := op.encoded.beginWriting()
-		if targetReqMsgID != 0 && targetReqMsgID != op.encoded.reqMsgID {
-			op.encoded, err = cloneRPCResultForRequest(op.encoded, targetReqMsgID, true)
-		}
+		binding = op.encoded.layer
 	}
-	var frame *outboundFrame
-	if err == nil {
-		frame, err = c.buildFrame(op.ctx, op.msgType, op.msg, op.encoded)
+	if c.lockSessionLayerBinding(binding) {
+		defer c.layerProfileMu.RUnlock()
 	}
+	// Extract the admitted reservation before any actor-side retarget or layer
+	// conversion can allocate another full body. supersededBytes covers immutable
+	// source bodies still reachable by the terminal callback; reserved covers the
+	// body that will be transferred to pending if the write succeeds.
 	reserved := op.reservedBytes
 	reservationBudget := op.reservationBudget
 	if reservationBudget == nil {
@@ -1217,16 +1831,48 @@ func (c *Conn) handleOutboundSend(state *outboundState, op outboundOp) {
 	}
 	op.reservedBytes = 0
 	op.reservationBudget = nil
-	// A per-connection layer downgrade can allocate a different body. Reserve the
-	// replacement before dropping the canonical queue reservation so the transient
-	// two-body peak is also covered by the Server budget.
+	supersededBytes := 0
+	defer func() {
+		reservationBudget.release(reserved)
+		reservationBudget.release(supersededBytes)
+	}()
+
+	var err error
+	if op.encoded != nil {
+		targetReqMsgID := op.encoded.beginWriting()
+		if targetReqMsgID != 0 && targetReqMsgID != op.encoded.reqMsgID {
+			cloneBytes := len(op.encoded.body)
+			if !reservationBudget.reserve(cloneBytes) {
+				err = ErrOutboundTrackedBudget
+			} else {
+				clone, cloneErr := cloneRPCResultForRequest(op.encoded, targetReqMsgID, true)
+				if cloneErr != nil {
+					reservationBudget.release(cloneBytes)
+					err = cloneErr
+				} else {
+					// The terminal callback still owns the original encoded pointer.
+					// Keep its reservation until that callback has cached/retained it.
+					supersededBytes += reserved
+					reserved = cloneBytes
+					op.encoded = clone
+				}
+			}
+		}
+	}
+	var frame *outboundFrame
+	if err == nil {
+		frame, err = c.buildFrame(op.ctx, op.msgType, op.msg, op.encoded)
+	}
+	// A profile-bound preparation can allocate a different body. Reserve the
+	// replacement before dropping the original prepared-body reservation. The
+	// original body stays charged through the terminal callback because cache/rewrap
+	// subscribers can still retain it there.
 	if err == nil && frame != nil && op.encoded != nil && !sameBacking(frame.body, op.encoded.body) {
 		if !reservationBudget.reserve(len(frame.body)) {
 			err = ErrOutboundTrackedBudget
 		} else {
-			reservationBudget.release(reserved)
+			supersededBytes += reserved
 			reserved = len(frame.body)
-			op.encoded = nil
 		}
 	}
 	if err == nil && frame != nil && frameNeedsAck(frame.typeID) {
@@ -1239,6 +1885,11 @@ func (c *Conn) handleOutboundSend(state *outboundState, op outboundOp) {
 	if errors.Is(err, ErrOutboundTrackedBudget) {
 		c.metrics.OutboundDropped("tracked_global_byte_budget")
 		c.failTransport()
+	}
+	if isOutboundStaleLayerEpoch(err) {
+		// Profile correction is normal client recovery. This proactive update
+		// belongs to an older epoch; drop it without poisoning the socket.
+		c.metrics.OutboundDropped("stale_layer_epoch")
 	}
 	if err == nil {
 		err = c.writeFrame(op.ctx, frame)
@@ -1255,7 +1906,6 @@ func (c *Conn) handleOutboundSend(state *outboundState, op outboundOp) {
 			}
 		}
 	}
-	reservationBudget.release(reserved)
 	queueWait := time.Since(op.enqueuedAt)
 	bytes := 0
 	typeID := uint32(0)
@@ -1278,9 +1928,27 @@ func (c *Conn) handleOutboundResend(state *outboundState, ctx context.Context, i
 		if !ok {
 			continue
 		}
+		lockedLayer := c.lockSessionLayerBinding(frame.layer)
+		if err := validateOutboundLayerBinding(c, &encodedOutboundMessage{layer: frame.layer}); err != nil {
+			if lockedLayer {
+				c.layerProfileMu.RUnlock()
+			}
+			if isOutboundStaleLayerEpoch(err) || isOutboundLayerProfileError(err) {
+				state.removePending(id)
+				c.metrics.OutboundDropped("stale_layer_resend")
+				continue
+			}
+			return info, err
+		}
 		if err := c.writeFrame(ctx, frame); err != nil {
+			if lockedLayer {
+				c.layerProfileMu.RUnlock()
+			}
 			c.metrics.OutboundResend(resent, err)
 			return info, err
+		}
+		if lockedLayer {
+			c.layerProfileMu.RUnlock()
 		}
 		frame.sentAt = time.Now()
 		frame.sends++
@@ -1396,6 +2064,11 @@ func (c *Conn) newOutboundSendOp(ctx context.Context, t proto.MessageType, msg b
 	if encoded == nil {
 		return outboundOp{}, errors.New("nil encoded outbound message")
 	}
+	// Catch correction-before-enqueue synchronously. The actor repeats the same
+	// validation immediately before framing to close the bounded queue race.
+	if err := validateOutboundLayerBinding(c, encoded); err != nil {
+		return outboundOp{}, err
+	}
 	bytes := len(encoded.body)
 	if bytes > maxOutboundBodyBytes {
 		return outboundOp{}, fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, bytes, maxOutboundBodyBytes)
@@ -1475,12 +2148,12 @@ func (c *Conn) buildFrame(ctx context.Context, t proto.MessageType, msg bin.Enco
 			return nil, err
 		}
 	}
-	// 出站统一在此按本连接协商 layer 降级：
-	//   - push fan-out 用 onceEncodedOutbound 把更新编码一次(canonical)再 SendEncoded 给多条
-	//     连接共享，故必须在此**逐连接**降级，且**绝不改共享 encoded**(downgradedClone 拷贝)。
-	//   - rpc_result 的内层对象已在 encodeRPCResult 按 layer 降级，其 mt.* 外壳在此为顶层直通(no-op)。
-	//   - 控制消息(mt.*)顶层直通。layer>=227 整条零开销。
-	encoded = c.downgradedCloneContext(ctx, encoded)
+	if err := validateOutboundLayerBinding(c, encoded); err != nil {
+		return nil, err
+	}
+	if encoded.layer == nil && !encoded.layerInvariant {
+		return nil, ErrOutboundLayerBindingRequired
+	}
 	content := frameNeedsAck(encoded.typeID)
 	msgID := c.msgID.New(t)
 	return &outboundFrame{
@@ -1489,50 +2162,11 @@ func (c *Conn) buildFrame(ctx context.Context, t proto.MessageType, msg bin.Enco
 		typeID:   encoded.typeID,
 		body:     encoded.body,
 		reqMsgID: encoded.reqMsgID,
+		layer:    encoded.layer,
 	}, nil
 }
 
-// downgradedClone 返回按本连接协商 layer 降级后的消息，**绝不修改入参**——push fan-out
-// 多条连接共享同一 encoded，逐连接降级必须各自拷贝，否则会污染其他连接的字节。
-// layer>=227 或 Transcode 直通(mt.* / 无变化)时原样返回入参，零拷贝。降级失败 fail-safe：
-// 返回 canonical 并计 metrics（宁可老客户端对个别长尾对象渲染异常，也不让连接/流崩）。
-func (c *Conn) downgradedClone(encoded *encodedOutboundMessage) *encodedOutboundMessage {
-	return c.downgradedCloneContext(context.Background(), encoded)
-}
-
-func (c *Conn) downgradedCloneContext(ctx context.Context, encoded *encodedOutboundMessage) *encodedOutboundMessage {
-	if encoded == nil {
-		return nil
-	}
-	if c.ClientLayer() >= layerwire.CanonicalLayer {
-		return encoded
-	}
-	var down []byte
-	err := withOutboundEncodeSlot(ctx, c.outboundStop, func() error {
-		var err error
-		down, err = layerwire.Transcode(encoded.body, c.ClientLayer())
-		return err
-	})
-	if err != nil {
-		c.metrics.OutboundDropped("layerwire_downgrade_failed")
-		return encoded
-	}
-	if sameBacking(down, encoded.body) {
-		return encoded // 直通：未变(mt.*/顶层未知)，无需拷贝或重算 typeID
-	}
-	out := &encodedOutboundMessage{
-		body: down, typeID: encoded.typeID, reqMsgID: encoded.reqMsgID,
-		priority: encoded.priority, delivery: encoded.delivery, compressed: encoded.compressed,
-		uncompressedBytes: encoded.uncompressedBytes,
-	}
-	if id, e := (&bin.Buffer{Buf: down}).PeekID(); e == nil {
-		out.typeID = id
-	}
-	return out
-}
-
-// sameBacking reports whether a and b share the same backing array (Transcode
-// returns its input unchanged for passthrough cases).
+// sameBacking reports whether a and b share the same backing array.
 func sameBacking(a, b []byte) bool {
 	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
@@ -1564,10 +2198,50 @@ func encodeOutboundMessageWithoutSlot(msg bin.Encoder) (*encodedOutboundMessage,
 		return nil, fmt.Errorf("peek outbound type id: %w", err)
 	}
 	return &encodedOutboundMessage{
-		typeID:   typeID,
-		body:     body.Raw(),
-		reqMsgID: outboundRequestMsgID(msg),
+		typeID:         typeID,
+		body:           body.Raw(),
+		reqMsgID:       outboundRequestMsgID(msg),
+		layerInvariant: isLayerInvariantControlEncoder(msg),
 	}, nil
+}
+
+// isLayerInvariantRPCResultEncoder proves the complete inner graph of the
+// legacy MTProto service results that may be wrapped by rpc_result before an
+// application Layer is known. Generated application results use their
+// LayerRPCResult proof instead and are intentionally absent here.
+func isLayerInvariantRPCResultEncoder(msg bin.Encoder) bool {
+	switch msg.(type) {
+	case *mt.RPCError,
+		*mt.RPCAnswerUnknown,
+		*mt.RPCAnswerDroppedRunning,
+		*mt.RPCAnswerDropped:
+		return true
+	default:
+		return false
+	}
+}
+
+// isLayerInvariantControlEncoder is intentionally a closed type proof. It
+// admits leaf MTProto service values plus the closed destroy_auth_key
+// rpc_result whose inner constructor is validated by its concrete type.
+// Generic rpc_result, gzip and container envelopes remain excluded because
+// they can carry profile-dependent application payloads.
+func isLayerInvariantControlEncoder(msg bin.Encoder) bool {
+	switch msg.(type) {
+	case *mt.Pong,
+		*mt.FutureSalts,
+		*mt.NewSessionCreated,
+		*mt.MsgsAck,
+		*mt.MsgsStateInfo,
+		*mt.DestroySessionOk,
+		*mt.DestroySessionNone,
+		*mt.BadMsgNotification,
+		*mt.BadServerSalt,
+		*destroyAuthKeyRPCResult:
+		return true
+	default:
+		return false
+	}
 }
 
 // peekSeqNo 计算本帧的 seq_no，但不提交 content 计数递增——递增延到 writeFrame 成功后
@@ -1851,9 +2525,7 @@ func encodedControlFrame(typeID uint32) bool {
 		mt.DestroySessionNoneTypeID,
 		mt.RPCAnswerUnknownTypeID,
 		mt.RPCAnswerDroppedRunningTypeID,
-		mt.RPCAnswerDroppedTypeID,
-		destroyAuthKeyOkTypeID,
-		destroyAuthKeyFailTypeID:
+		mt.RPCAnswerDroppedTypeID:
 		return true
 	default:
 		return false
@@ -1863,6 +2535,8 @@ func encodedControlFrame(typeID uint32) bool {
 func outboundRequestMsgID(msg bin.Encoder) int64 {
 	switch v := msg.(type) {
 	case *proto.Result:
+		return v.RequestMessageID
+	case *destroyAuthKeyRPCResult:
 		return v.RequestMessageID
 	default:
 		return 0

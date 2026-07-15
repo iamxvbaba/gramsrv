@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	appphone "telesrv/internal/app/phone"
 )

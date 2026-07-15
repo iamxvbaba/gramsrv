@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/postresponse"
 )
 
 const (
@@ -104,7 +103,10 @@ func (r *Router) enqueueLoginMessageBootstrap(ctx context.Context, msg domain.Me
 	}
 }
 
-func (r *Router) registerBootstrapAfterBaseline(ctx context.Context, userID int64) {
+// publishBootstrapAfterBaseline runs only from the ordered post-response plan.
+// It must never be called while the baseline rpc_result is merely encoded or
+// queued, otherwise the bootstrap update can overtake that baseline on wire.
+func (r *Router) publishBootstrapAfterBaseline(ctx context.Context, userID int64) {
 	if r.deps.BootstrapUpdates == nil || userID == 0 {
 		return
 	}
@@ -113,19 +115,17 @@ func (r *Router) registerBootstrapAfterBaseline(ctx context.Context, userID int6
 	if !hasAuthKeyID || !hasSessionID {
 		return
 	}
-	postresponse.Register(ctx, func() {
-		cbCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		ready, err := r.deps.BootstrapUpdates.MarkReadyForSession(cbCtx, userID, authKeyID, sessionID)
-		if err != nil {
-			r.log.Warn("mark bootstrap updates ready", zap.Int64("user_id", userID), zap.Int64("session_id", sessionID), zap.Error(err))
-			return
-		}
-		if ready == 0 {
-			return
-		}
-		r.publishReadyBootstrapUpdates(cbCtx, ready, defaultBootstrapLease, r.log.Named("bootstrap"))
-	})
+	cbCtx, cancel := context.WithTimeout(ctx, updatesDeliveryPhaseTimeout)
+	defer cancel()
+	ready, err := r.deps.BootstrapUpdates.MarkReadyForSession(cbCtx, userID, authKeyID, sessionID)
+	if err != nil {
+		r.log.Warn("mark bootstrap updates ready", zap.Int64("user_id", userID), zap.Int64("session_id", sessionID), zap.Error(err))
+		return
+	}
+	if ready == 0 {
+		return
+	}
+	r.publishReadyBootstrapUpdates(cbCtx, ready, defaultBootstrapLease, r.log.Named("bootstrap"))
 }
 
 func (r *Router) publishReadyBootstrapUpdates(ctx context.Context, batch int, leaseTimeout time.Duration, log *zap.Logger) int {

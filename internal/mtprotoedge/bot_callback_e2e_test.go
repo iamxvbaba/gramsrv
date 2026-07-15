@@ -12,13 +12,13 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/gotd/log/logzap"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/session"
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/telegram/dcs"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/session"
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/dcs"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
 
 	"telesrv/internal/app/account"
 	"telesrv/internal/app/auth"
@@ -84,8 +84,19 @@ func newBotCallbackEnv(t *testing.T, ctx context.Context) *botCallbackEnv {
 	router := rpc.New(rpc.Config{DC: dc, IP: tcpAddr.IP.String(), Port: tcpAddr.Port}, deps, zaptest.NewLogger(t), clock.System)
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
-	srv := New(Options{Logger: zaptest.NewLogger(t), DC: dc, RSAKey: rsaKey, AuthKeys: authKeyStore, RPC: router, ActiveSessions: activeSessions})
-	go func() { _ = srv.Serve(ctx, ln) }()
+	srv := New(Options{Logger: zaptest.NewLogger(t), DC: dc, RSAKey: rsaKey, AuthKeys: authKeyStore, LayerRPC: router, ActiveSessions: activeSessions})
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+	t.Cleanup(func() {
+		select {
+		case err := <-serveErr:
+			if err != nil {
+				t.Errorf("serve: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("server did not stop after callback test context cancellation")
+		}
+	})
 
 	newCli := func(storage *session.StorageMemory, handler telegram.UpdateHandler) *telegram.Client {
 		if handler == nil {

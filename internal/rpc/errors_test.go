@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"

@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appcontacts "telesrv/internal/app/contacts"
@@ -600,7 +600,7 @@ func TestModernForwardMessagesConstructorSavesToSelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch messages.forwardMessages#41d41ade: %v", err)
 	}
-	// Now routed through the unified layerwire client-alias (4-byte id swap) and
+	// Now routed through the generated static client overlay and
 	// the normal gotd dispatcher, which boxes a class result as *tg.UpdatesBox
 	// (wire-identical to the raw UpdatesClass the dedicated handler used to return).
 	switch v := enc.(type) {

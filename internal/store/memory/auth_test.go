@@ -44,6 +44,178 @@ func TestAuthKeyStorePreservesProtocolExpiry(t *testing.T) {
 	}
 }
 
+func TestAuthKeyStoreProtocolRetryPreservesClientLayerMetadata(t *testing.T) {
+	ctx := context.Background()
+	keys := NewAuthKeyStore()
+	id := memoryAuthKeyID(17)
+	key := store.AuthKeyData{ID: id, ServerSalt: 10, CreatedAt: 11}
+	key.Value[0] = 1
+	if err := keys.Save(ctx, key); err != nil {
+		t.Fatalf("save auth key: %v", err)
+	}
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 227, DeviceModel: "Desktop", Platform: "tdesktop",
+		SystemVersion: "Windows", APIID: 2040, AppVersion: "6.2",
+	}); err != nil {
+		t.Fatalf("update client info: %v", err)
+	}
+
+	retry := key
+	retry.ServerSalt = 20
+	retry.CreatedAt = 0
+	if err := keys.Save(ctx, retry); err != nil {
+		t.Fatalf("retry protocol save: %v", err)
+	}
+	got, found, err := keys.Get(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get auth key: found=%v err=%v", found, err)
+	}
+	if got.ServerSalt != 20 || got.CreatedAt != 11 {
+		t.Fatalf("protocol fields = salt:%d created:%d, want 20/11", got.ServerSalt, got.CreatedAt)
+	}
+	if got.Layer != 227 || got.DeviceModel != "Desktop" || got.Platform != "tdesktop" ||
+		got.SystemVersion != "Windows" || got.APIID != 2040 || got.AppVersion != "6.2" {
+		t.Fatalf("client metadata was erased by protocol retry: %+v", got)
+	}
+}
+
+func TestAuthKeyStoreUpdateClientInfoRejectsMissingPrimary(t *testing.T) {
+	keys := NewAuthKeyStore()
+	err := keys.UpdateClientInfo(context.Background(), memoryAuthKeyID(18), store.AuthKeyClientInfo{Layer: 227})
+	if !errors.Is(err, store.ErrAuthKeyNotFound) {
+		t.Fatalf("missing primary update error = %v, want %v", err, store.ErrAuthKeyNotFound)
+	}
+}
+
+func TestAuthKeyStoreUpdateClientInfoProtectsObservedLayer(t *testing.T) {
+	ctx := context.Background()
+	keys := NewAuthKeyStore()
+	id := memoryAuthKeyID(19)
+	want := store.AuthKeyData{
+		ID: id, Layer: 227, LayerObservationID: 91,
+		DeviceModel: "before", Platform: "tdesktop",
+	}
+	if err := keys.Save(ctx, want); err != nil {
+		t.Fatalf("save observed auth key: %v", err)
+	}
+
+	err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 220, DeviceModel: "must-not-merge", AppVersion: "must-not-merge",
+	})
+	if !errors.Is(err, store.ErrAuthKeySessionLayerConflict) {
+		t.Fatalf("conflicting layer update error = %v, want %v", err, store.ErrAuthKeySessionLayerConflict)
+	}
+	got, found, err := keys.Get(ctx, id)
+	if err != nil || !found || got != want {
+		t.Fatalf("auth key changed after layer conflict: got=%+v found=%v err=%v, want=%+v", got, found, err, want)
+	}
+
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 227, DeviceModel: "same-layer", AppVersion: "1.0",
+	}); err != nil {
+		t.Fatalf("same observed layer metadata merge: %v", err)
+	}
+	if err := keys.UpdateClientInfo(ctx, id, store.AuthKeyClientInfo{
+		Layer: 0, Platform: "windows", SystemVersion: "11",
+	}); err != nil {
+		t.Fatalf("layerless metadata merge: %v", err)
+	}
+	got, found, err = keys.Get(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get merged auth key: found=%v err=%v", found, err)
+	}
+	if got.Layer != 227 || got.LayerObservationID != 91 || got.DeviceModel != "same-layer" ||
+		got.Platform != "windows" || got.SystemVersion != "11" || got.AppVersion != "1.0" {
+		t.Fatalf("guarded metadata merge = %+v", got)
+	}
+}
+
+func TestTempAuthKeyBindingStoreMergesLayerObservations(t *testing.T) {
+	const handshakeExpiry = 1_800_000_000
+	tests := []struct {
+		name      string
+		tempLayer int
+		tempObs   int64
+		permLayer int
+		permObs   int64
+		wantLayer int
+		wantObs   int64
+		wantErr   error
+	}{
+		{name: "temporary newer", tempLayer: 227, tempObs: 20, permLayer: 220, permObs: 10, wantLayer: 227, wantObs: 20},
+		{name: "permanent newer", tempLayer: 220, tempObs: 10, permLayer: 227, permObs: 20, wantLayer: 227, wantObs: 20},
+		{name: "equal ordered same layer", tempLayer: 225, tempObs: 30, permLayer: 225, permObs: 30, wantLayer: 225, wantObs: 30},
+		{name: "equal ordered conflict", tempLayer: 220, tempObs: 30, permLayer: 227, permObs: 30, wantErr: store.ErrAuthKeySessionLayerConflict},
+		{name: "legacy permanent wins", tempLayer: 220, permLayer: 227, wantLayer: 227},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			keys := NewAuthKeyStore()
+			bindings := NewTempAuthKeyBindingStore(keys)
+			tempID := memoryAuthKeyID(int64(1_000 + i*2))
+			permID := memoryAuthKeyID(int64(1_001 + i*2))
+			tempBefore := store.AuthKeyData{
+				ID: tempID, ExpiresAt: handshakeExpiry,
+				Layer: tt.tempLayer, LayerObservationID: tt.tempObs, DeviceModel: "temp",
+			}
+			permBefore := store.AuthKeyData{
+				ID: permID, Layer: tt.permLayer, LayerObservationID: tt.permObs, DeviceModel: "perm",
+			}
+			if err := keys.Save(ctx, tempBefore); err != nil {
+				t.Fatalf("save temporary auth key: %v", err)
+			}
+			if err := keys.Save(ctx, permBefore); err != nil {
+				t.Fatalf("save permanent auth key: %v", err)
+			}
+			binding := domain.TempAuthKeyBinding{
+				TempAuthKeyID: tempID,
+				PermAuthKeyID: int64(binary.LittleEndian.Uint64(permID[:])),
+				ExpiresAt:     handshakeExpiry,
+			}
+			err := bindings.Save(ctx, binding)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("bind error = %v, want %v", err, tt.wantErr)
+				}
+				tempAfter, _, _ := keys.Get(ctx, tempID)
+				permAfter, _, _ := keys.Get(ctx, permID)
+				if tempAfter != tempBefore || permAfter != permBefore {
+					t.Fatalf("conflicting bind changed keys: temp=%+v perm=%+v", tempAfter, permAfter)
+				}
+				if _, found, getErr := bindings.GetByTemp(ctx, tempID); getErr != nil || found {
+					t.Fatalf("conflicting binding found=%v err=%v, want absent", found, getErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("bind: %v", err)
+			}
+			tempAfter, tempFound, getErr := keys.Get(ctx, tempID)
+			if getErr != nil || !tempFound {
+				t.Fatalf("get temporary after bind: found=%v err=%v", tempFound, getErr)
+			}
+			permAfter, permFound, getErr := keys.Get(ctx, permID)
+			if getErr != nil || !permFound {
+				t.Fatalf("get permanent after bind: found=%v err=%v", permFound, getErr)
+			}
+			if tempAfter.Layer != tt.wantLayer || tempAfter.LayerObservationID != tt.wantObs ||
+				permAfter.Layer != tt.wantLayer || permAfter.LayerObservationID != tt.wantObs {
+				t.Fatalf("merged defaults: temp=(%d,%d) perm=(%d,%d), want=(%d,%d)",
+					tempAfter.Layer, tempAfter.LayerObservationID,
+					permAfter.Layer, permAfter.LayerObservationID,
+					tt.wantLayer, tt.wantObs)
+			}
+			if tempAfter.DeviceModel != "temp" || permAfter.DeviceModel != "perm" {
+				t.Fatalf("bind erased client metadata: temp=%+v perm=%+v", tempAfter, permAfter)
+			}
+			if _, found, getErr := bindings.GetByTemp(ctx, tempID); getErr != nil || !found {
+				t.Fatalf("merged binding found=%v err=%v, want present", found, getErr)
+			}
+		})
+	}
+}
+
 func TestTempAuthKeyBindingStoreIsIdempotentAndRejectsCrossPermanentRebind(t *testing.T) {
 	ctx := context.Background()
 	keys := NewAuthKeyStore()

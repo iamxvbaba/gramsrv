@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 )
 
 func TestMessagesGetEmojiGameInfoUnavailable(t *testing.T) {

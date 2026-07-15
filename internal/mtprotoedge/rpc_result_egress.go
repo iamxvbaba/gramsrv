@@ -2,11 +2,15 @@ package mtprotoedge
 
 import (
 	"context"
+	"errors"
+	"log"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto"
 )
 
 const (
@@ -21,30 +25,143 @@ const (
 
 var rpcResultGZIPSlots = make(chan struct{}, rpcResultGZIPConcurrency)
 
-var (
-	rpcDeliveryHooksOnce sync.Once
-	rpcDeliveryHooks     chan func()
+var defaultRPCDeliveryHookExecutor = newRPCDeliveryHookExecutor(rpcDeliveryHookConcurrency, rpcDeliveryHookQueueSize)
+
+// ErrRPCDeliveryHookCapacity means an RPC result with a delivery-dependent
+// transition cannot reserve reliable executor capacity. The result must not be
+// written: its connection is fenced and the immutable result stays replayable.
+var ErrRPCDeliveryHookCapacity = errors.New("mtproto rpc delivery hook capacity exhausted")
+
+type rpcDeliveryHookTicketState uint32
+
+const (
+	rpcDeliveryHookTicketReserved rpcDeliveryHookTicketState = iota + 1
+	rpcDeliveryHookTicketQueued
+	rpcDeliveryHookTicketReleased
+	rpcDeliveryHookTicketDone
 )
 
-// scheduleRPCDeliveryHook keeps database/update follow-up work off the sole
-// socket writer. Hooks are internal, bounded and timeout-aware at registration
-// sites; the fixed worker set prevents one delivered result from stalling every
-// subsequent frame on that connection.
-func scheduleRPCDeliveryHook(fn func()) {
-	if fn == nil {
+type rpcDeliveryHookTicket struct {
+	executor *rpcDeliveryHookExecutor
+	state    atomic.Uint32
+	job      rpcDeliveryHookJob
+}
+
+type rpcDeliveryHookJob struct {
+	next   *rpcDeliveryHookJob
+	ticket *rpcDeliveryHookTicket
+	fn     func()
+}
+
+// rpcDeliveryHookExecutor has process lifetime. Capacity bounds queued plus
+// running hooks; every physical write reserves a ticket before admission. A
+// successful writer therefore performs only one short O(1) queue append and
+// never waits for capacity or hook work. Failed writes release their ticket,
+// while the shared logical coordinator remains eligible for a later replay.
+type rpcDeliveryHookExecutor struct {
+	slots chan struct{}
+
+	mu   sync.Mutex
+	cond *sync.Cond
+	head *rpcDeliveryHookJob
+	tail *rpcDeliveryHookJob
+
+	panics atomic.Uint64
+}
+
+func newRPCDeliveryHookExecutor(workers, capacity int) *rpcDeliveryHookExecutor {
+	if workers <= 0 {
+		workers = 1
+	}
+	if capacity < workers {
+		capacity = workers
+	}
+	e := &rpcDeliveryHookExecutor{slots: make(chan struct{}, capacity)}
+	e.cond = sync.NewCond(&e.mu)
+	for range workers {
+		go e.run()
+	}
+	return e
+}
+
+func (e *rpcDeliveryHookExecutor) reserve() (*rpcDeliveryHookTicket, bool) {
+	if e == nil {
+		return nil, false
+	}
+	select {
+	case e.slots <- struct{}{}:
+		ticket := &rpcDeliveryHookTicket{executor: e}
+		ticket.state.Store(uint32(rpcDeliveryHookTicketReserved))
+		return ticket, true
+	default:
+		return nil, false
+	}
+}
+
+func (t *rpcDeliveryHookTicket) release() {
+	if t == nil || t.executor == nil || !t.state.CompareAndSwap(
+		uint32(rpcDeliveryHookTicketReserved), uint32(rpcDeliveryHookTicketReleased),
+	) {
 		return
 	}
-	rpcDeliveryHooksOnce.Do(func() {
-		rpcDeliveryHooks = make(chan func(), rpcDeliveryHookQueueSize)
-		for range rpcDeliveryHookConcurrency {
-			go func() {
-				for hook := range rpcDeliveryHooks {
-					hook()
-				}
-			}()
+	<-t.executor.slots
+}
+
+func (t *rpcDeliveryHookTicket) submit(fn func()) bool {
+	if t == nil || t.executor == nil || fn == nil || !t.state.CompareAndSwap(
+		uint32(rpcDeliveryHookTicketReserved), uint32(rpcDeliveryHookTicketQueued),
+	) {
+		return false
+	}
+	t.job.ticket = t
+	t.job.fn = fn
+	t.executor.enqueue(&t.job)
+	return true
+}
+
+func (e *rpcDeliveryHookExecutor) enqueue(job *rpcDeliveryHookJob) {
+	e.mu.Lock()
+	if e.tail == nil {
+		e.head = job
+	} else {
+		e.tail.next = job
+	}
+	e.tail = job
+	e.cond.Signal()
+	e.mu.Unlock()
+}
+
+func (e *rpcDeliveryHookExecutor) run() {
+	for {
+		e.mu.Lock()
+		for e.head == nil {
+			e.cond.Wait()
 		}
-	})
-	rpcDeliveryHooks <- fn
+		job := e.head
+		e.head = job.next
+		if e.head == nil {
+			e.tail = nil
+		}
+		job.next = nil
+		e.mu.Unlock()
+		e.runOne(job)
+	}
+}
+
+func (e *rpcDeliveryHookExecutor) runOne(job *rpcDeliveryHookJob) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			e.panics.Add(1)
+			log.Printf("mtprotoedge: rpc delivery hook panic: %v\n%s", recovered, debug.Stack())
+		}
+		if job != nil && job.ticket != nil {
+			job.ticket.state.Store(uint32(rpcDeliveryHookTicketDone))
+			<-e.slots
+		}
+	}()
+	if job != nil && job.fn != nil {
+		job.fn()
+	}
 }
 
 // encodeAdaptiveRPCResultInner returns either the original layer-specific TL

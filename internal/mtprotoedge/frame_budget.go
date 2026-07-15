@@ -7,9 +7,9 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/transport"
 )
 
 const defaultInboundFrameGlobalMaxBytes int64 = 512 << 20

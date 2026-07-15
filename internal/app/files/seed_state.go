@@ -10,13 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"telesrv/internal/domain"
 )
 
 const (
 	seedEffectsStateKey        = "files.effects"
 	seedEffectsStateVersion    = "effects-v2"
-	seedAppearanceStateKey     = "files.appearance"
-	seedAppearanceStateVersion = "appearance-v1"
+	seedStickerPreviewStateKey = "files.sticker_previews"
+	// v2 explicitly rebuilds sticker documents written before duplicate seed imports
+	// became monotonic. Those databases may contain an effects-generated transparent
+	// 1x1 preview where the sticker catalog has a real static thumbnail.
+	seedStickerPreviewStateVersion = "sticker-previews-v2-monotonic"
+	seedAppearanceStateKey         = "files.appearance"
+	seedAppearanceStateVersion     = "appearance-v1"
 )
 
 func (s *Service) seedStateMatches(ctx context.Context, key, want string) (bool, error) {
@@ -88,15 +95,16 @@ func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []str
 	}
 	for _, tj := range dj.Thumbs {
 		ps, downloadable := seedPhotoSize(tj)
-		if !downloadable || ps.Type == "" {
+		if ps.Type == "" {
 			continue
 		}
-		if _, ok := index.thumb[dj.ID][ps.Type]; ok {
+		if downloadable {
+			if _, ok := index.thumb[dj.ID][ps.Type]; ok {
+				keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, ps.Type))
+			}
+		} else if ps.Kind == domain.PhotoSizeKindCached && len(ps.Bytes) > 0 && ps.W > 0 && ps.H > 0 {
 			keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, ps.Type))
 		}
-	}
-	if seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj) {
-		keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, seedSyntheticDocumentThumbType))
 	}
 	return keys
 }
@@ -143,6 +151,28 @@ func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumen
 		}
 		if doc.DCID != s.dc || doc.MimeType != dj.MimeType || doc.Size != dj.Size {
 			return false, nil
+		}
+		// A catalog without its own thumbnail may share this document with a richer
+		// catalog. Readiness follows the preview that is actually stored instead of
+		// demanding the synthetic "m" key and repeatedly downgrading that richer
+		// document on every import.
+		if seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj) {
+			if len(doc.Thumbs) == 0 {
+				return false, nil
+			}
+			for _, thumb := range doc.Thumbs {
+				switch thumb.Kind {
+				case domain.PhotoSizeKindDefault, domain.PhotoSizeKindProgressive, domain.PhotoSizeKindCached:
+					if thumb.Type == "" {
+						return false, nil
+					}
+					key := fmt.Sprintf("doc:%d:%s", doc.ID, thumb.Type)
+					if _, seen := seenLocationKeys[key]; !seen {
+						seenLocationKeys[key] = struct{}{}
+						locationKeys = append(locationKeys, key)
+					}
+				}
+			}
 		}
 		delete(expected, doc.ID)
 	}

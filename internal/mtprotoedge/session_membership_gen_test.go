@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -66,6 +67,9 @@ func TestSetSessionChannelMembershipsDetectsConcurrentIncrementalUpdates(t *test
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}
 	c := &Conn{sessionID: 42, authKeyID: raw}
+	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		t.Fatal(err)
+	}
 	sm.Register(c)
 	sm.BindUserForAuthKey(raw, 42, 100)
 	sm.SetReceivesUpdatesForAuthKey(raw, 42, true)

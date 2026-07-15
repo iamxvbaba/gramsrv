@@ -3,7 +3,7 @@ package tdesktop
 import (
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/links"
 )

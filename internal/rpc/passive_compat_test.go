@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -61,7 +61,7 @@ func TestAccountGetUniqueGiftChatThemesReturnsEmptyStub(t *testing.T) {
 	}
 }
 
-func TestAccountGetWallPapersReturnsOrangeCatalog(t *testing.T) {
+func TestAccountGetWallPapersReturnsDefaultCatalog(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	req := &tg.AccountGetWallPapersRequest{}
 	var in bin.Buffer
@@ -82,7 +82,7 @@ func TestAccountGetWallPapersReturnsOrangeCatalog(t *testing.T) {
 		t.Fatalf("boxed response type = %T, want *tg.AccountWallPapers", box.WallPapers)
 	}
 	if wallpapers.Hash == 0 || len(wallpapers.Wallpapers) == 0 {
-		t.Fatalf("wallpapers = %+v, want stable seed catalog", wallpapers)
+		t.Fatalf("wallpapers = %+v, want stable Default catalog", wallpapers)
 	}
 }
 

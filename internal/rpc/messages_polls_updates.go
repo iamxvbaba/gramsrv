@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"

@@ -55,16 +55,39 @@ func (s *UpdateStateStore) Save(ctx context.Context, id [8]byte, userID int64, s
 	return nil
 }
 
+func (s *UpdateStateStore) CommitDeliveredState(ctx context.Context, id [8]byte, userID int64, st domain.UpdateState, mode domain.UpdateStateCommitMode) error {
+	establishObserved := mode == domain.UpdateStateCommitDeliveredAndObservedBaseline
+	if mode != domain.UpdateStateCommitDeliveredOnly && !establishObserved {
+		return fmt.Errorf("commit delivered update state: invalid mode %d", mode)
+	}
+	if _, err := s.db.Exec(ctx, `
+INSERT INTO update_states (auth_key_id, user_id, pts, qts, date, seq, observed_pts)
+VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN $3 ELSE 0 END)
+ON CONFLICT (auth_key_id, user_id) DO UPDATE SET
+  pts = GREATEST(update_states.pts, EXCLUDED.pts),
+  qts = GREATEST(update_states.qts, EXCLUDED.qts),
+  date = GREATEST(update_states.date, EXCLUDED.date),
+  seq = GREATEST(update_states.seq, EXCLUDED.seq),
+  observed_pts = CASE
+    WHEN $7 THEN GREATEST(update_states.observed_pts, EXCLUDED.observed_pts)
+    ELSE update_states.observed_pts
+  END,
+  updated_at = now()`, authKeyIDToInt64(id), userID, st.Pts, st.Qts, st.Date, st.Seq, establishObserved); err != nil {
+		return fmt.Errorf("commit delivered update state: %w", err)
+	}
+	return nil
+}
+
 func (s *UpdateStateStore) ObserveClientState(ctx context.Context, id [8]byte, userID int64, st domain.UpdateState) error {
 	if st.Pts < 0 {
 		st.Pts = 0
 	}
 	if _, err := s.db.Exec(ctx, `
 INSERT INTO update_states (auth_key_id, user_id, pts, qts, date, seq, observed_pts)
-VALUES ($1, $2, $3, $4, $5, $6, $3)
+VALUES ($1, $2, 0, 0, 0, 0, $3)
 ON CONFLICT (auth_key_id, user_id) DO UPDATE SET
   observed_pts = GREATEST(update_states.observed_pts, EXCLUDED.observed_pts),
-  updated_at = now()`, authKeyIDToInt64(id), userID, st.Pts, st.Qts, st.Date, st.Seq); err != nil {
+  updated_at = now()`, authKeyIDToInt64(id), userID, st.Pts); err != nil {
 		return fmt.Errorf("observe client update state: %w", err)
 	}
 	return nil

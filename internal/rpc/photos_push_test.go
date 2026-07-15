@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appusers "telesrv/internal/app/users"
@@ -93,8 +93,17 @@ func TestUploadProfilePhotoEchoesUpdateToCurrentSession(t *testing.T) {
 	reqCtx := WithSessionID(WithUserID(ctx, owner.ID), currentSessionID)
 	req := &tg.PhotosUploadProfilePhotoRequest{}
 	req.SetVideoEmojiMarkup(&tg.VideoSizeEmojiMarkup{EmojiID: 99, BackgroundColors: []int{0xffffff}})
-	if _, err := r.onPhotosUploadProfilePhoto(reqCtx, req); err != nil {
+	got, err := r.onPhotosUploadProfilePhoto(reqCtx, req)
+	if err != nil {
 		t.Fatalf("uploadProfilePhoto: %v", err)
+	}
+	returned, ok := got.Photo.(*tg.Photo)
+	if !ok || len(returned.Sizes) < 1 {
+		t.Fatalf("returned photo = %T %+v, want photo with s/a/c sizes", got.Photo, got.Photo)
+	}
+	transientSize, ok := returned.Sizes[0].(*tg.PhotoSize)
+	if !ok || transientSize.Type != "s" || transientSize.W != 150 || transientSize.H != 150 {
+		t.Fatalf("returned first size = %+v, want real s=150 transient response location", returned.Sizes[0])
 	}
 
 	// PushToSession 在 PushToUserExceptSession 之后调用，snapshot().message 即当前 session 回显。

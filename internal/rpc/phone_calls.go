@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	appphone "telesrv/internal/app/phone"
 	"telesrv/internal/domain"

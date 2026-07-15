@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )

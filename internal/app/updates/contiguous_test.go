@@ -148,7 +148,14 @@ func TestGetStateDoesNotConfirmUnfetchedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState after difference: %v", err)
 	}
-	if st.Pts != 2 {
-		t.Fatalf("GetState after difference pts=%d, want confirmed pts=2", st.Pts)
+	if st.Pts != 1 {
+		t.Fatalf("GetState before delivery commit pts=%d, want confirmed pts=1", st.Pts)
+	}
+	if err := svc.CommitDeliveredState(ctx, authKeyID, userID, diff.State, domain.UpdateStateCommitDeliveredOnly); err != nil {
+		t.Fatalf("CommitDeliveredState: %v", err)
+	}
+	st, err = svc.GetState(ctx, authKeyID, userID)
+	if err != nil || st.Pts != 2 {
+		t.Fatalf("GetState after delivery commit = %+v err=%v, want pts=2", st, err)
 	}
 }

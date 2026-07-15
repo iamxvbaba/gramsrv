@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appmessages "telesrv/internal/app/messages"
@@ -47,14 +47,14 @@ func (s *phoneCaptureSessions) UserIDResolvedForAuthKey([8]byte, int64) (int64, 
 func (s *phoneCaptureSessions) UnbindAuthKey([8]byte) int                         { return 0 }
 func (s *phoneCaptureSessions) SetReceivesUpdatesForAuthKey([8]byte, int64, bool) {}
 
-func (s *phoneCaptureSessions) PushToSessionForAuthKey(_ context.Context, _ [8]byte, sessionID int64, _ proto.MessageType, msg bin.Encoder) error {
+func (s *phoneCaptureSessions) PushToSessionForAuthKey(_ context.Context, _ [8]byte, sessionID int64, _ proto.MessageType, msg tg.UpdatesClass) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log = append(s.log, phonePushRecord{targetSession: sessionID, msg: msg})
 	return nil
 }
 
-func (s *phoneCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, excludeSessionID int64, _ proto.MessageType, msg bin.Encoder) (int, error) {
+func (s *phoneCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context, userID int64, _ [8]byte, excludeSessionID int64, _ proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.log = append(s.log, phonePushRecord{userID: userID, excludeSession: excludeSessionID, msg: msg})

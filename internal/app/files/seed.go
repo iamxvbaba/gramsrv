@@ -81,6 +81,7 @@ func (s *Service) SeedMedia(ctx context.Context, root string, maxRegularSets int
 	// 这样向已部署(非空 store)的 data/sticker-seed 丢新集后重启即可生效,无需清库重 seed。
 	// 仅当检测到旧版缩略图/可渲染预览元数据缺失时 force=true 全量重导修复。
 	forceSticker := false
+	previewState := fmt.Sprintf("%s:dc=%d", seedStickerPreviewStateVersion, s.dc)
 	if n, err := s.media.CountStickerSets(ctx); err != nil {
 		return stats, err
 	} else if n > 0 {
@@ -88,10 +89,17 @@ func (s *Service) SeedMedia(ctx context.Context, root string, maxRegularSets int
 		if err != nil {
 			return stats, err
 		}
-		forceSticker = stale
+		migrated, err := s.seedStateMatches(ctx, seedStickerPreviewStateKey, previewState)
+		if err != nil {
+			return stats, err
+		}
+		forceSticker = stale || !migrated
 	}
 	if err := s.seedStickerSets(ctx, root, maxRegularSets, forceSticker, &stats); err != nil {
 		return stats, fmt.Errorf("seed sticker sets: %w", err)
+	}
+	if err := s.putSeedState(ctx, seedStickerPreviewStateKey, previewState); err != nil {
+		return stats, fmt.Errorf("record sticker preview seed state: %w", err)
 	}
 	s.logSeedPhase("sticker_sets", phaseStarted, phaseBefore, stats)
 
@@ -379,6 +387,10 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	if dj.ID == 0 {
 		return domain.Document{}, nil
 	}
+	existing, existingFound, err := s.media.GetDocument(ctx, dj.ID)
+	if err != nil {
+		return domain.Document{}, err
+	}
 	ref, _ := hex.DecodeString(dj.FileReference)
 	doc := domain.Document{
 		ID:            dj.ID,
@@ -436,27 +448,40 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 			if err != nil {
 				return domain.Document{}, err
 			}
-			objectKey, err := s.blobs.Put(ctx, data)
-			if err != nil {
-				return domain.Document{}, err
-			}
 			ps.Size = len(data)
-			if err := s.media.PutFileBlob(ctx, domain.FileBlob{
-				LocationKey: fmt.Sprintf("doc:%d:%s", doc.ID, ps.Type),
-				Backend:     domain.MediaBackend(s.blobs.Name()),
-				ObjectKey:   objectKey,
-				Size:        int64(len(data)),
-				MimeType:    seedThumbMimeType(data),
-			}); err != nil {
-				return domain.Document{}, err
-			}
 			ps = seedInlineCachedDocumentThumb(ps, data)
-			s.prewarmSmallBlob(objectKey, data)
-			stats.Blobs++
+			// A duplicate document can be present in several catalogs. Do not replace a
+			// better already-persisted preview (and its shared location key) with a lower
+			// quality rendition from the catalog imported later.
+			if prior, ok := seedDocumentThumbByType(existing.Thumbs, ps.Type); existingFound && ok && seedPhotoSizeBetter(prior, ps) {
+				ps = prior
+			} else {
+				objectKey, err := s.blobs.Put(ctx, data)
+				if err != nil {
+					return domain.Document{}, err
+				}
+				if err := s.media.PutFileBlob(ctx, domain.FileBlob{
+					LocationKey: fmt.Sprintf("doc:%d:%s", doc.ID, ps.Type),
+					Backend:     domain.MediaBackend(s.blobs.Name()),
+					ObjectKey:   objectKey,
+					Size:        int64(len(data)),
+					MimeType:    seedThumbMimeType(data),
+				}); err != nil {
+					return domain.Document{}, err
+				}
+				s.prewarmSmallBlob(objectKey, data)
+				stats.Blobs++
+			}
 		}
 		thumbs = append(thumbs, ps)
 	}
 	doc.Thumbs = thumbs
+	if existingFound {
+		doc.Thumbs = mergeSeedDocumentThumbs(existing.Thumbs, doc.Thumbs)
+	}
+	if err := s.ensureSeedCachedThumbBlobs(ctx, doc, stats); err != nil {
+		return domain.Document{}, err
+	}
 
 	if err := s.ensureTGStickerPreviewThumb(ctx, &doc, stats); err != nil {
 		return domain.Document{}, err
@@ -700,6 +725,138 @@ func seedInlineCachedDocumentThumb(ps domain.PhotoSize, data []byte) domain.Phot
 	return ps
 }
 
+// mergeSeedDocumentThumbs makes duplicate seed imports monotonic for preview quality.
+// PhotoSize.Type is also the blob location suffix, so only one winner per type may be
+// advertised. Incoming metadata wins ties; a richer existing preview wins downgrades.
+func mergeSeedDocumentThumbs(existing, incoming []domain.PhotoSize) []domain.PhotoSize {
+	out := append([]domain.PhotoSize(nil), incoming...)
+	byType := make(map[string]int, len(out))
+	for i, thumb := range out {
+		if thumb.Type != "" {
+			byType[thumb.Type] = i
+		}
+	}
+	for _, thumb := range existing {
+		if thumb.Type != "" {
+			if i, ok := byType[thumb.Type]; ok {
+				if seedPhotoSizeBetter(thumb, out[i]) {
+					out[i] = thumb
+				}
+				continue
+			}
+			byType[thumb.Type] = len(out)
+		}
+		out = append(out, thumb)
+	}
+
+	hasRealPreview := false
+	for _, thumb := range out {
+		if !seedSyntheticTGStickerPreviewThumb(thumb) && seedPhotoSizePreviewTier(thumb) > 1 {
+			hasRealPreview = true
+			break
+		}
+	}
+	if !hasRealPreview {
+		return out
+	}
+	filtered := out[:0]
+	for _, thumb := range out {
+		if !seedSyntheticTGStickerPreviewThumb(thumb) {
+			filtered = append(filtered, thumb)
+		}
+	}
+	return filtered
+}
+
+func seedDocumentThumbByType(thumbs []domain.PhotoSize, typ string) (domain.PhotoSize, bool) {
+	for _, thumb := range thumbs {
+		if thumb.Type == typ {
+			return thumb, true
+		}
+	}
+	return domain.PhotoSize{}, false
+}
+
+func seedPhotoSizeBetter(a, b domain.PhotoSize) bool {
+	aTier, bTier := seedPhotoSizePreviewTier(a), seedPhotoSizePreviewTier(b)
+	if aTier != bTier {
+		return aTier > bTier
+	}
+	aArea, bArea := int64(a.W)*int64(a.H), int64(b.W)*int64(b.H)
+	if aArea != bArea {
+		return aArea > bArea
+	}
+	aPayload, bPayload := len(a.Bytes)+a.Size, len(b.Bytes)+b.Size
+	return aPayload > bPayload
+}
+
+func seedPhotoSizePreviewTier(thumb domain.PhotoSize) int {
+	if seedSyntheticTGStickerPreviewThumb(thumb) {
+		return 0
+	}
+	switch thumb.Kind {
+	case domain.PhotoSizeKindCached:
+		if len(thumb.Bytes) > 0 && thumb.W > 0 && thumb.H > 0 {
+			return 4
+		}
+	case domain.PhotoSizeKindDefault, domain.PhotoSizeKindProgressive:
+		if thumb.Size > 0 && thumb.W > 0 && thumb.H > 0 {
+			return 4
+		}
+	case domain.PhotoSizeKindPath, domain.PhotoSizeKindStripped:
+		if len(thumb.Bytes) > 0 {
+			return 3
+		}
+	}
+	return 1
+}
+
+func seedSyntheticTGStickerPreviewThumb(thumb domain.PhotoSize) bool {
+	return thumb.Kind == domain.PhotoSizeKindCached &&
+		thumb.Type == seedSyntheticDocumentThumbType &&
+		thumb.W == 1 && thumb.H == 1 &&
+		bytes.Equal(thumb.Bytes, seedSyntheticTGStickerPreviewThumbPNG)
+}
+
+// ensureSeedCachedThumbBlobs keeps the RPC conversion invariant: document cached
+// previews are exposed as downloadable PhotoSize entries, so every advertised type
+// must have a matching blob even when the source JSON carried the bytes inline.
+func (s *Service) ensureSeedCachedThumbBlobs(ctx context.Context, doc domain.Document, stats *SeedStats) error {
+	for _, thumb := range doc.Thumbs {
+		if thumb.Kind != domain.PhotoSizeKindCached || thumb.Type == "" || len(thumb.Bytes) == 0 {
+			continue
+		}
+		locationKey := fmt.Sprintf("doc:%d:%s", doc.ID, thumb.Type)
+		mimeType := seedThumbMimeType(thumb.Bytes)
+		stored, found, err := s.media.GetFileBlob(ctx, locationKey)
+		if err != nil {
+			return err
+		}
+		if found && stored.Size == int64(len(thumb.Bytes)) && stored.MimeType == mimeType {
+			continue
+		}
+		if s.blobs == nil {
+			return fmt.Errorf("blob backend not configured for cached document thumb %s", locationKey)
+		}
+		objectKey, err := s.blobs.Put(ctx, thumb.Bytes)
+		if err != nil {
+			return err
+		}
+		if err := s.media.PutFileBlob(ctx, domain.FileBlob{
+			LocationKey: locationKey,
+			Backend:     domain.MediaBackend(s.blobs.Name()),
+			ObjectKey:   objectKey,
+			Size:        int64(len(thumb.Bytes)),
+			MimeType:    mimeType,
+		}); err != nil {
+			return err
+		}
+		s.prewarmSmallBlob(objectKey, thumb.Bytes)
+		stats.Blobs++
+	}
+	return nil
+}
+
 func (s *Service) ensureTGStickerPreviewThumb(ctx context.Context, doc *domain.Document, stats *SeedStats) error {
 	if !seedDocumentNeedsSyntheticTGStickerPreviewThumb(*doc) {
 		return nil
@@ -826,11 +983,12 @@ func (s *Service) documentsNeedSeedRepair(ctx context.Context, ids []int64) (boo
 				if err != nil {
 					return false, err
 				}
-				if ok {
-					want := seedThumbMimeType(thumb.Bytes)
-					if want != "application/octet-stream" && blob.MimeType != want {
-						return true, nil
-					}
+				if !ok {
+					return true, nil
+				}
+				want := seedThumbMimeType(thumb.Bytes)
+				if blob.Size != int64(len(thumb.Bytes)) || (want != "application/octet-stream" && blob.MimeType != want) {
+					return true, nil
 				}
 			}
 		}

@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/tg"
 
 	appfiles "telesrv/internal/app/files"
 	"telesrv/internal/domain"
@@ -18,6 +18,30 @@ type requestVectorPolicy struct {
 	max          int
 	minElemBytes int
 	tooLong      func() error
+}
+
+type rpcPreflightWire interface {
+	WireSize() int
+	ByteAt(offset int) (byte, error)
+	Uint32At(offset int) (uint32, error)
+}
+
+type rawRPCPreflightWire []byte
+
+func (w rawRPCPreflightWire) WireSize() int { return len(w) }
+
+func (w rawRPCPreflightWire) ByteAt(offset int) (byte, error) {
+	if offset < 0 || offset >= len(w) {
+		return 0, fmt.Errorf("byte offset %d outside request size %d", offset, len(w))
+	}
+	return w[offset], nil
+}
+
+func (w rawRPCPreflightWire) Uint32At(offset int) (uint32, error) {
+	if offset < 0 || offset > len(w) || len(w)-offset < 4 {
+		return 0, fmt.Errorf("uint32 offset %d outside request size %d", offset, len(w))
+	}
+	return binary.LittleEndian.Uint32(w[offset:]), nil
 }
 
 // requestVectorPolicies mirrors limits already enforced by typed handlers, but does so before
@@ -40,37 +64,136 @@ var requestVectorPolicies = map[uint32]requestVectorPolicy{
 	tg.ChannelsGetChannelsRequestTypeID:             {vectorOffset: 4, max: maxGetMessagesIDs, minElemBytes: 4, tooLong: limitInvalidErr},
 }
 
+// layerRPCVectorPolicies bind resource limits to generated semantic field
+// identities, not constructor CRCs, profile-specific field order, flags bits,
+// or byte offsets. gotdgen proves at generation time that each registered
+// field exposes the same metric in every routable profile. Importing a future
+// schema therefore either extends these policies automatically or makes
+// dispatcher construction fail closed until an explicit conversion policy is
+// supplied.
+var layerRPCVectorPolicies = []struct {
+	fieldID tg.LayerRPCFieldID
+	max     int
+	tooLong func() error
+}{
+	{tg.LayerRPCFieldUsersGetUsersID, 100, inputRequestTooLongErr},
+	{tg.LayerRPCFieldUsersGetRequirementsToContactID, maxRequirementsToContactUsers, limitInvalidErr},
+	{tg.LayerRPCFieldContactsImportContactsContacts, maxContactImportBatch, limitInvalidErr},
+	{tg.LayerRPCFieldContactsDeleteContactsID, maxContactDeleteBatch, limitInvalidErr},
+	{tg.LayerRPCFieldContactsEditCloseFriendsID, maxCloseFriendsCount, limitInvalidErr},
+	{tg.LayerRPCFieldContactsSetBlockedID, maxContactSetBlocked, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesGetMessagesID, maxGetMessagesIDs, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesGetChatsID, maxGetMessagesIDs, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesGetPeerDialogsPeers, maxDialogInputPeers, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesReadMessageContentsID, maxGetMessagesIDs, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesGetCustomEmojiDocumentsDocumentID, maxEmojiDocuments, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesDeleteMessagesID, domain.MaxDeleteMessageIDs, limitInvalidErr},
+	{tg.LayerRPCFieldMessagesCreateChatUsers, 200, limitInvalidErr},
+	{tg.LayerRPCFieldChannelsGetChannelsID, maxGetMessagesIDs, limitInvalidErr},
+}
+
+func registerLayerRPCAdmissionFieldPreflights(d *tg.ServerDispatcher) error {
+	if d == nil {
+		return fmt.Errorf("nil layer RPC dispatcher")
+	}
+	for _, policy := range layerRPCVectorPolicies {
+		policy := policy
+		if err := d.OnLayerRPCAdmissionFieldPreflight(policy.fieldID, func(view tg.LayerRPCAdmissionFieldView) error {
+			length, ok := view.VectorLength()
+			if !ok {
+				return inputRequestInvalidErr()
+			}
+			if length <= policy.max {
+				return nil
+			}
+			if policy.tooLong != nil {
+				return policy.tooLong()
+			}
+			return inputRequestTooLongErr()
+		}); err != nil {
+			return fmt.Errorf("register vector field %#016x: %w", uint64(policy.fieldID), err)
+		}
+	}
+
+	for _, fieldID := range []tg.LayerRPCFieldID{
+		tg.LayerRPCFieldUploadSaveFilePartBytes,
+		tg.LayerRPCFieldUploadSaveBigFilePartBytes,
+	} {
+		if err := d.OnLayerRPCAdmissionFieldPreflight(fieldID, func(view tg.LayerRPCAdmissionFieldView) error {
+			length, ok := view.BytesLength()
+			if !ok {
+				return inputRequestInvalidErr()
+			}
+			if length > appfiles.MaxUploadPartBytes {
+				return filePartTooBigErr()
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("register upload bytes field %#016x: %w", uint64(fieldID), err)
+		}
+	}
+
+	if err := d.OnLayerRPCAdmissionFieldPreflight(
+		tg.LayerRPCFieldUploadSaveBigFilePartFileTotalParts,
+		func(view tg.LayerRPCAdmissionFieldView) error {
+			totalParts, ok := view.Int32()
+			if !ok {
+				return inputRequestInvalidErr()
+			}
+			if totalParts <= 0 || totalParts > int32(appfiles.MaxUploadParts) {
+				return filePartInvalidErr()
+			}
+			return nil
+		},
+	); err != nil {
+		return fmt.Errorf("register upload total-parts field: %w", err)
+	}
+	return nil
+}
+
 func preflightRPCRequest(id uint32, b *bin.Buffer) error {
 	if b == nil {
 		return inputRequestInvalidErr()
 	}
+	return preflightRPCWire(id, rawRPCPreflightWire(b.Buf))
+}
+
+func preflightRPCWire(id uint32, wire rpcPreflightWire) error {
+	if wire == nil {
+		return inputRequestInvalidErr()
+	}
 	if policy, ok := requestVectorPolicies[id]; ok {
-		if err := preflightFixedVector(b.Buf, policy); err != nil {
+		if err := preflightFixedVector(wire, policy); err != nil {
 			return err
 		}
 	}
 	switch id {
 	case tg.UploadSaveFilePartRequestTypeID:
-		return preflightUploadPart(b.Buf, 16, false)
+		return preflightUploadPart(wire, 16, false)
 	case tg.UploadSaveBigFilePartRequestTypeID:
-		return preflightUploadPart(b.Buf, 20, true)
+		return preflightUploadPart(wire, 20, true)
 	default:
 		return nil
 	}
 }
 
-func preflightFixedVector(raw []byte, policy requestVectorPolicy) error {
-	if policy.vectorOffset < 4 || policy.minElemBytes <= 0 || len(raw) < policy.vectorOffset+8 {
+func preflightFixedVector(wire rpcPreflightWire, policy requestVectorPolicy) error {
+	if policy.vectorOffset < 4 || policy.minElemBytes <= 0 || wire.WireSize() < policy.vectorOffset+8 {
 		return inputRequestInvalidErr()
 	}
-	if binary.LittleEndian.Uint32(raw[policy.vectorOffset:]) != tlVectorTypeID {
+	typeID, err := wire.Uint32At(policy.vectorOffset)
+	if err != nil || typeID != tlVectorTypeID {
 		return inputRequestInvalidErr()
 	}
-	count := int64(int32(binary.LittleEndian.Uint32(raw[policy.vectorOffset+4:])))
+	rawCount, err := wire.Uint32At(policy.vectorOffset + 4)
+	if err != nil {
+		return inputRequestInvalidErr()
+	}
+	count := int64(int32(rawCount))
 	if count < 0 {
 		return inputRequestInvalidErr()
 	}
-	remaining := int64(len(raw) - policy.vectorOffset - 8)
+	remaining := int64(wire.WireSize() - policy.vectorOffset - 8)
 	// Check the cheapest possible encoding before the policy cap.  A forged MaxInt32 count with
 	// a truncated body is malformed, not merely a large valid request, and is rejected O(1).
 	if count > remaining/int64(policy.minElemBytes) {
@@ -85,21 +208,25 @@ func preflightFixedVector(raw []byte, policy requestVectorPolicy) error {
 	return nil
 }
 
-func preflightUploadPart(raw []byte, bytesOffset int, big bool) error {
+func preflightUploadPart(wire rpcPreflightWire, bytesOffset int, big bool) error {
 	if big {
-		if len(raw) < 20 {
+		if wire.WireSize() < 20 {
 			return inputRequestInvalidErr()
 		}
-		totalParts := int32(binary.LittleEndian.Uint32(raw[16:20]))
+		rawTotalParts, err := wire.Uint32At(16)
+		if err != nil {
+			return inputRequestInvalidErr()
+		}
+		totalParts := int32(rawTotalParts)
 		if totalParts <= 0 || totalParts > appfiles.MaxUploadParts {
 			return filePartInvalidErr()
 		}
 	}
-	n, encoded, err := tlBytesSizeAt(raw, bytesOffset)
+	n, encoded, err := tlBytesSizeAt(wire, bytesOffset)
 	if err != nil {
 		return inputRequestInvalidErr()
 	}
-	if encoded != len(raw)-bytesOffset {
+	if encoded != wire.WireSize()-bytesOffset {
 		return inputRequestInvalidErr()
 	}
 	if n > appfiles.MaxUploadPartBytes {
@@ -110,27 +237,36 @@ func preflightUploadPart(raw []byte, bytesOffset int, big bool) error {
 
 // tlBytesSizeAt parses a TL bytes prefix without copying the payload.  encoded includes prefix,
 // payload and 4-byte padding.
-func tlBytesSizeAt(raw []byte, offset int) (n, encoded int, err error) {
-	if offset < 0 || offset >= len(raw) {
+func tlBytesSizeAt(wire rpcPreflightWire, offset int) (n, encoded int, err error) {
+	if offset < 0 || offset >= wire.WireSize() {
 		return 0, 0, fmt.Errorf("bytes prefix out of range")
 	}
-	first := raw[offset]
+	first, err := wire.ByteAt(offset)
+	if err != nil {
+		return 0, 0, err
+	}
 	prefix := 1
 	switch {
 	case first < 254:
 		n = int(first)
 	case first == 254:
-		if len(raw)-offset < 4 {
+		if wire.WireSize()-offset < 4 {
 			return 0, 0, fmt.Errorf("truncated long bytes prefix")
 		}
-		n = int(raw[offset+1]) | int(raw[offset+2])<<8 | int(raw[offset+3])<<16
+		second, secondErr := wire.ByteAt(offset + 1)
+		third, thirdErr := wire.ByteAt(offset + 2)
+		fourth, fourthErr := wire.ByteAt(offset + 3)
+		if secondErr != nil || thirdErr != nil || fourthErr != nil {
+			return 0, 0, fmt.Errorf("truncated long bytes prefix")
+		}
+		n = int(second) | int(third)<<8 | int(fourth)<<16
 		prefix = 4
 	default:
 		return 0, 0, fmt.Errorf("invalid bytes prefix")
 	}
 	total := prefix + n
 	padding := (4 - total%4) % 4
-	if total > len(raw)-offset-padding {
+	if total > wire.WireSize()-offset-padding {
 		return 0, 0, fmt.Errorf("truncated bytes payload")
 	}
 	return n, total + padding, nil

@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )
@@ -171,7 +171,6 @@ func (r *Router) encryptedStateUpdates(ctx context.Context, userID int64) (updat
 		return nil, nil, nil
 	}
 	for _, ev := range events {
-		eventIDs = append(eventIDs, ev.ID)
 		switch ev.Type {
 		case domain.EncryptedStateEventEncryption:
 			chat, found, gerr := r.deps.SecretChats.GetSecretChat(ctx, ev.ChatID)
@@ -183,12 +182,14 @@ func (r *Router) encryptedStateUpdates(ctx context.Context, userID int64) (updat
 				Date: ev.Date,
 			})
 			peerUserIDs = append(peerUserIDs, chat.AdminUserID, chat.ParticipantUserID)
+			eventIDs = append(eventIDs, ev.ID)
 		case domain.EncryptedStateEventRead:
 			updates = append(updates, &tg.UpdateEncryptedMessagesRead{
 				ChatID:  ev.ChatID,
 				MaxDate: ev.MaxDate,
 				Date:    ev.Date,
 			})
+			eventIDs = append(eventIDs, ev.ID)
 		}
 	}
 	return updates, peerUserIDs, eventIDs

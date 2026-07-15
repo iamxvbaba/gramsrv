@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"sort"
 	"telesrv/internal/domain"
 	"unicode/utf8"
@@ -528,6 +528,13 @@ func (r *Router) onMessagesGetRichMessage(ctx context.Context, req *tg.MessagesG
 }
 
 func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSearchGlobalRequest) (tg.MessagesMessagesClass, error) {
+	// Layer 228 adds an optional community scope. telesrv has no Communities
+	// membership/link read model yet, so treating this as an ordinary global
+	// search would leak results outside the requested scope. Reject it before
+	// any search/store work until that model exists.
+	if _, ok := req.GetCommunity(); ok || req.Community != nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
+	}
 	if req.BroadcastsOnly && req.GroupsOnly {
 		return &tg.MessagesMessages{}, nil
 	}

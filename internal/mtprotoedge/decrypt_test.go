@@ -9,8 +9,8 @@ import (
 
 	"github.com/gotd/ige"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
 )
 
 func newTestAuthKey(t *testing.T) crypto.AuthKey {

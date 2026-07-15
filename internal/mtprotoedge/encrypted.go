@@ -10,19 +10,20 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime/debug"
 	"time"
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/tgerr"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+	"github.com/iamxvbaba/td/transport"
 
-	"telesrv/internal/compat/layerwire"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/postresponse"
 	"telesrv/internal/store"
@@ -140,7 +141,11 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 	// 临时创建 Conn 会在同一 socket 上启动多个 outbound actor，Android 的启动重试
 	// 风暴随即变成并发写和重复结果放大。
 	if current == nil || current.sessionID != frame.sessionID || current.authKeyID != key.ID {
+		var previousLayer LayerProfileSnapshot
 		if current != nil {
+			if current.authKeyID == key.ID {
+				previousLayer = current.LayerProfileState()
+			}
 			cs.reset()
 			current.beginTerminalShutdown()
 			s.conns.Unregister(current)
@@ -156,14 +161,19 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 			current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		}
 		current.authKeyExpiresAt = authKeyExpiresAt
-		// 注册即播种协商 layer：新 Conn 的 clientLayer 为 0（=canonical 227），若等到
-		// 首条 RPC 的 Dispatch 返回后才刷新，重连老客户端在首条 RPC handler 执行期间
-		// 收到的 pending flush / 并发 push 会漏降级。进程内重连时 rpc 层留有
-		// (auth_key, session) / auth_key 两级协商记录，这里一次查询即可闭合该空窗。
+		// Same-session evidence is restored as explicit; auth-key metadata is only
+		// an inherited default and can be corrected by the next invokeWithLayer.
 		if s.rpc != nil {
 			if layer, ok := s.rpc.NegotiatedLayer(current.authKeyID, current.sessionID); ok {
-				current.SetClientLayer(layer)
+				current.setLegacyClientLayer(layer)
 			}
+		}
+		fetchedLayer := 0
+		if fetchedKey != nil {
+			fetchedLayer = fetchedKey.Layer
+		}
+		if err := s.seedInitialLayerProfile(ctx, current, fetchedLayer, previousLayer); err != nil {
+			return current, fmt.Errorf("seed connection layer profile: %w", err)
 		}
 	}
 
@@ -194,6 +204,13 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 	}
 	defer plan.close()
 	if err := s.prepareInboundRPCBatch(ctx, current, plan); err != nil {
+		if errors.Is(err, errDestroyAuthKeyMustBeExclusive) {
+			s.log.Debug("Rejecting mixed destroy_auth_key container",
+				zap.Int64("msg_id", frame.messageID),
+				zap.Int32("seq_no", frame.seqNo),
+			)
+			return current, s.sendBadMsg(ctx, current, frame.messageID, frame.seqNo, badMsgContainer)
+		}
 		return current, err
 	}
 	if err := sendQuickAckIfRequested(ctx, current.transport, key, frame.plaintext, s.writeTimeout); err != nil {
@@ -232,6 +249,12 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 				return current, sendErr
 			}
 			return current, errActivationAuthKeyRejected
+		}
+		// Re-resolve inherited Layer only after the activation claim is visible.
+		// This closes the bind-vs-connect window for temporary keys without ever
+		// replacing explicit invokeWithLayer evidence admitted above.
+		if err := s.refreshActivatedInheritedLayerProfile(ctx, current, fresh.Layer); err != nil {
+			return current, fmt.Errorf("refresh claimed connection layer profile: %w", err)
 		}
 		if current.isRetired() || !current.isPhysicalTransportCurrentOpen() {
 			return current, ErrConnClosed
@@ -674,29 +697,44 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 
 	ctx = postresponse.WithCallbacks(ctx)
 	ctx, dbStats := dbtrace.WithStats(ctx)
+	// legacyRPC is an unexported package-test hook, but its result still has to
+	// obey the production exact-codec invariant. Admit a defensive copy using
+	// the generated current profile before the legacy router consumes b.
+	admissionBody := &bin.Buffer{Buf: append([]byte(nil), b.Buf...)}
+	admitted, err := tg.NewServerDispatcher(nil).AdmitDefaultLayerWithLimits(
+		tg.LayerProfileCanonical,
+		admissionBody,
+		inboundLayerDecodeLimits,
+	)
+	if err != nil {
+		return fmt.Errorf("admit legacy test RPC through generated codec: %w", err)
+	}
 	start := s.clock.Now()
 	effectiveMethod := method
 	var (
-		result bin.Encoder
-		err    error
+		result      bin.Encoder
+		dispatchErr error
 	)
-	if detailed, ok := s.rpc.(RPCHandlerWithMethod); ok {
+	if detailed, ok := s.rpc.(legacyRPCHandlerWithMethod); ok {
 		var innerMethod string
-		result, innerMethod, err = detailed.DispatchWithMethod(ctx, c.authKeyID, c.sessionID, b)
+		result, innerMethod, dispatchErr = detailed.DispatchWithMethod(ctx, c.authKeyID, c.sessionID, b)
 		if innerMethod != "" {
 			effectiveMethod = innerMethod
 		}
 	} else {
-		result, err = s.rpc.Dispatch(ctx, c.authKeyID, c.sessionID, b)
+		result, dispatchErr = s.rpc.Dispatch(ctx, c.authKeyID, c.sessionID, b)
+	}
+	if dispatchErr == nil && result != nil && !isLayerInvariantRPCResultEncoder(result) {
+		if _, exact := result.(exactLayerRPCResultEncoder); !exact {
+			result = &legacyTestRPCResultEncoder{call: admitted.Call(), result: result}
+		}
 	}
 	dur := s.clock.Now().Sub(start)
-	s.metrics.RPCHandled(effectiveMethod, dur, err)
-	// 刷新本连接协商 layer（invokeWithLayer/initConnection 已被 Dispatch 处理并登记），
-	// 供 rpc_result 与后续 push 出站降级使用。仅在确实观测到 layer 时更新——缓存被驱逐
-	// 时 NegotiatedLayer 返回 ok=false，此时必须保留连接已记住的 layer，绝不覆盖成默认值，
-	// 否则长连接老客户端的条目被驱逐后会被误降回 227。
+	s.metrics.RPCHandled(effectiveMethod, dur, dispatchErr)
+	// 刷新本连接由 invokeWithLayer 证明并冻结的 exact-session layer。ok=false
+	// 表示仍无协议证据；设备/授权元数据和其它 session 都不具备回填资格。
 	if layer, ok := s.rpc.NegotiatedLayer(c.authKeyID, c.sessionID); ok {
-		c.SetClientLayer(layer)
+		c.setLegacyClientLayer(layer)
 	}
 
 	fields := make([]zap.Field, 0, 12)
@@ -725,7 +763,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 		// Plain connection cancellation remains retryable on the replacement.
 		var terminal bin.Encoder
 		runPostResponse := false
-		if err == nil && result != nil {
+		if dispatchErr == nil && result != nil {
 			terminal = result
 			runPostResponse = true
 		} else if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -741,23 +779,23 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 			}
 		}
 		cancelFields := append(fields, zap.NamedError("context_error", ctxErr))
-		if err != nil {
-			cancelFields = append(cancelFields, zap.NamedError("dispatch_error", err))
+		if dispatchErr != nil {
+			cancelFields = append(cancelFields, zap.NamedError("dispatch_error", dispatchErr))
 		}
 		s.log.Info("RPC canceled", cancelFields...)
 		return ctxErr
 	}
 
-	if err != nil {
+	if dispatchErr != nil {
 		var rpcErr *tgerr.Error
-		if errors.As(err, &rpcErr) {
+		if errors.As(dispatchErr, &rpcErr) {
 			s.log.Info("RPC error", append(fields, zap.Int("code", rpcErr.Code), zap.String("error", rpcErr.Message))...)
 			return s.publishRPCResult(c, msgID, effectiveMethod, owner, &mt.RPCError{
 				ErrorCode:    rpcErr.Code,
 				ErrorMessage: rpcErr.Message,
 			}, nil)
 		}
-		s.log.Info("RPC internal error", append(fields, zap.Error(err))...)
+		s.log.Info("RPC internal error", append(fields, zap.Error(dispatchErr))...)
 		return s.publishRPCResult(c, msgID, effectiveMethod, owner, &mt.RPCError{
 			ErrorCode:    500,
 			ErrorMessage: "INTERNAL",
@@ -768,9 +806,14 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	return s.publishRPCResult(c, msgID, effectiveMethod, owner, result, postresponse.Take(ctx))
 }
 
+var errRPCResultRetentionHandoff = errors.New("mtproto rpc result retention handoff failed")
+
+type rpcResultRetentionHandoff func(*encodedOutboundMessage, error) error
+
 // publishRPCResult ends the inbound worker's ownership at bounded egress
-// admission. Physical delivery, fencing, completed-cache publication and the
-// post-response hook are thereafter owned by the single outbound actor.
+// admission. Physical delivery is thereafter owned either by the single
+// outbound actor or, under retained-byte saturation, by a fenced completed-cache
+// entry that the replacement connection can replay without rerunning business.
 func (s *Server) publishRPCResult(
 	c *Conn,
 	reqMsgID int64,
@@ -788,44 +831,116 @@ func (s *Server) publishRPCResult(
 	}
 	prepareCtx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
 	defer cancel()
-	encoded, err := s.encodeRPCResultContext(prepareCtx, c, reqMsgID, result)
+	prepareEncoded := func(encoded *encodedOutboundMessage) (outboundPriority, bool) {
+		if owner != nil && owner.Delivery() != nil {
+			// The owner-level delivery coordinator exists before the handler starts, so
+			// an initConnection rewrap can retarget even while result encoding is still
+			// pending. The encoded body itself remains immutable; the actor clones only
+			// the 12-byte rpc_result prefix when it snapshots the physical target.
+			encoded.delivery = owner.Delivery()
+		}
+		if afterDelivered != nil {
+			encoded.setDeliveryHook(afterDelivered)
+		}
+		priority := rpcResultPriority(method, encoded)
+		encoded.priority = priority
+		if metrics, ok := s.metrics.(RPCResultMetrics); ok {
+			metrics.RPCResultPrepared(method, priority.String(), encoded.uncompressedBytes, len(encoded.body), encoded.compressed)
+		}
+		visible := encoded.compressed || priority == outboundPriorityCritical || priority == outboundPriorityBulk
+		return priority, visible
+	}
+
+	// A successful business result may never leave the encode slot as an
+	// unaccounted []byte. If the primary 512MiB retained-body budget is full, make
+	// overload terminal for this physical generation and publish the exact result
+	// into the independently bounded completed cache before releasing the slot.
+	retainForReplay := func(encoded *encodedOutboundMessage, admissionErr error) error {
+		if s == nil || s.rpcResults == nil || c == nil || encoded == nil || reqMsgID == 0 {
+			return errors.New("rpc result completed cache is unavailable")
+		}
+		if int64(len(encoded.body)) > s.rpcResults.completedBytes.max {
+			// Every transport-legal result fits the production completed cache by the
+			// compile-time invariant in rpc_result_cache.go. A test/custom cache that
+			// violates it cannot safely complete this flight, so fail fast while the
+			// body is still confined to the encode slot.
+			panic(fmt.Sprintf(
+				"mtprotoedge: encoded rpc result exceeds completed-cache budget: body=%d max=%d",
+				len(encoded.body), s.rpcResults.completedBytes.max,
+			))
+		}
+		priority, visible := prepareEncoded(encoded)
+		if owner != nil && !owner.HandOff() {
+			return ErrRPCResultFlightInvalid
+		}
+		started := time.Now()
+		encoded.markReplayable()
+		// Put may expose a completed result only after the old logical connection
+		// is irreversibly unable to accept another same-generation request.
+		c.fenceUndeliveredRPCResult()
+		s.storeRPCResult(c, reqMsgID, encoded)
+		latency := time.Since(started)
+		if metrics, ok := s.metrics.(RPCResultMetrics); ok {
+			metrics.RPCResultDelivered(method, latency, len(encoded.body), admissionErr)
+		}
+		resultLogLevel := zap.DebugLevel
+		if visible {
+			resultLogLevel = zap.InfoLevel
+		}
+		if checked := s.log.Check(resultLogLevel, "RPC result retained for replay after egress saturation"); checked != nil {
+			checked.Write(
+				zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
+				zap.Int64("delivered_req_msg_id", encoded.writtenRequestID()),
+				zap.String("auth_key_id", c.authKeyHex), zap.Int64("session_id", c.sessionID),
+				zap.Int("wire_bytes", len(encoded.body)), zap.Bool("gzip", encoded.compressed),
+				zap.String("priority", priority.String()), zap.Error(admissionErr))
+		}
+		return nil
+	}
+
+	encoded, reserved, retained, err := s.encodeRPCResultReservedWithHandoffContext(
+		prepareCtx, c, reqMsgID, result, retainForReplay,
+	)
+	if retained {
+		return err
+	}
+	if errors.Is(err, errRPCResultRetentionHandoff) {
+		c.fenceUndeliveredRPCResult()
+		return err
+	}
 	if err != nil {
 		s.log.Warn("Encode RPC result failed; publishing INTERNAL",
 			zap.String("method", method), zap.Int64("req_msg_id", reqMsgID), zap.Error(err))
 		afterDelivered = nil
-		encoded, err = s.encodeRPCResultContext(prepareCtx, c, reqMsgID, &mt.RPCError{
-			ErrorCode: 500, ErrorMessage: "INTERNAL",
-		})
+		encoded, reserved, retained, err = s.encodeRPCResultReservedWithHandoffContext(
+			prepareCtx, c, reqMsgID, &mt.RPCError{ErrorCode: 500, ErrorMessage: "INTERNAL"}, retainForReplay,
+		)
+		if retained {
+			return err
+		}
 		if err != nil {
 			c.fenceUndeliveredRPCResult()
 			return err
 		}
 	}
-	if owner != nil && owner.Delivery() != nil {
-		// The owner-level delivery coordinator exists before the handler starts, so
-		// an initConnection rewrap can retarget even while result encoding is still
-		// pending. The encoded body itself remains immutable; the actor clones only
-		// the 12-byte rpc_result prefix when it snapshots the physical target.
-		encoded.delivery = owner.Delivery()
+	if encoded == nil || reserved == nil {
+		c.fenceUndeliveredRPCResult()
+		return errors.New("rpc result encode completed without tracked retention")
 	}
-	if afterDelivered != nil {
-		encoded.delivery.fn = afterDelivered
-	}
+	// Until enqueue transfers ownership, every exit must return the retained-byte
+	// charge. A successful transfer clears the reservation and makes this a no-op.
+	defer reserved.release()
+	priority, visible := prepareEncoded(encoded)
 	if owner != nil && !owner.HandOff() {
 		return ErrRPCResultFlightInvalid
 	}
 
-	priority := rpcResultPriority(method, encoded)
-	encoded.priority = priority
 	resultLogLevel := zap.DebugLevel
-	if encoded.compressed || priority == outboundPriorityCritical || priority == outboundPriorityBulk {
+	if visible {
 		// Keep ordinary small RPCs at debug, but make convergence and bulk/gzip
-		// delivery visible in default service logs. These are the
+		// delivery visible in the default service logs. These are the
 		// responses whose queueing and write latency diagnose startup Updating.
 		resultLogLevel = zap.InfoLevel
-	}
-	if metrics, ok := s.metrics.(RPCResultMetrics); ok {
-		metrics.RPCResultPrepared(method, priority.String(), encoded.uncompressedBytes, len(encoded.body), encoded.compressed)
 	}
 	egressStarted := time.Now()
 	terminal := func(deliveryErr error) {
@@ -848,8 +963,8 @@ func (s *Server) publishRPCResult(
 			}
 			return
 		}
-		s.storeRPCResult(c, reqMsgID, encoded)
 		encoded.markDelivered()
+		s.storeRPCResult(c, reqMsgID, encoded)
 		if checked := s.log.Check(resultLogLevel, "RPC result delivered"); checked != nil {
 			checked.Write(
 				zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
@@ -860,7 +975,7 @@ func (s *Server) publishRPCResult(
 		}
 	}
 	encoded.markQueued()
-	if err := c.enqueueEncodedDelivery(prepareCtx, proto.MessageServerResponse, encoded, priority, terminal); err != nil {
+	if err := c.enqueueEncodedDeliveryReserved(prepareCtx, proto.MessageServerResponse, encoded, priority, terminal, reserved); err != nil {
 		// HandOff already made the egress path the terminal owner. No bytes were
 		// admitted, so fence this generation before publishing a replayable result.
 		terminal(err)
@@ -905,10 +1020,10 @@ func (s *Server) sendResult(ctx context.Context, c *Conn, reqMsgID int64, result
 		s.storeRPCResult(c, reqMsgID, encoded)
 		return err
 	}
+	encoded.markDelivered()
 	// On a live Conn, completed means the rpc_result has reached the reliable byte
 	// stream. Same-physical duplicates can therefore be ACK-only without data loss.
 	s.storeRPCResult(c, reqMsgID, encoded)
-	encoded.markDelivered()
 	return nil
 }
 
@@ -916,24 +1031,114 @@ func (s *Server) sendResult(ctx context.Context, c *Conn, reqMsgID int64, result
 // for completed-flight replays: either the cached result reaches this physical
 // byte stream, or this logical Conn is fenced so a replacement may retry it.
 func (s *Server) sendCachedRPCResult(ctx context.Context, c *Conn, encoded *encodedOutboundMessage) error {
+	return s.sendCachedRPCResultWithHook(ctx, c, encoded, nil)
+}
+
+func (s *Server) sendCachedRPCResultWithHook(
+	ctx context.Context,
+	c *Conn,
+	encoded *encodedOutboundMessage,
+	afterSuccessfulDelivery func() error,
+) error {
 	if encoded == nil {
 		c.fenceUndeliveredRPCResult()
 		return errors.New("nil cached rpc_result")
 	}
-	if err := c.SendEncoded(ctx, proto.MessageServerResponse, encoded); err != nil {
+	attempt, reserved, err := c.cloneRPCResultForRequestReserved(encoded, encoded.reqMsgID, false)
+	if err != nil {
+		c.failOutboundBudget(err)
 		c.fenceUndeliveredRPCResult()
-		encoded.markReplayable()
 		return err
 	}
-	encoded.markDelivered()
-	return nil
+	// take clears the producer reservation after actor admission. Every earlier
+	// return, including a closed connection, must drop the replay pin here.
+	defer reserved.release()
+	pendingLogicalRestore := attempt.pendingLogicalDeliveryHook()
+	var finishRestore func()
+	if afterSuccessfulDelivery != nil || pendingLogicalRestore {
+		finishRestore = c.beginRPCReplayRestore()
+		defer finishRestore()
+	}
+	// Cached replay owns its delivery-gated state synchronously. Calling the
+	// lower send primitive avoids reserving the process-wide asynchronous hook
+	// executor; the logical hook is claimed only after this physical write wins.
+	if err := c.sendOutboundWithTerminalReserved(
+		ctx, proto.MessageServerResponse, nil, attempt, false, nil, reserved,
+	); err != nil {
+		c.fenceUndeliveredRPCResult()
+		attempt.markReplayable()
+		return err
+	}
+	// Physical success is irrevocable even if the caller's send context expires
+	// at the same instant. Give the ordered restore its own bounded lifetime.
+	restoreCtx, cancelRestore := boundedRPCReplayRestoreContext(context.Background())
+	defer cancelRestore()
+	logicalRestore, claimErr := attempt.claimLogicalDeliveryHook(restoreCtx, false)
+	attempt.markDelivered()
+	if claimErr != nil {
+		// Another replay owns Claimed/InProgress state (or a retarget still owns
+		// the sticky deferral). Fence before the deferred barrier is released; a
+		// later physical generation may wait for Done and replay the same bytes.
+		c.fenceUndeliveredRPCResult()
+		return fmt.Errorf("wait for cached rpc_result logical restore: %w", claimErr)
+	}
+	return s.runBoundedRPCReplayRestore(
+		restoreCtx, c, "cached rpc_result", logicalRestore, afterSuccessfulDelivery,
+	)
+}
+
+// composeRPCReplayRestore keeps replacement-connection metadata first while
+// still guaranteeing that the original handler's delivery-gated cursor/outbox
+// work runs after a physical replay even when metadata restoration reports an
+// error. runRPCReplayRestore provides panic isolation and terminal fencing for
+// the combined ordered transaction.
+func composeRPCReplayRestore(logical func(), replacement func() error) func() error {
+	if logical == nil && replacement == nil {
+		return nil
+	}
+	return func() (err error) {
+		if logical != nil {
+			defer logical()
+		}
+		if replacement != nil {
+			return replacement()
+		}
+		return nil
+	}
+}
+
+// runRPCReplayRestore is the panic/error boundary executed only by the fixed-
+// capacity runner in rpc_replay_restore.go. Replay restore may touch auth/session
+// stores and membership state; its caller holds the per-Conn scheduler barrier.
+// Any error or panic fences the partially restored physical generation so a
+// replacement can retry from the immutable completed result.
+func (s *Server) runRPCReplayRestore(c *Conn, source string, restore func() error) (err error) {
+	if restore == nil {
+		return nil
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("restore replay state after %s: panic: %v", source, recovered)
+			if s != nil && s.log != nil {
+				s.log.Error("Exact RPC replay state restore panicked",
+					zap.String("source", source), zap.ByteString("stack", debug.Stack()), zap.Any("panic", recovered))
+			}
+		}
+		if err != nil {
+			if s != nil && s.log != nil {
+				s.log.Warn("Exact RPC replay state restore failed", zap.String("source", source), zap.Error(err))
+			}
+			c.fenceUndeliveredRPCResult()
+		}
+	}()
+	return restore()
 }
 
 // encodeRPCResult 编码 rpc_result。内层对象与 rpc_result 头（type_id + req_msg_id）
 // 一次性编码进同一 buffer——旧实现先编码内层、再经 proto.Result.Encode 整体拷贝一遍，
-// 每条响应多一份全量 body 拷贝。内层按连接协商 layer 降级（layer==227 直通，零开销），
-// 降级改写字节时才重建整条消息。降级失败 fail-safe：记日志并发送 canonical 字节——
-// 宁可老客户端对个别长尾对象渲染异常，也不让连接/流崩。
+// 每条响应多一份全量 body 拷贝。生成式结果携带完整 Layer profile + result TypeRef
+// 绑定，后续发送、缓存和重放均只能用于同一精确 profile；package 测试保留的 legacy
+// handler 也必须先绑定 generated admitted call，生产路径不存在旧转码桥。
 func (s *Server) encodeRPCResult(c *Conn, reqMsgID int64, result bin.Encoder) (*encodedOutboundMessage, error) {
 	return s.encodeRPCResultContext(context.Background(), c, reqMsgID, result)
 }
@@ -942,36 +1147,138 @@ func (s *Server) encodeRPCResultContext(ctx context.Context, c *Conn, reqMsgID i
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var inner bin.Buffer
-	// Terminal result preparation must survive physical-generation retirement:
-	// an overlapping replacement may already be waiting to replay this owner's
-	// result. Only the bounded preparation context, not the old socket stop, owns it.
-	if err := withOutboundEncodeSlot(ctx, nil, func() error {
-		return result.Encode(&inner)
-	}); err != nil {
+	var encoded *encodedOutboundMessage
+	err := withOutboundEncodeSlot(ctx, nil, func() error {
+		var err error
+		encoded, err = s.encodeRPCResultWithoutSlot(ctx, c, reqMsgID, result)
+		return err
+	})
+	return encoded, err
+}
+
+// encodeRPCResultReservedContext keeps the process-wide encode slot until the
+// completed immutable body is charged to the shared retained-byte budget. This
+// closes the otherwise unbounded interval in which every RPC worker could own
+// a large encoded result that neither the inbound nor outbound budget tracked.
+func (s *Server) encodeRPCResultReservedContext(
+	ctx context.Context,
+	c *Conn,
+	reqMsgID int64,
+	result bin.Encoder,
+) (*encodedOutboundMessage, *outboundBodyReservation, error) {
+	encoded, reserved, _, err := s.encodeRPCResultReservedWithHandoffContext(ctx, c, reqMsgID, result, nil)
+	return encoded, reserved, err
+}
+
+// encodeRPCResultReservedWithHandoffContext has only two successful ownership
+// outcomes for a completed body: a primary outbound reservation, or a caller
+// handoff that synchronously installs another bounded owner while the encode slot
+// is still held. A failed/no handoff clears encoded before the slot is released.
+func (s *Server) encodeRPCResultReservedWithHandoffContext(
+	ctx context.Context,
+	c *Conn,
+	reqMsgID int64,
+	result bin.Encoder,
+	handoff rpcResultRetentionHandoff,
+) (*encodedOutboundMessage, *outboundBodyReservation, bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var (
+		encoded  *encodedOutboundMessage
+		reserved *outboundBodyReservation
+		retained bool
+	)
+	err := withOutboundEncodeSlot(ctx, nil, func() error {
+		var err error
+		encoded, err = s.encodeRPCResultWithoutSlot(ctx, c, reqMsgID, result)
+		if err != nil {
+			return err
+		}
+		budget := c.outboundMessageBudget(encoded.typeID, false)
+		bytes := len(encoded.body)
+		if budget.reserve(bytes) {
+			reserved = &outboundBodyReservation{budget: budget, bytes: bytes}
+			return nil
+		}
+		if handoff != nil {
+			admissionErr := fmt.Errorf("reserve encoded rpc result: %w", ErrOutboundTrackedBudget)
+			if err := handoff(encoded, admissionErr); err != nil {
+				encoded = nil
+				return fmt.Errorf("%w: %w", errRPCResultRetentionHandoff, errors.Join(admissionErr, err))
+			}
+			retained = true
+			// The handoff owns the only surviving pointer. Do not return a second
+			// producer reference after the encode slot releases; the completed cache
+			// may independently evict the entry under its bounded policy.
+			encoded = nil
+			return admissionErr
+		}
+		// Non-publish callers have no alternate bounded owner. They may wait for
+		// the caller's deadline, but on failure the body is discarded in-slot.
+		if err := budget.waitReserve(ctx, nil, bytes); err != nil {
+			encoded = nil
+			return fmt.Errorf("reserve encoded rpc result: %w", err)
+		}
+		reserved = &outboundBodyReservation{budget: budget, bytes: bytes}
+		return nil
+	})
+	if err != nil && !retained && reserved == nil {
+		encoded = nil
+	}
+	return encoded, reserved, retained, err
+}
+
+func (s *Server) encodeRPCResultWithoutSlot(ctx context.Context, c *Conn, reqMsgID int64, result bin.Encoder) (*encodedOutboundMessage, error) {
+	var layerBinding *outboundLayerBinding
+	exactResult, exactLayerResult := result.(exactLayerRPCResultEncoder)
+	layerInvariantResult := isLayerInvariantRPCResultEncoder(result)
+	if !exactLayerResult && !layerInvariantResult {
+		return nil, ErrOutboundLayerBindingRequired
+	}
+	if exactLayerResult {
+		binding := exactResult.exactLayerRPCResultBinding()
+		layerBinding = &binding
+		if err := validateOutboundLayerBinding(c, &encodedOutboundMessage{layer: layerBinding}); err != nil {
+			return nil, fmt.Errorf("bind exact layer rpc result: %w", err)
+		}
+	}
+	// Encode the ordinary exact/no-gzip path directly behind the rpc_result
+	// prefix. This avoids both the old generated Prepare snapshot and another
+	// full-body copy merely to prepend the 12-byte envelope.
+	var envelope bin.Buffer
+	envelope.PutID(proto.ResultTypeID)
+	envelope.PutLong(reqMsgID)
+	if err := result.Encode(&envelope); err != nil {
 		return nil, fmt.Errorf("encode rpc result: %w", err)
 	}
-	innerBody := inner.Raw()
-	if layer := c.ClientLayer(); layer < layerwire.CanonicalLayer {
-		if down, err := layerwire.Transcode(innerBody, layer); err != nil {
-			s.log.Warn("layerwire downgrade failed; sending canonical rpc_result",
-				zap.Int("layer", layer), zap.Int64("req_msg_id", reqMsgID), zap.Error(err))
-		} else {
-			innerBody = down
-		}
+	envelopeInner := envelope.Raw()[12:]
+	innerBody := envelopeInner
+	// Inputs above gotd's decompression ceiling can never be gzip_packed. Reject
+	// them before allocating a second transport-envelope-sized buffer.
+	if len(innerBody) > rpcResultGZIPMaxInputBytes && len(innerBody) > maxOutboundBodyBytes-12 {
+		return nil, fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, len(innerBody)+12, maxOutboundBodyBytes)
 	}
 
 	wireInner, compressed, err := encodeAdaptiveRPCResultInner(ctx, nil, innerBody)
 	if err != nil {
 		return nil, fmt.Errorf("compress rpc result: %w", err)
 	}
-	var out bin.Buffer
-	out.PutID(proto.ResultTypeID)
-	out.PutLong(reqMsgID)
-	out.Put(wireInner)
+	if len(wireInner) > maxOutboundBodyBytes-12 {
+		return nil, fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, len(wireInner)+12, maxOutboundBodyBytes)
+	}
+	body := envelope.Raw()
+	if compressed || !sameBacking(wireInner, envelopeInner) {
+		var out bin.Buffer
+		out.PutID(proto.ResultTypeID)
+		out.PutLong(reqMsgID)
+		out.Put(wireInner)
+		body = out.Raw()
+	}
 	return &encodedOutboundMessage{
-		typeID: proto.ResultTypeID, body: out.Raw(), reqMsgID: reqMsgID,
-		compressed: compressed, uncompressedBytes: len(innerBody), delivery: newRPCResultDelivery(),
+		typeID: proto.ResultTypeID, body: body, reqMsgID: reqMsgID,
+		compressed: compressed, uncompressedBytes: len(innerBody), delivery: newRPCResultDelivery(0),
+		layer: layerBinding, layerInvariant: layerInvariantResult,
 	}, nil
 }
 
@@ -1075,11 +1382,20 @@ func (s *Server) sendMsgsStateInfo(ctx context.Context, c *Conn, reqMsgID int64,
 }
 
 func (s *Server) sendDestroySession(ctx context.Context, c *Conn, sessionID int64) error {
-	removed := false
+	removed, removedDurable := false, false
 	if sessionID != c.sessionID {
-		removed = s.conns.DestroySessionForAuthKey(c.authKeyID, sessionID)
+		if deleter, ok := s.layerRPC.(LayerRPCDurableSessionProfileDeleter); ok {
+			var err error
+			removedDurable, err = deleter.DeleteNegotiatedSessionLayerEvidence(ctx, c.authKeyID, sessionID)
+			if err != nil {
+				return fmt.Errorf("delete durable exact session Layer evidence: %w", err)
+			}
+		}
+		if s.conns != nil {
+			removed = s.conns.DestroySessionForAuthKey(c.authKeyID, sessionID)
+		}
 	}
-	if removed {
+	if removed || removedDurable {
 		return c.Send(ctx, proto.MessageServerResponse, &mt.DestroySessionOk{SessionID: sessionID})
 	}
 	return c.Send(ctx, proto.MessageServerResponse, &mt.DestroySessionNone{SessionID: sessionID})
@@ -1113,7 +1429,7 @@ func (s *Server) typeName(id uint32) string {
 }
 
 func validateClientEnvelope(now time.Time, msgID int64, seqNo int32, typeID uint32) int {
-	if msgID == 0 || proto.MessageID(msgID).Type() != proto.MessageFromClient {
+	if !validClientMessageIDBits(msgID) {
 		return badMsgIDInvalidBits
 	}
 	msgTime := proto.MessageID(msgID).Time()
@@ -1137,7 +1453,7 @@ func validateClientEnvelope(now time.Time, msgID int64, seqNo int32, typeID uint
 }
 
 func validateClientContainerEnvelope(msgID int64, seqNo int32, typeID uint32) int {
-	if msgID == 0 || proto.MessageID(msgID).Type() != proto.MessageFromClient {
+	if !validClientMessageIDBits(msgID) {
 		return badMsgIDInvalidBits
 	}
 	if clientMessageAllowsEitherSeqParity(typeID) {

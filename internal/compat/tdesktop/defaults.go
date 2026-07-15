@@ -1,7 +1,7 @@
 package tdesktop
 
 import (
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/seed/catalog"
 )

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"telesrv/internal/domain"
 )
@@ -195,25 +196,42 @@ func (s *UpdateStateStore) Save(_ context.Context, id [8]byte, userID int64, st 
 	return nil
 }
 
+func (s *UpdateStateStore) CommitDeliveredState(_ context.Context, id [8]byte, userID int64, st domain.UpdateState, mode domain.UpdateStateCommitMode) error {
+	if mode != domain.UpdateStateCommitDeliveredOnly && mode != domain.UpdateStateCommitDeliveredAndObservedBaseline {
+		return fmt.Errorf("commit delivered update state: invalid mode %d", mode)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := updateStateKey{authKeyID: id, userID: userID}
+	s.states[key] = monotonicUpdateState(s.states[key], st)
+	if mode == domain.UpdateStateCommitDeliveredAndObservedBaseline {
+		s.observed[key] = monotonicUpdateState(s.observed[key], st)
+	}
+	return nil
+}
+
 func (s *UpdateStateStore) ObserveClientState(_ context.Context, id [8]byte, userID int64, st domain.UpdateState) error {
 	s.mu.Lock()
 	key := updateStateKey{authKeyID: id, userID: userID}
-	prev := s.observed[key]
-	if st.Pts < prev.Pts {
-		st.Pts = prev.Pts
-	}
-	if st.Qts < prev.Qts {
-		st.Qts = prev.Qts
-	}
-	if st.Date < prev.Date {
-		st.Date = prev.Date
-	}
-	if st.Seq < prev.Seq {
-		st.Seq = prev.Seq
-	}
-	s.observed[key] = st
+	s.observed[key] = monotonicUpdateState(s.observed[key], st)
 	s.mu.Unlock()
 	return nil
+}
+
+func monotonicUpdateState(prev, next domain.UpdateState) domain.UpdateState {
+	if next.Pts < prev.Pts {
+		next.Pts = prev.Pts
+	}
+	if next.Qts < prev.Qts {
+		next.Qts = prev.Qts
+	}
+	if next.Date < prev.Date {
+		next.Date = prev.Date
+	}
+	if next.Seq < prev.Seq {
+		next.Seq = prev.Seq
+	}
+	return next
 }
 
 // ObservedClientState 暴露给同包/服务测试验证 retention 安全水位；业务读路径仍用 Get。
@@ -237,6 +255,11 @@ func (s *UpdateStateStore) DeleteAuthKey(_ context.Context, id [8]byte) error {
 	for k := range s.states {
 		if k.authKeyID == id {
 			delete(s.states, k)
+			delete(s.observed, k)
+		}
+	}
+	for k := range s.observed {
+		if k.authKeyID == id {
 			delete(s.observed, k)
 		}
 	}

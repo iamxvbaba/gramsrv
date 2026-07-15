@@ -1,9 +1,13 @@
 package rpc
 
 import (
+	"context"
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
+	"telesrv/internal/postresponse"
 )
 
 // acceptChat 跑完 request→accept，返回 normal 态密聊 id 与 participant 视角 access_hash。
@@ -85,7 +89,8 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 	}
 
 	// participant 离线补差分：从 qts=0 拿回该加密消息。
-	diff, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: 0})
+	differenceCtx := postresponse.WithCallbacks(f.participantCtx())
+	diff, err := f.router.onUpdatesGetDifference(differenceCtx, &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
 	}
@@ -100,6 +105,7 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 	if !ok || string(gotEM.Bytes) != string(data) {
 		t.Fatalf("difference message = %+v, want bytes verbatim", full.NewEncryptedMessages[0])
 	}
+	postresponse.Run(differenceCtx)
 
 	// receivedQueue：确认到 qts=1，返回空 Vector。
 	rq, err := f.router.onMessagesReceivedQueue(f.participantCtx(), 1)
@@ -165,7 +171,8 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	chatID := res.(*tg.EncryptedChatWaiting).ID
 
 	// participant 离线补差分：拿到 updateEncryption(encryptedChatRequested, 携 g_a)。
-	diff, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: 0})
+	differenceCtx := postresponse.WithCallbacks(f.participantCtx())
+	diff, err := f.router.onUpdatesGetDifference(differenceCtx, &tg.UpdatesGetDifferenceRequest{Qts: 0})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
 	}
@@ -173,6 +180,16 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	requested, ok := upd.Chat.(*tg.EncryptedChatRequested)
 	if !ok || requested.ID != chatID || len(requested.GA) == 0 {
 		t.Fatalf("offline handshake update = %+v, want EncryptedChatRequested with g_a", upd.Chat)
+	}
+	deviceKey := businessAuthKeyInt64(encPartAuthKey)
+	beforeDelivery, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 10)
+	if err != nil || len(beforeDelivery) == 0 {
+		t.Fatalf("state events before difference delivery = %v err=%v, want pending", beforeDelivery, err)
+	}
+	postresponse.Run(differenceCtx)
+	afterDelivery, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 10)
+	if err != nil || len(afterDelivery) != 0 {
+		t.Fatalf("state events after difference delivery = %v err=%v, want none", afterDelivery, err)
 	}
 
 	// 再次补差分：已投递 → 不重复（DifferenceEmpty）。
@@ -182,6 +199,76 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	}
 	if _, ok := diff2.(*tg.UpdatesDifferenceEmpty); !ok {
 		t.Fatalf("redelivery: difference = %T, want UpdatesDifferenceEmpty", diff2)
+	}
+}
+
+func TestEncryptedDifferenceAcknowledgesOnlyProjectedStateEvents(t *testing.T) {
+	f := newEncryptedFixture(t)
+	chatID, _ := f.acceptChat(t)
+	deviceKey := businessAuthKeyInt64(encPartAuthKey)
+	// Retire handshake events created while establishing the fixture; the test
+	// below owns the complete pending set.
+	prior, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 100)
+	if err != nil {
+		t.Fatalf("list prior events: %v", err)
+	}
+	priorIDs := make([]int64, 0, len(prior))
+	for _, event := range prior {
+		priorIDs = append(priorIDs, event.ID)
+	}
+	if err := f.queue.MarkStateEventsDelivered(context.Background(), deviceKey, priorIDs); err != nil {
+		t.Fatalf("retire prior events: %v", err)
+	}
+
+	validID, err := f.queue.AppendStateEvent(f.ctx, domain.EncryptedStateEvent{
+		TargetUserID: f.participant.ID,
+		ChatID:       chatID,
+		Type:         domain.EncryptedStateEventRead,
+		MaxDate:      1700001000,
+		Date:         1700001001,
+	})
+	if err != nil {
+		t.Fatalf("append valid event: %v", err)
+	}
+	missingChatID, err := f.queue.AppendStateEvent(f.ctx, domain.EncryptedStateEvent{
+		TargetUserID: f.participant.ID,
+		ChatID:       999999,
+		Type:         domain.EncryptedStateEventEncryption,
+		Date:         1700001002,
+	})
+	if err != nil {
+		t.Fatalf("append missing-chat event: %v", err)
+	}
+	unknownID, err := f.queue.AppendStateEvent(f.ctx, domain.EncryptedStateEvent{
+		TargetUserID: f.participant.ID,
+		ChatID:       chatID,
+		Type:         domain.EncryptedStateEventType(99),
+		Date:         1700001003,
+	})
+	if err != nil {
+		t.Fatalf("append unknown event: %v", err)
+	}
+
+	ctx := postresponse.WithCallbacks(f.participantCtx())
+	diff, err := f.router.onUpdatesGetDifference(ctx, &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("getDifference: %v", err)
+	}
+	read := encOtherUpdate[*tg.UpdateEncryptedMessagesRead](t, diff)
+	if read.ChatID != chatID {
+		t.Fatalf("projected read chat_id = %d, want %d", read.ChatID, chatID)
+	}
+	postresponse.Run(ctx)
+	pending, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 100)
+	if err != nil {
+		t.Fatalf("list pending after delivery: %v", err)
+	}
+	remaining := make(map[int64]bool, len(pending))
+	for _, event := range pending {
+		remaining[event.ID] = true
+	}
+	if remaining[validID] || !remaining[missingChatID] || !remaining[unknownID] {
+		t.Fatalf("pending IDs after delivery = %v; valid=%d missing=%d unknown=%d", remaining, validID, missingChatID, unknownID)
 	}
 }
 

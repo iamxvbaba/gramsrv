@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/clock"
+	"github.com/iamxvbaba/td/clock"
 	"go.uber.org/zap/zaptest"
 
 	appbots "telesrv/internal/app/bots"

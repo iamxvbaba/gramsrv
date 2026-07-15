@@ -32,7 +32,14 @@
 | `TELESRV_MTPROTO_RPC_TIMEOUT` | duration / `30s` | 调度后 RPC handler 的端到端超时。 |
 | `TELESRV_MTPROTO_RPC_GLOBAL_WORKERS` | int / `256` | 共享公平调度器 worker 数。 |
 | `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `8192` | 进程级排队与执行中的 RPC task 上限。 |
-| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | 进程级排队/执行中 RPC request body 字节预算。 |
+| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES` | int64 charge bytes / `536870912` | 进程级已预留/排队/执行中 RPC 内存 charge 预算；legacy 等于 copied body，exact 是 typed decode 前按 wire 与生成对象放大计算的保守 materialization charge，不代表可并发接收同等大小的 wire body。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES` | int / `262144` | 331 秒进程内重放窗口中，pending owner、completed `rpc_result` 与容量 tombstone 的全局 ownership 条目上限。owner 执行前先占 1 条，转 completed 时不重复计数。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES` | int64 bytes / `67108864` | 上述 ownership 的全局 retained-byte 上限；owner 先占 1 byte，Put 转移为真实 body 或 1-byte identity tombstone。不得低于 `16775168`（单条合法 outbound body 上限）。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES` | int / `32768` | 单 raw auth key 的 ownership 条目上限；与全局、session 层同时计费，防一个 auth key 吃满进程缓存。必须 `global >= auth >= session`。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES` | int64 bytes / `33554432` | 单 raw auth key retained-byte 上限；必须不低于单条合法 outbound body，且满足 byte 层级关系。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES` | int / `16384` | 单 `raw auth key + session_id` ownership 条目上限；不同 session 不共享该局部额度。 |
+| `TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES` | int64 bytes / `16777216` | 单 `raw auth key + session_id` retained-byte 上限；默认略高于单条合法 outbound body，确保空预算时任一合法结果可完整进入。 |
+| `TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH` | int / `2048` | 单 raw auth key 的 active pending owner 附加上限；必须不大于 `RPC_GLOBAL_MAX_TASKS` 和 auth entry 上限。Put/Abort 都立即归还此 active 额度。 |
 | `TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | transport wire 与最大解密明文的进程级在途预算，在分配 payload 前预留。 |
 | `TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE` | int / `128` | 单连接普通 outbound mailbox 容量。 |
 | `TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE` | int / `32` | 单连接控制消息 mailbox 容量。 |

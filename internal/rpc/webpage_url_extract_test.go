@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 func TestFirstPreviewableURL(t *testing.T) {

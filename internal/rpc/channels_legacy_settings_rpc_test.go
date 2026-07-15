@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	appchannels "telesrv/internal/app/channels"
 	appusers "telesrv/internal/app/users"

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto/codec"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto/codec"
 
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"

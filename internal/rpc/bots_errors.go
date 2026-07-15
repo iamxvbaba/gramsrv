@@ -3,7 +3,7 @@ package rpc
 import (
 	"errors"
 
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/domain"
 )

@@ -1,6 +1,6 @@
 package rpc
 
-import "github.com/gotd/td/tg"
+import "github.com/iamxvbaba/td/tg"
 
 // registerEncrypted 注册私聊端对端加密（Secret Chat）域 RPC。
 //

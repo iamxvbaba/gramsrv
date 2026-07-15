@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/telegram/downloader"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/downloader"
+	"github.com/iamxvbaba/td/tg"
 )
 
 const (

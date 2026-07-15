@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )

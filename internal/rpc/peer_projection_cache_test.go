@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/clock"
+	"github.com/iamxvbaba/td/clock"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"

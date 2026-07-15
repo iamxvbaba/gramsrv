@@ -3,7 +3,7 @@ package rpc
 import (
 	"encoding/base64"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )

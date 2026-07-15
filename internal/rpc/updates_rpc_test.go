@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -16,6 +17,17 @@ import (
 	"telesrv/internal/postresponse"
 	"telesrv/internal/store/memory"
 )
+
+type bootstrapOrderUpdates struct {
+	*captureUpdates
+	sessions            *captureSessions
+	publishedAfterReady bool
+}
+
+func (s *bootstrapOrderUpdates) PublishNewMessage(ctx context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
+	s.publishedAfterReady = s.sessions.snapshot().receives
+	return s.captureUpdates.PublishNewMessage(ctx, userID, msg)
+}
 
 func TestSignUpBootstrapLoginMessagePublishesNewMessageAfterReady(t *testing.T) {
 	bootstrap := memory.NewBootstrapUpdateJobStore()
@@ -109,7 +121,11 @@ func TestSignUpBootstrapPendingJobFollowsSameAuthKeyReconnect(t *testing.T) {
 
 func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 	bootstrap := memory.NewBootstrapUpdateJobStore()
-	updates := &captureUpdates{state: domain.UpdateState{Pts: 0, Date: 1700000000}}
+	sessions := &captureSessions{}
+	updates := &bootstrapOrderUpdates{
+		captureUpdates: &captureUpdates{state: domain.UpdateState{Pts: 0, Date: 1700000000}},
+		sessions:       sessions,
+	}
 	msg := domain.Message{
 		ID:          1,
 		OwnerUserID: 1780243001,
@@ -119,7 +135,7 @@ func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 		Body:        "Login code: 12345",
 	}
 	messages := &captureMessages{list: domain.MessageList{Messages: []domain.Message{msg}}}
-	r := New(Config{}, Deps{BootstrapUpdates: bootstrap, Updates: updates, Messages: messages}, zaptest.NewLogger(t), clock.System)
+	r := New(Config{}, Deps{BootstrapUpdates: bootstrap, Updates: updates, Messages: messages, Sessions: sessions}, zaptest.NewLogger(t), clock.System)
 	authKeyID := [8]byte{9, 8, 7}
 	sessionID := int64(5723482677041206318)
 	ctx := postresponse.WithCallbacks(
@@ -133,9 +149,17 @@ func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 	)
 	r.enqueueLoginMessageBootstrap(ctx, msg)
 
-	state, err := r.onUpdatesGetState(ctx)
+	var request bin.Buffer
+	if err := (&tg.UpdatesGetStateRequest{}).Encode(&request); err != nil {
+		t.Fatalf("encode updates.getState: %v", err)
+	}
+	encoded, err := r.Dispatch(ctx, authKeyID, sessionID, &request)
 	if err != nil {
 		t.Fatalf("getState: %v", err)
+	}
+	state, ok := encoded.(*tg.UpdatesState)
+	if !ok {
+		t.Fatalf("getState response = %T, want *tg.UpdatesState", encoded)
 	}
 	if state.Pts != 0 {
 		t.Fatalf("state pts = %d, want 0 before bootstrap publish", state.Pts)
@@ -146,6 +170,9 @@ func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 	if len(updates.events) != 0 {
 		t.Fatalf("events before post-response = %d, want 0", len(updates.events))
 	}
+	if got := sessions.snapshot(); got.receives || got.receivesCalls != 0 {
+		t.Fatalf("session readiness before post-response = receives:%v calls:%d, want false/0", got.receives, got.receivesCalls)
+	}
 
 	postresponse.Run(ctx)
 	if len(updates.events) != 1 {
@@ -153,6 +180,12 @@ func TestUpdatesGetStatePublishesSignUpBootstrapAfterRPCResult(t *testing.T) {
 	}
 	if got := updates.events[0]; got.Type != domain.UpdateEventNewMessage || got.Message.ID != msg.ID {
 		t.Fatalf("event after post-response = %+v, want login message", got)
+	}
+	if !updates.publishedAfterReady {
+		t.Fatal("bootstrap update published before session readiness/FIFO flush barrier")
+	}
+	if got := sessions.snapshot(); !got.receives || got.receivesCalls != 1 {
+		t.Fatalf("merged baseline callback readiness = receives:%v calls:%d, want true/1", got.receives, got.receivesCalls)
 	}
 }
 
@@ -253,7 +286,7 @@ func TestUpdatesGetStateMarksSessionReadyForPush(t *testing.T) {
 		Updates:  &captureUpdates{state: domain.UpdateState{Pts: 3, Date: 1700000000, Seq: 2}},
 	}, zaptest.NewLogger(t), clock.System)
 
-	ctx := WithClientInfo(WithSessionID(context.Background(), 77), ClientInfo{Type: ClientTypeTDesktop})
+	ctx := postresponse.WithCallbacks(WithClientInfo(WithUserID(WithSessionID(context.Background(), 77), 1000000001), ClientInfo{Type: ClientTypeTDesktop}))
 	got, err := r.onUpdatesGetState(ctx)
 	if err != nil {
 		t.Fatalf("updates.getState: %v", err)
@@ -261,9 +294,91 @@ func TestUpdatesGetStateMarksSessionReadyForPush(t *testing.T) {
 	if got.Pts != 3 || got.Seq != 2 {
 		t.Fatalf("state = %+v, want pts=3 seq=2", got)
 	}
+	if gotSession := sessions.snapshot(); gotSession.receives {
+		t.Fatal("session became ready before getState rpc_result delivery")
+	}
+	postresponse.Run(ctx)
 	gotSession := sessions.snapshot()
 	if gotSession.sessionID != 77 || !gotSession.receives {
 		t.Fatalf("session ready = id %d receives %v, want 77/true", gotSession.sessionID, gotSession.receives)
+	}
+}
+
+func TestUpdatesGetDifferenceMarksSessionReadyOnlyAfterRPCResult(t *testing.T) {
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Sessions: sessions,
+		Updates:  &captureUpdates{state: domain.UpdateState{Pts: 7, Date: 1700000007}},
+	}, zaptest.NewLogger(t), clock.System)
+
+	ctx := postresponse.WithCallbacks(
+		WithSessionID(
+			WithAuthKeyID(WithUserID(context.Background(), 1000000001), [8]byte{7}),
+			79,
+		),
+	)
+	diff, err := r.onUpdatesGetDifference(ctx, &tg.UpdatesGetDifferenceRequest{Pts: 7, Date: 1700000007})
+	if err != nil {
+		t.Fatalf("updates.getDifference: %v", err)
+	}
+	if _, ok := diff.(*tg.UpdatesDifferenceEmpty); !ok {
+		t.Fatalf("difference = %T, want UpdatesDifferenceEmpty", diff)
+	}
+	if sessions.snapshot().receives {
+		t.Fatal("session became ready before getDifference rpc_result delivery")
+	}
+	updates := r.deps.Updates.(*captureUpdates)
+	if updates.observedCalls != 1 || updates.observedRequest.Pts != 7 || updates.commitCalls != 0 {
+		t.Fatalf("pre-delivery cursors = observed_calls:%d observed:%+v commits:%d", updates.observedCalls, updates.observedRequest, updates.commitCalls)
+	}
+
+	postresponse.Run(ctx)
+	gotSession := sessions.snapshot()
+	if gotSession.sessionID != 79 || !gotSession.receives {
+		t.Fatalf("session ready = id %d receives %v, want 79/true", gotSession.sessionID, gotSession.receives)
+	}
+	if updates.commitCalls != 1 || updates.committedState.Pts != 7 || updates.commitMode != domain.UpdateStateCommitDeliveredOnly {
+		t.Fatalf("delivered difference commit = calls:%d state:%+v mode:%d", updates.commitCalls, updates.committedState, updates.commitMode)
+	}
+}
+
+func TestUpdatesDifferenceTooLongObservesRequestAndCommitsReturnedCursorAfterDelivery(t *testing.T) {
+	updates := &captureUpdates{currentState: &domain.UpdateState{Pts: 10, Date: 1700000010}}
+	r := New(Config{}, Deps{Updates: updates, Sessions: &captureSessions{}}, zaptest.NewLogger(t), clock.System)
+	ctx := postresponse.WithCallbacks(WithAuthKeyID(WithUserID(context.Background(), 1000000001), [8]byte{10}))
+	req := &tg.UpdatesGetDifferenceRequest{Pts: 1, Qts: 3, Date: 1700000001}
+	req.SetPtsTotalLimit(2)
+	got, err := r.onUpdatesGetDifference(ctx, req)
+	if err != nil {
+		t.Fatalf("getDifference tooLong: %v", err)
+	}
+	tooLong, ok := got.(*tg.UpdatesDifferenceTooLong)
+	if !ok || tooLong.Pts != 10 {
+		t.Fatalf("tooLong result = %T %+v", got, got)
+	}
+	if updates.observedCalls != 1 || updates.observedRequest.Pts != 1 || updates.commitCalls != 0 {
+		t.Fatalf("pre-delivery cursors = observed:%+v calls:%d commits:%d", updates.observedRequest, updates.observedCalls, updates.commitCalls)
+	}
+	postresponse.Run(ctx)
+	if updates.commitCalls != 1 || updates.committedState.Pts != 10 || updates.committedState.Qts != req.Qts || updates.committedState.Date != req.Date || updates.commitMode != domain.UpdateStateCommitDeliveredOnly {
+		t.Fatalf("delivered tooLong commit = calls:%d state:%+v mode:%d", updates.commitCalls, updates.committedState, updates.commitMode)
+	}
+}
+
+func TestUpdatesDifferenceEmptyCommitsRequestCursorNotInternalCandidate(t *testing.T) {
+	updates := &captureUpdates{state: domain.UpdateState{Pts: 100, Date: 1700000100}}
+	r := New(Config{}, Deps{Updates: updates, Sessions: &captureSessions{}}, zaptest.NewLogger(t), clock.System)
+	ctx := postresponse.WithCallbacks(WithAuthKeyID(WithUserID(context.Background(), 1000000002), [8]byte{11}))
+	got, err := r.onUpdatesGetDifference(ctx, &tg.UpdatesGetDifferenceRequest{Pts: 5, Qts: 6, Date: 1700000005})
+	if err != nil {
+		t.Fatalf("getDifference empty: %v", err)
+	}
+	if _, ok := got.(*tg.UpdatesDifferenceEmpty); !ok {
+		t.Fatalf("difference = %T, want empty", got)
+	}
+	postresponse.Run(ctx)
+	if updates.committedState.Pts != 5 || updates.committedState.Qts != 6 {
+		t.Fatalf("empty delivered cursor = %+v, want request pts/qts 5/6 (wire has neither)", updates.committedState)
 	}
 }
 
@@ -284,7 +399,10 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 		Updates:  updates,
 	}, zaptest.NewLogger(t), clock.System)
 
-	ctx := WithClientInfo(WithSessionID(context.Background(), 77), ClientInfo{Type: ClientTypeTDesktop})
+	ctx := postresponse.WithCallbacks(WithClientInfo(
+		WithUserID(WithSessionID(context.Background(), 77), 1000000001),
+		ClientInfo{Type: ClientTypeTDesktop},
+	))
 	got, err := r.onUpdatesGetState(ctx)
 	if err != nil {
 		t.Fatalf("updates.getState: %v", err)
@@ -292,8 +410,12 @@ func TestUpdatesGetStateReturnsAccountCurrentState(t *testing.T) {
 	if got.Pts != 4 {
 		t.Fatalf("state pts = %d, want account current 4 (per-key stale=3 会触发客户端重放)", got.Pts)
 	}
-	if !updates.acknowledged {
-		t.Fatal("getState 未推进设备确认水位")
+	if updates.acknowledged {
+		t.Fatal("getState 在 rpc_result 物理交付前推进了设备确认水位")
+	}
+	postresponse.Run(ctx)
+	if !updates.acknowledged || updates.commitMode != domain.UpdateStateCommitDeliveredAndObservedBaseline || updates.committedState.Pts != 4 {
+		t.Fatalf("delivered getState commit = acknowledged:%v mode:%d state:%+v", updates.acknowledged, updates.commitMode, updates.committedState)
 	}
 	time.Sleep(500 * time.Millisecond)
 	if msg := sessions.snapshot().message; msg != nil {
@@ -312,7 +434,8 @@ func TestUpdatesGetStateUnknownClientDoesNotAdvanceObservedBaseline(t *testing.T
 	}
 	r := New(Config{}, Deps{Sessions: sessions, Updates: updates}, zaptest.NewLogger(t), clock.System)
 
-	got, err := r.onUpdatesGetState(WithSessionID(context.Background(), 78))
+	ctx := postresponse.WithCallbacks(WithUserID(WithSessionID(context.Background(), 78), 1000000001))
+	got, err := r.onUpdatesGetState(ctx)
 	if err != nil {
 		t.Fatalf("updates.getState unknown client: %v", err)
 	}
@@ -322,21 +445,32 @@ func TestUpdatesGetStateUnknownClientDoesNotAdvanceObservedBaseline(t *testing.T
 	if updates.acknowledged {
 		t.Fatal("unknown client advanced the observed getState baseline")
 	}
+	if sessions.snapshot().receives {
+		t.Fatal("unknown client was enabled before getState rpc_result delivery")
+	}
+	postresponse.Run(ctx)
 	if !sessions.snapshot().receives {
 		t.Fatal("unknown client was not enabled for subsequent updates")
+	}
+	if updates.commitMode != domain.UpdateStateCommitDeliveredOnly || updates.committedState.Pts != current.Pts {
+		t.Fatalf("unknown client delivered commit = mode:%d state:%+v", updates.commitMode, updates.committedState)
 	}
 }
 
 func TestUpdatesGetStateDrKLOEstablishesObservedBaseline(t *testing.T) {
 	updates := &captureUpdates{currentState: &domain.UpdateState{Pts: 6, Date: 1700000006}}
 	r := New(Config{}, Deps{Sessions: &captureSessions{}, Updates: updates}, zaptest.NewLogger(t), clock.System)
-	ctx := WithClientInfo(context.Background(), ClientInfo{Type: ClientTypeAndroid, AppVersion: "12.8.1"})
+	ctx := postresponse.WithCallbacks(WithClientInfo(WithUserID(context.Background(), 1000000001), ClientInfo{Type: ClientTypeAndroid, AppVersion: "12.8.1"}))
 
 	if _, err := r.onUpdatesGetState(ctx); err != nil {
 		t.Fatalf("updates.getState DrKLO: %v", err)
 	}
-	if !updates.acknowledged {
-		t.Fatal("DrKLO getState did not establish its explicit current-snapshot baseline")
+	if updates.acknowledged {
+		t.Fatal("DrKLO getState established baseline before rpc_result delivery")
+	}
+	postresponse.Run(ctx)
+	if !updates.acknowledged || updates.commitMode != domain.UpdateStateCommitDeliveredAndObservedBaseline {
+		t.Fatalf("DrKLO delivered baseline = acknowledged:%v mode:%d", updates.acknowledged, updates.commitMode)
 	}
 }
 

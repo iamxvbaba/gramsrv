@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/sfu"
@@ -40,7 +40,6 @@ type AuthService interface {
 	SignInBot(ctx context.Context, a domain.Authorization, token string) (domain.User, error)
 	LogOut(ctx context.Context, authKeyID [8]byte) error
 	Authorization(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
-	UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error
 	AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error)
 	UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
@@ -60,9 +59,9 @@ type SessionBinder interface {
 	UserIDResolvedForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (userID int64, resolved bool)
 	UnbindAuthKey(authKeyID [8]byte) int
 	SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64, receives bool)
-	PushToSessionForAuthKey(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
+	PushToSessionForAuthKey(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error
 	// excludeAuthKeyID/excludeSessionID 必须同时为零（不排除）或同时非零（精确排除）。
-	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error)
+	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error)
 }
 
 // RawAuthKeySessionBinder 在 auth.bindTempAuthKey 成功后，把同一 raw temporary key
@@ -83,7 +82,7 @@ type RawAuthKeyMetadataProvider interface {
 // 它绕过登录后 updates-ready 队列，只能用于会解锁登录流程本身的握手消息，
 // 例如 updateLoginToken。
 type ImmediateSessionPusher interface {
-	PushToSessionForAuthKeyImmediate(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
+	PushToSessionForAuthKeyImmediate(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error
 }
 
 // SessionUpdatesStateProvider 暴露连接当前的 updates 接收状态（可选能力）。
@@ -98,6 +97,52 @@ type SessionUpdatesStateProvider interface {
 // Dispatch 返回后的兜底刷新，重连老客户端首条 RPC 期间的推送会漏降级。
 type ClientLayerBinder interface {
 	SetClientLayerForAuthKey(rawAuthKeyID [8]byte, sessionID int64, layer int)
+}
+
+// AuthKeyLayerBinder seeds an inherited auth-key default into every live
+// session that still has no explicit invokeWithLayer observation. Implementors
+// must not overwrite an explicit per-session profile; the returned count is
+// diagnostic only.
+//
+// Router uses this optional capability after auth.bindTempAuthKey normalizes a
+// raw temporary key to its permanent identity. Keeping it separate from
+// ClientLayerBinder makes the source distinction explicit: inherited defaults
+// are mutable initialization state, while an explicit session observation is a
+// correction for exactly one logical session.
+type AuthKeyLayerBinder interface {
+	SeedInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int
+}
+
+// BusinessAuthKeyLayerBinder seeds unknown live sessions across every raw PFS
+// key currently normalized to the same permanent/business auth key.
+type BusinessAuthKeyLayerBinder interface {
+	SeedInheritedLayerForBusinessAuthKey(authKeyID [8]byte, layer int) int
+}
+
+// AuthKeyLayerRefresher is the identity-normalization variant used after
+// auth.bindTempAuthKey. It may replace an inherited raw-key shadow with the
+// permanent key's default, but must still preserve every explicit session
+// profile.
+type AuthKeyLayerRefresher interface {
+	RefreshInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int
+}
+
+// AuthKeyInheritedLayerClearer removes only the mutable inherited default for
+// a physical/raw key. Explicit per-session invokeWithLayer profiles are wire
+// evidence and must survive. Router uses this when a temp key binds to a
+// permanent key whose durable Layer is authoritative but unsupported by this
+// binary; retaining the raw key's older inherited default would silently
+// downgrade naked RPCs instead of asking the client to correct explicitly.
+type AuthKeyInheritedLayerClearer interface {
+	ClearInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte) int
+}
+
+// ActiveSessionLayerEvidenceProvider exposes the live connection's explicit
+// profile when auth.bindTempAuthKey runs after the Router's bounded exact-
+// profile retention window. It is deliberately session-scoped and must never
+// report an inherited profile as explicit evidence.
+type ActiveSessionLayerEvidenceProvider interface {
+	ExplicitLayerEvidenceForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (layer int, msgID int64, ok bool)
 }
 
 // SessionTerminator 暴露按业务 auth_key 强制断开活跃连接的能力（可选）。
@@ -117,22 +162,22 @@ type RawSessionTerminator interface {
 // BestEffortSessionBinder 是带 raw auth_key_id 精确排除当前设备的短超时推送接口；
 // 不用于 RPC result/ack。
 type BestEffortSessionBinder interface {
-	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // TransientSessionBinder 推送短命、不写 durable log 的 update（typing / presence）。
 // 与普通推送的关键区别：目标 session 未就绪时直接跳过、不进 pending——transient 数据
 // getDifference 无法补，就绪后由 getState 快照/下次状态变化重建，囤积过期 transient 无意义。
 type TransientSessionBinder interface {
-	PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // AuthKeyTargetedSessionBinder 把 update 定向投递给某用户【绑定到具体 business auth_key
 // 这台设备】的就绪连接（密聊设备级投递）。SessionManager 实现；测试替身/未装配时
 // rpc 层回退账号级推送。未就绪连接跳过、不进 pending（密聊离线靠 getDifference 补）。
 type AuthKeyTargetedSessionBinder interface {
-	PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder) (int, error)
-	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass) (int, error)
+	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // OnlineUserProvider exposes a bounded runtime snapshot for best-effort fanout.
@@ -346,8 +391,9 @@ type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
 	CurrentState(ctx context.Context, userID int64) (domain.UpdateState, error)
 	ConfirmedState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error)
-	AcknowledgeCurrentState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
+	ObserveDifferenceRequest(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateState, error)
 	GetDifference(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateDifference, error)
+	CommitDeliveredState(ctx context.Context, authKeyID [8]byte, userID int64, state domain.UpdateState, mode domain.UpdateStateCommitMode) error
 	ClearAuthKey(ctx context.Context, authKeyID [8]byte) error
 	RecordNewMessage(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
 	PublishNewMessage(ctx context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
@@ -740,40 +786,44 @@ type AIComposeService interface {
 
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
-	Auth             AuthService
-	Account          AccountService
-	Privacy          PrivacyService
-	Help             HelpService
-	AICompose        AIComposeService
-	Users            UsersService
-	Updates          UpdatesService
-	BootstrapUpdates store.BootstrapUpdateJobStore
-	BotAPIUpdates    store.BotAPIUpdateStore
-	Contacts         ContactsService
-	Dialogs          DialogsService
-	Chatlists        ChatlistsService
-	Messages         MessagesService
-	Translation      TranslationService
-	Stories          StoriesService
-	Channels         ChannelsService
-	Files            FilesService
-	Bots             BotsService
-	Polls            PollsService
-	Phone            PhoneService
-	GroupCalls       GroupCallsService
-	LiveStreams      LiveStreamsService
-	SFU              sfu.Service
-	TURN             turnsrv.Service
-	LangPack         LangPackService
-	Sessions         SessionBinder
-	Inline           store.InlineRegistryStore
-	Limiter          RateLimiter
-	Metrics          Metrics
-	SecretChats      SecretChatService
-	Stars            StarsService
-	Gifts            GiftsService
-	Passkey          PasskeyService
-	Themes           ThemeService
+	Auth AuthService
+	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
+	// explicit invokeWithLayer evidence. Production must wire the same auth-key
+	// store used by the MTProto edge; nil is reserved for isolated router tests.
+	AuthKeySessionLayers store.AuthKeySessionLayerStore
+	Account              AccountService
+	Privacy              PrivacyService
+	Help                 HelpService
+	AICompose            AIComposeService
+	Users                UsersService
+	Updates              UpdatesService
+	BootstrapUpdates     store.BootstrapUpdateJobStore
+	BotAPIUpdates        store.BotAPIUpdateStore
+	Contacts             ContactsService
+	Dialogs              DialogsService
+	Chatlists            ChatlistsService
+	Messages             MessagesService
+	Translation          TranslationService
+	Stories              StoriesService
+	Channels             ChannelsService
+	Files                FilesService
+	Bots                 BotsService
+	Polls                PollsService
+	Phone                PhoneService
+	GroupCalls           GroupCallsService
+	LiveStreams          LiveStreamsService
+	SFU                  sfu.Service
+	TURN                 turnsrv.Service
+	LangPack             LangPackService
+	Sessions             SessionBinder
+	Inline               store.InlineRegistryStore
+	Limiter              RateLimiter
+	Metrics              Metrics
+	SecretChats          SecretChatService
+	Stars                StarsService
+	Gifts                GiftsService
+	Passkey              PasskeyService
+	Themes               ThemeService
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。

@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 
 	botsapp "telesrv/internal/app/bots"
 	appchannels "telesrv/internal/app/channels"
@@ -105,7 +105,7 @@ func TestLegacyAndroidAuthSignUpAllowedBeforeAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch legacy auth.signUp: %v", err)
 	}
-	// Routed through the unified layerwire inbound upgrade + the normal gotd
+	// Routed through the generated static client overlay + the normal gotd
 	// dispatcher, which boxes a class result (auth.Authorization) as *...Box.
 	box, ok := enc.(*tg.AuthAuthorizationBox)
 	if !ok {
@@ -160,7 +160,7 @@ func TestModernAndroidChannelsInviteToChannelDispatch(t *testing.T) {
 
 	var in bin.Buffer
 	// DrKLO channels.inviteToChannel#199f3a6c — now handled by the unified
-	// layerwire client-alias table (pure id swap), not a dedicated handler.
+	// generated client overlay, not a dedicated handler.
 	in.PutID(0x199f3a6c)
 	if err := (&tg.ChannelsInviteToChannelRequest{
 		Channel: &tg.InputChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash},

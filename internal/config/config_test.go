@@ -57,6 +57,13 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", "33")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", "444")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", "555555")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", "555")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES", "70000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES", "444")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", "40000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES", "333")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", "20000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", "222")
 	t.Setenv("TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES", "777777")
 	t.Setenv("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", "88")
 	t.Setenv("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", "22")
@@ -77,6 +84,16 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 		cfg.MTProtoRPCGlobalWorkers != 33 || cfg.MTProtoRPCGlobalMaxTasks != 444 || cfg.MTProtoRPCGlobalMaxBytes != 555555 {
 		t.Fatalf("rpc budget config = %d/%d/%v/%d/%d/%d", cfg.MTProtoRPCMaxInflight, cfg.MTProtoRPCQueueSize, cfg.MTProtoRPCTimeout, cfg.MTProtoRPCGlobalWorkers, cfg.MTProtoRPCGlobalMaxTasks, cfg.MTProtoRPCGlobalMaxBytes)
 	}
+	if cfg.MTProtoRPCResultCacheMaxEntries != 555 || cfg.MTProtoRPCResultCacheMaxBytes != 70000000 ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries != 444 || cfg.MTProtoRPCResultCacheAuthMaxBytes != 40000000 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries != 333 || cfg.MTProtoRPCResultCacheSessionMaxBytes != 20000000 ||
+		cfg.MTProtoRPCResultPendingPerAuth != 222 {
+		t.Fatalf("rpc result cache config = global:%d/%d auth:%d/%d session:%d/%d pending/auth:%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxBytes,
+			cfg.MTProtoRPCResultCacheSessionMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxBytes,
+			cfg.MTProtoRPCResultPendingPerAuth)
+	}
 	if cfg.MTProtoInboundFrameGlobalMaxBytes != 777777 {
 		t.Fatalf("inbound frame budget config = %d", cfg.MTProtoInboundFrameGlobalMaxBytes)
 	}
@@ -85,6 +102,46 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	}
 	if cfg.TempKeyResolveCacheMaxEntries != 666 || cfg.TempKeyResolveCacheTTL != 17*time.Minute || cfg.OrphanAuthKeyRetention != 36*time.Hour {
 		t.Fatalf("auth key resource config = %d/%v/%v", cfg.TempKeyResolveCacheMaxEntries, cfg.TempKeyResolveCacheTTL, cfg.OrphanAuthKeyRetention)
+	}
+}
+
+func TestLoadRPCResultFairBudgetDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MTProtoRPCResultCacheMaxEntries != 1<<18 || cfg.MTProtoRPCResultCacheMaxBytes != 64<<20 ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries != 1<<15 || cfg.MTProtoRPCResultCacheAuthMaxBytes != 32<<20 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries != 1<<14 || cfg.MTProtoRPCResultCacheSessionMaxBytes != 16<<20 ||
+		cfg.MTProtoRPCResultPendingPerAuth != 1<<11 {
+		t.Fatalf("rpc_result fair defaults = global:%d/%d auth:%d/%d session:%d/%d pending/auth:%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxBytes,
+			cfg.MTProtoRPCResultCacheSessionMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxBytes,
+			cfg.MTProtoRPCResultPendingPerAuth)
+	}
+}
+
+func TestLoadRejectsInvalidRPCResultFairBudgets(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "entry hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", value: "1024"},
+		{name: "byte below outbound body", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", value: "16700000"},
+		{name: "byte hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", value: "70000000"},
+		{name: "pending hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", value: "9000"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
 	}
 }
 

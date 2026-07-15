@@ -29,14 +29,14 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/gotd/log/logzap"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/mtproxy"
-	"github.com/gotd/td/mtproxy/obfuscator"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/telegram"
-	"github.com/gotd/td/telegram/dcs"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mtproxy"
+	"github.com/iamxvbaba/td/mtproxy/obfuscator"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/dcs"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/transport"
 
 	"telesrv/internal/mtprotoedge"
 )

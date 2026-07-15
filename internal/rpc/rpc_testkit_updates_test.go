@@ -19,6 +19,11 @@ type captureUpdates struct {
 	excludeSessionID int64
 	reliableDispatch bool
 	difference       *domain.UpdateDifference
+	observedRequest  domain.UpdateState
+	observedCalls    int
+	committedState   domain.UpdateState
+	commitMode       domain.UpdateStateCommitMode
+	commitCalls      int
 }
 
 func (s *captureUpdates) UsesReliableDispatch() bool {
@@ -45,17 +50,22 @@ func (s *captureUpdates) ConfirmedState(_ context.Context, authKeyID [8]byte, us
 	return s.state, s.state.Pts != 0 || s.state.Date != 0, nil
 }
 
-func (s *captureUpdates) AcknowledgeCurrentState(_ context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error) {
+func (s *captureUpdates) ObserveDifferenceRequest(_ context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateState, error) {
 	s.authKeyID = authKeyID
 	s.userID = userID
-	st := s.state
+	current := s.state
 	if s.currentState != nil {
-		st = *s.currentState
+		current = *s.currentState
 	}
-	// 模拟真实 service：确认水位推进到账号最新。
-	s.state = st
-	s.acknowledged = true
-	return st, nil
+	if from.Pts < 0 {
+		from.Pts = 0
+	}
+	if from.Pts > current.Pts {
+		from.Pts = current.Pts
+	}
+	s.observedRequest = from
+	s.observedCalls++
+	return from, nil
 }
 
 func (s *captureUpdates) GetDifference(_ context.Context, authKeyID [8]byte, userID int64, _ domain.UpdateState) (domain.UpdateDifference, error) {
@@ -65,6 +75,17 @@ func (s *captureUpdates) GetDifference(_ context.Context, authKeyID [8]byte, use
 		return *s.difference, nil
 	}
 	return domain.UpdateDifference{State: s.state}, nil
+}
+
+func (s *captureUpdates) CommitDeliveredState(_ context.Context, authKeyID [8]byte, userID int64, state domain.UpdateState, mode domain.UpdateStateCommitMode) error {
+	s.authKeyID = authKeyID
+	s.userID = userID
+	s.committedState = state
+	s.commitMode = mode
+	s.commitCalls++
+	s.state = state
+	s.acknowledged = true
+	return nil
 }
 
 func (s *captureUpdates) ClearAuthKey(_ context.Context, authKeyID [8]byte) error {

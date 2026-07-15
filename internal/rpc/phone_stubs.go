@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // 群通话范围外入口的被动 stub（防点崩）。未列出的 phone.*（conference 族 /

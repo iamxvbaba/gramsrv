@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )

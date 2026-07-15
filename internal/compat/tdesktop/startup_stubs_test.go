@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 )
 
 func TestNotifySettingsDefaultIsAudible(t *testing.T) {
@@ -233,7 +233,7 @@ func TestUniqueGiftChatThemesIsEmptyHashableStub(t *testing.T) {
 	}
 }
 
-func TestWallPapersUsesOrangeFileCatalog(t *testing.T) {
+func TestWallPapersUsesDefaultFileCatalog(t *testing.T) {
 	got, ok := WallPapers(0).(*tg.AccountWallPapers)
 	if !ok {
 		t.Fatalf("WallPapers(0) = %T, want modified list", got)
@@ -249,14 +249,14 @@ func TestWallPapersUsesOrangeFileCatalog(t *testing.T) {
 		t.Fatalf("WallPapers(0).Wallpapers[0] = %T, want *tg.WallPaper", got.Wallpapers[0])
 	}
 	if wallpaper.ID == 0 || wallpaper.AccessHash == 0 || wallpaper.Slug == "" {
-		t.Fatalf("wallpaper identity = id %d hash %d slug %q, want seed ids", wallpaper.ID, wallpaper.AccessHash, wallpaper.Slug)
+		t.Fatalf("wallpaper identity = id %d hash %d slug %q, want Default ids", wallpaper.ID, wallpaper.AccessHash, wallpaper.Slug)
 	}
 	doc, ok := wallpaper.Document.(*tg.Document)
 	if !ok {
 		t.Fatalf("wallpaper document = %T, want *tg.Document", wallpaper.Document)
 	}
 	if doc.ID == 0 || doc.AccessHash == 0 || doc.Size == 0 || doc.MimeType == "" || doc.DCID != appearanceSeedDCID {
-		t.Fatalf("wallpaper document = id %d hash %d size %d mime %q dc %d, want downloadable seed document",
+		t.Fatalf("wallpaper document = id %d hash %d size %d mime %q dc %d, want downloadable Default document",
 			doc.ID, doc.AccessHash, doc.Size, doc.MimeType, doc.DCID)
 	}
 	if len(doc.Thumbs) == 0 {
@@ -392,7 +392,7 @@ func TestPeerColorsAreNonEmptyHashableAccentSets(t *testing.T) {
 		t.Fatalf("PeerColors(0) = hash %d colors %d, want non-empty stable list", got.Hash, len(got.Colors))
 	}
 	if len(got.Colors) != 21 {
-		t.Fatalf("PeerColors(0).Colors length = %d, want seed palette count 21", len(got.Colors))
+		t.Fatalf("PeerColors(0).Colors length = %d, want Default palette count 21", len(got.Colors))
 	}
 	withExplicitColors := 0
 	for i, option := range got.Colors {
@@ -412,7 +412,7 @@ func TestPeerColorsAreNonEmptyHashableAccentSets(t *testing.T) {
 		withExplicitColors++
 	}
 	if withExplicitColors == 0 {
-		t.Fatal("PeerColors() has no explicit seed color sets")
+		t.Fatal("PeerColors() has no explicit Default color sets")
 	}
 	if _, ok := PeerColors(got.Hash).(*tg.HelpPeerColorsNotModified); !ok {
 		t.Fatalf("PeerColors(hash) = %#v, want notModified", PeerColors(got.Hash))
@@ -428,7 +428,7 @@ func TestPeerProfileColorsAreNonEmptyHashableProfileSets(t *testing.T) {
 		t.Fatalf("PeerProfileColors(0) = hash %d colors %d, want non-empty stable list", got.Hash, len(got.Colors))
 	}
 	if len(got.Colors) != 16 {
-		t.Fatalf("PeerProfileColors(0).Colors length = %d, want seed profile palette count 16", len(got.Colors))
+		t.Fatalf("PeerProfileColors(0).Colors length = %d, want Default profile palette count 16", len(got.Colors))
 	}
 	for i, option := range got.Colors {
 		if !IsPeerProfileColorID(option.ColorID) {

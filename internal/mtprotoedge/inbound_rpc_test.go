@@ -108,6 +108,57 @@ func TestInboundRPCSchedulerBoundsConcurrentWork(t *testing.T) {
 	}
 }
 
+func TestInboundRPCSchedulerSkipsUnresolvedDependencyGate(t *testing.T) {
+	scheduler := newInboundRPCScheduler(1, 8, 1<<20)
+	scheduler.start()
+	c := newInboundTestConn(scheduler, 1, 4, time.Second)
+	defer func() {
+		c.closeInboundRPCScheduler()
+		scheduler.stop(time.Second)
+	}()
+
+	blockedRan := make(chan struct{}, 1)
+	independentRan := make(chan struct{}, 1)
+	gate := newInboundRPCGate(1, c.wakeInboundRPC)
+	gate.resolve(true) // subscriber-installation sentinel; one dependency remains.
+	if err := c.enqueueInboundRPC(context.Background(), inboundRPC{
+		method: "invokeAfter",
+		gate:   gate,
+		run: func(context.Context) error {
+			blockedRan <- struct{}{}
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.enqueueInboundRPC(context.Background(), inboundRPC{
+		method: "independent",
+		run: func(context.Context) error {
+			independentRan <- struct{}{}
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-independentRan:
+	case <-time.After(time.Second):
+		t.Fatal("independent task was starved behind unresolved invokeAfter")
+	}
+	select {
+	case <-blockedRan:
+		t.Fatal("invokeAfter ran before its dependency completed")
+	default:
+	}
+	gate.resolve(true)
+	select {
+	case <-blockedRan:
+	case <-time.After(time.Second):
+		t.Fatal("resolved invokeAfter was not rescheduled")
+	}
+}
+
 func TestInboundRPCSchedulerFairAcrossConnections(t *testing.T) {
 	scheduler := newInboundRPCScheduler(1, 16, 1<<20)
 	c1 := newInboundTestConn(scheduler, 1, 4, time.Second)
@@ -489,5 +540,47 @@ func TestInboundRPCCloseDrainsQueueAndReturnsBudgets(t *testing.T) {
 	}
 	if got := c.inflightRPCBytes.Load(); got != 0 {
 		t.Fatalf("connection inflight bytes after close = %d, want zero", got)
+	}
+}
+
+func TestInboundRPCReplayRestoreBarrierKeepsFollowingTaskOffWorkers(t *testing.T) {
+	scheduler := newInboundRPCScheduler(1, 8, 1<<20)
+	scheduler.start()
+	c := newInboundTestConn(scheduler, 1, 4, time.Second)
+	defer func() {
+		c.closeInboundRPCScheduler()
+		scheduler.stop(time.Second)
+	}()
+
+	finishFirst := c.beginRPCReplayRestore()
+	finishSecond := c.beginRPCReplayRestore()
+	ran := make(chan struct{})
+	if err := c.enqueueInboundRPC(context.Background(), inboundRPC{
+		method: "following.naked.rpc",
+		size:   4,
+		run: func(context.Context) error {
+			close(ran)
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("enqueue following task: %v", err)
+	}
+
+	select {
+	case <-ran:
+		t.Fatal("following RPC ran before replay restore completed")
+	case <-time.After(30 * time.Millisecond):
+	}
+	finishFirst()
+	select {
+	case <-ran:
+		t.Fatal("one of two replay restores released the scheduler early")
+	case <-time.After(30 * time.Millisecond):
+	}
+	finishSecond()
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("following RPC did not run after the final replay restore")
 	}
 }

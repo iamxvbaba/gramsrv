@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"hash/fnv"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
 	"telesrv/internal/compat/tdesktop"

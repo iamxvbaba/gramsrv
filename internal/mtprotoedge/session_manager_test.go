@@ -1,6 +1,7 @@
 package mtprotoedge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -10,23 +11,24 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
-
-type countingOutboundEncoder struct {
-	count *int
-}
-
-func (e *countingOutboundEncoder) Encode(b *bin.Buffer) error {
-	*e.count++
-	return (&tg.UpdatesTooLong{}).Encode(b)
-}
 
 type closeCountingTransport struct {
 	closes int
+}
+
+type sessionDestructionRecorder struct {
+	destroyed []sessionKey
+}
+
+func (*sessionDestructionRecorder) SessionOffline([8]byte, int64, int64, bool) {}
+
+func (r *sessionDestructionRecorder) SessionDestroyed(authKeyID [8]byte, sessionID int64) {
+	r.destroyed = append(r.destroyed, sessionKey{authKeyID: authKeyID, sessionID: sessionID})
 }
 
 type slowCloseTransport struct {
@@ -164,6 +166,8 @@ func TestSessionManagerReplacementClosesOldPhysicalTransport(t *testing.T) {
 
 func TestSessionManagerDestroyClosesPhysicalTransport(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
+	observer := &sessionDestructionRecorder{}
+	sm.SetLifecycleObserver(observer)
 	raw := [8]byte{4, 5, 6}
 	physical := &closeCountingTransport{}
 	c := &Conn{sessionID: 77, authKeyID: raw, transport: physical}
@@ -178,11 +182,38 @@ func TestSessionManagerDestroyClosesPhysicalTransport(t *testing.T) {
 	if sm.Online() != 0 {
 		t.Fatalf("online after destroy = %d, want 0", sm.Online())
 	}
+	if len(observer.destroyed) != 1 || observer.destroyed[0] != (sessionKey{authKeyID: raw, sessionID: 77}) {
+		t.Fatalf("destroy callbacks = %+v, want exact destroyed session", observer.destroyed)
+	}
+	// An explicit destroy for an already-offline logical session must still
+	// invalidate retained exact-profile metadata even though the wire response
+	// remains destroy_session_none.
+	if sm.DestroySessionForAuthKey(raw, 88) {
+		t.Fatal("missing session reported destroyed")
+	}
+	if len(observer.destroyed) != 2 || observer.destroyed[1] != (sessionKey{authKeyID: raw, sessionID: 88}) {
+		t.Fatalf("offline destroy callbacks = %+v", observer.destroyed)
+	}
 }
 
-func TestSessionManagerBestEffortFanoutPreencodesOnce(t *testing.T) {
+func TestSessionManagerUnregisterIsNotSessionDestruction(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	observer := &sessionDestructionRecorder{}
+	sm.SetLifecycleObserver(observer)
+	c := &Conn{sessionID: 91, authKeyID: [8]byte{9, 1}}
+	if err := sm.Register(c); err != nil {
+		t.Fatal(err)
+	}
+	sm.Unregister(c)
+	if len(observer.destroyed) != 0 {
+		t.Fatalf("ordinary unregister emitted destruction: %+v", observer.destroyed)
+	}
+}
+
+func TestSessionManagerBestEffortFanoutPreparesOncePerProfile(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userID = int64(100)
+	conns := make([]*Conn, 0, 2)
 	for i := 0; i < 2; i++ {
 		c := &Conn{
 			sessionID:       int64(i + 1),
@@ -195,16 +226,19 @@ func TestSessionManagerBestEffortFanoutPreencodesOnce(t *testing.T) {
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
+		if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+			t.Fatalf("freeze profile: %v", err)
+		}
 		sm.Register(c)
+		conns = append(conns, c)
 	}
 
-	encodes := 0
 	sent, err := sm.PushToUserExceptSessionBestEffort(
 		context.Background(),
 		userID,
 		0,
 		proto.MessageFromServer,
-		&countingOutboundEncoder{count: &encodes},
+		&tg.UpdatesTooLong{},
 		0,
 	)
 	if err != nil {
@@ -213,8 +247,91 @@ func TestSessionManagerBestEffortFanoutPreencodesOnce(t *testing.T) {
 	if sent != 2 {
 		t.Fatalf("sent = %d, want 2", sent)
 	}
-	if encodes != 1 {
-		t.Fatalf("encoded %d times, want 1", encodes)
+	first := <-conns[0].outbound
+	second := <-conns[1].outbound
+	defer first.releaseReservation(conns[0].outboundTrackedBudget)
+	defer second.releaseReservation(conns[1].outboundTrackedBudget)
+	if first.encoded == nil || second.encoded == nil || !sameBacking(first.encoded.body, second.encoded.body) {
+		t.Fatal("same-profile fanout did not share one exact prepared body")
+	}
+	if first.encoded.layer == nil || second.encoded.layer == nil || first.encoded.layer == second.encoded.layer {
+		t.Fatal("same-profile fanout shared connection-specific epoch binding")
+	}
+}
+
+func TestSessionManagerMixedLayerFanoutUsesProfileBoundBodies(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	const userID = int64(103)
+	authKeyID := [8]byte{0x22, 0x70, 0x22, 0x80}
+	profiles := []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227, tg.LayerProfile228}
+	conns := make([]*Conn, 0, len(profiles))
+	for _, profile := range profiles {
+		c := &Conn{
+			sessionID:       int64(profile),
+			authKeyID:       authKeyID,
+			outbound:        make(chan outboundOp, 1),
+			outboundControl: make(chan outboundOp, 1),
+			outboundStop:    make(chan struct{}),
+			metrics:         NopMetrics{},
+		}
+		c.userID.Store(userID)
+		c.userIDResolved.Store(true)
+		c.receivesUpdates.Store(true)
+		if profile == tg.LayerProfile228 {
+			if err := c.SeedInheritedLayerProfile(tg.LayerProfile227); err != nil {
+				t.Fatalf("seed Alice inherited profile: %v", err)
+			}
+		}
+		if err := c.FreezeLayerProfile(profile); err != nil {
+			t.Fatalf("freeze profile %d: %v", profile, err)
+		}
+		sm.Register(c)
+		conns = append(conns, c)
+	}
+
+	value := testLayerChannelUpdatesValue(321)
+	sent, err := sm.PushToUserExceptSessionBestEffort(
+		context.Background(), userID, 0, proto.MessageFromServer, value, 0,
+	)
+	if err != nil || sent != len(conns) {
+		t.Fatalf("mixed fanout = sent:%d err:%v", sent, err)
+	}
+	var previous *encodedOutboundMessage
+	for i, c := range conns {
+		op := <-c.outbound
+		defer op.releaseReservation(c.outboundTrackedBudget)
+		if op.encoded == nil || op.encoded.layer == nil || op.encoded.layer.profile != profiles[i] {
+			t.Fatalf("connection %d binding = %#v", i, op.encoded)
+		}
+		state := c.LayerProfileState()
+		if op.encoded.layer.kind != outboundLayerBindingSession || op.encoded.layer.epoch != state.Epoch {
+			t.Fatalf("connection %d target binding = %#v, state=%#v", i, op.encoded.layer, state)
+		}
+		if previous == op.encoded {
+			t.Fatal("different profiles shared one final wire body")
+		}
+		previous = op.encoded
+		wantChannelID := testChannelWireID(profiles[i])
+		if !bytes.Contains(op.encoded.body, littleEndianID(wantChannelID)) {
+			t.Fatalf("profile %d push lacks channel constructor %#08x", profiles[i], wantChannelID)
+		}
+		if otherChannelID := testOtherChannelWireID(profiles[i]); bytes.Contains(op.encoded.body, littleEndianID(otherChannelID)) {
+			t.Fatalf("profile %d push leaked channel constructor %#08x", profiles[i], otherChannelID)
+		}
+		input := bin.Buffer{Buf: op.encoded.body}
+		decoded, decodeErr := tg.DecodeLayer(profiles[i], tg.LayerClassUpdatesType(), &input)
+		if decodeErr != nil || input.Len() != 0 {
+			t.Fatalf("decode profile %d: remaining=%d err=%v", profiles[i], input.Len(), decodeErr)
+		}
+		updates := decoded.(*tg.Updates)
+		channel, ok := updates.Chats[0].(*tg.Channel)
+		if !ok || channel.ID != 100 {
+			t.Fatalf("profile %d decoded channel=%#v", profiles[i], updates.Chats)
+		}
+		status := updates.Updates[0].(*tg.UpdateUserStatus).Status.(*tg.UserStatusOnline)
+		if status.Expires != 321 {
+			t.Fatalf("profile %d decoded expires=%d", profiles[i], status.Expires)
+		}
 	}
 }
 
@@ -230,24 +347,23 @@ func TestSessionManagerPendingFanoutSharesOneEncodedBodyAndBudget(t *testing.T) 
 		keys = append(keys, connSessionKey(c))
 	}
 
-	encodes := 0
-	msg := &countingOutboundEncoder{count: &encodes}
+	msg := &tg.UpdatesTooLong{}
 	sent, err := sm.PushToUserExceptSession(context.Background(), userID, 0, proto.MessageFromServer, msg)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	if sent != 2 || encodes != 1 {
-		t.Fatalf("pending fanout = sent:%d encodes:%d, want 2/1", sent, encodes)
+	if sent != 2 {
+		t.Fatalf("pending fanout sent=%d, want 2", sent)
 	}
 
 	sm.mu.Lock()
 	first := sm.pending[keys[0]][0]
 	second := sm.pending[keys[1]][0]
-	if first.encoded != second.encoded || first.reservation != second.reservation {
+	if first.updates != second.updates || first.reservation != second.reservation {
 		sm.mu.Unlock()
-		t.Fatal("pending sessions did not share encoded body/reservation")
+		t.Fatal("pending sessions did not share frozen updates/reservation")
 	}
-	wantBytes := int64(len(first.encoded.body))
+	wantBytes := int64(first.updates.canonicalSize())
 	sm.deletePendingLocked(keys[0])
 	if got := sm.pendingBudget.snapshot(); got != wantBytes {
 		sm.mu.Unlock()
@@ -281,6 +397,9 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
+		if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+			t.Fatalf("freeze profile: %v", err)
+		}
 		sm.Register(c)
 		slow = append(slow, c)
 	}
@@ -296,6 +415,9 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 	healthy.userID.Store(userID)
 	healthy.userIDResolved.Store(true)
 	healthy.receivesUpdates.Store(true)
+	if err := healthy.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		t.Fatalf("freeze healthy profile: %v", err)
+	}
 	sm.Register(healthy)
 
 	const budget = 40 * time.Millisecond
@@ -625,6 +747,9 @@ func TestPushToUserAuthKeyUsesOneDeadlineAndDropsOnlySlowPFSConnections(t *testi
 			outboundStop:    make(chan struct{}),
 		}
 		c.receivesUpdates.Store(true)
+		if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+			t.Fatalf("freeze profile: %v", err)
+		}
 		if queueFull {
 			c.outbound <- outboundOp{}
 		}
@@ -787,6 +912,9 @@ func TestPushToSessionForAuthKeyImmediateBypassesReadinessQueue(t *testing.T) {
 		outboundControl: make(chan outboundOp, 1),
 		outboundStop:    make(chan struct{}),
 	}
+	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		t.Fatalf("freeze profile: %v", err)
+	}
 	sm.Register(c)
 
 	msg := &tg.UpdateShort{Update: &tg.UpdateLoginToken{}, Date: 1700000000}
@@ -816,6 +944,77 @@ func TestPushToSessionForAuthKeyImmediateBypassesReadinessQueue(t *testing.T) {
 	sm.mu.RUnlock()
 	if pending != 0 {
 		t.Fatalf("pending pushes = %d, want 0", pending)
+	}
+}
+
+func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	key := sessionKey{authKeyID: [8]byte{0x22, 0x02, 0x27}, sessionID: 220227}
+	c := &Conn{
+		authKeyID:             key.authKeyID,
+		sessionID:             key.sessionID,
+		outbound:              make(chan outboundOp, 1),
+		outboundControl:       make(chan outboundOp, 1),
+		outboundStop:          make(chan struct{}),
+		metrics:               NopMetrics{},
+		outboundTrackedBudget: newOutboundTrackedBudget(1 << 20),
+	}
+	const userID = int64(1000000227)
+	c.userID.Store(userID)
+	c.userIDResolved.Store(true)
+	c.membershipsSynced.Store(true) // model work performed before a defensive Set(true)
+	if err := sm.Register(c); err != nil {
+		t.Fatal(err)
+	}
+
+	update := &tg.UpdateShort{Update: &tg.UpdateUserStatus{UserID: userID, Status: &tg.UserStatusOnline{Expires: 1}}, Date: 1}
+	if err := sm.PushToSessionForAuthKey(context.Background(), key.authKeyID, key.sessionID, proto.MessageFromServer, update); err != nil {
+		t.Fatal(err)
+	}
+	sm.SetReceivesUpdatesForAuthKey(key.authKeyID, key.sessionID, true)
+	if c.receivesUpdates.Load() || c.membershipsSynced.Load() || sm.ReceivesUpdatesForAuthKey(key.authKeyID, key.sessionID) {
+		t.Fatal("unknown-profile connection became updates-ready")
+	}
+	if c.isRetired() {
+		t.Fatal("unknown-profile readiness attempt retired a healthy connection")
+	}
+	sm.mu.RLock()
+	pending, flushing := len(sm.pending[key]), sm.flushing[key]
+	sm.mu.RUnlock()
+	if pending != 1 || flushing {
+		t.Fatalf("unknown-profile readiness changed pending state = pending:%d flushing:%v", pending, flushing)
+	}
+	select {
+	case op := <-c.outbound:
+		op.releaseReservation(c.outboundTrackedBudget)
+		t.Fatal("unknown-profile readiness flushed a proactive update")
+	default:
+	}
+
+	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+		t.Fatal(err)
+	}
+	c.membershipsSynced.Store(true)
+	sm.SetReceivesUpdatesForAuthKey(key.authKeyID, key.sessionID, true)
+	var op outboundOp
+	select {
+	case op = <-c.outbound:
+	case <-time.After(time.Second):
+		t.Fatal("profiled readiness did not flush pending update")
+	}
+	if op.encoded == nil || op.encoded.layer == nil || op.encoded.layer.profile != tg.LayerProfile225 {
+		t.Fatalf("flushed update layer binding = %#v", op.encoded)
+	}
+	op.releaseReservation(c.outboundTrackedBudget)
+	deadline := time.Now().Add(time.Second)
+	for !c.receivesUpdates.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !c.receivesUpdates.Load() || !sm.ReceivesUpdatesForAuthKey(key.authKeyID, key.sessionID) {
+		t.Fatal("profiled connection did not become updates-ready after ordered flush")
+	}
+	if c.isRetired() {
+		t.Fatal("profiled pending flush retired connection")
 	}
 }
 
@@ -863,6 +1062,9 @@ func TestPendingFlushGlobalBodyPressureDoesNotTerminateHealthyConnection(t *test
 	const userID = int64(606)
 	c.userID.Store(userID)
 	c.userIDResolved.Store(true)
+	if err := c.FreezeLayerProfile(tg.LayerProfileCanonical); err != nil {
+		t.Fatal(err)
+	}
 	sm.Register(c)
 
 	msg := &tg.UpdateShort{Update: &tg.UpdateLoginToken{}, Date: 1700000000}
@@ -957,6 +1159,10 @@ func TestSessionManagerPush(t *testing.T) {
 
 	if got := srv.Conns().Online(); got != 2 {
 		t.Fatalf("online = %d, want 2", got)
+	}
+	if !srv.Conns().SetLayerProfile(auth1.SessionID, tg.LayerProfile227) ||
+		!srv.Conns().SetLayerProfile(auth2.SessionID, tg.LayerProfile227) {
+		t.Fatal("seed exact test profiles")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

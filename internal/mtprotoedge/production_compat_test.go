@@ -8,8 +8,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 var ErrSessionAmbiguous = errors.New("session id is shared by multiple auth keys")
@@ -153,7 +154,17 @@ func (m *SessionManager) SetReceivesUpdates(sessionID int64, receives bool) {
 	}
 }
 
-func (m *SessionManager) PushToSession(ctx context.Context, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+func (m *SessionManager) SetLayerProfile(sessionID int64, profile tg.LayerProfile) bool {
+	m.mu.RLock()
+	c, _, ok, ambiguous := m.uniqueSessionForTestLocked(sessionID)
+	m.mu.RUnlock()
+	if ambiguous || !ok {
+		return false
+	}
+	return c.SeedLayerProfile(profile) == nil
+}
+
+func (m *SessionManager) PushToSession(ctx context.Context, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	m.mu.RLock()
 	c, key, ok, ambiguous := m.uniqueSessionForTestLocked(sessionID)
 	if ambiguous {
@@ -167,20 +178,28 @@ func (m *SessionManager) PushToSession(ctx context.Context, sessionID int64, t p
 	ready := c.receivesUpdates.Load()
 	m.mu.RUnlock()
 	if ready {
-		return c.Send(ctx, t, msg)
+		updates, err := newLayerUpdatesFanoutContext(ctx, msg)
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(ctx, c)
+		if err != nil {
+			return err
+		}
+		return c.SendEncoded(ctx, t, encoded)
 	}
 	return m.queueOrSendPrepared(ctx, key, t, msg)
 }
 
-func (m *SessionManager) PushToUser(ctx context.Context, userID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (m *SessionManager) PushToUser(ctx context.Context, userID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	return m.PushToUserExceptAuthKeySession(ctx, userID, [8]byte{}, 0, t, msg)
 }
 
-func (m *SessionManager) PushToUserExceptSession(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (m *SessionManager) PushToUserExceptSession(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	return m.pushToUser(ctx, userID, nil, excludeSessionID, t, msg)
 }
 
-func (m *SessionManager) PushToUserExceptSessionBestEffort(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
+func (m *SessionManager) PushToUserExceptSessionBestEffort(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	return m.pushToUserBestEffort(ctx, userID, nil, excludeSessionID, t, msg, timeout)
 }
 
@@ -207,8 +226,8 @@ func (m *SessionManager) OnlineChannelIDsAfter(afterChannelID int64, limit int) 
 	return all[start:end]
 }
 
-func (m *SessionManager) queueLocked(key sessionKey, t proto.MessageType, msg bin.Encoder) bool {
-	encoded, reservation, err := m.preparePendingPush(context.Background(), msg)
+func (m *SessionManager) queueLocked(key sessionKey, t proto.MessageType, msg tg.UpdatesClass) bool {
+	updates, reservation, err := m.preparePendingPush(onceLayerUpdatesFanout(context.Background(), msg))
 	if err != nil {
 		m.log.Debug("Drop pending push outside byte budget",
 			zap.String("auth_key_id", sessionKeyLog(key.authKeyID)),
@@ -218,7 +237,7 @@ func (m *SessionManager) queueLocked(key sessionKey, t proto.MessageType, msg bi
 		return false
 	}
 	defer reservation.release()
-	return m.queuePreparedLocked(key, t, encoded, reservation)
+	return m.queuePreparedLocked(key, t, updates, reservation)
 }
 
 func (cs *connState) track(msgID int64, seqNo int32, content bool, state byte) {

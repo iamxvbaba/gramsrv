@@ -2,7 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"sort"
 	"telesrv/internal/domain"
 )

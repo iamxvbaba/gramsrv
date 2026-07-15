@@ -29,17 +29,9 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 	if a.Hash == 0 {
 		a.Hash = authorizationHash(a.AuthKeyID)
 	}
-	bind := func(db sqlcgen.DBTX) error {
-		return bindAuthorization(ctx, db, a)
-	}
-	var err error
-	if tx, ok := s.db.(pgx.Tx); ok {
-		err = bind(tx)
-	} else {
-		err = withTx(ctx, s.db, "bind authorization", func(tx pgx.Tx) error {
-			return bind(tx)
-		})
-	}
+	err := withAuthIdentityTx(ctx, s.db, "bind authorization", func(tx pgx.Tx) error {
+		return bindAuthorization(ctx, tx, a)
+	})
 	if err != nil {
 		return fmt.Errorf("upsert authorization: %w", err)
 	}
@@ -55,19 +47,34 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 // raw auth key 的并发登录/换号。
 func bindAuthorization(ctx context.Context, db sqlcgen.DBTX, a domain.Authorization) error {
 	keyID := authKeyIDToInt64(a.AuthKeyID)
+	tx, ok := db.(pgx.Tx)
+	if !ok {
+		return fmt.Errorf("bind authorization requires a transaction")
+	}
+	if err := lockPermanentAuthIdentities(ctx, tx, []int64{keyID}); err != nil {
+		return err
+	}
 	var (
-		lockedKeyID int64
-		expiresAt   int
+		lockedKeyID        int64
+		expiresAt          int
+		authLayer          int
+		layerObservationID int64
 	)
 	if err := db.QueryRow(ctx, `
-SELECT auth_key_id, expires_at
+SELECT auth_key_id, expires_at, layer, layer_observation_id
 FROM auth_keys
 WHERE auth_key_id = $1
-FOR UPDATE`, keyID).Scan(&lockedKeyID, &expiresAt); err != nil {
+FOR UPDATE`, keyID).Scan(&lockedKeyID, &expiresAt, &authLayer, &layerObservationID); err != nil {
 		return fmt.Errorf("lock auth key for authorization: %w", err)
 	}
 	if expiresAt != 0 {
 		return store.ErrAuthKeyNotPermanent
+	}
+	if authLayer < 0 || layerObservationID < 0 || (layerObservationID > 0 && authLayer == 0) {
+		return fmt.Errorf(
+			"authorization auth-key layer invariant violation: auth key %x has layer %d observation %d",
+			a.AuthKeyID, authLayer, layerObservationID,
+		)
 	}
 
 	if _, err := db.Exec(ctx, `
@@ -154,7 +161,7 @@ ON CONFLICT (auth_key_id) DO UPDATE SET
   ip = EXCLUDED.ip,
   password_pending = EXCLUDED.password_pending,
   active_at = now()`,
-		keyID, a.UserID, a.Hash, int32(a.Layer), a.DeviceModel, a.Platform, a.SystemVersion, int32(a.APIID), a.AppVersion, a.IP, a.PasswordPending,
+		keyID, a.UserID, a.Hash, int32(authLayer), a.DeviceModel, a.Platform, a.SystemVersion, int32(a.APIID), a.AppVersion, a.IP, a.PasswordPending,
 	); err != nil {
 		return fmt.Errorf("write authorization: %w", err)
 	}
@@ -176,18 +183,6 @@ FROM authorizations WHERE auth_key_id = $1`, authKeyIDToInt64(id))
 		return domain.Authorization{}, false, fmt.Errorf("get authorization: %w", err)
 	}
 	return a, true, nil
-}
-
-func (s *AuthorizationStore) UpdateLayer(ctx context.Context, id [8]byte, layer int) error {
-	if layer <= 0 {
-		return nil
-	}
-	if _, err := s.db.Exec(ctx, `
-UPDATE authorizations SET layer = $2, active_at = now() WHERE auth_key_id = $1`,
-		authKeyIDToInt64(id), int32(layer)); err != nil {
-		return fmt.Errorf("update authorization layer: %w", err)
-	}
-	return nil
 }
 
 func (s *AuthorizationStore) UpdateClientInfo(ctx context.Context, id [8]byte, info domain.AuthKeyClientInfo) error {
@@ -261,34 +256,19 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 // authorizations 通过 FK cascade 删除；update_states 没有 auth_keys FK，必须显式清理；
 // 关联 temp auth key 也显式删除，避免 raw temp key 重连。
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		var (
-			a     domain.Authorization
-			found bool
-		)
-		err := s.withRevocationTx(ctx, "revoke authorization by hash", func(tx pgx.Tx) error {
-			var err error
-			a, found, err = revokeByHashTx(ctx, tx, userID, hash)
-			return err
-		})
-		if err == nil {
-			return a, found, nil
-		}
-		if !isPermAuthKeyDeleteRace(err) {
-			return domain.Authorization{}, false, err
-		}
-		if _, inTx := s.db.(pgx.Tx); inTx {
-			return domain.Authorization{}, false, err
-		}
+	var (
+		a     domain.Authorization
+		found bool
+	)
+	err := withAuthIdentityTx(ctx, s.db, "revoke authorization by hash", func(tx pgx.Tx) error {
+		var err error
+		a, found, err = revokeByHashTx(ctx, tx, userID, hash)
+		return err
+	})
+	if err != nil {
+		return domain.Authorization{}, false, err
 	}
-	return domain.Authorization{}, false, fmt.Errorf("revoke authorization by hash: permanent-key binding changed during all retries")
-}
-
-func (s *AuthorizationStore) withRevocationTx(ctx context.Context, op string, fn func(pgx.Tx) error) error {
-	if tx, ok := s.db.(pgx.Tx); ok {
-		return fn(tx)
-	}
-	return withTx(ctx, s.db, op, fn)
+	return a, found, nil
 }
 
 // revokeByHashTx deliberately uses separate READ COMMITTED statements. The first
@@ -306,6 +286,9 @@ WHERE user_id = $1 AND hash = $2`, userID, hash).Scan(&candidate); err != nil {
 			return domain.Authorization{}, false, nil
 		}
 		return domain.Authorization{}, false, fmt.Errorf("select revoke candidate by hash: %w", err)
+	}
+	if err := lockPermanentAuthIdentities(ctx, tx, []int64{candidate}); err != nil {
+		return domain.Authorization{}, false, err
 	}
 
 	var locked int64
@@ -368,24 +351,13 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 
 // RevokeByUserExcept 批量删除协议 auth_key，保留 keepAuthKeyID 对应的当前设备。
 func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		var out []domain.Authorization
-		err := s.withRevocationTx(ctx, "revoke authorizations by user", func(tx pgx.Tx) error {
-			var err error
-			out, err = revokeByUserExceptTx(ctx, tx, userID, authKeyIDToInt64(keepAuthKeyID))
-			return err
-		})
-		if err == nil {
-			return out, nil
-		}
-		if !isPermAuthKeyDeleteRace(err) {
-			return nil, err
-		}
-		if _, inTx := s.db.(pgx.Tx); inTx {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("revoke authorizations by user: permanent-key binding changed during all retries")
+	var out []domain.Authorization
+	err := withAuthIdentityTx(ctx, s.db, "revoke authorizations by user", func(tx pgx.Tx) error {
+		var err error
+		out, err = revokeByUserExceptTx(ctx, tx, userID, authKeyIDToInt64(keepAuthKeyID))
+		return err
+	})
+	return out, err
 }
 
 func revokeByUserExceptTx(ctx context.Context, tx pgx.Tx, userID, keepAuthKeyID int64) ([]domain.Authorization, error) {
@@ -414,9 +386,12 @@ ORDER BY auth_key_id`, userID, keepAuthKeyID)
 	if len(candidates) == 0 {
 		return []domain.Authorization{}, nil
 	}
+	if err := lockPermanentAuthIdentities(ctx, tx, candidates); err != nil {
+		return nil, err
+	}
 
-	// Stable parent-row lock order matches every concurrent batch revocation and
-	// serializes each candidate with Bind's auth_keys-first ownership change.
+	// Advisory keys are already all held in final int32-hash order. Parent rows
+	// are then locked by their real bigint IDs for deterministic batch behavior.
 	lockRows, err := tx.Query(ctx, `
 SELECT auth_key_id
 FROM auth_keys

@@ -16,12 +16,12 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/mtproxy"
-	"github.com/gotd/td/mtproxy/obfuscator"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/telegram/dcs"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/mtproxy"
+	"github.com/iamxvbaba/td/mtproxy/obfuscator"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/telegram/dcs"
+	"github.com/iamxvbaba/td/transport"
 )
 
 // TestServerAcceptAndCodec 验证 M0：

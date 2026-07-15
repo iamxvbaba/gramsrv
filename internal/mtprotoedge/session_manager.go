@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 )
 
 // ErrSessionNotFound 表示目标 session 当前无活跃连接。
@@ -71,15 +71,18 @@ const maxForceCloseParallelism = 64
 
 type queuedPush struct {
 	t           proto.MessageType
-	encoded     *encodedOutboundMessage
+	updates     *layerUpdatesFanout
 	reservation *pendingPushReservation
 	at          time.Time
 }
 
 type pendingPushReservation struct {
 	budget *outboundTrackedBudget
-	bytes  int
+	bytes  atomic.Int64
 	refs   atomic.Int32
+
+	mu       sync.Mutex
+	profiles map[tg.LayerProfile]struct{}
 }
 
 func (r *pendingPushReservation) retain() {
@@ -100,8 +103,31 @@ func (r *pendingPushReservation) release() {
 		panic("mtprotoedge: pending push reservation released more than retained")
 	}
 	if refs == 0 {
-		r.budget.release(r.bytes)
+		r.budget.release(int(r.bytes.Load()))
 	}
+}
+
+// reservePrepared accounts the profile-specific immutable body retained by the
+// semantic pending fanout. Multiple queued sessions sharing this reservation
+// and profile share both the bytes and this one budget charge.
+func (r *pendingPushReservation) reservePrepared(profile tg.LayerProfile, bytes int) bool {
+	if r == nil || bytes < 0 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.profiles[profile]; ok {
+		return true
+	}
+	if !r.budget.reserve(bytes) {
+		return false
+	}
+	if r.profiles == nil {
+		r.profiles = make(map[tg.LayerProfile]struct{})
+	}
+	r.profiles[profile] = struct{}{}
+	r.bytes.Add(int64(bytes))
+	return true
 }
 
 type sessionKey struct {
@@ -112,6 +138,19 @@ type sessionKey struct {
 // SessionLifecycleObserver receives active connection lifecycle events.
 type SessionLifecycleObserver interface {
 	SessionOffline(rawAuthKeyID [8]byte, sessionID, userID int64, lastForUser bool)
+}
+
+// SessionDestructionObserver is an optional explicit control-plane lifecycle.
+// It is separate from SessionOffline because a physical disconnect must retain
+// logical-session replay metadata, while destroy_session must invalidate it.
+type SessionDestructionObserver interface {
+	SessionDestroyed(rawAuthKeyID [8]byte, sessionID int64)
+}
+
+func notifySessionDestroyed(observer SessionLifecycleObserver, authKeyID [8]byte, sessionID int64) {
+	if destroyed, ok := observer.(SessionDestructionObserver); ok {
+		destroyed.SessionDestroyed(authKeyID, sessionID)
+	}
 }
 
 // SessionManager 是活跃连接注册表，支持按 session / auth-key / user 查找并主动 push。
@@ -169,6 +208,294 @@ func (m *SessionManager) SetLifecycleObserver(observer SessionLifecycleObserver)
 	m.mu.Lock()
 	m.lifecycle = observer
 	m.mu.Unlock()
+}
+
+// SeedInheritedLayerForRawAuthKey supplies an auth-key-wide default to every
+// currently unknown active/provisional connection for rawAuthKeyID. Existing
+// inherited or explicit state is left untouched; only ordered invokeWithLayer
+// admission may correct a selected profile. The return value is the number of
+// connections which transitioned from unknown to inherited.
+func (m *SessionManager) SeedInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int {
+	return m.applyInheritedLayerForRawAuthKey(rawAuthKeyID, layer, false)
+}
+
+// RefreshInheritedLayerForRawAuthKey is the auth.bindTempAuthKey identity-
+// normalization path. It replaces unknown and inherited raw-temp-key shadows
+// with the resolved permanent-key default, while preserving explicit evidence.
+// Ordinary auth-key default publication must use SeedInheritedLayerForRawAuthKey
+// so it cannot rewrite live sessions which already selected an inherited value.
+func (m *SessionManager) RefreshInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int {
+	return m.applyInheritedLayerForRawAuthKey(rawAuthKeyID, layer, true)
+}
+
+// ClearInheritedLayerForRawAuthKey removes a stale raw-key default after
+// identity normalization obtains an authoritative unsupported/unknown
+// permanent-key result. Only inherited state is cleared: explicit
+// invokeWithLayer evidence belongs to the concrete logical session and remains
+// authoritative until newer ordered evidence replaces it.
+func (m *SessionManager) ClearInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte) int {
+	if m == nil || rawAuthKeyID == ([8]byte{}) {
+		return 0
+	}
+	m.mu.RLock()
+	conns := make([]*Conn, 0, len(m.byAuthKey[rawAuthKeyID])+len(m.claimsByAuth[rawAuthKeyID]))
+	seen := make(map[*Conn]struct{}, cap(conns))
+	for _, group := range []map[int64]*Conn{m.byAuthKey[rawAuthKeyID], m.claimsByAuth[rawAuthKeyID]} {
+		for _, c := range group {
+			if c == nil {
+				continue
+			}
+			if _, duplicate := seen[c]; duplicate {
+				continue
+			}
+			seen[c] = struct{}{}
+			conns = append(conns, c)
+		}
+	}
+	m.mu.RUnlock()
+
+	cleared := 0
+	for _, c := range conns {
+		if c.isRetired() {
+			continue
+		}
+		if changed, err := c.clearInheritedLayerProfileState(); err == nil && changed {
+			cleared++
+		}
+	}
+	return cleared
+}
+
+// SeedInheritedLayerForBusinessAuthKey supplies a canonical permanent-key
+// default to every live raw physical key already normalized to that business
+// identity. This covers multiple temporary/PFS keys for one authorization;
+// explicit and previously-selected inherited session profiles remain stable.
+func (m *SessionManager) SeedInheritedLayerForBusinessAuthKey(businessAuthKeyID [8]byte, layer int) int {
+	if m == nil || businessAuthKeyID == ([8]byte{}) {
+		return 0
+	}
+	profile, ok := tg.ResolveLayerProfile(layer)
+	if !ok {
+		return 0
+	}
+	m.mu.RLock()
+	group := m.byBusinessAuthKey[businessAuthKeyID]
+	conns := make([]*Conn, 0, len(group))
+	seen := make(map[*Conn]struct{}, len(group))
+	for _, c := range group {
+		if c == nil {
+			continue
+		}
+		if _, duplicate := seen[c]; duplicate {
+			continue
+		}
+		seen[c] = struct{}{}
+		conns = append(conns, c)
+	}
+	m.mu.RUnlock()
+
+	seeded := 0
+	for _, c := range conns {
+		if c.isRetired() {
+			continue
+		}
+		if current, resolved := c.BusinessAuthKeyID(); !resolved || current != businessAuthKeyID {
+			continue
+		}
+		if changed, err := c.setLayerProfile(profile, LayerProfileInherited, false); err == nil && changed {
+			seeded++
+		}
+	}
+	return seeded
+}
+
+func (m *SessionManager) applyInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int, refresh bool) int {
+	if m == nil {
+		return 0
+	}
+	profile, ok := tg.ResolveLayerProfile(layer)
+	if !ok {
+		return 0
+	}
+	m.mu.RLock()
+	conns := make([]*Conn, 0, len(m.byAuthKey[rawAuthKeyID])+len(m.claimsByAuth[rawAuthKeyID]))
+	seen := make(map[*Conn]struct{}, cap(conns))
+	for _, group := range []map[int64]*Conn{m.byAuthKey[rawAuthKeyID], m.claimsByAuth[rawAuthKeyID]} {
+		for _, c := range group {
+			if c == nil {
+				continue
+			}
+			if _, duplicate := seen[c]; duplicate {
+				continue
+			}
+			seen[c] = struct{}{}
+			conns = append(conns, c)
+		}
+	}
+	m.mu.RUnlock()
+
+	seeded := 0
+	for _, c := range conns {
+		if c.isRetired() {
+			continue
+		}
+		var (
+			changed bool
+			err     error
+		)
+		if refresh {
+			changed, err = c.refreshInheritedLayerProfile(profile)
+		} else {
+			changed, err = c.setLayerProfile(profile, LayerProfileInherited, false)
+		}
+		if err == nil && changed {
+			seeded++
+		}
+	}
+	return seeded
+}
+
+// ApplyOrderedLayerProfileForSession converges every physical generation
+// currently active or claiming the same logical MTProto session. Per-Conn
+// msg_id watermarks make broadcasts commutative: even if profile 300 reaches a
+// Conn before a delayed profile 200 broadcast, 200 is inert and final state is
+// the exact registry's maximum accepted evidence.
+func (m *SessionManager) ApplyOrderedLayerProfileForSession(
+	primary *Conn,
+	rawAuthKeyID [8]byte,
+	sessionID int64,
+	profile tg.LayerProfile,
+	msgID int64,
+) (int, error) {
+	if err := validateLayerProfile(profile); err != nil {
+		return 0, err
+	}
+	return m.ApplyOrderedRawLayerForSession(primary, rawAuthKeyID, sessionID, int(profile), msgID)
+}
+
+// ApplyOrderedRawLayerForSession also carries future Layers unknown to this
+// binary. Their raw watermark converges across physical generations while each
+// Conn remains codec-unknown until a newer supported selector is admitted.
+func (m *SessionManager) ApplyOrderedRawLayerForSession(
+	primary *Conn,
+	rawAuthKeyID [8]byte,
+	sessionID int64,
+	layer int,
+	msgID int64,
+) (int, error) {
+	if msgID <= 0 {
+		return 0, fmt.Errorf("invalid ordered session layer msg_id %d", msgID)
+	}
+	if layer <= 0 {
+		return 0, fmt.Errorf("invalid ordered session layer %d", layer)
+	}
+	conns := make([]*Conn, 0, 3)
+	seen := make(map[*Conn]struct{}, 3)
+	if primary != nil {
+		seen[primary] = struct{}{}
+		conns = append(conns, primary)
+	}
+	if m != nil {
+		key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
+		m.mu.RLock()
+		for _, c := range []*Conn{m.bySession[key], m.claims[key]} {
+			if c == nil {
+				continue
+			}
+			if _, duplicate := seen[c]; duplicate {
+				continue
+			}
+			seen[c] = struct{}{}
+			conns = append(conns, c)
+		}
+		m.mu.RUnlock()
+	}
+
+	applied := 0
+	for _, c := range conns {
+		if c == nil || c.isRetired() {
+			continue
+		}
+		changed, err := c.freezeRawLayerProfileAt(layer, msgID)
+		if err != nil {
+			return applied, err
+		}
+		if changed {
+			applied++
+		}
+	}
+	return applied, nil
+}
+
+// ExplicitLayerEvidenceForAuthKey exposes live exact-session truth to
+// auth.bindTempAuthKey. Router's bounded exact registry may expire while a Conn
+// remains active; bind must not replace that explicit profile with a permanent
+// key's inherited default merely because the cache TTL elapsed.
+func (m *SessionManager) ExplicitLayerEvidenceForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (layer int, msgID int64, ok bool) {
+	if m == nil || rawAuthKeyID == ([8]byte{}) || sessionID == 0 {
+		return 0, 0, false
+	}
+	key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
+	m.mu.RLock()
+	conns := []*Conn{m.bySession[key], m.claims[key]}
+	m.mu.RUnlock()
+	seen := make(map[*Conn]struct{}, len(conns))
+	for _, c := range conns {
+		if c == nil || c.isRetired() {
+			continue
+		}
+		if _, duplicate := seen[c]; duplicate {
+			continue
+		}
+		seen[c] = struct{}{}
+		state, evidenceMsgID := c.layerProfileEvidenceState()
+		if c.isRetired() || state.Origin != LayerProfileExplicit {
+			continue
+		}
+		profile, supported := tg.ResolveLayerProfile(int(state.Profile))
+		if !supported || profile != state.Profile {
+			continue
+		}
+		if !ok || evidenceMsgID > msgID {
+			layer, msgID, ok = int(profile), evidenceMsgID, true
+			continue
+		}
+		if evidenceMsgID == msgID && layer != int(profile) {
+			// This state contradicts the per-session msg_id ordering invariant;
+			// do not let bind choose either physical generation arbitrarily.
+			return 0, 0, false
+		}
+	}
+	return layer, msgID, ok
+}
+
+// SetClientLayerForAuthKey implements rpc.ClientLayerBinder without weakening
+// ordered evidence. It is a legacy/readiness safety net: only an unknown exact
+// Conn receives the value as inherited state. Explicit or already-selected
+// inherited profiles are owned by the edge's msg_id-ordered path.
+func (m *SessionManager) SetClientLayerForAuthKey(rawAuthKeyID [8]byte, sessionID int64, layer int) {
+	if m == nil {
+		return
+	}
+	profile, ok := tg.ResolveLayerProfile(layer)
+	if !ok {
+		return
+	}
+	key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
+	m.mu.RLock()
+	conns := []*Conn{m.bySession[key], m.claims[key]}
+	m.mu.RUnlock()
+	seen := make(map[*Conn]struct{}, len(conns))
+	for _, c := range conns {
+		if c == nil || c.isRetired() {
+			continue
+		}
+		if _, duplicate := seen[c]; duplicate {
+			continue
+		}
+		seen[c] = struct{}{}
+		_, _ = c.setLayerProfile(profile, LayerProfileInherited, false)
+	}
 }
 
 // BeginActivation atomically claims auth_key_id + session_id without publishing the
@@ -344,6 +671,7 @@ func (m *SessionManager) Unregister(c *Conn) {
 // DestroySessionForAuthKey 精确移除某个 raw auth_key_id 下的 session。
 func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID int64) bool {
 	m.mu.Lock()
+	observer := m.lifecycle
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
 	c, ok := m.bySession[key]
 	if !ok {
@@ -356,15 +684,16 @@ func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID i
 					zap.Int64("session_id", sessionID),
 				)
 			}
+			notifySessionDestroyed(observer, authKeyID, sessionID)
 			return true
 		}
 		m.deletePendingLocked(key)
 		m.mu.Unlock()
+		notifySessionDestroyed(observer, authKeyID, sessionID)
 		return false
 	}
 	offlineUser := m.retireConnLocked(c, true)
 	lastForUser := offlineUser != 0 && len(m.byUser[offlineUser]) == 0
-	observer := m.lifecycle
 	m.log.Debug("Session destroyed",
 		zap.String("auth_key_id", sessionKeyLog(authKeyID)),
 		zap.Int64("session_id", sessionID),
@@ -380,6 +709,7 @@ func (m *SessionManager) DestroySessionForAuthKey(authKeyID [8]byte, sessionID i
 	if observer != nil && offlineUser != 0 {
 		observer.SessionOffline(authKeyID, sessionID, offlineUser, lastForUser)
 	}
+	notifySessionDestroyed(observer, authKeyID, sessionID)
 	return true
 }
 
@@ -762,6 +1092,18 @@ func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, recei
 		delete(m.flushing, key)
 		return 0, false
 	}
+	if _, ok := c.LayerProfile(); !ok {
+		// A successful wire-invariant bootstrap RPC is not evidence that this
+		// physical session can decode proactive updates. Keep durable updates
+		// pending until generated exact admission freezes a real profile; do not
+		// start a flush which would fail layer binding and retire a healthy socket.
+		c.receivesUpdates.Store(false)
+		m.clearChannelInterestsLocked(key)
+		m.clearChannelMembershipsLocked(c, key)
+		c.membershipsSynced.Store(false)
+		delete(m.flushing, key)
+		return 0, false
+	}
 	if c.receivesUpdates.Load() || m.flushing[key] {
 		// 已就绪，或已有排空协程在跑（完成时会自行取走新增暂存并置位）。
 		return 0, false
@@ -819,11 +1161,37 @@ func (m *SessionManager) runFlush(c *Conn, key sessionKey, owner int64, attempt 
 			// Pending entries are durable account updates. Shared body-budget pressure is not
 			// evidence that this socket is corrupt, so use the non-terminal enqueue path; after
 			// bounded retries, getDifference is the authoritative recovery path.
-			err := c.SendBestEffortEncoded(ctx, item.t, item.encoded, 5*time.Second)
+			encoded, err := item.updates.prepareForConn(ctx, c)
+			if err == nil {
+				if encoded == nil || encoded.layer == nil {
+					err = errors.New("pending exact updates lost layer binding")
+				} else if !item.reservation.reservePrepared(encoded.layer.profile, len(encoded.body)) {
+					item.updates.discardPrepared(encoded.layer.profile, encoded)
+					err = ErrOutboundTrackedBudget
+				}
+			}
+			if err == nil {
+				err = c.SendBestEffortEncoded(ctx, item.t, encoded, 5*time.Second)
+			}
 			cancel()
 			if err == nil {
 				item.release()
 				continue
+			}
+			if isOutboundStaleLayerEpoch(err) {
+				// This durable online accelerator was prepared before a client layer
+				// correction. Drop only the stale item; difference remains authoritative.
+				item.release()
+				continue
+			}
+			if isOutboundLayerProfileError(err) {
+				// updates-ready without an exact profile, or a mismatched final
+				// body, violates the physical-connection layer invariant. Never
+				// guess canonical bytes; retire this writer and let durable
+				// difference recover after a correctly negotiated reconnect.
+				c.dropSlowConsumer()
+				releaseQueuedPushes(batch[i:])
+				return
 			}
 			m.mu.Lock()
 			if cur, ok := m.bySession[key]; !ok || cur != c || !m.flushing[key] || c.userID.Load() != owner {
@@ -884,23 +1252,11 @@ func (m *SessionManager) ReceivesUpdatesForAuthKey(authKeyID [8]byte, sessionID 
 	m.mu.RLock()
 	c, ok := m.bySession[sessionKey{authKeyID: authKeyID, sessionID: sessionID}]
 	m.mu.RUnlock()
-	return ok && c.receivesUpdates.Load() && c.membershipsSynced.Load()
-}
-
-// SetClientLayerForAuthKey 把协商的 TL layer 即时写到指定连接。由 rpc 层在
-// invokeWithLayer 观测到新 layer 时（Dispatch 入口，早于鉴权门与 updates 就绪
-// 置位）调用，使同一条请求触发的 pending flush 与并发 push 立即按正确 layer
-// 降级，不必等连接层在 Dispatch 返回后的兜底刷新。
-func (m *SessionManager) SetClientLayerForAuthKey(authKeyID [8]byte, sessionID int64, layer int) {
-	if m == nil || layer <= 0 {
-		return
+	if !ok {
+		return false
 	}
-	m.mu.RLock()
-	c, ok := m.bySession[sessionKey{authKeyID: authKeyID, sessionID: sessionID}]
-	m.mu.RUnlock()
-	if ok {
-		c.SetClientLayer(layer)
-	}
+	_, hasProfile := c.LayerProfile()
+	return hasProfile && c.receivesUpdates.Load() && c.membershipsSynced.Load()
 }
 
 // SetReceivesUpdatesForAuthKey 标记指定 raw auth_key_id + session_id 是否接收主动 updates。
@@ -921,7 +1277,7 @@ func (m *SessionManager) SetReceivesUpdatesForAuthKey(authKeyID [8]byte, session
 }
 
 // PushToSessionForAuthKey 向指定 raw auth_key_id + session_id 推送一条消息。
-func (m *SessionManager) PushToSessionForAuthKey(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+func (m *SessionManager) PushToSessionForAuthKey(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	m.mu.RLock()
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
 	c, ok := m.bySession[key]
@@ -932,13 +1288,22 @@ func (m *SessionManager) PushToSessionForAuthKey(ctx context.Context, authKeyID 
 	ready := c.receivesUpdates.Load()
 	m.mu.RUnlock()
 	if ready {
-		return c.Send(ctx, t, msg)
+		updates, err := newLayerUpdatesFanoutContext(ctx, msg)
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(ctx, c)
+		if err != nil {
+			return err
+		}
+		return c.SendEncoded(ctx, t, encoded)
 	}
 	return m.queueOrSendPrepared(ctx, key, t, msg)
 }
 
-func (m *SessionManager) queueOrSendPrepared(ctx context.Context, key sessionKey, t proto.MessageType, msg bin.Encoder) error {
-	encoded, reservation, err := m.preparePendingPush(ctx, msg)
+func (m *SessionManager) queueOrSendPrepared(ctx context.Context, key sessionKey, t proto.MessageType, msg tg.UpdatesClass) error {
+	getUpdates := onceLayerUpdatesFanout(ctx, msg)
+	updates, reservation, err := m.preparePendingPush(getUpdates)
 	if err != nil {
 		return err
 	}
@@ -951,11 +1316,15 @@ func (m *SessionManager) queueOrSendPrepared(ctx context.Context, key sessionKey
 		return ErrSessionNotFound
 	}
 	if !c.receivesUpdates.Load() {
-		_ = m.queuePreparedLocked(key, t, encoded, reservation)
+		_ = m.queuePreparedLocked(key, t, updates, reservation)
 		m.mu.Unlock()
 		return nil
 	}
 	m.mu.Unlock()
+	encoded, err := updates.prepareForConn(ctx, c)
+	if err != nil {
+		return err
+	}
 	return c.SendEncoded(ctx, t, encoded)
 }
 
@@ -964,7 +1333,7 @@ func (m *SessionManager) queueOrSendPrepared(ctx context.Context, key sessionKey
 // 它不等待该 session 进入 updates-ready，也不写 pending 队列。仅用于登录前的握手信号
 // （例如 updateLoginToken）：这类消息本身就是让客户端继续完成登录的触发器，若走普通
 // durable update 队列会卡在客户端尚未调用 updates.getState 的阶段。
-func (m *SessionManager) PushToSessionForAuthKeyImmediate(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error {
+func (m *SessionManager) PushToSessionForAuthKeyImmediate(ctx context.Context, authKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error {
 	m.mu.RLock()
 	key := sessionKey{authKeyID: authKeyID, sessionID: sessionID}
 	c, ok := m.bySession[key]
@@ -972,11 +1341,19 @@ func (m *SessionManager) PushToSessionForAuthKeyImmediate(ctx context.Context, a
 	if !ok {
 		return ErrSessionNotFound
 	}
-	return c.SendBestEffort(ctx, t, msg, 2*time.Second)
+	updates, err := newLayerUpdatesFanoutContext(ctx, msg)
+	if err != nil {
+		return err
+	}
+	encoded, err := updates.prepareForConn(ctx, c)
+	if err != nil {
+		return err
+	}
+	return c.SendBestEffortEncoded(ctx, t, encoded, 2*time.Second)
 }
 
 // PushToUserExceptAuthKeySession 向某 user 所有活跃连接推送，跳过指定 raw auth_key + session。
-func (m *SessionManager) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (m *SessionManager) PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	return m.pushToUser(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, msg)
 }
 
@@ -985,19 +1362,25 @@ func (m *SessionManager) PushToUserExceptAuthKeySession(ctx context.Context, use
 // businessAuthKeyCandidatesLocked，兼容 temp-key/PFS 连接），不是 byAuthKey（raw 索引会
 // 漏 temp-key 设备）。未就绪连接跳过、不进 pending——密聊消息 durable 在 qts 队列，
 // 离线设备靠 getDifference 补回（在线推送只是加速器）。c.userID 复查防跨账号泄露。
-func (m *SessionManager) PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder) (int, error) {
+func (m *SessionManager) PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	// Secret-chat qts is the durable source of truth, so online delivery is an accelerator just
 	// like account pts fan-out.  Do not synchronously wait for every PFS/raw connection's socket.
 	return m.pushToBusinessAuthKeyBestEffort(ctx, userID, businessAuthKeyID, t, msg, 2*time.Second)
 }
 
 // PushToUserAuthKeyTransient 是 PushToUserAuthKey 的 transient（typing）best-effort 版本。
-func (m *SessionManager) PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
+func (m *SessionManager) PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	return m.pushToBusinessAuthKeyBestEffort(ctx, userID, businessAuthKeyID, t, msg, timeout)
 }
 
-func (m *SessionManager) pushToBusinessAuthKeyBestEffort(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
-	getEncoded := onceEncodedOutbound(ctx, msg)
+func (m *SessionManager) pushToBusinessAuthKeyBestEffort(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+	sendCtx := context.Background()
+	if ctx != nil {
+		sendCtx = context.WithoutCancel(ctx)
+	}
 	var deadline time.Time
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
@@ -1007,11 +1390,21 @@ func (m *SessionManager) pushToBusinessAuthKeyBestEffort(ctx context.Context, us
 			deadline = ctxDeadline
 		}
 	}
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		sendCtx, cancel = context.WithDeadline(sendCtx, deadline)
+		defer cancel()
+	}
+	getUpdates := onceLayerUpdatesFanout(sendCtx, msg)
 	return m.pushToBusinessAuthKey(ctx, userID, businessAuthKeyID, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
-		encoded, err := getEncoded()
+		updates, err := getUpdates()
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(sendCtx, c)
 		if err != nil {
 			return err
 		}
@@ -1022,7 +1415,7 @@ func (m *SessionManager) pushToBusinessAuthKeyBestEffort(ctx context.Context, us
 				remaining = 0
 			}
 		}
-		return c.SendBestEffortEncoded(ctx, t, encoded, remaining)
+		return c.SendBestEffortEncoded(sendCtx, t, encoded, remaining)
 	})
 }
 
@@ -1049,6 +1442,15 @@ func (m *SessionManager) pushToBusinessAuthKey(ctx context.Context, userID int64
 			continue
 		}
 		if err := send(c); err != nil {
+			if isOutboundStaleLayerEpoch(err) {
+				// A concurrent correction invalidated this prepared push, not the
+				// connection. Durable qts/difference remains the source of truth.
+				continue
+			}
+			if isOutboundLayerProfileError(err) {
+				c.dropSlowConsumer()
+				continue
+			}
 			if errors.Is(err, ErrOutboundTrackedBudget) {
 				// Shared process pressure is not evidence that this particular socket is
 				// slow. Skip this online accelerator; durable qts/difference is the truth.
@@ -1071,13 +1473,17 @@ func (m *SessionManager) pushToBusinessAuthKey(ctx context.Context, userID int64
 	return sent, firstErr
 }
 
-func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error) {
-	getEncoded := onceEncodedOutbound(ctx, msg)
-	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, msg, true, func(c *Conn) error {
+func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
+	getUpdates := onceLayerUpdatesFanout(ctx, msg)
+	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, getUpdates, true, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
-		encoded, err := getEncoded()
+		updates, err := getUpdates()
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -1090,13 +1496,17 @@ func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAu
 // 跳过该连接、不进 pending——transient 数据 getDifference 无法补，就绪后由 getState 快照 /
 // 下一次状态变化重建，囤积过期 transient 既无意义又会被 pending 的老化/溢出/重试耗尽误当
 // 「durable 兜底」丢弃。走 best-effort 发送，不阻塞调用方。
-func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
-	getEncoded := onceEncodedOutbound(ctx, msg)
-	return m.pushToUserWithSender(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, msg, false, func(c *Conn) error {
+func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
+	getUpdates := onceLayerUpdatesFanout(ctx, msg)
+	return m.pushToUserWithSender(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, getUpdates, false, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
-		encoded, err := getEncoded()
+		updates, err := getUpdates()
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(ctx, c)
 		if err != nil {
 			return err
 		}
@@ -1104,12 +1514,18 @@ func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Con
 	})
 }
 
-func (m *SessionManager) PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
+func (m *SessionManager) PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	return m.pushToUserBestEffort(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, msg, timeout)
 }
 
-func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error) {
-	getEncoded := onceEncodedOutbound(ctx, msg)
+func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+	sendCtx := context.Background()
+	if ctx != nil {
+		sendCtx = context.WithoutCancel(ctx)
+	}
 	// timeout 是整次 fan-out 的等待预算，不是每个 session 各自一份。健康连接始终先走
 	// SendBestEffortEncoded 的非阻塞快路径；预算耗尽后 remaining=0，仍会尝试快路径，
 	// 但不会再为后续慢连接串行等待。
@@ -1122,11 +1538,21 @@ func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64,
 			deadline = ctxDeadline
 		}
 	}
-	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, msg, true, func(c *Conn) error {
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		sendCtx, cancel = context.WithDeadline(sendCtx, deadline)
+		defer cancel()
+	}
+	getUpdates := onceLayerUpdatesFanout(sendCtx, msg)
+	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, getUpdates, true, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
-		encoded, err := getEncoded()
+		updates, err := getUpdates()
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(sendCtx, c)
 		if err != nil {
 			return err
 		}
@@ -1137,24 +1563,35 @@ func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64,
 				remaining = 0
 			}
 		}
-		return c.SendBestEffortEncoded(ctx, t, encoded, remaining)
+		return c.SendBestEffortEncoded(sendCtx, t, encoded, remaining)
 	})
 }
 
-func onceEncodedOutbound(ctx context.Context, msg bin.Encoder) func() (*encodedOutboundMessage, error) {
+func newLayerUpdatesFanoutContext(ctx context.Context, msg tg.UpdatesClass) (*layerUpdatesFanout, error) {
+	var updates *layerUpdatesFanout
+	err := withOutboundEncodeSlot(ctx, nil, func() error {
+		var err error
+		updates, err = newLayerUpdatesFanout(msg)
+		return err
+	})
+	return updates, err
+}
+
+func onceLayerUpdatesFanout(ctx context.Context, msg tg.UpdatesClass) func() (*layerUpdatesFanout, error) {
 	var (
-		encoded *encodedOutboundMessage
+		once    sync.Once
+		updates *layerUpdatesFanout
 		err     error
 	)
-	return func() (*encodedOutboundMessage, error) {
-		if encoded == nil && err == nil {
-			encoded, err = encodeOutboundMessageContext(ctx, msg)
-		}
-		return encoded, err
+	return func() (*layerUpdatesFanout, error) {
+		once.Do(func() {
+			updates, err = newLayerUpdatesFanoutContext(ctx, msg)
+		})
+		return updates, err
 	}
 }
 
-func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, queueWhenNotReady bool, send func(*Conn) error) (int, error) {
+func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, getUpdates func() (*layerUpdatesFanout, error), queueWhenNotReady bool, send func(*Conn) error) (int, error) {
 	// push fan-out 是连接层最热路径之一：debug 日志的字段构造（含 auth_key hex 格式化）
 	// 在关闭 debug 时也会求值，先查级别一次、按需记日志。
 	debug := m.log.Core().Enabled(zapcore.DebugLevel)
@@ -1191,7 +1628,7 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 		// TL encoding and the process-wide pending-byte reservation may be expensive or
 		// briefly block on the global encode gate. Do both before taking SessionManager.mu,
 		// then share the immutable body across every not-ready session found by the re-scan.
-		pendingEncoded, pendingReservation, pendingErr := m.preparePendingPush(ctx, msg)
+		pendingUpdates, pendingReservation, pendingErr := m.preparePendingPush(getUpdates)
 		// 写锁下完整重扫（读锁释放到此之间状态可能变化，以重扫结果为准）。
 		conns = conns[:0]
 		queued, dropped, excluded, skipped = 0, 0, 0, 0
@@ -1207,7 +1644,7 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 					skipped++
 					continue
 				}
-				if pendingErr == nil && m.queuePreparedLocked(key, t, pendingEncoded, pendingReservation) {
+				if pendingErr == nil && m.queuePreparedLocked(key, t, pendingUpdates, pendingReservation) {
 					queued++
 					if debug {
 						m.log.Debug("Push queued (session not updates-ready)",
@@ -1252,6 +1689,16 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 			continue
 		}
 		if err := send(c); err != nil {
+			if isOutboundStaleLayerEpoch(err) {
+				// Do not classify profile correction as slow-consumer evidence.
+				dropped++
+				continue
+			}
+			if isOutboundLayerProfileError(err) {
+				c.dropSlowConsumer()
+				dropped++
+				continue
+			}
 			if errors.Is(err, ErrOutboundTrackedBudget) {
 				// Do not turn pressure owned by other sockets into a reconnect storm on
 				// healthy recipients. The durable event remains recoverable by difference.
@@ -1828,43 +2275,34 @@ func (m *SessionManager) takePendingLocked(key sessionKey, ready bool) []queuedP
 	return pending
 }
 
-// preparePendingPush encodes outside SessionManager.mu and reserves the one physical body before
-// releasing the process-wide encode slot. Multiple not-ready sessions may then share this
-// immutable body via reservation refs instead of encoding/copying it once per session.
-func (m *SessionManager) preparePendingPush(ctx context.Context, msg bin.Encoder) (*encodedOutboundMessage, *pendingPushReservation, error) {
-	var (
-		encoded *encodedOutboundMessage
-		bytes   int
-	)
-	err := withOutboundEncodeSlot(ctx, nil, func() error {
-		var err error
-		encoded, err = encodeOutboundMessageWithoutSlot(msg)
-		if err != nil {
-			return err
-		}
-		if encoded == nil {
-			return errors.New("nil encoded pending push")
-		}
-		bytes = len(encoded.body)
-		if bytes > maxOutboundBodyBytes {
-			return fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, bytes, maxOutboundBodyBytes)
-		}
-		if !m.pendingBudget.reserve(bytes) {
-			return ErrOutboundTrackedBudget
-		}
-		return nil
-	})
+// preparePendingPush reserves the one frozen canonical semantic snapshot. Exact
+// wire bytes are deliberately not retained here: they are prepared only when a
+// target physical connection has a frozen profile, then cached once per profile
+// by layerUpdatesFanout.
+func (m *SessionManager) preparePendingPush(getUpdates func() (*layerUpdatesFanout, error)) (*layerUpdatesFanout, *pendingPushReservation, error) {
+	updates, err := getUpdates()
 	if err != nil {
 		return nil, nil, err
 	}
-	reservation := &pendingPushReservation{budget: m.pendingBudget, bytes: bytes}
+	if updates == nil {
+		return nil, nil, errors.New("nil pending layer updates")
+	}
+	bytes := updates.canonicalSize()
+	if bytes > maxOutboundBodyBytes {
+		return nil, nil, fmt.Errorf("%w: body=%d limit=%d", ErrOutboundMessageTooLarge, bytes, maxOutboundBodyBytes)
+	}
+	if !m.pendingBudget.reserve(bytes) {
+		return nil, nil, ErrOutboundTrackedBudget
+	}
+	reservation := &pendingPushReservation{budget: m.pendingBudget}
+	reservation.bytes.Store(int64(bytes))
 	reservation.refs.Store(1) // producer ownership; queue entries retain below.
-	return encoded, reservation, nil
+	return updates, reservation, nil
 }
 
-// queuePreparedLocked 暂存一条已编码的主动推送，返回是否实际入队。
+// queuePreparedLocked 暂存一条已冻结的主动推送，返回是否实际入队。
 // 调用方必须在锁外保持 reservation 的 producer ref，并在全部入队完成后 release。
-func (m *SessionManager) queuePreparedLocked(key sessionKey, t proto.MessageType, encoded *encodedOutboundMessage, reservation *pendingPushReservation) bool {
+func (m *SessionManager) queuePreparedLocked(key sessionKey, t proto.MessageType, updates *layerUpdatesFanout, reservation *pendingPushReservation) bool {
 	q := m.pending[key]
 	// 过期保护：最早一条暂存已超过 pendingPushMaxAge（session 迟迟未 ready）时，丢整批并
 	// 不再囤这条，记 trace。避免「登录后从不 getState」的连接长期占用 pending 内存。
@@ -1877,13 +2315,13 @@ func (m *SessionManager) queuePreparedLocked(key sessionKey, t proto.MessageType
 		m.deletePendingLocked(key)
 		return false
 	}
-	if encoded == nil || reservation == nil {
+	if updates == nil || reservation == nil {
 		return false
 	}
 	reservation.retain()
 	push := queuedPush{
 		t:           t,
-		encoded:     encoded,
+		updates:     updates,
 		reservation: reservation,
 		at:          time.Now(),
 	}
