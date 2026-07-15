@@ -13,9 +13,7 @@ import (
 
 // registerHelp 注册 help.* RPC handler（DC 配置、最近 DC）。
 func (r *Router) registerHelp(d *tg.ServerDispatcher) {
-	d.OnHelpGetConfig(func(ctx context.Context) (*tg.Config, error) {
-		return tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL), nil
-	})
+	d.OnHelpGetConfig(r.onHelpGetConfig)
 	d.OnHelpGetNearestDC(func(ctx context.Context) (*tg.NearestDC, error) {
 		return tdesktop.NearestDC(r.cfg.DC), nil
 	})
@@ -79,6 +77,29 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 	})
 	d.OnHelpDismissSuggestion(r.onHelpDismissSuggestion)
 	d.OnHelpGetPremiumPromo(r.onHelpGetPremiumPromo)
+}
+
+func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
+	config := tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL)
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !authorized || userID == 0 {
+		return config, nil
+	}
+	if svc, ok := r.deps.Account.(accountReactionSettingsReader); ok {
+		settings, err := svc.GetReactionSettings(ctx, userID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		reaction := tgMessageReaction(settings.DefaultReaction)
+		if reaction == nil {
+			return nil, internalErr()
+		}
+		config.SetReactionsDefault(reaction)
+	}
+	return config, nil
 }
 
 // onHelpDismissSuggestion 为 DrKLO 改号成功后的 suggestion 清理提供有界兼容。

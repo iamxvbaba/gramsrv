@@ -10,6 +10,7 @@ import (
 
 // registerMessages 注册 messages.* RPC handler。
 func (r *Router) registerMessages(d *tg.ServerDispatcher) {
+	d.OnMessagesReceivedMessages(r.onMessagesReceivedMessages)
 	d.OnMessagesSetTyping(r.onMessagesSetTyping)
 	d.OnMessagesSaveDraft(r.onMessagesSaveDraft)
 	d.OnMessagesSaveDefaultSendAs(r.onMessagesSaveDefaultSendAs)

@@ -1100,7 +1100,7 @@ func privacyErr(err error) error {
 }
 
 type accountReactionSettingsService interface {
-	GetReactionSettings(ctx context.Context, userID int64) (domain.AccountReactionSettings, error)
+	accountReactionSettingsReader
 	SetReactionsNotifySettings(ctx context.Context, userID int64, settings domain.ReactionsNotifySettings) (domain.AccountReactionSettings, error)
 }
 

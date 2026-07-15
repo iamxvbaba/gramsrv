@@ -14,7 +14,7 @@ import (
 // （记录于 docs/compatibility-matrix.md）。
 func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL string) *tg.Config {
 	meURLPrefix := links.NormalizeBaseURL(publicBaseURL) + "/"
-	return &tg.Config{
+	config := &tg.Config{
 		Date:     int(now.Unix()),
 		Expires:  int(now.Add(time.Hour).Unix()),
 		TestMode: false,
@@ -55,6 +55,8 @@ func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL strin
 		MessageLengthMax:     4096,
 		WebfileDCID:          dc,
 	}
+	config.SetReactionsDefault(&tg.ReactionEmoji{Emoticon: DefaultReactionEmoticon})
+	return config
 }
 
 // NearestDC 构造 help.getNearestDc 返回值。

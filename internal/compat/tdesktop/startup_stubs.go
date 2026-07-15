@@ -194,7 +194,7 @@ func UniqueGiftChatThemes(hash int64) tg.AccountChatThemesClass {
 	}
 }
 
-// WallPapers returns the read-only Default wallpaper catalog. User wallpaper
+// WallPapers returns the read-only default wallpaper catalog. User wallpaper
 // upload/save/install remains outside the current TDesktop compatibility scope.
 func WallPapers(hash int64) tg.AccountWallPapersClass {
 	if hash == wallPapersHash {
@@ -256,13 +256,17 @@ func DefaultGroupPhotoEmojis() tg.EmojiListClass {
 const availableReactionsHash = 20260602
 const emptyStickerSetHash = 20260602
 
+// DefaultReactionEmoticon is the account fallback used by config and the
+// built-in available-reactions catalog.
+const DefaultReactionEmoticon = "\U0001f44d"
+
 type defaultReaction struct {
 	emoticon string
 	title    string
 }
 
 var defaultAvailableReactions = []defaultReaction{
-	{emoticon: "\U0001f44d", title: "Thumbs Up"},
+	{emoticon: DefaultReactionEmoticon, title: "Thumbs Up"},
 	{emoticon: "\u2764\ufe0f", title: "Red Heart"},
 	{emoticon: "\U0001f602", title: "Face With Tears of Joy"},
 	{emoticon: "\U0001f62e", title: "Face With Open Mouth"},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
 )
@@ -34,6 +35,11 @@ func inboundRPCBytesFrom(ctx context.Context) int {
 }
 
 const currentClientLayer = tg.Layer
+
+const (
+	maxClientDeviceModelRunes = 128
+	maxClientMetadataRunes    = 64
+)
 
 var androidSDKVersionRE = regexp.MustCompile(`\bsdk\s+\d+\b`)
 
@@ -98,9 +104,31 @@ func ClientTypeFrom(ctx context.Context) ClientType {
 }
 
 func normalizeClientInfo(info ClientInfo) ClientInfo {
+	// Classify against the complete wire metadata before bounding the values
+	// shared by auth-key and authorization persistence.
 	info.Type = detectClientType(info)
+	info.DeviceModel = truncateClientMetadata(info.DeviceModel, maxClientDeviceModelRunes)
+	info.SystemVersion = truncateClientMetadata(info.SystemVersion, maxClientMetadataRunes)
+	info.AppVersion = truncateClientMetadata(info.AppVersion, maxClientMetadataRunes)
+	info.SystemLangCode = truncateClientMetadata(info.SystemLangCode, maxClientMetadataRunes)
+	info.LangPack = truncateClientMetadata(info.LangPack, maxClientMetadataRunes)
+	info.LangCode = truncateClientMetadata(info.LangCode, maxClientMetadataRunes)
 	info.typeResolved = true
 	return info
+}
+
+func truncateClientMetadata(value string, maxRunes int) string {
+	if maxRunes <= 0 || value == "" {
+		return ""
+	}
+	if utf8.ValidString(value) && utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) > maxRunes {
+		runes = runes[:maxRunes]
+	}
+	return string(runes)
 }
 
 func (info ClientInfo) ClientType() ClientType {
