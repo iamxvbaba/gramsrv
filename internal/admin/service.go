@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -12,7 +14,7 @@ import (
 )
 
 const (
-	ActionSetSendFrozen         = "account.set_send_frozen"
+	ActionSetAccountFrozen      = "account.set_frozen"
 	ActionGrantPremium          = "account.grant_premium"
 	ActionGrantStars            = "account.grant_stars"
 	ActionSetVerified           = "account.set_verified"
@@ -21,12 +23,13 @@ const (
 	ActionDeletePrivateMessages = "messages.delete_private_messages"
 	ActionDeletePrivateHistory  = "messages.delete_private_history"
 
-	maxCommandIDLength = 128
-	maxActorLength     = 128
-	maxReasonLength    = 1000
-	maxHistoryBatches  = 100
-	maxPremiumMonths   = 120
-	maxStarsGrant      = 1_000_000_000
+	maxCommandIDLength       = 128
+	maxActorLength           = 128
+	maxReasonLength          = 1000
+	maxHistoryBatches        = 100
+	maxPremiumMonths         = 120
+	maxStarsGrant            = 1_000_000_000
+	maxFreezeAppealURLLength = 2048
 )
 
 type CommandRepository interface {
@@ -35,9 +38,8 @@ type CommandRepository interface {
 }
 
 type RestrictionStore interface {
-	GetSendRestriction(ctx context.Context, userID int64) (domain.AccountSendRestriction, bool, error)
-	SetSendRestriction(ctx context.Context, restriction domain.AccountSendRestriction) (domain.AccountSendRestriction, error)
-	IsSendFrozen(ctx context.Context, userID int64) (bool, error)
+	GetAccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
+	SetAccountFreeze(ctx context.Context, freeze domain.AccountFreeze) (domain.AccountFreeze, error)
 }
 
 type AuthService interface {
@@ -182,10 +184,12 @@ type CommandResult struct {
 	Error           string         `json:"error,omitempty"`
 }
 
-type SetSendFrozenRequest struct {
+type SetAccountFrozenRequest struct {
 	CommandMeta
-	UserID int64 `json:"user_id"`
-	Frozen bool  `json:"frozen"`
+	UserID    int64     `json:"user_id"`
+	Frozen    bool      `json:"frozen"`
+	Until     time.Time `json:"freeze_until,omitempty"`
+	AppealURL string    `json:"freeze_appeal_url,omitempty"`
 }
 
 type GrantPremiumRequest struct {
@@ -240,52 +244,127 @@ type DeletePrivateHistoryRequest struct {
 	MaxBatches  int         `json:"max_batches,omitempty"`
 }
 
-func (s *Service) CanSendMessages(ctx context.Context, userID int64) error {
+// AccountFreeze returns the durable account-level freeze state. A missing row
+// is the only non-frozen default; invalid active rows are rejected by the
+// store/schema instead of normalized on read.
+func (s *Service) AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error) {
 	if s == nil || s.restrictions == nil || userID == 0 {
+		return domain.AccountFreeze{}, false, nil
+	}
+	freeze, found, err := s.restrictions.GetAccountFreeze(ctx, userID)
+	if err != nil || !found {
+		return freeze, found, err
+	}
+	if err := validateAccountFreeze(freeze); err != nil {
+		return domain.AccountFreeze{}, false, fmt.Errorf("invalid durable account freeze for user %d: %w", userID, err)
+	}
+	return freeze, true, nil
+}
+
+func validateAccountFreeze(freeze domain.AccountFreeze) error {
+	if !freeze.Frozen {
+		if !freeze.Since.IsZero() || !freeze.Until.IsZero() || freeze.AppealURL != "" {
+			return fmt.Errorf("inactive freeze retains client-visible state")
+		}
 		return nil
 	}
-	frozen, err := s.restrictions.IsSendFrozen(ctx, userID)
-	if err != nil {
-		return err
+	if freeze.Since.IsZero() || freeze.Until.IsZero() || !freeze.Until.After(freeze.Since) ||
+		freeze.Since.Unix() <= 0 || freeze.Until.Unix() > math.MaxInt32 {
+		return fmt.Errorf("active freeze has invalid since/until")
 	}
-	if frozen {
-		return domain.ErrUserSendRestricted
+	if len(freeze.AppealURL) > maxFreezeAppealURLLength {
+		return fmt.Errorf("active freeze appeal URL is too long")
+	}
+	parsed, err := url.ParseRequestURI(freeze.AppealURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("active freeze has invalid appeal URL")
 	}
 	return nil
 }
 
-func (s *Service) SetSendFrozen(ctx context.Context, req SetSendFrozenRequest) (CommandResult, error) {
+func (s *Service) CanSendMessages(ctx context.Context, userID int64) error {
+	freeze, found, err := s.AccountFreeze(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if found && freeze.Frozen {
+		return domain.ErrUserFrozen
+	}
+	return nil
+}
+
+func (s *Service) SetAccountFrozen(ctx context.Context, req SetAccountFrozenRequest) (CommandResult, error) {
 	if req.UserID <= 0 {
 		return CommandResult{}, fmt.Errorf("user_id is required")
 	}
 	if s == nil || s.restrictions == nil {
 		return CommandResult{}, fmt.Errorf("admin restriction store is not configured")
 	}
-	return s.runCommand(ctx, req.CommandMeta, ActionSetSendFrozen, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
-		prev, found, err := s.restrictions.GetSendRestriction(ctx, req.UserID)
+	now := s.now().UTC()
+	appealURL := strings.TrimSpace(req.AppealURL)
+	if req.Frozen {
+		if req.Until.IsZero() || req.Until.Unix() > math.MaxInt32 {
+			return CommandResult{}, fmt.Errorf("freeze_until must be a non-zero int32 Unix timestamp")
+		}
+		if len(appealURL) > maxFreezeAppealURLLength {
+			return CommandResult{}, fmt.Errorf("freeze_appeal_url must be <= %d bytes", maxFreezeAppealURLLength)
+		}
+		parsed, err := url.ParseRequestURI(appealURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return CommandResult{}, fmt.Errorf("freeze_appeal_url must be an absolute HTTP(S) URL")
+		}
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetAccountFrozen, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		// Keep this time-relative check inside runCommand: a completed command ID
+		// must remain replayable after its deadline, while a new stale request is
+		// recorded as failed and cannot mutate the restriction row.
+		if req.Frozen && !req.Until.After(now) {
+			return CommandResult{}, fmt.Errorf("freeze_until must be in the future")
+		}
+		prev, found, err := s.restrictions.GetAccountFreeze(ctx, req.UserID)
 		if err != nil {
 			return CommandResult{}, err
 		}
-		details := map[string]any{
-			"previous_frozen": found && prev.Frozen,
-			"new_frozen":      req.Frozen,
-			"would_change":    !found || prev.Frozen != req.Frozen,
-		}
-		if req.DryRun {
-			return CommandResult{Message: "dry-run completed", Details: details}, nil
-		}
-		updated, err := s.restrictions.SetSendRestriction(ctx, domain.AccountSendRestriction{
+		next := domain.AccountFreeze{
 			UserID:    req.UserID,
 			Frozen:    req.Frozen,
 			Reason:    req.Reason,
 			Actor:     req.Actor,
 			CommandID: req.CommandID,
-		})
+		}
+		if req.Frozen {
+			next.Since = now
+			if found && prev.Frozen {
+				next.Since = prev.Since
+			}
+			next.Until = req.Until.UTC()
+			next.AppealURL = appealURL
+			if !next.Until.After(next.Since) {
+				return CommandResult{}, fmt.Errorf("freeze_until must be after freeze_since")
+			}
+		}
+		wouldChange := !found || prev.Frozen != next.Frozen ||
+			!prev.Since.Equal(next.Since) || !prev.Until.Equal(next.Until) ||
+			prev.AppealURL != next.AppealURL
+		details := map[string]any{
+			"previous_frozen": found && prev.Frozen,
+			"new_frozen":      req.Frozen,
+			"would_change":    wouldChange,
+		}
+		if req.Frozen {
+			details["freeze_since"] = next.Since.Format(time.RFC3339)
+			details["freeze_until"] = next.Until.Format(time.RFC3339)
+			details["freeze_appeal_url"] = next.AppealURL
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.restrictions.SetAccountFreeze(ctx, next)
 		if err != nil {
 			return CommandResult{}, err
 		}
 		details["updated_at"] = updated.UpdatedAt.UTC().Format(time.RFC3339)
-		return CommandResult{Message: "send restriction updated", Details: details}, nil
+		return CommandResult{Message: "account freeze updated", Details: details}, nil
 	})
 }
 

@@ -21,8 +21,8 @@ func TestServiceSendPrivateTextHonorsSendPermissionGate(t *testing.T) {
 		RecipientUserID: 1002,
 		RandomID:        1,
 		Message:         "blocked",
-	}); !errors.Is(err, domain.ErrUserSendRestricted) {
-		t.Fatalf("SendPrivateText err=%v, want ErrUserSendRestricted", err)
+	}); !errors.Is(err, domain.ErrUserFrozen) {
+		t.Fatalf("SendPrivateText err=%v, want ErrUserFrozen", err)
 	}
 	if store.sends != 0 {
 		t.Fatalf("store sends=%d, want 0", store.sends)
@@ -71,8 +71,8 @@ func TestServiceForwardPrivateMessagesHonorsSendPermissionGate(t *testing.T) {
 		ToUserID:    1003,
 		MessageIDs:  []int{1},
 		RandomIDs:   []int64{2},
-	}); !errors.Is(err, domain.ErrUserSendRestricted) {
-		t.Fatalf("ForwardPrivateMessages err=%v, want ErrUserSendRestricted", err)
+	}); !errors.Is(err, domain.ErrUserFrozen) {
+		t.Fatalf("ForwardPrivateMessages err=%v, want ErrUserFrozen", err)
 	}
 	if store.forwards != 0 {
 		t.Fatalf("store forwards=%d, want 0", store.forwards)
@@ -502,7 +502,7 @@ type projectionMessageStore struct {
 type denySendChecker struct{}
 
 func (denySendChecker) CanSendMessages(context.Context, int64) error {
-	return domain.ErrUserSendRestricted
+	return domain.ErrUserFrozen
 }
 
 type gateMessageStore struct {

@@ -382,8 +382,14 @@ type PrivacyService interface {
 
 // HelpService 抽象启动配置与国家区号目录。
 type HelpService interface {
-	GetAppConfig(ctx context.Context, hash int) (domain.AppConfig, bool, error)
+	GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error)
 	GetCountries(ctx context.Context, langCode string, hash int) (domain.CountriesList, bool, error)
+}
+
+// AccountFreezeService exposes the account-level read-only fact used by the
+// central RPC mutation gate. It is domain-only and shared with app/help.
+type AccountFreezeService interface {
+	AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
 }
 
 // UpdatesService 抽象 update 状态查询。
@@ -794,6 +800,7 @@ type Deps struct {
 	Account              AccountService
 	Privacy              PrivacyService
 	Help                 HelpService
+	AccountFreeze        AccountFreezeService
 	AICompose            AIComposeService
 	Users                UsersService
 	Updates              UpdatesService

@@ -201,13 +201,24 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		if err != nil {
 			return nil, internalErr()
 		}
-		// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：DrKLO 收 nudge 对未加载频道
-		// 走 loadUnknownChannel→getPeerDialogs，限速须同时覆盖它（不止 getChannelDifference）。
-		if err := r.checkCatchupRateLimit(ctx, userID, peerDialogsRateLimitKeyPrefix); err != nil {
-			return nil, err
-		}
 		domainPeers, err := r.dialogPeersFromInput(ctx, userID, peers)
 		if err != nil {
+			return nil, err
+		}
+		channelIDs := make([]int64, 0, len(domainPeers))
+		for _, peer := range domainPeers {
+			if peer.Type == domain.PeerTypeChannel {
+				channelIDs = append(channelIDs, peer.ID)
+			}
+		}
+		if err := r.checkFrozenChannelParticipants(ctx, userID, channelIDs...); err != nil {
+			return nil, err
+		}
+		// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：DrKLO 收 nudge 对未加载频道
+		// 走 loadUnknownChannel→getPeerDialogs，限速须同时覆盖它（不止 getChannelDifference）。
+		// 冻结账号的 guest/non-member 必须先返回 FROZEN_PARTICIPANT_MISSING，拒绝路径不能
+		// 消耗限流额度或产生其它可变状态。
+		if err := r.checkCatchupRateLimit(ctx, userID, peerDialogsRateLimitKeyPrefix); err != nil {
 			return nil, err
 		}
 		var list domain.DialogList
@@ -257,6 +268,9 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 				return messagesNotModifiedOrEmpty(req.Hash), nil
 			}
 			if err := r.validateInputPeerChannelAccess(ctx, userID, req.Peer, filter.Peer.ID); err != nil {
+				return nil, err
+			}
+			if err := r.checkFrozenChannelParticipants(ctx, userID, filter.Peer.ID); err != nil {
 				return nil, err
 			}
 			if isLegacyInputPeerChat(req.Peer) {

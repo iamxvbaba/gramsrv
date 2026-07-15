@@ -670,6 +670,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err := preflightRPCRequest(id, b); err != nil {
 			return nil, err
 		}
+		if err := r.checkFrozenRPC(ctx, tlTypeName(id)); err != nil {
+			return nil, err
+		}
 		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates
 		// 接收者。仅靠 updates.getState/getDifference 置位会漏掉 DrKLO 热恢复：
 		// 它重连后不重建同步基线（pts 在进程内存里），只发普通业务请求，置位

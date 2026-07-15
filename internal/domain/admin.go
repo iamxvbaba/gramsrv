@@ -26,9 +26,15 @@ type AdminCommand struct {
 	CompletedAt  *time.Time
 }
 
-type AccountSendRestriction struct {
+// AccountFreeze is the durable account-level read-only state advertised to
+// Telegram clients through help.getAppConfig. Until is the appeal/deletion
+// deadline; reaching it does not silently unfreeze the account.
+type AccountFreeze struct {
 	UserID    int64
 	Frozen    bool
+	Since     time.Time
+	Until     time.Time
+	AppealURL string
 	Reason    string
 	Actor     string
 	CommandID string

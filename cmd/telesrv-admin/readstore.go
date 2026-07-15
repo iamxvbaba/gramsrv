@@ -63,6 +63,9 @@ type AccountDetail struct {
 
 type RestrictionRow struct {
 	Frozen    bool
+	Since     *time.Time
+	Until     *time.Time
+	AppealURL string
 	Reason    string
 	Actor     string
 	CommandID string
@@ -152,7 +155,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 LEFT JOIN auth a ON a.user_id = u.id
 WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
@@ -326,7 +329,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
 JOIN auth ON auth.user_id = u.id
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
@@ -364,7 +367,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 WHERE u.id = $1`, userID).Scan(
@@ -393,9 +396,12 @@ WHERE u.id = $1`, userID).Scan(
 func (s *readStore) restriction(ctx context.Context, userID int64) (RestrictionRow, bool, error) {
 	var r RestrictionRow
 	err := s.pool.QueryRow(ctx, `
-SELECT frozen, reason, actor, command_id, updated_at
-FROM account_send_restrictions
-WHERE user_id = $1`, userID).Scan(&r.Frozen, &r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt)
+SELECT frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
+FROM account_restrictions
+WHERE user_id = $1`, userID).Scan(
+		&r.Frozen, &r.Since, &r.Until, &r.AppealURL,
+		&r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt,
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return RestrictionRow{}, false, nil

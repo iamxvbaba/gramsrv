@@ -187,8 +187,29 @@ func TestLoginRegisterFlow(t *testing.T) {
 		}
 		// 注意：client.Run 回调里 t.Fatalf 只会杀当前 goroutine、测试主协程
 		// 会等到 ctx 超时——断言失败用 return fmt.Errorf 让 Run 立即返回。
-		if cfg, ok := appConfig.(*tg.HelpAppConfig); !ok || cfg.Hash != seedAppConfigHash {
-			return fmt.Errorf("help.getAppConfig = %T %+v, want seeded hash=%d config", appConfig, appConfig, seedAppConfigHash)
+		cfg, ok := appConfig.(*tg.HelpAppConfig)
+		if !ok || cfg.Hash == 0 || cfg.Hash == seedAppConfigHash {
+			return fmt.Errorf("help.getAppConfig = %T %+v, want authenticated overlay hash distinct from seed=%d", appConfig, appConfig, seedAppConfigHash)
+		}
+		object, ok := cfg.Config.(*tg.JSONObject)
+		if !ok {
+			return fmt.Errorf("help.getAppConfig config = %T, want *tg.JSONObject", cfg.Config)
+		}
+		values := make(map[string]tg.JSONValueClass, len(object.Value))
+		for _, item := range object.Value {
+			values[item.Key] = item.Value
+		}
+		for _, key := range []string{"freeze_since_date", "freeze_until_date"} {
+			value, ok := values[key].(*tg.JSONNumber)
+			if !ok || value.Value != 0 {
+				return fmt.Errorf("help.getAppConfig %s = %T %+v, want zero clear value", key, values[key], values[key])
+			}
+		}
+		if value, ok := values["freeze_appeal_url"].(*tg.JSONString); !ok || value.Value != "" {
+			return fmt.Errorf("help.getAppConfig freeze_appeal_url = %T %+v, want empty clear value", values["freeze_appeal_url"], values["freeze_appeal_url"])
+		}
+		if value, ok := values["quote_length_max"].(*tg.JSONNumber); !ok || value.Value != 1024 {
+			return fmt.Errorf("help.getAppConfig lost seeded base config: quote_length_max=%T %+v", values["quote_length_max"], values["quote_length_max"])
 		}
 		countriesRes, err := raw.HelpGetCountriesList(ctx, &tg.HelpGetCountriesListRequest{LangCode: "en"})
 		if err != nil {

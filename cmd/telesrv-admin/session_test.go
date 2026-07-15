@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"telesrv/internal/admin"
 )
 
 func TestSignedSessionRoundTripAndTamper(t *testing.T) {
@@ -46,5 +50,35 @@ func TestSPAFallbackSmoke(t *testing.T) {
 func TestAdminAPIURLDefaultUsesAdminAPIPort(t *testing.T) {
 	if got, want := adminAPIURL(""), "http://127.0.0.1:2599"; got != want {
 		t.Fatalf("adminAPIURL(empty) = %q, want %q", got, want)
+	}
+}
+
+func TestSetAccountFrozenBFFForwardsClientVisibleState(t *testing.T) {
+	var got admin.SetAccountFrozenRequest
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/accounts/set-frozen" || r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("upstream request path=%q authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(admin.CommandResult{CommandID: got.CommandID, Status: "completed", DryRun: got.DryRun})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: uiConfig{AdminAPIURL: upstream.URL, AdminAPIToken: "secret"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/actions/set-frozen", strings.NewReader(`{
+		"reason":"review","confirm":false,"user_id":1001,"frozen":true,
+		"freeze_until":"2030-01-02T00:00:00Z","freeze_appeal_url":"https://appeals.example.test/1001"
+	}`))
+	req = req.WithContext(context.WithValue(req.Context(), actorKey{}, "operator"))
+	rec := httptest.NewRecorder()
+	srv.handleSetAccountFrozenAPI(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got.Actor != "operator" || got.UserID != 1001 || !got.Frozen || !got.DryRun ||
+		got.Until.IsZero() || got.AppealURL != "https://appeals.example.test/1001" {
+		t.Fatalf("forwarded freeze request = %+v", got)
 	}
 }

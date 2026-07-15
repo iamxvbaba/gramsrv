@@ -98,7 +98,7 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 		req.SenderUserID = userID
 	}
 	if req.SenderUserID != userID {
-		return domain.SendPrivateTextResult{}, domain.ErrUserSendRestricted
+		return domain.SendPrivateTextResult{}, domain.ErrAuthenticatedScopeInvalid
 	}
 	if req.RandomID != 0 && !req.IdempotencyPreflighted {
 		fingerprint, err := store.PrivateSendFingerprint(req)

@@ -202,7 +202,7 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 
 func messageSendErr(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrUserSendRestricted):
+	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()

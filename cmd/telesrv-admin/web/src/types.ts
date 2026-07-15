@@ -16,6 +16,9 @@ export type AccountRow = {
 
 export type RestrictionRow = {
   Frozen: boolean;
+  Since: string | null;
+  Until: string | null;
+  AppealURL: string;
   Reason: string;
   Actor: string;
   CommandID: string;

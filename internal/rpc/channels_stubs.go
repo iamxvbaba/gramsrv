@@ -655,7 +655,7 @@ func (r *Router) channelIDFromLegacyInputPeerChecked(ctx context.Context, userID
 
 func channelInvalidErr(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrUserSendRestricted):
+	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrChannelTitleInvalid):
 		return tgerr400("CHAT_TITLE_EMPTY")

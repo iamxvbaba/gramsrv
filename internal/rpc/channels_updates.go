@@ -18,13 +18,17 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 	if err != nil {
 		return nil, internalErr()
 	}
-	// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：nudge 被消费后客户端会触发
-	// getChannelDifference，大群 nudge 全速前需限速防风暴。未配置阈值时不限速。
-	if err := r.checkCatchupRateLimit(ctx, userID, channelDifferenceRateLimitKeyPrefix); err != nil {
-		return nil, err
-	}
 	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.checkFrozenChannelParticipants(ctx, userID, channelID); err != nil {
+		return nil, err
+	}
+	// difference 类 catch-up FLOOD_WAIT（设计 Phase 2 / §10.3）：nudge 被消费后客户端会触发
+	// getChannelDifference，大群 nudge 全速前需限速防风暴。未配置阈值时不限速。
+	// participant gate 必须先于限流写入，保证冻结拒绝没有副作用。
+	if err := r.checkCatchupRateLimit(ctx, userID, channelDifferenceRateLimitKeyPrefix); err != nil {
 		return nil, err
 	}
 	r.trackChannelInterest(ctx, userID, channelID)

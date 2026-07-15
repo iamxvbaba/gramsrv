@@ -56,7 +56,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/messages/detail", s.requireAuthAPI(http.HandlerFunc(s.handleMessageDetailAPI)))
 	mux.Handle("GET /api/messages/groups", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessagesAPI)))
 	mux.Handle("GET /api/messages/groups/detail", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessageDetailAPI)))
-	mux.Handle("POST /api/actions/freeze-send", s.requireAuthAPI(http.HandlerFunc(s.handleFreezeSendAPI)))
+	mux.Handle("POST /api/actions/set-frozen", s.requireAuthAPI(http.HandlerFunc(s.handleSetAccountFrozenAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
 	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetVerifiedAPI)))
@@ -388,25 +388,29 @@ func (s *server) handleGroupMessageDetailAPI(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, detail)
 }
 
-type freezeSendAPIRequest struct {
-	CommandID string `json:"command_id"`
-	Reason    string `json:"reason"`
-	Confirm   bool   `json:"confirm"`
-	UserID    int64  `json:"user_id"`
-	Frozen    bool   `json:"frozen"`
+type setAccountFrozenAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	UserID    int64     `json:"user_id"`
+	Frozen    bool      `json:"frozen"`
+	Until     time.Time `json:"freeze_until"`
+	AppealURL string    `json:"freeze_appeal_url"`
 }
 
-func (s *server) handleFreezeSendAPI(w http.ResponseWriter, r *http.Request) {
-	var body freezeSendAPIRequest
+func (s *server) handleSetAccountFrozenAPI(w http.ResponseWriter, r *http.Request) {
+	var body setAccountFrozenAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	req := admin.SetSendFrozenRequest{
-		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "freeze-send"),
+	req := admin.SetAccountFrozenRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-frozen"),
 		UserID:      body.UserID,
 		Frozen:      body.Frozen,
+		Until:       body.Until,
+		AppealURL:   body.AppealURL,
 	}
-	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/freeze-send", req)
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-frozen", req)
 	writeCommandResultAPI(w, result, err)
 }
 

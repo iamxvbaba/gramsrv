@@ -262,6 +262,9 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	if err != nil {
 		return nil, err
 	}
+	if err := r.checkFrozenChannelParticipants(ctx, userID, channelID); err != nil {
+		return nil, err
+	}
 	ids := make([]int, 0, len(req.ID))
 	for _, input := range req.ID {
 		id, ok := inputMessageBoxID(input)

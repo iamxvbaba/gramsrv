@@ -20,7 +20,7 @@ type Config struct {
 }
 
 type Service interface {
-	SetSendFrozen(ctx context.Context, req admin.SetSendFrozenRequest) (admin.CommandResult, error)
+	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
@@ -76,7 +76,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("POST /v1/accounts/freeze-send", s.authenticated(s.handleFreezeSend))
+	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
 	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
@@ -98,12 +98,12 @@ func (s *Server) authenticated(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) handleFreezeSend(w http.ResponseWriter, r *http.Request) {
-	var req admin.SetSendFrozenRequest
+func (s *Server) handleSetAccountFrozen(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetAccountFrozenRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := s.svc.SetSendFrozen(r.Context(), req)
+	result, err := s.svc.SetAccountFrozen(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

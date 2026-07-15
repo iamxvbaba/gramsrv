@@ -53,13 +53,16 @@ type AccountReactionSetting struct {
 	UpdatedAt            pgtype.Timestamptz
 }
 
-type AccountSendRestriction struct {
-	UserID    int64
-	Frozen    bool
-	Reason    string
-	Actor     string
-	CommandID string
-	UpdatedAt pgtype.Timestamptz
+type AccountRestriction struct {
+	UserID      int64
+	Frozen      bool
+	Reason      string
+	Actor       string
+	CommandID   string
+	UpdatedAt   pgtype.Timestamptz
+	FrozenSince pgtype.Timestamptz
+	FrozenUntil pgtype.Timestamptz
+	AppealUrl   string
 }
 
 type AccountSetting struct {
@@ -131,6 +134,17 @@ type AiComposeToneSafe struct {
 	SavedAt pgtype.Timestamptz
 }
 
+// Durable pre-send binding from album item random_id to grouped_id; never reconstructed from a retry subset.
+type AlbumGroupReservation struct {
+	SenderUserID int64
+	PeerType     string
+	PeerID       int64
+	RandomID     int64
+	IntentHash   []byte
+	GroupedID    int64
+	CreatedAt    pgtype.Timestamptz
+}
+
 type AppConfig struct {
 	Client     string
 	Hash       int32
@@ -164,18 +178,28 @@ type AttachMenuUserState struct {
 }
 
 type AuthKey struct {
-	AuthKeyID     int64
-	Body          []byte
-	ServerSalt    int64
-	CreatedAt     pgtype.Timestamptz
+	AuthKeyID          int64
+	Body               []byte
+	ServerSalt         int64
+	CreatedAt          pgtype.Timestamptz
+	Layer              int32
+	DeviceModel        string
+	Platform           string
+	SystemVersion      string
+	ApiID              int32
+	AppVersion         string
+	LastUsedAt         pgtype.Timestamptz
+	ExpiresAt          int32
+	LayerObservationID int64
+}
+
+type AuthKeySessionLayer struct {
+	RawAuthKeyID  int64
+	SessionID     int64
 	Layer         int32
-	DeviceModel   string
-	Platform      string
-	SystemVersion string
-	ApiID         int32
-	AppVersion    string
-	LastUsedAt    pgtype.Timestamptz
-	ExpiresAt     int32
+	MsgID         int64
+	ObservationID int64
+	ExpiresAt     pgtype.Timestamptz
 }
 
 type Authorization struct {
@@ -628,6 +652,7 @@ type ChannelMessage struct {
 	DeletePtsCount      int32
 	DeleteDate          int32
 	DeleteMessageIds    []byte
+	RequestFingerprint  []byte
 }
 
 type ChannelMessageMedium struct {
@@ -1033,6 +1058,20 @@ type LangPackString struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type LoginCodeMessageDelivery struct {
+	// SHA-256(phone_code_hash); raw phone_code_hash is never persisted
+	DeliveryKey []byte
+	// HMAC-SHA-256(code), keyed by the non-persisted raw phone_code_hash
+	CodeFingerprint  []byte
+	UserID           int64
+	PrivateMessageID int64
+	MessageBoxID     int32
+	Pts              int32
+	MessageDate      int32
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
 type MessageBox struct {
 	OwnerUserID          int64
 	BoxID                int32
@@ -1130,6 +1169,14 @@ type PeerStarGift struct {
 	Message       string
 	OwnerPeerType string
 	SavedID       int64
+}
+
+type PeerTranslationSetting struct {
+	UserID    int64
+	PeerType  string
+	PeerID    int64
+	Disabled  bool
+	UpdatedAt pgtype.Timestamptz
 }
 
 type PeerUsername struct {
@@ -1631,6 +1678,7 @@ type UserStickerCollection struct {
 	Kind        string
 	DocumentID  int64
 	UsedAt      int32
+	OrderKey    int64
 }
 
 type UserStickerSet struct {

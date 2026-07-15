@@ -16,12 +16,21 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   const [busy, setBusy] = useState(false);
   const [months, setMonths] = useState("1");
   const [starsAmount, setStarsAmount] = useState("1000");
+  const [freezeUntil, setFreezeUntil] = useState(() => toDateTimeLocal(new Date(Date.now() + 7 * 86400_000)));
+  const [freezeAppealURL, setFreezeAppealURL] = useState("");
 
   async function load() {
     setBusy(true);
     setError("");
     try {
-      setDetail(await api.account(id));
+      const next = await api.account(id);
+      setDetail(next);
+      if (next.Restriction.Frozen) {
+        if (next.Restriction.Until) {
+          setFreezeUntil(toDateTimeLocal(new Date(next.Restriction.Until)));
+        }
+        setFreezeAppealURL(next.Restriction.AppealURL || "");
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -58,7 +67,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <div className="entity-badges">
                 {account.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")}</Badge> : <Badge>{t("account.notPremium")}</Badge>}
                 {detail.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
-                {account.Frozen ? <Badge tone="danger">{t("account.sendFrozen")}</Badge> : <Badge>{t("account.sendNormal")}</Badge>}
+                {account.Frozen ? <Badge tone="danger">{t("account.accountFrozen")}</Badge> : <Badge>{t("account.accountActive")}</Badge>}
               </div>
             </section>
             <div className="summary-grid">
@@ -70,6 +79,9 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <Summary label={t("account.activeSessions")} value={String(detail.Authorizations.length)} />
               <Summary label={t("account.accountFlags")} value={`support=${detail.Support} bot=${detail.Bot}`} />
               <Summary label={t("account.restriction")} value={detail.HasRestriction ? detail.Restriction.Reason || t("account.restricted") : t("common.none")} />
+              <Summary label={t("account.freezeSince")} value={detail.Restriction.Since ? formatDate(detail.Restriction.Since) : t("common.none")} />
+              <Summary label={t("account.freezeUntil")} value={detail.Restriction.Until ? formatDate(detail.Restriction.Until) : t("common.none")} />
+              <Summary label={t("account.freezeAppealURL")} value={detail.Restriction.AppealURL || t("common.none")} />
               <Summary label={t("account.createdAt")} value={formatDate(account.CreatedAt) || "-"} />
             </div>
             {detail.About && <p className="about-text">{detail.About}</p>}
@@ -86,13 +98,46 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
         side={
           <section className="action-dock">
             <div className="dock-title">{t("account.actionDock")}</div>
+            <label className="duration-field">
+              <span>{t("account.freezeUntil")}</span>
+              <input
+                aria-label={t("account.freezeUntilAria")}
+                value={freezeUntil}
+                onChange={(event) => setFreezeUntil(event.target.value)}
+                type="datetime-local"
+              />
+            </label>
+            <label className="duration-field">
+              <span>{t("account.freezeAppealURL")}</span>
+              <input
+                aria-label={t("account.freezeAppealURLAria")}
+                value={freezeAppealURL}
+                onChange={(event) => setFreezeAppealURL(event.target.value)}
+                type="url"
+                placeholder="https://..."
+              />
+            </label>
             <ActionButton
-              label={account.Frozen ? t("account.unfreezeSend") : t("account.freezeSend")}
+              label={account.Frozen ? t("account.updateFreeze") : t("account.freezeAccount")}
               icon={<CircleAlert size={15} />}
-              path="/api/actions/freeze-send"
-              payload={() => ({ user_id: account.ID, frozen: !account.Frozen })}
+              path="/api/actions/set-frozen"
+              payload={() => ({
+                user_id: account.ID,
+                frozen: true,
+                freeze_until: new Date(freezeUntil).toISOString(),
+                freeze_appeal_url: freezeAppealURL.trim()
+              })}
               onDone={load}
             />
+            {account.Frozen && (
+              <ActionButton
+                label={t("account.unfreezeAccount")}
+                icon={<CircleAlert size={15} />}
+                path="/api/actions/set-frozen"
+                payload={() => ({ user_id: account.ID, frozen: false })}
+                onDone={load}
+              />
+            )}
             <label className="duration-field">
               <span>{t("account.premiumMonths")}</span>
               <input
@@ -154,4 +199,9 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
       />
     </PageFrame>
   );
+}
+
+function toDateTimeLocal(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }

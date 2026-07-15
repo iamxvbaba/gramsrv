@@ -30,7 +30,8 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 		if r.deps.Help == nil {
 			return tdesktop.AppConfig(hash), nil
 		}
-		cfg, notModified, err := r.deps.Help.GetAppConfig(ctx, hash)
+		userID, _ := UserIDFrom(ctx)
+		cfg, notModified, err := r.deps.Help.GetAppConfig(ctx, userID, hash)
 		if err != nil {
 			return nil, internalErr()
 		}

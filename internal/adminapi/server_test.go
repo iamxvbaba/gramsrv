@@ -12,7 +12,7 @@ import (
 
 func TestAdminAPIRequiresBearerToken(t *testing.T) {
 	srv := &Server{token: "secret", svc: fakeService{}}
-	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/freeze-send", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/set-frozen", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -20,9 +20,10 @@ func TestAdminAPIRequiresBearerToken(t *testing.T) {
 	}
 }
 
-func TestAdminAPIFreezeSend(t *testing.T) {
-	srv := &Server{token: "secret", svc: fakeService{}}
-	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/freeze-send", strings.NewReader(`{"command_id":"c1","actor":"ops","reason":"test","dry_run":true,"user_id":1001,"frozen":true}`))
+func TestAdminAPISetAccountFrozen(t *testing.T) {
+	svc := &captureFreezeService{}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/set-frozen", strings.NewReader(`{"command_id":"c1","actor":"ops","reason":"test","dry_run":true,"user_id":1001,"frozen":true,"freeze_until":"2030-01-02T00:00:00Z","freeze_appeal_url":"https://appeals.example.test"}`))
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)
@@ -31,6 +32,9 @@ func TestAdminAPIFreezeSend(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"command_id":"c1"`) {
 		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if svc.req.UserID != 1001 || !svc.req.Frozen || svc.req.Until.IsZero() || svc.req.AppealURL != "https://appeals.example.test" {
+		t.Fatalf("decoded freeze request = %+v", svc.req)
 	}
 }
 
@@ -78,7 +82,17 @@ func TestAdminAPISetChannelVerified(t *testing.T) {
 
 type fakeService struct{}
 
-func (fakeService) SetSendFrozen(_ context.Context, req admin.SetSendFrozenRequest) (admin.CommandResult, error) {
+type captureFreezeService struct {
+	fakeService
+	req admin.SetAccountFrozenRequest
+}
+
+func (s *captureFreezeService) SetAccountFrozen(_ context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error) {
+	s.req = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetAccountFrozen(_ context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 

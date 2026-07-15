@@ -3,7 +3,9 @@ package help
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"hash/crc32"
+	"strconv"
 	"sync"
 
 	"telesrv/internal/domain"
@@ -64,9 +66,10 @@ const defaultAppConfigHash = 23 // 默认 app config 内容变更时必须递增
 // (登录页/启动配置是高频握手路径)。运维改库需重启生效。timezones/emoji 等其余目录走
 // internal/seed/catalog(go:embed 一次解析),本就在内存。
 type Service struct {
-	appConfigs  store.AppConfigStore
-	countries   store.CountryStore
-	mapboxToken string
+	appConfigs    store.AppConfigStore
+	countries     store.CountryStore
+	accountFreeze AccountFreezeProvider
+	mapboxToken   string
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -76,6 +79,18 @@ type Service struct {
 
 // Option 配置 help 服务运行期默认目录。
 type Option func(*Service)
+
+// AccountFreezeProvider supplies account-specific read-only state without
+// exposing protocol types to the help application service.
+type AccountFreezeProvider interface {
+	AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
+}
+
+func WithAccountFreezeProvider(provider AccountFreezeProvider) Option {
+	return func(s *Service) {
+		s.accountFreeze = provider
+	}
+}
 
 // WithMapboxToken 设置 TDesktop appConfig 与地图缩略图代理共用的 Mapbox token。
 func WithMapboxToken(token string) Option {
@@ -119,10 +134,67 @@ func defaultAppConfigHashFor(mapboxToken string) int {
 	return defaultAppConfigHash + 1 + int(crc32.ChecksumIEEE([]byte(mapboxToken))&0x3fffffff)
 }
 
-// GetAppConfig 返回 TDesktop app config，hash 命中时返回 notModified。首次调用加载一次后缓存。
-func (s *Service) GetAppConfig(ctx context.Context, hash int) (domain.AppConfig, bool, error) {
+// GetAppConfig returns the cached global app config plus an authenticated,
+// per-account freeze overlay. The overlay owns its own deterministic hash so a
+// FROZEN_METHOD_INVALID-triggered refresh can never be answered notModified.
+func (s *Service) GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error) {
 	cfg := s.loadAppConfig(ctx)
+	var err error
+	cfg, err = s.accountAppConfig(ctx, userID, cfg)
+	if err != nil {
+		return domain.AppConfig{}, false, err
+	}
 	return cfg, hash != 0 && hash == cfg.Hash, nil
+}
+
+func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domain.AppConfig) (domain.AppConfig, error) {
+	values := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(base.JSON, &values); err != nil {
+		return domain.AppConfig{}, fmt.Errorf("decode base app config: %w", err)
+	}
+	changed := false
+	for _, key := range []string{"freeze_since_date", "freeze_until_date", "freeze_appeal_url"} {
+		if _, exists := values[key]; exists {
+			delete(values, key)
+			changed = true
+		}
+	}
+	if userID > 0 {
+		// DrKLO applies only keys present in the new JSON object and retains old
+		// SharedPreferences values for missing keys. Authenticated non-frozen
+		// accounts therefore need an explicit zero/empty triplet to converge after
+		// an unfreeze; merely omitting the overlay works in TDesktop but leaves
+		// Android frozen indefinitely. Unauthenticated config remains unscoped.
+		values["freeze_since_date"] = json.RawMessage("0")
+		values["freeze_until_date"] = json.RawMessage("0")
+		values["freeze_appeal_url"] = json.RawMessage(`""`)
+		changed = true
+		if s != nil && s.accountFreeze != nil {
+			freeze, found, err := s.accountFreeze.AccountFreeze(ctx, userID)
+			if err != nil {
+				return domain.AppConfig{}, fmt.Errorf("load account freeze: %w", err)
+			}
+			if found && freeze.Frozen {
+				values["freeze_since_date"] = json.RawMessage(strconv.FormatInt(freeze.Since.Unix(), 10))
+				values["freeze_until_date"] = json.RawMessage(strconv.FormatInt(freeze.Until.Unix(), 10))
+				appeal, _ := json.Marshal(freeze.AppealURL)
+				values["freeze_appeal_url"] = appeal
+			}
+		}
+	}
+	if !changed {
+		return base, nil
+	}
+	body, err := json.Marshal(values)
+	if err != nil {
+		return domain.AppConfig{}, fmt.Errorf("encode account app config: %w", err)
+	}
+	hashInput := append([]byte(strconv.Itoa(base.Hash)+"\x00"), body...)
+	overlayHash := int(crc32.ChecksumIEEE(hashInput) & 0x7fffffff)
+	if overlayHash == 0 || overlayHash == base.Hash {
+		overlayHash = base.Hash + 1
+	}
+	return domain.AppConfig{Client: base.Client, Hash: overlayHash, JSON: body}, nil
 }
 
 func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {

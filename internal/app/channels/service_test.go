@@ -25,8 +25,8 @@ func TestServiceSendMessageHonorsSendPermissionGate(t *testing.T) {
 		ChannelID: 2001,
 		RandomID:  1,
 		Message:   "blocked",
-	}); !errors.Is(err, domain.ErrUserSendRestricted) {
-		t.Fatalf("SendMessage err=%v, want ErrUserSendRestricted", err)
+	}); !errors.Is(err, domain.ErrUserFrozen) {
+		t.Fatalf("SendMessage err=%v, want ErrUserFrozen", err)
 	}
 }
 
@@ -79,8 +79,8 @@ func TestServiceSendMonoforumMessageHonorsSendPermissionGate(t *testing.T) {
 		SavedPeer:    domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
 		RandomID:     1,
 		Message:      "blocked",
-	}); !errors.Is(err, domain.ErrUserSendRestricted) {
-		t.Fatalf("SendMonoforumMessage err=%v, want ErrUserSendRestricted", err)
+	}); !errors.Is(err, domain.ErrUserFrozen) {
+		t.Fatalf("SendMonoforumMessage err=%v, want ErrUserFrozen", err)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestServiceMonoforumReplayPrecedesCurrentSendPermissionGate(t *testing.T) {
 type channelDenySendChecker struct{}
 
 func (channelDenySendChecker) CanSendMessages(context.Context, int64) error {
-	return domain.ErrUserSendRestricted
+	return domain.ErrUserFrozen
 }
 
 func (p testBotProfiles) BotInfo(_ context.Context, botUserID int64) (domain.BotProfile, bool, error) {

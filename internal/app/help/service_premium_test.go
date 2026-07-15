@@ -11,14 +11,14 @@ import (
 // premiumCanBuy()=!premium_purchase_blocked 耦合，置 true 会同时隐藏送礼入口；
 // reactions_user_max_premium 必须与服务端 enforcement 档位一致。
 func TestAppConfigPremiumKeys(t *testing.T) {
-	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0)
+	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, 0)
 	if err != nil || notModified {
 		t.Fatalf("GetAppConfig = notModified %v err %v", notModified, err)
 	}
 	if cfg.Hash != defaultAppConfigHash || cfg.Hash < 10 {
 		t.Fatalf("hash = %d, want defaultAppConfigHash(≥10)", cfg.Hash)
 	}
-	oldCfg, oldNotModified, err := (*Service)(nil).GetAppConfig(context.Background(), defaultAppConfigHash-1)
+	oldCfg, oldNotModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, defaultAppConfigHash-1)
 	if err != nil || oldNotModified || oldCfg.Hash != defaultAppConfigHash {
 		t.Fatalf("GetAppConfig(old hash) = hash %d notModified %v err %v, want refreshed config", oldCfg.Hash, oldNotModified, err)
 	}
@@ -93,7 +93,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 }
 
 func TestAppConfigOmitsMapboxTokenByDefault(t *testing.T) {
-	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0)
+	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, 0)
 	if err != nil || notModified {
 		t.Fatalf("GetAppConfig = notModified %v err %v", notModified, err)
 	}
@@ -108,14 +108,14 @@ func TestAppConfigOmitsMapboxTokenByDefault(t *testing.T) {
 
 func TestAppConfigUsesConfiguredMapboxTokenAndHash(t *testing.T) {
 	svc := NewService(nil, nil, WithMapboxToken("pk.test-token"))
-	cfg, notModified, err := svc.GetAppConfig(context.Background(), 0)
+	cfg, notModified, err := svc.GetAppConfig(context.Background(), 0, 0)
 	if err != nil || notModified {
 		t.Fatalf("GetAppConfig = notModified %v err %v", notModified, err)
 	}
 	if cfg.Hash == defaultAppConfigHash {
 		t.Fatalf("hash = %d, want token-specific hash", cfg.Hash)
 	}
-	if _, notModified, err := svc.GetAppConfig(context.Background(), cfg.Hash); err != nil || !notModified {
+	if _, notModified, err := svc.GetAppConfig(context.Background(), 0, cfg.Hash); err != nil || !notModified {
 		t.Fatalf("GetAppConfig(hash) = notModified %v err %v, want notModified", notModified, err)
 	}
 	var decoded map[string]any

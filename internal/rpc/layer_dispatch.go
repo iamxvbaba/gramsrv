@@ -254,6 +254,9 @@ func (r *Router) DispatchAdmitted(
 			return nil, method, authKeyUnregisteredErr()
 		}
 	}
+	if err := r.checkFrozenRPC(ctx, method); err != nil {
+		return nil, method, err
+	}
 	if profileKnown && profileEvidenceFresh {
 		r.maybeMarkSessionReceivesUpdates(ctx)
 	}

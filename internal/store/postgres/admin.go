@@ -166,57 +166,66 @@ func scanAdminCommand(row pgx.Row) (domain.AdminCommand, error) {
 	return cmd, nil
 }
 
-func (s *AdminStore) GetSendRestriction(ctx context.Context, userID int64) (domain.AccountSendRestriction, bool, error) {
+func (s *AdminStore) GetAccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT user_id, frozen, reason, actor, command_id, updated_at
-FROM account_send_restrictions
+SELECT user_id, frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
+FROM account_restrictions
 WHERE user_id = $1`, userID)
-	r, err := scanSendRestriction(row)
+	r, err := scanAccountFreeze(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.AccountSendRestriction{}, false, nil
+			return domain.AccountFreeze{}, false, nil
 		}
-		return domain.AccountSendRestriction{}, false, fmt.Errorf("get send restriction: %w", err)
+		return domain.AccountFreeze{}, false, fmt.Errorf("get account freeze: %w", err)
 	}
 	return r, true, nil
 }
 
-func (s *AdminStore) SetSendRestriction(ctx context.Context, restriction domain.AccountSendRestriction) (domain.AccountSendRestriction, error) {
+func (s *AdminStore) SetAccountFreeze(ctx context.Context, freeze domain.AccountFreeze) (domain.AccountFreeze, error) {
+	var since, until any
+	if freeze.Frozen {
+		since = freeze.Since
+		until = freeze.Until
+	}
 	row := s.db.QueryRow(ctx, `
-INSERT INTO account_send_restrictions (user_id, frozen, reason, actor, command_id, updated_at)
-VALUES ($1,$2,$3,$4,$5,now())
+INSERT INTO account_restrictions (
+	user_id, frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
 ON CONFLICT (user_id) DO UPDATE SET
 	frozen = EXCLUDED.frozen,
+	frozen_since = EXCLUDED.frozen_since,
+	frozen_until = EXCLUDED.frozen_until,
+	appeal_url = EXCLUDED.appeal_url,
 	reason = EXCLUDED.reason,
 	actor = EXCLUDED.actor,
 	command_id = EXCLUDED.command_id,
 	updated_at = now()
-RETURNING user_id, frozen, reason, actor, command_id, updated_at`,
-		restriction.UserID, restriction.Frozen, restriction.Reason, restriction.Actor, restriction.CommandID,
+RETURNING user_id, frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at`,
+		freeze.UserID, freeze.Frozen, since, until, freeze.AppealURL, freeze.Reason, freeze.Actor, freeze.CommandID,
 	)
-	out, err := scanSendRestriction(row)
+	out, err := scanAccountFreeze(row)
 	if err != nil {
-		return domain.AccountSendRestriction{}, fmt.Errorf("set send restriction: %w", err)
+		return domain.AccountFreeze{}, fmt.Errorf("set account freeze: %w", err)
 	}
 	return out, nil
 }
 
-func (s *AdminStore) IsSendFrozen(ctx context.Context, userID int64) (bool, error) {
-	var frozen bool
-	if err := s.db.QueryRow(ctx, `SELECT frozen FROM account_send_restrictions WHERE user_id = $1`, userID).Scan(&frozen); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("check send restriction: %w", err)
-	}
-	return frozen, nil
-}
-
-func scanSendRestriction(row pgx.Row) (domain.AccountSendRestriction, error) {
-	var r domain.AccountSendRestriction
+func scanAccountFreeze(row pgx.Row) (domain.AccountFreeze, error) {
+	var r domain.AccountFreeze
+	var since, until pgtype.Timestamptz
 	var updated time.Time
-	if err := row.Scan(&r.UserID, &r.Frozen, &r.Reason, &r.Actor, &r.CommandID, &updated); err != nil {
-		return domain.AccountSendRestriction{}, err
+	if err := row.Scan(
+		&r.UserID, &r.Frozen, &since, &until, &r.AppealURL,
+		&r.Reason, &r.Actor, &r.CommandID, &updated,
+	); err != nil {
+		return domain.AccountFreeze{}, err
+	}
+	if since.Valid {
+		r.Since = since.Time
+	}
+	if until.Valid {
+		r.Until = until.Time
 	}
 	r.UpdatedAt = updated
 	return r, nil
