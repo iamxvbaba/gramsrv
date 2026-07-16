@@ -130,9 +130,6 @@ func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch shared media count search: %v", err)
 	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
-	}
 	channelMessages, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
 		t.Fatalf("shared media count search result = %T, want messages.channelMessages", enc)
@@ -209,9 +206,6 @@ func TestMessagesSearchChatPhotosDoesNotReturnOrdinaryChannelHistory(t *testing.
 	enc, err := r.Dispatch(WithUserID(ctx, owner.ID), [8]byte{}, 0, &in)
 	if err != nil {
 		t.Fatalf("dispatch chat photos search: %v", err)
-	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
 	}
 	got, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
@@ -314,9 +308,6 @@ func TestMessagesGetSearchCountersUsesMediaCategoryCounts(t *testing.T) {
 	enc, err := r.Dispatch(WithUserID(ctx, owner.ID), [8]byte{}, 0, &in)
 	if err != nil {
 		t.Fatalf("dispatch shared media count search: %v", err)
-	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
 	}
 	channelMessages, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
@@ -498,13 +489,9 @@ func TestMessagesGetHistoryReturnsStoredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesMessagesBox)
+	got, ok := enc.(*tg.MessagesMessages)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessagesMessagesBox", enc)
-	}
-	got, ok := box.Messages.(*tg.MessagesMessages)
-	if !ok {
-		t.Fatalf("boxed response = %T, want *tg.MessagesMessages", box.Messages)
+		t.Fatalf("response = %T, want *tg.MessagesMessages", enc)
 	}
 	if len(got.Messages) != 1 || len(got.Users) != 1 {
 		t.Fatalf("history = %+v, want one message and one user", got)

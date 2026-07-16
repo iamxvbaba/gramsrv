@@ -6,18 +6,40 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
-func (r *Router) registerStickers(d *tg.ServerDispatcher) {
-	d.OnStickersCreateStickerSet(r.onStickersCreateStickerSet)
-	d.OnStickersCheckShortName(r.onStickersCheckShortName)
-	d.OnStickersSuggestShortName(r.onStickersSuggestShortName)
-	d.OnStickersAddStickerToSet(r.onStickersAddStickerToSet)
-	d.OnStickersRemoveStickerFromSet(r.onStickersRemoveStickerFromSet)
-	d.OnStickersChangeStickerPosition(r.onStickersChangeStickerPosition)
-	d.OnStickersRenameStickerSet(r.onStickersRenameStickerSet)
-	d.OnStickersDeleteStickerSet(r.onStickersDeleteStickerSet)
+func (r *Router) registerStickers(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.StickersCreateStickerSetRequest](d, tlprofile.SemanticMethodStickersCreateStickerSet, func(ctx context.Context, layerRequest *tg.StickersCreateStickerSetRequest) (any, error) {
+		return r.onStickersCreateStickerSet(ctx, layerRequest)
+	})
+	registerRPC[*tg.StickersCheckShortNameRequest](d, tlprofile.SemanticMethodStickersCheckShortName, func(ctx context.Context, layerRequest *tg.StickersCheckShortNameRequest) (any, error) {
+		return r.onStickersCheckShortName(ctx, layerRequest.
+			ShortName)
+	})
+	registerRPC[*tg.StickersSuggestShortNameRequest](d, tlprofile.SemanticMethodStickersSuggestShortName, func(ctx context.Context, layerRequest *tg.StickersSuggestShortNameRequest) (any, error) {
+		return r.onStickersSuggestShortName(ctx, layerRequest.
+			Title)
+	})
+	registerRPC[*tg.StickersAddStickerToSetRequest](d, tlprofile.SemanticMethodStickersAddStickerToSet, func(ctx context.Context, layerRequest *tg.StickersAddStickerToSetRequest) (any, error) {
+		return r.onStickersAddStickerToSet(ctx, layerRequest)
+	})
+	registerRPC[*tg.StickersRemoveStickerFromSetRequest](d, tlprofile.SemanticMethodStickersRemoveStickerFromSet, func(ctx context.Context, layerRequest *tg.StickersRemoveStickerFromSetRequest) (any, error) {
+		return r.onStickersRemoveStickerFromSet(ctx, layerRequest.
+			Sticker)
+	})
+	registerRPC[*tg.StickersChangeStickerPositionRequest](d, tlprofile.SemanticMethodStickersChangeStickerPosition, func(ctx context.Context, layerRequest *tg.StickersChangeStickerPositionRequest) (any, error) {
+		return r.onStickersChangeStickerPosition(ctx, layerRequest)
+	})
+	registerRPC[*tg.StickersRenameStickerSetRequest](d, tlprofile.SemanticMethodStickersRenameStickerSet, func(ctx context.Context, layerRequest *tg.StickersRenameStickerSetRequest) (any, error) {
+		return r.onStickersRenameStickerSet(ctx, layerRequest)
+	})
+	registerRPC[*tg.StickersDeleteStickerSetRequest](d, tlprofile.SemanticMethodStickersDeleteStickerSet, func(ctx context.Context, layerRequest *tg.StickersDeleteStickerSetRequest) (any, error) {
+		return r.onStickersDeleteStickerSet(ctx, layerRequest.
+			Stickerset)
+	})
+
 }
 
 func (r *Router) onStickersCreateStickerSet(ctx context.Context, req *tg.StickersCreateStickerSetRequest) (tg.MessagesStickerSetClass, error) {

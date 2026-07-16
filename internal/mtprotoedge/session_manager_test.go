@@ -15,6 +15,7 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 type closeCountingTransport struct {
@@ -226,7 +227,7 @@ func TestSessionManagerBestEffortFanoutPreparesOncePerProfile(t *testing.T) {
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
-		if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+		if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 			t.Fatalf("freeze profile: %v", err)
 		}
 		sm.Register(c)
@@ -263,7 +264,7 @@ func TestSessionManagerMixedLayerFanoutUsesProfileBoundBodies(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userID = int64(103)
 	authKeyID := [8]byte{0x22, 0x70, 0x22, 0x80}
-	profiles := []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227, tg.LayerProfile228}
+	profiles := []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227, tlprofile.Profile228}
 	conns := make([]*Conn, 0, len(profiles))
 	for _, profile := range profiles {
 		c := &Conn{
@@ -277,8 +278,8 @@ func TestSessionManagerMixedLayerFanoutUsesProfileBoundBodies(t *testing.T) {
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
-		if profile == tg.LayerProfile228 {
-			if err := c.SeedInheritedLayerProfile(tg.LayerProfile227); err != nil {
+		if profile == tlprofile.Profile228 {
+			if err := c.SeedInheritedLayerProfile(tlprofile.Profile227); err != nil {
 				t.Fatalf("seed Alice inherited profile: %v", err)
 			}
 		}
@@ -319,7 +320,7 @@ func TestSessionManagerMixedLayerFanoutUsesProfileBoundBodies(t *testing.T) {
 			t.Fatalf("profile %d push leaked channel constructor %#08x", profiles[i], otherChannelID)
 		}
 		input := bin.Buffer{Buf: op.encoded.body}
-		decoded, decodeErr := tg.DecodeLayer(profiles[i], tg.LayerClassUpdatesType(), &input)
+		decoded, decodeErr := tlprofile.DecodeObject(profiles[i], &input, tlprofile.Limits{})
 		if decodeErr != nil || input.Len() != 0 {
 			t.Fatalf("decode profile %d: remaining=%d err=%v", profiles[i], input.Len(), decodeErr)
 		}
@@ -397,7 +398,7 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
-		if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 			t.Fatalf("freeze profile: %v", err)
 		}
 		sm.Register(c)
@@ -415,7 +416,7 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 	healthy.userID.Store(userID)
 	healthy.userIDResolved.Store(true)
 	healthy.receivesUpdates.Store(true)
-	if err := healthy.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := healthy.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatalf("freeze healthy profile: %v", err)
 	}
 	sm.Register(healthy)
@@ -747,7 +748,7 @@ func TestPushToUserAuthKeyUsesOneDeadlineAndDropsOnlySlowPFSConnections(t *testi
 			outboundStop:    make(chan struct{}),
 		}
 		c.receivesUpdates.Store(true)
-		if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+		if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 			t.Fatalf("freeze profile: %v", err)
 		}
 		if queueFull {
@@ -912,7 +913,7 @@ func TestPushToSessionForAuthKeyImmediateBypassesReadinessQueue(t *testing.T) {
 		outboundControl: make(chan outboundOp, 1),
 		outboundStop:    make(chan struct{}),
 	}
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatalf("freeze profile: %v", err)
 	}
 	sm.Register(c)
@@ -991,7 +992,7 @@ func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) 
 	default:
 	}
 
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	c.membershipsSynced.Store(true)
@@ -1002,7 +1003,7 @@ func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("profiled readiness did not flush pending update")
 	}
-	if op.encoded == nil || op.encoded.layer == nil || op.encoded.layer.profile != tg.LayerProfile225 {
+	if op.encoded == nil || op.encoded.layer == nil || op.encoded.layer.profile != tlprofile.Profile225 {
 		t.Fatalf("flushed update layer binding = %#v", op.encoded)
 	}
 	op.releaseReservation(c.outboundTrackedBudget)
@@ -1062,7 +1063,7 @@ func TestPendingFlushGlobalBodyPressureDoesNotTerminateHealthyConnection(t *test
 	const userID = int64(606)
 	c.userID.Store(userID)
 	c.userIDResolved.Store(true)
-	if err := c.FreezeLayerProfile(tg.LayerProfileCanonical); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.ProfileCanonical); err != nil {
 		t.Fatal(err)
 	}
 	sm.Register(c)
@@ -1160,8 +1161,8 @@ func TestSessionManagerPush(t *testing.T) {
 	if got := srv.Conns().Online(); got != 2 {
 		t.Fatalf("online = %d, want 2", got)
 	}
-	if !srv.Conns().SetLayerProfile(auth1.SessionID, tg.LayerProfile227) ||
-		!srv.Conns().SetLayerProfile(auth2.SessionID, tg.LayerProfile227) {
+	if !srv.Conns().SetLayerProfile(auth1.SessionID, tlprofile.Profile227) ||
+		!srv.Conns().SetLayerProfile(auth2.SessionID, tlprofile.Profile227) {
 		t.Fatal("seed exact test profiles")
 	}
 

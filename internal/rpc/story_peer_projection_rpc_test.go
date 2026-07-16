@@ -1534,9 +1534,6 @@ func dispatchMessagesPayload(t *testing.T, r *Router, ctx context.Context, req b
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if box, ok := out.(*tg.MessagesMessagesBox); ok {
-		return box.Messages
-	}
 	return out
 }
 

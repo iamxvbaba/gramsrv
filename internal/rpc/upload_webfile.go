@@ -13,6 +13,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
@@ -39,8 +40,10 @@ type inlineWebFileFetcher func(ctx context.Context, document domain.BotInlineWeb
 
 var fetchInlineWebFile inlineWebFileFetcher = defaultFetchInlineWebFile
 
-func (r *Router) registerUploadWebFile(d *tg.ServerDispatcher) {
-	d.OnUploadGetWebFile(r.onUploadGetWebFile)
+func (r *Router) registerUploadWebFile(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.UploadGetWebFileRequest](d, tlprofile.SemanticMethodUploadGetWebFile, func(ctx context.Context, layerRequest *tg.UploadGetWebFileRequest) (any, error) {
+		return r.onUploadGetWebFile(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onUploadGetWebFile(ctx context.Context, req *tg.UploadGetWebFileRequest) (*tg.UploadWebFile, error) {

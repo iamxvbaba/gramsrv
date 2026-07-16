@@ -16,6 +16,7 @@ import (
 	"github.com/iamxvbaba/td/exchange"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"github.com/iamxvbaba/td/transport"
 )
 
@@ -23,7 +24,7 @@ import (
 // by old connection-state tests. Production exact-path tests must instead call
 // FreezeLayerProfile/SeedLayerProfile with protocol evidence.
 func legacyCanonicalTestConn(t testing.TB, c *Conn) *Conn {
-	return legacyLayerWireTestConn(t, c, int(tg.LayerProfileCanonical))
+	return legacyLayerWireTestConn(t, c, int(tlprofile.ProfileCanonical))
 }
 
 // legacyLayerWireTestConn preserves only the old tests' profile setup. It does
@@ -34,7 +35,7 @@ func legacyLayerWireTestConn(t testing.TB, c *Conn, layer int) *Conn {
 	if c == nil {
 		t.Fatal("nil legacy exact-layer test Conn")
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok {
 		t.Fatalf("unsupported generated test Layer %d", layer)
 	}
@@ -62,7 +63,6 @@ func exactTestUpdatesEncoded(t testing.TB, c *Conn, body []byte) *encodedOutboun
 		typeID: tg.UpdatesTooLongTypeID,
 		layer: &outboundLayerBinding{
 			profile: state.Profile,
-			typ:     tg.LayerClassUpdatesType().Ref(),
 			epoch:   state.Epoch,
 		},
 	}
@@ -86,8 +86,7 @@ func (r *opaqueExactTestRPCResult) Encode(b *bin.Buffer) error { return r.result
 
 func (r *opaqueExactTestRPCResult) exactLayerRPCResultBinding() outboundLayerBinding {
 	return outboundLayerBinding{
-		profile: tg.LayerProfileCanonical,
-		typ:     tg.LayerClassUpdatesType().Ref(),
+		profile: tlprofile.ProfileCanonical,
 		kind:    outboundLayerBindingRequest,
 	}
 }
@@ -180,7 +179,7 @@ func dialTransportOnly(t *testing.T, addr string) transport.Conn {
 // profile that a production invokeWithLayer admission would have proven. It is
 // intentionally explicit: handshake/new_session_created alone never implies a
 // TL Layer, and production push code must keep failing closed in that state.
-func freezeActiveTestSessionProfile(t *testing.T, sessions *SessionManager, authKeyID [8]byte, sessionID int64, profile tg.LayerProfile) {
+func freezeActiveTestSessionProfile(t *testing.T, sessions *SessionManager, authKeyID [8]byte, sessionID int64, profile tlprofile.Profile) {
 	t.Helper()
 	if sessions == nil {
 		t.Fatal("freeze test session profile on nil SessionManager")

@@ -103,9 +103,6 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		Filter: &tg.InputMessagesFilterPinned{},
 		Limit:  40,
 	})
-	if box, ok := searchEnc.(*tg.MessagesMessagesBox); ok {
-		searchEnc = box.Messages
-	}
 	channelMessages, ok := searchEnc.(*tg.MessagesChannelMessages)
 	if !ok {
 		t.Fatalf("pinned search response = %T, want messages.channelMessages", searchEnc)

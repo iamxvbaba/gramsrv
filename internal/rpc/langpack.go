@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 // registerLangpack 注册 langpack.* RPC handler。
@@ -12,19 +13,24 @@ import (
 // 老客户端（DrKLO）发的是不带 lang_pack 参数的旧构造器，已由 gotdgen client overlay 入站升级为 canonical
 // 形态并把 lang_pack 置空；故这里 lang_pack 为空时回退到按 client 信息派生（langPackFromClient），
 // 与历史 handleLegacyLangpack* 的行为一致。
-func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
-	d.OnLangpackGetLanguages(func(ctx context.Context, langPack string) ([]tg.LangPackLanguage, error) {
+func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.LangpackGetLanguagesRequest](d, tlprofile.SemanticMethodLangpackGetLanguages, func(ctx context.Context, layerRequest *tg.LangpackGetLanguagesRequest) (any, error) {
+		langPack := layerRequest.
+			LangPack
+		_ = langPack
+
 		return r.langpackLanguages(ctx, langPack), nil
 	})
-	d.OnLangpackGetLanguage(func(ctx context.Context, req *tg.LangpackGetLanguageRequest) (*tg.LangPackLanguage, error) {
+	registerRPC[*tg.LangpackGetLanguageRequest](d, tlprofile.SemanticMethodLangpackGetLanguage, func(ctx context.Context, req *tg.LangpackGetLanguageRequest) (any, error) {
 		if req == nil {
 			return nil, inputConstructorInvalidErr()
 		}
 		lang := r.langpackLanguage(ctx, req.LangPack, req.LangCode)
 		return &lang, nil
 	})
-	d.OnLangpackGetLangPack(func(ctx context.Context, req *tg.LangpackGetLangPackRequest) (*tg.LangPackDifference, error) {
+	registerRPC[*tg.LangpackGetLangPackRequest](d, tlprofile.SemanticMethodLangpackGetLangPack, func(ctx context.Context, req *tg.LangpackGetLangPackRequest) (any, error) {
 		langPack := langPackOrClient(ctx, req.LangPack)
+		_ = langPack
 		if r.deps.LangPack == nil {
 			return &tg.LangPackDifference{LangCode: req.LangCode}, nil
 		}
@@ -34,7 +40,7 @@ func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
 		}
 		return tgLangPackDifference(pack), nil
 	})
-	d.OnLangpackGetDifference(func(ctx context.Context, req *tg.LangpackGetDifferenceRequest) (*tg.LangPackDifference, error) {
+	registerRPC[*tg.LangpackGetDifferenceRequest](d, tlprofile.SemanticMethodLangpackGetDifference, func(ctx context.Context, req *tg.LangpackGetDifferenceRequest) (any, error) {
 		if r.deps.LangPack == nil {
 			return &tg.LangPackDifference{LangCode: req.LangCode, FromVersion: req.FromVersion}, nil
 		}
@@ -44,9 +50,9 @@ func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
 		}
 		return tgLangPackDifference(pack), nil
 	})
-	d.OnLangpackGetStrings(func(ctx context.Context, req *tg.LangpackGetStringsRequest) ([]tg.LangPackStringClass, error) {
+	registerRPC[*tg.LangpackGetStringsRequest](d, tlprofile.SemanticMethodLangpackGetStrings, func(ctx context.Context, req *tg.LangpackGetStringsRequest) (any, error) {
 		if r.deps.LangPack == nil {
-			return nil, nil
+			return []tg.LangPackStringClass{}, nil
 		}
 		pack, err := r.deps.LangPack.GetStrings(ctx, langPackOrClient(ctx, req.LangPack), req.LangCode, req.Keys)
 		if err != nil {
@@ -54,6 +60,7 @@ func (r *Router) registerLangpack(d *tg.ServerDispatcher) {
 		}
 		return tgLangPackStrings(pack.Strings), nil
 	})
+
 }
 
 // langPackOrClient 返回请求里的 lang_pack；为空（老客户端经生成 overlay 升级而来）时按 client 派生。

@@ -9,19 +9,20 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 func rpcFlightTestAuthID(seed byte) [8]byte {
 	return [8]byte{seed, seed + 1, seed + 2, seed + 3}
 }
 
-func rpcFlightExactIdentity(t *testing.T, profile tg.LayerProfile, request bin.Encoder) tg.LayerPreparedCallIdentity {
+func rpcFlightExactIdentity(t *testing.T, profile tlprofile.Profile, request bin.Object) tlprofile.PreparedIdentity {
 	t.Helper()
 	var body bin.Buffer
-	if err := request.Encode(&body); err != nil {
+	if err := tlprofile.EncodeObject(profile, request, &body); err != nil {
 		t.Fatalf("encode exact request: %v", err)
 	}
-	admitted, err := tg.NewServerDispatcher(nil).AdmitLayer(profile, &body)
+	admitted, err := tlprofile.NewDispatcher().Admit(profile, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("admit exact request: %v", err)
 	}
@@ -223,8 +224,8 @@ func TestRPCResultFlightRepeatedReplayJoinsStayBoundedAndPutCleansExecution(t *t
 func TestRPCResultFlightExactIdentityGuardsPendingAndCompletedReuse(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 2)
 	authKeyID := rpcFlightTestAuthID(90)
-	firstIdentity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
-	otherIdentity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetNearestDCRequest{})
+	firstIdentity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
+	otherIdentity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetNearestDCRequest{})
 
 	owner, err := cache.AcquireIdentified(authKeyID, 90, 900, firstIdentity)
 	if err != nil || owner.state != rpcResultAcquireOwner || owner.owner == nil {
@@ -255,23 +256,23 @@ func TestRPCResultFlightExactIdentityGuardsPendingAndCompletedReuse(t *testing.T
 func TestRPCResultFlightAdmissionSequenceAllocatedOnceAndReplayed(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 4)
 	authKeyID := rpcFlightTestAuthID(89)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
-	owner, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tg.LayerProfile225, identity)
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
+	owner, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tlprofile.Profile225, identity)
 	if err != nil || owner.state != rpcResultAcquireOwner || owner.owner == nil || owner.admissionSeq == 0 {
 		t.Fatalf("owner = state:%d seq:%d err:%v", owner.state, owner.admissionSeq, err)
 	}
-	pending, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tg.LayerProfile225, identity)
+	pending, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tlprofile.Profile225, identity)
 	if err != nil || pending.state != rpcResultAcquirePending || pending.admissionSeq != owner.admissionSeq {
 		t.Fatalf("pending = state:%d seq:%d err:%v, want seq:%d", pending.state, pending.admissionSeq, err, owner.admissionSeq)
 	}
 	owner.owner.CompleteExecution(true)
 	encoded := &encodedOutboundMessage{body: []byte{1}, reqMsgID: 890}
 	cache.Put(authKeyID, 89, 890, encoded)
-	completed, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tg.LayerProfile225, identity)
+	completed, err := cache.AcquireLayerIdentified(authKeyID, 89, 890, tlprofile.Profile225, identity)
 	if err != nil || completed.state != rpcResultAcquireCompleted || completed.admissionSeq != owner.admissionSeq {
 		t.Fatalf("completed = state:%d seq:%d err:%v, want seq:%d", completed.state, completed.admissionSeq, err, owner.admissionSeq)
 	}
-	second, err := cache.AcquireLayerIdentified(authKeyID, 89, 894, tg.LayerProfile225, identity)
+	second, err := cache.AcquireLayerIdentified(authKeyID, 89, 894, tlprofile.Profile225, identity)
 	if err != nil || second.admissionSeq <= owner.admissionSeq {
 		t.Fatalf("second owner seq=%d err=%v, want > %d", second.admissionSeq, err, owner.admissionSeq)
 	}
@@ -286,12 +287,12 @@ func TestRPCResultFlightAdmissionSequenceAllocatedOnceAndReplayed(t *testing.T) 
 func TestRPCAdmissionSafeFloorTracksOwnersUntilPutOrAbort(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 4)
 	authKeyID := rpcFlightTestAuthID(86)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
-	first, err := cache.AcquireLayerIdentified(authKeyID, 86, 860, tg.LayerProfile225, identity)
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
+	first, err := cache.AcquireLayerIdentified(authKeyID, 86, 860, tlprofile.Profile225, identity)
 	if err != nil || first.owner == nil {
 		t.Fatalf("first owner err=%v", err)
 	}
-	second, err := cache.AcquireLayerIdentified(authKeyID, 86, 864, tg.LayerProfile225, identity)
+	second, err := cache.AcquireLayerIdentified(authKeyID, 86, 864, tlprofile.Profile225, identity)
 	if err != nil || second.owner == nil {
 		t.Fatalf("second owner err=%v", err)
 	}
@@ -315,12 +316,12 @@ func TestRPCAdmissionSequenceExhaustionCannotWrap(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 2)
 	cache.nextAdmissionSeq.Store(^uint64(0) - 1)
 	authKeyID := rpcFlightTestAuthID(85)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
-	last, err := cache.AcquireLayerIdentified(authKeyID, 85, 850, tg.LayerProfile225, identity)
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
+	last, err := cache.AcquireLayerIdentified(authKeyID, 85, 850, tlprofile.Profile225, identity)
 	if err != nil || last.admissionSeq != ^uint64(0) || last.owner == nil {
 		t.Fatalf("last sequence=%d owner:%v err=%v", last.admissionSeq, last.owner != nil, err)
 	}
-	if _, err := cache.AcquireLayerIdentified(authKeyID, 85, 854, tg.LayerProfile225, identity); !errors.Is(err, ErrRPCAdmissionSeqExhausted) {
+	if _, err := cache.AcquireLayerIdentified(authKeyID, 85, 854, tlprofile.Profile225, identity); !errors.Is(err, ErrRPCAdmissionSeqExhausted) {
 		t.Fatalf("post-max allocation err=%v, want %v", err, ErrRPCAdmissionSeqExhausted)
 	}
 	if got := cache.nextAdmissionSeq.Load(); got != ^uint64(0) {
@@ -333,15 +334,15 @@ func TestRPCIdentityMismatchCarriesWinnerProfileAcrossAbort(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 2)
 	authKeyID := rpcFlightTestAuthID(88)
 	request := &tg.MessagesGetHistoryRequest{Peer: &tg.InputPeerSelf{}, Limit: 1}
-	winnerIdentity := rpcFlightExactIdentity(t, tg.LayerProfile225, request)
-	loserIdentity := rpcFlightExactIdentity(t, tg.LayerProfile227, request)
-	winner, err := cache.AcquireLayerIdentified(authKeyID, 88, 880, tg.LayerProfile225, winnerIdentity)
+	winnerIdentity := rpcFlightExactIdentity(t, tlprofile.Profile225, request)
+	loserIdentity := rpcFlightExactIdentity(t, tlprofile.Profile227, request)
+	winner, err := cache.AcquireLayerIdentified(authKeyID, 88, 880, tlprofile.Profile225, winnerIdentity)
 	if err != nil || winner.owner == nil {
 		t.Fatalf("winner owner err=%v", err)
 	}
-	_, err = cache.AcquireLayerIdentified(authKeyID, 88, 880, tg.LayerProfile227, loserIdentity)
+	_, err = cache.AcquireLayerIdentified(authKeyID, 88, 880, tlprofile.Profile227, loserIdentity)
 	var mismatch *rpcResultIdentityMismatchError
-	if !errors.As(err, &mismatch) || !mismatch.hasProfile || mismatch.profile != tg.LayerProfile225 {
+	if !errors.As(err, &mismatch) || !mismatch.hasProfile || mismatch.profile != tlprofile.Profile225 {
 		t.Fatalf("mismatch = %#v err=%v", mismatch, err)
 	}
 	if !winner.owner.Abort() {
@@ -358,17 +359,17 @@ func TestRPCAdmissionProfileHintSurvivesCompletedEvictionWindow(t *testing.T) {
 	now := time.Unix(1_900_000_000, 0)
 	cache := newRPCResultCacheWithFlightLimit(func() time.Time { return now }, 2)
 	authKeyID := rpcFlightTestAuthID(87)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.MessagesGetHistoryRequest{
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
-	claim, err := cache.AcquireLayerIdentified(authKeyID, 87, 870, tg.LayerProfile225, identity)
+	claim, err := cache.AcquireLayerIdentified(authKeyID, 87, 870, tlprofile.Profile225, identity)
 	if err != nil || claim.owner == nil {
 		t.Fatalf("owner err=%v", err)
 	}
 	claim.owner.CompleteExecution(true)
 	cache.Put(authKeyID, 87, 870, &encodedOutboundMessage{body: []byte{1}, reqMsgID: 870})
 	profile, ok := cache.ExactAdmissionProfile(authKeyID, 87, 870)
-	if !ok || profile != tg.LayerProfile225 {
+	if !ok || profile != tlprofile.Profile225 {
 		t.Fatalf("profile hint = (%d,%v)", profile, ok)
 	}
 	// Admission already copied the hint into its local decoder cursor. Expiry
@@ -385,7 +386,7 @@ func TestRPCAdmissionProfileHintSurvivesCompletedEvictionWindow(t *testing.T) {
 func TestRPCInvariantIdentityDoesNotExposeCanonicalProfileHint(t *testing.T) {
 	cache := newRPCResultCacheWithFlightLimit(time.Now, 2)
 	authKeyID := rpcFlightTestAuthID(84)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile227, &tg.AuthBindTempAuthKeyRequest{
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile227, &tg.AuthBindTempAuthKeyRequest{
 		PermAuthKeyID: 1, Nonce: 2, ExpiresAt: 3, EncryptedMessage: []byte("bind"),
 	})
 	claim, err := cache.AcquireLayerIdentified(authKeyID, 84, 840, 0, identity)

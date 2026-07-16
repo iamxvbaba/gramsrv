@@ -10,6 +10,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
@@ -28,38 +29,82 @@ const (
 )
 
 // registerContacts 注册 contacts.* RPC handler。
-func (r *Router) registerContacts(d *tg.ServerDispatcher) {
-	d.OnContactsGetContacts(r.onContactsGetContacts)
-	d.OnContactsGetContactIDs(r.onContactsGetContactIDs)
-	d.OnContactsGetStatuses(r.onContactsGetStatuses)
-	d.OnContactsImportContacts(r.onContactsImportContacts)
-	d.OnContactsAddContact(r.onContactsAddContact)
-	d.OnContactsAcceptContact(r.onContactsAcceptContact)
-	d.OnContactsDeleteContacts(r.onContactsDeleteContacts)
-	d.OnContactsEditCloseFriends(r.onContactsEditCloseFriends)
-	d.OnContactsBlock(r.onContactsBlock)
-	d.OnContactsUnblock(r.onContactsUnblock)
-	d.OnContactsSetBlocked(r.onContactsSetBlocked)
-	d.OnContactsUpdateContactNote(r.onContactsUpdateContactNote)
-	d.OnContactsSearch(r.onContactsSearch)
-	d.OnContactsResolveUsername(r.onContactsResolveUsername)
-	d.OnContactsResolvePhone(r.onContactsResolvePhone)
-	d.OnContactsGetTopPeers(func(ctx context.Context, req *tg.ContactsGetTopPeersRequest) (tg.ContactsTopPeersClass, error) {
+func (r *Router) registerContacts(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.ContactsGetContactsRequest](d, tlprofile.SemanticMethodContactsGetContacts, func(ctx context.Context, layerRequest *tg.ContactsGetContactsRequest) (any, error) {
+		return r.onContactsGetContacts(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.ContactsGetContactIDsRequest](d, tlprofile.SemanticMethodContactsGetContactIDs, func(ctx context.Context, layerRequest *tg.ContactsGetContactIDsRequest) (any, error) {
+		return r.onContactsGetContactIDs(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.ContactsGetStatusesRequest](d, tlprofile.SemanticMethodContactsGetStatuses, func(ctx context.Context, layerRequest *tg.ContactsGetStatusesRequest) (any, error) {
+		return r.onContactsGetStatuses(ctx)
+	})
+	registerRPC[*tg.ContactsImportContactsRequest](d, tlprofile.SemanticMethodContactsImportContacts, func(ctx context.Context, layerRequest *tg.ContactsImportContactsRequest) (any, error) {
+		return r.onContactsImportContacts(ctx, layerRequest.
+			Contacts)
+	})
+	registerRPC[*tg.ContactsAddContactRequest](d, tlprofile.SemanticMethodContactsAddContact, func(ctx context.Context, layerRequest *tg.ContactsAddContactRequest) (any, error) {
+		return r.onContactsAddContact(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsAcceptContactRequest](d, tlprofile.SemanticMethodContactsAcceptContact, func(ctx context.Context, layerRequest *tg.ContactsAcceptContactRequest) (any, error) {
+		return r.onContactsAcceptContact(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.ContactsDeleteContactsRequest](d, tlprofile.SemanticMethodContactsDeleteContacts, func(ctx context.Context, layerRequest *tg.ContactsDeleteContactsRequest) (any, error) {
+		return r.onContactsDeleteContacts(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.ContactsEditCloseFriendsRequest](d, tlprofile.SemanticMethodContactsEditCloseFriends, func(ctx context.Context, layerRequest *tg.ContactsEditCloseFriendsRequest) (any, error) {
+		return r.onContactsEditCloseFriends(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.ContactsBlockRequest](d, tlprofile.SemanticMethodContactsBlock, func(ctx context.Context, layerRequest *tg.ContactsBlockRequest) (any, error) {
+		return r.onContactsBlock(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsUnblockRequest](d, tlprofile.SemanticMethodContactsUnblock, func(ctx context.Context, layerRequest *tg.ContactsUnblockRequest) (any, error) {
+		return r.onContactsUnblock(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsSetBlockedRequest](d, tlprofile.SemanticMethodContactsSetBlocked, func(ctx context.Context, layerRequest *tg.ContactsSetBlockedRequest) (any, error) {
+		return r.onContactsSetBlocked(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsUpdateContactNoteRequest](d, tlprofile.SemanticMethodContactsUpdateContactNote, func(ctx context.Context, layerRequest *tg.ContactsUpdateContactNoteRequest) (any, error) {
+		return r.onContactsUpdateContactNote(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsSearchRequest](d, tlprofile.SemanticMethodContactsSearch, func(ctx context.Context, layerRequest *tg.ContactsSearchRequest) (any, error) {
+		return r.onContactsSearch(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsResolveUsernameRequest](d, tlprofile.SemanticMethodContactsResolveUsername, func(ctx context.Context, layerRequest *tg.ContactsResolveUsernameRequest) (any, error) {
+		return r.onContactsResolveUsername(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsResolvePhoneRequest](d, tlprofile.SemanticMethodContactsResolvePhone, func(ctx context.Context, layerRequest *tg.ContactsResolvePhoneRequest) (any, error) {
+		return r.onContactsResolvePhone(ctx, layerRequest.
+			Phone)
+	})
+	registerRPC[*tg.ContactsGetTopPeersRequest](d, tlprofile.SemanticMethodContactsGetTopPeers, func(ctx context.Context, req *tg.ContactsGetTopPeersRequest) (any, error) {
 		return tdesktop.TopPeers(), nil
 	})
-	d.OnContactsGetBlocked(r.onContactsGetBlocked)
-	d.OnContactsGetBirthdays(func(ctx context.Context) (*tg.ContactsContactBirthdays, error) {
+	registerRPC[*tg.ContactsGetBlockedRequest](d, tlprofile.SemanticMethodContactsGetBlocked, func(ctx context.Context, layerRequest *tg.ContactsGetBlockedRequest) (any, error) {
+		return r.onContactsGetBlocked(ctx, layerRequest)
+	})
+	registerRPC[*tg.ContactsGetBirthdaysRequest](d, tlprofile.SemanticMethodContactsGetBirthdays, func(ctx context.Context, layerRequest *tg.ContactsGetBirthdaysRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return &tg.ContactsContactBirthdays{Contacts: []tg.ContactBirthday{}, Users: []tg.UserClass{}}, nil
 	})
-	d.OnContactsGetSponsoredPeers(func(ctx context.Context, q string) (tg.ContactsSponsoredPeersClass, error) {
+	registerRPC[*tg.ContactsGetSponsoredPeersRequest](d, tlprofile.SemanticMethodContactsGetSponsoredPeers, func(ctx context.Context, layerRequest *tg.ContactsGetSponsoredPeersRequest) (any, error) {
+		q := layerRequest.
+			Q
+		_ = q
+
 		if utf8.RuneCountInString(q) > maxContactSearchQLen {
 			return nil, limitInvalidErr()
 		}
 		return &tg.ContactsSponsoredPeersEmpty{}, nil
 	})
+
 }
 
 func (r *Router) onContactsEditCloseFriends(ctx context.Context, id []int64) (bool, error) {

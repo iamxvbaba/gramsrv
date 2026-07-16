@@ -17,11 +17,12 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 	"github.com/iamxvbaba/td/transport"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/rpc"
 )
 
 // TestRPCGetConfig 验证 M3：握手后 client 加密 help.getConfig，
-// server 经 tg.ServerDispatcher 路由并回 rpc_result（含本地 DC），外加 new_session_created + ack。
+// server 经 tlprofile.Dispatcher 路由并回 rpc_result（含本地 DC），外加 new_session_created + ack。
 func TestRPCGetConfig(t *testing.T) {
 	const (
 		dc      = 2
@@ -80,7 +81,7 @@ func TestLayerRPCGetConfigUsesExactAdmittedProfile(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	reqMsgID := clientMsgID.New(proto.MessageFromClient)
 	request := &tg.InvokeWithLayerRequest{
-		Layer: int(tg.LayerProfile225),
+		Layer: int(tlprofile.Profile225),
 		Query: &tg.InitConnectionRequest{
 			APIID:          123,
 			DeviceModel:    "Desktop",
@@ -104,9 +105,13 @@ func TestLayerRPCGetConfigUsesExactAdmittedProfile(t *testing.T) {
 		t.Fatalf("rpc_result req_msg_id = %d, want %d", result.RequestMessageID, reqMsgID)
 	}
 	exact := &bin.Buffer{Buf: result.Result}
-	config, err := tg.DecodeLayer(tg.LayerProfile225, tg.LayerConstructorConfigType(), exact)
+	configObject, err := tlprofile.DecodeObject(tlprofile.Profile225, exact, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("decode layer 225 config: %v", err)
+	}
+	config, ok := configObject.(*tg.Config)
+	if !ok {
+		t.Fatalf("layer 225 config = %T, want *tg.Config", configObject)
 	}
 	if exact.Len() != 0 || config.ThisDC != dc {
 		t.Fatalf("layer 225 config = dc:%d remaining:%d", config.ThisDC, exact.Len())

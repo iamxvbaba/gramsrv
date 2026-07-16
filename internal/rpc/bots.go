@@ -6,6 +6,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
@@ -22,58 +23,165 @@ import (
 // bump bot_info_version；命令变更后 bots_hooks.PushBotCommandsChanged 给在线相关用户
 // 推 updateBotCommands（扇出封顶 100，无 pts），离线/超界用户靠 version bump 在下次
 // getFullUser 重拉兜底。
-func (r *Router) registerBots(d *tg.ServerDispatcher) {
-	d.OnBotsSendCustomRequest(r.onBotsSendCustomRequest)
-	d.OnBotsAnswerWebhookJSONQuery(r.onBotsAnswerWebhookJSONQuery)
-	d.OnBotsSetBotBroadcastDefaultAdminRights(r.onBotsSetBotBroadcastDefaultAdminRights)
-	d.OnBotsSetBotGroupDefaultAdminRights(r.onBotsSetBotGroupDefaultAdminRights)
-	d.OnBotsSetBotCommands(r.onBotsSetBotCommands)
-	d.OnBotsResetBotCommands(r.onBotsResetBotCommands)
-	d.OnBotsGetBotCommands(r.onBotsGetBotCommands)
-	d.OnBotsSetBotInfo(r.onBotsSetBotInfo)
-	d.OnBotsGetBotInfo(r.onBotsGetBotInfo)
-	d.OnBotsSetBotMenuButton(r.onBotsSetBotMenuButton)
-	d.OnBotsGetBotMenuButton(r.onBotsGetBotMenuButton)
-	d.OnBotsReorderUsernames(r.onBotsReorderUsernames)
-	d.OnBotsToggleUsername(r.onBotsToggleUsername)
-	d.OnBotsCanSendMessage(r.onBotsCanSendMessage)
-	d.OnBotsAllowSendMessage(r.onBotsAllowSendMessage)
-	d.OnBotsInvokeWebViewCustomMethod(r.onBotsInvokeWebViewCustomMethod)
-	d.OnBotsGetPopularAppBots(r.onBotsGetPopularAppBots)
-	d.OnBotsAddPreviewMedia(r.onBotsAddPreviewMedia)
-	d.OnBotsEditPreviewMedia(r.onBotsEditPreviewMedia)
-	d.OnBotsDeletePreviewMedia(r.onBotsDeletePreviewMedia)
-	d.OnBotsReorderPreviewMedias(r.onBotsReorderPreviewMedias)
-	d.OnBotsGetPreviewInfo(r.onBotsGetPreviewInfo)
-	d.OnBotsGetPreviewMedias(r.onBotsGetPreviewMedias)
-	d.OnBotsUpdateUserEmojiStatus(r.onBotsUpdateUserEmojiStatus)
-	d.OnBotsToggleUserEmojiStatusPermission(r.onBotsToggleUserEmojiStatusPermission)
-	d.OnBotsCheckDownloadFileParams(r.onBotsCheckDownloadFileParams)
-	d.OnBotsGetAdminedBots(r.onBotsGetAdminedBots)
-	d.OnBotsUpdateStarRefProgram(r.onBotsUpdateStarRefProgram)
-	d.OnBotsSetCustomVerification(r.onBotsSetCustomVerification)
-	d.OnBotsGetBotRecommendations(r.onBotsGetBotRecommendations)
-	d.OnBotsCheckUsername(r.onBotsCheckUsername)
-	d.OnBotsCreateBot(r.onBotsCreateBot)
-	d.OnBotsExportBotToken(r.onBotsExportBotToken)
-	d.OnBotsRequestWebViewButton(r.onBotsRequestWebViewButton)
-	d.OnBotsGetRequestedWebViewButton(r.onBotsGetRequestedWebViewButton)
-	d.OnBotsGetAccessSettings(r.onBotsGetAccessSettings)
-	d.OnBotsEditAccessSettings(r.onBotsEditAccessSettings)
-	// P3：startBot 深链 + inline callback 闭环。
-	d.OnMessagesStartBot(r.onMessagesStartBot)
-	d.OnMessagesGetBotCallbackAnswer(r.onMessagesGetBotCallbackAnswer)
-	d.OnMessagesSetBotCallbackAnswer(r.onMessagesSetBotCallbackAnswer)
-	d.OnMessagesGetInlineBotResults(r.onMessagesGetInlineBotResults)
-	d.OnMessagesSetInlineBotResults(r.onMessagesSetInlineBotResults)
-	d.OnMessagesSendInlineBotResult(r.onMessagesSendInlineBotResult)
-	d.OnMessagesSavePreparedInlineMessage(r.onMessagesSavePreparedInlineMessage)
-	d.OnMessagesEditInlineBotMessage(r.onMessagesEditInlineBotMessage)
-	d.OnMessagesSetBotShippingResults(r.onMessagesSetBotShippingResults)
-	d.OnMessagesSetBotPrecheckoutResults(r.onMessagesSetBotPrecheckoutResults)
+func (r *Router) registerBots(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.BotsSendCustomRequestRequest](d, tlprofile.SemanticMethodBotsSendCustomRequest, func(ctx context.Context, layerRequest *tg.BotsSendCustomRequestRequest) (any, error) {
+		return r.onBotsSendCustomRequest(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsAnswerWebhookJSONQueryRequest](d, tlprofile.SemanticMethodBotsAnswerWebhookJSONQuery, func(ctx context.Context, layerRequest *tg.BotsAnswerWebhookJSONQueryRequest) (any, error) {
+		return r.onBotsAnswerWebhookJSONQuery(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsSetBotBroadcastDefaultAdminRightsRequest](d, tlprofile.SemanticMethodBotsSetBotBroadcastDefaultAdminRights, func(ctx context.Context, layerRequest *tg.BotsSetBotBroadcastDefaultAdminRightsRequest) (any, error) {
+		return r.onBotsSetBotBroadcastDefaultAdminRights(ctx, layerRequest.
+			AdminRights)
+	})
+	registerRPC[*tg.BotsSetBotGroupDefaultAdminRightsRequest](d, tlprofile.SemanticMethodBotsSetBotGroupDefaultAdminRights, func(ctx context.Context, layerRequest *tg.BotsSetBotGroupDefaultAdminRightsRequest) (any, error) {
+		return r.onBotsSetBotGroupDefaultAdminRights(ctx, layerRequest.
+			AdminRights)
+	})
+	registerRPC[*tg.BotsSetBotCommandsRequest](d, tlprofile.SemanticMethodBotsSetBotCommands, func(ctx context.Context, layerRequest *tg.BotsSetBotCommandsRequest) (any, error) {
+		return r.onBotsSetBotCommands(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsResetBotCommandsRequest](d, tlprofile.SemanticMethodBotsResetBotCommands, func(ctx context.Context, layerRequest *tg.BotsResetBotCommandsRequest) (any, error) {
+		return r.onBotsResetBotCommands(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetBotCommandsRequest](d, tlprofile.SemanticMethodBotsGetBotCommands, func(ctx context.Context, layerRequest *tg.BotsGetBotCommandsRequest) (any, error) {
+		return r.onBotsGetBotCommands(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsSetBotInfoRequest](d, tlprofile.SemanticMethodBotsSetBotInfo, func(ctx context.Context, layerRequest *tg.BotsSetBotInfoRequest) (any, error) {
+		return r.onBotsSetBotInfo(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetBotInfoRequest](d, tlprofile.SemanticMethodBotsGetBotInfo, func(ctx context.Context, layerRequest *tg.BotsGetBotInfoRequest) (any, error) {
+		return r.onBotsGetBotInfo(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsSetBotMenuButtonRequest](d, tlprofile.SemanticMethodBotsSetBotMenuButton, func(ctx context.Context, layerRequest *tg.BotsSetBotMenuButtonRequest) (any, error) {
+		return r.onBotsSetBotMenuButton(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetBotMenuButtonRequest](d, tlprofile.SemanticMethodBotsGetBotMenuButton, func(ctx context.Context, layerRequest *tg.BotsGetBotMenuButtonRequest) (any, error) {
+		return r.onBotsGetBotMenuButton(ctx, layerRequest.
+			UserID)
+	})
+	registerRPC[*tg.BotsReorderUsernamesRequest](d, tlprofile.SemanticMethodBotsReorderUsernames, func(ctx context.Context, layerRequest *tg.BotsReorderUsernamesRequest) (any, error) {
+		return r.onBotsReorderUsernames(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsToggleUsernameRequest](d, tlprofile.SemanticMethodBotsToggleUsername, func(ctx context.Context, layerRequest *tg.BotsToggleUsernameRequest) (any, error) {
+		return r.onBotsToggleUsername(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsCanSendMessageRequest](d, tlprofile.SemanticMethodBotsCanSendMessage, func(ctx context.Context, layerRequest *tg.BotsCanSendMessageRequest) (any, error) {
+		return r.onBotsCanSendMessage(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.BotsAllowSendMessageRequest](d, tlprofile.SemanticMethodBotsAllowSendMessage, func(ctx context.Context, layerRequest *tg.BotsAllowSendMessageRequest) (any, error) {
+		return r.onBotsAllowSendMessage(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.BotsInvokeWebViewCustomMethodRequest](d, tlprofile.SemanticMethodBotsInvokeWebViewCustomMethod, func(ctx context.Context, layerRequest *tg.BotsInvokeWebViewCustomMethodRequest) (any, error) {
+		return r.onBotsInvokeWebViewCustomMethod(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetPopularAppBotsRequest](d, tlprofile.SemanticMethodBotsGetPopularAppBots, func(ctx context.Context, layerRequest *tg.BotsGetPopularAppBotsRequest) (any, error) {
+		return r.onBotsGetPopularAppBots(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsAddPreviewMediaRequest](d, tlprofile.SemanticMethodBotsAddPreviewMedia, func(ctx context.Context, layerRequest *tg.BotsAddPreviewMediaRequest) (any, error) {
+		return r.onBotsAddPreviewMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsEditPreviewMediaRequest](d, tlprofile.SemanticMethodBotsEditPreviewMedia, func(ctx context.Context, layerRequest *tg.BotsEditPreviewMediaRequest) (any, error) {
+		return r.onBotsEditPreviewMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsDeletePreviewMediaRequest](d, tlprofile.SemanticMethodBotsDeletePreviewMedia, func(ctx context.Context, layerRequest *tg.BotsDeletePreviewMediaRequest) (any, error) {
+		return r.onBotsDeletePreviewMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsReorderPreviewMediasRequest](d, tlprofile.SemanticMethodBotsReorderPreviewMedias, func(ctx context.Context, layerRequest *tg.BotsReorderPreviewMediasRequest) (any, error) {
+		return r.onBotsReorderPreviewMedias(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetPreviewInfoRequest](d, tlprofile.SemanticMethodBotsGetPreviewInfo, func(ctx context.Context, layerRequest *tg.BotsGetPreviewInfoRequest) (any, error) {
+		return r.onBotsGetPreviewInfo(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetPreviewMediasRequest](d, tlprofile.SemanticMethodBotsGetPreviewMedias, func(ctx context.Context, layerRequest *tg.BotsGetPreviewMediasRequest) (any, error) {
+		return r.onBotsGetPreviewMedias(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.BotsUpdateUserEmojiStatusRequest](d, tlprofile.SemanticMethodBotsUpdateUserEmojiStatus, func(ctx context.Context, layerRequest *tg.BotsUpdateUserEmojiStatusRequest) (any, error) {
+		return r.onBotsUpdateUserEmojiStatus(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsToggleUserEmojiStatusPermissionRequest](d, tlprofile.SemanticMethodBotsToggleUserEmojiStatusPermission, func(ctx context.Context, layerRequest *tg.BotsToggleUserEmojiStatusPermissionRequest) (any, error) {
+		return r.onBotsToggleUserEmojiStatusPermission(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsCheckDownloadFileParamsRequest](d, tlprofile.SemanticMethodBotsCheckDownloadFileParams, func(ctx context.Context, layerRequest *tg.BotsCheckDownloadFileParamsRequest) (any, error) {
+		return r.onBotsCheckDownloadFileParams(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetAdminedBotsRequest](d, tlprofile.SemanticMethodBotsGetAdminedBots, func(ctx context.Context, layerRequest *tg.BotsGetAdminedBotsRequest) (any, error) {
+		return r.onBotsGetAdminedBots(ctx)
+	})
+	registerRPC[*tg.BotsUpdateStarRefProgramRequest](d, tlprofile.SemanticMethodBotsUpdateStarRefProgram, func(ctx context.Context, layerRequest *tg.BotsUpdateStarRefProgramRequest) (any, error) {
+		return r.onBotsUpdateStarRefProgram(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsSetCustomVerificationRequest](d, tlprofile.SemanticMethodBotsSetCustomVerification, func(ctx context.Context, layerRequest *tg.BotsSetCustomVerificationRequest) (any, error) {
+		return r.onBotsSetCustomVerification(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetBotRecommendationsRequest](d, tlprofile.SemanticMethodBotsGetBotRecommendations, func(ctx context.Context, layerRequest *tg.BotsGetBotRecommendationsRequest) (any, error) {
+		return r.onBotsGetBotRecommendations(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.BotsCheckUsernameRequest](d, tlprofile.SemanticMethodBotsCheckUsername, func(ctx context.Context, layerRequest *tg.BotsCheckUsernameRequest) (any, error) {
+		return r.onBotsCheckUsername(ctx, layerRequest.
+			Username)
+	})
+	registerRPC[*tg.BotsCreateBotRequest](d, tlprofile.SemanticMethodBotsCreateBot, func(ctx context.Context, layerRequest *tg.BotsCreateBotRequest) (any, error) {
+		return r.onBotsCreateBot(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsExportBotTokenRequest](d, tlprofile.SemanticMethodBotsExportBotToken, func(ctx context.Context, layerRequest *tg.BotsExportBotTokenRequest) (any, error) {
+		return r.onBotsExportBotToken(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsRequestWebViewButtonRequest](d, tlprofile.SemanticMethodBotsRequestWebViewButton, func(ctx context.Context, layerRequest *tg.BotsRequestWebViewButtonRequest) (any, error) {
+		return r.onBotsRequestWebViewButton(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetRequestedWebViewButtonRequest](d, tlprofile.SemanticMethodBotsGetRequestedWebViewButton, func(ctx context.Context, layerRequest *tg.BotsGetRequestedWebViewButtonRequest) (any, error) {
+		return r.onBotsGetRequestedWebViewButton(ctx, layerRequest)
+	})
+	registerRPC[*tg.BotsGetAccessSettingsRequest](d, tlprofile.SemanticMethodBotsGetAccessSettings, func(ctx context.Context, layerRequest *tg.BotsGetAccessSettingsRequest) (
+
+		// P3：startBot 深链 + inline callback 闭环。
+		any, error) {
+		return r.onBotsGetAccessSettings(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.BotsEditAccessSettingsRequest](d, tlprofile.SemanticMethodBotsEditAccessSettings, func(ctx context.Context, layerRequest *tg.BotsEditAccessSettingsRequest) (any, error) {
+		return r.onBotsEditAccessSettings(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesStartBotRequest](d, tlprofile.SemanticMethodMessagesStartBot, func(ctx context.Context, layerRequest *tg.MessagesStartBotRequest) (any, error) {
+		return r.onMessagesStartBot(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetBotCallbackAnswerRequest](d, tlprofile.SemanticMethodMessagesGetBotCallbackAnswer, func(ctx context.Context, layerRequest *tg.MessagesGetBotCallbackAnswerRequest) (any, error) {
+		return r.onMessagesGetBotCallbackAnswer(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetBotCallbackAnswerRequest](d, tlprofile.SemanticMethodMessagesSetBotCallbackAnswer, func(ctx context.Context, layerRequest *tg.MessagesSetBotCallbackAnswerRequest) (any, error) {
+		return r.onMessagesSetBotCallbackAnswer(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetInlineBotResultsRequest](d, tlprofile.SemanticMethodMessagesGetInlineBotResults, func(ctx context.Context, layerRequest *tg.MessagesGetInlineBotResultsRequest) (any, error) {
+		return r.onMessagesGetInlineBotResults(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetInlineBotResultsRequest](d, tlprofile.SemanticMethodMessagesSetInlineBotResults, func(ctx context.Context, layerRequest *tg.MessagesSetInlineBotResultsRequest) (any, error) {
+		return r.onMessagesSetInlineBotResults(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendInlineBotResultRequest](d, tlprofile.SemanticMethodMessagesSendInlineBotResult, func(ctx context.Context, layerRequest *tg.MessagesSendInlineBotResultRequest) (any, error) {
+		return r.onMessagesSendInlineBotResult(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSavePreparedInlineMessageRequest](d, tlprofile.SemanticMethodMessagesSavePreparedInlineMessage, func(ctx context.Context, layerRequest *tg.MessagesSavePreparedInlineMessageRequest) (any, error) {
+		return r.onMessagesSavePreparedInlineMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesEditInlineBotMessageRequest](d, tlprofile.SemanticMethodMessagesEditInlineBotMessage, func(ctx context.Context, layerRequest *tg.MessagesEditInlineBotMessageRequest) (any, error) {
+		return r.onMessagesEditInlineBotMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetBotShippingResultsRequest](d, tlprofile.SemanticMethodMessagesSetBotShippingResults, func(ctx context.Context, layerRequest *tg.MessagesSetBotShippingResultsRequest) (any, error) {
+		return r.onMessagesSetBotShippingResults(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetBotPrecheckoutResultsRequest](d, tlprofile.SemanticMethodMessagesSetBotPrecheckoutResults, func(ctx context.Context,
+
+		// callerBotID 校验调用者本身是 bot 账号，返回其 user_id（bot-only RPC 用）。
+		layerRequest *tg.MessagesSetBotPrecheckoutResultsRequest) (any, error) {
+		return r.onMessagesSetBotPrecheckoutResults(ctx, layerRequest)
+	})
 }
 
-// callerBotID 校验调用者本身是 bot 账号，返回其 user_id（bot-only RPC 用）。
 func (r *Router) callerBotID(ctx context.Context) (int64, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {

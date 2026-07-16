@@ -8,15 +8,27 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
-func (r *Router) registerPremium(d *tg.ServerDispatcher) {
-	d.OnPremiumGetBoostsStatus(r.onPremiumGetBoostsStatus)
-	d.OnPremiumGetBoostsList(r.onPremiumGetBoostsList)
-	d.OnPremiumGetMyBoosts(r.onPremiumGetMyBoosts)
-	d.OnPremiumApplyBoost(r.onPremiumApplyBoost)
-	d.OnPremiumGetUserBoosts(r.onPremiumGetUserBoosts)
+func (r *Router) registerPremium(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.PremiumGetBoostsStatusRequest](d, tlprofile.SemanticMethodPremiumGetBoostsStatus, func(ctx context.Context, layerRequest *tg.PremiumGetBoostsStatusRequest) (any, error) {
+		return r.onPremiumGetBoostsStatus(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.PremiumGetBoostsListRequest](d, tlprofile.SemanticMethodPremiumGetBoostsList, func(ctx context.Context, layerRequest *tg.PremiumGetBoostsListRequest) (any, error) {
+		return r.onPremiumGetBoostsList(ctx, layerRequest)
+	})
+	registerRPC[*tg.PremiumGetMyBoostsRequest](d, tlprofile.SemanticMethodPremiumGetMyBoosts, func(ctx context.Context, layerRequest *tg.PremiumGetMyBoostsRequest) (any, error) {
+		return r.onPremiumGetMyBoosts(ctx)
+	})
+	registerRPC[*tg.PremiumApplyBoostRequest](d, tlprofile.SemanticMethodPremiumApplyBoost, func(ctx context.Context, layerRequest *tg.PremiumApplyBoostRequest) (any, error) {
+		return r.onPremiumApplyBoost(ctx, layerRequest)
+	})
+	registerRPC[*tg.PremiumGetUserBoostsRequest](d, tlprofile.SemanticMethodPremiumGetUserBoosts, func(ctx context.Context, layerRequest *tg.PremiumGetUserBoostsRequest) (any, error) {
+		return r.onPremiumGetUserBoosts(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onPremiumGetBoostsStatus(ctx context.Context, peer tg.InputPeerClass) (*tg.PremiumBoostsStatus, error) {

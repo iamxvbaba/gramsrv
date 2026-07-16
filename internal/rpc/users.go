@@ -6,6 +6,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/users"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
@@ -15,15 +16,30 @@ const maxSavedMusicLimit = 100
 const maxRequirementsToContactUsers = 100
 
 // registerUsers 注册 users.* RPC handler。
-func (r *Router) registerUsers(d *tg.ServerDispatcher) {
-	d.OnUsersGetUsers(r.onUsersGetUsers)
-	d.OnUsersGetFullUser(r.onUsersGetFullUser)
-	d.OnUsersGetRequirementsToContact(r.onUsersGetRequirementsToContact)
-	d.OnUsersGetSavedMusic(r.onUsersGetSavedMusic)
-	d.OnUsersGetSavedMusicByID(r.onUsersGetSavedMusicByID)
+func (r *Router) registerUsers(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.UsersGetUsersRequest](d, tlprofile.SemanticMethodUsersGetUsers, func(ctx context.Context, layerRequest *tg.UsersGetUsersRequest) (any, error) {
+		return r.onUsersGetUsers(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.UsersGetFullUserRequest](d, tlprofile.SemanticMethodUsersGetFullUser, func(ctx context.Context, layerRequest *tg.UsersGetFullUserRequest) (any, error) {
+		return r.onUsersGetFullUser(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.UsersGetRequirementsToContactRequest](d, tlprofile.SemanticMethodUsersGetRequirementsToContact, func(ctx context.Context, layerRequest *tg.UsersGetRequirementsToContactRequest) (any, error) {
+		return r.onUsersGetRequirementsToContact(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.UsersGetSavedMusicRequest](d, tlprofile.SemanticMethodUsersGetSavedMusic, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicRequest) (
+
+		// onUsersGetUsers 处理 users.getUsers：支持 self 和已知 user peer（含 777000 官方账号）。
+		any, error) {
+		return r.onUsersGetSavedMusic(ctx, layerRequest)
+	})
+	registerRPC[*tg.UsersGetSavedMusicByIDRequest](d, tlprofile.SemanticMethodUsersGetSavedMusicByID, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicByIDRequest) (any, error) {
+		return r.onUsersGetSavedMusicByID(ctx, layerRequest)
+	})
 }
 
-// onUsersGetUsers 处理 users.getUsers：支持 self 和已知 user peer（含 777000 官方账号）。
 func (r *Router) onUsersGetUsers(ctx context.Context, ids []tg.InputUserClass) ([]tg.UserClass, error) {
 	currentUserID, authorized, err := r.currentUserID(ctx)
 	if err != nil {

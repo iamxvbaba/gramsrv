@@ -8,6 +8,7 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 var (
@@ -36,8 +37,7 @@ const (
 )
 
 type outboundLayerBinding struct {
-	profile       tg.LayerProfile
-	typ           *tg.LayerTypeRef
+	profile       tlprofile.Profile
 	wireInvariant bool
 	kind          outboundLayerBindingKind
 	// epoch is required for proactive updates. Zero is accepted only for older
@@ -52,26 +52,26 @@ type preparedLayerUpdates struct {
 }
 
 // layerUpdatesFanout is one immutable canonical Updates snapshot plus a
-// request-scoped cache of exact prepared bytes. FreezeLayer and
-// PrepareFrozenLayer are the same generated TypeRef codec used by RPC results
+// request-scoped cache of exact prepared bytes. FreezeObject and
+// FrozenObject.Prepare use the same sparse TypeRef execution plans as RPC results
 // and differences; this type adds only fan-out singleflight and ownership.
 type layerUpdatesFanout struct {
-	frozen tg.LayerFrozen[tg.UpdatesClass]
+	frozen *tlprofile.FrozenObject
 	size   int
 
 	mu       sync.Mutex
-	prepared map[tg.LayerProfile]*preparedLayerUpdates
+	prepared map[tlprofile.Profile]*preparedLayerUpdates
 }
 
 func newLayerUpdatesFanout(value tg.UpdatesClass) (*layerUpdatesFanout, error) {
-	frozen, err := tg.FreezeLayer(tg.LayerClassUpdatesType(), value)
+	frozen, err := tlprofile.FreezeObject(value)
 	if err != nil {
 		return nil, fmt.Errorf("freeze exact layer updates: %w", err)
 	}
 	return &layerUpdatesFanout{
 		frozen:   frozen,
 		size:     frozen.CanonicalSize(),
-		prepared: make(map[tg.LayerProfile]*preparedLayerUpdates),
+		prepared: make(map[tlprofile.Profile]*preparedLayerUpdates),
 	}, nil
 }
 
@@ -107,7 +107,7 @@ func (u *layerUpdatesFanout) prepareForConn(ctx context.Context, c *Conn) (*enco
 	return &encoded, nil
 }
 
-func (u *layerUpdatesFanout) prepare(ctx context.Context, profile tg.LayerProfile) (*encodedOutboundMessage, error) {
+func (u *layerUpdatesFanout) prepare(ctx context.Context, profile tlprofile.Profile) (*encodedOutboundMessage, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -149,7 +149,7 @@ func (u *layerUpdatesFanout) prepare(ctx context.Context, profile tg.LayerProfil
 	return entry.encoded, entry.err
 }
 
-func (u *layerUpdatesFanout) discardPrepared(profile tg.LayerProfile, encoded *encodedOutboundMessage) {
+func (u *layerUpdatesFanout) discardPrepared(profile tlprofile.Profile, encoded *encodedOutboundMessage) {
 	if u == nil || encoded == nil {
 		return
 	}
@@ -172,18 +172,13 @@ func (u *layerUpdatesFanout) discardPrepared(profile tg.LayerProfile, encoded *e
 
 func prepareFrozenLayerUpdatesContext(
 	ctx context.Context,
-	profile tg.LayerProfile,
-	frozen tg.LayerFrozen[tg.UpdatesClass],
+	profile tlprofile.Profile,
+	frozen *tlprofile.FrozenObject,
 ) (*encodedOutboundMessage, error) {
 	var encoded *encodedOutboundMessage
 	err := withOutboundEncodeSlot(ctx, nil, func() error {
-		prepared, err := tg.PrepareFrozenLayer(profile, frozen)
-		if err != nil {
-			return err
-		}
 		var body bin.Buffer
-		typ := tg.LayerClassUpdatesType()
-		if err := prepared.Encode(profile, typ, &body); err != nil {
+		if err := frozen.Encode(profile, &body); err != nil {
 			return err
 		}
 		id, err := body.PeekID()
@@ -192,7 +187,7 @@ func prepareFrozenLayerUpdatesContext(
 		}
 		encoded = &encodedOutboundMessage{
 			body: body.Copy(), typeID: id,
-			layer: &outboundLayerBinding{profile: profile, typ: prepared.TypeRef()},
+			layer: &outboundLayerBinding{profile: profile},
 		}
 		return nil
 	})
@@ -205,9 +200,6 @@ func prepareFrozenLayerUpdatesContext(
 func validateOutboundLayerBinding(c *Conn, encoded *encodedOutboundMessage) error {
 	if encoded == nil || encoded.layer == nil {
 		return nil
-	}
-	if encoded.layer.typ == nil {
-		return errors.New("outbound exact layer TypeRef is nil")
 	}
 	if encoded.layer.wireInvariant || encoded.layer.kind == outboundLayerBindingRequest {
 		return nil

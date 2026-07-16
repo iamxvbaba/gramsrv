@@ -64,12 +64,8 @@ func TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dispatch get dialogs: %v", err)
 		}
-		box, ok := enc.(*tg.MessagesDialogsBox)
-		if !ok {
-			t.Fatalf("dialogs response = %T, want box", enc)
-		}
 		ids := map[int64]struct{}{}
-		switch d := box.Dialogs.(type) {
+		switch d := enc.(type) {
 		case *tg.MessagesDialogs:
 			for _, ch := range d.Chats {
 				if c, ok := ch.(*tg.Channel); ok {
@@ -83,7 +79,7 @@ func TestChannelsDeleteChannelCascadesMonoforumForbiddenRPC(t *testing.T) {
 				}
 			}
 		default:
-			t.Fatalf("dialogs = %T, want messages.dialogs(Slice)", box.Dialogs)
+			t.Fatalf("dialogs = %T, want messages.dialogs(Slice)", enc)
 		}
 		return ids
 	}

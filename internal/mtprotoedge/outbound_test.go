@@ -16,6 +16,7 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"github.com/iamxvbaba/td/transport"
 )
 
@@ -545,7 +546,7 @@ func TestOutboundActorSerializesConcurrentSends(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	sendEncrypted(t, conn, cipher, auth, clientMsgID.New(proto.MessageFromClient), &mt.PingRequest{PingID: 1})
 	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
-	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tg.LayerProfileCanonical)
+	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tlprofile.ProfileCanonical)
 	srv.Conns().SetReceivesUpdates(auth.SessionID, true)
 
 	const sends = 64
@@ -1035,7 +1036,7 @@ func TestOutboundResendAndAckState(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	sendEncrypted(t, conn, cipher, auth, clientMsgID.New(proto.MessageFromClient), &mt.PingRequest{PingID: 1})
 	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
-	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tg.LayerProfileCanonical)
+	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tlprofile.ProfileCanonical)
 	srv.Conns().SetReceivesUpdates(auth.SessionID, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

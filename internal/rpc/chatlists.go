@@ -6,21 +6,49 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
-func (r *Router) registerChatlists(d *tg.ServerDispatcher) {
-	d.OnChatlistsExportChatlistInvite(r.onChatlistsExportChatlistInvite)
-	d.OnChatlistsDeleteExportedInvite(r.onChatlistsDeleteExportedInvite)
-	d.OnChatlistsEditExportedInvite(r.onChatlistsEditExportedInvite)
-	d.OnChatlistsGetExportedInvites(r.onChatlistsGetExportedInvites)
-	d.OnChatlistsCheckChatlistInvite(r.onChatlistsCheckChatlistInvite)
-	d.OnChatlistsJoinChatlistInvite(r.onChatlistsJoinChatlistInvite)
-	d.OnChatlistsGetChatlistUpdates(r.onChatlistsGetChatlistUpdates)
-	d.OnChatlistsJoinChatlistUpdates(r.onChatlistsJoinChatlistUpdates)
-	d.OnChatlistsHideChatlistUpdates(r.onChatlistsHideChatlistUpdates)
-	d.OnChatlistsGetLeaveChatlistSuggestions(r.onChatlistsGetLeaveChatlistSuggestions)
-	d.OnChatlistsLeaveChatlist(r.onChatlistsLeaveChatlist)
+func (r *Router) registerChatlists(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.ChatlistsExportChatlistInviteRequest](d, tlprofile.SemanticMethodChatlistsExportChatlistInvite, func(ctx context.Context, layerRequest *tg.ChatlistsExportChatlistInviteRequest) (any, error) {
+		return r.onChatlistsExportChatlistInvite(ctx, layerRequest)
+	})
+	registerRPC[*tg.ChatlistsDeleteExportedInviteRequest](d, tlprofile.SemanticMethodChatlistsDeleteExportedInvite, func(ctx context.Context, layerRequest *tg.ChatlistsDeleteExportedInviteRequest) (any, error) {
+		return r.onChatlistsDeleteExportedInvite(ctx, layerRequest)
+	})
+	registerRPC[*tg.ChatlistsEditExportedInviteRequest](d, tlprofile.SemanticMethodChatlistsEditExportedInvite, func(ctx context.Context, layerRequest *tg.ChatlistsEditExportedInviteRequest) (any, error) {
+		return r.onChatlistsEditExportedInvite(ctx, layerRequest)
+	})
+	registerRPC[*tg.ChatlistsGetExportedInvitesRequest](d, tlprofile.SemanticMethodChatlistsGetExportedInvites, func(ctx context.Context, layerRequest *tg.ChatlistsGetExportedInvitesRequest) (any, error) {
+		return r.onChatlistsGetExportedInvites(ctx, layerRequest.
+			Chatlist)
+	})
+	registerRPC[*tg.ChatlistsCheckChatlistInviteRequest](d, tlprofile.SemanticMethodChatlistsCheckChatlistInvite, func(ctx context.Context, layerRequest *tg.ChatlistsCheckChatlistInviteRequest) (any, error) {
+		return r.onChatlistsCheckChatlistInvite(ctx, layerRequest.
+			Slug)
+	})
+	registerRPC[*tg.ChatlistsJoinChatlistInviteRequest](d, tlprofile.SemanticMethodChatlistsJoinChatlistInvite, func(ctx context.Context, layerRequest *tg.ChatlistsJoinChatlistInviteRequest) (any, error) {
+		return r.onChatlistsJoinChatlistInvite(ctx, layerRequest)
+	})
+	registerRPC[*tg.ChatlistsGetChatlistUpdatesRequest](d, tlprofile.SemanticMethodChatlistsGetChatlistUpdates, func(ctx context.Context, layerRequest *tg.ChatlistsGetChatlistUpdatesRequest) (any, error) {
+		return r.onChatlistsGetChatlistUpdates(ctx, layerRequest.
+			Chatlist)
+	})
+	registerRPC[*tg.ChatlistsJoinChatlistUpdatesRequest](d, tlprofile.SemanticMethodChatlistsJoinChatlistUpdates, func(ctx context.Context, layerRequest *tg.ChatlistsJoinChatlistUpdatesRequest) (any, error) {
+		return r.onChatlistsJoinChatlistUpdates(ctx, layerRequest)
+	})
+	registerRPC[*tg.ChatlistsHideChatlistUpdatesRequest](d, tlprofile.SemanticMethodChatlistsHideChatlistUpdates, func(ctx context.Context, layerRequest *tg.ChatlistsHideChatlistUpdatesRequest) (any, error) {
+		return r.onChatlistsHideChatlistUpdates(ctx, layerRequest.
+			Chatlist)
+	})
+	registerRPC[*tg.ChatlistsGetLeaveChatlistSuggestionsRequest](d, tlprofile.SemanticMethodChatlistsGetLeaveChatlistSuggestions, func(ctx context.Context, layerRequest *tg.ChatlistsGetLeaveChatlistSuggestionsRequest) (any, error) {
+		return r.onChatlistsGetLeaveChatlistSuggestions(ctx, layerRequest.
+			Chatlist)
+	})
+	registerRPC[*tg.ChatlistsLeaveChatlistRequest](d, tlprofile.SemanticMethodChatlistsLeaveChatlist, func(ctx context.Context, layerRequest *tg.ChatlistsLeaveChatlistRequest) (any, error) {
+		return r.onChatlistsLeaveChatlist(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onChatlistsExportChatlistInvite(ctx context.Context, req *tg.ChatlistsExportChatlistInviteRequest) (*tg.ChatlistsExportedChatlistInvite, error) {

@@ -10,13 +10,14 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 )
 
 type androidPrivateLayerFixture struct {
 	name      string
 	privateID uint32
-	semantic  tg.LayerSemanticID
+	semantic  tlprofile.SemanticID
 	method    string
 	wire      func(*testing.T) []byte
 }
@@ -46,14 +47,14 @@ func TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary(t *testing.T) {
 			}
 
 			private := bin.Buffer{Buf: append([]byte(nil), raw...)}
-			canonical, handled, err := compatandroid.UpgradePrivateLayerRPC(tg.LayerProfileCanonical, &private, tg.LayerDecodeLimits{})
+			canonical, handled, err := compatandroid.UpgradePrivateLayerRPC(tlprofile.ProfileCanonical, &private, tlprofile.Limits{})
 			if err != nil || !handled || canonical == nil {
 				t.Fatalf("canonical upgrade = value:%v handled:%v err:%v", canonical != nil, handled, err)
 			}
 			if private.Len() != 0 {
 				t.Fatalf("canonical upgrade left %d private bytes", private.Len())
 			}
-			canonicalID, ok := tg.LayerWireID(tg.LayerProfileCanonical, fixture.semantic)
+			canonicalID, ok := tlprofile.WireID(tlprofile.ProfileCanonical, fixture.semantic)
 			if !ok {
 				t.Fatalf("canonical profile has no wire id for %s", fixture.method)
 			}
@@ -61,11 +62,11 @@ func TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary(t *testing.T) {
 				t.Fatalf("canonical upgrade id = %#x err=%v, want %#x", got, peekErr, canonicalID)
 			}
 
-			for _, profile := range []tg.LayerProfile{tg.LayerProfile227, tg.LayerProfile228} {
+			for _, profile := range []tlprofile.Profile{tlprofile.Profile227, tlprofile.Profile228} {
 				profile := profile
 				t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 					body := bin.Buffer{Buf: append([]byte(nil), raw...)}
-					admitted, err := r.AdmitLayer(profile, &body, tg.LayerDecodeLimits{})
+					admitted, err := r.AdmitLayer(profile, &body, tlprofile.Limits{})
 					if err != nil {
 						t.Fatalf("production exact admission: %v", err)
 					}
@@ -77,11 +78,11 @@ func TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary(t *testing.T) {
 					if call.Profile() != profile || call.Method() != fixture.semantic {
 						t.Fatalf("admitted call = profile:%d semantic:%#x, want profile:%d semantic:%#x", call.Profile(), call.Method(), profile, fixture.semantic)
 					}
-					category, method, ok := tg.LayerSemanticName(call.Method())
+					category, method, ok := tlprofile.SemanticName(call.Method())
 					if !ok || category != "function" || method != fixture.method {
 						t.Fatalf("admitted semantic name = (%q,%q,%v), want (function,%q,true)", category, method, ok, fixture.method)
 					}
-					wantWireID, ok := tg.LayerWireID(profile, fixture.semantic)
+					wantWireID, ok := tlprofile.WireID(profile, fixture.semantic)
 					if !ok || call.WireID() != wantWireID {
 						t.Fatalf("admitted exact id = %#x, want %#x (ok=%v)", call.WireID(), wantWireID, ok)
 					}
@@ -95,12 +96,12 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 	return []androidPrivateLayerFixture{
 		{
 			name: "messages.forwardMessages_alias", privateID: 0x41d41ade,
-			semantic: tg.LayerSemanticMethodMessagesForwardMessages, method: "messages.forwardMessages",
+			semantic: tlprofile.SemanticMethodMessagesForwardMessages, method: "messages.forwardMessages",
 			wire: func(*testing.T) []byte { return androidPrivateForwardMessagesWire() },
 		},
 		{
 			name: "channels.inviteToChannel_alias", privateID: 0x199f3a6c,
-			semantic: tg.LayerSemanticMethodChannelsInviteToChannel, method: "channels.inviteToChannel",
+			semantic: tlprofile.SemanticMethodChannelsInviteToChannel, method: "channels.inviteToChannel",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateAliasWire(t, 0x199f3a6c, &tg.ChannelsInviteToChannelRequest{
 					Channel: &tg.InputChannel{ChannelID: 41, AccessHash: 42},
@@ -110,14 +111,14 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "updates.getDifference_alias", privateID: 0x25939651,
-			semantic: tg.LayerSemanticMethodUpdatesGetDifference, method: "updates.getDifference",
+			semantic: tlprofile.SemanticMethodUpdatesGetDifference, method: "updates.getDifference",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateAliasWire(t, 0x25939651, &tg.UpdatesGetDifferenceRequest{Pts: 100, Date: 200, Qts: 3})
 			},
 		},
 		{
 			name: "messages.createChat_alias", privateID: 0x0034a818,
-			semantic: tg.LayerSemanticMethodMessagesCreateChat, method: "messages.createChat",
+			semantic: tlprofile.SemanticMethodMessagesCreateChat, method: "messages.createChat",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateAliasWire(t, 0x0034a818, &tg.MessagesCreateChatRequest{
 					Users: []tg.InputUserClass{&tg.InputUser{UserID: 51, AccessHash: 52}},
@@ -127,7 +128,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "messages.uploadMedia_transform", privateID: 0x519bc2b1,
-			semantic: tg.LayerSemanticMethodMessagesUploadMedia, method: "messages.uploadMedia",
+			semantic: tlprofile.SemanticMethodMessagesUploadMedia, method: "messages.uploadMedia",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x519bc2b1, func(body *bin.Buffer) error {
 					if err := (&tg.InputPeerSelf{}).Encode(body); err != nil {
@@ -139,7 +140,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "auth.signUp_transform", privateID: 0x80eee427,
-			semantic: tg.LayerSemanticMethodAuthSignUp, method: "auth.signUp",
+			semantic: tlprofile.SemanticMethodAuthSignUp, method: "auth.signUp",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x80eee427, func(body *bin.Buffer) error {
 					body.PutString("+15550000228")
@@ -152,7 +153,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "messages.getMessages_transform", privateID: 0x4222fa74,
-			semantic: tg.LayerSemanticMethodMessagesGetMessages, method: "messages.getMessages",
+			semantic: tlprofile.SemanticMethodMessagesGetMessages, method: "messages.getMessages",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x4222fa74, func(body *bin.Buffer) error {
 					body.PutVectorHeader(2)
@@ -164,7 +165,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "channels.getMessages_transform", privateID: 0x93d7b347,
-			semantic: tg.LayerSemanticMethodChannelsGetMessages, method: "channels.getMessages",
+			semantic: tlprofile.SemanticMethodChannelsGetMessages, method: "channels.getMessages",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x93d7b347, func(body *bin.Buffer) error {
 					if err := (&tg.InputChannel{ChannelID: 81, AccessHash: 82}).Encode(body); err != nil {
@@ -179,7 +180,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "bots.exportBotToken_transform", privateID: 0x0063b089,
-			semantic: tg.LayerSemanticMethodBotsExportBotToken, method: "bots.exportBotToken",
+			semantic: tlprofile.SemanticMethodBotsExportBotToken, method: "bots.exportBotToken",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x0063b089, func(body *bin.Buffer) error {
 					body.PutLong(91)
@@ -190,7 +191,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "account.registerDevice_transform", privateID: 0x637ea878,
-			semantic: tg.LayerSemanticMethodAccountRegisterDevice, method: "account.registerDevice",
+			semantic: tlprofile.SemanticMethodAccountRegisterDevice, method: "account.registerDevice",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x637ea878, func(body *bin.Buffer) error {
 					body.PutInt(2)
@@ -201,7 +202,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "contacts.search_transform", privateID: 0x11f812d8,
-			semantic: tg.LayerSemanticMethodContactsSearch, method: "contacts.search",
+			semantic: tlprofile.SemanticMethodContactsSearch, method: "contacts.search",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x11f812d8, func(body *bin.Buffer) error {
 					body.PutString("private-query")
@@ -212,7 +213,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "langpack.getLangPack_transform", privateID: 0x9ab5c58e,
-			semantic: tg.LayerSemanticMethodLangpackGetLangPack, method: "langpack.getLangPack",
+			semantic: tlprofile.SemanticMethodLangpackGetLangPack, method: "langpack.getLangPack",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x9ab5c58e, func(body *bin.Buffer) error {
 					body.PutString("en")
@@ -222,7 +223,7 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "langpack.getStrings_transform", privateID: 0x2e1ee318,
-			semantic: tg.LayerSemanticMethodLangpackGetStrings, method: "langpack.getStrings",
+			semantic: tlprofile.SemanticMethodLangpackGetStrings, method: "langpack.getStrings",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x2e1ee318, func(body *bin.Buffer) error {
 					body.PutString("en")
@@ -235,14 +236,14 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 		},
 		{
 			name: "langpack.getLanguages_transform", privateID: 0x800fd57d,
-			semantic: tg.LayerSemanticMethodLangpackGetLanguages, method: "langpack.getLanguages",
+			semantic: tlprofile.SemanticMethodLangpackGetLanguages, method: "langpack.getLanguages",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x800fd57d, func(*bin.Buffer) error { return nil })
 			},
 		},
 		{
 			name: "messages.editChatCreator_transform", privateID: 0x8f38cd1f,
-			semantic: tg.LayerSemanticMethodMessagesEditChatCreator, method: "messages.editChatCreator",
+			semantic: tlprofile.SemanticMethodMessagesEditChatCreator, method: "messages.editChatCreator",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateRawWire(t, 0x8f38cd1f, func(body *bin.Buffer) error {
 					if err := (&tg.InputChannel{ChannelID: 101, AccessHash: 102}).Encode(body); err != nil {

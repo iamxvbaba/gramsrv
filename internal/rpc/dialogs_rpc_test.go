@@ -65,13 +65,9 @@ func TestMessagesGetDialogsReturnsNotModifiedFromFullListHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesDialogsBox)
+	got, ok := enc.(*tg.MessagesDialogsNotModified)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessagesDialogsBox", enc)
-	}
-	got, ok := box.Dialogs.(*tg.MessagesDialogsNotModified)
-	if !ok {
-		t.Fatalf("boxed response = %T, want *tg.MessagesDialogsNotModified", box.Dialogs)
+		t.Fatalf("response = %T, want *tg.MessagesDialogsNotModified", enc)
 	}
 	if got.Count != 3 || dialogs.filter.Hash != 77 {
 		t.Fatalf("not modified = %+v filter %+v, want count/hash from service", got, dialogs.filter)
@@ -100,13 +96,9 @@ func TestMessagesGetDialogsHashHitSkipsFullListLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesDialogsBox)
+	got, ok := enc.(*tg.MessagesDialogsNotModified)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessagesDialogsBox", enc)
-	}
-	got, ok := box.Dialogs.(*tg.MessagesDialogsNotModified)
-	if !ok {
-		t.Fatalf("boxed response = %T, want *tg.MessagesDialogsNotModified", box.Dialogs)
+		t.Fatalf("response = %T, want *tg.MessagesDialogsNotModified", enc)
 	}
 	if got.Count != 5 {
 		t.Fatalf("not modified count = %d, want 5", got.Count)
@@ -733,13 +725,12 @@ func TestMessagesGetDialogsIncludesCloudDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get dialogs: %v", err)
 	}
-	box, ok := got.(*tg.MessagesDialogsBox)
+	dialogs, ok := got.(*tg.MessagesDialogs)
 	if !ok {
-		t.Fatalf("response = %T, want boxed messages.dialogs", got)
+		t.Fatalf("response = %T, want *tg.MessagesDialogs", got)
 	}
-	dialogs, ok := box.Dialogs.(*tg.MessagesDialogs)
-	if !ok || len(dialogs.Dialogs) != 1 {
-		t.Fatalf("dialogs = %T %+v, want one messages.dialogs", box.Dialogs, box.Dialogs)
+	if len(dialogs.Dialogs) != 1 {
+		t.Fatalf("dialogs = %+v, want one messages.dialogs", dialogs)
 	}
 	dialog, ok := dialogs.Dialogs[0].(*tg.Dialog)
 	if !ok {
@@ -1092,13 +1083,9 @@ func TestMessagesGetDialogsTDesktopInitialPageMergesPinnedHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch get dialogs: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesDialogsBox)
+	out, ok := enc.(*tg.MessagesDialogs)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessagesDialogsBox", enc)
-	}
-	out, ok := box.Dialogs.(*tg.MessagesDialogs)
-	if !ok {
-		t.Fatalf("dialogs response = %T, want *tg.MessagesDialogs", box.Dialogs)
+		t.Fatalf("response = %T, want *tg.MessagesDialogs", enc)
 	}
 	if dialogs.getDialogsCalls != 2 || len(dialogs.filters) != 2 {
 		t.Fatalf("GetDialogs calls = %d filters %+v, want normal + pinned", dialogs.getDialogsCalls, dialogs.filters)
@@ -1186,8 +1173,7 @@ func TestMessagesGetDialogsNonTDesktopKeepsExcludePinnedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch get dialogs: %v", err)
 	}
-	box := enc.(*tg.MessagesDialogsBox)
-	out := box.Dialogs.(*tg.MessagesDialogs)
+	out := enc.(*tg.MessagesDialogs)
 	if dialogs.getDialogsCalls != 1 {
 		t.Fatalf("GetDialogs calls = %d, want no pinned compatibility load", dialogs.getDialogsCalls)
 	}

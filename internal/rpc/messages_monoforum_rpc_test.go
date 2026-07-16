@@ -73,13 +73,9 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getHistory(monoforum): %v", err)
 	}
-	mainBox, ok := mainEnc.(*tg.MessagesMessagesBox)
+	mainHistory, ok := mainEnc.(*tg.MessagesChannelMessages)
 	if !ok {
-		t.Fatalf("getHistory(monoforum) = %T, want MessagesMessagesBox", mainEnc)
-	}
-	mainHistory, ok := mainBox.Messages.(*tg.MessagesChannelMessages)
-	if !ok {
-		t.Fatalf("getHistory(monoforum) boxed = %T, want MessagesChannelMessages", mainBox.Messages)
+		t.Fatalf("getHistory(monoforum) = %T, want *tg.MessagesChannelMessages", mainEnc)
 	}
 	if len(mainHistory.Messages) != 1 {
 		t.Fatalf("main monoforum history = %d msgs, want only the creation service", len(mainHistory.Messages))

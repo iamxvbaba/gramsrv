@@ -14,6 +14,7 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	appfiles "telesrv/internal/app/files"
 	"telesrv/internal/domain"
 	"telesrv/internal/postresponse"
@@ -33,7 +34,7 @@ func TestLayerAdmissionAndroidPrivateOverlayUsesExactProfile(t *testing.T) {
 	body.PutVectorHeader(0)
 	body.PutID(0x7f3b18ea) // inputPeerEmpty
 
-	admitted, err := r.AdmitLayer(tg.LayerProfile227, &body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitLayer(tlprofile.Profile227, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,10 +42,10 @@ func TestLayerAdmissionAndroidPrivateOverlayUsesExactProfile(t *testing.T) {
 		t.Fatalf("private request left %d bytes", body.Len())
 	}
 	call := admitted.Call()
-	if call.Profile() != tg.LayerProfile227 || call.Method() != tg.LayerSemanticMethodMessagesForwardMessages {
+	if call.Profile() != tlprofile.Profile227 || call.Method() != tlprofile.SemanticMethodMessagesForwardMessages {
 		t.Fatalf("private admission = profile:%d method:%#x", call.Profile(), call.Method())
 	}
-	if want, ok := tg.LayerWireID(tg.LayerProfile227, call.Method()); !ok || call.WireID() != want {
+	if want, ok := tlprofile.WireID(tlprofile.Profile227, call.Method()); !ok || call.WireID() != want {
 		t.Fatalf("private admission wire id = %#x, want %#x (ok=%v)", call.WireID(), want, ok)
 	}
 }
@@ -52,12 +53,12 @@ func TestLayerAdmissionAndroidPrivateOverlayUsesExactProfile(t *testing.T) {
 func TestLayerAdmissionOfficialProfileOwnsOverlappingAndroidID(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	request := &tg.ContactsSearchRequest{Q: "exact", Limit: 20}
-	body := encodeExactLayerRPC(t, tg.LayerProfile225, request)
-	admitted, err := r.AdmitLayer(tg.LayerProfile225, &body, tg.LayerDecodeLimits{})
+	body := encodeExactLayerRPC(t, tlprofile.Profile225, request)
+	admitted, err := r.AdmitLayer(tlprofile.Profile225, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body.Len() != 0 || admitted.Call().Method() != tg.LayerSemanticMethodContactsSearch {
+	if body.Len() != 0 || admitted.Call().Method() != tlprofile.SemanticMethodContactsSearch {
 		t.Fatalf("official overlap = remaining:%d method:%#x", body.Len(), admitted.Call().Method())
 	}
 }
@@ -66,7 +67,7 @@ func TestLayerAdmissionAndroidOverlayFailureDoesNotConsumeInput(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	bounded := bin.Buffer{Buf: androidPrivateForwardMessagesWire()}
 	boundedOriginal := bounded.Copy()
-	if _, err := r.AdmitLayer(tg.LayerProfile227, &bounded, tg.LayerDecodeLimits{MaxWireBytes: len(boundedOriginal) - 1}); err == nil {
+	if _, err := r.AdmitLayer(tlprofile.Profile227, &bounded, tlprofile.Limits{MaxWireBytes: len(boundedOriginal) - 1}); err == nil {
 		t.Fatal("oversized Android-private request was admitted")
 	}
 	if !bytes.Equal(bounded.Raw(), boundedOriginal) {
@@ -76,7 +77,7 @@ func TestLayerAdmissionAndroidOverlayFailureDoesNotConsumeInput(t *testing.T) {
 	malformed := bin.Buffer{}
 	malformed.PutID(0x41d41ade)
 	original := malformed.Copy()
-	if _, err := r.AdmitLayer(tg.LayerProfile227, &malformed, tg.LayerDecodeLimits{}); err == nil {
+	if _, err := r.AdmitLayer(tlprofile.Profile227, &malformed, tlprofile.Limits{}); err == nil {
 		t.Fatal("malformed Android-private request was admitted")
 	}
 	if string(malformed.Raw()) != string(original) {
@@ -86,7 +87,7 @@ func TestLayerAdmissionAndroidOverlayFailureDoesNotConsumeInput(t *testing.T) {
 	unknown := bin.Buffer{}
 	unknown.PutID(0xdeadbeef)
 	original = unknown.Copy()
-	if _, err := r.AdmitLayer(tg.LayerProfile227, &unknown, tg.LayerDecodeLimits{}); !errors.Is(err, tg.ErrLayerUnknownRPCMethod) {
+	if _, err := r.AdmitLayer(tlprofile.Profile227, &unknown, tlprofile.Limits{}); !errors.Is(err, tlprofile.ErrUnknownRPCMethod) {
 		t.Fatalf("official unknown error = %v", err)
 	}
 	if string(unknown.Raw()) != string(original) {
@@ -154,12 +155,12 @@ func TestLayerAdmissionAndroidPrivateInnermostAcrossWrappers(t *testing.T) {
 	replaceTerminalRPC(t, &initWire, private)
 	var unprofiledInit bin.Buffer
 	unprofiledInit.PutID(tg.InvokeWithLayerRequestTypeID)
-	unprofiledInit.PutInt(int(tg.LayerProfile227))
+	unprofiledInit.PutInt(int(tlprofile.Profile227))
 	unprofiledInit.Put(initWire.Raw())
 
 	var unprofiledBare bin.Buffer
 	unprofiledBare.PutID(tg.InvokeWithLayerRequestTypeID)
-	unprofiledBare.PutInt(int(tg.LayerProfile227))
+	unprofiledBare.PutInt(int(tlprofile.Profile227))
 	unprofiledBare.Put(private)
 
 	tests := []struct {
@@ -179,18 +180,18 @@ func TestLayerAdmissionAndroidPrivateInnermostAcrossWrappers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := bin.Buffer{Buf: append([]byte(nil), tc.body...)}
 			var (
-				admitted tg.LayerRequest
+				admitted tlprofile.Admission
 				err      error
 			)
 			if tc.unprofiled {
-				admitted, err = r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+				admitted, err = r.AdmitUnprofiled(&body, tlprofile.Limits{})
 			} else {
-				admitted, err = r.AdmitLayer(tg.LayerProfile227, &body, tg.LayerDecodeLimits{})
+				admitted, err = r.AdmitLayer(tlprofile.Profile227, &body, tlprofile.Limits{})
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if body.Len() != 0 || admitted.WrapperCount() != tc.wrappers || admitted.Call().Method() != tg.LayerSemanticMethodMessagesForwardMessages {
+			if body.Len() != 0 || admitted.WrapperCount() != tc.wrappers || admitted.Call().Method() != tlprofile.SemanticMethodMessagesForwardMessages {
 				t.Fatalf("admission = remaining:%d wrappers:%d method:%#x", body.Len(), admitted.WrapperCount(), admitted.Call().Method())
 			}
 		})
@@ -210,7 +211,7 @@ func TestLayerAdmissionAndroidPrivateFieldPolicyBeforeTypedMaterialization(t *te
 	// DrKLO's private createChat constructor is body-identical to canonical.
 	binary.LittleEndian.PutUint32(body.Buf[:4], 0x0034a818)
 	original := body.Copy()
-	if _, err := r.AdmitLayer(tg.LayerProfile227, &body, tg.LayerDecodeLimits{MaxVectorElements: 8 << 10}); !tgerr.Is(err, "LIMIT_INVALID") {
+	if _, err := r.AdmitLayer(tlprofile.Profile227, &body, tlprofile.Limits{MaxVectorElements: 8 << 10}); !tgerr.Is(err, "LIMIT_INVALID") {
 		t.Fatalf("private createChat admission err = %v, want LIMIT_INVALID", err)
 	}
 	if !bytes.Equal(body.Raw(), original) {
@@ -219,7 +220,7 @@ func TestLayerAdmissionAndroidPrivateFieldPolicyBeforeTypedMaterialization(t *te
 }
 
 func TestLayerDispatchExactProfilesShareOneHandler(t *testing.T) {
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 			request := &tg.InvokeWithLayerRequest{
@@ -239,7 +240,7 @@ func TestLayerDispatchExactProfilesShareOneHandler(t *testing.T) {
 			if err := request.Encode(&body); err != nil {
 				t.Fatal(err)
 			}
-			admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+			admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,23 +258,19 @@ func TestLayerDispatchExactProfilesShareOneHandler(t *testing.T) {
 			if err := result.Encode(&exact); err != nil {
 				t.Fatal(err)
 			}
-			decoded, err := tg.DecodeLayer(profile, tg.LayerConstructorConfigType(), &exact)
+			decodedObject, err := tlprofile.DecodeObject(profile, &exact, tlprofile.Limits{})
 			if err != nil {
 				t.Fatal(err)
+			}
+			decoded, ok := decodedObject.(*tg.Config)
+			if !ok {
+				t.Fatalf("decoded config type = %T", decodedObject)
 			}
 			if exact.Len() != 0 || decoded.ThisDC != 2 {
 				t.Fatalf("decoded config = dc:%d remaining:%d", decoded.ThisDC, exact.Len())
 			}
-			frozen, err := result.Freeze()
-			if err != nil {
-				t.Fatal(err)
-			}
-			prepared, err := admitted.Call().PrepareFrozenResult(frozen)
-			if err != nil {
-				t.Fatal(err)
-			}
 			var replay bin.Buffer
-			if err := prepared.Encode(admitted.Call(), &replay); err != nil {
+			if err := result.Encode(&replay); err != nil {
 				t.Fatal(err)
 			}
 			if string(replay.Raw()) != string(tgBufferBytes(t, result)) {
@@ -308,7 +305,7 @@ func TestLayerDispatchUnprofiledInvariantDoesNotPublishRepresentativeLayer(t *te
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,11 +336,11 @@ func TestLayerDispatchUnprofiledInvariantDoesNotPublishRepresentativeLayer(t *te
 	if err := (&tg.InvokeWithLayerRequest{Layer: 227, Query: request}).Encode(&profiledBody); err != nil {
 		t.Fatal(err)
 	}
-	profiled, err := r.AdmitUnprofiled(&profiledBody, tg.LayerDecodeLimits{})
+	profiled, err := r.AdmitUnprofiled(&profiledBody, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile, ok := profiled.ProfileEvidence(); !ok || profile != tg.LayerProfile227 {
+	if profile, ok := profiled.ProfileEvidence(); !ok || profile != tlprofile.Profile227 {
 		t.Fatalf("profiled bind evidence = (%d,%v), want layer 227", profile, ok)
 	}
 	freezeAndPublishLayer(t, r, rawAuthKeyID, sessionID, 100, 1, 227)
@@ -376,14 +373,14 @@ func TestLayerDispatchInheritedDefaultIsEffectiveWithoutBecomingExplicitEvidence
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitDefaultLayer(tg.LayerProfile225, &body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitDefaultLayer(tlprofile.Profile225, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile, ok := admitted.EffectiveProfile(); !ok || profile != tg.LayerProfile225 {
+	if profile, ok := admitted.EffectiveProfile(); !ok || profile != tlprofile.Profile225 {
 		t.Fatalf("effective profile = (%d,%v), want (225,true)", profile, ok)
 	}
-	if profile, ok := admitted.ProfileEvidence(); ok || profile != tg.LayerProfile(0) {
+	if profile, ok := admitted.ProfileEvidence(); ok || profile != tlprofile.Profile(0) {
 		t.Fatalf("explicit evidence = (%d,%v), want (0,false)", profile, ok)
 	}
 	result, _, err := r.DispatchAdmitted(WithLayer(context.Background(), 227), rawAuthKeyID, sessionID, 0, 0, admitted)
@@ -419,8 +416,8 @@ func TestLayerDispatchProfiledBareIgnoresStaleMetadataLayer(t *testing.T) {
 		ExpiresAt:        3,
 		EncryptedMessage: []byte("bind"),
 	}
-	body := encodeExactLayerRPC(t, tg.LayerProfile225, request)
-	admitted, err := r.AdmitLayer(tg.LayerProfile225, &body, tg.LayerDecodeLimits{})
+	body := encodeExactLayerRPC(t, tlprofile.Profile225, request)
+	admitted, err := r.AdmitLayer(tlprofile.Profile225, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +458,7 @@ func TestLayerDispatchUnprofiledInvariantWithholdsUpdatesReadinessUntilEvidence(
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +494,7 @@ func TestLayerDispatchUnprofiledInvariantWithholdsUpdatesReadinessUntilEvidence(
 	if err := (&tg.InvokeWithLayerRequest{Layer: 227, Query: request}).Encode(&wrapped); err != nil {
 		t.Fatal(err)
 	}
-	profiled, err := r.AdmitUnprofiled(&wrapped, tg.LayerDecodeLimits{})
+	profiled, err := r.AdmitUnprofiled(&wrapped, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,14 +519,14 @@ func TestLayerAdmissionPreflightRunsBeforeLargeVectorDecode(t *testing.T) {
 		users[index] = &tg.InputUserEmpty{}
 	}
 	request := &tg.InvokeWithLayerRequest{
-		Layer: int(tg.LayerProfile225),
+		Layer: int(tlprofile.Profile225),
 		Query: &tg.UsersGetUsersRequest{ID: users},
 	}
 	var body bin.Buffer
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{}); !tgerr.Is(err, "INPUT_REQUEST_TOO_LONG") {
+	if _, err := r.AdmitUnprofiled(&body, tlprofile.Limits{}); !tgerr.Is(err, "INPUT_REQUEST_TOO_LONG") {
 		t.Fatalf("admission err = %v, want INPUT_REQUEST_TOO_LONG", err)
 	}
 }
@@ -537,62 +534,62 @@ func TestLayerAdmissionPreflightRunsBeforeLargeVectorDecode(t *testing.T) {
 func TestLayerAdmissionFieldPoliciesCoverEveryRoutableProfile(t *testing.T) {
 	type vectorCase struct {
 		name      string
-		method    tg.LayerSemanticID
+		method    tlprofile.SemanticID
 		max       int
 		errorCode string
 		request   func(int) bin.Object
 	}
 	cases := []vectorCase{
-		{"users.getUsers", tg.LayerSemanticMethodUsersGetUsers, 100, "INPUT_REQUEST_TOO_LONG", func(n int) bin.Object {
+		{"users.getUsers", tlprofile.SemanticMethodUsersGetUsers, 100, "INPUT_REQUEST_TOO_LONG", func(n int) bin.Object {
 			return &tg.UsersGetUsersRequest{ID: repeatLayerPreflightValue[tg.InputUserClass](n, &tg.InputUserEmpty{})}
 		}},
-		{"users.getRequirementsToContact", tg.LayerSemanticMethodUsersGetRequirementsToContact, maxRequirementsToContactUsers, "LIMIT_INVALID", func(n int) bin.Object {
+		{"users.getRequirementsToContact", tlprofile.SemanticMethodUsersGetRequirementsToContact, maxRequirementsToContactUsers, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.UsersGetRequirementsToContactRequest{ID: repeatLayerPreflightValue[tg.InputUserClass](n, &tg.InputUserEmpty{})}
 		}},
-		{"contacts.importContacts", tg.LayerSemanticMethodContactsImportContacts, maxContactImportBatch, "LIMIT_INVALID", func(n int) bin.Object {
+		{"contacts.importContacts", tlprofile.SemanticMethodContactsImportContacts, maxContactImportBatch, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.ContactsImportContactsRequest{Contacts: make([]tg.InputPhoneContact, n)}
 		}},
-		{"contacts.deleteContacts", tg.LayerSemanticMethodContactsDeleteContacts, maxContactDeleteBatch, "LIMIT_INVALID", func(n int) bin.Object {
+		{"contacts.deleteContacts", tlprofile.SemanticMethodContactsDeleteContacts, maxContactDeleteBatch, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.ContactsDeleteContactsRequest{ID: repeatLayerPreflightValue[tg.InputUserClass](n, &tg.InputUserEmpty{})}
 		}},
-		{"contacts.editCloseFriends", tg.LayerSemanticMethodContactsEditCloseFriends, maxCloseFriendsCount, "LIMIT_INVALID", func(n int) bin.Object {
+		{"contacts.editCloseFriends", tlprofile.SemanticMethodContactsEditCloseFriends, maxCloseFriendsCount, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.ContactsEditCloseFriendsRequest{ID: make([]int64, n)}
 		}},
-		{"contacts.setBlocked", tg.LayerSemanticMethodContactsSetBlocked, maxContactSetBlocked, "LIMIT_INVALID", func(n int) bin.Object {
+		{"contacts.setBlocked", tlprofile.SemanticMethodContactsSetBlocked, maxContactSetBlocked, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.ContactsSetBlockedRequest{ID: repeatLayerPreflightValue[tg.InputPeerClass](n, &tg.InputPeerEmpty{})}
 		}},
-		{"messages.getMessages", tg.LayerSemanticMethodMessagesGetMessages, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.getMessages", tlprofile.SemanticMethodMessagesGetMessages, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesGetMessagesRequest{ID: repeatLayerPreflightValue[tg.InputMessageClass](n, &tg.InputMessageID{})}
 		}},
-		{"messages.getChats", tg.LayerSemanticMethodMessagesGetChats, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.getChats", tlprofile.SemanticMethodMessagesGetChats, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesGetChatsRequest{ID: make([]int64, n)}
 		}},
-		{"messages.getPeerDialogs", tg.LayerSemanticMethodMessagesGetPeerDialogs, maxDialogInputPeers, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.getPeerDialogs", tlprofile.SemanticMethodMessagesGetPeerDialogs, maxDialogInputPeers, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesGetPeerDialogsRequest{Peers: repeatLayerPreflightValue[tg.InputDialogPeerClass](n, &tg.InputDialogPeer{Peer: &tg.InputPeerEmpty{}})}
 		}},
-		{"messages.readMessageContents", tg.LayerSemanticMethodMessagesReadMessageContents, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.readMessageContents", tlprofile.SemanticMethodMessagesReadMessageContents, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesReadMessageContentsRequest{ID: make([]int, n)}
 		}},
-		{"messages.getCustomEmojiDocuments", tg.LayerSemanticMethodMessagesGetCustomEmojiDocuments, maxEmojiDocuments, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.getCustomEmojiDocuments", tlprofile.SemanticMethodMessagesGetCustomEmojiDocuments, maxEmojiDocuments, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesGetCustomEmojiDocumentsRequest{DocumentID: make([]int64, n)}
 		}},
-		{"messages.deleteMessages", tg.LayerSemanticMethodMessagesDeleteMessages, domain.MaxDeleteMessageIDs, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.deleteMessages", tlprofile.SemanticMethodMessagesDeleteMessages, domain.MaxDeleteMessageIDs, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesDeleteMessagesRequest{ID: make([]int, n)}
 		}},
-		{"messages.createChat", tg.LayerSemanticMethodMessagesCreateChat, 200, "LIMIT_INVALID", func(n int) bin.Object {
+		{"messages.createChat", tlprofile.SemanticMethodMessagesCreateChat, 200, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.MessagesCreateChatRequest{Users: repeatLayerPreflightValue[tg.InputUserClass](n, &tg.InputUserEmpty{}), Title: "layer-policy"}
 		}},
-		{"channels.getChannels", tg.LayerSemanticMethodChannelsGetChannels, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
+		{"channels.getChannels", tlprofile.SemanticMethodChannelsGetChannels, maxGetMessagesIDs, "LIMIT_INVALID", func(n int) bin.Object {
 			return &tg.ChannelsGetChannelsRequest{ID: repeatLayerPreflightValue[tg.InputChannelClass](n, &tg.InputChannelEmpty{})}
 		}},
 	}
 
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
-	limits := tg.LayerDecodeLimits{MaxVectorElements: 8 << 10}
-	for profile := tg.LayerProfile225; profile <= tg.LayerProfile227; profile++ {
+	limits := tlprofile.Limits{MaxVectorElements: 8 << 10}
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile227; profile++ {
 		for _, tc := range cases {
 			tc := tc
-			if _, available := tg.LayerWireID(profile, tc.method); !available {
+			if _, available := tlprofile.WireID(profile, tc.method); !available {
 				continue
 			}
 			t.Run(fmt.Sprintf("layer_%d/%s/at_cap", profile, tc.name), func(t *testing.T) {
@@ -620,15 +617,15 @@ func TestLayerAdmissionFieldPoliciesCoverEveryRoutableProfile(t *testing.T) {
 
 func TestLayerAdmissionUploadFieldsCoverEveryProfile(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
-	for profile := tg.LayerProfile225; profile <= tg.LayerProfile227; profile++ {
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile227; profile++ {
 		t.Run(fmt.Sprintf("layer_%d/saveFilePart", profile), func(t *testing.T) {
 			atCap := encodeExactLayerRPC(t, profile, &tg.UploadSaveFilePartRequest{Bytes: make([]byte, appfiles.MaxUploadPartBytes)})
-			if _, err := r.AdmitLayer(profile, &atCap, tg.LayerDecodeLimits{}); err != nil {
+			if _, err := r.AdmitLayer(profile, &atCap, tlprofile.Limits{}); err != nil {
 				t.Fatal(err)
 			}
 			over := encodeExactLayerRPC(t, profile, &tg.UploadSaveFilePartRequest{Bytes: make([]byte, appfiles.MaxUploadPartBytes+1)})
 			original := over.Copy()
-			if _, err := r.AdmitLayer(profile, &over, tg.LayerDecodeLimits{}); !tgerr.Is(err, "FILE_PART_TOO_BIG") {
+			if _, err := r.AdmitLayer(profile, &over, tlprofile.Limits{}); !tgerr.Is(err, "FILE_PART_TOO_BIG") {
 				t.Fatalf("oversized part err = %v", err)
 			}
 			if string(over.Raw()) != string(original) {
@@ -637,13 +634,13 @@ func TestLayerAdmissionUploadFieldsCoverEveryProfile(t *testing.T) {
 		})
 		t.Run(fmt.Sprintf("layer_%d/saveBigFilePart", profile), func(t *testing.T) {
 			atCap := encodeExactLayerRPC(t, profile, &tg.UploadSaveBigFilePartRequest{FileTotalParts: appfiles.MaxUploadParts, Bytes: make([]byte, appfiles.MaxUploadPartBytes)})
-			if _, err := r.AdmitLayer(profile, &atCap, tg.LayerDecodeLimits{}); err != nil {
+			if _, err := r.AdmitLayer(profile, &atCap, tlprofile.Limits{}); err != nil {
 				t.Fatal(err)
 			}
 			for _, totalParts := range []int{0, -1, appfiles.MaxUploadParts + 1} {
 				body := encodeExactLayerRPC(t, profile, &tg.UploadSaveBigFilePartRequest{FileTotalParts: totalParts})
 				original := body.Copy()
-				if _, err := r.AdmitLayer(profile, &body, tg.LayerDecodeLimits{}); !tgerr.Is(err, "FILE_PART_INVALID") {
+				if _, err := r.AdmitLayer(profile, &body, tlprofile.Limits{}); !tgerr.Is(err, "FILE_PART_INVALID") {
 					t.Fatalf("total parts %d err = %v", totalParts, err)
 				}
 				if string(body.Raw()) != string(original) {
@@ -651,7 +648,7 @@ func TestLayerAdmissionUploadFieldsCoverEveryProfile(t *testing.T) {
 				}
 			}
 			over := encodeExactLayerRPC(t, profile, &tg.UploadSaveBigFilePartRequest{FileTotalParts: 1, Bytes: make([]byte, appfiles.MaxUploadPartBytes+1)})
-			if _, err := r.AdmitLayer(profile, &over, tg.LayerDecodeLimits{}); !tgerr.Is(err, "FILE_PART_TOO_BIG") {
+			if _, err := r.AdmitLayer(profile, &over, tlprofile.Limits{}); !tgerr.Is(err, "FILE_PART_TOO_BIG") {
 				t.Fatalf("oversized big part err = %v", err)
 			}
 		})
@@ -666,14 +663,10 @@ func repeatLayerPreflightValue[T any](n int, value T) []T {
 	return result
 }
 
-func encodeExactLayerRPC(t *testing.T, profile tg.LayerProfile, request bin.Object) bin.Buffer {
+func encodeExactLayerRPC(t *testing.T, profile tlprofile.Profile, request bin.Object) bin.Buffer {
 	t.Helper()
-	outbound, err := tg.PrepareLayerOutboundCall(profile, request)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var body bin.Buffer
-	if err := outbound.Encode(&body); err != nil {
+	if err := tlprofile.EncodeObject(profile, request, &body); err != nil {
 		t.Fatal(err)
 	}
 	return body
@@ -682,7 +675,7 @@ func encodeExactLayerRPC(t *testing.T, profile tg.LayerProfile, request bin.Obje
 func TestLayerDispatchRejectsUnsupportedWrapperBeforeHandler(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	request := &tg.InvokeWithLayerRequest{
-		Layer: int(tg.LayerProfile227),
+		Layer: int(tlprofile.Profile227),
 		Query: &tg.InvokeWithTakeoutRequest{
 			TakeoutID: 1,
 			Query:     &tg.HelpGetConfigRequest{},
@@ -692,7 +685,7 @@ func TestLayerDispatchRejectsUnsupportedWrapperBeforeHandler(t *testing.T) {
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +708,7 @@ func TestPrepareAdmittedReplayRestoresReadinessOnlyAfterDelivery(t *testing.T) {
 		clock.System,
 	)
 	request := &tg.InvokeWithLayerRequest{
-		Layer: int(tg.LayerProfile225),
+		Layer: int(tlprofile.Profile225),
 		Query: &tg.InitConnectionRequest{
 			APIID: 123, DeviceModel: "Desktop", SystemVersion: "Windows", AppVersion: "test",
 			SystemLangCode: "en", LangPack: "tdesktop", LangCode: "en",
@@ -726,7 +719,7 @@ func TestPrepareAdmittedReplayRestoresReadinessOnlyAfterDelivery(t *testing.T) {
 	if err := request.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -774,7 +767,7 @@ func TestRequestBoundOnlyLayerRPCDoesNotPublishMetadataOrReadiness(t *testing.T)
 				clock.System,
 			)
 			request := &tg.InvokeWithLayerRequest{
-				Layer: int(tg.LayerProfile225),
+				Layer: int(tlprofile.Profile225),
 				Query: &tg.InitConnectionRequest{
 					APIID: 123, DeviceModel: "Stale Desktop", SystemVersion: "Windows", AppVersion: "stale",
 					SystemLangCode: "en", LangPack: "tdesktop", LangCode: "en",
@@ -785,7 +778,7 @@ func TestRequestBoundOnlyLayerRPCDoesNotPublishMetadataOrReadiness(t *testing.T)
 			if err := request.Encode(&body); err != nil {
 				t.Fatal(err)
 			}
-			admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+			admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -830,7 +823,7 @@ func TestPrepareAdmittedReplayDoesNotRollBackNewerExplicitLayerOrClientInfo(t *t
 		clock.System,
 	)
 	oldRequest := &tg.InvokeWithLayerRequest{
-		Layer: int(tg.LayerProfile225),
+		Layer: int(tlprofile.Profile225),
 		Query: &tg.InitConnectionRequest{
 			APIID: 123, DeviceModel: "Old Desktop", SystemVersion: "Windows 10", AppVersion: "old",
 			SystemLangCode: "en", LangPack: "tdesktop", LangCode: "en",
@@ -841,7 +834,7 @@ func TestPrepareAdmittedReplayDoesNotRollBackNewerExplicitLayerOrClientInfo(t *t
 	if err := oldRequest.Encode(&body); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +879,7 @@ func TestDelayedExplicitDispatchCannotRollBackAdmissionTimeLayerOrInitMetadata(t
 		zaptest.NewLogger(t),
 		clock.System,
 	)
-	admit := func(layer int, device, version string) tg.LayerRequest {
+	admit := func(layer int, device, version string) tlprofile.Admission {
 		t.Helper()
 		request := &tg.InvokeWithLayerRequest{
 			Layer: layer,
@@ -900,7 +893,7 @@ func TestDelayedExplicitDispatchCannotRollBackAdmissionTimeLayerOrInitMetadata(t
 		if err := request.Encode(&body); err != nil {
 			t.Fatal(err)
 		}
-		admitted, err := r.AdmitUnprofiled(&body, tg.LayerDecodeLimits{})
+		admitted, err := r.AdmitUnprofiled(&body, tlprofile.Limits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -940,7 +933,7 @@ func TestSameLayerNakedInitConnectionUsesMessageIDWatermark(t *testing.T) {
 		zaptest.NewLogger(t),
 		clock.System,
 	)
-	admit := func(device, version string) tg.LayerRequest {
+	admit := func(device, version string) tlprofile.Admission {
 		t.Helper()
 		request := &tg.InitConnectionRequest{
 			APIID: 123, DeviceModel: device, SystemVersion: "Windows", AppVersion: version,
@@ -951,7 +944,7 @@ func TestSameLayerNakedInitConnectionUsesMessageIDWatermark(t *testing.T) {
 		if err := request.Encode(&body); err != nil {
 			t.Fatal(err)
 		}
-		admitted, err := r.AdmitDefaultLayer(tg.LayerProfile227, &body, tg.LayerDecodeLimits{})
+		admitted, err := r.AdmitDefaultLayer(tlprofile.Profile227, &body, tlprofile.Limits{})
 		if err != nil {
 			t.Fatal(err)
 		}

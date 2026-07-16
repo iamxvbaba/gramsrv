@@ -61,10 +61,8 @@ func TestDispatchPromotesNegativeSessionCacheFromPositiveAuthCache(t *testing.T)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if box, ok := enc.(*tg.BoolBox); !ok {
-		t.Fatalf("dispatch result = %T, want *tg.BoolBox", enc)
-	} else if _, ok := box.Bool.(*tg.BoolTrue); !ok {
-		t.Fatalf("dispatch bool = %T, want BoolTrue", box.Bool)
+	if value, ok := dispatchCanonicalValue(enc).(bool); !ok || !value {
+		t.Fatalf("dispatch result = %#v (%T), want true", dispatchCanonicalValue(enc), enc)
 	}
 	gotSession := sessions.snapshot()
 	if gotSession.userID != userID || !gotSession.userResolved {
@@ -130,10 +128,8 @@ func TestDispatchRevalidatesCachedTempAuthKeyBinding(t *testing.T) {
 	}
 	if enc, err := r.Dispatch(context.Background(), tempAuthKeyID, 123, &first); err != nil {
 		t.Fatalf("first dispatch: %v", err)
-	} else if box, ok := enc.(*tg.BoolBox); !ok {
-		t.Fatalf("first dispatch result = %T, want *tg.BoolBox", enc)
-	} else if _, ok := box.Bool.(*tg.BoolTrue); !ok {
-		t.Fatalf("first dispatch bool = %T, want BoolTrue", box.Bool)
+	} else if value, ok := dispatchCanonicalValue(enc).(bool); !ok || !value {
+		t.Fatalf("first dispatch result = %#v (%T), want true", dispatchCanonicalValue(enc), enc)
 	}
 	gotSession := sessions.snapshot()
 	if gotSession.authKeyID != permAuthKeyID || gotSession.userID != 1000000001 {

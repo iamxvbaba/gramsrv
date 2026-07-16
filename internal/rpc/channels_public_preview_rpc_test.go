@@ -102,13 +102,9 @@ func TestPublicChannelPreviewRPCsAllowNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getHistory public preview: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesMessagesBox)
+	history, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
-		t.Fatalf("getHistory response = %T, want boxed messages", enc)
-	}
-	history, ok := box.Messages.(*tg.MessagesChannelMessages)
-	if !ok {
-		t.Fatalf("boxed getHistory = %T, want channel messages", box.Messages)
+		t.Fatalf("getHistory response = %T, want *tg.MessagesChannelMessages", enc)
 	}
 	foundPost := false
 	for _, item := range history.Messages {

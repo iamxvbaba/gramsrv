@@ -11,6 +11,7 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 type epochBlockingTransport struct {
@@ -65,7 +66,7 @@ func testLayerChannelUpdatesValue(expires int) tg.UpdatesClass {
 	}
 }
 
-func testConnWithLayerProfile(t *testing.T, profile tg.LayerProfile) *Conn {
+func testConnWithLayerProfile(t *testing.T, profile tlprofile.Profile) *Conn {
 	t.Helper()
 	c := &Conn{}
 	if err := c.FreezeLayerProfile(profile); err != nil {
@@ -79,7 +80,7 @@ func TestLayerUpdatesFanoutPreparesExactMixedProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("freeze updates: %v", err)
 	}
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227, tg.LayerProfile228} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227, tlprofile.Profile228} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			c := testConnWithLayerProfile(t, profile)
 			encoded, err := fanout.prepareForConn(context.Background(), c)
@@ -90,7 +91,7 @@ func TestLayerUpdatesFanoutPreparesExactMixedProfiles(t *testing.T) {
 				t.Fatalf("binding = %#v, want profile %d", encoded.layer, profile)
 			}
 			input := bin.Buffer{Buf: encoded.body}
-			decoded, err := tg.DecodeLayer(profile, tg.LayerClassUpdatesType(), &input)
+			decoded, err := tlprofile.DecodeObject(profile, &input, tlprofile.Limits{})
 			if err != nil {
 				t.Fatalf("decode profile %d: %v", profile, err)
 			}
@@ -121,7 +122,7 @@ func TestLayerUpdatesFanoutFreezesDefensivelyAndSharesPreparedProfile(t *testing
 	}
 	value.(*tg.UpdateShort).Update.(*tg.UpdateUserStatus).Status.(*tg.UserStatusOnline).Expires = 999
 
-	c := testConnWithLayerProfile(t, tg.LayerProfile225)
+	c := testConnWithLayerProfile(t, tlprofile.Profile225)
 	const workers = 16
 	prepared := make([]*encodedOutboundMessage, workers)
 	prepareErrs := make([]error, workers)
@@ -149,7 +150,7 @@ func TestLayerUpdatesFanoutFreezesDefensivelyAndSharesPreparedProfile(t *testing
 	}
 
 	input := bin.Buffer{Buf: prepared[0].body}
-	decoded, err := tg.DecodeLayer(tg.LayerProfile225, tg.LayerClassUpdatesType(), &input)
+	decoded, err := tlprofile.DecodeObject(tlprofile.Profile225, &input, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("decode frozen value: %v", err)
 	}
@@ -165,7 +166,7 @@ func TestLayerUpdatesEpochBecomesStaleWithoutRetiringProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Conn{}
-	if err := c.SeedInheritedLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.SeedInheritedLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := fanout.prepareForConn(context.Background(), c)
@@ -173,14 +174,14 @@ func TestLayerUpdatesEpochBecomesStaleWithoutRetiringProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldEpoch := encoded.layer.epoch
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateOutboundLayerBinding(c, encoded); !errors.Is(err, ErrOutboundLayerProfileStale) {
 		t.Fatalf("old push validation = %v, want ErrOutboundLayerProfileStale", err)
 	}
 	state := c.LayerProfileState()
-	if state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileExplicit || state.Epoch <= oldEpoch {
+	if state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileExplicit || state.Epoch <= oldEpoch {
 		t.Fatalf("corrected profile state = %#v, old epoch %d", state, oldEpoch)
 	}
 }
@@ -190,13 +191,13 @@ func TestRequestBoundLayerResultSurvivesConnectionCorrection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := testConnWithLayerProfile(t, tg.LayerProfile225)
-	encoded, err := fanout.prepare(context.Background(), tg.LayerProfile225)
+	c := testConnWithLayerProfile(t, tlprofile.Profile225)
+	encoded, err := fanout.prepare(context.Background(), tlprofile.Profile225)
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded.layer.kind = outboundLayerBindingRequest
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateOutboundLayerBinding(c, encoded); err != nil {
@@ -207,7 +208,7 @@ func TestRequestBoundLayerResultSurvivesConnectionCorrection(t *testing.T) {
 func TestProfileCorrectionLinearizesAfterStartedPushWrite(t *testing.T) {
 	transport := newEpochBlockingTransport()
 	c := newOutboundTestConn(t, transport, nil)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	fanout, err := newLayerUpdatesFanout(testLayerUpdatesValue(123))
@@ -228,7 +229,7 @@ func TestProfileCorrectionLinearizesAfterStartedPushWrite(t *testing.T) {
 	}
 
 	corrected := make(chan error, 1)
-	go func() { corrected <- c.FreezeLayerProfile(tg.LayerProfile227) }()
+	go func() { corrected <- c.FreezeLayerProfile(tlprofile.Profile227) }()
 	select {
 	case err := <-corrected:
 		t.Fatalf("profile correction crossed an old-epoch physical write: %v", err)
@@ -252,7 +253,7 @@ func TestProfileCorrectionLinearizesAfterStartedPushWrite(t *testing.T) {
 
 func TestStaleLayerPushIsRemovedFromResendTracking(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}}
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	fanout, err := newLayerUpdatesFanout(testLayerUpdatesValue(123))
@@ -263,7 +264,7 @@ func TestStaleLayerPushIsRemovedFromResendTracking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	frame := &outboundFrame{msgID: 100, body: encoded.body, layer: encoded.layer}
@@ -285,14 +286,14 @@ func TestOutboundLayerBindingRejectsUnknownAndMismatchedConnections(t *testing.T
 	if err != nil {
 		t.Fatalf("freeze updates: %v", err)
 	}
-	encoded, err := fanout.prepare(context.Background(), tg.LayerProfile225)
+	encoded, err := fanout.prepare(context.Background(), tlprofile.Profile225)
 	if err != nil {
 		t.Fatalf("prepare profile 225: %v", err)
 	}
 	if _, err := (&Conn{}).buildFrame(context.Background(), 0, nil, encoded); !errors.Is(err, ErrOutboundLayerProfileUnknown) {
 		t.Fatalf("unknown profile error = %v", err)
 	}
-	wrong := testConnWithLayerProfile(t, tg.LayerProfile227)
+	wrong := testConnWithLayerProfile(t, tlprofile.Profile227)
 	if _, err := wrong.buildFrame(context.Background(), 0, nil, encoded); !errors.Is(err, ErrOutboundLayerProfileMismatch) {
 		t.Fatalf("profile mismatch error = %v", err)
 	}
@@ -307,13 +308,13 @@ func TestPendingPushReservationAccountsPreparedProfilesOnce(t *testing.T) {
 	reservation.bytes.Store(100)
 	reservation.refs.Store(1)
 
-	if !reservation.reservePrepared(tg.LayerProfile225, 80) {
+	if !reservation.reservePrepared(tlprofile.Profile225, 80) {
 		t.Fatal("reserve first profile")
 	}
-	if !reservation.reservePrepared(tg.LayerProfile225, 80) {
+	if !reservation.reservePrepared(tlprofile.Profile225, 80) {
 		t.Fatal("reuse first profile reservation")
 	}
-	if !reservation.reservePrepared(tg.LayerProfile227, 120) {
+	if !reservation.reservePrepared(tlprofile.Profile227, 120) {
 		t.Fatal("reserve second profile")
 	}
 	if got := budget.snapshot(); got != 300 {

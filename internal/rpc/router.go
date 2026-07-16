@@ -16,6 +16,7 @@ import (
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/domain"
 	"telesrv/internal/observability/dbtrace"
@@ -90,7 +91,7 @@ type Config struct {
 	TempKeyResolveCacheMaxEntries int
 }
 
-// Router 把解密后的 RPC 请求按 TypeID 路由到 typed handler（tg.ServerDispatcher）。
+// Router 把解密后的 RPC 请求按 semantic method 路由到 typed handler（tlprofile.Dispatcher）。
 //
 // handler 输入输出均为 iamxvbaba/td/tg 类型，各业务域的 handler
 // 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
@@ -100,7 +101,7 @@ type Router struct {
 	log               *zap.Logger
 	clock             clock.Clock
 	deps              Deps
-	dispatcher        *tg.ServerDispatcher
+	dispatcher        *tlprofile.Dispatcher
 	clientInfoMu      sync.RWMutex
 	clientInfo        map[clientInfoSessionKey]clientSessionInfo
 	authInfo          map[[8]byte]clientSessionInfo
@@ -244,12 +245,12 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	if cfg.DC > 0 {
 		groupCallStreamDCID = cfg.DC
 	}
-	d := tg.NewServerDispatcher(r.fallback)
+	d := tlprofile.NewDispatcher()
 	if err := registerLayerRPCAdmissionFieldPreflights(d); err != nil {
 		panic(fmt.Sprintf("register exact layer RPC admission policy: %v", err))
 	}
 	r.registerAndroidLayerRPCAdapter(d)
-	d.OnLayerRPCWrappers(r.consumeLayerRPCWrappers)
+	d.OnWrappers(r.consumeLayerRPCWrappers)
 
 	r.registerHelp(d)
 	r.registerAuth(d)
@@ -276,6 +277,22 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 
 	r.dispatcher = d
 	return r
+}
+
+func registerRPC[T bin.Object](d *tlprofile.Dispatcher, method tlprofile.SemanticID, handler func(context.Context, T) (any, error)) {
+	if d == nil || handler == nil {
+		panic("rpc: register nil canonical RPC handler or dispatcher")
+	}
+	err := d.Register(method, func(ctx context.Context, object bin.Object) (any, error) {
+		request, ok := object.(T)
+		if !ok {
+			return nil, fmt.Errorf("rpc: semantic %#016x decoded unexpected canonical request %T", uint64(method), object)
+		}
+		return handler(ctx, request)
+	})
+	if err != nil {
+		panic(fmt.Sprintf("rpc: register canonical RPC %#016x: %v", uint64(method), err))
+	}
 }
 
 // Dispatch routes one RPC and preserves the historical two-value API used by
@@ -622,14 +639,14 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		// Router.Dispatch is a legacy test seam. Production uses generated exact
 		// Layer admission, whose unknown-method view invokes the same static DrKLO
 		// overlay while sharing the outer request budget.
+		profile := tlprofile.ProfileCanonical
+		if selected, ok := tlprofile.ResolveProfile(LayerFrom(ctx)); ok {
+			profile = selected
+		}
 		if id != 0 {
-			profile := tg.LayerProfileCanonical
-			if selected, ok := tg.ResolveLayerProfile(LayerFrom(ctx)); ok {
-				profile = selected
-			}
-			_, official := tg.LayerSemanticForWireID(profile, id)
+			_, official := tlprofile.SemanticForWireID(profile, id)
 			if !official {
-				if up, ok, err := compatandroid.UpgradePrivateLayerRPC(profile, b, tg.LayerDecodeLimits{}); ok {
+				if up, ok, err := compatandroid.UpgradePrivateLayerRPC(profile, b, tlprofile.Limits{}); ok {
 					if err != nil {
 						return nil, inputRequestInvalidErr()
 					}
@@ -648,13 +665,16 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if meta != nil {
 			meta.method = tlTypeName(id)
 		}
-		semantic, knownRequest := tg.LayerSemanticForWireID(tg.LayerProfileCanonical, id)
+		semantic, knownRequest := tlprofile.SemanticForWireID(tlprofile.ProfileCanonical, id)
 		if knownRequest {
-			category, _, named := tg.LayerSemanticName(semantic)
+			category, _, named := tlprofile.SemanticName(semantic)
 			knownRequest = named && category == "function"
 		}
 		if !knownRequest {
 			// Unknown methods remain opaque and go to the compatibility trace.
+			return r.fallback(ctx, b)
+		}
+		if !r.dispatcher.Has(semantic) {
 			return r.fallback(ctx, b)
 		}
 		if r.deps.Auth != nil {
@@ -680,7 +700,17 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		r.maybeMarkSessionReceivesUpdates(ctx)
 		dbBefore := dbtrace.SnapshotFromContext(ctx)
 		start := time.Now()
-		enc, err := r.dispatcher.Handle(ctx, b)
+		admission, err := r.dispatcher.Admit(profile, b, tlprofile.Limits{})
+		if err != nil {
+			return nil, err
+		}
+		exact, err := r.dispatcher.Dispatch(ctx, admission)
+		var enc bin.Encoder = exact
+		if err == nil && exact != nil {
+			if canonical, ok := exact.CanonicalValue().(bin.Encoder); ok {
+				enc = canonical
+			}
+		}
 		dur := time.Since(start)
 		dbDelta := dbtrace.SnapshotFromContext(ctx).Sub(dbBefore)
 		fields := append([]zap.Field{
@@ -1026,7 +1056,7 @@ func (r *Router) FreezeNegotiatedSessionLayerAt(authKeyID [8]byte, sessionID int
 	if r == nil || authKeyID == ([8]byte{}) || sessionID == 0 {
 		return false, errors.New("invalid exact session profile identity")
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok || int(profile) != layer {
 		return false, fmt.Errorf("unsupported exact session profile %d", layer)
 	}

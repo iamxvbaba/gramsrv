@@ -347,13 +347,12 @@ func TestChannelDialogCarriesChannelPts(t *testing.T) {
 	}
 
 	got := dispatch(&tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 20})
-	box, ok := got.(*tg.MessagesDialogsBox)
+	dialogs, ok := got.(*tg.MessagesDialogs)
 	if !ok {
-		t.Fatalf("dialogs response = %T, want box", got)
+		t.Fatalf("dialogs response = %T, want *tg.MessagesDialogs", got)
 	}
-	dialogs, ok := box.Dialogs.(*tg.MessagesDialogs)
-	if !ok || len(dialogs.Dialogs) != 1 {
-		t.Fatalf("dialogs = %T %+v, want one channel dialog", box.Dialogs, box.Dialogs)
+	if len(dialogs.Dialogs) != 1 {
+		t.Fatalf("dialogs = %+v, want one channel dialog", dialogs)
 	}
 	dialog, ok := dialogs.Dialogs[0].(*tg.Dialog)
 	if !ok {

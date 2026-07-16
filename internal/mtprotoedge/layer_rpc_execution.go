@@ -7,10 +7,10 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/postresponse"
 )
@@ -20,8 +20,8 @@ import (
 // the inbound worker. The only Encode call happens later under outbound encode
 // and retained-byte admission.
 type layerRPCResultEncoder struct {
-	call   tg.LayerCall
-	result tg.LayerRPCResult
+	call   tlprofile.Call
+	result tlprofile.Result
 }
 
 func (e *layerRPCResultEncoder) Encode(b *bin.Buffer) error {
@@ -40,7 +40,6 @@ func (e *layerRPCResultEncoder) exactLayerRPCResultBinding() outboundLayerBindin
 	}
 	return outboundLayerBinding{
 		profile:       e.call.Profile(),
-		typ:           e.call.WireResultType(),
 		wireInvariant: e.call.WireInvariant(),
 		kind:          outboundLayerBindingRequest,
 	}
@@ -55,7 +54,7 @@ type exactLayerRPCResultEncoder interface {
 // hook onto the generated result codec. The hook may still exercise the old
 // scheduling API, but it no longer has a canonical-bytes escape hatch.
 type legacyTestRPCResultEncoder struct {
-	call   tg.LayerCall
+	call   tlprofile.Call
 	result bin.Encoder
 }
 
@@ -63,7 +62,7 @@ func (e *legacyTestRPCResultEncoder) Encode(b *bin.Buffer) error {
 	if e == nil || e.result == nil {
 		return errors.New("nil legacy test RPC result")
 	}
-	return e.call.EncodeResult(e.result, b)
+	return e.result.Encode(b)
 }
 
 func (e *legacyTestRPCResultEncoder) exactLayerRPCResultBinding() outboundLayerBinding {
@@ -72,7 +71,6 @@ func (e *legacyTestRPCResultEncoder) exactLayerRPCResultBinding() outboundLayerB
 	}
 	return outboundLayerBinding{
 		profile:       e.call.Profile(),
-		typ:           e.call.WireResultType(),
 		wireInvariant: e.call.WireInvariant(),
 		kind:          outboundLayerBindingRequest,
 	}
@@ -85,7 +83,7 @@ var errLayerRPCResultIdentityMismatch = errors.New("layer RPC result does not ma
 // result capability created from this exact admission; accepting a result from
 // another request would pair the wrong result TypeRef/profile with this
 // flight/cache identity even when both methods happen to share a Go type.
-func bindAdmittedLayerRPCResult(request tg.LayerRequest, result tg.LayerRPCResult) (*layerRPCResultEncoder, error) {
+func bindAdmittedLayerRPCResult(request tlprofile.Admission, result tlprofile.Result) (*layerRPCResultEncoder, error) {
 	if result == nil {
 		return nil, nil
 	}
@@ -101,7 +99,7 @@ func (s *Server) newInboundLayerRPCTask(
 	admissionSeq uint64,
 	method string,
 	profileEvidenceFresh bool,
-	request tg.LayerRequest,
+	request tlprofile.Admission,
 	dependencies layerRPCDependencySet,
 	owner *rpcResultOwnerLease,
 ) inboundRPC {
@@ -202,7 +200,7 @@ func (s *Server) handleAdmittedLayerRPC(
 	msgID int64,
 	admissionSeq uint64,
 	method string,
-	request tg.LayerRequest,
+	request tlprofile.Admission,
 	owner *rpcResultOwnerLease,
 ) error {
 	if s.layerRPC == nil {

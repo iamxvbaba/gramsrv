@@ -8,17 +8,35 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
-func (r *Router) registerAiCompose(d *tg.ServerDispatcher) {
-	d.OnAicomposeGetTones(r.onAicomposeGetTones)
-	d.OnAicomposeCreateTone(r.onAicomposeCreateTone)
-	d.OnAicomposeUpdateTone(r.onAicomposeUpdateTone)
-	d.OnAicomposeSaveTone(r.onAicomposeSaveTone)
-	d.OnAicomposeDeleteTone(r.onAicomposeDeleteTone)
-	d.OnAicomposeGetTone(r.onAicomposeGetTone)
-	d.OnAicomposeGetToneExample(r.onAicomposeGetToneExample)
+func (r *Router) registerAiCompose(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.AicomposeGetTonesRequest](d, tlprofile.SemanticMethodAicomposeGetTones, func(ctx context.Context, layerRequest *tg.AicomposeGetTonesRequest) (any, error) {
+		return r.onAicomposeGetTones(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AicomposeCreateToneRequest](d, tlprofile.SemanticMethodAicomposeCreateTone, func(ctx context.Context, layerRequest *tg.AicomposeCreateToneRequest) (any, error) {
+		return r.onAicomposeCreateTone(ctx, layerRequest)
+	})
+	registerRPC[*tg.AicomposeUpdateToneRequest](d, tlprofile.SemanticMethodAicomposeUpdateTone, func(ctx context.Context, layerRequest *tg.AicomposeUpdateToneRequest) (any, error) {
+		return r.onAicomposeUpdateTone(ctx, layerRequest)
+	})
+	registerRPC[*tg.AicomposeSaveToneRequest](d, tlprofile.SemanticMethodAicomposeSaveTone, func(ctx context.Context, layerRequest *tg.AicomposeSaveToneRequest) (any, error) {
+		return r.onAicomposeSaveTone(ctx, layerRequest)
+	})
+	registerRPC[*tg.AicomposeDeleteToneRequest](d, tlprofile.SemanticMethodAicomposeDeleteTone, func(ctx context.Context, layerRequest *tg.AicomposeDeleteToneRequest) (any, error) {
+		return r.onAicomposeDeleteTone(ctx, layerRequest.
+			Tone)
+	})
+	registerRPC[*tg.AicomposeGetToneRequest](d, tlprofile.SemanticMethodAicomposeGetTone, func(ctx context.Context, layerRequest *tg.AicomposeGetToneRequest) (any, error) {
+		return r.onAicomposeGetTone(ctx, layerRequest.
+			Tone)
+	})
+	registerRPC[*tg.AicomposeGetToneExampleRequest](d, tlprofile.SemanticMethodAicomposeGetToneExample, func(ctx context.Context, layerRequest *tg.AicomposeGetToneExampleRequest) (any, error) {
+		return r.onAicomposeGetToneExample(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onAicomposeGetTones(ctx context.Context, hash int64) (tg.AicomposeTonesClass, error) {

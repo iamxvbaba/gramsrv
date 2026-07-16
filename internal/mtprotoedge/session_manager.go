@@ -14,6 +14,7 @@ import (
 
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 // ErrSessionNotFound 表示目标 session 当前无活跃连接。
@@ -82,7 +83,7 @@ type pendingPushReservation struct {
 	refs   atomic.Int32
 
 	mu       sync.Mutex
-	profiles map[tg.LayerProfile]struct{}
+	profiles map[tlprofile.Profile]struct{}
 }
 
 func (r *pendingPushReservation) retain() {
@@ -110,7 +111,7 @@ func (r *pendingPushReservation) release() {
 // reservePrepared accounts the profile-specific immutable body retained by the
 // semantic pending fanout. Multiple queued sessions sharing this reservation
 // and profile share both the bytes and this one budget charge.
-func (r *pendingPushReservation) reservePrepared(profile tg.LayerProfile, bytes int) bool {
+func (r *pendingPushReservation) reservePrepared(profile tlprofile.Profile, bytes int) bool {
 	if r == nil || bytes < 0 {
 		return false
 	}
@@ -123,7 +124,7 @@ func (r *pendingPushReservation) reservePrepared(profile tg.LayerProfile, bytes 
 		return false
 	}
 	if r.profiles == nil {
-		r.profiles = make(map[tg.LayerProfile]struct{})
+		r.profiles = make(map[tlprofile.Profile]struct{})
 	}
 	r.profiles[profile] = struct{}{}
 	r.bytes.Add(int64(bytes))
@@ -274,7 +275,7 @@ func (m *SessionManager) SeedInheritedLayerForBusinessAuthKey(businessAuthKeyID 
 	if m == nil || businessAuthKeyID == ([8]byte{}) {
 		return 0
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok {
 		return 0
 	}
@@ -313,7 +314,7 @@ func (m *SessionManager) applyInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, 
 	if m == nil {
 		return 0
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok {
 		return 0
 	}
@@ -364,7 +365,7 @@ func (m *SessionManager) ApplyOrderedLayerProfileForSession(
 	primary *Conn,
 	rawAuthKeyID [8]byte,
 	sessionID int64,
-	profile tg.LayerProfile,
+	profile tlprofile.Profile,
 	msgID int64,
 ) (int, error) {
 	if err := validateLayerProfile(profile); err != nil {
@@ -452,7 +453,7 @@ func (m *SessionManager) ExplicitLayerEvidenceForAuthKey(rawAuthKeyID [8]byte, s
 		if c.isRetired() || state.Origin != LayerProfileExplicit {
 			continue
 		}
-		profile, supported := tg.ResolveLayerProfile(int(state.Profile))
+		profile, supported := tlprofile.ResolveProfile(int(state.Profile))
 		if !supported || profile != state.Profile {
 			continue
 		}
@@ -477,7 +478,7 @@ func (m *SessionManager) SetClientLayerForAuthKey(rawAuthKeyID [8]byte, sessionI
 	if m == nil {
 		return
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok {
 		return
 	}

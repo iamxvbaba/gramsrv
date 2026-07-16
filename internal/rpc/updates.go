@@ -5,21 +5,28 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
 // registerUpdates 注册 updates.* RPC handler。
-func (r *Router) registerUpdates(d *tg.ServerDispatcher) {
-	d.OnUpdatesGetState(r.onUpdatesGetState)
-	d.OnUpdatesGetDifference(r.onUpdatesGetDifference)
+func (r *Router) registerUpdates(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.UpdatesGetStateRequest](d, tlprofile.SemanticMethodUpdatesGetState, func(ctx context.Context, layerRequest *tg.UpdatesGetStateRequest) (
+
+		// onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
+		// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位，并且只在 rpc_result
+		// 物理交付后原子推进该设备 confirmed + observed。对尚未审计 baseline 语义的客户端
+		// 仍返回同一 current state，但交付后只推进 confirmed；这保留 observed/durable
+		// difference tail，避免把 TDesktop/DrKLO 的兼容例外扩散成所有客户端都能跨过未实际
+		// 确认事件的 retention 后门。
+		any, error) {
+		return r.onUpdatesGetState(ctx)
+	})
+	registerRPC[*tg.UpdatesGetDifferenceRequest](d, tlprofile.SemanticMethodUpdatesGetDifference, func(ctx context.Context, layerRequest *tg.UpdatesGetDifferenceRequest) (any, error) {
+		return r.onUpdatesGetDifference(ctx, layerRequest)
+	})
 }
 
-// onUpdatesGetState 处理 updates.getState。TDesktop 与 DrKLO 的启动路径把它当作
-// 「从当前快照开始同步」的显式 baseline：返回账号当前连续水位，并且只在 rpc_result
-// 物理交付后原子推进该设备 confirmed + observed。对尚未审计 baseline 语义的客户端
-// 仍返回同一 current state，但交付后只推进 confirmed；这保留 observed/durable
-// difference tail，避免把 TDesktop/DrKLO 的兼容例外扩散成所有客户端都能跨过未实际
-// 确认事件的 retention 后门。
 func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {

@@ -105,15 +105,11 @@ func TestLegacyAndroidAuthSignUpAllowedBeforeAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch legacy auth.signUp: %v", err)
 	}
-	// Routed through the generated static client overlay + the normal gotd
-	// dispatcher, which boxes a class result (auth.Authorization) as *...Box.
-	box, ok := enc.(*tg.AuthAuthorizationBox)
+	// Routed through the generated static client overlay and sparse semantic
+	// dispatcher, which exposes the canonical concrete result at this test seam.
+	authorization, ok := enc.(*tg.AuthAuthorization)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.AuthAuthorizationBox", enc)
-	}
-	authorization, ok := box.Authorization.(*tg.AuthAuthorization)
-	if !ok {
-		t.Fatalf("authorization = %T, want auth.authorization", box.Authorization)
+		t.Fatalf("response = %T, want *tg.AuthAuthorization", enc)
 	}
 	user, ok := authorization.User.(*tg.User)
 	if !ok || user.ID != auth.signUpUser.ID {

@@ -600,17 +600,9 @@ func TestModernForwardMessagesConstructorSavesToSelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch messages.forwardMessages#41d41ade: %v", err)
 	}
-	// Now routed through the generated static client overlay and
-	// the normal gotd dispatcher, which boxes a class result as *tg.UpdatesBox
-	// (wire-identical to the raw UpdatesClass the dedicated handler used to return).
-	switch v := enc.(type) {
-	case tg.UpdatesClass:
-	case *tg.UpdatesBox:
-		if v.Updates == nil {
-			t.Fatalf("forward result box has nil Updates")
-		}
-	default:
-		t.Fatalf("forward result = %T, want UpdatesClass or *tg.UpdatesBox", enc)
+	// The sparse dispatcher exposes the canonical concrete class result.
+	if _, ok := enc.(tg.UpdatesClass); !ok {
+		t.Fatalf("forward result = %T, want tg.UpdatesClass", enc)
 	}
 
 	res, err := r.onMessagesGetSavedDialogs(WithUserID(ctx, alice.ID), &tg.MessagesGetSavedDialogsRequest{Limit: 20})

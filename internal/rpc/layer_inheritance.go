@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -609,6 +609,6 @@ func isSupportedLayer(layer int) bool {
 	if layer <= 0 {
 		return false
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	return ok && int(profile) == layer
 }

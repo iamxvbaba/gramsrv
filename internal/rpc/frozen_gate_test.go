@@ -13,6 +13,7 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
@@ -130,11 +131,11 @@ func TestFrozenMethodGateIsUserScopedAcrossSessionsAndUnfreezesImmediately(t *te
 
 func TestFrozenMethodGateReturns420BeforeLayerHandler(t *testing.T) {
 	const userID = int64(1001)
-	for _, profile := range []tg.LayerProfile{
-		tg.LayerProfile225,
-		tg.LayerProfile226,
-		tg.LayerProfile227,
-		tg.LayerProfile228,
+	for _, profile := range []tlprofile.Profile{
+		tlprofile.Profile225,
+		tlprofile.Profile226,
+		tlprofile.Profile227,
+		tlprofile.Profile228,
 	} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			provider := &frozenGateFreezeProvider{freeze: frozenGateActiveState(userID), found: true}
@@ -149,7 +150,7 @@ func TestFrozenMethodGateReturns420BeforeLayerHandler(t *testing.T) {
 				Message:  "must not reach handler",
 				RandomID: 1,
 			})
-			admitted, err := router.AdmitLayer(profile, &body, tg.LayerDecodeLimits{})
+			admitted, err := router.AdmitLayer(profile, &body, tlprofile.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}

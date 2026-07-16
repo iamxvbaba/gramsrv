@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/observability/dbtrace"
 )
@@ -56,28 +56,28 @@ const layerRPCReplayRestoreTimeout = 5 * time.Second
 // AdmitLayer performs generated, bounded, exact-profile admission without
 // touching auth/session stores. The MTProto edge must call it before acquiring
 // an RPC flight/cache slot or scheduling business work.
-func (r *Router) AdmitLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
+func (r *Router) AdmitLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
 	if r == nil || r.dispatcher == nil {
-		return tg.LayerRequest{}, internalErr()
+		return tlprofile.Admission{}, internalErr()
 	}
 	if b == nil {
-		return tg.LayerRequest{}, inputRequestInvalidErr()
+		return tlprofile.Admission{}, inputRequestInvalidErr()
 	}
-	return r.dispatcher.AdmitLayerWithLimits(profile, b, limits)
+	return r.dispatcher.Admit(profile, b, limits)
 }
 
 // AdmitDefaultLayer admits a request using an inherited auth-key profile as
 // its effective codec while still allowing an explicit invokeWithLayer in the
 // same wrapper chain to correct that default. Generated admission preserves
 // the distinction through EffectiveProfile and ProfileEvidence.
-func (r *Router) AdmitDefaultLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
+func (r *Router) AdmitDefaultLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
 	if r == nil || r.dispatcher == nil {
-		return tg.LayerRequest{}, internalErr()
+		return tlprofile.Admission{}, internalErr()
 	}
 	if b == nil {
-		return tg.LayerRequest{}, inputRequestInvalidErr()
+		return tlprofile.Admission{}, inputRequestInvalidErr()
 	}
-	return r.dispatcher.AdmitDefaultLayerWithLimits(profile, b, limits)
+	return r.dispatcher.AdmitDefault(profile, b, limits)
 }
 
 // registerAndroidLayerRPCAdapter installs the only client-private schema seam.
@@ -85,20 +85,20 @@ func (r *Router) AdmitDefaultLayer(profile tg.LayerProfile, b *bin.Buffer, limit
 // after recursively peeling every official wrapper. AdaptCanonical runs this
 // dispatcher's semantic field policies before the first generated typed
 // materialization, then core revalidates exact wire with the adapter disabled.
-func (r *Router) registerAndroidLayerRPCAdapter(d *tg.ServerDispatcher) {
+func (r *Router) registerAndroidLayerRPCAdapter(d *tlprofile.Dispatcher) {
 	if d == nil {
 		panic("rpc: register Android layer RPC adapter on nil dispatcher")
 	}
-	d.OnLayerRPCUnknownMethod(func(view tg.LayerRPCUnknownMethodView) (tg.LayerOutboundCall, bool, error) {
+	d.OnUnknownMethod(func(view tlprofile.UnknownMethodView) (tlprofile.OutboundCall, bool, error) {
 		outbound, handled, err := compatandroid.AdaptPrivateLayerRPC(view)
 		if !handled {
-			return tg.LayerOutboundCall{}, false, nil
+			return tlprofile.OutboundCall{}, false, nil
 		}
 		if err != nil {
-			return tg.LayerOutboundCall{}, true, err
+			return tlprofile.OutboundCall{}, true, err
 		}
 		if r.log != nil {
-			_, method, _ := tg.LayerSemanticName(outbound.Method())
+			_, method, _ := tlprofile.SemanticName(outbound.Method())
 			r.log.Info("Android private RPC admitted through generated exact adapter",
 				zap.Int("profile", int(view.Profile())),
 				zap.String("method", method),
@@ -119,12 +119,12 @@ func (r *Router) PrepareAdmittedReplay(
 	sessionID int64,
 	msgID int64,
 	admissionSeq uint64,
-	request tg.LayerRequest,
+	request tlprofile.Admission,
 ) (func() error, error) {
 	if r == nil || r.dispatcher == nil || request.Prepared().WireSize() <= 0 {
 		return nil, inputRequestInvalidErr()
 	}
-	_, method, ok := tg.LayerSemanticName(request.Call().Method())
+	_, method, ok := tlprofile.SemanticName(request.Call().Method())
 	if !ok || method == "" {
 		return nil, inputRequestInvalidErr()
 	}
@@ -190,11 +190,11 @@ func (r *Router) PrepareAdmittedReplay(
 // either obtains authoritative profile evidence from invokeWithLayer or admits
 // a closed terminal whose complete request and result wire graphs were proven
 // invariant across every generated profile. The latter never freezes a layer.
-func (r *Router) AdmitUnprofiled(b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
+func (r *Router) AdmitUnprofiled(b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
 	if r == nil || r.dispatcher == nil {
-		return tg.LayerRequest{}, internalErr()
+		return tlprofile.Admission{}, internalErr()
 	}
-	return r.dispatcher.AdmitUnprofiledWithLimits(b, limits)
+	return r.dispatcher.AdmitUnprofiled(b, limits)
 }
 
 // DispatchAdmitted executes one generated admission lease. invokeAfterMsg(s)
@@ -206,14 +206,14 @@ func (r *Router) DispatchAdmitted(
 	sessionID int64,
 	msgID int64,
 	admissionSeq uint64,
-	request tg.LayerRequest,
-) (tg.LayerRPCResult, string, error) {
+	request tlprofile.Admission,
+) (tlprofile.Result, string, error) {
 	if r == nil || r.dispatcher == nil {
 		return nil, "", internalErr()
 	}
 	prepared := request.Prepared()
 	call := request.Call()
-	category, method, ok := tg.LayerSemanticName(call.Method())
+	category, method, ok := tlprofile.SemanticName(call.Method())
 	if !ok || category != "function" || method == "" || prepared.WireSize() <= 0 {
 		return nil, "", inputRequestInvalidErr()
 	}
@@ -228,7 +228,7 @@ func (r *Router) DispatchAdmitted(
 	if err != nil {
 		return nil, method, err
 	}
-	if !r.dispatcher.HasLayerRPCHandler(call.Method()) {
+	if !r.dispatcher.Has(call.Method()) {
 		fields := append([]zap.Field{
 			zap.String("method", method),
 			zap.String("type_id", fmt.Sprintf("%#x", call.WireID())),
@@ -239,7 +239,7 @@ func (r *Router) DispatchAdmitted(
 		}
 		return nil, method, notImplementedErr()
 	}
-	canonicalID, hasCanonicalID := tg.LayerWireID(tg.LayerProfileCanonical, call.Method())
+	canonicalID, hasCanonicalID := tlprofile.WireID(tlprofile.ProfileCanonical, call.Method())
 	if !hasCanonicalID {
 		return nil, method, inputRequestInvalidErr()
 	}
@@ -262,7 +262,7 @@ func (r *Router) DispatchAdmitted(
 	}
 	dbBefore := dbtrace.SnapshotFromContext(ctx)
 	start := time.Now()
-	result, err := r.dispatcher.DispatchAdmitted(ctx, request)
+	result, err := r.dispatcher.Dispatch(ctx, request)
 	dur := time.Since(start)
 	dbDelta := dbtrace.SnapshotFromContext(ctx).Sub(dbBefore)
 	fields := append([]zap.Field{
@@ -294,12 +294,12 @@ func (r *Router) DispatchAdmitted(
 }
 
 type layerRPCWrapperEffect struct {
-	semantic tg.LayerSemanticID
+	semantic tlprofile.SemanticID
 	layer    int
 	info     ClientInfo
 }
 
-func (r *Router) snapshotLayerRPCWrapperEffects(ctx context.Context, request tg.LayerRequest) ([]layerRPCWrapperEffect, error) {
+func (r *Router) snapshotLayerRPCWrapperEffects(ctx context.Context, request tlprofile.Admission) ([]layerRPCWrapperEffect, error) {
 	if err := r.validateLayerRPCWrappers(ctx, request); err != nil {
 		return nil, err
 	}
@@ -323,19 +323,19 @@ func (r *Router) snapshotLayerRPCWrapperEffects(ctx context.Context, request tg.
 		wrapper, _ := request.Wrapper(index)
 		effect := layerRPCWrapperEffect{semantic: wrapper.Semantic()}
 		switch wrapper.Semantic() {
-		case tg.LayerSemanticMethodInvokeWithLayer:
+		case tlprofile.SemanticMethodInvokeWithLayer:
 			layer, err := layerWrapperRequired[int](wrapper, "layer")
 			if err != nil || layer != int(profile) {
 				return nil, inputRequestInvalidErr()
 			}
 			effect.layer = layer
-		case tg.LayerSemanticMethodInitConnection:
+		case tlprofile.SemanticMethodInitConnection:
 			info, err := clientInfoFromLayerWrapper(wrapper)
 			if err != nil {
 				return nil, err
 			}
 			effect.info = info
-		case tg.LayerSemanticMethodInvokeAfterMsg, tg.LayerSemanticMethodInvokeAfterMsgs:
+		case tlprofile.SemanticMethodInvokeAfterMsg, tlprofile.SemanticMethodInvokeAfterMsgs:
 			// Dependency completion is an MTProto message-lifecycle fact. The edge
 			// validates it before scheduling this one-shot admission lease.
 		}
@@ -346,9 +346,9 @@ func (r *Router) snapshotLayerRPCWrapperEffects(ctx context.Context, request tg.
 
 func (r *Router) applyLayerRPCWrapperEffects(
 	ctx context.Context,
-	profile tg.LayerProfile,
+	profile tlprofile.Profile,
 	profileKnown bool,
-	identity tg.LayerPreparedCallIdentity,
+	identity tlprofile.PreparedIdentity,
 	effects []layerRPCWrapperEffect,
 	msgID int64,
 	admissionSeq uint64,
@@ -379,15 +379,15 @@ func (r *Router) applyLayerRPCWrapperEffects(
 	}
 	for _, effect := range effects {
 		switch effect.semantic {
-		case tg.LayerSemanticMethodInvokeWithLayer:
+		case tlprofile.SemanticMethodInvokeWithLayer:
 			ctx = WithLayer(ctx, effect.layer)
 			// Shared Layer publication is an admission-time protocol effect. It has
 			// already been linearized by admissionSeq before the scheduler/rewrap
 			// split; handler execution and physical replay are intentionally unable
 			// to move that auth-key-wide default.
-		case tg.LayerSemanticMethodInvokeWithoutUpdates:
+		case tlprofile.SemanticMethodInvokeWithoutUpdates:
 			ctx = withInvokeWithoutUpdates(ctx)
-		case tg.LayerSemanticMethodInitConnection:
+		case tlprofile.SemanticMethodInitConnection:
 			if mode == layerRPCWrapperApplyReplayRestore {
 				if _, exists := ClientInfoFrom(ctx); exists {
 					// prepareRPCDispatchContext restored newer session/auth metadata.
@@ -416,7 +416,7 @@ func (r *Router) applyLayerRPCWrapperEffects(
 	return context.WithValue(ctx, layerWrappersAppliedKey{}, identity)
 }
 
-func (r *Router) applyLayerRPCWrappers(ctx context.Context, msgID int64, admissionSeq uint64, request tg.LayerRequest) (context.Context, error) {
+func (r *Router) applyLayerRPCWrappers(ctx context.Context, msgID int64, admissionSeq uint64, request tlprofile.Admission) (context.Context, error) {
 	effects, err := r.snapshotLayerRPCWrapperEffects(ctx, request)
 	if err != nil {
 		return nil, err
@@ -428,25 +428,25 @@ func (r *Router) applyLayerRPCWrappers(ctx context.Context, msgID int64, admissi
 func hasMutableLayerRPCWrapperEffect(effects []layerRPCWrapperEffect) bool {
 	for _, effect := range effects {
 		switch effect.semantic {
-		case tg.LayerSemanticMethodInvokeWithLayer, tg.LayerSemanticMethodInitConnection:
+		case tlprofile.SemanticMethodInvokeWithLayer, tlprofile.SemanticMethodInitConnection:
 			return true
 		}
 	}
 	return false
 }
 
-func (r *Router) validateLayerRPCWrappers(ctx context.Context, request tg.LayerRequest) error {
+func (r *Router) validateLayerRPCWrappers(ctx context.Context, request tlprofile.Admission) error {
 	for index := 0; index < request.WrapperCount(); index++ {
 		wrapper, _ := request.Wrapper(index)
 		switch wrapper.Semantic() {
-		case tg.LayerSemanticMethodInvokeWithLayer,
-			tg.LayerSemanticMethodInvokeWithoutUpdates,
-			tg.LayerSemanticMethodInitConnection,
-			tg.LayerSemanticMethodInvokeAfterMsg,
-			tg.LayerSemanticMethodInvokeAfterMsgs:
+		case tlprofile.SemanticMethodInvokeWithLayer,
+			tlprofile.SemanticMethodInvokeWithoutUpdates,
+			tlprofile.SemanticMethodInitConnection,
+			tlprofile.SemanticMethodInvokeAfterMsg,
+			tlprofile.SemanticMethodInvokeAfterMsgs:
 			continue
 		default:
-			_, name, _ := tg.LayerSemanticName(wrapper.Semantic())
+			_, name, _ := tlprofile.SemanticName(wrapper.Semantic())
 			fields := append([]zap.Field{
 				zap.String("wrapper", name),
 				zap.String("type_id", fmt.Sprintf("%#x", wrapper.WireID())),
@@ -461,15 +461,15 @@ func (r *Router) validateLayerRPCWrappers(ctx context.Context, request tg.LayerR
 	return nil
 }
 
-func (r *Router) consumeLayerRPCWrappers(ctx context.Context, request tg.LayerRequest, next tg.LayerRPCNext) error {
-	applied, ok := ctx.Value(layerWrappersAppliedKey{}).(tg.LayerPreparedCallIdentity)
+func (r *Router) consumeLayerRPCWrappers(ctx context.Context, request tlprofile.Admission, next tlprofile.Next) error {
+	applied, ok := ctx.Value(layerWrappersAppliedKey{}).(tlprofile.PreparedIdentity)
 	if !ok || applied != request.Prepared().Identity() {
 		return fmt.Errorf("rpc: exact wrapper context was not applied to admitted request")
 	}
 	return next(ctx)
 }
 
-func layerWrapperRequired[T any](wrapper tg.LayerRPCWrapper, name string) (T, error) {
+func layerWrapperRequired[T any](wrapper tlprofile.Wrapper, name string) (T, error) {
 	var zero T
 	value, present, ok, err := wrapper.Value(name)
 	if err != nil || !ok || !present {
@@ -482,7 +482,7 @@ func layerWrapperRequired[T any](wrapper tg.LayerRPCWrapper, name string) (T, er
 	return typed, nil
 }
 
-func clientInfoFromLayerWrapper(wrapper tg.LayerRPCWrapper) (ClientInfo, error) {
+func clientInfoFromLayerWrapper(wrapper tlprofile.Wrapper) (ClientInfo, error) {
 	apiID, err := layerWrapperRequired[int](wrapper, "api_id")
 	if err != nil {
 		return ClientInfo{}, err

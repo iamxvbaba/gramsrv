@@ -13,7 +13,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 type inboundItemKind uint8
@@ -58,7 +58,7 @@ type inboundItem struct {
 	content                       bool
 	body                          []byte
 	payload                       any
-	admitted                      tg.LayerRequest
+	admitted                      tlprofile.Admission
 	method                        string
 	replayAfterSuccessfulDelivery func() error
 	layerProfileEvidenceFreshness inboundLayerProfileEvidenceFreshness
@@ -108,7 +108,7 @@ func (p *inboundPlan) close() {
 	// advertise the same bytes to another connection while this plan still kept
 	// the old graph reachable until its caller returned.
 	for i := range p.items {
-		p.items[i].admitted = tg.LayerRequest{}
+		p.items[i].admitted = tlprofile.Admission{}
 	}
 	for i := range p.rpcTasks {
 		p.rpcTasks[i] = inboundRPC{}

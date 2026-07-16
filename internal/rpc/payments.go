@@ -7,45 +7,97 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
 
 // registerPayments 注册 payments.* RPC：Stars 本地账本（余额/流水真实化）+ 其余
 // gift/auction/revenue 第一阶段兼容桩。
-func (r *Router) registerPayments(d *tg.ServerDispatcher) {
-	d.OnPaymentsGetStarsTopupOptions(func(ctx context.Context) ([]tg.StarsTopupOption, error) {
+func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.PaymentsGetStarsTopupOptionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsTopupOptions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarsTopupOptionsRequest) (any,
+
+		// premium 订阅赠送 telesrv 不实现（无支付流），返回空选项。关键作用：TDesktop 送礼框
+		// ShowStarGiftBox 的 ready() 门控要求 getPremiumGiftCodeOptions 成功返回(on_next)才置
+		// premiumGiftsReady=true，否则整框不弹出——此前返 NOT_IMPLEMENTED 导致点生日礼物无反应。
+		// 空列表即解门，星礼物正常发送；premium 区段另由 userFull.disallow_premium_gifts=true 隐藏。
+		error) {
 		return devStarsTopupOptions(), nil
 	})
-	// premium 订阅赠送 telesrv 不实现（无支付流），返回空选项。关键作用：TDesktop 送礼框
-	// ShowStarGiftBox 的 ready() 门控要求 getPremiumGiftCodeOptions 成功返回(on_next)才置
-	// premiumGiftsReady=true，否则整框不弹出——此前返 NOT_IMPLEMENTED 导致点生日礼物无反应。
-	// 空列表即解门，星礼物正常发送；premium 区段另由 userFull.disallow_premium_gifts=true 隐藏。
-	d.OnPaymentsGetPremiumGiftCodeOptions(func(ctx context.Context, req *tg.PaymentsGetPremiumGiftCodeOptionsRequest) ([]tg.PremiumGiftCodeOption, error) {
+	registerRPC[*tg.PaymentsGetPremiumGiftCodeOptionsRequest](d, tlprofile.SemanticMethodPaymentsGetPremiumGiftCodeOptions, func(ctx context.Context, req *tg.PaymentsGetPremiumGiftCodeOptionsRequest) (any, error) {
 		return []tg.PremiumGiftCodeOption{}, nil
 	})
-	d.OnPaymentsGetStarsStatus(r.onPaymentsGetStarsStatus)
-	d.OnPaymentsGetStarsTransactions(r.onPaymentsGetStarsTransactions)
-	d.OnPaymentsGetStarGiftActiveAuctions(func(ctx context.Context, hash int64) (tg.PaymentsStarGiftActiveAuctionsClass, error) {
+	registerRPC[*tg.PaymentsGetStarsStatusRequest](d, tlprofile.SemanticMethodPaymentsGetStarsStatus, func(ctx context.Context, layerRequest *tg.PaymentsGetStarsStatusRequest) (any, error) {
+		return r.onPaymentsGetStarsStatus(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetStarsTransactionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsTransactions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarsTransactionsRequest) (any, error) {
+		return r.onPaymentsGetStarsTransactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftActiveAuctionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftActiveAuctions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftActiveAuctionsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.StarGiftActiveAuctions(), nil
 	})
-	d.OnPaymentsGetStarGifts(r.onPaymentsGetStarGifts)
-	d.OnPaymentsGetStarGiftUpgradePreview(r.onPaymentsGetStarGiftUpgradePreview)
-	d.OnPaymentsGetUniqueStarGift(r.onPaymentsGetUniqueStarGift)
-	d.OnPaymentsGetPaymentForm(r.onPaymentsGetPaymentForm)
-	d.OnPaymentsSendStarsForm(r.onPaymentsSendStarsForm)
-	d.OnPaymentsGetSavedStarGifts(r.onPaymentsGetSavedStarGifts)
-	d.OnPaymentsGetSavedStarGift(r.onPaymentsGetSavedStarGift)
-	d.OnPaymentsSaveStarGift(r.onPaymentsSaveStarGift)
-	d.OnPaymentsConvertStarGift(r.onPaymentsConvertStarGift)
-	d.OnPaymentsUpgradeStarGift(r.onPaymentsUpgradeStarGift)
-	d.OnPaymentsGetStarGiftCollections(r.onPaymentsGetStarGiftCollections)
-	d.OnPaymentsCreateStarGiftCollection(r.onPaymentsCreateStarGiftCollection)
-	d.OnPaymentsUpdateStarGiftCollection(r.onPaymentsUpdateStarGiftCollection)
-	d.OnPaymentsDeleteStarGiftCollection(r.onPaymentsDeleteStarGiftCollection)
-	d.OnPaymentsReorderStarGiftCollections(r.onPaymentsReorderStarGiftCollections)
-	d.OnPaymentsToggleStarGiftsPinnedToTop(r.onPaymentsToggleStarGiftsPinnedToTop)
-	d.OnPaymentsGetStarsRevenueAdsAccountURL(func(ctx context.Context, peer tg.InputPeerClass) (*tg.PaymentsStarsRevenueAdsAccountURL, error) {
+	registerRPC[*tg.PaymentsGetStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGifts, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetStarGifts(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftUpgradePreviewRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftUpgradePreview, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftUpgradePreviewRequest) (any, error) {
+		return r.onPaymentsGetStarGiftUpgradePreview(ctx, layerRequest.
+			GiftID)
+	})
+	registerRPC[*tg.PaymentsGetUniqueStarGiftRequest](d, tlprofile.SemanticMethodPaymentsGetUniqueStarGift, func(ctx context.Context, layerRequest *tg.PaymentsGetUniqueStarGiftRequest) (any, error) {
+		return r.onPaymentsGetUniqueStarGift(ctx, layerRequest.
+			Slug)
+	})
+	registerRPC[*tg.PaymentsGetPaymentFormRequest](d, tlprofile.SemanticMethodPaymentsGetPaymentForm, func(ctx context.Context, layerRequest *tg.PaymentsGetPaymentFormRequest) (any, error) {
+		return r.onPaymentsGetPaymentForm(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsSendStarsFormRequest](d, tlprofile.SemanticMethodPaymentsSendStarsForm, func(ctx context.Context, layerRequest *tg.PaymentsSendStarsFormRequest) (any, error) {
+		return r.onPaymentsSendStarsForm(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetSavedStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetSavedStarGifts, func(ctx context.Context, layerRequest *tg.PaymentsGetSavedStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetSavedStarGifts(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetSavedStarGiftRequest](d, tlprofile.SemanticMethodPaymentsGetSavedStarGift, func(ctx context.Context, layerRequest *tg.PaymentsGetSavedStarGiftRequest) (any, error) {
+		return r.onPaymentsGetSavedStarGift(ctx, layerRequest.
+			Stargift)
+	})
+	registerRPC[*tg.PaymentsSaveStarGiftRequest](d, tlprofile.SemanticMethodPaymentsSaveStarGift, func(ctx context.Context, layerRequest *tg.PaymentsSaveStarGiftRequest) (any, error) {
+		return r.onPaymentsSaveStarGift(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsConvertStarGiftRequest](d, tlprofile.SemanticMethodPaymentsConvertStarGift, func(ctx context.Context, layerRequest *tg.PaymentsConvertStarGiftRequest) (any, error) {
+		return r.onPaymentsConvertStarGift(ctx, layerRequest.
+			Stargift)
+	})
+	registerRPC[*tg.PaymentsUpgradeStarGiftRequest](d, tlprofile.SemanticMethodPaymentsUpgradeStarGift, func(ctx context.Context, layerRequest *tg.PaymentsUpgradeStarGiftRequest) (any, error) {
+		return r.onPaymentsUpgradeStarGift(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftCollections, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftCollectionsRequest) (any, error) {
+		return r.onPaymentsGetStarGiftCollections(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsCreateStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsCreateStarGiftCollection, func(ctx context.Context, layerRequest *tg.PaymentsCreateStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsCreateStarGiftCollection(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsUpdateStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsUpdateStarGiftCollection, func(ctx context.Context, layerRequest *tg.PaymentsUpdateStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsUpdateStarGiftCollection(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsDeleteStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsDeleteStarGiftCollection, func(ctx context.Context, layerRequest *tg.PaymentsDeleteStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsDeleteStarGiftCollection(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsReorderStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsReorderStarGiftCollections, func(ctx context.Context, layerRequest *tg.PaymentsReorderStarGiftCollectionsRequest) (any, error) {
+		return r.onPaymentsReorderStarGiftCollections(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsToggleStarGiftsPinnedToTopRequest](d, tlprofile.SemanticMethodPaymentsToggleStarGiftsPinnedToTop, func(ctx context.Context, layerRequest *tg.PaymentsToggleStarGiftsPinnedToTopRequest) (any, error) {
+		return r.onPaymentsToggleStarGiftsPinnedToTop(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetStarsRevenueAdsAccountURLRequest](d, tlprofile.SemanticMethodPaymentsGetStarsRevenueAdsAccountURL, func(ctx context.Context, layerRequest *tg.PaymentsGetStarsRevenueAdsAccountURLRequest) (any, error) {
+		peer := layerRequest.
+			Peer
+		_ = peer
+
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
 			return nil, internalErr()
@@ -55,7 +107,7 @@ func (r *Router) registerPayments(d *tg.ServerDispatcher) {
 		}
 		return &tg.PaymentsStarsRevenueAdsAccountURL{URL: "https://ads.telegram.org/"}, nil
 	})
-	d.OnPaymentsGetStarsRevenueStats(func(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (*tg.PaymentsStarsRevenueStats, error) {
+	registerRPC[*tg.PaymentsGetStarsRevenueStatsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsRevenueStats, func(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (any, error) {
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
 			return nil, internalErr()
@@ -68,6 +120,7 @@ func (r *Router) registerPayments(d *tg.ServerDispatcher) {
 		}
 		return tdesktop.StarsRevenueStats(req.GetTon()), nil
 	})
+
 }
 
 // onPaymentsGetStarsStatus 返回当前账号的 Stars 余额（首读时惰性授予起始余额）。

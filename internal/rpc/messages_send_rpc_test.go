@@ -41,13 +41,9 @@ func TestMessagesSendMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.UpdatesBox)
+	got, ok := enc.(*tg.Updates)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.UpdatesBox", enc)
-	}
-	got, ok := box.Updates.(*tg.Updates)
-	if !ok {
-		t.Fatalf("boxed response = %T, want *tg.Updates", box.Updates)
+		t.Fatalf("response = %T, want *tg.Updates", enc)
 	}
 	if messages.sendUserID != sender.ID || messages.sendReq.SenderUserID != sender.ID || messages.sendReq.RecipientUserID != recipient.ID || messages.sendReq.OriginSessionID != 77 {
 		t.Fatalf("send context = user %d req %+v, want sender/recipient/session", messages.sendUserID, messages.sendReq)
@@ -176,11 +172,10 @@ func TestMessagesSendMessageSupportsReplyAndFlags(t *testing.T) {
 	if !messages.sendReq.Silent || !messages.sendReq.NoForwards {
 		t.Fatalf("send flags silent=%v noforwards=%v, want true/true", messages.sendReq.Silent, messages.sendReq.NoForwards)
 	}
-	box, ok := enc.(*tg.UpdatesBox)
+	got, ok := enc.(*tg.Updates)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.UpdatesBox", enc)
+		t.Fatalf("response = %T, want *tg.Updates", enc)
 	}
-	got := box.Updates.(*tg.Updates)
 	newMsg := got.Updates[1].(*tg.UpdateNewMessage)
 	msg := newMsg.Message.(*tg.Message)
 	if !msg.Silent || !msg.Noforwards {

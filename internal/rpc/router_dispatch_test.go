@@ -8,6 +8,7 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
@@ -1334,7 +1335,7 @@ func TestTDesktopStartupRPCsEncode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := WithUserID(context.Background(), 1000000001)
-			result, method := dispatchExactLayerRPCTest(t, r, ctx, tg.LayerProfileCanonical, tt.req)
+			result, method := dispatchExactLayerRPCTest(t, r, ctx, tlprofile.ProfileCanonical, tt.req)
 			if method != tt.name {
 				t.Fatalf("dispatched method = %q, want %q", method, tt.name)
 			}
@@ -1353,12 +1354,12 @@ func dispatchExactLayerRPCTest(
 	t *testing.T,
 	r *Router,
 	ctx context.Context,
-	profile tg.LayerProfile,
+	profile tlprofile.Profile,
 	request bin.Object,
-) (tg.LayerRPCResult, string) {
+) (tlprofile.Result, string) {
 	t.Helper()
 	body := encodeExactLayerRPC(t, profile, request)
-	admitted, err := r.AdmitLayer(profile, &body, tg.LayerDecodeLimits{})
+	admitted, err := r.AdmitLayer(profile, &body, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("admit exact Layer %d request: %v", profile, err)
 	}
@@ -1379,11 +1380,11 @@ func TestMessagesSearchGlobalExactLayerProfiles(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 	ctx := WithUserID(context.Background(), 1000000001)
 	for _, tc := range []struct {
-		profile tg.LayerProfile
+		profile tlprofile.Profile
 		wireID  uint32
 	}{
-		{profile: tg.LayerProfile227, wireID: 0x4bc6589a},
-		{profile: tg.LayerProfile228, wireID: 0x6126a43c},
+		{profile: tlprofile.Profile227, wireID: 0x4bc6589a},
+		{profile: tlprofile.Profile228, wireID: 0x6126a43c},
 	} {
 		t.Run(fmt.Sprintf("layer_%d", tc.profile), func(t *testing.T) {
 			request := &tg.MessagesSearchGlobalRequest{
@@ -1396,7 +1397,7 @@ func TestMessagesSearchGlobalExactLayerProfiles(t *testing.T) {
 			if got := binary.LittleEndian.Uint32(body.Raw()); got != tc.wireID {
 				t.Fatalf("Layer %d wire id = %#x, want %#x", tc.profile, got, tc.wireID)
 			}
-			admitted, err := r.AdmitLayer(tc.profile, &body, tg.LayerDecodeLimits{})
+			admitted, err := r.AdmitLayer(tc.profile, &body, tlprofile.Limits{})
 			if err != nil {
 				t.Fatalf("admit Layer %d searchGlobal: %v", tc.profile, err)
 			}
@@ -1404,7 +1405,7 @@ func TestMessagesSearchGlobalExactLayerProfiles(t *testing.T) {
 				t.Fatalf("Layer %d admission left %d bytes", tc.profile, body.Len())
 			}
 			call := admitted.Call()
-			if call.Profile() != tc.profile || call.WireID() != tc.wireID || call.Method() != tg.LayerSemanticMethodMessagesSearchGlobal {
+			if call.Profile() != tc.profile || call.WireID() != tc.wireID || call.Method() != tlprofile.SemanticMethodMessagesSearchGlobal {
 				t.Fatalf("Layer %d call = profile:%d wire:%#x semantic:%#x", tc.profile, call.Profile(), call.WireID(), call.Method())
 			}
 			result, method, err := r.DispatchAdmitted(ctx, [8]byte{}, 0, 0, 0, admitted)
@@ -1439,23 +1440,19 @@ func TestMessagesSearchGlobalCommunityProjectionFailsClosedForLayer227(t *testin
 	request.SetCommunity(&tg.InputChannel{ChannelID: 42, AccessHash: 84})
 
 	// The Layer 228 shape is valid and carries the new field.
-	body228 := encodeExactLayerRPC(t, tg.LayerProfile228, request)
+	body228 := encodeExactLayerRPC(t, tlprofile.Profile228, request)
 	if got := binary.LittleEndian.Uint32(body228.Raw()); got != 0x6126a43c {
 		t.Fatalf("Layer 228 wire id = %#x, want %#x", got, uint32(0x6126a43c))
 	}
-	if _, err := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System).AdmitLayer(tg.LayerProfile228, &body228, tg.LayerDecodeLimits{}); err != nil {
+	if _, err := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System).AdmitLayer(tlprofile.Profile228, &body228, tlprofile.Limits{}); err != nil {
 		t.Fatalf("admit Layer 228 community search: %v", err)
 	}
 	if body228.Len() != 0 {
 		t.Fatalf("Layer 228 community admission left %d bytes", body228.Len())
 	}
 
-	outbound227, err := tg.PrepareLayerOutboundCall(tg.LayerProfile227, request)
-	if err != nil {
-		t.Fatalf("prepare Layer 227 searchGlobal projection: %v", err)
-	}
 	var body227 bin.Buffer
-	if err := outbound227.Encode(&body227); err == nil {
+	if err := tlprofile.EncodeObject(tlprofile.Profile227, request, &body227); err == nil {
 		t.Fatal("Layer 227 projection accepted a Layer 228-only community scope")
 	}
 	if body227.Len() != 0 {

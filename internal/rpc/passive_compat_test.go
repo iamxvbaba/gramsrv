@@ -23,13 +23,9 @@ func TestAccountGetChatThemesReturnsStaticThemes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := got.(*tg.AccountThemesBox)
+	themes, ok := got.(*tg.AccountThemes)
 	if !ok {
-		t.Fatalf("response type = %T, want *tg.AccountThemesBox", got)
-	}
-	themes, ok := box.Themes.(*tg.AccountThemes)
-	if !ok {
-		t.Fatalf("boxed response type = %T, want *tg.AccountThemes", box.Themes)
+		t.Fatalf("response type = %T, want *tg.AccountThemes", got)
 	}
 	if themes.Hash == 0 || len(themes.Themes) == 0 {
 		t.Fatalf("themes = %+v, want non-empty stable list", themes)
@@ -48,20 +44,16 @@ func TestAccountGetUniqueGiftChatThemesReturnsEmptyStub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := got.(*tg.AccountChatThemesBox)
+	themes, ok := got.(*tg.AccountChatThemes)
 	if !ok {
-		t.Fatalf("response type = %T, want *tg.AccountChatThemesBox", got)
-	}
-	themes, ok := box.ChatThemes.(*tg.AccountChatThemes)
-	if !ok {
-		t.Fatalf("boxed response type = %T, want *tg.AccountChatThemes", box.ChatThemes)
+		t.Fatalf("response type = %T, want *tg.AccountChatThemes", got)
 	}
 	if themes.Hash == 0 || len(themes.Themes) != 0 || len(themes.Chats) != 0 || len(themes.Users) != 0 {
 		t.Fatalf("unique gift themes = %+v, want stable empty catalog", themes)
 	}
 }
 
-func TestAccountGetWallPapersReturnsDefaultCatalog(t *testing.T) {
+func TestAccountGetWallPapersReturnsOrangeCatalog(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	req := &tg.AccountGetWallPapersRequest{}
 	var in bin.Buffer
@@ -73,13 +65,9 @@ func TestAccountGetWallPapersReturnsDefaultCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := got.(*tg.AccountWallPapersBox)
+	wallpapers, ok := got.(*tg.AccountWallPapers)
 	if !ok {
-		t.Fatalf("response type = %T, want *tg.AccountWallPapersBox", got)
-	}
-	wallpapers, ok := box.WallPapers.(*tg.AccountWallPapers)
-	if !ok {
-		t.Fatalf("boxed response type = %T, want *tg.AccountWallPapers", box.WallPapers)
+		t.Fatalf("response type = %T, want *tg.AccountWallPapers", got)
 	}
 	if wallpapers.Hash == 0 || len(wallpapers.Wallpapers) == 0 {
 		t.Fatalf("wallpapers = %+v, want stable default catalog", wallpapers)
@@ -98,7 +86,7 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch list: %v", err)
 	}
-	list := listGot.(*tg.AccountWallPapersBox).WallPapers.(*tg.AccountWallPapers)
+	list := listGot.(*tg.AccountWallPapers)
 	first := list.Wallpapers[0].(*tg.WallPaper)
 	input := &tg.InputWallPaper{ID: first.ID, AccessHash: first.AccessHash}
 
@@ -110,13 +98,9 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getWallPaper: %v", err)
 	}
-	oneBox, ok := oneGot.(*tg.WallPaperBox)
+	oneWallpaper, ok := oneGot.(*tg.WallPaper)
 	if !ok {
-		t.Fatalf("getWallPaper = %T, want *tg.WallPaperBox", oneGot)
-	}
-	oneWallpaper, ok := oneBox.WallPaper.(*tg.WallPaper)
-	if !ok {
-		t.Fatalf("getWallPaper boxed = %T, want *tg.WallPaper", oneBox.WallPaper)
+		t.Fatalf("getWallPaper = %T, want *tg.WallPaper", oneGot)
 	}
 	if oneWallpaper.ID != first.ID {
 		t.Fatalf("getWallPaper id = %d, want %d", oneWallpaper.ID, first.ID)
@@ -131,13 +115,12 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getWallPaper nofile: %v", err)
 	}
-	nofileBox, ok := nofileGot.(*tg.WallPaperBox)
+	nofileWallpaper, ok := nofileGot.(*tg.WallPaperNoFile)
 	if !ok {
-		t.Fatalf("getWallPaper nofile = %T, want *tg.WallPaperBox", nofileGot)
+		t.Fatalf("getWallPaper nofile = %T, want *tg.WallPaperNoFile", nofileGot)
 	}
-	nofileWallpaper, ok := nofileBox.WallPaper.(*tg.WallPaperNoFile)
-	if !ok || nofileWallpaper.ID != nofileInput.ID {
-		t.Fatalf("getWallPaper nofile boxed = %T %#v, want no-file id", nofileBox.WallPaper, nofileBox.WallPaper)
+	if nofileWallpaper.ID != nofileInput.ID {
+		t.Fatalf("getWallPaper nofile = %#v, want no-file id", nofileWallpaper)
 	}
 
 	var multiReq bin.Buffer
@@ -152,7 +135,7 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getMultiWallPapers: %v", err)
 	}
-	if vector, ok := multiGot.(*tg.WallPaperClassVector); !ok || len(vector.Elems) != 3 {
+	if vector, ok := dispatchCanonicalValue(multiGot).([]tg.WallPaperClass); !ok || len(vector) != 3 {
 		t.Fatalf("getMultiWallPapers = %T %#v, want 3 wallpapers", multiGot, multiGot)
 	}
 
@@ -171,12 +154,8 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dispatch %s: %v", name, err)
 		}
-		box, ok := got.(*tg.BoolBox)
-		if !ok {
-			t.Fatalf("%s = %T, want *tg.BoolBox", name, got)
-		}
-		if _, ok := box.Bool.(*tg.BoolTrue); !ok {
-			t.Fatalf("%s boxed = %T, want *tg.BoolTrue", name, box.Bool)
+		if value, ok := dispatchCanonicalValue(got).(bool); !ok || !value {
+			t.Fatalf("%s = %#v (%T), want true", name, dispatchCanonicalValue(got), got)
 		}
 	}
 
@@ -201,13 +180,9 @@ func TestPaymentsGetStarGiftCollectionsNoServiceFallbackAndValidatesPeer(t *test
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := got.(*tg.PaymentsStarGiftCollectionsBox)
+	collections, ok := got.(*tg.PaymentsStarGiftCollections)
 	if !ok {
-		t.Fatalf("response type = %T, want *tg.PaymentsStarGiftCollectionsBox", got)
-	}
-	collections, ok := box.StarGiftCollections.(*tg.PaymentsStarGiftCollections)
-	if !ok {
-		t.Fatalf("boxed response type = %T, want *tg.PaymentsStarGiftCollections", box.StarGiftCollections)
+		t.Fatalf("response type = %T, want *tg.PaymentsStarGiftCollections", got)
 	}
 	if len(collections.Collections) != 0 {
 		t.Fatalf("collections = %+v, want empty list", collections.Collections)

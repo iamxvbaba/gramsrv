@@ -83,12 +83,8 @@ func TestContactsEditCloseFriendsProjectsUserFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch edit close friends: %v", err)
 	}
-	box, ok := enc.(*tg.BoolBox)
-	if !ok {
-		t.Fatalf("edit close friends result = %T, want BoolBox", enc)
-	}
-	if _, ok := box.Bool.(*tg.BoolTrue); !ok {
-		t.Fatalf("edit close friends bool = %T, want BoolTrue", box.Bool)
+	if value, ok := dispatchCanonicalValue(enc).(bool); !ok || !value {
+		t.Fatalf("edit close friends result = %#v (%T), want true", dispatchCanonicalValue(enc), enc)
 	}
 
 	var get bin.Buffer
@@ -99,12 +95,11 @@ func TestContactsEditCloseFriendsProjectsUserFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch get contacts: %v", err)
 	}
-	contactsBox, ok := got.(*tg.ContactsContactsBox)
+	list, ok := got.(*tg.ContactsContacts)
 	if !ok {
-		t.Fatalf("contacts result = %T %+v, want ContactsContactsBox", got, got)
+		t.Fatalf("contacts result = %T %+v, want *tg.ContactsContacts", got, got)
 	}
-	list, ok := contactsBox.Contacts.(*tg.ContactsContacts)
-	if !ok || len(list.Users) != 1 {
+	if len(list.Users) != 1 {
 		t.Fatalf("contacts result = %T %+v, want one contact user", got, got)
 	}
 	user, ok := list.Users[0].(*tg.User)

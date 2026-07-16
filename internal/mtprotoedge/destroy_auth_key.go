@@ -6,7 +6,7 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 const (
@@ -20,8 +20,8 @@ var errDestroyAuthKeyMustBeExclusive = errors.New("wrapped destroy_auth_key must
 // wrappedDestroyAuthKeyTerminal accepts only evidence emitted by the generated
 // exact wrapper parser after it has legally reached the innermost non-API
 // terminal. It never re-parses wrapper bytes at runtime.
-func wrappedDestroyAuthKeyTerminal(err error) (*tg.LayerRPCUnknownTerminalError, bool) {
-	var terminal *tg.LayerRPCUnknownTerminalError
+func wrappedDestroyAuthKeyTerminal(err error) (*tlprofile.UnknownTerminalError, bool) {
+	var terminal *tlprofile.UnknownTerminalError
 	if !errors.As(err, &terminal) || terminal == nil || terminal.WireID != destroyAuthKeyRequestTypeID {
 		return nil, false
 	}
@@ -35,7 +35,7 @@ func wrappedDestroyAuthKeyTerminal(err error) (*tg.LayerRPCUnknownTerminalError,
 // invokeWithLayer(initConnection(destroy_auth_key)); an already initialized
 // connection sends the bare service message and is classified before Layer RPC
 // admission.
-func validWrappedDestroyAuthKeyChain(terminal *tg.LayerRPCUnknownTerminalError) bool {
+func validWrappedDestroyAuthKeyChain(terminal *tlprofile.UnknownTerminalError) bool {
 	if terminal == nil || terminal.WrapperCount() != 2 {
 		return false
 	}
@@ -44,8 +44,8 @@ func validWrappedDestroyAuthKeyChain(terminal *tg.LayerRPCUnknownTerminalError) 
 	return outerOK && innerOK &&
 		outer.Profile() == terminal.Profile &&
 		inner.Profile() == terminal.Profile &&
-		outer.Semantic() == tg.LayerSemanticMethodInvokeWithLayer &&
-		inner.Semantic() == tg.LayerSemanticMethodInitConnection
+		outer.Semantic() == tlprofile.SemanticMethodInvokeWithLayer &&
+		inner.Semantic() == tlprofile.SemanticMethodInitConnection
 }
 
 type destroyAuthKeyRequest struct{}

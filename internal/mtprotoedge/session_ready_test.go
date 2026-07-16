@@ -3,7 +3,7 @@ package mtprotoedge
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -16,7 +16,7 @@ func TestReceivesUpdatesForAuthKeyRequiresMembershipSync(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}
 	c := &Conn{sessionID: 42, authKeyID: raw}
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	sm.Register(c)

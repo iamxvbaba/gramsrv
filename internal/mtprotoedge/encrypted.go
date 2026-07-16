@@ -20,10 +20,10 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/proto/codec"
-	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 	"github.com/iamxvbaba/td/transport"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/postresponse"
 	"telesrv/internal/store"
@@ -701,8 +701,8 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	// obey the production exact-codec invariant. Admit a defensive copy using
 	// the generated current profile before the legacy router consumes b.
 	admissionBody := &bin.Buffer{Buf: append([]byte(nil), b.Buf...)}
-	admitted, err := tg.NewServerDispatcher(nil).AdmitDefaultLayerWithLimits(
-		tg.LayerProfileCanonical,
+	admitted, err := tlprofile.NewDispatcher().AdmitDefault(
+		tlprofile.ProfileCanonical,
 		admissionBody,
 		inboundLayerDecodeLimits,
 	)

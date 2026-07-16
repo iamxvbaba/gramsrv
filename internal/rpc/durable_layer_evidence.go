@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/iamxvbaba/td/tg"
-
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/store"
 )
 
@@ -142,7 +141,7 @@ func (r *Router) cacheResolvedDurableSessionLayer(
 		return nil
 	}
 	key := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
-	profile, supported := tg.ResolveLayerProfile(value.Layer)
+	profile, supported := tlprofile.ResolveProfile(value.Layer)
 	if !supported || int(profile) != value.Layer {
 		// A newer binary may have persisted a future profile. Never leave an old
 		// typed codec shadow beside that raw authoritative watermark. Observation

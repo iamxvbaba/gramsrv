@@ -11,6 +11,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 var ErrSessionAmbiguous = errors.New("session id is shared by multiple auth keys")
@@ -154,7 +155,7 @@ func (m *SessionManager) SetReceivesUpdates(sessionID int64, receives bool) {
 	}
 }
 
-func (m *SessionManager) SetLayerProfile(sessionID int64, profile tg.LayerProfile) bool {
+func (m *SessionManager) SetLayerProfile(sessionID int64, profile tlprofile.Profile) bool {
 	m.mu.RLock()
 	c, _, ok, ambiguous := m.uniqueSessionForTestLocked(sessionID)
 	m.mu.RUnlock()

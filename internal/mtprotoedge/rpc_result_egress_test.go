@@ -15,6 +15,7 @@ import (
 	"github.com/iamxvbaba/td/crypto"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 type opaqueRPCResult struct{ body []byte }
@@ -491,8 +492,7 @@ func encodedRPCResultForPriorityTest(reqMsgID int64, payloadBytes int) *encodedO
 	return &encodedOutboundMessage{
 		typeID: proto.ResultTypeID, reqMsgID: reqMsgID, body: b.Raw(),
 		layer: &outboundLayerBinding{
-			profile: tg.LayerProfileCanonical,
-			typ:     tg.LayerClassBoolType().Ref(),
+			profile: tlprofile.ProfileCanonical,
 			kind:    outboundLayerBindingRequest,
 		},
 	}

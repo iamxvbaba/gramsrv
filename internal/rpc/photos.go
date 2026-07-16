@@ -9,16 +9,29 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
 // registerPhotos 注册 photos.* RPC handler（头像上传 / 切换 / 查询 / 删除）。
-func (r *Router) registerPhotos(d *tg.ServerDispatcher) {
-	d.OnPhotosUploadProfilePhoto(r.onPhotosUploadProfilePhoto)
-	d.OnPhotosUpdateProfilePhoto(r.onPhotosUpdateProfilePhoto)
-	d.OnPhotosUploadContactProfilePhoto(r.onPhotosUploadContactProfilePhoto)
-	d.OnPhotosGetUserPhotos(r.onPhotosGetUserPhotos)
-	d.OnPhotosDeletePhotos(r.onPhotosDeletePhotos)
+func (r *Router) registerPhotos(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.PhotosUploadProfilePhotoRequest](d, tlprofile.SemanticMethodPhotosUploadProfilePhoto, func(ctx context.Context, layerRequest *tg.PhotosUploadProfilePhotoRequest) (any, error) {
+		return r.onPhotosUploadProfilePhoto(ctx, layerRequest)
+	})
+	registerRPC[*tg.PhotosUpdateProfilePhotoRequest](d, tlprofile.SemanticMethodPhotosUpdateProfilePhoto, func(ctx context.Context, layerRequest *tg.PhotosUpdateProfilePhotoRequest) (any, error) {
+		return r.onPhotosUpdateProfilePhoto(ctx, layerRequest)
+	})
+	registerRPC[*tg.PhotosUploadContactProfilePhotoRequest](d, tlprofile.SemanticMethodPhotosUploadContactProfilePhoto, func(ctx context.Context, layerRequest *tg.PhotosUploadContactProfilePhotoRequest) (any, error) {
+		return r.onPhotosUploadContactProfilePhoto(ctx, layerRequest)
+	})
+	registerRPC[*tg.PhotosGetUserPhotosRequest](d, tlprofile.SemanticMethodPhotosGetUserPhotos, func(ctx context.Context, layerRequest *tg.PhotosGetUserPhotosRequest) (any, error) {
+		return r.onPhotosGetUserPhotos(ctx, layerRequest)
+	})
+	registerRPC[*tg.PhotosDeletePhotosRequest](d, tlprofile.SemanticMethodPhotosDeletePhotos, func(ctx context.Context, layerRequest *tg.PhotosDeletePhotosRequest) (any, error) {
+		return r.onPhotosDeletePhotos(ctx, layerRequest.
+			ID)
+	})
+
 }
 
 func (r *Router) onPhotosUploadProfilePhoto(ctx context.Context, req *tg.PhotosUploadProfilePhotoRequest) (*tg.PhotosPhoto, error) {

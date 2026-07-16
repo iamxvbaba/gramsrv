@@ -13,6 +13,7 @@ import (
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"
 )
@@ -21,38 +22,90 @@ import (
 const devCodeLength = 5
 
 // registerAuth 注册 auth.* RPC handler。
-func (r *Router) registerAuth(d *tg.ServerDispatcher) {
-	d.OnAuthBindTempAuthKey(r.onAuthBindTempAuthKey)
-	d.OnAuthExportLoginToken(r.onAuthExportLoginToken)
-	d.OnAuthImportLoginToken(r.onAuthImportLoginToken)
-	d.OnAuthAcceptLoginToken(r.onAuthAcceptLoginToken)
-	d.OnAuthExportAuthorization(func(ctx context.Context, dcid int) (*tg.AuthExportedAuthorization, error) {
+func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.AuthBindTempAuthKeyRequest](d, tlprofile.SemanticMethodAuthBindTempAuthKey, func(ctx context.Context, layerRequest *tg.AuthBindTempAuthKeyRequest) (any, error) {
+		return r.onAuthBindTempAuthKey(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthExportLoginTokenRequest](d, tlprofile.SemanticMethodAuthExportLoginToken, func(ctx context.Context, layerRequest *tg.AuthExportLoginTokenRequest) (any, error) {
+		return r.onAuthExportLoginToken(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthImportLoginTokenRequest](d, tlprofile.SemanticMethodAuthImportLoginToken, func(ctx context.Context, layerRequest *tg.AuthImportLoginTokenRequest) (any, error) {
+		return r.onAuthImportLoginToken(ctx, layerRequest.
+			Token)
+	})
+	registerRPC[*tg.AuthAcceptLoginTokenRequest](d, tlprofile.SemanticMethodAuthAcceptLoginToken, func(ctx context.Context, layerRequest *tg.AuthAcceptLoginTokenRequest) (any, error) {
+		return r.onAuthAcceptLoginToken(ctx, layerRequest.
+			Token)
+	})
+	registerRPC[*tg.AuthExportAuthorizationRequest](d, tlprofile.SemanticMethodAuthExportAuthorization, func(ctx context.Context, layerRequest *tg.AuthExportAuthorizationRequest) (any, error) {
+		dcid := layerRequest.
+			DCID
+		_ = dcid
+
 		return nil, dcIDInvalidErr()
 	})
-	d.OnAuthImportAuthorization(func(ctx context.Context, req *tg.AuthImportAuthorizationRequest) (tg.AuthAuthorizationClass, error) {
+	registerRPC[*tg.AuthImportAuthorizationRequest](d, tlprofile.SemanticMethodAuthImportAuthorization, func(ctx context.Context, req *tg.AuthImportAuthorizationRequest) (any, error) {
 		return nil, dcIDInvalidErr()
 	})
-	d.OnAuthDropTempAuthKeys(func(ctx context.Context, exceptauthkeys []int64) (bool, error) {
+	registerRPC[*tg.AuthDropTempAuthKeysRequest](d, tlprofile.SemanticMethodAuthDropTempAuthKeys, func(ctx context.Context, layerRequest *tg.AuthDropTempAuthKeysRequest) (any, error) {
+		exceptauthkeys := layerRequest.
+			ExceptAuthKeys
+		_ = exceptauthkeys
+
 		return true, nil
 	})
-	d.OnAuthInitPasskeyLogin(r.onAuthInitPasskeyLogin)
-	d.OnAuthFinishPasskeyLogin(r.onAuthFinishPasskeyLogin)
-	d.OnAuthSendCode(r.onAuthSendCode)
-	d.OnAuthResendCode(r.onAuthResendCode)
-	d.OnAuthCancelCode(r.onAuthCancelCode)
-	d.OnAuthSignIn(r.onAuthSignIn)
-	d.OnAuthSignUp(r.onAuthSignUp)
-	d.OnAuthImportBotAuthorization(r.onAuthImportBotAuthorization)
-	d.OnAuthLogOut(r.onAuthLogOut)
-	d.OnAuthResetAuthorizations(r.onAuthResetAuthorizations)
-	d.OnAuthCheckPassword(r.onAuthCheckPassword)
-	d.OnAuthRequestPasswordRecovery(r.onAuthRequestPasswordRecovery)
-	d.OnAuthRecoverPassword(r.onAuthRecoverPassword)
-	d.OnAuthCheckRecoveryPassword(r.onAuthCheckRecoveryPassword)
-	d.OnAuthResetLoginEmail(r.onAuthResetLoginEmail)
+	registerRPC[*tg.AuthInitPasskeyLoginRequest](d, tlprofile.SemanticMethodAuthInitPasskeyLogin, func(ctx context.Context, layerRequest *tg.AuthInitPasskeyLoginRequest) (any, error) {
+		return r.onAuthInitPasskeyLogin(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthFinishPasskeyLoginRequest](d, tlprofile.SemanticMethodAuthFinishPasskeyLogin, func(ctx context.Context, layerRequest *tg.AuthFinishPasskeyLoginRequest) (any, error) {
+		return r.onAuthFinishPasskeyLogin(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthSendCodeRequest](d, tlprofile.SemanticMethodAuthSendCode, func(ctx context.Context, layerRequest *tg.AuthSendCodeRequest) (any, error) {
+		return r.onAuthSendCode(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthResendCodeRequest](d, tlprofile.SemanticMethodAuthResendCode, func(ctx context.Context, layerRequest *tg.AuthResendCodeRequest) (any, error) {
+		return r.onAuthResendCode(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthCancelCodeRequest](d, tlprofile.SemanticMethodAuthCancelCode, func(ctx context.Context, layerRequest *tg.AuthCancelCodeRequest) (any, error) {
+		return r.onAuthCancelCode(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthSignInRequest](d, tlprofile.SemanticMethodAuthSignIn, func(ctx context.Context, layerRequest *tg.AuthSignInRequest) (any, error) {
+		return r.onAuthSignIn(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthSignUpRequest](d, tlprofile.SemanticMethodAuthSignUp, func(ctx context.Context, layerRequest *tg.AuthSignUpRequest) (any, error) {
+		return r.onAuthSignUp(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthImportBotAuthorizationRequest](d, tlprofile.SemanticMethodAuthImportBotAuthorization, func(ctx context.Context, layerRequest *tg.AuthImportBotAuthorizationRequest) (any, error) {
+		return r.onAuthImportBotAuthorization(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthLogOutRequest](d, tlprofile.SemanticMethodAuthLogOut, func(ctx context.Context, layerRequest *tg.AuthLogOutRequest) (any, error) {
+		return r.onAuthLogOut(ctx)
+	})
+	registerRPC[*tg.AuthResetAuthorizationsRequest](d, tlprofile.SemanticMethodAuthResetAuthorizations, func(ctx context.Context, layerRequest *tg.AuthResetAuthorizationsRequest) (any, error) {
+		return r.onAuthResetAuthorizations(ctx)
+	})
+	registerRPC[*tg.AuthCheckPasswordRequest](d, tlprofile.SemanticMethodAuthCheckPassword, func(ctx context.Context, layerRequest *tg.AuthCheckPasswordRequest) (any, error) {
+		return r.onAuthCheckPassword(ctx, layerRequest.
+			Password)
+	})
+	registerRPC[*tg.AuthRequestPasswordRecoveryRequest](d, tlprofile.SemanticMethodAuthRequestPasswordRecovery, func(ctx context.Context, layerRequest *tg.AuthRequestPasswordRecoveryRequest) (any, error) {
+		return r.onAuthRequestPasswordRecovery(ctx)
+	})
+	registerRPC[*tg.AuthRecoverPasswordRequest](d, tlprofile.SemanticMethodAuthRecoverPassword, func(ctx context.Context, layerRequest *tg.AuthRecoverPasswordRequest) (any, error) {
+		return r.onAuthRecoverPassword(ctx, layerRequest)
+	})
+	registerRPC[*tg.AuthCheckRecoveryPasswordRequest](d, tlprofile.SemanticMethodAuthCheckRecoveryPassword, func(ctx context.Context, layerRequest *tg.AuthCheckRecoveryPasswordRequest) (
+
+		// onAuthBindTempAuthKey 记录 TDesktop 的 PFS temp→perm auth key 绑定。
+		any, error) {
+		return r.onAuthCheckRecoveryPassword(ctx, layerRequest.
+			Code)
+	})
+	registerRPC[*tg.AuthResetLoginEmailRequest](d, tlprofile.SemanticMethodAuthResetLoginEmail, func(ctx context.Context, layerRequest *tg.AuthResetLoginEmailRequest) (any, error) {
+		return r.onAuthResetLoginEmail(ctx, layerRequest)
+	})
 }
 
-// onAuthBindTempAuthKey 记录 TDesktop 的 PFS temp→perm auth key 绑定。
 func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTempAuthKeyRequest) (bool, error) {
 	if !layerRPCProfileEvidenceFresh(ctx) {
 		// The inner request is outside MTProto's mutable msg_id window. It may be

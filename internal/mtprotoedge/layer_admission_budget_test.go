@@ -14,6 +14,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	appfiles "telesrv/internal/app/files"
 	"telesrv/internal/rpc"
 )
@@ -102,17 +103,17 @@ func (h *failingReplayLayerRPC) PrepareAdmittedReplay(
 	int64,
 	int64,
 	uint64,
-	tg.LayerRequest,
+	tlprofile.Admission,
 ) (func() error, error) {
 	return nil, h.err
 }
 
-func (h *countingLayerRPCAdmission) AdmitLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
+func (h *countingLayerRPCAdmission) AdmitLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
 	h.decodeCalls.Add(1)
 	return h.LayerRPCHandler.AdmitLayer(profile, b, limits)
 }
 
-func (h *countingLayerRPCAdmission) AdmitUnprofiled(b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
+func (h *countingLayerRPCAdmission) AdmitUnprofiled(b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
 	h.decodeCalls.Add(1)
 	return h.LayerRPCHandler.AdmitUnprofiled(b, limits)
 }
@@ -166,13 +167,13 @@ func TestLayerRPCAdmissionTransfersOriginalReservationToFreshOwner(t *testing.T)
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 3}, sessionID: 83, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 4, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 
 	bad := make([]byte, bin.Word)
 	bad[0], bad[1], bad[2], bad[3] = 0x04, 0x03, 0x02, 0x01
-	fresh := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	fresh := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	plan := &inboundPlan{items: []inboundItem{
 		{kind: inboundItemRPC, msgID: 100, body: bad},
 		{kind: inboundItemRPC, msgID: 104, body: fresh},
@@ -211,13 +212,13 @@ func TestLayerRPCAdmissionPendingReplayReleasesProvisionalEntry(t *testing.T) {
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 4}, sessionID: 84, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 4, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 
-	pendingBody := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	pendingBody := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	identityBuffer := &bin.Buffer{Buf: append([]byte(nil), pendingBody...)}
-	pendingRequest, err := router.AdmitLayer(tg.LayerProfile225, identityBuffer, tg.LayerDecodeLimits{})
+	pendingRequest, err := router.AdmitLayer(tlprofile.Profile225, identityBuffer, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestLayerRPCAdmissionPendingReplayReleasesProvisionalEntry(t *testing.T) {
 		t.Fatalf("pending owner = %v, %v", pending.owner, err)
 	}
 
-	freshBody := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetNearestDCRequest{})
+	freshBody := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetNearestDCRequest{})
 	plan := &inboundPlan{items: []inboundItem{
 		{kind: inboundItemRPC, msgID: 100, body: pendingBody},
 		{kind: inboundItemRPC, msgID: 104, body: freshBody},
@@ -253,12 +254,12 @@ func TestLayerRPCAdmissionCompletedReplayReleasesWholeProvisionalBatch(t *testin
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 8}, sessionID: 88, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 2, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	identityBuffer := &bin.Buffer{Buf: append([]byte(nil), body...)}
-	request, err := router.AdmitLayer(tg.LayerProfile225, identityBuffer, tg.LayerDecodeLimits{})
+	request, err := router.AdmitLayer(tlprofile.Profile225, identityBuffer, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,12 +300,12 @@ func TestLayerRPCAdmissionReplayPreparationErrorIsNotSilentlyDelivered(t *testin
 	}})
 	c := &Conn{authKeyID: [8]byte{8, 9}, sessionID: 89, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 2, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	identityBuffer := &bin.Buffer{Buf: append([]byte(nil), body...)}
-	request, err := router.AdmitLayer(tg.LayerProfile225, identityBuffer, tg.LayerDecodeLimits{})
+	request, err := router.AdmitLayer(tlprofile.Profile225, identityBuffer, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,12 +344,12 @@ func TestLayerRPCAdmissionTransferredBatchClosesWithoutLeak(t *testing.T) {
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 5}, sessionID: 85, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 2, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	plan := &inboundPlan{items: []inboundItem{{
 		kind: inboundItemRPC, msgID: 100,
-		body: exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{}),
+		body: exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{}),
 	}}}
 	defer plan.close()
 	if err := s.prepareInboundLayerRPCBatch(context.Background(), c, plan); err != nil {
@@ -378,10 +379,10 @@ func TestLayerRPCAdmissionTransferredBatchCommitsConservativeCharge(t *testing.T
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 6}, sessionID: 86, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 2, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	plan := &inboundPlan{items: []inboundItem{{kind: inboundItemRPC, msgID: 100, body: body}}}
 	defer plan.close()
 	if err := s.prepareInboundLayerRPCBatch(context.Background(), c, plan); err != nil {
@@ -418,10 +419,10 @@ func TestLayerRPCAdmissionLocalDuplicateConsumesNoProvisionalEntry(t *testing.T)
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{8, 7}, sessionID: 87, metrics: NopMetrics{}}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 2, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	plan := &inboundPlan{items: []inboundItem{
 		{kind: inboundItemDuplicate, msgID: 96, body: body},
 		{kind: inboundItemRPC, msgID: 100, body: body},

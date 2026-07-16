@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 const rpcResultFlightDefaultMaxPending = 8192
@@ -26,7 +26,7 @@ var (
 // re-decode the same naked body under that grammar even if the winner aborts
 // immediately after the mismatch is returned.
 type rpcResultIdentityMismatchError struct {
-	profile    tg.LayerProfile
+	profile    tlprofile.Profile
 	hasProfile bool
 }
 
@@ -40,11 +40,11 @@ func identityMismatch(identity rpcResultRequestIdentity) error {
 }
 
 type rpcResultRequestIdentity struct {
-	exact tg.LayerPreparedCallIdentity
-	// profile is retained separately because LayerPreparedCallIdentity is opaque.
+	exact tlprofile.PreparedIdentity
+	// profile is retained separately because PreparedIdentity is opaque.
 	// It lets a same-msg_id replay be re-admitted with the original request
 	// grammar after the session default has moved to another Layer.
-	profile tg.LayerProfile
+	profile tlprofile.Profile
 	valid   bool
 }
 
@@ -474,7 +474,7 @@ func (c *rpcResultCache) Acquire(authKeyID [8]byte, sessionID, reqMsgID int64) (
 func (c *rpcResultCache) AcquireIdentified(
 	authKeyID [8]byte,
 	sessionID, reqMsgID int64,
-	identity tg.LayerPreparedCallIdentity,
+	identity tlprofile.PreparedIdentity,
 ) (rpcResultAcquire, error) {
 	return c.acquire(authKeyID, sessionID, reqMsgID, rpcResultRequestIdentity{exact: identity, valid: true})
 }
@@ -485,8 +485,8 @@ func (c *rpcResultCache) AcquireIdentified(
 func (c *rpcResultCache) AcquireLayerIdentified(
 	authKeyID [8]byte,
 	sessionID, reqMsgID int64,
-	profile tg.LayerProfile,
-	identity tg.LayerPreparedCallIdentity,
+	profile tlprofile.Profile,
+	identity tlprofile.PreparedIdentity,
 ) (rpcResultAcquire, error) {
 	return c.acquire(authKeyID, sessionID, reqMsgID, rpcResultRequestIdentity{
 		exact: identity, profile: profile, valid: true,
@@ -497,7 +497,7 @@ func (c *rpcResultCache) AcquireLayerIdentified(
 // owner/result. It does not create or join a flight. Callers still perform
 // AcquireLayerIdentified after decode, which atomically rejects a same-msg_id
 // body change by comparing the full prepared identity.
-func (c *rpcResultCache) ExactAdmissionProfile(authKeyID [8]byte, sessionID, reqMsgID int64) (tg.LayerProfile, bool) {
+func (c *rpcResultCache) ExactAdmissionProfile(authKeyID [8]byte, sessionID, reqMsgID int64) (tlprofile.Profile, bool) {
 	if c == nil || reqMsgID == 0 {
 		return 0, false
 	}

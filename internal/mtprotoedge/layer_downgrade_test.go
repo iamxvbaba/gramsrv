@@ -13,13 +13,13 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 )
 
 type countingLayerRPCResult struct {
-	inner        tg.LayerRPCResult
-	encodeCalls  atomic.Int32
-	prepareCalls atomic.Int32
+	inner       tlprofile.Result
+	encodeCalls atomic.Int32
 }
 
 const (
@@ -27,15 +27,15 @@ const (
 	testChannelWireID228 uint32 = 0xd49f34c6
 )
 
-func testChannelWireID(profile tg.LayerProfile) uint32 {
-	if profile == tg.LayerProfile228 {
+func testChannelWireID(profile tlprofile.Profile) uint32 {
+	if profile == tlprofile.Profile228 {
 		return testChannelWireID228
 	}
 	return testChannelWireID227
 }
 
-func testOtherChannelWireID(profile tg.LayerProfile) uint32 {
-	if profile == tg.LayerProfile228 {
+func testOtherChannelWireID(profile tlprofile.Profile) uint32 {
+	if profile == tlprofile.Profile228 {
 		return testChannelWireID227
 	}
 	return testChannelWireID228
@@ -55,28 +55,21 @@ func (r *countingLayerRPCResult) Encode(b *bin.Buffer) error {
 	return r.inner.Encode(b)
 }
 
-func (r *countingLayerRPCResult) Prepared() tg.LayerPreparedCall { return r.inner.Prepared() }
+func (r *countingLayerRPCResult) Prepared() tlprofile.PreparedCall { return r.inner.Prepared() }
 
 func (r *countingLayerRPCResult) WireInvariant() bool { return r.inner.WireInvariant() }
 
-func (r *countingLayerRPCResult) Freeze() (tg.LayerFrozenResult, error) {
-	return r.inner.Freeze()
-}
-
-func (r *countingLayerRPCResult) Prepare() (tg.LayerPreparedResult, error) {
-	r.prepareCalls.Add(1)
-	return r.inner.Prepare()
-}
+func (r *countingLayerRPCResult) CanonicalValue() any { return r.inner.CanonicalValue() }
 
 func TestExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T) {
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227, tg.LayerProfile228} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227, tlprofile.Profile228} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t, profile)
 		})
 	}
 }
 
-func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, profile tg.LayerProfile) {
+func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, profile tlprofile.Profile) {
 	t.Helper()
 	diff := &tg.UpdatesDifference{
 		NewMessages: []tg.MessageClass{
@@ -95,23 +88,21 @@ func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, pro
 		State:                tg.UpdatesState{Pts: 2, Date: 1},
 	}
 
-	dispatcher := tg.NewServerDispatcher(nil)
-	dispatcher.OnUpdatesGetDifference(func(context.Context, *tg.UpdatesGetDifferenceRequest) (tg.UpdatesDifferenceClass, error) {
+	dispatcher := tlprofile.NewDispatcher()
+	if err := dispatcher.Register(tlprofile.SemanticMethodUpdatesGetDifference, func(context.Context, bin.Object) (any, error) {
 		return diff, nil
-	})
-	outbound, err := tg.PrepareLayerOutboundCall(profile, &tg.UpdatesGetDifferenceRequest{Pts: 1, Date: 1})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var requestBody bin.Buffer
-	if err := outbound.Encode(&requestBody); err != nil {
+	if err := tlprofile.EncodeObject(profile, &tg.UpdatesGetDifferenceRequest{Pts: 1, Date: 1}, &requestBody); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := dispatcher.AdmitLayer(profile, &requestBody)
+	admitted, err := dispatcher.Admit(profile, &requestBody, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverResult, err := dispatcher.DispatchAdmitted(context.Background(), admitted)
+	serverResult, err := dispatcher.Dispatch(context.Background(), admitted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,9 +115,9 @@ func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, pro
 	}
 	// Simulate an invokeWithLayer correction admitted while this handler was
 	// still running. The result must retain the request's admitted profile.
-	corrected := tg.LayerProfile227
-	if profile == tg.LayerProfile227 {
-		corrected = tg.LayerProfile225
+	corrected := tlprofile.Profile227
+	if profile == tlprofile.Profile227 {
+		corrected = tlprofile.Profile225
 	}
 	if err := c.FreezeLayerProfile(corrected); err != nil {
 		t.Fatal(err)
@@ -136,14 +127,11 @@ func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, pro
 	if err != nil {
 		t.Fatalf("encode rpc_result: %v", err)
 	}
-	if got := counted.prepareCalls.Load(); got != 0 {
-		t.Fatalf("generated Prepare calls = %d, want 0; inbound workers must not snapshot result bytes", got)
-	}
 	if got := counted.encodeCalls.Load(); got != 1 {
 		t.Fatalf("generated Encode calls = %d, want exactly 1 under outbound admission", got)
 	}
-	if encoded.layer == nil || encoded.layer.profile != profile || encoded.layer.typ != admitted.Call().WireResultType() {
-		t.Fatalf("result binding = %#v, want profile %d and admitted result TypeRef", encoded.layer, profile)
+	if encoded.layer == nil || encoded.layer.profile != profile {
+		t.Fatalf("result binding = %#v, want profile %d", encoded.layer, profile)
 	}
 	if encoded.layer.kind != outboundLayerBindingRequest {
 		t.Fatalf("exact RPC result binding kind = %d, want request-bound", encoded.layer.kind)
@@ -171,7 +159,7 @@ func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, pro
 		t.Fatalf("profile %d offline difference leaked channel constructor %#08x", profile, otherChannelID)
 	}
 	inner := bin.Buffer{Buf: rpcEnvelope.Result}
-	decoded, err := tg.DecodeLayer(profile, tg.LayerClassUpdatesDifferenceType(), &inner)
+	decoded, err := tlprofile.DecodeObject(profile, &inner, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("decode exact difference: %v", err)
 	}
@@ -199,27 +187,25 @@ func testExactLayerRPCResultEncodesDifferenceWithAdmittedCodec(t *testing.T, pro
 }
 
 func TestExactLayerRPCResultUsesHistoricalMethodResultType(t *testing.T) {
-	const profile = tg.LayerProfile225
-	dispatcher := tg.NewServerDispatcher(nil)
-	dispatcher.OnChannelsJoinChannel(func(context.Context, tg.InputChannelClass) (tg.MessagesChatInviteJoinResultClass, error) {
+	const profile = tlprofile.Profile225
+	dispatcher := tlprofile.NewDispatcher()
+	if err := dispatcher.Register(tlprofile.SemanticMethodChannelsJoinChannel, func(context.Context, bin.Object) (any, error) {
 		return &tg.MessagesChatInviteJoinResultOk{Updates: &tg.UpdatesTooLong{}}, nil
-	})
-	outbound, err := tg.PrepareLayerOutboundCall(profile, &tg.ChannelsJoinChannelRequest{Channel: &tg.InputChannelEmpty{}})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	var requestBody bin.Buffer
-	if err := outbound.Encode(&requestBody); err != nil {
+	if err := tlprofile.EncodeObject(profile, &tg.ChannelsJoinChannelRequest{Channel: &tg.InputChannelEmpty{}}, &requestBody); err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := dispatcher.AdmitLayer(profile, &requestBody)
+	admitted, err := dispatcher.Admit(profile, &requestBody, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if admitted.Call().WireID() == tg.ChannelsJoinChannelRequestTypeID {
 		t.Fatal("historical request unexpectedly retained canonical method id")
 	}
-	serverResult, err := dispatcher.DispatchAdmitted(context.Background(), admitted)
+	serverResult, err := dispatcher.Dispatch(context.Background(), admitted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +223,7 @@ func TestExactLayerRPCResultUsesHistoricalMethodResultType(t *testing.T) {
 		t.Fatal(err)
 	}
 	inner := bin.Buffer{Buf: rpcEnvelope.Result}
-	updates, err := tg.DecodeLayer(profile, tg.LayerClassUpdatesType(), &inner)
+	updates, err := tlprofile.DecodeObject(profile, &inner, tlprofile.Limits{})
 	if err != nil {
 		t.Fatalf("decode historical channels.joinChannel result: %v", err)
 	}
@@ -251,7 +237,7 @@ func TestExactLayerRPCResultUsesHistoricalMethodResultType(t *testing.T) {
 
 func TestProductionUnboundApplicationResultFailsClosedForLayer227(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}}
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := (&Server{log: zaptest.NewLogger(t)}).encodeRPCResult(c, 12345, testLayerChannel())
@@ -265,7 +251,7 @@ func TestProductionUnboundApplicationResultFailsClosedForLayer227(t *testing.T) 
 
 func TestProductionUnboundApplicationPushFailsClosedForLayer227(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}}
-	if err := c.FreezeLayerProfile(tg.LayerProfile227); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
 		t.Fatal(err)
 	}
 	frame, err := c.buildFrame(context.Background(), proto.MessageFromServer, testLayerChannelUpdatesValue(321), nil)

@@ -60,11 +60,10 @@ func TestMessagesForwardMessagesRecordsRequestAndReturnsUpdates(t *testing.T) {
 	if messages.sendReq.ReplyTo == nil || messages.sendReq.ReplyTo.MessageID != 9 || messages.sendReq.ReplyTo.Peer.ID != toID || messages.sendReq.ReplyTo.QuoteText != "target" {
 		t.Fatalf("forward reply = %+v, want target peer reply metadata", messages.sendReq.ReplyTo)
 	}
-	box, ok := enc.(*tg.UpdatesBox)
+	got, ok := enc.(*tg.Updates)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.UpdatesBox", enc)
+		t.Fatalf("response = %T, want *tg.Updates", enc)
 	}
-	got := box.Updates.(*tg.Updates)
 	if len(got.Updates) != 4 {
 		t.Fatalf("updates = %+v, want two message ids and two new messages", got.Updates)
 	}

@@ -6,8 +6,8 @@
 
 协议栈基于已发布的
 [`github.com/iamxvbaba/td`](https://github.com/iamxvbaba/td) module
-（`v1.0.0`），使用 canonical Layer 228 schema，并提供 exact Layer 225-228
-compatibility profiles。
+（`v1.1.0`），使用 canonical Layer 228 schema，并通过 sparse `tlprofile`
+提供 exact Layer 225-228 compatibility profiles。
 
 如果你正在搜索 **Telegram server 实现**、**MTProto server 实现**、
 **Telegram 后端**、**Telegram clone server**、**自建 Telegram-like 聊天服务器**，
@@ -42,7 +42,7 @@ https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
 
 | 状态 | 功能 | 当前已实现 |
 |---|---|---|
-| ✅ | MTProto server 接入层 | TCP transport、RSA key exchange、auth key、加密 session、salt、ack/resend、bad message、RPC dispatch、canonical Layer 228，以及 exact Layer 225-228 compatibility profiles。 |
+| ✅ | MTProto server 接入层 | TCP transport、RSA key exchange、auth key、加密 session、salt、ack/resend、bad message、RPC dispatch、canonical Layer 228，以及 sparse exact Layer 225-228 compatibility profiles。 |
 | ✅ | 登录与账号 | 开发验证码登录、sign-in、sign-up、log-out、授权设备、账号设置、SRP/password 状态、email/passkey 相关路径。 |
 | ✅ | 用户与联系人 | 用户资料、username、头像、联系人导入/搜索、block/privacy 状态、presence、last seen。 |
 | ✅ | 会话与同步 | dialog list、置顶、手动未读、folders/filters、草稿、read boundary、durable updates、在线 fan-out、离线 difference 恢复。 |

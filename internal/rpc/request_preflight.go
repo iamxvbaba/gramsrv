@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	appfiles "telesrv/internal/app/files"
 	"telesrv/internal/domain"
 )
@@ -72,33 +73,33 @@ var requestVectorPolicies = map[uint32]requestVectorPolicy{
 // dispatcher construction fail closed until an explicit conversion policy is
 // supplied.
 var layerRPCVectorPolicies = []struct {
-	fieldID tg.LayerRPCFieldID
+	fieldID tlprofile.FieldID
 	max     int
 	tooLong func() error
 }{
-	{tg.LayerRPCFieldUsersGetUsersID, 100, inputRequestTooLongErr},
-	{tg.LayerRPCFieldUsersGetRequirementsToContactID, maxRequirementsToContactUsers, limitInvalidErr},
-	{tg.LayerRPCFieldContactsImportContactsContacts, maxContactImportBatch, limitInvalidErr},
-	{tg.LayerRPCFieldContactsDeleteContactsID, maxContactDeleteBatch, limitInvalidErr},
-	{tg.LayerRPCFieldContactsEditCloseFriendsID, maxCloseFriendsCount, limitInvalidErr},
-	{tg.LayerRPCFieldContactsSetBlockedID, maxContactSetBlocked, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesGetMessagesID, maxGetMessagesIDs, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesGetChatsID, maxGetMessagesIDs, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesGetPeerDialogsPeers, maxDialogInputPeers, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesReadMessageContentsID, maxGetMessagesIDs, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesGetCustomEmojiDocumentsDocumentID, maxEmojiDocuments, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesDeleteMessagesID, domain.MaxDeleteMessageIDs, limitInvalidErr},
-	{tg.LayerRPCFieldMessagesCreateChatUsers, 200, limitInvalidErr},
-	{tg.LayerRPCFieldChannelsGetChannelsID, maxGetMessagesIDs, limitInvalidErr},
+	{tlprofile.FieldUsersGetUsersID, 100, inputRequestTooLongErr},
+	{tlprofile.FieldUsersGetRequirementsToContactID, maxRequirementsToContactUsers, limitInvalidErr},
+	{tlprofile.FieldContactsImportContactsContacts, maxContactImportBatch, limitInvalidErr},
+	{tlprofile.FieldContactsDeleteContactsID, maxContactDeleteBatch, limitInvalidErr},
+	{tlprofile.FieldContactsEditCloseFriendsID, maxCloseFriendsCount, limitInvalidErr},
+	{tlprofile.FieldContactsSetBlockedID, maxContactSetBlocked, limitInvalidErr},
+	{tlprofile.FieldMessagesGetMessagesID, maxGetMessagesIDs, limitInvalidErr},
+	{tlprofile.FieldMessagesGetChatsID, maxGetMessagesIDs, limitInvalidErr},
+	{tlprofile.FieldMessagesGetPeerDialogsPeers, maxDialogInputPeers, limitInvalidErr},
+	{tlprofile.FieldMessagesReadMessageContentsID, maxGetMessagesIDs, limitInvalidErr},
+	{tlprofile.FieldMessagesGetCustomEmojiDocumentsDocumentID, maxEmojiDocuments, limitInvalidErr},
+	{tlprofile.FieldMessagesDeleteMessagesID, domain.MaxDeleteMessageIDs, limitInvalidErr},
+	{tlprofile.FieldMessagesCreateChatUsers, 200, limitInvalidErr},
+	{tlprofile.FieldChannelsGetChannelsID, maxGetMessagesIDs, limitInvalidErr},
 }
 
-func registerLayerRPCAdmissionFieldPreflights(d *tg.ServerDispatcher) error {
+func registerLayerRPCAdmissionFieldPreflights(d *tlprofile.Dispatcher) error {
 	if d == nil {
 		return fmt.Errorf("nil layer RPC dispatcher")
 	}
 	for _, policy := range layerRPCVectorPolicies {
 		policy := policy
-		if err := d.OnLayerRPCAdmissionFieldPreflight(policy.fieldID, func(view tg.LayerRPCAdmissionFieldView) error {
+		if err := d.OnFieldPreflight(policy.fieldID, func(view tlprofile.FieldView) error {
 			length, ok := view.VectorLength()
 			if !ok {
 				return inputRequestInvalidErr()
@@ -115,11 +116,11 @@ func registerLayerRPCAdmissionFieldPreflights(d *tg.ServerDispatcher) error {
 		}
 	}
 
-	for _, fieldID := range []tg.LayerRPCFieldID{
-		tg.LayerRPCFieldUploadSaveFilePartBytes,
-		tg.LayerRPCFieldUploadSaveBigFilePartBytes,
+	for _, fieldID := range []tlprofile.FieldID{
+		tlprofile.FieldUploadSaveFilePartBytes,
+		tlprofile.FieldUploadSaveBigFilePartBytes,
 	} {
-		if err := d.OnLayerRPCAdmissionFieldPreflight(fieldID, func(view tg.LayerRPCAdmissionFieldView) error {
+		if err := d.OnFieldPreflight(fieldID, func(view tlprofile.FieldView) error {
 			length, ok := view.BytesLength()
 			if !ok {
 				return inputRequestInvalidErr()
@@ -133,9 +134,9 @@ func registerLayerRPCAdmissionFieldPreflights(d *tg.ServerDispatcher) error {
 		}
 	}
 
-	if err := d.OnLayerRPCAdmissionFieldPreflight(
-		tg.LayerRPCFieldUploadSaveBigFilePartFileTotalParts,
-		func(view tg.LayerRPCAdmissionFieldView) error {
+	if err := d.OnFieldPreflight(
+		tlprofile.FieldUploadSaveBigFilePartFileTotalParts,
+		func(view tlprofile.FieldView) error {
 			totalParts, ok := view.Int32()
 			if !ok {
 				return inputRequestInvalidErr()

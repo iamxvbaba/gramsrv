@@ -11,24 +11,25 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 // preparedOnlyLayerRPCResult is intentionally incapable of encoding. The
 // binding guard must reject it solely from immutable admission identity before
 // any result method other than Prepared can be observed.
 type preparedOnlyLayerRPCResult struct {
-	tg.LayerRPCResult
-	prepared tg.LayerPreparedCall
+	tlprofile.Result
+	prepared tlprofile.PreparedCall
 }
 
-func (r *preparedOnlyLayerRPCResult) Prepared() tg.LayerPreparedCall { return r.prepared }
+func (r *preparedOnlyLayerRPCResult) Prepared() tlprofile.PreparedCall { return r.prepared }
 
 func TestBindAdmittedLayerRPCResultRequiresExactRequestIdentity(t *testing.T) {
-	dispatcher := tg.NewServerDispatcher(nil)
-	admit := func(request bin.Encoder) tg.LayerRequest {
+	dispatcher := tlprofile.NewDispatcher()
+	admit := func(request bin.Encoder) tlprofile.Admission {
 		t.Helper()
 		body := &bin.Buffer{Buf: exactLayerRPCBody(t, request)}
-		admitted, err := dispatcher.AdmitLayer(tg.LayerProfile227, body)
+		admitted, err := dispatcher.Admit(tlprofile.Profile227, body, tlprofile.Limits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +54,7 @@ func TestBindAdmittedLayerRPCResultRequiresExactRequestIdentity(t *testing.T) {
 
 type mismatchedProjectionLayerRPC struct {
 	*admissionOnlyLayerRPC
-	result tg.LayerRPCResult
+	result tlprofile.Result
 	calls  atomic.Int32
 }
 
@@ -63,18 +64,18 @@ func (h *mismatchedProjectionLayerRPC) DispatchAdmitted(
 	int64,
 	int64,
 	uint64,
-	tg.LayerRequest,
-) (tg.LayerRPCResult, string, error) {
+	tlprofile.Admission,
+) (tlprofile.Result, string, error) {
 	h.calls.Add(1)
 	return h.result, "help.getConfig", nil
 }
 
 func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
-	dispatcher := tg.NewServerDispatcher(nil)
-	admit := func(request bin.Encoder) tg.LayerRequest {
+	dispatcher := tlprofile.NewDispatcher()
+	admit := func(request bin.Encoder) tlprofile.Admission {
 		t.Helper()
 		body := &bin.Buffer{Buf: exactLayerRPCBody(t, request)}
-		admitted, err := dispatcher.AdmitLayer(tg.LayerProfile227, body)
+		admitted, err := dispatcher.Admit(tlprofile.Profile227, body, tlprofile.Limits{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +94,7 @@ func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
 	const reqMsgID = int64(410100)
 	claim, err := s.rpcResults.AcquireLayerIdentified(
 		c.authKeyID, c.sessionID, reqMsgID,
-		tg.LayerProfile227, request.Prepared().Identity(),
+		tlprofile.Profile227, request.Prepared().Identity(),
 	)
 	if err != nil || claim.owner == nil {
 		t.Fatalf("owner acquisition err=%v", err)
@@ -110,7 +111,7 @@ func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
 	for {
 		completed, err = s.rpcResults.AcquireLayerIdentified(
 			c.authKeyID, c.sessionID, reqMsgID,
-			tg.LayerProfile227, request.Prepared().Identity(),
+			tlprofile.Profile227, request.Prepared().Identity(),
 		)
 		if err == nil && completed.state == rpcResultAcquireCompleted {
 			break
@@ -142,7 +143,7 @@ func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
 	// success.
 	replay, err := s.rpcResults.AcquireLayerIdentified(
 		c.authKeyID, c.sessionID, reqMsgID,
-		tg.LayerProfile227, request.Prepared().Identity(),
+		tlprofile.Profile227, request.Prepared().Identity(),
 	)
 	if err != nil || replay.state != rpcResultAcquireCompleted || replay.encoded != completed.encoded {
 		t.Fatalf("projection replay = state:%d err:%v", replay.state, err)

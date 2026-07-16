@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
@@ -17,11 +18,19 @@ import (
 const maxUploadGetFileChunkLimit = 1 << 20
 
 // registerUpload 注册 upload.* RPC handler（分片上传 + 文件下载 + 地图 webfile）。
-func (r *Router) registerUpload(d *tg.ServerDispatcher) {
-	d.OnUploadSaveFilePart(r.onUploadSaveFilePart)
-	d.OnUploadSaveBigFilePart(r.onUploadSaveBigFilePart)
-	d.OnUploadGetFile(r.onUploadGetFile)
-	d.OnUploadGetFileHashes(r.onUploadGetFileHashes)
+func (r *Router) registerUpload(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.UploadSaveFilePartRequest](d, tlprofile.SemanticMethodUploadSaveFilePart, func(ctx context.Context, layerRequest *tg.UploadSaveFilePartRequest) (any, error) {
+		return r.onUploadSaveFilePart(ctx, layerRequest)
+	})
+	registerRPC[*tg.UploadSaveBigFilePartRequest](d, tlprofile.SemanticMethodUploadSaveBigFilePart, func(ctx context.Context, layerRequest *tg.UploadSaveBigFilePartRequest) (any, error) {
+		return r.onUploadSaveBigFilePart(ctx, layerRequest)
+	})
+	registerRPC[*tg.UploadGetFileRequest](d, tlprofile.SemanticMethodUploadGetFile, func(ctx context.Context, layerRequest *tg.UploadGetFileRequest) (any, error) {
+		return r.onUploadGetFile(ctx, layerRequest)
+	})
+	registerRPC[*tg.UploadGetFileHashesRequest](d, tlprofile.SemanticMethodUploadGetFileHashes, func(ctx context.Context, layerRequest *tg.UploadGetFileHashesRequest) (any, error) {
+		return r.onUploadGetFileHashes(ctx, layerRequest)
+	})
 	r.registerUploadWebFile(d)
 }
 

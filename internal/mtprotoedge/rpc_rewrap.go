@@ -15,6 +15,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 // rpcRewrapRegistry links only an explicit official-client transition:
@@ -40,8 +41,8 @@ type rpcRewrapSessionKey struct {
 type rpcRewrapKey struct {
 	rpcRewrapSessionKey
 	fingerprint [sha256.Size]byte
-	semantic    tg.LayerSemanticRequestIdentity
-	call        tg.LayerCallIdentity
+	semantic    tlprofile.SemanticIdentity
+	call        tlprofile.CallIdentity
 	exact       bool
 }
 
@@ -110,8 +111,8 @@ func (r *rpcRewrapRegistry) register(c *Conn, body []byte, reqMsgID int64, metho
 
 func (r *rpcRewrapRegistry) registerSemantic(
 	c *Conn,
-	identity tg.LayerSemanticRequestIdentity,
-	call tg.LayerCallIdentity,
+	identity tlprofile.SemanticIdentity,
+	call tlprofile.CallIdentity,
 	reqMsgID int64,
 	method string,
 	owner *rpcResultOwnerLease,
@@ -183,8 +184,8 @@ func (r *rpcRewrapRegistry) claim(c *Conn, inner []byte) *rpcRewrapCandidate {
 
 func (r *rpcRewrapRegistry) claimSemantic(
 	c *Conn,
-	identity tg.LayerSemanticRequestIdentity,
-	call tg.LayerCallIdentity,
+	identity tlprofile.SemanticIdentity,
+	call tlprofile.CallIdentity,
 ) *rpcRewrapCandidate {
 	if r == nil || c == nil || identity.Method() == 0 || identity.CanonicalSize() <= 0 {
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/rpc"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -29,17 +31,17 @@ func exactLayerRPCBody(t *testing.T, request bin.Encoder) []byte {
 	return body.Copy()
 }
 
-func exactOutboundLayerRPCBody(t *testing.T, profile tg.LayerProfile, request bin.Object) []byte {
+func exactOutboundLayerRPCBody(t *testing.T, profile tlprofile.Profile, request bin.Object) []byte {
 	t.Helper()
-	outbound, err := tg.PrepareLayerOutboundCall(profile, request)
-	if err != nil {
+	var body bin.Buffer
+	if err := tlprofile.EncodeObject(profile, request, &body); err != nil {
 		t.Fatal(err)
 	}
-	return exactLayerRPCBody(t, outbound)
+	return body.Copy()
 }
 
 type admissionOnlyLayerRPC struct {
-	dispatcher *tg.ServerDispatcher
+	dispatcher *tlprofile.Dispatcher
 	mu         sync.Mutex
 	published  []publishedLayerEvidence
 }
@@ -128,8 +130,8 @@ func (s unavailableEdgeSessionLayerStore) DeleteExpiredSessionLayers(context.Con
 type dispatchProfileCaptureRouter struct {
 	*rpc.Router
 	mu             sync.Mutex
-	requestProfile tg.LayerProfile
-	resultProfile  tg.LayerProfile
+	requestProfile tlprofile.Profile
+	resultProfile  tlprofile.Profile
 }
 
 func (h *dispatchProfileCaptureRouter) DispatchAdmitted(
@@ -138,8 +140,8 @@ func (h *dispatchProfileCaptureRouter) DispatchAdmitted(
 	sessionID int64,
 	msgID int64,
 	admissionSeq uint64,
-	request tg.LayerRequest,
-) (tg.LayerRPCResult, string, error) {
+	request tlprofile.Admission,
+) (tlprofile.Result, string, error) {
 	result, method, err := h.Router.DispatchAdmitted(ctx, authKeyID, sessionID, msgID, admissionSeq, request)
 	h.mu.Lock()
 	h.requestProfile = request.Call().Profile()
@@ -150,7 +152,7 @@ func (h *dispatchProfileCaptureRouter) DispatchAdmitted(
 	return result, method, err
 }
 
-func (h *dispatchProfileCaptureRouter) profiles() (tg.LayerProfile, tg.LayerProfile) {
+func (h *dispatchProfileCaptureRouter) profiles() (tlprofile.Profile, tlprofile.Profile) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.requestProfile, h.resultProfile
@@ -189,7 +191,7 @@ func (h *capacityAdmissionOnlyLayerRPC) FreezeNegotiatedSessionLayerAt([8]byte, 
 type replayProfileCaptureLayerRPC struct {
 	*admissionOnlyLayerRPC
 	mu       sync.Mutex
-	profiles []tg.LayerProfile
+	profiles []tlprofile.Profile
 	known    []bool
 }
 
@@ -199,7 +201,7 @@ func (h *replayProfileCaptureLayerRPC) PrepareAdmittedReplay(
 	_ int64,
 	_ int64,
 	_ uint64,
-	request tg.LayerRequest,
+	request tlprofile.Admission,
 ) (func() error, error) {
 	profile, known := request.EffectiveProfile()
 	h.mu.Lock()
@@ -209,14 +211,14 @@ func (h *replayProfileCaptureLayerRPC) PrepareAdmittedReplay(
 	return nil, nil
 }
 
-func (h *replayProfileCaptureLayerRPC) capturedProfiles() ([]tg.LayerProfile, []bool) {
+func (h *replayProfileCaptureLayerRPC) capturedProfiles() ([]tlprofile.Profile, []bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return append([]tg.LayerProfile(nil), h.profiles...), append([]bool(nil), h.known...)
+	return append([]tlprofile.Profile(nil), h.profiles...), append([]bool(nil), h.known...)
 }
 
 func newAdmissionOnlyLayerRPC() *admissionOnlyLayerRPC {
-	return &admissionOnlyLayerRPC{dispatcher: tg.NewServerDispatcher(nil)}
+	return &admissionOnlyLayerRPC{dispatcher: tlprofile.NewDispatcher()}
 }
 
 func newOrderedAdmissionOnlyLayerRPC() *orderedAdmissionOnlyLayerRPC {
@@ -259,19 +261,19 @@ func (h *orderedAdmissionOnlyLayerRPC) FreezeNegotiatedSessionLayerAt(authKeyID 
 	return true, nil
 }
 
-func (h *admissionOnlyLayerRPC) AdmitLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
-	return h.dispatcher.AdmitLayerWithLimits(profile, b, limits)
+func (h *admissionOnlyLayerRPC) AdmitLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
+	return h.dispatcher.Admit(profile, b, limits)
 }
 
-func (h *admissionOnlyLayerRPC) AdmitDefaultLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
-	return h.dispatcher.AdmitDefaultLayerWithLimits(profile, b, limits)
+func (h *admissionOnlyLayerRPC) AdmitDefaultLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
+	return h.dispatcher.AdmitDefault(profile, b, limits)
 }
 
-func (h *admissionOnlyLayerRPC) AdmitUnprofiled(b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error) {
-	return h.dispatcher.AdmitUnprofiledWithLimits(b, limits)
+func (h *admissionOnlyLayerRPC) AdmitUnprofiled(b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error) {
+	return h.dispatcher.AdmitUnprofiled(b, limits)
 }
 
-func (*admissionOnlyLayerRPC) DispatchAdmitted(context.Context, [8]byte, int64, int64, uint64, tg.LayerRequest) (tg.LayerRPCResult, string, error) {
+func (*admissionOnlyLayerRPC) DispatchAdmitted(context.Context, [8]byte, int64, int64, uint64, tlprofile.Admission) (tlprofile.Result, string, error) {
 	return nil, "", fmt.Errorf("admission-only handler")
 }
 
@@ -302,7 +304,7 @@ func (h *admissionOnlyLayerRPC) publications() []publishedLayerEvidence {
 func TestNestedExplicitLayerAdmissionErrorsAreNotDefaultFailures(t *testing.T) {
 	handler := newAdmissionOnlyLayerRPC()
 	s := New(Options{DC: 2, LayerRPC: handler})
-	state := LayerProfileSnapshot{Profile: tg.LayerProfile227, Origin: LayerProfileInherited}
+	state := LayerProfileSnapshot{Profile: tlprofile.Profile227, Origin: LayerProfileInherited}
 
 	unsupported := exactLayerRPCBody(t, &tg.InvokeAfterMsgRequest{
 		MsgID: 1,
@@ -334,12 +336,11 @@ func TestNestedExplicitLayerAdmissionErrorsAreNotDefaultFailures(t *testing.T) {
 	malformedSelectedQuery.PutID(tg.MessagesGetHistoryRequestTypeID)
 
 	for _, test := range []struct {
-		name         string
-		body         []byte
-		wantSemantic bool
+		name string
+		body []byte
 	}{
-		{name: "unsupported", body: unsupported, wantSemantic: true},
-		{name: "conflict", body: conflict, wantSemantic: true},
+		{name: "unsupported", body: unsupported},
+		{name: "conflict", body: conflict},
 		{name: "truncated_selector", body: truncatedSelector.Copy()},
 		{name: "malformed_selected_query", body: malformedSelectedQuery.Copy()},
 	} {
@@ -351,10 +352,14 @@ func TestNestedExplicitLayerAdmissionErrorsAreNotDefaultFailures(t *testing.T) {
 			if errors.Is(err, errDefaultLayerAdmission) {
 				t.Fatalf("explicit admission was misclassified as stale default: %v", err)
 			}
-			if test.wantSemantic {
-				var codecErr *tg.LayerCodecError
-				if !errors.As(err, &codecErr) || codecErr.Semantic != tg.LayerSemanticMethodInvokeWithLayer {
-					t.Fatalf("explicit error semantic = %#v, err=%v", codecErr, err)
+			switch test.name {
+			case "unsupported":
+				if !strings.Contains(err.Error(), "unsupported exact profile 229") {
+					t.Fatalf("unsupported selector error = %v", err)
+				}
+			case "conflict":
+				if !errors.Is(err, tlprofile.ErrProfileConflict) {
+					t.Fatalf("conflicting selector error = %v", err)
 				}
 			}
 		})
@@ -376,7 +381,7 @@ func TestBatchProvisionalCursorKeepsRegistryWatermarkAcrossOldReplay(t *testing.
 		t.Fatal(err)
 	}
 	c := &Conn{authKeyID: authKeyID, sessionID: sessionID, metrics: NopMetrics{}}
-	if err := c.SeedInheritedLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.SeedInheritedLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 8, time.Second)
@@ -384,7 +389,7 @@ func TestBatchProvisionalCursorKeepsRegistryWatermarkAcrossOldReplay(t *testing.
 
 	oldBody := exactLayerRPCBody(t, &tg.InvokeWithLayerRequest{Layer: 225, Query: &tg.HelpGetConfigRequest{}})
 	oldAdmitted, _, err := s.decodeInboundLayerRPC(
-		LayerProfileSnapshot{Profile: tg.LayerProfile225, Origin: LayerProfileExplicit}, oldBody,
+		LayerProfileSnapshot{Profile: tlprofile.Profile225, Origin: LayerProfileExplicit}, oldBody,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -398,7 +403,7 @@ func TestBatchProvisionalCursorKeepsRegistryWatermarkAcrossOldReplay(t *testing.
 	oldClaim.owner.CompleteExecution(true)
 	s.rpcResults.Put(authKeyID, sessionID, 100, &encodedOutboundMessage{body: []byte{1}, reqMsgID: 100})
 
-	nakedBody := exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.MessagesGetHistoryRequest{
+	nakedBody := exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	plan := &inboundPlan{items: []inboundItem{
@@ -412,7 +417,7 @@ func TestBatchProvisionalCursorKeepsRegistryWatermarkAcrossOldReplay(t *testing.
 	if plan.items[0].kind != inboundItemReplayRPC {
 		t.Fatalf("old explicit item kind=%d, want completed replay", plan.items[0].kind)
 	}
-	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, 108); !ok || profile != tg.LayerProfile227 {
+	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, 108); !ok || profile != tlprofile.Profile227 {
 		t.Fatalf("following naked admission profile = (%d,%v), want registry Layer 227", profile, ok)
 	}
 }
@@ -423,7 +428,7 @@ func TestBatchProvisionalCursorUsesPendingNewerExplicitEvidence(t *testing.T) {
 	authKeyID := [8]byte{0x31, 0x02}
 	const sessionID = int64(3102)
 	c := &Conn{authKeyID: authKeyID, sessionID: sessionID, metrics: NopMetrics{}}
-	if err := c.seedOrderedLayerProfile(tg.LayerProfile225, 100); err != nil {
+	if err := c.seedOrderedLayerProfile(tlprofile.Profile225, 100); err != nil {
 		t.Fatal(err)
 	}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 8, time.Second)
@@ -431,7 +436,7 @@ func TestBatchProvisionalCursorUsesPendingNewerExplicitEvidence(t *testing.T) {
 
 	explicitBody := exactLayerRPCBody(t, &tg.InvokeWithLayerRequest{Layer: 227, Query: &tg.HelpGetConfigRequest{}})
 	explicit, _, err := s.decodeInboundLayerRPC(
-		LayerProfileSnapshot{Profile: tg.LayerProfile227, Origin: LayerProfileExplicit}, explicitBody,
+		LayerProfileSnapshot{Profile: tlprofile.Profile227, Origin: LayerProfileExplicit}, explicitBody,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +449,7 @@ func TestBatchProvisionalCursorUsesPendingNewerExplicitEvidence(t *testing.T) {
 	}
 	defer pending.owner.Abort()
 
-	nakedBody := exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.MessagesGetHistoryRequest{
+	nakedBody := exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	plan := &inboundPlan{items: []inboundItem{
@@ -458,10 +463,10 @@ func TestBatchProvisionalCursorUsesPendingNewerExplicitEvidence(t *testing.T) {
 	if plan.items[0].kind != inboundItemRewrappedRPC {
 		t.Fatalf("pending explicit item kind=%d, want pending replay", plan.items[0].kind)
 	}
-	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, 108); !ok || profile != tg.LayerProfile227 {
+	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, 108); !ok || profile != tlprofile.Profile227 {
 		t.Fatalf("following naked admission profile = (%d,%v), want pending Layer 227", profile, ok)
 	}
-	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileExplicit || msgID != 104 {
+	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileExplicit || msgID != 104 {
 		t.Fatalf("pending full-identity evidence was not committed = %#v msgID:%d", state, msgID)
 	}
 	if got := handler.publications(); len(got) != 0 {
@@ -500,7 +505,7 @@ func TestFutureExactLayerWatermarkAllowsOnlyNewerSupportedSelfHeal(t *testing.T)
 		t.Fatal(err)
 	}
 	c := &Conn{authKeyID: authKeyID, sessionID: sessionID, metrics: NopMetrics{}}
-	if err := c.SeedInheritedLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.SeedInheritedLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 8, time.Second)
@@ -513,7 +518,7 @@ func TestFutureExactLayerWatermarkAllowsOnlyNewerSupportedSelfHeal(t *testing.T)
 		},
 		{
 			kind: inboundItemRPC, msgID: 104,
-			body: exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.MessagesGetHistoryRequest{
+			body: exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.MessagesGetHistoryRequest{
 				Peer: &tg.InputPeerSelf{}, Limit: 1,
 			}),
 		},
@@ -549,7 +554,7 @@ func TestFutureExactLayerWatermarkAllowsOnlyNewerSupportedSelfHeal(t *testing.T)
 	if err := s.prepareInboundLayerRPCBatch(context.Background(), c, newPlan); err != nil {
 		t.Fatal(err)
 	}
-	if state, rawLayer, msgID := c.layerProfileRawEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileExplicit || rawLayer != 227 || msgID != 108 {
+	if state, rawLayer, msgID := c.layerProfileRawEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileExplicit || rawLayer != 227 || msgID != 108 {
 		t.Fatalf("newer supported self-heal = %#v raw:%d msgID:%d", state, rawLayer, msgID)
 	}
 	if got := handler.publications(); len(got) != 1 || got[0].layer != 227 || got[0].msgID != 108 {
@@ -602,7 +607,7 @@ func TestDurabilityOutageKeepsExplicitLayerConnectionLocal(t *testing.T) {
 	if !plan.items[0].profileEvidenceFresh() {
 		t.Fatal("durability fallback incorrectly disabled current-connection wrapper effects")
 	}
-	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileExplicit || msgID != 100 {
+	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileExplicit || msgID != 100 {
 		t.Fatalf("connection-local evidence = %#v msgID:%d", state, msgID)
 	}
 	if _, _, found := handler.NegotiatedSessionLayerEvidence(c.authKeyID, c.sessionID); found {
@@ -679,7 +684,7 @@ func TestDurabilityOutageInitializesOnlyCurrentConnection(t *testing.T) {
 	if !c.rpcRewrapInitialized.Load() {
 		t.Fatal("current connection did not retain successful init wrapper state")
 	}
-	if state, evidenceMsgID := c.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileExplicit || evidenceMsgID != msgID {
+	if state, evidenceMsgID := c.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileExplicit || evidenceMsgID != msgID {
 		t.Fatalf("current connection profile = %#v msg:%d", state, evidenceMsgID)
 	}
 	if _, _, found := router.NegotiatedSessionLayerEvidence(c.authKeyID, c.sessionID); found {
@@ -710,7 +715,7 @@ func TestDurabilityOutageInitializesOnlyCurrentConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, err := fanout.prepareForConn(ctx, c)
-	if err != nil || encoded.layer == nil || encoded.layer.profile != tg.LayerProfile227 {
+	if err != nil || encoded.layer == nil || encoded.layer.profile != tlprofile.Profile227 {
 		t.Fatalf("outage-local push profile = encoded:%#v err:%v", encoded, err)
 	}
 
@@ -723,7 +728,7 @@ func TestDurabilityOutageInitializesOnlyCurrentConnection(t *testing.T) {
 	if state := replacement.LayerProfileState(); state.Origin != LayerProfileUnknown {
 		t.Fatalf("new session inherited outage-local profile: %#v", state)
 	}
-	naked := exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.MessagesGetHistoryRequest{
+	naked := exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	if _, _, err := s.admitInboundLayerRPCAt(replacement, msgID+4, naked); err == nil {
@@ -782,7 +787,7 @@ func TestInvariantReplayNeverCachesInternalCanonicalProfile(t *testing.T) {
 	}
 	profiled := newConn()
 	defer profiled.Close()
-	if err := profiled.seedOrderedLayerProfile(tg.LayerProfile225, 104); err != nil {
+	if err := profiled.seedOrderedLayerProfile(tlprofile.Profile225, 104); err != nil {
 		t.Fatal(err)
 	}
 	completed := &inboundPlan{items: []inboundItem{{kind: inboundItemRPC, msgID: 100, body: body}}}
@@ -793,7 +798,7 @@ func TestInvariantReplayNeverCachesInternalCanonicalProfile(t *testing.T) {
 	if completed.items[0].kind != inboundItemReplayRPC {
 		t.Fatalf("profiled invariant completed replay kind=%d", completed.items[0].kind)
 	}
-	if state, msgID := profiled.layerProfileEvidenceState(); state.Profile != tg.LayerProfile225 || state.Origin != LayerProfileExplicit || msgID != 104 {
+	if state, msgID := profiled.layerProfileEvidenceState(); state.Profile != tlprofile.Profile225 || state.Origin != LayerProfileExplicit || msgID != 104 {
 		t.Fatalf("invariant replay polluted explicit profile = %#v msgID:%d", state, msgID)
 	}
 }
@@ -804,21 +809,21 @@ func TestSameMsgIDNakedReplayUsesWinnerAdmissionProfile(t *testing.T) {
 	s.rpcResults = newRPCResultCacheWithFlightLimit(time.Now, 8)
 	authKeyID := [8]byte{0x22, 0x99}
 	const sessionID = int64(2299)
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.MessagesGetHistoryRequest{
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 
 	item220 := inboundItem{msgID: 100, body: body}
 	var err error
 	item220.admitted, item220.method, err = s.decodeInboundLayerRPC(
-		LayerProfileSnapshot{Profile: tg.LayerProfile225, Origin: LayerProfileInherited}, body,
+		LayerProfileSnapshot{Profile: tlprofile.Profile225, Origin: LayerProfileInherited}, body,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	item227 := inboundItem{msgID: 100, body: body}
 	item227.admitted, item227.method, err = s.decodeInboundLayerRPC(
-		LayerProfileSnapshot{Profile: tg.LayerProfile227, Origin: LayerProfileInherited}, body,
+		LayerProfileSnapshot{Profile: tlprofile.Profile227, Origin: LayerProfileInherited}, body,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -836,13 +841,13 @@ func TestSameMsgIDNakedReplayUsesWinnerAdmissionProfile(t *testing.T) {
 	if err != nil || loser.state != rpcResultAcquirePending || loser.admissionSeq != winner.admissionSeq {
 		t.Fatalf("loser join = state:%d seq:%d err:%v, winner seq:%d", loser.state, loser.admissionSeq, err, winner.admissionSeq)
 	}
-	if got := item227.admitted.Call().Profile(); got != tg.LayerProfile225 {
+	if got := item227.admitted.Call().Profile(); got != tlprofile.Profile225 {
 		t.Fatalf("loser re-admitted profile = %d, want winner 225", got)
 	}
 
 	changed := inboundItem{msgID: 100, body: exactLayerRPCBody(t, &tg.HelpGetNearestDCRequest{})}
 	changed.admitted, changed.method, err = s.decodeInboundLayerRPC(
-		LayerProfileSnapshot{Profile: tg.LayerProfile225, Origin: LayerProfileInherited}, changed.body,
+		LayerProfileSnapshot{Profile: tlprofile.Profile225, Origin: LayerProfileInherited}, changed.body,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -854,7 +859,7 @@ func TestSameMsgIDNakedReplayUsesWinnerAdmissionProfile(t *testing.T) {
 }
 
 func TestInheritedLayerServesRepeatedNakedRPCsWithoutSelectorRefresh(t *testing.T) {
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			s := New(Options{DC: 2, LayerRPC: newAdmissionOnlyLayerRPC()})
 			c := &Conn{authKeyID: [8]byte{0x71, byte(profile)}, sessionID: int64(profile), metrics: NopMetrics{}}
@@ -985,7 +990,7 @@ func TestOldCompletedLayerRequestCannotRollBackCorrectedSession(t *testing.T) {
 	if err := s.prepareInboundLayerRPCBatch(context.Background(), c, correctPlan); err != nil {
 		t.Fatal(err)
 	}
-	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || msgID != 104 {
+	if state, msgID := c.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || msgID != 104 {
 		t.Fatalf("corrected Conn = %#v msgID:%d", state, msgID)
 	}
 
@@ -1002,7 +1007,7 @@ func TestOldCompletedLayerRequestCannotRollBackCorrectedSession(t *testing.T) {
 	if replay.items[0].kind != inboundItemReplayRPC {
 		t.Fatalf("old request kind=%d, want completed replay", replay.items[0].kind)
 	}
-	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || msgID != 104 {
+	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || msgID != 104 {
 		t.Fatalf("old replay rolled replacement back = %#v msgID:%d", state, msgID)
 	}
 	if layer, msgID, ok := handler.NegotiatedSessionLayerEvidence(authKeyID, sessionID); !ok || layer != 227 || msgID != 104 {
@@ -1069,11 +1074,11 @@ func TestLogicalSessionLayerWatermarkSurvivesResultExpiryAndOldContainer(t *test
 	if err := s.seedInitialLayerProfile(context.Background(), replacement, 0, LayerProfileSnapshot{}); err != nil {
 		t.Fatal(err)
 	}
-	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileInherited || msgID != 0 {
+	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileInherited || msgID != 0 {
 		t.Fatalf("replacement seed = %#v msgID:%d, want inherited Layer 227", state, msgID)
 	}
 	freshMsgID := proto.NewMessageIDGen(now.Now).New(proto.MessageFromClient)
-	nakedBody := exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.MessagesGetHistoryRequest{
+	nakedBody := exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	replayPlan := &inboundPlan{items: []inboundItem{
@@ -1090,10 +1095,10 @@ func TestLogicalSessionLayerWatermarkSurvivesResultExpiryAndOldContainer(t *test
 	if err := s.prepareInboundLayerRPCBatch(context.Background(), replacement, replayPlan); err != nil {
 		t.Fatal(err)
 	}
-	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, freshMsgID); !ok || profile != tg.LayerProfile227 {
+	if profile, ok := s.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, freshMsgID); !ok || profile != tlprofile.Profile227 {
 		t.Fatalf("naked request after expired old replay = (%d,%v), want Layer 227", profile, ok)
 	}
-	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tg.LayerProfile227 || state.Origin != LayerProfileInherited || msgID != 0 {
+	if state, msgID := replacement.layerProfileEvidenceState(); state.Profile != tlprofile.Profile227 || state.Origin != LayerProfileInherited || msgID != 0 {
 		t.Fatalf("old request-bound flight rolled replacement back = %#v msgID:%d", state, msgID)
 	}
 	if _, _, ok := router.NegotiatedSessionLayerEvidence(authKeyID, sessionID); ok {
@@ -1156,14 +1161,14 @@ func TestDurableLayerEvidenceRestoresAcrossEdgeRouterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, rawLayer, evidenceMsgID := replacement.layerProfileRawEvidenceState()
-	if state.Profile != tg.LayerProfile225 || state.Origin != LayerProfileExplicit || rawLayer != 225 || evidenceMsgID != selectorMsgID {
+	if state.Profile != tlprofile.Profile225 || state.Origin != LayerProfileExplicit || rawLayer != 225 || evidenceMsgID != selectorMsgID {
 		t.Fatalf("restart seed = state:%#v raw:%d msg:%d", state, rawLayer, evidenceMsgID)
 	}
 
 	nakedMsgID := msgIDs.New(proto.MessageFromClient)
 	nakedPlan := &inboundPlan{items: []inboundItem{{
 		kind: inboundItemRPC, msgID: nakedMsgID,
-		body: exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.MessagesGetHistoryRequest{
+		body: exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.MessagesGetHistoryRequest{
 			Peer: &tg.InputPeerSelf{}, Limit: 1,
 		}),
 		layerProfileEvidenceFreshness: inboundLayerProfileEvidenceFresh,
@@ -1173,7 +1178,7 @@ func TestDurableLayerEvidenceRestoresAcrossEdgeRouterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile, profiled := restartedEdge.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, nakedMsgID)
-	if len(nakedPlan.rpcTasks) != 1 || !profiled || profile != tg.LayerProfile225 {
+	if len(nakedPlan.rpcTasks) != 1 || !profiled || profile != tlprofile.Profile225 {
 		t.Fatalf("restart naked admission = tasks:%d item:%+v", len(nakedPlan.rpcTasks), nakedPlan.items[0])
 	}
 }
@@ -1207,7 +1212,7 @@ func TestPhysicalConnectionReadsDurableLayerOnceBeforeAdmissionHotPath(t *testin
 		t.Fatalf("connection seed GetSessionLayer calls=%d, want 1", got)
 	}
 
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	for i := 0; i < 64; i++ {
 		plan := &inboundPlan{items: []inboundItem{{
 			kind: inboundItemRPC, msgID: msgIDs.New(proto.MessageFromClient), body: body,
@@ -1237,12 +1242,12 @@ func TestDurableExactSeedOutageKeepsFetchedAuthKeyDefaultServing(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := c.LayerProfileState()
-	if initial.Profile != tg.LayerProfile225 || initial.Origin != LayerProfileInherited {
+	if initial.Profile != tlprofile.Profile225 || initial.Origin != LayerProfileInherited {
 		t.Fatalf("outage seed discarded fetched auth-key default: %#v", initial)
 	}
 
 	msgIDs := proto.NewMessageIDGen(time.Now)
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.MessagesGetHistoryRequest{
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	for i := 0; i < 64; i++ {
@@ -1280,12 +1285,12 @@ func TestBoundTempSeedOutageKeepsRawFetchedLayerServingCurrentConn(t *testing.T)
 		t.Fatal(err)
 	}
 	initial := c.LayerProfileState()
-	if initial.Profile != tg.LayerProfile225 || initial.Origin != LayerProfileInherited {
+	if initial.Profile != tlprofile.Profile225 || initial.Origin != LayerProfileInherited {
 		t.Fatalf("bound-temp outage discarded same-frame raw default: %#v", initial)
 	}
 
 	msgIDs := proto.NewMessageIDGen(time.Now)
-	body := exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.MessagesGetHistoryRequest{
+	body := exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.MessagesGetHistoryRequest{
 		Peer: &tg.InputPeerSelf{}, Limit: 1,
 	})
 	for i := 0; i < 64; i++ {
@@ -1347,7 +1352,7 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 		t.Fatal(err)
 	}
 	oldPlan.close()
-	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tg.LayerProfile225 || raw != 225 || msgID != oldMsgID {
+	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tlprofile.Profile225 || raw != 225 || msgID != oldMsgID {
 		t.Fatalf("A initial profile = state:%#v raw:%d msg:%d", state, raw, msgID)
 	}
 
@@ -1366,18 +1371,18 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 	oldNakedMsgID := msgIDs.New(proto.MessageFromClient)
 	oldNakedPlan := &inboundPlan{items: []inboundItem{{
 		kind: inboundItemRPC, msgID: oldNakedMsgID,
-		body:                          exactOutboundLayerRPCBody(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{}),
+		body:                          exactOutboundLayerRPCBody(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{}),
 		layerProfileEvidenceFreshness: inboundLayerProfileEvidenceFresh,
 	}}}
 	if err := edgeA.prepareInboundLayerRPCBatch(ctx, connA, oldNakedPlan); err != nil {
 		oldNakedPlan.close()
 		t.Fatal(err)
 	}
-	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tg.LayerProfile225 || raw != 225 || msgID != oldMsgID {
+	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tlprofile.Profile225 || raw != 225 || msgID != oldMsgID {
 		oldNakedPlan.close()
 		t.Fatalf("remote durable advance rewrote live A = state:%#v raw:%d msg:%d", state, raw, msgID)
 	}
-	if profile, ok := edgeA.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, oldNakedMsgID); !ok || profile != tg.LayerProfile225 {
+	if profile, ok := edgeA.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, oldNakedMsgID); !ok || profile != tlprofile.Profile225 {
 		oldNakedPlan.close()
 		t.Fatalf("old naked admission profile = (%d,%v), want 225", profile, ok)
 	}
@@ -1388,7 +1393,7 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 	mismatchMsgID := msgIDs.New(proto.MessageFromClient)
 	mismatchPlan := &inboundPlan{items: []inboundItem{{
 		kind: inboundItemRPC, msgID: mismatchMsgID,
-		body: exactOutboundLayerRPCBody(t, tg.LayerProfile227, &tg.ChannelsJoinChannelRequest{
+		body: exactOutboundLayerRPCBody(t, tlprofile.Profile227, &tg.ChannelsJoinChannelRequest{
 			Channel: &tg.InputChannelEmpty{},
 		}),
 		layerProfileEvidenceFreshness: inboundLayerProfileEvidenceFresh,
@@ -1402,7 +1407,7 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 		t.Fatalf("new naked grammar kind=%d, want admission error", mismatchPlan.items[0].kind)
 	}
 	mismatchPlan.close()
-	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tg.LayerProfile225 || raw != 225 || msgID != oldMsgID {
+	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tlprofile.Profile225 || raw != 225 || msgID != oldMsgID {
 		t.Fatalf("failed naked correction mutated A = state:%#v raw:%d msg:%d", state, raw, msgID)
 	}
 
@@ -1418,10 +1423,10 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 	if err := edgeA.prepareInboundLayerRPCBatch(ctx, connA, correctionPlan); err != nil {
 		t.Fatal(err)
 	}
-	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tg.LayerProfile227 || raw != 227 || msgID != correctionMsgID {
+	if state, raw, msgID := connA.layerProfileRawEvidenceState(); state.Profile != tlprofile.Profile227 || raw != 227 || msgID != correctionMsgID {
 		t.Fatalf("A explicit correction = state:%#v raw:%d msg:%d", state, raw, msgID)
 	}
-	if profile, ok := edgeA.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, correctionMsgID); !ok || profile != tg.LayerProfile227 {
+	if profile, ok := edgeA.rpcResults.ExactAdmissionProfile(authKeyID, sessionID, correctionMsgID); !ok || profile != tlprofile.Profile227 {
 		t.Fatalf("corrected admission profile = (%d,%v), want 227", profile, ok)
 	}
 	if len(correctionPlan.rpcTasks) != 1 {
@@ -1431,7 +1436,7 @@ func TestLiveConnectionKeepsFrozenLayerUntilItsOwnExplicitCorrection(t *testing.
 		t.Fatal(err)
 	}
 	requestProfile, resultProfile := handlerA.profiles()
-	if requestProfile != tg.LayerProfile227 || resultProfile != tg.LayerProfile227 {
+	if requestProfile != tlprofile.Profile227 || resultProfile != tlprofile.Profile227 {
 		t.Fatalf("dispatch/result profiles = %d/%d, want 227/227", requestProfile, resultProfile)
 	}
 }
@@ -1488,7 +1493,7 @@ func TestExactSessionProfileSurvivesUnregisterAndSeedsNakedReplay(t *testing.T) 
 	if !ok || layer != 225 {
 		t.Fatalf("reconnect seed = (%d,%v), want (225,true)", layer, ok)
 	}
-	profile, ok := tg.ResolveLayerProfile(layer)
+	profile, ok := tlprofile.ResolveProfile(layer)
 	if !ok {
 		t.Fatalf("resolve retained profile %d", layer)
 	}
@@ -1500,7 +1505,7 @@ func TestExactSessionProfileSurvivesUnregisterAndSeedsNakedReplay(t *testing.T) 
 	if err != nil {
 		t.Fatalf("same-session naked replay admission: %v", err)
 	}
-	if method != "help.getConfig" || admitted.Call().Profile() != tg.LayerProfile225 {
+	if method != "help.getConfig" || admitted.Call().Profile() != tlprofile.Profile225 {
 		t.Fatalf("naked replay = method:%q profile:%d", method, admitted.Call().Profile())
 	}
 }
@@ -1523,7 +1528,7 @@ func TestSameAuthKeyNewSessionRequiresOwnLayerEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bob session layer 227: %v", err)
 	}
-	if bobRequest.Call().Profile() != tg.LayerProfile227 {
+	if bobRequest.Call().Profile() != tlprofile.Profile227 {
 		t.Fatalf("Bob profile = %d, want 227", bobRequest.Call().Profile())
 	}
 
@@ -1532,7 +1537,7 @@ func TestSameAuthKeyNewSessionRequiresOwnLayerEvidence(t *testing.T) {
 		Peer:  &tg.InputPeerSelf{},
 		Limit: 1,
 	}
-	naked228 := exactOutboundLayerRPCBody(t, tg.LayerProfile228, profileDependent)
+	naked228 := exactOutboundLayerRPCBody(t, tlprofile.Profile228, profileDependent)
 	if _, _, err := s.admitInboundLayerRPC(aliceConn, naked228); err == nil {
 		t.Fatal("new session inherited another session's Layer for naked application RPC")
 	}
@@ -1551,7 +1556,7 @@ func TestSameAuthKeyNewSessionRequiresOwnLayerEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Alice session own layer 228 evidence: %v", err)
 	}
-	if aliceRequest.Call().Profile() != tg.LayerProfile228 {
+	if aliceRequest.Call().Profile() != tlprofile.Profile228 {
 		t.Fatalf("Alice profile = %d, want 228", aliceRequest.Call().Profile())
 	}
 	if layer, ok := router.NegotiatedSessionLayer(authKeyID, bobSession); !ok || layer != 227 {
@@ -1573,7 +1578,7 @@ func TestExactSessionRegistryAllowsOrderedExplicitCorrection(t *testing.T) {
 	// A later well-formed invokeWithLayer is authoritative correction, including
 	// when same-session recovery initially restored an older explicit profile.
 	c := &Conn{authKeyID: authKeyID, sessionID: sessionID, metrics: NopMetrics{}}
-	if err := c.SeedLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.SeedLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	wrapped := exactLayerRPCBody(t, &tg.InvokeWithLayerRequest{
@@ -1584,10 +1589,10 @@ func TestExactSessionRegistryAllowsOrderedExplicitCorrection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("profile correction: %v", err)
 	}
-	if request.Call().Profile() != tg.LayerProfile227 {
+	if request.Call().Profile() != tlprofile.Profile227 {
 		t.Fatalf("corrected request profile = %d", request.Call().Profile())
 	}
-	if got := c.LayerProfileState(); got.Profile != tg.LayerProfile227 || got.Origin != LayerProfileExplicit || got.Epoch < 2 {
+	if got := c.LayerProfileState(); got.Profile != tlprofile.Profile227 || got.Origin != LayerProfileExplicit || got.Epoch < 2 {
 		t.Fatalf("corrected Conn profile = %#v", got)
 	}
 	if layer, ok := router.NegotiatedSessionLayer(authKeyID, sessionID); !ok || layer != 227 {
@@ -1599,17 +1604,17 @@ func TestRestoredExplicitProfileNakedFailureRequestsLayerCorrection(t *testing.T
 	router := rpc.New(rpc.Config{DC: 2}, rpc.Deps{}, zaptest.NewLogger(t), clock.System)
 	s := New(Options{DC: 2, LayerRPC: router})
 	c := &Conn{authKeyID: [8]byte{2, 2, 0, 2}, sessionID: 220227, metrics: NopMetrics{}}
-	if err := c.SeedLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.SeedLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	request := &tg.ChannelsJoinChannelRequest{Channel: &tg.InputChannelEmpty{}}
-	naked227 := exactOutboundLayerRPCBody(t, tg.LayerProfile227, request)
+	naked227 := exactOutboundLayerRPCBody(t, tlprofile.Profile227, request)
 	if _, _, err := s.admitInboundLayerRPC(c, naked227); err == nil {
 		t.Fatal("stale explicit profile admitted newer naked constructor")
 	} else if rpcErr := layerRPCAdmissionError(err); rpcErr.ErrorCode != 400 || rpcErr.ErrorMessage != "CONNECTION_LAYER_INVALID" {
 		t.Fatalf("stale explicit profile error = (%d,%q): %v", rpcErr.ErrorCode, rpcErr.ErrorMessage, err)
 	}
-	if got := c.LayerProfileState(); got.Profile != tg.LayerProfile225 || got.Origin != LayerProfileExplicit {
+	if got := c.LayerProfileState(); got.Profile != tlprofile.Profile225 || got.Origin != LayerProfileExplicit {
 		t.Fatalf("failed naked admission changed profile = %#v", got)
 	}
 
@@ -1618,10 +1623,10 @@ func TestRestoredExplicitProfileNakedFailureRequestsLayerCorrection(t *testing.T
 	if err != nil {
 		t.Fatalf("explicit correction retry: %v", err)
 	}
-	if admitted.Call().Profile() != tg.LayerProfile227 {
+	if admitted.Call().Profile() != tlprofile.Profile227 {
 		t.Fatalf("corrected call profile = %d", admitted.Call().Profile())
 	}
-	if got := c.LayerProfileState(); got.Profile != tg.LayerProfile227 || got.Origin != LayerProfileExplicit || got.Epoch < 2 {
+	if got := c.LayerProfileState(); got.Profile != tlprofile.Profile227 || got.Origin != LayerProfileExplicit || got.Epoch < 2 {
 		t.Fatalf("corrected profile = %#v", got)
 	}
 }
@@ -1675,9 +1680,9 @@ func TestUnprofiledInvariantBindKeepsProfileUnknownAndReturnsExactBool(t *testin
 	if err := envelope.Decode(&bin.Buffer{Buf: encoded.body}); err != nil {
 		t.Fatal(err)
 	}
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile225, tg.LayerProfile227} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile227} {
 		inner := bin.Buffer{Buf: append([]byte(nil), envelope.Result...)}
-		decoded, err := tg.DecodeLayer(profile, tg.LayerClassBoolType(), &inner)
+		decoded, err := tlprofile.DecodeObject(profile, &inner, tlprofile.Limits{})
 		if err != nil {
 			t.Fatalf("decode invariant Bool at layer %d: %v", profile, err)
 		}
@@ -1688,13 +1693,13 @@ func TestUnprofiledInvariantBindKeepsProfileUnknownAndReturnsExactBool(t *testin
 
 	// The same immutable bytes remain legal if profile evidence arrives before
 	// the queued bind result is physically written.
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateOutboundLayerBinding(c, encoded); err != nil {
 		t.Fatalf("validate invariant result after layer 225 freeze: %v", err)
 	}
-	profiledBody := exactOutboundLayerRPCBody(t, tg.LayerProfile225, bind)
+	profiledBody := exactOutboundLayerRPCBody(t, tlprofile.Profile225, bind)
 	profiled, _, err := s.admitInboundLayerRPC(c, profiledBody)
 	if err != nil {
 		t.Fatal(err)
@@ -1714,13 +1719,13 @@ func TestLayerRPCBatchCapacityKeepsExistingPendingReplay(t *testing.T) {
 		metrics:   NopMetrics{},
 	}
 	c.startInboundRPCScheduler(s.rpcScheduler, 1, 8, time.Second)
-	if err := c.FreezeLayerProfile(tg.LayerProfile225); err != nil {
+	if err := c.FreezeLayerProfile(tlprofile.Profile225); err != nil {
 		t.Fatal(err)
 	}
 
 	firstBody := exactLayerRPCBody(t, &tg.HelpGetConfigRequest{})
 	identityBuffer := &bin.Buffer{Buf: append([]byte(nil), firstBody...)}
-	admitted, err := router.AdmitLayer(tg.LayerProfile225, identityBuffer, tg.LayerDecodeLimits{})
+	admitted, err := router.AdmitLayer(tlprofile.Profile225, identityBuffer, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1768,7 +1773,7 @@ func TestLayerRPCBatchCapacityAbortsRejectedRewrapOwner(t *testing.T) {
 		sessionID = int64(779)
 		msgID     = int64(900)
 	)
-	identity := rpcFlightExactIdentity(t, tg.LayerProfile225, &tg.HelpGetConfigRequest{})
+	identity := rpcFlightExactIdentity(t, tlprofile.Profile225, &tg.HelpGetConfigRequest{})
 	claim, err := cache.AcquireIdentified(authKeyID, sessionID, msgID, identity)
 	if err != nil || claim.state != rpcResultAcquireOwner || claim.owner == nil {
 		t.Fatalf("rewrap owner = state:%d err:%v", claim.state, err)
@@ -1819,7 +1824,7 @@ func TestLayerRPCDependencyGateUsesBusinessOutcome(t *testing.T) {
 				MsgID: test.dependency,
 				Query: &tg.HelpGetConfigRequest{},
 			})
-			admitted, err := router.AdmitLayer(tg.LayerProfile225, &bin.Buffer{Buf: body}, tg.LayerDecodeLimits{})
+			admitted, err := router.AdmitLayer(tlprofile.Profile225, &bin.Buffer{Buf: body}, tlprofile.Limits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1847,7 +1852,7 @@ func TestLayerRPCDependencyGateUsesBusinessOutcome(t *testing.T) {
 		MsgID: 300,
 		Query: &tg.HelpGetConfigRequest{},
 	})
-	missing, err := router.AdmitLayer(tg.LayerProfile225, &bin.Buffer{Buf: missingBody}, tg.LayerDecodeLimits{})
+	missing, err := router.AdmitLayer(tlprofile.Profile225, &bin.Buffer{Buf: missingBody}, tlprofile.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1874,12 +1879,12 @@ func TestLayerRPCTimeoutMessageDistinguishesDependencyWait(t *testing.T) {
 }
 
 func TestLayerRPCAdmissionErrorUsesTypedUnknownClassification(t *testing.T) {
-	err := &tg.LayerCodecError{
+	err := &tlprofile.LayerCodecError{
 		Operation: "admit RPC request",
-		Profile:   tg.LayerProfile225,
+		Profile:   tlprofile.Profile225,
 		WireID:    0x01020304,
 		Reason:    "wording may change",
-		Cause:     tg.ErrLayerUnknownRPCMethod,
+		Cause:     tlprofile.ErrUnknownRPCMethod,
 	}
 	rpcErr := layerRPCAdmissionError(err)
 	if rpcErr.ErrorCode != 501 || rpcErr.ErrorMessage != "NOT_IMPLEMENTED" {
@@ -1888,11 +1893,11 @@ func TestLayerRPCAdmissionErrorUsesTypedUnknownClassification(t *testing.T) {
 }
 
 func TestLayerRPCAdmissionErrorDistinguishesUnknownAndInheritedProfiles(t *testing.T) {
-	profileRequired := &tg.LayerCodecError{Operation: "admit", Cause: tg.ErrLayerProfileRequired}
+	profileRequired := &tlprofile.LayerCodecError{Operation: "admit", Cause: tlprofile.ErrProfileRequired}
 	if rpcErr := layerRPCAdmissionError(profileRequired); rpcErr.ErrorCode != 400 || rpcErr.ErrorMessage != "CONNECTION_NOT_INITED" {
 		t.Fatalf("unknown profile admission = (%d,%q)", rpcErr.ErrorCode, rpcErr.ErrorMessage)
 	}
-	inherited := fmt.Errorf("%w: %w", errDefaultLayerAdmission, tg.ErrLayerUnknownRPCMethod)
+	inherited := fmt.Errorf("%w: %w", errDefaultLayerAdmission, tlprofile.ErrUnknownRPCMethod)
 	if rpcErr := layerRPCAdmissionError(inherited); rpcErr.ErrorCode != 400 || rpcErr.ErrorMessage != "CONNECTION_LAYER_INVALID" {
 		t.Fatalf("inherited profile admission = (%d,%q)", rpcErr.ErrorCode, rpcErr.ErrorMessage)
 	}

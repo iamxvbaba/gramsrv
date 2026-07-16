@@ -6,27 +6,38 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	androidcompat "telesrv/internal/compat/android"
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 )
 
 // registerHelp 注册 help.* RPC handler（DC 配置、最近 DC）。
-func (r *Router) registerHelp(d *tg.ServerDispatcher) {
-	d.OnHelpGetConfig(r.onHelpGetConfig)
-	d.OnHelpGetNearestDC(func(ctx context.Context) (*tg.NearestDC, error) {
+func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.HelpGetConfigRequest](d, tlprofile.SemanticMethodHelpGetConfig, func(ctx context.Context, layerRequest *tg.HelpGetConfigRequest) (any, error) {
+		return r.onHelpGetConfig(ctx)
+	})
+	registerRPC[*tg.HelpGetNearestDCRequest](d, tlprofile.SemanticMethodHelpGetNearestDC, func(ctx context.Context, layerRequest *tg.HelpGetNearestDCRequest) (any, error) {
 		return tdesktop.NearestDC(r.cfg.DC), nil
 	})
-	d.OnHelpGetInviteText(func(ctx context.Context) (*tg.HelpInviteText, error) {
+	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
 		return &tg.HelpInviteText{Message: "Join me on Telegram."}, nil
 	})
-	d.OnHelpGetAppUpdate(func(ctx context.Context, source string) (tg.HelpAppUpdateClass, error) {
+	registerRPC[*tg.HelpGetAppUpdateRequest](d, tlprofile.SemanticMethodHelpGetAppUpdate, func(ctx context.Context, layerRequest *tg.HelpGetAppUpdateRequest) (any, error) {
+		source := layerRequest.
+			Source
+		_ = source
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return ioscompat.NoAppUpdate(), nil
 	})
-	d.OnHelpGetAppConfig(func(ctx context.Context, hash int) (tg.HelpAppConfigClass, error) {
+	registerRPC[*tg.HelpGetAppConfigRequest](d, tlprofile.SemanticMethodHelpGetAppConfig, func(ctx context.Context, layerRequest *tg.HelpGetAppConfigRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		if r.deps.Help == nil {
 			return tdesktop.AppConfig(hash), nil
 		}
@@ -40,7 +51,7 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 		}
 		return &tg.HelpAppConfig{Hash: cfg.Hash, Config: tgJSONValue(cfg.JSON)}, nil
 	})
-	d.OnHelpGetCountriesList(func(ctx context.Context, req *tg.HelpGetCountriesListRequest) (tg.HelpCountriesListClass, error) {
+	registerRPC[*tg.HelpGetCountriesListRequest](d, tlprofile.SemanticMethodHelpGetCountriesList, func(ctx context.Context, req *tg.HelpGetCountriesListRequest) (any, error) {
 		if r.deps.Help == nil {
 			return tdesktop.CountriesList(req.Hash), nil
 		}
@@ -53,31 +64,53 @@ func (r *Router) registerHelp(d *tg.ServerDispatcher) {
 		}
 		return tgCountriesList(list), nil
 	})
-	d.OnHelpGetTimezonesList(func(ctx context.Context, hash int) (tg.HelpTimezonesListClass, error) {
+	registerRPC[*tg.HelpGetTimezonesListRequest](d, tlprofile.SemanticMethodHelpGetTimezonesList, func(ctx context.Context, layerRequest *tg.HelpGetTimezonesListRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.TimezonesList(hash), nil
 	})
-	d.OnHelpGetPeerColors(func(ctx context.Context, hash int) (tg.HelpPeerColorsClass, error) {
+	registerRPC[*tg.HelpGetPeerColorsRequest](d, tlprofile.SemanticMethodHelpGetPeerColors, func(ctx context.Context, layerRequest *tg.HelpGetPeerColorsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.PeerColors(hash), nil
 	})
-	d.OnHelpGetPeerProfileColors(func(ctx context.Context, hash int) (tg.HelpPeerColorsClass, error) {
+	registerRPC[*tg.HelpGetPeerProfileColorsRequest](d, tlprofile.SemanticMethodHelpGetPeerProfileColors, func(ctx context.Context, layerRequest *tg.HelpGetPeerProfileColorsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.PeerProfileColors(hash), nil
 	})
-	d.OnHelpGetPromoData(func(ctx context.Context) (tg.HelpPromoDataClass, error) {
+	registerRPC[*tg.HelpGetPromoDataRequest](d, tlprofile.SemanticMethodHelpGetPromoData, func(ctx context.Context, layerRequest *tg.HelpGetPromoDataRequest) (any, error) {
 		return tdesktop.PromoData(r.clock.Now()), nil
 	})
-	d.OnHelpGetTermsOfServiceUpdate(func(ctx context.Context) (tg.HelpTermsOfServiceUpdateClass, error) {
+	registerRPC[*tg.HelpGetTermsOfServiceUpdateRequest](d, tlprofile.SemanticMethodHelpGetTermsOfServiceUpdate, func(ctx context.Context, layerRequest *tg.HelpGetTermsOfServiceUpdateRequest) (any, error) {
 		return tdesktop.TermsOfServiceUpdate(r.clock.Now()), nil
 	})
+	registerRPC[
+
 	// 客户端遇到无法识别的 tg:// 深链时会查询 help.getDeepLinkInfo。telesrv 不维护
 	// “需更新 App”的特殊深链提示库，对所有 path 返回 deepLinkInfoEmpty——这是规范的
 	// “无特殊信息”应答：DrKLO 仅在收到非空 deepLinkInfo 时才弹“请更新 App”弹窗
 	// （LaunchActivity.java:5175），收到 Empty 则静默放行按普通链接处理。此前未注册
 	// handler 会落 fallback 返回 500 NOT_IMPLEMENTED（污染日志且非正确协议行为）。
-	d.OnHelpGetDeepLinkInfo(func(ctx context.Context, path string) (tg.HelpDeepLinkInfoClass, error) {
+	*tg.HelpGetDeepLinkInfoRequest](d, tlprofile.SemanticMethodHelpGetDeepLinkInfo, func(ctx context.Context, layerRequest *tg.HelpGetDeepLinkInfoRequest) (any, error) {
+		path := layerRequest.
+			Path
+		_ = path
+
 		return &tg.HelpDeepLinkInfoEmpty{}, nil
 	})
-	d.OnHelpDismissSuggestion(r.onHelpDismissSuggestion)
-	d.OnHelpGetPremiumPromo(r.onHelpGetPremiumPromo)
+	registerRPC[*tg.HelpDismissSuggestionRequest](d, tlprofile.SemanticMethodHelpDismissSuggestion, func(ctx context.Context, layerRequest *tg.HelpDismissSuggestionRequest) (any, error) {
+		return r.onHelpDismissSuggestion(ctx, layerRequest)
+	})
+	registerRPC[*tg.HelpGetPremiumPromoRequest](d, tlprofile.SemanticMethodHelpGetPremiumPromo, func(ctx context.Context, layerRequest *tg.HelpGetPremiumPromoRequest) (any, error) {
+		return r.onHelpGetPremiumPromo(ctx)
+	})
 }
 
 func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {

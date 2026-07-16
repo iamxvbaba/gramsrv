@@ -3,142 +3,394 @@ package rpc
 import (
 	"context"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 	"unicode/utf8"
 )
 
 // registerMessages 注册 messages.* RPC handler。
-func (r *Router) registerMessages(d *tg.ServerDispatcher) {
-	d.OnMessagesReceivedMessages(r.onMessagesReceivedMessages)
-	d.OnMessagesSetTyping(r.onMessagesSetTyping)
-	d.OnMessagesSaveDraft(r.onMessagesSaveDraft)
-	d.OnMessagesSaveDefaultSendAs(r.onMessagesSaveDefaultSendAs)
-	d.OnMessagesGetAllDrafts(r.onMessagesGetAllDrafts)
-	d.OnMessagesClearAllDrafts(r.onMessagesClearAllDrafts)
-	d.OnMessagesGetAllStickers(r.onMessagesGetAllStickers)
-	d.OnMessagesGetEmojiStickers(r.onMessagesGetEmojiStickers)
-	d.OnMessagesGetMaskStickers(r.onMessagesGetMaskStickers)
-	d.OnMessagesGetFeaturedStickers(r.onMessagesGetFeaturedStickers)
-	d.OnMessagesGetFeaturedEmojiStickers(r.onMessagesGetFeaturedEmojiStickers)
-	d.OnMessagesGetOldFeaturedStickers(r.onMessagesGetOldFeaturedStickers)
-	d.OnMessagesGetRecentStickers(r.onMessagesGetRecentStickers)
-	d.OnMessagesGetFavedStickers(r.onMessagesGetFavedStickers)
-	d.OnMessagesGetSavedGifs(r.onMessagesGetSavedGifs)
-	d.OnMessagesFaveSticker(r.onMessagesFaveSticker)
-	d.OnMessagesSaveRecentSticker(r.onMessagesSaveRecentSticker)
-	d.OnMessagesSaveGif(r.onMessagesSaveGif)
-	d.OnMessagesClearRecentStickers(r.onMessagesClearRecentStickers)
-	d.OnMessagesSendMessage(r.onMessagesSendMessage)
-	d.OnMessagesForwardMessages(r.onMessagesForwardMessages)
-	d.OnMessagesGetDialogFilters(r.onMessagesGetDialogFilters)
-	d.OnMessagesGetSuggestedDialogFilters(func(ctx context.Context) ([]tg.DialogFilterSuggested, error) {
+func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.MessagesReceivedMessagesRequest](d, tlprofile.SemanticMethodMessagesReceivedMessages, func(ctx context.Context, layerRequest *tg.MessagesReceivedMessagesRequest) (any, error) {
+		return r.onMessagesReceivedMessages(ctx, layerRequest.
+			MaxID)
+	})
+	registerRPC[*tg.MessagesSetTypingRequest](d, tlprofile.SemanticMethodMessagesSetTyping, func(ctx context.Context, layerRequest *tg.MessagesSetTypingRequest) (any, error) {
+		return r.onMessagesSetTyping(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSaveDraftRequest](d, tlprofile.SemanticMethodMessagesSaveDraft, func(ctx context.Context, layerRequest *tg.MessagesSaveDraftRequest) (any, error) {
+		return r.onMessagesSaveDraft(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSaveDefaultSendAsRequest](d, tlprofile.SemanticMethodMessagesSaveDefaultSendAs, func(ctx context.Context, layerRequest *tg.MessagesSaveDefaultSendAsRequest) (any, error) {
+		return r.onMessagesSaveDefaultSendAs(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetAllDraftsRequest](d, tlprofile.SemanticMethodMessagesGetAllDrafts, func(ctx context.Context, layerRequest *tg.MessagesGetAllDraftsRequest) (any, error) {
+		return r.onMessagesGetAllDrafts(ctx)
+	})
+	registerRPC[*tg.MessagesClearAllDraftsRequest](d, tlprofile.SemanticMethodMessagesClearAllDrafts, func(ctx context.Context, layerRequest *tg.MessagesClearAllDraftsRequest) (any, error) {
+		return r.onMessagesClearAllDrafts(ctx)
+	})
+	registerRPC[*tg.MessagesGetAllStickersRequest](d, tlprofile.SemanticMethodMessagesGetAllStickers, func(ctx context.Context, layerRequest *tg.MessagesGetAllStickersRequest) (any, error) {
+		return r.onMessagesGetAllStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetEmojiStickersRequest](d, tlprofile.SemanticMethodMessagesGetEmojiStickers, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiStickersRequest) (any, error) {
+		return r.onMessagesGetEmojiStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetMaskStickersRequest](d, tlprofile.SemanticMethodMessagesGetMaskStickers, func(ctx context.Context, layerRequest *tg.MessagesGetMaskStickersRequest) (any, error) {
+		return r.onMessagesGetMaskStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetFeaturedStickersRequest](d, tlprofile.SemanticMethodMessagesGetFeaturedStickers, func(ctx context.Context, layerRequest *tg.MessagesGetFeaturedStickersRequest) (any, error) {
+		return r.onMessagesGetFeaturedStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetFeaturedEmojiStickersRequest](d, tlprofile.SemanticMethodMessagesGetFeaturedEmojiStickers, func(ctx context.Context, layerRequest *tg.MessagesGetFeaturedEmojiStickersRequest) (any, error) {
+		return r.onMessagesGetFeaturedEmojiStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetOldFeaturedStickersRequest](d, tlprofile.SemanticMethodMessagesGetOldFeaturedStickers, func(ctx context.Context, layerRequest *tg.MessagesGetOldFeaturedStickersRequest) (any, error) {
+		return r.onMessagesGetOldFeaturedStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetRecentStickersRequest](d, tlprofile.SemanticMethodMessagesGetRecentStickers, func(ctx context.Context, layerRequest *tg.MessagesGetRecentStickersRequest) (any, error) {
+		return r.onMessagesGetRecentStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetFavedStickersRequest](d, tlprofile.SemanticMethodMessagesGetFavedStickers, func(ctx context.Context, layerRequest *tg.MessagesGetFavedStickersRequest) (any, error) {
+		return r.onMessagesGetFavedStickers(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetSavedGifsRequest](d, tlprofile.SemanticMethodMessagesGetSavedGifs, func(ctx context.Context, layerRequest *tg.MessagesGetSavedGifsRequest) (any, error) {
+		return r.onMessagesGetSavedGifs(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesFaveStickerRequest](d, tlprofile.SemanticMethodMessagesFaveSticker, func(ctx context.Context, layerRequest *tg.MessagesFaveStickerRequest) (any, error) {
+		return r.onMessagesFaveSticker(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSaveRecentStickerRequest](d, tlprofile.SemanticMethodMessagesSaveRecentSticker, func(ctx context.Context, layerRequest *tg.MessagesSaveRecentStickerRequest) (any, error) {
+		return r.onMessagesSaveRecentSticker(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSaveGifRequest](d, tlprofile.SemanticMethodMessagesSaveGif, func(ctx context.Context, layerRequest *tg.MessagesSaveGifRequest) (any, error) {
+		return r.onMessagesSaveGif(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesClearRecentStickersRequest](d, tlprofile.SemanticMethodMessagesClearRecentStickers, func(ctx context.Context, layerRequest *tg.MessagesClearRecentStickersRequest) (any, error) {
+		return r.onMessagesClearRecentStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendMessageRequest](d, tlprofile.SemanticMethodMessagesSendMessage, func(ctx context.Context, layerRequest *tg.MessagesSendMessageRequest) (any, error) {
+		return r.onMessagesSendMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesForwardMessagesRequest](d, tlprofile.SemanticMethodMessagesForwardMessages, func(ctx context.Context, layerRequest *tg.MessagesForwardMessagesRequest) (any, error) {
+		return r.onMessagesForwardMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDialogFiltersRequest](d, tlprofile.SemanticMethodMessagesGetDialogFilters, func(ctx context.Context, layerRequest *tg.MessagesGetDialogFiltersRequest) (any, error) {
+		return r.onMessagesGetDialogFilters(ctx)
+	})
+	registerRPC[*tg.MessagesGetSuggestedDialogFiltersRequest](d, tlprofile.SemanticMethodMessagesGetSuggestedDialogFilters, func(ctx context.Context, layerRequest *tg.MessagesGetSuggestedDialogFiltersRequest) (any, error) {
 		return tdesktop.SuggestedDialogFilters(), nil
 	})
-	d.OnMessagesUpdateDialogFilter(r.onMessagesUpdateDialogFilter)
-	d.OnMessagesUpdateDialogFiltersOrder(r.onMessagesUpdateDialogFiltersOrder)
-	d.OnMessagesToggleDialogFilterTags(r.onMessagesToggleDialogFilterTags)
-	d.OnMessagesGetSavedDialogs(r.onMessagesGetSavedDialogs)
-	d.OnMessagesGetPinnedSavedDialogs(func(ctx context.Context) (tg.MessagesSavedDialogsClass, error) {
+	registerRPC[*tg.MessagesUpdateDialogFilterRequest](d, tlprofile.SemanticMethodMessagesUpdateDialogFilter, func(ctx context.Context, layerRequest *tg.MessagesUpdateDialogFilterRequest) (any, error) {
+		return r.onMessagesUpdateDialogFilter(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesUpdateDialogFiltersOrderRequest](d, tlprofile.SemanticMethodMessagesUpdateDialogFiltersOrder, func(ctx context.Context, layerRequest *tg.MessagesUpdateDialogFiltersOrderRequest) (any, error) {
+		return r.onMessagesUpdateDialogFiltersOrder(ctx, layerRequest.
+			Order)
+	})
+	registerRPC[*tg.MessagesToggleDialogFilterTagsRequest](d, tlprofile.SemanticMethodMessagesToggleDialogFilterTags, func(ctx context.Context, layerRequest *tg.MessagesToggleDialogFilterTagsRequest) (any, error) {
+		return r.onMessagesToggleDialogFilterTags(ctx, layerRequest.
+			Enabled)
+	})
+	registerRPC[*tg.MessagesGetSavedDialogsRequest](d, tlprofile.SemanticMethodMessagesGetSavedDialogs, func(ctx context.Context, layerRequest *tg.MessagesGetSavedDialogsRequest) (any, error) {
+		return r.onMessagesGetSavedDialogs(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetPinnedSavedDialogsRequest](d, tlprofile.SemanticMethodMessagesGetPinnedSavedDialogs, func(ctx context.Context, layerRequest *tg.MessagesGetPinnedSavedDialogsRequest) (any, error) {
 		return r.onMessagesGetPinnedSavedDialogs(ctx)
 	})
-	d.OnMessagesToggleSavedDialogPin(r.onMessagesToggleSavedDialogPin)
-	d.OnMessagesReorderPinnedSavedDialogs(r.onMessagesReorderPinnedSavedDialogs)
-	d.OnMessagesGetSavedDialogsByID(r.onMessagesGetSavedDialogsByID)
-	d.OnMessagesGetSavedHistory(r.onMessagesGetSavedHistory)
-	d.OnMessagesReadSavedHistory(r.onMessagesReadSavedHistory)
-	d.OnMessagesDeleteSavedHistory(r.onMessagesDeleteSavedHistory)
-	d.OnMessagesGetCommonChats(r.onMessagesGetCommonChats)
-	d.OnMessagesGetDefaultHistoryTTL(r.onMessagesGetDefaultHistoryTTL)
-	d.OnMessagesSetHistoryTTL(r.onMessagesSetHistoryTTL)
-	d.OnMessagesSetDefaultHistoryTTL(r.onMessagesSetDefaultHistoryTTL)
-	d.OnMessagesGetSponsoredMessages(r.onMessagesGetSponsoredMessages)
-	d.OnMessagesGetWebPagePreview(r.onMessagesGetWebPagePreview)
-	d.OnMessagesRequestWebView(r.onMessagesRequestWebView)
-	d.OnMessagesProlongWebView(r.onMessagesProlongWebView)
-	d.OnMessagesSendWebViewResultMessage(r.onMessagesSendWebViewResultMessage)
-	d.OnMessagesRequestSimpleWebView(r.onMessagesRequestSimpleWebView)
-	d.OnMessagesGetBotApp(r.onMessagesGetBotApp)
-	d.OnMessagesRequestAppWebView(r.onMessagesRequestAppWebView)
-	d.OnMessagesRequestMainWebView(r.onMessagesRequestMainWebView)
-	d.OnMessagesSendWebViewData(r.onMessagesSendWebViewData)
-	d.OnMessagesSendBotRequestedPeer(r.onMessagesSendBotRequestedPeer)
-	d.OnMessagesGetPreparedInlineMessage(r.onMessagesGetPreparedInlineMessage)
-	d.OnMessagesGetEmojiGameInfo(r.onMessagesGetEmojiGameInfo)
-	d.OnMessagesGetGameHighScores(r.onMessagesGetGameHighScores)
-	d.OnMessagesGetInlineGameHighScores(r.onMessagesGetInlineGameHighScores)
-	d.OnMessagesSetGameScore(r.onMessagesSetGameScore)
-	d.OnMessagesSetInlineGameScore(r.onMessagesSetInlineGameScore)
-	d.OnMessagesUploadMedia(r.onMessagesUploadMedia)
-	d.OnMessagesSendMedia(r.onMessagesSendMedia)
-	d.OnMessagesSendMultiMedia(r.onMessagesSendMultiMedia)
-	d.OnMessagesReportSpam(r.onMessagesReportSpam)
-	d.OnMessagesReport(r.onMessagesReport)
-	d.OnMessagesReportReaction(r.onMessagesReportReaction)
-	d.OnMessagesReportMessagesDelivery(r.onMessagesReportMessagesDelivery)
-	d.OnMessagesReportReadMetrics(r.onMessagesReportReadMetrics)
-	d.OnMessagesReportMusicListen(r.onMessagesReportMusicListen)
-	d.OnMessagesReportSponsoredMessage(r.onMessagesReportSponsoredMessage)
-	d.OnMessagesReadMessageContents(r.onMessagesReadMessageContents)
-	d.OnMessagesTranslateText(r.onMessagesTranslateText)
-	d.OnMessagesTogglePeerTranslations(r.onMessagesTogglePeerTranslations)
-	d.OnMessagesGetMessagesViews(r.onMessagesGetMessagesViews)
-	d.OnMessagesGetUnreadMentions(r.onMessagesGetUnreadMentions)
-	d.OnMessagesReadMentions(r.onMessagesReadMentions)
-	d.OnMessagesGetSearchCounters(r.onMessagesGetSearchCounters)
-	d.OnMessagesGetReplies(r.onMessagesGetReplies)
-	d.OnMessagesGetDiscussionMessage(r.onMessagesGetDiscussionMessage)
-	d.OnMessagesReadDiscussion(r.onMessagesReadDiscussion)
-	d.OnMessagesGetForumTopics(r.onMessagesGetForumTopics)
-	d.OnMessagesGetForumTopicsByID(r.onMessagesGetForumTopicsByID)
-	d.OnMessagesGetOnlines(r.onMessagesGetOnlines)
-	d.OnMessagesGetAvailableReactions(r.onMessagesGetAvailableReactions)
-	d.OnMessagesGetAvailableEffects(r.onMessagesGetAvailableEffects)
-	d.OnMessagesGetStickers(r.onMessagesGetStickers)
-	d.OnMessagesInstallStickerSet(r.onMessagesInstallStickerSet)
-	d.OnMessagesUninstallStickerSet(r.onMessagesUninstallStickerSet)
-	d.OnMessagesReorderStickerSets(r.onMessagesReorderStickerSets)
-	d.OnMessagesToggleStickerSets(r.onMessagesToggleStickerSets)
-	d.OnMessagesGetMyStickers(r.onMessagesGetMyStickers)
-	d.OnMessagesGetArchivedStickers(func(ctx context.Context, req *tg.MessagesGetArchivedStickersRequest) (*tg.MessagesArchivedStickers, error) {
+	registerRPC[*tg.MessagesToggleSavedDialogPinRequest](d, tlprofile.SemanticMethodMessagesToggleSavedDialogPin, func(ctx context.Context, layerRequest *tg.MessagesToggleSavedDialogPinRequest) (any, error) {
+		return r.onMessagesToggleSavedDialogPin(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReorderPinnedSavedDialogsRequest](d, tlprofile.SemanticMethodMessagesReorderPinnedSavedDialogs, func(ctx context.Context, layerRequest *tg.MessagesReorderPinnedSavedDialogsRequest) (any, error) {
+		return r.onMessagesReorderPinnedSavedDialogs(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetSavedDialogsByIDRequest](d, tlprofile.SemanticMethodMessagesGetSavedDialogsByID, func(ctx context.Context, layerRequest *tg.MessagesGetSavedDialogsByIDRequest) (any, error) {
+		return r.onMessagesGetSavedDialogsByID(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetSavedHistoryRequest](d, tlprofile.SemanticMethodMessagesGetSavedHistory, func(ctx context.Context, layerRequest *tg.MessagesGetSavedHistoryRequest) (any, error) {
+		return r.onMessagesGetSavedHistory(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadSavedHistoryRequest](d, tlprofile.SemanticMethodMessagesReadSavedHistory, func(ctx context.Context, layerRequest *tg.MessagesReadSavedHistoryRequest) (any, error) {
+		return r.onMessagesReadSavedHistory(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteSavedHistoryRequest](d, tlprofile.SemanticMethodMessagesDeleteSavedHistory, func(ctx context.Context, layerRequest *tg.MessagesDeleteSavedHistoryRequest) (any, error) {
+		return r.onMessagesDeleteSavedHistory(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetCommonChatsRequest](d, tlprofile.SemanticMethodMessagesGetCommonChats, func(ctx context.Context, layerRequest *tg.MessagesGetCommonChatsRequest) (any, error) {
+		return r.onMessagesGetCommonChats(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDefaultHistoryTTLRequest](d, tlprofile.SemanticMethodMessagesGetDefaultHistoryTTL, func(ctx context.Context, layerRequest *tg.MessagesGetDefaultHistoryTTLRequest) (any, error) {
+		return r.onMessagesGetDefaultHistoryTTL(ctx)
+	})
+	registerRPC[*tg.MessagesSetHistoryTTLRequest](d, tlprofile.SemanticMethodMessagesSetHistoryTTL, func(ctx context.Context, layerRequest *tg.MessagesSetHistoryTTLRequest) (any, error) {
+		return r.onMessagesSetHistoryTTL(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetDefaultHistoryTTLRequest](d, tlprofile.SemanticMethodMessagesSetDefaultHistoryTTL, func(ctx context.Context, layerRequest *tg.MessagesSetDefaultHistoryTTLRequest) (any, error) {
+		return r.onMessagesSetDefaultHistoryTTL(ctx, layerRequest.
+			Period)
+	})
+	registerRPC[*tg.MessagesGetSponsoredMessagesRequest](d, tlprofile.SemanticMethodMessagesGetSponsoredMessages, func(ctx context.Context, layerRequest *tg.MessagesGetSponsoredMessagesRequest) (any, error) {
+		return r.onMessagesGetSponsoredMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetWebPagePreviewRequest](d, tlprofile.SemanticMethodMessagesGetWebPagePreview, func(ctx context.Context, layerRequest *tg.MessagesGetWebPagePreviewRequest) (any, error) {
+		return r.onMessagesGetWebPagePreview(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesRequestWebViewRequest](d, tlprofile.SemanticMethodMessagesRequestWebView, func(ctx context.Context, layerRequest *tg.MessagesRequestWebViewRequest) (any, error) {
+		return r.onMessagesRequestWebView(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesProlongWebViewRequest](d, tlprofile.SemanticMethodMessagesProlongWebView, func(ctx context.Context, layerRequest *tg.MessagesProlongWebViewRequest) (any, error) {
+		return r.onMessagesProlongWebView(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendWebViewResultMessageRequest](d, tlprofile.SemanticMethodMessagesSendWebViewResultMessage, func(ctx context.Context, layerRequest *tg.MessagesSendWebViewResultMessageRequest) (any, error) {
+		return r.onMessagesSendWebViewResultMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesRequestSimpleWebViewRequest](d, tlprofile.SemanticMethodMessagesRequestSimpleWebView, func(ctx context.Context, layerRequest *tg.MessagesRequestSimpleWebViewRequest) (any, error) {
+		return r.onMessagesRequestSimpleWebView(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetBotAppRequest](d, tlprofile.SemanticMethodMessagesGetBotApp, func(ctx context.Context, layerRequest *tg.MessagesGetBotAppRequest) (any, error) {
+		return r.onMessagesGetBotApp(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesRequestAppWebViewRequest](d, tlprofile.SemanticMethodMessagesRequestAppWebView, func(ctx context.Context, layerRequest *tg.MessagesRequestAppWebViewRequest) (any, error) {
+		return r.onMessagesRequestAppWebView(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesRequestMainWebViewRequest](d, tlprofile.SemanticMethodMessagesRequestMainWebView, func(ctx context.Context, layerRequest *tg.MessagesRequestMainWebViewRequest) (any, error) {
+		return r.onMessagesRequestMainWebView(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendWebViewDataRequest](d, tlprofile.SemanticMethodMessagesSendWebViewData, func(ctx context.Context, layerRequest *tg.MessagesSendWebViewDataRequest) (any, error) {
+		return r.onMessagesSendWebViewData(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendBotRequestedPeerRequest](d, tlprofile.SemanticMethodMessagesSendBotRequestedPeer, func(ctx context.Context, layerRequest *tg.MessagesSendBotRequestedPeerRequest) (any, error) {
+		return r.onMessagesSendBotRequestedPeer(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetPreparedInlineMessageRequest](d, tlprofile.SemanticMethodMessagesGetPreparedInlineMessage, func(ctx context.Context, layerRequest *tg.MessagesGetPreparedInlineMessageRequest) (any, error) {
+		return r.onMessagesGetPreparedInlineMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetEmojiGameInfoRequest](d, tlprofile.SemanticMethodMessagesGetEmojiGameInfo, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiGameInfoRequest) (any, error) {
+		return r.onMessagesGetEmojiGameInfo(ctx)
+	})
+	registerRPC[*tg.MessagesGetGameHighScoresRequest](d, tlprofile.SemanticMethodMessagesGetGameHighScores, func(ctx context.Context, layerRequest *tg.MessagesGetGameHighScoresRequest) (any, error) {
+		return r.onMessagesGetGameHighScores(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetInlineGameHighScoresRequest](d, tlprofile.SemanticMethodMessagesGetInlineGameHighScores, func(ctx context.Context, layerRequest *tg.MessagesGetInlineGameHighScoresRequest) (any, error) {
+		return r.onMessagesGetInlineGameHighScores(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetGameScoreRequest](d, tlprofile.SemanticMethodMessagesSetGameScore, func(ctx context.Context, layerRequest *tg.MessagesSetGameScoreRequest) (any, error) {
+		return r.onMessagesSetGameScore(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetInlineGameScoreRequest](d, tlprofile.SemanticMethodMessagesSetInlineGameScore, func(ctx context.Context, layerRequest *tg.MessagesSetInlineGameScoreRequest) (any, error) {
+		return r.onMessagesSetInlineGameScore(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesUploadMediaRequest](d, tlprofile.SemanticMethodMessagesUploadMedia, func(ctx context.Context, layerRequest *tg.MessagesUploadMediaRequest) (any, error) {
+		return r.onMessagesUploadMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendMediaRequest](d, tlprofile.SemanticMethodMessagesSendMedia, func(ctx context.Context, layerRequest *tg.MessagesSendMediaRequest) (any, error) {
+		return r.onMessagesSendMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendMultiMediaRequest](d, tlprofile.SemanticMethodMessagesSendMultiMedia, func(ctx context.Context, layerRequest *tg.MessagesSendMultiMediaRequest) (any, error) {
+		return r.onMessagesSendMultiMedia(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportSpamRequest](d, tlprofile.SemanticMethodMessagesReportSpam, func(ctx context.Context, layerRequest *tg.MessagesReportSpamRequest) (any, error) {
+		return r.onMessagesReportSpam(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.MessagesReportRequest](d, tlprofile.SemanticMethodMessagesReport, func(ctx context.Context, layerRequest *tg.MessagesReportRequest) (any, error) {
+		return r.onMessagesReport(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportReactionRequest](d, tlprofile.SemanticMethodMessagesReportReaction, func(ctx context.Context, layerRequest *tg.MessagesReportReactionRequest) (any, error) {
+		return r.onMessagesReportReaction(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportMessagesDeliveryRequest](d, tlprofile.SemanticMethodMessagesReportMessagesDelivery, func(ctx context.Context, layerRequest *tg.MessagesReportMessagesDeliveryRequest) (any, error) {
+		return r.onMessagesReportMessagesDelivery(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportReadMetricsRequest](d, tlprofile.SemanticMethodMessagesReportReadMetrics, func(ctx context.Context, layerRequest *tg.MessagesReportReadMetricsRequest) (any, error) {
+		return r.onMessagesReportReadMetrics(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportMusicListenRequest](d, tlprofile.SemanticMethodMessagesReportMusicListen, func(ctx context.Context, layerRequest *tg.MessagesReportMusicListenRequest) (any, error) {
+		return r.onMessagesReportMusicListen(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReportSponsoredMessageRequest](d, tlprofile.SemanticMethodMessagesReportSponsoredMessage, func(ctx context.Context, layerRequest *tg.MessagesReportSponsoredMessageRequest) (any, error) {
+		return r.onMessagesReportSponsoredMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadMessageContentsRequest](d, tlprofile.SemanticMethodMessagesReadMessageContents, func(ctx context.Context, layerRequest *tg.MessagesReadMessageContentsRequest) (any, error) {
+		return r.onMessagesReadMessageContents(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.MessagesTranslateTextRequest](d, tlprofile.SemanticMethodMessagesTranslateText, func(ctx context.Context, layerRequest *tg.MessagesTranslateTextRequest) (any, error) {
+		return r.onMessagesTranslateText(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesTogglePeerTranslationsRequest](d, tlprofile.SemanticMethodMessagesTogglePeerTranslations, func(ctx context.Context, layerRequest *tg.MessagesTogglePeerTranslationsRequest) (any, error) {
+		return r.onMessagesTogglePeerTranslations(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetMessagesViewsRequest](d, tlprofile.SemanticMethodMessagesGetMessagesViews, func(ctx context.Context, layerRequest *tg.MessagesGetMessagesViewsRequest) (any, error) {
+		return r.onMessagesGetMessagesViews(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetUnreadMentionsRequest](d, tlprofile.SemanticMethodMessagesGetUnreadMentions, func(ctx context.Context, layerRequest *tg.MessagesGetUnreadMentionsRequest) (any, error) {
+		return r.onMessagesGetUnreadMentions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadMentionsRequest](d, tlprofile.SemanticMethodMessagesReadMentions, func(ctx context.Context, layerRequest *tg.MessagesReadMentionsRequest) (any, error) {
+		return r.onMessagesReadMentions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetSearchCountersRequest](d, tlprofile.SemanticMethodMessagesGetSearchCounters, func(ctx context.Context, layerRequest *tg.MessagesGetSearchCountersRequest) (any, error) {
+		return r.onMessagesGetSearchCounters(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetRepliesRequest](d, tlprofile.SemanticMethodMessagesGetReplies, func(ctx context.Context, layerRequest *tg.MessagesGetRepliesRequest) (any, error) {
+		return r.onMessagesGetReplies(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDiscussionMessageRequest](d, tlprofile.SemanticMethodMessagesGetDiscussionMessage, func(ctx context.Context, layerRequest *tg.MessagesGetDiscussionMessageRequest) (any, error) {
+		return r.onMessagesGetDiscussionMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadDiscussionRequest](d, tlprofile.SemanticMethodMessagesReadDiscussion, func(ctx context.Context, layerRequest *tg.MessagesReadDiscussionRequest) (any, error) {
+		return r.onMessagesReadDiscussion(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetForumTopicsRequest](d, tlprofile.SemanticMethodMessagesGetForumTopics, func(ctx context.Context, layerRequest *tg.MessagesGetForumTopicsRequest) (any, error) {
+		return r.onMessagesGetForumTopics(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetForumTopicsByIDRequest](d, tlprofile.SemanticMethodMessagesGetForumTopicsByID, func(ctx context.Context, layerRequest *tg.MessagesGetForumTopicsByIDRequest) (any, error) {
+		return r.onMessagesGetForumTopicsByID(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetOnlinesRequest](d, tlprofile.SemanticMethodMessagesGetOnlines, func(ctx context.Context, layerRequest *tg.MessagesGetOnlinesRequest) (any, error) {
+		return r.onMessagesGetOnlines(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.MessagesGetAvailableReactionsRequest](d, tlprofile.SemanticMethodMessagesGetAvailableReactions, func(ctx context.Context, layerRequest *tg.MessagesGetAvailableReactionsRequest) (any, error) {
+		return r.onMessagesGetAvailableReactions(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetAvailableEffectsRequest](d, tlprofile.SemanticMethodMessagesGetAvailableEffects, func(ctx context.Context, layerRequest *tg.MessagesGetAvailableEffectsRequest) (any, error) {
+		return r.onMessagesGetAvailableEffects(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetStickersRequest](d, tlprofile.SemanticMethodMessagesGetStickers, func(ctx context.Context, layerRequest *tg.MessagesGetStickersRequest) (any, error) {
+		return r.onMessagesGetStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesInstallStickerSetRequest](d, tlprofile.SemanticMethodMessagesInstallStickerSet, func(ctx context.Context, layerRequest *tg.MessagesInstallStickerSetRequest) (any, error) {
+		return r.onMessagesInstallStickerSet(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesUninstallStickerSetRequest](d, tlprofile.SemanticMethodMessagesUninstallStickerSet, func(ctx context.Context, layerRequest *tg.MessagesUninstallStickerSetRequest) (any, error) {
+		return r.onMessagesUninstallStickerSet(ctx, layerRequest.
+			Stickerset)
+	})
+	registerRPC[*tg.MessagesReorderStickerSetsRequest](d, tlprofile.SemanticMethodMessagesReorderStickerSets, func(ctx context.Context, layerRequest *tg.MessagesReorderStickerSetsRequest) (any, error) {
+		return r.onMessagesReorderStickerSets(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesToggleStickerSetsRequest](d, tlprofile.SemanticMethodMessagesToggleStickerSets, func(ctx context.Context, layerRequest *tg.MessagesToggleStickerSetsRequest) (any, error) {
+		return r.onMessagesToggleStickerSets(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetMyStickersRequest](d, tlprofile.SemanticMethodMessagesGetMyStickers, func(ctx context.Context, layerRequest *tg.MessagesGetMyStickersRequest) (any, error) {
+		return r.onMessagesGetMyStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetArchivedStickersRequest](d, tlprofile.SemanticMethodMessagesGetArchivedStickers, func(ctx context.Context, req *tg.MessagesGetArchivedStickersRequest) (any, error) {
 		return &tg.MessagesArchivedStickers{
 			Count: 0,
 			Sets:  []tg.StickerSetCoveredClass{},
 		}, nil
 	})
-	d.OnMessagesGetStickerSet(r.onMessagesGetStickerSet)
-	d.OnMessagesGetEmojiGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
+	registerRPC[*tg.MessagesGetStickerSetRequest](d, tlprofile.SemanticMethodMessagesGetStickerSet, func(ctx context.Context, layerRequest *tg.MessagesGetStickerSetRequest) (any, error) {
+		return r.onMessagesGetStickerSet(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetEmojiGroupsRequest](d, tlprofile.SemanticMethodMessagesGetEmojiGroups, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiGroupsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.EmojiGroups(hash), nil
 	})
-	d.OnMessagesGetEmojiStatusGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
+	registerRPC[*tg.MessagesGetEmojiStatusGroupsRequest](d, tlprofile.SemanticMethodMessagesGetEmojiStatusGroups, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiStatusGroupsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.EmojiStatusGroups(), nil
 	})
-	d.OnMessagesGetEmojiStickerGroups(r.onMessagesGetEmojiStickerGroups)
-	d.OnMessagesGetEmojiProfilePhotoGroups(func(ctx context.Context, hash int) (tg.MessagesEmojiGroupsClass, error) {
+	registerRPC[*tg.MessagesGetEmojiStickerGroupsRequest](d, tlprofile.SemanticMethodMessagesGetEmojiStickerGroups, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiStickerGroupsRequest) (any, error) {
+		return r.onMessagesGetEmojiStickerGroups(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetEmojiProfilePhotoGroupsRequest](d, tlprofile.SemanticMethodMessagesGetEmojiProfilePhotoGroups, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiProfilePhotoGroupsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.EmojiProfilePhotoGroups(), nil
 	})
-	d.OnMessagesGetEmojiKeywords(r.onMessagesGetEmojiKeywords)
-	d.OnMessagesGetEmojiKeywordsDifference(r.onMessagesGetEmojiKeywordsDifference)
-	d.OnMessagesGetEmojiKeywordsLanguages(func(ctx context.Context, langcodes []string) ([]tg.EmojiLanguage, error) {
+	registerRPC[*tg.MessagesGetEmojiKeywordsRequest](d, tlprofile.SemanticMethodMessagesGetEmojiKeywords, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiKeywordsRequest) (any, error) {
+		return r.onMessagesGetEmojiKeywords(ctx, layerRequest.
+			LangCode)
+	})
+	registerRPC[*tg.MessagesGetEmojiKeywordsDifferenceRequest](d, tlprofile.SemanticMethodMessagesGetEmojiKeywordsDifference, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiKeywordsDifferenceRequest) (any, error) {
+		return r.onMessagesGetEmojiKeywordsDifference(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetEmojiKeywordsLanguagesRequest](d, tlprofile.SemanticMethodMessagesGetEmojiKeywordsLanguages, func(ctx context.Context, layerRequest *tg.MessagesGetEmojiKeywordsLanguagesRequest) (any, error) {
+		langcodes := layerRequest.
+			LangCodes
+		_ = langcodes
+
 		return []tg.EmojiLanguage{}, nil
 	})
-	d.OnMessagesGetCustomEmojiDocuments(r.onMessagesGetCustomEmojiDocuments)
-	d.OnMessagesGetAttachedStickers(r.onMessagesGetAttachedStickers)
-	d.OnMessagesSearchStickerSets(r.onMessagesSearchStickerSets)
-	d.OnMessagesSearchStickers(r.onMessagesSearchStickers)
-	d.OnMessagesGetAttachMenuBots(r.onMessagesGetAttachMenuBots)
-	d.OnMessagesGetAttachMenuBot(r.onMessagesGetAttachMenuBot)
-	d.OnMessagesToggleBotInAttachMenu(r.onMessagesToggleBotInAttachMenu)
-	d.OnMessagesGetQuickReplies(r.onMessagesGetQuickReplies)
-	d.OnMessagesCheckQuickReplyShortcut(r.onMessagesCheckQuickReplyShortcut)
-	d.OnMessagesReorderQuickReplies(r.onMessagesReorderQuickReplies)
-	d.OnMessagesEditQuickReplyShortcut(r.onMessagesEditQuickReplyShortcut)
-	d.OnMessagesDeleteQuickReplyShortcut(r.onMessagesDeleteQuickReplyShortcut)
-	d.OnMessagesGetQuickReplyMessages(r.onMessagesGetQuickReplyMessages)
-	d.OnMessagesSendQuickReplyMessages(r.onMessagesSendQuickReplyMessages)
-	d.OnMessagesDeleteQuickReplyMessages(r.onMessagesDeleteQuickReplyMessages)
-	d.OnMessagesGetWebPage(r.onMessagesGetWebPage)
-	d.OnMessagesGetDialogs(func(ctx context.Context, req *tg.MessagesGetDialogsRequest) (tg.MessagesDialogsClass, error) {
+	registerRPC[*tg.MessagesGetCustomEmojiDocumentsRequest](d, tlprofile.SemanticMethodMessagesGetCustomEmojiDocuments, func(ctx context.Context, layerRequest *tg.MessagesGetCustomEmojiDocumentsRequest) (any, error) {
+		return r.onMessagesGetCustomEmojiDocuments(ctx, layerRequest.
+			DocumentID)
+	})
+	registerRPC[*tg.MessagesGetAttachedStickersRequest](d, tlprofile.SemanticMethodMessagesGetAttachedStickers, func(ctx context.Context, layerRequest *tg.MessagesGetAttachedStickersRequest) (any, error) {
+		return r.onMessagesGetAttachedStickers(ctx, layerRequest.
+			Media)
+	})
+	registerRPC[*tg.MessagesSearchStickerSetsRequest](d, tlprofile.SemanticMethodMessagesSearchStickerSets, func(ctx context.Context, layerRequest *tg.MessagesSearchStickerSetsRequest) (any, error) {
+		return r.onMessagesSearchStickerSets(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSearchStickersRequest](d, tlprofile.SemanticMethodMessagesSearchStickers, func(ctx context.Context, layerRequest *tg.MessagesSearchStickersRequest) (any, error) {
+		return r.onMessagesSearchStickers(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetAttachMenuBotsRequest](d, tlprofile.SemanticMethodMessagesGetAttachMenuBots, func(ctx context.Context, layerRequest *tg.MessagesGetAttachMenuBotsRequest) (any, error) {
+		return r.onMessagesGetAttachMenuBots(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesGetAttachMenuBotRequest](d, tlprofile.SemanticMethodMessagesGetAttachMenuBot, func(ctx context.Context, layerRequest *tg.MessagesGetAttachMenuBotRequest) (any, error) {
+		return r.onMessagesGetAttachMenuBot(ctx, layerRequest.
+			Bot)
+	})
+	registerRPC[*tg.MessagesToggleBotInAttachMenuRequest](d, tlprofile.SemanticMethodMessagesToggleBotInAttachMenu, func(ctx context.Context, layerRequest *tg.MessagesToggleBotInAttachMenuRequest) (any, error) {
+		return r.onMessagesToggleBotInAttachMenu(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetQuickRepliesRequest](d, tlprofile.SemanticMethodMessagesGetQuickReplies, func(ctx context.Context, layerRequest *tg.MessagesGetQuickRepliesRequest) (any, error) {
+		return r.onMessagesGetQuickReplies(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesCheckQuickReplyShortcutRequest](d, tlprofile.SemanticMethodMessagesCheckQuickReplyShortcut, func(ctx context.Context, layerRequest *tg.MessagesCheckQuickReplyShortcutRequest) (any, error) {
+		return r.onMessagesCheckQuickReplyShortcut(ctx, layerRequest.
+			Shortcut)
+	})
+	registerRPC[*tg.MessagesReorderQuickRepliesRequest](d, tlprofile.SemanticMethodMessagesReorderQuickReplies, func(ctx context.Context, layerRequest *tg.MessagesReorderQuickRepliesRequest) (any, error) {
+		return r.onMessagesReorderQuickReplies(ctx, layerRequest.
+			Order)
+	})
+	registerRPC[*tg.MessagesEditQuickReplyShortcutRequest](d, tlprofile.SemanticMethodMessagesEditQuickReplyShortcut, func(ctx context.Context, layerRequest *tg.MessagesEditQuickReplyShortcutRequest) (any, error) {
+		return r.onMessagesEditQuickReplyShortcut(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteQuickReplyShortcutRequest](d, tlprofile.SemanticMethodMessagesDeleteQuickReplyShortcut, func(ctx context.Context, layerRequest *tg.MessagesDeleteQuickReplyShortcutRequest) (any, error) {
+		return r.onMessagesDeleteQuickReplyShortcut(ctx, layerRequest.
+			ShortcutID)
+	})
+	registerRPC[*tg.MessagesGetQuickReplyMessagesRequest](d, tlprofile.SemanticMethodMessagesGetQuickReplyMessages, func(ctx context.Context, layerRequest *tg.MessagesGetQuickReplyMessagesRequest) (any, error) {
+		return r.onMessagesGetQuickReplyMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendQuickReplyMessagesRequest](d, tlprofile.SemanticMethodMessagesSendQuickReplyMessages, func(ctx context.Context, layerRequest *tg.MessagesSendQuickReplyMessagesRequest) (any, error) {
+		return r.onMessagesSendQuickReplyMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteQuickReplyMessagesRequest](d, tlprofile.SemanticMethodMessagesDeleteQuickReplyMessages, func(ctx context.Context, layerRequest *tg.MessagesDeleteQuickReplyMessagesRequest) (any, error) {
+		return r.onMessagesDeleteQuickReplyMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetWebPageRequest](d, tlprofile.SemanticMethodMessagesGetWebPage, func(ctx context.Context, layerRequest *tg.MessagesGetWebPageRequest) (any, error) {
+		return r.onMessagesGetWebPage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDialogsRequest](d, tlprofile.SemanticMethodMessagesGetDialogs, func(ctx context.Context, req *tg.MessagesGetDialogsRequest) (any, error) {
 		if r.deps.Dialogs == nil {
 			return &tg.MessagesDialogs{}, nil
 		}
@@ -175,7 +427,11 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.tgMessagesDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list)), nil
 	})
-	d.OnMessagesGetPinnedDialogs(func(ctx context.Context, folderID int) (*tg.MessagesPeerDialogs, error) {
+	registerRPC[*tg.MessagesGetPinnedDialogsRequest](d, tlprofile.SemanticMethodMessagesGetPinnedDialogs, func(ctx context.Context, layerRequest *tg.MessagesGetPinnedDialogsRequest) (any, error) {
+		folderID := layerRequest.
+			FolderID
+		_ = folderID
+
 		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
@@ -195,7 +451,11 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.tgPeerDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list), st), nil
 	})
-	d.OnMessagesGetPeerDialogs(func(ctx context.Context, peers []tg.InputDialogPeerClass) (*tg.MessagesPeerDialogs, error) {
+	registerRPC[*tg.MessagesGetPeerDialogsRequest](d, tlprofile.SemanticMethodMessagesGetPeerDialogs, func(ctx context.Context, layerRequest *tg.MessagesGetPeerDialogsRequest) (any, error) {
+		peers := layerRequest.
+			Peers
+		_ = peers
+
 		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
@@ -240,21 +500,52 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		r.trackChannelInterest(ctx, userID, channelIDsFromDialogs(list)...)
 		return r.tgPeerDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list), st), nil
 	})
-	d.OnMessagesGetPeerSettings(r.onMessagesGetPeerSettings)
-	d.OnMessagesToggleDialogPin(r.onMessagesToggleDialogPin)
-	d.OnMessagesReorderPinnedDialogs(r.onMessagesReorderPinnedDialogs)
-	d.OnMessagesMarkDialogUnread(r.onMessagesMarkDialogUnread)
-	d.OnMessagesGetDialogUnreadMarks(r.onMessagesGetDialogUnreadMarks)
-	d.OnMessagesHidePeerSettingsBar(r.onMessagesHidePeerSettingsBar)
-	d.OnMessagesGetMessageEditData(r.onMessagesGetMessageEditData)
-	d.OnMessagesEditMessage(r.onMessagesEditMessage)
-	d.OnMessagesGetOutboxReadDate(r.onMessagesGetOutboxReadDate)
-	d.OnMessagesGetMessageReadParticipants(r.onMessagesGetMessageReadParticipants)
-	d.OnMessagesDeleteMessages(r.onMessagesDeleteMessages)
-	d.OnMessagesDeleteHistory(r.onMessagesDeleteHistory)
-	d.OnMessagesGetMessages(r.onMessagesGetMessages)
-	d.OnMessagesGetRichMessage(r.onMessagesGetRichMessage)
-	d.OnMessagesGetHistory(func(ctx context.Context, req *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error) {
+	registerRPC[*tg.MessagesGetPeerSettingsRequest](d, tlprofile.SemanticMethodMessagesGetPeerSettings, func(ctx context.Context, layerRequest *tg.MessagesGetPeerSettingsRequest) (any, error) {
+		return r.onMessagesGetPeerSettings(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.MessagesToggleDialogPinRequest](d, tlprofile.SemanticMethodMessagesToggleDialogPin, func(ctx context.Context, layerRequest *tg.MessagesToggleDialogPinRequest) (any, error) {
+		return r.onMessagesToggleDialogPin(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReorderPinnedDialogsRequest](d, tlprofile.SemanticMethodMessagesReorderPinnedDialogs, func(ctx context.Context, layerRequest *tg.MessagesReorderPinnedDialogsRequest) (any, error) {
+		return r.onMessagesReorderPinnedDialogs(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesMarkDialogUnreadRequest](d, tlprofile.SemanticMethodMessagesMarkDialogUnread, func(ctx context.Context, layerRequest *tg.MessagesMarkDialogUnreadRequest) (any, error) {
+		return r.onMessagesMarkDialogUnread(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDialogUnreadMarksRequest](d, tlprofile.SemanticMethodMessagesGetDialogUnreadMarks, func(ctx context.Context, layerRequest *tg.MessagesGetDialogUnreadMarksRequest) (any, error) {
+		return r.onMessagesGetDialogUnreadMarks(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesHidePeerSettingsBarRequest](d, tlprofile.SemanticMethodMessagesHidePeerSettingsBar, func(ctx context.Context, layerRequest *tg.MessagesHidePeerSettingsBarRequest) (any, error) {
+		return r.onMessagesHidePeerSettingsBar(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.MessagesGetMessageEditDataRequest](d, tlprofile.SemanticMethodMessagesGetMessageEditData, func(ctx context.Context, layerRequest *tg.MessagesGetMessageEditDataRequest) (any, error) {
+		return r.onMessagesGetMessageEditData(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesEditMessageRequest](d, tlprofile.SemanticMethodMessagesEditMessage, func(ctx context.Context, layerRequest *tg.MessagesEditMessageRequest) (any, error) {
+		return r.onMessagesEditMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetOutboxReadDateRequest](d, tlprofile.SemanticMethodMessagesGetOutboxReadDate, func(ctx context.Context, layerRequest *tg.MessagesGetOutboxReadDateRequest) (any, error) {
+		return r.onMessagesGetOutboxReadDate(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetMessageReadParticipantsRequest](d, tlprofile.SemanticMethodMessagesGetMessageReadParticipants, func(ctx context.Context, layerRequest *tg.MessagesGetMessageReadParticipantsRequest) (any, error) {
+		return r.onMessagesGetMessageReadParticipants(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteMessagesRequest](d, tlprofile.SemanticMethodMessagesDeleteMessages, func(ctx context.Context, layerRequest *tg.MessagesDeleteMessagesRequest) (any, error) {
+		return r.onMessagesDeleteMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteHistoryRequest](d, tlprofile.SemanticMethodMessagesDeleteHistory, func(ctx context.Context, layerRequest *tg.MessagesDeleteHistoryRequest) (any, error) {
+		return r.onMessagesDeleteHistory(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetMessagesRequest](d, tlprofile.SemanticMethodMessagesGetMessages, func(ctx context.Context, layerRequest *tg.MessagesGetMessagesRequest) (any, error) {
+		return r.onMessagesGetMessages(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.MessagesGetRichMessageRequest](d, tlprofile.SemanticMethodMessagesGetRichMessage, func(ctx context.Context, layerRequest *tg.MessagesGetRichMessageRequest) (any, error) {
+		return r.onMessagesGetRichMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetHistoryRequest](d, tlprofile.SemanticMethodMessagesGetHistory, func(ctx context.Context, req *tg.MessagesGetHistoryRequest) (any, error) {
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
 			return nil, internalErr()
@@ -309,8 +600,10 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.tgMessagesMessages(ctx, userID, r.enrichMessageList(ctx, userID, list)), nil
 	})
-	d.OnMessagesGetRecentLocations(r.onMessagesGetRecentLocations)
-	d.OnMessagesReadHistory(func(ctx context.Context, req *tg.MessagesReadHistoryRequest) (*tg.MessagesAffectedMessages, error) {
+	registerRPC[*tg.MessagesGetRecentLocationsRequest](d, tlprofile.SemanticMethodMessagesGetRecentLocations, func(ctx context.Context, layerRequest *tg.MessagesGetRecentLocationsRequest) (any, error) {
+		return r.onMessagesGetRecentLocations(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadHistoryRequest](d, tlprofile.SemanticMethodMessagesReadHistory, func(ctx context.Context, req *tg.MessagesReadHistoryRequest) (any, error) {
 		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
@@ -365,7 +658,7 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.affectedMessages(ctx, id, userID)
 	})
-	d.OnMessagesSearch(func(ctx context.Context, req *tg.MessagesSearchRequest) (tg.MessagesMessagesClass, error) {
+	registerRPC[*tg.MessagesSearchRequest](d, tlprofile.SemanticMethodMessagesSearch, func(ctx context.Context, req *tg.MessagesSearchRequest) (any, error) {
 		if utf8.RuneCountInString(req.Q) > maxMessageSearchQLength {
 			return nil, limitInvalidErr()
 		}
@@ -536,51 +829,132 @@ func (r *Router) registerMessages(d *tg.ServerDispatcher) {
 		}
 		return r.tgMessagesMessages(ctx, userID, r.enrichMessageList(ctx, userID, list)), nil
 	})
-	d.OnMessagesSearchGlobal(r.onMessagesSearchGlobal)
-	d.OnMessagesGetSearchResultsCalendar(r.onMessagesGetSearchResultsCalendar)
-	d.OnMessagesGetSearchResultsPositions(r.onMessagesGetSearchResultsPositions)
-	d.OnMessagesSendReaction(r.onMessagesSendReaction)
-	d.OnMessagesComposeMessageWithAI(r.onMessagesComposeMessageWithAI)
-	// 语音转文字无识别后端：注册为显式失败（TRANSCRIPTION_FAILED），premium
-	// 客户端点击转录按钮得到优雅失败提示，而不是 NOT_IMPLEMENTED trace。
-	d.OnMessagesTranscribeAudio(func(ctx context.Context, req *tg.MessagesTranscribeAudioRequest) (*tg.MessagesTranscribedAudio, error) {
+	registerRPC[*tg.MessagesSearchGlobalRequest](d, tlprofile.SemanticMethodMessagesSearchGlobal, func(ctx context.Context, layerRequest *tg.MessagesSearchGlobalRequest) (any, error) {
+		return r.onMessagesSearchGlobal(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetSearchResultsCalendarRequest](d, tlprofile.SemanticMethodMessagesGetSearchResultsCalendar, func(ctx context.Context, layerRequest *tg.MessagesGetSearchResultsCalendarRequest) (any, error) {
+		return r.onMessagesGetSearchResultsCalendar(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetSearchResultsPositionsRequest](d, tlprofile.SemanticMethodMessagesGetSearchResultsPositions, func(ctx context.Context, layerRequest *tg.MessagesGetSearchResultsPositionsRequest) (any, error) {
+		return r.onMessagesGetSearchResultsPositions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendReactionRequest](d, tlprofile.SemanticMethodMessagesSendReaction, func(ctx context.Context, layerRequest *tg.MessagesSendReactionRequest) (any, error) {
+
+		// 语音转文字无识别后端：注册为显式失败（TRANSCRIPTION_FAILED），premium
+		// 客户端点击转录按钮得到优雅失败提示，而不是 NOT_IMPLEMENTED trace。
+		return r.onMessagesSendReaction(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesComposeMessageWithAIRequest](d, tlprofile.SemanticMethodMessagesComposeMessageWithAI, func(ctx context.Context, layerRequest *tg.MessagesComposeMessageWithAIRequest) (any, error) {
+		return r.onMessagesComposeMessageWithAI(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesTranscribeAudioRequest](d, tlprofile.SemanticMethodMessagesTranscribeAudio, func(ctx context.Context, req *tg.MessagesTranscribeAudioRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return nil, tgerr400("TRANSCRIPTION_FAILED")
 	})
-	d.OnMessagesGetMessagesReactions(r.onMessagesGetMessagesReactions)
-	d.OnMessagesGetMessageReactionsList(r.onMessagesGetMessageReactionsList)
-	d.OnMessagesSetDefaultReaction(r.onMessagesSetDefaultReaction)
-	d.OnMessagesGetPaidReactionPrivacy(r.onMessagesGetPaidReactionPrivacy)
-	d.OnMessagesTogglePaidReactionPrivacy(r.onMessagesTogglePaidReactionPrivacy)
-	d.OnMessagesSendPaidReaction(r.onMessagesSendPaidReaction)
-	d.OnMessagesDeleteParticipantReactions(r.onMessagesDeleteParticipantReactions)
-	d.OnMessagesDeleteParticipantReaction(r.onMessagesDeleteParticipantReaction)
-	d.OnMessagesGetUnreadReactions(r.onMessagesGetUnreadReactions)
-	d.OnMessagesReadReactions(r.onMessagesReadReactions)
-	d.OnMessagesGetTopReactions(r.onMessagesGetTopReactions)
-	d.OnMessagesGetRecentReactions(r.onMessagesGetRecentReactions)
-	d.OnMessagesClearRecentReactions(r.onMessagesClearRecentReactions)
-	d.OnMessagesGetSavedReactionTags(r.onMessagesGetSavedReactionTags)
-	d.OnMessagesUpdateSavedReactionTag(r.onMessagesUpdateSavedReactionTag)
-	d.OnMessagesGetDefaultTagReactions(r.onMessagesGetDefaultTagReactions)
-	d.OnMessagesSendVote(r.onMessagesSendVote)
-	d.OnMessagesGetPollResults(r.onMessagesGetPollResults)
-	d.OnMessagesGetPollVotes(r.onMessagesGetPollVotes)
-	d.OnMessagesAddPollAnswer(r.onMessagesAddPollAnswer)
-	d.OnMessagesDeletePollAnswer(r.onMessagesDeletePollAnswer)
-	d.OnMessagesGetUnreadPollVotes(r.onMessagesGetUnreadPollVotes)
-	d.OnMessagesReadPollVotes(r.onMessagesReadPollVotes)
-	d.OnMessagesAppendTodoList(r.onMessagesAppendTodoList)
-	d.OnMessagesToggleTodoCompleted(r.onMessagesToggleTodoCompleted)
-	d.OnMessagesGetScheduledHistory(r.onMessagesGetScheduledHistory)
-	d.OnMessagesGetScheduledMessages(r.onMessagesGetScheduledMessages)
-	d.OnMessagesSendScheduledMessages(r.onMessagesSendScheduledMessages)
-	d.OnMessagesDeleteScheduledMessages(r.onMessagesDeleteScheduledMessages)
-	d.OnMessagesCreateForumTopic(r.onMessagesCreateForumTopic)
-	d.OnMessagesEditForumTopic(r.onMessagesEditForumTopic)
-	d.OnMessagesUpdatePinnedForumTopic(r.onMessagesUpdatePinnedForumTopic)
-	d.OnMessagesReorderPinnedForumTopics(r.onMessagesReorderPinnedForumTopics)
-	d.OnMessagesDeleteTopicHistory(r.onMessagesDeleteTopicHistory)
+	registerRPC[*tg.MessagesGetMessagesReactionsRequest](d, tlprofile.SemanticMethodMessagesGetMessagesReactions, func(ctx context.Context, layerRequest *tg.MessagesGetMessagesReactionsRequest) (any, error) {
+		return r.onMessagesGetMessagesReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetMessageReactionsListRequest](d, tlprofile.SemanticMethodMessagesGetMessageReactionsList, func(ctx context.Context, layerRequest *tg.MessagesGetMessageReactionsListRequest) (any, error) {
+		return r.onMessagesGetMessageReactionsList(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSetDefaultReactionRequest](d, tlprofile.SemanticMethodMessagesSetDefaultReaction, func(ctx context.Context, layerRequest *tg.MessagesSetDefaultReactionRequest) (any, error) {
+		return r.onMessagesSetDefaultReaction(ctx, layerRequest.
+			Reaction)
+	})
+	registerRPC[*tg.MessagesGetPaidReactionPrivacyRequest](d, tlprofile.SemanticMethodMessagesGetPaidReactionPrivacy, func(ctx context.Context, layerRequest *tg.MessagesGetPaidReactionPrivacyRequest) (any, error) {
+		return r.onMessagesGetPaidReactionPrivacy(ctx)
+	})
+	registerRPC[*tg.MessagesTogglePaidReactionPrivacyRequest](d, tlprofile.SemanticMethodMessagesTogglePaidReactionPrivacy, func(ctx context.Context, layerRequest *tg.MessagesTogglePaidReactionPrivacyRequest) (any, error) {
+		return r.onMessagesTogglePaidReactionPrivacy(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendPaidReactionRequest](d, tlprofile.SemanticMethodMessagesSendPaidReaction, func(ctx context.Context, layerRequest *tg.MessagesSendPaidReactionRequest) (any, error) {
+		return r.onMessagesSendPaidReaction(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteParticipantReactionsRequest](d, tlprofile.SemanticMethodMessagesDeleteParticipantReactions, func(ctx context.Context, layerRequest *tg.MessagesDeleteParticipantReactionsRequest) (any, error) {
+		return r.onMessagesDeleteParticipantReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteParticipantReactionRequest](d, tlprofile.SemanticMethodMessagesDeleteParticipantReaction, func(ctx context.Context, layerRequest *tg.MessagesDeleteParticipantReactionRequest) (any, error) {
+		return r.onMessagesDeleteParticipantReaction(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetUnreadReactionsRequest](d, tlprofile.SemanticMethodMessagesGetUnreadReactions, func(ctx context.Context, layerRequest *tg.MessagesGetUnreadReactionsRequest) (any, error) {
+		return r.onMessagesGetUnreadReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadReactionsRequest](d, tlprofile.SemanticMethodMessagesReadReactions, func(ctx context.Context, layerRequest *tg.MessagesReadReactionsRequest) (any, error) {
+		return r.onMessagesReadReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetTopReactionsRequest](d, tlprofile.SemanticMethodMessagesGetTopReactions, func(ctx context.Context, layerRequest *tg.MessagesGetTopReactionsRequest) (any, error) {
+		return r.onMessagesGetTopReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetRecentReactionsRequest](d, tlprofile.SemanticMethodMessagesGetRecentReactions, func(ctx context.Context, layerRequest *tg.MessagesGetRecentReactionsRequest) (any, error) {
+		return r.onMessagesGetRecentReactions(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesClearRecentReactionsRequest](d, tlprofile.SemanticMethodMessagesClearRecentReactions, func(ctx context.Context, layerRequest *tg.MessagesClearRecentReactionsRequest) (any, error) {
+		return r.onMessagesClearRecentReactions(ctx)
+	})
+	registerRPC[*tg.MessagesGetSavedReactionTagsRequest](d, tlprofile.SemanticMethodMessagesGetSavedReactionTags, func(ctx context.Context, layerRequest *tg.MessagesGetSavedReactionTagsRequest) (any, error) {
+		return r.onMessagesGetSavedReactionTags(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesUpdateSavedReactionTagRequest](d, tlprofile.SemanticMethodMessagesUpdateSavedReactionTag, func(ctx context.Context, layerRequest *tg.MessagesUpdateSavedReactionTagRequest) (any, error) {
+		return r.onMessagesUpdateSavedReactionTag(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetDefaultTagReactionsRequest](d, tlprofile.SemanticMethodMessagesGetDefaultTagReactions, func(ctx context.Context, layerRequest *tg.MessagesGetDefaultTagReactionsRequest) (any, error) {
+		return r.onMessagesGetDefaultTagReactions(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.MessagesSendVoteRequest](d, tlprofile.SemanticMethodMessagesSendVote, func(ctx context.Context, layerRequest *tg.MessagesSendVoteRequest) (any, error) {
+		return r.onMessagesSendVote(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetPollResultsRequest](d, tlprofile.SemanticMethodMessagesGetPollResults, func(ctx context.Context, layerRequest *tg.MessagesGetPollResultsRequest) (any, error) {
+		return r.onMessagesGetPollResults(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetPollVotesRequest](d, tlprofile.SemanticMethodMessagesGetPollVotes, func(ctx context.Context, layerRequest *tg.MessagesGetPollVotesRequest) (any, error) {
+		return r.onMessagesGetPollVotes(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesAddPollAnswerRequest](d, tlprofile.SemanticMethodMessagesAddPollAnswer, func(ctx context.Context, layerRequest *tg.MessagesAddPollAnswerRequest) (any, error) {
+		return r.onMessagesAddPollAnswer(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeletePollAnswerRequest](d, tlprofile.SemanticMethodMessagesDeletePollAnswer, func(ctx context.Context, layerRequest *tg.MessagesDeletePollAnswerRequest) (any, error) {
+		return r.onMessagesDeletePollAnswer(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetUnreadPollVotesRequest](d, tlprofile.SemanticMethodMessagesGetUnreadPollVotes, func(ctx context.Context, layerRequest *tg.MessagesGetUnreadPollVotesRequest) (any, error) {
+		return r.onMessagesGetUnreadPollVotes(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReadPollVotesRequest](d, tlprofile.SemanticMethodMessagesReadPollVotes, func(ctx context.Context, layerRequest *tg.MessagesReadPollVotesRequest) (any, error) {
+		return r.onMessagesReadPollVotes(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesAppendTodoListRequest](d, tlprofile.SemanticMethodMessagesAppendTodoList, func(ctx context.Context, layerRequest *tg.MessagesAppendTodoListRequest) (any, error) {
+		return r.onMessagesAppendTodoList(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesToggleTodoCompletedRequest](d, tlprofile.SemanticMethodMessagesToggleTodoCompleted, func(ctx context.Context, layerRequest *tg.MessagesToggleTodoCompletedRequest) (any, error) {
+		return r.onMessagesToggleTodoCompleted(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetScheduledHistoryRequest](d, tlprofile.SemanticMethodMessagesGetScheduledHistory, func(ctx context.Context, layerRequest *tg.MessagesGetScheduledHistoryRequest) (any, error) {
+		return r.onMessagesGetScheduledHistory(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetScheduledMessagesRequest](d, tlprofile.SemanticMethodMessagesGetScheduledMessages, func(ctx context.Context, layerRequest *tg.MessagesGetScheduledMessagesRequest) (any, error) {
+		return r.onMessagesGetScheduledMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesSendScheduledMessagesRequest](d, tlprofile.SemanticMethodMessagesSendScheduledMessages, func(ctx context.Context, layerRequest *tg.MessagesSendScheduledMessagesRequest) (any, error) {
+		return r.onMessagesSendScheduledMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteScheduledMessagesRequest](d, tlprofile.SemanticMethodMessagesDeleteScheduledMessages, func(ctx context.Context, layerRequest *tg.MessagesDeleteScheduledMessagesRequest) (any, error) {
+		return r.onMessagesDeleteScheduledMessages(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesCreateForumTopicRequest](d, tlprofile.SemanticMethodMessagesCreateForumTopic, func(ctx context.Context, layerRequest *tg.MessagesCreateForumTopicRequest) (any, error) {
+		return r.onMessagesCreateForumTopic(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesEditForumTopicRequest](d, tlprofile.SemanticMethodMessagesEditForumTopic, func(ctx context.Context, layerRequest *tg.MessagesEditForumTopicRequest) (any, error) {
+		return r.onMessagesEditForumTopic(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesUpdatePinnedForumTopicRequest](d, tlprofile.SemanticMethodMessagesUpdatePinnedForumTopic, func(ctx context.Context, layerRequest *tg.MessagesUpdatePinnedForumTopicRequest) (any, error) {
+		return r.onMessagesUpdatePinnedForumTopic(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesReorderPinnedForumTopicsRequest](d, tlprofile.SemanticMethodMessagesReorderPinnedForumTopics, func(ctx context.Context, layerRequest *tg.MessagesReorderPinnedForumTopicsRequest) (any, error) {
+		return r.onMessagesReorderPinnedForumTopics(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteTopicHistoryRequest](d, tlprofile.SemanticMethodMessagesDeleteTopicHistory, func(ctx context.Context, layerRequest *tg.MessagesDeleteTopicHistoryRequest) (any, error) {
+		return r.onMessagesDeleteTopicHistory(ctx, layerRequest)
+	})
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/crypto"
 	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"github.com/iamxvbaba/td/transport"
 )
 
@@ -279,7 +279,7 @@ func (c *Conn) isPhysicalTransportCurrentOpen() bool {
 // LayerProfile returns the exact TL profile currently selected for this
 // connection. ok is false until admission or an inherited auth-key default
 // supplies a supported generated profile.
-func (c *Conn) LayerProfile() (profile tg.LayerProfile, ok bool) {
+func (c *Conn) LayerProfile() (profile tlprofile.Profile, ok bool) {
 	state := c.LayerProfileState()
 	return state.Profile, state.Origin != LayerProfileUnknown
 }
@@ -288,7 +288,7 @@ func (c *Conn) LayerProfile() (profile tg.LayerProfile, ok bool) {
 // admission. Repeating the same value is idempotent. A later well-formed
 // invokeWithLayer may replace either an inherited default or older explicit
 // evidence; already-admitted requests retain their own immutable profile.
-func (c *Conn) FreezeLayerProfile(profile tg.LayerProfile) error {
+func (c *Conn) FreezeLayerProfile(profile tlprofile.Profile) error {
 	_, err := c.setLayerProfile(profile, LayerProfileExplicit, true)
 	return err
 }
@@ -298,14 +298,14 @@ func (c *Conn) FreezeLayerProfile(profile tg.LayerProfile) error {
 // msg_id carrying another Layer is a protocol conflict. Advancing the evidence
 // cursor at an unchanged Layer does not rotate the outbound epoch because the
 // wire profile itself did not change.
-func (c *Conn) FreezeLayerProfileAt(profile tg.LayerProfile, msgID int64) (bool, error) {
+func (c *Conn) FreezeLayerProfileAt(profile tlprofile.Profile, msgID int64) (bool, error) {
 	return c.freezeLayerProfileAt(profile, msgID)
 }
 
 // SeedLayerProfile restores explicit evidence previously proven for this exact
 // logical session. It is kept as the compatible same-session restore API;
 // auth-key-wide metadata must use SeedInheritedLayerProfile instead.
-func (c *Conn) SeedLayerProfile(profile tg.LayerProfile) error {
+func (c *Conn) SeedLayerProfile(profile tlprofile.Profile) error {
 	_, err := c.setLayerProfile(profile, LayerProfileExplicit, true)
 	return err
 }
@@ -313,7 +313,7 @@ func (c *Conn) SeedLayerProfile(profile tg.LayerProfile) error {
 // SeedInheritedLayerProfile installs an auth-key-wide default only while the
 // connection is still unknown. It never overwrites explicit evidence or an
 // already selected inherited default; client protocol evidence owns correction.
-func (c *Conn) SeedInheritedLayerProfile(profile tg.LayerProfile) error {
+func (c *Conn) SeedInheritedLayerProfile(profile tlprofile.Profile) error {
 	_, err := c.setLayerProfile(profile, LayerProfileInherited, false)
 	return err
 }

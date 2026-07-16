@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 func TestUpgradePrivateLayerRPCOnlyAcceptsAuditedAndroidConstructors(t *testing.T) {
@@ -20,7 +20,7 @@ func TestUpgradePrivateLayerRPCOnlyAcceptsAuditedAndroidConstructors(t *testing.
 	private.PutID(0x7f3b18ea) // inputPeerEmpty
 
 	in := &bin.Buffer{Buf: private.Copy()}
-	upgraded, ok, err := UpgradePrivateLayerRPC(tg.LayerProfileCanonical, in, tg.LayerDecodeLimits{})
+	upgraded, ok, err := UpgradePrivateLayerRPC(tlprofile.ProfileCanonical, in, tlprofile.Limits{})
 	if err != nil || !ok {
 		t.Fatalf("upgrade private method = ok:%v err:%v", ok, err)
 	}
@@ -33,13 +33,13 @@ func TestUpgradePrivateLayerRPCOnlyAcceptsAuditedAndroidConstructors(t *testing.
 
 	official := bin.Buffer{}
 	official.PutID(0xb921bd04) // arbitrary non-private/official constructor
-	if value, handled, err := UpgradePrivateLayerRPC(tg.LayerProfileCanonical, &official, tg.LayerDecodeLimits{}); value != nil || handled || err != nil {
+	if value, handled, err := UpgradePrivateLayerRPC(tlprofile.ProfileCanonical, &official, tlprofile.Limits{}); value != nil || handled || err != nil {
 		t.Fatalf("non-private method = value:%v handled:%v err:%v", value, handled, err)
 	}
 }
 
 func TestGeneratedPrivateLayerRPCOverlayHasAllAuditedMethods(t *testing.T) {
-	if got, want := tg.LayerClientRPCOverlayMethodCount(tg.LayerClientRPCOverlayDrkloAndroid), 15; got != want {
+	if got, want := tlprofile.ClientRPCOverlayMethodCount(tlprofile.ClientRPCOverlayDrkloAndroid), 15; got != want {
 		t.Fatalf("generated DrKLO method count = %d, want %d", got, want)
 	}
 }
@@ -47,7 +47,7 @@ func TestGeneratedPrivateLayerRPCOverlayHasAllAuditedMethods(t *testing.T) {
 func TestUpgradePrivateLayerRPCRejectsMalformedBody(t *testing.T) {
 	malformed := bin.Buffer{}
 	malformed.PutID(0x41d41ade)
-	_, ok, err := UpgradePrivateLayerRPC(tg.LayerProfileCanonical, &malformed, tg.LayerDecodeLimits{})
+	_, ok, err := UpgradePrivateLayerRPC(tlprofile.ProfileCanonical, &malformed, tlprofile.Limits{})
 	if !ok || !errors.Is(err, ErrPrivateLayerRPCInvalid) {
 		t.Fatalf("malformed private method = ok:%v err:%v", ok, err)
 	}

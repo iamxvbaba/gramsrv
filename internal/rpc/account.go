@@ -7,99 +7,241 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
 
 // registerAccount 注册 account.* RPC handler。
-func (r *Router) registerAccount(d *tg.ServerDispatcher) {
-	d.OnAccountRegisterDevice(func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (bool, error) {
+func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
 		return true, nil
 	})
-	d.OnAccountUnregisterDevice(func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (bool, error) {
+	registerRPC[*tg.AccountUnregisterDeviceRequest](d, tlprofile.SemanticMethodAccountUnregisterDevice, func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (any, error) {
 		return true, nil
 	})
-	d.OnAccountUpdateDeviceLocked(func(ctx context.Context, period int) (bool, error) {
+	registerRPC[*tg.AccountUpdateDeviceLockedRequest](d, tlprofile.SemanticMethodAccountUpdateDeviceLocked, func(ctx context.Context, layerRequest *tg.AccountUpdateDeviceLockedRequest) (any, error) {
+		period := layerRequest.
+			Period
+		_ = period
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return false, internalErr()
 		}
 		return ioscompat.DeviceLockedUpdated(), nil
 	})
-	d.OnAccountSendChangePhoneCode(r.onAccountSendChangePhoneCode)
-	d.OnAccountChangePhone(r.onAccountChangePhone)
-	d.OnAccountCheckUsername(r.onAccountCheckUsername)
-	d.OnAccountUpdateProfile(r.onAccountUpdateProfile)
-	d.OnAccountUpdateUsername(r.onAccountUpdateUsername)
-	d.OnAccountUpdateBirthday(r.onAccountUpdateBirthday)
-	d.OnAccountUpdatePersonalChannel(r.onAccountUpdatePersonalChannel)
-	d.OnAccountGetPassword(r.onAccountGetPassword)
-	d.OnAccountGetNotifySettings(r.onAccountGetNotifySettings)
-	d.OnAccountUpdateNotifySettings(r.onAccountUpdateNotifySettings)
-	d.OnAccountResetNotifySettings(r.onAccountResetNotifySettings)
-	d.OnAccountGetPrivacy(r.onAccountGetPrivacy)
-	d.OnAccountSetPrivacy(r.onAccountSetPrivacy)
-	d.OnAccountGetAuthorizations(r.onAccountGetAuthorizations)
-	d.OnAccountResetAuthorization(r.onAccountResetAuthorization)
-	d.OnAccountGetPasswordSettings(r.onAccountGetPasswordSettings)
-	d.OnAccountUpdatePasswordSettings(r.onAccountUpdatePasswordSettings)
-	d.OnAccountConfirmPasswordEmail(r.onAccountConfirmPasswordEmail)
-	d.OnAccountResendPasswordEmail(r.onAccountResendPasswordEmail)
-	d.OnAccountCancelPasswordEmail(r.onAccountCancelPasswordEmail)
-	d.OnAccountSendVerifyEmailCode(r.onAccountSendVerifyEmailCode)
-	d.OnAccountVerifyEmail(r.onAccountVerifyEmail)
-	d.OnAccountGetDefaultEmojiStatuses(r.onAccountGetDefaultEmojiStatuses)
-	d.OnAccountGetCollectibleEmojiStatuses(func(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
+	registerRPC[*tg.AccountSendChangePhoneCodeRequest](d, tlprofile.SemanticMethodAccountSendChangePhoneCode, func(ctx context.Context, layerRequest *tg.AccountSendChangePhoneCodeRequest) (any, error) {
+		return r.onAccountSendChangePhoneCode(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountChangePhoneRequest](d, tlprofile.SemanticMethodAccountChangePhone, func(ctx context.Context, layerRequest *tg.AccountChangePhoneRequest) (any, error) {
+		return r.onAccountChangePhone(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountCheckUsernameRequest](d, tlprofile.SemanticMethodAccountCheckUsername, func(ctx context.Context, layerRequest *tg.AccountCheckUsernameRequest) (any, error) {
+		return r.onAccountCheckUsername(ctx, layerRequest.
+			Username)
+	})
+	registerRPC[*tg.AccountUpdateProfileRequest](d, tlprofile.SemanticMethodAccountUpdateProfile, func(ctx context.Context, layerRequest *tg.AccountUpdateProfileRequest) (any, error) {
+		return r.onAccountUpdateProfile(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateUsernameRequest](d, tlprofile.SemanticMethodAccountUpdateUsername, func(ctx context.Context, layerRequest *tg.AccountUpdateUsernameRequest) (any, error) {
+		return r.onAccountUpdateUsername(ctx, layerRequest.
+			Username)
+	})
+	registerRPC[*tg.AccountUpdateBirthdayRequest](d, tlprofile.SemanticMethodAccountUpdateBirthday, func(ctx context.Context, layerRequest *tg.AccountUpdateBirthdayRequest) (any, error) {
+		return r.onAccountUpdateBirthday(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdatePersonalChannelRequest](d, tlprofile.SemanticMethodAccountUpdatePersonalChannel, func(ctx context.Context, layerRequest *tg.AccountUpdatePersonalChannelRequest) (any, error) {
+		return r.onAccountUpdatePersonalChannel(ctx, layerRequest.
+			Channel)
+	})
+	registerRPC[*tg.AccountGetPasswordRequest](d, tlprofile.SemanticMethodAccountGetPassword, func(ctx context.Context, layerRequest *tg.AccountGetPasswordRequest) (any, error) {
+		return r.onAccountGetPassword(ctx)
+	})
+	registerRPC[*tg.AccountGetNotifySettingsRequest](d, tlprofile.SemanticMethodAccountGetNotifySettings, func(ctx context.Context, layerRequest *tg.AccountGetNotifySettingsRequest) (any, error) {
+		return r.onAccountGetNotifySettings(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.AccountUpdateNotifySettingsRequest](d, tlprofile.SemanticMethodAccountUpdateNotifySettings, func(ctx context.Context, layerRequest *tg.AccountUpdateNotifySettingsRequest) (any, error) {
+		return r.onAccountUpdateNotifySettings(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountResetNotifySettingsRequest](d, tlprofile.SemanticMethodAccountResetNotifySettings, func(ctx context.Context, layerRequest *tg.AccountResetNotifySettingsRequest) (any, error) {
+		return r.onAccountResetNotifySettings(ctx)
+	})
+	registerRPC[*tg.AccountGetPrivacyRequest](d, tlprofile.SemanticMethodAccountGetPrivacy, func(ctx context.Context, layerRequest *tg.AccountGetPrivacyRequest) (any, error) {
+		return r.onAccountGetPrivacy(ctx, layerRequest.
+			Key)
+	})
+	registerRPC[*tg.AccountSetPrivacyRequest](d, tlprofile.SemanticMethodAccountSetPrivacy, func(ctx context.Context, layerRequest *tg.AccountSetPrivacyRequest) (any, error) {
+		return r.onAccountSetPrivacy(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetAuthorizationsRequest](d, tlprofile.SemanticMethodAccountGetAuthorizations, func(ctx context.Context, layerRequest *tg.AccountGetAuthorizationsRequest) (any, error) {
+		return r.onAccountGetAuthorizations(ctx)
+	})
+	registerRPC[*tg.AccountResetAuthorizationRequest](d, tlprofile.SemanticMethodAccountResetAuthorization, func(ctx context.Context, layerRequest *tg.AccountResetAuthorizationRequest) (any, error) {
+		return r.onAccountResetAuthorization(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AccountGetPasswordSettingsRequest](d, tlprofile.SemanticMethodAccountGetPasswordSettings, func(ctx context.Context, layerRequest *tg.AccountGetPasswordSettingsRequest) (any, error) {
+		return r.onAccountGetPasswordSettings(ctx, layerRequest.
+			Password)
+	})
+	registerRPC[*tg.AccountUpdatePasswordSettingsRequest](d, tlprofile.SemanticMethodAccountUpdatePasswordSettings, func(ctx context.Context, layerRequest *tg.AccountUpdatePasswordSettingsRequest) (any, error) {
+		return r.onAccountUpdatePasswordSettings(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountConfirmPasswordEmailRequest](d, tlprofile.SemanticMethodAccountConfirmPasswordEmail, func(ctx context.Context, layerRequest *tg.AccountConfirmPasswordEmailRequest) (any, error) {
+		return r.onAccountConfirmPasswordEmail(ctx, layerRequest.
+			Code)
+	})
+	registerRPC[*tg.AccountResendPasswordEmailRequest](d, tlprofile.SemanticMethodAccountResendPasswordEmail, func(ctx context.Context, layerRequest *tg.AccountResendPasswordEmailRequest) (any, error) {
+		return r.onAccountResendPasswordEmail(ctx)
+	})
+	registerRPC[*tg.AccountCancelPasswordEmailRequest](d, tlprofile.SemanticMethodAccountCancelPasswordEmail, func(ctx context.Context, layerRequest *tg.AccountCancelPasswordEmailRequest) (any, error) {
+		return r.onAccountCancelPasswordEmail(ctx)
+	})
+	registerRPC[*tg.AccountSendVerifyEmailCodeRequest](d, tlprofile.SemanticMethodAccountSendVerifyEmailCode, func(ctx context.Context, layerRequest *tg.AccountSendVerifyEmailCodeRequest) (any, error) {
+		return r.onAccountSendVerifyEmailCode(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountVerifyEmailRequest](d, tlprofile.SemanticMethodAccountVerifyEmail, func(ctx context.Context, layerRequest *tg.AccountVerifyEmailRequest) (any, error) {
+		return r.onAccountVerifyEmail(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetDefaultEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountGetDefaultEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountGetDefaultEmojiStatusesRequest) (any, error) {
+		return r.onAccountGetDefaultEmojiStatuses(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AccountGetCollectibleEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountGetCollectibleEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountGetCollectibleEmojiStatusesRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.CollectibleEmojiStatuses(), nil
 	})
-	d.OnAccountGetDefaultGroupPhotoEmojis(func(ctx context.Context, hash int64) (tg.EmojiListClass, error) {
+	registerRPC[*tg.AccountGetDefaultGroupPhotoEmojisRequest](d, tlprofile.SemanticMethodAccountGetDefaultGroupPhotoEmojis, func(ctx context.Context, layerRequest *tg.AccountGetDefaultGroupPhotoEmojisRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.DefaultGroupPhotoEmojis(), nil
 	})
-	d.OnAccountGetConnectedBots(r.onAccountGetConnectedBots)
-	d.OnAccountUpdateBusinessWorkHours(r.onAccountUpdateBusinessWorkHours)
-	d.OnAccountUpdateBusinessLocation(r.onAccountUpdateBusinessLocation)
-	d.OnAccountUpdateBusinessIntro(r.onAccountUpdateBusinessIntro)
-	d.OnAccountUpdateBusinessGreetingMessage(r.onAccountUpdateBusinessGreetingMessage)
-	d.OnAccountUpdateBusinessAwayMessage(r.onAccountUpdateBusinessAwayMessage)
-	d.OnAccountGetBusinessChatLinks(r.onAccountGetBusinessChatLinks)
-	d.OnAccountCreateBusinessChatLink(r.onAccountCreateBusinessChatLink)
-	d.OnAccountEditBusinessChatLink(r.onAccountEditBusinessChatLink)
-	d.OnAccountDeleteBusinessChatLink(r.onAccountDeleteBusinessChatLink)
-	d.OnAccountResolveBusinessChatLink(r.onAccountResolveBusinessChatLink)
-	d.OnAccountUpdateConnectedBot(r.onAccountUpdateConnectedBot)
-	d.OnAccountGetBotBusinessConnection(func(ctx context.Context, connectionID string) (tg.UpdatesClass, error) {
+	registerRPC[*tg.AccountGetConnectedBotsRequest](d, tlprofile.SemanticMethodAccountGetConnectedBots, func(ctx context.Context, layerRequest *tg.AccountGetConnectedBotsRequest) (any, error) {
+		return r.onAccountGetConnectedBots(ctx)
+	})
+	registerRPC[*tg.AccountUpdateBusinessWorkHoursRequest](d, tlprofile.SemanticMethodAccountUpdateBusinessWorkHours, func(ctx context.Context, layerRequest *tg.AccountUpdateBusinessWorkHoursRequest) (any, error) {
+		return r.onAccountUpdateBusinessWorkHours(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateBusinessLocationRequest](d, tlprofile.SemanticMethodAccountUpdateBusinessLocation, func(ctx context.Context, layerRequest *tg.AccountUpdateBusinessLocationRequest) (any, error) {
+		return r.onAccountUpdateBusinessLocation(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateBusinessIntroRequest](d, tlprofile.SemanticMethodAccountUpdateBusinessIntro, func(ctx context.Context, layerRequest *tg.AccountUpdateBusinessIntroRequest) (any, error) {
+		return r.onAccountUpdateBusinessIntro(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateBusinessGreetingMessageRequest](d, tlprofile.SemanticMethodAccountUpdateBusinessGreetingMessage, func(ctx context.Context, layerRequest *tg.AccountUpdateBusinessGreetingMessageRequest) (any, error) {
+		return r.onAccountUpdateBusinessGreetingMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateBusinessAwayMessageRequest](d, tlprofile.SemanticMethodAccountUpdateBusinessAwayMessage, func(ctx context.Context, layerRequest *tg.AccountUpdateBusinessAwayMessageRequest) (any, error) {
+		return r.onAccountUpdateBusinessAwayMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetBusinessChatLinksRequest](d, tlprofile.SemanticMethodAccountGetBusinessChatLinks, func(ctx context.Context, layerRequest *tg.AccountGetBusinessChatLinksRequest) (any, error) {
+		return r.onAccountGetBusinessChatLinks(ctx)
+	})
+	registerRPC[*tg.AccountCreateBusinessChatLinkRequest](d, tlprofile.SemanticMethodAccountCreateBusinessChatLink, func(ctx context.Context, layerRequest *tg.AccountCreateBusinessChatLinkRequest) (any, error) {
+		return r.onAccountCreateBusinessChatLink(ctx, layerRequest.
+			Link)
+	})
+	registerRPC[*tg.AccountEditBusinessChatLinkRequest](d, tlprofile.SemanticMethodAccountEditBusinessChatLink, func(ctx context.Context, layerRequest *tg.AccountEditBusinessChatLinkRequest) (any, error) {
+		return r.onAccountEditBusinessChatLink(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountDeleteBusinessChatLinkRequest](d, tlprofile.SemanticMethodAccountDeleteBusinessChatLink, func(ctx context.Context, layerRequest *tg.AccountDeleteBusinessChatLinkRequest) (any, error) {
+		return r.onAccountDeleteBusinessChatLink(ctx, layerRequest.
+			Slug)
+	})
+	registerRPC[*tg.AccountResolveBusinessChatLinkRequest](d, tlprofile.SemanticMethodAccountResolveBusinessChatLink, func(ctx context.Context, layerRequest *tg.AccountResolveBusinessChatLinkRequest) (any, error) {
+		return r.onAccountResolveBusinessChatLink(ctx, layerRequest.
+			Slug)
+	})
+	registerRPC[*tg.AccountUpdateConnectedBotRequest](d, tlprofile.SemanticMethodAccountUpdateConnectedBot, func(ctx context.Context, layerRequest *tg.AccountUpdateConnectedBotRequest) (any, error) {
+		return r.onAccountUpdateConnectedBot(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetBotBusinessConnectionRequest](d, tlprofile.SemanticMethodAccountGetBotBusinessConnection, func(ctx context.Context, layerRequest *tg.AccountGetBotBusinessConnectionRequest) (any, error) {
+		connectionID := layerRequest.
+			ConnectionID
+		_ = connectionID
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return nil, tgerr400("BOT_BUSINESS_MISSING")
 	})
-	d.OnAccountToggleConnectedBotPaused(r.onAccountToggleConnectedBotPaused)
-	d.OnAccountDisablePeerConnectedBot(r.onAccountDisablePeerConnectedBot)
-	d.OnAccountGetReactionsNotifySettings(r.onAccountGetReactionsNotifySettings)
-	d.OnAccountSetReactionsNotifySettings(r.onAccountSetReactionsNotifySettings)
-	d.OnAccountGetContactSignUpNotification(r.onAccountGetContactSignUpNotification)
-	d.OnAccountSetContactSignUpNotification(r.onAccountSetContactSignUpNotification)
-	d.OnAccountGetThemes(r.onAccountGetThemes)
-	d.OnAccountGetChatThemes(func(ctx context.Context, hash int64) (tg.AccountThemesClass, error) {
+	registerRPC[*tg.AccountToggleConnectedBotPausedRequest](d, tlprofile.SemanticMethodAccountToggleConnectedBotPaused, func(ctx context.Context, layerRequest *tg.AccountToggleConnectedBotPausedRequest) (any, error) {
+		return r.onAccountToggleConnectedBotPaused(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountDisablePeerConnectedBotRequest](d, tlprofile.SemanticMethodAccountDisablePeerConnectedBot, func(ctx context.Context, layerRequest *tg.AccountDisablePeerConnectedBotRequest) (any, error) {
+		return r.onAccountDisablePeerConnectedBot(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.AccountGetReactionsNotifySettingsRequest](d, tlprofile.SemanticMethodAccountGetReactionsNotifySettings, func(ctx context.Context, layerRequest *tg.AccountGetReactionsNotifySettingsRequest) (any, error) {
+		return r.onAccountGetReactionsNotifySettings(ctx)
+	})
+	registerRPC[*tg.AccountSetReactionsNotifySettingsRequest](d, tlprofile.SemanticMethodAccountSetReactionsNotifySettings, func(ctx context.Context, layerRequest *tg.AccountSetReactionsNotifySettingsRequest) (any, error) {
+		return r.onAccountSetReactionsNotifySettings(ctx, layerRequest.
+			Settings)
+	})
+	registerRPC[*tg.AccountGetContactSignUpNotificationRequest](d, tlprofile.SemanticMethodAccountGetContactSignUpNotification, func(ctx context.Context, layerRequest *tg.AccountGetContactSignUpNotificationRequest) (any, error) {
+		return r.onAccountGetContactSignUpNotification(ctx)
+	})
+	registerRPC[*tg.AccountSetContactSignUpNotificationRequest](d, tlprofile.SemanticMethodAccountSetContactSignUpNotification, func(ctx context.Context, layerRequest *tg.AccountSetContactSignUpNotificationRequest) (any, error) {
+		return r.onAccountSetContactSignUpNotification(ctx, layerRequest.
+			Silent)
+	})
+	registerRPC[*tg.AccountGetThemesRequest](d, tlprofile.SemanticMethodAccountGetThemes, func(ctx context.Context, layerRequest *tg.AccountGetThemesRequest) (any, error) {
+		return r.onAccountGetThemes(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetChatThemesRequest](d, tlprofile.SemanticMethodAccountGetChatThemes, func(ctx context.Context, layerRequest *tg.AccountGetChatThemesRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return tdesktop.ChatThemes(hash), nil
 	})
+	registerRPC[
+
 	// 自定义云主题(Create a New Theme 全链路):upload→create→update→save→install→get。
-	d.OnAccountUploadTheme(r.onAccountUploadTheme)
-	d.OnAccountCreateTheme(r.onAccountCreateTheme)
-	d.OnAccountUpdateTheme(r.onAccountUpdateTheme)
-	d.OnAccountSaveTheme(r.onAccountSaveTheme)
-	d.OnAccountInstallTheme(r.onAccountInstallTheme)
-	d.OnAccountGetTheme(r.onAccountGetTheme)
-	d.OnAccountGetWallPapers(func(ctx context.Context, hash int64) (tg.AccountWallPapersClass, error) {
+	*tg.AccountUploadThemeRequest](d, tlprofile.SemanticMethodAccountUploadTheme, func(ctx context.Context, layerRequest *tg.AccountUploadThemeRequest) (any, error) {
+		return r.onAccountUploadTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountCreateThemeRequest](d, tlprofile.SemanticMethodAccountCreateTheme, func(ctx context.Context, layerRequest *tg.AccountCreateThemeRequest) (any, error) {
+		return r.onAccountCreateTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountUpdateThemeRequest](d, tlprofile.SemanticMethodAccountUpdateTheme, func(ctx context.Context, layerRequest *tg.AccountUpdateThemeRequest) (any, error) {
+		return r.onAccountUpdateTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountSaveThemeRequest](d, tlprofile.SemanticMethodAccountSaveTheme, func(ctx context.Context, layerRequest *tg.AccountSaveThemeRequest) (any, error) {
+		return r.onAccountSaveTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountInstallThemeRequest](d, tlprofile.SemanticMethodAccountInstallTheme, func(ctx context.Context, layerRequest *tg.AccountInstallThemeRequest) (any, error) {
+		return r.onAccountInstallTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetThemeRequest](d, tlprofile.SemanticMethodAccountGetTheme, func(ctx context.Context, layerRequest *tg.AccountGetThemeRequest) (any, error) {
+		return r.onAccountGetTheme(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetWallPapersRequest](d, tlprofile.SemanticMethodAccountGetWallPapers, func(ctx context.Context, layerRequest *tg.AccountGetWallPapersRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return tdesktop.WallPapers(hash), nil
 	})
-	d.OnAccountGetWallPaper(func(ctx context.Context, wallpaper tg.InputWallPaperClass) (tg.WallPaperClass, error) {
+	registerRPC[*tg.AccountGetWallPaperRequest](d, tlprofile.SemanticMethodAccountGetWallPaper, func(ctx context.Context, layerRequest *tg.AccountGetWallPaperRequest) (any, error) {
+		wallpaper := layerRequest.
+			Wallpaper
+		_ = wallpaper
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
@@ -109,7 +251,11 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 		}
 		return found, nil
 	})
-	d.OnAccountGetMultiWallPapers(func(ctx context.Context, wallpapers []tg.InputWallPaperClass) ([]tg.WallPaperClass, error) {
+	registerRPC[*tg.AccountGetMultiWallPapersRequest](d, tlprofile.SemanticMethodAccountGetMultiWallPapers, func(ctx context.Context, layerRequest *tg.AccountGetMultiWallPapersRequest) (any, error) {
+		wallpapers := layerRequest.
+			Wallpapers
+		_ = wallpapers
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
@@ -122,7 +268,7 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 		}
 		return found, nil
 	})
-	d.OnAccountSaveWallPaper(func(ctx context.Context, req *tg.AccountSaveWallPaperRequest) (bool, error) {
+	registerRPC[*tg.AccountSaveWallPaperRequest](d, tlprofile.SemanticMethodAccountSaveWallPaper, func(ctx context.Context, req *tg.AccountSaveWallPaperRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return false, internalErr()
 		}
@@ -134,7 +280,7 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 		}
 		return true, nil
 	})
-	d.OnAccountInstallWallPaper(func(ctx context.Context, req *tg.AccountInstallWallPaperRequest) (bool, error) {
+	registerRPC[*tg.AccountInstallWallPaperRequest](d, tlprofile.SemanticMethodAccountInstallWallPaper, func(ctx context.Context, req *tg.AccountInstallWallPaperRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return false, internalErr()
 		}
@@ -146,13 +292,13 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 		}
 		return true, nil
 	})
-	d.OnAccountResetWallPapers(func(ctx context.Context) (bool, error) {
+	registerRPC[*tg.AccountResetWallPapersRequest](d, tlprofile.SemanticMethodAccountResetWallPapers, func(ctx context.Context, layerRequest *tg.AccountResetWallPapersRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return false, internalErr()
 		}
 		return true, nil
 	})
-	d.OnAccountGetUniqueGiftChatThemes(func(ctx context.Context, req *tg.AccountGetUniqueGiftChatThemesRequest) (tg.AccountChatThemesClass, error) {
+	registerRPC[*tg.AccountGetUniqueGiftChatThemesRequest](d, tlprofile.SemanticMethodAccountGetUniqueGiftChatThemes, func(ctx context.Context, req *tg.AccountGetUniqueGiftChatThemesRequest) (any, error) {
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
@@ -161,71 +307,151 @@ func (r *Router) registerAccount(d *tg.ServerDispatcher) {
 		}
 		return tdesktop.UniqueGiftChatThemes(req.Hash), nil
 	})
-	d.OnAccountGetRecentEmojiStatuses(func(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
+	registerRPC[*tg.AccountGetRecentEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountGetRecentEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountGetRecentEmojiStatusesRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return &tg.AccountEmojiStatuses{Hash: 0, Statuses: []tg.EmojiStatusClass{}}, nil
 	})
-	d.OnAccountClearRecentEmojiStatuses(func(ctx context.Context) (bool, error) {
+	registerRPC[*tg.AccountClearRecentEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountClearRecentEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountClearRecentEmojiStatusesRequest) (any, error) {
 		return true, nil
 	})
-	d.OnAccountUpdateEmojiStatus(r.onAccountUpdateEmojiStatus)
-	d.OnAccountUpdateColor(r.onAccountUpdateColor)
-	d.OnAccountGetDefaultProfilePhotoEmojis(r.onAccountGetDefaultProfilePhotoEmojis)
-	d.OnAccountGetDefaultBackgroundEmojis(r.onAccountGetDefaultBackgroundEmojis)
-	d.OnAccountGetChannelDefaultEmojiStatuses(func(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
+	registerRPC[*tg.AccountUpdateEmojiStatusRequest](d, tlprofile.SemanticMethodAccountUpdateEmojiStatus, func(ctx context.Context, layerRequest *tg.AccountUpdateEmojiStatusRequest) (any, error) {
+		return r.onAccountUpdateEmojiStatus(ctx, layerRequest.
+			EmojiStatus)
+	})
+	registerRPC[*tg.AccountUpdateColorRequest](d, tlprofile.SemanticMethodAccountUpdateColor, func(ctx context.Context, layerRequest *tg.AccountUpdateColorRequest) (any, error) {
+		return r.onAccountUpdateColor(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetDefaultProfilePhotoEmojisRequest](d, tlprofile.SemanticMethodAccountGetDefaultProfilePhotoEmojis, func(ctx context.Context, layerRequest *tg.AccountGetDefaultProfilePhotoEmojisRequest) (any, error) {
+		return r.onAccountGetDefaultProfilePhotoEmojis(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AccountGetDefaultBackgroundEmojisRequest](d, tlprofile.SemanticMethodAccountGetDefaultBackgroundEmojis, func(ctx context.Context, layerRequest *tg.AccountGetDefaultBackgroundEmojisRequest) (any, error) {
+		return r.onAccountGetDefaultBackgroundEmojis(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AccountGetChannelDefaultEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountGetChannelDefaultEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountGetChannelDefaultEmojiStatusesRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return &tg.AccountEmojiStatuses{Hash: 0, Statuses: []tg.EmojiStatusClass{}}, nil
 	})
-	d.OnAccountGetChannelRestrictedStatusEmojis(func(ctx context.Context, hash int64) (tg.EmojiListClass, error) {
+	registerRPC[*tg.AccountGetChannelRestrictedStatusEmojisRequest](d, tlprofile.SemanticMethodAccountGetChannelRestrictedStatusEmojis, func(ctx context.Context, layerRequest *tg.AccountGetChannelRestrictedStatusEmojisRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return tdesktop.DefaultGroupPhotoEmojis(), nil
 	})
-	d.OnAccountSetContentSettings(r.onAccountSetContentSettings)
-	d.OnAccountGetContentSettings(r.onAccountGetContentSettings)
-	d.OnAccountGetGlobalPrivacySettings(r.onAccountGetGlobalPrivacySettings)
-	d.OnAccountSetGlobalPrivacySettings(r.onAccountSetGlobalPrivacySettings)
-	d.OnAccountGetPasskeys(r.onAccountGetPasskeys)
-	d.OnAccountInitPasskeyRegistration(r.onAccountInitPasskeyRegistration)
-	d.OnAccountRegisterPasskey(r.onAccountRegisterPasskey)
-	d.OnAccountDeletePasskey(r.onAccountDeletePasskey)
-	d.OnAccountGetWebAuthorizations(func(ctx context.Context) (*tg.AccountWebAuthorizations, error) {
+	registerRPC[*tg.AccountSetContentSettingsRequest](d, tlprofile.SemanticMethodAccountSetContentSettings, func(ctx context.Context, layerRequest *tg.AccountSetContentSettingsRequest) (any, error) {
+		return r.onAccountSetContentSettings(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetContentSettingsRequest](d, tlprofile.SemanticMethodAccountGetContentSettings, func(ctx context.Context, layerRequest *tg.AccountGetContentSettingsRequest) (any, error) {
+		return r.onAccountGetContentSettings(ctx)
+	})
+	registerRPC[*tg.AccountGetGlobalPrivacySettingsRequest](d, tlprofile.SemanticMethodAccountGetGlobalPrivacySettings, func(ctx context.Context, layerRequest *tg.AccountGetGlobalPrivacySettingsRequest) (any, error) {
+		return r.onAccountGetGlobalPrivacySettings(ctx)
+	})
+	registerRPC[*tg.AccountSetGlobalPrivacySettingsRequest](d, tlprofile.SemanticMethodAccountSetGlobalPrivacySettings, func(ctx context.Context, layerRequest *tg.AccountSetGlobalPrivacySettingsRequest) (any, error) {
+		return r.onAccountSetGlobalPrivacySettings(ctx, layerRequest.
+			Settings)
+	})
+	registerRPC[*tg.AccountGetPasskeysRequest](d, tlprofile.SemanticMethodAccountGetPasskeys, func(ctx context.Context, layerRequest *tg.AccountGetPasskeysRequest) (any, error) {
+		return r.onAccountGetPasskeys(ctx)
+	})
+	registerRPC[*tg.AccountInitPasskeyRegistrationRequest](d, tlprofile.SemanticMethodAccountInitPasskeyRegistration, func(ctx context.Context, layerRequest *tg.AccountInitPasskeyRegistrationRequest) (any, error) {
+		return r.onAccountInitPasskeyRegistration(ctx)
+	})
+	registerRPC[*tg.AccountRegisterPasskeyRequest](d, tlprofile.SemanticMethodAccountRegisterPasskey, func(ctx context.Context, layerRequest *tg.AccountRegisterPasskeyRequest) (any, error) {
+		return r.onAccountRegisterPasskey(ctx, layerRequest.
+			Credential)
+	})
+	registerRPC[*tg.AccountDeletePasskeyRequest](d, tlprofile.SemanticMethodAccountDeletePasskey, func(ctx context.Context, layerRequest *tg.AccountDeletePasskeyRequest) (any, error) {
+		return r.onAccountDeletePasskey(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.AccountGetWebAuthorizationsRequest](d, tlprofile.SemanticMethodAccountGetWebAuthorizations, func(ctx context.Context, layerRequest *tg.AccountGetWebAuthorizationsRequest) (any, error) {
 		return tdesktop.WebAuthorizations(), nil
 	})
-	d.OnAccountResetWebAuthorization(func(ctx context.Context, hash int64) (bool, error) {
+	registerRPC[*tg.AccountResetWebAuthorizationRequest](d, tlprofile.SemanticMethodAccountResetWebAuthorization, func(ctx context.Context, layerRequest *tg.AccountResetWebAuthorizationRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return true, nil
 	})
-	d.OnAccountResetWebAuthorizations(func(ctx context.Context) (bool, error) {
+	registerRPC[*tg.AccountResetWebAuthorizationsRequest](d, tlprofile.SemanticMethodAccountResetWebAuthorizations, func(ctx context.Context, layerRequest *tg.AccountResetWebAuthorizationsRequest) (
+
+		// account.getWebBrowserSettings：telesrv 不接入网页浏览器（web bot）集成，返回空设置
+		// （无内置浏览器例外、不强制外部浏览器）。Android 启动时会拉取，缺它会反复 500
+		// NOT_IMPLEMENTED。空结构 Hash=0，客户端按默认（内置浏览器、无例外）渲染。
+		any, error) {
 		return true, nil
 	})
-	// account.getWebBrowserSettings：telesrv 不接入网页浏览器（web bot）集成，返回空设置
-	// （无内置浏览器例外、不强制外部浏览器）。Android 启动时会拉取，缺它会反复 500
-	// NOT_IMPLEMENTED。空结构 Hash=0，客户端按默认（内置浏览器、无例外）渲染。
-	d.OnAccountGetWebBrowserSettings(func(ctx context.Context, hash int64) (tg.AccountWebBrowserSettingsClass, error) {
+	registerRPC[*tg.AccountGetWebBrowserSettingsRequest](d, tlprofile.SemanticMethodAccountGetWebBrowserSettings, func(ctx context.Context, layerRequest *tg.AccountGetWebBrowserSettingsRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		return &tg.AccountWebBrowserSettings{}, nil
 	})
-	d.OnAccountGetNotifyExceptions(r.onAccountGetNotifyExceptions)
-	d.OnAccountGetAutoDownloadSettings(func(ctx context.Context) (*tg.AccountAutoDownloadSettings, error) {
+	registerRPC[*tg.AccountGetNotifyExceptionsRequest](d, tlprofile.SemanticMethodAccountGetNotifyExceptions, func(ctx context.Context, layerRequest *tg.AccountGetNotifyExceptionsRequest) (any, error) {
+		return r.onAccountGetNotifyExceptions(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetAutoDownloadSettingsRequest](d, tlprofile.SemanticMethodAccountGetAutoDownloadSettings, func(ctx context.Context, layerRequest *tg.AccountGetAutoDownloadSettingsRequest) (any, error) {
 		return tdesktop.AutoDownloadSettings(), nil
 	})
-	d.OnAccountSaveAutoDownloadSettings(func(ctx context.Context, req *tg.AccountSaveAutoDownloadSettingsRequest) (bool, error) {
+	registerRPC[*tg.AccountSaveAutoDownloadSettingsRequest](d, tlprofile.SemanticMethodAccountSaveAutoDownloadSettings, func(ctx context.Context, req *tg.AccountSaveAutoDownloadSettingsRequest) (any, error) {
 		return true, nil
 	})
-	d.OnAccountSaveMusic(r.onAccountSaveMusic)
-	d.OnAccountGetSavedMusicIDs(r.onAccountGetSavedMusicIDs)
-	d.OnAccountGetSavedRingtones(func(ctx context.Context, hash int64) (tg.AccountSavedRingtonesClass, error) {
+	registerRPC[*tg.AccountSaveMusicRequest](d, tlprofile.SemanticMethodAccountSaveMusic, func(ctx context.Context, layerRequest *tg.AccountSaveMusicRequest) (any, error) {
+		return r.onAccountSaveMusic(ctx, layerRequest)
+	})
+	registerRPC[*tg.AccountGetSavedMusicIDsRequest](d, tlprofile.SemanticMethodAccountGetSavedMusicIDs, func(ctx context.Context, layerRequest *tg.AccountGetSavedMusicIDsRequest) (any, error) {
+		return r.onAccountGetSavedMusicIDs(ctx, layerRequest.
+			Hash)
+	})
+	registerRPC[*tg.AccountGetSavedRingtonesRequest](d, tlprofile.SemanticMethodAccountGetSavedRingtones, func(ctx context.Context, layerRequest *tg.AccountGetSavedRingtonesRequest) (any, error) {
+		hash := layerRequest.
+			Hash
+		_ = hash
+
 		if _, _, err := r.currentUserID(ctx); err != nil {
 			return nil, internalErr()
 		}
 		return &tg.AccountSavedRingtones{Hash: 0, Ringtones: []tg.DocumentClass{}}, nil
 	})
-	d.OnAccountGetAccountTTL(r.onAccountGetAccountTTL)
-	d.OnAccountSetAccountTTL(r.onAccountSetAccountTTL)
-	d.OnAccountSetAuthorizationTTL(func(ctx context.Context, authorizationttldays int) (bool, error) {
+	registerRPC[*tg.AccountGetAccountTTLRequest](d, tlprofile.SemanticMethodAccountGetAccountTTL, func(ctx context.Context, layerRequest *tg.AccountGetAccountTTLRequest) (any, error) {
+		return r.onAccountGetAccountTTL(ctx)
+	})
+	registerRPC[*tg.AccountSetAccountTTLRequest](d, tlprofile.SemanticMethodAccountSetAccountTTL, func(ctx context.Context, layerRequest *tg.AccountSetAccountTTLRequest) (any, error) {
+		return r.onAccountSetAccountTTL(ctx, layerRequest.
+			TTL)
+	})
+	registerRPC[*tg.AccountSetAuthorizationTTLRequest](d, tlprofile.SemanticMethodAccountSetAuthorizationTTL, func(ctx context.Context, layerRequest *tg.AccountSetAuthorizationTTLRequest) (any, error) {
+		authorizationttldays := layerRequest.
+			AuthorizationTTLDays
+		_ = authorizationttldays
+
 		return true, nil
 	})
-	d.OnAccountChangeAuthorizationSettings(func(ctx context.Context, req *tg.AccountChangeAuthorizationSettingsRequest) (bool, error) {
+	registerRPC[*tg.AccountChangeAuthorizationSettingsRequest](d, tlprofile.SemanticMethodAccountChangeAuthorizationSettings, func(ctx context.Context, req *tg.AccountChangeAuthorizationSettingsRequest) (any, error) {
 		return true, nil
 	})
-	d.OnAccountResetPassword(r.onAccountResetPassword)
-	d.OnAccountDeclinePasswordReset(r.onAccountDeclinePasswordReset)
-	d.OnAccountUpdateStatus(r.onAccountUpdateStatus)
+	registerRPC[*tg.AccountResetPasswordRequest](d, tlprofile.SemanticMethodAccountResetPassword, func(ctx context.Context, layerRequest *tg.AccountResetPasswordRequest) (any, error) {
+		return r.onAccountResetPassword(ctx)
+	})
+	registerRPC[*tg.AccountDeclinePasswordResetRequest](d, tlprofile.SemanticMethodAccountDeclinePasswordReset, func(ctx context.Context, layerRequest *tg.AccountDeclinePasswordResetRequest) (any, error) {
+		return r.onAccountDeclinePasswordReset(ctx)
+	})
+	registerRPC[*tg.AccountUpdateStatusRequest](d, tlprofile.SemanticMethodAccountUpdateStatus, func(ctx context.Context, layerRequest *tg.AccountUpdateStatusRequest) (any, error) {
+		return r.onAccountUpdateStatus(ctx, layerRequest.
+			Offline)
+	})
+
 }
 
 func (r *Router) onAccountGetPassword(ctx context.Context) (*tg.AccountPassword, error) {

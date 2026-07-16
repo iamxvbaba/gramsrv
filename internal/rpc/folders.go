@@ -5,11 +5,16 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
-func (r *Router) registerFolders(d *tg.ServerDispatcher) {
-	d.OnFoldersEditPeerFolders(r.onFoldersEditPeerFolders)
+func (r *Router) registerFolders(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.FoldersEditPeerFoldersRequest](d, tlprofile.SemanticMethodFoldersEditPeerFolders, func(ctx context.Context, layerRequest *tg.FoldersEditPeerFoldersRequest) (any, error) {
+		return r.onFoldersEditPeerFolders(ctx, layerRequest.
+			FolderPeers)
+	})
+
 }
 
 func (r *Router) onFoldersEditPeerFolders(ctx context.Context, folderPeers []tg.InputFolderPeer) (tg.UpdatesClass, error) {

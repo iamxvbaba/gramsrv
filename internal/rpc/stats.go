@@ -6,6 +6,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
 )
 
@@ -15,15 +16,31 @@ const (
 	maxStatsGraphTokenLength    = 128
 )
 
-func (r *Router) registerStats(d *tg.ServerDispatcher) {
-	d.OnStatsGetBroadcastStats(r.onStatsGetBroadcastStats)
-	d.OnStatsGetMegagroupStats(r.onStatsGetMegagroupStats)
-	d.OnStatsGetMessageStats(r.onStatsGetMessageStats)
-	d.OnStatsGetMessagePublicForwards(r.onStatsGetMessagePublicForwards)
-	d.OnStatsLoadAsyncGraph(r.onStatsLoadAsyncGraph)
-	d.OnStatsGetStoryStats(r.onStatsGetStoryStats)
-	d.OnStatsGetStoryPublicForwards(r.onStatsGetStoryPublicForwards)
-	d.OnStatsGetPollStats(r.onStatsGetPollStats)
+func (r *Router) registerStats(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.StatsGetBroadcastStatsRequest](d, tlprofile.SemanticMethodStatsGetBroadcastStats, func(ctx context.Context, layerRequest *tg.StatsGetBroadcastStatsRequest) (any, error) {
+		return r.onStatsGetBroadcastStats(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetMegagroupStatsRequest](d, tlprofile.SemanticMethodStatsGetMegagroupStats, func(ctx context.Context, layerRequest *tg.StatsGetMegagroupStatsRequest) (any, error) {
+		return r.onStatsGetMegagroupStats(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetMessageStatsRequest](d, tlprofile.SemanticMethodStatsGetMessageStats, func(ctx context.Context, layerRequest *tg.StatsGetMessageStatsRequest) (any, error) {
+		return r.onStatsGetMessageStats(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetMessagePublicForwardsRequest](d, tlprofile.SemanticMethodStatsGetMessagePublicForwards, func(ctx context.Context, layerRequest *tg.StatsGetMessagePublicForwardsRequest) (any, error) {
+		return r.onStatsGetMessagePublicForwards(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsLoadAsyncGraphRequest](d, tlprofile.SemanticMethodStatsLoadAsyncGraph, func(ctx context.Context, layerRequest *tg.StatsLoadAsyncGraphRequest) (any, error) {
+		return r.onStatsLoadAsyncGraph(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetStoryStatsRequest](d, tlprofile.SemanticMethodStatsGetStoryStats, func(ctx context.Context, layerRequest *tg.StatsGetStoryStatsRequest) (any, error) {
+		return r.onStatsGetStoryStats(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetStoryPublicForwardsRequest](d, tlprofile.SemanticMethodStatsGetStoryPublicForwards, func(ctx context.Context, layerRequest *tg.StatsGetStoryPublicForwardsRequest) (any, error) {
+		return r.onStatsGetStoryPublicForwards(ctx, layerRequest)
+	})
+	registerRPC[*tg.StatsGetPollStatsRequest](d, tlprofile.SemanticMethodStatsGetPollStats, func(ctx context.Context, layerRequest *tg.StatsGetPollStatsRequest) (any, error) {
+		return r.onStatsGetPollStats(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onStatsGetBroadcastStats(ctx context.Context, req *tg.StatsGetBroadcastStatsRequest) (*tg.StatsBroadcastStats, error) {

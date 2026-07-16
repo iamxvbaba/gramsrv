@@ -9,10 +9,11 @@ import (
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap"
 )
 
-var inboundLayerDecodeLimits = tg.LayerDecodeLimits{
+var inboundLayerDecodeLimits = tlprofile.Limits{
 	MaxWireBytes: maxInflightRPCBytes,
 	// contacts.editCloseFriends and contacts.setBlocked deliberately allow
 	// 5,000 entries. Keep the coarse generated allocation ceiling above every
@@ -48,7 +49,7 @@ type layerRPCDependencySet struct {
 }
 
 type layerRPCProfileEvidence struct {
-	profile      tg.LayerProfile
+	profile      tlprofile.Profile
 	admissionSeq uint64
 	present      bool
 	fresh        bool
@@ -67,7 +68,7 @@ type layerRPCAdmissionCursor struct {
 	evidenceMsgID int64
 }
 
-func (c *layerRPCAdmissionCursor) observe(profile tg.LayerProfile, msgID int64) error {
+func (c *layerRPCAdmissionCursor) observe(profile tlprofile.Profile, msgID int64) error {
 	return c.observeRaw(int(profile), msgID)
 }
 
@@ -90,7 +91,7 @@ func (c *layerRPCAdmissionCursor) observeRaw(layer int, msgID int64) error {
 		}
 	}
 	c.state = LayerProfileSnapshot{}
-	if profile, supported := tg.ResolveLayerProfile(layer); supported {
+	if profile, supported := tlprofile.ResolveProfile(layer); supported {
 		c.state = LayerProfileSnapshot{Profile: profile, Origin: LayerProfileExplicit}
 	}
 	c.rawLayer = layer
@@ -136,7 +137,7 @@ func (s *Server) initialLayerRPCAdmissionCursor(ctx context.Context, c *Conn) (l
 	if registryMsgID == 0 {
 		if cursor.evidenceMsgID == 0 {
 			cursor.state = LayerProfileSnapshot{}
-			if profile, supported := tg.ResolveLayerProfile(layer); supported {
+			if profile, supported := tlprofile.ResolveProfile(layer); supported {
 				cursor.state = LayerProfileSnapshot{Profile: profile, Origin: LayerProfileExplicit}
 			}
 			cursor.rawLayer = layer
@@ -466,7 +467,7 @@ func (s *Server) prepareInboundLayerRPCBatch(ctx context.Context, c *Conn, plan 
 		}
 		plan.rejectNewRPCOwners(indices)
 		for _, index := range candidateItems {
-			plan.items[index].admitted = tg.LayerRequest{}
+			plan.items[index].admitted = tlprofile.Admission{}
 		}
 		if err := reservation.retain(nil, nil); err != nil {
 			return err
@@ -534,7 +535,7 @@ func (s *Server) prepareInboundLayerRPCBatch(ctx context.Context, c *Conn, plan 
 		}
 		plan.rewrapAliases = keptAliases
 		for _, index := range candidateItems {
-			plan.items[index].admitted = tg.LayerRequest{}
+			plan.items[index].admitted = tlprofile.Admission{}
 		}
 		if err := reservation.retain(nil, nil); err != nil {
 			return err
@@ -581,7 +582,7 @@ func (s *Server) prepareInboundLayerRPCBatch(ctx context.Context, c *Conn, plan 
 	}
 	if len(specs) == 0 {
 		for _, index := range candidateItems {
-			plan.items[index].admitted = tg.LayerRequest{}
+			plan.items[index].admitted = tlprofile.Admission{}
 		}
 		if err := reservation.retain(nil, nil); err != nil {
 			return err
@@ -604,7 +605,7 @@ func (s *Server) prepareInboundLayerRPCBatch(ctx context.Context, c *Conn, plan 
 	// Tasks now own the admitted request leases. Drop the plan's value copies
 	// before non-fresh reservations become reusable.
 	for _, index := range candidateItems {
-		plan.items[index].admitted = tg.LayerRequest{}
+		plan.items[index].admitted = tlprofile.Admission{}
 	}
 	if err := reservation.retain(reservationIndices, specs); err != nil {
 		return err
@@ -628,7 +629,7 @@ func (s *Server) acquireAdmittedLayerRPC(
 		return rpcResultAcquire{}, ErrRPCResultFlightInvalid
 	}
 	acquire := func() (rpcResultAcquire, error) {
-		profile := tg.LayerProfile(0)
+		profile := tlprofile.Profile(0)
 		if effective, known := item.admitted.EffectiveProfile(); known {
 			profile = effective
 		}
@@ -671,7 +672,7 @@ func (s *Server) acquireAdmittedLayerRPC(
 	return acquire()
 }
 
-func (s *Server) prepareAdmittedLayerRPCReplay(ctx context.Context, c *Conn, msgID int64, admissionSeq uint64, profileEvidenceFresh bool, request tg.LayerRequest) (func() error, error) {
+func (s *Server) prepareAdmittedLayerRPCReplay(ctx context.Context, c *Conn, msgID int64, admissionSeq uint64, profileEvidenceFresh bool, request tlprofile.Admission) (func() error, error) {
 	preparer, ok := s.layerRPC.(LayerRPCReplayPreparer)
 	if !ok || c == nil {
 		return nil, nil
@@ -703,26 +704,26 @@ func (s *Server) withLayerRPCProfileEvidenceFresh(ctx context.Context, fresh boo
 // admitInboundLayerRPC is the force-style compatibility entry point used by
 // focused tests and old embedders. Production must call admitInboundLayerRPCAt
 // with the real inner MTProto client msg_id.
-func (s *Server) admitInboundLayerRPC(c *Conn, body []byte) (tg.LayerRequest, string, error) {
+func (s *Server) admitInboundLayerRPC(c *Conn, body []byte) (tlprofile.Admission, string, error) {
 	return s.admitInboundLayerRPCAt(c, 0, body)
 }
 
-func (s *Server) admitInboundLayerRPCAt(c *Conn, msgID int64, body []byte) (tg.LayerRequest, string, error) {
+func (s *Server) admitInboundLayerRPCAt(c *Conn, msgID int64, body []byte) (tlprofile.Admission, string, error) {
 	if s == nil || s.layerRPC == nil || c == nil || len(body) < bin.Word {
-		return tg.LayerRequest{}, "unknown", fmt.Errorf("invalid exact RPC admission input")
+		return tlprofile.Admission{}, "unknown", fmt.Errorf("invalid exact RPC admission input")
 	}
 	request, method, err := s.decodeInboundLayerRPC(c.LayerProfileState(), body)
 	if err != nil {
-		return tg.LayerRequest{}, method, err
+		return tlprofile.Admission{}, method, err
 	}
 	if profile, hasEvidence := request.ProfileEvidence(); hasEvidence {
 		if _, err := s.commitLayerProfileEvidence(context.Background(), c, profile, msgID); err != nil {
 			if !isLayerEvidenceDurabilityUnavailable(err) {
-				return tg.LayerRequest{}, method, err
+				return tlprofile.Admission{}, method, err
 			}
 			if msgID > 0 {
 				if _, localErr := c.freezeLayerProfileAt(profile, msgID); localErr != nil {
-					return tg.LayerRequest{}, method, localErr
+					return tlprofile.Admission{}, method, localErr
 				}
 			}
 		}
@@ -737,8 +738,8 @@ func (s *Server) admitInboundLayerRPCAt(c *Conn, msgID int64, body []byte) (tg.L
 // constructed, so the bounded fallback walks only transparent wrapper prefixes
 // whose query offset is fixed and allocation-free.
 func layerRPCAdmissionHasExplicitSelector(body []byte, admissionErr error) bool {
-	var codecErr *tg.LayerCodecError
-	if errors.As(admissionErr, &codecErr) && codecErr.Semantic == tg.LayerSemanticMethodInvokeWithLayer {
+	var codecErr *tlprofile.LayerCodecError
+	if errors.As(admissionErr, &codecErr) && codecErr.Semantic == tlprofile.SemanticMethodInvokeWithLayer {
 		return true
 	}
 
@@ -784,13 +785,13 @@ func layerRPCAdmissionHasExplicitSelector(body []byte, admissionErr error) bool 
 // it with a wire-ordered provisional profile cursor, then publishes explicit
 // evidence only after the full request identity has acquired an owner (or a
 // genuine new-msg_id rewrap alias).
-func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) (tg.LayerRequest, string, error) {
+func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) (tlprofile.Admission, string, error) {
 	if s == nil || s.layerRPC == nil || len(body) < bin.Word {
-		return tg.LayerRequest{}, "unknown", fmt.Errorf("invalid exact RPC admission input")
+		return tlprofile.Admission{}, "unknown", fmt.Errorf("invalid exact RPC admission input")
 	}
 	b := &bin.Buffer{Buf: body}
 	var (
-		request tg.LayerRequest
+		request tlprofile.Admission
 		err     error
 	)
 	if state.Origin != LayerProfileUnknown {
@@ -806,19 +807,19 @@ func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) 
 	}
 	method := "unknown"
 	if err == nil {
-		_, method, _ = tg.LayerSemanticName(request.Call().Method())
+		_, method, _ = tlprofile.SemanticName(request.Call().Method())
 		if b.Len() != 0 {
-			return tg.LayerRequest{}, method, fmt.Errorf("exact RPC admission left %d bytes", b.Len())
+			return tlprofile.Admission{}, method, fmt.Errorf("exact RPC admission left %d bytes", b.Len())
 		}
 		if effective, known := request.EffectiveProfile(); known && effective != request.Call().Profile() {
-			return tg.LayerRequest{}, method, fmt.Errorf("%w: effective profile %d differs from call profile %d", ErrLayerProfileConflict, effective, request.Call().Profile())
+			return tlprofile.Admission{}, method, fmt.Errorf("%w: effective profile %d differs from call profile %d", ErrLayerProfileConflict, effective, request.Call().Profile())
 		}
 		// A generated invariant terminal may use canonical decoding internally
 		// before the client declares a layer. Only explicit invokeWithLayer (or the
 		// strict compatibility fallback above) publishes new profile evidence.
 		if profile, hasEvidence := request.ProfileEvidence(); hasEvidence {
 			if profile != request.Call().Profile() {
-				return tg.LayerRequest{}, method, fmt.Errorf("%w: generated profile evidence %d differs from call profile %d", ErrLayerProfileConflict, profile, request.Call().Profile())
+				return tlprofile.Admission{}, method, fmt.Errorf("%w: generated profile evidence %d differs from call profile %d", ErrLayerProfileConflict, profile, request.Call().Profile())
 			}
 		}
 		return request, method, nil
@@ -834,9 +835,9 @@ func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) 
 	if id, peekErr := (&bin.Buffer{Buf: body}).PeekID(); peekErr == nil {
 		method = s.typeName(id)
 	}
-	if codecErr := new(tg.LayerCodecError); errors.As(err, &codecErr) {
+	if codecErr := new(tlprofile.LayerCodecError); errors.As(err, &codecErr) {
 		if codecErr.Semantic != 0 {
-			if _, semanticMethod, ok := tg.LayerSemanticName(codecErr.Semantic); ok && semanticMethod != "" {
+			if _, semanticMethod, ok := tlprofile.SemanticName(codecErr.Semantic); ok && semanticMethod != "" {
 				method = semanticMethod
 			}
 		} else if codecErr.WireID != 0 {
@@ -846,7 +847,7 @@ func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) 
 			method = s.typeName(codecErr.WireID)
 		}
 	}
-	if errors.Is(err, tg.ErrLayerUnknownRPCMethod) && s.log != nil {
+	if errors.Is(err, tlprofile.ErrUnknownRPCMethod) && s.log != nil {
 		if terminal, recognized := wrappedDestroyAuthKeyTerminal(err); recognized {
 			method = "destroy_auth_key"
 			s.log.Debug("Generated wrapper admission exposed MTProto service terminal",
@@ -860,7 +861,7 @@ func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) 
 				zap.String("method", method), zap.Error(err))
 		}
 	}
-	return tg.LayerRequest{}, method, err
+	return tlprofile.Admission{}, method, err
 }
 
 // commitLayerProfileEvidence publishes one generated invokeWithLayer proof.
@@ -868,7 +869,7 @@ func (s *Server) decodeInboundLayerRPC(state LayerProfileSnapshot, body []byte) 
 // point; the Conn cursor then prevents a concurrent older admission from
 // overwriting its local wire epoch. Older cached duplicates remain decodable
 // and request-bound, but cannot mutate session/profile state.
-func (s *Server) commitLayerProfileEvidence(ctx context.Context, c *Conn, profile tg.LayerProfile, msgID int64) (bool, error) {
+func (s *Server) commitLayerProfileEvidence(ctx context.Context, c *Conn, profile tlprofile.Profile, msgID int64) (bool, error) {
 	if s == nil || c == nil {
 		return false, fmt.Errorf("invalid layer profile evidence target")
 	}
@@ -890,7 +891,7 @@ func (s *Server) commitLayerProfileEvidence(ctx context.Context, c *Conn, profil
 			} else if _, err := c.freezeRawLayerProfileAt(layer, authoritativeMsgID); err != nil {
 				return false, err
 			}
-			authoritative, supported := tg.ResolveLayerProfile(layer)
+			authoritative, supported := tlprofile.ResolveProfile(layer)
 			return supported && authoritative == profile && authoritativeMsgID == msgID && publishShared, nil
 		}
 		if registry, ok := s.layerRPC.(LayerRPCOrderedSessionProfileRegistry); ok {
@@ -909,7 +910,7 @@ func (s *Server) commitLayerProfileEvidence(ctx context.Context, c *Conn, profil
 			if !found || authoritativeMsgID <= 0 {
 				return false, fmt.Errorf("%w: ordered exact session evidence disappeared after commit", ErrLayerProfileConflict)
 			}
-			authoritative, supported := tg.ResolveLayerProfile(layer)
+			authoritative, supported := tlprofile.ResolveProfile(layer)
 			if s.conns != nil {
 				if _, err := s.conns.ApplyOrderedRawLayerForSession(c, c.authKeyID, c.sessionID, layer, authoritativeMsgID); err != nil {
 					return false, err
@@ -980,34 +981,34 @@ func layerRPCAdmissionError(err error) *mt.RPCError {
 	if errors.Is(err, errDefaultLayerAdmission) {
 		return &mt.RPCError{ErrorCode: 400, ErrorMessage: "CONNECTION_LAYER_INVALID"}
 	}
-	if errors.Is(err, tg.ErrLayerProfileRequired) {
+	if errors.Is(err, tlprofile.ErrProfileRequired) {
 		return &mt.RPCError{ErrorCode: 400, ErrorMessage: "CONNECTION_NOT_INITED"}
 	}
 	var rpcErr *tgerr.Error
 	if errors.As(err, &rpcErr) {
 		return &mt.RPCError{ErrorCode: rpcErr.Code, ErrorMessage: rpcErr.Message}
 	}
-	if errors.Is(err, tg.ErrLayerUnknownRPCMethod) {
+	if errors.Is(err, tlprofile.ErrUnknownRPCMethod) {
 		return &mt.RPCError{ErrorCode: 501, ErrorMessage: "NOT_IMPLEMENTED"}
 	}
 	return &mt.RPCError{ErrorCode: 400, ErrorMessage: "INPUT_REQUEST_INVALID"}
 }
 
-func (s *Server) layerRPCDependencies(c *Conn, msgID int64, request tg.LayerRequest) layerRPCDependencySet {
+func (s *Server) layerRPCDependencies(c *Conn, msgID int64, request tlprofile.Admission) layerRPCDependencySet {
 	result := layerRPCDependencySet{}
 	seen := make(map[int64]struct{})
 	for index := 0; index < request.WrapperCount(); index++ {
 		wrapper, _ := request.Wrapper(index)
 		var ids []int64
 		switch wrapper.Semantic() {
-		case tg.LayerSemanticMethodInvokeAfterMsg:
+		case tlprofile.SemanticMethodInvokeAfterMsg:
 			id, err := layerRPCWrapperRequired[int64](wrapper, "msg_id")
 			if err != nil {
 				result.failed = true
 				continue
 			}
 			ids = []int64{id}
-		case tg.LayerSemanticMethodInvokeAfterMsgs:
+		case tlprofile.SemanticMethodInvokeAfterMsgs:
 			var err error
 			ids, err = layerRPCWrapperRequired[[]int64](wrapper, "msg_ids")
 			if err != nil || len(ids) > maxLayerRPCDependencyIDs {
@@ -1045,16 +1046,16 @@ func (s *Server) layerRPCDependencies(c *Conn, msgID int64, request tg.LayerRequ
 	return result
 }
 
-func admittedRPCRewrapInit(request tg.LayerRequest) (rpcRewrapInit, bool) {
+func admittedRPCRewrapInit(request tlprofile.Admission) (rpcRewrapInit, bool) {
 	if request.WrapperCount() != 2 {
 		return rpcRewrapInit{}, false
 	}
 	layerWrapper, ok := request.Wrapper(0)
-	if !ok || layerWrapper.Semantic() != tg.LayerSemanticMethodInvokeWithLayer {
+	if !ok || layerWrapper.Semantic() != tlprofile.SemanticMethodInvokeWithLayer {
 		return rpcRewrapInit{}, false
 	}
 	initWrapper, ok := request.Wrapper(1)
-	if !ok || initWrapper.Semantic() != tg.LayerSemanticMethodInitConnection {
+	if !ok || initWrapper.Semantic() != tlprofile.SemanticMethodInitConnection {
 		return rpcRewrapInit{}, false
 	}
 	layer, err := layerRPCWrapperRequired[int](layerWrapper, "layer")
@@ -1095,7 +1096,7 @@ func admittedRPCRewrapInit(request tg.LayerRequest) (rpcRewrapInit, bool) {
 	}, true
 }
 
-func layerRPCWrapperRequired[T any](wrapper tg.LayerRPCWrapper, name string) (T, error) {
+func layerRPCWrapperRequired[T any](wrapper tlprofile.Wrapper, name string) (T, error) {
 	var zero T
 	value, present, ok, err := wrapper.Value(name)
 	if err != nil || !ok || !present {

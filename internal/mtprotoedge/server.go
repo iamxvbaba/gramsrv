@@ -25,6 +25,7 @@ import (
 	"github.com/iamxvbaba/td/tmap"
 	"github.com/iamxvbaba/td/transport"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -57,25 +58,25 @@ type legacyRPCHandlerWithMethod interface {
 // validate wrapper dependencies and establish exact request identity before
 // flight/cache/scheduler ownership is acquired.
 type LayerRPCHandler interface {
-	AdmitLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error)
-	AdmitUnprofiled(b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error)
+	AdmitLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error)
+	AdmitUnprofiled(b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error)
 	DispatchAdmitted(
 		ctx context.Context,
 		authKeyID [8]byte,
 		sessionID int64,
 		msgID int64,
 		admissionSeq uint64,
-		request tg.LayerRequest,
-	) (tg.LayerRPCResult, string, error)
+		request tlprofile.Admission,
+	) (tlprofile.Result, string, error)
 }
 
 // LayerRPCDefaultProfileAdmitter decodes with a recoverable inherited/default
-// profile. Production handlers should implement it with the same generated
-// ServerDispatcher and adapter registry used by AdmitLayer. The split keeps old
+// profile. Production handlers should implement it with the same sparse
+// tlprofile dispatcher and semantic adapter registry used by AdmitLayer. The split keeps old
 // test doubles source-compatible while allowing invokeWithLayer to correct even
 // a previously explicit Conn profile.
 type LayerRPCDefaultProfileAdmitter interface {
-	AdmitDefaultLayer(profile tg.LayerProfile, b *bin.Buffer, limits tg.LayerDecodeLimits) (tg.LayerRequest, error)
+	AdmitDefaultLayer(profile tlprofile.Profile, b *bin.Buffer, limits tlprofile.Limits) (tlprofile.Admission, error)
 }
 
 // LayerRPCSessionProfileResolver may restore an exact profile only when it was
@@ -168,7 +169,7 @@ type LayerRPCReplayPreparer interface {
 		sessionID int64,
 		msgID int64,
 		admissionSeq uint64,
-		request tg.LayerRequest,
+		request tlprofile.Admission,
 	) (afterSuccessfulDelivery func() error, err error)
 }
 

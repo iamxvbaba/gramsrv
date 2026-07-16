@@ -10,6 +10,7 @@ import (
 	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	appchannels "telesrv/internal/app/channels"
 	appmessages "telesrv/internal/app/messages"
 	appstargifts "telesrv/internal/app/stargifts"
@@ -107,15 +108,19 @@ func TestSavedStarGiftProjectionCombinesHistoricalCatalogWithCurrentCollectibleA
 	if upgradeStars, ok := gift.GetUpgradeStars(); !ok || upgradeStars != 75 {
 		t.Fatalf("upgrade_stars = %d ok=%v, want current price 75", upgradeStars, ok)
 	}
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile227, tg.LayerProfile228} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile227, tlprofile.Profile228} {
 		wire := &tg.PaymentsSavedStarGifts{Count: 1, Gifts: projected, Chats: []tg.ChatClass{}, Users: []tg.UserClass{}}
 		encoded := &bin.Buffer{}
-		if err := tg.EncodeLayer(profile, tg.LayerConstructorPaymentsSavedStarGiftsType(), wire, encoded); err != nil {
+		if err := tlprofile.EncodeObject(profile, wire, encoded); err != nil {
 			t.Fatalf("encode Layer %d saved gift: %v", profile, err)
 		}
-		decoded, err := tg.DecodeLayer(profile, tg.LayerConstructorPaymentsSavedStarGiftsType(), &bin.Buffer{Buf: encoded.Buf})
+		decodedObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: encoded.Buf}, tlprofile.Limits{})
 		if err != nil {
 			t.Fatalf("decode Layer %d saved gift: %v", profile, err)
+		}
+		decoded, ok := decodedObject.(*tg.PaymentsSavedStarGifts)
+		if !ok {
+			t.Fatalf("decode Layer %d saved gift type = %T", profile, decodedObject)
 		}
 		inner, ok := decoded.Gifts[0].Gift.(*tg.StarGift)
 		if !ok || !decoded.Gifts[0].CanUpgrade || inner.UpgradeStars != 75 {
@@ -219,14 +224,18 @@ func TestStarGiftCollectiblePreviewUpgradeFormUniqueAndServiceProjection(t *test
 	} else if user, ok := peer.(*tg.PeerUser); !ok || user.UserID != owner.ID {
 		t.Fatalf("unique service action peer = %#v", peer)
 	}
-	for _, profile := range []tg.LayerProfile{tg.LayerProfile227, tg.LayerProfile228} {
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile227, tlprofile.Profile228} {
 		responseWire := &bin.Buffer{}
-		if err := tg.EncodeLayer(profile, tg.LayerConstructorPaymentsUniqueStarGiftType(), uniqueResponse, responseWire); err != nil {
+		if err := tlprofile.EncodeObject(profile, uniqueResponse, responseWire); err != nil {
 			t.Fatalf("encode Layer %d unique response: %v", profile, err)
 		}
-		decodedResponse, err := tg.DecodeLayer(profile, tg.LayerConstructorPaymentsUniqueStarGiftType(), &bin.Buffer{Buf: responseWire.Buf})
+		decodedResponseObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: responseWire.Buf}, tlprofile.Limits{})
 		if err != nil {
 			t.Fatalf("decode Layer %d unique response: %v", profile, err)
+		}
+		decodedResponse, ok := decodedResponseObject.(*tg.PaymentsUniqueStarGift)
+		if !ok {
+			t.Fatalf("decode Layer %d unique response type = %T", profile, decodedResponseObject)
 		}
 		decodedGift, ok := decodedResponse.Gift.(*tg.StarGiftUnique)
 		if !ok || decodedGift.Slug != unique.Slug || len(decodedGift.Attributes) != 4 {
@@ -234,12 +243,16 @@ func TestStarGiftCollectiblePreviewUpgradeFormUniqueAndServiceProjection(t *test
 		}
 
 		actionWire := &bin.Buffer{}
-		if err := tg.EncodeLayer(profile, tg.LayerConstructorMessageActionStarGiftUniqueType(), action, actionWire); err != nil {
+		if err := tlprofile.EncodeObject(profile, action, actionWire); err != nil {
 			t.Fatalf("encode Layer %d unique action: %v", profile, err)
 		}
-		decodedAction, err := tg.DecodeLayer(profile, tg.LayerConstructorMessageActionStarGiftUniqueType(), &bin.Buffer{Buf: actionWire.Buf})
+		decodedActionObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: actionWire.Buf}, tlprofile.Limits{})
 		if err != nil {
 			t.Fatalf("decode Layer %d unique action: %v", profile, err)
+		}
+		decodedAction, ok := decodedActionObject.(*tg.MessageActionStarGiftUnique)
+		if !ok {
+			t.Fatalf("decode Layer %d unique action type = %T", profile, decodedActionObject)
 		}
 		if decodedActionGift, ok := decodedAction.Gift.(*tg.StarGiftUnique); !ok || !decodedAction.Upgrade || decodedActionGift.Slug != unique.Slug {
 			t.Fatalf("Layer %d unique action lost fields: %#v", profile, decodedAction)

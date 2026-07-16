@@ -12,6 +12,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
@@ -27,40 +28,110 @@ const (
 )
 
 // registerStories 注册 TDesktop/Android 已发现的 stories.* RPC。
-func (r *Router) registerStories(d *tg.ServerDispatcher) {
-	d.OnStoriesGetAllStories(r.onStoriesGetAllStories)
-	d.OnStoriesGetPeerStories(r.onStoriesGetPeerStories)
-	d.OnStoriesGetStoriesByID(r.onStoriesGetStoriesByID)
-	d.OnStoriesGetStoriesArchive(r.onStoriesGetStoriesArchive)
-	d.OnStoriesGetPinnedStories(r.onStoriesGetPinnedStories)
-	d.OnStoriesExportStoryLink(r.onStoriesExportStoryLink)
-	d.OnStoriesReport(r.onStoriesReport)
-	d.OnStoriesActivateStealthMode(r.onStoriesActivateStealthMode)
-	d.OnStoriesSearchPosts(r.onStoriesSearchPosts)
-	d.OnStoriesSendStory(r.onStoriesSendStory)
-	d.OnStoriesEditStory(r.onStoriesEditStory)
-	d.OnStoriesDeleteStories(r.onStoriesDeleteStories)
-	d.OnStoriesTogglePinned(r.onStoriesTogglePinned)
-	d.OnStoriesTogglePinnedToTop(r.onStoriesTogglePinnedToTop)
-	d.OnStoriesToggleAllStoriesHidden(r.onStoriesToggleAllStoriesHidden)
-	d.OnStoriesCreateAlbum(r.onStoriesCreateAlbum)
-	d.OnStoriesUpdateAlbum(r.onStoriesUpdateAlbum)
-	d.OnStoriesReorderAlbums(r.onStoriesReorderAlbums)
-	d.OnStoriesDeleteAlbum(r.onStoriesDeleteAlbum)
-	d.OnStoriesGetAlbums(r.onStoriesGetAlbums)
-	d.OnStoriesGetAlbumStories(r.onStoriesGetAlbumStories)
-	d.OnStoriesGetAllReadPeerStories(r.onStoriesGetAllReadPeerStories)
-	d.OnStoriesGetPeerMaxIDs(r.onStoriesGetPeerMaxIDs)
-	d.OnStoriesReadStories(r.onStoriesReadStories)
-	d.OnStoriesIncrementStoryViews(r.onStoriesIncrementStoryViews)
-	d.OnStoriesGetStoriesViews(r.onStoriesGetStoriesViews)
-	d.OnStoriesGetStoryViewsList(r.onStoriesGetStoryViewsList)
-	d.OnStoriesGetStoryReactionsList(r.onStoriesGetStoryReactionsList)
-	d.OnStoriesTogglePeerStoriesHidden(r.onStoriesTogglePeerStoriesHidden)
-	d.OnStoriesCanSendStory(r.onStoriesCanSendStory)
-	d.OnStoriesGetChatsToSend(r.onStoriesGetChatsToSend)
-	d.OnStoriesSendReaction(r.onStoriesSendReaction)
-	d.OnStoriesStartLive(r.onStoriesStartLive)
+func (r *Router) registerStories(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.StoriesGetAllStoriesRequest](d, tlprofile.SemanticMethodStoriesGetAllStories, func(ctx context.Context, layerRequest *tg.StoriesGetAllStoriesRequest) (any, error) {
+		return r.onStoriesGetAllStories(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetPeerStoriesRequest](d, tlprofile.SemanticMethodStoriesGetPeerStories, func(ctx context.Context, layerRequest *tg.StoriesGetPeerStoriesRequest) (any, error) {
+		return r.onStoriesGetPeerStories(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.StoriesGetStoriesByIDRequest](d, tlprofile.SemanticMethodStoriesGetStoriesByID, func(ctx context.Context, layerRequest *tg.StoriesGetStoriesByIDRequest) (any, error) {
+		return r.onStoriesGetStoriesByID(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetStoriesArchiveRequest](d, tlprofile.SemanticMethodStoriesGetStoriesArchive, func(ctx context.Context, layerRequest *tg.StoriesGetStoriesArchiveRequest) (any, error) {
+		return r.onStoriesGetStoriesArchive(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetPinnedStoriesRequest](d, tlprofile.SemanticMethodStoriesGetPinnedStories, func(ctx context.Context, layerRequest *tg.StoriesGetPinnedStoriesRequest) (any, error) {
+		return r.onStoriesGetPinnedStories(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesExportStoryLinkRequest](d, tlprofile.SemanticMethodStoriesExportStoryLink, func(ctx context.Context, layerRequest *tg.StoriesExportStoryLinkRequest) (any, error) {
+		return r.onStoriesExportStoryLink(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesReportRequest](d, tlprofile.SemanticMethodStoriesReport, func(ctx context.Context, layerRequest *tg.StoriesReportRequest) (any, error) {
+		return r.onStoriesReport(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesActivateStealthModeRequest](d, tlprofile.SemanticMethodStoriesActivateStealthMode, func(ctx context.Context, layerRequest *tg.StoriesActivateStealthModeRequest) (any, error) {
+		return r.onStoriesActivateStealthMode(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesSearchPostsRequest](d, tlprofile.SemanticMethodStoriesSearchPosts, func(ctx context.Context, layerRequest *tg.StoriesSearchPostsRequest) (any, error) {
+		return r.onStoriesSearchPosts(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesSendStoryRequest](d, tlprofile.SemanticMethodStoriesSendStory, func(ctx context.Context, layerRequest *tg.StoriesSendStoryRequest) (any, error) {
+		return r.onStoriesSendStory(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesEditStoryRequest](d, tlprofile.SemanticMethodStoriesEditStory, func(ctx context.Context, layerRequest *tg.StoriesEditStoryRequest) (any, error) {
+		return r.onStoriesEditStory(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesDeleteStoriesRequest](d, tlprofile.SemanticMethodStoriesDeleteStories, func(ctx context.Context, layerRequest *tg.StoriesDeleteStoriesRequest) (any, error) {
+		return r.onStoriesDeleteStories(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesTogglePinnedRequest](d, tlprofile.SemanticMethodStoriesTogglePinned, func(ctx context.Context, layerRequest *tg.StoriesTogglePinnedRequest) (any, error) {
+		return r.onStoriesTogglePinned(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesTogglePinnedToTopRequest](d, tlprofile.SemanticMethodStoriesTogglePinnedToTop, func(ctx context.Context, layerRequest *tg.StoriesTogglePinnedToTopRequest) (any, error) {
+		return r.onStoriesTogglePinnedToTop(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesToggleAllStoriesHiddenRequest](d, tlprofile.SemanticMethodStoriesToggleAllStoriesHidden, func(ctx context.Context, layerRequest *tg.StoriesToggleAllStoriesHiddenRequest) (any, error) {
+		return r.onStoriesToggleAllStoriesHidden(ctx, layerRequest.
+			Hidden)
+	})
+	registerRPC[*tg.StoriesCreateAlbumRequest](d, tlprofile.SemanticMethodStoriesCreateAlbum, func(ctx context.Context, layerRequest *tg.StoriesCreateAlbumRequest) (any, error) {
+		return r.onStoriesCreateAlbum(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesUpdateAlbumRequest](d, tlprofile.SemanticMethodStoriesUpdateAlbum, func(ctx context.Context, layerRequest *tg.StoriesUpdateAlbumRequest) (any, error) {
+		return r.onStoriesUpdateAlbum(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesReorderAlbumsRequest](d, tlprofile.SemanticMethodStoriesReorderAlbums, func(ctx context.Context, layerRequest *tg.StoriesReorderAlbumsRequest) (any, error) {
+		return r.onStoriesReorderAlbums(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesDeleteAlbumRequest](d, tlprofile.SemanticMethodStoriesDeleteAlbum, func(ctx context.Context, layerRequest *tg.StoriesDeleteAlbumRequest) (any, error) {
+		return r.onStoriesDeleteAlbum(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetAlbumsRequest](d, tlprofile.SemanticMethodStoriesGetAlbums, func(ctx context.Context, layerRequest *tg.StoriesGetAlbumsRequest) (any, error) {
+		return r.onStoriesGetAlbums(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetAlbumStoriesRequest](d, tlprofile.SemanticMethodStoriesGetAlbumStories, func(ctx context.Context, layerRequest *tg.StoriesGetAlbumStoriesRequest) (any, error) {
+		return r.onStoriesGetAlbumStories(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetAllReadPeerStoriesRequest](d, tlprofile.SemanticMethodStoriesGetAllReadPeerStories, func(ctx context.Context, layerRequest *tg.StoriesGetAllReadPeerStoriesRequest) (any, error) {
+		return r.onStoriesGetAllReadPeerStories(ctx)
+	})
+	registerRPC[*tg.StoriesGetPeerMaxIDsRequest](d, tlprofile.SemanticMethodStoriesGetPeerMaxIDs, func(ctx context.Context, layerRequest *tg.StoriesGetPeerMaxIDsRequest) (any, error) {
+		return r.onStoriesGetPeerMaxIDs(ctx, layerRequest.
+			ID)
+	})
+	registerRPC[*tg.StoriesReadStoriesRequest](d, tlprofile.SemanticMethodStoriesReadStories, func(ctx context.Context, layerRequest *tg.StoriesReadStoriesRequest) (any, error) {
+		return r.onStoriesReadStories(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesIncrementStoryViewsRequest](d, tlprofile.SemanticMethodStoriesIncrementStoryViews, func(ctx context.Context, layerRequest *tg.StoriesIncrementStoryViewsRequest) (any, error) {
+		return r.onStoriesIncrementStoryViews(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetStoriesViewsRequest](d, tlprofile.SemanticMethodStoriesGetStoriesViews, func(ctx context.Context, layerRequest *tg.StoriesGetStoriesViewsRequest) (any, error) {
+		return r.onStoriesGetStoriesViews(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetStoryViewsListRequest](d, tlprofile.SemanticMethodStoriesGetStoryViewsList, func(ctx context.Context, layerRequest *tg.StoriesGetStoryViewsListRequest) (any, error) {
+		return r.onStoriesGetStoryViewsList(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesGetStoryReactionsListRequest](d, tlprofile.SemanticMethodStoriesGetStoryReactionsList, func(ctx context.Context, layerRequest *tg.StoriesGetStoryReactionsListRequest) (any, error) {
+		return r.onStoriesGetStoryReactionsList(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesTogglePeerStoriesHiddenRequest](d, tlprofile.SemanticMethodStoriesTogglePeerStoriesHidden, func(ctx context.Context, layerRequest *tg.StoriesTogglePeerStoriesHiddenRequest) (any, error) {
+		return r.onStoriesTogglePeerStoriesHidden(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesCanSendStoryRequest](d, tlprofile.SemanticMethodStoriesCanSendStory, func(ctx context.Context, layerRequest *tg.StoriesCanSendStoryRequest) (any, error) {
+		return r.onStoriesCanSendStory(ctx, layerRequest.
+			Peer)
+	})
+	registerRPC[*tg.StoriesGetChatsToSendRequest](d, tlprofile.SemanticMethodStoriesGetChatsToSend, func(ctx context.Context, layerRequest *tg.StoriesGetChatsToSendRequest) (any, error) {
+		return r.onStoriesGetChatsToSend(ctx)
+	})
+	registerRPC[*tg.StoriesSendReactionRequest](d, tlprofile.SemanticMethodStoriesSendReaction, func(ctx context.Context, layerRequest *tg.StoriesSendReactionRequest) (any, error) {
+		return r.onStoriesSendReaction(ctx, layerRequest)
+	})
+	registerRPC[*tg.StoriesStartLiveRequest](d, tlprofile.SemanticMethodStoriesStartLive, func(ctx context.Context, layerRequest *tg.StoriesStartLiveRequest) (any, error) {
+		return r.onStoriesStartLive(ctx, layerRequest)
+	})
 }
 
 func (r *Router) onStoriesGetAllStories(ctx context.Context, req *tg.StoriesGetAllStoriesRequest) (tg.StoriesAllStoriesClass, error) {

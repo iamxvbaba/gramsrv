@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap"
 )
 
@@ -24,7 +24,7 @@ const (
 // profile. Epoch advances on every effective correction, including promotion
 // from inherited to explicit evidence at the same numeric layer.
 type LayerProfileSnapshot struct {
-	Profile tg.LayerProfile
+	Profile tlprofile.Profile
 	Origin  LayerProfileOrigin
 	Epoch   uint32
 }
@@ -49,7 +49,7 @@ func unpackLayerProfileState(raw uint64) LayerProfileSnapshot {
 		return LayerProfileSnapshot{}
 	}
 	return LayerProfileSnapshot{
-		Profile: tg.LayerProfile(raw & layerProfileValueMask),
+		Profile: tlprofile.Profile(raw & layerProfileValueMask),
 		Origin:  LayerProfileOrigin((raw >> layerProfileOriginShift) & layerProfileOriginMask),
 		Epoch:   uint32(raw >> layerProfileEpochShift),
 	}
@@ -63,7 +63,7 @@ func (c *Conn) LayerProfileState() LayerProfileSnapshot {
 	return unpackLayerProfileState(c.layerProfileState.Load())
 }
 
-func (c *Conn) setLayerProfile(profile tg.LayerProfile, origin LayerProfileOrigin, replace bool) (bool, error) {
+func (c *Conn) setLayerProfile(profile tlprofile.Profile, origin LayerProfileOrigin, replace bool) (bool, error) {
 	if err := validateLayerProfile(profile); err != nil {
 		return false, err
 	}
@@ -104,8 +104,8 @@ func (c *Conn) setLayerProfile(profile tg.LayerProfile, origin LayerProfileOrigi
 	}
 }
 
-func validateLayerProfile(profile tg.LayerProfile) error {
-	resolved, ok := tg.ResolveLayerProfile(int(profile))
+func validateLayerProfile(profile tlprofile.Profile) error {
+	resolved, ok := tlprofile.ResolveProfile(int(profile))
 	if !ok || resolved != profile || uint64(profile) > layerProfileValueMask {
 		return fmt.Errorf("%w: %d", ErrLayerProfileUnsupported, profile)
 	}
@@ -138,7 +138,7 @@ func (c *Conn) layerProfileRawEvidenceState() (LayerProfileSnapshot, int, int64)
 // freezeLayerProfileAt is the production explicit-evidence transition. The
 // positive client msg_id is the protocol ordering authority across TCP
 // reconnects and cached request replays.
-func (c *Conn) freezeLayerProfileAt(profile tg.LayerProfile, msgID int64) (bool, error) {
+func (c *Conn) freezeLayerProfileAt(profile tlprofile.Profile, msgID int64) (bool, error) {
 	if c == nil {
 		return false, fmt.Errorf("nil connection layer profile")
 	}
@@ -158,7 +158,7 @@ func (c *Conn) freezeRawLayerProfileAt(layer int, msgID int64) (bool, error) {
 	if layer <= 0 || msgID <= 0 {
 		return false, fmt.Errorf("invalid raw layer evidence layer=%d msg_id=%d", layer, msgID)
 	}
-	profile, supported := tg.ResolveLayerProfile(layer)
+	profile, supported := tlprofile.ResolveProfile(layer)
 	c.layerProfileMu.Lock()
 	defer c.layerProfileMu.Unlock()
 
@@ -206,7 +206,7 @@ func (c *Conn) freezeRawLayerProfileAt(layer int, msgID int64) (bool, error) {
 
 // seedOrderedLayerProfile restores exact-session evidence atomically before
 // any request on a replacement physical connection is admitted.
-func (c *Conn) seedOrderedLayerProfile(profile tg.LayerProfile, msgID int64) error {
+func (c *Conn) seedOrderedLayerProfile(profile tlprofile.Profile, msgID int64) error {
 	if c == nil {
 		return nil
 	}
@@ -248,7 +248,7 @@ func (c *Conn) seedRawLayerEvidence(layer int, msgID int64) error {
 // auth.bindTempAuthKey: once a raw temporary key is resolved to its permanent
 // key, the permanent key's default supersedes an older raw-key shadow. Explicit
 // evidence on the concrete session is never overwritten.
-func (c *Conn) refreshInheritedLayerProfile(profile tg.LayerProfile) (bool, error) {
+func (c *Conn) refreshInheritedLayerProfile(profile tlprofile.Profile) (bool, error) {
 	if c == nil {
 		return false, nil
 	}
@@ -339,7 +339,7 @@ func (s *Server) seedInitialLayerProfile(
 			// Older in-process exact-session registries did not retain a message
 			// watermark. Keep that compatibility-only seed usable without treating
 			// it as durable ordered evidence; real durable stores never persist zero.
-			profile, supported := tg.ResolveLayerProfile(layer)
+			profile, supported := tlprofile.ResolveProfile(layer)
 			if !supported {
 				return nil
 			}
@@ -353,7 +353,7 @@ func (s *Server) seedInitialLayerProfile(
 			if msgID > 0 {
 				return c.seedRawLayerEvidence(layer, msgID)
 			}
-			profile, supported := tg.ResolveLayerProfile(layer)
+			profile, supported := tlprofile.ResolveProfile(layer)
 			if !supported {
 				return nil
 			}
@@ -361,7 +361,7 @@ func (s *Server) seedInitialLayerProfile(
 		}
 	} else if resolver, ok := s.layerRPC.(LayerRPCSessionProfileResolver); ok {
 		if layer, found := resolver.NegotiatedSessionLayer(c.authKeyID, c.sessionID); found {
-			profile, supported := tg.ResolveLayerProfile(layer)
+			profile, supported := tlprofile.ResolveProfile(layer)
 			if !supported {
 				return nil
 			}
@@ -373,7 +373,7 @@ func (s *Server) seedInitialLayerProfile(
 	// row again. Unsupported metadata remains unknown and must not fall through
 	// to a weaker mirror.
 	if c.authKeyExpiresAt == 0 && fetchedLayer != 0 {
-		profile, supported := tg.ResolveLayerProfile(fetchedLayer)
+		profile, supported := tlprofile.ResolveProfile(fetchedLayer)
 		if !supported {
 			return nil
 		}
@@ -406,7 +406,7 @@ func (s *Server) seedInitialLayerProfile(
 			// Fall through to a raw auth-key shadow when the resolver has no
 			// canonical permanent-key default (for example an unbound temp key).
 		} else {
-			profile, supported := tg.ResolveLayerProfile(layer)
+			profile, supported := tlprofile.ResolveProfile(layer)
 			if !supported {
 				return nil
 			}
@@ -414,7 +414,7 @@ func (s *Server) seedInitialLayerProfile(
 		}
 	}
 	if fetchedLayer != 0 {
-		profile, supported := tg.ResolveLayerProfile(fetchedLayer)
+		profile, supported := tlprofile.ResolveProfile(fetchedLayer)
 		if !supported {
 			return nil
 		}
@@ -446,7 +446,7 @@ func (s *Server) refreshActivatedInheritedLayerProfile(ctx context.Context, c *C
 		if fetchedLayer == 0 {
 			return nil
 		}
-		profile, ok := tg.ResolveLayerProfile(fetchedLayer)
+		profile, ok := tlprofile.ResolveProfile(fetchedLayer)
 		if !ok {
 			return c.clearInheritedLayerProfile()
 		}
@@ -472,7 +472,7 @@ func (s *Server) refreshActivatedInheritedLayerProfile(ctx context.Context, c *C
 					zap.String("auth_key_id", c.authKeyHex), zap.Error(err))
 			}
 		} else if found {
-			profile, supported := tg.ResolveLayerProfile(layer)
+			profile, supported := tlprofile.ResolveProfile(layer)
 			if !supported {
 				return c.clearInheritedLayerProfile()
 			}
@@ -483,7 +483,7 @@ func (s *Server) refreshActivatedInheritedLayerProfile(ctx context.Context, c *C
 	if fetchedLayer == 0 {
 		return nil
 	}
-	profile, ok := tg.ResolveLayerProfile(fetchedLayer)
+	profile, ok := tlprofile.ResolveProfile(fetchedLayer)
 	if !ok {
 		return c.clearInheritedLayerProfile()
 	}

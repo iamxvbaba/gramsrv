@@ -126,8 +126,8 @@ func TestMessagesReceivedMessagesIsRegistered(t *testing.T) {
 	if method != "messages.receivedMessages" {
 		t.Fatalf("method = %q, want messages.receivedMessages", method)
 	}
-	vector, ok := result.(*tg.ReceivedNotifyMessageVector)
-	if !ok || vector == nil || vector.Elems == nil || len(vector.Elems) != 0 {
+	vector, ok := dispatchCanonicalValue(result).([]tg.ReceivedNotifyMessage)
+	if !ok || vector == nil || len(vector) != 0 {
 		t.Fatalf("result = %#v (%T), want non-nil empty ReceivedNotifyMessageVector", result, result)
 	}
 }

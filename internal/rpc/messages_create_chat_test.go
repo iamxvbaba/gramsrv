@@ -107,13 +107,12 @@ func TestMessagesCreateChatCreatesMegagroupAndDialogsRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch get dialogs: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesDialogsBox)
+	dialogs, ok := enc.(*tg.MessagesDialogs)
 	if !ok {
-		t.Fatalf("dialogs response = %T, want box", enc)
+		t.Fatalf("dialogs response = %T, want *tg.MessagesDialogs", enc)
 	}
-	dialogs, ok := box.Dialogs.(*tg.MessagesDialogs)
-	if !ok || len(dialogs.Dialogs) != 1 || len(dialogs.Chats) != 1 || len(dialogs.Messages) != 1 {
-		t.Fatalf("dialogs = %T %+v, want channel dialog/chat/message", box.Dialogs, box.Dialogs)
+	if len(dialogs.Dialogs) != 1 || len(dialogs.Chats) != 1 || len(dialogs.Messages) != 1 {
+		t.Fatalf("dialogs = %+v, want channel dialog/chat/message", dialogs)
 	}
 	dialog := dialogs.Dialogs[0].(*tg.Dialog)
 	if peer, ok := dialog.Peer.(*tg.PeerChannel); !ok || peer.ChannelID != channel.ID {
@@ -227,12 +226,11 @@ func TestMessagesCreateChatTDesktopReturnsLegacyChatAndAcceptsInputPeerChatRPC(t
 	if err != nil {
 		t.Fatalf("legacy history: %v", err)
 	}
-	legacyBox, ok := legacyHistory.(*tg.MessagesMessagesBox)
+	legacyMessages, ok := legacyHistory.(*tg.MessagesMessages)
 	if !ok {
-		t.Fatalf("legacy history = %T %+v, want messages box", legacyHistory, legacyHistory)
+		t.Fatalf("legacy history = %T %+v, want *tg.MessagesMessages", legacyHistory, legacyHistory)
 	}
-	legacyMessages, ok := legacyBox.Messages.(*tg.MessagesMessages)
-	if !ok || len(legacyMessages.Messages) != 0 {
+	if len(legacyMessages.Messages) != 0 {
 		t.Fatalf("legacy history = %T %+v, want empty messages.messages", legacyHistory, legacyHistory)
 	}
 
