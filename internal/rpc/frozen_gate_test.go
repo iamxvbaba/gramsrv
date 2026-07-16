@@ -77,6 +77,13 @@ func TestFrozenMethodGateIsReadOnlyAndFailsClosed(t *testing.T) {
 		"account.updateStatus":             false,
 		"account.deleteAccount":            false,
 		"auth.logOut":                      false,
+		"phone.acceptCall":                 false,
+		"phone.confirmCall":                false,
+		"phone.discardCall":                false,
+		"phone.receivedCall":               false,
+		"phone.saveCallDebug":              false,
+		"phone.sendSignalingData":          false,
+		"phone.setCallRating":              false,
 		"messages.sendMessage":             true,
 		"messages.editMessage":             true,
 		"messages.deleteHistory":           true,
@@ -86,6 +93,8 @@ func TestFrozenMethodGateIsReadOnlyAndFailsClosed(t *testing.T) {
 		"channels.searchPosts":             true,
 		"contacts.importContacts":          true,
 		"account.saveAutoDownloadSettings": true,
+		"phone.requestCall":                true,
+		"phone.joinGroupCall":              true,
 		"future.performNewMutation":        true,
 	}
 	for method, want := range tests {
@@ -94,6 +103,178 @@ func TestFrozenMethodGateIsReadOnlyAndFailsClosed(t *testing.T) {
 				t.Fatalf("frozenMethodRequiresWriteGate(%q) = %v, want %v", method, got, want)
 			}
 		})
+	}
+}
+
+func TestFrozenPrivateCallLifecyclePassesExactLayerGate(t *testing.T) {
+	const frozenUserID = int64(1001)
+	for _, profile := range []tlprofile.Profile{
+		tlprofile.Profile225,
+		tlprofile.Profile226,
+		tlprofile.Profile227,
+		tlprofile.Profile228,
+	} {
+		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
+			provider := &frozenGateFreezeProvider{freeze: frozenGateActiveState(frozenUserID), found: true}
+			router := New(
+				Config{DC: 2, IP: "127.0.0.1", Port: 2398},
+				Deps{AccountFreeze: provider},
+				zaptest.NewLogger(t),
+				clock.System,
+			)
+			body := encodeExactLayerRPC(t, profile, &tg.PhoneAcceptCallRequest{
+				Peer:     tg.InputPhoneCall{ID: 1, AccessHash: 2},
+				GB:       make([]byte, 256),
+				Protocol: phoneTestProtocol(),
+			})
+			admitted, err := router.AdmitLayer(profile, &body, tlprofile.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, method, err := router.DispatchAdmitted(WithUserID(context.Background(), frozenUserID), [8]byte{1}, 10, 0, 1, admitted)
+			if method != "phone.acceptCall" || !tgerr.Is(err, "NOT_IMPLEMENTED") {
+				t.Fatalf("DispatchAdmitted = method:%q err:%v, want handler NOT_IMPLEMENTED", method, err)
+			}
+			if provider.calls != 0 {
+				t.Fatalf("freeze provider calls = %d, lifecycle method should bypass write gate", provider.calls)
+			}
+		})
+	}
+}
+
+func TestFrozenPrivateCallLifecyclePassesLegacyGate(t *testing.T) {
+	const frozenUserID = int64(1001)
+	provider := &frozenGateFreezeProvider{freeze: frozenGateActiveState(frozenUserID), found: true}
+	router := New(
+		Config{DC: 2, IP: "127.0.0.1", Port: 2398},
+		Deps{AccountFreeze: provider},
+		zaptest.NewLogger(t),
+		clock.System,
+	)
+	request := &tg.PhoneAcceptCallRequest{
+		Peer:     tg.InputPhoneCall{ID: 1, AccessHash: 2},
+		GB:       make([]byte, 256),
+		Protocol: phoneTestProtocol(),
+	}
+	var body bin.Buffer
+	if err := request.Encode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.Dispatch(WithUserID(context.Background(), frozenUserID), [8]byte{1}, 10, &body); !tgerr.Is(err, "NOT_IMPLEMENTED") {
+		t.Fatalf("legacy Dispatch err = %v, want handler NOT_IMPLEMENTED", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("freeze provider calls = %d, lifecycle method should bypass write gate", provider.calls)
+	}
+}
+
+func TestFrozenCalleeCompletesPrivateCallLifecycle(t *testing.T) {
+	f := newPhoneFixture(t, stubPrivacy{})
+	provider := &frozenGateFreezeProvider{items: map[int64]domain.AccountFreeze{
+		f.callee.ID: frozenGateActiveState(f.callee.ID),
+	}}
+	f.router.deps.AccountFreeze = provider
+	ga, gaHash, gb := phoneTestKeys()
+
+	requested, err := f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
+		UserID:   inputUser(f.callee),
+		RandomID: 7001,
+		GAHash:   gaHash,
+		Protocol: phoneTestProtocol(),
+	})
+	if err != nil {
+		t.Fatalf("request call to frozen callee: %v", err)
+	}
+	waiting, ok := requested.PhoneCall.(*tg.PhoneCallWaiting)
+	if !ok {
+		t.Fatalf("request result = %T, want PhoneCallWaiting", requested.PhoneCall)
+	}
+	peer := tg.InputPhoneCall{ID: waiting.ID, AccessHash: waiting.AccessHash}
+	f.sessions.reset()
+
+	dispatch := func(ctx context.Context, request bin.Object) tlprofile.Result {
+		t.Helper()
+		body := encodeExactLayerRPC(t, tlprofile.Profile228, request)
+		admitted, err := f.router.AdmitLayer(tlprofile.Profile228, &body, tlprofile.Limits{})
+		if err != nil {
+			t.Fatalf("admit %T: %v", request, err)
+		}
+		sessionID, _ := SessionIDFrom(ctx)
+		result, method, err := f.router.DispatchAdmitted(ctx, [8]byte{1}, sessionID, 0, 1, admitted)
+		if err != nil {
+			t.Fatalf("dispatch %s: %v", method, err)
+		}
+		return result
+	}
+
+	received := dispatch(f.calleeCtx(), &tg.PhoneReceivedCallRequest{Peer: peer})
+	if value, ok := dispatchCanonicalValue(received).(bool); !ok || !value {
+		t.Fatalf("receivedCall = %#v, want true", dispatchCanonicalValue(received))
+	}
+	f.sessions.reset()
+
+	accepted := dispatch(f.calleeCtx(), &tg.PhoneAcceptCallRequest{
+		Peer:     peer,
+		GB:       gb,
+		Protocol: phoneTestProtocol(),
+	})
+	acceptedCall, ok := dispatchCanonicalValue(accepted).(*tg.PhonePhoneCall)
+	if !ok {
+		t.Fatalf("acceptCall = %T, want *tg.PhonePhoneCall", dispatchCanonicalValue(accepted))
+	}
+	if _, ok := acceptedCall.PhoneCall.(*tg.PhoneCallWaiting); !ok {
+		t.Fatalf("acceptCall phone_call = %T, want PhoneCallWaiting", acceptedCall.PhoneCall)
+	}
+
+	dispatch(f.callerCtx(), &tg.PhoneConfirmCallRequest{
+		Peer:           peer,
+		GA:             ga,
+		KeyFingerprint: 99,
+		Protocol:       phoneTestProtocol(),
+	})
+	f.sessions.reset()
+
+	signaled := dispatch(f.calleeCtx(), &tg.PhoneSendSignalingDataRequest{Peer: peer, Data: []byte("offer")})
+	if value, ok := dispatchCanonicalValue(signaled).(bool); !ok || !value {
+		t.Fatalf("sendSignalingData = %#v, want true", dispatchCanonicalValue(signaled))
+	}
+	if pushes := f.sessions.records(); len(pushes) != 1 || pushes[0].targetSession != phoneCallerSession {
+		t.Fatalf("signaling pushes = %+v, want caller device", pushes)
+	}
+	f.sessions.reset()
+
+	dispatch(f.calleeCtx(), &tg.PhoneDiscardCallRequest{
+		Peer:     peer,
+		Duration: 3,
+		Reason:   &tg.PhoneCallDiscardReasonHangup{},
+	})
+	if call, found := f.router.deps.Phone.Lookup(f.ctx, peer.ID, peer.AccessHash); !found || !call.Terminal() {
+		t.Fatalf("discarded call = %+v found=%v, want terminal tombstone", call, found)
+	}
+
+	newCall := &tg.PhoneRequestCallRequest{
+		UserID:   inputUser(f.caller),
+		RandomID: 7002,
+		GAHash:   gaHash,
+		Protocol: phoneTestProtocol(),
+	}
+	body := encodeExactLayerRPC(t, tlprofile.Profile228, newCall)
+	admitted, err := f.router.AdmitLayer(tlprofile.Profile228, &body, tlprofile.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, method, err := f.router.DispatchAdmitted(f.calleeCtx(), [8]byte{1}, phoneCalleeSession, 0, 1, admitted); method != "phone.requestCall" || !tgerr.Is(err, "FROZEN_METHOD_INVALID") {
+		t.Fatalf("frozen outbound call = method:%q err:%v, want FROZEN_METHOD_INVALID", method, err)
+	}
+
+	delete(provider.items, f.callee.ID)
+	body = encodeExactLayerRPC(t, tlprofile.Profile228, newCall)
+	admitted, err = f.router.AdmitLayer(tlprofile.Profile228, &body, tlprofile.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, method, err := f.router.DispatchAdmitted(f.calleeCtx(), [8]byte{1}, phoneCalleeSession, 0, 1, admitted); err != nil || method != "phone.requestCall" {
+		t.Fatalf("unfrozen outbound call = method:%q err:%v", method, err)
 	}
 }
 
