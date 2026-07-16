@@ -24,6 +24,11 @@
   flex-direction: column;
 }
 
+.command-modal > .modal-head,
+.command-modal > .modal-actions {
+  flex: 0 0 auto;
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;
@@ -52,6 +57,8 @@
 
 .command-body {
   display: grid;
+  min-height: 0;
+  grid-auto-rows: max-content;
   gap: 12px;
   overflow: auto;
   padding: 14px 18px;
