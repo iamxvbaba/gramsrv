@@ -246,19 +246,23 @@ type MessageFilter struct {
 
 // SendPrivateTextRequest 是私聊文本/媒体发送命令。
 type SendPrivateTextRequest struct {
-	SenderUserID     int64
-	RecipientUserID  int64
-	RandomID         int64
-	Message          string
-	Entities         []MessageEntity
-	Media            *MessageMedia
-	Silent           bool
-	NoForwards       bool
-	ReplyTo          *MessageReply
-	Forward          *MessageForward
-	Date             int
-	OriginAuthKeyID  [8]byte
-	OriginSessionID  int64
+	SenderUserID    int64
+	RecipientUserID int64
+	RandomID        int64
+	Message         string
+	Entities        []MessageEntity
+	Media           *MessageMedia
+	Silent          bool
+	NoForwards      bool
+	ReplyTo         *MessageReply
+	Forward         *MessageForward
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+	// OriginUserID identifies the authenticated initiator when a server-generated
+	// service message is authored by another user. Zero preserves the ordinary
+	// send path where the sender is the initiator.
+	OriginUserID     int64
 	RecipientBlocked bool
 	// IdempotencyFingerprint 是调用边界对原始、不可变发送请求计算的 SHA-256。
 	// RPC 层应优先填入原始 TL 请求指纹，避免链接预览、骰子结果、上传媒体

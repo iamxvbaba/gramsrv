@@ -76,8 +76,17 @@ ON CONFLICT (id) DO NOTHING
 }
 
 func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (res domain.SendPrivateTextResult, err error) {
+	return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{})
+}
+
+type privateSendTxHooks struct {
+	before func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
+	after  func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error
+}
+
+func (s *MessageStore) sendPrivateTextWithHooks(ctx context.Context, req domain.SendPrivateTextRequest, hooks privateSendTxHooks) (res domain.SendPrivateTextResult, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
-		res, err = s.sendPrivateTextOnce(ctx, req)
+		res, err = s.sendPrivateTextOnce(ctx, req, hooks)
 		if err == nil {
 			return res, nil
 		}
@@ -91,7 +100,7 @@ func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPriva
 	return domain.SendPrivateTextResult{}, err
 }
 
-func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendPrivateTextRequest) (res domain.SendPrivateTextResult, err error) {
+func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendPrivateTextRequest, hooks privateSendTxHooks) (res domain.SendPrivateTextResult, err error) {
 	if req.SenderUserID == 0 || req.RecipientUserID == 0 {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("send private text: missing user id")
 	}
@@ -105,10 +114,6 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		req.Date = int(time.Now().Unix())
 	}
 	entities, err := encodeMessageEntities(req.Entities)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
-	mediaJSON, err := encodeMessageMedia(req.Media)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
@@ -180,6 +185,15 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	// 行锁的 AB-BA 死锁（A↔B 反向并发 send/read/edit）。
 	if err := lockUsersForUpdate(ctx, tx, req.SenderUserID, req.RecipientUserID); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send users: %w", err)
+	}
+	if hooks.before != nil {
+		if err := hooks.before(ctx, tx, &req); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+	}
+	mediaJSON, err := encodeMessageMedia(req.Media)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
 	}
 	ttlPeriod := req.TTLPeriod
 	if ttlPeriod == 0 {
@@ -298,12 +312,21 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err := appendNewMessageEvent(ctx, qtx, sender); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
+	originUserID := req.OriginUserID
+	if originUserID == 0 {
+		originUserID = req.SenderUserID
+	}
+	senderExcludeAuthKeyID, senderExcludeSessionID := int64(0), int64(0)
+	if originUserID == req.SenderUserID {
+		senderExcludeAuthKeyID = authKeyIDToInt64(req.OriginAuthKeyID)
+		senderExcludeSessionID = req.OriginSessionID
+	}
 	if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 		TargetUserID:     req.SenderUserID,
 		Pts:              int32(senderPts),
 		EventType:        string(domain.UpdateEventNewMessage),
-		ExcludeAuthKeyID: authKeyIDToInt64(req.OriginAuthKeyID),
-		ExcludeSessionID: req.OriginSessionID,
+		ExcludeAuthKeyID: senderExcludeAuthKeyID,
+		ExcludeSessionID: senderExcludeSessionID,
 	}); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("enqueue sender dispatch: %w", err)
 	}
@@ -360,12 +383,17 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		if err := appendNewMessageEvent(ctx, qtx, recipient); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
+		recipientExcludeAuthKeyID, recipientExcludeSessionID := int64(0), int64(0)
+		if originUserID == req.RecipientUserID {
+			recipientExcludeAuthKeyID = authKeyIDToInt64(req.OriginAuthKeyID)
+			recipientExcludeSessionID = req.OriginSessionID
+		}
 		if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
 			TargetUserID:     req.RecipientUserID,
 			Pts:              int32(recipientPts),
 			EventType:        string(domain.UpdateEventNewMessage),
-			ExcludeAuthKeyID: 0,
-			ExcludeSessionID: 0,
+			ExcludeAuthKeyID: recipientExcludeAuthKeyID,
+			ExcludeSessionID: recipientExcludeSessionID,
 		}); err != nil {
 			return domain.SendPrivateTextResult{}, fmt.Errorf("enqueue recipient dispatch: %w", err)
 		}
@@ -397,17 +425,23 @@ WHERE sender_user_id = $1
 	if tag.RowsAffected() != 1 {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("save private send receipt: private message %d already has or lost its immutable receipt", pm.ID)
 	}
+	result := domain.SendPrivateTextResult{
+		SenderMessage:    sender,
+		RecipientMessage: recipient,
+		SenderEvent:      eventFromMessage(sender),
+		RecipientEvent:   eventFromMessage(recipient),
+	}
+	if hooks.after != nil {
+		if err := hooks.after(ctx, tx, result); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("commit send message tx: %w", err)
 	}
 	committed = true
-	return domain.SendPrivateTextResult{
-		SenderMessage:    sender,
-		RecipientMessage: recipient,
-		SenderEvent:      eventFromMessage(sender),
-		RecipientEvent:   eventFromMessage(recipient),
-	}, nil
+	return result, nil
 }
 
 // LookupPrivateSendReplay reads an existing receipt without permission checks, source/media

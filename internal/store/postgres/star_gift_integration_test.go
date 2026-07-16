@@ -3,13 +3,15 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 )
 
-// TestStarGiftStorePostgres 回归迁移 0011：用户收到礼物实例对真实 PG 的 CRUD
-// （创建 / keyset 分页 / excludeUnsaved / 隐藏切换 / 转换幂等）。
+// TestStarGiftStorePostgres 回归迁移 0089：目录不可变版本与用户收到礼物实例对真实 PG 的 CRUD
+// （版本固定 / 创建 / keyset 分页 / excludeUnsaved / 隐藏切换 / 转换幂等）。
 func TestStarGiftStorePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -26,19 +28,70 @@ func TestStarGiftStorePostgres(t *testing.T) {
 		t.Fatalf("create sender: %v", err)
 	}
 	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+	docID := time.Now().UnixNano() & 0x7fffffffffffffff
+	documentIDs := []int64{docID}
+	locationKeys := []string{"doc:" + fmt.Sprint(docID)}
+	entry, err := st.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Stars: 50, ConvertStars: 50, Enabled: true, Document: domain.Document{
+			ID: docID, AccessHash: docID + 1, MimeType: "application/x-tgsticker", Size: 4, DCID: 2,
+			Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}},
+		},
+		Blob:      domain.FileBlob{LocationKey: "doc:" + fmt.Sprint(docID), Backend: domain.MediaBackendLocalFS, ObjectKey: "test-star-gift", Size: 4, SHA256: make([]byte, 32), MimeType: "application/x-tgsticker"},
+		Animation: domain.StarGiftAnimation{JSON: []byte(`{"v":"5.7","w":512,"h":512,"fr":30,"ip":0,"op":30,"layers":[{}]}`), SHA256: make([]byte, 32), SourceFormat: domain.StarGiftAnimationTGS, Width: 512, Height: 512},
+		Actor:     "test", CommandID: "test-star-gift-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create catalog gift: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, "DELETE FROM peer_star_gifts WHERE owner_peer_id IN ($1, $2)", owner.ID, int64(987654321))
+		tx, _ := pool.Begin(ctx)
+		if tx != nil {
+			_, _ = tx.Exec(ctx, "DELETE FROM star_gift_catalog WHERE gift_id=$1", entry.Gift.ID)
+			_, _ = tx.Exec(ctx, "DELETE FROM star_gift_catalog_revisions WHERE gift_id=$1", entry.Gift.ID)
+			_, _ = tx.Exec(ctx, "DELETE FROM file_blobs WHERE location_key = ANY($1::text[])", locationKeys)
+			_, _ = tx.Exec(ctx, "DELETE FROM documents WHERE id = ANY($1::bigint[])", documentIDs)
+			_ = tx.Commit(ctx)
+		}
 		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{owner.ID, from.ID})
 	})
 
 	// 创建三份礼物（msg_id 递增）。
 	for i := 0; i < 3; i++ {
 		if _, err := st.Create(ctx, domain.SavedStarGift{
-			Owner: ownerPeer, FromUserID: from.ID, GiftID: 8001, MsgID: 100 + i,
+			Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, MsgID: 100 + i,
 			Date: 1700000000 + i, ConvertStars: 50,
 		}); err != nil {
 			t.Fatalf("create gift #%d: %v", i, err)
 		}
+	}
+
+	// active revision 更新后，已收到的礼物必须继续固定到购买瞬间的 immutable revision。
+	docID2 := docID + 1
+	documentIDs = append(documentIDs, docID2)
+	locationKeys = append(locationKeys, "doc:"+fmt.Sprint(docID2))
+	updated, err := st.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		GiftID: entry.Gift.ID, Title: "Revision 2", Stars: 75, ConvertStars: 25, Enabled: true,
+		Document: domain.Document{
+			ID: docID2, AccessHash: docID2 + 1, MimeType: "application/x-tgsticker", Size: 4, DCID: 2,
+			Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}},
+		},
+		Blob:      domain.FileBlob{LocationKey: "doc:" + fmt.Sprint(docID2), Backend: domain.MediaBackendLocalFS, ObjectKey: "test-star-gift-v2", Size: 4, SHA256: make([]byte, 32), MimeType: "application/x-tgsticker"},
+		Animation: domain.StarGiftAnimation{JSON: []byte(`{"v":"5.7","w":512,"h":512,"fr":30,"ip":0,"op":30,"layers":[{}]}`), SHA256: make([]byte, 32), SourceFormat: domain.StarGiftAnimationTGS, Width: 512, Height: 512},
+		Actor:     "test", CommandID: "test-star-gift-v2-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create catalog revision 2: %v", err)
+	}
+	if updated.Revision != 2 || updated.Gift.RevisionID == entry.Gift.RevisionID {
+		t.Fatalf("revision 2 = %+v, want a new immutable revision", updated)
+	}
+	if updated.ReceivedCount != 3 {
+		t.Fatalf("revision 2 received count = %d, want all 3 historical instances", updated.ReceivedCount)
+	}
+	historical, found, err := st.CatalogRevision(ctx, entry.Gift.RevisionID)
+	if err != nil || !found || historical.Stars != 50 || historical.Sticker.ID != docID {
+		t.Fatalf("historical revision = %+v found %v err %v", historical, found, err)
 	}
 
 	// keyset 分页：每页 2，末页省略游标。
@@ -71,7 +124,7 @@ func TestStarGiftStorePostgres(t *testing.T) {
 
 	// GetByRef(user msg_id)。
 	g, found, err := st.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100})
-	if err != nil || !found || g.GiftID != 8001 || g.ConvertStars != 50 {
+	if err != nil || !found || g.GiftID != entry.Gift.ID || g.RevisionID != entry.Gift.RevisionID || g.ConvertStars != 50 {
 		t.Fatalf("get = %+v found %v err %v", g, found, err)
 	}
 
@@ -101,13 +154,13 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	// 频道礼物用 saved_id 定位，和用户 msg_id 身份键隔离。
 	channelPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: 987654321}
 	if _, err := st.Create(ctx, domain.SavedStarGift{
-		Owner: ownerPeer, FromUserID: from.ID, GiftID: 8001, MsgID: 700,
+		Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, MsgID: 700,
 		Date: 1700000100, ConvertStars: 50,
 	}); err != nil {
 		t.Fatalf("create user gift with same msg_id namespace: %v", err)
 	}
 	channelSavedID, err := st.Create(ctx, domain.SavedStarGift{
-		Owner: channelPeer, FromUserID: from.ID, GiftID: 8001, MsgID: 0, SavedID: 0,
+		Owner: channelPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, MsgID: 0, SavedID: 0,
 		Date: 1700000101, ConvertStars: 50,
 	})
 	if err != nil {

@@ -126,7 +126,7 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
-| `TELESRV_BUSINESS_AI_PROVIDER` | string / `echo` | Business auto-reply generator: `echo`, `template`/`quick_reply`, or `ai`/`compose_ai`/a configured provider name. |
+| `TELESRV_BUSINESS_AI_PROVIDER` | string / `echo` | Business auto-reply generator. Allowed values are `echo`/empty (echo the triggering text), `template`/`quick_reply`/`quick-reply` (use quick-reply templates), or `ai`/`compose_ai`/`ai_compose`/`aicompose`/`kimi` (reuse the `TELESRV_AI_PROVIDERS` provider chain). This setting does not accept arbitrary provider names; for example, with Ollama set `TELESRV_BUSINESS_AI_PROVIDER=ai` and select the actual provider through `TELESRV_AI_PROVIDERS=ollama,local`. |
 | `TELESRV_AI_ENABLED` | bool / `true` | Enables client compose rewrite/polish. False returns no tones and hides the entry. |
 | `TELESRV_AI_PROVIDERS` | list / `local` | Ordered provider chain. Empty resolves to deterministic `local`, which makes no external request. |
 | `TELESRV_AI_TIMEOUT` | duration / `15s` | Total timeout for one provider call. |

@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"telesrv/internal/domain"
 )
 
 const (
@@ -129,6 +131,60 @@ type ChannelDetail struct {
 	Channel     ChannelRow
 	ChannelJSON string
 	AuditLogs   []AuditLogRow
+}
+
+type StarGiftRow struct {
+	GiftID        int64
+	RevisionID    int64
+	Revision      int
+	Title         string
+	Stars         int64
+	ConvertStars  int64
+	Enabled       bool
+	SortOrder     int
+	DocumentID    int64
+	SourceName    string
+	SourceFormat  string
+	AnimationSHA  string
+	AnimationSize int64
+	Width         int
+	Height        int
+	FrameRate     float64
+	ReceivedCount int64
+	CreatedBy     string
+	UpdatedAt     time.Time
+}
+
+func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
+       c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
+       encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
+       (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
+       r.created_by, c.updated_at
+FROM star_gift_catalog c
+JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
+JOIN documents d ON d.id = r.document_id
+ORDER BY c.sort_order, c.gift_id
+LIMIT $1`, domain.MaxStarGiftCatalogSize)
+	if err != nil {
+		return nil, fmt.Errorf("list star gifts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StarGiftRow, 0)
+	for rows.Next() {
+		var row StarGiftRow
+		if err := rows.Scan(
+			&row.GiftID, &row.RevisionID, &row.Revision, &row.Title, &row.Stars, &row.ConvertStars,
+			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
+			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
+			&row.ReceivedCount, &row.CreatedBy, &row.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow, error) {

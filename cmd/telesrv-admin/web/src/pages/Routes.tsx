@@ -8,6 +8,7 @@ import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
 import { GroupMessagesPage } from "./GroupMessagesPage";
 import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
+import { GiftsPage } from "./GiftsPage";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
@@ -24,6 +25,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   if (route.path === "/channels") {
     return <ChannelsPage navigate={navigate} />;
   }
+	if (route.path === "/gifts") {
+		return <GiftsPage />;
+	}
   if (route.path === "/messages/detail" || route.path === "/messages/private/detail") {
     return (
       <MessageDetailPage

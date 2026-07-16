@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,13 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run postgres integration test")
+	}
+	parsed, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse TELESRV_TEST_POSTGRES_DSN: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(parsed.ConnConfig.Database), "test") {
+		t.Fatalf("TELESRV_TEST_POSTGRES_DSN must name a dedicated test database, got %q", parsed.ConnConfig.Database)
 	}
 	if err := Migrate(dsn); err != nil {
 		t.Fatalf("migrate: %v", err)

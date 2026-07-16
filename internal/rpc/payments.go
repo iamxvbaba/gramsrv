@@ -30,25 +30,21 @@ func (r *Router) registerPayments(d *tg.ServerDispatcher) {
 		return tdesktop.StarGiftActiveAuctions(), nil
 	})
 	d.OnPaymentsGetStarGifts(r.onPaymentsGetStarGifts)
+	d.OnPaymentsGetStarGiftUpgradePreview(r.onPaymentsGetStarGiftUpgradePreview)
+	d.OnPaymentsGetUniqueStarGift(r.onPaymentsGetUniqueStarGift)
 	d.OnPaymentsGetPaymentForm(r.onPaymentsGetPaymentForm)
 	d.OnPaymentsSendStarsForm(r.onPaymentsSendStarsForm)
 	d.OnPaymentsGetSavedStarGifts(r.onPaymentsGetSavedStarGifts)
 	d.OnPaymentsGetSavedStarGift(r.onPaymentsGetSavedStarGift)
 	d.OnPaymentsSaveStarGift(r.onPaymentsSaveStarGift)
 	d.OnPaymentsConvertStarGift(r.onPaymentsConvertStarGift)
-	d.OnPaymentsGetStarGiftCollections(func(ctx context.Context, req *tg.PaymentsGetStarGiftCollectionsRequest) (tg.PaymentsStarGiftCollectionsClass, error) {
-		userID, _, err := r.currentUserID(ctx)
-		if err != nil {
-			return nil, internalErr()
-		}
-		if req == nil {
-			return nil, peerIDInvalidErr()
-		}
-		if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer); err != nil {
-			return nil, err
-		}
-		return tdesktop.StarGiftCollections(), nil
-	})
+	d.OnPaymentsUpgradeStarGift(r.onPaymentsUpgradeStarGift)
+	d.OnPaymentsGetStarGiftCollections(r.onPaymentsGetStarGiftCollections)
+	d.OnPaymentsCreateStarGiftCollection(r.onPaymentsCreateStarGiftCollection)
+	d.OnPaymentsUpdateStarGiftCollection(r.onPaymentsUpdateStarGiftCollection)
+	d.OnPaymentsDeleteStarGiftCollection(r.onPaymentsDeleteStarGiftCollection)
+	d.OnPaymentsReorderStarGiftCollections(r.onPaymentsReorderStarGiftCollections)
+	d.OnPaymentsToggleStarGiftsPinnedToTop(r.onPaymentsToggleStarGiftsPinnedToTop)
 	d.OnPaymentsGetStarsRevenueAdsAccountURL(func(ctx context.Context, peer tg.InputPeerClass) (*tg.PaymentsStarsRevenueAdsAccountURL, error) {
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"reflect"
 	"strings"
@@ -693,6 +694,95 @@ func (f *fakeChannelsService) SetVerified(_ context.Context, channelID int64, ve
 
 type fakeChannelNotifier struct {
 	channels []int64
+}
+
+func TestImportStarGiftDryRunThenConfirm(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	base := ImportStarGiftRequest{
+		Title: "Cake", Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 3,
+		FileName: "cake.lottie", Data: []byte(`{"v":"5.7"}`),
+	}
+	base.CommandMeta = CommandMeta{CommandID: "dry-gift", Actor: "ops", Reason: "catalog", DryRun: true}
+	preview, err := svc.ImportStarGift(context.Background(), base)
+	if err != nil || gifts.createCalls != 0 || preview.Details["source_format"] != domain.StarGiftAnimationLottie {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	base.CommandMeta = CommandMeta{CommandID: "exec-gift", Actor: "ops", Reason: "catalog", DryRun: false}
+	result, err := svc.ImportStarGift(context.Background(), base)
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(22) {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+func TestCommandIDConflictRejectsDifferentGiftBytes(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	req := ImportStarGiftRequest{
+		CommandMeta: CommandMeta{CommandID: "same", Actor: "ops", Reason: "catalog", DryRun: true},
+		Title:       "Gift", Stars: 10, ConvertStars: 5, Enabled: true, FileName: "a.lottie", Data: []byte("one"),
+	}
+	if _, err := svc.ImportStarGift(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Data = []byte("two")
+	if _, err := svc.ImportStarGift(context.Background(), req); err == nil || err.Error() != "COMMAND_ID_CONFLICT" {
+		t.Fatalf("conflict err=%v", err)
+	}
+}
+
+func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	base := PublishStarGiftCollectiblesRequest{
+		GiftID: 11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
+		Models:    []StarGiftCollectibleAnimationUpload{{Name: "Ruby", RarityPermille: 1000, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")}},
+		Patterns:  []StarGiftCollectibleAnimationUpload{{Name: "Stars", RarityPermille: 1000, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")}},
+		Backdrops: []StarGiftCollectibleBackdropInput{{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 1000}},
+	}
+	base.CommandMeta = CommandMeta{CommandID: "dry-collectibles", Actor: "ops", Reason: "pool", DryRun: true}
+	preview, err := svc.PublishStarGiftCollectibles(context.Background(), base)
+	if err != nil || gifts.createCalls != 0 || preview.Details["models"] == nil {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	base.CommandMeta = CommandMeta{CommandID: "exec-collectibles", Actor: "ops", Reason: "pool", DryRun: false}
+	result, err := svc.PublishStarGiftCollectibles(context.Background(), base)
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(33) || result.Details["published"] != true {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+type fakeGiftsService struct{ createCalls int }
+
+func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
+	sum := sha256.Sum256(data)
+	return domain.StarGiftAnimation{
+		SourceName: name, SourceFormat: domain.StarGiftAnimationLottie,
+		JSON: []byte(`{"v":"5.7"}`), TGS: []byte("tgs"), SHA256: sum[:], Width: 512, Height: 512, FrameRate: 30,
+	}, nil
+}
+func (f *fakeGiftsService) CreateCatalogRevision(_ context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
+	f.createCalls++
+	return domain.StarGiftCatalogEntry{Gift: domain.StarGift{ID: 11, RevisionID: 22, Stars: write.Stars}, Revision: 1}, nil
+}
+func (*fakeGiftsService) SetCatalogEnabled(context.Context, int64, bool) (bool, error) {
+	return true, nil
+}
+func (*fakeGiftsService) SetCatalogSortOrder(context.Context, int64, int) (bool, error) {
+	return true, nil
+}
+func (*fakeGiftsService) AnimationJSON(context.Context, int64) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7"}`), true, nil
+}
+func (f *fakeGiftsService) CreateCollectibleRevision(_ context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
+	f.createCalls++
+	return domain.StarGiftCollectibleRevision{ID: 33, GiftID: write.GiftID, Revision: 2, Published: true}, nil
+}
+func (*fakeGiftsService) CollectiblePreview(context.Context, int64) (domain.StarGiftUpgradePreview, bool, error) {
+	return domain.StarGiftUpgradePreview{}, false, nil
+}
+func (*fakeGiftsService) CollectibleAnimationJSON(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7"}`), true, nil
 }
 
 func (f *fakeChannelNotifier) NotifyChannelChanged(_ context.Context, ch domain.Channel) error {

@@ -126,7 +126,7 @@
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
-| `TELESRV_BUSINESS_AI_PROVIDER` | string / `echo` | Business 自动回复生成器：`echo`、`template`/`quick_reply`，或 `ai`/`compose_ai`/已配置 provider 名。 |
+| `TELESRV_BUSINESS_AI_PROVIDER` | string / `echo` | Business 自动回复生成器。可填 `echo`/空值（回显触发文本）、`template`/`quick_reply`/`quick-reply`（使用 quick reply 模板），或 `ai`/`compose_ai`/`ai_compose`/`aicompose`/`kimi`（复用 `TELESRV_AI_PROVIDERS` provider 链）。这里不接受任意 provider 名；例如使用 Ollama 时填 `TELESRV_BUSINESS_AI_PROVIDER=ai`，实际 provider 由 `TELESRV_AI_PROVIDERS=ollama,local` 决定。 |
 | `TELESRV_AI_ENABLED` | bool / `true` | 启用客户端输入框改写/润色；关闭时返回空 tone 集合并隐藏入口。 |
 | `TELESRV_AI_PROVIDERS` | list / `local` | 按顺序尝试的 provider 链；空列表回退确定性 `local`，不访问外网。 |
 | `TELESRV_AI_TIMEOUT` | duration / `15s` | 单次 provider 调用总超时。 |

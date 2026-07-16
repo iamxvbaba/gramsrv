@@ -220,6 +220,25 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		}
 	case domain.MessageServiceActionStarGift:
 		return tgMessageActionStarGift(m.ServiceAction.StarGift)
+	case domain.MessageServiceActionStarGiftUnique:
+		action := m.ServiceAction.StarGiftUnique
+		if action == nil {
+			return &tg.MessageActionEmpty{}
+		}
+		out := &tg.MessageActionStarGiftUnique{
+			Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
+			Gift: tgUniqueStarGift(action.Gift),
+		}
+		if action.FromUserID != 0 {
+			out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
+		}
+		if peer := tgPeer(action.Peer); peer != nil {
+			out.SetPeer(peer)
+		}
+		if action.SavedID != 0 {
+			out.SetSavedID(action.SavedID)
+		}
+		return out
 	default:
 		return &tg.MessageActionEmpty{}
 	}

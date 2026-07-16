@@ -634,7 +634,9 @@ func run(logger *zap.Logger) error {
 	starsStore := postgres.NewStarsStore(pool)
 	starsService := stars.NewService(starsStore, stars.WithStartingGrant(cfg.StarsStartingGrant))
 	starGiftStore := postgres.NewStarGiftStore(pool)
-	giftsService := stargifts.NewService(starGiftStore, filesService)
+	starGiftUpgradeStore := postgres.NewStarGiftUpgradeStore(pool, messageStore)
+	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC,
+		stargifts.WithUpgradeStore(starGiftUpgradeStore))
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -776,6 +778,7 @@ func run(logger *zap.Logger) error {
 		RPCProjections:     router,
 		BaseUsers:          userCache,
 		BotProfiles:        botsService,
+		StarGifts:          giftsService,
 	}, logger.Named("store").Named("read-model-listener"))
 	go readModelListener.Run(ctx)
 	activeSessions.SetLifecycleObserver(router)
@@ -789,6 +792,7 @@ func run(logger *zap.Logger) error {
 		Channels:        channelsService,
 		ChannelNotifier: router,
 		Messages:        messagesService,
+		Gifts:           giftsService,
 	})
 	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
 	// router 创建后注入。

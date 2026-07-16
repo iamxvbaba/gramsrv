@@ -561,6 +561,10 @@ const (
 	// MessageServiceActionStarGift 映射 messageActionStarGift：收到一份 Star 礼物。
 	// 礼物快照（贴纸/星价）内嵌在 action 里，收礼人无需额外拉取即可渲染气泡。
 	MessageServiceActionStarGift MessageServiceActionKind = "star_gift"
+	// MessageServiceActionStarGiftUnique maps messageActionStarGiftUnique. The
+	// immutable collectible snapshot is carried by the service message so an
+	// exact replay/difference never depends on mutable catalog state.
+	MessageServiceActionStarGiftUnique MessageServiceActionKind = "star_gift_unique"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
@@ -617,24 +621,42 @@ type MessageServiceAction struct {
 	RequestedPeer     *MessageRequestedPeerAction  `json:"requested_peer,omitempty"`
 	ChatThemeEmoticon string                       `json:"chat_theme_emoticon,omitempty"`
 	StarGift          *MessageStarGiftAction       `json:"star_gift,omitempty"`
+	StarGiftUnique    *MessageStarGiftUniqueAction `json:"star_gift_unique,omitempty"`
 }
 
 // MessageStarGiftAction 是 messageActionStarGift 的协议中立载荷：内嵌礼物快照（贴纸/星价）
 // 使收礼人无需额外拉取即可渲染。PeerUserID/PeerChannelID 为收礼方；NameHidden 时下发不暴露 from。
 type MessageStarGiftAction struct {
-	GiftID        int64     `json:"gift_id"`
-	Stars         int64     `json:"stars"`
-	ConvertStars  int64     `json:"convert_stars,omitempty"`
-	Title         string    `json:"title,omitempty"`
-	Sticker       *Document `json:"sticker,omitempty"`
-	Message       string    `json:"message,omitempty"`
-	FromUserID    int64     `json:"from_user_id,omitempty"`
-	PeerUserID    int64     `json:"peer_user_id,omitempty"`
-	PeerChannelID int64     `json:"peer_channel_id,omitempty"`
-	SavedID       int64     `json:"saved_id,omitempty"`
-	NameHidden    bool      `json:"name_hidden,omitempty"`
-	Saved         bool      `json:"saved,omitempty"`
-	Converted     bool      `json:"converted,omitempty"`
+	GiftID         int64     `json:"gift_id"`
+	Stars          int64     `json:"stars"`
+	ConvertStars   int64     `json:"convert_stars,omitempty"`
+	Title          string    `json:"title,omitempty"`
+	Sticker        *Document `json:"sticker,omitempty"`
+	Message        string    `json:"message,omitempty"`
+	FromUserID     int64     `json:"from_user_id,omitempty"`
+	PeerUserID     int64     `json:"peer_user_id,omitempty"`
+	PeerChannelID  int64     `json:"peer_channel_id,omitempty"`
+	SavedID        int64     `json:"saved_id,omitempty"`
+	NameHidden     bool      `json:"name_hidden,omitempty"`
+	Saved          bool      `json:"saved,omitempty"`
+	Converted      bool      `json:"converted,omitempty"`
+	CanUpgrade     bool      `json:"can_upgrade,omitempty"`
+	PrepaidUpgrade bool      `json:"prepaid_upgrade,omitempty"`
+	UpgradeStars   int64     `json:"upgrade_stars,omitempty"`
+	UpgradeMsgID   int       `json:"upgrade_msg_id,omitempty"`
+}
+
+// MessageStarGiftUniqueAction is the protocol-neutral payload of an upgrade
+// service message. Commercial transfer/resale/export fields are intentionally
+// absent from the collectibles mainline.
+type MessageStarGiftUniqueAction struct {
+	Gift           UniqueStarGift `json:"gift"`
+	FromUserID     int64          `json:"from_user_id,omitempty"`
+	Peer           Peer           `json:"peer"`
+	SavedID        int64          `json:"saved_id,omitempty"`
+	Upgrade        bool           `json:"upgrade,omitempty"`
+	Saved          bool           `json:"saved,omitempty"`
+	PrepaidUpgrade bool           `json:"prepaid_upgrade,omitempty"`
 }
 
 // MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。

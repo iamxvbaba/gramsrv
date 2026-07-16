@@ -160,6 +160,58 @@ export type OutboxRow = {
   UpdatedAt: string;
 };
 
+export type StarGiftRow = {
+  GiftID: number;
+  RevisionID: number;
+  Revision: number;
+  Title: string;
+  Stars: number;
+  ConvertStars: number;
+  Enabled: boolean;
+  SortOrder: number;
+  DocumentID: number;
+  SourceName: string;
+  SourceFormat: "tgs" | "lottie";
+  AnimationSHA: string;
+  AnimationSize: number;
+  Width: number;
+  Height: number;
+  FrameRate: number;
+  ReceivedCount: number;
+  CreatedBy: string;
+  UpdatedAt: string;
+};
+
+export type StarGiftListResponse = { Gifts: StarGiftRow[] };
+
+export type StarGiftCollectibleAttributeRow = {
+  id: number;
+  kind: "model" | "pattern" | "backdrop";
+  name: string;
+  rarity_permille: number;
+  sort_order: number;
+  source_name?: string;
+  source_format?: "tgs" | "lottie";
+  backdrop_id?: number;
+  center_color?: number;
+  edge_color?: number;
+  pattern_color?: number;
+  text_color?: number;
+};
+
+export type StarGiftCollectiblePreview = {
+  found: boolean;
+  gift_id: number;
+  revision?: number;
+  upgrade_stars?: number;
+  supply_total?: number;
+  issued?: number;
+  slug_prefix?: string;
+  models?: StarGiftCollectibleAttributeRow[];
+  patterns?: StarGiftCollectibleAttributeRow[];
+  backdrops?: StarGiftCollectibleAttributeRow[];
+};
+
 export type MessageDetail = {
   Message: MessageRow;
   MessageJSON: string;

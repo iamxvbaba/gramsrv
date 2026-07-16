@@ -7,7 +7,9 @@ import type {
   GroupMessageDetail,
   GroupMessageListResponse,
   MessageDetail,
-  MessageListResponse
+  MessageListResponse,
+  StarGiftCollectiblePreview,
+  StarGiftListResponse
 } from "./types";
 
 export class APIError extends Error {
@@ -20,12 +22,10 @@ export class APIError extends Error {
 }
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+	const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
   const response = await fetch(url, {
     credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers ?? {})
-    },
+    headers: isForm ? init.headers : { "Content-Type": "application/json", ...(init.headers ?? {}) },
     ...init
   });
   const text = await response.text();
@@ -65,6 +65,12 @@ export const api = {
     const params = new URLSearchParams({ channel_id: String(channelID), msg_id: String(msgID) });
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
+	gifts: () => request<StarGiftListResponse>("/api/gifts"),
+	giftAnimation: (id: number) => request<Record<string, unknown>>(`/api/gifts/${id}/animation`),
+	giftCollectibles: (id: number) => request<StarGiftCollectiblePreview>(`/api/gifts/${id}/collectibles`),
+	giftCollectibleAnimation: (giftID: number, kind: "model" | "pattern", attributeID: number) => request<Record<string, unknown>>(`/api/gifts/${giftID}/collectibles/${kind}/${attributeID}/animation`),
+	importGift: (form: FormData) => request<CommandResult>("/api/actions/import-gift", { method: "POST", body: form }),
+	publishGiftCollectibles: (giftID: number, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${giftID}`, { method: "POST", body: form }),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
     body: JSON.stringify(payload)

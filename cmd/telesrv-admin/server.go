@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime/multipart"
 	"net/http"
 	"path"
 	"strconv"
@@ -56,6 +57,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/messages/detail", s.requireAuthAPI(http.HandlerFunc(s.handleMessageDetailAPI)))
 	mux.Handle("GET /api/messages/groups", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessagesAPI)))
 	mux.Handle("GET /api/messages/groups/detail", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessageDetailAPI)))
+	mux.Handle("GET /api/gifts", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftsAPI)))
+	mux.Handle("GET /api/gifts/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftAnimationAPI)))
+	mux.Handle("GET /api/gifts/{id}/collectibles", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
+	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
 	mux.Handle("POST /api/actions/set-frozen", s.requireAuthAPI(http.HandlerFunc(s.handleSetAccountFrozenAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
 	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
@@ -64,6 +69,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/revoke-sessions", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeSessionsAPI)))
 	mux.Handle("POST /api/actions/delete-messages", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteMessagesAPI)))
 	mux.Handle("POST /api/actions/delete-history", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteHistoryAPI)))
+	mux.Handle("POST /api/actions/import-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportStarGiftAPI)))
+	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
+	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
+	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -161,6 +170,101 @@ func (s *server) handleAPILogout(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"actor": actorFromContext(r.Context())})
+}
+
+func (s *server) handleStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	rows, err := s.read.ListStarGifts(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"Gifts": rows})
+}
+
+func (s *server) handleStarGiftAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid gift id")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/v1/gifts/%d/animation", s.cfg.AdminAPIURL, giftID), nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
+	if err != nil || len(raw) > 4<<20 {
+		writeAPIError(w, http.StatusBadGateway, "invalid animation response")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		writeAPIError(w, resp.StatusCode, string(raw))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *server) handleStarGiftCollectiblesAPI(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid gift id")
+		return
+	}
+	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/gifts/%d/collectibles", giftID), 4<<20)
+}
+
+func (s *server) handleStarGiftCollectibleAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	attributeID, attrErr := strconv.ParseInt(r.PathValue("attribute_id"), 10, 64)
+	kind := r.PathValue("kind")
+	if err != nil || giftID <= 0 || attrErr != nil || attributeID <= 0 || (kind != "model" && kind != "pattern") {
+		writeAPIError(w, http.StatusBadRequest, "invalid collectible animation")
+		return
+	}
+	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/gifts/%d/collectibles/%s/%d/animation", giftID, kind, attributeID), 4<<20)
+}
+
+func (s *server) proxyAdminJSON(w http.ResponseWriter, r *http.Request, apiPath string, maxBytes int64) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(raw)) > maxBytes {
+		writeAPIError(w, http.StatusBadGateway, "invalid admin api response")
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeAPIError(w, resp.StatusCode, string(raw))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=30")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *server) handleAccountsAPI(w http.ResponseWriter, r *http.Request) {
@@ -588,6 +692,184 @@ func (s *server) handleDeleteHistoryAPI(w http.ResponseWriter, r *http.Request) 
 	writeCommandResultAPI(w, result, err)
 }
 
+type importStarGiftAPIRequest struct {
+	CommandID    string `json:"command_id"`
+	Reason       string `json:"reason"`
+	Confirm      bool   `json:"confirm"`
+	GiftID       int64  `json:"gift_id"`
+	Title        string `json:"title"`
+	Stars        int64  `json:"stars"`
+	ConvertStars int64  `json:"convert_stars"`
+	Enabled      bool   `json:"enabled"`
+	SortOrder    int    `json:"sort_order"`
+}
+
+func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body importStarGiftAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "animation file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+	if err != nil || len(data) == 0 || len(data) > 4<<20 {
+		writeAPIError(w, http.StatusBadRequest, "animation file is empty or too large")
+		return
+	}
+	req := admin.ImportStarGiftRequest{
+		CommandMeta:  s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-gift"),
+		GiftID:       body.GiftID,
+		Title:        body.Title,
+		Stars:        body.Stars,
+		ConvertStars: body.ConvertStars,
+		Enabled:      body.Enabled,
+		SortOrder:    body.SortOrder,
+		FileName:     header.Filename,
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/gifts/import", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
+}
+
+type publishStarGiftCollectiblesAPIRequest struct {
+	CommandID    string                                     `json:"command_id"`
+	Reason       string                                     `json:"reason"`
+	Confirm      bool                                       `json:"confirm"`
+	UpgradeStars int64                                      `json:"upgrade_stars"`
+	SupplyTotal  int                                        `json:"supply_total"`
+	SlugPrefix   string                                     `json:"slug_prefix"`
+	Models       []admin.StarGiftCollectibleAnimationUpload `json:"models"`
+	Patterns     []admin.StarGiftCollectibleAnimationUpload `json:"patterns"`
+	Backdrops    []admin.StarGiftCollectibleBackdropInput   `json:"backdrops"`
+}
+
+func (s *server) handlePublishStarGiftCollectiblesAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	giftID, err := strconv.ParseInt(r.URL.Query().Get("gift_id"), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid gift id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid collectible multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body publishStarGiftCollectiblesAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	if len(body.Models)+len(body.Patterns) > 128 {
+		writeAPIError(w, http.StatusBadRequest, "too many collectible animation files")
+		return
+	}
+	seen := make(map[string]struct{}, len(body.Models)+len(body.Patterns))
+	load := func(upload *admin.StarGiftCollectibleAnimationUpload) error {
+		upload.FileKey = strings.TrimSpace(upload.FileKey)
+		if upload.FileKey == "" {
+			return errors.New("animation file key is required")
+		}
+		if _, ok := seen[upload.FileKey]; ok {
+			return fmt.Errorf("duplicate animation file key %q", upload.FileKey)
+		}
+		seen[upload.FileKey] = struct{}{}
+		file, header, err := r.FormFile(upload.FileKey)
+		if err != nil {
+			return fmt.Errorf("animation file %q is required", upload.FileKey)
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+		if err != nil || len(data) == 0 || len(data) > 4<<20 {
+			return fmt.Errorf("animation file %q is empty or too large", upload.FileKey)
+		}
+		upload.FileName = header.Filename
+		upload.Data = data
+		return nil
+	}
+	for i := range body.Models {
+		if err := load(&body.Models[i]); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	for i := range body.Patterns {
+		if err := load(&body.Patterns[i]); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	req := admin.PublishStarGiftCollectiblesRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "publish-gift-collectibles"),
+		GiftID:      giftID, UpgradeStars: body.UpgradeStars, SupplyTotal: body.SupplyTotal,
+		SlugPrefix: body.SlugPrefix, Models: body.Models, Patterns: body.Patterns, Backdrops: body.Backdrops,
+	}
+	result, err := s.callAdminCollectibleMultipart(r.Context(), fmt.Sprintf("/v1/gifts/%d/collectibles/publish", giftID), req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setStarGiftEnabledAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	GiftID    int64  `json:"gift_id"`
+	Enabled   bool   `json:"enabled"`
+}
+
+func (s *server) handleSetStarGiftEnabledAPI(w http.ResponseWriter, r *http.Request) {
+	var body setStarGiftEnabledAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetStarGiftEnabledRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-gift-enabled"),
+		GiftID:      body.GiftID, Enabled: body.Enabled,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-enabled", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setStarGiftSortOrderAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	GiftID    int64  `json:"gift_id"`
+	SortOrder int    `json:"sort_order"`
+}
+
+func (s *server) handleSetStarGiftSortOrderAPI(w http.ResponseWriter, r *http.Request) {
+	var body setStarGiftSortOrderAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetStarGiftSortOrderRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-gift-sort-order"),
+		GiftID:      body.GiftID, SortOrder: body.SortOrder,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-sort-order", req)
+	writeCommandResultAPI(w, result, err)
+}
+
 func (s *server) commandMetaFromAPI(r *http.Request, commandID, reason string, confirm bool, prefix string) admin.CommandMeta {
 	commandID = strings.TrimSpace(commandID)
 	if confirm && strings.HasPrefix(commandID, "dry-") {
@@ -619,6 +901,107 @@ func (s *server) callAdminAPI(ctx context.Context, apiPath string, payload any) 
 		return admin.CommandResult{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var result admin.CommandResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("admin api %s: status=%d body=%s", apiPath, resp.StatusCode, string(raw))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if result.Error == "" {
+			result.Error = resp.Status
+		}
+		return result, errors.New(result.Error)
+	}
+	return result, nil
+}
+
+func (s *server) callAdminMultipart(ctx context.Context, apiPath string, metadata any, fileName string, data []byte) (admin.CommandResult, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	meta, err := json.Marshal(metadata)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	if err := writer.WriteField("metadata", string(meta)); err != nil {
+		return admin.CommandResult{}, err
+	}
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	if _, err := part.Write(data); err != nil {
+		return admin.CommandResult{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return admin.CommandResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.AdminAPIURL+apiPath, &body)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var result admin.CommandResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return result, fmt.Errorf("admin api %s: status=%d body=%s", apiPath, resp.StatusCode, string(raw))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if result.Error == "" {
+			result.Error = resp.Status
+		}
+		return result, errors.New(result.Error)
+	}
+	return result, nil
+}
+
+func (s *server) callAdminCollectibleMultipart(ctx context.Context, apiPath string, payload admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	meta, err := json.Marshal(payload)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	if err := writer.WriteField("metadata", string(meta)); err != nil {
+		return admin.CommandResult{}, err
+	}
+	writeUploads := func(uploads []admin.StarGiftCollectibleAnimationUpload) error {
+		for _, upload := range uploads {
+			part, err := writer.CreateFormFile(upload.FileKey, upload.FileName)
+			if err != nil {
+				return err
+			}
+			if _, err := part.Write(upload.Data); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := writeUploads(payload.Models); err != nil {
+		return admin.CommandResult{}, err
+	}
+	if err := writeUploads(payload.Patterns); err != nil {
+		return admin.CommandResult{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return admin.CommandResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.AdminAPIURL+apiPath, &body)
+	if err != nil {
+		return admin.CommandResult{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

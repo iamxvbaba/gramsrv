@@ -82,7 +82,7 @@ func TestAccountGetWallPapersReturnsDefaultCatalog(t *testing.T) {
 		t.Fatalf("boxed response type = %T, want *tg.AccountWallPapers", box.WallPapers)
 	}
 	if wallpapers.Hash == 0 || len(wallpapers.Wallpapers) == 0 {
-		t.Fatalf("wallpapers = %+v, want stable Default catalog", wallpapers)
+		t.Fatalf("wallpapers = %+v, want stable default catalog", wallpapers)
 	}
 }
 
@@ -189,7 +189,7 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 	}
 }
 
-func TestPaymentsGetStarGiftCollectionsReturnsEmptyAndValidatesPeer(t *testing.T) {
+func TestPaymentsGetStarGiftCollectionsNoServiceFallbackAndValidatesPeer(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	ctx := WithUserID(context.Background(), 1000000001)
 

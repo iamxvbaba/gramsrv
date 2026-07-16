@@ -20,21 +20,22 @@ type StarsBalance struct {
 type StarsTransactionReason string
 
 const (
-	StarsReasonGrant    StarsTransactionReason = "grant"    // 起始余额自动授予
-	StarsReasonTopup    StarsTransactionReason = "topup"    // 充值（本地铸造）
-	StarsReasonReaction StarsTransactionReason = "reaction" // 付费 reaction 花费
-	StarsReasonGift     StarsTransactionReason = "gift"     // 星礼花费/收取
-	StarsReasonPaidMedia StarsTransactionReason = "paid_media" // 付费媒体解锁
-	StarsReasonAdjust   StarsTransactionReason = "adjust"   // 兜底/人工调整
+	StarsReasonGrant       StarsTransactionReason = "grant"        // 起始余额自动授予
+	StarsReasonTopup       StarsTransactionReason = "topup"        // 充值（本地铸造）
+	StarsReasonReaction    StarsTransactionReason = "reaction"     // 付费 reaction 花费
+	StarsReasonGift        StarsTransactionReason = "gift"         // 星礼花费/收取
+	StarsReasonGiftUpgrade StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
+	StarsReasonPaidMedia   StarsTransactionReason = "paid_media"   // 付费媒体解锁
+	StarsReasonAdjust      StarsTransactionReason = "adjust"       // 兜底/人工调整
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
 type StarsTransaction struct {
-	ID          int64                  // 单调递增账本 id（keyset 游标）
-	UserID      int64                  // 账本归属
-	Peer        Peer                   // 对手方（grant/topup 等无对手时为零 Peer）
-	Amount      int64                  // 带符号金额
-	Date        int                    // Unix 秒
+	ID          int64 // 单调递增账本 id（keyset 游标）
+	UserID      int64 // 账本归属
+	Peer        Peer  // 对手方（grant/topup 等无对手时为零 Peer）
+	Amount      int64 // 带符号金额
+	Date        int   // Unix 秒
 	Reason      StarsTransactionReason
 	Title       string // 可选，投影到 tg.StarsTransaction.Title
 	Description string // 可选，投影到 tg.StarsTransaction.Description

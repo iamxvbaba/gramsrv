@@ -33,6 +33,12 @@ type ReadModelCacheSet struct {
 	RPCProjections     RPCProjectionReadModelCache
 	BaseUsers          BaseUserCache
 	BotProfiles        BotProfileReadModelCache
+	StarGifts          StarGiftCatalogCache
+}
+
+type StarGiftCatalogCache interface {
+	InvalidateStarGiftCatalog()
+	FlushStarGiftCatalog()
 }
 
 // BaseUserCache 是跨进程共享的 user:base 缓存(Redis)。user_base read-model 事件必须删除
@@ -214,7 +220,8 @@ func (l *ReadModelChangeListener) empty() bool {
 		l.caches.PrivateMediaCounts == nil &&
 		l.caches.RPCProjections == nil &&
 		l.caches.BaseUsers == nil &&
-		l.caches.BotProfiles == nil
+		l.caches.BotProfiles == nil &&
+		l.caches.StarGifts == nil
 }
 
 func (l *ReadModelChangeListener) flush(reasons ...string) {
@@ -287,6 +294,10 @@ func (l *ReadModelChangeListener) flush(reasons ...string) {
 		l.caches.BotProfiles.FlushBotProfileReadModel()
 		flushed = append(flushed, "bot_profiles")
 	}
+	if l.caches.StarGifts != nil {
+		l.caches.StarGifts.FlushStarGiftCatalog()
+		flushed = append(flushed, "star_gifts")
+	}
 	// 注意：BaseUsers(Redis) 刻意不在重连时 flush——它是跨实例共享缓存，整库清空会误伤
 	// 其它实例；漏掉的通知由其 5min TTL 兜底。
 	l.log.Info("read model caches flushed",
@@ -315,6 +326,10 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 		}
 	}
 	switch evt.Model {
+	case "star_gift_catalog":
+		if l.caches.StarGifts != nil {
+			l.caches.StarGifts.InvalidateStarGiftCatalog()
+		}
 	case "user_base":
 		if evt.PeerType == "user" && evt.PeerID != 0 {
 			if l.caches.RPCProjections != nil {
