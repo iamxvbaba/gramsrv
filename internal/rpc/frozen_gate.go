@@ -20,10 +20,11 @@ var frozenAlwaysBlockedMethods = map[string]struct{}{
 	"channels.searchPosts":    {},
 }
 
-// These methods are security/session housekeeping or read acknowledgements
-// that must remain available in read-only mode. In particular, a frozen user
-// must be able to log out/delete the account and clients must not enter retry
-// loops for presence, push registration, or delivery/read acknowledgements.
+// These methods are security/session housekeeping, read acknowledgements, or
+// lifecycle operations that must remain available in read-only mode. A frozen
+// user must be able to log out/delete the account, and clients must be able to
+// settle an incoming or already-active private call without entering a broken
+// half-state. Starting a new call remains gated through phone.requestCall.
 var frozenAllowedMutationNamedMethods = map[string]struct{}{
 	"account.changeAuthorizationSettings": {},
 	"account.deleteAccount":               {},
@@ -43,7 +44,13 @@ var frozenAllowedMutationNamedMethods = map[string]struct{}{
 	"messages.viewSponsoredMessage":       {},
 	"channels.readHistory":                {},
 	"channels.readMessageContents":        {},
+	"phone.acceptCall":                    {},
+	"phone.confirmCall":                   {},
+	"phone.discardCall":                   {},
 	"phone.receivedCall":                  {},
+	"phone.saveCallDebug":                 {},
+	"phone.sendSignalingData":             {},
+	"phone.setCallRating":                 {},
 	"stories.incrementStoryViews":         {},
 }
 
