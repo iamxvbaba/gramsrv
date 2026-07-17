@@ -895,7 +895,7 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	if systemLoginPhoneForbidden(phone) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
-	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, code, false)
+	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, code)
 	if err != nil {
 		return domain.User{}, domain.Message{}, false, err
 	}
@@ -905,17 +905,17 @@ func (s *Service) SignIn(ctx context.Context, auth domain.Authorization, phone, 
 	return s.finishSignIn(ctx, auth, existing)
 }
 
-// SignInWithEmail 处理带 email_verification 的 auth.signIn：账号设置了登录邮箱后，新设备
-// 的验证码改投递到邮箱，客户端凭邮箱码（而非短信码）登录。开启真实登录邮箱后必须匹配
-// 随机邮箱码；未开启该特性时仍允许旧客户端把 phone channel 放进
-// email_verification，但必须精确匹配该 phone code，不能再接受任意非空值。
-// 两条路径共用 owner 绑定、原子尝试计数与 2FA 门控。
+// SignInWithEmail 处理带 email_verification 的 auth.signIn。它与 SignIn
+// 共享同一个登录凭证状态机：TDesktop/Android 把邮箱码放在
+// email_verification，WebK 把同一邮箱码放在 phone_code；TL 字段只是 proof
+// carrier，服务端签发记录的 channel 才表示实际投递渠道。所有渠道都必须精确
+// 匹配签发码，并共用 owner 绑定、原子尝试计数、一次性消费与 2FA 门控。
 func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization, phone, phoneCodeHash, code string) (domain.User, domain.Message, bool, error) {
 	phone = normalizePhone(phone)
 	if systemLoginPhoneForbidden(phone) {
 		return domain.User{}, domain.Message{}, false, ErrSystemUserLoginForbidden
 	}
-	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, strings.TrimSpace(code), true)
+	_, existing, found, err := s.verifyLoginCode(ctx, phone, phoneCodeHash, strings.TrimSpace(code))
 	if err != nil {
 		return domain.User{}, domain.Message{}, false, err
 	}
@@ -929,7 +929,7 @@ func (s *Service) SignInWithEmail(ctx context.Context, auth domain.Authorization
 // CodeStore verification. The phone owner is read both before and after that
 // linearization point. A hash issued for an unregistered number therefore can
 // never authorize whichever account happens to acquire that number later.
-func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, code string, emailPath bool) (store.PhoneCode, domain.User, bool, error) {
+func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, code string) (store.PhoneCode, domain.User, bool, error) {
 	rec, found, err := s.codes.Get(ctx, phoneCodeHash)
 	if err != nil {
 		return store.PhoneCode{}, domain.User{}, false, err
@@ -944,11 +944,7 @@ func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, cod
 	if rec.Phone != phone || rec.Purpose != "" {
 		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
 	}
-	channelAllowed := (rec.Channel == codeChannelPhone || rec.Channel == codeChannelSMS) && !emailPath
-	if emailPath {
-		channelAllowed = rec.Channel == codeChannelEmailLogin || (!s.loginEmailEnabled && rec.Channel == codeChannelPhone)
-	}
-	if !channelAllowed {
+	if !store.LoginCodeChannelVerifiable(rec.Channel) {
 		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
 	}
 
@@ -1087,7 +1083,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
-	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelSMS && rec.Channel != codeChannelEmailLogin {
+	if !store.LoginCodeChannelVerifiable(rec.Channel) {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" {
@@ -1107,7 +1103,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, ErrCodeExpired
 	}
 	rec = consumed
-	if rec.IssuedUserID != 0 || !rec.SignUpVerified || (rec.Channel != codeChannelPhone && rec.Channel != codeChannelSMS && rec.Channel != codeChannelEmailLogin) {
+	if rec.IssuedUserID != 0 || !rec.SignUpVerified || !store.LoginCodeChannelVerifiable(rec.Channel) {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {

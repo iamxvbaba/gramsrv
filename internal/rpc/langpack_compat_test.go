@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap/zaptest"
@@ -9,10 +10,14 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+
+	applangpack "telesrv/internal/app/langpack"
+	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 func TestLangpackGetLanguagesCurrentAndLegacy(t *testing.T) {
-	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
+	r := newSeededLangpackRouter(t)
 
 	t.Run("current layer", func(t *testing.T) {
 		var in bin.Buffer
@@ -47,7 +52,7 @@ func TestLangpackGetLanguagesCurrentAndLegacy(t *testing.T) {
 }
 
 func TestLangpackGetLanguage(t *testing.T) {
-	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
+	r := newSeededLangpackRouter(t)
 
 	var in bin.Buffer
 	if err := (&tg.LangpackGetLanguageRequest{LangPack: "tdesktop", LangCode: "zh-hans"}).Encode(&in); err != nil {
@@ -69,21 +74,33 @@ func TestLangpackGetLanguage(t *testing.T) {
 		t.Fatalf("language = %+v, want zh-hans", lang)
 	}
 
-	raw := r.langpackLanguage(context.Background(), "tdesktop", "en-raw")
+	raw, err := r.langpackLanguage(context.Background(), "tdesktop", "en-raw")
+	if err != nil {
+		t.Fatalf("language(en-raw): %v", err)
+	}
 	if raw.LangCode != "en" {
 		t.Fatalf("language(en-raw) = %+v, want en", raw)
+	}
+	if _, err := r.langpackLanguage(context.Background(), "tdesktop", "zh"); err == nil || !strings.Contains(err.Error(), "LANG_CODE_NOT_SUPPORTED") {
+		t.Fatalf("language(zh) error = %v, want LANG_CODE_NOT_SUPPORTED", err)
 	}
 }
 
 func TestLangpackAndroidPersianLanguage(t *testing.T) {
-	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
+	r := newSeededLangpackRouter(t)
 
-	lang := r.langpackLanguage(context.Background(), "android", "fa")
-	if lang.LangCode != "fa" || lang.PluralCode != "fa" || lang.Name != "Persian" || lang.NativeName != "فارسی" || !lang.Rtl {
+	lang, err := r.langpackLanguage(context.Background(), "android", "fa")
+	if err != nil {
+		t.Fatalf("android fa language: %v", err)
+	}
+	if lang.LangCode != "fa" || lang.PluralCode != "fa" || lang.NativeName != "فارسی" || !lang.Rtl {
 		t.Fatalf("android fa language = %+v", lang)
 	}
 
-	languages := r.langpackLanguages(androidClientContext(), "")
+	languages, err := r.langpackLanguages(androidClientContext(), "")
+	if err != nil {
+		t.Fatalf("android languages: %v", err)
+	}
 	for _, item := range languages {
 		if item.LangCode == "fa" {
 			return
@@ -189,6 +206,53 @@ func TestLegacyAccountRegisterDevice(t *testing.T) {
 	if _, ok := ok.(*tg.BoolTrue); !ok {
 		t.Fatalf("legacy account.registerDevice = false, want true")
 	}
+}
+
+func newSeededLangpackRouter(t *testing.T) *Router {
+	t.Helper()
+	return New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		LangPack: seededLangPackService(t),
+	}, zaptest.NewLogger(t), clock.System)
+}
+
+func seededLangPackService(t testing.TB) LangPackService {
+	t.Helper()
+	ctx := context.Background()
+	store := memory.NewLangPackStore()
+	for _, pack := range []domain.LangPack{
+		{
+			LangPack: "tdesktop",
+			LangCode: "en",
+			Version:  1,
+			Strings:  []domain.LangPackString{{Key: "lng_language_name", Value: "English"}},
+		},
+		{
+			LangPack: "tdesktop",
+			LangCode: "zh-hans",
+			Version:  1,
+			Strings:  []domain.LangPackString{{Key: "lng_language_name", Value: "简体中文"}},
+		},
+		{
+			LangPack: "android",
+			LangCode: "en",
+			Version:  1,
+			Strings:  []domain.LangPackString{{Key: "LanguageName", Value: "English"}},
+		},
+		{
+			LangPack: "android",
+			LangCode: "fa",
+			Version:  1,
+			Strings: []domain.LangPackString{
+				{Key: "LanguageName", Value: "انگلیسی"},
+				{Key: "TranslateLanguageFA", Value: "فارسی"},
+			},
+		},
+	} {
+		if err := store.UpsertPack(ctx, pack); err != nil {
+			t.Fatalf("seed %s/%s: %v", pack.LangPack, pack.LangCode, err)
+		}
+	}
+	return applangpack.NewService(store)
 }
 
 func dispatchLangpackLanguages(t *testing.T, r *Router, ctx context.Context, in *bin.Buffer) []tg.LangPackLanguage {

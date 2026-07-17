@@ -341,6 +341,12 @@ func TestEmailSetupVerificationAuthorizesSignUpWithout777000Message(t *testing.T
 	if _, _, err := authSvc.SignUp(ctx, domain.Authorization{}, phone, hash, "Direct", "Email"); !errors.Is(err, ErrCodeInvalid) {
 		t.Fatalf("SignUp before email setup err=%v, want ErrCodeInvalid", err)
 	}
+	if _, _, _, err := authSvc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345"); !errors.Is(err, ErrCodeInvalid) {
+		t.Fatalf("WebK SignIn with setup-required placeholder err=%v, want ErrCodeInvalid", err)
+	}
+	if _, _, _, err := authSvc.SignInWithEmail(ctx, domain.Authorization{}, phone, hash, "12345"); !errors.Is(err, ErrCodeInvalid) {
+		t.Fatalf("native SignInWithEmail with setup-required placeholder err=%v, want ErrCodeInvalid", err)
+	}
 	if _, _, err := accountSvc.SendLoginEmailCode(ctx, 0, phone, hash, "new@example.test", true); err != nil {
 		t.Fatalf("SendLoginEmailCode: %v", err)
 	}

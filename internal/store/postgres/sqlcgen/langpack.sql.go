@@ -9,6 +9,46 @@ import (
 	"context"
 )
 
+const deleteLangPackMeta = `-- name: DeleteLangPackMeta :exec
+DELETE FROM lang_packs
+WHERE lang_pack = $1 AND lang_code = $2
+`
+
+type DeleteLangPackMetaParams struct {
+	LangPack string
+	LangCode string
+}
+
+func (q *Queries) DeleteLangPackMeta(ctx context.Context, arg DeleteLangPackMetaParams) error {
+	_, err := q.db.Exec(ctx, deleteLangPackMeta, arg.LangPack, arg.LangCode)
+	return err
+}
+
+const deleteLangPackSeedHash = `-- name: DeleteLangPackSeedHash :exec
+DELETE FROM seed_states
+WHERE key = $1
+`
+
+func (q *Queries) DeleteLangPackSeedHash(ctx context.Context, key string) error {
+	_, err := q.db.Exec(ctx, deleteLangPackSeedHash, key)
+	return err
+}
+
+const deleteLangPackStrings = `-- name: DeleteLangPackStrings :exec
+DELETE FROM lang_pack_strings
+WHERE lang_pack = $1 AND lang_code = $2
+`
+
+type DeleteLangPackStringsParams struct {
+	LangPack string
+	LangCode string
+}
+
+func (q *Queries) DeleteLangPackStrings(ctx context.Context, arg DeleteLangPackStringsParams) error {
+	_, err := q.db.Exec(ctx, deleteLangPackStrings, arg.LangPack, arg.LangCode)
+	return err
+}
+
 const getLangPackMeta = `-- name: GetLangPackMeta :one
 SELECT lang_pack, lang_code, version, strings_count
 FROM lang_packs
@@ -37,6 +77,19 @@ func (q *Queries) GetLangPackMeta(ctx context.Context, arg GetLangPackMetaParams
 		&i.StringsCount,
 	)
 	return i, err
+}
+
+const getLangPackSeedHash = `-- name: GetLangPackSeedHash :one
+SELECT content_hash
+FROM seed_states
+WHERE key = $1
+`
+
+func (q *Queries) GetLangPackSeedHash(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRow(ctx, getLangPackSeedHash, key)
+	var content_hash string
+	err := row.Scan(&content_hash)
+	return content_hash, err
 }
 
 const getLangPackStringsByKeys = `-- name: GetLangPackStringsByKeys :many
@@ -93,6 +146,115 @@ func (q *Queries) GetLangPackStringsByKeys(ctx context.Context, arg GetLangPackS
 			&i.ManyValue,
 			&i.OtherValue,
 			&i.Deleted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLangPackCodes = `-- name: ListLangPackCodes :many
+SELECT lang_code
+FROM lang_packs
+WHERE lang_pack = $1
+ORDER BY lang_code
+`
+
+func (q *Queries) ListLangPackCodes(ctx context.Context, langPack string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listLangPackCodes, langPack)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var lang_code string
+		if err := rows.Scan(&lang_code); err != nil {
+			return nil, err
+		}
+		items = append(items, lang_code)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLangPackLanguages = `-- name: ListLangPackLanguages :many
+SELECT
+  p.lang_pack,
+  p.lang_code,
+  p.version,
+  p.strings_count,
+  COALESCE(
+    MAX(s.value) FILTER (WHERE s.key = 'LanguageNameInEnglish'),
+    MAX(s.value) FILTER (WHERE s.key = 'Localization.EnglishLanguageName'),
+    ''
+  )::text AS name,
+  CASE
+    WHEN p.lang_pack = 'android' THEN COALESCE(
+      MAX(s.value) FILTER (WHERE s.key = 'TranslateLanguage' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1))),
+      MAX(s.value) FILTER (WHERE s.key = 'PassportLanguage_' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1))),
+      MAX(s.value) FILTER (WHERE s.key = 'LanguageName'),
+      ''
+    )
+    ELSE COALESCE(
+      MAX(s.value) FILTER (WHERE s.key = 'lng_language_name'),
+      MAX(s.value) FILTER (WHERE s.key = 'LanguageName'),
+      MAX(s.value) FILTER (WHERE s.key = 'Localization.LanguageName'),
+      MAX(s.value) FILTER (WHERE s.key = 'TranslateLanguage' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1))),
+      MAX(s.value) FILTER (WHERE s.key = 'PassportLanguage_' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1))),
+      ''
+    )
+  END::text AS native_name
+FROM lang_packs p
+LEFT JOIN lang_pack_strings s
+  ON s.lang_pack = p.lang_pack
+ AND s.lang_code = p.lang_code
+ AND s.key = ANY(ARRAY[
+   'lng_language_name',
+   'LanguageName',
+   'LanguageNameInEnglish',
+   'Localization.LanguageName',
+   'Localization.EnglishLanguageName',
+   'TranslateLanguage' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1)),
+   'PassportLanguage_' || upper(split_part(replace(p.lang_code, '-', '_'), '_', 1))
+ ]::text[])
+ AND NOT s.deleted
+WHERE p.lang_pack = $1
+GROUP BY p.lang_pack, p.lang_code, p.version, p.strings_count
+ORDER BY p.lang_code
+`
+
+type ListLangPackLanguagesRow struct {
+	LangPack     string
+	LangCode     string
+	Version      int32
+	StringsCount int32
+	Name         string
+	NativeName   string
+}
+
+func (q *Queries) ListLangPackLanguages(ctx context.Context, langPack string) ([]ListLangPackLanguagesRow, error) {
+	rows, err := q.db.Query(ctx, listLangPackLanguages, langPack)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLangPackLanguagesRow
+	for rows.Next() {
+		var i ListLangPackLanguagesRow
+		if err := rows.Scan(
+			&i.LangPack,
+			&i.LangCode,
+			&i.Version,
+			&i.StringsCount,
+			&i.Name,
+			&i.NativeName,
 		); err != nil {
 			return nil, err
 		}
@@ -166,6 +328,24 @@ func (q *Queries) ListLangPackStrings(ctx context.Context, arg ListLangPackStrin
 		return nil, err
 	}
 	return items, nil
+}
+
+const putLangPackSeedHash = `-- name: PutLangPackSeedHash :exec
+INSERT INTO seed_states (key, content_hash)
+VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE SET
+  content_hash = EXCLUDED.content_hash,
+  updated_at = now()
+`
+
+type PutLangPackSeedHashParams struct {
+	Key         string
+	ContentHash string
+}
+
+func (q *Queries) PutLangPackSeedHash(ctx context.Context, arg PutLangPackSeedHashParams) error {
+	_, err := q.db.Exec(ctx, putLangPackSeedHash, arg.Key, arg.ContentHash)
+	return err
 }
 
 const upsertLangPackMeta = `-- name: UpsertLangPackMeta :exec

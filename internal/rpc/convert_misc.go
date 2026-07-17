@@ -2,10 +2,31 @@ package rpc
 
 import (
 	"encoding/json"
+	"telesrv/internal/domain"
+
 	"github.com/iamxvbaba/td/tg"
 	"sort"
-	"telesrv/internal/domain"
 )
+
+func tgLangPackLanguages(items []domain.LangPackLanguage) []tg.LangPackLanguage {
+	out := make([]tg.LangPackLanguage, 0, len(items))
+	for _, item := range items {
+		out = append(out, tg.LangPackLanguage{
+			Official:        item.Official,
+			Rtl:             item.Rtl,
+			Beta:            item.Beta,
+			Name:            item.Name,
+			NativeName:      item.NativeName,
+			LangCode:        item.LangCode,
+			BaseLangCode:    item.BaseLangCode,
+			PluralCode:      item.PluralCode,
+			StringsCount:    item.StringsCount,
+			TranslatedCount: item.TranslatedCount,
+			TranslationsURL: item.TranslationsURL,
+		})
+	}
+	return out
+}
 
 func tgLangPackStrings(items []domain.LangPackString) []tg.LangPackStringClass {
 	out := make([]tg.LangPackStringClass, 0, len(items))

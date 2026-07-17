@@ -191,11 +191,11 @@ func (s *CodeStore) InvalidateLoginCode(_ context.Context, hash, phone string) (
 }
 
 func loginCodeVerifiable(record store.PhoneCode) bool {
-	return record.Channel == store.PhoneCodeChannelPhone || record.Channel == store.PhoneCodeChannelSMS || record.Channel == store.PhoneCodeChannelEmailLogin
+	return store.LoginCodeChannelVerifiable(record.Channel)
 }
 
 func loginCodeTakeable(record store.PhoneCode) bool {
-	return loginCodeVerifiable(record) || record.Channel == store.PhoneCodeChannelEmailSetupRequired
+	return store.LoginCodeChannelTakeable(record.Channel)
 }
 
 func (s *CodeStore) liveCodeLocked(hash string) (codeEntry, bool) {

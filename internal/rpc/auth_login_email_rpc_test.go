@@ -47,6 +47,57 @@ func TestEmailSentCodeUsesDeliveryLength(t *testing.T) {
 	}
 }
 
+func TestAuthSignInRoutesOfficialEmailCodeCarriers(t *testing.T) {
+	const (
+		phone = "+86 188 0000 0021"
+		hash  = "hash-email-login"
+		code  = "654321"
+	)
+	tests := []struct {
+		name               string
+		request            func() *tg.AuthSignInRequest
+		wantPhoneCodeCalls int
+		wantEmailCodeCalls int
+	}{
+		{
+			name: "webk_phone_code",
+			request: func() *tg.AuthSignInRequest {
+				return &tg.AuthSignInRequest{PhoneNumber: phone, PhoneCodeHash: hash, PhoneCode: code}
+			},
+			wantPhoneCodeCalls: 1,
+		},
+		{
+			name: "tdesktop_android_email_verification",
+			request: func() *tg.AuthSignInRequest {
+				req := &tg.AuthSignInRequest{PhoneNumber: phone, PhoneCodeHash: hash}
+				req.SetEmailVerification(&tg.EmailVerificationCode{Code: code})
+				return req
+			},
+			wantEmailCodeCalls: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			authSvc := &captureAuthService{signInUser: domain.User{ID: 100200301, Phone: "8618800000021", FirstName: "Alice"}}
+			r := New(Config{}, Deps{Auth: authSvc}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000000, 0)})
+
+			if _, err := r.onAuthSignIn(context.Background(), tc.request()); err != nil {
+				t.Fatalf("onAuthSignIn: %v", err)
+			}
+			if authSvc.signInCount != tc.wantPhoneCodeCalls || authSvc.signInWithEmailCount != tc.wantEmailCodeCalls {
+				t.Fatalf("SignIn/SignInWithEmail calls=%d/%d, want %d/%d", authSvc.signInCount, authSvc.signInWithEmailCount, tc.wantPhoneCodeCalls, tc.wantEmailCodeCalls)
+			}
+			if tc.wantPhoneCodeCalls == 1 && (authSvc.signInPhone != phone || authSvc.signInHash != hash || authSvc.signInCode != code) {
+				t.Fatalf("SignIn proof=%q/%q/%q, want %q/%q/%q", authSvc.signInPhone, authSvc.signInHash, authSvc.signInCode, phone, hash, code)
+			}
+			if tc.wantEmailCodeCalls == 1 && (authSvc.signInWithEmailPhone != phone || authSvc.signInWithEmailHash != hash || authSvc.signInWithEmailCode != code) {
+				t.Fatalf("SignInWithEmail proof=%q/%q/%q, want %q/%q/%q", authSvc.signInWithEmailPhone, authSvc.signInWithEmailHash, authSvc.signInWithEmailCode, phone, hash, code)
+			}
+		})
+	}
+}
+
 func TestAccountVerifyEmailLoginSetupReturnsSentCodeSuccess(t *testing.T) {
 	user := domain.User{
 		ID:         100200300,

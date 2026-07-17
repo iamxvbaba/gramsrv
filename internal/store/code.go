@@ -16,6 +16,26 @@ const (
 	PhoneCodeChannelEmailSetupRequired = "email_setup_required"
 )
 
+// LoginCodeChannelVerifiable reports whether a code record belongs to the
+// auth.signIn/auth.signUp state machine. The TL field carrying the proof
+// (phone_code or email_verification) is deliberately not part of this
+// decision: official clients use both fields for an email-delivered login
+// code, while the record channel remains the server-side delivery fact.
+func LoginCodeChannelVerifiable(channel string) bool {
+	switch channel {
+	case PhoneCodeChannelPhone, PhoneCodeChannelSMS, PhoneCodeChannelEmailLogin:
+		return true
+	default:
+		return false
+	}
+}
+
+// LoginCodeChannelTakeable includes the setup-required placeholder because
+// cancel/resend may replace it, although it is never valid auth.signIn proof.
+func LoginCodeChannelTakeable(channel string) bool {
+	return LoginCodeChannelVerifiable(channel) || channel == PhoneCodeChannelEmailSetupRequired
+}
+
 // PhoneCodeVersionCurrent is the only version accepted by the atomic login
 // state machine. Version zero is the pre-state-machine shape and deliberately
 // fails closed instead of being normalized on read.

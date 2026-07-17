@@ -775,6 +775,7 @@ type LangPackService interface {
 	GetLangPack(ctx context.Context, langPack, langCode string) (domain.LangPack, error)
 	GetDifference(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error)
 	GetStrings(ctx context.Context, langPack, langCode string, keys []string) (domain.LangPack, error)
+	ListLanguages(ctx context.Context, langPack string) ([]domain.LangPackLanguage, error)
 }
 
 // AIComposeService 抽象客户端输入框 AI 改写/润色与 aicompose tones 目录。

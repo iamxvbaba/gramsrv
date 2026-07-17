@@ -17,15 +17,21 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.LangpackGetLanguagesRequest](d, tlprofile.SemanticMethodLangpackGetLanguages, func(ctx context.Context, layerRequest *tg.LangpackGetLanguagesRequest) (any, error) {
 		langPack := layerRequest.
 			LangPack
-		_ = langPack
 
-		return r.langpackLanguages(ctx, langPack), nil
+		languages, err := r.langpackLanguages(ctx, langPack)
+		if err != nil {
+			return nil, internalErr()
+		}
+		return languages, nil
 	})
 	registerRPC[*tg.LangpackGetLanguageRequest](d, tlprofile.SemanticMethodLangpackGetLanguage, func(ctx context.Context, req *tg.LangpackGetLanguageRequest) (any, error) {
 		if req == nil {
 			return nil, inputConstructorInvalidErr()
 		}
-		lang := r.langpackLanguage(ctx, req.LangPack, req.LangCode)
+		lang, err := r.langpackLanguage(ctx, req.LangPack, req.LangCode)
+		if err != nil {
+			return nil, err
+		}
 		return &lang, nil
 	})
 	registerRPC[*tg.LangpackGetLangPackRequest](d, tlprofile.SemanticMethodLangpackGetLangPack, func(ctx context.Context, req *tg.LangpackGetLangPackRequest) (any, error) {
@@ -71,7 +77,7 @@ func langPackOrClient(ctx context.Context, langPack string) string {
 	return langPackFromClient(ctx)
 }
 
-func (r *Router) langpackLanguage(ctx context.Context, langPack, langCode string) tg.LangPackLanguage {
+func (r *Router) langpackLanguage(ctx context.Context, langPack, langCode string) (tg.LangPackLanguage, error) {
 	if langCode == "" {
 		if info, ok := ClientInfoFrom(ctx); ok && info.LangCode != "" {
 			langCode = info.LangCode
@@ -80,61 +86,31 @@ func (r *Router) langpackLanguage(ctx context.Context, langPack, langCode string
 		}
 	}
 	langCode = normalizeLangpackCode(langCode)
-	languages := r.langpackLanguages(ctx, langPack)
+	languages, err := r.langpackLanguages(ctx, langPack)
+	if err != nil {
+		return tg.LangPackLanguage{}, internalErr()
+	}
 	for _, lang := range languages {
 		if strings.ToLower(lang.LangCode) == langCode {
-			return lang
+			return lang, nil
 		}
 	}
-	for _, lang := range languages {
-		if strings.ToLower(lang.PluralCode) == langCode {
-			return lang
-		}
-	}
-	return languages[0]
+	return tg.LangPackLanguage{}, langCodeNotSupportedErr()
 }
 
-func (r *Router) langpackLanguages(ctx context.Context, langPack string) []tg.LangPackLanguage {
+func (r *Router) langpackLanguages(ctx context.Context, langPack string) ([]tg.LangPackLanguage, error) {
 	if langPack == "" {
 		langPack = langPackFromClient(ctx)
 	}
 	langPack = strings.ToLower(langPack)
-	languages := []tg.LangPackLanguage{
-		{
-			Official:        true,
-			Name:            "English",
-			NativeName:      "English",
-			LangCode:        "en",
-			PluralCode:      "en",
-			StringsCount:    0,
-			TranslatedCount: 0,
-			TranslationsURL: "",
-		},
-		{
-			Official:        true,
-			Name:            "Chinese (Simplified)",
-			NativeName:      "Chinese (Simplified)",
-			LangCode:        "zh-hans",
-			PluralCode:      "zh",
-			StringsCount:    0,
-			TranslatedCount: 0,
-			TranslationsURL: "",
-		},
+	if r.deps.LangPack == nil {
+		return []tg.LangPackLanguage{}, nil
 	}
-	if langPack == "android" {
-		languages = append(languages, tg.LangPackLanguage{
-			Official:        true,
-			Rtl:             true,
-			Name:            "Persian",
-			NativeName:      "فارسی",
-			LangCode:        "fa",
-			PluralCode:      "fa",
-			StringsCount:    11002,
-			TranslatedCount: 11002,
-			TranslationsURL: "",
-		})
+	languages, err := r.deps.LangPack.ListLanguages(ctx, langPack)
+	if err != nil {
+		return nil, err
 	}
-	return languages
+	return tgLangPackLanguages(languages), nil
 }
 
 func langPackFromClient(ctx context.Context) string {
@@ -171,5 +147,6 @@ func normalizeLangpackCode(langCode string) string {
 	if code == "" {
 		return "en"
 	}
+	code = strings.ReplaceAll(code, "_", "-")
 	return strings.TrimSuffix(code, "-raw")
 }

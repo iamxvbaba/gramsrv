@@ -35,7 +35,14 @@ type captureAuthService struct {
 	completedPasswordKey  [8]byte
 	completePasswordCount int
 	codeDelivery          domain.AuthCodeDelivery
+	signInCount           int
+	signInPhone           string
+	signInHash            string
+	signInCode            string
 	signInWithEmailCount  int
+	signInWithEmailPhone  string
+	signInWithEmailHash   string
+	signInWithEmailCode   string
 }
 
 type blockingUserAuthService struct {
@@ -188,15 +195,22 @@ func (s *captureAuthService) CancelCode(context.Context, string, string) error {
 	return nil
 }
 
-func (s *captureAuthService) SignIn(context.Context, domain.Authorization, string, string, string) (domain.User, domain.Message, bool, error) {
+func (s *captureAuthService) SignIn(_ context.Context, _ domain.Authorization, phone, hash, code string) (domain.User, domain.Message, bool, error) {
+	s.signInCount++
+	s.signInPhone = phone
+	s.signInHash = hash
+	s.signInCode = code
 	if s.signInUser.ID != 0 {
 		return s.signInUser, domain.Message{}, false, nil
 	}
 	return domain.User{}, domain.Message{}, false, nil
 }
 
-func (s *captureAuthService) SignInWithEmail(context.Context, domain.Authorization, string, string, string) (domain.User, domain.Message, bool, error) {
+func (s *captureAuthService) SignInWithEmail(_ context.Context, _ domain.Authorization, phone, hash, code string) (domain.User, domain.Message, bool, error) {
 	s.signInWithEmailCount++
+	s.signInWithEmailPhone = phone
+	s.signInWithEmailHash = hash
+	s.signInWithEmailCode = code
 	if s.signInUser.ID != 0 {
 		return s.signInUser, domain.Message{}, false, nil
 	}

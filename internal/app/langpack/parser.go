@@ -2,6 +2,7 @@ package langpack
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,8 @@ import (
 )
 
 var tdesktopStringRE = regexp.MustCompile(`(?s)"((?:\\.|[^"\\])*)"\s*=\s*"((?:\\.|[^"\\])*)";`)
+var langPackNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+var langCodeRE = regexp.MustCompile(`^[a-z0-9]{1,16}(?:-[a-z0-9]{1,16})*$`)
 
 // ParseTDesktopFile 解析客户端 .strings 文件为 domain 语言包。
 func ParseTDesktopFile(path string) (domain.LangPack, error) {
@@ -81,6 +84,17 @@ func packFromFilename(path string) (domain.LangPack, error) {
 	}
 	if langPack == "" || langCode == "" {
 		return domain.LangPack{}, fmt.Errorf("invalid langpack filename %q", filepath.Base(path))
+	}
+	langPack = normalizePack(langPack)
+	langCode = normalizeCode(langCode)
+	if !langPackNameRE.MatchString(langPack) {
+		return domain.LangPack{}, fmt.Errorf("invalid langpack name %q in %q", langPack, filepath.Base(path))
+	}
+	if len(langCode) > 64 || !langCodeRE.MatchString(langCode) {
+		return domain.LangPack{}, fmt.Errorf("invalid language code %q in %q", langCode, filepath.Base(path))
+	}
+	if version <= 0 || version > math.MaxInt32 {
+		return domain.LangPack{}, fmt.Errorf("invalid langpack version %d in %q", version, filepath.Base(path))
 	}
 	return domain.LangPack{
 		LangPack: langPack,
