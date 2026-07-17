@@ -289,6 +289,13 @@ type SendPrivateTextRequest struct {
 	RichMessage *MessageRichMessage
 }
 
+// HasContent reports whether the command contains a client-visible message payload.
+// TDesktop rich-message posting intentionally leaves Message empty, so every send
+// boundary must treat text, media, and rich_message as equivalent content sources.
+func (r SendPrivateTextRequest) HasContent() bool {
+	return r.Message != "" || !r.Media.IsZero() || !r.RichMessage.IsZero()
+}
+
 // PrivateSendReplayRequest identifies one already-committed private send without carrying any
 // mutable or resolver-derived message fields.  The fingerprint is computed at the original
 // request boundary and must be a complete SHA-256 value.

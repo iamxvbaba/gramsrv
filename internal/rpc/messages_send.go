@@ -208,6 +208,8 @@ func messageSendErr(err error) error {
 		return replyMessageIDInvalidErr()
 	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):
 		return randomIDDuplicateErr()
+	case errors.Is(err, domain.ErrMessageEmpty):
+		return messageEmptyErr()
 	default:
 		return internalErr()
 	}

@@ -45,6 +45,9 @@ func (s *MessageStore) Create(_ context.Context, msg domain.Message) (domain.Mes
 }
 
 func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+	if !req.HasContent() {
+		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
+	}
 	fingerprint, err := store.PrivateSendFingerprint(req)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err

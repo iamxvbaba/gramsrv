@@ -180,6 +180,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			zap.Int64("random_id", p.randomID),
 			zap.Int("message_len", utf8.RuneCountInString(p.message)),
 			zap.Bool("has_media", p.media != nil && !p.media.IsZero()),
+			zap.Bool("has_rich_message", !p.richMessage.IsZero()),
 			zap.Bool("has_reply_to", replyTo != nil),
 			zap.Bool("clear_draft", p.clearDraft),
 			zap.Int64("via_bot_id", p.viaBotID),

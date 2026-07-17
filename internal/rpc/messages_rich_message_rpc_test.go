@@ -27,6 +27,51 @@ func richTextBlocksWith(title, paragraph string) []tg.PageBlockClass {
 	}
 }
 
+func richHeadingTableBlocks() []tg.PageBlockClass {
+	return []tg.PageBlockClass{
+		&tg.PageBlockHeading2{Text: &tg.TextPlain{Text: "Quarterly results"}},
+		&tg.PageBlockTable{
+			Bordered: true,
+			Striped:  true,
+			Title:    &tg.TextPlain{Text: "Revenue"},
+			Rows: []tg.PageTableRow{
+				{Cells: []tg.PageTableCell{
+					{Header: true, Text: &tg.TextPlain{Text: "Quarter"}},
+					{Header: true, Text: &tg.TextPlain{Text: "Amount"}},
+				}},
+				{Cells: []tg.PageTableCell{
+					{Text: &tg.TextPlain{Text: "Q1"}},
+					{AlignRight: true, Text: &tg.TextPlain{Text: "100"}},
+				}},
+			},
+		},
+	}
+}
+
+func assertRichHeadingTableBlocks(t *testing.T, label string, rich tg.RichMessage) {
+	t.Helper()
+	if len(rich.Blocks) != 2 {
+		t.Fatalf("%s: blocks = %d, want heading and table", label, len(rich.Blocks))
+	}
+	heading, ok := rich.Blocks[0].(*tg.PageBlockHeading2)
+	if !ok {
+		t.Fatalf("%s: block[0] = %T, want *tg.PageBlockHeading2", label, rich.Blocks[0])
+	}
+	if text, ok := heading.Text.(*tg.TextPlain); !ok || text.Text != "Quarterly results" {
+		t.Fatalf("%s: heading text = %+v", label, heading.Text)
+	}
+	table, ok := rich.Blocks[1].(*tg.PageBlockTable)
+	if !ok {
+		t.Fatalf("%s: block[1] = %T, want *tg.PageBlockTable", label, rich.Blocks[1])
+	}
+	if !table.Bordered || !table.Striped || len(table.Rows) != 2 || len(table.Rows[0].Cells) != 2 {
+		t.Fatalf("%s: table shape = %+v", label, table)
+	}
+	if !table.Rows[0].Cells[0].Header {
+		t.Fatalf("%s: first table cell lost header flag", label)
+	}
+}
+
 func richEmptyCaption() tg.PageCaption {
 	return tg.PageCaption{
 		Text:   &tg.TextEmpty{},
@@ -417,9 +462,9 @@ func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 	assertRichTextBlocks(t, "getRichMessage", rich)
 }
 
-// TestSendMessageRichOnlyTextBlocksRoundTrip 覆盖 TDesktop rich editor 的真实发送形态：
-// messages.sendMessage 带 f_rich_message，但 message:string 为空。
-func TestSendMessageRichOnlyTextBlocksRoundTrip(t *testing.T) {
+// TestSendMessageRichOnlyHeadingTableRoundTrip 覆盖 TDesktop rich editor 的真实发送形态：
+// messages.sendMessage 带 f_rich_message（标题与表格 blocks），但 message:string 为空。
+func TestSendMessageRichOnlyHeadingTableRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
 
@@ -427,8 +472,7 @@ func TestSendMessageRichOnlyTextBlocksRoundTrip(t *testing.T) {
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
 		RandomID: 7101,
 		RichMessage: &tg.InputRichMessage{
-			Rtl:    true,
-			Blocks: richTextBlocks(),
+			Blocks: richHeadingTableBlocks(),
 		},
 	})
 	if err != nil {
@@ -442,7 +486,32 @@ func TestSendMessageRichOnlyTextBlocksRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("rich-only echo missing rich message")
 	}
-	assertRichTextBlocks(t, "rich-only echo", rich)
+	assertRichHeadingTableBlocks(t, "rich-only echo", rich)
+
+	got, err := r.onMessagesGetMessages(WithUserID(ctx, owner.ID), []tg.InputMessageClass{&tg.InputMessageID{ID: echo.ID}})
+	if err != nil {
+		t.Fatalf("get rich-only message: %v", err)
+	}
+	stored := singleStoredMessage(t, got)
+	rich, ok = stored.GetRichMessage()
+	if !ok {
+		t.Fatalf("getMessages missing rich-only message")
+	}
+	assertRichHeadingTableBlocks(t, "getMessages", rich)
+
+	gotRich, err := r.onMessagesGetRichMessage(WithUserID(ctx, owner.ID), &tg.MessagesGetRichMessageRequest{
+		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		ID:   echo.ID,
+	})
+	if err != nil {
+		t.Fatalf("get rich-only message body: %v", err)
+	}
+	stored = singleStoredMessage(t, gotRich)
+	rich, ok = stored.GetRichMessage()
+	if !ok {
+		t.Fatalf("getRichMessage missing rich-only message")
+	}
+	assertRichHeadingTableBlocks(t, "getRichMessage", rich)
 }
 
 func TestEditMessageRichOnlyPrivateRoundTrip(t *testing.T) {

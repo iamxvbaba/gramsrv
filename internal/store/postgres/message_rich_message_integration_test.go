@@ -3,6 +3,7 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -54,7 +55,6 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 		SenderUserID:    sender.ID,
 		RecipientUserID: recipient.ID,
 		RandomID:        time.Now().UnixNano(),
-		Message:         "rich",
 		RichMessage:     rich,
 		Date:            int(time.Now().Unix()),
 	})
@@ -120,5 +120,17 @@ func TestSendPrivateRichMessageSurvivesReadPaths(t *testing.T) {
 	}
 	if !sawEvent {
 		t.Fatal("no new_message event for recipient")
+	}
+
+	// The shared store invariant still rejects a command with no text, media, or
+	// rich payload; accepting rich-only must not make truly empty rows possible.
+	_, err = messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    sender.ID,
+		RecipientUserID: recipient.ID,
+		RandomID:        time.Now().UnixNano(),
+		Date:            int(time.Now().Unix()),
+	})
+	if !errors.Is(err, domain.ErrMessageEmpty) {
+		t.Fatalf("send empty private message err = %v, want ErrMessageEmpty", err)
 	}
 }

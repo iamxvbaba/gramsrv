@@ -90,6 +90,35 @@ func TestMessageStoreSendPrivateTextCreatesBothOwnerBoxes(t *testing.T) {
 	}
 }
 
+func TestMessageStoreSendPrivateTextContentInvariant(t *testing.T) {
+	ctx := context.Background()
+	messages := NewMessageStore()
+
+	richOnly, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    1000000001,
+		RecipientUserID: 1000000002,
+		RandomID:        191,
+		Date:            1700000191,
+		RichMessage:     &domain.MessageRichMessage{Blocks: validRichMessageBlocks},
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText rich-only: %v", err)
+	}
+	if richOnly.SenderMessage.Body != "" || richOnly.SenderMessage.RichMessage.IsZero() {
+		t.Fatalf("rich-only sender message = %+v, want empty body with rich payload", richOnly.SenderMessage)
+	}
+
+	_, err = messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    1000000001,
+		RecipientUserID: 1000000002,
+		RandomID:        192,
+		Date:            1700000192,
+	})
+	if !errors.Is(err, domain.ErrMessageEmpty) {
+		t.Fatalf("SendPrivateText empty err = %v, want ErrMessageEmpty", err)
+	}
+}
+
 func TestMessageStoreEditRichOnlyMessageUsesFinalContentState(t *testing.T) {
 	ctx := context.Background()
 	messages := NewMessageStore()

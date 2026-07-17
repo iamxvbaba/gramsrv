@@ -107,8 +107,8 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if req.RandomID == 0 {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("send private text: missing random id")
 	}
-	if req.Message == "" && req.Media.IsZero() {
-		return domain.SendPrivateTextResult{}, fmt.Errorf("send private text: empty message")
+	if !req.HasContent() {
+		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
 	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
