@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store/memory"
 )
 
@@ -28,10 +28,10 @@ type testMailSender struct {
 	code string
 }
 
-func (s *testMailSender) SendLoginCode(_ context.Context, to, code string, _ time.Duration) error {
-	s.to = to
-	s.code = code
-	return nil
+func (s *testMailSender) Deliver(_ context.Context, req otpdelivery.Request) (otpdelivery.Result, error) {
+	s.to = req.Recipient
+	s.code = req.Code
+	return otpdelivery.Result{}, nil
 }
 
 func TestConfiguredEmailLoginSendsAndLimitsAttempts(t *testing.T) {
@@ -43,7 +43,9 @@ func TestConfiguredEmailLoginSendsAndLimitsAttempts(t *testing.T) {
 	}
 	emails := &testLoginEmailStore{emails: map[string]string{"15550009101": "alice@example.test"}}
 	sender := &testMailSender{}
+	appDelivery := &captureLoginCodeDelivery{}
 	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginCodeDelivery(appDelivery),
 		WithLoginEmail(LoginEmailOptions{
 			Enabled:    true,
 			CodeLength: 6,
@@ -58,6 +60,9 @@ func TestConfiguredEmailLoginSendsAndLimitsAttempts(t *testing.T) {
 	}
 	if sender.to != "alice@example.test" || len(sender.code) != 6 {
 		t.Fatalf("sent email to/code = %q/%q, want alice@example.test/6 digits", sender.to, sender.code)
+	}
+	if len(appDelivery.requests) != 1 || appDelivery.requests[0].PhoneCodeHash != hash || appDelivery.requests[0].Code != sender.code {
+		t.Fatalf("App-code delivery=%+v, want same email code/hash", appDelivery.requests)
 	}
 	delivery, found, err := svc.CodeDelivery(ctx, hash)
 	if err != nil || !found {
@@ -109,9 +114,11 @@ func TestConfiguredEmailLoginAcceptsCorrectCode(t *testing.T) {
 	}
 	emails := &testLoginEmailStore{emails: map[string]string{"15550009102": "bob@example.test"}}
 	sender := &testMailSender{}
+	appDelivery := &captureLoginCodeDelivery{}
 	var key [8]byte
 	key[0] = 0x91
 	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginCodeDelivery(appDelivery),
 		WithLoginEmail(LoginEmailOptions{
 			Enabled:    true,
 			CodeLength: 5,
@@ -122,6 +129,9 @@ func TestConfiguredEmailLoginAcceptsCorrectCode(t *testing.T) {
 	hash, err := svc.SendCode(ctx, "+15550009102")
 	if err != nil {
 		t.Fatalf("SendCode: %v", err)
+	}
+	if len(appDelivery.requests) != 1 || appDelivery.requests[0].Code != sender.code {
+		t.Fatalf("App-code delivery=%+v, want same email code", appDelivery.requests)
 	}
 	got, _, needSignUp, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: key}, "+15550009102", hash, sender.code)
 	if err != nil {

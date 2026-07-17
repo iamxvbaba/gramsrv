@@ -31,14 +31,14 @@ if record.SignUpVerified == true then
 end
 local channel = record.Channel or ''
 if (record.Purpose or '') ~= '' or (record.Phone or '') ~= ARGV[2]
-    or (channel ~= ARGV[6] and channel ~= ARGV[7])
+	or (channel ~= ARGV[6] and channel ~= ARGV[7] and channel ~= ARGV[8])
     or (record.Code or '') == '' or ARGV[3] == '' then
   return {1, raw}
 end
 if (record.Code or '') ~= ARGV[3] then
   local attempts = tonumber(record.Attempts or 0) + 1
   record.Attempts = attempts
-  record.Revision = ARGV[8]
+  record.Revision = ARGV[9]
   local max_attempts = tonumber(record.MaxAttempts or 0)
   if not max_attempts or max_attempts <= 0 then
     max_attempts = tonumber(ARGV[5]) or 0
@@ -59,7 +59,7 @@ if ARGV[4] == '1' then
     return {1, raw}
   end
   record.SignUpVerified = true
-  record.Revision = ARGV[8]
+	record.Revision = ARGV[9]
   local updated = cjson.encode(record)
   redis.call('SET', KEYS[1], updated, 'KEEPTTL')
   return {2, updated}
@@ -144,7 +144,7 @@ if record.SignUpVerified == true then
 end
 local channel = record.Channel or ''
 if (record.Purpose or '') ~= '' or (record.Phone or '') ~= ARGV[2]
-    or (channel ~= ARGV[3] and channel ~= ARGV[4] and channel ~= ARGV[5]) then
+	or (channel ~= ARGV[3] and channel ~= ARGV[4] and channel ~= ARGV[5] and channel ~= ARGV[6]) then
   return ''
 end
 redis.call('DEL', KEYS[1])
@@ -167,7 +167,7 @@ if tonumber(record.Version or 0) ~= tonumber(ARGV[1]) then
 end
 local channel = record.Channel or ''
 if (record.Purpose or '') ~= '' or (record.Phone or '') ~= ARGV[2]
-    or (channel ~= ARGV[3] and channel ~= ARGV[4])
+	or (channel ~= ARGV[3] and channel ~= ARGV[4] and channel ~= ARGV[5])
     or tonumber(record.IssuedUserID or '0') ~= 0
     or record.SignUpVerified ~= true then
   return ''
@@ -192,7 +192,7 @@ if tonumber(record.Version or 0) ~= tonumber(ARGV[1]) then
 end
 local channel = record.Channel or ''
 if (record.Purpose or '') ~= '' or (record.Phone or '') ~= ARGV[2]
-    or (channel ~= ARGV[3] and channel ~= ARGV[4] and channel ~= ARGV[5]) then
+	or (channel ~= ARGV[3] and channel ~= ARGV[4] and channel ~= ARGV[5] and channel ~= ARGV[6]) then
   return ''
 end
 redis.call('DEL', KEYS[1])
@@ -218,6 +218,7 @@ func (s *CodeStore) VerifyLogin(ctx context.Context, hash, phone, code string, k
 		keep,
 		defaultMaxAttempts,
 		store.PhoneCodeChannelPhone,
+		store.PhoneCodeChannelSMS,
 		store.PhoneCodeChannelEmailLogin,
 		revision,
 	).Result()
@@ -276,6 +277,7 @@ func (s *CodeStore) ConsumeSignUpVerified(ctx context.Context, hash, phone strin
 		true,
 		true,
 		store.PhoneCodeChannelPhone,
+		store.PhoneCodeChannelSMS,
 		store.PhoneCodeChannelEmailLogin,
 	)
 }
@@ -290,6 +292,7 @@ func (s *CodeStore) TakeLoginCode(ctx context.Context, hash, phone string) (stor
 		false,
 		false,
 		store.PhoneCodeChannelPhone,
+		store.PhoneCodeChannelSMS,
 		store.PhoneCodeChannelEmailLogin,
 		store.PhoneCodeChannelEmailSetupRequired,
 	)
@@ -305,6 +308,7 @@ func (s *CodeStore) InvalidateLoginCode(ctx context.Context, hash, phone string)
 		false,
 		true,
 		store.PhoneCodeChannelPhone,
+		store.PhoneCodeChannelSMS,
 		store.PhoneCodeChannelEmailLogin,
 		store.PhoneCodeChannelEmailSetupRequired,
 	)

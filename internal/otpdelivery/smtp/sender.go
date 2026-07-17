@@ -1,4 +1,4 @@
-package mail
+package smtp
 
 import (
 	"bytes"
@@ -8,9 +8,11 @@ import (
 	"mime"
 	"net"
 	stdmail "net/mail"
-	"net/smtp"
+	stdsmtp "net/smtp"
 	"strings"
 	"time"
+
+	"telesrv/internal/otpdelivery"
 )
 
 type Config struct {
@@ -24,15 +26,11 @@ type Config struct {
 	Timeout  time.Duration
 }
 
-type Sender interface {
-	SendLoginCode(ctx context.Context, to, code string, ttl time.Duration) error
-}
-
-type SMTP struct {
+type Sender struct {
 	cfg Config
 }
 
-func NewSMTP(cfg Config) *SMTP {
+func New(cfg Config) *Sender {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
@@ -43,16 +41,26 @@ func NewSMTP(cfg Config) *SMTP {
 	if strings.TrimSpace(cfg.From) == "" {
 		cfg.From = cfg.Username
 	}
-	return &SMTP{cfg: cfg}
+	return &Sender{cfg: cfg}
 }
 
-func (s *SMTP) SendLoginCode(ctx context.Context, to, code string, ttl time.Duration) error {
+func (s *Sender) Deliver(ctx context.Context, req otpdelivery.Request) (otpdelivery.Result, error) {
+	if err := req.Validate(time.Now()); err != nil {
+		return otpdelivery.Result{}, err
+	}
+	if req.Channel != otpdelivery.ChannelEmail {
+		return otpdelivery.Result{}, fmt.Errorf("smtp cannot deliver channel %q", req.Channel)
+	}
+	ttl := time.Until(req.ExpiresAt)
 	subject := "Your telesrv login code"
-	body := fmt.Sprintf("Your telesrv login code is %s.\n\nThis code expires in %s. If you did not request it, ignore this email.\n", code, humanTTL(ttl))
-	return s.send(ctx, to, subject, body)
+	body := fmt.Sprintf("Your telesrv login code is %s.\n\nThis code expires in %s. If you did not request it, ignore this email.\n", req.Code, humanTTL(ttl))
+	if err := s.send(ctx, req.Recipient, subject, body); err != nil {
+		return otpdelivery.Result{}, err
+	}
+	return otpdelivery.Result{}, nil
 }
 
-func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
+func (s *Sender) send(ctx context.Context, to, subject, body string) error {
 	if strings.TrimSpace(s.cfg.Host) == "" {
 		return fmt.Errorf("smtp host is empty")
 	}
@@ -77,15 +85,15 @@ func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
 	defer conn.Close()
 
 	mode := strings.ToLower(strings.TrimSpace(s.cfg.TLSMode))
-	var c *smtp.Client
+	var c *stdsmtp.Client
 	if mode == "tls" {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12})
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			return fmt.Errorf("smtp tls handshake: %w", err)
 		}
-		c, err = smtp.NewClient(tlsConn, s.cfg.Host)
+		c, err = stdsmtp.NewClient(tlsConn, s.cfg.Host)
 	} else {
-		c, err = smtp.NewClient(conn, s.cfg.Host)
+		c, err = stdsmtp.NewClient(conn, s.cfg.Host)
 	}
 	if err != nil {
 		return fmt.Errorf("new smtp client: %w", err)
@@ -101,7 +109,7 @@ func (s *SMTP) send(ctx context.Context, to, subject, body string) error {
 		}
 	}
 	if s.cfg.Username != "" {
-		if err := c.Auth(smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)); err != nil {
+		if err := c.Auth(stdsmtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.Host)); err != nil {
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
@@ -143,6 +151,9 @@ func humanTTL(ttl time.Duration) string {
 	if ttl <= 0 {
 		return "a short time"
 	}
+	// Network and processing time can shave sub-second precision off an exact
+	// configured TTL. Round up so a five-minute code is not rendered as 4m59s.
+	ttl = ttl.Round(time.Second)
 	if ttl%time.Minute == 0 {
 		minutes := int(ttl / time.Minute)
 		if minutes == 1 {

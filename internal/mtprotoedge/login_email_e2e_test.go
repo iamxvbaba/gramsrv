@@ -27,6 +27,7 @@ import (
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/updates"
 	"telesrv/internal/app/users"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/rpc"
 	"telesrv/internal/store/memory"
 )
@@ -36,10 +37,10 @@ type loginEmailTestSender struct {
 	code string
 }
 
-func (s *loginEmailTestSender) SendLoginCode(_ context.Context, to, code string, _ time.Duration) error {
-	s.to = to
-	s.code = code
-	return nil
+func (s *loginEmailTestSender) Deliver(_ context.Context, req otpdelivery.Request) (otpdelivery.Result, error) {
+	s.to = req.Recipient
+	s.code = req.Code
+	return otpdelivery.Result{}, nil
 }
 
 // TestLoginEmailEndToEnd 端到端验证登录邮箱：设备 A 注册并设置登录邮箱（loginChange），

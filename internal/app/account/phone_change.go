@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 )
 
@@ -42,26 +44,59 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 	} else if found && existing.ID != 0 {
 		return "", domain.AuthCodeDelivery{}, domain.ErrPhoneNumberOccupied
 	}
-	if s.codes == nil || strings.TrimSpace(s.phoneChangeCode) == "" {
+	if s.codes == nil || (s.phoneCodeSender == nil && strings.TrimSpace(s.phoneChangeCode) == "") {
 		return "", domain.AuthCodeDelivery{}, fmt.Errorf("phone change code service is not configured")
 	}
 	hash, err := phoneChangeHash()
 	if err != nil {
 		return "", domain.AuthCodeDelivery{}, err
 	}
+	code := s.phoneChangeCode
+	channel := store.PhoneCodeChannelPhone
+	deliveryID := ""
+	if s.phoneCodeSender != nil {
+		code, err = randomDigits(s.phoneCodeLength)
+		if err != nil {
+			return "", domain.AuthCodeDelivery{}, err
+		}
+		deliveryID, err = otpdelivery.NewDeliveryID()
+		if err != nil {
+			return "", domain.AuthCodeDelivery{}, err
+		}
+		channel = store.PhoneCodeChannelSMS
+	}
 	rec := store.PhoneCode{
 		Version:     store.PhoneCodeVersionCurrent,
 		Phone:       phone,
-		Code:        s.phoneChangeCode,
-		Channel:     store.PhoneCodeChannelPhone,
+		Code:        code,
+		DeliveryID:  deliveryID,
+		Channel:     channel,
 		Purpose:     store.PhoneCodePurposeChangePhone,
 		UserID:      userID,
 		AuthKeyID:   authKeyID,
 		SessionID:   sessionID,
 		MaxAttempts: s.phoneChangeMaxAttempts,
 	}
+	expiresAt := time.Now().Add(s.phoneChangeCodeTTL)
 	if err := s.codes.Set(ctx, hash, rec, s.phoneChangeCodeTTL); err != nil {
 		return "", domain.AuthCodeDelivery{}, fmt.Errorf("store phone change code: %w", err)
+	}
+	if s.phoneCodeSender != nil {
+		if err := deliverOTP(ctx, s.phoneCodeSender, otpdelivery.Request{
+			DeliveryID: deliveryID,
+			Purpose:    otpdelivery.PurposeChangePhone,
+			Channel:    otpdelivery.ChannelSMS,
+			Recipient:  phone,
+			Code:       code,
+			ExpiresAt:  expiresAt,
+		}); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			if _, _, cleanupErr := s.codes.ConsumeScoped(cleanupCtx, hash, rec.Scope()); cleanupErr != nil {
+				return "", domain.AuthCodeDelivery{}, errors.Join(err, fmt.Errorf("rollback phone change code: %w", cleanupErr))
+			}
+			return "", domain.AuthCodeDelivery{}, err
+		}
 	}
 	return hash, domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}, nil
 }
@@ -107,7 +142,8 @@ func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, orig
 		return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
 	}
 	consumed := verified.Record
-	if consumed.Version != store.PhoneCodeVersionCurrent || consumed.Scope() != scope || consumed.Channel != store.PhoneCodeChannelPhone {
+	if consumed.Version != store.PhoneCodeVersionCurrent || consumed.Scope() != scope ||
+		(consumed.Channel != store.PhoneCodeChannelPhone && consumed.Channel != store.PhoneCodeChannelSMS) {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeInvalid
 	}
 	if date == 0 {

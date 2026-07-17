@@ -1,4 +1,4 @@
-// Command telesrv 是基于 iamxvbaba/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
+// Command telesrv 是基于 github.com/iamxvbaba/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
 package main
 
 import (
@@ -55,8 +55,10 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
-	mailpkg "telesrv/internal/mail"
 	"telesrv/internal/mtprotoedge"
+	"telesrv/internal/otpdelivery"
+	otpsmtp "telesrv/internal/otpdelivery/smtp"
+	otpwebhook "telesrv/internal/otpdelivery/webhook"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
 	"telesrv/internal/sfu"
@@ -524,18 +526,45 @@ func run(logger *zap.Logger) error {
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
 	}
-	var loginEmailSender mailpkg.Sender
-	if cfg.LoginEmailEnable {
-		loginEmailSender = mailpkg.NewSMTP(mailpkg.Config{
-			Host:     cfg.SMTPHost,
-			Port:     cfg.SMTPPort,
-			Username: cfg.SMTPUsername,
-			Password: cfg.SMTPPassword,
-			From:     cfg.SMTPFrom,
-			FromName: cfg.SMTPFromName,
-			TLSMode:  cfg.SMTPTLSMode,
-			Timeout:  cfg.SMTPTimeout,
+	var webhookSender otpdelivery.Sender
+	if cfg.PhoneCodeDeliveryProvider == "webhook" ||
+		(cfg.LoginEmailEnable && cfg.EmailCodeDeliveryProvider == "webhook") {
+		configured, err := otpwebhook.New(otpwebhook.Config{
+			URL:     cfg.OTPWebhookURL,
+			Secret:  cfg.OTPWebhookSecret,
+			Timeout: cfg.OTPWebhookTimeout,
+			Logger:  logger.Named("otp").Named("webhook"),
 		})
+		if err != nil {
+			return fmt.Errorf("configure OTP webhook: %w", err)
+		}
+		webhookSender = configured
+		logger.Info("OTP Webhook 投递已启用",
+			zap.Bool("phone", cfg.PhoneCodeDeliveryProvider == "webhook"),
+			zap.Bool("email", cfg.LoginEmailEnable && cfg.EmailCodeDeliveryProvider == "webhook"))
+	}
+	var phoneCodeSender otpdelivery.Sender
+	if cfg.PhoneCodeDeliveryProvider == "webhook" {
+		phoneCodeSender = webhookSender
+		accountOptions = append(accountOptions, account.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength))
+	}
+	var loginEmailSender otpdelivery.Sender
+	if cfg.LoginEmailEnable {
+		switch cfg.EmailCodeDeliveryProvider {
+		case "webhook":
+			loginEmailSender = webhookSender
+		default:
+			loginEmailSender = otpsmtp.New(otpsmtp.Config{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				Username: cfg.SMTPUsername,
+				Password: cfg.SMTPPassword,
+				From:     cfg.SMTPFrom,
+				FromName: cfg.SMTPFromName,
+				TLSMode:  cfg.SMTPTLSMode,
+				Timeout:  cfg.SMTPTimeout,
+			})
+		}
 		accountOptions = append(accountOptions,
 			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
 	}
@@ -693,6 +722,14 @@ func run(logger *zap.Logger) error {
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
+		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
+		auth.WithOTPDeliveryFailureObserver(func(_ context.Context, request otpdelivery.Request, err error) {
+			logger.Named("otp").Warn("附加 OTP provider 投递失败，777000 App-code 保持有效",
+				zap.String("delivery_id", request.DeliveryID),
+				zap.String("purpose", string(request.Purpose)),
+				zap.String("channel", string(request.Channel)),
+				zap.Error(err))
+		}),
 		auth.WithLoginEmail(auth.LoginEmailOptions{
 			Enabled:      cfg.LoginEmailEnable,
 			RequireSetup: cfg.LoginEmailRequireSetup,

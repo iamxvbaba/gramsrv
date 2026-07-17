@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -30,8 +31,10 @@ func createUser(t *testing.T, users *memory.UserStore, phone string) domain.User
 }
 
 type captureMailSender struct {
-	to   string
-	code string
+	to       string
+	code     string
+	requests []otpdelivery.Request
+	err      error
 }
 
 type blockingCodeCAS struct {
@@ -116,10 +119,102 @@ func (s *blockingCodeCAS) CompareAndDelete(ctx context.Context, key, revision st
 	return s.CodeStore.CompareAndDelete(ctx, key, revision)
 }
 
-func (s *captureMailSender) SendLoginCode(_ context.Context, to, code string, _ time.Duration) error {
-	s.to = to
-	s.code = code
-	return nil
+func (s *captureMailSender) Deliver(_ context.Context, req otpdelivery.Request) (otpdelivery.Result, error) {
+	s.to = req.Recipient
+	s.code = req.Code
+	s.requests = append(s.requests, req)
+	return otpdelivery.Result{}, s.err
+}
+
+func TestLoginEmailDeliveryCarriesPurposeAndStableID(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	codes := memory.NewCodeStore()
+	sender := &captureMailSender{}
+	svc := NewService(memory.NewPasswordStore(),
+		WithUsers(users),
+		WithLoginEmailVerification(codes, sender, time.Minute, 3, 6))
+	u := createUser(t, users, "15550010150")
+
+	pattern, length, err := svc.SendLoginEmailCode(ctx, u.ID, "", "", "Alice@Example.Test", false)
+	if err != nil {
+		t.Fatalf("SendLoginEmailCode: %v", err)
+	}
+	if pattern == "" || length != 6 || len(sender.requests) != 1 {
+		t.Fatalf("pattern=%q length=%d requests=%d", pattern, length, len(sender.requests))
+	}
+	req := sender.requests[0]
+	if req.DeliveryID == "" || req.Purpose != otpdelivery.PurposeLoginEmailChange || req.Channel != otpdelivery.ChannelEmail ||
+		req.Recipient != "alice@example.test" || len(req.Code) != 6 {
+		t.Fatalf("request = %+v", req)
+	}
+	snapshot, found, err := codes.GetSnapshot(ctx, loginEmailVerifyChangePrefix+fmt.Sprint(u.ID))
+	if err != nil || !found || snapshot.Record.DeliveryID != req.DeliveryID || snapshot.Record.Code != req.Code {
+		t.Fatalf("snapshot=%+v found=%v err=%v", snapshot, found, err)
+	}
+}
+
+func TestLoginEmailSetupDeliveryUsesSetupPurpose(t *testing.T) {
+	ctx := context.Background()
+	codes := memory.NewCodeStore()
+	sender := &captureMailSender{}
+	phone := "15550010151"
+	phoneHash := "setup-purpose-hash"
+	if err := codes.Set(ctx, phoneHash, store.PhoneCode{
+		Version: store.PhoneCodeVersionCurrent,
+		Phone:   phone,
+		Channel: codeChannelEmailSetupRequired,
+	}, time.Minute); err != nil {
+		t.Fatalf("seed setup code: %v", err)
+	}
+	svc := NewService(memory.NewPasswordStore(),
+		WithUsers(memory.NewUserStore()),
+		WithLoginEmailVerification(codes, sender, time.Minute, 3, 6))
+
+	if _, _, err := svc.SendLoginEmailCode(ctx, 0, phone, phoneHash, "new@example.test", true); err != nil {
+		t.Fatalf("SendLoginEmailCode setup: %v", err)
+	}
+	if len(sender.requests) != 1 || sender.requests[0].Purpose != otpdelivery.PurposeLoginEmailSetup {
+		t.Fatalf("requests = %+v", sender.requests)
+	}
+}
+
+func TestLoginEmailExplicitRejectionDeletesOnlyCurrentAttempt(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	codes := memory.NewCodeStore()
+	sender := &captureMailSender{err: &otpdelivery.RejectedError{StatusCode: 400, Code: "RECIPIENT_INVALID"}}
+	svc := NewService(memory.NewPasswordStore(),
+		WithUsers(users),
+		WithLoginEmailVerification(codes, sender, time.Minute, 3, 6))
+	u := createUser(t, users, "15550010152")
+	key := loginEmailVerifyChangePrefix + fmt.Sprint(u.ID)
+
+	if _, _, err := svc.SendLoginEmailCode(ctx, u.ID, "", "", "bad@example.test", false); err == nil {
+		t.Fatal("explicit rejection succeeded")
+	}
+	if _, found, err := codes.Get(ctx, key); err != nil || found {
+		t.Fatalf("rejected code found=%v err=%v", found, err)
+	}
+}
+
+func TestLoginEmailUnknownOutcomeReturnsSuccessAndKeepsCode(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	codes := memory.NewCodeStore()
+	sender := &captureMailSender{err: &otpdelivery.OutcomeUnknownError{Cause: errors.New("ack lost")}}
+	svc := NewService(memory.NewPasswordStore(),
+		WithUsers(users),
+		WithLoginEmailVerification(codes, sender, time.Minute, 3, 6))
+	u := createUser(t, users, "15550010153")
+
+	if _, _, err := svc.SendLoginEmailCode(ctx, u.ID, "", "", "unknown@example.test", false); err != nil {
+		t.Fatalf("unknown outcome: %v", err)
+	}
+	key := loginEmailVerifyChangePrefix + fmt.Sprint(u.ID)
+	if rec, found, err := codes.Get(ctx, key); err != nil || !found || rec.Code != sender.code {
+		t.Fatalf("unknown code=%+v found=%v err=%v", rec, found, err)
+	}
 }
 
 // TestSetLoginEmailPersistsAndMasks 设置登录邮箱后，GetPassword 下发掩码 pattern，原始
