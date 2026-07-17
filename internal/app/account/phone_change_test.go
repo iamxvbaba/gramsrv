@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -28,6 +29,16 @@ type recordingPhoneChangeStore struct {
 	mu    sync.Mutex
 	inner store.PhoneChangeStore
 	last  domain.PhoneChangeRequest
+}
+
+type trackingPhoneCodeStore struct {
+	store.CodeStore
+	lastHash string
+}
+
+func (s *trackingPhoneCodeStore) Set(ctx context.Context, hash string, code store.PhoneCode, ttl time.Duration) error {
+	s.lastHash = hash
+	return s.CodeStore.Set(ctx, hash, code, ttl)
 }
 
 func (s *recordingPhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChangeRequest) (domain.PhoneChangeResult, error) {
@@ -65,6 +76,53 @@ func newPhoneChangeFixture(t *testing.T) phoneChangeFixture {
 		WithPhoneChange(changes, auths, codes, nil, "12345", time.Minute, 3),
 	)
 	return phoneChangeFixture{ctx: ctx, service: service, users: users, auths: auths, codes: codes, events: events, user: u, authKeyID: authKeyID, changes: changes}
+}
+
+func TestPhoneChangeWebhookDeliversRandomScopedCode(t *testing.T) {
+	f := newPhoneChangeFixture(t)
+	sender := &captureMailSender{}
+	f.service.phoneCodeSender = sender
+	f.service.phoneCodeLength = 6
+	f.service.phoneChangeCode = ""
+
+	hash, delivery, err := f.service.SendChangePhoneCode(f.ctx, f.user.ID, f.authKeyID, 77, "15550012020")
+	if err != nil {
+		t.Fatalf("SendChangePhoneCode: %v", err)
+	}
+	if hash == "" || delivery.Kind != domain.AuthCodeDeliverySMS || delivery.Length != 6 || len(sender.requests) != 1 {
+		t.Fatalf("hash=%q delivery=%+v requests=%d", hash, delivery, len(sender.requests))
+	}
+	req := sender.requests[0]
+	if req.Purpose != otpdelivery.PurposeChangePhone || req.Channel != otpdelivery.ChannelSMS || req.Recipient != "15550012020" || req.DeliveryID == "" {
+		t.Fatalf("request = %+v", req)
+	}
+	rec, found, err := f.codes.Get(f.ctx, hash)
+	if err != nil || !found || rec.Channel != store.PhoneCodeChannelSMS || rec.DeliveryID != req.DeliveryID || rec.Code != req.Code {
+		t.Fatalf("record=%+v found=%v err=%v", rec, found, err)
+	}
+	if _, err := f.service.ChangePhone(f.ctx, f.user.ID, f.authKeyID, f.authKeyID, 78, req.Recipient, hash, req.Code, 1700000000); err != nil {
+		t.Fatalf("ChangePhone: %v", err)
+	}
+}
+
+func TestPhoneChangeWebhookRejectionRevokesScopedCode(t *testing.T) {
+	f := newPhoneChangeFixture(t)
+	sender := &captureMailSender{err: &otpdelivery.RejectedError{StatusCode: 503, Code: "UNAVAILABLE", Retryable: true}}
+	tracked := &trackingPhoneCodeStore{CodeStore: f.codes}
+	f.service.codes = tracked
+	f.service.phoneCodeSender = sender
+	f.service.phoneCodeLength = 5
+
+	hash, _, err := f.service.SendChangePhoneCode(f.ctx, f.user.ID, f.authKeyID, 77, "15550012021")
+	if hash != "" || err == nil || len(sender.requests) != 1 {
+		t.Fatalf("hash=%q err=%v requests=%d", hash, err, len(sender.requests))
+	}
+	if tracked.lastHash == "" {
+		t.Fatal("code was not stored before delivery")
+	}
+	if rec, found, getErr := f.codes.Get(f.ctx, tracked.lastHash); getErr != nil || found || rec.Code != "" {
+		t.Fatalf("post-rejection code rec=%+v found=%v err=%v", rec, found, getErr)
+	}
 }
 
 func TestPhoneChangeScopesCodeAndPersistsDurableEvent(t *testing.T) {

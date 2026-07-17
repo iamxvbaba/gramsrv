@@ -191,7 +191,7 @@ func (s *CodeStore) InvalidateLoginCode(_ context.Context, hash, phone string) (
 }
 
 func loginCodeVerifiable(record store.PhoneCode) bool {
-	return record.Channel == store.PhoneCodeChannelPhone || record.Channel == store.PhoneCodeChannelEmailLogin
+	return record.Channel == store.PhoneCodeChannelPhone || record.Channel == store.PhoneCodeChannelSMS || record.Channel == store.PhoneCodeChannelEmailLogin
 }
 
 func loginCodeTakeable(record store.PhoneCode) bool {

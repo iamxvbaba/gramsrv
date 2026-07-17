@@ -79,27 +79,33 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_STICKER_SEED_DIR` | path / `data/sticker-seed` | Sticker/reaction seed packages imported into documents, sticker sets, and blobs. |
 | `TELESRV_STICKER_SEED_MAX_SETS` | int / `300` | Maximum regular sticker sets imported at startup; `<=0` means unlimited. |
 
-## 5. Authentication, login email, SMTP, and passkeys
+## 5. Authentication, OTP providers, SMTP, and passkeys
 
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
-| `TELESRV_DEV_AUTH_CODE` | sensitive string / `12345` | Fixed development login code. Production SMS/risk delivery is not implemented; do not expose this default publicly. |
+| `TELESRV_DEV_AUTH_CODE` | sensitive string / `12345` | Fixed code used by `PHONE_CODE_DELIVERY_PROVIDER=development`; do not expose this default publicly. |
 | `TELESRV_AUTH_CODE_TTL` | duration / `5m` | Login/registration/email verification code lifetime; must be positive. |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | int / `5` | Maximum wrong attempts for one code/hash; must be positive. |
+| `TELESRV_PHONE_CODE_LENGTH` | int / `5` | Random SMS-code length for the `webhook` phone provider; allowed range `4..10`. |
 | `TELESRV_AUTH_CODE_PHONE_RATE_LIMIT` | int / `5` | Code issuance limit per normalized phone digest per rate window; `<=0` disables this dimension. |
 | `TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT` | int / `20` | Code issuance limit per raw auth key per rate window; `<=0` disables this dimension. |
 | `TELESRV_AUTH_CODE_RATE_WINDOW` | duration / `10m` | Shared window for phone and auth-key issuance limits. |
-| `TELESRV_LOGIN_EMAIL_ENABLE` | bool / `false` | Enables login-email verification delivery. When true, SMTP settings below become mandatory. |
+| `TELESRV_PHONE_CODE_DELIVERY_PROVIDER` | enum / `development` | `development` uses fixed codes; `webhook` generates random SMS codes for login, registration, and phone changes. Both modes first commit the same code to the durable 777000 dialog for existing accounts; Webhook is additive. |
+| `TELESRV_EMAIL_CODE_DELIVERY_PROVIDER` | enum / `smtp` | Delivery implementation for login-email and email setup/change codes: `smtp` or `webhook`. Existing-account login-email codes are first mirrored to 777000; setup/change remains provider-only. |
+| `TELESRV_OTP_WEBHOOK_URL` | absolute URL / empty | Required when any provider selects `webhook`; see [otp-delivery.md](otp-delivery.md) for the fixed v1 contract. Must use `http`/`https` and contain no userinfo. |
+| `TELESRV_OTP_WEBHOOK_SECRET` | secret string / empty | Optional HMAC-SHA256 signing secret; enables `X-Telesrv-Signature` when non-empty. |
+| `TELESRV_OTP_WEBHOOK_TIMEOUT` | duration / `5s` | Webhook HTTP timeout; must be positive when Webhook delivery is enabled. |
+| `TELESRV_LOGIN_EMAIL_ENABLE` | bool / `false` | Enables login-email verification. SMTP settings are required only when the email provider is `smtp`. |
 | `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | bool / `false` | Forces accounts without a login email to configure one. Requires `TELESRV_LOGIN_EMAIL_ENABLE=true`. |
 | `TELESRV_LOGIN_EMAIL_CODE_LENGTH` | int / `6` | Email verification-code length; allowed range `4..10`. |
-| `TELESRV_SMTP_HOST` | string / empty | SMTP server host; required when login email is enabled. |
-| `TELESRV_SMTP_PORT` | int / `587` | SMTP port; must be `1..65535` when login email is enabled. |
+| `TELESRV_SMTP_HOST` | string / empty | SMTP server host; required when login email is enabled with the `smtp` provider. |
+| `TELESRV_SMTP_PORT` | int / `587` | SMTP port; must be `1..65535` when the SMTP provider is used. |
 | `TELESRV_SMTP_USERNAME` | sensitive string / empty | SMTP username. Also used as sender when `TELESRV_SMTP_FROM` is empty. |
 | `TELESRV_SMTP_PASSWORD` | secret string / empty | SMTP password. |
 | `TELESRV_SMTP_FROM` | email/string / empty | Envelope/header sender. Either this or SMTP username is required when login email is enabled. |
 | `TELESRV_SMTP_FROM_NAME` | string / `telesrv` | Display name for login-email messages. |
 | `TELESRV_SMTP_TLS` | enum / `starttls` | `starttls`, `tls`, or `none`; any other value fails startup. |
-| `TELESRV_SMTP_TIMEOUT` | duration / `10s` | SMTP operation timeout; must be positive when login email is enabled. |
+| `TELESRV_SMTP_TIMEOUT` | duration / `10s` | SMTP operation timeout; must be positive when the SMTP provider is used. |
 | `TELESRV_PASSKEY_RP_ID` | hostname / `telesrv.net` | WebAuthn relying-party ID used for `rpIdHash`. Android Credential Manager requires alignment with hosted `assetlinks.json`. |
 | `TELESRV_PASSKEY_ALLOWED_ORIGINS` | list / empty | Allowed WebAuthn origins. Empty disables explicit origin enforcement because Android APK-key-hash origins may not be known in advance. |
 
@@ -232,4 +238,4 @@ The following fallback keys are accepted from the **process environment only**. 
 
 ## 12. Production minimum checklist
 
-At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, SMTP secrets when enabled, AI/Mapbox API keys, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices.
+At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, OTP Webhook/SMTP secrets, AI/Mapbox API keys, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices.

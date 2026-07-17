@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
-	"telesrv/internal/mail"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 )
 
@@ -47,7 +48,9 @@ type Service struct {
 	phoneChangeCode           string
 	phoneChangeCodeTTL        time.Duration
 	phoneChangeMaxAttempts    int
-	loginEmailSender          mail.Sender
+	loginEmailSender          otpdelivery.Sender
+	phoneCodeSender           otpdelivery.Sender
+	phoneCodeLength           int
 	loginEmailCodeTTL         time.Duration
 	loginEmailCodeMaxAttempts int
 	loginEmailCodeLength      int
@@ -136,7 +139,7 @@ func WithPublicBaseURL(baseURL string) ServiceOption {
 	}
 }
 
-func WithLoginEmailVerification(codes store.CodeStore, sender mail.Sender, ttl time.Duration, maxAttempts, length int) ServiceOption {
+func WithLoginEmailVerification(codes store.CodeStore, sender otpdelivery.Sender, ttl time.Duration, maxAttempts, length int) ServiceOption {
 	return func(s *Service) {
 		s.codes = codes
 		s.loginEmailSender = sender
@@ -152,6 +155,17 @@ func WithLoginEmailVerification(codes store.CodeStore, sender mail.Sender, ttl t
 	}
 }
 
+// WithPhoneCodeDelivery replaces the fixed development code used by the
+// change-phone flow with an externally delivered SMS code.
+func WithPhoneCodeDelivery(sender otpdelivery.Sender, length int) ServiceOption {
+	return func(s *Service) {
+		s.phoneCodeSender = sender
+		if length > 0 {
+			s.phoneCodeLength = length
+		}
+	}
+}
+
 // NewService 创建 account 服务。
 func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
 	s := &Service{
@@ -162,6 +176,7 @@ func NewService(passwords store.PasswordStore, opts ...ServiceOption) *Service {
 		loginEmailCodeLength:      6,
 		phoneChangeCodeTTL:        5 * time.Minute,
 		phoneChangeMaxAttempts:    5,
+		phoneCodeLength:           5,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -616,16 +631,52 @@ func (s *Service) SendLoginEmailCode(ctx context.Context, userID int64, phone, p
 		return "", 0, err
 	}
 	rec.Code = code
+	deliveryID, err := otpdelivery.NewDeliveryID()
+	if err != nil {
+		return "", 0, err
+	}
+	rec.DeliveryID = deliveryID
+	expiresAt := time.Now().Add(s.loginEmailCodeTTL)
 	if err := s.codes.Set(ctx, key, rec, s.loginEmailCodeTTL); err != nil {
 		return "", 0, err
 	}
-	if err := s.loginEmailSender.SendLoginCode(ctx, email, code, s.loginEmailCodeTTL); err != nil {
-		// Set does not expose its generated revision. A blind Del here could
-		// remove a newer concurrent resend; leave the unreachable random code
-		// to expire or be replaced by the retry instead.
+	snapshot, found, err := s.codes.GetSnapshot(ctx, key)
+	if err != nil {
+		return "", 0, err
+	}
+	if !found || snapshot.Record.DeliveryID != deliveryID {
+		return "", 0, domain.ErrEmailCodeInvalid
+	}
+	purpose := otpdelivery.PurposeLoginEmailChange
+	if setup {
+		purpose = otpdelivery.PurposeLoginEmailSetup
+	}
+	if err := deliverOTP(ctx, s.loginEmailSender, otpdelivery.Request{
+		DeliveryID: deliveryID,
+		Purpose:    purpose,
+		Channel:    otpdelivery.ChannelEmail,
+		Recipient:  email,
+		Code:       code,
+		ExpiresAt:  expiresAt,
+	}); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		deleted, cleanupErr := s.codes.CompareAndDelete(cleanupCtx, key, snapshot.Revision)
+		if cleanupErr != nil {
+			return "", 0, fmt.Errorf("%w; rollback email code: %v", err, cleanupErr)
+		}
+		_ = deleted // false means a newer concurrent resend owns the key.
 		return "", 0, err
 	}
 	return emailPattern(email), len(code), nil
+}
+
+func deliverOTP(ctx context.Context, sender otpdelivery.Sender, req otpdelivery.Request) error {
+	_, err := sender.Deliver(ctx, req)
+	if errors.Is(err, otpdelivery.ErrOutcomeUnknown) {
+		return nil
+	}
+	return err
 }
 
 func (s *Service) VerifyLoginEmail(ctx context.Context, userID int64, phone, phoneCodeHash, code string, setup bool) (string, error) {

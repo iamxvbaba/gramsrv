@@ -11,6 +11,7 @@ import (
 const (
 	PhoneCodePurposeChangePhone        = "change_phone"
 	PhoneCodeChannelPhone              = "phone"
+	PhoneCodeChannelSMS                = "sms"
 	PhoneCodeChannelEmailLogin         = "email_login"
 	PhoneCodeChannelEmailSetupRequired = "email_setup_required"
 )
@@ -34,8 +35,12 @@ type PhoneCode struct {
 	SignUpVerified bool
 	Phone          string
 	Code           string
-	Channel        string
-	Purpose        string
+	// DeliveryID is the stable, opaque idempotency key used for the outbound
+	// provider call that carries this code. It contains no recipient or secret
+	// material and is rotated whenever a genuinely new code is issued.
+	DeliveryID string
+	Channel    string
+	Purpose    string
 	// UserID is also encoded as a string because scoped verification mutates the
 	// record in Redis Lua and must not round an int64 owner through cjson.
 	UserID    int64 `json:",string"`

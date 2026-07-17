@@ -35,13 +35,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 	disableDefaultConfigFile(t)
-	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
+	t.Setenv("TELESRV_ADVERTISE_IP", "192.0.2.10")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AdvertiseIP != "203.0.113.10" {
+	if cfg.AdvertiseIP != "192.0.2.10" {
 		t.Fatalf("AdvertiseIP = %q, want explicit env", cfg.AdvertiseIP)
 	}
 }
@@ -199,6 +199,7 @@ func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
 		t.Fatal("LoginEmailRequireSetup = true, want false")
 	}
 	if cfg.AuthCodeTTL != 5*time.Minute || cfg.AuthCodeMaxAttempts != 5 || cfg.LoginEmailCodeLength != 6 ||
+		cfg.PhoneCodeLength != 5 || cfg.PhoneCodeDeliveryProvider != "development" || cfg.EmailCodeDeliveryProvider != "smtp" ||
 		cfg.AuthCodePhoneRateLimit != 5 || cfg.AuthCodeAuthKeyRateLimit != 20 || cfg.AuthCodeRateWindow != 10*time.Minute {
 		t.Fatalf("auth/login email defaults = ttl=%v attempts=%d length=%d phone_limit=%d key_limit=%d window=%v",
 			cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength,
@@ -248,6 +249,50 @@ func TestLoadLoginEmailRequiresSMTPWhenEnabled(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with login email enabled but no SMTP host")
+	}
+}
+
+func TestLoadLoginEmailWebhookDoesNotRequireSMTP(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+	t.Setenv("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "https://otp.example.test/v1/deliveries")
+	t.Setenv("TELESRV_OTP_WEBHOOK_SECRET", "test-secret")
+	t.Setenv("TELESRV_OTP_WEBHOOK_TIMEOUT", "3s")
+	t.Setenv("TELESRV_SMTP_HOST", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EmailCodeDeliveryProvider != "webhook" || cfg.OTPWebhookURL != "https://otp.example.test/v1/deliveries" ||
+		cfg.OTPWebhookSecret != "test-secret" || cfg.OTPWebhookTimeout != 3*time.Second {
+		t.Fatalf("webhook config = %#v", cfg)
+	}
+}
+
+func TestLoadPhoneWebhookRequiresValidURL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "relative/path")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with relative OTP webhook URL")
+	}
+}
+
+func TestLoadPhoneWebhookConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_PHONE_CODE_LENGTH", "7")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "http://127.0.0.1:8080/otp")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PhoneCodeDeliveryProvider != "webhook" || cfg.PhoneCodeLength != 7 {
+		t.Fatalf("phone webhook config = %#v", cfg)
 	}
 }
 

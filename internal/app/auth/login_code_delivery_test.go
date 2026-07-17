@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -340,7 +341,7 @@ func TestExistingAccountResendDeliveryFailureLeavesNoUsableCode(t *testing.T) {
 	}
 }
 
-func TestConfiguredEmailLoginDoesNotLeakCodeThroughAppDelivery(t *testing.T) {
+func TestConfiguredEmailLoginMirrorsSameCodeThroughAppDelivery(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
 	if _, err := users.Create(ctx, domain.User{Phone: "15550009207"}); err != nil {
@@ -360,7 +361,40 @@ func TestConfiguredEmailLoginDoesNotLeakCodeThroughAppDelivery(t *testing.T) {
 	if mailSender.to != "secure@example.test" || mailSender.code == "" {
 		t.Fatalf("email delivery = %q/%q", mailSender.to, mailSender.code)
 	}
-	if len(delivery.requests) != 0 {
-		t.Fatalf("email code leaked into app delivery: %+v", delivery.requests)
+	if len(delivery.requests) != 1 || delivery.requests[0].Code != mailSender.code || delivery.requests[0].PhoneCodeHash == "" {
+		t.Fatalf("email App-code delivery=%+v, want same code and non-empty hash", delivery.requests)
+	}
+}
+
+func TestConfiguredEmailLoginProviderFailureKeepsDurableAppCode(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	user, err := users.Create(ctx, domain.User{Phone: "15550009215"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	emails := &testLoginEmailStore{emails: map[string]string{user.Phone: "fallback@example.test"}}
+	codes := memory.NewCodeStore()
+	mailSender := &captureOTPSender{err: &otpdelivery.RejectedError{StatusCode: 503, Code: "UNAVAILABLE", Retryable: true}}
+	delivery := &captureLoginCodeDelivery{}
+	var observed []error
+	svc := NewService(users, memory.NewAuthorizationStore(), codes, nil, nil, "12345",
+		WithLoginEmail(LoginEmailOptions{Enabled: true, CodeLength: 6, Store: emails, Sender: mailSender}),
+		WithLoginCodeDelivery(delivery),
+		WithOTPDeliveryFailureObserver(func(_ context.Context, _ otpdelivery.Request, err error) {
+			observed = append(observed, err)
+		}),
+	)
+
+	hash, err := svc.SendCode(ctx, user.Phone)
+	if err != nil || hash == "" {
+		t.Fatalf("SendCode hash=%q err=%v, want App fallback success", hash, err)
+	}
+	if len(delivery.requests) != 1 || len(mailSender.requests) != 1 || len(observed) != 1 ||
+		delivery.requests[0].Code != mailSender.requests[0].Code {
+		t.Fatalf("App=%+v provider=%+v observed=%d", delivery.requests, mailSender.requests, len(observed))
+	}
+	if rec, found, getErr := codes.Get(ctx, hash); getErr != nil || !found || rec.Code != delivery.requests[0].Code {
+		t.Fatalf("code=%+v found=%v err=%v", rec, found, getErr)
 	}
 }

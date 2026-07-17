@@ -18,7 +18,7 @@ import (
 	mtcrypto "github.com/iamxvbaba/td/crypto"
 
 	"telesrv/internal/domain"
-	"telesrv/internal/mail"
+	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 )
 
@@ -48,9 +48,10 @@ var (
 )
 
 const (
-	codeChannelPhone              = "phone"
-	codeChannelEmailLogin         = "email_login"
-	codeChannelEmailSetupRequired = "email_setup_required"
+	codeChannelPhone              = store.PhoneCodeChannelPhone
+	codeChannelSMS                = store.PhoneCodeChannelSMS
+	codeChannelEmailLogin         = store.PhoneCodeChannelEmailLogin
+	codeChannelEmailSetupRequired = store.PhoneCodeChannelEmailSetupRequired
 	loginCodeRollbackTimeout      = 2 * time.Second
 )
 
@@ -70,7 +71,9 @@ func systemLoginPhoneForbidden(phone string) bool {
 	return ok
 }
 
-// Service 实现登录/注册业务。第一阶段为开发固定验证码（不真实下发短信）。
+// Service 实现登录/注册业务。默认保留开发固定码；配置外部 provider
+// 后生成随机验证码并通过 otpdelivery 投递。已有账号的外部投递是 durable
+// 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
 type Service struct {
 	users                  store.UserStore
 	auths                  store.AuthorizationStore
@@ -86,7 +89,10 @@ type Service struct {
 	codeTTL                time.Duration
 	codeMaxAttempts        int
 	loginEmails            loginEmailStore
-	loginEmailSender       mail.Sender
+	loginEmailSender       otpdelivery.Sender
+	phoneCodeSender        otpdelivery.Sender
+	otpDeliveryFailure     func(context.Context, otpdelivery.Request, error)
+	phoneCodeLength        int
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
 	loginEmailCodeLength   int
@@ -104,7 +110,7 @@ type LoginEmailOptions struct {
 	RequireSetup bool
 	CodeLength   int
 	Store        loginEmailStore
-	Sender       mail.Sender
+	Sender       otpdelivery.Sender
 }
 
 type authorizationRevoker interface {
@@ -185,9 +191,31 @@ func WithLoginEmail(opts LoginEmailOptions) Option {
 	}
 }
 
+// WithPhoneCodeDelivery enables an external SMS delivery provider. Existing
+// accounts keep their durable 777000 App-code and receive the same code through
+// the provider as an additional channel. A nil sender preserves development
+// behavior.
+func WithPhoneCodeDelivery(sender otpdelivery.Sender, length int) Option {
+	return func(s *Service) {
+		s.phoneCodeSender = sender
+		if length > 0 {
+			s.phoneCodeLength = length
+		}
+	}
+}
+
+// WithOTPDeliveryFailureObserver observes failures of an additional provider
+// delivery after an existing account already has a durable 777000 App-code.
+// Observers must not log the recipient or code.
+func WithOTPDeliveryFailureObserver(observer func(context.Context, otpdelivery.Request, error)) Option {
+	return func(s *Service) {
+		s.otpDeliveryFailure = observer
+	}
+}
+
 // NewService 创建登录服务。fixedCode 为开发固定验证码。
 func NewService(users store.UserStore, auths store.AuthorizationStore, codes store.CodeStore, authKeys store.AuthKeyStore, tempKeys store.TempAuthKeyBindingStore, fixedCode string, opts ...Option) *Service {
-	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6}
+	s := &Service{users: users, auths: auths, codes: codes, authKeys: authKeys, tempKeys: tempKeys, fixedCode: fixedCode, codeTTL: 5 * time.Minute, codeMaxAttempts: 5, loginEmailCodeLength: 6, phoneCodeLength: 5}
 	if linker, ok := auths.(store.AuthKeyAuthorityLinker); ok && authKeys != nil {
 		linker.LinkAuthKeyAuthority(authKeys)
 	}
@@ -372,32 +400,68 @@ func (s *Service) createPhoneCode(ctx context.Context, phone string, existingUse
 	if err != nil {
 		return "", err
 	}
-	if err := s.codes.Set(ctx, hash, store.PhoneCode{
+	code := s.fixedCode
+	channel := codeChannelPhone
+	deliveryID := ""
+	if s.phoneCodeSender != nil {
+		code, err = randomDigits(s.phoneCodeLength)
+		if err != nil {
+			return "", err
+		}
+		deliveryID, err = otpdelivery.NewDeliveryID()
+		if err != nil {
+			return "", err
+		}
+		channel = codeChannelSMS
+	}
+	rec := store.PhoneCode{
 		Version:      store.PhoneCodeVersionCurrent,
 		IssuedUserID: existingUserID,
 		Phone:        phone,
-		Code:         s.fixedCode,
-		Channel:      codeChannelPhone,
+		Code:         code,
+		DeliveryID:   deliveryID,
+		Channel:      channel,
 		MaxAttempts:  s.codeMaxAttempts,
-	}, s.codeTTL); err != nil {
+	}
+	expiresAt := time.Now().Add(s.codeTTL)
+	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store code: %w", err)
 	}
-	rec := store.PhoneCode{Phone: phone, IssuedUserID: existingUserID}
 	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
 		return "", err
 	}
-	// 新手机号还没有 owner/dialog，只能在 SignUp 创建用户后写第一条
-	// 777000 消息。已有账号则必须在 sendCode RPC 返回前把 app-code
-	// 作为普通 incoming message + durable update/outbox 提交；登录成功不再补发。
-	if existingUserID == 0 {
+	// Existing accounts always retain the original durable App-code path. Commit
+	// it before attempting the external mirror so a provider cannot replace the
+	// message fact or leave an externally disclosed code without local state.
+	if existingUserID != 0 {
+		if err := s.deliverLoginCode(ctx, existingUserID, hash, code); err != nil {
+			return "", s.rollbackUndeliveredCode(ctx, hash, err)
+		}
+		if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+			return "", err
+		}
+	}
+	if s.phoneCodeSender != nil {
+		request := otpdelivery.Request{
+			DeliveryID: deliveryID,
+			Purpose:    otpdelivery.PurposeLoginSMS,
+			Channel:    otpdelivery.ChannelSMS,
+			Recipient:  phone,
+			Code:       code,
+			ExpiresAt:  expiresAt,
+		}
+		if existingUserID != 0 {
+			s.deliverOTPWithAppFallback(ctx, s.phoneCodeSender, request)
+		} else if err := deliverOTP(ctx, s.phoneCodeSender, request); err != nil {
+			return "", s.rollbackUndeliveredCode(ctx, hash, fmt.Errorf("send login SMS code: %w", err))
+		}
+		if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+			return "", err
+		}
 		return hash, nil
 	}
-	if err := s.deliverLoginCode(ctx, existingUserID, hash, s.fixedCode); err != nil {
-		return "", s.rollbackUndeliveredCode(ctx, hash, err)
-	}
-	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
-		return "", err
-	}
+	// 新手机号还没有 owner/dialog，不能在签发阶段创建 777000 消息；
+	// 已有账号的 App-code 已在上面的 provider 分支之前 durable 提交。
 	return hash, nil
 }
 
@@ -463,31 +527,94 @@ func (s *Service) createEmailLoginCode(ctx context.Context, phone, email string,
 	if err != nil {
 		return "", err
 	}
+	deliveryID, err := otpdelivery.NewDeliveryID()
+	if err != nil {
+		return "", err
+	}
 	rec := store.PhoneCode{
 		Version:      store.PhoneCodeVersionCurrent,
 		IssuedUserID: issuedUserID,
 		Phone:        phone,
 		Code:         code,
+		DeliveryID:   deliveryID,
 		Channel:      codeChannelEmailLogin,
 		Email:        strings.TrimSpace(email),
 		MaxAttempts:  s.codeMaxAttempts,
 	}
+	expiresAt := time.Now().Add(s.codeTTL)
 	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store email code: %w", err)
 	}
 	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
 		return "", err
 	}
+	if issuedUserID != 0 {
+		if err := s.deliverLoginCode(ctx, issuedUserID, hash, code); err != nil {
+			return "", s.rollbackUndeliveredCode(ctx, hash, err)
+		}
+		if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
+			return "", err
+		}
+	}
 	if s.loginEmailSender == nil {
+		if issuedUserID != 0 {
+			s.reportOTPDeliveryFailure(ctx, otpdelivery.Request{
+				DeliveryID: deliveryID,
+				Purpose:    otpdelivery.PurposeLoginEmail,
+				Channel:    otpdelivery.ChannelEmail,
+				Recipient:  rec.Email,
+				Code:       code,
+				ExpiresAt:  expiresAt,
+			}, fmt.Errorf("login email sender is not configured"))
+			return hash, nil
+		}
 		return "", s.rollbackUndeliveredCode(ctx, hash, fmt.Errorf("login email sender is not configured"))
 	}
-	if err := s.loginEmailSender.SendLoginCode(ctx, rec.Email, code, s.codeTTL); err != nil {
+	request := otpdelivery.Request{
+		DeliveryID: deliveryID,
+		Purpose:    otpdelivery.PurposeLoginEmail,
+		Channel:    otpdelivery.ChannelEmail,
+		Recipient:  rec.Email,
+		Code:       code,
+		ExpiresAt:  expiresAt,
+	}
+	if issuedUserID != 0 {
+		s.deliverOTPWithAppFallback(ctx, s.loginEmailSender, request)
+	} else if err := deliverOTP(ctx, s.loginEmailSender, request); err != nil {
 		return "", s.rollbackUndeliveredCode(ctx, hash, fmt.Errorf("send login email code: %w", err))
 	}
 	if err := s.ensureIssuedOwnerAfterSet(ctx, hash, rec); err != nil {
 		return "", err
 	}
 	return hash, nil
+}
+
+// deliverOTPWithAppFallback performs an additional provider delivery only
+// after the same code is durably visible through 777000. A provider failure
+// must not invalidate that visible code or fail the RPC; it remains observable
+// through the injected failure observer.
+func (s *Service) deliverOTPWithAppFallback(ctx context.Context, sender otpdelivery.Sender, req otpdelivery.Request) {
+	if _, err := sender.Deliver(ctx, req); err != nil {
+		s.reportOTPDeliveryFailure(ctx, req, err)
+	}
+}
+
+func (s *Service) reportOTPDeliveryFailure(ctx context.Context, req otpdelivery.Request, err error) {
+	if s.otpDeliveryFailure != nil && err != nil {
+		s.otpDeliveryFailure(ctx, req, err)
+	}
+}
+
+// deliverOTP treats a transport-level unknown outcome as a successful issue:
+// the provider may already have accepted the request, so the code must remain
+// usable and the client needs the hash in order to verify or explicitly resend
+// it. Only an explicit provider rejection is safe to roll back.
+func deliverOTP(ctx context.Context, sender otpdelivery.Sender, req otpdelivery.Request) error {
+	_, err := sender.Deliver(ctx, req)
+	if errors.Is(err, otpdelivery.ErrOutcomeUnknown) {
+		return nil
+	}
+	return err
 }
 
 func (s *Service) CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error) {
@@ -503,6 +630,8 @@ func codeDelivery(rec store.PhoneCode) domain.AuthCodeDelivery {
 		return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}
 	}
 	switch rec.Channel {
+	case codeChannelSMS:
+		return domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}
 	case codeChannelEmailLogin:
 		return domain.AuthCodeDelivery{
 			Kind:         domain.AuthCodeDeliveryEmail,
@@ -582,7 +711,7 @@ func (s *Service) resendCode(ctx context.Context, authKeyID [8]byte, phone, phon
 	if rec.Channel == codeChannelEmailSetupRequired {
 		return s.createSetupRequiredCode(ctx, phone, rec.IssuedUserID)
 	}
-	if rec.Channel != codeChannelPhone {
+	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelSMS {
 		return "", ErrCodeInvalid
 	}
 	return s.createPhoneCode(ctx, phone, rec.IssuedUserID)
@@ -594,13 +723,43 @@ func (s *Service) recreateChangePhoneCode(ctx context.Context, rec store.PhoneCo
 		return "", err
 	}
 	rec.Code = s.fixedCode
+	rec.DeliveryID = ""
 	rec.Channel = codeChannelPhone
+	if s.phoneCodeSender != nil {
+		rec.Code, err = randomDigits(s.phoneCodeLength)
+		if err != nil {
+			return "", err
+		}
+		rec.DeliveryID, err = otpdelivery.NewDeliveryID()
+		if err != nil {
+			return "", err
+		}
+		rec.Channel = codeChannelSMS
+	}
 	rec.Attempts = 0
 	if rec.MaxAttempts <= 0 {
 		rec.MaxAttempts = s.codeMaxAttempts
 	}
+	expiresAt := time.Now().Add(s.codeTTL)
 	if err := s.codes.Set(ctx, hash, rec, s.codeTTL); err != nil {
 		return "", fmt.Errorf("store resent phone change code: %w", err)
+	}
+	if s.phoneCodeSender != nil {
+		if err := deliverOTP(ctx, s.phoneCodeSender, otpdelivery.Request{
+			DeliveryID: rec.DeliveryID,
+			Purpose:    otpdelivery.PurposeChangePhone,
+			Channel:    otpdelivery.ChannelSMS,
+			Recipient:  rec.Phone,
+			Code:       rec.Code,
+			ExpiresAt:  expiresAt,
+		}); err != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginCodeRollbackTimeout)
+			defer cancel()
+			if _, _, cleanupErr := s.codes.ConsumeScoped(cleanupCtx, hash, rec.Scope()); cleanupErr != nil {
+				return "", errors.Join(err, fmt.Errorf("rollback undelivered phone change code: %w", cleanupErr))
+			}
+			return "", err
+		}
 	}
 	return hash, nil
 }
@@ -785,7 +944,7 @@ func (s *Service) verifyLoginCode(ctx context.Context, phone, phoneCodeHash, cod
 	if rec.Phone != phone || rec.Purpose != "" {
 		return store.PhoneCode{}, domain.User{}, false, ErrCodeInvalid
 	}
-	channelAllowed := rec.Channel == codeChannelPhone && !emailPath
+	channelAllowed := (rec.Channel == codeChannelPhone || rec.Channel == codeChannelSMS) && !emailPath
 	if emailPath {
 		channelAllowed = rec.Channel == codeChannelEmailLogin || (!s.loginEmailEnabled && rec.Channel == codeChannelPhone)
 	}
@@ -928,7 +1087,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		s.invalidateLoginCodeDetached(ctx, phoneCodeHash, phone)
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
-	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelEmailLogin {
+	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelSMS && rec.Channel != codeChannelEmailLogin {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" {
@@ -948,7 +1107,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, ErrCodeExpired
 	}
 	rec = consumed
-	if rec.IssuedUserID != 0 || !rec.SignUpVerified || (rec.Channel != codeChannelPhone && rec.Channel != codeChannelEmailLogin) {
+	if rec.IssuedUserID != 0 || !rec.SignUpVerified || (rec.Channel != codeChannelPhone && rec.Channel != codeChannelSMS && rec.Channel != codeChannelEmailLogin) {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {
@@ -985,8 +1144,9 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		return domain.User{}, domain.Message{}, err
 	}
 	loginMessage := domain.Message{}
-	// SMTP setup/login codes are secret factors, not 777000 app messages. Only
-	// the normal phone/app-code registration path creates the bootstrap dialog.
+	// A new account has no owner/dialog at issuance time. Only the development
+	// phone/App registration path creates its bootstrap 777000 message here;
+	// external SMS and email setup registration retain only their verified fact.
 	if rec.Channel == codeChannelPhone {
 		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
 		if err != nil {

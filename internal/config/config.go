@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -112,6 +113,9 @@ type Config struct {
 	DevAuthCode string
 	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
 	AuthCodeTTL time.Duration
+	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
+	// provider 继续使用 DevAuthCode 原样，不受此字段影响。
+	PhoneCodeLength int
 	// AuthCodeMaxAttempts 是同一 phone_code_hash / email verification code 的最大错误次数。
 	// 达到上限后验证码立即失效，用户必须重发。
 	AuthCodeMaxAttempts int
@@ -127,7 +131,16 @@ type Config struct {
 	LoginEmailRequireSetup bool
 	// LoginEmailCodeLength 是邮箱验证码长度。
 	LoginEmailCodeLength int
-	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 时必须可用。
+	// PhoneCodeDeliveryProvider 选择普通登录/注册与改号验证码的投递方式：
+	// development 保留固定码与 777000 app-code；webhook 使用随机 SMS code。
+	PhoneCodeDeliveryProvider string
+	// EmailCodeDeliveryProvider 选择登录邮箱与邮箱 setup/change 的投递方式。
+	EmailCodeDeliveryProvider string
+	// OTPWebhook* 定义固定 v1 webhook 协议的端点、HMAC secret 与请求超时。
+	OTPWebhookURL     string
+	OTPWebhookSecret  string
+	OTPWebhookTimeout time.Duration
+	// SMTP* 是 email provider=smtp 时使用的出站邮件配置。
 	SMTPHost     string
 	SMTPPort     int
 	SMTPUsername string
@@ -456,6 +469,7 @@ func Load() (Config, error) {
 
 		DevAuthCode:                   envOr("TELESRV_DEV_AUTH_CODE", "12345"),
 		AuthCodeTTL:                   envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
+		PhoneCodeLength:               envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
 		AuthCodeMaxAttempts:           envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
 		AuthCodePhoneRateLimit:        envIntOr("TELESRV_AUTH_CODE_PHONE_RATE_LIMIT", 5),
 		AuthCodeAuthKeyRateLimit:      envIntOr("TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT", 20),
@@ -463,6 +477,11 @@ func Load() (Config, error) {
 		LoginEmailEnable:              envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:        envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		PhoneCodeDeliveryProvider:     strings.ToLower(strings.TrimSpace(envOr("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "development"))),
+		EmailCodeDeliveryProvider:     strings.ToLower(strings.TrimSpace(envOr("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "smtp"))),
+		OTPWebhookURL:                 envOr("TELESRV_OTP_WEBHOOK_URL", ""),
+		OTPWebhookSecret:              envOr("TELESRV_OTP_WEBHOOK_SECRET", ""),
+		OTPWebhookTimeout:             envDurationOr("TELESRV_OTP_WEBHOOK_TIMEOUT", 5*time.Second),
 		SMTPHost:                      envOr("TELESRV_SMTP_HOST", ""),
 		SMTPPort:                      envIntOr("TELESRV_SMTP_PORT", 587),
 		SMTPUsername:                  envOr("TELESRV_SMTP_USERNAME", ""),
@@ -619,6 +638,9 @@ func validateLoginEmailConfig(cfg Config) error {
 	if cfg.AuthCodeMaxAttempts <= 0 {
 		return fmt.Errorf("TELESRV_AUTH_CODE_MAX_ATTEMPTS must be positive")
 	}
+	if cfg.PhoneCodeLength < 4 || cfg.PhoneCodeLength > 10 {
+		return fmt.Errorf("TELESRV_PHONE_CODE_LENGTH must be between 4 and 10")
+	}
 	if cfg.LoginEmailCodeLength < 4 || cfg.LoginEmailCodeLength > 10 {
 		return fmt.Errorf("TELESRV_LOGIN_EMAIL_CODE_LENGTH must be between 4 and 10")
 	}
@@ -627,7 +649,28 @@ func validateLoginEmailConfig(cfg Config) error {
 	default:
 		return fmt.Errorf("TELESRV_SMTP_TLS must be starttls, tls, or none")
 	}
-	if !cfg.LoginEmailEnable {
+	switch cfg.PhoneCodeDeliveryProvider {
+	case "development", "webhook":
+	default:
+		return fmt.Errorf("TELESRV_PHONE_CODE_DELIVERY_PROVIDER must be development or webhook")
+	}
+	switch cfg.EmailCodeDeliveryProvider {
+	case "smtp", "webhook":
+	default:
+		return fmt.Errorf("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER must be smtp or webhook")
+	}
+	webhookEnabled := cfg.PhoneCodeDeliveryProvider == "webhook" ||
+		(cfg.LoginEmailEnable && cfg.EmailCodeDeliveryProvider == "webhook")
+	if webhookEnabled {
+		if cfg.OTPWebhookTimeout <= 0 {
+			return fmt.Errorf("TELESRV_OTP_WEBHOOK_TIMEOUT must be positive")
+		}
+		u, err := url.Parse(strings.TrimSpace(cfg.OTPWebhookURL))
+		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("TELESRV_OTP_WEBHOOK_URL must be an absolute http(s) URL without userinfo")
+		}
+	}
+	if !cfg.LoginEmailEnable || cfg.EmailCodeDeliveryProvider == "webhook" {
 		return nil
 	}
 	if strings.TrimSpace(cfg.SMTPHost) == "" {

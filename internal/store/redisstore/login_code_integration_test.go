@@ -29,6 +29,39 @@ func TestRedisCodeStoreAtomicLoginStateMachine(t *testing.T) {
 		}
 	}
 
+	t.Run("sms channel participates in every login transition", func(t *testing.T) {
+		sms := newRecord()
+		sms.Channel = store.PhoneCodeChannelSMS
+		sms.IssuedUserID = 0
+		verifyHash := hash("sms-verify")
+		if err := codes.Set(ctx, verifyHash, sms, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		result, err := codes.VerifyLogin(ctx, verifyHash, phone, sms.Code, true, 5)
+		if err != nil || result.Status != store.LoginCodeVerifyAccepted || !result.Record.SignUpVerified {
+			t.Fatalf("sms verify = %+v err=%v", result, err)
+		}
+		if consumed, found, err := codes.ConsumeSignUpVerified(ctx, verifyHash, phone); err != nil || !found || consumed.Channel != store.PhoneCodeChannelSMS {
+			t.Fatalf("sms signup consume=%+v found=%v err=%v", consumed, found, err)
+		}
+
+		takeHash := hash("sms-take")
+		if err := codes.Set(ctx, takeHash, sms, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if taken, found, err := codes.TakeLoginCode(ctx, takeHash, phone); err != nil || !found || taken.Channel != store.PhoneCodeChannelSMS {
+			t.Fatalf("sms take=%+v found=%v err=%v", taken, found, err)
+		}
+
+		invalidateHash := hash("sms-invalidate")
+		if err := codes.Set(ctx, invalidateHash, sms, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		if found, err := codes.InvalidateLoginCode(ctx, invalidateHash, phone); err != nil || !found {
+			t.Fatalf("sms invalidate found=%v err=%v", found, err)
+		}
+	})
+
 	t.Run("version and corrupt records fail closed", func(t *testing.T) {
 		legacy := newRecord()
 		legacy.Version = 0
