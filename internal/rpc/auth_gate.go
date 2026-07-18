@@ -39,6 +39,7 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		tg.HelpGetConfigRequestTypeID,
 		tg.HelpGetNearestDCRequestTypeID,
 		tg.HelpGetInviteTextRequestTypeID,
+		tg.HelpSaveAppLogRequestTypeID,
 		tg.HelpGetAppConfigRequestTypeID,
 		tg.HelpGetCountriesListRequestTypeID,
 		tg.HelpGetTimezonesListRequestTypeID,

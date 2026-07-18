@@ -23,6 +23,9 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
 		return &tg.HelpInviteText{Message: "Join me on Telegram."}, nil
 	})
+	registerRPC[*tg.HelpSaveAppLogRequest](d, tlprofile.SemanticMethodHelpSaveAppLog, func(ctx context.Context, _ *tg.HelpSaveAppLogRequest) (any, error) {
+		return r.onHelpSaveAppLog(ctx)
+	})
 	registerRPC[*tg.HelpGetAppUpdateRequest](d, tlprofile.SemanticMethodHelpGetAppUpdate, func(ctx context.Context, layerRequest *tg.HelpGetAppUpdateRequest) (any, error) {
 		source := layerRequest.
 			Source
@@ -111,6 +114,21 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.HelpGetPremiumPromoRequest](d, tlprofile.SemanticMethodHelpGetPremiumPromo, func(ctx context.Context, layerRequest *tg.HelpGetPremiumPromoRequest) (any, error) {
 		return r.onHelpGetPremiumPromo(ctx)
 	})
+}
+
+// onHelpSaveAppLog 为官方客户端的 fire-and-forget 应用遥测提供有界兼容应答。
+// telesrv 当前不运营遥测产品，因此不读取、记录或持久化事件内容；请求已在 exact
+// Layer admission 处受 wire/vector/aggregate/depth 限制。该方法按 TL 访问约束允许
+// 未授权连接调用，但已登录 bot 必须拒绝。
+func (r *Router) onHelpSaveAppLog(ctx context.Context) (bool, error) {
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if authorized && r.userIsBot(ctx, userID) {
+		return false, botMethodInvalidErr()
+	}
+	return true, nil
 }
 
 func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
