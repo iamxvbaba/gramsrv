@@ -24,29 +24,85 @@ type StarGift struct {
 	UpgradeIssued int      // 当前已发行数量
 	Title         string   // 可选标题
 	Sticker       Document // 礼物贴纸快照（tg 投影必须是带 sticker 属性的有效 Document，否则客户端丢弃）
+
+	// Layer 228 regular-gift shape. Static release facts live in the immutable
+	// catalog revision; AvailabilityRemains/AvailabilityResale are the current
+	// inventory projection maintained on the catalog aggregate.
+	Limited             bool
+	SoldOut             bool
+	Birthday            bool
+	RequirePremium      bool
+	LimitedPerUser      bool
+	PeerColorAvailable  bool
+	Auction             bool
+	AvailabilityRemains int
+	AvailabilityTotal   int
+	AvailabilityResale  int64
+	FirstSaleDate       int
+	LastSaleDate        int
+	ResellMinStars      int64
+	ReleasedBy          Peer
+	PerUserTotal        int
+	PerUserRemains      int
+	LockedUntilDate     int
+	AuctionSlug         string
+	GiftsPerRound       int
+	AuctionStartDate    int
+	UpgradeVariants     int
+	Background          *StarGiftBackground
+}
+
+// StarGiftBackground is the release-level palette used by auction cards and
+// gift previews before a collectible backdrop is selected.
+type StarGiftBackground struct {
+	CenterColor int
+	EdgeColor   int
+	TextColor   int
 }
 
 // SavedStarGift 是一条已收到的礼物实例（peer_star_gifts 一行）。
 type SavedStarGift struct {
-	ID                  int64
-	Owner               Peer   // 收礼 peer（user/channel）
-	FromUserID          int64  // 送礼人（匿名也保留真实值供账本，下发时按 NameHidden 决定是否暴露）
-	GiftID              int64  // → StarGift.ID
-	RevisionID          int64  // → star_gift_catalog_revisions.id，历史查询必须按此版本投影
-	MsgID               int    // 用户礼物的私聊 msg_id；频道礼物不进历史，固定为 0
-	SavedID             int64  // 频道礼物 inputSavedStarGiftChat.saved_id；用户礼物为 0
-	Date                int    // 收到时刻 Unix 秒
-	NameHidden          bool   // 送礼人请求隐藏姓名
-	Unsaved             bool   // 未展示在个人资料（saveStarGift 切换）
-	Converted           bool   // 已转换回 Stars（终态，从列表排除）
-	ConvertStars        int64  // 转换可退回的 Stars
-	PrepaidUpgradeStars int64  // 送礼人随礼物预付的唯一礼物升级额
-	Message             string // 附言（可选）
-	UniqueGiftID        int64  // 非 0 表示已升级为唯一礼物；与 Converted 互斥
-	UpgradeMsgID        int    // messageActionStarGiftUnique 的 owner 侧消息 id
-	PinnedOrder         int    // >0 表示资料页置顶顺序
-	CollectionIDs       []int  // 当前所属集合；按集合顺序稳定返回
-	Unique              *UniqueStarGift
+	ID                       int64
+	Owner                    Peer  // 收礼 peer（user/channel）
+	FromUserID               int64 // 送礼人（匿名也保留真实值供账本，下发时按 NameHidden 决定是否暴露）
+	GiftID                   int64 // → StarGift.ID
+	RevisionID               int64 // → star_gift_catalog_revisions.id，历史查询必须按此版本投影
+	MsgID                    int   // 用户礼物的私聊 msg_id；频道礼物不进历史，固定为 0
+	SavedID                  int64 // 频道礼物 inputSavedStarGiftChat.saved_id；用户礼物为 0
+	Date                     int   // 收到时刻 Unix 秒
+	NameHidden               bool  // 送礼人请求隐藏姓名
+	Unsaved                  bool  // 未展示在个人资料（saveStarGift 切换）
+	Converted                bool  // 已转换回 Stars（终态，从列表排除）
+	LifecycleStatus          StarGiftLifecycleStatus
+	ConvertStars             int64  // 转换可退回的 Stars
+	PrepaidUpgradeStars      int64  // 送礼人随礼物预付的唯一礼物升级额
+	PrepaidUpgradeHash       string // 第三方单独代付升级的一次性 entitlement
+	GiftNum                  int    // auction-acquired release number for regular gifts
+	Message                  string // 附言（可选）
+	UniqueGiftID             int64  // 非 0 表示已升级为唯一礼物；与 Converted 互斥
+	TransferStars            int64
+	CanExportAt              int
+	CanTransferAt            int
+	CanResellAt              int
+	DropOriginalDetailsStars int64
+	CanCraftAt               int
+	UpgradeMsgID             int   // 当前 owner 侧承载 messageActionStarGiftUnique 的消息 id；所有权转移时随新消息更新
+	PinnedOrder              int   // >0 表示资料页置顶顺序
+	CollectionIDs            []int // 当前所属集合；按集合顺序稳定返回
+	Unique                   *UniqueStarGift
+}
+
+type StarGiftLifecycleStatus string
+
+const (
+	StarGiftLifecycleActive    StarGiftLifecycleStatus = "active"
+	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
+	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
+	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
+)
+
+func (s StarGiftLifecycleStatus) Live() bool {
+	return s == StarGiftLifecycleActive
 }
 
 // StarGiftCollectibleAttributeKind 是唯一礼物三个必选属性槽位。
@@ -58,8 +114,31 @@ const (
 	StarGiftCollectibleBackdrop StarGiftCollectibleAttributeKind = "backdrop"
 )
 
-// StarGiftCollectibleAttribute 是已发布属性池的一项。RarityPermille 同时是客户端展示的
-// 精确稀有度和升级抽取概率；同一 revision、同一 kind 的总和必须恰好为 1000。
+// StarGiftAttributeRarityKind mirrors the Layer 228 rarity union. Permille is the only
+// kind eligible for a regular upgrade draw; named rarities are currently used by
+// craft-only models and must still be preserved in the published attribute directory.
+type StarGiftAttributeRarityKind string
+
+const (
+	StarGiftRarityPermille  StarGiftAttributeRarityKind = "permille"
+	StarGiftRarityUncommon  StarGiftAttributeRarityKind = "uncommon"
+	StarGiftRarityRare      StarGiftAttributeRarityKind = "rare"
+	StarGiftRarityEpic      StarGiftAttributeRarityKind = "epic"
+	StarGiftRarityLegendary StarGiftAttributeRarityKind = "legendary"
+)
+
+func (k StarGiftAttributeRarityKind) Valid() bool {
+	switch k {
+	case StarGiftRarityPermille, StarGiftRarityUncommon, StarGiftRarityRare,
+		StarGiftRarityEpic, StarGiftRarityLegendary:
+		return true
+	default:
+		return false
+	}
+}
+
+// StarGiftCollectibleAttribute 是已发布属性池的一项。RarityKind/RarityPermille
+// 是客户端展示事实；普通升级把非 crafted 的 permille 值当相对权重，不要求合计为 1000。
 type StarGiftCollectibleAttribute struct {
 	ID                    int64
 	CollectibleRevisionID int64
@@ -71,7 +150,10 @@ type StarGiftCollectibleAttribute struct {
 	EdgeColor             int
 	PatternColor          int
 	TextColor             int
+	RarityKind            StarGiftAttributeRarityKind
 	RarityPermille        int
+	Crafted               bool
+	OfficialDocumentID    int64
 	SortOrder             int
 	Animation             *StarGiftAnimation
 	Blob                  *FileBlob
@@ -79,33 +161,37 @@ type StarGiftCollectibleAttribute struct {
 
 // StarGiftCollectibleRevision 是某普通礼物的一份不可变、可发布属性池。
 type StarGiftCollectibleRevision struct {
-	ID           int64
-	GiftID       int64
-	Revision     int
-	UpgradeStars int64
-	SupplyTotal  int
-	Issued       int
-	SlugPrefix   string
-	Published    bool
-	Models       []StarGiftCollectibleAttribute
-	Patterns     []StarGiftCollectibleAttribute
-	Backdrops    []StarGiftCollectibleAttribute
-	CreatedBy    string
-	CreatedAt    time.Time
-	PublishedAt  time.Time
+	ID                   int64
+	GiftID               int64
+	Revision             int
+	UpgradeStars         int64
+	SupplyTotal          int
+	Issued               int
+	SlugPrefix           string
+	Published            bool
+	Models               []StarGiftCollectibleAttribute
+	Patterns             []StarGiftCollectibleAttribute
+	Backdrops            []StarGiftCollectibleAttribute
+	CreatedBy            string
+	CreatedAt            time.Time
+	PublishedAt          time.Time
+	OfficialGiftID       int64
+	SourceManifestSHA256 []byte
 }
 
 // StarGiftCollectibleWrite 是后台创建/发布属性池的协议无关输入。
 type StarGiftCollectibleWrite struct {
-	GiftID       int64
-	UpgradeStars int64
-	SupplyTotal  int
-	SlugPrefix   string
-	Models       []StarGiftCollectibleAttribute
-	Patterns     []StarGiftCollectibleAttribute
-	Backdrops    []StarGiftCollectibleAttribute
-	Actor        string
-	CommandID    string
+	GiftID               int64
+	UpgradeStars         int64
+	SupplyTotal          int
+	SlugPrefix           string
+	Models               []StarGiftCollectibleAttribute
+	Patterns             []StarGiftCollectibleAttribute
+	Backdrops            []StarGiftCollectibleAttribute
+	Actor                string
+	CommandID            string
+	OfficialGiftID       int64
+	SourceManifestSHA256 []byte
 }
 
 // UniqueStarGift 是一份已经发行的唯一礼物。属性、编号与 slug 一经创建永久不变。
@@ -118,6 +204,26 @@ type UniqueStarGift struct {
 	Slug                  string
 	Num                   int
 	Owner                 Peer
+	RequirePremium        bool
+	ResaleTonOnly         bool
+	ThemeAvailable        bool
+	Burned                bool
+	Crafted               bool
+	OwnerName             string
+	OwnerAddress          string
+	GiftAddress           string
+	ResellAmount          *StarGiftAmount
+	ResellVersion         int64
+	ReleasedBy            Peer
+	ValueAmount           int64
+	ValueCurrency         string
+	ValueUSD              int64
+	ThemePeer             Peer
+	Host                  Peer
+	OfferMinStars         int
+	CraftChancePermille   int
+	LastSaleDate          int
+	LastSaleAmount        *StarGiftAmount
 	Model                 StarGiftCollectibleAttribute
 	Pattern               StarGiftCollectibleAttribute
 	Backdrop              StarGiftCollectibleAttribute
@@ -130,6 +236,33 @@ type UniqueStarGift struct {
 	OriginalMessage       string
 	OriginalNameHidden    bool
 	CreatedAt             time.Time
+}
+
+type StarGiftCurrency string
+
+const (
+	StarGiftCurrencyStars StarGiftCurrency = "XTR"
+	StarGiftCurrencyTON   StarGiftCurrency = "TON"
+)
+
+type StarGiftAmount struct {
+	Currency StarGiftCurrency
+	Amount   int64
+	Nanos    int
+}
+
+func (a StarGiftAmount) Valid() bool {
+	if a.Amount <= 0 {
+		return false
+	}
+	switch a.Currency {
+	case StarGiftCurrencyStars:
+		return a.Nanos >= -999999999 && a.Nanos <= 999999999
+	case StarGiftCurrencyTON:
+		return a.Nanos == 0
+	default:
+		return false
+	}
 }
 
 // StarGiftUpgradePreview 是客户端升级弹窗所需的当前价格和属性样例。
@@ -171,12 +304,365 @@ type StarGiftUpgradeRequest struct {
 	OriginSessionID     int64
 }
 
+type StarGiftPurchaseRequest struct {
+	BuyerUserID      int64
+	BuyerPremium     bool
+	To               Peer
+	GiftID           int64
+	RevisionID       int64
+	IncludeUpgrade   bool
+	HideName         bool
+	Message          string
+	ChargeStars      int64
+	FormID           int64
+	CommandKey       string
+	Date             int
+	RecipientBlocked bool
+	OriginAuthKeyID  [8]byte
+	OriginSessionID  int64
+}
+
+// StarGiftPurchaseForm is the server-issued, short-lived payment intent that
+// binds payments.getPaymentForm to one later payments.sendStarsForm call. A
+// fresh form represents a fresh purchase even when every invoice field is the
+// same; retrying one form represents the same purchase command.
+type StarGiftPurchaseForm struct {
+	FormID         int64
+	BuyerUserID    int64
+	To             Peer
+	GiftID         int64
+	RevisionID     int64
+	IncludeUpgrade bool
+	HideName       bool
+	Message        string
+	ChargeStars    int64
+	IssuedAt       int
+	ExpiresAt      int
+}
+
+type StarGiftPurchaseResult struct {
+	Gift      StarGift
+	Saved     SavedStarGift
+	Balance   StarsBalance
+	Send      SendPrivateTextResult
+	Duplicate bool
+}
+
+// StarGiftConvertRequest identifies one owner-scoped regular gift conversion.
+// ActorUserID is the authenticated user who owns the user gift or administers
+// the channel gift; authorization is checked again at the RPC boundary.
+type StarGiftConvertRequest struct {
+	ActorUserID int64
+	Ref         SavedStarGiftRef
+	Date        int
+}
+
+// StarGiftConvertResult exposes the committed aggregate state. OwnerBalance is
+// the post-credit balance of either the user or the channel internal Stars
+// ledger selected by Saved.Owner.
+type StarGiftConvertResult struct {
+	Saved        SavedStarGift
+	OwnerBalance int64
+}
+
 type StarGiftUpgradeResult struct {
+	Saved       SavedStarGift
+	Unique      UniqueStarGift
+	Balance     StarsBalance
+	Send        SendPrivateTextResult
+	SourceEdits []EditedMessageForUser
+	Duplicate   bool
+}
+
+// StarGiftUpgradeReceipt is the immutable command envelope needed to replay a
+// committed upgrade after the saved gift has entered its unique terminal state.
+// In particular, a paid replay must not be rebound to a later catalog price.
+type StarGiftUpgradeReceipt struct {
+	UserID              int64
+	SourceSavedGiftID   int64
+	FormID              int64
+	UniqueGiftID        int64
+	ChargeStars         int64
+	BalanceAfter        int64
+	SourceEditPts       int
+	RequirePrepaid      bool
+	KeepOriginalDetails bool
+}
+
+type StarGiftPrepaidUpgradeRequest struct {
+	PayerUserID     int64
+	Owner           Peer
+	Hash            string
+	ChargeStars     int64
+	FormID          int64
+	CommandKey      string
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftPrepaidUpgradeResult struct {
+	Saved     SavedStarGift
+	Balance   StarsBalance
+	Send      SendPrivateTextResult
+	Duplicate bool
+}
+
+type StarGiftDropOriginalDetailsRequest struct {
+	UserID      int64
+	Ref         SavedStarGiftRef
+	ChargeStars int64
+	FormID      int64
+	CommandKey  string
+	Date        int
+}
+
+type StarGiftDropOriginalDetailsResult struct {
+	Saved     SavedStarGift
+	Unique    UniqueStarGift
+	Balance   StarsBalance
+	Duplicate bool
+}
+
+// StarGiftLifecyclePolicy is the server-owned policy snapshotted when a regular
+// gift becomes collectible. It deliberately contains no wallet/node/provider
+// configuration: TON remains only a currency unit in the local ledger.
+type StarGiftLifecyclePolicy struct {
+	TransferStars            int64
+	DropOriginalDetailsStars int64
+	OfferMinStars            int
+	ExportDelaySeconds       int
+	TransferDelaySeconds     int
+	ResellDelaySeconds       int
+	CraftDelaySeconds        int
+	CraftChancePermille      int
+}
+
+func (p StarGiftLifecyclePolicy) Valid() bool {
+	return p.TransferStars >= 0 && p.DropOriginalDetailsStars >= 0 && p.OfferMinStars >= 0 &&
+		p.ExportDelaySeconds >= 0 && p.TransferDelaySeconds >= 0 && p.ResellDelaySeconds >= 0 &&
+		p.CraftDelaySeconds >= 0 && p.CraftChancePermille >= 0 && p.CraftChancePermille <= 1000
+}
+
+// StarGiftMarketPolicy is snapshotted in the running aggregate coordinator.
+// Proceeds permille is the seller share; the remainder is recorded as platform
+// commission. TON is still only a unit in the local ledger.
+type StarGiftMarketPolicy struct {
+	StarsProceedsPermille int
+	TONProceedsPermille   int
+}
+
+func (p StarGiftMarketPolicy) Valid() bool {
+	return p.StarsProceedsPermille >= 0 && p.StarsProceedsPermille <= 1000 &&
+		p.TONProceedsPermille >= 0 && p.TONProceedsPermille <= 1000
+}
+
+type StarGiftResaleFilter struct {
+	GiftID      int64
+	SortByPrice bool
+	SortByNum   bool
+	ForCraft    bool
+	StarsOnly   bool
+	ModelIDs    []int64
+	PatternIDs  []int64
+	BackdropIDs []int64
+	Offset      string
+	Limit       int
+}
+
+type StarGiftResalePage struct {
+	Gifts      []UniqueStarGift
+	Count      int
+	NextOffset string
+}
+
+type StarGiftValueInfo struct {
+	Currency         string
+	Value            int64
+	ValueIsAverage   bool
+	InitialSaleDate  int
+	InitialSaleStars int64
+	InitialSalePrice int64
+	LastSaleDate     int
+	LastSalePrice    int64
+	FloorPrice       int64
+	AveragePrice     int64
+	ListedCount      int
+}
+
+type StarGiftTransferRequest struct {
+	ActorUserID     int64
+	Ref             SavedStarGiftRef
+	To              Peer
+	ChargeStars     int64
+	FormID          int64
+	CommandKey      string
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftTransferResult struct {
 	Saved     SavedStarGift
 	Unique    UniqueStarGift
 	Balance   StarsBalance
 	Send      SendPrivateTextResult
 	Duplicate bool
+}
+
+type StarGiftListingRequest struct {
+	ActorUserID int64
+	Ref         SavedStarGiftRef
+	Amount      *StarGiftAmount
+	Date        int
+}
+
+type StarGiftResalePurchaseRequest struct {
+	BuyerUserID     int64
+	Slug            string
+	To              Peer
+	Amount          StarGiftAmount
+	FormID          int64
+	CommandKey      string
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftOfferRequest struct {
+	BuyerUserID     int64
+	Owner           Peer
+	Slug            string
+	Price           StarGiftAmount
+	Duration        int
+	RandomID        int64
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftOffer struct {
+	ID           int64
+	BuyerUserID  int64
+	Owner        Peer
+	UniqueGiftID int64
+	Price        StarGiftAmount
+	RandomID     int64
+	OfferMsgID   int
+	BuyerMsgID   int
+	Status       string
+	CreatedAt    int
+	ExpiresAt    int
+	ResolvedAt   int
+	Gift         UniqueStarGift
+}
+
+type StarGiftOfferResult struct {
+	Offer     StarGiftOffer
+	Saved     SavedStarGift
+	Unique    UniqueStarGift
+	Balance   StarsBalance
+	Send      SendPrivateTextResult
+	Duplicate bool
+}
+
+type StarGiftResolveOfferRequest struct {
+	OwnerUserID     int64
+	OfferMsgID      int
+	Decline         bool
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftCraftRequest struct {
+	UserID          int64
+	Refs            []SavedStarGiftRef
+	CommandKey      string
+	Date            int
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+}
+
+type StarGiftCraftResult struct {
+	Success     bool
+	Chance      int
+	Gift        *UniqueStarGift
+	Send        SendPrivateTextResult
+	SourceEdits []EditedMessageForUser
+	Duplicate   bool
+}
+
+type StarGiftAuction struct {
+	Gift          StarGift
+	Version       int
+	StartDate     int
+	EndDate       int
+	MinBidAmount  int64
+	NextRoundAt   int
+	LastGiftNum   int
+	GiftsLeft     int
+	CurrentRound  int
+	TotalRounds   int
+	RoundDuration int
+	BidLevels     []StarGiftAuctionBidLevel
+	TopBidders    []int64
+	UserState     StarGiftAuctionUserState
+	Finished      bool
+	AveragePrice  int64
+	ListedCount   int
+}
+
+type StarGiftAuctionBidLevel struct {
+	Pos    int
+	Amount int64
+	Date   int
+}
+
+type StarGiftAuctionUserState struct {
+	Returned      bool
+	BidAmount     int64
+	BidDate       int
+	MinBidAmount  int64
+	BidPeer       Peer
+	AcquiredCount int
+}
+
+type StarGiftAuctionBidRequest struct {
+	UserID    int64
+	GiftID    int64
+	Peer      Peer
+	BidAmount int64
+	HideName  bool
+	Message   string
+	UpdateBid bool
+	FormID    int64
+	Date      int
+}
+
+type StarGiftAuctionAcquired struct {
+	Peer       Peer
+	Date       int
+	BidAmount  int64
+	Round      int
+	Pos        int
+	Message    string
+	GiftNum    int
+	NameHidden bool
+}
+
+type StarGiftWithdrawalRequest struct {
+	UserID int64
+	Ref    SavedStarGiftRef
+	Date   int
+}
+
+type StarGiftWithdrawal struct {
+	ProviderRequestID string
+	URL               string
+	ExpiresAt         int
+	Status            string
+	Gift              UniqueStarGift
 }
 
 // StarGiftCollection 是 peer 资料页中的礼物集合；一份礼物可属于多个集合。
@@ -223,17 +709,53 @@ type StarGiftAnimation struct {
 
 // StarGiftCatalogWrite 是 store 原子创建目录版本所需的协议无关数据。
 type StarGiftCatalogWrite struct {
-	GiftID       int64 // 0 创建新礼物；非 0 为该礼物创建新 revision
-	Title        string
-	Stars        int64
-	ConvertStars int64
-	Enabled      bool
-	SortOrder    int
-	Document     Document
-	Blob         FileBlob
-	Animation    StarGiftAnimation
-	Actor        string
-	CommandID    string
+	GiftID               int64 // 0 创建新礼物；非 0 为该礼物创建新 revision
+	Title                string
+	Stars                int64
+	ConvertStars         int64
+	Enabled              bool
+	SortOrder            int
+	Document             Document
+	Blob                 FileBlob
+	Animation            StarGiftAnimation
+	Actor                string
+	CommandID            string
+	OfficialGiftID       int64
+	SourceManifestSHA256 []byte
+	OfficialSourceJSON   []byte
+	Limited              bool
+	SoldOut              bool
+	Birthday             bool
+	RequirePremium       bool
+	LimitedPerUser       bool
+	PeerColorAvailable   bool
+	Auction              bool
+	AvailabilityRemains  int
+	AvailabilityTotal    int
+	AvailabilityResale   int64
+	FirstSaleDate        int
+	LastSaleDate         int
+	ResellMinStars       int64
+	ReleasedBy           Peer
+	PerUserTotal         int
+	LockedUntilDate      int
+	AuctionSlug          string
+	GiftsPerRound        int
+	AuctionStartDate     int
+	UpgradeVariants      int
+	Background           *StarGiftBackground
+}
+
+// StarGiftCatalogBundleWrite atomically publishes one catalog revision and its optional
+// complete collectible pool. Collectible.GiftID is filled with the allocated local gift ID.
+type StarGiftCatalogBundleWrite struct {
+	Catalog     StarGiftCatalogWrite
+	Collectible *StarGiftCollectibleWrite
+}
+
+type StarGiftCatalogBundleResult struct {
+	Catalog     StarGiftCatalogEntry
+	Collectible *StarGiftCollectibleRevision
 }
 
 // StarGiftCatalogEntry 是管理后台目录视图。
@@ -255,20 +777,24 @@ type StarGiftCatalogEntry struct {
 }
 
 // SavedStarGiftRef 是 payments.getSavedStarGift/saveStarGift/convertStarGift 的协议中立引用。
-// 用户礼物使用 inputSavedStarGiftUser.msg_id；频道礼物使用 inputSavedStarGiftChat.peer + saved_id。
+// 用户礼物使用 inputSavedStarGiftUser.msg_id；频道礼物使用 inputSavedStarGiftChat.peer + saved_id；
+// 已升级的唯一礼物也可使用官方 inputSavedStarGiftSlug.slug。三种身份必须互斥。
 type SavedStarGiftRef struct {
 	Owner   Peer
 	MsgID   int
 	SavedID int64
+	Slug    string
 }
 
 // Valid reports whether the reference has the identity required by its owner kind.
 func (r SavedStarGiftRef) Valid() bool {
+	slug := strings.TrimSpace(r.Slug)
+	validSlug := slug != "" && slug == r.Slug && len(slug) <= MaxStarGiftSlugBytes && r.MsgID == 0 && r.SavedID == 0
 	switch r.Owner.Type {
 	case PeerTypeUser:
-		return r.Owner.ID != 0 && r.MsgID > 0
+		return r.Owner.ID != 0 && (validSlug || r.MsgID > 0 && r.SavedID == 0 && slug == "")
 	case PeerTypeChannel:
-		return r.Owner.ID != 0 && r.SavedID > 0
+		return r.Owner.ID != 0 && (validSlug || r.SavedID > 0 && r.MsgID == 0 && slug == "")
 	default:
 		return false
 	}
@@ -317,7 +843,8 @@ const (
 	// MaxStarGiftCatalogSize 是当前普通礼物目录的有界上限。
 	MaxStarGiftCatalogSize                  = 500
 	MaxStarGiftTitleRunes                   = 128
-	MaxStarGiftCollectibleAttributesPerKind = 256
+	MaxStarGiftSlugBytes                    = 255
+	MaxStarGiftCollectibleAttributesPerKind = 512
 	MaxStarGiftCollectionTitleRunes         = 12
 	MaxStarGiftCollectionsPerPeer           = 100
 	MaxStarGiftCollectionItems              = 1000
@@ -339,6 +866,18 @@ var (
 	ErrStarGiftCollectibleInvalid     = errors.New("stargift: invalid collectible definition")
 	ErrStarGiftCollectionNotFound     = errors.New("stargift: collection not found")
 	ErrStarGiftCollectionsFull        = errors.New("stargift: collections full")
+	ErrStarGiftUnavailable            = errors.New("stargift: unavailable")
+	ErrStarGiftOwnerInvalid           = errors.New("stargift: owner invalid")
+	ErrStarGiftTransferUnavailable    = errors.New("stargift: transfer unavailable")
+	ErrStarGiftResaleUnavailable      = errors.New("stargift: resale unavailable")
+	ErrStarGiftOfferInvalid           = errors.New("stargift: offer invalid")
+	ErrStarGiftOfferExpired           = errors.New("stargift: offer expired")
+	ErrStarGiftCraftUnavailable       = errors.New("stargift: craft unavailable")
+	ErrStarGiftAuctionUnavailable     = errors.New("stargift: auction unavailable")
+	ErrStarGiftWithdrawalUnavailable  = errors.New("stargift: withdrawal provider unavailable")
+	ErrStarGiftFormExpired            = errors.New("stargift: payment form expired")
+	ErrStarGiftFormPurposeInvalid     = errors.New("stargift: payment form purpose invalid")
+	ErrStarGiftFormAmountMismatch     = errors.New("stargift: payment form amount mismatch")
 )
 
 var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -349,6 +888,11 @@ func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
 	write.SlugPrefix = strings.TrimSpace(strings.ToLower(write.SlugPrefix))
 	if write.GiftID <= 0 || write.UpgradeStars <= 0 || write.SupplyTotal <= 0 ||
 		!starGiftCollectibleSlugPrefix.MatchString(write.SlugPrefix) || strings.TrimSpace(write.CommandID) == "" {
+		return ErrStarGiftCollectibleInvalid
+	}
+	if write.OfficialGiftID < 0 ||
+		(write.OfficialGiftID == 0 && len(write.SourceManifestSHA256) != 0) ||
+		(write.OfficialGiftID > 0 && len(write.SourceManifestSHA256) != 32) {
 		return ErrStarGiftCollectibleInvalid
 	}
 	if err := validateStarGiftAttributes(write.Models, StarGiftCollectibleModel, false); err != nil {
@@ -380,11 +924,19 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 		return ErrStarGiftCollectibleInvalid
 	}
 	seen := make(map[string]struct{}, len(attributes))
-	total := 0
+	selectable := 0
 	for _, attribute := range attributes {
 		name := strings.TrimSpace(attribute.Name)
-		if attribute.Kind != kind || name == "" || len([]rune(name)) > MaxStarGiftTitleRunes ||
-			attribute.RarityPermille <= 0 || attribute.RarityPermille > 1000 {
+		rarityKind := attribute.RarityKind
+		if attribute.Kind != kind || name == "" || len([]rune(name)) > MaxStarGiftTitleRunes || !rarityKind.Valid() {
+			return ErrStarGiftCollectibleInvalid
+		}
+		if rarityKind == StarGiftRarityPermille {
+			if attribute.RarityPermille <= 0 || attribute.RarityPermille > 1000 || attribute.Crafted {
+				return ErrStarGiftCollectibleInvalid
+			}
+			selectable++
+		} else if attribute.RarityPermille != 0 || !attribute.Crafted || kind != StarGiftCollectibleModel {
 			return ErrStarGiftCollectibleInvalid
 		}
 		key := strings.ToLower(name)
@@ -392,7 +944,6 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 			return ErrStarGiftCollectibleInvalid
 		}
 		seen[key] = struct{}{}
-		total += attribute.RarityPermille
 		switch kind {
 		case StarGiftCollectibleModel, StarGiftCollectiblePattern:
 			if attribute.Animation == nil || len(attribute.Animation.JSON) == 0 ||
@@ -404,7 +955,7 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 				return ErrStarGiftCollectibleInvalid
 			}
 		case StarGiftCollectibleBackdrop:
-			if attribute.BackdropID <= 0 || attribute.Document != nil ||
+			if attribute.BackdropID < 0 || attribute.Document != nil ||
 				attribute.CenterColor < 0 || attribute.CenterColor > 0xffffff ||
 				attribute.EdgeColor < 0 || attribute.EdgeColor > 0xffffff ||
 				attribute.PatternColor < 0 || attribute.PatternColor > 0xffffff ||
@@ -415,7 +966,7 @@ func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind 
 			return ErrStarGiftCollectibleInvalid
 		}
 	}
-	if total != 1000 {
+	if selectable == 0 {
 		return ErrStarGiftCollectibleInvalid
 	}
 	return nil

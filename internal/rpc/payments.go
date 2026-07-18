@@ -33,12 +33,11 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsGetStarsTransactionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsTransactions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarsTransactionsRequest) (any, error) {
 		return r.onPaymentsGetStarsTransactions(ctx, layerRequest)
 	})
+	registerRPC[*tg.PaymentsCheckCanSendGiftRequest](d, tlprofile.SemanticMethodPaymentsCheckCanSendGift, func(ctx context.Context, req *tg.PaymentsCheckCanSendGiftRequest) (any, error) {
+		return r.onPaymentsCheckCanSendGift(ctx, req)
+	})
 	registerRPC[*tg.PaymentsGetStarGiftActiveAuctionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftActiveAuctions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftActiveAuctionsRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		return tdesktop.StarGiftActiveAuctions(), nil
+		return r.onPaymentsGetStarGiftActiveAuctions(ctx, layerRequest)
 	})
 	registerRPC[*tg.PaymentsGetStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGifts, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftsRequest) (any, error) {
 		return r.onPaymentsGetStarGifts(ctx, layerRequest.
@@ -48,9 +47,18 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 		return r.onPaymentsGetStarGiftUpgradePreview(ctx, layerRequest.
 			GiftID)
 	})
+	registerRPC[*tg.PaymentsGetStarGiftUpgradeAttributesRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftUpgradeAttributes, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftUpgradeAttributesRequest) (any, error) {
+		return r.onPaymentsGetStarGiftUpgradeAttributes(ctx, layerRequest.GiftID)
+	})
 	registerRPC[*tg.PaymentsGetUniqueStarGiftRequest](d, tlprofile.SemanticMethodPaymentsGetUniqueStarGift, func(ctx context.Context, layerRequest *tg.PaymentsGetUniqueStarGiftRequest) (any, error) {
 		return r.onPaymentsGetUniqueStarGift(ctx, layerRequest.
 			Slug)
+	})
+	registerRPC[*tg.PaymentsGetUniqueStarGiftValueInfoRequest](d, tlprofile.SemanticMethodPaymentsGetUniqueStarGiftValueInfo, func(ctx context.Context, req *tg.PaymentsGetUniqueStarGiftValueInfoRequest) (any, error) {
+		return r.onPaymentsGetUniqueStarGiftValueInfo(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetResaleStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetResaleStarGifts, func(ctx context.Context, req *tg.PaymentsGetResaleStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetResaleStarGifts(ctx, req)
 	})
 	registerRPC[*tg.PaymentsGetPaymentFormRequest](d, tlprofile.SemanticMethodPaymentsGetPaymentForm, func(ctx context.Context, layerRequest *tg.PaymentsGetPaymentFormRequest) (any, error) {
 		return r.onPaymentsGetPaymentForm(ctx, layerRequest)
@@ -74,6 +82,36 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.PaymentsUpgradeStarGiftRequest](d, tlprofile.SemanticMethodPaymentsUpgradeStarGift, func(ctx context.Context, layerRequest *tg.PaymentsUpgradeStarGiftRequest) (any, error) {
 		return r.onPaymentsUpgradeStarGift(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsUpdateStarGiftPriceRequest](d, tlprofile.SemanticMethodPaymentsUpdateStarGiftPrice, func(ctx context.Context, req *tg.PaymentsUpdateStarGiftPriceRequest) (any, error) {
+		return r.onPaymentsUpdateStarGiftPrice(ctx, req)
+	})
+	registerRPC[*tg.PaymentsTransferStarGiftRequest](d, tlprofile.SemanticMethodPaymentsTransferStarGift, func(ctx context.Context, req *tg.PaymentsTransferStarGiftRequest) (any, error) {
+		return r.onPaymentsTransferStarGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURL, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (any, error) {
+		return r.onPaymentsGetStarGiftWithdrawalURL(ctx, req)
+	})
+	registerRPC[*tg.PaymentsSendStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsSendStarGiftOffer, func(ctx context.Context, req *tg.PaymentsSendStarGiftOfferRequest) (any, error) {
+		return r.onPaymentsSendStarGiftOffer(ctx, req)
+	})
+	registerRPC[*tg.PaymentsResolveStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsResolveStarGiftOffer, func(ctx context.Context, req *tg.PaymentsResolveStarGiftOfferRequest) (any, error) {
+		return r.onPaymentsResolveStarGiftOffer(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetCraftStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetCraftStarGifts, func(ctx context.Context, req *tg.PaymentsGetCraftStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetCraftStarGifts(ctx, req)
+	})
+	registerRPC[*tg.PaymentsCraftStarGiftRequest](d, tlprofile.SemanticMethodPaymentsCraftStarGift, func(ctx context.Context, req *tg.PaymentsCraftStarGiftRequest) (any, error) {
+		return r.onPaymentsCraftStarGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftAuctionStateRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftAuctionState, func(ctx context.Context, req *tg.PaymentsGetStarGiftAuctionStateRequest) (any, error) {
+		return r.onPaymentsGetStarGiftAuctionState(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftAuctionAcquiredGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftAuctionAcquiredGifts, func(ctx context.Context, req *tg.PaymentsGetStarGiftAuctionAcquiredGiftsRequest) (any, error) {
+		return r.onPaymentsGetStarGiftAuctionAcquiredGifts(ctx, req)
+	})
+	registerRPC[*tg.PaymentsToggleChatStarGiftNotificationsRequest](d, tlprofile.SemanticMethodPaymentsToggleChatStarGiftNotifications, func(ctx context.Context, req *tg.PaymentsToggleChatStarGiftNotificationsRequest) (any, error) {
+		return r.onPaymentsToggleChatStarGiftNotifications(ctx, req)
 	})
 	registerRPC[*tg.PaymentsGetStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftCollections, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftCollectionsRequest) (any, error) {
 		return r.onPaymentsGetStarGiftCollections(ctx, layerRequest)
@@ -108,35 +146,115 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 		return &tg.PaymentsStarsRevenueAdsAccountURL{URL: "https://ads.telegram.org/"}, nil
 	})
 	registerRPC[*tg.PaymentsGetStarsRevenueStatsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsRevenueStats, func(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (any, error) {
-		userID, _, err := r.currentUserID(ctx)
-		if err != nil {
-			return nil, internalErr()
-		}
-		if req == nil {
-			return nil, peerIDInvalidErr()
-		}
-		if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer); err != nil {
-			return nil, err
-		}
-		return tdesktop.StarsRevenueStats(req.GetTon()), nil
+		return r.onPaymentsGetStarsRevenueStats(ctx, req)
 	})
 
 }
 
-// onPaymentsGetStarsStatus 返回当前账号的 Stars 余额（首读时惰性授予起始余额）。
-// 响应必须是 payments.starsStatus（balance/chats/users 都是必填，空 vector 即可）——
-// 两端客户端无条件读取 balance（DrKLO StarsAmount 反序列化 / TDesktop vbalance()）。
-func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (*tg.PaymentsStarsStatus, error) {
-	if req != nil && req.GetTon() {
-		// TON 余额未建模：返回 0 nanoton 的合法响应。
-		return emptyStarsStatus(&tg.StarsTonAmount{}), nil
-	}
-	if r.deps.Stars == nil {
-		return emptyStarsStatus(&tg.StarsAmount{}), nil
-	}
+// onPaymentsGetStarsRevenueStats exposes real channel Star Gift proceeds from
+// the same peer-scoped ledger as getStarsStatus/getStarsTransactions. Personal
+// and bot revenue remain the bounded compatibility response because their
+// revenue bucket is distinct from the general Stars balance and is not modeled.
+func (r *Router) onPaymentsGetStarsRevenueStats(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (*tg.PaymentsStarsRevenueStats, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+	if req == nil {
+		return nil, peerIDInvalidErr()
+	}
+	owner, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
+		return nil, err
+	}
+	ton := req.GetTon()
+	if owner.Type != domain.PeerTypeChannel {
+		return tdesktop.StarsRevenueStats(ton), nil
+	}
+	if err := r.checkStarGiftOwnerPermission(ctx, userID, owner); err != nil {
+		return nil, err
+	}
+	ledger, ok := r.deps.Gifts.(channelGiftLedgerReader)
+	if !ok {
+		return tdesktop.StarsRevenueStats(ton), nil
+	}
+	var balance int64
+	if ton {
+		balance, err = ledger.ChannelTonBalance(ctx, owner.ID)
+	} else {
+		balance, err = ledger.ChannelStarsBalance(ctx, owner.ID)
+	}
+	if err != nil {
+		return nil, internalErr()
+	}
+	stats := tdesktop.StarsRevenueStats(ton)
+	var amount tg.StarsAmountClass = &tg.StarsAmount{Amount: balance}
+	if ton {
+		amount = &tg.StarsTonAmount{Amount: balance}
+	}
+	// Channel ledgers currently only receive collectible conversion/marketplace
+	// proceeds and have no withdrawal/debit path, so balance equals lifetime
+	// revenue. Withdrawal stays disabled because no external payout exists.
+	stats.Status.CurrentBalance = amount
+	stats.Status.AvailableBalance = amount
+	stats.Status.OverallRevenue = amount
+	return stats, nil
+}
+
+type channelGiftLedgerReader interface {
+	ChannelStarsBalance(ctx context.Context, channelID int64) (int64, error)
+	ChannelStarsTransactions(ctx context.Context, channelID int64, offset string, limit int) (domain.StarsTransactionPage, error)
+	ChannelTonBalance(ctx context.Context, channelID int64) (int64, error)
+	ChannelTonTransactions(ctx context.Context, channelID int64, offset string, limit int) (domain.TonTransactionPage, error)
+}
+
+// onPaymentsGetStarsStatus 返回请求 peer 的 Stars/本地 TON 余额。个人与频道账本
+// 严格隔离；频道读取要求 Star Gift 管理权限，不能把频道收益投影到执行 RPC 的管理员。
+// 响应必须是 payments.starsStatus（balance/chats/users 都是必填，空 vector 即可）——
+// 两端客户端无条件读取 balance（DrKLO StarsAmount 反序列化 / TDesktop vbalance()）。
+func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (*tg.PaymentsStarsStatus, error) {
+	userID, owner, err := r.starGiftLedgerOwner(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	ton := req != nil && req.GetTon()
+	if owner.Type == domain.PeerTypeChannel {
+		ledger, ok := r.deps.Gifts.(channelGiftLedgerReader)
+		if !ok {
+			if ton {
+				return emptyStarsStatus(&tg.StarsTonAmount{}), nil
+			}
+			return emptyStarsStatus(&tg.StarsAmount{}), nil
+		}
+		var balance int64
+		if ton {
+			balance, err = ledger.ChannelTonBalance(ctx, owner.ID)
+		} else {
+			balance, err = ledger.ChannelStarsBalance(ctx, owner.ID)
+		}
+		if err != nil {
+			return nil, internalErr()
+		}
+		var amount tg.StarsAmountClass = &tg.StarsAmount{Amount: balance}
+		if ton {
+			amount = &tg.StarsTonAmount{Amount: balance}
+		}
+		out := emptyStarsStatus(amount)
+		out.Chats = r.tgChatsForChannelIDs(ctx, userID, []int64{owner.ID})
+		return out, nil
+	}
+	if ton {
+		if r.deps.Gifts == nil {
+			return emptyStarsStatus(&tg.StarsTonAmount{}), nil
+		}
+		balance, err := r.deps.Gifts.TonBalance(ctx, userID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		return emptyStarsStatus(&tg.StarsTonAmount{Amount: balance}), nil
+	}
+	if r.deps.Stars == nil {
+		return emptyStarsStatus(&tg.StarsAmount{}), nil
 	}
 	bal, err := r.deps.Stars.GetBalance(ctx, userID)
 	if err != nil {
@@ -148,23 +266,81 @@ func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsG
 // onPaymentsGetStarsTransactions 返回 keyset 分页的 Stars 流水（同 starsStatus 信封）。
 // 末页必须省略 next_offset（flag 不置），否则 DrKLO 会无限翻页。
 func (r *Router) onPaymentsGetStarsTransactions(ctx context.Context, req *tg.PaymentsGetStarsTransactionsRequest) (*tg.PaymentsStarsStatus, error) {
-	if req != nil && req.GetTon() {
-		return emptyStarsStatus(&tg.StarsTonAmount{}), nil
-	}
-	if r.deps.Stars == nil {
-		return emptyStarsStatus(&tg.StarsAmount{}), nil
-	}
-	userID, _, err := r.currentUserID(ctx)
+	userID, owner, err := r.starGiftTransactionLedgerOwner(ctx, req)
 	if err != nil {
-		return nil, internalErr()
+		return nil, err
 	}
-	offset := ""
-	limit := domain.MaxStarsTransactionsLimit
+	offset, limit := "", domain.MaxStarsTransactionsLimit
 	if req != nil {
 		offset = req.Offset
 		if req.Limit > 0 {
 			limit = req.Limit
 		}
+	}
+	ton := req != nil && req.GetTon()
+	if owner.Type == domain.PeerTypeChannel {
+		ledger, ok := r.deps.Gifts.(channelGiftLedgerReader)
+		if !ok {
+			if ton {
+				return emptyStarsStatus(&tg.StarsTonAmount{}), nil
+			}
+			return emptyStarsStatus(&tg.StarsAmount{}), nil
+		}
+		if ton {
+			page, err := ledger.ChannelTonTransactions(ctx, owner.ID, offset, limit)
+			if err != nil {
+				return nil, internalErr()
+			}
+			out := emptyStarsStatus(&tg.StarsTonAmount{Amount: page.Balance})
+			if txns := tgTonTransactions(page.Transactions); len(txns) > 0 {
+				out.SetHistory(txns)
+			}
+			if page.NextOffset != "" {
+				out.SetNextOffset(page.NextOffset)
+			}
+			r.enrichChannelTonLedgerStatus(ctx, userID, owner.ID, page.Transactions, out)
+			return out, nil
+		}
+		page, err := ledger.ChannelStarsTransactions(ctx, owner.ID, offset, limit)
+		if err != nil {
+			return nil, internalErr()
+		}
+		out := emptyStarsStatus(&tg.StarsAmount{Amount: page.Balance})
+		if txns := tgStarsTransactions(page.Transactions); len(txns) > 0 {
+			out.SetHistory(txns)
+		}
+		if page.NextOffset != "" {
+			out.SetNextOffset(page.NextOffset)
+		}
+		r.enrichChannelStarsLedgerStatus(ctx, userID, owner.ID, page.Transactions, out)
+		return out, nil
+	}
+	if ton {
+		if r.deps.Gifts == nil {
+			return emptyStarsStatus(&tg.StarsTonAmount{}), nil
+		}
+		page, err := r.deps.Gifts.TonTransactions(ctx, userID, offset, limit)
+		if err != nil {
+			return nil, internalErr()
+		}
+		out := emptyStarsStatus(&tg.StarsTonAmount{Amount: page.Balance})
+		if txns := tgTonTransactions(page.Transactions); len(txns) > 0 {
+			out.SetHistory(txns)
+		}
+		if page.NextOffset != "" {
+			out.SetNextOffset(page.NextOffset)
+		}
+		ids := make([]int64, 0)
+		for _, txn := range page.Transactions {
+			if txn.Peer.Type == domain.PeerTypeUser {
+				ids = append(ids, txn.Peer.ID)
+			}
+		}
+		out.Users = tgUsersForViewer(userID, r.domainUsersForIDs(ctx, userID, uniqueInt64(ids)))
+		return out, nil
+	}
+	if r.deps.Stars == nil {
+		return emptyStarsStatus(&tg.StarsAmount{}), nil
 	}
 	page, err := r.deps.Stars.ListTransactions(ctx, userID, offset, limit)
 	if err != nil {
@@ -182,6 +358,71 @@ func (r *Router) onPaymentsGetStarsTransactions(ctx context.Context, req *tg.Pay
 		out.Users = tgUsersForViewer(userID, r.domainUsersForIDs(ctx, userID, ids))
 	}
 	return out, nil
+}
+
+func (r *Router) starGiftLedgerOwner(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (int64, domain.Peer, error) {
+	if req == nil {
+		return 0, domain.Peer{}, peerIDInvalidErr()
+	}
+	return r.starGiftLedgerOwnerForPeer(ctx, req.Peer)
+}
+
+func (r *Router) starGiftTransactionLedgerOwner(ctx context.Context, req *tg.PaymentsGetStarsTransactionsRequest) (int64, domain.Peer, error) {
+	if req == nil {
+		return 0, domain.Peer{}, peerIDInvalidErr()
+	}
+	return r.starGiftLedgerOwnerForPeer(ctx, req.Peer)
+}
+
+func (r *Router) starGiftLedgerOwnerForPeer(ctx context.Context, input tg.InputPeerClass) (int64, domain.Peer, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return 0, domain.Peer{}, internalErr()
+	}
+	owner, err := r.checkedDomainPeerFromInputPeer(ctx, userID, input)
+	if err != nil {
+		return 0, domain.Peer{}, err
+	}
+	if owner.Type == domain.PeerTypeUser {
+		if owner.ID != userID {
+			return 0, domain.Peer{}, peerIDInvalidErr()
+		}
+		return userID, owner, nil
+	}
+	if err := r.checkStarGiftOwnerPermission(ctx, userID, owner); err != nil {
+		return 0, domain.Peer{}, err
+	}
+	return userID, owner, nil
+}
+
+func (r *Router) enrichChannelStarsLedgerStatus(ctx context.Context, viewerID, ownerChannelID int64, txns []domain.StarsTransaction, out *tg.PaymentsStarsStatus) {
+	userIDs := make([]int64, 0, len(txns))
+	channelIDs := []int64{ownerChannelID}
+	for _, txn := range txns {
+		switch txn.Peer.Type {
+		case domain.PeerTypeUser:
+			userIDs = append(userIDs, txn.Peer.ID)
+		case domain.PeerTypeChannel:
+			channelIDs = append(channelIDs, txn.Peer.ID)
+		}
+	}
+	out.Users = tgUsersForViewer(viewerID, r.domainUsersForIDs(ctx, viewerID, uniqueInt64(userIDs)))
+	out.Chats = r.tgChatsForChannelIDs(ctx, viewerID, uniqueInt64(channelIDs))
+}
+
+func (r *Router) enrichChannelTonLedgerStatus(ctx context.Context, viewerID, ownerChannelID int64, txns []domain.TonTransaction, out *tg.PaymentsStarsStatus) {
+	userIDs := make([]int64, 0, len(txns))
+	channelIDs := []int64{ownerChannelID}
+	for _, txn := range txns {
+		switch txn.Peer.Type {
+		case domain.PeerTypeUser:
+			userIDs = append(userIDs, txn.Peer.ID)
+		case domain.PeerTypeChannel:
+			channelIDs = append(channelIDs, txn.Peer.ID)
+		}
+	}
+	out.Users = tgUsersForViewer(viewerID, r.domainUsersForIDs(ctx, viewerID, uniqueInt64(userIDs)))
+	out.Chats = r.tgChatsForChannelIDs(ctx, viewerID, uniqueInt64(channelIDs))
 }
 
 // emptyStarsStatus 构造一个合法的最小 payments.starsStatus（chats/users 非空 vector 但可空）。
@@ -214,6 +455,49 @@ func tgStarsTransactions(in []domain.StarsTransaction) []tg.StarsTransaction {
 			item.Reaction = true
 		case domain.StarsReasonGift:
 			item.Gift = true
+		case domain.StarsReasonGiftUpgrade:
+			item.StargiftUpgrade = true
+		case domain.StarsReasonGiftResale:
+			item.StargiftResale = true
+		case domain.StarsReasonGiftPrepaid:
+			item.StargiftPrepaidUpgrade = true
+		case domain.StarsReasonGiftDrop:
+			item.StargiftDropOriginalDetails = true
+		case domain.StarsReasonGiftAuction:
+			item.StargiftAuctionBid = true
+		case domain.StarsReasonGiftOffer:
+			item.Offer = true
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func tgTonTransactions(in []domain.TonTransaction) []tg.StarsTransaction {
+	out := make([]tg.StarsTransaction, 0, len(in))
+	for _, t := range in {
+		item := tg.StarsTransaction{ID: strconv.FormatInt(t.ID, 10), Amount: &tg.StarsTonAmount{Amount: t.Amount},
+			Date: t.Date, Peer: tgStarsTransactionPeer(domain.StarsTransaction{Peer: t.Peer, Reason: t.Reason})}
+		if t.Amount > 0 {
+			item.Refund = true
+		}
+		if t.Title != "" {
+			item.SetTitle(t.Title)
+		}
+		if t.Description != "" {
+			item.SetDescription(t.Description)
+		}
+		switch t.Reason {
+		case domain.StarsReasonGiftResale:
+			item.StargiftResale = true
+		case domain.StarsReasonGiftOffer:
+			item.Offer = true
+		case domain.StarsReasonGiftAuction:
+			item.StargiftAuctionBid = true
+		case domain.StarsReasonGiftPrepaid:
+			item.StargiftPrepaidUpgrade = true
+		case domain.StarsReasonGiftDrop:
+			item.StargiftDropOriginalDetails = true
 		}
 		out = append(out, item)
 	}

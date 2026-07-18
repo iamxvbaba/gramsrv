@@ -161,34 +161,58 @@ export type OutboxRow = {
 };
 
 export type StarGiftRow = {
-  GiftID: number;
-  RevisionID: number;
+  GiftID: string;
+  RevisionID: string;
   Revision: number;
   Title: string;
-  Stars: number;
-  ConvertStars: number;
+  Stars: string;
+  ConvertStars: string;
   Enabled: boolean;
   SortOrder: number;
-  DocumentID: number;
+  DocumentID: string;
   SourceName: string;
   SourceFormat: "tgs" | "lottie";
   AnimationSHA: string;
-  AnimationSize: number;
+  AnimationSize: string;
   Width: number;
   Height: number;
   FrameRate: number;
-  ReceivedCount: number;
+  ReceivedCount: string;
   CreatedBy: string;
   UpdatedAt: string;
 };
 
 export type StarGiftListResponse = { Gifts: StarGiftRow[] };
 
+export type OfficialStarGiftRow = {
+  source_gift_id: string;
+  title: string;
+  stars: string;
+  convert_stars: string;
+  upgrade_stars: string;
+  availability_total: number;
+  limited: boolean;
+  sold_out: boolean;
+  model_count: number;
+  pattern_count: number;
+  backdrop_count: number;
+  crafted_model_count: number;
+  can_upgrade: boolean;
+  can_craft: boolean;
+  document_id: string;
+  animation_validated: boolean;
+};
+
+export type OfficialStarGiftListResponse = { gifts: OfficialStarGiftRow[] };
+
 export type StarGiftCollectibleAttributeRow = {
-  id: number;
+  id: string;
   kind: "model" | "pattern" | "backdrop";
   name: string;
+  rarity_kind: "permille" | "uncommon" | "rare" | "epic" | "legendary";
   rarity_permille: number;
+  crafted: boolean;
+  official_document_id: string;
   sort_order: number;
   source_name?: string;
   source_format?: "tgs" | "lottie";
@@ -201,9 +225,9 @@ export type StarGiftCollectibleAttributeRow = {
 
 export type StarGiftCollectiblePreview = {
   found: boolean;
-  gift_id: number;
+  gift_id: string;
   revision?: number;
-  upgrade_stars?: number;
+  upgrade_stars?: string;
   supply_total?: number;
   issued?: number;
   slug_prefix?: string;

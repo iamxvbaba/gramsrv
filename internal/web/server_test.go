@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -42,6 +43,158 @@ func newTestHandlerWithPublicPeers(
 		t.Fatalf("NewHandler: %v", err)
 	}
 	return h
+}
+
+type fakeGiftWithdrawals struct {
+	value         domain.StarGiftWithdrawal
+	found         bool
+	completeCalls int
+}
+
+type fakeUniqueGifts struct {
+	bySlug map[string]domain.UniqueStarGift
+	err    error
+	calls  int
+}
+
+func (f *fakeUniqueGifts) UniqueBySlug(_ context.Context, slug string) (domain.UniqueStarGift, bool, error) {
+	f.calls++
+	if f.err != nil {
+		return domain.UniqueStarGift{}, false, f.err
+	}
+	value, ok := f.bySlug[strings.ToLower(slug)]
+	return value, ok, nil
+}
+
+func TestHandlerServesUniqueGiftLandingPage(t *testing.T) {
+	const slug = "official-5895603153683874485-7"
+	resolver := &fakeUniqueGifts{bySlug: map[string]domain.UniqueStarGift{
+		slug: {
+			ID: 7001, GiftID: 5895603153683874485, Title: "Official Gift", Slug: slug, Num: 7,
+			AvailabilityIssued: 7, AvailabilityTotal: 1000,
+		},
+	}}
+	handler, err := NewHandler(Config{
+		StickerSets: fakeResolver{}, UniqueGifts: resolver, PublicBaseURL: "http://127.0.0.1:2401",
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nft/"+slug, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	for _, want := range []string{
+		"Official Gift", "Collectible #7", "7/1 000 issued",
+		"http://127.0.0.1:2401/nft/" + slug,
+		"telesrv://nft?slug=" + slug,
+		"tg://nft?slug=" + slug,
+		"Open it in the app to view its current details.",
+	} {
+		if !strings.Contains(rr.Body.String(), want) {
+			t.Fatalf("body missing %q:\n%s", want, rr.Body.String())
+		}
+	}
+	if strings.Contains(rr.Body.String(), `window.location.href = "tg://`) {
+		t.Fatalf("landing page must not auto-open tg:// and steal official Telegram:\n%s", rr.Body.String())
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "public, max-age=60, must-revalidate" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}
+
+func TestHandlerCanonicalizesUniqueGiftSlug(t *testing.T) {
+	const canonical = "Official-Gift-7"
+	resolver := &fakeUniqueGifts{bySlug: map[string]domain.UniqueStarGift{
+		strings.ToLower(canonical): {ID: 7, GiftID: 70, Slug: canonical, Num: 7},
+	}}
+	handler, err := NewHandler(Config{
+		StickerSets: fakeResolver{}, UniqueGifts: resolver, PublicBaseURL: "https://telesrv.net",
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	for _, path := range []string{"/nft/official-gift-7", "/nft/" + canonical + "/"} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusPermanentRedirect || rr.Header().Get("Location") != "https://telesrv.net/nft/"+canonical {
+			t.Fatalf("%s status=%d location=%q", path, rr.Code, rr.Header().Get("Location"))
+		}
+	}
+}
+
+func TestHandlerRejectsInvalidMissingAndBrokenUniqueGift(t *testing.T) {
+	resolver := &fakeUniqueGifts{bySlug: map[string]domain.UniqueStarGift{
+		"broken-1": {ID: 1, GiftID: 2, Slug: "other-1", Num: 1},
+	}}
+	handler, err := NewHandler(Config{
+		StickerSets: fakeResolver{}, UniqueGifts: resolver, PublicBaseURL: "https://telesrv.net",
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	for _, path := range []string{
+		"/nft/missing-1", "/nft/bad!slug", "/nft/%E4%B8%AD%E6%96%87", "/nft/" + strings.Repeat("x", domain.MaxStarGiftSlugBytes+1),
+	} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("%s status=%d, want 404", path, rr.Code)
+		}
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nft/broken-1", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("broken aggregate status=%d, want 500", rr.Code)
+	}
+
+	resolver.err = errors.New("lookup failed")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/nft/error-1", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("lookup error status=%d, want 500", rr.Code)
+	}
+}
+
+func (f *fakeGiftWithdrawals) ResolveWithdrawal(context.Context, string) (domain.StarGiftWithdrawal, bool, error) {
+	return f.value, f.found, nil
+}
+
+func (f *fakeGiftWithdrawals) CompleteWithdrawal(_ context.Context, _ string, _ int) (domain.StarGiftWithdrawal, error) {
+	f.completeCalls++
+	f.value.Status = "completed"
+	f.value.Gift.OwnerAddress = "telesrv-owner:test"
+	f.value.Gift.GiftAddress = "telesrv-gift:test"
+	return f.value, nil
+}
+
+func TestHandlerCompletesLocalStarGiftWithdrawal(t *testing.T) {
+	resolver := &fakeGiftWithdrawals{found: true, value: domain.StarGiftWithdrawal{
+		ProviderRequestID: "safe-token", Status: "pending", ExpiresAt: int(time.Now().Add(time.Minute).Unix()),
+		Gift: domain.UniqueStarGift{Title: `<script>alert("x")</script>`, Slug: "gift-1"},
+	}}
+	handler, err := NewHandler(Config{StickerSets: fakeResolver{}, GiftWithdrawals: resolver,
+		PublicBaseURL: "https://telesrv.net", AppName: "telesrv"})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/gift-withdrawal/safe-token", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Complete local export") ||
+		strings.Contains(rr.Body.String(), `<script>alert("x")</script>`) {
+		t.Fatalf("withdrawal GET status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self'") {
+		t.Fatalf("withdrawal CSP does not allow its same-origin POST form: %q", csp)
+	}
+
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/gift-withdrawal/safe-token", strings.NewReader("")))
+	if rr.Code != http.StatusOK || resolver.completeCalls != 1 || !strings.Contains(rr.Body.String(), "Status: completed") ||
+		!strings.Contains(rr.Body.String(), "telesrv-owner:test") || !strings.Contains(rr.Body.String(), "telesrv-gift:test") {
+		t.Fatalf("withdrawal POST calls=%d status=%d body=%s", resolver.completeCalls, rr.Code, rr.Body.String())
+	}
 }
 
 func TestHandlerServesStickerSetLandingPage(t *testing.T) {
@@ -185,7 +338,10 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 			"stickers_pack": {ShortName: "stickers_pack", Title: "Stickers", Kind: domain.StickerSetKindStickers},
 			"emoji_pack":    {ShortName: "emoji_pack", Title: "Emoji", Kind: domain.StickerSetKindEmoji, Emojis: true},
 		},
-		Users:         fakeUsers{"alice": {ID: 2001, Username: "Alice", FirstName: "Alice"}},
+		Users: fakeUsers{"alice": {ID: 2001, Username: "Alice", FirstName: "Alice"}},
+		UniqueGifts: &fakeUniqueGifts{bySlug: map[string]domain.UniqueStarGift{
+			"gift-1": {ID: 1, GiftID: 10, Slug: "gift-1", Num: 1},
+		}},
 		PublicBaseURL: "https://links.example.test",
 		AppScheme:     "example-chat",
 		WebBaseURL:    "https://web.example.test/client/",
@@ -220,6 +376,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		{path: "/addstickers/stickers_pack", want: "example-chat://addstickers?set=stickers_pack"},
 		{path: "/addemoji/emoji_pack", want: "example-chat://addemoji?set=emoji_pack"},
 		{path: "/addlist/shared-folder", want: "example-chat://addlist?slug=shared-folder"},
+		{path: "/nft/gift-1", want: "example-chat://nft?slug=gift-1"},
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))

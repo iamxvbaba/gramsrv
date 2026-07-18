@@ -221,27 +221,67 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 	case domain.MessageServiceActionStarGift:
 		return tgMessageActionStarGift(m.ServiceAction.StarGift)
 	case domain.MessageServiceActionStarGiftUnique:
-		action := m.ServiceAction.StarGiftUnique
+		return tgMessageActionStarGiftUnique(m.ServiceAction.StarGiftUnique)
+	case domain.MessageServiceActionStarGiftOffer:
+		action := m.ServiceAction.StarGiftOffer
 		if action == nil {
 			return &tg.MessageActionEmpty{}
 		}
-		out := &tg.MessageActionStarGiftUnique{
-			Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
-			Gift: tgUniqueStarGift(action.Gift),
+		return &tg.MessageActionStarGiftPurchaseOffer{Accepted: action.Accepted, Declined: action.Declined,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price), ExpiresAt: action.ExpiresAt}
+	case domain.MessageServiceActionStarGiftOfferDeclined:
+		action := m.ServiceAction.StarGiftOfferDeclined
+		if action == nil {
+			return &tg.MessageActionEmpty{}
 		}
-		if action.FromUserID != 0 {
-			out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
-		}
-		if peer := tgPeer(action.Peer); peer != nil {
-			out.SetPeer(peer)
-		}
-		if action.SavedID != 0 {
-			out.SetSavedID(action.SavedID)
-		}
-		return out
+		return &tg.MessageActionStarGiftPurchaseOfferDeclined{Expired: action.Expired,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price)}
 	default:
 		return &tg.MessageActionEmpty{}
 	}
+}
+
+func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) tg.MessageActionClass {
+	if action == nil {
+		return &tg.MessageActionEmpty{}
+	}
+	out := &tg.MessageActionStarGiftUnique{
+		Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
+		Transferred: action.Transferred, Refunded: action.Refunded, Assigned: action.Assigned,
+		FromOffer: action.FromOffer, Craft: action.Craft,
+		Gift: tgUniqueStarGift(action.Gift),
+	}
+	if action.CanExportAt > 0 {
+		out.SetCanExportAt(action.CanExportAt)
+	}
+	if action.TransferStars > 0 {
+		out.SetTransferStars(action.TransferStars)
+	}
+	if action.ResaleAmount != nil {
+		out.SetResaleAmount(tgStarGiftAmount(*action.ResaleAmount))
+	}
+	if action.CanTransferAt > 0 {
+		out.SetCanTransferAt(action.CanTransferAt)
+	}
+	if action.CanResellAt > 0 {
+		out.SetCanResellAt(action.CanResellAt)
+	}
+	if action.DropOriginalDetailsStars > 0 {
+		out.SetDropOriginalDetailsStars(action.DropOriginalDetailsStars)
+	}
+	if action.CanCraftAt > 0 {
+		out.SetCanCraftAt(action.CanCraftAt)
+	}
+	if action.FromUserID != 0 {
+		out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
+	}
+	if peer := tgPeer(action.Peer); peer != nil {
+		out.SetPeer(peer)
+	}
+	if action.SavedID != 0 {
+		out.SetSavedID(action.SavedID)
+	}
+	return out
 }
 
 func tgPeerList(peers []domain.Peer) []tg.PeerClass {

@@ -872,6 +872,7 @@ type GiftsService interface {
 	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
 	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
 	Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
+	UpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
 	RecordSavedGift(ctx context.Context, gift domain.SavedStarGift) (int64, error)
 	ListSaved(ctx context.Context, owner domain.Peer, excludeUnsaved bool, offset string, limit int) (domain.SavedStarGiftPage, error)
 	ListSavedFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
@@ -879,13 +880,36 @@ type GiftsService interface {
 	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
 	CountSaved(ctx context.Context, owner domain.Peer) (int, error)
 	ToggleSaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
-	Convert(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, error)
+	ConvertAggregate(ctx context.Context, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error)
 	ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error)
 	CreateCollection(ctx context.Context, owner domain.Peer, title string, savedGiftIDs []int64) (domain.StarGiftCollection, error)
 	UpdateCollection(ctx context.Context, owner domain.Peer, collectionID int, patch domain.StarGiftCollectionPatch) (domain.StarGiftCollection, error)
 	DeleteCollection(ctx context.Context, owner domain.Peer, collectionID int) (bool, error)
 	ReorderCollections(ctx context.Context, owner domain.Peer, collectionIDs []int) error
 	SetPinned(ctx context.Context, owner domain.Peer, savedGiftIDs []int64) error
+	ListResale(ctx context.Context, filter domain.StarGiftResaleFilter) (domain.StarGiftResalePage, error)
+	ValueInfo(ctx context.Context, uniqueGiftID int64) (domain.StarGiftValueInfo, error)
+	SetListing(ctx context.Context, req domain.StarGiftListingRequest) (domain.UniqueStarGift, error)
+	Transfer(ctx context.Context, req domain.StarGiftTransferRequest) (domain.StarGiftTransferResult, error)
+	PurchaseResale(ctx context.Context, req domain.StarGiftResalePurchaseRequest) (domain.StarGiftTransferResult, error)
+	SendOffer(ctx context.Context, req domain.StarGiftOfferRequest) (domain.StarGiftOfferResult, error)
+	ResolveOffer(ctx context.Context, req domain.StarGiftResolveOfferRequest) (domain.StarGiftOfferResult, error)
+	ListCraft(ctx context.Context, userID, giftID int64, offset string, limit int) (domain.SavedStarGiftPage, error)
+	Craft(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, error)
+	AuctionState(ctx context.Context, userID, giftID int64, slug string, now int) (domain.StarGiftAuction, error)
+	ActiveAuctions(ctx context.Context, userID int64, now int) ([]domain.StarGiftAuction, error)
+	AuctionAcquired(ctx context.Context, userID, giftID int64) ([]domain.StarGiftAuctionAcquired, error)
+	BidAuction(ctx context.Context, req domain.StarGiftAuctionBidRequest) (domain.StarGiftAuction, domain.StarsBalance, error)
+	PrepaidUpgradeTarget(ctx context.Context, owner domain.Peer, hash string) (domain.SavedStarGift, int64, error)
+	PrepayUpgrade(ctx context.Context, req domain.StarGiftPrepaidUpgradeRequest) (domain.StarGiftPrepaidUpgradeResult, error)
+	DropOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
+	SetNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
+	Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error)
+	TonBalance(ctx context.Context, userID int64) (int64, error)
+	TonTransactions(ctx context.Context, userID int64, offset string, limit int) (domain.TonTransactionPage, error)
+	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
+	ValidatePurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
+	Purchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error)
 }
 
 // StarsService 抽象 Stars 本地账本（app/stars）：余额查询、贷记/借记、流水分页。

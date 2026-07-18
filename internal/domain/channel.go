@@ -550,6 +550,9 @@ const (
 	ChannelActionPaidMessagesPrice ChannelMessageActionType = "paid_messages_price"
 	// ChannelActionStarGift 映射 messageActionStarGift：频道礼物的 admin-log 快照。
 	ChannelActionStarGift ChannelMessageActionType = "star_gift"
+	// ChannelActionStarGiftUnique 映射 messageActionStarGiftUnique：collectible
+	// 升级、转赠等所有权变更只进入 Recent Actions，不伪造频道历史/pts。
+	ChannelActionStarGiftUnique ChannelMessageActionType = "star_gift_unique"
 	// ChannelActionSetChatWallpaper 映射 messageActionSetChatWallPaper：频道外观页设置 wallpaper。
 	ChannelActionSetChatWallpaper ChannelMessageActionType = "set_chat_wallpaper"
 )
@@ -583,7 +586,8 @@ type ChannelMessageAction struct {
 	Incompleted []int
 	TodoItems   []MessageTodoItem
 	// StarGift 仅 star_gift 服务消息使用。
-	StarGift *MessageStarGiftAction
+	StarGift       *MessageStarGiftAction
+	StarGiftUnique *MessageStarGiftUniqueAction
 	// Wallpaper 仅 set_chat_wallpaper 服务消息使用。
 	Wallpaper *Wallpaper
 	// Photo 仅 chat_edit_photo 服务消息使用。

@@ -91,3 +91,26 @@ func TestCreateCatalogRevisionPreservesHistoricalRevision(t *testing.T) {
 		t.Fatalf("disable missing err=%v, want ErrStarGiftNotFound", err)
 	}
 }
+
+func TestCreateCatalogBundleRejectsMismatchedOfficialProvenance(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStarGiftStore()
+	svc := NewService(store, &testGiftBlob{data: map[string][]byte{}}, 2)
+	animation, err := svc.PrepareAnimation("gift.json", []byte(validGiftLottie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := make([]byte, sha256.Size)
+	_, err = svc.CreateCatalogBundle(ctx, domain.StarGiftCatalogBundleWrite{
+		Catalog: domain.StarGiftCatalogWrite{
+			Stars: 50, ConvertStars: 25, Enabled: true, Title: "Official", Animation: animation,
+			OfficialGiftID: 10, SourceManifestSHA256: hash, OfficialSourceJSON: []byte(`{"id":10}`),
+		},
+		Collectible: &domain.StarGiftCollectibleWrite{
+			OfficialGiftID: 11, SourceManifestSHA256: hash,
+		},
+	})
+	if !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("mismatched provenance err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}

@@ -1,4 +1,4 @@
-// Command telesrv 是基于 github.com/iamxvbaba/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
+// Command telesrv 是基于 gotd/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
 package main
 
 import (
@@ -56,6 +56,7 @@ import (
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
 	"telesrv/internal/mtprotoedge"
+	"telesrv/internal/officialgifts"
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
@@ -467,8 +468,9 @@ func run(logger *zap.Logger) error {
 	rateLimiter := redisstore.NewRateLimiter(rdb)
 	activeSessions := mtprotoedge.NewSessionManager(logger.Named("mtprotoedge").Named("sessions"))
 	adminService := adminapp.NewService(adminapp.Dependencies{
-		Commands:     adminStore,
-		Restrictions: adminStore,
+		Commands:      adminStore,
+		Restrictions:  adminStore,
+		OfficialGifts: officialgifts.New(cfg.OfficialGiftsDir),
 	})
 	go maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
 		cfg.UpdateEventRetention,
@@ -663,9 +665,26 @@ func run(logger *zap.Logger) error {
 	starsStore := postgres.NewStarsStore(pool)
 	starsService := stars.NewService(starsStore, stars.WithStartingGrant(cfg.StarsStartingGrant))
 	starGiftStore := postgres.NewStarGiftStore(pool)
-	starGiftUpgradeStore := postgres.NewStarGiftUpgradeStore(pool, messageStore)
+	starGiftUpgradeStore := postgres.NewStarGiftUpgradeStore(pool, messageStore, postgres.WithStarGiftLifecyclePolicy(domain.StarGiftLifecyclePolicy{
+		TransferStars: cfg.StarGiftTransferStars, DropOriginalDetailsStars: cfg.StarGiftDropOriginalDetailsStars,
+		OfferMinStars:      cfg.StarGiftOfferMinStars,
+		ExportDelaySeconds: int(cfg.StarGiftExportDelay / time.Second), TransferDelaySeconds: int(cfg.StarGiftTransferDelay / time.Second),
+		ResellDelaySeconds: int(cfg.StarGiftResellDelay / time.Second), CraftDelaySeconds: int(cfg.StarGiftCraftDelay / time.Second),
+		CraftChancePermille: cfg.StarGiftCraftChancePermille,
+	}))
+	starGiftLifecycleStore := postgres.NewStarGiftLifecycleStore(pool, messageStore, cfg.StarGiftTONStartingGrant,
+		postgres.WithStarGiftMarketPolicy(domain.StarGiftMarketPolicy{
+			StarsProceedsPermille: cfg.StarGiftStarsProceedsPermille,
+			TONProceedsPermille:   cfg.StarGiftTONProceedsPermille,
+		}))
+	starGiftWithdrawalProvider, err := stargifts.NewLocalWithdrawalProvider(cfg.PublicBaseURL)
+	if err != nil {
+		return fmt.Errorf("init local star gift withdrawal provider: %w", err)
+	}
 	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC,
-		stargifts.WithUpgradeStore(starGiftUpgradeStore))
+		stargifts.WithUpgradeStore(starGiftUpgradeStore),
+		stargifts.WithLifecycleStore(starGiftLifecycleStore),
+		stargifts.WithWithdrawalProvider(starGiftWithdrawalProvider))
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -852,6 +871,32 @@ func run(logger *zap.Logger) error {
 	go router.RunPresenceSweeper(ctx, time.Minute)
 	go activeSessions.RunPendingSweeper(ctx, time.Minute)
 	go router.RunPremiumSweeper(ctx, cfg.PremiumSweepInterval, cfg.PremiumSweepBatch)
+	go func() {
+		interval := cfg.StarGiftSweepInterval
+		if interval <= 0 {
+			interval = 15 * time.Second
+		}
+		batch := cfg.StarGiftSweepBatch
+		if batch <= 0 {
+			batch = 1000
+		}
+		run := func() {
+			if err := giftsService.SweepLifecycle(ctx, int(time.Now().Unix()), batch); err != nil && ctx.Err() == nil {
+				logger.Warn("star_gift_lifecycle_sweep_failed", zap.Error(err))
+			}
+		}
+		run()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
 	go router.RunInlineBotPushSubscriber(ctx)
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
@@ -860,16 +905,18 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("start admin api: %w", err)
 	}
 	if _, err := web.Start(ctx, web.Config{
-		Addr:          cfg.PublicLinkWebAddr,
-		PublicBaseURL: cfg.PublicBaseURL,
-		AppScheme:     cfg.PublicAppScheme,
-		WebBaseURL:    cfg.PublicWebBaseURL,
-		AppName:       cfg.PublicAppName,
-		StickerSets:   filesService,
-		Users:         userStore,
-		Channels:      channelStore,
-		Privacy:       privacyService,
-		Photos:        filesService,
+		Addr:            cfg.PublicLinkWebAddr,
+		PublicBaseURL:   cfg.PublicBaseURL,
+		AppScheme:       cfg.PublicAppScheme,
+		WebBaseURL:      cfg.PublicWebBaseURL,
+		AppName:         cfg.PublicAppName,
+		StickerSets:     filesService,
+		Users:           userStore,
+		Channels:        channelStore,
+		Privacy:         privacyService,
+		Photos:          filesService,
+		UniqueGifts:     giftsService,
+		GiftWithdrawals: giftsService,
 	}, logger.Named("public-web")); err != nil {
 		return fmt.Errorf("start public Web: %w", err)
 	}

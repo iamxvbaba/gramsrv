@@ -44,7 +44,7 @@ function AnimationPreview({ data, compact = false }: { data: AnimationData; comp
   return <div className={`collectible-animation ${compact ? "compact" : ""}`} ref={host} />;
 }
 
-function RemoteAnimation({ giftID, attribute }: { giftID: number; attribute: StarGiftCollectibleAttributeRow }) {
+function RemoteAnimation({ giftID, attribute }: { giftID: string; attribute: StarGiftCollectibleAttributeRow }) {
   const [data, setData] = useState<AnimationData | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -74,6 +74,7 @@ async function parseAnimationFile(file: File): Promise<AnimationData> {
 }
 
 const colorNumber = (value: string) => Number.parseInt(value.replace("#", ""), 16);
+const rarityLabel = (attribute: StarGiftCollectibleAttributeRow) => attribute.rarity_kind === "permille" ? `${attribute.rarity_permille}‰` : attribute.rarity_kind;
 
 export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: StarGiftRow; onClose: () => void; onPublished: () => void }) {
   const { t } = useI18n();
@@ -135,7 +136,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
     const animatedMetadata = (rows: AnimatedDraft[]) => rows.map((row) => ({ name: row.name.trim(), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder), file_key: row.key }));
     form.set("metadata", JSON.stringify({
       command_id: commandID, reason: reason.trim(), confirm,
-      upgrade_stars: Number(upgradeStars), supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
+		upgrade_stars: upgradeStars, supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
       models: animatedMetadata(models), patterns: animatedMetadata(patterns),
       backdrops: backdrops.map((row) => ({
         name: row.name.trim(), backdrop_id: Number(row.backdropID), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder),
@@ -167,7 +168,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
     <section className="collectible-section">
       <div className="collectible-section-head">
         <div><strong>{t(`collectibles.${kind}`)}</strong><span>{t("collectibles.rarityHint")}</span></div>
-        <div className="collectible-section-tools"><Badge tone={rarityTotals[kind] === 1000 ? "good" : "neutral"}>{rarityTotals[kind]} / 1000</Badge><button className="btn compact-btn" type="button" onClick={() => { setRows([...rows, newAnimated(kind === "models" ? "model" : "pattern")]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div>
+        <div className="collectible-section-tools"><Badge tone={rarityTotals[kind] > 0 ? "good" : "neutral"}>{rarityTotals[kind]}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setRows([...rows, newAnimated(kind === "models" ? "model" : "pattern")]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div>
       </div>
       <div className="collectible-rows">
         {rows.map((row, index) => <div className="collectible-row animated" key={row.key}>
@@ -194,8 +195,8 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
         {loading ? <div className="collectible-loading"><Loader2 className="spin" />{t("common.loading")}</div> : active?.found ? <section className="collectible-active">
           <div className="collectible-active-head"><div><Gem size={18} /><div><strong>{t("collectibles.activeRevision", { revision: active.revision ?? 0 })}</strong><span>{active.slug_prefix} · ⭐ {active.upgrade_stars} · {active.issued} / {active.supply_total}</span></div></div><Badge tone="good">{t("collectibles.published")}</Badge></div>
           <div className="collectible-active-grid">
-            {[...(active.models ?? []), ...(active.patterns ?? [])].map((attribute) => <article key={`${attribute.kind}-${attribute.id}`}><RemoteAnimation giftID={gift.GiftID} attribute={attribute} /><div><strong>{attribute.name}</strong><span>{t(`collectibles.${attribute.kind}`)} · {attribute.rarity_permille}‰</span></div></article>)}
-            {(active.backdrops ?? []).map((attribute) => <article key={`backdrop-${attribute.id}`}><div className="collectible-backdrop-preview" style={{ background: `radial-gradient(circle, #${(attribute.center_color ?? 0).toString(16).padStart(6, "0")}, #${(attribute.edge_color ?? 0).toString(16).padStart(6, "0")})`, color: `#${(attribute.text_color ?? 0xffffff).toString(16).padStart(6, "0")}` }}>Aa</div><div><strong>{attribute.name}</strong><span>{t("collectibles.backdrop")} · {attribute.rarity_permille}‰</span></div></article>)}
+            {[...(active.models ?? []), ...(active.patterns ?? [])].map((attribute) => <article key={`${attribute.kind}-${attribute.id}`}><RemoteAnimation giftID={gift.GiftID} attribute={attribute} /><div><strong>{attribute.name}{attribute.crafted && <Badge>crafted</Badge>}</strong><span>{t(`collectibles.${attribute.kind}`)} · {rarityLabel(attribute)}</span></div></article>)}
+            {(active.backdrops ?? []).map((attribute) => <article key={`backdrop-${attribute.id}`}><div className="collectible-backdrop-preview" style={{ background: `radial-gradient(circle, #${(attribute.center_color ?? 0).toString(16).padStart(6, "0")}, #${(attribute.edge_color ?? 0).toString(16).padStart(6, "0")})`, color: `#${(attribute.text_color ?? 0xffffff).toString(16).padStart(6, "0")}` }}>Aa</div><div><strong>{attribute.name}</strong><span>{t("collectibles.backdrop")} · {rarityLabel(attribute)}</span></div></article>)}
           </div>
         </section> : <div className="collectible-empty"><Gem size={22} /><div><strong>{t("collectibles.noPool")}</strong><span>{t("collectibles.noPoolHint")}</span></div></div>}
 
@@ -210,11 +211,11 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
           {renderAnimatedRows("models", models, setModels)}
           {renderAnimatedRows("patterns", patterns, setPatterns)}
           <section className="collectible-section">
-            <div className="collectible-section-head"><div><strong>{t("collectibles.backdrops")}</strong><span>{t("collectibles.colorHint")}</span></div><div className="collectible-section-tools"><Badge tone={rarityTotals.backdrops === 1000 ? "good" : "neutral"}>{rarityTotals.backdrops} / 1000</Badge><button className="btn compact-btn" type="button" onClick={() => { setBackdrops([...backdrops, newBackdrop()]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div></div>
+            <div className="collectible-section-head"><div><strong>{t("collectibles.backdrops")}</strong><span>{t("collectibles.colorHint")}</span></div><div className="collectible-section-tools"><Badge tone={rarityTotals.backdrops > 0 ? "good" : "neutral"}>{rarityTotals.backdrops}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setBackdrops([...backdrops, newBackdrop()]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div></div>
             <div className="collectible-rows">{backdrops.map((row, index) => <div className="collectible-row backdrop" key={row.key}>
               <div className="collectible-row-index">{index + 1}</div>
               <label><span>{t("common.name")}</span><input value={row.name} maxLength={128} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, name: e.target.value } : value)); invalidate(); }} /></label>
-              <label><span>{t("collectibles.backdropID")}</span><input type="number" min="1" value={row.backdropID} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, backdropID: e.target.value } : value)); invalidate(); }} /></label>
+              <label><span>{t("collectibles.backdropID")}</span><input type="number" min="0" value={row.backdropID} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, backdropID: e.target.value } : value)); invalidate(); }} /></label>
               <label><span>{t("collectibles.rarity")}</span><input type="number" min="1" max="1000" value={row.rarity} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, rarity: e.target.value } : value)); invalidate(); }} /></label>
               <label><span>{t("gifts.sortOrder")}</span><input type="number" value={row.sortOrder} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, sortOrder: e.target.value } : value)); invalidate(); }} /></label>
               {(["center", "edge", "pattern", "text"] as const).map((field) => <label className="collectible-color" key={field}><span>{t(`collectibles.color.${field}`)}</span><input type="color" value={row[field]} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, [field]: e.target.value } : value)); invalidate(); }} /></label>)}

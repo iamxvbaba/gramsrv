@@ -21,7 +21,18 @@ func (s *Service) PrepareAnimation(fileName string, data []byte) (domain.StarGif
 	return prepareAnimation(fileName, data)
 }
 
+// PrepareOfficialAnimation preserves expressions present in Telegram's signed-in official
+// snapshot. Callers must first verify the file against manifest size and SHA-256; ordinary
+// operator uploads continue through PrepareAnimation and reject expressions.
+func (s *Service) PrepareOfficialAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error) {
+	return prepareAnimationWithPolicy(fileName, data, true)
+}
+
 func prepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error) {
+	return prepareAnimationWithPolicy(fileName, data, false)
+}
+
+func prepareAnimationWithPolicy(fileName string, data []byte, allowExpressions bool) (domain.StarGiftAnimation, error) {
 	fileName = strings.TrimSpace(filepath.Base(fileName))
 	ext := strings.ToLower(filepath.Ext(fileName))
 	format := domain.StarGiftAnimationLottie
@@ -46,7 +57,7 @@ func prepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, e
 		rawJSON = data
 	}
 
-	normalized, meta, err := normalizeAndValidateLottie(rawJSON)
+	normalized, meta, err := normalizeAndValidateLottie(rawJSON, allowExpressions)
 	if err != nil {
 		return domain.StarGiftAnimation{}, err
 	}
@@ -80,7 +91,7 @@ type lottieMetadata struct {
 	Assets    []json.RawMessage `json:"assets"`
 }
 
-func normalizeAndValidateLottie(data []byte) ([]byte, lottieMetadata, error) {
+func normalizeAndValidateLottie(data []byte, allowExpressions bool) ([]byte, lottieMetadata, error) {
 	data = bytes.TrimSpace(bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}))
 	if len(data) == 0 || int64(len(data)) > domain.MaxStarGiftLottieBytes || !json.Valid(data) {
 		return nil, lottieMetadata{}, domain.ErrStarGiftFileInvalid
@@ -94,7 +105,7 @@ func normalizeAndValidateLottie(data []byte) ([]byte, lottieMetadata, error) {
 	if _, ok := root.(map[string]any); !ok {
 		return nil, lottieMetadata{}, domain.ErrStarGiftFileInvalid
 	}
-	if containsLottieExpression(root) {
+	if !allowExpressions && containsLottieExpression(root) {
 		return nil, lottieMetadata{}, fmt.Errorf("%w: expressions are not allowed", domain.ErrStarGiftFileInvalid)
 	}
 	var meta lottieMetadata

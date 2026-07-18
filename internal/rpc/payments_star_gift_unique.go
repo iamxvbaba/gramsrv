@@ -26,18 +26,37 @@ func (r *Router) starGiftUpgradePaymentForm(ctx context.Context, userID int64, i
 }
 
 func (r *Router) sendStarGiftUpgradeForm(ctx context.Context, userID, formID int64, inv *tg.InputInvoiceStarGiftUpgrade) (tg.PaymentsPaymentResultClass, error) {
-	saved, preview, err := r.starGiftUpgradeTarget(ctx, userID, inv.Stargift)
+	saved, err := r.starGiftUpgradeSavedTarget(ctx, userID, inv.Stargift)
 	if err != nil {
 		return nil, err
 	}
-	wantFormID := starGiftUpgradeFormID(userID, saved.ID, preview.UpgradeStars, inv.KeepOriginalDetails)
-	if formID == 0 || formID != wantFormID {
-		return nil, starsFormAmountMismatchErr()
+	commandKey := fmt.Sprintf("paid:%d:%d:%t", saved.ID, formID, inv.KeepOriginalDetails)
+	receipt, replay, err := r.deps.Gifts.UpgradeReceipt(ctx, userID, commandKey)
+	if err != nil {
+		return nil, internalErr()
+	}
+	chargeStars := int64(0)
+	if replay {
+		if receipt.SourceSavedGiftID != saved.ID || receipt.FormID != formID || receipt.RequirePrepaid ||
+			receipt.KeepOriginalDetails != inv.KeepOriginalDetails || receipt.ChargeStars <= 0 {
+			return nil, starGiftInvalidErr()
+		}
+		chargeStars = receipt.ChargeStars
+	} else {
+		preview, err := r.starGiftUpgradePreviewForSaved(ctx, saved)
+		if err != nil {
+			return nil, err
+		}
+		wantFormID := starGiftUpgradeFormID(userID, saved.ID, preview.UpgradeStars, inv.KeepOriginalDetails)
+		if formID == 0 || formID != wantFormID {
+			return nil, starsFormAmountMismatchErr()
+		}
+		chargeStars = preview.UpgradeStars
 	}
 	result, err := r.deps.Gifts.Upgrade(ctx, domain.StarGiftUpgradeRequest{
-		UserID: userID, Ref: domain.SavedStarGiftRef{Owner: saved.Owner, MsgID: saved.MsgID},
-		KeepOriginalDetails: inv.KeepOriginalDetails, ChargeStars: preview.UpgradeStars,
-		FormID: formID, CommandKey: fmt.Sprintf("paid:%d:%d:%t", saved.ID, formID, inv.KeepOriginalDetails),
+		UserID: userID, Ref: starGiftUpgradeSavedRef(saved),
+		KeepOriginalDetails: inv.KeepOriginalDetails, ChargeStars: chargeStars,
+		FormID: formID, CommandKey: commandKey,
 		Date: int(r.clock.Now().Unix()), OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionIDOrZero(ctx),
 	})
@@ -57,17 +76,32 @@ func (r *Router) onPaymentsUpgradeStarGift(ctx context.Context, req *tg.Payments
 	if err != nil {
 		return nil, internalErr()
 	}
-	saved, _, err := r.starGiftUpgradeTarget(ctx, userID, req.Stargift)
+	saved, err := r.starGiftUpgradeSavedTarget(ctx, userID, req.Stargift)
 	if err != nil {
 		return nil, err
 	}
-	if saved.PrepaidUpgradeStars <= 0 {
-		return nil, starGiftInvalidErr()
+	commandKey := fmt.Sprintf("prepaid:%d:%t", saved.ID, req.KeepOriginalDetails)
+	receipt, replay, err := r.deps.Gifts.UpgradeReceipt(ctx, userID, commandKey)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if replay {
+		if receipt.SourceSavedGiftID != saved.ID || receipt.FormID != 0 || !receipt.RequirePrepaid ||
+			receipt.KeepOriginalDetails != req.KeepOriginalDetails || receipt.ChargeStars != 0 {
+			return nil, starGiftInvalidErr()
+		}
+	} else {
+		if _, err := r.starGiftUpgradePreviewForSaved(ctx, saved); err != nil {
+			return nil, err
+		}
+		if saved.PrepaidUpgradeStars <= 0 {
+			return nil, starGiftInvalidErr()
+		}
 	}
 	result, err := r.deps.Gifts.Upgrade(ctx, domain.StarGiftUpgradeRequest{
-		UserID: userID, Ref: domain.SavedStarGiftRef{Owner: saved.Owner, MsgID: saved.MsgID},
+		UserID: userID, Ref: starGiftUpgradeSavedRef(saved),
 		KeepOriginalDetails: req.KeepOriginalDetails, RequirePrepaid: true,
-		CommandKey: fmt.Sprintf("prepaid:%d:%t", saved.ID, req.KeepOriginalDetails),
+		CommandKey: commandKey,
 		Date:       int(r.clock.Now().Unix()), OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx),
 		OriginSessionID: sessionIDOrZero(ctx),
 	})
@@ -79,33 +113,60 @@ func (r *Router) onPaymentsUpgradeStarGift(ctx context.Context, req *tg.Payments
 }
 
 func (r *Router) starGiftUpgradeTarget(ctx context.Context, userID int64, input tg.InputSavedStarGiftClass) (domain.SavedStarGift, domain.StarGiftUpgradePreview, error) {
-	if r.deps.Gifts == nil {
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, notImplementedErr()
-	}
-	ref, ok, err := r.starGiftRefFromInput(ctx, userID, input)
+	saved, err := r.starGiftUpgradeSavedTarget(ctx, userID, input)
 	if err != nil {
 		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, err
 	}
-	if !ok || ref.Owner.Type != domain.PeerTypeUser || ref.Owner.ID != userID {
-		// Channel gift upgrades require a channel pts aggregate and are not silently
-		// routed through the private-message transaction.
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
+	preview, err := r.starGiftUpgradePreviewForSaved(ctx, saved)
+	return saved, preview, err
+}
+
+func (r *Router) starGiftUpgradeSavedTarget(ctx context.Context, userID int64, input tg.InputSavedStarGiftClass) (domain.SavedStarGift, error) {
+	if r.deps.Gifts == nil {
+		return domain.SavedStarGift{}, notImplementedErr()
+	}
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, input)
+	if err != nil {
+		return domain.SavedStarGift{}, err
+	}
+	if !ok {
+		return domain.SavedStarGift{}, starGiftInvalidErr()
+	}
+	if err := r.checkStarGiftOwnerPermission(ctx, userID, ref.Owner); err != nil {
+		return domain.SavedStarGift{}, err
 	}
 	saved, found, err := r.deps.Gifts.GetSaved(ctx, ref)
 	if err != nil {
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, internalErr()
+		return domain.SavedStarGift{}, internalErr()
 	}
-	if !found || saved.Converted || saved.UniqueGiftID != 0 {
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
+	if !found {
+		return domain.SavedStarGift{}, starGiftInvalidErr()
+	}
+	return saved, nil
+}
+
+func (r *Router) starGiftUpgradePreviewForSaved(ctx context.Context, saved domain.SavedStarGift) (domain.StarGiftUpgradePreview, error) {
+	if saved.Converted || saved.UniqueGiftID != 0 {
+		return domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
 	}
 	preview, found, err := r.deps.Gifts.CollectiblePreview(ctx, saved.GiftID)
 	if err != nil {
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, internalErr()
+		return domain.StarGiftUpgradePreview{}, internalErr()
 	}
 	if !found || preview.UpgradeStars <= 0 || preview.Issued >= preview.SupplyTotal {
-		return domain.SavedStarGift{}, domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
+		return domain.StarGiftUpgradePreview{}, starGiftInvalidErr()
 	}
-	return saved, preview, nil
+	return preview, nil
+}
+
+func starGiftUpgradeSavedRef(saved domain.SavedStarGift) domain.SavedStarGiftRef {
+	ref := domain.SavedStarGiftRef{Owner: saved.Owner}
+	if saved.Owner.Type == domain.PeerTypeChannel {
+		ref.SavedID = saved.SavedID
+	} else {
+		ref.MsgID = saved.MsgID
+	}
+	return ref
 }
 
 func (r *Router) tgStarGiftUpgradeUpdates(ctx context.Context, ownerUserID int64, result domain.StarGiftUpgradeResult, includeBalance bool) *tg.Updates {
@@ -116,6 +177,17 @@ func (r *Router) tgStarGiftUpgradeUpdates(ctx context.Context, ownerUserID int64
 	updates := tgPrivateMessageUpdates(event, message, 0, false,
 		r.usersForMessageUpdate(ctx, ownerUserID, message),
 		r.chatsForMessageUpdate(ctx, ownerUserID, message))
+	for _, edit := range result.SourceEdits {
+		if edit.UserID != ownerUserID {
+			continue
+		}
+		if update := tgOtherUpdateFromEvent(edit.Event); update != nil {
+			updates.Updates = append(updates.Updates, update)
+			if edit.Event.Date > updates.Date {
+				updates.Date = edit.Event.Date
+			}
+		}
+	}
 	if includeBalance {
 		updates.Updates = append(updates.Updates, &tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: result.Balance.Balance}})
 	}
@@ -175,6 +247,20 @@ func (r *Router) onPaymentsGetStarGiftUpgradePreview(ctx context.Context, giftID
 	}, nil
 }
 
+func (r *Router) onPaymentsGetStarGiftUpgradeAttributes(ctx context.Context, giftID int64) (*tg.PaymentsStarGiftUpgradeAttributes, error) {
+	if giftID <= 0 || r.deps.Gifts == nil {
+		return nil, starGiftInvalidErr()
+	}
+	preview, found, err := r.deps.Gifts.CollectiblePreview(ctx, giftID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !found {
+		return nil, starGiftInvalidErr()
+	}
+	return &tg.PaymentsStarGiftUpgradeAttributes{Attributes: tgAllStarGiftAttributes(preview)}, nil
+}
+
 func (r *Router) onPaymentsGetUniqueStarGift(ctx context.Context, slug string) (*tg.PaymentsUniqueStarGift, error) {
 	if r.deps.Gifts == nil || strings.TrimSpace(slug) == "" {
 		return nil, starGiftInvalidErr()
@@ -211,6 +297,9 @@ func (r *Router) onPaymentsGetUniqueStarGift(ctx context.Context, slug string) (
 func tgStarGiftPreviewAttributes(preview domain.StarGiftUpgradePreview) []tg.StarGiftAttributeClass {
 	out := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
 	for _, attribute := range preview.Models {
+		if attribute.Crafted {
+			continue
+		}
 		out = append(out, tgStarGiftAttribute(attribute))
 	}
 	for _, attribute := range preview.Patterns {
@@ -222,15 +311,25 @@ func tgStarGiftPreviewAttributes(preview domain.StarGiftUpgradePreview) []tg.Sta
 	return out
 }
 
+func tgAllStarGiftAttributes(preview domain.StarGiftUpgradePreview) []tg.StarGiftAttributeClass {
+	out := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
+	for _, attributes := range [][]domain.StarGiftCollectibleAttribute{preview.Models, preview.Patterns, preview.Backdrops} {
+		for _, attribute := range attributes {
+			out = append(out, tgStarGiftAttribute(attribute))
+		}
+	}
+	return out
+}
+
 func tgStarGiftAttribute(attribute domain.StarGiftCollectibleAttribute) tg.StarGiftAttributeClass {
-	rarity := &tg.StarGiftAttributeRarity{Permille: attribute.RarityPermille}
+	rarity := tgStarGiftAttributeRarity(attribute)
 	switch attribute.Kind {
 	case domain.StarGiftCollectibleModel:
 		document := tg.DocumentClass(&tg.DocumentEmpty{})
 		if attribute.Document != nil {
 			document = tgDocument(*attribute.Document)
 		}
-		return &tg.StarGiftAttributeModel{Name: attribute.Name, Document: document, Rarity: rarity}
+		return &tg.StarGiftAttributeModel{Name: attribute.Name, Document: document, Rarity: rarity, Crafted: attribute.Crafted}
 	case domain.StarGiftCollectiblePattern:
 		document := tg.DocumentClass(&tg.DocumentEmpty{})
 		if attribute.Document != nil {
@@ -245,6 +344,21 @@ func tgStarGiftAttribute(attribute domain.StarGiftCollectibleAttribute) tg.StarG
 		}
 	default:
 		return &tg.StarGiftAttributeBackdrop{Name: attribute.Name, Rarity: rarity}
+	}
+}
+
+func tgStarGiftAttributeRarity(attribute domain.StarGiftCollectibleAttribute) tg.StarGiftAttributeRarityClass {
+	switch attribute.RarityKind {
+	case domain.StarGiftRarityUncommon:
+		return &tg.StarGiftAttributeRarityUncommon{}
+	case domain.StarGiftRarityRare:
+		return &tg.StarGiftAttributeRarityRare{}
+	case domain.StarGiftRarityEpic:
+		return &tg.StarGiftAttributeRarityEpic{}
+	case domain.StarGiftRarityLegendary:
+		return &tg.StarGiftAttributeRarityLegendary{}
+	default:
+		return &tg.StarGiftAttributeRarity{Permille: attribute.RarityPermille}
 	}
 }
 
@@ -268,11 +382,73 @@ func tgUniqueStarGift(unique domain.UniqueStarGift) *tg.StarGiftUnique {
 		attributes = append(attributes, original)
 	}
 	out := &tg.StarGiftUnique{
+		RequirePremium: unique.RequirePremium, ResaleTonOnly: unique.ResaleTonOnly,
+		ThemeAvailable: unique.ThemeAvailable, Burned: unique.Burned, Crafted: unique.Crafted,
 		ID: unique.ID, GiftID: unique.GiftID, Title: unique.Title, Slug: unique.Slug, Num: unique.Num,
 		Attributes: attributes, AvailabilityIssued: unique.AvailabilityIssued, AvailabilityTotal: unique.AvailabilityTotal,
 	}
-	if owner := tgPeer(unique.Owner); owner != nil {
+	if unique.OwnerAddress != "" {
+		out.SetOwnerAddress(unique.OwnerAddress)
+	} else if owner := tgPeer(unique.Owner); owner != nil {
 		out.SetOwnerID(owner)
+	} else if unique.OwnerName != "" {
+		out.SetOwnerName(unique.OwnerName)
+	}
+	if unique.GiftAddress != "" {
+		out.SetGiftAddress(unique.GiftAddress)
+	}
+	if unique.ResellAmount != nil {
+		out.SetResellAmount([]tg.StarsAmountClass{tgStarGiftAmount(*unique.ResellAmount)})
+	}
+	if peer := tgPeer(unique.ReleasedBy); peer != nil {
+		out.SetReleasedBy(peer)
+	}
+	if unique.ValueAmount > 0 {
+		out.SetValueAmount(unique.ValueAmount)
+	}
+	if unique.ValueCurrency != "" {
+		out.SetValueCurrency(unique.ValueCurrency)
+	}
+	if unique.ValueUSD > 0 {
+		out.SetValueUsdAmount(unique.ValueUSD)
+	}
+	if peer := tgPeer(unique.ThemePeer); peer != nil {
+		out.SetThemePeer(peer)
+	}
+	if peer := tgPeer(unique.Host); peer != nil {
+		out.SetHostID(peer)
+	}
+	if unique.OfferMinStars > 0 && unique.Owner.Type == domain.PeerTypeUser {
+		out.SetOfferMinStars(unique.OfferMinStars)
+	}
+	if unique.CraftChancePermille > 0 {
+		out.SetCraftChancePermille(unique.CraftChancePermille)
 	}
 	return out
+}
+
+func tgStarGiftAmount(amount domain.StarGiftAmount) tg.StarsAmountClass {
+	if amount.Currency == domain.StarGiftCurrencyTON {
+		return &tg.StarsTonAmount{Amount: amount.Amount}
+	}
+	return &tg.StarsAmount{Amount: amount.Amount, Nanos: amount.Nanos}
+}
+
+func domainStarGiftAmount(amount tg.StarsAmountClass) (domain.StarGiftAmount, bool) {
+	switch value := amount.(type) {
+	case *tg.StarsAmount:
+		if value == nil {
+			return domain.StarGiftAmount{}, false
+		}
+		out := domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: value.Amount, Nanos: value.Nanos}
+		return out, out.Valid()
+	case *tg.StarsTonAmount:
+		if value == nil {
+			return domain.StarGiftAmount{}, false
+		}
+		out := domain.StarGiftAmount{Currency: domain.StarGiftCurrencyTON, Amount: value.Amount}
+		return out, out.Valid()
+	default:
+		return domain.StarGiftAmount{}, false
+	}
 }

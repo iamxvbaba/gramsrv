@@ -34,26 +34,35 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	poolRevision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 10, SlugPrefix: "comet-" + suffix,
 		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Aurora", RarityPermille: 1000,
+			Kind: domain.StarGiftCollectibleModel, Name: "Aurora", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 922,
 			Document: collectibleTestDocumentPtr(baseDocumentID+1, "model.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+1, "model"), Animation: collectibleTestAnimationPtr("model.tgs"),
+			OfficialDocumentID: 5100000000000000001,
+		}, {
+			Kind: domain.StarGiftCollectibleModel, Name: "Crafted Aurora", RarityKind: domain.StarGiftRarityLegendary, Crafted: true,
+			Document: collectibleTestDocumentPtr(baseDocumentID+3, "crafted-model.tgs"),
+			Blob:     collectibleTestBlobPtr(baseDocumentID+3, "crafted-model"), Animation: collectibleTestAnimationPtr("crafted-model.tgs"),
+			OfficialDocumentID: 5100000000000000003,
 		}},
 		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityPermille: 1000,
+			Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
 			Document: collectibleTestDocumentPtr(baseDocumentID+2, "pattern.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs"),
 		}},
 		Backdrops: []domain.StarGiftCollectibleAttribute{{
 			Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1,
 			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityPermille: 1000,
+			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999,
 		}},
 		Actor: "integration", CommandID: "collectibles-" + suffix,
+		OfficialGiftID: 5170145012310081615, SourceManifestSHA256: make([]byte, 32),
 	})
 	if err != nil {
 		t.Fatalf("publish collectible pool: %v", err)
 	}
-	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 1 || len(poolRevision.Patterns) != 1 || len(poolRevision.Backdrops) != 1 {
+	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 2 || len(poolRevision.Patterns) != 1 || len(poolRevision.Backdrops) != 1 ||
+		!poolRevision.Models[1].Crafted || poolRevision.Models[1].RarityKind != domain.StarGiftRarityLegendary ||
+		poolRevision.Models[1].RarityPermille != 0 || poolRevision.Models[0].OfficialDocumentID != 5100000000000000001 {
 		t.Fatalf("published pool = %+v", poolRevision)
 	}
 	availability, err := gifts.CollectibleAvailability(ctx, []int64{entry.Gift.ID, entry.Gift.ID + 1})
@@ -74,21 +83,19 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("issued after rejected manual update = %d err %v, want 0", guardedIssued, err)
 	}
 
-	savedID, err := gifts.Create(ctx, domain.SavedStarGift{
+	messages := NewMessageStore(pool)
+	saved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
-		MsgID: 700001, Date: 1700001000, ConvertStars: 25, Message: "original",
+		Date: 1700001000, ConvertStars: 25, Message: "original",
 	})
-	if err != nil {
-		t.Fatalf("create saved gift: %v", err)
-	}
+	savedID := saved.ID
 	stars := NewStarsStore(pool)
 	if _, _, err := stars.EnsureGrant(ctx, owner.ID, 1000, 1700001001); err != nil {
 		t.Fatalf("grant upgrade stars: %v", err)
 	}
-	messages := NewMessageStore(pool)
 	upgrades := NewStarGiftUpgradeStore(pool, messages)
 	req := domain.StarGiftUpgradeRequest{
-		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 700001},
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: saved.MsgID},
 		KeepOriginalDetails: true, ChargeStars: 100, FormID: 991,
 		CommandKey: "paid-" + suffix, Date: 1700001002,
 	}
@@ -107,6 +114,31 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		ownerMessage.Media.ServiceAction == nil || ownerMessage.Media.ServiceAction.Kind != domain.MessageServiceActionStarGiftUnique ||
 		ownerMessage.Media.ServiceAction.StarGiftUnique == nil || ownerMessage.Media.ServiceAction.StarGiftUnique.Gift.ID != upgraded.Unique.ID {
 		t.Fatalf("owner upgrade service message = %+v", ownerMessage)
+	}
+	uniqueAction := ownerMessage.Media.ServiceAction.StarGiftUnique
+	if uniqueAction.SavedID != int64(saved.MsgID) {
+		t.Fatalf("unique action saved_id = %d, want stable source msg id %d", uniqueAction.SavedID, saved.MsgID)
+	}
+	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
+	if ownerSourceEdit.Event.Pts <= ownerMessage.Pts || ownerSourceEdit.Message.Media == nil ||
+		ownerSourceEdit.Message.Media.ServiceAction == nil || ownerSourceEdit.Message.Media.ServiceAction.StarGift == nil ||
+		ownerSourceEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != ownerMessage.ID ||
+		ownerSourceEdit.Message.Media.ServiceAction.StarGift.CanUpgrade {
+		t.Fatalf("owner source gift was not durably marked upgraded: %+v", ownerSourceEdit)
+	}
+	senderSourceEdit := upgradedSourceEditForUser(upgraded, sender.ID)
+	if senderSourceEdit.Message.Media == nil || senderSourceEdit.Message.Media.ServiceAction == nil ||
+		senderSourceEdit.Message.Media.ServiceAction.StarGift == nil ||
+		senderSourceEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != upgraded.Send.SenderMessage.ID {
+		t.Fatalf("sender source gift has wrong box-local upgrade link: %+v", senderSourceEdit)
+	}
+	difference, err := NewUpdateEventStore(pool).ListAfter(ctx, owner.ID, ownerMessage.Pts-1, 4)
+	if err != nil || len(difference) < 2 || difference[0].Type != domain.UpdateEventNewMessage ||
+		difference[0].Message.ID != ownerMessage.ID || difference[1].Type != domain.UpdateEventEditMessage ||
+		difference[1].Message.ID != saved.MsgID || difference[1].Message.Media == nil ||
+		difference[1].Message.Media.ServiceAction == nil || difference[1].Message.Media.ServiceAction.StarGift == nil ||
+		difference[1].Message.Media.ServiceAction.StarGift.UpgradeMsgID != ownerMessage.ID {
+		t.Fatalf("owner upgrade difference = %+v err %v", difference, err)
 	}
 
 	var (
@@ -128,12 +160,19 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	if issued != 1 || uniqueCount != 1 || commandCount != 1 || reason != string(domain.StarsReasonGiftUpgrade) {
 		t.Fatalf("durable aggregate issued=%d unique=%d command=%d reason=%q", issued, uniqueCount, commandCount, reason)
 	}
+	receipt, found, err := upgrades.StarGiftUpgradeReceipt(ctx, owner.ID, req.CommandKey)
+	if err != nil || !found || receipt.SourceSavedGiftID != savedID || receipt.UniqueGiftID != upgraded.Unique.ID ||
+		receipt.FormID != req.FormID || receipt.ChargeStars != req.ChargeStars || receipt.RequirePrepaid ||
+		!receipt.KeepOriginalDetails || receipt.BalanceAfter != 900 || receipt.SourceEditPts != ownerSourceEdit.Event.Pts {
+		t.Fatalf("upgrade receipt = %+v found=%v err=%v", receipt, found, err)
+	}
 
 	replayed, err := upgrades.UpgradeStarGift(ctx, req)
 	if err != nil {
 		t.Fatalf("replay upgrade: %v", err)
 	}
-	if !replayed.Duplicate || replayed.Unique.ID != upgraded.Unique.ID || replayed.Balance.Balance != 900 {
+	if !replayed.Duplicate || replayed.Unique.ID != upgraded.Unique.ID || replayed.Balance.Balance != 900 ||
+		upgradedSourceEditForUser(replayed, owner.ID).Event.Pts != ownerSourceEdit.Event.Pts {
 		t.Fatalf("replayed upgrade = %+v", replayed)
 	}
 	conflictingReplay := req
@@ -152,17 +191,15 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("balance after retries = %+v err %v", bal, err)
 	}
 
-	prepaidSavedID, err := gifts.Create(ctx, domain.SavedStarGift{
+	prepaidSaved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
 		// A later pool revision may raise the current price; the historical paid
 		// amount remains an entitlement instead of being compared to that price.
-		MsgID: 700002, Date: 1700001004, ConvertStars: 25, PrepaidUpgradeStars: 50,
+		Date: 1700001004, ConvertStars: 25, PrepaidUpgradeStars: 50,
 	})
-	if err != nil {
-		t.Fatalf("create prepaid saved gift: %v", err)
-	}
+	prepaidSavedID := prepaidSaved.ID
 	prepaid, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 700002},
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: prepaidSaved.MsgID},
 		RequirePrepaid: true, CommandKey: "prepaid-" + suffix, Date: 1700001005,
 	})
 	if err != nil {
@@ -174,26 +211,24 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("prepaid upgrade = %+v", prepaid)
 	}
 
-	insufficientSavedID, err := gifts.Create(ctx, domain.SavedStarGift{
+	insufficientSaved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
 		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
-		MsgID: 700003, Date: 1700001006, ConvertStars: 25,
+		Date: 1700001006, ConvertStars: 25,
 	})
-	if err != nil {
-		t.Fatalf("create insufficient saved gift: %v", err)
-	}
+	insufficientSavedID := insufficientSaved.ID
 	if _, err := stars.Debit(ctx, owner.ID, 850, domain.StarsReasonReaction,
 		domain.Peer{Type: domain.PeerTypeChannel, ID: 777001}, 1700001007, "paid reaction", ""); err != nil {
 		t.Fatalf("seed isolated paid reaction debit: %v", err)
 	}
 	if _, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 700003},
-		ChargeStars: 100, CommandKey: "insufficient-" + suffix, Date: 1700001008,
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: insufficientSaved.MsgID},
+		ChargeStars: 100, FormID: 994, CommandKey: "insufficient-" + suffix, Date: 1700001008,
 	}); !errors.Is(err, domain.ErrStarsInsufficient) {
 		t.Fatalf("insufficient upgrade err = %v", err)
 	}
-	insufficientSaved, found, err := gifts.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 700003})
-	if err != nil || !found || insufficientSaved.ID != insufficientSavedID || insufficientSaved.UniqueGiftID != 0 {
-		t.Fatalf("saved gift after rejected upgrade = %+v found %v err %v", insufficientSaved, found, err)
+	insufficientAfter, found, err := gifts.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: insufficientSaved.MsgID})
+	if err != nil || !found || insufficientAfter.ID != insufficientSavedID || insufficientAfter.UniqueGiftID != 0 {
+		t.Fatalf("saved gift after rejected upgrade = %+v found %v err %v", insufficientAfter, found, err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT issued FROM star_gift_collectible_revisions WHERE id=$1`, poolRevision.ID).Scan(&issued); err != nil || issued != 2 {
 		t.Fatalf("issued after rejected upgrade = %d err %v, want 2", issued, err)
@@ -220,12 +255,10 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 
 	concurrentOwner := createTestUser(t, ctx, users, "+1778"+suffix+"43", "ConcurrentOwner", "")
 	concurrentPeer := domain.Peer{Type: domain.PeerTypeUser, ID: concurrentOwner.ID}
-	if _, err := gifts.Create(ctx, domain.SavedStarGift{
+	concurrentSaved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
 		Owner: concurrentPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
-		MsgID: 700004, Date: 1700001010, ConvertStars: 25,
-	}); err != nil {
-		t.Fatalf("create concurrent upgrade target: %v", err)
-	}
+		Date: 1700001010, ConvertStars: 25,
+	})
 	if _, _, err := stars.EnsureGrant(ctx, concurrentOwner.ID, 150, 1700001011); err != nil {
 		t.Fatalf("grant concurrent balance: %v", err)
 	}
@@ -238,7 +271,7 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	go func() {
 		<-start
 		_, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-			UserID: concurrentOwner.ID, Ref: domain.SavedStarGiftRef{Owner: concurrentPeer, MsgID: 700004},
+			UserID: concurrentOwner.ID, Ref: domain.SavedStarGiftRef{Owner: concurrentPeer, MsgID: concurrentSaved.MsgID},
 			ChargeStars: 100, FormID: 993, CommandKey: "concurrent-upgrade-" + suffix, Date: 1700001012,
 		})
 		results <- concurrentDebitResult{kind: "gift_upgrade", err: err}
@@ -302,19 +335,19 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	soldOutRevision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: soldOutEntry.Gift.ID, UpgradeStars: 10, SupplyTotal: 1, SlugPrefix: "nova-" + suffix,
 		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityPermille: 1000,
+			Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
 			Document: collectibleTestDocumentPtr(baseDocumentID+101, "nova-model.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+101, "nova-model"), Animation: collectibleTestAnimationPtr("nova-model.tgs"),
 		}},
 		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityPermille: 1000,
+			Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
 			Document: collectibleTestDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs"),
 		}},
 		Backdrops: []domain.StarGiftCollectibleAttribute{{
 			Kind: domain.StarGiftCollectibleBackdrop, Name: "Void", BackdropID: 2,
 			CenterColor: 0x101010, EdgeColor: 0x202020, PatternColor: 0x303030, TextColor: 0xffffff,
-			RarityPermille: 1000,
+			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
 		}},
 		Actor: "integration", CommandID: "soldout-pool-" + suffix,
 	})
@@ -323,27 +356,26 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	}
 	soldOutOwner := createTestUser(t, ctx, users, "+1778"+suffix+"44", "SoldOutOwner", "")
 	soldOutPeer := domain.Peer{Type: domain.PeerTypeUser, ID: soldOutOwner.ID}
-	for index, msgID := range []int{700010, 700011} {
-		if _, err := gifts.Create(ctx, domain.SavedStarGift{
+	soldOutSaved := make([]domain.SavedStarGift, 0, 2)
+	for index := range 2 {
+		soldOutSaved = append(soldOutSaved, createCollectibleSavedGift(t, ctx, messages, gifts, soldOutEntry.Gift, domain.SavedStarGift{
 			Owner: soldOutPeer, FromUserID: sender.ID, GiftID: soldOutEntry.Gift.ID, RevisionID: soldOutEntry.Gift.RevisionID,
-			MsgID: msgID, Date: 1700001020 + index, ConvertStars: 10,
-		}); err != nil {
-			t.Fatalf("create sold-out target %d: %v", msgID, err)
-		}
+			Date: 1700001020 + index, ConvertStars: 10,
+		}))
 	}
 	if _, _, err := stars.EnsureGrant(ctx, soldOutOwner.ID, 100, 1700001022); err != nil {
 		t.Fatalf("grant sold-out owner balance: %v", err)
 	}
 	if _, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-		UserID: soldOutOwner.ID, Ref: domain.SavedStarGiftRef{Owner: soldOutPeer, MsgID: 700010},
-		ChargeStars: 10, CommandKey: "soldout-first-" + suffix, Date: 1700001023,
+		UserID: soldOutOwner.ID, Ref: domain.SavedStarGiftRef{Owner: soldOutPeer, MsgID: soldOutSaved[0].MsgID},
+		ChargeStars: 10, FormID: 995, CommandKey: "soldout-first-" + suffix, Date: 1700001023,
 	}); err != nil {
 		t.Fatalf("fill collectible supply: %v", err)
 	}
 	balanceBeforeSoldOut, _ := stars.GetBalance(ctx, soldOutOwner.ID)
 	if _, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-		UserID: soldOutOwner.ID, Ref: domain.SavedStarGiftRef{Owner: soldOutPeer, MsgID: 700011},
-		ChargeStars: 10, CommandKey: "soldout-second-" + suffix, Date: 1700001024,
+		UserID: soldOutOwner.ID, Ref: domain.SavedStarGiftRef{Owner: soldOutPeer, MsgID: soldOutSaved[1].MsgID},
+		ChargeStars: 10, FormID: 996, CommandKey: "soldout-second-" + suffix, Date: 1700001024,
 	}); !errors.Is(err, domain.ErrStarGiftCollectibleSoldOut) {
 		t.Fatalf("sold-out upgrade err = %v", err)
 	}
@@ -357,7 +389,7 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create ordinary collection: %v", err)
 	}
-	converted, err := gifts.MarkConverted(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 700003})
+	converted, err := gifts.MarkConverted(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: insufficientSaved.MsgID})
 	if err != nil || !converted.Converted || converted.PinnedOrder != 0 || len(converted.CollectionIDs) != 0 {
 		t.Fatalf("convert collection member = %+v err %v", converted, err)
 	}
@@ -383,6 +415,106 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	})
 	if err != nil || filteredAfterConvert.Count != 0 || len(filteredAfterConvert.Gifts) != 0 {
 		t.Fatalf("converted collection filter = %+v err %v, want empty", filteredAfterConvert, err)
+	}
+}
+
+func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	users := NewUserStore(pool)
+	sender := createTestUser(t, ctx, users, "+1779"+suffix+"51", "NoCraftSender", "")
+	owner := createTestUser(t, ctx, users, "+1779"+suffix+"52", "NoCraftOwner", "")
+	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "No Craft " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "no-craft-gift.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "no-craft-gift"), Animation: collectibleTestAnimation("no-craft-gift.tgs"),
+		Actor: "integration", CommandID: "no-craft-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create no-craft catalog gift: %v", err)
+	}
+	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 10, SlugPrefix: "no-craft-" + suffix,
+		Models: []domain.StarGiftCollectibleAttribute{{
+			Kind: domain.StarGiftCollectibleModel, Name: "Ordinary", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+			Document: collectibleTestDocumentPtr(baseDocumentID+1, "no-craft-model.tgs"),
+			Blob:     collectibleTestBlobPtr(baseDocumentID+1, "no-craft-model"), Animation: collectibleTestAnimationPtr("no-craft-model.tgs"),
+		}},
+		Patterns: []domain.StarGiftCollectibleAttribute{{
+			Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+			Document: collectibleTestDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"),
+			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs"),
+		}},
+		Backdrops: []domain.StarGiftCollectibleAttribute{{
+			Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1,
+			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
+			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+		}},
+		Actor: "integration", CommandID: "no-craft-pool-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("publish no-craft pool: %v", err)
+	}
+	if len(revision.Models) != 1 || revision.Models[0].Crafted {
+		t.Fatalf("no-craft pool models = %+v", revision.Models)
+	}
+
+	messages := NewMessageStore(pool)
+	saved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
+		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
+		Date: now, ConvertStars: 25,
+	})
+	stars := NewStarsStore(pool)
+	if _, _, err := stars.EnsureGrant(ctx, owner.ID, 1000, now); err != nil {
+		t.Fatalf("grant no-craft upgrade stars: %v", err)
+	}
+	upgrades := NewStarGiftUpgradeStore(pool, messages, WithStarGiftLifecyclePolicy(domain.StarGiftLifecyclePolicy{
+		TransferStars: 25, DropOriginalDetailsStars: 25, OfferMinStars: 1, CraftChancePermille: 750,
+	}))
+	upgraded, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: saved.MsgID},
+		ChargeStars: 100, FormID: 551, CommandKey: "no-craft-upgrade-" + suffix, Date: now + 1,
+	})
+	if err != nil {
+		t.Fatalf("upgrade no-craft gift: %v", err)
+	}
+	uniqueAction := upgraded.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
+	if upgraded.Unique.CraftChancePermille != 0 || upgraded.Saved.CanCraftAt != 0 ||
+		uniqueAction == nil || uniqueAction.Gift.CraftChancePermille != 0 || uniqueAction.CanCraftAt != 0 {
+		t.Fatalf("no-craft capability leaked: saved=%+v unique=%+v action=%+v", upgraded.Saved, upgraded.Unique, uniqueAction)
+	}
+
+	lifecycle := NewStarGiftLifecycleStore(pool, messages, 1_000_000)
+	page, err := lifecycle.ListCraftStarGifts(ctx, owner.ID, entry.Gift.ID, "", 10)
+	if err != nil || page.Count != 0 || len(page.Gifts) != 0 {
+		t.Fatalf("no-craft candidate page = %+v err %v", page, err)
+	}
+	if _, err := lifecycle.CraftStarGift(ctx, domain.StarGiftCraftRequest{
+		UserID: owner.ID, Refs: []domain.SavedStarGiftRef{{Owner: ownerPeer, MsgID: saved.MsgID}},
+		CommandKey: "no-craft-attempt-" + suffix, Date: now + 2,
+	}); !errors.Is(err, domain.ErrStarGiftCraftUnavailable) {
+		t.Fatalf("no-craft attempt err = %v", err)
+	}
+	var lifecycleStatus string
+	var burned bool
+	var commandCount int
+	if err := pool.QueryRow(ctx, `SELECT p.lifecycle_status,u.burned
+FROM peer_star_gifts p JOIN unique_star_gifts u ON u.id=p.unique_gift_id WHERE p.id=$1`, upgraded.Saved.ID).
+		Scan(&lifecycleStatus, &burned); err != nil {
+		t.Fatalf("load no-craft aggregate: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_craft_commands WHERE user_id=$1 AND command_key=$2`,
+		owner.ID, "no-craft-attempt-"+suffix).Scan(&commandCount); err != nil {
+		t.Fatalf("count no-craft commands: %v", err)
+	}
+	if lifecycleStatus != "active" || burned || commandCount != 0 {
+		t.Fatalf("no-craft attempt mutated aggregate: status=%q burned=%t commands=%d", lifecycleStatus, burned, commandCount)
 	}
 }
 
@@ -426,4 +558,54 @@ func collectibleTestBlob(id int64, suffix string) domain.FileBlob {
 func collectibleTestBlobPtr(id int64, suffix string) *domain.FileBlob {
 	blob := collectibleTestBlob(id, suffix)
 	return &blob
+}
+
+// createCollectibleSavedGift seeds the same valid source-message + saved-gift
+// invariant as the purchase aggregate. Tests must not invent a peer_star_gifts
+// msg_id that has no durable message box behind it.
+func createCollectibleSavedGift(
+	t *testing.T,
+	ctx context.Context,
+	messages *MessageStore,
+	gifts *StarGiftStore,
+	gift domain.StarGift,
+	saved domain.SavedStarGift,
+) domain.SavedStarGift {
+	t.Helper()
+	sticker := gift.Sticker
+	sent, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    saved.FromUserID,
+		RecipientUserID: saved.Owner.ID,
+		RandomID:        (time.Now().UnixNano() & 0x7fffffffffffffff) ^ saved.Owner.ID ^ int64(saved.Date),
+		Date:            saved.Date,
+		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindService, ServiceAction: &domain.MessageServiceAction{
+			Kind: domain.MessageServiceActionStarGift,
+			StarGift: &domain.MessageStarGiftAction{
+				GiftID: gift.ID, Stars: gift.Stars, ConvertStars: saved.ConvertStars,
+				Title: gift.Title, Sticker: &sticker, Message: saved.Message,
+				FromUserID: saved.FromUserID, PeerUserID: saved.Owner.ID, Saved: true,
+				CanUpgrade: gift.UpgradeStars > 0, PrepaidUpgrade: saved.PrepaidUpgradeStars > 0,
+				UpgradePriceStars: gift.UpgradeStars, UpgradeStars: saved.PrepaidUpgradeStars,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create collectible source message: %v", err)
+	}
+	saved.MsgID = sent.RecipientMessage.ID
+	id, err := gifts.Create(ctx, saved)
+	if err != nil {
+		t.Fatalf("create saved gift: %v", err)
+	}
+	saved.ID = id
+	return saved
+}
+
+func upgradedSourceEditForUser(result domain.StarGiftUpgradeResult, userID int64) domain.EditedMessageForUser {
+	for _, edit := range result.SourceEdits {
+		if edit.UserID == userID {
+			return edit
+		}
+	}
+	return domain.EditedMessageForUser{UserID: userID}
 }

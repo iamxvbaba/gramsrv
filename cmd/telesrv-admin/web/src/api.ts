@@ -8,6 +8,7 @@ import type {
   GroupMessageListResponse,
   MessageDetail,
   MessageListResponse,
+  OfficialStarGiftListResponse,
   StarGiftCollectiblePreview,
   StarGiftListResponse
 } from "./types";
@@ -66,11 +67,14 @@ export const api = {
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
 	gifts: () => request<StarGiftListResponse>("/api/gifts"),
-	giftAnimation: (id: number) => request<Record<string, unknown>>(`/api/gifts/${id}/animation`),
-	giftCollectibles: (id: number) => request<StarGiftCollectiblePreview>(`/api/gifts/${id}/collectibles`),
-	giftCollectibleAnimation: (giftID: number, kind: "model" | "pattern", attributeID: number) => request<Record<string, unknown>>(`/api/gifts/${giftID}/collectibles/${kind}/${attributeID}/animation`),
+	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
+	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),
+	giftAnimation: (id: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(id)}/animation`),
+	giftCollectibles: (id: string) => request<StarGiftCollectiblePreview>(`/api/gifts/${encodeURIComponent(id)}/collectibles`),
+	giftCollectibleAnimation: (giftID: string, kind: "model" | "pattern", attributeID: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(giftID)}/collectibles/${kind}/${encodeURIComponent(attributeID)}/animation`),
 	importGift: (form: FormData) => request<CommandResult>("/api/actions/import-gift", { method: "POST", body: form }),
-	publishGiftCollectibles: (giftID: number, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${giftID}`, { method: "POST", body: form }),
+	importOfficialGift: (payload: Record<string, unknown>) => request<CommandResult>("/api/actions/import-official-gift", { method: "POST", body: JSON.stringify(payload) }),
+	publishGiftCollectibles: (giftID: string, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${encodeURIComponent(giftID)}`, { method: "POST", body: form }),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
     body: JSON.stringify(payload)

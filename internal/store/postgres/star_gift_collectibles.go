@@ -14,6 +14,34 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
+func nullablePermille(attribute domain.StarGiftCollectibleAttribute) any {
+	if attribute.RarityKind != domain.StarGiftRarityPermille {
+		return nil
+	}
+	return attribute.RarityPermille
+}
+
+func nullableSHA256(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
+func nullablePositiveInt64(value int64) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableOfficialGiftJSON(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return string(value)
+}
+
 func (s *StarGiftStore) PublishCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
 	write.SlugPrefix = strings.ToLower(strings.TrimSpace(write.SlugPrefix))
 	write.Actor = strings.TrimSpace(write.Actor)
@@ -38,13 +66,15 @@ SELECT COALESCE(MAX(revision), 0) + 1 FROM star_gift_collectible_revisions WHERE
 		var revisionID int64
 		if err := tx.QueryRow(ctx, `
 INSERT INTO star_gift_collectible_revisions
-    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id)
-VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
-RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, write.SlugPrefix, write.Actor, write.CommandID).Scan(&revisionID); err != nil {
+    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id,
+     official_gift_id, source_manifest_sha256)
+VALUES ($1,$2,$3,$4,$5,'draft',$6,$7,NULLIF($8::bigint,0),$9)
+RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, write.SlugPrefix, write.Actor, write.CommandID,
+			write.OfficialGiftID, nullableSHA256(write.SourceManifestSHA256)).Scan(&revisionID); err != nil {
 			return fmt.Errorf("insert collectible revision: %w", err)
 		}
 		media := NewMediaStore(tx)
-		insertAnimated := func(table string, attributes []domain.StarGiftCollectibleAttribute) error {
+		insertAnimated := func(table string, attributes []domain.StarGiftCollectibleAttribute, models bool) error {
 			for _, attribute := range attributes {
 				if err := media.PutDocument(ctx, *attribute.Document); err != nil {
 					return fmt.Errorf("put collectible %s document: %w", attribute.Kind, err)
@@ -53,35 +83,53 @@ RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, wr
 					return fmt.Errorf("put collectible %s blob: %w", attribute.Kind, err)
 				}
 				animation := attribute.Animation
-				query := fmt.Sprintf(`
+				var query string
+				if models {
+					query = fmt.Sprintf(`
 INSERT INTO %s
     (collectible_revision_id, name, document_id, animation_json, animation_sha256,
      source_name, source_format, width, height, frame_rate, in_point, out_point,
-     rarity_permille, sort_order)
-VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, table)
-				if _, err := tx.Exec(ctx, query, revisionID, strings.TrimSpace(attribute.Name), attribute.Document.ID,
-					string(animation.JSON), animation.SHA256, animation.SourceName, string(animation.SourceFormat),
-					animation.Width, animation.Height, animation.FrameRate, animation.InPoint, animation.OutPoint,
-					attribute.RarityPermille, attribute.SortOrder); err != nil {
-					return fmt.Errorf("insert collectible %s attribute: %w", attribute.Kind, err)
+     rarity_kind, rarity_permille, crafted, official_document_id, sort_order)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, table)
+					if _, err := tx.Exec(ctx, query, revisionID, strings.TrimSpace(attribute.Name), attribute.Document.ID,
+						string(animation.JSON), animation.SHA256, animation.SourceName, string(animation.SourceFormat),
+						animation.Width, animation.Height, animation.FrameRate, animation.InPoint, animation.OutPoint,
+						string(attribute.RarityKind), nullablePermille(attribute), attribute.Crafted,
+						nullablePositiveInt64(attribute.OfficialDocumentID), attribute.SortOrder); err != nil {
+						return fmt.Errorf("insert collectible %s attribute: %w", attribute.Kind, err)
+					}
+				} else {
+					query = fmt.Sprintf(`
+INSERT INTO %s
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256,
+     source_name, source_format, width, height, frame_rate, in_point, out_point,
+     rarity_kind, rarity_permille, official_document_id, sort_order)
+VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, table)
+					if _, err := tx.Exec(ctx, query, revisionID, strings.TrimSpace(attribute.Name), attribute.Document.ID,
+						string(animation.JSON), animation.SHA256, animation.SourceName, string(animation.SourceFormat),
+						animation.Width, animation.Height, animation.FrameRate, animation.InPoint, animation.OutPoint,
+						string(attribute.RarityKind), nullablePermille(attribute), nullablePositiveInt64(attribute.OfficialDocumentID),
+						attribute.SortOrder); err != nil {
+						return fmt.Errorf("insert collectible %s attribute: %w", attribute.Kind, err)
+					}
 				}
 			}
 			return nil
 		}
-		if err := insertAnimated("star_gift_collectible_models", write.Models); err != nil {
+		if err := insertAnimated("star_gift_collectible_models", write.Models, true); err != nil {
 			return err
 		}
-		if err := insertAnimated("star_gift_collectible_patterns", write.Patterns); err != nil {
+		if err := insertAnimated("star_gift_collectible_patterns", write.Patterns, false); err != nil {
 			return err
 		}
 		for _, attribute := range write.Backdrops {
 			if _, err := tx.Exec(ctx, `
 INSERT INTO star_gift_collectible_backdrops
     (collectible_revision_id, name, backdrop_id, center_color, edge_color, pattern_color,
-     text_color, rarity_permille, sort_order)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, revisionID, strings.TrimSpace(attribute.Name), attribute.BackdropID,
+     text_color, rarity_kind, rarity_permille, sort_order)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, revisionID, strings.TrimSpace(attribute.Name), attribute.BackdropID,
 				attribute.CenterColor, attribute.EdgeColor, attribute.PatternColor, attribute.TextColor,
-				attribute.RarityPermille, attribute.SortOrder); err != nil {
+				string(attribute.RarityKind), nullablePermille(attribute), attribute.SortOrder); err != nil {
 				return fmt.Errorf("insert collectible backdrop: %w", err)
 			}
 		}
@@ -152,10 +200,11 @@ func collectibleRevisionByID(ctx context.Context, db sqlcgen.DBTX, revisionID in
 	var publishedAt pgtype.Timestamptz
 	if err := db.QueryRow(ctx, `
 SELECT id, gift_id, revision, upgrade_stars, supply_total, issued, slug_prefix, status,
-       created_by, created_at, published_at
+       created_by, created_at, published_at, COALESCE(official_gift_id,0), source_manifest_sha256
 FROM star_gift_collectible_revisions WHERE id=$1`, revisionID).Scan(
 		&revision.ID, &revision.GiftID, &revision.Revision, &revision.UpgradeStars, &revision.SupplyTotal,
 		&revision.Issued, &revision.SlugPrefix, &status, &revision.CreatedBy, &revision.CreatedAt, &publishedAt,
+		&revision.OfficialGiftID, &revision.SourceManifestSHA256,
 	); err != nil {
 		return domain.StarGiftCollectibleRevision{}, fmt.Errorf("get collectible revision: %w", err)
 	}
@@ -184,13 +233,20 @@ func listAnimatedCollectibleAttributes(ctx context.Context, db sqlcgen.DBTX, rev
 		return nil, domain.ErrStarGiftCollectibleInvalid
 	}
 	rows, err := db.Query(ctx, fmt.Sprintf(`
-SELECT a.id, a.collectible_revision_id, a.name, a.rarity_permille, a.sort_order,
+SELECT a.id, a.collectible_revision_id, a.name, a.rarity_kind, COALESCE(a.rarity_permille,0),
+       %s, COALESCE(a.official_document_id,0), a.sort_order,
        a.animation_json::text, a.animation_sha256, a.source_name, a.source_format,
        a.width, a.height, a.frame_rate, a.in_point, a.out_point,
        d.id, d.access_hash, d.file_reference, d.date, d.mime_type, d.size, d.dc_id,
        d.attributes::text, d.thumbs::text
 FROM %s a JOIN documents d ON d.id=a.document_id
-WHERE a.collectible_revision_id=$1 ORDER BY a.sort_order, a.id`, table), revisionID)
+WHERE a.collectible_revision_id=$1 ORDER BY a.sort_order, a.id`,
+		func() string {
+			if kind == domain.StarGiftCollectibleModel {
+				return "a.crafted"
+			}
+			return "false"
+		}(), table), revisionID)
 	if err != nil {
 		return nil, fmt.Errorf("list collectible %s attributes: %w", kind, err)
 	}
@@ -199,7 +255,8 @@ WHERE a.collectible_revision_id=$1 ORDER BY a.sort_order, a.id`, table), revisio
 	for rows.Next() {
 		attribute := domain.StarGiftCollectibleAttribute{Kind: kind, Document: &domain.Document{}, Animation: &domain.StarGiftAnimation{}}
 		var attrsJSON, thumbsJSON, sourceFormat string
-		if err := rows.Scan(&attribute.ID, &attribute.CollectibleRevisionID, &attribute.Name, &attribute.RarityPermille, &attribute.SortOrder,
+		if err := rows.Scan(&attribute.ID, &attribute.CollectibleRevisionID, &attribute.Name, &attribute.RarityKind,
+			&attribute.RarityPermille, &attribute.Crafted, &attribute.OfficialDocumentID, &attribute.SortOrder,
 			&attribute.Animation.JSON, &attribute.Animation.SHA256, &attribute.Animation.SourceName, &sourceFormat,
 			&attribute.Animation.Width, &attribute.Animation.Height, &attribute.Animation.FrameRate, &attribute.Animation.InPoint, &attribute.Animation.OutPoint,
 			&attribute.Document.ID, &attribute.Document.AccessHash, &attribute.Document.FileReference, &attribute.Document.Date,
@@ -221,7 +278,7 @@ WHERE a.collectible_revision_id=$1 ORDER BY a.sort_order, a.id`, table), revisio
 func listCollectibleBackdrops(ctx context.Context, db sqlcgen.DBTX, revisionID int64) ([]domain.StarGiftCollectibleAttribute, error) {
 	rows, err := db.Query(ctx, `
 SELECT id, collectible_revision_id, name, backdrop_id, center_color, edge_color, pattern_color,
-       text_color, rarity_permille, sort_order
+       text_color, rarity_kind, COALESCE(rarity_permille,0), sort_order
 FROM star_gift_collectible_backdrops WHERE collectible_revision_id=$1 ORDER BY sort_order, id`, revisionID)
 	if err != nil {
 		return nil, fmt.Errorf("list collectible backdrops: %w", err)
@@ -232,7 +289,7 @@ FROM star_gift_collectible_backdrops WHERE collectible_revision_id=$1 ORDER BY s
 		attribute := domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectibleBackdrop}
 		if err := rows.Scan(&attribute.ID, &attribute.CollectibleRevisionID, &attribute.Name, &attribute.BackdropID,
 			&attribute.CenterColor, &attribute.EdgeColor, &attribute.PatternColor, &attribute.TextColor,
-			&attribute.RarityPermille, &attribute.SortOrder); err != nil {
+			&attribute.RarityKind, &attribute.RarityPermille, &attribute.SortOrder); err != nil {
 			return nil, err
 		}
 		out = append(out, attribute)
@@ -307,14 +364,24 @@ func (s *StarGiftStore) uniqueByPredicate(ctx context.Context, predicate string,
 func uniqueStarGiftQuery(predicate string) string {
 	return fmt.Sprintf(`
 SELECT u.id, u.gift_id, u.collectible_revision_id, u.source_saved_gift_id, u.title, u.slug, u.num,
-       u.owner_peer_type, u.owner_peer_id, u.keep_original_details, u.created_at,
-       r.issued, r.supply_total, sg.from_user_id, sg.owner_peer_type, sg.owner_peer_id,
+       COALESCE(u.owner_peer_type,''), COALESCE(u.owner_peer_id,0), u.keep_original_details, u.created_at,
+       u.require_premium, u.resale_ton_only, u.theme_available, u.burned, u.crafted,
+       u.owner_name, u.owner_address, u.gift_address,
+       COALESCE(l.currency,''), COALESCE(l.amount,0), COALESCE(l.version,0),
+       COALESCE(u.released_by_peer_type,''), COALESCE(u.released_by_peer_id,0),
+       u.value_amount, u.value_currency, u.value_usd_amount,
+       COALESCE(u.theme_peer_type,''), COALESCE(u.theme_peer_id,0),
+       COALESCE(u.host_peer_type,''), COALESCE(u.host_peer_id,0),
+       u.offer_min_stars, u.craft_chance_permille, u.last_sale_date,
+       u.last_sale_currency, u.last_sale_amount,
+       r.issued, r.supply_total, sg.from_user_id, u.original_owner_peer_type, u.original_owner_peer_id,
        sg.gift_date, sg.message, sg.name_hidden,
-       m.id, m.name, m.rarity_permille, md.id, md.access_hash, md.file_reference, md.date,
+       m.id, m.name, m.rarity_kind, COALESCE(m.rarity_permille,0), m.crafted, md.id, md.access_hash, md.file_reference, md.date,
        md.mime_type, md.size, md.dc_id, md.attributes::text, md.thumbs::text,
-       p.id, p.name, p.rarity_permille, pd.id, pd.access_hash, pd.file_reference, pd.date,
+       p.id, p.name, p.rarity_kind, COALESCE(p.rarity_permille,0), pd.id, pd.access_hash, pd.file_reference, pd.date,
        pd.mime_type, pd.size, pd.dc_id, pd.attributes::text, pd.thumbs::text,
-       b.id, b.name, b.backdrop_id, b.center_color, b.edge_color, b.pattern_color, b.text_color, b.rarity_permille
+       b.id, b.name, b.backdrop_id, b.center_color, b.edge_color, b.pattern_color, b.text_color,
+       b.rarity_kind, COALESCE(b.rarity_permille,0)
 FROM unique_star_gifts u
 JOIN star_gift_collectible_revisions r ON r.id=u.collectible_revision_id
 JOIN star_gift_collectible_models m ON m.id=u.model_attribute_id
@@ -323,12 +390,14 @@ JOIN star_gift_collectible_patterns p ON p.id=u.pattern_attribute_id
 JOIN documents pd ON pd.id=p.document_id
 JOIN star_gift_collectible_backdrops b ON b.id=u.backdrop_attribute_id
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
+LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id
 WHERE %s`, predicate)
 }
 
 func scanUniqueStarGift(row rowScanner) (domain.UniqueStarGift, error) {
 	var unique domain.UniqueStarGift
-	var ownerType, originalOwnerType string
+	var ownerType, originalOwnerType, listingCurrency, releasedByType, themePeerType, hostPeerType, lastSaleCurrency string
+	var listingAmount, lastSaleAmount int64
 	unique.Model.Kind = domain.StarGiftCollectibleModel
 	unique.Pattern.Kind = domain.StarGiftCollectiblePattern
 	unique.Backdrop.Kind = domain.StarGiftCollectibleBackdrop
@@ -337,23 +406,40 @@ func scanUniqueStarGift(row rowScanner) (domain.UniqueStarGift, error) {
 	var modelAttrs, modelThumbs, patternAttrs, patternThumbs string
 	if err := row.Scan(&unique.ID, &unique.GiftID, &unique.CollectibleRevisionID, &unique.SourceSavedGiftID,
 		&unique.Title, &unique.Slug, &unique.Num, &ownerType, &unique.Owner.ID, &unique.KeepOriginalDetails,
-		&unique.CreatedAt, &unique.AvailabilityIssued, &unique.AvailabilityTotal,
+		&unique.CreatedAt, &unique.RequirePremium, &unique.ResaleTonOnly, &unique.ThemeAvailable,
+		&unique.Burned, &unique.Crafted, &unique.OwnerName, &unique.OwnerAddress, &unique.GiftAddress,
+		&listingCurrency, &listingAmount, &unique.ResellVersion, &releasedByType, &unique.ReleasedBy.ID,
+		&unique.ValueAmount, &unique.ValueCurrency, &unique.ValueUSD,
+		&themePeerType, &unique.ThemePeer.ID, &hostPeerType, &unique.Host.ID,
+		&unique.OfferMinStars, &unique.CraftChancePermille, &unique.LastSaleDate,
+		&lastSaleCurrency, &lastSaleAmount,
+		&unique.AvailabilityIssued, &unique.AvailabilityTotal,
 		&unique.OriginalFromUserID, &originalOwnerType, &unique.OriginalOwner.ID, &unique.OriginalDate,
 		&unique.OriginalMessage, &unique.OriginalNameHidden,
-		&unique.Model.ID, &unique.Model.Name, &unique.Model.RarityPermille,
+		&unique.Model.ID, &unique.Model.Name, &unique.Model.RarityKind, &unique.Model.RarityPermille, &unique.Model.Crafted,
 		&unique.Model.Document.ID, &unique.Model.Document.AccessHash, &unique.Model.Document.FileReference,
 		&unique.Model.Document.Date, &unique.Model.Document.MimeType, &unique.Model.Document.Size,
 		&unique.Model.Document.DCID, &modelAttrs, &modelThumbs,
-		&unique.Pattern.ID, &unique.Pattern.Name, &unique.Pattern.RarityPermille,
+		&unique.Pattern.ID, &unique.Pattern.Name, &unique.Pattern.RarityKind, &unique.Pattern.RarityPermille,
 		&unique.Pattern.Document.ID, &unique.Pattern.Document.AccessHash, &unique.Pattern.Document.FileReference,
 		&unique.Pattern.Document.Date, &unique.Pattern.Document.MimeType, &unique.Pattern.Document.Size,
 		&unique.Pattern.Document.DCID, &patternAttrs, &patternThumbs,
 		&unique.Backdrop.ID, &unique.Backdrop.Name, &unique.Backdrop.BackdropID, &unique.Backdrop.CenterColor,
-		&unique.Backdrop.EdgeColor, &unique.Backdrop.PatternColor, &unique.Backdrop.TextColor, &unique.Backdrop.RarityPermille); err != nil {
+		&unique.Backdrop.EdgeColor, &unique.Backdrop.PatternColor, &unique.Backdrop.TextColor,
+		&unique.Backdrop.RarityKind, &unique.Backdrop.RarityPermille); err != nil {
 		return domain.UniqueStarGift{}, fmt.Errorf("get unique star gift: %w", err)
 	}
 	unique.Owner.Type = domain.PeerType(ownerType)
 	unique.OriginalOwner.Type = domain.PeerType(originalOwnerType)
+	unique.ReleasedBy.Type = domain.PeerType(releasedByType)
+	unique.ThemePeer.Type = domain.PeerType(themePeerType)
+	unique.Host.Type = domain.PeerType(hostPeerType)
+	if listingCurrency != "" && listingAmount > 0 {
+		unique.ResellAmount = &domain.StarGiftAmount{Currency: domain.StarGiftCurrency(listingCurrency), Amount: listingAmount}
+	}
+	if lastSaleCurrency != "" && unique.LastSaleDate > 0 {
+		unique.LastSaleAmount = &domain.StarGiftAmount{Currency: domain.StarGiftCurrency(lastSaleCurrency), Amount: lastSaleAmount}
+	}
 	unique.Model.CollectibleRevisionID = unique.CollectibleRevisionID
 	unique.Pattern.CollectibleRevisionID = unique.CollectibleRevisionID
 	unique.Backdrop.CollectibleRevisionID = unique.CollectibleRevisionID
@@ -603,7 +689,7 @@ func validatePostgresCollectionGiftIDs(ctx context.Context, db sqlcgen.DBTX, own
 	}
 	rows, err := db.Query(ctx, `
 SELECT id FROM peer_star_gifts
-WHERE owner_peer_type=$1 AND owner_peer_id=$2 AND NOT converted AND id=ANY($3::bigint[])
+WHERE owner_peer_type=$1 AND owner_peer_id=$2 AND lifecycle_status='active' AND id=ANY($3::bigint[])
 FOR UPDATE`, string(owner.Type), owner.ID, ids)
 	if err != nil {
 		return nil, err

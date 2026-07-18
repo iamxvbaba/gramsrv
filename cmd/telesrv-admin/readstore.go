@@ -134,23 +134,23 @@ type ChannelDetail struct {
 }
 
 type StarGiftRow struct {
-	GiftID        int64
-	RevisionID    int64
+	GiftID        int64 `json:"GiftID,string"`
+	RevisionID    int64 `json:"RevisionID,string"`
 	Revision      int
 	Title         string
-	Stars         int64
-	ConvertStars  int64
+	Stars         int64 `json:"Stars,string"`
+	ConvertStars  int64 `json:"ConvertStars,string"`
 	Enabled       bool
 	SortOrder     int
-	DocumentID    int64
+	DocumentID    int64 `json:"DocumentID,string"`
 	SourceName    string
 	SourceFormat  string
 	AnimationSHA  string
-	AnimationSize int64
+	AnimationSize int64 `json:"AnimationSize,string"`
 	Width         int
 	Height        int
 	FrameRate     float64
-	ReceivedCount int64
+	ReceivedCount int64 `json:"ReceivedCount,string"`
 	CreatedBy     string
 	UpdatedAt     time.Time
 }

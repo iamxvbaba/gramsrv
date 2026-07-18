@@ -284,6 +284,8 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 		}
 	case domain.ChannelActionStarGift:
 		return tgMessageActionStarGift(action.StarGift)
+	case domain.ChannelActionStarGiftUnique:
+		return tgMessageActionStarGiftUnique(action.StarGiftUnique)
 	case domain.ChannelActionSetChatWallpaper:
 		if wallpaper := tgWallpaper(action.Wallpaper); wallpaper != nil {
 			return &tg.MessageActionSetChatWallPaper{Wallpaper: wallpaper}

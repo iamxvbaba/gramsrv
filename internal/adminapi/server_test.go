@@ -11,6 +11,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
+	"telesrv/internal/officialgifts"
 )
 
 func TestAdminAPIRequiresBearerToken(t *testing.T) {
@@ -151,6 +152,49 @@ func TestAdminAPIPublishStarGiftCollectiblesMultipart(t *testing.T) {
 	}
 }
 
+func TestCollectiblePreviewResponsePreservesInt64AsDecimalStrings(t *testing.T) {
+	const maxInt64 = int64(9223372036854775807)
+	got := collectiblePreviewResponse(domain.StarGiftUpgradePreview{
+		GiftID:       maxInt64,
+		UpgradeStars: maxInt64,
+		Models: []domain.StarGiftCollectibleAttribute{{
+			ID:                 maxInt64,
+			Kind:               domain.StarGiftCollectibleModel,
+			Name:               "Exact",
+			RarityKind:         domain.StarGiftRarityPermille,
+			RarityPermille:     1000,
+			OfficialDocumentID: maxInt64,
+		}},
+	})
+	if got["gift_id"] != "9223372036854775807" || got["upgrade_stars"] != "9223372036854775807" {
+		t.Fatalf("preview ids = %#v", got)
+	}
+	models, ok := got["models"].([]map[string]any)
+	if !ok || len(models) != 1 {
+		t.Fatalf("preview models = %#v", got["models"])
+	}
+	if models[0]["id"] != "9223372036854775807" || models[0]["official_document_id"] != "9223372036854775807" {
+		t.Fatalf("preview model ids = %#v", models[0])
+	}
+}
+
+func TestOfficialStarGiftListItemExposesExplicitCapabilities(t *testing.T) {
+	item := officialStarGiftListItem(officialgifts.GiftSummary{
+		ID: 9223372036854775807, Title: "Fresh Socks", Stars: 25, ConvertStars: 10, UpgradeStars: 50,
+		ModelCount: 10, PatternCount: 20, BackdropCount: 30, CraftedModelCount: 2,
+	})
+	if item["source_gift_id"] != "9223372036854775807" || item["title"] != "Fresh Socks" ||
+		item["can_upgrade"] != true || item["can_craft"] != true {
+		t.Fatalf("official gift item = %#v", item)
+	}
+	item = officialStarGiftListItem(officialgifts.GiftSummary{
+		ID: 1, UpgradeStars: 0, ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1,
+	})
+	if item["can_upgrade"] != false || item["can_craft"] != false {
+		t.Fatalf("unavailable official gift capabilities = %#v", item)
+	}
+}
+
 type fakeService struct{}
 
 type captureFreezeService struct {
@@ -217,6 +261,18 @@ func (fakeService) DeletePrivateHistory(context.Context, admin.DeletePrivateHist
 
 func (fakeService) ImportStarGift(_ context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) ImportOfficialStarGift(_ context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) OfficialStarGifts(context.Context) ([]officialgifts.GiftSummary, error) {
+	return nil, nil
+}
+
+func (fakeService) OfficialStarGiftAnimation(context.Context, string) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
 }
 
 func (fakeService) PublishStarGiftCollectibles(_ context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error) {

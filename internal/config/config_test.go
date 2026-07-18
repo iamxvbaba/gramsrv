@@ -519,6 +519,19 @@ func TestLoadRejectsNonTelesrvConfigKeys(t *testing.T) {
 	}
 }
 
+func TestValidateStarGiftConfigRejectsNegativeInternalTONGrant(t *testing.T) {
+	cfg := Config{
+		StarGiftSweepInterval:         time.Second,
+		StarGiftSweepBatch:            1,
+		StarGiftTONStartingGrant:      -1,
+		StarGiftStarsProceedsPermille: 1000,
+		StarGiftTONProceedsPermille:   1000,
+	}
+	if err := validateStarGiftConfig(cfg); err == nil {
+		t.Fatal("negative internal TON starting grant was accepted")
+	}
+}
+
 func writeConfigFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

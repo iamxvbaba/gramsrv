@@ -98,3 +98,113 @@ func TestOnPaymentsGetStarsStatusNilDeps(t *testing.T) {
 	}
 	_ = domain.DefaultStarsStartingGrant
 }
+
+type channelLedgerGifts struct {
+	GiftsService
+	starsBalance int64
+	tonBalance   int64
+	starsPage    domain.StarsTransactionPage
+	tonPage      domain.TonTransactionPage
+}
+
+func (s *channelLedgerGifts) ChannelStarsBalance(context.Context, int64) (int64, error) {
+	return s.starsBalance, nil
+}
+
+func (s *channelLedgerGifts) ChannelStarsTransactions(context.Context, int64, string, int) (domain.StarsTransactionPage, error) {
+	return s.starsPage, nil
+}
+
+func (s *channelLedgerGifts) ChannelTonBalance(context.Context, int64) (int64, error) {
+	return s.tonBalance, nil
+}
+
+func (s *channelLedgerGifts) ChannelTonTransactions(context.Context, int64, string, int) (domain.TonTransactionPage, error) {
+	return s.tonPage, nil
+}
+
+type channelLedgerChannels struct {
+	ChannelsService
+	view domain.ChannelView
+}
+
+func (s *channelLedgerChannels) ResolveChannel(context.Context, int64, int64) (domain.ChannelView, error) {
+	return s.view, nil
+}
+
+func (s *channelLedgerChannels) GetChannels(context.Context, int64, []int64) ([]domain.ChannelView, error) {
+	return []domain.ChannelView{s.view}, nil
+}
+
+func TestPaymentsStarsLedgerUsesRequestedChannelOwner(t *testing.T) {
+	const viewerID, channelID int64 = 1000000001, 2000000001
+	view := domain.ChannelView{
+		Channel: domain.Channel{ID: channelID, AccessHash: 9876, Title: "Gift Channel", Broadcast: true, CreatorUserID: viewerID},
+		Self:    domain.ChannelMember{ChannelID: channelID, UserID: viewerID, Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive},
+	}
+	gifts := &channelLedgerGifts{
+		starsBalance: 20,
+		tonBalance:   900,
+		starsPage: domain.StarsTransactionPage{Balance: 20, Transactions: []domain.StarsTransaction{{
+			ID: 1, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002}, Amount: 20, Date: 10, Reason: domain.StarsReasonGift,
+		}}},
+		tonPage: domain.TonTransactionPage{Balance: 900, Transactions: []domain.TonTransaction{{
+			ID: 2, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 2000000002}, GiftID: 9, Amount: 900, Date: 11, Reason: domain.StarsReasonGiftResale,
+		}}},
+	}
+	r := New(Config{}, Deps{Gifts: gifts, Channels: &channelLedgerChannels{view: view}}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), viewerID)
+	peer := &tg.InputPeerChannel{ChannelID: channelID, AccessHash: view.Channel.AccessHash}
+
+	status, err := r.onPaymentsGetStarsStatus(ctx, &tg.PaymentsGetStarsStatusRequest{Peer: peer})
+	if err != nil {
+		t.Fatalf("get channel stars status: %v", err)
+	}
+	if amount, ok := status.Balance.(*tg.StarsAmount); !ok || amount.Amount != 20 || len(status.Chats) != 1 {
+		t.Fatalf("channel stars status = %+v chats=%d", status.Balance, len(status.Chats))
+	}
+	revenue, err := r.onPaymentsGetStarsRevenueStats(ctx, &tg.PaymentsGetStarsRevenueStatsRequest{Peer: peer})
+	if err != nil {
+		t.Fatalf("get channel stars revenue: %v", err)
+	}
+	if current, ok := revenue.Status.CurrentBalance.(*tg.StarsAmount); !ok || current.Amount != 20 {
+		t.Fatalf("channel stars revenue current = %+v", revenue.Status.CurrentBalance)
+	}
+	if overall, ok := revenue.Status.OverallRevenue.(*tg.StarsAmount); !ok || overall.Amount != 20 || revenue.Status.WithdrawalEnabled {
+		t.Fatalf("channel stars revenue overall = %+v withdrawal=%v", revenue.Status.OverallRevenue, revenue.Status.WithdrawalEnabled)
+	}
+
+	txnReq := &tg.PaymentsGetStarsTransactionsRequest{Peer: peer, Limit: 20}
+	txnReq.SetTon(true)
+	transactions, err := r.onPaymentsGetStarsTransactions(ctx, txnReq)
+	if err != nil {
+		t.Fatalf("get channel ton transactions: %v", err)
+	}
+	history, ok := transactions.GetHistory()
+	if amount, amountOK := transactions.Balance.(*tg.StarsTonAmount); !amountOK || amount.Amount != 900 || !ok || len(history) != 1 || !history[0].StargiftResale {
+		t.Fatalf("channel ton transactions = balance=%+v history=%+v", transactions.Balance, history)
+	}
+	revenueReq := &tg.PaymentsGetStarsRevenueStatsRequest{Peer: peer}
+	revenueReq.SetTon(true)
+	tonRevenue, err := r.onPaymentsGetStarsRevenueStats(ctx, revenueReq)
+	if err != nil {
+		t.Fatalf("get channel ton revenue: %v", err)
+	}
+	if current, ok := tonRevenue.Status.CurrentBalance.(*tg.StarsTonAmount); !ok || current.Amount != 900 {
+		t.Fatalf("channel ton revenue current = %+v", tonRevenue.Status.CurrentBalance)
+	}
+}
+
+func TestPaymentsStarsLedgerRejectsNonAdminChannelReader(t *testing.T) {
+	const viewerID, channelID int64 = 1000000001, 2000000001
+	view := domain.ChannelView{
+		Channel: domain.Channel{ID: channelID, AccessHash: 9876, Title: "Gift Channel", Broadcast: true},
+		Self:    domain.ChannelMember{ChannelID: channelID, UserID: viewerID, Role: domain.ChannelRoleMember, Status: domain.ChannelMemberActive},
+	}
+	r := New(Config{}, Deps{Gifts: &channelLedgerGifts{}, Channels: &channelLedgerChannels{view: view}}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), viewerID)
+	_, err := r.onPaymentsGetStarsStatus(ctx, &tg.PaymentsGetStarsStatusRequest{Peer: &tg.InputPeerChannel{ChannelID: channelID, AccessHash: view.Channel.AccessHash}})
+	if err == nil {
+		t.Fatal("non-admin channel ledger read unexpectedly succeeded")
+	}
+}

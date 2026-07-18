@@ -20,13 +20,19 @@ type StarsBalance struct {
 type StarsTransactionReason string
 
 const (
-	StarsReasonGrant       StarsTransactionReason = "grant"        // 起始余额自动授予
-	StarsReasonTopup       StarsTransactionReason = "topup"        // 充值（本地铸造）
-	StarsReasonReaction    StarsTransactionReason = "reaction"     // 付费 reaction 花费
-	StarsReasonGift        StarsTransactionReason = "gift"         // 星礼花费/收取
-	StarsReasonGiftUpgrade StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
-	StarsReasonPaidMedia   StarsTransactionReason = "paid_media"   // 付费媒体解锁
-	StarsReasonAdjust      StarsTransactionReason = "adjust"       // 兜底/人工调整
+	StarsReasonGrant        StarsTransactionReason = "grant"        // 起始余额自动授予
+	StarsReasonTopup        StarsTransactionReason = "topup"        // 充值（本地铸造）
+	StarsReasonReaction     StarsTransactionReason = "reaction"     // 付费 reaction 花费
+	StarsReasonGift         StarsTransactionReason = "gift"         // 星礼花费/收取
+	StarsReasonGiftUpgrade  StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
+	StarsReasonGiftTransfer StarsTransactionReason = "gift_transfer"
+	StarsReasonGiftResale   StarsTransactionReason = "gift_resale"
+	StarsReasonGiftOffer    StarsTransactionReason = "gift_offer"
+	StarsReasonGiftAuction  StarsTransactionReason = "gift_auction"
+	StarsReasonGiftPrepaid  StarsTransactionReason = "gift_prepaid_upgrade"
+	StarsReasonGiftDrop     StarsTransactionReason = "gift_drop_original_details"
+	StarsReasonPaidMedia    StarsTransactionReason = "paid_media" // 付费媒体解锁
+	StarsReasonAdjust       StarsTransactionReason = "adjust"     // 兜底/人工调整
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
@@ -50,6 +56,28 @@ type StarsTransactionPage struct {
 	Transactions []StarsTransaction
 	NextOffset   string // 空表示无更多页（DrKLO 据此停止翻页，勿在末页给非空值）
 	Users        []User // History 中提到的对手方用户，供 tg Users 富化
+}
+
+// TonTransaction is an entry in telesrv's internal nanoton ledger. It models
+// the Telegram TON-denominated gift UI without contacting a wallet, Fragment,
+// a TON node, or any blockchain service.
+type TonTransaction struct {
+	ID          int64
+	UserID      int64
+	Peer        Peer
+	GiftID      int64
+	Amount      int64 // signed nanoton amount
+	Date        int
+	Reason      StarsTransactionReason
+	Title       string
+	Description string
+}
+
+type TonTransactionPage struct {
+	Balance      int64
+	Transactions []TonTransaction
+	NextOffset   string
+	Users        []User
 }
 
 // Stars 账本边界常量。

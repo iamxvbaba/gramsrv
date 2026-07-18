@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"telesrv/internal/domain"
 )
 
@@ -53,6 +55,22 @@ func (s *ChannelStore) AppendStarGiftAdminLog(ctx context.Context, channelID, se
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	if err := s.appendStarGiftAdminLogTx(ctx, tx, channelID, senderUserID, savedID, date, action); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit star gift admin log: %w", err)
+	}
+	committed = true
+	return nil
+}
+
+// appendStarGiftAdminLogTx is the aggregate-local form used when the saved gift,
+// inventory/balance mutation and Recent Actions entry must commit together.
+func (s *ChannelStore) appendStarGiftAdminLogTx(ctx context.Context, tx pgx.Tx, channelID, senderUserID, savedID int64, date int, action domain.ChannelMessageAction) error {
+	if channelID == 0 || senderUserID == 0 || savedID <= 0 {
+		return domain.ErrChannelInvalid
+	}
 	channel, err := getChannelByID(ctx, tx, channelID)
 	if err != nil {
 		return err
@@ -63,29 +81,14 @@ func (s *ChannelStore) AppendStarGiftAdminLog(ctx context.Context, channelID, se
 	}
 	action = channelServiceActionForMessage(channelID, messageID, action)
 	msg := domain.ChannelMessage{
-		ChannelID:    channelID,
-		ID:           messageID,
-		SenderUserID: senderUserID,
-		From:         domain.Peer{Type: domain.PeerTypeUser, ID: senderUserID},
-		Date:         date,
-		Post:         channel.Broadcast,
-		Action:       &action,
-		Pts:          channel.Pts,
+		ChannelID: channelID, ID: messageID, SenderUserID: senderUserID,
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: senderUserID}, Date: date,
+		Post: channel.Broadcast, Action: &action, Pts: channel.Pts,
 	}
-	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
-		ChannelID: channelID,
-		UserID:    senderUserID,
-		Date:      date,
-		Type:      domain.ChannelAdminLogSendMessage,
-		Message:   &msg,
-	}); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit star gift admin log: %w", err)
-	}
-	committed = true
-	return nil
+	return s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+		ChannelID: channelID, UserID: senderUserID, Date: date,
+		Type: domain.ChannelAdminLogSendMessage, Message: &msg,
+	})
 }
 
 func (s *ChannelStore) appendServiceMessage(ctx context.Context, label string, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error) {

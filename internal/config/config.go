@@ -171,6 +171,11 @@ type Config struct {
 	WebPagePreviewRatePerMin int
 	// LangPackSeedDir 是 TDesktop 语言包 .strings 种子目录。
 	LangPackSeedDir string
+	// OfficialGiftsDir 是 cmd/giftfetch 生成的只读官方礼物快照目录。
+	OfficialGiftsDir string
+	// StarGiftTONStartingGrant 是 telesrv 内部 TON 账本首次访问时授予的 nanoton。
+	// 该账本只用于自建服务端礼物链路，不连接任何外部区块链。
+	StarGiftTONStartingGrant int64
 	// BlobDir 是本地磁盘 blob backend 根目录（媒体文件字节内容）。
 	BlobDir string
 	// StickerSeedDir 是 reaction / sticker 资源种子目录（导入到 documents/sticker_sets + blob）。
@@ -311,6 +316,21 @@ type Config struct {
 	PremiumSweepInterval time.Duration
 	// PremiumSweepBatch 是单次到期清理的最大行数。
 	PremiumSweepBatch int
+	// StarGiftSweepInterval drives offer expiry/refunds, auction rounds and their
+	// durable notification/delivery outboxes. It is entirely server-local.
+	StarGiftSweepInterval time.Duration
+	// StarGiftSweepBatch bounds rows/aggregates claimed by one sweep.
+	StarGiftSweepBatch               int
+	StarGiftTransferStars            int64
+	StarGiftDropOriginalDetailsStars int64
+	StarGiftOfferMinStars            int
+	StarGiftStarsProceedsPermille    int
+	StarGiftTONProceedsPermille      int
+	StarGiftExportDelay              time.Duration
+	StarGiftTransferDelay            time.Duration
+	StarGiftResellDelay              time.Duration
+	StarGiftCraftDelay               time.Duration
+	StarGiftCraftChancePermille      int
 
 	// GroupCallCheckTTL 是群通话参与者保活水位的过期阈值（客户端 Connecting 态
 	// 4s 一跳；M1 起 SFU liveness reporter 同样刷新该水位）。
@@ -491,6 +511,8 @@ func Load() (Config, error) {
 		SMTPTLSMode:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
 		SMTPTimeout:                   envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:               envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
+		OfficialGiftsDir:              envOr("TELESRV_OFFICIAL_GIFTS_DIR", "data/official-gifts"),
+		StarGiftTONStartingGrant:      envInt64Or("TELESRV_STARGIFT_TON_STARTING_GRANT", 10_000_000_000),
 		BlobDir:                       envOr("TELESRV_BLOB_DIR", "data/blobs"),
 		StickerSeedDir:                envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
 		StickerSeedMaxSets:            envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
@@ -555,12 +577,24 @@ func Load() (Config, error) {
 		CallSignalingRate:     envIntOr("TELESRV_CALL_SIGNALING_RATE", 50),
 		CallExpiryInterval:    envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
-		PremiumGrantMonths:    envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
-		PasskeyRPID:           envOr("TELESRV_PASSKEY_RP_ID", "telesrv.net"),
-		PasskeyAllowedOrigins: envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
-		StarsStartingGrant:    int64(envIntOr("TELESRV_STARS_STARTING_GRANT", 1000)),
-		PremiumSweepInterval:  envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),
-		PremiumSweepBatch:     envIntOr("TELESRV_PREMIUM_SWEEP_BATCH", 500),
+		PremiumGrantMonths:               envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
+		PasskeyRPID:                      envOr("TELESRV_PASSKEY_RP_ID", "telesrv.net"),
+		PasskeyAllowedOrigins:            envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
+		StarsStartingGrant:               int64(envIntOr("TELESRV_STARS_STARTING_GRANT", 1000)),
+		PremiumSweepInterval:             envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),
+		PremiumSweepBatch:                envIntOr("TELESRV_PREMIUM_SWEEP_BATCH", 500),
+		StarGiftSweepInterval:            envDurationOr("TELESRV_STARGIFT_SWEEP_INTERVAL", 15*time.Second),
+		StarGiftSweepBatch:               envIntOr("TELESRV_STARGIFT_SWEEP_BATCH", 1000),
+		StarGiftTransferStars:            int64(envIntOr("TELESRV_STARGIFT_TRANSFER_STARS", 25)),
+		StarGiftDropOriginalDetailsStars: int64(envIntOr("TELESRV_STARGIFT_DROP_DETAILS_STARS", 25)),
+		StarGiftOfferMinStars:            envIntOr("TELESRV_STARGIFT_OFFER_MIN_STARS", 1),
+		StarGiftStarsProceedsPermille:    envIntOr("TELESRV_STARGIFT_STARS_PROCEEDS_PERMILLE", 1000),
+		StarGiftTONProceedsPermille:      envIntOr("TELESRV_STARGIFT_TON_PROCEEDS_PERMILLE", 1000),
+		StarGiftExportDelay:              envDurationOr("TELESRV_STARGIFT_EXPORT_DELAY", 0),
+		StarGiftTransferDelay:            envDurationOr("TELESRV_STARGIFT_TRANSFER_DELAY", 0),
+		StarGiftResellDelay:              envDurationOr("TELESRV_STARGIFT_RESELL_DELAY", 0),
+		StarGiftCraftDelay:               envDurationOr("TELESRV_STARGIFT_CRAFT_DELAY", 0),
+		StarGiftCraftChancePermille:      envIntOr("TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE", 250),
 
 		GroupCallCheckTTL:        envDurationOr("TELESRV_GROUPCALL_CHECK_TTL", 45*time.Second),
 		GroupCallSweepInterval:   envDurationOr("TELESRV_GROUPCALL_SWEEP_INTERVAL", 10*time.Second),
@@ -592,7 +626,38 @@ func Load() (Config, error) {
 	if err := validateRPCResultCacheConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateStarGiftConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateStarGiftConfig(cfg Config) error {
+	if cfg.StarGiftSweepInterval <= 0 || cfg.StarGiftSweepBatch <= 0 || cfg.StarGiftSweepBatch > 10000 {
+		return fmt.Errorf("TELESRV_STARGIFT_SWEEP_INTERVAL must be positive and TELESRV_STARGIFT_SWEEP_BATCH must be 1..10000")
+	}
+	if cfg.StarGiftTONStartingGrant < 0 {
+		return fmt.Errorf("TELESRV_STARGIFT_TON_STARTING_GRANT must be non-negative")
+	}
+	if cfg.StarGiftTransferStars < 0 || cfg.StarGiftDropOriginalDetailsStars < 0 || cfg.StarGiftOfferMinStars < 0 {
+		return fmt.Errorf("TELESRV_STARGIFT_TRANSFER_STARS, TELESRV_STARGIFT_DROP_DETAILS_STARS and TELESRV_STARGIFT_OFFER_MIN_STARS must be non-negative")
+	}
+	if cfg.StarGiftExportDelay < 0 || cfg.StarGiftTransferDelay < 0 || cfg.StarGiftResellDelay < 0 || cfg.StarGiftCraftDelay < 0 {
+		return fmt.Errorf("TELESRV_STARGIFT lifecycle delays must be non-negative")
+	}
+	const maxProtocolDelay = time.Duration(1<<31-1) * time.Second
+	if cfg.StarGiftExportDelay > maxProtocolDelay || cfg.StarGiftTransferDelay > maxProtocolDelay ||
+		cfg.StarGiftResellDelay > maxProtocolDelay || cfg.StarGiftCraftDelay > maxProtocolDelay {
+		return fmt.Errorf("TELESRV_STARGIFT lifecycle delays exceed the protocol int32 date range")
+	}
+	if cfg.StarGiftCraftChancePermille < 0 || cfg.StarGiftCraftChancePermille > 1000 {
+		return fmt.Errorf("TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE must be 0..1000")
+	}
+	if cfg.StarGiftStarsProceedsPermille < 0 || cfg.StarGiftStarsProceedsPermille > 1000 ||
+		cfg.StarGiftTONProceedsPermille < 0 || cfg.StarGiftTONProceedsPermille > 1000 {
+		return fmt.Errorf("TELESRV_STARGIFT_*_PROCEEDS_PERMILLE must be 0..1000")
+	}
+	return nil
 }
 
 const mtProtoRPCResultMinBytes = int64((1 << 24) - (2 << 10))

@@ -16,6 +16,9 @@ type StarGiftStore interface {
 	CatalogRevision(ctx context.Context, revisionID int64) (domain.StarGift, bool, error)
 	// CreateCatalogRevision 创建新礼物或为既有礼物创建新版本，并原子切换当前版本。
 	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
+	// CreateCatalogBundle atomically switches the catalog revision and optional complete
+	// collectible revision. It is the only write path used by official full imports.
+	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
 	// AnimationJSON 返回当前版本的规范化 Lottie JSON，供管理后台安全预览。
@@ -60,4 +63,44 @@ type StarGiftStore interface {
 // private service-message updates.
 type StarGiftUpgradeStore interface {
 	UpgradeStarGift(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
+	StarGiftUpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
+}
+
+// StarGiftLifecycleStore owns transactions that span collectible ownership, listings,
+// balances and service-message updates. Implementations must serialize on the saved/unique
+// aggregate and return exact replays for command-key/random-id retries.
+type StarGiftLifecycleStore interface {
+	IssueStarGiftPurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
+	ValidateStarGiftPurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
+	PurchaseStarGift(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error)
+	ConvertStarGift(ctx context.Context, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error)
+	ListResaleStarGifts(ctx context.Context, filter domain.StarGiftResaleFilter) (domain.StarGiftResalePage, error)
+	UniqueStarGiftValueInfo(ctx context.Context, uniqueGiftID int64) (domain.StarGiftValueInfo, error)
+	SetStarGiftListing(ctx context.Context, req domain.StarGiftListingRequest) (domain.UniqueStarGift, error)
+	TransferStarGift(ctx context.Context, req domain.StarGiftTransferRequest) (domain.StarGiftTransferResult, error)
+	PurchaseResaleStarGift(ctx context.Context, req domain.StarGiftResalePurchaseRequest) (domain.StarGiftTransferResult, error)
+	SendStarGiftOffer(ctx context.Context, req domain.StarGiftOfferRequest) (domain.StarGiftOfferResult, error)
+	ResolveStarGiftOffer(ctx context.Context, req domain.StarGiftResolveOfferRequest) (domain.StarGiftOfferResult, error)
+	ListCraftStarGifts(ctx context.Context, userID, giftID int64, offset string, limit int) (domain.SavedStarGiftPage, error)
+	CraftStarGift(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, error)
+	StarGiftAuctionState(ctx context.Context, userID int64, giftID int64, slug string, now int) (domain.StarGiftAuction, error)
+	ActiveStarGiftAuctions(ctx context.Context, userID int64, now int) ([]domain.StarGiftAuction, error)
+	StarGiftAuctionAcquired(ctx context.Context, userID, giftID int64) ([]domain.StarGiftAuctionAcquired, error)
+	BidStarGiftAuction(ctx context.Context, req domain.StarGiftAuctionBidRequest) (domain.StarGiftAuction, domain.StarsBalance, error)
+	PrepaidUpgradeTarget(ctx context.Context, owner domain.Peer, hash string) (domain.SavedStarGift, int64, error)
+	PrepayStarGiftUpgrade(ctx context.Context, req domain.StarGiftPrepaidUpgradeRequest) (domain.StarGiftPrepaidUpgradeResult, error)
+	DropStarGiftOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
+	SetStarGiftNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
+	RecordStarGiftWithdrawal(ctx context.Context, req domain.StarGiftWithdrawalRequest, provider, providerRequestID, url string, expiresAt int) (domain.StarGiftWithdrawal, error)
+	ResolveStarGiftWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error)
+	CompleteStarGiftWithdrawal(ctx context.Context, providerRequestID string, date int) (domain.StarGiftWithdrawal, error)
+	TonBalance(ctx context.Context, userID int64) (int64, error)
+	TonTransactions(ctx context.Context, userID int64, offset string, limit int) (domain.TonTransactionPage, error)
+	ChannelStarsBalance(ctx context.Context, channelID int64) (int64, error)
+	ChannelStarsTransactions(ctx context.Context, channelID int64, offset string, limit int) (domain.StarsTransactionPage, error)
+	ChannelTonBalance(ctx context.Context, channelID int64) (int64, error)
+	ChannelTonTransactions(ctx context.Context, channelID int64, offset string, limit int) (domain.TonTransactionPage, error)
+	// SweepStarGiftLifecycle advances time-driven offer/auction aggregates and
+	// drains their durable notification/delivery outboxes in bounded batches.
+	SweepStarGiftLifecycle(ctx context.Context, now, limit int) error
 }

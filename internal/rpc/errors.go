@@ -137,6 +137,10 @@ func starsFormAmountMismatchErr() error { return tgerr.New(406, "STARS_FORM_AMOU
 
 func formIDEmptyErr() error { return tgerr.New(400, "FORM_ID_EMPTY") }
 
+func formExpiredErr() error { return tgerr.New(400, "FORM_EXPIRED") }
+
+func purposeInvalidErr() error { return tgerr.New(400, "PURPOSE_INVALID") }
+
 func suggestedPostPeerInvalidErr() error { return tgerr.New(400, "SUGGESTED_POST_PEER_INVALID") }
 
 func storyIDInvalidErr() error { return tgerr.New(400, "STORY_ID_INVALID") }

@@ -96,6 +96,10 @@ func (s *StarGiftStore) CatalogRevision(_ context.Context, revisionID int64) (do
 func (s *StarGiftStore) CreateCatalogRevision(_ context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createCatalogRevisionLocked(write)
+}
+
+func (s *StarGiftStore) createCatalogRevisionLocked(write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
 	giftID := write.GiftID
 	if giftID == 0 {
 		s.nextGiftID++
@@ -104,13 +108,66 @@ func (s *StarGiftStore) CreateCatalogRevision(_ context.Context, write domain.St
 		return domain.StarGiftCatalogEntry{}, domain.ErrStarGiftNotFound
 	}
 	s.nextRevID++
-	gift := domain.StarGift{ID: giftID, RevisionID: s.nextRevID, Stars: write.Stars, ConvertStars: write.ConvertStars, Title: write.Title, Sticker: write.Document}
+	gift := domain.StarGift{
+		ID: giftID, RevisionID: s.nextRevID, Stars: write.Stars, ConvertStars: write.ConvertStars,
+		Title: write.Title, Sticker: write.Document,
+		Limited: write.Limited, SoldOut: write.SoldOut, Birthday: write.Birthday,
+		RequirePremium: write.RequirePremium, LimitedPerUser: write.LimitedPerUser,
+		PeerColorAvailable: write.PeerColorAvailable, Auction: write.Auction,
+		AvailabilityRemains: write.AvailabilityRemains, AvailabilityTotal: write.AvailabilityTotal,
+		AvailabilityResale: write.AvailabilityResale, FirstSaleDate: write.FirstSaleDate,
+		LastSaleDate: write.LastSaleDate, ResellMinStars: write.ResellMinStars,
+		ReleasedBy: write.ReleasedBy, PerUserTotal: write.PerUserTotal,
+		PerUserRemains: write.PerUserTotal, LockedUntilDate: write.LockedUntilDate,
+		AuctionSlug: write.AuctionSlug, GiftsPerRound: write.GiftsPerRound,
+		AuctionStartDate: write.AuctionStartDate, UpgradeVariants: write.UpgradeVariants,
+		Background: cloneStarGiftBackground(write.Background),
+	}
 	s.catalog[giftID] = gift
 	s.revisions[gift.RevisionID] = gift
 	s.enabled[giftID] = write.Enabled
 	s.sortOrder[giftID] = write.SortOrder
 	s.animations[giftID] = append([]byte(nil), write.Animation.JSON...)
 	return domain.StarGiftCatalogEntry{Gift: gift, Enabled: write.Enabled, SortOrder: write.SortOrder}, nil
+}
+
+func cloneStarGiftBackground(value *domain.StarGiftBackground) *domain.StarGiftBackground {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func (s *StarGiftStore) CreateCatalogBundle(_ context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if write.Collectible != nil {
+		collectibleWrite := *write.Collectible
+		collectibleWrite.GiftID = write.Catalog.GiftID
+		if collectibleWrite.GiftID == 0 {
+			collectibleWrite.GiftID = s.nextGiftID + 1
+		}
+		if err := domain.ValidateStarGiftCollectibleWrite(collectibleWrite); err != nil {
+			return domain.StarGiftCatalogBundleResult{}, err
+		}
+	}
+	entry, err := s.createCatalogRevisionLocked(write.Catalog)
+	if err != nil {
+		return domain.StarGiftCatalogBundleResult{}, err
+	}
+	result := domain.StarGiftCatalogBundleResult{Catalog: entry}
+	if write.Collectible != nil {
+		collectibleWrite := *write.Collectible
+		collectibleWrite.GiftID = entry.Gift.ID
+		revision, err := s.publishCollectibleRevisionLocked(collectibleWrite)
+		if err != nil {
+			return domain.StarGiftCatalogBundleResult{}, err
+		}
+		result.Collectible = &revision
+		result.Catalog.Gift = s.catalog[entry.Gift.ID]
+	}
+	return result, nil
 }
 
 func (s *StarGiftStore) SetCatalogEnabled(_ context.Context, giftID int64, enabled bool) (bool, error) {
@@ -148,6 +205,10 @@ func (s *StarGiftStore) PublishCollectibleRevision(_ context.Context, write doma
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.publishCollectibleRevisionLocked(write)
+}
+
+func (s *StarGiftStore) publishCollectibleRevisionLocked(write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
 	if _, ok := s.catalog[write.GiftID]; !ok {
 		return domain.StarGiftCollectibleRevision{}, domain.ErrStarGiftNotFound
 	}
@@ -156,7 +217,8 @@ func (s *StarGiftStore) PublishCollectibleRevision(_ context.Context, write doma
 		ID: previous.ID + 1, GiftID: write.GiftID, Revision: previous.Revision + 1,
 		UpgradeStars: write.UpgradeStars, SupplyTotal: write.SupplyTotal,
 		SlugPrefix: strings.ToLower(strings.TrimSpace(write.SlugPrefix)), Published: true,
-		CreatedBy: write.Actor,
+		CreatedBy:      write.Actor,
+		OfficialGiftID: write.OfficialGiftID, SourceManifestSHA256: append([]byte(nil), write.SourceManifestSHA256...),
 	}
 	if revision.ID == 1 {
 		revision.ID = write.GiftID*1000 + 1
@@ -275,6 +337,7 @@ func (s *StarGiftStore) Create(_ context.Context, gift domain.SavedStarGift) (in
 		gift.SavedID = gift.ID
 	}
 	gift.Converted = false
+	gift.LifecycleStatus = domain.StarGiftLifecycleActive
 	s.gifts = append(s.gifts, gift)
 	return gift.ID, nil
 }
@@ -297,7 +360,7 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 	defer s.mu.Unlock()
 	matched := make([]domain.SavedStarGift, 0)
 	for _, g := range s.gifts {
-		if g.Owner != owner || g.Converted {
+		if g.Owner != owner || !g.LifecycleStatus.Live() {
 			continue
 		}
 		if filter.ExcludeUnsaved && g.Unsaved {
@@ -370,7 +433,7 @@ func (s *StarGiftStore) ResolveSavedIDs(_ context.Context, owner domain.Peer, re
 		}
 		var id int64
 		for _, gift := range s.gifts {
-			if savedStarGiftMatchesRef(gift, ref) && !gift.Converted {
+			if s.savedStarGiftMatchesRef(gift, ref) && gift.LifecycleStatus.Live() {
 				id = gift.ID
 				break
 			}
@@ -394,7 +457,7 @@ func (s *StarGiftStore) GetByRef(_ context.Context, ref domain.SavedStarGiftRef)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, g := range s.gifts {
-		if savedStarGiftMatchesRef(g, ref) {
+		if s.savedStarGiftMatchesRef(g, ref) {
 			return g, true, nil
 		}
 	}
@@ -409,7 +472,7 @@ func (s *StarGiftStore) CountByOwner(_ context.Context, owner domain.Peer) (int,
 	defer s.mu.Unlock()
 	n := 0
 	for _, g := range s.gifts {
-		if g.Owner == owner && !g.Converted && !g.Unsaved {
+		if g.Owner == owner && g.LifecycleStatus.Live() && !g.Unsaved {
 			n++
 		}
 	}
@@ -423,7 +486,7 @@ func (s *StarGiftStore) SetUnsaved(_ context.Context, ref domain.SavedStarGiftRe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.gifts {
-		if savedStarGiftMatchesRef(s.gifts[i], ref) && !s.gifts[i].Converted {
+		if s.savedStarGiftMatchesRef(s.gifts[i], ref) && s.gifts[i].LifecycleStatus.Live() {
 			s.gifts[i].Unsaved = unsaved
 			return true, nil
 		}
@@ -438,7 +501,7 @@ func (s *StarGiftStore) MarkConverted(_ context.Context, ref domain.SavedStarGif
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.gifts {
-		if savedStarGiftMatchesRef(s.gifts[i], ref) {
+		if s.savedStarGiftMatchesRef(s.gifts[i], ref) {
 			if s.gifts[i].UniqueGiftID != 0 {
 				return domain.SavedStarGift{}, domain.ErrStarGiftAlreadyUpgraded
 			}
@@ -446,6 +509,7 @@ func (s *StarGiftStore) MarkConverted(_ context.Context, ref domain.SavedStarGif
 				return domain.SavedStarGift{}, domain.ErrStarGiftAlreadyConverted
 			}
 			s.gifts[i].Converted = true
+			s.gifts[i].LifecycleStatus = domain.StarGiftLifecycleConverted
 			s.gifts[i].Unsaved = true
 			s.gifts[i].PinnedOrder = 0
 			for collectionIndex := range s.collections[ref.Owner] {
@@ -640,7 +704,7 @@ func (s *StarGiftStore) validCollectionGiftIDsLocked(owner domain.Peer, ids []in
 		}
 		valid := false
 		for _, gift := range s.gifts {
-			if gift.ID == id && gift.Owner == owner && !gift.Converted {
+			if gift.ID == id && gift.Owner == owner && gift.LifecycleStatus.Live() {
 				valid = true
 				break
 			}
@@ -707,6 +771,7 @@ func cloneCollectibleAttribute(in domain.StarGiftCollectibleAttribute) domain.St
 
 func cloneCollectibleRevision(in domain.StarGiftCollectibleRevision) domain.StarGiftCollectibleRevision {
 	out := in
+	out.SourceManifestSHA256 = append([]byte(nil), in.SourceManifestSHA256...)
 	clone := func(attributes []domain.StarGiftCollectibleAttribute) []domain.StarGiftCollectibleAttribute {
 		copy := make([]domain.StarGiftCollectibleAttribute, len(attributes))
 		for i, attribute := range attributes {
@@ -747,9 +812,13 @@ func validStarGiftOwner(owner domain.Peer) bool {
 	return owner.ID != 0 && (owner.Type == domain.PeerTypeUser || owner.Type == domain.PeerTypeChannel)
 }
 
-func savedStarGiftMatchesRef(g domain.SavedStarGift, ref domain.SavedStarGiftRef) bool {
+func (s *StarGiftStore) savedStarGiftMatchesRef(g domain.SavedStarGift, ref domain.SavedStarGiftRef) bool {
 	if g.Owner != ref.Owner {
 		return false
+	}
+	if ref.Slug != "" {
+		uniqueID, ok := s.uniqueBySlug[strings.ToLower(strings.TrimSpace(ref.Slug))]
+		return ok && uniqueID != 0 && g.UniqueGiftID == uniqueID
 	}
 	switch ref.Owner.Type {
 	case domain.PeerTypeUser:

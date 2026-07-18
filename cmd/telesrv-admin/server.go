@@ -58,6 +58,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/messages/groups", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessagesAPI)))
 	mux.Handle("GET /api/messages/groups/detail", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessageDetailAPI)))
 	mux.Handle("GET /api/gifts", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftsAPI)))
+	mux.Handle("GET /api/official-gifts", s.requireAuthAPI(http.HandlerFunc(s.handleOfficialStarGiftsAPI)))
+	mux.Handle("GET /api/official-gifts/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleOfficialStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
@@ -70,6 +72,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/delete-messages", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteMessagesAPI)))
 	mux.Handle("POST /api/actions/delete-history", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteHistoryAPI)))
 	mux.Handle("POST /api/actions/import-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportStarGiftAPI)))
+	mux.Handle("POST /api/actions/import-official-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportOfficialStarGiftAPI)))
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
@@ -226,6 +229,19 @@ func (s *server) handleStarGiftCollectiblesAPI(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/gifts/%d/collectibles", giftID), 4<<20)
+}
+
+func (s *server) handleOfficialStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSON(w, r, "/v1/official-gifts", 4<<20)
+}
+
+func (s *server) handleOfficialStarGiftAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid official gift id")
+		return
+	}
+	s.proxyAdminJSON(w, r, "/v1/official-gifts/"+id+"/animation", 4<<20)
 }
 
 func (s *server) handleStarGiftCollectibleAnimationAPI(w http.ResponseWriter, r *http.Request) {
@@ -696,10 +712,10 @@ type importStarGiftAPIRequest struct {
 	CommandID    string `json:"command_id"`
 	Reason       string `json:"reason"`
 	Confirm      bool   `json:"confirm"`
-	GiftID       int64  `json:"gift_id"`
+	GiftID       int64  `json:"gift_id,string"`
 	Title        string `json:"title"`
-	Stars        int64  `json:"stars"`
-	ConvertStars int64  `json:"convert_stars"`
+	Stars        int64  `json:"stars,string"`
+	ConvertStars int64  `json:"convert_stars,string"`
 	Enabled      bool   `json:"enabled"`
 	SortOrder    int    `json:"sort_order"`
 }
@@ -746,11 +762,48 @@ func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request)
 	writeCommandResultAPI(w, result, err)
 }
 
+type importOfficialStarGiftAPIRequest struct {
+	CommandID          string `json:"command_id"`
+	Reason             string `json:"reason"`
+	Confirm            bool   `json:"confirm"`
+	SourceGiftID       string `json:"source_gift_id"`
+	GiftID             int64  `json:"gift_id,string"`
+	Title              string `json:"title"`
+	Stars              int64  `json:"stars,string"`
+	ConvertStars       int64  `json:"convert_stars,string"`
+	Enabled            bool   `json:"enabled"`
+	SortOrder          int    `json:"sort_order"`
+	IncludeCollectible bool   `json:"include_collectible"`
+	UpgradeStars       int64  `json:"upgrade_stars,string"`
+	SupplyTotal        int    `json:"supply_total"`
+	SlugPrefix         string `json:"slug_prefix"`
+}
+
+func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.Request) {
+	var body importOfficialStarGiftAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	if _, err := strconv.ParseInt(strings.TrimSpace(body.SourceGiftID), 10, 64); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid official gift id")
+		return
+	}
+	req := admin.ImportOfficialStarGiftRequest{
+		CommandMeta:  s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-official-gift"),
+		SourceGiftID: body.SourceGiftID, GiftID: body.GiftID, Title: body.Title,
+		Stars: body.Stars, ConvertStars: body.ConvertStars, Enabled: body.Enabled, SortOrder: body.SortOrder,
+		IncludeCollectible: body.IncludeCollectible, UpgradeStars: body.UpgradeStars,
+		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
+	writeCommandResultAPI(w, result, err)
+}
+
 type publishStarGiftCollectiblesAPIRequest struct {
 	CommandID    string                                     `json:"command_id"`
 	Reason       string                                     `json:"reason"`
 	Confirm      bool                                       `json:"confirm"`
-	UpgradeStars int64                                      `json:"upgrade_stars"`
+	UpgradeStars int64                                      `json:"upgrade_stars,string"`
 	SupplyTotal  int                                        `json:"supply_total"`
 	SlugPrefix   string                                     `json:"slug_prefix"`
 	Models       []admin.StarGiftCollectibleAnimationUpload `json:"models"`
@@ -832,7 +885,7 @@ type setStarGiftEnabledAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
-	GiftID    int64  `json:"gift_id"`
+	GiftID    int64  `json:"gift_id,string"`
 	Enabled   bool   `json:"enabled"`
 }
 
@@ -853,7 +906,7 @@ type setStarGiftSortOrderAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
-	GiftID    int64  `json:"gift_id"`
+	GiftID    int64  `json:"gift_id,string"`
 	SortOrder int    `json:"sort_order"`
 }
 
