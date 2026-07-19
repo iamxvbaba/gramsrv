@@ -15,7 +15,7 @@ If you are looking for a **Telegram server**, **MTProto server**,
 Telegram-like chat server**, this repository is the server-side implementation
 to study, run, and improve.
 
-[Website](https://telesrv.net) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
+[Website](https://telesrv.net) · [OwpenGram client](https://owpengram.org/) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
 
 `gramsrv` is independent and unofficial. It is not affiliated with, endorsed by,
 or sponsored by Telegram or the official Telegram team.
@@ -30,6 +30,17 @@ or sponsored by Telegram or the official Telegram team.
 ## Demo Video
 
 https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
+
+## Client Ecosystem
+
+`gramsrv` is the server side of the stack, and client projects make self-hosted
+Telegram-compatible networks much easier to try in real life.
+
+We are happy to highlight [OwpenGram](https://owpengram.org/), a multi-server
+Telegram-style client project for using the official network, private
+self-hosted servers, and community nodes from one client experience. OwpenGram
+currently builds on `gramsrv`, and we recommend checking it out if you want a
+client focused on switching between multiple Telegram-compatible servers.
 
 ## Project Traits
 
