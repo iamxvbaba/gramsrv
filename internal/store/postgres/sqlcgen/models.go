@@ -692,6 +692,8 @@ type ChannelMessage struct {
 	DeleteDate          int32
 	DeleteMessageIds    []byte
 	RequestFingerprint  []byte
+	SuggestedPost       []byte
+	PaidMessageStars    int64
 }
 
 type ChannelMessageMedium struct {
