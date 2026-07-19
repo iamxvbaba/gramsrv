@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -57,13 +58,16 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	})
 
 	// 创建三份礼物（msg_id 递增）。
+	savedIDs := make([]int64, 3)
 	for i := 0; i < 3; i++ {
-		if _, err := st.Create(ctx, domain.SavedStarGift{
+		savedID, err := st.Create(ctx, domain.SavedStarGift{
 			Owner: ownerPeer, FromUserID: from.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID, MsgID: 100 + i,
 			Date: 1700000000 + i, ConvertStars: 50,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("create gift #%d: %v", i, err)
 		}
+		savedIDs[i] = savedID
 	}
 
 	// active revision 更新后，已收到的礼物必须继续固定到购买瞬间的 immutable revision。
@@ -111,6 +115,35 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	}
 	if len(page2.Gifts) != 1 || page2.NextOffset != "" {
 		t.Fatalf("page2 = %d next %q, want 1 + empty (terminal)", len(page2.Gifts), page2.NextOffset)
+	}
+
+	// 资料页顺序：完整 pin vector 的顺序必须成为列表前缀；游标即使切在
+	// pinned block 内或 pinned/unpinned 边界，也不能重复或漏项。
+	if err := st.SetPinned(ctx, ownerPeer, []int64{savedIDs[0], savedIDs[2]}); err != nil {
+		t.Fatalf("set pinned profile order: %v", err)
+	}
+	wantMsgIDs := []int{100, 102, 101}
+	gotMsgIDs := make([]int, 0, len(wantMsgIDs))
+	offset := ""
+	for pageNumber := 0; ; pageNumber++ {
+		page, err := st.ListByOwner(ctx, ownerPeer, false, offset, 1)
+		if err != nil {
+			t.Fatalf("list pinned page %d: %v", pageNumber, err)
+		}
+		if page.Count != 3 || len(page.Gifts) != 1 {
+			t.Fatalf("pinned page %d = %+v, want count=3 and one gift", pageNumber, page)
+		}
+		gotMsgIDs = append(gotMsgIDs, page.Gifts[0].MsgID)
+		if page.NextOffset == "" {
+			break
+		}
+		offset = page.NextOffset
+	}
+	if !slices.Equal(gotMsgIDs, wantMsgIDs) {
+		t.Fatalf("pinned paged msg ids = %v, want %v", gotMsgIDs, wantMsgIDs)
+	}
+	if err := st.SetPinned(ctx, ownerPeer, nil); err != nil {
+		t.Fatalf("clear pinned profile order: %v", err)
 	}
 
 	// 隐藏 msg_id=101 → excludeUnsaved 列表少一份。

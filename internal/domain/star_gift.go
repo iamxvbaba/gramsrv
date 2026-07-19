@@ -807,6 +807,14 @@ type SavedStarGiftPage struct {
 	Count      int    // 总数（未转换、按 excludeUnsaved 过滤后）
 }
 
+// SavedStarGiftListCursor is the composite keyset cursor for the profile gift
+// order: pinned gifts first by PinnedOrder, then unpinned gifts by ID DESC.
+// PinnedOrder == 0 identifies the unpinned segment.
+type SavedStarGiftListCursor struct {
+	PinnedOrder int
+	ID          int64
+}
+
 // SavedStarGiftFilter describes the client-visible filters supported by
 // payments.getSavedStarGifts. CollectionID is the collection membership filter;
 // zero means all collections. The current catalog is used only to decide whether
@@ -1013,7 +1021,44 @@ func StarGiftCollectionHash(title string, giftIDs []int64) int64 {
 	return int64(h & 0x7fffffffffffffff)
 }
 
-// EncodeStarGiftCursor / DecodeStarGiftCursor 是 saved gifts keyset 游标（最后一条实例 id）。
+// EncodeSavedStarGiftListCursor encodes the exact profile-order key of the last
+// visible gift. The version prefix keeps this cursor distinct from other star
+// gift lists that are ordered only by instance ID.
+func EncodeSavedStarGiftListCursor(pinnedOrder int, id int64) string {
+	if pinnedOrder < 0 || id <= 0 {
+		return ""
+	}
+	raw := "v1:" + strconv.Itoa(pinnedOrder) + ":" + strconv.FormatInt(id, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeSavedStarGiftListCursor decodes a profile gift list cursor. Invalid or
+// obsolete cursor shapes are rejected instead of being normalized on read.
+func DecodeSavedStarGiftListCursor(s string) (SavedStarGiftListCursor, bool) {
+	if s == "" {
+		return SavedStarGiftListCursor{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return SavedStarGiftListCursor{}, false
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 3 || parts[0] != "v1" {
+		return SavedStarGiftListCursor{}, false
+	}
+	order, err := strconv.ParseInt(parts[1], 10, 32)
+	if err != nil || order < 0 {
+		return SavedStarGiftListCursor{}, false
+	}
+	id, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || id <= 0 {
+		return SavedStarGiftListCursor{}, false
+	}
+	return SavedStarGiftListCursor{PinnedOrder: int(order), ID: id}, true
+}
+
+// EncodeStarGiftCursor / DecodeStarGiftCursor are simple instance-ID cursors
+// used by star gift lists whose order is strictly ID DESC (for example craft).
 func EncodeStarGiftCursor(id int64) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(id, 10)))
 }

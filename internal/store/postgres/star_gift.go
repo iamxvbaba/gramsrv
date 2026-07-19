@@ -535,9 +535,27 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 	}
 	page := domain.SavedStarGiftPage{Count: total}
 
-	if cursor, ok := domain.DecodeStarGiftCursor(offset); ok {
-		args = append(args, cursor)
-		where += fmt.Sprintf(" AND p.id < $%d", len(args))
+	profileOrder := filter.CollectionID == 0
+	if cursor, ok := domain.DecodeSavedStarGiftListCursor(offset); ok {
+		if profileOrder && cursor.PinnedOrder > 0 {
+			args = append(args, cursor.PinnedOrder, cursor.ID)
+			where += fmt.Sprintf(` AND (
+    p.pinned_order = 0
+    OR p.pinned_order > $%d
+    OR (p.pinned_order = $%d AND p.id < $%d)
+)`, len(args)-1, len(args)-1, len(args))
+		} else {
+			args = append(args, cursor.ID)
+			if profileOrder {
+				where += fmt.Sprintf(" AND p.pinned_order = 0 AND p.id < $%d", len(args))
+			} else {
+				where += fmt.Sprintf(" AND p.id < $%d", len(args))
+			}
+		}
+	}
+	orderBy := "ORDER BY p.id DESC"
+	if profileOrder {
+		orderBy = "ORDER BY (p.pinned_order = 0), p.pinned_order, p.id DESC"
 	}
 	args = append(args, limit+1)
 	limitPlaceholder := len(args)
@@ -553,7 +571,7 @@ SELECT p.id, p.owner_peer_type, p.owner_peer_id, p.from_user_id, p.gift_id, p.ca
                  WHERE i.saved_gift_id=p.id), ARRAY[]::integer[])
 FROM peer_star_gifts p `+joins+`
 WHERE `+where+`
-ORDER BY p.id DESC
+`+orderBy+`
 LIMIT $`+fmt.Sprint(limitPlaceholder), args...)
 	if err != nil {
 		return domain.SavedStarGiftPage{}, fmt.Errorf("list star gifts: %w", err)
@@ -572,7 +590,12 @@ LIMIT $`+fmt.Sprint(limitPlaceholder), args...)
 	}
 	if len(gifts) > limit {
 		gifts = gifts[:limit]
-		page.NextOffset = domain.EncodeStarGiftCursor(gifts[len(gifts)-1].ID)
+		last := gifts[len(gifts)-1]
+		pinnedOrder := 0
+		if profileOrder {
+			pinnedOrder = last.PinnedOrder
+		}
+		page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.ID)
 	}
 	page.Gifts = gifts
 	return page, nil

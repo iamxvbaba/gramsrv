@@ -392,28 +392,51 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 		}
 		matched = append(matched, g)
 	}
-	sort.Slice(matched, func(i, j int) bool { return matched[i].ID > matched[j].ID })
+	profileOrder := filter.CollectionID == 0
+	sort.Slice(matched, func(i, j int) bool {
+		if profileOrder {
+			iPinned := matched[i].PinnedOrder > 0
+			jPinned := matched[j].PinnedOrder > 0
+			if iPinned != jPinned {
+				return iPinned
+			}
+			if iPinned && matched[i].PinnedOrder != matched[j].PinnedOrder {
+				return matched[i].PinnedOrder < matched[j].PinnedOrder
+			}
+		}
+		return matched[i].ID > matched[j].ID
+	})
 	page := domain.SavedStarGiftPage{Count: len(matched)}
-	cursor, hasCursor := domain.DecodeStarGiftCursor(offset)
-	out := make([]domain.SavedStarGift, 0, limit)
+	cursor, hasCursor := domain.DecodeSavedStarGiftListCursor(offset)
+	out := make([]domain.SavedStarGift, 0, limit+1)
 	for _, g := range matched {
-		if hasCursor && g.ID >= cursor {
-			continue
+		if hasCursor {
+			if profileOrder {
+				if cursor.PinnedOrder > 0 {
+					if g.PinnedOrder > 0 && (g.PinnedOrder < cursor.PinnedOrder ||
+						g.PinnedOrder == cursor.PinnedOrder && g.ID >= cursor.ID) {
+						continue
+					}
+				} else if g.PinnedOrder > 0 || g.ID >= cursor.ID {
+					continue
+				}
+			} else if g.ID >= cursor.ID {
+				continue
+			}
 		}
 		out = append(out, g)
-		if len(out) == limit {
+		if len(out) == limit+1 {
 			break
 		}
 	}
-	if len(out) == limit {
-		// 还有更早的则给下一页游标。
-		last := out[len(out)-1].ID
-		for _, g := range matched {
-			if g.ID < last {
-				page.NextOffset = domain.EncodeStarGiftCursor(last)
-				break
-			}
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		pinnedOrder := 0
+		if profileOrder {
+			pinnedOrder = last.PinnedOrder
 		}
+		page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.ID)
 	}
 	page.Gifts = out
 	return page, nil
