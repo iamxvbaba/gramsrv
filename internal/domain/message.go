@@ -151,7 +151,7 @@ type Message struct {
 	// （🎉/👍 等），发送方与接收方双盒持同一非零值并各自播放一次；非特效消息恒 0。
 	// 转发不携带特效（新消息恒 0）。仅私聊；群/频道不渲染。
 	Effect int64
-	// ReplyMarkup 是 bot 消息携带的 inline keyboard 快照（P3）。仅 bot 出站消息可
+	// ReplyMarkup 是 bot 消息携带的 reply/inline keyboard 快照。仅 bot 出站消息可
 	// 非空；普通用户消息恒 nil（发送侧 is_bot 闸门）。双盒持同一快照（无 per-viewer 差异）。
 	ReplyMarkup *MessageReplyMarkup
 	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
@@ -283,7 +283,7 @@ type SendPrivateTextRequest struct {
 	// BusinessAutomationKind is internal app-layer metadata used to suppress
 	// recursive greeting/away automation for server-generated replies.
 	BusinessAutomationKind BusinessAutomationKind
-	// ReplyMarkup 是 bot 出站消息的 inline keyboard 快照（P3）；普通用户发送恒 nil。
+	// ReplyMarkup 是 bot 出站消息的 reply/inline keyboard 快照；普通用户发送恒 nil。
 	ReplyMarkup *MessageReplyMarkup
 	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage

@@ -10,8 +10,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -41,6 +43,7 @@ type GatewayService interface {
 	BotAPISendMessage(ctx context.Context, botID, chatID int64, text string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview, silent bool, replyToMessageID int) (domain.Message, error)
 	BotAPISendMedia(ctx context.Context, botID, chatID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error)
 	BotAPIEditMessageText(ctx context.Context, botID, chatID int64, messageID int, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (domain.Message, error)
+	BotAPIEditInlineMessageText(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (bool, error)
 	BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error)
 	BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, callbackQueryID, text, url string, showAlert bool, cacheTime int) (bool, error)
 	BotAPIGetFile(ctx context.Context, botID int64, locationKey string, offset int64, limit int) (domain.FileChunk, bool, error)
@@ -51,6 +54,29 @@ type GatewayUpdateWaiter interface {
 	WaitBotAPIUpdate(ctx context.Context, botID int64, version uint64, timeout time.Duration) bool
 }
 
+type GatewayUpdateControl interface {
+	BotAPISetAllowedUpdates(ctx context.Context, botID int64, allowed []domain.BotAPIUpdateKind) error
+	BotAPIDropPendingUpdates(ctx context.Context, botID int64) error
+	BotAPIPendingUpdateCount(ctx context.Context, botID int64) (int, error)
+}
+
+type GatewayPollLease interface {
+	AcquireBotAPIPollLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error)
+	ReleaseBotAPIPollLease(ctx context.Context, botID int64, owner string) error
+}
+
+type GatewayWebhookControl interface {
+	BotAPISetWebhook(ctx context.Context, config domain.BotAPIWebhook, dropPending bool) error
+	BotAPIDeleteWebhook(ctx context.Context, botID int64, dropPending bool) error
+	BotAPIWebhook(ctx context.Context, botID int64) (domain.BotAPIWebhook, bool, error)
+	ListDueBotAPIWebhooks(ctx context.Context, limit int) ([]domain.BotAPIWebhook, error)
+	AcquireBotAPIWebhookLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error)
+	ReleaseBotAPIWebhookLease(ctx context.Context, botID int64, owner string) error
+	RecordBotAPIWebhookFailure(ctx context.Context, botID int64, owner string, nextAttempt time.Time, message string) error
+	RecordBotAPIWebhookSuccess(ctx context.Context, botID int64, owner string, nextAttempt time.Time) error
+	ConfirmBotAPIWebhookDelivery(ctx context.Context, botID, updateID int64) error
+}
+
 func Start(ctx context.Context, addr string, bots BotsService, users UsersService, webapps WebAppService, gateway GatewayService, logger *zap.Logger) (*http.Server, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, nil
@@ -58,7 +84,7 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	handler := &handler{bots: bots, users: users, webapps: webapps, gateway: gateway, logger: logger}
+	handler := &handler{bots: bots, users: users, webapps: webapps, gateway: gateway, logger: logger, webhookClient: newWebhookHTTPClient()}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler.routes(),
@@ -76,6 +102,9 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 			logger.Warn("Bot API 网关退出", zap.Error(err))
 		}
 	}()
+	if webhooks, ok := gateway.(GatewayWebhookControl); ok {
+		go runWebhookDispatcher(ctx, webhooks, gateway, handler.webhookClient, logger.Named("webhook"))
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -86,11 +115,37 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 }
 
 type handler struct {
-	bots    BotsService
-	users   UsersService
-	webapps WebAppService
-	gateway GatewayService
-	logger  *zap.Logger
+	bots          BotsService
+	users         UsersService
+	webapps       WebAppService
+	gateway       GatewayService
+	logger        *zap.Logger
+	polls         botAPIPollRegistry
+	webhookClient *http.Client
+}
+
+type botAPIPollRegistry struct {
+	mu     sync.Mutex
+	active map[int64]struct{}
+}
+
+func (p *botAPIPollRegistry) acquire(botID int64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.active == nil {
+		p.active = make(map[int64]struct{})
+	}
+	if _, exists := p.active[botID]; exists {
+		return false
+	}
+	p.active[botID] = struct{}{}
+	return true
+}
+
+func (p *botAPIPollRegistry) release(botID int64) {
+	p.mu.Lock()
+	delete(p.active, botID)
+	p.mu.Unlock()
 }
 
 const (
@@ -148,11 +203,11 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 	case "getfile":
 		h.getFile(w, r, botID)
 	case "deletewebhook":
-		writeAPIOK(w, true)
+		h.deleteWebhook(w, r, botID)
 	case "getwebhookinfo":
-		writeAPIOK(w, map[string]any{"url": "", "has_custom_certificate": false, "pending_update_count": 0})
+		h.getWebhookInfo(w, r, botID)
 	case "setwebhook":
-		h.setWebhook(w, r)
+		h.setWebhook(w, r, botID)
 	case "setchatmenubutton":
 		h.setChatMenuButton(w, r, botID)
 	case "getchatmenubutton":
@@ -216,7 +271,14 @@ func (h *handler) getUpdates(w http.ResponseWriter, r *http.Request, botID int64
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	offset, _ := strconv.ParseInt(strings.TrimSpace(values["offset"]), 10, 64)
+	var offset int64
+	if raw := strings.TrimSpace(values["offset"]); raw != "" {
+		offset, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || offset < -10000 {
+			writeAPIError(w, http.StatusBadRequest, "OFFSET_INVALID")
+			return
+		}
+	}
 	limit := apiInt(values["limit"], 100)
 	if limit <= 0 {
 		limit = 100
@@ -231,7 +293,56 @@ func (h *handler) getUpdates(w http.ResponseWriter, r *http.Request, botID int64
 	if timeoutSeconds > 50 {
 		timeoutSeconds = 50
 	}
-	allowed := allowedUpdates(values["allowed_updates"])
+	if !h.polls.acquire(botID) {
+		writeAPIError(w, http.StatusConflict, "CONFLICT: another getUpdates request is active")
+		return
+	}
+	defer h.polls.release(botID)
+	if leases, ok := h.gateway.(GatewayPollLease); ok {
+		owner := randomBotAPIOwner()
+		leaseTTL := time.Duration(timeoutSeconds)*time.Second + 30*time.Second
+		acquired, err := leases.AcquireBotAPIPollLease(r.Context(), botID, owner, leaseTTL)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+		if !acquired {
+			writeAPIError(w, http.StatusConflict, "CONFLICT: another getUpdates request is active")
+			return
+		}
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := leases.ReleaseBotAPIPollLease(releaseCtx, botID, owner); err != nil {
+				h.logger.Warn("release bot api poll lease", zap.Int64("bot_user_id", botID), zap.Error(err))
+			}
+		}()
+	}
+	if webhooks, ok := h.gateway.(GatewayWebhookControl); ok {
+		if _, configured, err := webhooks.BotAPIWebhook(r.Context(), botID); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		} else if configured {
+			writeAPIError(w, http.StatusConflict, "CONFLICT: can't use getUpdates method while webhook is active")
+			return
+		}
+	}
+	if raw, present := values["allowed_updates"]; present {
+		allowed, err := parseAllowedUpdates(raw)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		control, ok := h.gateway.(GatewayUpdateControl)
+		if !ok {
+			writeAPIError(w, http.StatusNotImplemented, "ALLOWED_UPDATES_UNSUPPORTED")
+			return
+		}
+		if err := control.BotAPISetAllowedUpdates(r.Context(), botID, allowed); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+	}
 	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 	for {
 		version := botAPIUpdateWaitVersion(h.gateway, botID)
@@ -240,13 +351,91 @@ func (h *handler) getUpdates(w http.ResponseWriter, r *http.Request, botID int64
 			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 			return
 		}
-		updates := apiUpdates(events, allowed, limit)
+		updates := apiUpdates(events, limit)
 		if len(updates) > 0 || timeoutSeconds == 0 || time.Now().After(deadline) {
 			writeAPIOK(w, updates)
 			return
 		}
 		waitForBotAPIUpdate(r.Context(), h.gateway, botID, version, time.Until(deadline))
 	}
+}
+
+func randomBotAPIOwner() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return fmt.Sprintf("%x", raw[:])
+	}
+	return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+}
+
+func (h *handler) deleteWebhook(w http.ResponseWriter, r *http.Request, botID int64) {
+	values, err := requestValues(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
+		return
+	}
+	control, ok := h.gateway.(GatewayWebhookControl)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "WEBHOOK_UNSUPPORTED")
+		return
+	}
+	leaseOwner := randomBotAPIOwner()
+	if _, found, err := control.BotAPIWebhook(r.Context(), botID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return
+	} else if found {
+		acquired, err := control.AcquireBotAPIWebhookLease(r.Context(), botID, leaseOwner, 30*time.Second)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+		if !acquired {
+			writeAPIError(w, http.StatusConflict, "CONFLICT: webhook delivery is active")
+			return
+		}
+		defer func() { _ = control.ReleaseBotAPIWebhookLease(context.Background(), botID, leaseOwner) }()
+	}
+	if err := control.BotAPIDeleteWebhook(r.Context(), botID, apiBool(values["drop_pending_updates"])); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return
+	}
+	writeAPIOK(w, true)
+}
+
+func (h *handler) getWebhookInfo(w http.ResponseWriter, r *http.Request, botID int64) {
+	pending := 0
+	if control, ok := h.gateway.(GatewayUpdateControl); ok {
+		var err error
+		pending, err = control.BotAPIPendingUpdateCount(r.Context(), botID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+	}
+	result := map[string]any{"url": "", "has_custom_certificate": false, "pending_update_count": pending}
+	if control, ok := h.gateway.(GatewayWebhookControl); ok {
+		config, found, err := control.BotAPIWebhook(r.Context(), botID)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+		if found {
+			result["url"] = config.URL
+			result["max_connections"] = config.MaxConnections
+			if config.AllowedUpdates != nil {
+				allowed := make([]string, 0, len(config.AllowedUpdates))
+				for _, kind := range config.AllowedUpdates {
+					allowed = append(allowed, string(kind))
+				}
+				result["allowed_updates"] = allowed
+			}
+			if config.LastErrorDate > 0 {
+				result["last_error_date"] = config.LastErrorDate
+				result["last_error_message"] = config.LastErrorMessage
+			}
+		}
+	}
+	writeAPIOK(w, result)
 }
 
 func botAPIUpdateWaitVersion(gateway GatewayService, botID int64) uint64 {
@@ -381,14 +570,22 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
-	if err != nil || chatID == 0 {
-		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
-		return
-	}
-	messageID := apiInt(values["message_id"], 0)
-	if messageID <= 0 {
-		writeAPIError(w, http.StatusBadRequest, "MESSAGE_ID_INVALID")
+	rawInlineID := strings.TrimSpace(values["inline_message_id"])
+	var chatID int64
+	messageID := 0
+	if rawInlineID == "" {
+		chatID, err = strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
+		if err != nil || chatID == 0 {
+			writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+			return
+		}
+		messageID = apiInt(values["message_id"], 0)
+		if messageID <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "MESSAGE_ID_INVALID")
+			return
+		}
+	} else if strings.TrimSpace(values["chat_id"]) != "" || strings.TrimSpace(values["message_id"]) != "" {
+		writeAPIError(w, http.StatusBadRequest, "MESSAGE_IDENTIFIER_INVALID")
 		return
 	}
 	if strings.TrimSpace(values["parse_mode"]) != "" {
@@ -403,11 +600,25 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 	var markup *domain.MessageReplyMarkup
 	_, setReplyMarkup := values["reply_markup"]
 	if raw := strings.TrimSpace(values["reply_markup"]); raw != "" {
-		markup, err = replyMarkupFromAPI(json.RawMessage(raw))
+		markup, err = inlineReplyMarkupFromAPI(json.RawMessage(raw))
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	if rawInlineID != "" {
+		inlineID, err := decodeBotAPIInlineMessageID(rawInlineID)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ok, err := h.gateway.BotAPIEditInlineMessageText(r.Context(), botID, inlineID, values["text"], entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+			return
+		}
+		writeAPIOK(w, ok)
+		return
 	}
 	msg, err := h.gateway.BotAPIEditMessageText(r.Context(), botID, chatID, messageID, values["text"], entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
 	if err != nil {
@@ -557,17 +768,136 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *handler) setWebhook(w http.ResponseWriter, r *http.Request) {
-	values, err := requestValues(r)
+func (h *handler) setWebhook(w http.ResponseWriter, r *http.Request, botID int64) {
+	values, files, err := requestValuesWithFiles(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
 		return
 	}
-	if strings.TrimSpace(values["url"]) == "" {
+	control, ok := h.gateway.(GatewayWebhookControl)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "WEBHOOK_UNSUPPORTED")
+		return
+	}
+	rawURL := strings.TrimSpace(values["url"])
+	if rawURL == "" {
+		if err := control.BotAPIDeleteWebhook(r.Context(), botID, apiBool(values["drop_pending_updates"])); err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
 		writeAPIOK(w, true)
 		return
 	}
-	writeAPIError(w, http.StatusNotImplemented, "WEBHOOK_NOT_IMPLEMENTED")
+	if err := validateWebhookURL(rawURL); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(values["certificate"]) != "" || len(files) != 0 {
+		writeAPIError(w, http.StatusBadRequest, "CERTIFICATE_PINNING_UNSUPPORTED")
+		return
+	}
+	if strings.TrimSpace(values["ip_address"]) != "" {
+		writeAPIError(w, http.StatusBadRequest, "IP_ADDRESS_UNSUPPORTED")
+		return
+	}
+	secret := strings.TrimSpace(values["secret_token"])
+	if !validWebhookSecret(secret) {
+		writeAPIError(w, http.StatusBadRequest, "SECRET_TOKEN_INVALID")
+		return
+	}
+	maxConnections := apiInt(values["max_connections"], 40)
+	if maxConnections < 1 || maxConnections > 100 {
+		writeAPIError(w, http.StatusBadRequest, "MAX_CONNECTIONS_INVALID")
+		return
+	}
+	var allowed []domain.BotAPIUpdateKind
+	_, allowedUpdatesSet := values["allowed_updates"]
+	if raw, present := values["allowed_updates"]; present {
+		allowed, err = parseAllowedUpdates(raw)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(allowed) == 0 {
+			allowed = nil
+		}
+	}
+	if !h.polls.acquire(botID) {
+		writeAPIError(w, http.StatusConflict, "CONFLICT: another getUpdates request is active")
+		return
+	}
+	defer h.polls.release(botID)
+	if leases, ok := h.gateway.(GatewayPollLease); ok {
+		owner := randomBotAPIOwner()
+		acquired, err := leases.AcquireBotAPIPollLease(r.Context(), botID, owner, 30*time.Second)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+		if !acquired {
+			writeAPIError(w, http.StatusConflict, "CONFLICT: another getUpdates request is active")
+			return
+		}
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = leases.ReleaseBotAPIPollLease(releaseCtx, botID, owner)
+		}()
+	}
+	webhookOwner := randomBotAPIOwner()
+	if _, found, err := control.BotAPIWebhook(r.Context(), botID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return
+	} else if found {
+		acquired, err := control.AcquireBotAPIWebhookLease(r.Context(), botID, webhookOwner, 30*time.Second)
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+			return
+		}
+		if !acquired {
+			writeAPIError(w, http.StatusConflict, "CONFLICT: webhook delivery is active")
+			return
+		}
+		defer func() { _ = control.ReleaseBotAPIWebhookLease(context.Background(), botID, webhookOwner) }()
+	}
+	if err := control.BotAPISetWebhook(r.Context(), domain.BotAPIWebhook{
+		BotUserID: botID, URL: rawURL, SecretToken: secret,
+		MaxConnections: maxConnections, AllowedUpdates: allowed, AllowedUpdatesSet: allowedUpdatesSet,
+	}, apiBool(values["drop_pending_updates"])); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return
+	}
+	writeAPIOK(w, true)
+}
+
+func validateWebhookURL(raw string) error {
+	if len(raw) > 2048 {
+		return errors.New("WEBHOOK_URL_INVALID")
+	}
+	u, err := neturl.ParseRequestURI(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("WEBHOOK_URL_INVALID")
+	}
+	if port := u.Port(); port != "" && port != "443" && port != "80" && port != "88" && port != "8443" {
+		return errors.New("WEBHOOK_PORT_NOT_ALLOWED")
+	}
+	return nil
+}
+
+func validWebhookSecret(secret string) bool {
+	if secret == "" {
+		return true
+	}
+	if len(secret) > 256 {
+		return false
+	}
+	for _, r := range secret {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (h *handler) authenticate(ctx context.Context, token string) (int64, bool) {

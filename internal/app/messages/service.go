@@ -100,6 +100,9 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 	if req.SenderUserID != userID {
 		return domain.SendPrivateTextResult{}, domain.ErrAuthenticatedScopeInvalid
 	}
+	if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	if req.RandomID != 0 && !req.IdempotencyPreflighted {
 		fingerprint, err := store.PrivateSendFingerprint(req)
 		if err != nil {
@@ -263,6 +266,32 @@ func (s *Service) GetMessages(ctx context.Context, userID int64, ids []int) (dom
 	return s.projectMessageUsers(ctx, userID, list)
 }
 
+type messageByUIDStore interface {
+	GetByUID(ctx context.Context, userID, uid int64) (domain.Message, bool, error)
+}
+
+// GetMessageByUID translates a shared private message id into one owner's exact box row.
+// It is intentionally an optional capability so lightweight MessageStore test doubles that
+// never exercise callback translation do not need a meaningless implementation.
+func (s *Service) GetMessageByUID(ctx context.Context, userID, uid int64) (domain.Message, bool, error) {
+	if s == nil || userID == 0 || uid == 0 {
+		return domain.Message{}, false, nil
+	}
+	provider, ok := s.messages.(messageByUIDStore)
+	if !ok {
+		return domain.Message{}, false, nil
+	}
+	msg, found, err := provider.GetByUID(ctx, userID, uid)
+	if err != nil || !found {
+		return domain.Message{}, found, err
+	}
+	list, err := s.projectMessageUsers(ctx, userID, domain.MessageList{Messages: []domain.Message{msg}})
+	if err != nil || len(list.Messages) != 1 {
+		return domain.Message{}, false, err
+	}
+	return list.Messages[0], true, nil
+}
+
 // GetHistory 返回当前账号某个 peer 的历史消息。
 func (s *Service) GetHistory(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	return s.list(ctx, userID, filter)
@@ -405,6 +434,11 @@ func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.Edit
 	}
 	if req.OwnerUserID == 0 {
 		req.OwnerUserID = userID
+	}
+	if req.SetReplyMarkup {
+		if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+			return domain.EditMessageResult{OwnerUserID: userID}, err
+		}
 	}
 	return s.messages.EditMessage(ctx, req)
 }

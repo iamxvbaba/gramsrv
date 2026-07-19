@@ -112,7 +112,7 @@ func tgMessage(m domain.Message) tg.MessageClass {
 			msg.SetInvertMedia(true)
 		}
 	}
-	// reply_markup（bot inline keyboard）：仅普通 tg.Message 携带（service 消息不带）。
+	// reply_markup（bot reply/inline keyboard）：仅普通 tg.Message 携带（service 消息不带）。
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
@@ -211,7 +211,7 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		if msg.Out {
 			return &tg.MessageActionRequestedPeerSentMe{
 				ButtonID: shared.ButtonID,
-				Peers:    tgRequestedPeers(shared.Peers),
+				Peers:    tgRequestedPeers(shared),
 			}
 		}
 		return &tg.MessageActionRequestedPeer{
@@ -294,14 +294,43 @@ func tgPeerList(peers []domain.Peer) []tg.PeerClass {
 	return out
 }
 
-func tgRequestedPeers(peers []domain.Peer) []tg.RequestedPeerClass {
-	out := make([]tg.RequestedPeerClass, 0, len(peers))
-	for _, peer := range peers {
+func tgRequestedPeers(action *domain.MessageRequestedPeerAction) []tg.RequestedPeerClass {
+	if action == nil {
+		return nil
+	}
+	details := make(map[domain.Peer]domain.MessageRequestedPeerDetails, len(action.Details))
+	for _, detail := range action.Details {
+		details[detail.Peer] = detail
+	}
+	out := make([]tg.RequestedPeerClass, 0, len(action.Peers))
+	for _, peer := range action.Peers {
+		detail := details[peer]
 		switch peer.Type {
 		case domain.PeerTypeUser:
-			out = append(out, &tg.RequestedPeerUser{UserID: peer.ID})
+			item := &tg.RequestedPeerUser{UserID: peer.ID}
+			if action.NameRequested {
+				item.SetFirstName(detail.FirstName)
+				item.SetLastName(detail.LastName)
+			}
+			if action.UsernameRequested {
+				item.SetUsername(detail.Username)
+			}
+			if action.PhotoRequested && detail.Photo != nil {
+				item.SetPhoto(tgPhoto(*detail.Photo))
+			}
+			out = append(out, item)
 		case domain.PeerTypeChannel:
-			out = append(out, &tg.RequestedPeerChannel{ChannelID: peer.ID})
+			item := &tg.RequestedPeerChannel{ChannelID: peer.ID}
+			if action.NameRequested {
+				item.SetTitle(detail.Title)
+			}
+			if action.UsernameRequested {
+				item.SetUsername(detail.Username)
+			}
+			if action.PhotoRequested && detail.Photo != nil {
+				item.SetPhoto(tgPhoto(*detail.Photo))
+			}
+			out = append(out, item)
 		}
 	}
 	return out

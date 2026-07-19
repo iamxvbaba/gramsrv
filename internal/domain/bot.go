@@ -204,15 +204,19 @@ type BotAttachMenuState struct {
 
 // BotRequestedWebViewButton 是 bots.requestWebViewButton 创建的 request-peer 上下文。
 type BotRequestedWebViewButton struct {
-	WebAppReqID string
-	BotUserID   int64
-	UserID      int64
-	ButtonID    int
-	Text        string
-	PeerType    string
-	MaxQuantity int
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
+	WebAppReqID       string
+	BotUserID         int64
+	UserID            int64
+	ButtonID          int
+	Text              string
+	PeerType          string
+	MaxQuantity       int
+	PeerFilter        *BotRequestPeerFilter
+	NameRequested     bool
+	UsernameRequested bool
+	PhotoRequested    bool
+	CreatedAt         time.Time
+	ExpiresAt         time.Time
 }
 
 // BotWebViewCustomMethodQuery 是 custom method 的 pending 记录。没有 bot 侧回答

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 
 	"telesrv/internal/domain"
@@ -44,9 +45,12 @@ func decodeMessageMedia(s string) (*domain.MessageMedia, error) {
 	return &m, nil
 }
 
-// encodeReplyMarkup 把 inline keyboard 快照序列化为 JSONB；空 markup 序列化为 "{}"。
+// encodeReplyMarkup 把 reply/inline keyboard 快照序列化为 JSONB；空 markup 序列化为 "{}"。
 // callback data 是 []byte，json.Marshal 自动 base64（保证经 JSONB 字节级 round-trip）。
 func encodeReplyMarkup(m *domain.MessageReplyMarkup) ([]byte, error) {
+	if err := domain.ValidateReplyMarkup(m); err != nil {
+		return nil, fmt.Errorf("encode reply markup: %w", err)
+	}
 	if m.IsZero() {
 		return []byte("{}"), nil
 	}
@@ -62,6 +66,9 @@ func decodeReplyMarkup(s string) (*domain.MessageReplyMarkup, error) {
 	var m domain.MessageReplyMarkup
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
 		return nil, err
+	}
+	if err := domain.ValidateReplyMarkup(&m); err != nil {
+		return nil, fmt.Errorf("decode reply markup: %w", err)
 	}
 	if m.IsZero() {
 		return nil, nil

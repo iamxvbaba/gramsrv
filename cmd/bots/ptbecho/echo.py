@@ -32,11 +32,18 @@ import os
 import signal
 from typing import Iterable
 
-from telegram import Bot, Update
-from telegram.constants import ChatAction
+from telegram import (
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -78,6 +85,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--send-count", type=int, default=1, help="Number of proactive messages to send")
     parser.add_argument("--send-interval", type=float, default=1.0, help="Seconds between proactive sends")
+    parser.add_argument(
+        "--buttons-chat-id",
+        type=int,
+        default=env_int("TELESRV_BOT_DEMO_BUTTONS_CHAT_ID"),
+        help="Send reply/inline keyboard validation messages to this chat on startup",
+    )
     parser.add_argument("--send-only", action="store_true", help="Send proactive messages and exit without polling")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
@@ -87,11 +100,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--send-count must be >= 1")
     if args.send_interval < 0:
         parser.error("--send-interval must be >= 0")
-    wants_send = args.send_only or bool(args.send_text)
-    if wants_send and args.send_chat_id is None:
+    if args.send_text and args.send_chat_id is None:
         parser.error("--send-chat-id is required when --send-text or --send-only is used")
-    if args.send_only and not args.send_text:
-        parser.error("--send-only requires --send-text")
+    if args.send_only and not args.send_text and args.buttons_chat_id is None:
+        parser.error("--send-only requires --send-text or --buttons-chat-id")
     return args
 
 
@@ -112,7 +124,6 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not text:
         return
     prefix = context.application.bot_data.get("prefix", "echo: ")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     sent = await update.effective_message.reply_text(prefix + text)
     LOG.info(
         "echoed update_id=%s chat_id=%s message_id=%s sent_message_id=%s text=%r",
@@ -121,6 +132,26 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         update.effective_message.message_id,
         sent.message_id,
         text,
+    )
+
+
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat is None:
+        return
+    await send_button_messages(context.bot, update.effective_chat.id)
+
+
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer("telesrv inline callback OK")
+    LOG.info(
+        "answered callback query_id=%s chat_id=%s message_id=%s data=%r",
+        query.id,
+        query.message.chat_id if query.message else None,
+        query.message.message_id if query.message else None,
+        query.data,
     )
 
 
@@ -139,25 +170,63 @@ async def send_active_messages(bot: Bot, chat_id: int, text: str, count: int, in
             await asyncio.sleep(interval)
 
 
+async def send_button_messages(bot: Bot, chat_id: int) -> None:
+    reply = await bot.send_message(
+        chat_id=chat_id,
+        text="TELESRV_REPLY_KEYBOARD_20260719",
+        reply_markup=ReplyKeyboardMarkup(
+            [[
+                KeyboardButton("Primary", api_kwargs={"style": "primary"}),
+                KeyboardButton("Success", api_kwargs={"style": "success"}),
+                KeyboardButton("Danger", api_kwargs={"style": "danger"}),
+            ]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+            input_field_placeholder="Tap the reply button",
+        ),
+    )
+    inline = await bot.send_message(
+        chat_id=chat_id,
+        text="TELESRV_INLINE_CALLBACK_20260719",
+        reply_markup=InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton("Primary", callback_data="telesrv-primary", api_kwargs={"style": "primary"}),
+                InlineKeyboardButton("Success", callback_data="telesrv-success", api_kwargs={"style": "success"}),
+                InlineKeyboardButton("Danger", callback_data="telesrv-danger", api_kwargs={"style": "danger"}),
+            ]],
+        ),
+    )
+    LOG.info(
+        "sent keyboard validation chat_id=%s reply_message_id=%s inline_message_id=%s",
+        chat_id,
+        reply.message_id,
+        inline.message_id,
+    )
+
+
 async def send_on_startup(app: Application) -> None:
     chat_id = app.bot_data.get("send_chat_id")
     text = app.bot_data.get("send_text")
-    if chat_id is None or not text:
-        return
-    await send_active_messages(
-        app.bot,
-        chat_id=chat_id,
-        text=text,
-        count=int(app.bot_data.get("send_count", 1)),
-        interval=float(app.bot_data.get("send_interval", 1.0)),
-    )
+    if chat_id is not None and text:
+        await send_active_messages(
+            app.bot,
+            chat_id=chat_id,
+            text=text,
+            count=int(app.bot_data.get("send_count", 1)),
+            interval=float(app.bot_data.get("send_interval", 1.0)),
+        )
+    buttons_chat_id = app.bot_data.get("buttons_chat_id")
+    if buttons_chat_id is not None:
+        await send_button_messages(app.bot, int(buttons_chat_id))
 
 
 async def post_init(app: Application) -> None:
     me = await app.bot.get_me()
     LOG.info("listening as @%s (%s), bot_api=%s", me.username or me.id, me.id, app.bot_data["base_url"])
-    if app.bot_data.get("send_chat_id") is not None and app.bot_data.get("send_text"):
-        app.create_task(send_on_startup(app), name="ptbecho-proactive-send")
+    if (app.bot_data.get("send_chat_id") is not None and app.bot_data.get("send_text")) or app.bot_data.get(
+        "buttons_chat_id"
+    ) is not None:
+        await send_on_startup(app)
 
 
 def build_app(args: argparse.Namespace) -> Application:
@@ -175,8 +244,11 @@ def build_app(args: argparse.Namespace) -> Application:
     app.bot_data["send_text"] = args.send_text
     app.bot_data["send_count"] = args.send_count
     app.bot_data["send_interval"] = args.send_interval
+    app.bot_data["buttons_chat_id"] = args.buttons_chat_id
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("buttons", buttons))
+    app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
     return app
 
@@ -185,18 +257,21 @@ async def run_send_only(args: argparse.Namespace) -> None:
     bot = Bot(token=args.token, base_url=args.base_url, base_file_url=args.base_file_url)
     me = await bot.get_me()
     LOG.info("authenticated as @%s (%s), bot_api=%s", me.username or me.id, me.id, args.base_url)
-    await send_active_messages(
-        bot,
-        chat_id=args.send_chat_id,
-        text=args.send_text,
-        count=args.send_count,
-        interval=args.send_interval,
-    )
+    if args.send_chat_id is not None and args.send_text:
+        await send_active_messages(
+            bot,
+            chat_id=args.send_chat_id,
+            text=args.send_text,
+            count=args.send_count,
+            interval=args.send_interval,
+        )
+    if args.buttons_chat_id is not None:
+        await send_button_messages(bot, args.buttons_chat_id)
 
 
-def stop_signals() -> Iterable[int]:
+def stop_signals() -> Iterable[int] | None:
     if os.name == "nt":
-        return (signal.SIGINT, signal.SIGTERM)
+        return None
     return (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
@@ -214,7 +289,7 @@ def main() -> int:
 
     app = build_app(args)
     app.run_polling(
-        allowed_updates=["message", "edited_message"],
+        allowed_updates=["message", "edited_message", "callback_query"],
         drop_pending_updates=args.drop_pending,
         poll_interval=0.0,
         timeout=args.timeout,

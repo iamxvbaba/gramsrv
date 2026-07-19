@@ -91,6 +91,7 @@ func normalizeMemoryMessageIDs(ids []int) []int {
 
 func cloneMessage(msg domain.Message) domain.Message {
 	msg.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+	msg.Media = cloneRequestedPeerMedia(msg.Media)
 	msg.ReplyTo = cloneMessageReply(msg.ReplyTo)
 	msg.Forward = cloneMessageForward(msg.Forward)
 	msg.Reactions = cloneChannelMessageReactionsPtr(msg.Reactions)
@@ -99,13 +100,36 @@ func cloneMessage(msg domain.Message) domain.Message {
 	return msg
 }
 
-// cloneReplyMarkup 深拷 inline keyboard 快照：与 postgres 每盒独立 decode 对齐
+// cloneRequestedPeerMedia isolates the immutable disclosure snapshot carried by
+// messageActionRequestedPeer. Other media payloads retain their established
+// copy behavior; this helper only deep-copies the newly mutable peer/photo slices.
+func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
+	if media == nil {
+		return nil
+	}
+	clone := *media
+	if media.ServiceAction == nil || media.ServiceAction.RequestedPeer == nil {
+		return &clone
+	}
+	action := *media.ServiceAction
+	requested := *media.ServiceAction.RequestedPeer
+	requested.Peers = append([]domain.Peer(nil), requested.Peers...)
+	requested.Details = append([]domain.MessageRequestedPeerDetails(nil), requested.Details...)
+	for i := range requested.Details {
+		requested.Details[i].Photo = domain.ClonePhotoPtr(requested.Details[i].Photo)
+	}
+	action.RequestedPeer = &requested
+	clone.ServiceAction = &action
+	return &clone
+}
+
+// cloneReplyMarkup 深拷 reply markup 快照：与 postgres 每盒独立 decode 对齐
 // （双 store 行为一致），避免发送方/接收方两行共享底层 rows/Data 切片。
 func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 	if m == nil {
 		return nil
 	}
-	clone := domain.MessageReplyMarkup{}
+	clone := *m
 	if m.Inline != nil {
 		clone.Inline = make([][]domain.MarkupButton, len(m.Inline))
 		for i, row := range m.Inline {
@@ -115,6 +139,12 @@ func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 				cloneRow[j].Data = append([]byte(nil), btn.Data...)
 			}
 			clone.Inline[i] = cloneRow
+		}
+	}
+	if m.Keyboard != nil {
+		clone.Keyboard = make([][]domain.MarkupButton, len(m.Keyboard))
+		for i, row := range m.Keyboard {
+			clone.Keyboard[i] = append([]domain.MarkupButton(nil), row...)
 		}
 	}
 	return &clone

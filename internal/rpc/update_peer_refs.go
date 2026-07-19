@@ -45,6 +45,9 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 			addDomainPeerRef(peer, 0, userIDs, channelIDs)
 		}
 		collectMessagePeerRefs(out[i].Message, 0, userIDs, channelIDs)
+		if out[i].BotCallbackQuery != nil && out[i].BotCallbackQuery.UserID != 0 {
+			userIDs[out[i].BotCallbackQuery.UserID] = struct{}{}
+		}
 		removeKnownChannelRefs(channelIDs, out[i].Channels)
 		refs[i] = updateEventPeerRefs{userIDs: userIDs, channelIDs: channelIDs}
 		for id := range userIDs {
@@ -219,6 +222,11 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
+	}
+	if msg.Media != nil && msg.Media.ServiceAction != nil && msg.Media.ServiceAction.RequestedPeer != nil {
+		for _, peer := range msg.Media.ServiceAction.RequestedPeer.Peers {
+			addDomainPeerRef(peer, currentChannelID, userIDs, channelIDs)
+		}
 	}
 	collectPollMediaUserRefs(msg.Media, userIDs)
 	collectTodoMediaUserRefs(msg.Media, userIDs)

@@ -37,7 +37,7 @@ type outgoingSend struct {
 	sendAs                 *domain.Peer
 	sendAsReady            bool
 	clearDraft             bool
-	// replyMarkup 是 bot inline keyboard（已解析+校验；非 bot 恒 nil）。
+	// replyMarkup 是 bot reply/inline keyboard（已解析+校验；非 bot 恒 nil）。
 	replyMarkup *domain.MessageReplyMarkup
 	viaBotID    int64
 	// richMessage 是 Layer 227 富文本消息快照（已解析内嵌媒体；普通消息恒 nil）。
@@ -382,12 +382,16 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if media == nil {
 		return nil, mediaInvalidErr()
 	}
-	// reply_markup（bot inline keyboard on media）：仅 bot 接受+校验，非 bot 静默丢弃。
+	// reply_markup：bot 可发送 inline keyboard 与普通 reply keyboard/hide/force；
+	// 非 bot 静默丢弃。
 	var replyMarkup *domain.MessageReplyMarkup
 	if req.ReplyMarkup != nil {
-		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
+		replyMarkup, err = domainOutgoingReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
 		if err != nil {
 			return nil, replyMarkupErr(err)
+		}
+		if err := r.validateReplyMarkupForPeer(ctx, userID, peer, replyMarkup); err != nil {
+			return nil, err
 		}
 	}
 	if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {

@@ -222,6 +222,65 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 	assertWebViewData("recipient history", recipientHistory.Messages[0])
 }
 
+func TestMessageStoreRequestedPeerDisclosureSnapshotRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	messages := NewMessageStore()
+	photo := domain.Photo{ID: 8101, Sizes: []domain.PhotoSize{{
+		Kind: domain.PhotoSizeKindDefault, Type: "m", W: 320, H: 320, Size: 4096,
+	}}}
+	requestedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: 1000000003}
+	req := domain.SendPrivateTextRequest{
+		SenderUserID: 1000000001, RecipientUserID: 1000000002, RandomID: 200, Date: 1700000121,
+		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindService, ServiceAction: &domain.MessageServiceAction{
+			Kind: domain.MessageServiceActionRequestedPeer,
+			RequestedPeer: &domain.MessageRequestedPeerAction{
+				ButtonID: 77, Peers: []domain.Peer{requestedPeer},
+				Details: []domain.MessageRequestedPeerDetails{{
+					Peer: requestedPeer, FirstName: "Shared", Username: "shared_user", Photo: &photo,
+				}},
+				NameRequested: true, UsernameRequested: true, PhotoRequested: true,
+			},
+		}},
+	}
+
+	got, err := messages.SendPrivateText(ctx, req)
+	if err != nil {
+		t.Fatalf("SendPrivateText: %v", err)
+	}
+	assertSnapshot := func(name string, msg domain.Message) {
+		t.Helper()
+		if msg.Media == nil || msg.Media.ServiceAction == nil || msg.Media.ServiceAction.RequestedPeer == nil {
+			t.Fatalf("%s media=%+v, want requested-peer action", name, msg.Media)
+		}
+		action := msg.Media.ServiceAction.RequestedPeer
+		if action.ButtonID != 77 || len(action.Peers) != 1 || action.Peers[0] != requestedPeer ||
+			len(action.Details) != 1 || action.Details[0].FirstName != "Shared" ||
+			action.Details[0].Username != "shared_user" || action.Details[0].Photo == nil ||
+			len(action.Details[0].Photo.Sizes) != 1 || action.Details[0].Photo.Sizes[0].W != 320 ||
+			!action.NameRequested || !action.UsernameRequested || !action.PhotoRequested {
+			t.Fatalf("%s requested-peer=%+v", name, action)
+		}
+	}
+	assertSnapshot("sender", got.SenderMessage)
+	assertSnapshot("recipient", got.RecipientMessage)
+
+	// Mutating either the request or one returned box must not alter the other
+	// box or the immutable store snapshot.
+	req.Media.ServiceAction.RequestedPeer.Details[0].FirstName = "mutated-request"
+	req.Media.ServiceAction.RequestedPeer.Details[0].Photo.Sizes[0].W = 1
+	got.SenderMessage.Media.ServiceAction.RequestedPeer.Details[0].FirstName = "mutated-result"
+	got.SenderMessage.Media.ServiceAction.RequestedPeer.Details[0].Photo.Sizes[0].W = 2
+	assertSnapshot("isolated recipient result", got.RecipientMessage)
+
+	for _, owner := range []int64{req.SenderUserID, req.RecipientUserID} {
+		history, err := messages.ListByUser(ctx, owner, domain.MessageFilter{Limit: 10})
+		if err != nil || len(history.Messages) != 1 {
+			t.Fatalf("owner %d history=%+v err=%v", owner, history, err)
+		}
+		assertSnapshot("stored history", history.Messages[0])
+	}
+}
+
 func TestMessageStorePrivateMessageReactionsAreSharedAcrossOwnerBoxes(t *testing.T) {
 	ctx := context.Background()
 	messages := NewMessageStore()

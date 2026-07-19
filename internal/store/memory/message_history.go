@@ -35,6 +35,33 @@ func (s *MessageStore) GetByIDs(_ context.Context, userID int64, ids []int) (dom
 	return out, nil
 }
 
+// GetByUID resolves one owner's box row by the shared private message id. Callback delivery
+// uses it to translate the clicker's box id to the bot's box id without scanning history.
+func (s *MessageStore) GetByUID(_ context.Context, userID, uid int64) (domain.Message, bool, error) {
+	if userID == 0 || uid == 0 {
+		return domain.Message{}, false, nil
+	}
+	s.mu.RLock()
+	var found domain.Message
+	for _, msg := range s.m[userID] {
+		if msg.UID == uid {
+			found = cloneMessage(msg)
+			reactions := s.privateMessageReactionsForMessageLocked(found)
+			if len(reactions.Results) > 0 || len(reactions.Recent) > 0 {
+				found.Reactions = cloneChannelMessageReactionsPtr(&reactions)
+			}
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if found.ID == 0 {
+		return domain.Message{}, false, nil
+	}
+	items := []domain.Message{found}
+	s.enrichPrivateMessagePolls(items, int(time.Now().Unix()))
+	return items[0], true, nil
+}
+
 func (s *MessageStore) ListByUser(_ context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	s.mu.RLock()
 	messages := cloneMessages(s.m[userID])

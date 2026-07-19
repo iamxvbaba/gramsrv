@@ -205,6 +205,70 @@ func TestMessageStoreWebViewDataServiceActionRoundTrip(t *testing.T) {
 	assertWebViewData("recipient event", events[0].Message)
 }
 
+func TestMessageStoreRequestedPeerDisclosureSnapshotRoundTrip(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	sender := createTestUser(t, ctx, users, "+1666"+suffix+"33", "RequestedSender", "")
+	recipient := createTestUser(t, ctx, users, "+1666"+suffix+"34", "RequestedRecipient", "")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = ANY($1::bigint[])", []int64{sender.ID, recipient.ID})
+	})
+
+	requestedPeer := domain.Peer{Type: domain.PeerTypeChannel, ID: 5501}
+	photo := domain.Photo{ID: 8201, Sizes: []domain.PhotoSize{{
+		Kind: domain.PhotoSizeKindDefault, Type: "m", W: 320, H: 320, Size: 4096,
+	}}}
+	messages := NewMessageStore(pool)
+	got, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID: sender.ID, RecipientUserID: recipient.ID, RandomID: 9002, Date: 1700000212,
+		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindService, ServiceAction: &domain.MessageServiceAction{
+			Kind: domain.MessageServiceActionRequestedPeer,
+			RequestedPeer: &domain.MessageRequestedPeerAction{
+				ButtonID: 88, Peers: []domain.Peer{requestedPeer},
+				Details: []domain.MessageRequestedPeerDetails{{
+					Peer: requestedPeer, Title: "Shared Chat", Username: "shared_chat", Photo: &photo,
+				}},
+				NameRequested: true, UsernameRequested: true, PhotoRequested: true,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText: %v", err)
+	}
+	assertSnapshot := func(name string, msg domain.Message) {
+		t.Helper()
+		if msg.Media == nil || msg.Media.ServiceAction == nil || msg.Media.ServiceAction.RequestedPeer == nil {
+			t.Fatalf("%s media=%+v, want requested-peer action", name, msg.Media)
+		}
+		action := msg.Media.ServiceAction.RequestedPeer
+		if action.ButtonID != 88 || len(action.Peers) != 1 || action.Peers[0] != requestedPeer ||
+			len(action.Details) != 1 || action.Details[0].Title != "Shared Chat" ||
+			action.Details[0].Username != "shared_chat" || action.Details[0].Photo == nil ||
+			len(action.Details[0].Photo.Sizes) != 1 || action.Details[0].Photo.Sizes[0].W != 320 ||
+			!action.NameRequested || !action.UsernameRequested || !action.PhotoRequested {
+			t.Fatalf("%s requested-peer=%+v", name, action)
+		}
+	}
+	assertSnapshot("sender", got.SenderMessage)
+	assertSnapshot("recipient", got.RecipientMessage)
+
+	history, err := messages.ListByUser(ctx, recipient.ID, domain.MessageFilter{
+		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}, Limit: 10,
+	})
+	if err != nil || len(history.Messages) != 1 {
+		t.Fatalf("recipient history=%+v err=%v", history, err)
+	}
+	assertSnapshot("recipient history", history.Messages[0])
+	events, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, 0, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("recipient events=%+v err=%v", events, err)
+	}
+	assertSnapshot("recipient event", events[0].Message)
+}
+
 func TestMessageStorePhoneCallServiceFirstMessageFeedsDialogsAndUpdates(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

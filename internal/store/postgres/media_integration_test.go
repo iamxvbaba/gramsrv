@@ -91,6 +91,10 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 	if err != nil || !ok || len(gotPhoto.Sizes) != 1 || gotPhoto.Sizes[0].Type != "x" {
 		t.Fatalf("get photo mismatch: ok=%v err=%v photo=%+v", ok, err, gotPhoto)
 	}
+	photos, err := s.GetPhotos(ctx, []int64{photoID, 0, photoID, photoID + 99})
+	if err != nil || len(photos) != 1 || photos[0].ID != photoID || len(photos[0].Sizes) != 1 {
+		t.Fatalf("get photos mismatch: photos=%+v err=%v", photos, err)
+	}
 
 	// ---- sticker set ----
 	set := domain.StickerSet{

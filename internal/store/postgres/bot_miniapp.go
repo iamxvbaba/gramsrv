@@ -416,16 +416,29 @@ func (s *BotStore) SaveRequestedWebViewButton(ctx context.Context, button domain
 	if button.BotUserID == 0 || button.UserID == 0 || button.WebAppReqID == "" || button.ExpiresAt.IsZero() {
 		return domain.ErrBotRequestedButtonInvalid
 	}
-	_, err := s.db.Exec(ctx, `
-INSERT INTO webview_requested_buttons (webapp_req_id, bot_user_id, user_id, button_id, text, peer_type, max_quantity, created_at, expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	peerFilter, err := json.Marshal(button.PeerFilter)
+	if err != nil {
+		return domain.ErrBotRequestedButtonInvalid
+	}
+	_, err = s.db.Exec(ctx, `
+INSERT INTO webview_requested_buttons (
+  webapp_req_id, bot_user_id, user_id, button_id, text, peer_type, max_quantity,
+  peer_filter, name_requested, username_requested, photo_requested, created_at, expires_at
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 ON CONFLICT (webapp_req_id) DO UPDATE SET
   button_id=EXCLUDED.button_id,
   text=EXCLUDED.text,
   peer_type=EXCLUDED.peer_type,
   max_quantity=EXCLUDED.max_quantity,
+  peer_filter=EXCLUDED.peer_filter,
+  name_requested=EXCLUDED.name_requested,
+  username_requested=EXCLUDED.username_requested,
+  photo_requested=EXCLUDED.photo_requested,
   expires_at=EXCLUDED.expires_at`,
-		button.WebAppReqID, button.BotUserID, button.UserID, button.ButtonID, button.Text, button.PeerType, button.MaxQuantity, button.CreatedAt, button.ExpiresAt)
+		button.WebAppReqID, button.BotUserID, button.UserID, button.ButtonID, button.Text,
+		button.PeerType, button.MaxQuantity, peerFilter, button.NameRequested,
+		button.UsernameRequested, button.PhotoRequested, button.CreatedAt, button.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("save requested webview button: %w", err)
 	}
@@ -435,17 +448,27 @@ ON CONFLICT (webapp_req_id) DO UPDATE SET
 func (s *BotStore) GetRequestedWebViewButton(ctx context.Context, botUserID, userID int64, webAppReqID string) (domain.BotRequestedWebViewButton, bool, error) {
 	_, _ = s.db.Exec(ctx, `DELETE FROM webview_requested_buttons WHERE expires_at <= now()`)
 	var button domain.BotRequestedWebViewButton
+	var peerFilter []byte
 	err := s.db.QueryRow(ctx, `
-SELECT webapp_req_id, bot_user_id, user_id, button_id, text, peer_type, max_quantity, created_at, expires_at
+SELECT webapp_req_id, bot_user_id, user_id, button_id, text, peer_type, max_quantity,
+       peer_filter, name_requested, username_requested, photo_requested, created_at, expires_at
 FROM webview_requested_buttons
 WHERE bot_user_id=$1 AND user_id=$2 AND webapp_req_id=$3 AND expires_at > now()`,
 		botUserID, userID, webAppReqID).
-		Scan(&button.WebAppReqID, &button.BotUserID, &button.UserID, &button.ButtonID, &button.Text, &button.PeerType, &button.MaxQuantity, &button.CreatedAt, &button.ExpiresAt)
+		Scan(&button.WebAppReqID, &button.BotUserID, &button.UserID, &button.ButtonID,
+			&button.Text, &button.PeerType, &button.MaxQuantity, &peerFilter,
+			&button.NameRequested, &button.UsernameRequested, &button.PhotoRequested,
+			&button.CreatedAt, &button.ExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.BotRequestedWebViewButton{}, false, nil
 		}
 		return domain.BotRequestedWebViewButton{}, false, fmt.Errorf("get requested webview button: %w", err)
+	}
+	if string(peerFilter) != "{}" && string(peerFilter) != "null" {
+		if err := json.Unmarshal(peerFilter, &button.PeerFilter); err != nil {
+			return domain.BotRequestedWebViewButton{}, false, fmt.Errorf("decode requested webview button filter: %w", err)
+		}
 	}
 	return button, true, nil
 }

@@ -610,6 +610,23 @@ type MessageWebViewDataAction struct {
 type MessageRequestedPeerAction struct {
 	ButtonID int    `json:"button_id"`
 	Peers    []Peer `json:"peers"`
+	// Details is the immutable, permission-gated snapshot delivered to the bot.
+	// It is kept separate from Peers because the sender-side MTProto action only
+	// exposes peer identities, while the bot-side/Bot API view may additionally
+	// expose the requested name, username, and profile photo.
+	Details           []MessageRequestedPeerDetails `json:"details,omitempty"`
+	NameRequested     bool                          `json:"name_requested,omitempty"`
+	UsernameRequested bool                          `json:"username_requested,omitempty"`
+	PhotoRequested    bool                          `json:"photo_requested,omitempty"`
+}
+
+type MessageRequestedPeerDetails struct {
+	Peer      Peer   `json:"peer"`
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Photo     *Photo `json:"photo,omitempty"`
 }
 
 // MessageServiceAction 是私聊服务消息动作的协议中立表示。

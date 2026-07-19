@@ -11,11 +11,13 @@ import (
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
+	"telesrv/internal/store/memory"
 )
 
 func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	f := newInlineBotRPCTestFixture(t)
+	f.router.deps.BotAPIUpdates = memory.NewBotAPIUpdateStore()
 	ownerCtx := WithUserID(ctx, f.owner.ID)
 
 	updatesClass, err := f.router.onMessagesSendWebViewData(ownerCtx, &tg.MessagesSendWebViewDataRequest{
@@ -45,6 +47,13 @@ func TestMessagesSendWebViewDataServiceMessageRoundTrip(t *testing.T) {
 	}
 	if service.PeerID.(*tg.PeerUser).UserID != f.bot.ID || service.FromID.(*tg.PeerUser).UserID != f.owner.ID {
 		t.Fatalf("service peer/from = %+v/%+v, want bot/user", service.PeerID, service.FromID)
+	}
+	botAPIEvents, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
+	if err != nil || len(botAPIEvents) != 1 || botAPIEvents[0].Message.Media == nil ||
+		botAPIEvents[0].Message.Media.ServiceAction == nil ||
+		botAPIEvents[0].Message.Media.ServiceAction.WebViewData == nil ||
+		botAPIEvents[0].Message.Media.ServiceAction.WebViewData.Data != `{"ok":true}` {
+		t.Fatalf("bot api webview events=%#v err=%v", botAPIEvents, err)
 	}
 
 	botHistory, err := f.router.deps.Messages.GetHistory(ctx, f.bot.ID, domain.MessageFilter{
@@ -137,6 +146,41 @@ func TestMessagesSendBotRequestedPeerRejectsWithoutRequestButtonState(t *testing
 		RequestedPeers: nil,
 	}); !tgerr.Is(err, "BUTTON_DATA_INVALID") {
 		t.Fatalf("send requested peer without peers err = %v, want BUTTON_DATA_INVALID", err)
+	}
+}
+
+func TestMessagesSendBotRequestedPeerQueuesBotAPIResponse(t *testing.T) {
+	ctx := context.Background()
+	f := newInlineBotRPCTestFixture(t)
+	f.router.deps.BotAPIUpdates = memory.NewBotAPIUpdateStore()
+	ownerCtx := WithUserID(ctx, f.owner.ID)
+	button := domain.MarkupButton{
+		Type: domain.MarkupButtonRequestPeer, Text: "Share user", ButtonID: 77,
+		RequestPeerType: "user", MaxQuantity: 1, NameRequested: true, UsernameRequested: true,
+	}
+	requestMessage, err := f.router.deps.Messages.SendPrivateText(ctx, f.bot.ID, domain.SendPrivateTextRequest{
+		SenderUserID: f.bot.ID, RecipientUserID: f.owner.ID, RandomID: 7001, Message: "Choose",
+		ReplyMarkup: &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupKeyboard, Keyboard: [][]domain.MarkupButton{{button}}},
+		Date:        1700000100,
+	})
+	if err != nil {
+		t.Fatalf("send request message: %v", err)
+	}
+	if _, err := f.router.onMessagesSendBotRequestedPeer(ownerCtx, &tg.MessagesSendBotRequestedPeerRequest{
+		Peer: inputPeerUser(f.bot), MsgID: requestMessage.RecipientMessage.ID, ButtonID: button.ButtonID,
+		RequestedPeers: []tg.InputPeerClass{inputPeerUser(f.peer)},
+	}); err != nil {
+		t.Fatalf("send requested peer: %v", err)
+	}
+	events, err := f.router.BotAPIUpdates(ctx, f.bot.ID, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("bot api requested-peer events=%#v err=%v", events, err)
+	}
+	action := events[0].Message.Media.ServiceAction.RequestedPeer
+	if action == nil || action.ButtonID != 77 || len(action.Peers) != 1 || action.Peers[0].ID != f.peer.ID ||
+		len(action.Details) != 1 || action.Details[0].Peer != action.Peers[0] || action.Details[0].FirstName != f.peer.FirstName ||
+		!action.NameRequested || !action.UsernameRequested {
+		t.Fatalf("requested-peer action=%#v", action)
 	}
 }
 

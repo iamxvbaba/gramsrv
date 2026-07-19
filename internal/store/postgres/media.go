@@ -550,6 +550,56 @@ func (s *MediaStore) GetPhoto(ctx context.Context, id int64) (domain.Photo, bool
 	return photo, true, nil
 }
 
+// GetPhotos resolves a bounded set of immutable photo metadata with one indexed
+// ANY query. Missing ids are omitted and the result follows first-seen caller order.
+func (s *MediaStore) GetPhotos(ctx context.Context, ids []int64) ([]domain.Photo, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	unique := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT id, access_hash, file_reference, date, dc_id, has_stickers, sizes::text
+FROM photos
+WHERE id = ANY($1::bigint[])
+`, unique)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := make(map[int64]domain.Photo, len(unique))
+	for rows.Next() {
+		photo, err := scanPhotoRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[photo.ID] = photo
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]domain.Photo, 0, len(byID))
+	for _, id := range unique {
+		if photo, ok := byID[id]; ok {
+			out = append(out, photo)
+		}
+	}
+	return out, nil
+}
+
 type photoScanner interface {
 	Scan(dest ...any) error
 }

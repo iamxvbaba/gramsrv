@@ -8,7 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/iamxvbaba/td/tg"
+
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 var botAPIAuthKeyID = [8]byte{'B', 'O', 'T', 'A', 'P', 'I', 0, 1}
@@ -61,6 +64,114 @@ func (r *Router) BotAPIUpdates(ctx context.Context, botID int64, offset int64) (
 	return r.enrichUpdateEvents(ctx, botID, diff.Events), nil
 }
 
+func (r *Router) BotAPISetAllowedUpdates(ctx context.Context, botID int64, allowed []domain.BotAPIUpdateKind) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.SetBotAPIAllowedUpdates(ctx, botID, allowed)
+}
+
+func (r *Router) BotAPIDropPendingUpdates(ctx context.Context, botID int64) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.DropPendingBotAPIUpdates(ctx, botID)
+}
+
+func (r *Router) BotAPIPendingUpdateCount(ctx context.Context, botID int64) (int, error) {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return 0, nil
+	}
+	return r.deps.BotAPIUpdates.PendingBotAPIUpdateCount(ctx, botID)
+}
+
+func (r *Router) AcquireBotAPIPollLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error) {
+	leases, ok := r.deps.BotAPIUpdates.(store.BotAPIPollLeaseStore)
+	if !ok || botID <= 0 {
+		return true, nil
+	}
+	return leases.AcquireBotAPIPollLease(ctx, botID, owner, ttl)
+}
+
+func (r *Router) ReleaseBotAPIPollLease(ctx context.Context, botID int64, owner string) error {
+	leases, ok := r.deps.BotAPIUpdates.(store.BotAPIPollLeaseStore)
+	if !ok || botID <= 0 {
+		return nil
+	}
+	return leases.ReleaseBotAPIPollLease(ctx, botID, owner)
+}
+
+func (r *Router) BotAPISetWebhook(ctx context.Context, config domain.BotAPIWebhook, dropPending bool) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return errors.New("WEBHOOK_UNSUPPORTED")
+	}
+	return webhooks.SetBotAPIWebhook(ctx, config, dropPending)
+}
+
+func (r *Router) BotAPIDeleteWebhook(ctx context.Context, botID int64, dropPending bool) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return errors.New("WEBHOOK_UNSUPPORTED")
+	}
+	return webhooks.DeleteBotAPIWebhook(ctx, botID, dropPending)
+}
+
+func (r *Router) BotAPIWebhook(ctx context.Context, botID int64) (domain.BotAPIWebhook, bool, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return domain.BotAPIWebhook{}, false, nil
+	}
+	return webhooks.BotAPIWebhook(ctx, botID)
+}
+
+func (r *Router) ListDueBotAPIWebhooks(ctx context.Context, limit int) ([]domain.BotAPIWebhook, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil, nil
+	}
+	return webhooks.ListDueBotAPIWebhooks(ctx, limit)
+}
+
+func (r *Router) AcquireBotAPIWebhookLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return false, nil
+	}
+	return webhooks.AcquireBotAPIWebhookLease(ctx, botID, owner, ttl)
+}
+
+func (r *Router) ReleaseBotAPIWebhookLease(ctx context.Context, botID int64, owner string) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.ReleaseBotAPIWebhookLease(ctx, botID, owner)
+}
+
+func (r *Router) RecordBotAPIWebhookFailure(ctx context.Context, botID int64, owner string, nextAttempt time.Time, message string) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.RecordBotAPIWebhookFailure(ctx, botID, owner, nextAttempt, message)
+}
+
+func (r *Router) RecordBotAPIWebhookSuccess(ctx context.Context, botID int64, owner string, nextAttempt time.Time) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.RecordBotAPIWebhookSuccess(ctx, botID, owner, nextAttempt)
+}
+
+func (r *Router) ConfirmBotAPIWebhookDelivery(ctx context.Context, botID, updateID int64) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID <= 0 || updateID <= 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.ConfirmBotAPIUpdates(ctx, botID, updateID)
+}
+
 // BotAPISendMessage sends a text message as a bot through the normal private
 // or channel message state machine. Positive chat_id is a user private chat;
 // -1000000000000-channel_id is a supergroup/channel chat.
@@ -71,6 +182,12 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 	peer, ok := botAPIPeerFromChatID(chatID)
 	if !ok {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
 	}
 	if text == "" {
 		return domain.Message{}, errors.New("MESSAGE_EMPTY")
@@ -121,6 +238,12 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 	peer, ok := botAPIPeerFromChatID(chatID)
 	if !ok {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
 	}
 	if utf8.RuneCountInString(caption) > domain.MaxMessageTextLength {
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
@@ -400,6 +523,37 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 	return self.Message, nil
 }
 
+func (r *Router) BotAPIEditInlineMessageText(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (bool, error) {
+	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
+		return false, errors.New("BOT_INVALID")
+	}
+	if text == "" {
+		return false, errors.New("MESSAGE_EMPTY")
+	}
+	if utf8.RuneCountInString(text) > domain.MaxMessageTextLength {
+		return false, errors.New("MESSAGE_TOO_LONG")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return false, replyMarkupErr(err)
+	}
+	req := &tg.MessagesEditInlineBotMessageRequest{
+		ID:        tgInputBotInlineMessageID(inlineMessageID),
+		NoWebpage: disableWebPagePreview,
+	}
+	req.SetMessage(text)
+	if len(entities) > 0 {
+		req.SetEntities(tgMessageEntities(entities))
+	}
+	if setReplyMarkup {
+		wire := tgReplyMarkup(replyMarkup)
+		if wire == nil {
+			wire = &tg.ReplyInlineMarkup{}
+		}
+		req.SetReplyMarkup(wire)
+	}
+	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
+}
+
 // BotAPIDeleteMessage deletes a bot-owned private message with revoke=true so
 // the target user's MTProto clients observe the normal delete update.
 func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error) {
@@ -440,12 +594,18 @@ func (r *Router) BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, cal
 	if cacheTime < 0 {
 		cacheTime = 0
 	}
-	r.callbacks.resolve(botID, queryID, domain.BotCallbackAnswer{
+	resolved, resolveErr := r.callbacks.resolveContext(ctx, botID, queryID, domain.BotCallbackAnswer{
 		Alert:     showAlert,
 		Message:   text,
 		URL:       url,
 		CacheTime: cacheTime,
 	})
+	if resolveErr != nil {
+		return false, resolveErr
+	}
+	if !resolved {
+		return false, errors.New("QUERY_ID_INVALID")
+	}
 	return true, nil
 }
 

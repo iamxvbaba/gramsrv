@@ -188,20 +188,23 @@ const (
 
 // ChannelAdminRights is a domain-only representation of Telegram admin rights.
 type ChannelAdminRights struct {
-	ChangeInfo     bool
-	PostMessages   bool
-	EditMessages   bool
-	DeleteMessages bool
-	PostStories    bool
-	EditStories    bool
-	DeleteStories  bool
-	BanUsers       bool
-	InviteUsers    bool
-	PinMessages    bool
-	AddAdmins      bool
-	ManageCall     bool
-	Anonymous      bool
-	ManageRanks    bool
+	ChangeInfo        bool
+	PostMessages      bool
+	EditMessages      bool
+	DeleteMessages    bool
+	PostStories       bool
+	EditStories       bool
+	DeleteStories     bool
+	BanUsers          bool
+	InviteUsers       bool
+	PinMessages       bool
+	AddAdmins         bool
+	ManageCall        bool
+	ManageChat        bool
+	ManageTopics      bool
+	Anonymous         bool
+	ManageRanks       bool
+	ManageLinkedPeers bool
 	// ManageDirectMessages 对应 TL ChatAdminRights.manage_direct_messages(flags.17)。母广播频道的
 	// 管理员据此被客户端授予 monoforum(频道私信)容器的 MonoforumAdmin 身份;creator 走 amCreator 旁路。
 	ManageDirectMessages bool
@@ -210,19 +213,22 @@ type ChannelAdminRights struct {
 // CreatorChannelAdminRights returns the full rights set clients expect on creator projections.
 func CreatorChannelAdminRights() ChannelAdminRights {
 	return ChannelAdminRights{
-		ChangeInfo:     true,
-		PostMessages:   true,
-		EditMessages:   true,
-		DeleteMessages: true,
-		PostStories:    true,
-		EditStories:    true,
-		DeleteStories:  true,
-		BanUsers:       true,
-		InviteUsers:    true,
-		PinMessages:    true,
-		AddAdmins:      true,
-		ManageCall:     true,
-		ManageRanks:    true,
+		ChangeInfo:        true,
+		PostMessages:      true,
+		EditMessages:      true,
+		DeleteMessages:    true,
+		PostStories:       true,
+		EditStories:       true,
+		DeleteStories:     true,
+		BanUsers:          true,
+		InviteUsers:       true,
+		PinMessages:       true,
+		AddAdmins:         true,
+		ManageCall:        true,
+		ManageChat:        true,
+		ManageTopics:      true,
+		ManageRanks:       true,
+		ManageLinkedPeers: true,
 	}
 }
 

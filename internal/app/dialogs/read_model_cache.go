@@ -461,7 +461,14 @@ func cloneReplyMarkupForDialogCache(in *domain.MessageReplyMarkup) *domain.Messa
 	if in == nil {
 		return nil
 	}
-	out := &domain.MessageReplyMarkup{}
+	out := &domain.MessageReplyMarkup{
+		Type:        in.Type,
+		Resize:      in.Resize,
+		SingleUse:   in.SingleUse,
+		Selective:   in.Selective,
+		Persistent:  in.Persistent,
+		Placeholder: in.Placeholder,
+	}
 	if len(in.Inline) > 0 {
 		out.Inline = make([][]domain.MarkupButton, len(in.Inline))
 		for i, row := range in.Inline {
@@ -470,6 +477,12 @@ func cloneReplyMarkupForDialogCache(in *domain.MessageReplyMarkup) *domain.Messa
 				out.Inline[i][j] = button
 				out.Inline[i][j].Data = append([]byte(nil), button.Data...)
 			}
+		}
+	}
+	if len(in.Keyboard) > 0 {
+		out.Keyboard = make([][]domain.MarkupButton, len(in.Keyboard))
+		for i, row := range in.Keyboard {
+			out.Keyboard[i] = append([]domain.MarkupButton(nil), row...)
 		}
 	}
 	return out

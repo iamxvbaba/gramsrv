@@ -2,12 +2,14 @@ package botapi
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 func apiInt(raw string, fallback int) int {
@@ -33,33 +35,42 @@ func botAPIMessageEntities(raw string) ([]domain.MessageEntity, error) {
 	return messageEntitiesFromAPI(payload)
 }
 
-func allowedUpdates(raw string) map[string]struct{} {
+func parseAllowedUpdates(raw string) ([]domain.BotAPIUpdateKind, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil
+		return nil, errors.New("ALLOWED_UPDATES_INVALID")
 	}
 	var items []string
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return nil
+		return nil, errors.New("ALLOWED_UPDATES_INVALID")
 	}
-	out := make(map[string]struct{}, len(items))
+	if len(items) > 100 {
+		return nil, errors.New("ALLOWED_UPDATES_INVALID")
+	}
+	seen := make(map[domain.BotAPIUpdateKind]struct{}, len(items))
+	out := make([]domain.BotAPIUpdateKind, 0, len(items))
 	for _, item := range items {
 		item = strings.TrimSpace(item)
-		if item != "" {
-			out[item] = struct{}{}
+		if item == "" || len(item) > 64 {
+			return nil, errors.New("ALLOWED_UPDATES_INVALID")
+		}
+		kind := domain.BotAPIUpdateKind(item)
+		if _, ok := seen[kind]; !ok {
+			seen[kind] = struct{}{}
+			out = append(out, kind)
 		}
 	}
-	return out
+	return out, nil
 }
 
-func apiUpdates(events []domain.UpdateEvent, allowed map[string]struct{}, limit int) []map[string]any {
+func apiUpdates(events []domain.UpdateEvent, limit int) []map[string]any {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
 	out := make([]map[string]any, 0, min(len(events), limit))
 	for _, event := range events {
-		item, kind, ok := apiUpdate(event)
-		if !ok || !updateAllowed(kind, allowed) {
+		item, _, ok := apiUpdate(event)
+		if !ok {
 			continue
 		}
 		out = append(out, item)
@@ -73,14 +84,6 @@ func apiUpdates(events []domain.UpdateEvent, allowed map[string]struct{}, limit 
 	return out
 }
 
-func updateAllowed(kind string, allowed map[string]struct{}) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	_, ok := allowed[kind]
-	return ok
-}
-
 func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 	if event.Pts <= 0 {
 		return nil, "", false
@@ -92,7 +95,7 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 		}
 		return map[string]any{
 			"update_id": event.Pts,
-			"message":   apiMessage(event.Message, event.Users),
+			"message":   apiMessage(event.Message, event.Users, event.Channels),
 		}, "message", true
 	case domain.UpdateEventEditMessage:
 		if !apiMessageProjectable(event.Message) {
@@ -100,18 +103,90 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 		}
 		return map[string]any{
 			"update_id":      event.Pts,
-			"edited_message": apiMessage(event.Message, event.Users),
+			"edited_message": apiMessage(event.Message, event.Users, event.Channels),
 		}, "edited_message", true
+	case domain.UpdateEventBotCallbackQuery:
+		callback := event.BotCallbackQuery
+		if callback == nil || callback.ID == 0 || callback.UserID == 0 {
+			return nil, "", false
+		}
+		var from domain.User
+		for _, user := range event.Users {
+			if user.ID == callback.UserID {
+				from = user
+				break
+			}
+		}
+		if from.ID == 0 {
+			from = domain.User{ID: callback.UserID}
+		}
+		query := map[string]any{
+			"id":            strconv.FormatInt(callback.ID, 10),
+			"from":          apiUser(from),
+			"chat_instance": strconv.FormatInt(callback.ChatInstance, 10),
+			"data":          string(callback.Data),
+		}
+		if callback.InlineMessage != nil {
+			inlineMessageID, ok := encodeBotAPIInlineMessageID(*callback.InlineMessage)
+			if !ok || callback.MessageID != 0 || callback.Peer != (domain.Peer{}) {
+				return nil, "", false
+			}
+			query["inline_message_id"] = inlineMessageID
+		} else {
+			if callback.MessageID <= 0 || event.Message.ID != callback.MessageID {
+				return nil, "", false
+			}
+			query["message"] = apiMessage(event.Message, event.Users, event.Channels)
+		}
+		return map[string]any{
+			"update_id":      event.Pts,
+			"callback_query": query,
+		}, "callback_query", true
 	default:
 		return nil, "", false
 	}
+}
+
+const botAPIInlineMessageIDVersion byte = 1
+
+// encodeBotAPIInlineMessageID exposes the signed MTProto inline-message identity as an
+// opaque, fixed-size Bot API token. AccessHash remains the authorization boundary; the
+// version byte lets us reject rather than reinterpret future shapes.
+func encodeBotAPIInlineMessageID(id domain.BotInlineMessageID) (string, bool) {
+	if id.DCID <= 0 || id.OwnerID == 0 || id.ID <= 0 || id.AccessHash == 0 {
+		return "", false
+	}
+	buf := make([]byte, 1+4+8+4+8)
+	buf[0] = botAPIInlineMessageIDVersion
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(id.DCID))
+	binary.LittleEndian.PutUint64(buf[5:13], uint64(id.OwnerID))
+	binary.LittleEndian.PutUint32(buf[13:17], uint32(id.ID))
+	binary.LittleEndian.PutUint64(buf[17:25], uint64(id.AccessHash))
+	return base64.RawURLEncoding.EncodeToString(buf), true
+}
+
+func decodeBotAPIInlineMessageID(raw string) (domain.BotInlineMessageID, error) {
+	buf, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil || len(buf) != 25 || buf[0] != botAPIInlineMessageIDVersion {
+		return domain.BotInlineMessageID{}, errors.New("INLINE_MESSAGE_ID_INVALID")
+	}
+	id := domain.BotInlineMessageID{
+		DCID:       int(binary.LittleEndian.Uint32(buf[1:5])),
+		OwnerID:    int64(binary.LittleEndian.Uint64(buf[5:13])),
+		ID:         int(binary.LittleEndian.Uint32(buf[13:17])),
+		AccessHash: int64(binary.LittleEndian.Uint64(buf[17:25])),
+	}
+	if id.DCID <= 0 || id.OwnerID == 0 || id.ID <= 0 || id.AccessHash == 0 {
+		return domain.BotInlineMessageID{}, errors.New("INLINE_MESSAGE_ID_INVALID")
+	}
+	return id, nil
 }
 
 func apiMessageProjectable(msg domain.Message) bool {
 	if msg.Out || msg.ID <= 0 {
 		return false
 	}
-	return msg.Body != "" || len(apiMessageMedia(msg.Media)) > 0
+	return msg.Body != "" || len(apiMessageMedia(msg.Media, nil, nil)) > 0
 }
 
 func apiUser(u domain.User) map[string]any {
@@ -133,10 +208,16 @@ func apiUser(u domain.User) map[string]any {
 	return out
 }
 
-func apiMessage(msg domain.Message, users []domain.User) map[string]any {
+func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domain.Channel) map[string]any {
 	userByID := map[int64]domain.User{}
 	for _, u := range users {
 		userByID[u.ID] = u
+	}
+	channelByID := map[int64]domain.Channel{}
+	if len(channelLists) > 0 {
+		for _, channel := range channelLists[0] {
+			channelByID[channel.ID] = channel
+		}
 	}
 	out := map[string]any{
 		"message_id": msg.ID,
@@ -153,17 +234,25 @@ func apiMessage(msg domain.Message, users []domain.User) map[string]any {
 		}
 		out["from"] = apiUser(from)
 	}
-	media := apiMessageMedia(msg.Media)
+	media := apiMessageMedia(msg.Media, userByID, channelByID)
 	if msg.Body != "" {
-		if len(media) > 0 {
+		if _, photo := media["photo"]; photo {
 			out["caption"] = msg.Body
+		} else if _, document := media["document"]; document {
+			out["caption"] = msg.Body
+		} else if poll, ok := media["poll"].(map[string]any); ok {
+			poll["description"] = msg.Body
 		} else {
 			out["text"] = msg.Body
 		}
 	}
 	if entities := apiMessageEntities(msg.Entities, userByID); len(entities) > 0 {
-		if len(media) > 0 {
+		if _, photo := media["photo"]; photo {
 			out["caption_entities"] = entities
+		} else if _, document := media["document"]; document {
+			out["caption_entities"] = entities
+		} else if poll, ok := media["poll"].(map[string]any); ok && msg.Body != "" {
+			poll["description_entities"] = entities
 		} else {
 			out["entities"] = entities
 		}
@@ -309,6 +398,11 @@ func apiReplyMarkup(markup *domain.MessageReplyMarkup) map[string]any {
 	if markup.IsZero() {
 		return nil
 	}
+	// Bot API Message.reply_markup is InlineKeyboardMarkup only. ReplyKeyboardMarkup,
+	// ReplyKeyboardRemove and ForceReply are send parameters, not message response fields.
+	if markup.Kind() != domain.MessageReplyMarkupInline {
+		return nil
+	}
 	rows := make([][]map[string]any, 0, len(markup.Inline))
 	for _, row := range markup.Inline {
 		if len(row) == 0 {
@@ -317,11 +411,43 @@ func apiReplyMarkup(markup *domain.MessageReplyMarkup) map[string]any {
 		apiRow := make([]map[string]any, 0, len(row))
 		for _, button := range row {
 			item := map[string]any{"text": button.Text}
+			if button.Style != "" {
+				item["style"] = string(button.Style)
+			}
+			if button.IconCustomEmojiID > 0 {
+				item["icon_custom_emoji_id"] = strconv.FormatInt(button.IconCustomEmojiID, 10)
+			}
 			switch button.Type {
 			case domain.MarkupButtonURL:
 				item["url"] = button.URL
 			case domain.MarkupButtonCallback:
 				item["callback_data"] = string(button.Data)
+			case domain.MarkupButtonWebView:
+				item["web_app"] = map[string]any{"url": button.URL}
+			case domain.MarkupButtonSwitchInline:
+				switch {
+				case button.SamePeer:
+					item["switch_inline_query_current_chat"] = button.Query
+				case len(button.PeerTypes) > 0:
+					chosen := map[string]any{"query": button.Query}
+					for _, peerType := range button.PeerTypes {
+						switch peerType {
+						case store.InlineQueryPeerTypePM:
+							chosen["allow_user_chats"] = true
+						case store.InlineQueryPeerTypeBotPM:
+							chosen["allow_bot_chats"] = true
+						case store.InlineQueryPeerTypeChat, store.InlineQueryPeerTypeMegagroup:
+							chosen["allow_group_chats"] = true
+						case store.InlineQueryPeerTypeBroadcast:
+							chosen["allow_channel_chats"] = true
+						}
+					}
+					item["switch_inline_query_chosen_chat"] = chosen
+				default:
+					item["switch_inline_query"] = button.Query
+				}
+			case domain.MarkupButtonCopy:
+				item["copy_text"] = map[string]any{"text": button.CopyText}
 			default:
 				continue
 			}
@@ -337,7 +463,7 @@ func apiReplyMarkup(markup *domain.MessageReplyMarkup) map[string]any {
 	return map[string]any{"inline_keyboard": rows}
 }
 
-func apiMessageMedia(media *domain.MessageMedia) map[string]any {
+func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, channels map[int64]domain.Channel) map[string]any {
 	if media.IsZero() {
 		return nil
 	}
@@ -356,9 +482,262 @@ func apiMessageMedia(media *domain.MessageMedia) map[string]any {
 			return nil
 		}
 		return map[string]any{"document": apiDocument(*media.Document)}
+	case domain.MessageMediaKindContact:
+		if media.Contact == nil {
+			return nil
+		}
+		contact := map[string]any{
+			"phone_number": media.Contact.PhoneNumber,
+			"first_name":   media.Contact.FirstName,
+		}
+		if media.Contact.LastName != "" {
+			contact["last_name"] = media.Contact.LastName
+		}
+		if media.Contact.Vcard != "" {
+			contact["vcard"] = media.Contact.Vcard
+		}
+		if media.Contact.UserID != 0 {
+			contact["user_id"] = media.Contact.UserID
+		}
+		return map[string]any{"contact": contact}
+	case domain.MessageMediaKindGeo:
+		if media.Geo == nil {
+			return nil
+		}
+		return map[string]any{"location": apiLocation(*media.Geo, nil)}
+	case domain.MessageMediaKindVenue:
+		if media.Venue == nil {
+			return nil
+		}
+		return map[string]any{"venue": apiVenue(*media.Venue)}
+	case domain.MessageMediaKindGeoLive:
+		if media.GeoLive == nil {
+			return nil
+		}
+		return map[string]any{"location": apiLocation(media.GeoLive.Geo, media.GeoLive)}
+	case domain.MessageMediaKindPoll:
+		if media.Poll == nil {
+			return nil
+		}
+		return map[string]any{"poll": apiPoll(*media.Poll, users)}
+	case domain.MessageMediaKindService:
+		if media.ServiceAction == nil {
+			return nil
+		}
+		switch media.ServiceAction.Kind {
+		case domain.MessageServiceActionWebViewDataSent:
+			if media.ServiceAction.WebViewData == nil {
+				return nil
+			}
+			return map[string]any{"web_app_data": map[string]any{
+				"data": media.ServiceAction.WebViewData.Data, "button_text": media.ServiceAction.WebViewData.ButtonText,
+			}}
+		case domain.MessageServiceActionRequestedPeer:
+			return apiRequestedPeer(media.ServiceAction.RequestedPeer, users, channels)
+		default:
+			return nil
+		}
 	default:
 		return nil
 	}
+}
+
+func apiLocation(geo domain.MessageGeoPoint, live *domain.MessageGeoLive) map[string]any {
+	out := map[string]any{"latitude": geo.Lat, "longitude": geo.Long}
+	if geo.AccuracyRadius > 0 {
+		out["horizontal_accuracy"] = float64(geo.AccuracyRadius)
+	}
+	if live != nil {
+		if live.Period > 0 {
+			out["live_period"] = live.Period
+		}
+		if live.Heading > 0 {
+			out["heading"] = live.Heading
+		}
+		if live.ProximityNotificationRadius > 0 {
+			out["proximity_alert_radius"] = live.ProximityNotificationRadius
+		}
+	}
+	return out
+}
+
+func apiVenue(venue domain.MessageVenue) map[string]any {
+	out := map[string]any{
+		"location": apiLocation(venue.Geo, nil), "title": venue.Title, "address": venue.Address,
+	}
+	switch strings.ToLower(venue.Provider) {
+	case "foursquare":
+		if venue.VenueID != "" {
+			out["foursquare_id"] = venue.VenueID
+		}
+		if venue.VenueType != "" {
+			out["foursquare_type"] = venue.VenueType
+		}
+	case "gplaces", "google":
+		if venue.VenueID != "" {
+			out["google_place_id"] = venue.VenueID
+		}
+		if venue.VenueType != "" {
+			out["google_place_type"] = venue.VenueType
+		}
+	}
+	return out
+}
+
+func apiPoll(poll domain.MessagePoll, users map[int64]domain.User) map[string]any {
+	resultByOption := make(map[string]domain.MessagePollAnswerVoters)
+	totalVoters := 0
+	if poll.Results != nil {
+		totalVoters = poll.Results.TotalVoters
+		for _, result := range poll.Results.Voters {
+			resultByOption[string(result.Option)] = result
+		}
+	}
+	options := make([]map[string]any, 0, len(poll.Answers))
+	correct := make([]int, 0, len(poll.Answers))
+	for index, answer := range poll.Answers {
+		persistentID := base64.RawURLEncoding.EncodeToString(answer.Option)
+		if persistentID == "" {
+			persistentID = strconv.Itoa(index)
+		}
+		result := resultByOption[string(answer.Option)]
+		option := map[string]any{
+			"persistent_id": persistentID, "text": answer.Text, "voter_count": result.Voters,
+		}
+		if entities := apiMessageEntities(answer.Entities, users); len(entities) > 0 {
+			option["text_entities"] = entities
+		}
+		if answer.Media != nil {
+			if projected := apiPollMedia(answer.Media); len(projected) > 0 {
+				option["media"] = projected
+			}
+		}
+		if result.Correct {
+			correct = append(correct, index)
+		}
+		options = append(options, option)
+	}
+	pollType := "regular"
+	if poll.Quiz {
+		pollType = "quiz"
+	}
+	out := map[string]any{
+		"id": strconv.FormatInt(poll.ID, 10), "question": poll.Question,
+		"options": options, "total_voter_count": totalVoters, "is_closed": poll.Closed,
+		"is_anonymous": !poll.PublicVoters, "type": pollType,
+		"allows_multiple_answers": poll.MultipleChoice, "allows_revoting": !poll.RevotingDisabled,
+	}
+	if entities := apiMessageEntities(poll.QuestionEntities, users); len(entities) > 0 {
+		out["question_entities"] = entities
+	}
+	if len(correct) > 0 {
+		out["correct_option_ids"] = correct
+	}
+	if poll.Results != nil && poll.Results.Solution != "" {
+		out["explanation"] = poll.Results.Solution
+		if entities := apiMessageEntities(poll.Results.SolutionEntities, users); len(entities) > 0 {
+			out["explanation_entities"] = entities
+		}
+	}
+	if poll.ClosePeriod > 0 {
+		out["open_period"] = poll.ClosePeriod
+	}
+	if poll.CloseDate > 0 {
+		out["close_date"] = poll.CloseDate
+	}
+	if poll.AttachedMedia != nil {
+		if projected := apiPollMedia(poll.AttachedMedia); len(projected) > 0 {
+			out["media"] = projected
+		}
+	}
+	return out
+}
+
+func apiPollMedia(media *domain.MessageMedia) map[string]any {
+	if media.IsZero() {
+		return nil
+	}
+	switch media.Kind {
+	case domain.MessageMediaKindPhoto:
+		if media.Photo != nil {
+			if sizes := apiPhotoSizes(*media.Photo); len(sizes) > 0 {
+				return map[string]any{"photo": sizes}
+			}
+		}
+	case domain.MessageMediaKindDocument:
+		if media.Document != nil {
+			return map[string]any{"document": apiDocument(*media.Document)}
+		}
+	case domain.MessageMediaKindGeo:
+		if media.Geo != nil {
+			return map[string]any{"location": apiLocation(*media.Geo, nil)}
+		}
+	case domain.MessageMediaKindVenue:
+		if media.Venue != nil {
+			return map[string]any{"venue": apiVenue(*media.Venue)}
+		}
+	}
+	return nil
+}
+
+func apiRequestedPeer(action *domain.MessageRequestedPeerAction, _ map[int64]domain.User, _ map[int64]domain.Channel) map[string]any {
+	if action == nil || action.ButtonID == 0 || len(action.Peers) == 0 {
+		return nil
+	}
+	allUsers := true
+	details := make(map[domain.Peer]domain.MessageRequestedPeerDetails, len(action.Details))
+	for _, detail := range action.Details {
+		details[detail.Peer] = detail
+	}
+	for _, peer := range action.Peers {
+		if peer.ID == 0 || (peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) {
+			return nil
+		}
+		allUsers = allUsers && peer.Type == domain.PeerTypeUser
+	}
+	if allUsers {
+		shared := make([]map[string]any, 0, len(action.Peers))
+		for _, peer := range action.Peers {
+			item := map[string]any{"user_id": peer.ID}
+			detail := details[peer]
+			if action.NameRequested {
+				if detail.FirstName != "" {
+					item["first_name"] = detail.FirstName
+				}
+				if detail.LastName != "" {
+					item["last_name"] = detail.LastName
+				}
+			}
+			if action.UsernameRequested && detail.Username != "" {
+				item["username"] = detail.Username
+			}
+			if action.PhotoRequested && detail.Photo != nil {
+				if photo := apiPhotoSizes(*detail.Photo); len(photo) > 0 {
+					item["photo"] = photo
+				}
+			}
+			shared = append(shared, item)
+		}
+		return map[string]any{"users_shared": map[string]any{"request_id": action.ButtonID, "users": shared}}
+	}
+	if len(action.Peers) != 1 || action.Peers[0].Type != domain.PeerTypeChannel {
+		return nil
+	}
+	peer := action.Peers[0]
+	shared := map[string]any{"request_id": action.ButtonID, "chat_id": -1000000000000 - peer.ID}
+	detail := details[peer]
+	if action.NameRequested && detail.Title != "" {
+		shared["title"] = detail.Title
+	}
+	if action.UsernameRequested && detail.Username != "" {
+		shared["username"] = detail.Username
+	}
+	if action.PhotoRequested && detail.Photo != nil {
+		if photo := apiPhotoSizes(*detail.Photo); len(photo) > 0 {
+			shared["photo"] = photo
+		}
+	}
+	return map[string]any{"chat_shared": shared}
 }
 
 func apiPhotoSizes(photo domain.Photo) []map[string]any {

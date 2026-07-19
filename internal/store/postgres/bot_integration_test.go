@@ -183,6 +183,22 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if flagBot, _, _ := bots.GetBot(ctx, bot1.ID); !flagBot.Nochats || !flagBot.ChatHistory {
 		t.Fatalf("flags = nochats=%v chat_history=%v, want both true", flagBot.Nochats, flagBot.ChatHistory)
 	}
+	requestedButton := domain.BotRequestedWebViewButton{
+		WebAppReqID: fmt.Sprintf("pg-requested-%d", suffix), BotUserID: bot1.ID, UserID: owner.ID,
+		ButtonID: 45, Text: "Share", PeerType: "user", MaxQuantity: 2,
+		NameRequested: true, UsernameRequested: true, PhotoRequested: true,
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	t.Cleanup(func() {
+		_ = bots.DeleteRequestedWebViewButton(ctx, bot1.ID, owner.ID, requestedButton.WebAppReqID)
+	})
+	if err := bots.SaveRequestedWebViewButton(ctx, requestedButton); err != nil {
+		t.Fatalf("save requested button: %v", err)
+	}
+	storedButton, found, err := bots.GetRequestedWebViewButton(ctx, bot1.ID, owner.ID, requestedButton.WebAppReqID)
+	if err != nil || !found || !storedButton.NameRequested || !storedButton.UsernameRequested || !storedButton.PhotoRequested {
+		t.Fatalf("requested button=%#v found=%v err=%v", storedButton, found, err)
+	}
 	if can, err := bots.CanBotSendMessage(ctx, bot1.ID, owner.ID); err != nil || can {
 		t.Fatalf("CanBotSendMessage before allow = %v,%v, want false,nil", can, err)
 	}

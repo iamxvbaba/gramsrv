@@ -2,11 +2,14 @@ package rpc
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appbots "telesrv/internal/app/bots"
@@ -16,6 +19,170 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
+
+func TestBotAPICallbackQueryPrivatePollingAndAnswer(t *testing.T) {
+	fixture := newBotAPIReceiveFixture(t, false)
+	data := []byte("private-confirm")
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
+		Type: domain.MarkupButtonCallback, Text: "Confirm", Data: data,
+	}}}}
+	sent, err := fixture.messages.SendPrivateText(fixture.ctx, fixture.bot.ID, domain.SendPrivateTextRequest{
+		SenderUserID: fixture.bot.ID, RecipientUserID: fixture.owner.ID,
+		RandomID: 90001, Message: "tap private", Date: 200, ReplyMarkup: markup,
+	})
+	if err != nil {
+		t.Fatalf("SendPrivateText: %v", err)
+	}
+	if _, err := fixture.router.resolveBotCallbackQuery(
+		fixture.ctx,
+		fixture.owner.ID,
+		domain.Peer{Type: domain.PeerTypeUser, ID: fixture.bot.ID},
+		sent.RecipientMessage.ID,
+		[]byte("forged-callback-data"),
+	); !tgerr.Is(err, "DATA_INVALID") {
+		t.Fatalf("forged callback data err = %v, want DATA_INVALID", err)
+	}
+	ctx, cancel := context.WithTimeout(WithUserID(context.Background(), fixture.owner.ID), 5*time.Second)
+	defer cancel()
+	answerCh := make(chan struct {
+		answer *tg.MessagesBotCallbackAnswer
+		err    error
+	}, 1)
+	go func() {
+		req := &tg.MessagesGetBotCallbackAnswerRequest{
+			Peer:  &tg.InputPeerUser{UserID: fixture.bot.ID, AccessHash: fixture.bot.AccessHash},
+			MsgID: sent.RecipientMessage.ID,
+		}
+		req.SetData(data)
+		answer, err := fixture.router.onMessagesGetBotCallbackAnswer(ctx, req)
+		answerCh <- struct {
+			answer *tg.MessagesBotCallbackAnswer
+			err    error
+		}{answer: answer, err: err}
+	}()
+
+	event := waitForBotAPICallbackEvent(t, ctx, fixture.router, fixture.bot.ID)
+	if event.Message.ID != sent.SenderMessage.ID || event.Message.OwnerUserID != fixture.bot.ID || !event.Message.Out {
+		t.Fatalf("callback message = %+v, want bot-side box id %d", event.Message, sent.SenderMessage.ID)
+	}
+	callback := event.BotCallbackQuery
+	if callback == nil || callback.UserID != fixture.owner.ID || callback.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: fixture.owner.ID}) ||
+		callback.MessageID != sent.SenderMessage.ID || string(callback.Data) != string(data) {
+		t.Fatalf("callback = %+v", callback)
+	}
+	if ok, err := fixture.router.BotAPIAnswerCallbackQuery(ctx, fixture.bot.ID, strconv.FormatInt(callback.ID, 10), "accepted", "", false, 0); err != nil || !ok {
+		t.Fatalf("BotAPIAnswerCallbackQuery = %v, %v", ok, err)
+	}
+	select {
+	case result := <-answerCh:
+		if result.err != nil || result.answer == nil || result.answer.Message != "accepted" {
+			t.Fatalf("callback answer = %+v err=%v", result.answer, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("callback answer did not unblock requester")
+	}
+}
+
+func TestBotAPICallbackQueryRejectsExpiredOrUnknownAnswer(t *testing.T) {
+	fixture := newBotAPIReceiveFixture(t, false)
+	if ok, err := fixture.router.BotAPIAnswerCallbackQuery(fixture.ctx, fixture.bot.ID, "999", "late", "", false, 0); err == nil || ok || !strings.Contains(err.Error(), "QUERY_ID_INVALID") {
+		t.Fatalf("unknown answer = ok=%v err=%v", ok, err)
+	}
+	item := domain.BotAPIUpdate{
+		ID: 1, BotUserID: fixture.bot.ID, Kind: domain.BotAPIUpdateCallbackQuery,
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fixture.owner.ID}, MessageID: 1,
+		Date: 100,
+		Callback: &domain.BotCallbackQuery{
+			ID: 2, BotUserID: fixture.bot.ID, UserID: fixture.owner.ID,
+			Peer: domain.Peer{Type: domain.PeerTypeUser, ID: fixture.owner.ID}, MessageID: 1, ChatInstance: 3,
+		},
+	}
+	if _, ok := botAPIQueuedUpdateKind(fixture.bot.ID, item, time.Unix(100, 0).Add(botCallbackTimeout)); ok {
+		t.Fatal("callback at answer deadline remained deliverable")
+	}
+}
+
+func TestBotAPIInlineCallbackDoesNotHydrateNonexistentChatMessage(t *testing.T) {
+	now := time.Unix(200, 0)
+	inline := &domain.BotInlineMessageID{DCID: 2, OwnerID: 2001, ID: 17, AccessHash: 9988}
+	item := domain.BotAPIUpdate{
+		ID: 55, BotUserID: 1001, Kind: domain.BotAPIUpdateCallbackQuery, Date: int(now.Unix()),
+		Callback: &domain.BotCallbackQuery{
+			ID: 77, BotUserID: 1001, UserID: 2001, ChatInstance: 99,
+			Data: []byte("inline"), InlineMessage: inline,
+		},
+	}
+	event, ok := botAPIQueuedUpdateEventFromMessages(1001, item, nil, nil, now)
+	if !ok || event.Type != domain.UpdateEventBotCallbackQuery || event.Message.ID != 0 || event.Peer != (domain.Peer{}) ||
+		event.BotCallbackQuery == nil || event.BotCallbackQuery.InlineMessage == nil || *event.BotCallbackQuery.InlineMessage != *inline {
+		t.Fatalf("inline callback event=%#v ok=%v", event, ok)
+	}
+}
+
+func TestBotAPICallbackQuerySupergroupPollingAndAnswer(t *testing.T) {
+	fixture := newBotAPIReceiveFixture(t, false)
+	data := []byte("group-confirm")
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
+		Type: domain.MarkupButtonCallback, Text: "Confirm", Data: data,
+	}}}}
+	sent, err := fixture.channels.SendMessage(fixture.ctx, fixture.bot.ID, domain.SendChannelMessageRequest{
+		UserID: fixture.bot.ID, ChannelID: fixture.channel.ID, RandomID: 90002,
+		Message: "tap group", Date: 201, ReplyMarkup: markup, SkipRecipientLookup: true,
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(WithUserID(context.Background(), fixture.owner.ID), 5*time.Second)
+	defer cancel()
+	answerCh := make(chan error, 1)
+	go func() {
+		req := &tg.MessagesGetBotCallbackAnswerRequest{
+			Peer:  &tg.InputPeerChannel{ChannelID: fixture.channel.ID, AccessHash: fixture.channel.AccessHash},
+			MsgID: sent.Message.ID,
+		}
+		req.SetData(data)
+		_, err := fixture.router.onMessagesGetBotCallbackAnswer(ctx, req)
+		answerCh <- err
+	}()
+
+	event := waitForBotAPICallbackEvent(t, ctx, fixture.router, fixture.bot.ID)
+	callback := event.BotCallbackQuery
+	if callback == nil || callback.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: fixture.channel.ID}) ||
+		callback.MessageID != sent.Message.ID || event.Message.ID != sent.Message.ID || !event.Message.Out {
+		t.Fatalf("group callback event = %+v", event)
+	}
+	if _, err := fixture.router.BotAPIAnswerCallbackQuery(ctx, fixture.bot.ID, strconv.FormatInt(callback.ID, 10), "", "", false, 0); err != nil {
+		t.Fatalf("BotAPIAnswerCallbackQuery: %v", err)
+	}
+	select {
+	case err := <-answerCh:
+		if err != nil {
+			t.Fatalf("group callback answer: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("group callback answer did not unblock requester")
+	}
+}
+
+func waitForBotAPICallbackEvent(t *testing.T, ctx context.Context, router *Router, botID int64) domain.UpdateEvent {
+	t.Helper()
+	for {
+		events, err := router.BotAPIUpdates(ctx, botID, 0)
+		if err != nil {
+			t.Fatalf("BotAPIUpdates: %v", err)
+		}
+		for _, event := range events {
+			if event.Type == domain.UpdateEventBotCallbackQuery {
+				return event
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("callback query did not reach Bot API queue")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
 
 func TestBotAPISendMessageToSupergroupChatID(t *testing.T) {
 	ctx := context.Background()
@@ -49,7 +216,12 @@ func TestBotAPISendMessageToSupergroupChatID(t *testing.T) {
 	}, zaptest.NewLogger(t), clock.System)
 
 	chatID := -botAPIChannelChatIDBase - created.Channel.ID
-	msg, err := r.BotAPISendMessage(ctx, bot.ID, chatID, "hello Group1 from bot api", nil, nil, false, false, 0)
+	replyKeyboard := &domain.MessageReplyMarkup{
+		Type:     domain.MessageReplyMarkupKeyboard,
+		Keyboard: [][]domain.MarkupButton{{{Type: domain.MarkupButtonText, Text: "Help"}}},
+		Resize:   true,
+	}
+	msg, err := r.BotAPISendMessage(ctx, bot.ID, chatID, "hello Group1 from bot api", nil, replyKeyboard, false, false, 0)
 	if err != nil {
 		t.Fatalf("BotAPISendMessage: %v", err)
 	}
@@ -67,7 +239,9 @@ func TestBotAPISendMessageToSupergroupChatID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHistory: %v", err)
 	}
-	if len(history.Messages) < 1 || history.Messages[0].SenderUserID != bot.ID || history.Messages[0].Body != msg.Body {
+	if len(history.Messages) < 1 || history.Messages[0].SenderUserID != bot.ID || history.Messages[0].Body != msg.Body ||
+		history.Messages[0].ReplyMarkup == nil || history.Messages[0].ReplyMarkup.Kind() != domain.MessageReplyMarkupKeyboard ||
+		history.Messages[0].ReplyMarkup.Keyboard[0][0].Text != "Help" {
 		t.Fatalf("history messages = %+v, want bot channel message", history.Messages)
 	}
 	if pushed := sessions.pushedUserIDs(); !fanoutHasID(pushed, owner.ID) {

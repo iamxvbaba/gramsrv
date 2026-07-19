@@ -12,6 +12,9 @@ const (
 	UpdateEventReadChannelDiscussionOutbox UpdateEventType = "read_channel_discussion_outbox"
 	UpdateEventReadMessageContents         UpdateEventType = "read_message_contents"
 	UpdateEventEditMessage                 UpdateEventType = "edit_message"
+	// UpdateEventBotCallbackQuery 仅用于 Bot API 专用 update_id 队列投影；不写账号
+	// pts/difference/outbox。
+	UpdateEventBotCallbackQuery UpdateEventType = "bot_callback_query"
 	// UpdateEventWebPage 映射 updateWebPage：异步解析完成后把消息里的 pending 链接预览
 	// 占位就地替换为已解析卡片。携带账号 pts（非 LacksWirePts），消息快照经 box JOIN 重建，
 	// 故 difference/dispatch 与 edit_message 同走通用消息事件路径，仅 tg 投影构造器不同。
@@ -110,6 +113,7 @@ type UpdateEvent struct {
 	QuickReplies      []QuickReply
 	QuickReply        QuickReply
 	QuickReplyMessage QuickReplyMessage
+	BotCallbackQuery  *BotCallbackQuery
 }
 
 // LacksWirePts 表示该事件占用了账号 pts，但它对应的 TL update 构造器没有

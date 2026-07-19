@@ -51,6 +51,27 @@ func (s *MessageStore) GetByIDs(ctx context.Context, userID int64, ids []int) (d
 	return out, nil
 }
 
+// GetByUID resolves one owner's box row by the indexed shared private_message_id.
+func (s *MessageStore) GetByUID(ctx context.Context, userID, uid int64) (domain.Message, bool, error) {
+	if userID == 0 || uid == 0 {
+		return domain.Message{}, false, nil
+	}
+	row, err := s.q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
+		OwnerUserID:      userID,
+		PrivateMessageID: uid,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Message{}, false, nil
+	}
+	if err != nil {
+		return domain.Message{}, false, fmt.Errorf("get message by uid: %w", err)
+	}
+	if _, err := decodeReplyMarkup(row.ReplyMarkupJson); err != nil {
+		return domain.Message{}, false, fmt.Errorf("get message by uid reply markup: %w", err)
+	}
+	return messageFromGetBoxRow(row), true, nil
+}
+
 func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	limit := filter.Limit
 	if limit <= 0 {

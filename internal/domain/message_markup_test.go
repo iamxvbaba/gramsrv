@@ -26,7 +26,20 @@ func TestValidateReplyMarkup(t *testing.T) {
 		{"url http bad", &MessageReplyMarkup{Inline: [][]MarkupButton{{{Type: MarkupButtonURL, Text: "go", URL: "http://example.com"}}}}, ErrButtonURLInvalid},
 		{"url javascript bad", &MessageReplyMarkup{Inline: [][]MarkupButton{{{Type: MarkupButtonURL, Text: "go", URL: "javascript:alert(1)"}}}}, ErrButtonURLInvalid},
 		{"url empty bad", &MessageReplyMarkup{Inline: [][]MarkupButton{{{Type: MarkupButtonURL, Text: "go", URL: ""}}}}, ErrButtonURLInvalid},
-		{"unknown type bad", &MessageReplyMarkup{Inline: [][]MarkupButton{{{Type: "webview", Text: "x"}}}}, ErrButtonTypeInvalid},
+		{"unknown type bad", &MessageReplyMarkup{Inline: [][]MarkupButton{{{Type: "rainbow", Text: "x"}}}}, ErrButtonTypeInvalid},
+		{"reply keyboard ok", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Help"}}}, Resize: true, Persistent: true, Placeholder: "Choose"}, nil},
+		{"reply keyboard semantic style ok", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Delete", Style: MarkupButtonStyleDanger, IconCustomEmojiID: 123}}}}, nil},
+		{"inline semantic style ok", &MessageReplyMarkup{Type: MessageReplyMarkupInline, Inline: [][]MarkupButton{{{Type: MarkupButtonCallback, Text: "Confirm", Data: []byte("yes"), Style: MarkupButtonStyleSuccess}}}}, nil},
+		{"unknown semantic style bad", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Odd", Style: "rainbow"}}}}, ErrButtonInvalid},
+		{"negative custom emoji bad", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Odd", IconCustomEmojiID: -1}}}}, ErrButtonInvalid},
+		{"reply keyboard callback bad", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{cb("wrong", []byte("d"))}}}, ErrButtonTypeInvalid},
+		{"reply keyboard empty bad", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard}, ErrButtonInvalid},
+		{"reply keyboard placeholder too long", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Help"}}}, Placeholder: strings.Repeat("p", MaxReplyKeyboardPlaceholderLen+1)}, ErrButtonInvalid},
+		{"reply keyboard text too long", &MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: strings.Repeat("x", MaxReplyKeyboardButtonTextLen+1)}}}}, ErrButtonInvalid},
+		{"hide keyboard ok", &MessageReplyMarkup{Type: MessageReplyMarkupHide, Selective: true}, nil},
+		{"force reply ok", &MessageReplyMarkup{Type: MessageReplyMarkupForceReply, SingleUse: true, Placeholder: "Answer"}, nil},
+		{"missing keyboard constructor", &MessageReplyMarkup{Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Help"}}}}, ErrButtonInvalid},
+		{"inline constructor with keyboard payload", &MessageReplyMarkup{Type: MessageReplyMarkupInline, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "Help"}}}}, ErrButtonInvalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -73,5 +86,11 @@ func TestMessageReplyMarkupIsZero(t *testing.T) {
 	}
 	if (&MessageReplyMarkup{Inline: [][]MarkupButton{{cb("x", nil)}}}).IsZero() {
 		t.Fatal("markup with a button must not be zero")
+	}
+	if (&MessageReplyMarkup{Type: MessageReplyMarkupKeyboard, Keyboard: [][]MarkupButton{{{Type: MarkupButtonText, Text: "x"}}}}).IsZero() {
+		t.Fatal("reply keyboard with a button must not be zero")
+	}
+	if (&MessageReplyMarkup{Type: MessageReplyMarkupHide}).IsZero() {
+		t.Fatal("hide keyboard constructor must not be zero")
 	}
 }

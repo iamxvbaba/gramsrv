@@ -2,11 +2,16 @@ package rpc
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"telesrv/internal/domain"
 )
 
-const botAPIGetUpdatesLimit = 100
+const (
+	botAPIGetUpdatesLimit   = 100
+	botAPIMaxNegativeOffset = 10000
+)
 
 type botAPIChannelBotMemberProvider interface {
 	ActiveBotMemberIDs(ctx context.Context, viewerUserID, channelID int64, limit int) ([]int64, error)
@@ -17,24 +22,43 @@ func (r *Router) botAPIQueuedUpdates(ctx context.Context, botID int64, offset in
 		return nil, nil
 	}
 	fromID := int64(1)
-	if offset > 0 {
+	var items []domain.BotAPIUpdate
+	if offset < 0 {
+		if offset < -botAPIMaxNegativeOffset {
+			return nil, errors.New("OFFSET_INVALID")
+		}
+		var err error
+		items, err = r.deps.BotAPIUpdates.ListTailBotAPIUpdates(ctx, botID, int(-offset), botAPIGetUpdatesLimit)
+		if err != nil {
+			return nil, err
+		}
+		if len(items) > 0 && items[0].ID > 1 {
+			if err := r.deps.BotAPIUpdates.ConfirmBotAPIUpdates(ctx, botID, items[0].ID-1); err != nil {
+				return nil, err
+			}
+		}
+	} else if offset > 0 {
 		if err := r.deps.BotAPIUpdates.ConfirmBotAPIUpdates(ctx, botID, offset-1); err != nil {
 			return nil, err
 		}
-		fromID = offset
-	} else if confirmed, found, err := r.deps.BotAPIUpdates.ConfirmedBotAPIUpdateID(ctx, botID); err != nil {
-		return nil, err
-	} else if found {
-		fromID = confirmed + 1
 	}
-	items, err := r.deps.BotAPIUpdates.ListBotAPIUpdates(ctx, botID, fromID, botAPIGetUpdatesLimit)
-	if err != nil {
-		return nil, err
+	if offset >= 0 {
+		confirmed, found, err := r.deps.BotAPIUpdates.ConfirmedBotAPIUpdateID(ctx, botID)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			fromID = confirmed + 1
+		}
+		items, err = r.deps.BotAPIUpdates.ListBotAPIUpdates(ctx, botID, fromID, botAPIGetUpdatesLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(items) == 0 {
 		return nil, nil
 	}
-	events, leadingSkipped := r.botAPIQueuedUpdateEvents(ctx, botID, items)
+	events, leadingSkipped := r.botAPIQueuedUpdateEvents(ctx, botID, items, r.clock.Now())
 	if leadingSkipped > 0 {
 		if err := r.deps.BotAPIUpdates.ConfirmBotAPIUpdates(ctx, botID, leadingSkipped); err != nil {
 			return nil, err
@@ -46,13 +70,16 @@ func (r *Router) botAPIQueuedUpdates(ctx context.Context, botID int64, offset in
 	return r.enrichUpdateEvents(ctx, botID, events), nil
 }
 
-func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, items []domain.BotAPIUpdate) ([]domain.UpdateEvent, int64) {
+func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, items []domain.BotAPIUpdate, now time.Time) ([]domain.UpdateEvent, int64) {
 	privateIDs := make([]int, 0)
 	privateSeen := make(map[int]struct{})
 	channelIDs := make(map[int64][]int)
 	channelSeen := make(map[int64]map[int]struct{})
 	for _, item := range items {
-		if _, ok := botAPIQueuedUpdateKind(botID, item); !ok {
+		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
+			continue
+		}
+		if item.Callback != nil && item.Callback.InlineMessage != nil {
 			continue
 		}
 		switch item.Peer.Type {
@@ -79,7 +106,7 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 	events := make([]domain.UpdateEvent, 0, len(items))
 	leadingSkipped := int64(0)
 	for _, item := range items {
-		event, ok := botAPIQueuedUpdateEventFromMessages(botID, item, privateMessages, channelMessages)
+		event, ok := botAPIQueuedUpdateEventFromMessages(botID, item, privateMessages, channelMessages, now)
 		if !ok {
 			if len(events) == 0 {
 				leadingSkipped = item.ID
@@ -101,7 +128,7 @@ func (r *Router) botAPIQueuedPrivateMessages(ctx context.Context, botID int64, i
 	}
 	out := make(map[int]domain.Message, len(list.Messages))
 	for _, msg := range list.Messages {
-		if msg.ID <= 0 || msg.Out || !botAPIMessageProjectable(msg) {
+		if msg.ID <= 0 || msg.OwnerUserID != botID {
 			continue
 		}
 		out[msg.ID] = msg
@@ -127,10 +154,6 @@ func (r *Router) botAPIQueuedChannelMessages(ctx context.Context, botID int64, i
 			if msg.ID <= 0 || msg.Deleted || msg.Action != nil {
 				continue
 			}
-			projected := botAPIMessageFromChannel(botID, msg)
-			if projected.Out || !botAPIMessageProjectable(projected) {
-				continue
-			}
 			byID[msg.ID] = msg
 		}
 		if len(byID) > 0 {
@@ -140,12 +163,35 @@ func (r *Router) botAPIQueuedChannelMessages(ctx context.Context, botID int64, i
 	return out
 }
 
-func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate) (domain.UpdateEventType, bool) {
-	if item.ID <= 0 || item.BotUserID != botID || item.MessageID <= 0 {
+func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time) (domain.UpdateEventType, bool) {
+	if item.ID <= 0 || item.BotUserID != botID {
 		return "", false
 	}
 	eventType, ok := botAPIUpdateEventType(item.Kind)
 	if !ok {
+		return "", false
+	}
+	if item.Kind == domain.BotAPIUpdateCallbackQuery {
+		if item.Date <= 0 || !now.Before(time.Unix(int64(item.Date), 0).Add(botCallbackTimeout)) {
+			return "", false
+		}
+		cb := item.Callback
+		if cb == nil || cb.ID == 0 || cb.BotUserID != botID || cb.UserID <= 0 ||
+			cb.ChatInstance == 0 || len(cb.Data) > domain.MaxCallbackDataLen {
+			return "", false
+		}
+		if cb.InlineMessage != nil {
+			inline := cb.InlineMessage
+			if item.MessageID != 0 || item.Peer != (domain.Peer{}) || cb.MessageID != 0 || cb.Peer != (domain.Peer{}) ||
+				inline.DCID <= 0 || inline.OwnerID == 0 || inline.ID <= 0 || inline.AccessHash == 0 {
+				return "", false
+			}
+			return eventType, true
+		}
+		if item.MessageID <= 0 || cb.Peer != item.Peer || cb.MessageID != item.MessageID {
+			return "", false
+		}
+	} else if item.MessageID <= 0 {
 		return "", false
 	}
 	switch item.Peer.Type {
@@ -159,15 +205,46 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate) (domain.Updat
 	return eventType, true
 }
 
-func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, privateMessages map[int]domain.Message, channelMessages map[int64]map[int]domain.ChannelMessage) (domain.UpdateEvent, bool) {
-	eventType, ok := botAPIQueuedUpdateKind(botID, item)
+func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, privateMessages map[int]domain.Message, channelMessages map[int64]map[int]domain.ChannelMessage, now time.Time) (domain.UpdateEvent, bool) {
+	eventType, ok := botAPIQueuedUpdateKind(botID, item, now)
 	if !ok {
 		return domain.UpdateEvent{}, false
+	}
+	if eventType == domain.UpdateEventBotCallbackQuery && item.Callback.InlineMessage != nil {
+		callback := *item.Callback
+		callback.Data = append([]byte(nil), item.Callback.Data...)
+		inline := *item.Callback.InlineMessage
+		callback.InlineMessage = &inline
+		return domain.UpdateEvent{
+			UserID:           botID,
+			Type:             eventType,
+			Pts:              int(item.ID),
+			PtsCount:         1,
+			Date:             item.Date,
+			BotCallbackQuery: &callback,
+		}, true
 	}
 	switch item.Peer.Type {
 	case domain.PeerTypeUser:
 		msg, found := privateMessages[item.MessageID]
 		if !found {
+			return domain.UpdateEvent{}, false
+		}
+		if eventType == domain.UpdateEventBotCallbackQuery {
+			callback := *item.Callback
+			callback.Data = append([]byte(nil), item.Callback.Data...)
+			return domain.UpdateEvent{
+				UserID:           botID,
+				Type:             eventType,
+				Pts:              int(item.ID),
+				PtsCount:         1,
+				Date:             item.Date,
+				Peer:             item.Peer,
+				Message:          msg,
+				BotCallbackQuery: &callback,
+			}, true
+		}
+		if msg.Out || !botAPIMessageProjectable(msg) {
 			return domain.UpdateEvent{}, false
 		}
 		msg.Pts = int(item.ID)
@@ -186,6 +263,23 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			return domain.UpdateEvent{}, false
 		}
 		projected := botAPIMessageFromChannel(botID, msg)
+		if eventType == domain.UpdateEventBotCallbackQuery {
+			callback := *item.Callback
+			callback.Data = append([]byte(nil), item.Callback.Data...)
+			return domain.UpdateEvent{
+				UserID:           botID,
+				Type:             eventType,
+				Pts:              int(item.ID),
+				PtsCount:         1,
+				Date:             item.Date,
+				Peer:             item.Peer,
+				Message:          projected,
+				BotCallbackQuery: &callback,
+			}, true
+		}
+		if projected.Out || !botAPIMessageProjectable(projected) {
+			return domain.UpdateEvent{}, false
+		}
 		projected.Pts = int(item.ID)
 		return domain.UpdateEvent{
 			UserID:   botID,
@@ -207,6 +301,8 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 		return domain.UpdateEventNewMessage, true
 	case domain.BotAPIUpdateEditedMessage:
 		return domain.UpdateEventEditMessage, true
+	case domain.BotAPIUpdateCallbackQuery:
+		return domain.UpdateEventBotCallbackQuery, true
 	default:
 		return "", false
 	}
@@ -410,7 +506,56 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 		return media.Photo != nil
 	case domain.MessageMediaKindDocument:
 		return media.Document != nil
+	case domain.MessageMediaKindContact:
+		return media.Contact != nil
+	case domain.MessageMediaKindGeo:
+		return media.Geo != nil
+	case domain.MessageMediaKindVenue:
+		return media.Venue != nil
+	case domain.MessageMediaKindPoll:
+		return media.Poll != nil
+	case domain.MessageMediaKindGeoLive:
+		return media.GeoLive != nil
+	case domain.MessageMediaKindService:
+		if media.ServiceAction == nil {
+			return false
+		}
+		switch media.ServiceAction.Kind {
+		case domain.MessageServiceActionWebViewDataSent:
+			return media.ServiceAction.WebViewData != nil
+		case domain.MessageServiceActionRequestedPeer:
+			return botAPIRequestedPeerProjectable(media.ServiceAction.RequestedPeer)
+		default:
+			return false
+		}
 	default:
 		return false
 	}
+}
+
+func botAPIRequestedPeerProjectable(action *domain.MessageRequestedPeerAction) bool {
+	if action == nil || action.ButtonID == 0 || len(action.Peers) == 0 || len(action.Peers) > domain.MaxBotRequestedPeerQuantity {
+		return false
+	}
+	details := make(map[domain.Peer]struct{}, len(action.Details))
+	for _, detail := range action.Details {
+		if detail.Peer.ID == 0 || (detail.Peer.Type != domain.PeerTypeUser && detail.Peer.Type != domain.PeerTypeChannel) {
+			return false
+		}
+		details[detail.Peer] = struct{}{}
+	}
+	requiresDetails := action.NameRequested || action.UsernameRequested || action.PhotoRequested
+	allUsers := true
+	for _, peer := range action.Peers {
+		if peer.ID == 0 || (peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) {
+			return false
+		}
+		if requiresDetails {
+			if _, ok := details[peer]; !ok {
+				return false
+			}
+		}
+		allUsers = allUsers && peer.Type == domain.PeerTypeUser
+	}
+	return allUsers || (len(action.Peers) == 1 && action.Peers[0].Type == domain.PeerTypeChannel)
 }

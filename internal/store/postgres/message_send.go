@@ -117,7 +117,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
-	// reply_markup（bot inline keyboard）随消息一并入双盒；普通用户发送恒 nil → "{}"。
+	// reply_markup（bot reply/inline keyboard）随消息一并入双盒；普通用户发送恒 nil → "{}"。
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err

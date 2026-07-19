@@ -169,13 +169,18 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		sendErr = err
 		return nil, sendErr
 	}
-	// reply_markup（bot inline keyboard）：仅 bot 账号发送被接受+校验；非 bot 静默丢弃。
+	// reply_markup：bot 可发送 inline keyboard 与普通 reply keyboard/hide/force；
+	// 非 bot 静默丢弃。仅请求携带 markup 时查询 is_bot。
 	// 仅在请求携带 markup 时才查 is_bot，避免普通发送多打一次查询。
 	var replyMarkup *domain.MessageReplyMarkup
 	if req.ReplyMarkup != nil {
-		replyMarkup, err = domainReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
+		replyMarkup, err = domainOutgoingReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
 		if err != nil {
 			sendErr = replyMarkupErr(err)
+			return nil, sendErr
+		}
+		if err := r.validateReplyMarkupForPeer(ctx, userID, peer, replyMarkup); err != nil {
+			sendErr = err
 			return nil, sendErr
 		}
 	}

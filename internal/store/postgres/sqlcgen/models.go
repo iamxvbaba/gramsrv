@@ -294,21 +294,33 @@ type Bot struct {
 }
 
 type BotApiUpdate struct {
-	ID         int64
-	BotUserID  int64
-	UpdateKind string
-	PeerType   string
-	PeerID     int64
-	MessageID  int32
-	SourcePts  int32
-	Date       int32
-	CreatedAt  pgtype.Timestamptz
+	ID                       int64
+	BotUserID                int64
+	UpdateKind               string
+	PeerType                 string
+	PeerID                   int64
+	MessageID                int32
+	SourcePts                int32
+	Date                     int32
+	CreatedAt                pgtype.Timestamptz
+	CallbackQueryID          int64
+	CallbackUserID           int64
+	CallbackChatInstance     int64
+	CallbackData             []byte
+	CallbackInlineDcID       int32
+	CallbackInlineOwnerID    int64
+	CallbackInlineMessageID  int32
+	CallbackInlineAccessHash int64
 }
 
 type BotApiUpdateState struct {
 	BotUserID         int64
 	ConfirmedUpdateID int64
 	UpdatedAt         pgtype.Timestamptz
+	AllowedUpdates    []string
+	CursorInitialized bool
+	PollOwner         string
+	PollExpiresAt     pgtype.Timestamptz
 }
 
 type BotApp struct {

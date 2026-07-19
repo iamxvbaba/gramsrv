@@ -98,6 +98,41 @@ func (s *Service) GetPhoto(ctx context.Context, id int64) (domain.Photo, bool, e
 	return s.media.GetPhoto(ctx, id)
 }
 
+type photoBatchStore interface {
+	GetPhotos(ctx context.Context, ids []int64) ([]domain.Photo, error)
+}
+
+// GetPhotos loads immutable photo metadata in caller order without requiring
+// one storage round-trip per requested-peer response. PostgreSQL implements the
+// optional batch primitive; lightweight stores retain a bounded fallback.
+func (s *Service) GetPhotos(ctx context.Context, ids []int64) ([]domain.Photo, error) {
+	if s == nil || s.media == nil || len(ids) == 0 {
+		return nil, nil
+	}
+	if batch, ok := s.media.(photoBatchStore); ok {
+		return batch.GetPhotos(ctx, ids)
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]domain.Photo, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		photo, found, err := s.media.GetPhoto(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			out = append(out, photo)
+		}
+	}
+	return out, nil
+}
+
 // GetDocument 按 id 返回已存储文档（贴纸 / 文件）。
 func (s *Service) GetDocument(ctx context.Context, id int64) (domain.Document, bool, error) {
 	return s.media.GetDocument(ctx, id)

@@ -689,12 +689,15 @@ func domainRequestedButtonFromTG(botUserID int64, _ tg.InputUserClass, button tg
 	case *tg.InputKeyboardButtonRequestPeer:
 		out.ButtonID = b.ButtonID
 		out.Text = strings.TrimSpace(b.Text)
-		out.PeerType = requestPeerTypeName(b.PeerType)
+		out.PeerType, out.PeerFilter = domainRequestPeerFilter(b.PeerType)
 		out.MaxQuantity = b.MaxQuantity
+		out.NameRequested = b.NameRequested
+		out.UsernameRequested = b.UsernameRequested
+		out.PhotoRequested = b.PhotoRequested
 	case *tg.KeyboardButtonRequestPeer:
 		out.ButtonID = b.ButtonID
 		out.Text = strings.TrimSpace(b.Text)
-		out.PeerType = requestPeerTypeName(b.PeerType)
+		out.PeerType, out.PeerFilter = domainRequestPeerFilter(b.PeerType)
 		out.MaxQuantity = b.MaxQuantity
 	default:
 		return domain.BotRequestedWebViewButton{}, buttonDataInvalidErr()
@@ -722,7 +725,7 @@ func tgKeyboardButtonRequestPeer(button domain.BotRequestedWebViewButton) tg.Key
 	return &tg.KeyboardButtonRequestPeer{
 		Text:        button.Text,
 		ButtonID:    button.ButtonID,
-		PeerType:    tgRequestPeerType(button.PeerType),
+		PeerType:    tgRequestPeerTypeWithFilter(button.PeerType, button.PeerFilter),
 		MaxQuantity: button.MaxQuantity,
 	}
 }

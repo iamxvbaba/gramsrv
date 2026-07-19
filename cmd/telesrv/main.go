@@ -362,6 +362,7 @@ func run(logger *zap.Logger) error {
 	dispatchOutboxStore := postgres.NewDispatchOutboxStore(pool, postgres.WithLeaseTimeout(cfg.OutboxLeaseTimeout))
 	bootstrapUpdateStore := postgres.NewBootstrapUpdateJobStore(pool)
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
+	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
 	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
 	channelIDAllocator := redisstore.NewChannelIDAllocator(rdb, postgres.NewChannelIDCounterSource(pool))
 	channelMessageIDAllocator := redisstore.NewChannelMessageIDAllocator(rdb, postgres.NewChannelMessageIDCounterSource(pool))
@@ -436,7 +437,7 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("seed appearance: %w", err)
 	} else if !stats.Skipped {
 		logger.Info("外观种子导入完成",
-			zap.String("source", "orange-live"),
+			zap.String("source", "default-seed"),
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
 			zap.Int("blobs", stats.Blobs),
@@ -792,6 +793,7 @@ func run(logger *zap.Logger) error {
 		Updates:              updatesService,
 		BootstrapUpdates:     bootstrapUpdateStore,
 		BotAPIUpdates:        botAPIUpdateStore,
+		BotCallbacks:         botCallbackStore,
 		Contacts:             contactsService,
 		Dialogs:              dialogsService,
 		Chatlists:            chatlistsService,
@@ -900,6 +902,7 @@ func run(logger *zap.Logger) error {
 		}
 	}()
 	go router.RunInlineBotPushSubscriber(ctx)
+	go router.RunBotCallbackAnswerSubscriber(ctx)
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}

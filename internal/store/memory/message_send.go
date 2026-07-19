@@ -84,7 +84,7 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		NoForwards:  req.NoForwards,
 		Body:        req.Message,
 		Entities:    append([]domain.MessageEntity(nil), req.Entities...),
-		Media:       req.Media,
+		Media:       cloneRequestedPeerMedia(req.Media),
 		ViaBotID:    req.ViaBotID,
 		GroupedID:   req.GroupedID,
 		Effect:      req.Effect,
@@ -110,6 +110,7 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		recipient.Peer = domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID}
 		recipient.Out = false
 		recipient.ReplyTo = cloneMessageReply(recipientReply)
+		recipient.Media = cloneRequestedPeerMedia(sender.Media)
 		// recipient = sender 是值拷贝，共享 sender.ReplyMarkup 指针/Data 切片——深拷
 		// 让双盒各持独立快照（与 postgres 每盒独立 decode 对齐，I3/I2）。
 		recipient.ReplyMarkup = cloneReplyMarkup(sender.ReplyMarkup)

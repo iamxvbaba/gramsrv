@@ -821,6 +821,7 @@ type Deps struct {
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore
 	BotAPIUpdates        store.BotAPIUpdateStore
+	BotCallbacks         store.BotCallbackRegistryStore
 	Contacts             ContactsService
 	Dialogs              DialogsService
 	Chatlists            ChatlistsService
