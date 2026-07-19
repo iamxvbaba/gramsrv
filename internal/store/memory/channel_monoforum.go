@@ -10,12 +10,18 @@ import (
 	"telesrv/internal/store"
 )
 
+const paidMessageChannelCommissionPermille int64 = 850
+
 // SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
-// 与 postgres 行为一致:复用 channel pts/事件;只校验 monoforum 存在,不要求发件人是成员。
+// 与 postgres 行为一致:复用 channel pts/事件;订阅者无需成员记录且只能写自己的 saved_peer，
+// 母频道管理员可以回复任意订阅者。
 func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
-		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" {
+		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
+	}
+	if req.AllowPaidStars < 0 {
+		return domain.SendChannelMessageResult{}, domain.ErrStarsInvalidAmount
 	}
 	var fingerprint []byte
 	var err error
@@ -43,23 +49,81 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 	if !ok || channel.Deleted || !channel.Monoforum {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	parent, ok := s.channels[channel.LinkedMonoforumID]
+	if !ok || parent.Deleted || !parent.BroadcastMessagesAllowed || parent.LinkedMonoforumID != channel.ID {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelPrivate
+	}
+	parentMember, parentMemberOK := s.members[parent.ID][req.SenderUserID]
+	isAdmin := parentMemberOK && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember)
+	if req.SenderUserID != req.SavedPeer.ID && !isAdmin {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelAdminRequired
+	}
+	if req.ReplyTo != nil {
+		if req.ReplyTo.MessageID <= 0 || req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}) {
+			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+		found := false
+		for _, candidate := range s.messages[channel.ID] {
+			if candidate.ID == req.ReplyTo.MessageID && !candidate.Deleted && candidate.SavedPeer == req.SavedPeer {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+	}
+	var senderBalance *domain.StarsBalance
+	paidMessageStars := int64(0)
+	balanceAfter := int64(0)
+	if !isAdmin && channel.SendPaidMessagesStars > 0 {
+		if channel.SendPaidMessagesStars != parent.SendPaidMessagesStars {
+			return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
+		}
+		if req.AllowPaidStars < channel.SendPaidMessagesStars {
+			return domain.SendChannelMessageResult{}, &domain.StarsPaymentRequiredError{Stars: channel.SendPaidMessagesStars}
+		}
+		current, ok := s.starsBalances[req.SenderUserID]
+		if !ok {
+			current = domain.DefaultStarsStartingGrant
+		}
+		if current < channel.SendPaidMessagesStars {
+			return domain.SendChannelMessageResult{}, domain.ErrStarsInsufficient
+		}
+		paidMessageStars = channel.SendPaidMessagesStars
+		balanceAfter = current - paidMessageStars
+		senderBalance = &domain.StarsBalance{UserID: req.SenderUserID, Balance: balanceAfter, Granted: true}
+	}
+	from := domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID}
+	if isAdmin {
+		from = domain.Peer{Type: domain.PeerTypeChannel, ID: parent.ID}
+	}
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
 	}
 	pts := s.nextChannelPtsLocked(req.MonoforumID)
 	msgID := s.nextChannelMessageIDLocked(req.MonoforumID)
 	msg := domain.ChannelMessage{
-		ChannelID:    req.MonoforumID,
-		ID:           msgID,
-		RandomID:     req.RandomID,
-		SenderUserID: req.SenderUserID,
-		From:         domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID},
-		SavedPeer:    req.SavedPeer,
-		Date:         req.Date,
-		Body:         req.Message,
-		Entities:     append([]domain.MessageEntity(nil), req.Entities...),
-		Pts:          pts,
+		ChannelID:        req.MonoforumID,
+		ID:               msgID,
+		RandomID:         req.RandomID,
+		SenderUserID:     req.SenderUserID,
+		From:             from,
+		SavedPeer:        req.SavedPeer,
+		SuggestedPost:    req.SuggestedPost,
+		PaidMessageStars: paidMessageStars,
+		Date:             req.Date,
+		Silent:           req.Silent,
+		NoForwards:       req.NoForwards,
+		Body:             req.Message,
+		Entities:         append([]domain.MessageEntity(nil), req.Entities...),
+		Media:            req.Media,
+		ReplyTo:          req.ReplyTo,
+		Pts:              pts,
 	}
+	// Store owns the persisted snapshot; callers must not be able to mutate it through
+	// SuggestedPost/Media pointers after SendMonoforumMessage returns.
+	msg = cloneChannelMessage(msg)
 	var sendSnapshot []byte
 	if req.RandomID != 0 {
 		var snapshotErr error
@@ -78,6 +142,10 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		SenderUserID: req.SenderUserID,
 	}
 	s.messages[req.MonoforumID] = append(s.messages[req.MonoforumID], msg)
+	if paidMessageStars > 0 {
+		s.starsBalances[req.SenderUserID] = balanceAfter
+		s.channelStarsBalances[parent.ID] += paidMessageStars * paidMessageChannelCommissionPermille / 1000
+	}
 	if req.RandomID != 0 {
 		replayKey := channelMessageReplayKey{channelID: req.MonoforumID, messageID: msg.ID}
 		s.sendSnapshots[replayKey] = sendSnapshot
@@ -87,7 +155,13 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 	channel.TopMessageID = msgID
 	channel.Pts = pts
 	s.channels[req.MonoforumID] = channel
-	return domain.SendChannelMessageResult{Channel: cloneChannel(channel), Message: cloneChannelMessage(msg), Event: cloneChannelEvent(event)}, nil
+	recipients := []int64{req.SavedPeer.ID}
+	for userID, member := range s.members[parent.ID] {
+		if member.Status == domain.ChannelMemberActive && isChannelAdmin(member) {
+			recipients = append(recipients, userID)
+		}
+	}
+	return domain.SendChannelMessageResult{Channel: cloneChannel(channel), Message: cloneChannelMessage(msg), Event: cloneChannelEvent(event), Recipients: uniqueNonZero(recipients, 0), SenderStarsBalance: senderBalance}, nil
 }
 
 // findMonoforumDuplicateLocked 按 (sender, saved_peer, random_id) 查 monoforum 子会话内的重发消息。

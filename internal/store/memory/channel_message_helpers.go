@@ -34,6 +34,14 @@ func cloneChannelMessage(in domain.ChannelMessage) domain.ChannelMessage {
 	in.Discussion = cloneChannelDiscussionRef(in.Discussion)
 	in.Replies = cloneChannelMessageReplies(in.Replies)
 	in.Reactions = cloneChannelMessageReactionsPtr(in.Reactions)
+	if in.SuggestedPost != nil {
+		suggested := *in.SuggestedPost
+		if suggested.Price != nil {
+			price := *suggested.Price
+			suggested.Price = &price
+		}
+		in.SuggestedPost = &suggested
+	}
 	if in.SendAs != nil {
 		p := *in.SendAs
 		in.SendAs = &p

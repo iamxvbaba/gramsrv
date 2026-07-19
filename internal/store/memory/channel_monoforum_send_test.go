@@ -35,11 +35,14 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if m1.Message.SavedPeer != sub || m1.Message.ChannelID != monoID || m1.Message.Pts == 0 {
 		t.Fatalf("m1 = %+v, want saved_peer sub + channel mono + pts>0", m1.Message)
 	}
+	if !containsInt64(m1.Recipients, 1) || !containsInt64(m1.Recipients, 42) || len(m1.Recipients) != 2 {
+		t.Fatalf("m1 recipients = %v, want subscriber 42 + parent admin 1", m1.Recipients)
+	}
 	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 112, Message: "again", Date: 1_700_001_002}); err != nil {
 		t.Fatalf("subscriber send 2: %v", err)
 	}
 	// 管理员回复:发件人是 creator,saved_peer 仍是该订阅者(同一子会话)。
-	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 113, Message: "reply", Date: 1_700_001_003}); err != nil {
+	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 113, Message: "reply", ReplyTo: &domain.MessageReply{MessageID: m1.Message.ID, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: monoID}}, Date: 1_700_001_003}); err != nil {
 		t.Fatalf("admin reply: %v", err)
 	}
 
@@ -58,8 +61,17 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if len(mainHist.Channels) != 1 || mainHist.Channels[0].ID != broadcast.Channel.ID {
 		t.Fatalf("main monoforum extra channels = %+v, want parent %d", mainHist.Channels, broadcast.Channel.ID)
 	}
-	if _, err := store.ListChannelHistory(ctx, 42, domain.ChannelHistoryFilter{ChannelID: monoID, Limit: 10}); err == nil {
-		t.Fatalf("subscriber main monoforum history = nil err, want denied")
+	subscriberHist, err := store.ListChannelHistory(ctx, 42, domain.ChannelHistoryFilter{ChannelID: monoID, Limit: 10})
+	if err != nil {
+		t.Fatalf("subscriber monoforum history: %v", err)
+	}
+	if subscriberHist.Count != 3 || len(subscriberHist.Messages) != 3 {
+		t.Fatalf("subscriber monoforum history count=%d len=%d, want 3 own messages", subscriberHist.Count, len(subscriberHist.Messages))
+	}
+	for _, message := range subscriberHist.Messages {
+		if message.SavedPeer != sub {
+			t.Fatalf("subscriber history leaked saved_peer=%+v, want self %+v", message.SavedPeer, sub)
+		}
 	}
 
 	// 幂等:相同 randomID 返回原消息、不重复。
@@ -84,6 +96,12 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if hist.Messages[0].Body != "reply" {
 		t.Fatalf("history[0] = %q, want newest 'reply'", hist.Messages[0].Body)
 	}
+	if hist.Messages[0].ReplyTo == nil || hist.Messages[0].ReplyTo.MessageID != m1.Message.ID {
+		t.Fatalf("history[0] reply = %+v, want message %d", hist.Messages[0].ReplyTo, m1.Message.ID)
+	}
+	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 114, Message: "cross reply", ReplyTo: &domain.MessageReply{MessageID: 999999, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: monoID}}, Date: 1_700_001_004}); !errors.Is(err, domain.ErrReplyMessageIDInvalid) {
+		t.Fatalf("invalid monoforum reply err = %v, want ErrReplyMessageIDInvalid", err)
+	}
 	for _, m := range hist.Messages {
 		if m.SavedPeer != sub {
 			t.Fatalf("history msg saved_peer = %+v, want sub", m.SavedPeer)
@@ -98,6 +116,40 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	subHist, _ := store.ListMonoforumHistory(ctx, domain.MonoforumHistoryFilter{MonoforumID: monoID, SavedPeer: sub, Limit: 10})
 	if subHist.Count != 3 {
 		t.Fatalf("sub history after other subscriber = %d, want still 3 (no cross-talk)", subHist.Count)
+	}
+	subscriberChannelHistory, err := store.ListChannelHistory(ctx, 42, domain.ChannelHistoryFilter{ChannelID: monoID, Limit: 10})
+	if err != nil {
+		t.Fatalf("subscriber channel history after other subscriber: %v", err)
+	}
+	if subscriberChannelHistory.Count != 3 || len(subscriberChannelHistory.Messages) != 3 {
+		t.Fatalf("subscriber channel history after other = %d/%d, want own 3", subscriberChannelHistory.Count, len(subscriberChannelHistory.Messages))
+	}
+	for _, message := range subscriberChannelHistory.Messages {
+		if message.SavedPeer != sub {
+			t.Fatalf("subscriber channel history leaked message %+v", message)
+		}
+	}
+	diff, err := store.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{UserID: 42, ChannelID: monoID, Pts: 0, Limit: 100})
+	if err != nil {
+		t.Fatalf("subscriber channel difference: %v", err)
+	}
+	if diff.Pts != store.channels[monoID].Pts {
+		t.Fatalf("subscriber difference pts = %d, want channel pts %d despite filtered events", diff.Pts, store.channels[monoID].Pts)
+	}
+	if len(diff.NewMessages) != 3 {
+		t.Fatalf("subscriber difference messages = %d, want own 3", len(diff.NewMessages))
+	}
+	for _, message := range diff.NewMessages {
+		if message.SavedPeer != sub {
+			t.Fatalf("subscriber difference leaked message %+v", message)
+		}
+	}
+	activeChannelIDs, err := store.ListActiveChannelIDsForUser(ctx, 42, 0, 10)
+	if err != nil {
+		t.Fatalf("subscriber active channels: %v", err)
+	}
+	if !containsInt64(activeChannelIDs, monoID) {
+		t.Fatalf("subscriber active channels = %v, want monoforum %d for offline recovery", activeChannelIDs, monoID)
 	}
 
 	// 去重按订阅者子会话维度:同一发件人(此处管理员)用相同 random_id 向两个不同订阅者发,不得互相去重。
@@ -141,6 +193,13 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("delete monoforum message: %v", err)
 	}
+	deleteDiff, err := store.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{UserID: 42, ChannelID: monoID, Pts: deleteEvent.Pts - deleteEvent.PtsCount, Limit: 10})
+	if err != nil {
+		t.Fatalf("subscriber difference after own delete: %v", err)
+	}
+	if deleteDiff.Pts != deleteEvent.Pts || len(deleteDiff.OtherUpdates) != 1 || len(deleteDiff.OtherUpdates[0].MessageIDs) != 1 || deleteDiff.OtherUpdates[0].MessageIDs[0] != a.Message.ID {
+		t.Fatalf("subscriber delete difference = %+v, want own deleted id %d at pts %d", deleteDiff, a.Message.ID, deleteEvent.Pts)
+	}
 	ptsBeforeReplay, eventsBeforeReplay := store.ptsSeq[monoID], len(store.events[monoID])
 	deletedReplay, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 9001, Message: "to sub", Date: 1_700_001_014})
 	if err != nil {
@@ -151,5 +210,75 @@ func TestSendMonoforumMessageAndHistory(t *testing.T) {
 	}
 	if store.ptsSeq[monoID] != ptsBeforeReplay || len(store.events[monoID]) != eventsBeforeReplay {
 		t.Fatalf("deleted monoforum replay mutated pts/events = %d/%d, want %d/%d", store.ptsSeq[monoID], len(store.events[monoID]), ptsBeforeReplay, eventsBeforeReplay)
+	}
+}
+
+func TestSendPaidMonoforumMessageLedger(t *testing.T) {
+	ctx := context.Background()
+	store := NewChannelStore()
+	broadcast, err := store.CreateChannel(ctx, domain.CreateChannelRequest{CreatorUserID: 1, Title: "Paid DM", Broadcast: true, Date: 1_700_002_000})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	enabled, err := store.SetPaidMessagesPrice(ctx, 1, broadcast.Channel.ID, 10, true)
+	if err != nil {
+		t.Fatalf("enable paid DM: %v", err)
+	}
+	monoID := enabled.Channel.LinkedMonoforumID
+	sub := domain.Peer{Type: domain.PeerTypeUser, ID: 42}
+	baseMessages := len(store.messages[monoID])
+
+	low := domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 3001, Message: "too low", AllowPaidStars: 9, Date: 1_700_002_001}
+	var required *domain.StarsPaymentRequiredError
+	if _, err := store.SendMonoforumMessage(ctx, low); !errors.As(err, &required) || required.Stars != 10 {
+		t.Fatalf("low authorization err = %v, want 10-Star payment required", err)
+	}
+	if len(store.messages[monoID]) != baseMessages {
+		t.Fatalf("low authorization wrote a message")
+	}
+
+	store.starsBalances[42] = 25
+	paidReq := domain.SendMonoforumMessageRequest{MonoforumID: monoID, SenderUserID: 42, SavedPeer: sub, RandomID: 3002, Message: "paid", AllowPaidStars: 99, Date: 1_700_002_002}
+	paid, err := store.SendMonoforumMessage(ctx, paidReq)
+	if err != nil {
+		t.Fatalf("paid send: %v", err)
+	}
+	if paid.Message.PaidMessageStars != 10 || paid.SenderStarsBalance == nil || paid.SenderStarsBalance.Balance != 15 {
+		t.Fatalf("paid result = %+v balance=%+v, want actual 10 and balance 15", paid.Message, paid.SenderStarsBalance)
+	}
+	if store.starsBalances[42] != 15 || store.channelStarsBalances[broadcast.Channel.ID] != 8 {
+		t.Fatalf("ledger sender/channel = %d/%d, want 15/8", store.starsBalances[42], store.channelStarsBalances[broadcast.Channel.ID])
+	}
+
+	duplicate, err := store.SendMonoforumMessage(ctx, paidReq)
+	if err != nil {
+		t.Fatalf("paid replay: %v", err)
+	}
+	if !duplicate.Duplicate || duplicate.Message.ID != paid.Message.ID || duplicate.SenderStarsBalance == nil || duplicate.SenderStarsBalance.Balance != 15 {
+		t.Fatalf("paid replay = %+v, want original message and balance 15", duplicate)
+	}
+	if store.starsBalances[42] != 15 || store.channelStarsBalances[broadcast.Channel.ID] != 8 {
+		t.Fatalf("paid replay double charged: sender/channel=%d/%d", store.starsBalances[42], store.channelStarsBalances[broadcast.Channel.ID])
+	}
+
+	admin, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
+		MonoforumID: monoID, SenderUserID: 1, SavedPeer: sub, RandomID: 3003, Message: "free admin reply", AllowPaidStars: 100, Date: 1_700_002_003,
+	})
+	if err != nil {
+		t.Fatalf("admin reply: %v", err)
+	}
+	if admin.Message.PaidMessageStars != 0 || admin.SenderStarsBalance != nil || store.channelStarsBalances[broadcast.Channel.ID] != 8 {
+		t.Fatalf("admin reply charged: message=%+v balance=%+v channel=%d", admin.Message, admin.SenderStarsBalance, store.channelStarsBalances[broadcast.Channel.ID])
+	}
+
+	store.starsBalances[99] = 5
+	other := domain.Peer{Type: domain.PeerTypeUser, ID: 99}
+	if _, err := store.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
+		MonoforumID: monoID, SenderUserID: 99, SavedPeer: other, RandomID: 3004, Message: "insufficient", AllowPaidStars: 10, Date: 1_700_002_004,
+	}); !errors.Is(err, domain.ErrStarsInsufficient) {
+		t.Fatalf("insufficient err = %v, want ErrStarsInsufficient", err)
+	}
+	if store.starsBalances[99] != 5 || store.channelStarsBalances[broadcast.Channel.ID] != 8 {
+		t.Fatalf("insufficient send mutated ledger: sender/channel=%d/%d", store.starsBalances[99], store.channelStarsBalances[broadcast.Channel.ID])
 	}
 }

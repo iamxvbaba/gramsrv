@@ -109,6 +109,9 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	if !ok || channel.Deleted {
 		return domain.CreateChannelResult{}, domain.ErrChannelInvalid
 	}
+	if channel.Monoforum {
+		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
+	}
 	preJoinTopID := channel.TopMessageID
 	if existing, ok := s.members[channelID][userID]; ok {
 		if existing.Status == domain.ChannelMemberActive {
@@ -1048,6 +1051,15 @@ func syntheticMonoforumAdminMember(mono domain.Channel, parentMember domain.Chan
 	member.UnreadMark = false
 	member.SlowmodeLastSendDate = 0
 	return member
+}
+
+func syntheticMonoforumUserMember(mono domain.Channel, userID int64) domain.ChannelMember {
+	return domain.ChannelMember{
+		ChannelID: mono.ID,
+		UserID:    userID,
+		Role:      domain.ChannelRoleMember,
+		Status:    domain.ChannelMemberActive,
+	}
 }
 
 func publicChannelSearchRank(channel domain.Channel, queryLower string) (int, bool) {

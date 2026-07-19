@@ -298,12 +298,26 @@ func (s *ChannelStore) ListActiveChannelIDsForUser(ctx context.Context, userID, 
 		limit = domain.MaxSynchronousChannelDialogFanout
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT channel_id
-FROM user_channel_member_index
-WHERE user_id = $1
-  AND status = 'active'
-  AND NOT deleted
-  AND channel_id > $2
+WITH visible_channels AS (
+    SELECT channel_id
+    FROM user_channel_member_index
+    WHERE user_id = $1 AND status = 'active' AND NOT deleted
+    UNION
+    SELECT mono.id
+    FROM channels mono
+    JOIN channels parent ON parent.id = mono.linked_monoforum_id
+      AND NOT parent.deleted AND parent.broadcast_messages_allowed AND parent.linked_monoforum_id = mono.id
+    WHERE mono.monoforum AND NOT mono.deleted
+      AND (EXISTS (
+            SELECT 1 FROM channel_members admin
+            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active' AND admin.role IN ('creator', 'admin')
+          ) OR EXISTS (
+            SELECT 1 FROM channel_messages message
+            WHERE message.channel_id = mono.id AND message.saved_peer_type = 'user' AND message.saved_peer_id = $1 AND NOT message.deleted
+          ))
+)
+SELECT channel_id FROM visible_channels
+WHERE channel_id > $2
 ORDER BY channel_id
 LIMIT $3`, userID, afterChannelID, limit)
 	if err != nil {
@@ -329,16 +343,31 @@ func (s *ChannelStore) ListDirtyActiveChannelsForUser(ctx context.Context, userI
 		limit = domain.MaxChannelDifferenceLimit
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT i.channel_id, c.pts
-FROM user_channel_member_index i
-JOIN channels c ON c.id = i.channel_id AND NOT c.deleted
-JOIN channel_update_checkpoints cp ON cp.channel_id = i.channel_id
-WHERE i.user_id = $1
-  AND i.status = 'active'
-  AND NOT i.deleted
-  AND i.channel_id > $3
+WITH visible_channels AS (
+    SELECT channel_id
+    FROM user_channel_member_index
+    WHERE user_id = $1 AND status = 'active' AND NOT deleted
+    UNION
+    SELECT mono.id
+    FROM channels mono
+    JOIN channels parent ON parent.id = mono.linked_monoforum_id
+      AND NOT parent.deleted AND parent.broadcast_messages_allowed AND parent.linked_monoforum_id = mono.id
+    WHERE mono.monoforum AND NOT mono.deleted
+      AND (EXISTS (
+            SELECT 1 FROM channel_members admin
+            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active' AND admin.role IN ('creator', 'admin')
+          ) OR EXISTS (
+            SELECT 1 FROM channel_messages message
+            WHERE message.channel_id = mono.id AND message.saved_peer_type = 'user' AND message.saved_peer_id = $1 AND NOT message.deleted
+          ))
+)
+SELECT visible.channel_id, c.pts
+FROM visible_channels visible
+JOIN channels c ON c.id = visible.channel_id AND NOT c.deleted
+JOIN channel_update_checkpoints cp ON cp.channel_id = visible.channel_id
+WHERE visible.channel_id > $3
   AND cp.latest_event_date > $2
-ORDER BY i.channel_id ASC
+ORDER BY visible.channel_id ASC
 LIMIT $4`, userID, sinceDate, afterChannelID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list dirty active channels for user: %w", err)
@@ -380,6 +409,15 @@ func (s *ChannelStore) getChannelForViewer(ctx context.Context, db sqlcgen.DBTX,
 		return domain.Channel{}, domain.ChannelMember{}, false, err
 	} else if ok {
 		return ch, member, true, nil
+	}
+	if ch.Monoforum && ch.LinkedMonoforumID != 0 {
+		parent, parentErr := s.channelByID(ctx, db, ch.LinkedMonoforumID)
+		if parentErr != nil {
+			return domain.Channel{}, domain.ChannelMember{}, false, parentErr
+		}
+		if parent.BroadcastMessagesAllowed && parent.LinkedMonoforumID == ch.ID {
+			return ch, syntheticMonoforumUserMember(ch, viewerUserID), true, nil
+		}
 	}
 	if !publicPreviewableChannel(ch) {
 		return domain.Channel{}, domain.ChannelMember{}, false, domain.ErrChannelPrivate

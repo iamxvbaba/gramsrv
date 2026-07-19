@@ -375,22 +375,65 @@ func (s *Service) SweepExpiredPremium(ctx context.Context, now int64, limit int)
 	return users, nil
 }
 
-// UpdateEmojiStatus 更新当前用户 emoji status（premium 专属；documentID=0 清除）。
+// UpdateEmojiStatus 更新当前用户 emoji status（premium 专属；零值清除）。
 // 清除不要求会员（到期降级后客户端仍可显式清掉残留状态）。
-func (s *Service) UpdateEmojiStatus(ctx context.Context, userID int64, documentID int64, until int) (domain.User, error) {
-	self, err := s.loadSelf(ctx, userID)
+func (s *Service) UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
+	self, err := s.validateEmojiStatusUpdate(ctx, userID, status)
 	if err != nil {
 		return domain.User{}, err
 	}
-	if documentID != 0 && !self.PremiumActiveAt(time.Now().Unix()) {
-		return domain.User{}, domain.ErrPremiumRequired
-	}
-	u, err := s.users.UpdateEmojiStatus(ctx, self.ID, documentID, until)
+	u, err := s.users.UpdateEmojiStatus(ctx, self.ID, status)
 	if err != nil {
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
 	return u, nil
+}
+
+// UpdateEmojiStatusWithEvent uses the store's aggregate transaction when it
+// is available. The bool reports whether the returned event was durably
+// appended with dispatch; lightweight memory/test wiring falls back to the
+// ordinary state write and lets the RPC's Updates service append the event.
+func (s *Service) UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, date int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, bool, error) {
+	self, err := s.validateEmojiStatusUpdate(ctx, userID, status)
+	if err != nil {
+		return domain.User{}, domain.UpdateEvent{}, false, err
+	}
+	writer, ok := s.users.(store.UserEmojiStatusEventStore)
+	if !ok {
+		u, err := s.users.UpdateEmojiStatus(ctx, self.ID, status)
+		if err == nil {
+			s.refreshCachedUsers(ctx, u)
+		}
+		return u, domain.UpdateEvent{}, false, err
+	}
+	event := domain.UpdateEvent{
+		Type:        domain.UpdateEventUserEmojiStatus,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: self.ID},
+		EmojiStatus: status,
+		Date:        date,
+		PtsCount:    1,
+	}
+	u, event, err := writer.UpdateEmojiStatusWithEvent(ctx, self.ID, status, event, excludeAuthKeyID, excludeSessionID)
+	if err != nil {
+		return domain.User{}, domain.UpdateEvent{}, false, err
+	}
+	s.refreshCachedUsers(ctx, u)
+	return u, event, true, nil
+}
+
+func (s *Service) validateEmojiStatusUpdate(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
+	self, err := s.loadSelf(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !status.Valid() {
+		return domain.User{}, domain.ErrStarGiftCollectibleInvalid
+	}
+	if !status.Empty() && !self.PremiumActiveAt(time.Now().Unix()) {
+		return domain.User{}, domain.ErrPremiumRequired
+	}
+	return self, nil
 }
 
 // UpdateBirthday 设置/清除用户生日（account.updateBirthday）。零值 Birthday 表示清除。
@@ -513,7 +556,7 @@ func (s *Service) loadBaseUsersByIDs(ctx context.Context, userIDs []int64) ([]do
 	if s.cache != nil {
 		if cached, err := s.cache.GetByIDs(ctx, ids); err == nil && len(cached) > 0 {
 			for id, u := range cached {
-				if u.ID != 0 {
+				if u.ID != 0 && u.EmojiStatusCollectible.Empty() {
 					loaded[id] = u
 				}
 			}
@@ -561,7 +604,18 @@ func (s *Service) putCachedUsers(ctx context.Context, users ...domain.User) {
 	if s.cache == nil || len(users) == 0 {
 		return
 	}
-	_ = s.cache.PutMany(ctx, users)
+	cacheable := make([]domain.User, 0, len(users))
+	for _, user := range users {
+		// Collectible ownership may change inside the star-gift aggregate. Keep
+		// these uncommon users on the authoritative store path so the database
+		// lifecycle trigger can never be masked by a stale base-user cache entry.
+		if user.ID != 0 && user.EmojiStatusCollectible.Empty() {
+			cacheable = append(cacheable, user)
+		}
+	}
+	if len(cacheable) > 0 {
+		_ = s.cache.PutMany(ctx, cacheable)
+	}
 }
 
 func (s *Service) dropCachedUsers(ctx context.Context, userIDs ...int64) {

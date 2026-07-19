@@ -377,6 +377,20 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 	if err != nil {
 		return nil, err
 	}
+	parentIDs := make([]int64, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Monoforum && channel.LinkedMonoforumID != 0 {
+			parentIDs = append(parentIDs, channel.LinkedMonoforumID)
+		}
+	}
+	parents, err := listChannelsByIDs(ctx, s.db, parentIDs)
+	if err != nil {
+		return nil, err
+	}
+	parentsByID := make(map[int64]domain.Channel, len(parents))
+	for _, parent := range parents {
+		parentsByID[parent.ID] = parent
+	}
 	linkedGuests, err := s.listLinkedDiscussionGuests(ctx, s.db, viewerUserID, remaining)
 	if err != nil {
 		return nil, err
@@ -401,6 +415,17 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 				SelfBoostsApplied: 0,
 			}
 			continue
+		}
+		if channel.Monoforum && channel.LinkedMonoforumID != 0 {
+			if parent, ok := parentsByID[channel.LinkedMonoforumID]; ok && parent.BroadcastMessagesAllowed && parent.LinkedMonoforumID == channel.ID {
+				member := syntheticMonoforumUserMember(channel, viewerUserID)
+				views[channel.ID] = domain.ChannelView{
+					Channel: channel,
+					Self:    member,
+					Dialog:  previewChannelDialog(viewerUserID, channel, member),
+				}
+				continue
+			}
 		}
 		if !publicPreviewableChannel(channel) {
 			continue

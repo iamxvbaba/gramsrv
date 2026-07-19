@@ -298,7 +298,14 @@ type UserIdentityService interface {
 type UserPremiumService interface {
 	GrantPremium(ctx context.Context, userID int64, months int) (domain.User, error)
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)
-	UpdateEmojiStatus(ctx context.Context, userID int64, documentID int64, until int) (domain.User, error)
+	UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error)
+}
+
+// UserEmojiStatusDurableService exposes the aggregate state+event write used
+// by account.updateEmojiStatus. The bool is false for lightweight stores that
+// require the RPC Updates service to append the event separately.
+type UserEmojiStatusDurableService interface {
+	UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, date int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, bool, error)
 }
 
 // UserColorService 是 UsersService 的个人色板扩展能力。用于 account.updateColor
@@ -427,6 +434,13 @@ type UpdatesService interface {
 	RecordChannelViewForumAsMessages(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, enabled bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordChannelDiscussionInbox(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, topicID, maxID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
+}
+
+// UserEmojiStatusUpdatesService is the optional durable settings-update
+// extension used by account.updateEmojiStatus. Keeping it separate preserves
+// lightweight test/service implementations of the core UpdatesService.
+type UserEmojiStatusUpdatesService interface {
+	RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
 // ContactsService 抽象通讯录查询。
@@ -871,6 +885,7 @@ type GiftsService interface {
 	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
 	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
 	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
+	ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error)
 	Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
 	UpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
 	RecordSavedGift(ctx context.Context, gift domain.SavedStarGift) (int64, error)

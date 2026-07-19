@@ -478,6 +478,15 @@ func syntheticMonoforumAdminMember(mono domain.Channel, parentMember domain.Chan
 	return member
 }
 
+func syntheticMonoforumUserMember(mono domain.Channel, userID int64) domain.ChannelMember {
+	return domain.ChannelMember{
+		ChannelID: mono.ID,
+		UserID:    userID,
+		Role:      domain.ChannelRoleMember,
+		Status:    domain.ChannelMemberActive,
+	}
+}
+
 func zeroChannelAdminRights(rights domain.ChannelAdminRights) bool {
 	return rights == domain.ChannelAdminRights{}
 }

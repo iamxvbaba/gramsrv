@@ -219,6 +219,35 @@ func TestRecordSettingsEventsFeedGetDifference(t *testing.T) {
 	}
 }
 
+func TestRecordCollectibleEmojiStatusFeedsDifference(t *testing.T) {
+	ctx := context.Background()
+	authKeyID := [8]byte{3, 1}
+	events := memory.NewUpdateEventStore()
+	svc := NewService(memory.NewUpdateStateStore(), events)
+	ownerUserID := int64(1000000001)
+	status := domain.UserEmojiStatus{
+		DocumentID: 71,
+		Collectible: domain.EmojiStatusCollectible{
+			CollectibleID: 91, DocumentID: 71, Title: "Gift", Slug: "Gift-1",
+			PatternDocumentID: 72, CenterColor: 1, EdgeColor: 2, PatternColor: 3, TextColor: 4,
+		},
+	}
+	event, state, err := svc.RecordUserEmojiStatus(ctx, authKeyID, ownerUserID, status, authKeyID, 42)
+	if err != nil {
+		t.Fatalf("RecordUserEmojiStatus: %v", err)
+	}
+	if event.Type != domain.UpdateEventUserEmojiStatus || event.Pts != 1 || state.Pts != 1 || !event.LacksWirePts() {
+		t.Fatalf("event/state = %+v / %+v", event, state)
+	}
+	diff, err := svc.GetDifference(ctx, authKeyID, ownerUserID, domain.UpdateState{})
+	if err != nil {
+		t.Fatalf("GetDifference: %v", err)
+	}
+	if len(diff.Events) != 1 || diff.Events[0].EmojiStatus != status || diff.Events[0].Peer.ID != ownerUserID {
+		t.Fatalf("difference = %+v, want exact collectible snapshot", diff)
+	}
+}
+
 func TestRecordSettingsEventUsesDispatchAppender(t *testing.T) {
 	ctx := context.Background()
 	authKeyID := [8]byte{4}

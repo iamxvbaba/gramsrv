@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -134,27 +135,29 @@ func (s *UserStore) Search(ctx context.Context, currentUserID int64, query, phon
 		Results:   make([]domain.User, 0, len(rows)),
 	}
 	for _, row := range rows {
+		collectible := mustDecodeEmojiStatusCollectible(row.EmojiStatusCollectibleID, row.EmojiStatusCollectible)
 		u := domain.User{
-			ID:                    row.ID,
-			AccessHash:            row.AccessHash,
-			Phone:                 row.Phone,
-			FirstName:             row.FirstName,
-			LastName:              row.LastName,
-			About:                 row.About,
-			Username:              row.Username,
-			CountryCode:           row.CountryCode,
-			Verified:              row.Verified,
-			Support:               row.Support,
-			Bot:                   row.IsBot,
-			BotInfoVersion:        int(row.BotInfoVersion),
-			PremiumUntil:          premiumUntilFromModel(row.PremiumExpiresAt),
-			EmojiStatusDocumentID: row.EmojiStatusDocumentID,
-			EmojiStatusUntil:      int(row.EmojiStatusUntil),
-			Color:                 peerColorFromModel(row.ColorSet, row.Color, row.ColorBackgroundEmojiID),
-			ProfileColor:          peerColorFromModel(row.ProfileColorSet, row.ProfileColor, row.ProfileColorBackgroundEmojiID),
-			LastSeenAt:            int(row.LastSeenAt),
-			Contact:               row.Contact,
-			Mutual:                row.Mutual,
+			ID:                     row.ID,
+			AccessHash:             row.AccessHash,
+			Phone:                  row.Phone,
+			FirstName:              row.FirstName,
+			LastName:               row.LastName,
+			About:                  row.About,
+			Username:               row.Username,
+			CountryCode:            row.CountryCode,
+			Verified:               row.Verified,
+			Support:                row.Support,
+			Bot:                    row.IsBot,
+			BotInfoVersion:         int(row.BotInfoVersion),
+			PremiumUntil:           premiumUntilFromModel(row.PremiumExpiresAt),
+			EmojiStatusDocumentID:  row.EmojiStatusDocumentID,
+			EmojiStatusUntil:       int(row.EmojiStatusUntil),
+			EmojiStatusCollectible: collectible,
+			Color:                  peerColorFromModel(row.ColorSet, row.Color, row.ColorBackgroundEmojiID),
+			ProfileColor:           peerColorFromModel(row.ProfileColorSet, row.ProfileColor, row.ProfileColorBackgroundEmojiID),
+			LastSeenAt:             int(row.LastSeenAt),
+			Contact:                row.Contact,
+			Mutual:                 row.Mutual,
 		}
 		if row.Contact {
 			out.MyResults = append(out.MyResults, u)
@@ -336,20 +339,108 @@ func (s *UserStore) SweepExpiredPremium(ctx context.Context, now int64, limit in
 	return out, nil
 }
 
-// UpdateEmojiStatus 更新用户自定义 emoji status（documentID=0 表示清除）。
-func (s *UserStore) UpdateEmojiStatus(ctx context.Context, userID int64, documentID int64, until int) (domain.User, error) {
-	row, err := s.q.UpdateUserEmojiStatus(ctx, sqlcgen.UpdateUserEmojiStatusParams{
-		ID:                    userID,
-		EmojiStatusDocumentID: documentID,
-		EmojiStatusUntil:      int64(until),
-	})
+// UpdateEmojiStatus atomically replaces the complete emoji-status snapshot.
+func (s *UserStore) UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
+	collectibleJSON, collectibleID, err := encodeEmojiStatusCollectible(status)
+	if err != nil {
+		return domain.User{}, err
+	}
+	params := sqlcgen.UpdateUserEmojiStatusParams{
+		ID:                       userID,
+		EmojiStatusDocumentID:    status.DocumentID,
+		EmojiStatusUntil:         int64(status.Until),
+		EmojiStatusCollectibleID: collectibleID,
+		EmojiStatusCollectible:   collectibleJSON,
+	}
+	var row sqlcgen.User
+	if status.Collectible.Empty() {
+		row, err = updateEmojiStatusRow(ctx, s.db, s.q, userID, status, params)
+	} else {
+		// Serialize selection against transfer/export/burn. RPC-level ownership
+		// checks are advisory; this lock is the write-boundary invariant that
+		// prevents a concurrent lifecycle commit from leaving a non-owned gift
+		// installed after its invalidation trigger already ran.
+		err = withTx(ctx, s.db, "update collectible emoji status", func(tx pgx.Tx) error {
+			row, err = updateEmojiStatusRow(ctx, tx, sqlcgen.New(tx), userID, status, params)
+			return err
+		})
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.User{}, domain.ErrUserNotFound
 		}
+		if errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+			return domain.User{}, err
+		}
 		return domain.User{}, fmt.Errorf("update user emoji status: %w", err)
 	}
 	return userFromModel(row), nil
+}
+
+// UpdateEmojiStatusWithEvent commits the user snapshot, allocated pts event
+// and dispatch outbox row as one aggregate transaction. This is the production
+// boundary used by account.updateEmojiStatus; no success can expose a users
+// row whose change is absent from updates.getDifference.
+func (s *UserStore) UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, error) {
+	collectibleJSON, collectibleID, err := encodeEmojiStatusCollectible(status)
+	if err != nil {
+		return domain.User{}, domain.UpdateEvent{}, err
+	}
+	if event.Type != domain.UpdateEventUserEmojiStatus || event.EmojiStatus != status ||
+		event.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+		return domain.User{}, domain.UpdateEvent{}, domain.ErrStarGiftCollectibleInvalid
+	}
+	params := sqlcgen.UpdateUserEmojiStatusParams{
+		ID:                       userID,
+		EmojiStatusDocumentID:    status.DocumentID,
+		EmojiStatusUntil:         int64(status.Until),
+		EmojiStatusCollectibleID: collectibleID,
+		EmojiStatusCollectible:   collectibleJSON,
+	}
+	var row sqlcgen.User
+	err = withTx(ctx, s.db, "update emoji status with event", func(tx pgx.Tx) error {
+		row, err = updateEmojiStatusRow(ctx, tx, sqlcgen.New(tx), userID, status, params)
+		if err != nil {
+			return err
+		}
+		event, err = NewUpdateEventStore(tx).AppendAllocatedWithDispatch(
+			ctx, userID, event, excludeAuthKeyID, excludeSessionID,
+		)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.UpdateEvent{}, domain.ErrUserNotFound
+		}
+		if errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+			return domain.User{}, domain.UpdateEvent{}, err
+		}
+		return domain.User{}, domain.UpdateEvent{}, fmt.Errorf("update user emoji status with event: %w", err)
+	}
+	return userFromModel(row), event, nil
+}
+
+func updateEmojiStatusRow(ctx context.Context, db sqlcgen.DBTX, q *sqlcgen.Queries, userID int64, status domain.UserEmojiStatus, params sqlcgen.UpdateUserEmojiStatusParams) (sqlcgen.User, error) {
+	if !status.Collectible.Empty() {
+		var lockedID int64
+		if err := db.QueryRow(ctx, `
+SELECT id FROM unique_star_gifts WHERE id=$1 FOR UPDATE`, status.Collectible.CollectibleID).Scan(&lockedID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return sqlcgen.User{}, domain.ErrStarGiftCollectibleInvalid
+			}
+			return sqlcgen.User{}, err
+		}
+		gift, found, err := NewStarGiftStore(db).UniqueByID(ctx, lockedID)
+		if err != nil {
+			return sqlcgen.User{}, err
+		}
+		expected, valid := domain.CollectibleEmojiStatus(gift)
+		if !found || !valid || gift.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) ||
+			gift.Burned || gift.OwnerAddress != "" || expected != status.Collectible {
+			return sqlcgen.User{}, domain.ErrStarGiftCollectibleInvalid
+		}
+	}
+	return q.UpdateUserEmojiStatus(ctx, params)
 }
 
 // UpdateBirthday 更新用户生日（零值 Birthday 表示清除）。
@@ -444,38 +535,72 @@ func escapeLike(s string) string {
 }
 
 func userFromModel(r sqlcgen.User) domain.User {
+	collectible := mustDecodeEmojiStatusCollectible(r.EmojiStatusCollectibleID, r.EmojiStatusCollectible)
 	u := domain.User{
-		ID:                    r.ID,
-		AccessHash:            r.AccessHash,
-		Phone:                 r.Phone,
-		FirstName:             r.FirstName,
-		LastName:              r.LastName,
-		About:                 r.About,
-		Username:              r.Username,
-		CountryCode:           r.CountryCode,
-		Verified:              r.Verified,
-		Support:               r.Support,
-		Bot:                   r.IsBot,
-		BotInfoVersion:        int(r.BotInfoVersion),
-		PremiumUntil:          premiumUntilFromModel(r.PremiumExpiresAt),
-		EmojiStatusDocumentID: r.EmojiStatusDocumentID,
-		EmojiStatusUntil:      int(r.EmojiStatusUntil),
-		Birthday:              domain.Birthday{Day: int(r.BirthdayDay), Month: int(r.BirthdayMonth), Year: int(r.BirthdayYear)},
-		PersonalChannelID:     r.PersonalChannelID,
-		Color:                 peerColorFromModel(r.ColorSet, r.Color, r.ColorBackgroundEmojiID),
-		ProfileColor:          peerColorFromModel(r.ProfileColorSet, r.ProfileColor, r.ProfileColorBackgroundEmojiID),
-		LastSeenAt:            int(r.LastSeenAt),
-		Deleted:               r.DeletedAt.Valid,
-		DeletionSource:        domain.AccountDeletionSource(r.DeletionSource),
-		DeletionReason:        r.DeletionReason,
-		CreatedAt:             r.CreatedAt.Time,
-		AccountDeleteAt:       r.AccountDeleteAt.Time,
+		ID:                     r.ID,
+		AccessHash:             r.AccessHash,
+		Phone:                  r.Phone,
+		FirstName:              r.FirstName,
+		LastName:               r.LastName,
+		About:                  r.About,
+		Username:               r.Username,
+		CountryCode:            r.CountryCode,
+		Verified:               r.Verified,
+		Support:                r.Support,
+		Bot:                    r.IsBot,
+		BotInfoVersion:         int(r.BotInfoVersion),
+		PremiumUntil:           premiumUntilFromModel(r.PremiumExpiresAt),
+		EmojiStatusDocumentID:  r.EmojiStatusDocumentID,
+		EmojiStatusUntil:       int(r.EmojiStatusUntil),
+		EmojiStatusCollectible: collectible,
+		Birthday:               domain.Birthday{Day: int(r.BirthdayDay), Month: int(r.BirthdayMonth), Year: int(r.BirthdayYear)},
+		PersonalChannelID:      r.PersonalChannelID,
+		Color:                  peerColorFromModel(r.ColorSet, r.Color, r.ColorBackgroundEmojiID),
+		ProfileColor:           peerColorFromModel(r.ProfileColorSet, r.ProfileColor, r.ProfileColorBackgroundEmojiID),
+		LastSeenAt:             int(r.LastSeenAt),
+		Deleted:                r.DeletedAt.Valid,
+		DeletionSource:         domain.AccountDeletionSource(r.DeletionSource),
+		DeletionReason:         r.DeletionReason,
+		CreatedAt:              r.CreatedAt.Time,
+		AccountDeleteAt:        r.AccountDeleteAt.Time,
 	}
 	if r.DeletedAt.Valid {
 		u.DeletedAt = r.DeletedAt.Time.Unix()
 		return u.DeletedTombstone()
 	}
 	return u
+}
+
+func encodeEmojiStatusCollectible(status domain.UserEmojiStatus) ([]byte, *int64, error) {
+	if !status.Valid() {
+		return nil, nil, domain.ErrStarGiftCollectibleInvalid
+	}
+	if status.Collectible.Empty() {
+		return []byte(`{}`), nil, nil
+	}
+	raw, err := json.Marshal(status.Collectible)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode collectible emoji status: %w", err)
+	}
+	id := status.Collectible.CollectibleID
+	return raw, &id, nil
+}
+
+func mustDecodeEmojiStatusCollectible(id *int64, raw []byte) domain.EmojiStatusCollectible {
+	var collectible domain.EmojiStatusCollectible
+	if err := json.Unmarshal(raw, &collectible); err != nil {
+		panic(fmt.Sprintf("invalid users.emoji_status_collectible JSON: %v", err))
+	}
+	if id == nil {
+		if !collectible.Empty() {
+			panic("users emoji-status invariant: snapshot exists without collectible id")
+		}
+		return domain.EmojiStatusCollectible{}
+	}
+	if !collectible.Valid() || collectible.CollectibleID != *id {
+		panic("users emoji-status invariant: incomplete or mismatched collectible snapshot")
+	}
+	return collectible
 }
 
 func peerColorFromModel(hasColor bool, color int32, backgroundEmojiID int64) domain.PeerColor {

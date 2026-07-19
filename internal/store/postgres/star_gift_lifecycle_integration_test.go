@@ -213,6 +213,21 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 	if err != nil || resold.Unique.Owner.ID != resaleBuyer.ID || resold.Balance.Balance != 999000 || resold.Saved.TransferStars != 25 {
 		t.Fatalf("TON resale = %+v err %v", resold, err)
 	}
+	selected, valid := domain.CollectibleEmojiStatus(resold.Unique)
+	if !valid {
+		t.Fatalf("resold collectible cannot project emoji status: %+v", resold.Unique)
+	}
+	if _, err := users.UpdateEmojiStatus(ctx, resaleBuyer.ID, domain.UserEmojiStatus{
+		DocumentID:  selected.DocumentID,
+		Collectible: selected,
+	}); err != nil {
+		t.Fatalf("wear resold collectible: %v", err)
+	}
+	updateEvents := NewUpdateEventStore(pool)
+	statusPtsBeforeTransfer, err := updateEvents.MaxContiguousPts(ctx, resaleBuyer.ID)
+	if err != nil {
+		t.Fatalf("emoji status pts before transfer: %v", err)
+	}
 	if sellerTON, err := lifecycle.TonBalance(ctx, offerBuyer.ID); err != nil || sellerTON != 1_000_900 {
 		t.Fatalf("TON seller local balance = %d err %v", sellerTON, err)
 	}
@@ -232,6 +247,29 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 	})
 	if err != nil || transferred.Unique.Owner != ownerPeer || transferred.Saved.TransferStars != 25 || transferred.Balance.Balance != 9975 {
 		t.Fatalf("paid transfer = %+v err %v", transferred, err)
+	}
+	clearedUser, found, err := users.ByID(ctx, resaleBuyer.ID)
+	if err != nil || !found || !clearedUser.EmojiStatus().Empty() {
+		t.Fatalf("transferred collectible status was not cleared: user=%+v found=%v err=%v", clearedUser, found, err)
+	}
+	statusEvents, err := updateEvents.ListAfter(ctx, resaleBuyer.ID, statusPtsBeforeTransfer, 20)
+	if err != nil {
+		t.Fatalf("load collectible invalidation event: %v", err)
+	}
+	var clearEvent domain.UpdateEvent
+	for _, event := range statusEvents {
+		if event.Type == domain.UpdateEventUserEmojiStatus {
+			clearEvent = event
+			break
+		}
+	}
+	if clearEvent.Pts == 0 || !clearEvent.EmojiStatus.Empty() || clearEvent.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: resaleBuyer.ID}) {
+		t.Fatalf("collectible invalidation event = %+v", clearEvent)
+	}
+	var clearOutboxCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM dispatch_outbox
+WHERE target_user_id=$1 AND pts=$2 AND event_type='user_emoji_status'`, resaleBuyer.ID, clearEvent.Pts).Scan(&clearOutboxCount); err != nil || clearOutboxCount != 1 {
+		t.Fatalf("collectible invalidation outbox count=%d err=%v, want 1", clearOutboxCount, err)
 	}
 
 	// A second prepaid collectible makes craft chance exactly 1000‰. Success

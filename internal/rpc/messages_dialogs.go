@@ -3,10 +3,12 @@ package rpc
 import (
 	"context"
 	"errors"
+	"unicode/utf8"
+
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
+
 	"telesrv/internal/domain"
-	"unicode/utf8"
 )
 
 func (r *Router) onMessagesSaveDraft(ctx context.Context, req *tg.MessagesSaveDraftRequest) (bool, error) {
@@ -159,8 +161,18 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 	if len(req.Entities) > maxMessageEntityCount {
 		return domain.DialogDraft{}, limitInvalidErr()
 	}
-	if !req.SuggestedPost.Zero() {
-		return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
+	suggestedPost, err := domainSuggestedPost(suggestedInput, hasSuggestedPost)
+	if err != nil {
+		return domain.DialogDraft{}, err
+	}
+	if hasSuggestedPost {
+		if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
+			return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+		}
+		if _, _, resolveErr := r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID); resolveErr != nil {
+			return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+		}
 	}
 	replyTo, err := r.messageReplyFromInput(ctx, userID, peer, req.ReplyTo)
 	if err != nil {
@@ -182,17 +194,18 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 		topMessageID = replyTo.TopMessageID
 	}
 	return domain.DialogDraft{
-		Peer:         peer,
-		TopMessageID: topMessageID,
-		Date:         date,
-		NoWebpage:    req.NoWebpage,
-		InvertMedia:  req.InvertMedia,
-		Message:      req.Message,
-		Entities:     domainMessageEntities(req.Entities),
-		ReplyTo:      replyTo,
-		WebPage:      webpage,
-		Effect:       req.Effect,
-		RichMessage:  richMessage,
+		Peer:          peer,
+		TopMessageID:  topMessageID,
+		Date:          date,
+		NoWebpage:     req.NoWebpage,
+		InvertMedia:   req.InvertMedia,
+		Message:       req.Message,
+		Entities:      domainMessageEntities(req.Entities),
+		ReplyTo:       replyTo,
+		WebPage:       webpage,
+		Effect:        req.Effect,
+		SuggestedPost: suggestedPost,
+		RichMessage:   richMessage,
 	}, nil
 }
 

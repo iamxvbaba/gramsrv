@@ -368,11 +368,8 @@ func (s *Service) materializeCollectibleAttributes(ctx context.Context, attribut
 			ID: documentID, AccessHash: accessHash, FileReference: fileReference,
 			Date: int(time.Now().Unix()), MimeType: "application/x-tgsticker",
 			Size: int64(len(animation.TGS)), DCID: s.dc,
-			Attributes: []domain.DocumentAttribute{
-				{Kind: domain.DocAttrImageSize, W: 512, H: 512},
-				{Kind: domain.DocAttrSticker, Alt: "🎁"},
-				{Kind: domain.DocAttrFilename, FileName: string(attributes[i].Kind) + ".tgs"},
-			},
+			Attributes: collectibleDocumentAttributes(attributes[i].Kind),
+			Thumbs:     collectibleDocumentThumbs(attributes[i].Kind),
 		}
 		attributes[i].Blob = &domain.FileBlob{
 			LocationKey: fmt.Sprintf("doc:%d", documentID), Backend: domain.MediaBackend(s.blobs.Name()),
@@ -381,6 +378,50 @@ func (s *Service) materializeCollectibleAttributes(ctx context.Context, attribut
 		}
 	}
 	return nil
+}
+
+// collectiblePatternPathThumb is a valid, inline PhotoPathSize placeholder.
+// DrKLO's CACHE_TYPE_ALERT_PREVIEW_STATIC classifies a TGS document as an
+// animated sticker only when document.thumbs is non-empty.  The placeholder is
+// not used as the rendered collectible pattern: after classification Android
+// downloads and decodes the document's full TGS first frame.  Keeping the
+// placeholder inline avoids introducing a second downloadable blob and matches
+// the shape used by official animated-sticker documents.
+var collectiblePatternPathThumb = []byte{
+	0x19, 0x06, 0xa5, 0x05, 0xdc, 0x61, 0x4d, 0x7e,
+	0x78, 0x48, 0x04, 0x48, 0x04, 0x63, 0x6c, 0x7c,
+	0x4e, 0x08, 0x9a, 0x4e, 0x07, 0xa2, 0x80, 0xa3,
+	0x94, 0xba, 0xa1, 0x85, 0x83, 0x87, 0x48, 0x8c,
+	0x4c, 0x8c, 0x4c, 0x9b, 0x55, 0xad, 0x55, 0x90,
+	0x80, 0x9f, 0x86, 0xaa, 0x91, 0xaa, 0xab, 0x86,
+	0x8a, 0x04, 0x58, 0x8e, 0x01, 0x4d, 0x91, 0x79,
+	0x87, 0x03, 0x47, 0x06, 0x87, 0x03,
+}
+
+func collectibleDocumentThumbs(kind domain.StarGiftCollectibleAttributeKind) []domain.PhotoSize {
+	if kind != domain.StarGiftCollectiblePattern {
+		return nil
+	}
+	return []domain.PhotoSize{{
+		Kind:  domain.PhotoSizeKindPath,
+		Type:  "j",
+		Bytes: append([]byte(nil), collectiblePatternPathThumb...),
+	}}
+}
+
+func collectibleDocumentAttributes(kind domain.StarGiftCollectibleAttributeKind) []domain.DocumentAttribute {
+	renderAttribute := domain.DocumentAttribute{Kind: domain.DocAttrSticker, Alt: "🎁"}
+	if kind == domain.StarGiftCollectiblePattern {
+		// DrKLO only applies StarGiftAttributeBackdrop.pattern_color when the
+		// pattern is a text-color custom emoji. Without this the gradient is
+		// visible but the collectible pattern is rendered with its raw fill.
+		renderAttribute = domain.DocumentAttribute{Kind: domain.DocAttrCustomEmoji, Alt: "🎁", TextColor: true}
+	}
+	return []domain.DocumentAttribute{
+		{Kind: domain.DocAttrImageSize, W: 512, H: 512},
+		renderAttribute,
+		{Kind: domain.DocAttrFilename, FileName: string(kind) + ".tgs"},
+	}
 }
 
 func (s *Service) CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error) {
@@ -431,6 +472,14 @@ func (s *Service) UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[i
 		return map[int64]domain.UniqueStarGift{}, nil
 	}
 	return s.store.UniqueByIDs(ctx, uniqueGiftIDs)
+}
+
+func (s *Service) ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error) {
+	if s == nil || s.store == nil || owner.ID <= 0 ||
+		(owner.Type != domain.PeerTypeUser && owner.Type != domain.PeerTypeChannel) || limit <= 0 {
+		return []domain.UniqueStarGift{}, nil
+	}
+	return s.store.ListUniqueByOwner(ctx, owner, min(limit, domain.MaxSavedStarGiftsLimit))
 }
 
 func (s *Service) Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error) {

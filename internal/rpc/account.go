@@ -119,11 +119,7 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 			Hash)
 	})
 	registerRPC[*tg.AccountGetCollectibleEmojiStatusesRequest](d, tlprofile.SemanticMethodAccountGetCollectibleEmojiStatuses, func(ctx context.Context, layerRequest *tg.AccountGetCollectibleEmojiStatusesRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		return tdesktop.CollectibleEmojiStatuses(), nil
+		return r.onAccountGetCollectibleEmojiStatuses(ctx, layerRequest.Hash)
 	})
 	registerRPC[*tg.AccountGetDefaultGroupPhotoEmojisRequest](d, tlprofile.SemanticMethodAccountGetDefaultGroupPhotoEmojis, func(ctx context.Context, layerRequest *tg.AccountGetDefaultGroupPhotoEmojisRequest) (any, error) {
 		hash := layerRequest.
@@ -1611,10 +1607,10 @@ func (r *Router) onAccountUpdatePersonalChannel(ctx context.Context, channel tg.
 	return true, nil
 }
 
-// onAccountUpdateEmojiStatus 持久化用户自定义 emoji status（premium 专属）。
-// emojiStatusEmpty 与未支持的 collectible 类型按清除处理（collectible 依赖
-// Stars 礼物模型，范围外，记兼容矩阵）；变更经 updateUserEmojiStatus 推给
-// 本人全部在线 session（self user 对象同时携带最新 emoji_status 字段）。
+// onAccountUpdateEmojiStatus persists either a normal custom emoji or a
+// complete collectible snapshot. Collectibles must still be locally owned by
+// the actor; unsupported constructors are rejected instead of being mistaken
+// for a clear operation.
 func (r *Router) onAccountUpdateEmojiStatus(ctx context.Context, status tg.EmojiStatusClass) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -1624,31 +1620,103 @@ func (r *Router) onAccountUpdateEmojiStatus(ctx context.Context, status tg.Emoji
 	if !ok {
 		return true, nil // 服务未接通（精简测试装配）时保持旧 stub 语义
 	}
-	var documentID int64
-	var until int
-	if s, ok := status.(*tg.EmojiStatus); ok {
-		documentID = s.DocumentID
-		if v, ok := s.GetUntil(); ok {
-			until = v
-		}
+	value, err := r.domainUserEmojiStatus(ctx, userID, status)
+	if err != nil {
+		return false, err
 	}
-	u, err := svc.UpdateEmojiStatus(ctx, userID, documentID, until)
+	var (
+		u            domain.User
+		event        domain.UpdateEvent
+		durableWrite bool
+	)
+	authKeyID, _ := AuthKeyIDFrom(ctx)
+	sessionID, _ := SessionIDFrom(ctx)
+	if durable, ok := r.deps.Users.(UserEmojiStatusDurableService); ok {
+		u, event, durableWrite, err = durable.UpdateEmojiStatusWithEvent(
+			ctx, userID, value, int(r.clock.Now().Unix()), rawAuthKeyIDForOrigin(ctx), sessionID,
+		)
+	} else {
+		u, err = svc.UpdateEmojiStatus(ctx, userID, value)
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrPremiumRequired) {
 			return false, tgerr400("PREMIUM_ACCOUNT_REQUIRED")
 		}
+		if errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+			return false, tgerr400("COLLECTIBLE_INVALID")
+		}
 		return false, internalErr()
 	}
 	r.invalidateRPCProjectionForUser(u.ID)
-	r.pushUserUpdates(ctx, u.ID, &tg.Updates{
-		Updates: []tg.UpdateClass{&tg.UpdateUserEmojiStatus{
-			UserID:      u.ID,
-			EmojiStatus: tgUserEmojiStatus(u, r.clock.Now().Unix()),
-		}},
-		Users: []tg.UserClass{r.tgSelfUser(u)},
-		Date:  int(r.clock.Now().Unix()),
-	})
+	update := &tg.UpdateUserEmojiStatus{UserID: u.ID, EmojiStatus: tgUserEmojiStatusValue(value)}
+	if durableWrite {
+		if sessionID != 0 {
+			r.bookkeepAuxPtsForCurrentSession(ctx, event)
+		}
+		r.pushUserUpdatesIfNoReliableDispatch(ctx, u.ID, &tg.Updates{
+			Updates: []tg.UpdateClass{update}, Users: []tg.UserClass{r.tgSelfUser(u)}, Date: event.Date,
+		})
+	} else if updates, ok := r.deps.Updates.(UserEmojiStatusUpdatesService); ok {
+		event, _, recordErr := updates.RecordUserEmojiStatus(ctx, authKeyID, userID, value, rawAuthKeyIDForOrigin(ctx), sessionID)
+		if recordErr != nil {
+			return false, internalErr()
+		}
+		if sessionID != 0 {
+			r.bookkeepAuxPtsForCurrentSession(ctx, event)
+		}
+		r.pushUserUpdatesIfNoReliableDispatch(ctx, u.ID, &tg.Updates{
+			Updates: []tg.UpdateClass{update}, Users: []tg.UserClass{r.tgSelfUser(u)}, Date: event.Date,
+		})
+	} else {
+		// Lightweight test deployments without the durable extension retain the
+		// previous online-only behavior; production wiring implements it.
+		r.pushUserUpdates(ctx, u.ID, &tg.Updates{
+			Updates: []tg.UpdateClass{update}, Users: []tg.UserClass{r.tgSelfUser(u)}, Date: int(r.clock.Now().Unix()),
+		})
+	}
 	return true, nil
+}
+
+func (r *Router) domainUserEmojiStatus(ctx context.Context, userID int64, input tg.EmojiStatusClass) (domain.UserEmojiStatus, error) {
+	switch status := input.(type) {
+	case *tg.EmojiStatusEmpty:
+		return domain.UserEmojiStatus{}, nil
+	case *tg.EmojiStatus:
+		value := domain.UserEmojiStatus{DocumentID: status.DocumentID}
+		if until, ok := status.GetUntil(); ok {
+			value.Until = until
+		}
+		if !value.Valid() {
+			return domain.UserEmojiStatus{}, tgerr400("EMOJI_STATUS_INVALID")
+		}
+		return value, nil
+	case *tg.InputEmojiStatusCollectible:
+		if r.deps.Gifts == nil || status.CollectibleID <= 0 {
+			return domain.UserEmojiStatus{}, tgerr400("COLLECTIBLE_INVALID")
+		}
+		gift, found, err := r.deps.Gifts.UniqueByID(ctx, status.CollectibleID)
+		if err != nil {
+			return domain.UserEmojiStatus{}, internalErr()
+		}
+		owner := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
+		if !found || gift.Owner != owner || gift.Burned || gift.OwnerAddress != "" {
+			return domain.UserEmojiStatus{}, tgerr400("COLLECTIBLE_INVALID")
+		}
+		collectible, valid := domain.CollectibleEmojiStatus(gift)
+		if !valid {
+			return domain.UserEmojiStatus{}, tgerr400("COLLECTIBLE_INVALID")
+		}
+		value := domain.UserEmojiStatus{DocumentID: collectible.DocumentID, Collectible: collectible}
+		if until, ok := status.GetUntil(); ok {
+			value.Until = until
+		}
+		if !value.Valid() {
+			return domain.UserEmojiStatus{}, tgerr400("COLLECTIBLE_INVALID")
+		}
+		return value, nil
+	default:
+		return domain.UserEmojiStatus{}, inputConstructorInvalidErr()
+	}
 }
 
 // onAccountUpdateColor 持久化当前用户的消息 accent 或资料页背景色。
@@ -1742,6 +1810,41 @@ func (r *Router) onAccountGetDefaultEmojiStatuses(ctx context.Context, hash int6
 	statuses := make([]tg.EmojiStatusClass, 0, len(set.DocumentIDs))
 	for _, id := range set.DocumentIDs {
 		statuses = append(statuses, &tg.EmojiStatus{DocumentID: id})
+	}
+	return &tg.AccountEmojiStatuses{Hash: catalogHash, Statuses: statuses}, nil
+}
+
+// onAccountGetCollectibleEmojiStatuses returns the actor's active locally
+// owned unique gifts as complete emojiStatusCollectible values. The bounded
+// list order and hash are stable, so Android can safely reuse its cache.
+func (r *Router) onAccountGetCollectibleEmojiStatuses(ctx context.Context, hash int64) (tg.AccountEmojiStatusesClass, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if r.deps.Gifts == nil {
+		return tdesktop.CollectibleEmojiStatuses(), nil
+	}
+	gifts, err := r.deps.Gifts.ListUniqueByOwner(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: userID}, domain.MaxSavedStarGiftsLimit)
+	if err != nil {
+		return nil, internalErr()
+	}
+	ids := make([]int64, 0, len(gifts))
+	statuses := make([]tg.EmojiStatusClass, 0, len(gifts))
+	for _, gift := range gifts {
+		collectible, ok := domain.CollectibleEmojiStatus(gift)
+		if !ok {
+			continue
+		}
+		ids = append(ids, collectible.CollectibleID)
+		statuses = append(statuses, tgUserEmojiStatusValue(domain.UserEmojiStatus{
+			DocumentID:  collectible.DocumentID,
+			Collectible: collectible,
+		}))
+	}
+	catalogHash := mediaCatalogHash(ids)
+	if hash != 0 && hash == catalogHash {
+		return &tg.AccountEmojiStatusesNotModified{}, nil
 	}
 	return &tg.AccountEmojiStatuses{Hash: catalogHash, Statuses: statuses}, nil
 }

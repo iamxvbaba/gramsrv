@@ -129,6 +129,10 @@ func effectIDInvalidErr() error { return tgerr.New(400, "EFFECT_ID_INVALID") }
 
 func paymentUnsupportedErr() error { return tgerr.New(406, "PAYMENT_UNSUPPORTED") }
 
+func allowPaymentRequiredErr(stars int64) error {
+	return tgerr.New(403, fmt.Sprintf("ALLOW_PAYMENT_REQUIRED_%d", stars))
+}
+
 func balanceTooLowErr() error { return tgerr.New(400, "BALANCE_TOO_LOW") }
 
 func starsAmountInvalidErr() error { return tgerr.New(400, "STARS_AMOUNT_INVALID") }

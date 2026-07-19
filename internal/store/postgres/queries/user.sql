@@ -37,6 +37,8 @@ WITH matched AS (
     u.premium_expires_at,
     u.emoji_status_document_id,
     u.emoji_status_until,
+    u.emoji_status_collectible_id,
+    u.emoji_status_collectible,
     u.color_set,
     u.color,
     u.color_background_emoji_id,
@@ -86,6 +88,8 @@ SELECT
   premium_expires_at,
   emoji_status_document_id,
   emoji_status_until,
+  emoji_status_collectible_id,
+  emoji_status_collectible,
   color_set,
   color,
   color_background_emoji_id,
@@ -165,6 +169,8 @@ RETURNING *;
 UPDATE users
 SET emoji_status_document_id = sqlc.arg(emoji_status_document_id)::bigint,
     emoji_status_until = sqlc.arg(emoji_status_until)::bigint,
+    emoji_status_collectible_id = sqlc.narg(emoji_status_collectible_id)::bigint,
+    emoji_status_collectible = sqlc.arg(emoji_status_collectible)::jsonb,
     updated_at = now()
 WHERE id = sqlc.arg(id)::bigint AND deleted_at IS NULL
 RETURNING *;

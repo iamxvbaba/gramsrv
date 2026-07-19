@@ -33,17 +33,19 @@ func scanChannelMessage(row rowScanner) (domain.ChannelMessage, error) {
 	var richMessageJSON string
 	var savedPeerType string
 	var savedPeerID int64
+	var suggestedPostJSON string
 	if err := row.Scan(
 		&msg.ChannelID, &msg.ID, &msg.RandomID, &msg.SenderUserID, &fromType, &msg.From.ID,
 		&sendAsType, &sendAsID, &msg.Date, &msg.EditDate, &msg.Post, &msg.Silent, &msg.NoForwards,
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
-		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID,
+		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON,
 	); err != nil {
 		return domain.ChannelMessage{}, err
 	}
 	msg.From.Type = domain.PeerType(fromType)
 	msg.SavedPeer = domain.Peer{Type: domain.PeerType(savedPeerType), ID: savedPeerID}
+	msg.SuggestedPost = decodeJSONPtr[domain.SuggestedPost](suggestedPostJSON)
 	if sendAsType.Valid && sendAsID.Valid {
 		msg.SendAs = &domain.Peer{Type: domain.PeerType(sendAsType.String), ID: sendAsID.Int64}
 	}
@@ -90,17 +92,19 @@ func scanChannelMessageWithCount(row rowScanner) (domain.ChannelMessage, int, er
 	var richMessageJSON string
 	var savedPeerType string
 	var savedPeerID int64
+	var suggestedPostJSON string
 	if err := row.Scan(
 		&msg.ChannelID, &msg.ID, &msg.RandomID, &msg.SenderUserID, &fromType, &msg.From.ID,
 		&sendAsType, &sendAsID, &msg.Date, &msg.EditDate, &msg.Post, &msg.Silent, &msg.NoForwards,
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
-		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &count,
+		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &count,
 	); err != nil {
 		return domain.ChannelMessage{}, 0, err
 	}
 	msg.From.Type = domain.PeerType(fromType)
 	msg.SavedPeer = domain.Peer{Type: domain.PeerType(savedPeerType), ID: savedPeerID}
+	msg.SuggestedPost = decodeJSONPtr[domain.SuggestedPost](suggestedPostJSON)
 	if sendAsType.Valid && sendAsID.Valid {
 		msg.SendAs = &domain.Peer{Type: domain.PeerType(sendAsType.String), ID: sendAsID.Int64}
 	}

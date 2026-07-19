@@ -180,6 +180,7 @@ UPDATE users SET
   phone = '', first_name = '', last_name = '', username = '', country_code = '', about = '',
   verified = false, support = false, last_seen_at = 0,
   premium_expires_at = NULL, emoji_status_document_id = 0, emoji_status_until = 0,
+  emoji_status_collectible_id = NULL, emoji_status_collectible = '{}'::jsonb,
   color_set = false, color = 0, color_background_emoji_id = 0,
   profile_color_set = false, profile_color = 0, profile_color_background_emoji_id = 0,
   birthday_day = 0, birthday_month = 0, birthday_year = 0, personal_channel_id = 0,

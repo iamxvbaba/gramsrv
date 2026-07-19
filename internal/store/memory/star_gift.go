@@ -325,6 +325,25 @@ func (s *StarGiftStore) UniqueByIDs(_ context.Context, uniqueGiftIDs []int64) (m
 	return out, nil
 }
 
+func (s *StarGiftStore) ListUniqueByOwner(_ context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error) {
+	if owner.ID <= 0 || limit <= 0 {
+		return []domain.UniqueStarGift{}, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.UniqueStarGift, 0, min(limit, len(s.uniqueByID)))
+	for _, gift := range s.uniqueByID {
+		if gift.Owner == owner && !gift.Burned && gift.OwnerAddress == "" {
+			out = append(out, gift)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (s *StarGiftStore) Create(_ context.Context, gift domain.SavedStarGift) (int64, error) {
 	if !validSavedStarGift(gift) {
 		return 0, domain.ErrStarGiftInvalid

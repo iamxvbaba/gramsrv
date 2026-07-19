@@ -669,6 +669,8 @@ func channelInvalidErr(err error) error {
 		return tgerr400("CHAT_WRITE_FORBIDDEN")
 	case errors.Is(err, domain.ErrChannelAdminRequired):
 		return tgerr400("CHAT_ADMIN_REQUIRED")
+	case errors.Is(err, domain.ErrChannelMonoforumUnsupported):
+		return tgerr400("CHANNEL_MONOFORUM_UNSUPPORTED")
 	case errors.Is(err, domain.ErrUserAlreadyParticipant):
 		return tgerr400("USER_ALREADY_PARTICIPANT")
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):

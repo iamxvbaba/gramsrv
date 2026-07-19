@@ -47,9 +47,10 @@ type userBaseValue struct {
 	BotInfoVersion int  `json:"bot_info_version,omitempty"`
 	// premium / emoji status 同理必须随缓存往返：丢失会让缓存命中路径把
 	// 会员输出成非会员，跨路径状态漂移（与 bot 列同一坑位）。
-	PremiumUntil          int   `json:"premium_until,omitempty"`
-	EmojiStatusDocumentID int64 `json:"emoji_status_document_id,omitempty"`
-	EmojiStatusUntil      int   `json:"emoji_status_until,omitempty"`
+	PremiumUntil           int                           `json:"premium_until,omitempty"`
+	EmojiStatusDocumentID  int64                         `json:"emoji_status_document_id,omitempty"`
+	EmojiStatusUntil       int                           `json:"emoji_status_until,omitempty"`
+	EmojiStatusCollectible domain.EmojiStatusCollectible `json:"emoji_status_collectible,omitempty"`
 	// birthday / personal channel 同理必须随缓存往返：缓存命中路径丢失会让刚保存的
 	// 生日 / 个人频道在重新打开资料时归零（与 bot/premium 列同一坑位）。
 	BirthdayDay                   int   `json:"birthday_day,omitempty"`
@@ -82,6 +83,7 @@ func baseValueFromUser(u domain.User) userBaseValue {
 		PremiumUntil:                  u.PremiumUntil,
 		EmojiStatusDocumentID:         u.EmojiStatusDocumentID,
 		EmojiStatusUntil:              u.EmojiStatusUntil,
+		EmojiStatusCollectible:        u.EmojiStatusCollectible,
 		BirthdayDay:                   u.Birthday.Day,
 		BirthdayMonth:                 u.Birthday.Month,
 		BirthdayYear:                  u.Birthday.Year,
@@ -98,23 +100,24 @@ func baseValueFromUser(u domain.User) userBaseValue {
 
 func (v userBaseValue) user() domain.User {
 	return domain.User{
-		ID:                    v.ID,
-		AccessHash:            v.AccessHash,
-		Phone:                 v.Phone,
-		FirstName:             v.FirstName,
-		LastName:              v.LastName,
-		About:                 v.About,
-		Username:              v.Username,
-		CountryCode:           v.CountryCode,
-		Verified:              v.Verified,
-		Support:               v.Support,
-		Bot:                   v.Bot,
-		BotInfoVersion:        v.BotInfoVersion,
-		PremiumUntil:          v.PremiumUntil,
-		EmojiStatusDocumentID: v.EmojiStatusDocumentID,
-		EmojiStatusUntil:      v.EmojiStatusUntil,
-		Birthday:              domain.Birthday{Day: v.BirthdayDay, Month: v.BirthdayMonth, Year: v.BirthdayYear},
-		PersonalChannelID:     v.PersonalChannelID,
+		ID:                     v.ID,
+		AccessHash:             v.AccessHash,
+		Phone:                  v.Phone,
+		FirstName:              v.FirstName,
+		LastName:               v.LastName,
+		About:                  v.About,
+		Username:               v.Username,
+		CountryCode:            v.CountryCode,
+		Verified:               v.Verified,
+		Support:                v.Support,
+		Bot:                    v.Bot,
+		BotInfoVersion:         v.BotInfoVersion,
+		PremiumUntil:           v.PremiumUntil,
+		EmojiStatusDocumentID:  v.EmojiStatusDocumentID,
+		EmojiStatusUntil:       v.EmojiStatusUntil,
+		EmojiStatusCollectible: v.EmojiStatusCollectible,
+		Birthday:               domain.Birthday{Day: v.BirthdayDay, Month: v.BirthdayMonth, Year: v.BirthdayYear},
+		PersonalChannelID:      v.PersonalChannelID,
 		Color: domain.PeerColor{
 			HasColor:          v.ColorSet,
 			Color:             v.Color,

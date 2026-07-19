@@ -274,6 +274,89 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if !ok || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
+	var mono domain.Channel
+	var monoforum, monoforumAdmin bool
+	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		mono, monoforumAdmin, err = r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID)
+		switch {
+		case err == nil:
+			monoforum = true
+		case !errors.Is(err, domain.ErrChannelInvalid):
+			return nil, internalErr()
+		}
+	}
+	if hasSuggestedPost && !monoforum {
+		return nil, suggestedPostPeerInvalidErr()
+	}
+	if monoforum {
+		if req.AllowPaidStars < 0 {
+			return nil, starsAmountInvalidErr()
+		}
+		if req.AllowPaidFloodskip {
+			return nil, paymentUnsupportedErr()
+		}
+		if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
+			return nil, scheduleDateInvalidErr()
+		}
+		suggestedPost, err := domainSuggestedPost(suggestedInput, hasSuggestedPost)
+		if err != nil {
+			return nil, err
+		}
+		savedPeer, err := r.monoforumSavedPeerForSender(userID, monoforumAdmin, req.ReplyTo)
+		if err != nil {
+			return nil, err
+		}
+		replyTo, err := r.monoforumMessageReplyFromInput(ctx, userID, peer, req.ReplyTo)
+		if err != nil {
+			return nil, err
+		}
+		replay, err := r.lookupChannelSendReplay(ctx, userID, peer.ID, savedPeer, req.RandomID, idempotencyFingerprint)
+		if err != nil {
+			return nil, err
+		}
+		if replay.found {
+			if req.ClearDraft {
+				r.clearDraftAfterSend(ctx, userID, peer, replyTo)
+			}
+			return r.monoforumSendUpdates(ctx, userID, replay.channel.Channel, savedPeer, replay.channel), nil
+		}
+		if r.messageEffectInvalid(ctx, req.Effect) {
+			return nil, effectIDInvalidErr()
+		}
+		if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
+			return nil, err
+		}
+		checkedPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+		if err != nil {
+			return nil, err
+		}
+		media, err := r.resolveInputMedia(ctx, userID, req.Media)
+		if err != nil {
+			return nil, err
+		}
+		if media == nil {
+			return nil, mediaInvalidErr()
+		}
+		return r.sendMonoforumMessage(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
+			SavedPeer:              savedPeer,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: idempotencyFingerprint,
+			IdempotencyPreflighted: replay.checked,
+			Message:                req.Message,
+			Entities:               domainMessageEntities(req.Entities),
+			Media:                  media,
+			ReplyTo:                replyTo,
+			Silent:                 req.Silent,
+			NoForwards:             req.Noforwards,
+			SuggestedPost:          suggestedPost,
+			AllowPaidStars:         req.AllowPaidStars,
+			ClearDraft:             req.ClearDraft,
+		})
+	}
+	if req.AllowPaidStars > 0 || req.AllowPaidFloodskip {
+		return nil, paymentUnsupportedErr()
+	}
 	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
 	if err != nil {
 		return nil, err

@@ -12,13 +12,18 @@ import (
 	"telesrv/internal/store"
 )
 
+const paidMessageChannelCommissionPermille int64 = 850
+
 // SendMonoforumMessage 向 monoforum(频道私信)虚拟频道发一条消息,按 saved_peer 分订阅者子会话。
-// 私信消息存进 channel_messages(复用 channel pts/事件/difference);发件权限(订阅者身份/管理员)
-// 由 RPC 层校验,store 只校验 monoforum 频道存在,不要求发件人是成员(订阅者不是 monoforum 成员)。
+// 私信消息存进 channel_messages(复用 channel pts/事件/difference);store 在写边界再次强制：订阅者
+// 无需成员记录但只能写自己的 saved_peer，母频道管理员可以回复任意订阅者。
 func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.SendMonoforumMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.MonoforumID == 0 || req.SenderUserID == 0 || req.SavedPeer.ID == 0 ||
-		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" {
+		req.SavedPeer.Type != domain.PeerTypeUser || strings.TrimSpace(req.Message) == "" && req.Media == nil {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
+	}
+	if req.AllowPaidStars < 0 {
+		return domain.SendChannelMessageResult{}, domain.ErrStarsInvalidAmount
 	}
 	requestFingerprint, err := store.MonoforumSendFingerprint(req)
 	if err != nil {
@@ -65,6 +70,101 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 	if channel.Deleted || !channel.Monoforum {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	parent, err := getChannelByID(ctx, tx, channel.LinkedMonoforumID)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	var monoDeleted, parentDeleted, directEnabled bool
+	var linkedMonoforumID, monoPrice, parentPrice int64
+	if err := tx.QueryRow(ctx, `
+SELECT m.deleted, p.deleted, p.broadcast_messages_allowed, p.linked_monoforum_id,
+       m.send_paid_messages_stars, p.send_paid_messages_stars
+FROM channels m
+JOIN channels p ON p.id = m.linked_monoforum_id
+WHERE m.id = $1
+FOR SHARE OF m, p`, channel.ID).Scan(
+		&monoDeleted, &parentDeleted, &directEnabled, &linkedMonoforumID, &monoPrice, &parentPrice,
+	); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
+	if monoDeleted || parentDeleted || !directEnabled || linkedMonoforumID != channel.ID {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelPrivate
+	}
+	if monoPrice != parentPrice || monoPrice < 0 {
+		return domain.SendChannelMessageResult{}, fmt.Errorf("monoforum %d paid-message price disagrees with parent %d", channel.ID, parent.ID)
+	}
+	channel.SendPaidMessagesStars = monoPrice
+	parent.SendPaidMessagesStars = parentPrice
+	parentMember, parentMemberErr := s.getChannelMember(ctx, tx, parent.ID, req.SenderUserID)
+	if parentMemberErr != nil && !errors.Is(parentMemberErr, domain.ErrChannelPrivate) {
+		return domain.SendChannelMessageResult{}, parentMemberErr
+	}
+	isAdmin := parentMemberErr == nil && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember)
+	if req.SenderUserID != req.SavedPeer.ID && !isAdmin {
+		return domain.SendChannelMessageResult{}, domain.ErrChannelAdminRequired
+	}
+	var senderBalance *domain.StarsBalance
+	paidMessageStars := int64(0)
+	if !isAdmin && channel.SendPaidMessagesStars > 0 {
+		if req.AllowPaidStars < channel.SendPaidMessagesStars {
+			return domain.SendChannelMessageResult{}, &domain.StarsPaymentRequiredError{Stars: channel.SendPaidMessagesStars}
+		}
+		balance := domain.StarsBalance{UserID: req.SenderUserID}
+		if err := tx.QueryRow(ctx, `SELECT balance, granted FROM stars_balances WHERE user_id = $1 FOR UPDATE`, req.SenderUserID).
+			Scan(&balance.Balance, &balance.Granted); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.SendChannelMessageResult{}, domain.ErrStarsInsufficient
+			}
+			return domain.SendChannelMessageResult{}, fmt.Errorf("lock paid-message sender balance: %w", err)
+		}
+		if balance.Balance < channel.SendPaidMessagesStars {
+			return domain.SendChannelMessageResult{}, domain.ErrStarsInsufficient
+		}
+		paidMessageStars = channel.SendPaidMessagesStars
+		if err := tx.QueryRow(ctx, `
+UPDATE stars_balances
+SET balance = balance - $2, updated_at = now()
+WHERE user_id = $1
+RETURNING balance`, req.SenderUserID, paidMessageStars).Scan(&balance.Balance); err != nil {
+			return domain.SendChannelMessageResult{}, fmt.Errorf("debit paid-message sender balance: %w", err)
+		}
+		if err := insertStarsTxn(ctx, tx, req.SenderUserID, -paidMessageStars, domain.StarsReasonPaidMessage,
+			domain.Peer{Type: domain.PeerTypeChannel, ID: parent.ID}, req.Date, "Paid message", ""); err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		channelCredit := paidMessageStars * paidMessageChannelCommissionPermille / 1000
+		if channelCredit > 0 {
+			if _, err := tx.Exec(ctx, `
+INSERT INTO channel_stars_balances(channel_id, balance)
+VALUES($1, $2)
+ON CONFLICT(channel_id) DO UPDATE
+SET balance = channel_stars_balances.balance + EXCLUDED.balance, updated_at = now()`, parent.ID, channelCredit); err != nil {
+				return domain.SendChannelMessageResult{}, fmt.Errorf("credit paid-message channel balance: %w", err)
+			}
+		}
+		senderBalance = &balance
+	}
+	if req.ReplyTo != nil {
+		if req.ReplyTo.MessageID <= 0 || req.ReplyTo.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}) {
+			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM channel_messages
+    WHERE channel_id = $1 AND id = $2 AND NOT deleted
+      AND saved_peer_type = $3 AND saved_peer_id = $4
+)`, channel.ID, req.ReplyTo.MessageID, string(req.SavedPeer.Type), req.SavedPeer.ID).Scan(&exists); err != nil {
+			return domain.SendChannelMessageResult{}, err
+		}
+		if !exists {
+			return domain.SendChannelMessageResult{}, domain.ErrReplyMessageIDInvalid
+		}
+	}
+	from := domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID}
+	if isAdmin {
+		from = domain.Peer{Type: domain.PeerTypeChannel, ID: parent.ID}
+	}
 	msgID, err := s.msgIDs.NextChannelMessageID(ctx, req.MonoforumID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("allocate monoforum message id: %w", err)
@@ -74,16 +174,22 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 		return domain.SendChannelMessageResult{}, fmt.Errorf("allocate monoforum pts: %w", err)
 	}
 	msg := domain.ChannelMessage{
-		ChannelID:    req.MonoforumID,
-		ID:           msgID,
-		RandomID:     req.RandomID,
-		SenderUserID: req.SenderUserID,
-		From:         domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID},
-		SavedPeer:    req.SavedPeer,
-		Date:         req.Date,
-		Body:         req.Message,
-		Entities:     append([]domain.MessageEntity(nil), req.Entities...),
-		Pts:          pts,
+		ChannelID:        req.MonoforumID,
+		ID:               msgID,
+		RandomID:         req.RandomID,
+		SenderUserID:     req.SenderUserID,
+		From:             from,
+		SavedPeer:        req.SavedPeer,
+		SuggestedPost:    req.SuggestedPost,
+		PaidMessageStars: paidMessageStars,
+		Date:             req.Date,
+		Silent:           req.Silent,
+		NoForwards:       req.NoForwards,
+		Body:             req.Message,
+		Entities:         append([]domain.MessageEntity(nil), req.Entities...),
+		Media:            req.Media,
+		ReplyTo:          req.ReplyTo,
+		Pts:              pts,
 	}
 	event := domain.ChannelUpdateEvent{
 		ChannelID:    req.MonoforumID,
@@ -130,13 +236,31 @@ func (s *ChannelStore) SendMonoforumMessage(ctx context.Context, req domain.Send
 	if _, err := tx.Exec(ctx, `UPDATE channels SET top_message_id = $2, pts = $3, updated_at = now() WHERE id = $1`, req.MonoforumID, msgID, pts); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("update monoforum top: %w", err)
 	}
+	recipients := []int64{req.SavedPeer.ID}
+	rows, err := tx.Query(ctx, `SELECT user_id FROM channel_members WHERE channel_id = $1 AND status = 'active' AND role IN ('creator', 'admin') ORDER BY user_id`, parent.ID)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, fmt.Errorf("list monoforum recipients: %w", err)
+	}
+	for rows.Next() {
+		var recipient int64
+		if err := rows.Scan(&recipient); err != nil {
+			rows.Close()
+			return domain.SendChannelMessageResult{}, err
+		}
+		recipients = append(recipients, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.SendChannelMessageResult{}, err
+	}
+	rows.Close()
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("commit send monoforum: %w", err)
 	}
 	committed = true
 	channel.TopMessageID = msgID
 	channel.Pts = pts
-	return domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event}, nil
+	return domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: uniqueChannelUserIDs(recipients, 0), SenderStarsBalance: senderBalance}, nil
 }
 
 // ListMonoforumHistory 拉取某订阅者(saved_peer)在 monoforum 内的私信历史,id 倒序分页。
@@ -205,9 +329,11 @@ func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, m
 		return domain.Channel{}, false, domain.ErrChannelInvalid
 	}
 	isAdmin := false
-	if _, member, err := s.getChannelForMember(ctx, s.db, viewerUserID, mono.LinkedMonoforumID); err == nil {
+	if _, member, memberErr := s.getChannelForMember(ctx, s.db, viewerUserID, mono.LinkedMonoforumID); memberErr == nil {
 		isAdmin = member.Status == domain.ChannelMemberActive &&
 			(member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin)
+	} else if !errors.Is(memberErr, domain.ErrChannelPrivate) {
+		return domain.Channel{}, false, memberErr
 	}
 	return mono, isAdmin, nil
 }

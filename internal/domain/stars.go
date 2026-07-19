@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strconv"
 )
 
@@ -31,8 +32,9 @@ const (
 	StarsReasonGiftAuction  StarsTransactionReason = "gift_auction"
 	StarsReasonGiftPrepaid  StarsTransactionReason = "gift_prepaid_upgrade"
 	StarsReasonGiftDrop     StarsTransactionReason = "gift_drop_original_details"
-	StarsReasonPaidMedia    StarsTransactionReason = "paid_media" // 付费媒体解锁
-	StarsReasonAdjust       StarsTransactionReason = "adjust"     // 兜底/人工调整
+	StarsReasonPaidMedia    StarsTransactionReason = "paid_media"   // 付费媒体解锁
+	StarsReasonPaidMessage  StarsTransactionReason = "paid_message" // 频道 Direct Message 花费
+	StarsReasonAdjust       StarsTransactionReason = "adjust"       // 兜底/人工调整
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
@@ -97,6 +99,17 @@ var (
 	// ErrStarsInvalidAmount 表示金额非法（<=0）。
 	ErrStarsInvalidAmount = errors.New("stars: invalid amount")
 )
+
+// StarsPaymentRequiredError reports the minimum paid-message authorization the
+// sender must include in allow_paid_stars. The authorization is a ceiling; the
+// ledger debits only the channel's current configured price.
+type StarsPaymentRequiredError struct {
+	Stars int64
+}
+
+func (e *StarsPaymentRequiredError) Error() string {
+	return fmt.Sprintf("stars: allow payment required: %d", e.Stars)
+}
 
 // EncodeStarsCursor 把 keyset 游标（最后一条流水 id）编码为客户端不透明字符串。
 func EncodeStarsCursor(id int64) string {

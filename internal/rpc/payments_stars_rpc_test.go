@@ -85,6 +85,22 @@ func TestOnPaymentsGetStarsTransactions(t *testing.T) {
 	}
 }
 
+func TestTGStarsTransactionsPaidMessage(t *testing.T) {
+	out := tgStarsTransactions([]domain.StarsTransaction{{
+		ID: 1, UserID: 42, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 50},
+		Amount: -10, Date: 1700002002, Reason: domain.StarsReasonPaidMessage, Title: "Paid message",
+	}})
+	if len(out) != 1 {
+		t.Fatalf("paid-message transactions = %d, want 1", len(out))
+	}
+	if paid, ok := out[0].GetPaidMessages(); !ok || paid != 1 {
+		t.Fatalf("paid_messages = %d/%v, want 1/true", paid, ok)
+	}
+	if amount, ok := out[0].Amount.(*tg.StarsAmount); !ok || amount.Amount != -10 {
+		t.Fatalf("paid-message amount = %#v, want -10", out[0].Amount)
+	}
+}
+
 // deps.Stars==nil 兜底：返回合法的空 starsStatus（余额 0），不崩。
 func TestOnPaymentsGetStarsStatusNilDeps(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)

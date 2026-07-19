@@ -26,6 +26,7 @@ INSERT INTO user_update_events (
   folder_peers,
   story_payload,
   reaction_payload,
+  emoji_status_payload,
   message_box_id,
   peer_type,
   peer_id,
@@ -51,43 +52,45 @@ INSERT INTO user_update_events (
   $13::jsonb,
   $14::jsonb,
   $15::jsonb,
-  $16,
-  $17::text,
-  $18::bigint,
-  $19::int,
+  $16::jsonb,
+  $17,
+  $18::text,
+  $19::bigint,
   $20::int,
   $21::int,
   $22::int,
-  $23::boolean,
-  $24::int
+  $23::int,
+  $24::boolean,
+  $25::int
 )
 `
 
 type AppendUserUpdateEventParams struct {
-	UserID           int64
-	Pts              int32
-	PtsCount         int32
-	Date             int32
-	EventType        string
-	EventBool        bool
-	EventPhone       string
-	EventPeers       []byte
-	PeerSettings     []byte
-	MessageIds       []byte
-	DialogFilter     []byte
-	FilterOrder      []byte
-	FolderPeers      []byte
-	StoryPayload     []byte
-	ReactionPayload  []byte
-	MessageBoxID     *int32
-	PeerType         *string
-	PeerID           *int64
-	FilterID         int32
-	MaxID            int32
-	StillUnreadCount int32
-	ChannelPts       int32
-	TagsEnabled      bool
-	FolderID         int32
+	UserID             int64
+	Pts                int32
+	PtsCount           int32
+	Date               int32
+	EventType          string
+	EventBool          bool
+	EventPhone         string
+	EventPeers         []byte
+	PeerSettings       []byte
+	MessageIds         []byte
+	DialogFilter       []byte
+	FilterOrder        []byte
+	FolderPeers        []byte
+	StoryPayload       []byte
+	ReactionPayload    []byte
+	EmojiStatusPayload []byte
+	MessageBoxID       *int32
+	PeerType           *string
+	PeerID             *int64
+	FilterID           int32
+	MaxID              int32
+	StillUnreadCount   int32
+	ChannelPts         int32
+	TagsEnabled        bool
+	FolderID           int32
 }
 
 func (q *Queries) AppendUserUpdateEvent(ctx context.Context, arg AppendUserUpdateEventParams) error {
@@ -107,6 +110,7 @@ func (q *Queries) AppendUserUpdateEvent(ctx context.Context, arg AppendUserUpdat
 		arg.FolderPeers,
 		arg.StoryPayload,
 		arg.ReactionPayload,
+		arg.EmojiStatusPayload,
 		arg.MessageBoxID,
 		arg.PeerType,
 		arg.PeerID,
@@ -137,6 +141,7 @@ SELECT
   COALESCE(e.folder_peers::text, '[]')::text AS folder_peers_json,
   COALESCE(e.story_payload::text, '{}')::text AS story_payload_json,
   COALESCE(e.reaction_payload::text, '{}')::text AS reaction_payload_json,
+  COALESCE(e.emoji_status_payload::text, '{}')::text AS emoji_status_payload_json,
   COALESCE(e.peer_type, '')::text AS event_peer_type,
   COALESCE(e.peer_id, 0)::bigint AS event_peer_id,
   e.filter_id,
@@ -274,6 +279,7 @@ type BatchListDispatchEventsRow struct {
 	FolderPeersJson                string
 	StoryPayloadJson               string
 	ReactionPayloadJson            string
+	EmojiStatusPayloadJson         string
 	EventPeerType                  string
 	EventPeerID                    int64
 	FilterID                       int32
@@ -409,6 +415,7 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 			&i.FolderPeersJson,
 			&i.StoryPayloadJson,
 			&i.ReactionPayloadJson,
+			&i.EmojiStatusPayloadJson,
 			&i.EventPeerType,
 			&i.EventPeerID,
 			&i.FilterID,
@@ -788,6 +795,7 @@ SELECT
   COALESCE(e.folder_peers::text, '[]')::text AS folder_peers_json,
   COALESCE(e.story_payload::text, '{}')::text AS story_payload_json,
   COALESCE(e.reaction_payload::text, '{}')::text AS reaction_payload_json,
+  COALESCE(e.emoji_status_payload::text, '{}')::text AS emoji_status_payload_json,
   COALESCE(e.peer_type, '')::text AS event_peer_type,
   COALESCE(e.peer_id, 0)::bigint AS event_peer_id,
   e.filter_id,
@@ -928,6 +936,7 @@ type ListUserUpdateEventsAfterRow struct {
 	FolderPeersJson                string
 	StoryPayloadJson               string
 	ReactionPayloadJson            string
+	EmojiStatusPayloadJson         string
 	EventPeerType                  string
 	EventPeerID                    int64
 	FilterID                       int32
@@ -1061,6 +1070,7 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 			&i.FolderPeersJson,
 			&i.StoryPayloadJson,
 			&i.ReactionPayloadJson,
+			&i.EmojiStatusPayloadJson,
 			&i.EventPeerType,
 			&i.EventPeerID,
 			&i.FilterID,

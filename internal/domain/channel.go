@@ -603,17 +603,21 @@ type ChannelMessage struct {
 	From         Peer
 	SendAs       *Peer
 	// SavedPeer 是 monoforum 私信子会话分组键(按订阅者分组);普通频道消息为零值。
-	SavedPeer  Peer
-	Date       int
-	EditDate   int
-	Post       bool
-	Silent     bool
-	NoForwards bool
-	Body       string
-	Entities   []MessageEntity
-	ReplyTo    *MessageReply
-	Forward    *MessageForward
-	ViaBotID   int64
+	SavedPeer Peer
+	// SuggestedPost 是频道私信建议投稿的不可变发送快照；普通频道消息为 nil。
+	SuggestedPost *SuggestedPost
+	// PaidMessageStars 是本条频道私信实际扣除的 Stars；管理员免费回复及普通频道消息为 0。
+	PaidMessageStars int64
+	Date             int
+	EditDate         int
+	Post             bool
+	Silent           bool
+	NoForwards       bool
+	Body             string
+	Entities         []MessageEntity
+	ReplyTo          *MessageReply
+	Forward          *MessageForward
+	ViaBotID         int64
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -1459,7 +1463,15 @@ type SendMonoforumMessageRequest struct {
 	IdempotencyPreflighted bool
 	Message                string
 	Entities               []MessageEntity
-	Date                   int
+	Media                  *MessageMedia
+	ReplyTo                *MessageReply
+	Silent                 bool
+	NoForwards             bool
+	SuggestedPost          *SuggestedPost
+	// AllowPaidStars 是客户端授权的最高可扣金额；实际扣款取频道当前价格，绝不按授权上限扣款。
+	AllowPaidStars int64
+	ClearDraft     bool
+	Date           int
 }
 
 // ChannelSendReplayRequest addresses either a regular channel send (SavedPeer is zero) or one
@@ -1579,6 +1591,8 @@ type SendChannelMessageResult struct {
 	Event      ChannelUpdateEvent
 	Recipients []int64
 	Duplicate  bool
+	// SenderStarsBalance 仅在实际发生 paid-message 借记时返回；RPC 只向发件人投影余额更新。
+	SenderStarsBalance *StarsBalance
 	// ReplayDeleteEvent is the existing durable channel delete event paired
 	// with a deleted exact-random_id replay. It must be returned only to the
 	// caller echo and must never be fanned out as a fresh event.

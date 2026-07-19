@@ -993,6 +993,22 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 		})
 }
 
+// enqueueMonoforumMessageFanout only targets the subscriber sub-dialog and active parent-channel
+// admins. A monoforum has no ordinary members, so member recomputation would either drop the
+// message or leak it to an invalid historical membership.
+func (r *Router) enqueueMonoforumMessageFanout(ctx context.Context, originUserID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) {
+	fanoutCache := newViewerPeerCache(r)
+	ownerIDs := channelMessageFanoutOwnerIDs(res, []int64{savedPeer.ID})
+	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutExplicit, originUserID, mono.ID, res.Event.Pts, res.Recipients,
+		0,
+		func(bgCtx context.Context, viewers []int64) {
+			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		},
+		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
+			return r.monoforumDeliveryUpdates(bgCtx, viewerUserID, mono, savedPeer, res)
+		})
+}
+
 // skipDeliverySet 把 SkipDeliveryUserIDs 切片转成查找集合（nil 表示无排除）。
 func skipDeliverySet(ids []int64) map[int64]struct{} {
 	if len(ids) == 0 {

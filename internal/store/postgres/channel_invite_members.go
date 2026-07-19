@@ -29,6 +29,9 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	if channel.Monoforum {
+		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
+	}
 	if !canInviteToChannel(channel, inviter) {
 		return domain.CreateChannelResult{}, domain.ErrChannelAdminRequired
 	}

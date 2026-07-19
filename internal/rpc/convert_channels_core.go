@@ -82,7 +82,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		return nil
 	}
 	peer := &tg.PeerChannel{ChannelID: m.ChannelID}
-	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && m.From.Type != domain.PeerTypeChannel
+	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
 	from := tg.PeerClass(nil)
 	if !m.Post && m.SendAs != nil && m.SendAs.ID != 0 {
 		from = tgPeer(*m.SendAs)
@@ -138,6 +138,12 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if m.SavedPeer.ID != 0 {
 		// 频道私信(monoforum):saved_peer_id 让客户端把消息归入对应订阅者子会话。
 		msg.SetSavedPeerID(tgPeer(m.SavedPeer))
+	}
+	if suggested, ok := tgSuggestedPost(m.SuggestedPost); ok {
+		msg.SetSuggestedPost(suggested)
+	}
+	if m.PaidMessageStars > 0 {
+		msg.SetPaidMessageStars(m.PaidMessageStars)
 	}
 	if m.Pinned {
 		msg.SetPinned(true)

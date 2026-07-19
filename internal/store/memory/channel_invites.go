@@ -17,6 +17,9 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	if channel.Monoforum {
+		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
+	}
 	inviter := s.members[channelID][inviterUserID]
 	if !canInviteToChannel(channel, inviter) {
 		return domain.CreateChannelResult{}, domain.ErrChannelAdminRequired

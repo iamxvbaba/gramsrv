@@ -306,19 +306,20 @@ func (s *UserStore) SweepExpiredPremium(_ context.Context, now int64, limit int)
 	return out, nil
 }
 
-// UpdateEmojiStatus 更新用户自定义 emoji status（documentID=0 表示清除）。
-func (s *UserStore) UpdateEmojiStatus(_ context.Context, userID int64, documentID int64, until int) (domain.User, error) {
+// UpdateEmojiStatus 更新用户自定义 emoji status（零值表示清除）。
+func (s *UserStore) UpdateEmojiStatus(_ context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
 	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
-	if documentID == 0 {
-		until = 0
+	if !status.Valid() {
+		return domain.User{}, domain.ErrStarGiftCollectibleInvalid
 	}
-	u.EmojiStatusDocumentID = documentID
-	u.EmojiStatusUntil = until
+	u.EmojiStatusDocumentID = status.DocumentID
+	u.EmojiStatusUntil = status.Until
+	u.EmojiStatusCollectible = status.Collectible
 	s.byID[userID] = u
 	return u, nil
 }

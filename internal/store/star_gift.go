@@ -31,6 +31,9 @@ type StarGiftStore interface {
 	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
 	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
 	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
+	// ListUniqueByOwner returns active, locally owned collectibles in a bounded
+	// stable order. Exported/burned/transferred gifts are deliberately excluded.
+	ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error)
 
 	// Create 写一条收到的礼物实例，返回行 id；频道礼物未显式给 saved_id 时以该行 id 作为 saved_id。
 	Create(ctx context.Context, gift domain.SavedStarGift) (int64, error)

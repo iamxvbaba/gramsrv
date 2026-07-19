@@ -593,6 +593,20 @@ func (s *Service) RecordContactsReset(ctx context.Context, stateAuthKeyID [8]byt
 	}, true, excludeSessionID)
 }
 
+// RecordUserEmojiStatus durably synchronizes an absolute emoji-status snapshot
+// to the account's other sessions and offline difference stream.
+func (s *Service) RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	if !status.Valid() {
+		return domain.UpdateEvent{}, domain.UpdateState{}, domain.ErrStarGiftCollectibleInvalid
+	}
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
+		Type:        domain.UpdateEventUserEmojiStatus,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: userID},
+		EmojiStatus: status,
+		PtsCount:    1,
+	}, true, excludeSessionID)
+}
+
 // RecordDraftMessage 记录某会话云草稿变化（保存/清空都是同一事件——草稿是绝对
 // 状态，重放时按 peer 重载当前值）。updateDraftMessage 无 pts 字段，走 LacksWirePts
 // aux 簿记；topMsgID 是 forum 话题草稿键（复用 MaxID 列持久化）。

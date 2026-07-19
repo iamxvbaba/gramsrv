@@ -33,6 +33,9 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	if channel.Monoforum {
+		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
+	}
 	existing, existingErr := s.getChannelMember(ctx, tx, channelID, userID)
 	if existingErr == nil {
 		switch {

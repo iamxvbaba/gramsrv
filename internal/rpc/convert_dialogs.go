@@ -165,6 +165,9 @@ func tgDialogDraft(d domain.DialogDraft) tg.DraftMessageClass {
 	if rich := mustTGRichMessage(d.RichMessage); rich != nil {
 		out.SetRichMessage(*rich)
 	}
+	if suggested, ok := tgSuggestedPost(d.SuggestedPost); ok {
+		out.SetSuggestedPost(suggested)
+	}
 	return out
 }
 

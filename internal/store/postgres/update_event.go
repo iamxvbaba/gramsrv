@@ -211,31 +211,36 @@ func appendUserUpdateEvent(ctx context.Context, db sqlcgen.DBTX, q *sqlcgen.Quer
 	if err != nil {
 		return err
 	}
+	emojiStatusPayload, err := encodeEventEmojiStatus(event.EmojiStatus)
+	if err != nil {
+		return err
+	}
 	if err := q.AppendUserUpdateEvent(ctx, sqlcgen.AppendUserUpdateEventParams{
-		UserID:           userID,
-		Pts:              int32(event.Pts),
-		PtsCount:         int32(event.PtsCount),
-		Date:             int32(event.Date),
-		EventType:        string(event.Type),
-		EventBool:        event.Bool,
-		EventPhone:       event.Phone,
-		EventPeers:       peers,
-		PeerSettings:     settings,
-		MessageIds:       messageIDs,
-		DialogFilter:     dialogFilter,
-		FilterOrder:      filterOrder,
-		FolderPeers:      folderPeers,
-		StoryPayload:     storyPayload,
-		ReactionPayload:  reactionPayload,
-		MaxID:            pgInt32NonNegative(event.MaxID),
-		StillUnreadCount: int32(event.StillUnreadCount),
-		ChannelPts:       int32(event.ChannelPts),
-		FilterID:         pgInt32NonNegative(event.FilterID),
-		TagsEnabled:      event.TagsEnabled,
-		FolderID:         pgInt32NonNegative(event.FolderID),
-		MessageBoxID:     messageID,
-		PeerType:         peerType,
-		PeerID:           peerID,
+		UserID:             userID,
+		Pts:                int32(event.Pts),
+		PtsCount:           int32(event.PtsCount),
+		Date:               int32(event.Date),
+		EventType:          string(event.Type),
+		EventBool:          event.Bool,
+		EventPhone:         event.Phone,
+		EventPeers:         peers,
+		PeerSettings:       settings,
+		MessageIds:         messageIDs,
+		DialogFilter:       dialogFilter,
+		FilterOrder:        filterOrder,
+		FolderPeers:        folderPeers,
+		StoryPayload:       storyPayload,
+		ReactionPayload:    reactionPayload,
+		EmojiStatusPayload: emojiStatusPayload,
+		MaxID:              pgInt32NonNegative(event.MaxID),
+		StillUnreadCount:   int32(event.StillUnreadCount),
+		ChannelPts:         int32(event.ChannelPts),
+		FilterID:           pgInt32NonNegative(event.FilterID),
+		TagsEnabled:        event.TagsEnabled,
+		FolderID:           pgInt32NonNegative(event.FolderID),
+		MessageBoxID:       messageID,
+		PeerType:           peerType,
+		PeerID:             peerID,
 	}); err != nil {
 		return err
 	}
@@ -385,6 +390,10 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 		if err != nil {
 			return nil, fmt.Errorf("decode reaction payload: %w", err)
 		}
+		emojiStatus, err := decodeEventEmojiStatus(row.EmojiStatusPayloadJson)
+		if err != nil {
+			return nil, fmt.Errorf("decode emoji status payload: %w", err)
+		}
 		media, err := decodeMessageMedia(row.MediaJson)
 		if err != nil {
 			return nil, fmt.Errorf("decode message media: %w", err)
@@ -420,6 +429,7 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 			TagsEnabled:      row.TagsEnabled,
 			FolderID:         int(row.FolderID),
 			Reaction:         reaction,
+			EmojiStatus:      emojiStatus,
 			Message: domain.Message{
 				ID:             int(row.MessageID),
 				UID:            row.PrivateMessageID,
@@ -579,6 +589,10 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 		if err != nil {
 			return nil, fmt.Errorf("decode reaction payload: %w", err)
 		}
+		emojiStatus, err := decodeEventEmojiStatus(row.EmojiStatusPayloadJson)
+		if err != nil {
+			return nil, fmt.Errorf("decode emoji status payload: %w", err)
+		}
 		media, err := decodeMessageMedia(row.MediaJson)
 		if err != nil {
 			return nil, fmt.Errorf("decode message media: %w", err)
@@ -614,6 +628,7 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 			TagsEnabled:      row.TagsEnabled,
 			FolderID:         int(row.FolderID),
 			Reaction:         reaction,
+			EmojiStatus:      emojiStatus,
 			Message: domain.Message{
 				ID:             int(row.MessageID),
 				UID:            row.PrivateMessageID,
@@ -977,6 +992,31 @@ func encodeEventReaction(reaction *domain.MessageReaction) ([]byte, error) {
 
 func decodeEventReaction(raw string) (*domain.MessageReaction, error) {
 	return decodeStoryReaction(raw)
+}
+
+func encodeEventEmojiStatus(status domain.UserEmojiStatus) ([]byte, error) {
+	if !status.Valid() {
+		return nil, domain.ErrStarGiftCollectibleInvalid
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		return nil, fmt.Errorf("marshal event emoji status: %w", err)
+	}
+	return raw, nil
+}
+
+func decodeEventEmojiStatus(raw string) (domain.UserEmojiStatus, error) {
+	if raw == "" || raw == "{}" || raw == "null" {
+		return domain.UserEmojiStatus{}, nil
+	}
+	var status domain.UserEmojiStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		return domain.UserEmojiStatus{}, err
+	}
+	if !status.Valid() {
+		return domain.UserEmojiStatus{}, domain.ErrStarGiftCollectibleInvalid
+	}
+	return status, nil
 }
 
 type peerSettingsJSON struct {

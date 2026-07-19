@@ -22,6 +22,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM contacts c
 JOIN users u ON u.id = c.contact_user_id
@@ -52,6 +54,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM contacts c
 JOIN users u ON u.id = c.contact_user_id
@@ -130,6 +134,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at,
   EXISTS (SELECT 1 FROM reverse_updated)::boolean AS reverse_mutual_changed
 FROM upserted c
@@ -168,6 +174,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM updated c
 JOIN users u ON u.id = c.contact_user_id;

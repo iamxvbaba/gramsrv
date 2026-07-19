@@ -349,6 +349,37 @@ func (s *StarGiftStore) UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) 
 	return out, nil
 }
 
+func (s *StarGiftStore) ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error) {
+	if owner.ID <= 0 || limit <= 0 {
+		return []domain.UniqueStarGift{}, nil
+	}
+	if limit > domain.MaxSavedStarGiftsLimit {
+		limit = domain.MaxSavedStarGiftsLimit
+	}
+	rows, err := s.db.Query(ctx, uniqueStarGiftQuery(`
+u.owner_peer_type=$1 AND u.owner_peer_id=$2
+AND NOT u.burned AND u.owner_address=''
+AND sg.lifecycle_status='active'`)+`
+ORDER BY u.id DESC
+LIMIT $3`, string(owner.Type), owner.ID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unique star gifts by owner: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.UniqueStarGift, 0, limit)
+	for rows.Next() {
+		gift, err := scanUniqueStarGift(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, gift)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unique star gifts by owner: %w", err)
+	}
+	return out, nil
+}
+
 func (s *StarGiftStore) uniqueByPredicate(ctx context.Context, predicate string, value any) (domain.UniqueStarGift, bool, error) {
 	row := s.db.QueryRow(ctx, uniqueStarGiftQuery(predicate), value)
 	unique, err := scanUniqueStarGift(row)

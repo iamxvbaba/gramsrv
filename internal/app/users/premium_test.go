@@ -107,7 +107,7 @@ func TestUpdateEmojiStatusPremiumGate(t *testing.T) {
 	svc := NewService(store)
 
 	// 非会员设置被拒（PREMIUM_ACCOUNT_REQUIRED）。
-	if _, err := svc.UpdateEmojiStatus(ctx, u.ID, 42, 0); !errors.Is(err, domain.ErrPremiumRequired) {
+	if _, err := svc.UpdateEmojiStatus(ctx, u.ID, domain.UserEmojiStatus{DocumentID: 42}); !errors.Is(err, domain.ErrPremiumRequired) {
 		t.Fatalf("non-premium set err = %v, want ErrPremiumRequired", err)
 	}
 
@@ -115,14 +115,14 @@ func TestUpdateEmojiStatusPremiumGate(t *testing.T) {
 	if _, err := store.SetPremiumUntil(ctx, u.ID, int(time.Now().Add(time.Hour).Unix())); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	set, err := svc.UpdateEmojiStatus(ctx, u.ID, 42, 0)
+	set, err := svc.UpdateEmojiStatus(ctx, u.ID, domain.UserEmojiStatus{DocumentID: 42})
 	if err != nil || set.EmojiStatusDocumentID != 42 {
 		t.Fatalf("premium set = %+v err %v, want document 42", set, err)
 	}
 	if _, err := store.SetPremiumUntil(ctx, u.ID, 0); err != nil {
 		t.Fatalf("downgrade: %v", err)
 	}
-	cleared, err := svc.UpdateEmojiStatus(ctx, u.ID, 0, 0)
+	cleared, err := svc.UpdateEmojiStatus(ctx, u.ID, domain.UserEmojiStatus{})
 	if err != nil || cleared.EmojiStatusDocumentID != 0 {
 		t.Fatalf("clear after downgrade = %+v err %v, want cleared", cleared, err)
 	}

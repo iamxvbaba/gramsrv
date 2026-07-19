@@ -453,6 +453,8 @@ func tgStarsTransactions(in []domain.StarsTransaction) []tg.StarsTransaction {
 		switch t.Reason {
 		case domain.StarsReasonReaction:
 			item.Reaction = true
+		case domain.StarsReasonPaidMessage:
+			item.SetPaidMessages(1)
 		case domain.StarsReasonGift:
 			item.Gift = true
 		case domain.StarsReasonGiftUpgrade:

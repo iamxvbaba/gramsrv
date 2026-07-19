@@ -103,8 +103,8 @@ func (r *Router) monoforumSavedHistory(ctx context.Context, userID int64, mono d
 	}, nil
 }
 
-// monoforumChats 投影客户端 materialize monoforum 私信所需的频道:monoforum 自身(直接投影,管理员
-// 非其成员故不能走可见性受限的 GetChannels)+ 母广播频道(管理员是其成员)。
+// monoforumChats 投影客户端 materialize monoforum 私信所需的频道:monoforum 自身直接投影，
+// 再按 viewer 补母广播频道。订阅者没有 monoforum member row，管理员身份也只来自母频道。
 func (r *Router) monoforumChats(ctx context.Context, userID int64, mono domain.Channel) []tg.ChatClass {
 	chats := []tg.ChatClass{tgChannelChatForView(userID, domain.ChannelView{Channel: mono})}
 	if mono.LinkedMonoforumID != 0 && r.deps.Channels != nil {
@@ -151,8 +151,8 @@ func (r *Router) monoforumSubscriberUsers(ctx context.Context, userID int64, dia
 	return r.tgUsers(found)
 }
 
-// monoforumReplyPresent 判断 sendMessage 的 reply_to 是否带 monoforum_peer_id(频道私信发送的唯一标志)。
-// 普通发送恒不带,故据此 gate monoforum 分支,普通发送热路径零额外成本。
+// monoforumReplyPresent 判断 sendMessage 的 reply_to 是否显式携带 monoforum_peer_id。
+// 管理员回复必须带目标订阅者；普通订阅者按官方 TDesktop 行为不携带 reply_to，目标由调用者推导。
 func monoforumReplyPresent(input tg.InputReplyToClass) bool {
 	switch v := input.(type) {
 	case *tg.InputReplyToMonoForum:
@@ -189,46 +189,75 @@ func (r *Router) monoforumReplyTargetPeer(userID int64, input tg.InputReplyToCla
 	return r.domainPeerFromInputPeer(userID, inputPeer)
 }
 
+func (r *Router) monoforumSavedPeerForSender(userID int64, isAdmin bool, replyTo tg.InputReplyToClass) (domain.Peer, error) {
+	savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
+	if monoforumReplyPresent(replyTo) {
+		var valid bool
+		savedPeer, valid = r.monoforumReplyTargetPeer(userID, replyTo)
+		if !valid || savedPeer.Type != domain.PeerTypeUser || savedPeer.ID == 0 {
+			return domain.Peer{}, replyToMonoforumPeerInvalidErr()
+		}
+	} else if isAdmin {
+		return domain.Peer{}, replyToMonoforumPeerInvalidErr()
+	}
+	if !isAdmin && savedPeer.ID != userID {
+		return domain.Peer{}, replyToMonoforumPeerInvalidErr()
+	}
+	return savedPeer, nil
+}
+
+// monoforumMessageReplyFromInput separates the sub-dialog selector from the actual message reply.
+// InputReplyToMonoForum only selects a subscriber; InputReplyToMessage may carry both the selector
+// and a real reply_to_msg_id, so clear flags.5 before reusing the common structural validator.
+func (r *Router) monoforumMessageReplyFromInput(ctx context.Context, userID int64, peer domain.Peer, input tg.InputReplyToClass) (*domain.MessageReply, error) {
+	switch value := input.(type) {
+	case nil, *tg.InputReplyToMonoForum:
+		return nil, nil
+	case *tg.InputReplyToMessage:
+		if value == nil {
+			return nil, nil
+		}
+		clean := *value
+		clean.Flags.Unset(5)
+		clean.MonoforumPeerID = nil
+		return r.messageReplyFromInput(ctx, userID, peer, &clean)
+	default:
+		return r.messageReplyFromInput(ctx, userID, peer, input)
+	}
+}
+
 // sendMonoforumMessage 处理向频道私信(monoforum)发送:订阅者发到自己的子会话,管理员回复到目标订阅者。
-// saved_peer 来自 reply_to 的 monoforum_peer_id;管理员可写任意订阅者子会话,普通订阅者只能写自己的。
-func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, req *tg.MessagesSendMessageRequest, fingerprint []byte, preflighted bool) (tg.UpdatesClass, error) {
+// saved_peer 对订阅者由调用者推导、对管理员来自 reply_to;管理员可写任意订阅者子会话,订阅者只能写自己的。
+func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer domain.Peer, mono domain.Channel, isAdmin bool, req domain.SendMonoforumMessageRequest) (tg.UpdatesClass, error) {
 	if r.deps.Channels == nil {
 		return nil, notImplementedErr()
 	}
 	if peer.Type != domain.PeerTypeChannel || peer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
-	mono, isAdmin, err := r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID)
-	if err != nil {
-		if errors.Is(err, domain.ErrChannelInvalid) {
-			// 带 monoforum_peer_id 却不是 monoforum 频道。
-			return nil, tgerr400("CHANNEL_MONOFORUM_UNSUPPORTED")
-		}
-		return nil, internalErr()
-	}
-	savedPeer, ok := r.monoforumReplyTargetPeer(userID, req.ReplyTo)
-	if !ok || savedPeer.Type != domain.PeerTypeUser || savedPeer.ID == 0 {
+	if mono.ID != peer.ID || !mono.Monoforum || req.SavedPeer.Type != domain.PeerTypeUser || req.SavedPeer.ID == 0 {
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
-	if !isAdmin && savedPeer.ID != userID {
+	if !isAdmin && req.SavedPeer.ID != userID {
 		// 普通订阅者只能写自己的子会话,不能写他人的。
 		return nil, replyToMonoforumPeerInvalidErr()
 	}
-	res, err := r.deps.Channels.SendMonoforumMessage(ctx, domain.SendMonoforumMessageRequest{
-		MonoforumID:            mono.ID,
-		SenderUserID:           userID,
-		SavedPeer:              savedPeer,
-		RandomID:               req.RandomID,
-		IdempotencyFingerprint: fingerprint,
-		IdempotencyPreflighted: preflighted,
-		Message:                req.Message,
-		Entities:               domainMessageEntities(req.Entities),
-		Date:                   int(r.clock.Now().Unix()),
-	})
+	req.MonoforumID = mono.ID
+	req.SenderUserID = userID
+	if req.Date == 0 {
+		req.Date = int(r.clock.Now().Unix())
+	}
+	res, err := r.deps.Channels.SendMonoforumMessage(ctx, req)
 	if err != nil {
 		return nil, messageSendErr(err)
 	}
-	return r.monoforumSendUpdates(ctx, userID, mono, savedPeer, res), nil
+	if req.ClearDraft {
+		r.clearDraftAfterSend(ctx, userID, peer, req.ReplyTo)
+	}
+	if !res.Duplicate {
+		r.enqueueMonoforumMessageFanout(ctx, userID, mono, req.SavedPeer, res)
+	}
+	return r.monoforumSendUpdates(ctx, userID, mono, req.SavedPeer, res), nil
 }
 
 // monoforumSendUpdates 给发送者构造回声 Updates:updateMessageID(关联 random_id)+ updateNewChannelMessage
@@ -245,6 +274,11 @@ func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono do
 		newMsg.Message = &tg.MessageEmpty{ID: res.Message.ID}
 	}
 	updates = append(updates, newMsg)
+	if res.SenderStarsBalance != nil && res.Message.SenderUserID == userID {
+		updates = append(updates, &tg.UpdateStarsBalance{
+			Balance: &tg.StarsAmount{Amount: res.SenderStarsBalance.Balance},
+		})
+	}
 	date := int(r.clock.Now().Unix())
 	if res.Duplicate && res.ReplayDeleteEvent != nil {
 		if deleted := tgChannelUpdate(userID, *res.ReplayDeleteEvent); deleted != nil {
@@ -260,4 +294,19 @@ func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono do
 		Users:   r.monoforumSubscriberUsers(ctx, userID, []domain.MonoforumDialog{{SavedPeer: savedPeer}}, []domain.ChannelMessage{res.Message}),
 		Date:    date,
 	}
+}
+
+func (r *Router) monoforumDeliveryUpdates(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) *tg.Updates {
+	updates, _ := r.monoforumSendUpdates(ctx, userID, mono, savedPeer, res).(*tg.Updates)
+	if updates == nil {
+		return nil
+	}
+	filtered := make([]tg.UpdateClass, 0, len(updates.Updates))
+	for _, update := range updates.Updates {
+		if _, randomMapping := update.(*tg.UpdateMessageID); !randomMapping {
+			filtered = append(filtered, update)
+		}
+	}
+	updates.Updates = filtered
+	return updates
 }

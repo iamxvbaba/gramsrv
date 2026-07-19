@@ -25,7 +25,12 @@ func (s *ChannelStore) ListChannelHistory(ctx context.Context, viewerUserID int6
 	base := "channel_id = $1 AND NOT deleted"
 	extraChannels := []domain.Channel(nil)
 	if channel.Monoforum {
-		base += " AND saved_peer_id = 0"
+		if isChannelAdmin(member) {
+			base += " AND saved_peer_id = 0"
+		} else {
+			baseArgs = append(baseArgs, viewerUserID)
+			base += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(baseArgs))
+		}
 		if channel.LinkedMonoforumID != 0 {
 			if parent, parentErr := s.channelByID(ctx, s.db, channel.LinkedMonoforumID); parentErr == nil {
 				extraChannels = append(extraChannels, parent)

@@ -3,10 +3,12 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/iamxvbaba/td/tg"
 	"strings"
-	"telesrv/internal/domain"
 	"unicode/utf8"
+
+	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
 )
 
 func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSendMessageRequest) (tg.UpdatesClass, error) {
@@ -63,12 +65,39 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		sendErr = internalErr()
 		return nil, sendErr
 	}
-	// 频道私信(monoforum):仅当 reply_to 带 monoforum_peer_id 时走专用发送路径(普通发送恒不带,
-	// 故此 gate 对普通发送零额外成本)。peer 解析为 monoforum 频道时按订阅者子会话发送。
-	if monoforumReplyPresent(req.ReplyTo) {
-		savedPeer, valid := r.monoforumReplyTargetPeer(userID, req.ReplyTo)
-		if !valid || savedPeer.Type != domain.PeerTypeUser || savedPeer.ID == 0 {
-			sendErr = replyToMonoforumPeerInvalidErr()
+	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
+	// monoforum 普通用户发送不带 reply_to，saved_peer 必须由服务端推导为自己；管理员回复才必须
+	// 显式携带 monoforum_peer_id。仅凭 reply_to 判路由会把用户请求误送进普通 megagroup 路径。
+	var mono domain.Channel
+	var monoforum, monoforumAdmin bool
+	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		mono, monoforumAdmin, err = r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID)
+		switch {
+		case err == nil:
+			monoforum = true
+		case !errors.Is(err, domain.ErrChannelInvalid):
+			sendErr = internalErr()
+			return nil, sendErr
+		}
+	}
+	if hasSuggestedPost && !monoforum {
+		sendErr = suggestedPostPeerInvalidErr()
+		return nil, sendErr
+	}
+	if monoforum {
+		suggestedPost, suggestedErr := domainSuggestedPost(suggestedInput, hasSuggestedPost)
+		if suggestedErr != nil {
+			sendErr = suggestedErr
+			return nil, sendErr
+		}
+		savedPeer, err := r.monoforumSavedPeerForSender(userID, monoforumAdmin, req.ReplyTo)
+		if err != nil {
+			sendErr = err
+			return nil, sendErr
+		}
+		replyTo, err := r.monoforumMessageReplyFromInput(ctx, userID, peer, req.ReplyTo)
+		if err != nil {
+			sendErr = err
 			return nil, sendErr
 		}
 		replay, err := r.lookupChannelSendReplay(ctx, userID, peer.ID, savedPeer, req.RandomID, idempotencyFingerprint)
@@ -78,6 +107,9 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		}
 		if replay.found {
 			duplicate = true
+			if req.ClearDraft {
+				r.clearDraftAfterSend(ctx, userID, peer, replyTo)
+			}
 			return r.monoforumSendUpdates(ctx, userID, replay.channel.Channel, savedPeer, replay.channel), nil
 		}
 		if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
@@ -89,12 +121,29 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			sendErr = err
 			return nil, sendErr
 		}
-		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, req, idempotencyFingerprint, replay.checked)
+		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
+			SavedPeer:              savedPeer,
+			RandomID:               req.RandomID,
+			IdempotencyFingerprint: idempotencyFingerprint,
+			IdempotencyPreflighted: replay.checked,
+			Message:                req.Message,
+			Entities:               domainMessageEntities(req.Entities),
+			ReplyTo:                replyTo,
+			Silent:                 req.Silent,
+			NoForwards:             req.Noforwards,
+			SuggestedPost:          suggestedPost,
+			AllowPaidStars:         req.AllowPaidStars,
+			ClearDraft:             req.ClearDraft,
+		})
 		if err != nil {
 			sendErr = err
 			return nil, sendErr
 		}
 		return updates, nil
+	}
+	if req.AllowPaidStars > 0 {
+		sendErr = paymentUnsupportedErr()
+		return nil, sendErr
 	}
 	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
 	if err != nil {
@@ -201,7 +250,12 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 }
 
 func messageSendErr(err error) error {
+	var paymentRequired *domain.StarsPaymentRequiredError
 	switch {
+	case errors.As(err, &paymentRequired) && paymentRequired.Stars > 0:
+		return allowPaymentRequiredErr(paymentRequired.Stars)
+	case errors.Is(err, domain.ErrStarsInsufficient):
+		return balanceTooLowErr()
 	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
@@ -314,10 +368,8 @@ func sendMessageUnsupportedOptionErr(req *tg.MessagesSendMessageRequest) error {
 	// req.Effect 不再一律拒绝：消息特效已实现，合法性在 messageEffectInvalid 单独校验。
 	case req.AllowPaidStars < 0:
 		return starsAmountInvalidErr()
-	case req.AllowPaidStars > 0 || req.AllowPaidFloodskip:
+	case req.AllowPaidFloodskip:
 		return paymentUnsupportedErr()
-	case !req.SuggestedPost.Zero():
-		return suggestedPostPeerInvalidErr()
 	default:
 		return nil
 	}

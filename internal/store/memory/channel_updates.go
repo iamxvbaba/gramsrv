@@ -49,6 +49,9 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 			if msg.Deleted {
 				continue
 			}
+			if channel.Monoforum && !isChannelAdmin(member) && msg.SavedPeer != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) {
+				continue
+			}
 			if msg.ID <= member.AvailableMinID {
 				continue
 			}
@@ -68,6 +71,16 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 	}
 	events := make([]domain.ChannelUpdateEvent, 0, limit)
 	lastPts := req.Pts
+	var visibleMonoforumMessageIDs map[int]struct{}
+	if channel.Monoforum && !isChannelAdmin(member) {
+		visibleMonoforumMessageIDs = make(map[int]struct{})
+		savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}
+		for _, message := range s.messages[req.ChannelID] {
+			if message.SavedPeer == savedPeer {
+				visibleMonoforumMessageIDs[message.ID] = struct{}{}
+			}
+		}
+	}
 	for _, event := range s.events[req.ChannelID] {
 		if event.Pts <= req.Pts {
 			continue
@@ -76,6 +89,12 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 		visible, ok := domain.FilterChannelUpdateEventForAvailableMinID(cloneChannelEvent(event), member.AvailableMinID)
 		if !ok {
 			continue
+		}
+		if channel.Monoforum && !isChannelAdmin(member) {
+			visible, ok = filterMonoforumEventForUser(visible, req.UserID, visibleMonoforumMessageIDs)
+			if !ok {
+				continue
+			}
 		}
 		if preview && visible.Type == domain.ChannelUpdateParticipant {
 			continue
@@ -119,6 +138,27 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 		diff.OtherUpdates[i].Message = messages[0]
 	}
 	return diff, nil
+}
+
+func filterMonoforumEventForUser(event domain.ChannelUpdateEvent, userID int64, visibleMessageIDs map[int]struct{}) (domain.ChannelUpdateEvent, bool) {
+	savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
+	if event.Message.ID != 0 {
+		return event, event.Message.SavedPeer == savedPeer
+	}
+	if len(event.MessageIDs) == 0 {
+		return event, false
+	}
+	visibleIDs := make([]int, 0, len(event.MessageIDs))
+	for _, id := range event.MessageIDs {
+		if _, ok := visibleMessageIDs[id]; ok {
+			visibleIDs = append(visibleIDs, id)
+		}
+	}
+	if len(visibleIDs) == 0 {
+		return event, false
+	}
+	event.MessageIDs = visibleIDs
+	return event, true
 }
 
 func (s *ChannelStore) MaxChannelPts(_ context.Context, channelID int64) (int, error) {

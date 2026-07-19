@@ -316,13 +316,21 @@ func (s *ChannelStore) lookupChannelSendReplayLocked(req domain.ChannelSendRepla
 		Message:      cloneChannelMessage(replay),
 		SenderUserID: first.SenderUserID,
 	}
-	return domain.SendChannelMessageResult{
+	result := domain.SendChannelMessageResult{
 		Channel:           cloneChannel(channel),
 		Message:           cloneChannelMessage(replay),
 		Event:             event,
 		Duplicate:         true,
 		ReplayDeleteEvent: replayDelete,
-	}, true, nil
+	}
+	if first.PaidMessageStars > 0 {
+		balance, ok := s.starsBalances[first.SenderUserID]
+		if !ok {
+			return domain.SendChannelMessageResult{}, false, fmt.Errorf("memory paid-message replay has no sender balance")
+		}
+		result.SenderStarsBalance = &domain.StarsBalance{UserID: first.SenderUserID, Balance: balance, Granted: true}
+	}
+	return result, true, nil
 }
 
 func channelDeliverySkipSet(ids []int64) map[int64]struct{} {

@@ -67,6 +67,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM contacts c
 JOIN users u ON u.id = c.contact_user_id
@@ -80,29 +82,31 @@ type GetContactParams struct {
 }
 
 type GetContactRow struct {
-	ContactUserID         int64
-	Mutual                bool
-	CloseFriend           bool
-	ContactPhone          string
-	ContactFirstName      string
-	ContactLastName       string
-	Note                  string
-	NoteEntitiesJson      string
-	ID                    int64
-	AccessHash            int64
-	Phone                 string
-	FirstName             string
-	LastName              string
-	Username              string
-	CountryCode           string
-	Verified              bool
-	Support               bool
-	IsBot                 bool
-	BotInfoVersion        int32
-	PremiumExpiresAt      pgtype.Timestamptz
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int64
-	LastSeenAt            int64
+	ContactUserID            int64
+	Mutual                   bool
+	CloseFriend              bool
+	ContactPhone             string
+	ContactFirstName         string
+	ContactLastName          string
+	Note                     string
+	NoteEntitiesJson         string
+	ID                       int64
+	AccessHash               int64
+	Phone                    string
+	FirstName                string
+	LastName                 string
+	Username                 string
+	CountryCode              string
+	Verified                 bool
+	Support                  bool
+	IsBot                    bool
+	BotInfoVersion           int32
+	PremiumExpiresAt         pgtype.Timestamptz
+	EmojiStatusDocumentID    int64
+	EmojiStatusUntil         int64
+	EmojiStatusCollectibleID *int64
+	EmojiStatusCollectible   []byte
+	LastSeenAt               int64
 }
 
 func (q *Queries) GetContact(ctx context.Context, arg GetContactParams) (GetContactRow, error) {
@@ -131,6 +135,8 @@ func (q *Queries) GetContact(ctx context.Context, arg GetContactParams) (GetCont
 		&i.PremiumExpiresAt,
 		&i.EmojiStatusDocumentID,
 		&i.EmojiStatusUntil,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
 		&i.LastSeenAt,
 	)
 	return i, err
@@ -160,6 +166,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM contacts c
 JOIN users u ON u.id = c.contact_user_id
@@ -168,29 +176,31 @@ ORDER BY c.contact_first_name, c.contact_last_name, u.first_name, u.last_name, u
 `
 
 type ListContactsByUserRow struct {
-	ContactUserID         int64
-	Mutual                bool
-	CloseFriend           bool
-	ContactPhone          string
-	ContactFirstName      string
-	ContactLastName       string
-	Note                  string
-	NoteEntitiesJson      string
-	ID                    int64
-	AccessHash            int64
-	Phone                 string
-	FirstName             string
-	LastName              string
-	Username              string
-	CountryCode           string
-	Verified              bool
-	Support               bool
-	IsBot                 bool
-	BotInfoVersion        int32
-	PremiumExpiresAt      pgtype.Timestamptz
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int64
-	LastSeenAt            int64
+	ContactUserID            int64
+	Mutual                   bool
+	CloseFriend              bool
+	ContactPhone             string
+	ContactFirstName         string
+	ContactLastName          string
+	Note                     string
+	NoteEntitiesJson         string
+	ID                       int64
+	AccessHash               int64
+	Phone                    string
+	FirstName                string
+	LastName                 string
+	Username                 string
+	CountryCode              string
+	Verified                 bool
+	Support                  bool
+	IsBot                    bool
+	BotInfoVersion           int32
+	PremiumExpiresAt         pgtype.Timestamptz
+	EmojiStatusDocumentID    int64
+	EmojiStatusUntil         int64
+	EmojiStatusCollectibleID *int64
+	EmojiStatusCollectible   []byte
+	LastSeenAt               int64
 }
 
 func (q *Queries) ListContactsByUser(ctx context.Context, userID int64) ([]ListContactsByUserRow, error) {
@@ -225,6 +235,8 @@ func (q *Queries) ListContactsByUser(ctx context.Context, userID int64) ([]ListC
 			&i.PremiumExpiresAt,
 			&i.EmojiStatusDocumentID,
 			&i.EmojiStatusUntil,
+			&i.EmojiStatusCollectibleID,
+			&i.EmojiStatusCollectible,
 			&i.LastSeenAt,
 		); err != nil {
 			return nil, err
@@ -270,6 +282,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at
 FROM updated c
 JOIN users u ON u.id = c.contact_user_id
@@ -283,29 +297,31 @@ type UpdateContactNoteParams struct {
 }
 
 type UpdateContactNoteRow struct {
-	ContactUserID         int64
-	Mutual                bool
-	CloseFriend           bool
-	ContactPhone          string
-	ContactFirstName      string
-	ContactLastName       string
-	Note                  string
-	NoteEntitiesJson      string
-	ID                    int64
-	AccessHash            int64
-	Phone                 string
-	FirstName             string
-	LastName              string
-	Username              string
-	CountryCode           string
-	Verified              bool
-	Support               bool
-	IsBot                 bool
-	BotInfoVersion        int32
-	PremiumExpiresAt      pgtype.Timestamptz
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int64
-	LastSeenAt            int64
+	ContactUserID            int64
+	Mutual                   bool
+	CloseFriend              bool
+	ContactPhone             string
+	ContactFirstName         string
+	ContactLastName          string
+	Note                     string
+	NoteEntitiesJson         string
+	ID                       int64
+	AccessHash               int64
+	Phone                    string
+	FirstName                string
+	LastName                 string
+	Username                 string
+	CountryCode              string
+	Verified                 bool
+	Support                  bool
+	IsBot                    bool
+	BotInfoVersion           int32
+	PremiumExpiresAt         pgtype.Timestamptz
+	EmojiStatusDocumentID    int64
+	EmojiStatusUntil         int64
+	EmojiStatusCollectibleID *int64
+	EmojiStatusCollectible   []byte
+	LastSeenAt               int64
 }
 
 func (q *Queries) UpdateContactNote(ctx context.Context, arg UpdateContactNoteParams) (UpdateContactNoteRow, error) {
@@ -339,6 +355,8 @@ func (q *Queries) UpdateContactNote(ctx context.Context, arg UpdateContactNotePa
 		&i.PremiumExpiresAt,
 		&i.EmojiStatusDocumentID,
 		&i.EmojiStatusUntil,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
 		&i.LastSeenAt,
 	)
 	return i, err
@@ -416,6 +434,8 @@ SELECT
   u.premium_expires_at,
   u.emoji_status_document_id,
   u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
   u.last_seen_at,
   EXISTS (SELECT 1 FROM reverse_updated)::boolean AS reverse_mutual_changed
 FROM upserted c
@@ -433,30 +453,32 @@ type UpsertContactParams struct {
 }
 
 type UpsertContactRow struct {
-	ContactUserID         int64
-	Mutual                bool
-	CloseFriend           bool
-	ContactPhone          string
-	ContactFirstName      string
-	ContactLastName       string
-	Note                  string
-	NoteEntitiesJson      string
-	ID                    int64
-	AccessHash            int64
-	Phone                 string
-	FirstName             string
-	LastName              string
-	Username              string
-	CountryCode           string
-	Verified              bool
-	Support               bool
-	IsBot                 bool
-	BotInfoVersion        int32
-	PremiumExpiresAt      pgtype.Timestamptz
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int64
-	LastSeenAt            int64
-	ReverseMutualChanged  bool
+	ContactUserID            int64
+	Mutual                   bool
+	CloseFriend              bool
+	ContactPhone             string
+	ContactFirstName         string
+	ContactLastName          string
+	Note                     string
+	NoteEntitiesJson         string
+	ID                       int64
+	AccessHash               int64
+	Phone                    string
+	FirstName                string
+	LastName                 string
+	Username                 string
+	CountryCode              string
+	Verified                 bool
+	Support                  bool
+	IsBot                    bool
+	BotInfoVersion           int32
+	PremiumExpiresAt         pgtype.Timestamptz
+	EmojiStatusDocumentID    int64
+	EmojiStatusUntil         int64
+	EmojiStatusCollectibleID *int64
+	EmojiStatusCollectible   []byte
+	LastSeenAt               int64
+	ReverseMutualChanged     bool
 }
 
 func (q *Queries) UpsertContact(ctx context.Context, arg UpsertContactParams) (UpsertContactRow, error) {
@@ -493,6 +515,8 @@ func (q *Queries) UpsertContact(ctx context.Context, arg UpsertContactParams) (U
 		&i.PremiumExpiresAt,
 		&i.EmojiStatusDocumentID,
 		&i.EmojiStatusUntil,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
 		&i.LastSeenAt,
 		&i.ReverseMutualChanged,
 	)

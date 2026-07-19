@@ -27,14 +27,21 @@ type UserStore interface {
 	// SweepExpiredPremium 把到期（premium_expires_at <= now）的会员行清空并
 	// 返回清理后的用户（供推送 updateUser）；单次最多处理 limit 行。
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)
-	// UpdateEmojiStatus 更新用户自定义 emoji status（documentID=0 表示清除，
-	// until=0 表示永久）。
-	UpdateEmojiStatus(ctx context.Context, userID int64, documentID int64, until int) (domain.User, error)
+	// UpdateEmojiStatus 更新用户自定义 emoji status。零值清除；collectible
+	// 必须是完整且与 DocumentID 一致的不可变快照。
+	UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error)
 	UpdateColor(ctx context.Context, userID int64, forProfile bool, color domain.PeerColor) (domain.User, error)
 	// UpdateBirthday 更新用户生日（零值 Birthday 表示清除）。
 	UpdateBirthday(ctx context.Context, userID int64, birthday domain.Birthday) (domain.User, error)
 	// UpdatePersonalChannel 设置/清除资料页个人频道（channelID=0 表示清除）。
 	UpdatePersonalChannel(ctx context.Context, userID int64, channelID int64) (domain.User, error)
+}
+
+// UserEmojiStatusEventStore is the aggregate write boundary used by the
+// account RPC in durable deployments. The user snapshot, pts event and online
+// dispatch row must commit or roll back together.
+type UserEmojiStatusEventStore interface {
+	UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, error)
 }
 
 // UserCache 缓存 viewer 无关的 users 表基础资料。

@@ -238,6 +238,29 @@ type UniqueStarGift struct {
 	CreatedAt             time.Time
 }
 
+// CollectibleEmojiStatus projects an immutable unique gift into the complete
+// status shape consumed by Telegram clients.  Ownership/lifecycle validation
+// is intentionally performed by the caller because it depends on the actor;
+// this helper validates only the immutable renderable facts.
+func CollectibleEmojiStatus(g UniqueStarGift) (EmojiStatusCollectible, bool) {
+	status := EmojiStatusCollectible{
+		CollectibleID: g.ID,
+		Title:         g.Title,
+		Slug:          g.Slug,
+		CenterColor:   g.Backdrop.CenterColor,
+		EdgeColor:     g.Backdrop.EdgeColor,
+		PatternColor:  g.Backdrop.PatternColor,
+		TextColor:     g.Backdrop.TextColor,
+	}
+	if g.Model.Document != nil {
+		status.DocumentID = g.Model.Document.ID
+	}
+	if g.Pattern.Document != nil {
+		status.PatternDocumentID = g.Pattern.Document.ID
+	}
+	return status, status.Valid()
+}
+
 type StarGiftCurrency string
 
 const (

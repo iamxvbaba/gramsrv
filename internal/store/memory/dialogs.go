@@ -868,6 +868,14 @@ func cloneDialogDraft(draft domain.DialogDraft) domain.DialogDraft {
 		draft.WebPage = &webpage
 	}
 	draft.RichMessage = cloneRichMessage(draft.RichMessage)
+	if draft.SuggestedPost != nil {
+		suggested := *draft.SuggestedPost
+		if suggested.Price != nil {
+			price := *suggested.Price
+			suggested.Price = &price
+		}
+		draft.SuggestedPost = &suggested
+	}
 	return draft
 }
 

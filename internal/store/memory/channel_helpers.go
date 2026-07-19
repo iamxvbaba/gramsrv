@@ -290,6 +290,12 @@ func (s *ChannelStore) ListActiveChannelIDsForUser(_ context.Context, userID, af
 		}
 		out = append(out, channelID)
 	}
+	for channelID, channel := range s.channels {
+		if channelID <= afterChannelID || !s.monoforumVisibleToUserLocked(channel, userID) || containsInt64(out, channelID) {
+			continue
+		}
+		out = append(out, channelID)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	if len(out) > limit {
 		out = out[:limit]
@@ -324,11 +330,57 @@ func (s *ChannelStore) ListDirtyActiveChannelsForUser(_ context.Context, userID 
 			out = append(out, domain.DirtyChannel{ChannelID: channelID, Pts: channel.Pts})
 		}
 	}
+	for channelID, channel := range s.channels {
+		if channelID <= afterChannelID || !s.monoforumVisibleToUserLocked(channel, userID) {
+			continue
+		}
+		checkpoint := s.channelUpdateCheckpointLocked(channelID, channel)
+		if checkpoint.LatestEventDate > sinceDate {
+			found := false
+			for _, item := range out {
+				if item.ChannelID == channelID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				out = append(out, domain.DirtyChannel{ChannelID: channelID, Pts: channel.Pts})
+			}
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ChannelID < out[j].ChannelID })
 	if len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *ChannelStore) monoforumVisibleToUserLocked(mono domain.Channel, userID int64) bool {
+	if userID == 0 || mono.Deleted || !mono.Monoforum || mono.LinkedMonoforumID == 0 {
+		return false
+	}
+	parent, ok := s.channels[mono.LinkedMonoforumID]
+	if !ok || parent.Deleted || !parent.BroadcastMessagesAllowed || parent.LinkedMonoforumID != mono.ID {
+		return false
+	}
+	if member, ok := s.members[parent.ID][userID]; ok && member.Status == domain.ChannelMemberActive && isChannelAdmin(member) {
+		return true
+	}
+	for _, msg := range s.messages[mono.ID] {
+		if !msg.Deleted && msg.SavedPeer == (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsInt64(items []int64, target int64) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ChannelStore) nextChannelIDLocked() int64 {
@@ -368,6 +420,10 @@ func (s *ChannelStore) channelForViewerLocked(userID, channelID int64) (domain.C
 		parentMember, ok := s.members[channel.LinkedMonoforumID][userID]
 		if ok && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember) {
 			return channel, syntheticMonoforumAdminMember(channel, parentMember), true, nil
+		}
+		parent, ok := s.channels[channel.LinkedMonoforumID]
+		if ok && !parent.Deleted && parent.BroadcastMessagesAllowed && parent.LinkedMonoforumID == channel.ID {
+			return channel, syntheticMonoforumUserMember(channel, userID), true, nil
 		}
 	}
 	if !publicPreviewableChannel(channel) {

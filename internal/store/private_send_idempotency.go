@@ -69,11 +69,17 @@ type channelSendFingerprintPayload struct {
 }
 
 type monoforumSendFingerprintPayload struct {
-	Version   int                    `json:"version"`
-	ChannelID int64                  `json:"channel_id"`
-	SavedPeer domain.Peer            `json:"saved_peer"`
-	Message   string                 `json:"message"`
-	Entities  []domain.MessageEntity `json:"entities"`
+	Version        int                    `json:"version"`
+	ChannelID      int64                  `json:"channel_id"`
+	SavedPeer      domain.Peer            `json:"saved_peer"`
+	Message        string                 `json:"message"`
+	Entities       []domain.MessageEntity `json:"entities"`
+	Media          *domain.MessageMedia   `json:"media"`
+	ReplyTo        *domain.MessageReply   `json:"reply_to"`
+	Silent         bool                   `json:"silent"`
+	NoForwards     bool                   `json:"noforwards"`
+	SuggestedPost  *domain.SuggestedPost  `json:"suggested_post,omitempty"`
+	AllowPaidStars int64                  `json:"allow_paid_stars"`
 }
 
 // PrivateSendFingerprint returns a SHA-256 fingerprint of the original send
@@ -155,11 +161,17 @@ func MonoforumSendFingerprint(req domain.SendMonoforumMessageRequest) ([]byte, e
 		return append([]byte(nil), req.IdempotencyFingerprint...), nil
 	}
 	payload, err := json.Marshal(monoforumSendFingerprintPayload{
-		Version:   channelSendFingerprintVersion,
-		ChannelID: req.MonoforumID,
-		SavedPeer: req.SavedPeer,
-		Message:   req.Message,
-		Entities:  req.Entities,
+		Version:        channelSendFingerprintVersion,
+		ChannelID:      req.MonoforumID,
+		SavedPeer:      req.SavedPeer,
+		Message:        req.Message,
+		Entities:       req.Entities,
+		Media:          req.Media,
+		ReplyTo:        req.ReplyTo,
+		Silent:         req.Silent,
+		NoForwards:     req.NoForwards,
+		SuggestedPost:  req.SuggestedPost,
+		AllowPaidStars: req.AllowPaidStars,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal monoforum send fingerprint: %w", err)

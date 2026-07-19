@@ -470,7 +470,16 @@ WHERE channel_id = $1 AND id = $2`, msg.ChannelID, msg.ID).Scan(
 		Message:      replay,
 		SenderUserID: first.SenderUserID,
 	}
-	return domain.SendChannelMessageResult{Channel: channel, Message: replay, Event: event, Duplicate: true, ReplayDeleteEvent: replayDelete}, nil
+	result := domain.SendChannelMessageResult{Channel: channel, Message: replay, Event: event, Duplicate: true, ReplayDeleteEvent: replayDelete}
+	if first.PaidMessageStars > 0 {
+		balance := domain.StarsBalance{UserID: first.SenderUserID}
+		if err := s.db.QueryRow(ctx, `SELECT balance, granted FROM stars_balances WHERE user_id = $1`, first.SenderUserID).
+			Scan(&balance.Balance, &balance.Granted); err != nil {
+			return domain.SendChannelMessageResult{}, fmt.Errorf("load paid-message replay balance: %w", err)
+		}
+		result.SenderStarsBalance = &balance
+	}
+	return result, nil
 }
 
 func (s *ChannelStore) insertServiceMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.ChannelMessage, domain.ChannelUpdateEvent, error) {
@@ -578,6 +587,10 @@ func insertChannelMessageWithFingerprintTx(ctx context.Context, tx pgx.Tx, msg d
 	if err != nil {
 		return err
 	}
+	suggestedPost, err := marshalJSON(msg.SuggestedPost, "{}")
+	if err != nil {
+		return err
+	}
 	sendSnapshot := []byte("{}")
 	if msg.RandomID != 0 {
 		sendSnapshot, err = store.EncodeChannelSendSnapshot(msg)
@@ -613,12 +626,12 @@ INSERT INTO channel_messages (
     channel_id, id, random_id, sender_user_id, from_peer_type, from_peer_id,
     send_as_peer_type, send_as_peer_id, message_date, edit_date, post, silent, noforwards,
     body, entities, reply_to, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
-    fwd_from, discussion_channel_id, discussion_message_id, action, pts, deleted, media, reply_markup, rich_message, ttl_period, expires_at, post_author, via_bot_id, from_boosts_applied, grouped_id, saved_peer_type, saved_peer_id, send_snapshot, request_fingerprint
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38::jsonb,$39::bytea)`,
+	    fwd_from, discussion_channel_id, discussion_message_id, action, pts, deleted, media, reply_markup, rich_message, ttl_period, expires_at, post_author, via_bot_id, from_boosts_applied, grouped_id, saved_peer_type, saved_peer_id, paid_message_stars, suggested_post, send_snapshot, request_fingerprint
+	  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39::jsonb,$40::jsonb,$41::bytea)`,
 		msg.ChannelID, msg.ID, msg.RandomID, msg.SenderUserID, string(msg.From.Type), msg.From.ID,
 		sendAsType, sendAsID, msg.Date, msg.EditDate, msg.Post, msg.Silent, msg.NoForwards,
 		msg.Body, entities, reply, replyMsgID, replyPeerType, replyPeerID, replyTopID,
-		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID, sendSnapshot, requestFingerprint); err != nil {
+		forward, discussionChannelID, discussionMessageID, action, msg.Pts, msg.Deleted, media, replyMarkup, richMessage, msg.TTLPeriod, msg.ExpiresAt, msg.PostAuthor, msg.ViaBotID, msg.FromBoostsApplied, msg.GroupedID, string(msg.SavedPeer.Type), msg.SavedPeer.ID, msg.PaidMessageStars, suggestedPost, sendSnapshot, requestFingerprint); err != nil {
 		return fmt.Errorf("insert channel message: %w", err)
 	}
 	// 共享媒体索引(迁移 0118):创建即按媒体类别建索引行,供 messages.search 媒体标签页。

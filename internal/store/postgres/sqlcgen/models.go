@@ -2144,6 +2144,8 @@ type User struct {
 	DeletionSource                string
 	DeletionReason                string
 	AccountDeleteAt               pgtype.Timestamptz
+	EmojiStatusCollectibleID      *int64
+	EmojiStatusCollectible        []byte
 }
 
 type UserBusinessProfile struct {
@@ -2219,33 +2221,34 @@ type UserTopReaction struct {
 }
 
 type UserUpdateEvent struct {
-	UserID            int64
-	Pts               int32
-	PtsCount          int32
-	Date              int32
-	EventType         string
-	MessageBoxID      *int32
-	PeerType          *string
-	PeerID            *int64
-	MaxID             int32
-	StillUnreadCount  int32
-	CreatedAt         pgtype.Timestamptz
-	EventBool         bool
-	EventPeers        []byte
-	PeerSettings      []byte
-	MessageIds        []byte
-	DialogFilter      []byte
-	FilterOrder       []byte
-	FolderPeers       []byte
-	FilterID          int32
-	TagsEnabled       bool
-	ChannelPts        int32
-	FolderID          int32
-	QuickReplies      []byte
-	QuickReplyMessage []byte
-	StoryPayload      []byte
-	ReactionPayload   []byte
-	EventPhone        string
+	UserID             int64
+	Pts                int32
+	PtsCount           int32
+	Date               int32
+	EventType          string
+	MessageBoxID       *int32
+	PeerType           *string
+	PeerID             *int64
+	MaxID              int32
+	StillUnreadCount   int32
+	CreatedAt          pgtype.Timestamptz
+	EventBool          bool
+	EventPeers         []byte
+	PeerSettings       []byte
+	MessageIds         []byte
+	DialogFilter       []byte
+	FilterOrder        []byte
+	FolderPeers        []byte
+	FilterID           int32
+	TagsEnabled        bool
+	ChannelPts         int32
+	FolderID           int32
+	QuickReplies       []byte
+	QuickReplyMessage  []byte
+	StoryPayload       []byte
+	ReactionPayload    []byte
+	EventPhone         string
+	EmojiStatusPayload []byte
 }
 
 type UserUpdateRetention struct {

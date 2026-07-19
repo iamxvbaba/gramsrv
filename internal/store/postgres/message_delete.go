@@ -331,19 +331,20 @@ func appendDeleteMessagesEvent(ctx context.Context, q *sqlcgen.Queries, event do
 		event.PtsCount = 1
 	}
 	if err := q.AppendUserUpdateEvent(ctx, sqlcgen.AppendUserUpdateEventParams{
-		UserID:          event.UserID,
-		Pts:             int32(event.Pts),
-		PtsCount:        int32(event.PtsCount),
-		Date:            int32(event.Date),
-		EventType:       string(domain.UpdateEventDeleteMessages),
-		EventPeers:      []byte("[]"),
-		PeerSettings:    []byte("{}"),
-		MessageIds:      messageIDs,
-		DialogFilter:    []byte("{}"),
-		FilterOrder:     []byte("[]"),
-		FolderPeers:     []byte("[]"),
-		StoryPayload:    []byte("{}"),
-		ReactionPayload: []byte("{}"),
+		UserID:             event.UserID,
+		Pts:                int32(event.Pts),
+		PtsCount:           int32(event.PtsCount),
+		Date:               int32(event.Date),
+		EventType:          string(domain.UpdateEventDeleteMessages),
+		EventPeers:         []byte("[]"),
+		PeerSettings:       []byte("{}"),
+		MessageIds:         messageIDs,
+		DialogFilter:       []byte("{}"),
+		FilterOrder:        []byte("[]"),
+		FolderPeers:        []byte("[]"),
+		StoryPayload:       []byte("{}"),
+		ReactionPayload:    []byte("{}"),
+		EmojiStatusPayload: []byte("{}"),
 	}); err != nil {
 		return fmt.Errorf("append delete messages event: %w", err)
 	}

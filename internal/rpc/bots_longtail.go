@@ -422,7 +422,7 @@ func (r *Router) onBotsUpdateUserEmojiStatus(ctx context.Context, req *tg.BotsUp
 	if !ok {
 		return false, userPermissionDeniedErr()
 	}
-	u, err := svc.UpdateEmojiStatus(ctx, target.ID, documentID, until)
+	u, err := svc.UpdateEmojiStatus(ctx, target.ID, domain.UserEmojiStatus{DocumentID: documentID, Until: until})
 	if err != nil {
 		if errors.Is(err, domain.ErrPremiumRequired) {
 			return false, tgerr400("PREMIUM_ACCOUNT_REQUIRED")

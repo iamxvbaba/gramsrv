@@ -48,6 +48,10 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 			args = append(args, member.AvailableMinID)
 			where += fmt.Sprintf(" AND id > $%d", len(args))
 		}
+		if channel.Monoforum && !isChannelAdmin(member) {
+			args = append(args, req.UserID)
+			where += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(args))
+		}
 		args = append(args, domain.MaxChannelDifferenceTooLongMessages)
 		rows, err := s.db.Query(ctx, `
 SELECT `+channelMessageColumns+`
@@ -100,11 +104,15 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 	if err != nil {
 		return domain.ChannelDifference{}, fmt.Errorf("list channel difference: %w", err)
 	}
-	defer rows.Close()
 	diff := domain.ChannelDifference{Channel: channel, Self: member, Pts: channel.Pts, Final: true, Timeout: 30}
 	userRefs := make(map[int64]struct{})
 	channelRefs := make(map[int64]struct{})
 	lastPts := req.Pts
+	type differenceEventRow struct {
+		event     domain.ChannelUpdateEvent
+		messageID int
+	}
+	eventRows := make([]differenceEventRow, 0, limit)
 	for rows.Next() {
 		event, messageID, err := scanChannelEvent(rows)
 		if err != nil {
@@ -131,6 +139,27 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 			break
 		}
 		lastPts = event.Pts
+		eventRows = append(eventRows, differenceEventRow{event: event, messageID: messageID})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return domain.ChannelDifference{}, err
+	}
+	rows.Close()
+	var visibleMonoforumMessageIDs map[int]struct{}
+	if channel.Monoforum && !isChannelAdmin(member) {
+		messageIDs := make([]int, 0)
+		for _, row := range eventRows {
+			messageIDs = append(messageIDs, row.event.MessageIDs...)
+		}
+		visibleMonoforumMessageIDs, err = s.monoforumVisibleMessageIDs(ctx, req.ChannelID, req.UserID, messageIDs)
+		if err != nil {
+			return domain.ChannelDifference{}, err
+		}
+	}
+	for _, row := range eventRows {
+		event := row.event
+		messageID := row.messageID
 		if messageID != 0 && event.Message.ID == 0 {
 			msg, err := s.getChannelMessage(ctx, s.db, req.ChannelID, messageID)
 			if err != nil {
@@ -143,6 +172,12 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 			continue
 		}
 		event = visibleEvent
+		if channel.Monoforum && !isChannelAdmin(member) {
+			event, ok = filterMonoforumEventForUser(event, req.UserID, visibleMonoforumMessageIDs)
+			if !ok {
+				continue
+			}
+		}
 		if preview && event.Type == domain.ChannelUpdateParticipant {
 			continue
 		}
@@ -155,9 +190,6 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 		default:
 			diff.OtherUpdates = append(diff.OtherUpdates, event)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return domain.ChannelDifference{}, err
 	}
 	if len(diff.Events) == 0 {
 		diff.Pts = lastPts
@@ -206,6 +238,55 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 	}
 	diff.Final = lastPts >= channel.Pts
 	return diff, nil
+}
+
+func (s *ChannelStore) monoforumVisibleMessageIDs(ctx context.Context, channelID, userID int64, ids []int) (map[int]struct{}, error) {
+	visible := make(map[int]struct{})
+	if len(ids) == 0 {
+		return visible, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT id
+FROM channel_messages
+WHERE channel_id = $1
+  AND id = ANY($2::int[])
+  AND saved_peer_type = 'user'
+  AND saved_peer_id = $3`, channelID, int32s(ids), userID)
+	if err != nil {
+		return nil, fmt.Errorf("list visible monoforum message ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		visible[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return visible, nil
+}
+
+func filterMonoforumEventForUser(event domain.ChannelUpdateEvent, userID int64, visibleMessageIDs map[int]struct{}) (domain.ChannelUpdateEvent, bool) {
+	if event.Message.ID != 0 {
+		return event, event.Message.SavedPeer == (domain.Peer{Type: domain.PeerTypeUser, ID: userID})
+	}
+	if len(event.MessageIDs) == 0 {
+		return event, false
+	}
+	ids := make([]int, 0, len(event.MessageIDs))
+	for _, id := range event.MessageIDs {
+		if _, ok := visibleMessageIDs[id]; ok {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return event, false
+	}
+	event.MessageIDs = ids
+	return event, true
 }
 
 func (s *ChannelStore) MaxChannelPts(ctx context.Context, channelID int64) (int, error) {

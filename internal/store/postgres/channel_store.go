@@ -126,7 +126,7 @@ const channelMessageColumns = `channel_id, id, random_id, sender_user_id, from_p
 send_as_peer_type, send_as_peer_id, message_date, edit_date, post, silent, noforwards, body,
 entities::text, reply_to::text, reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
 fwd_from::text, discussion_channel_id, discussion_message_id, action::text, pts, deleted, media::text,
-reply_markup::text, rich_message::text, ttl_period, expires_at, views_count, post_author, pinned, via_bot_id, grouped_id, from_boosts_applied, saved_peer_type, saved_peer_id`
+reply_markup::text, rich_message::text, ttl_period, expires_at, views_count, post_author, pinned, via_bot_id, grouped_id, from_boosts_applied, saved_peer_type, saved_peer_id, paid_message_stars, suggested_post::text`
 
 const channelForumTopicColumns = `channel_id, topic_id, creator_user_id, title, icon_color, icon_emoji_id,
 title_missing, closed, hidden, pinned, pinned_order, date, top_message_id, read_inbox_max_id,
