@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // UserIDSequenceBase 是普通用户 ID 的起始值。
 //
 // 取 2026-06-01 00:00:00 Asia/Shanghai 的 Unix 秒级时间戳。
@@ -63,6 +65,15 @@ type User struct {
 	PhotoHasVideo bool
 	LastSeenAt    int
 	Status        UserStatus
+	// Deleted is the durable tombstone state. Deleted users remain addressable by
+	// ID so historical messages can render "Deleted Account", but all profile
+	// and reusable identity fields are cleared at the store boundary.
+	Deleted         bool
+	DeletedAt       int64
+	DeletionSource  AccountDeletionSource
+	DeletionReason  string
+	CreatedAt       time.Time
+	AccountDeleteAt time.Time
 }
 
 // PremiumActiveAt 报告用户在 now（Unix 秒）时刻是否为有效会员。
@@ -79,6 +90,25 @@ func (u User) EmojiStatusActiveAt(now int64) bool {
 		return false
 	}
 	return u.EmojiStatusUntil == 0 || int64(u.EmojiStatusUntil) > now
+}
+
+// DeletedTombstone strips every viewer-dependent or personally identifying
+// field while preserving the immutable id and lifecycle audit facts.
+func (u User) DeletedTombstone() User {
+	if !u.Deleted {
+		return u
+	}
+	return User{
+		ID:              u.ID,
+		AccessHash:      u.AccessHash,
+		Deleted:         true,
+		DeletedAt:       u.DeletedAt,
+		DeletionSource:  u.DeletionSource,
+		DeletionReason:  u.DeletionReason,
+		CreatedAt:       u.CreatedAt,
+		AccountDeleteAt: u.AccountDeleteAt,
+		Status:          UserStatus{Kind: UserStatusEmpty},
+	}
 }
 
 // UserStatusKind is a protocol-neutral account presence state.

@@ -9,6 +9,9 @@ import (
 
 // tgSelfUser 把 domain.User 转为 self 标记的 tg.User（optional 字段由 Encode 自动 SetFlags）。
 func tgSelfUser(u domain.User) *tg.User {
+	if u.Deleted {
+		return &tg.User{ID: u.ID, Deleted: true}
+	}
 	out := &tg.User{
 		ID:            u.ID,
 		AccessHash:    u.AccessHash,
@@ -34,6 +37,9 @@ func tgSelfUser(u domain.User) *tg.User {
 }
 
 func tgUser(u domain.User) *tg.User {
+	if u.Deleted {
+		return &tg.User{ID: u.ID, Deleted: true}
+	}
 	out := &tg.User{
 		ID:            u.ID,
 		AccessHash:    u.AccessHash,

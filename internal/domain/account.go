@@ -174,7 +174,12 @@ func DefaultAccountReactionSettings() AccountReactionSettings {
 }
 
 // DefaultAccountTTLDays 是账号自毁默认期限（无显式设置时）。与历史固定回显一致。
-const DefaultAccountTTLDays = 365
+const (
+	DefaultAccountTTLDays = 365
+	// MaxAccountTTLDays prevents an untrusted int32 TL value from producing an
+	// out-of-range PostgreSQL interval/timestamp during deadline maintenance.
+	MaxAccountTTLDays = 3650
+)
 
 // GlobalPrivacy 是 globalPrivacySettings 的业务层表达（账号级隐私开关）。
 // DisallowedGifts 依赖礼物资产模型（当前未实现），故不建模、保持默认。
@@ -212,7 +217,7 @@ func DefaultAccountSettings() AccountSettings {
 
 // NormalizedTTLDays 返回钳制后的账号自毁期限（0/越界回落默认）。
 func (s AccountSettings) NormalizedTTLDays() int {
-	if s.AccountTTLDays <= 0 {
+	if s.AccountTTLDays <= 0 || s.AccountTTLDays > MaxAccountTTLDays {
 		return DefaultAccountTTLDays
 	}
 	return s.AccountTTLDays

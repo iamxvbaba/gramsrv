@@ -8,6 +8,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AccountDeletionNotification struct {
+	ID            int64
+	TargetUserID  int64
+	DeletedUserID int64
+	Status        string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type AccountDeletionRequest struct {
+	ID                 int64
+	UserID             int64
+	RequesterAuthKeyID int64
+	State              string
+	Reason             string
+	ConfirmHashDigest  []byte
+	RequestedAt        pgtype.Timestamptz
+	ExecuteAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type AccountPassword struct {
 	UserID                  int64
 	HasRecovery             bool
@@ -30,6 +56,7 @@ type AccountPassword struct {
 	RecoveryCode            string
 	RecoveryCodeExpiresAt   pgtype.Timestamptz
 	LoginEmail              string
+	PasswordChangedAt       pgtype.Timestamptz
 }
 
 type AccountPrivacyRule struct {
@@ -694,6 +721,42 @@ type ChannelMessageViewer struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type ChannelStarsBalance struct {
+	ChannelID int64
+	Balance   int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+type ChannelStarsTransaction struct {
+	ID          int64
+	ChannelID   int64
+	ActorUserID int64
+	Amount      int64
+	Reason      string
+	PeerType    string
+	PeerID      int64
+	GiftID      *int64
+	Date        int32
+}
+
+type ChannelTonBalance struct {
+	ChannelID      int64
+	BalanceNanoton int64
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type ChannelTonTransaction struct {
+	ID            int64
+	ChannelID     int64
+	ActorUserID   int64
+	AmountNanoton int64
+	Reason        string
+	PeerType      string
+	PeerID        int64
+	GiftID        *int64
+	Date          int32
+}
+
 type ChannelTopicRead struct {
 	ChannelID       int64
 	UserID          int64
@@ -1156,19 +1219,33 @@ type PasskeyCredential struct {
 }
 
 type PeerStarGift struct {
-	ID            int64
-	OwnerPeerID   int64
-	FromUserID    int64
-	GiftID        int64
-	MsgID         int32
-	GiftDate      int32
-	NameHidden    bool
-	Unsaved       bool
-	Converted     bool
-	ConvertStars  int64
-	Message       string
-	OwnerPeerType string
-	SavedID       int64
+	ID                       int64
+	OwnerPeerID              int64
+	FromUserID               int64
+	GiftID                   int64
+	MsgID                    int32
+	GiftDate                 int32
+	NameHidden               bool
+	Unsaved                  bool
+	Converted                bool
+	ConvertStars             int64
+	Message                  string
+	OwnerPeerType            string
+	SavedID                  int64
+	CatalogRevisionID        int64
+	UniqueGiftID             *int64
+	UpgradeMsgID             int32
+	PinnedOrder              int32
+	PrepaidUpgradeStars      int64
+	LifecycleStatus          string
+	TransferStars            int64
+	PrepaidUpgradeHash       string
+	GiftNum                  int32
+	CanExportAt              int32
+	CanTransferAt            int32
+	CanResellAt              int32
+	DropOriginalDetailsStars int64
+	CanCraftAt               int32
 }
 
 type PeerTranslationSetting struct {
@@ -1417,6 +1494,382 @@ type SeedState struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type StarGiftAuction struct {
+	GiftID        int64
+	Slug          string
+	Version       int32
+	StartDate     int32
+	EndDate       int32
+	RoundDuration int32
+	GiftsPerRound int32
+	TotalRounds   int32
+	CurrentRound  int32
+	NextRoundAt   int32
+	LastGiftNum   int32
+	GiftsLeft     int32
+	MinBidAmount  int64
+	Status        string
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type StarGiftAuctionAcquired struct {
+	ID                int64
+	GiftID            int64
+	BidderUserID      int64
+	RecipientPeerType string
+	RecipientPeerID   int64
+	SavedGiftID       *int64
+	BidAmount         int64
+	Round             int32
+	Pos               int32
+	GiftNum           *int32
+	AcquiredAt        int32
+	HideName          bool
+	Message           string
+}
+
+type StarGiftAuctionBid struct {
+	GiftID            int64
+	BidderUserID      int64
+	RecipientPeerType string
+	RecipientPeerID   int64
+	Amount            int64
+	BidDate           int32
+	HideName          bool
+	Message           string
+	Returned          bool
+	AcquiredCount     int32
+	Active            bool
+	Version           int64
+}
+
+type StarGiftAuctionBidPayment struct {
+	UserID       int64
+	FormID       int64
+	GiftID       int64
+	BidAmount    int64
+	BalanceAfter int64
+	CreatedAt    int32
+}
+
+type StarGiftCatalog struct {
+	GiftID                int64
+	ActiveRevisionID      int64
+	Enabled               bool
+	SortOrder             int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	CollectibleRevisionID *int64
+	AvailabilityRemains   int32
+	AvailabilityResale    int64
+	ResellMinStars        int64
+	FirstSaleDate         int32
+	LastSaleDate          int32
+}
+
+type StarGiftCatalogRevision struct {
+	ID                    int64
+	GiftID                int64
+	Revision              int32
+	Title                 string
+	Stars                 int64
+	ConvertStars          int64
+	DocumentID            int64
+	AnimationJson         []byte
+	AnimationSha256       []byte
+	SourceName            string
+	SourceFormat          string
+	Width                 int32
+	Height                int32
+	FrameRate             float64
+	InPoint               float64
+	OutPoint              float64
+	CreatedBy             string
+	CommandID             string
+	CreatedAt             pgtype.Timestamptz
+	OfficialGiftID        *int64
+	SourceManifestSha256  []byte
+	OfficialSource        []byte
+	Limited               bool
+	SoldOut               bool
+	Birthday              bool
+	RequirePremium        bool
+	LimitedPerUser        bool
+	PeerColorAvailable    bool
+	Auction               bool
+	AvailabilityTotal     int32
+	ReleasedByPeerType    *string
+	ReleasedByPeerID      *int64
+	PerUserTotal          int32
+	LockedUntilDate       int32
+	AuctionSlug           string
+	GiftsPerRound         int32
+	AuctionStartDate      int32
+	UpgradeVariants       int32
+	BackgroundCenterColor *int32
+	BackgroundEdgeColor   *int32
+	BackgroundTextColor   *int32
+}
+
+type StarGiftCollectibleBackdrop struct {
+	ID                    int64
+	CollectibleRevisionID int64
+	Name                  string
+	BackdropID            int32
+	CenterColor           int32
+	EdgeColor             int32
+	PatternColor          int32
+	TextColor             int32
+	RarityPermille        *int32
+	SortOrder             int32
+	RarityKind            string
+}
+
+type StarGiftCollectibleModel struct {
+	ID                    int64
+	CollectibleRevisionID int64
+	Name                  string
+	DocumentID            int64
+	AnimationJson         []byte
+	AnimationSha256       []byte
+	SourceName            string
+	SourceFormat          string
+	Width                 int32
+	Height                int32
+	FrameRate             float64
+	InPoint               float64
+	OutPoint              float64
+	RarityPermille        *int32
+	SortOrder             int32
+	RarityKind            string
+	Crafted               bool
+	OfficialDocumentID    *int64
+}
+
+type StarGiftCollectiblePattern struct {
+	ID                    int64
+	CollectibleRevisionID int64
+	Name                  string
+	DocumentID            int64
+	AnimationJson         []byte
+	AnimationSha256       []byte
+	SourceName            string
+	SourceFormat          string
+	Width                 int32
+	Height                int32
+	FrameRate             float64
+	InPoint               float64
+	OutPoint              float64
+	RarityPermille        *int32
+	SortOrder             int32
+	RarityKind            string
+	OfficialDocumentID    *int64
+}
+
+type StarGiftCollectibleRevision struct {
+	ID                   int64
+	GiftID               int64
+	Revision             int32
+	UpgradeStars         int64
+	SupplyTotal          int32
+	Issued               int32
+	SlugPrefix           string
+	Status               string
+	CreatedBy            string
+	CommandID            string
+	CreatedAt            pgtype.Timestamptz
+	PublishedAt          pgtype.Timestamptz
+	OfficialGiftID       *int64
+	SourceManifestSha256 []byte
+}
+
+type StarGiftCollection struct {
+	CollectionID  int32
+	OwnerPeerType string
+	OwnerPeerID   int64
+	Title         string
+	SortOrder     int32
+	Hash          int64
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type StarGiftCollectionItem struct {
+	CollectionID int32
+	SavedGiftID  int64
+	SortOrder    int32
+	CreatedAt    pgtype.Timestamptz
+}
+
+type StarGiftConversion struct {
+	SavedGiftID   int64
+	ActorUserID   int64
+	OwnerPeerType string
+	OwnerPeerID   int64
+	Amount        int64
+	BalanceAfter  int64
+	ConvertedAt   int32
+}
+
+type StarGiftCraftCommand struct {
+	UserID             int64
+	CommandKey         string
+	InputUniqueGiftIds []int64
+	GiftID             int64
+	Success            bool
+	ResultUniqueGiftID *int64
+	ChancePermille     int32
+	CreatedAt          int32
+	SourceEditPts      []int32
+}
+
+type StarGiftDropDetailsCommand struct {
+	UserID       int64
+	CommandKey   string
+	SavedGiftID  int64
+	UniqueGiftID int64
+	FormID       int64
+	ChargeStars  int64
+	BalanceAfter int64
+	CreatedAt    int32
+}
+
+type StarGiftListing struct {
+	UniqueGiftID   int64
+	SellerPeerType string
+	SellerPeerID   int64
+	Currency       string
+	Amount         int64
+	ListedAt       int32
+	UpdatedAt      int32
+	Version        int64
+}
+
+type StarGiftNotificationSetting struct {
+	UserID    int64
+	ChannelID int64
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
+}
+
+type StarGiftOffer struct {
+	ID                 int64
+	BuyerUserID        int64
+	OwnerPeerType      string
+	OwnerPeerID        int64
+	UniqueGiftID       int64
+	Currency           string
+	Amount             int64
+	RandomID           int64
+	OfferMsgID         int32
+	BuyerMsgID         int32
+	Status             string
+	CreatedAt          int32
+	ExpiresAt          int32
+	ResolvedAt         int32
+	BalanceAfter       int64
+	ResolutionNotified bool
+}
+
+type StarGiftPrepaidUpgradeCommand struct {
+	PayerUserID  int64
+	CommandKey   string
+	SavedGiftID  int64
+	FormID       int64
+	ChargeStars  int64
+	BalanceAfter int64
+	CreatedAt    int32
+}
+
+type StarGiftPurchaseCommand struct {
+	BuyerUserID       int64
+	CommandKey        string
+	GiftID            int64
+	RecipientPeerType string
+	RecipientPeerID   int64
+	SavedGiftID       int64
+	FormID            int64
+	ChargeStars       int64
+	BalanceAfter      int64
+	CreatedAt         int32
+}
+
+type StarGiftPurchaseForm struct {
+	BuyerUserID       int64
+	FormID            int64
+	GiftID            int64
+	RevisionID        int64
+	RecipientPeerType string
+	RecipientPeerID   int64
+	IncludeUpgrade    bool
+	HideName          bool
+	Message           string
+	ChargeStars       int64
+	IssuedAt          int32
+	ExpiresAt         int32
+}
+
+type StarGiftSale struct {
+	ID               int64
+	UniqueGiftID     int64
+	SellerPeerType   string
+	SellerPeerID     int64
+	BuyerPeerType    string
+	BuyerPeerID      int64
+	Currency         string
+	Amount           int64
+	CommissionAmount int64
+	SoldAt           int32
+	CommandKey       string
+}
+
+type StarGiftTransferCommand struct {
+	ActorUserID  int64
+	CommandKey   string
+	UniqueGiftID int64
+	FromPeerType string
+	FromPeerID   int64
+	ToPeerType   string
+	ToPeerID     int64
+	ChargeStars  int64
+	BalanceAfter int64
+	CreatedAt    int32
+}
+
+type StarGiftUpgradeCommand struct {
+	UserID              int64
+	CommandKey          string
+	SourceSavedGiftID   int64
+	FormID              int64
+	UniqueGiftID        int64
+	BalanceAfter        int64
+	CreatedAt           pgtype.Timestamptz
+	ChargeStars         int64
+	RequirePrepaid      bool
+	KeepOriginalDetails bool
+	SourceEditPts       int32
+}
+
+type StarGiftUserPurchase struct {
+	UserID         int64
+	GiftID         int64
+	PurchasedCount int32
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type StarGiftWithdrawalRequest struct {
+	ID                int64
+	UniqueGiftID      int64
+	OwnerUserID       int64
+	Provider          string
+	ProviderRequestID string
+	Url               string
+	Status            string
+	CreatedAt         int32
+	ExpiresAt         int32
+	CompletedAt       int32
+}
+
 type StarsBalance struct {
 	UserID    int64
 	Balance   int64
@@ -1564,6 +2017,66 @@ type ThemeUserInstall struct {
 	InstalledAt pgtype.Timestamptz
 }
 
+type TonBalance struct {
+	UserID         int64
+	BalanceNanoton int64
+	Granted        bool
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type TonTransaction struct {
+	ID            int64
+	UserID        int64
+	AmountNanoton int64
+	Reason        string
+	PeerType      *string
+	PeerID        *int64
+	GiftID        *int64
+	Date          int32
+}
+
+type UniqueStarGift struct {
+	ID                    int64
+	GiftID                int64
+	CollectibleRevisionID int64
+	SourceSavedGiftID     int64
+	Title                 string
+	Slug                  string
+	Num                   int32
+	OwnerPeerType         *string
+	OwnerPeerID           *int64
+	ModelAttributeID      int64
+	PatternAttributeID    int64
+	BackdropAttributeID   int64
+	KeepOriginalDetails   bool
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	RequirePremium        bool
+	ResaleTonOnly         bool
+	ThemeAvailable        bool
+	Burned                bool
+	Crafted               bool
+	OriginalOwnerPeerType string
+	OriginalOwnerPeerID   int64
+	OwnerName             string
+	OwnerAddress          string
+	GiftAddress           string
+	ReleasedByPeerType    *string
+	ReleasedByPeerID      *int64
+	ValueAmount           int64
+	ValueCurrency         string
+	ValueUsdAmount        int64
+	ThemePeerType         *string
+	ThemePeerID           *int64
+	HostPeerType          *string
+	HostPeerID            *int64
+	OfferMinStars         int32
+	CraftChancePermille   int32
+	LastSaleDate          int32
+	LastSaleCurrency      string
+	LastSaleAmount        int64
+}
+
 type UpdateState struct {
 	AuthKeyID   int64
 	Pts         int32
@@ -1627,6 +2140,10 @@ type User struct {
 	BirthdayMonth                 int32
 	BirthdayYear                  int32
 	PersonalChannelID             int64
+	DeletedAt                     pgtype.Timestamptz
+	DeletionSource                string
+	DeletionReason                string
+	AccountDeleteAt               pgtype.Timestamptz
 }
 
 type UserBusinessProfile struct {

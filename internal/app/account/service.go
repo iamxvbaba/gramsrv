@@ -43,6 +43,7 @@ type Service struct {
 	userCache                 store.UserCache
 	authorizations            store.AuthorizationStore
 	phoneChanges              store.PhoneChangeStore
+	lifecycle                 store.AccountLifecycleStore
 	publicBaseURL             string
 	codes                     store.CodeStore
 	phoneChangeCode           string
@@ -163,6 +164,14 @@ func WithPhoneCodeDelivery(sender otpdelivery.Sender, length int) ServiceOption 
 		if length > 0 {
 			s.phoneCodeLength = length
 		}
+	}
+}
+
+// WithAccountLifecycle installs the single durable account deletion boundary.
+// It shares the already configured phone-code delivery and user cache.
+func WithAccountLifecycle(lifecycle store.AccountLifecycleStore) ServiceOption {
+	return func(s *Service) {
+		s.lifecycle = lifecycle
 	}
 }
 

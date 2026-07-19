@@ -490,6 +490,19 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
 		return nil, err
 	}
+	if userID, authorized, err := r.currentUserID(ctx); err == nil && authorized && userID != 0 {
+		if svc, ok := r.deps.Account.(accountDeletionService); ok {
+			authKeyID, _ := AuthKeyIDFrom(ctx)
+			sessionID, _ := SessionIDFrom(ctx)
+			hash, delivery, handled, err := svc.ResendConfirmPhoneCode(ctx, userID, authKeyID, sessionID, req.PhoneNumber, req.PhoneCodeHash)
+			if handled {
+				if err != nil {
+					return nil, accountDeletionErr(err)
+				}
+				return tgSMSSentCode(hash, delivery.Length), nil
+			}
+		}
+	}
 	var hash string
 	var err error
 	if scoped, ok := r.deps.Auth.(interface {
@@ -507,6 +520,18 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 }
 
 func (r *Router) onAuthCancelCode(ctx context.Context, req *tg.AuthCancelCodeRequest) (bool, error) {
+	if userID, authorized, err := r.currentUserID(ctx); err == nil && authorized && userID != 0 {
+		if svc, ok := r.deps.Account.(accountDeletionService); ok {
+			authKeyID, _ := AuthKeyIDFrom(ctx)
+			handled, err := svc.CancelConfirmPhoneCode(ctx, userID, authKeyID, req.PhoneNumber, req.PhoneCodeHash)
+			if handled {
+				if err != nil {
+					return false, accountDeletionErr(err)
+				}
+				return true, nil
+			}
+		}
+	}
 	var err error
 	if scoped, ok := r.deps.Auth.(interface {
 		CancelCodeForAuthKey(context.Context, [8]byte, string, string) error

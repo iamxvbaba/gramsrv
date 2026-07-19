@@ -46,7 +46,7 @@ func (s *MessageStore) DefaultHistoryTTL(ctx context.Context, userID int64) (int
 		return 0, nil
 	}
 	var period int
-	err := s.db.QueryRow(ctx, `SELECT COALESCE(default_history_ttl_period, 0)::int FROM users WHERE id = $1`, userID).Scan(&period)
+	err := s.db.QueryRow(ctx, `SELECT COALESCE(default_history_ttl_period, 0)::int FROM users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&period)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -70,7 +70,7 @@ func (s *MessageStore) SetDefaultHistoryTTL(ctx context.Context, userID int64, p
 UPDATE users
 SET default_history_ttl_period = $2,
     updated_at = now()
-WHERE id = $1
+WHERE id = $1 AND deleted_at IS NULL
 `, userID, period)
 	if err != nil {
 		return fmt.Errorf("set default history ttl: %w", err)

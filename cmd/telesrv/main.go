@@ -436,7 +436,7 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("seed appearance: %w", err)
 	} else if !stats.Skipped {
 		logger.Info("外观种子导入完成",
-			zap.String("source", "default-seed"),
+			zap.String("source", "orange-live"),
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
 			zap.Int("blobs", stats.Blobs),
@@ -526,6 +526,7 @@ func run(logger *zap.Logger) error {
 		account.WithBusinessAutomation(passwordStore),
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
+		account.WithAccountLifecycle(postgres.NewAccountLifecycleStore(pool)),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
 	}
 	var webhookSender otpdelivery.Sender
@@ -871,6 +872,7 @@ func run(logger *zap.Logger) error {
 	go router.RunPresenceSweeper(ctx, time.Minute)
 	go activeSessions.RunPendingSweeper(ctx, time.Minute)
 	go router.RunPremiumSweeper(ctx, cfg.PremiumSweepInterval, cfg.PremiumSweepBatch)
+	go router.RunAccountLifecycle(ctx, time.Minute, 500)
 	go func() {
 		interval := cfg.StarGiftSweepInterval
 		if interval <= 0 {

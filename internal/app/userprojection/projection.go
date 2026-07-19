@@ -83,6 +83,7 @@ func New(opts ...Option) *Projector {
 
 // ForViewer applies both current profile photos and owner-specific contact view.
 func (p *Projector) ForViewer(ctx context.Context, viewerUserID int64, users []domain.User) ([]domain.User, error) {
+	users = sanitizeDeletedUsers(users)
 	if p == nil {
 		return users, nil
 	}
@@ -112,6 +113,7 @@ func (p *Projector) One(ctx context.Context, viewerUserID int64, user domain.Use
 // （无 O(owner) 反查接口），客户端下次 getChannelDifference/getHistory 会走 projectBatch 完整投影自愈。
 // 调用方传入的 users 不被修改（内部复制）。
 func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users []domain.User) (map[int64][]domain.User, error) {
+	users = sanitizeDeletedUsers(users)
 	out := make(map[int64][]domain.User, len(viewerUserIDs))
 	if p == nil || len(users) == 0 {
 		for _, v := range viewerUserIDs {
@@ -168,6 +170,10 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 		for i := range projected {
 			u := projected[i]
 			if u.ID == 0 {
+				continue
+			}
+			if u.Deleted {
+				projected[i] = u.DeletedTombstone()
 				continue
 			}
 			if pj, ok := cache[u.ID]; ok {
@@ -276,13 +282,14 @@ func dedupNonZeroInt64(ids []int64) []int64 {
 // WithProfilePhotos enriches users with their current avatar from profile photo storage.
 // The lookup is best-effort: a storage error keeps the original user list.
 func WithProfilePhotos(ctx context.Context, photos ProfilePhotoProvider, users []domain.User) []domain.User {
+	users = sanitizeDeletedUsers(users)
 	if photos == nil || len(users) == 0 {
 		return users
 	}
 	ids := make([]int64, 0, len(users))
 	seen := make(map[int64]struct{}, len(users))
 	for _, u := range users {
-		if u.ID == 0 {
+		if u.ID == 0 || u.Deleted {
 			continue
 		}
 		if _, ok := seen[u.ID]; ok {
@@ -312,6 +319,7 @@ func WithProfilePhotos(ctx context.Context, photos ProfilePhotoProvider, users [
 // In particular, phone is visible for self and contacts; non-contacts should not
 // receive a phone field because TDesktop will prefer it over the public name.
 func ForViewer(ctx context.Context, contacts store.ContactStore, viewerUserID int64, users []domain.User) ([]domain.User, error) {
+	users = sanitizeDeletedUsers(users)
 	if contacts == nil || viewerUserID == 0 || len(users) == 0 {
 		return users, nil
 	}
@@ -320,7 +328,7 @@ func ForViewer(ctx context.Context, contacts store.ContactStore, viewerUserID in
 	cache := make(map[int64]domain.User, len(users))
 	for i := range out {
 		u := out[i]
-		if u.ID == 0 || u.ID == viewerUserID || u.ID == domain.OfficialSystemUserID || u.Bot {
+		if u.ID == 0 || u.Deleted || u.ID == viewerUserID || u.ID == domain.OfficialSystemUserID || u.Bot {
 			continue
 		}
 		if projected, ok := cache[u.ID]; ok {
@@ -352,6 +360,7 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 	}
 	out := make([]domain.User, len(users))
 	copy(out, users)
+	out = sanitizeDeletedUsers(out)
 	ids := uniqueUserIDs(out)
 	var (
 		profileRefs  = map[int64]domain.ProfilePhotoRef{}
@@ -430,6 +439,10 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 		if u.ID == 0 {
 			continue
 		}
+		if u.Deleted {
+			out[i] = u.DeletedTombstone()
+			continue
+		}
 		if projected, ok := cache[u.ID]; ok {
 			out[i] = projected
 			continue
@@ -463,7 +476,7 @@ func prefetchPrivacyVisibility(ctx context.Context, privacy PrivacyEvaluator, vi
 	ids := make([]int64, 0, len(users))
 	seen := make(map[int64]struct{}, len(users))
 	for _, u := range users {
-		if u.ID == 0 || u.ID == viewerUserID || u.ID == domain.OfficialSystemUserID || u.Bot {
+		if u.ID == 0 || u.Deleted || u.ID == viewerUserID || u.ID == domain.OfficialSystemUserID || u.Bot {
 			continue
 		}
 		if _, ok := seen[u.ID]; ok {
@@ -479,6 +492,9 @@ func prefetchPrivacyVisibility(ctx context.Context, privacy PrivacyEvaluator, vi
 }
 
 func projectOne(ctx context.Context, contacts store.ContactStore, viewerUserID int64, user domain.User) (domain.User, error) {
+	if user.Deleted {
+		return user.DeletedTombstone(), nil
+	}
 	contact, found, err := contacts.Get(ctx, viewerUserID, user.ID)
 	if err != nil {
 		return domain.User{}, err
@@ -513,7 +529,7 @@ func uniqueUserIDs(users []domain.User) []int64 {
 	seen := make(map[int64]struct{}, len(users))
 	ids := make([]int64, 0, len(users))
 	for _, user := range users {
-		if user.ID == 0 {
+		if user.ID == 0 || user.Deleted {
 			continue
 		}
 		if _, ok := seen[user.ID]; ok {
@@ -526,6 +542,9 @@ func uniqueUserIDs(users []domain.User) []int64 {
 }
 
 func applyBasePhotos(user domain.User, profileRefs, fallbackRefs, personalRefs map[int64]domain.ProfilePhotoRef, viewerUserID int64) domain.User {
+	if user.Deleted {
+		return user.DeletedTombstone()
+	}
 	if !hasPhotoLookups(profileRefs, fallbackRefs, personalRefs) {
 		return user
 	}
@@ -548,6 +567,9 @@ func applyBasePhotos(user domain.User, profileRefs, fallbackRefs, personalRefs m
 }
 
 func applyContactProjection(user domain.User, contact domain.Contact, found bool) domain.User {
+	if user.Deleted {
+		return user.DeletedTombstone()
+	}
 	if !found {
 		user.Phone = ""
 		user.Contact = false
@@ -574,6 +596,9 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 }
 
 func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID int64, user domain.User, isContact bool, vis map[domain.PrivacyKey]bool, profileRefs, fallbackRefs, personalRefs map[int64]domain.ProfilePhotoRef) (domain.User, error) {
+	if user.Deleted {
+		return user.DeletedTombstone(), nil
+	}
 	if privacy == nil {
 		return user, nil
 	}
@@ -646,4 +671,22 @@ func clearPhoto(user *domain.User) {
 	user.PhotoStripped = nil
 	user.PhotoPersonal = false
 	user.PhotoHasVideo = false
+}
+
+func sanitizeDeletedUsers(users []domain.User) []domain.User {
+	var out []domain.User
+	for i, user := range users {
+		if !user.Deleted {
+			continue
+		}
+		if out == nil {
+			out = make([]domain.User, len(users))
+			copy(out, users)
+		}
+		out[i] = user.DeletedTombstone()
+	}
+	if out != nil {
+		return out
+	}
+	return users
 }

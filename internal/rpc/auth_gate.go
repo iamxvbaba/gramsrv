@@ -32,6 +32,9 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		tg.AuthReportMissingCodeRequestTypeID,
 		tg.AuthResetLoginEmailRequestTypeID,
 		tg.AccountGetPasswordRequestTypeID,
+		// deleteAccount may complete the narrow password_pending login path when
+		// the user forgot 2FA. The handler resolves only that bound identity.
+		tg.AccountDeleteAccountRequestTypeID,
 		// 登录邮箱 setup（emailVerifyPurposeLoginSetup）发生在登录流程中、尚未鉴权，
 		// 故这两个 account.* 方法必须放行 pre-auth；loginChange 分支内部仍校验 userID。
 		tg.AccountSendVerifyEmailCodeRequestTypeID,

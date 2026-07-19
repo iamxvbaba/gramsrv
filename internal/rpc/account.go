@@ -15,6 +15,15 @@ import (
 
 // registerAccount 注册 account.* RPC handler。
 func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.AccountDeleteAccountRequest](d, tlprofile.SemanticMethodAccountDeleteAccount, func(ctx context.Context, req *tg.AccountDeleteAccountRequest) (any, error) {
+		return r.onAccountDeleteAccount(ctx, req)
+	})
+	registerRPC[*tg.AccountSendConfirmPhoneCodeRequest](d, tlprofile.SemanticMethodAccountSendConfirmPhoneCode, func(ctx context.Context, req *tg.AccountSendConfirmPhoneCodeRequest) (any, error) {
+		return r.onAccountSendConfirmPhoneCode(ctx, req)
+	})
+	registerRPC[*tg.AccountConfirmPhoneRequest](d, tlprofile.SemanticMethodAccountConfirmPhone, func(ctx context.Context, req *tg.AccountConfirmPhoneRequest) (any, error) {
+		return r.onAccountConfirmPhone(ctx, req)
+	})
 	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
 		return true, nil
 	})
@@ -902,7 +911,7 @@ func (r *Router) onAccountSetAccountTTL(ctx context.Context, ttl tg.AccountDaysT
 	if err != nil {
 		return false, internalErr()
 	}
-	if ttl.Days <= 0 {
+	if ttl.Days <= 0 || ttl.Days > domain.MaxAccountTTLDays {
 		return false, tgerr400("TTL_DAYS_INVALID")
 	}
 	if svc, ok := r.accountSettingsSvc(); ok {

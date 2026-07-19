@@ -10,6 +10,7 @@ import (
 
 const (
 	PhoneCodePurposeChangePhone        = "change_phone"
+	PhoneCodePurposeConfirmPhone       = "confirm_phone"
 	PhoneCodeChannelPhone              = "phone"
 	PhoneCodeChannelSMS                = "sms"
 	PhoneCodeChannelEmailLogin         = "email_login"
@@ -75,6 +76,10 @@ type PhoneCode struct {
 	VerifiedEmail  bool
 	RequireSignUp  bool
 	LoginEmailHash string
+	// AccountDeletionHash is the hex-encoded SHA-256 digest of the validated
+	// confirmphone link token. It binds account.confirmPhone to one pending
+	// deletion without persisting the raw link credential in the code record.
+	AccountDeletionHash string
 }
 
 type PhoneCodeSnapshot struct {

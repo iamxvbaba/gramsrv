@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"telesrv/internal/domain"
+	"time"
 )
 
 // UserStore 是 store.UserStore 的内存实现。ID 与 PG identity 使用同一业务起点。
@@ -65,7 +66,7 @@ func (s *UserStore) ByPhone(_ context.Context, phone string) (domain.User, bool,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, u := range s.byID {
-		if u.Phone == phone {
+		if !u.Deleted && u.Phone == phone {
 			return u, true, nil
 		}
 	}
@@ -87,6 +88,9 @@ func (s *UserStore) ByPhones(_ context.Context, phones []string) ([]domain.User,
 	out := make([]domain.User, 0, len(want))
 	seenIDs := map[int64]struct{}{}
 	for _, u := range s.byID {
+		if u.Deleted {
+			continue
+		}
 		if _, ok := want[u.Phone]; !ok {
 			continue
 		}
@@ -108,7 +112,7 @@ func (s *UserStore) ByUsername(_ context.Context, username string) (domain.User,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, u := range s.byID {
-		if strings.ToLower(u.Username) == username {
+		if !u.Deleted && strings.ToLower(u.Username) == username {
 			return u, true, nil
 		}
 	}
@@ -123,7 +127,7 @@ func (s *UserStore) CheckUsername(_ context.Context, userID int64, username stri
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for id, u := range s.byID {
-		if strings.ToLower(u.Username) == username && id != userID {
+		if !u.Deleted && strings.ToLower(u.Username) == username && id != userID {
 			return false, nil
 		}
 	}
@@ -143,7 +147,7 @@ func (s *UserStore) Search(_ context.Context, currentUserID int64, query, phoneQ
 	defer s.mu.RUnlock()
 	users := make([]domain.User, 0)
 	for _, u := range s.byID {
-		if u.ID == currentUserID {
+		if u.ID == currentUserID || u.Deleted {
 			continue
 		}
 		if userMatchesSearch(u, query, phoneQuery) {
@@ -165,7 +169,7 @@ func (s *UserStore) UpdateUsername(_ context.Context, userID int64, username str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUsernameNotOccupied
 	}
 	if usernameLower != "" {
@@ -184,7 +188,7 @@ func (s *UserStore) UpdateProfile(_ context.Context, userID int64, firstName, la
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUsernameNotOccupied
 	}
 	u.FirstName = firstName
@@ -198,7 +202,7 @@ func (s *UserStore) UpdateBirthday(_ context.Context, userID int64, birthday dom
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	u.Birthday = birthday
@@ -210,7 +214,7 @@ func (s *UserStore) UpdatePersonalChannel(_ context.Context, userID int64, chann
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	u.PersonalChannelID = channelID
@@ -224,7 +228,7 @@ func (s *UserStore) bumpBotInfoVersion(userID int64) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok || !u.Bot {
+	if !ok || u.Deleted || !u.Bot {
 		return 0, false
 	}
 	u.BotInfoVersion++
@@ -237,7 +241,7 @@ func (s *UserStore) updateBotProfile(userID int64, setName bool, name string, se
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok || !u.Bot {
+	if !ok || u.Deleted || !u.Bot {
 		return false
 	}
 	if setName {
@@ -255,7 +259,7 @@ func (s *UserStore) SetPremiumUntil(_ context.Context, userID int64, until int) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	if until < 0 {
@@ -271,7 +275,7 @@ func (s *UserStore) SetVerified(_ context.Context, userID int64, verified bool) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	u.Verified = verified
@@ -288,7 +292,7 @@ func (s *UserStore) SweepExpiredPremium(_ context.Context, now int64, limit int)
 	defer s.mu.Unlock()
 	out := make([]domain.User, 0)
 	for id, u := range s.byID {
-		if u.PremiumUntil <= 0 || int64(u.PremiumUntil) > now {
+		if u.Deleted || u.PremiumUntil <= 0 || int64(u.PremiumUntil) > now {
 			continue
 		}
 		u.PremiumUntil = 0
@@ -307,7 +311,7 @@ func (s *UserStore) UpdateEmojiStatus(_ context.Context, userID int64, documentI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	if documentID == 0 {
@@ -323,7 +327,7 @@ func (s *UserStore) UpdateColor(_ context.Context, userID int64, forProfile bool
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	if forProfile {
@@ -342,7 +346,7 @@ func (s *UserStore) UpdateLastSeen(_ context.Context, userID int64, lastSeenAt i
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]
-	if !ok {
+	if !ok || u.Deleted {
 		return domain.ErrUsernameNotOccupied
 	}
 	if lastSeenAt > u.LastSeenAt {
@@ -379,6 +383,9 @@ func (s *UserStore) Create(_ context.Context, u domain.User) (domain.User, error
 	}
 	u.ID = s.nextID
 	s.nextID++
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Now().UTC()
+	}
 	s.byID[u.ID] = u
 	return u, nil
 }

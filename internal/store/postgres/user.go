@@ -200,7 +200,7 @@ func (s *UserStore) UpdateUsername(ctx context.Context, userID int64, username s
 	}()
 	qtx := s.q.WithTx(tx)
 	var lockedUserID int64
-	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&lockedUserID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, userID).Scan(&lockedUserID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.User{}, domain.ErrUsernameNotOccupied
 		}
@@ -444,7 +444,7 @@ func escapeLike(s string) string {
 }
 
 func userFromModel(r sqlcgen.User) domain.User {
-	return domain.User{
+	u := domain.User{
 		ID:                    r.ID,
 		AccessHash:            r.AccessHash,
 		Phone:                 r.Phone,
@@ -465,7 +465,17 @@ func userFromModel(r sqlcgen.User) domain.User {
 		Color:                 peerColorFromModel(r.ColorSet, r.Color, r.ColorBackgroundEmojiID),
 		ProfileColor:          peerColorFromModel(r.ProfileColorSet, r.ProfileColor, r.ProfileColorBackgroundEmojiID),
 		LastSeenAt:            int(r.LastSeenAt),
+		Deleted:               r.DeletedAt.Valid,
+		DeletionSource:        domain.AccountDeletionSource(r.DeletionSource),
+		DeletionReason:        r.DeletionReason,
+		CreatedAt:             r.CreatedAt.Time,
+		AccountDeleteAt:       r.AccountDeleteAt.Time,
 	}
+	if r.DeletedAt.Valid {
+		u.DeletedAt = r.DeletedAt.Time.Unix()
+		return u.DeletedTombstone()
+	}
+	return u
 }
 
 func peerColorFromModel(hasColor bool, color int32, backgroundEmojiID int64) domain.PeerColor {
