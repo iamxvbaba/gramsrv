@@ -39,8 +39,9 @@ Telegram-compatible networks much easier to try in real life.
 We are happy to highlight [OwpenGram](https://owpengram.org/), a multi-server
 Telegram-style client project for using the official network, private
 self-hosted servers, and community nodes from one client experience. OwpenGram
-currently builds on `gramsrv`, and we recommend checking it out if you want a
-client focused on switching between multiple Telegram-compatible servers.
+includes built-in compatibility for `gramsrv` servers, and we recommend
+checking it out if you want a client focused on switching between multiple
+Telegram-compatible servers.
 
 ## Project Traits
 

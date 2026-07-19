@@ -13,7 +13,7 @@
 **Telegram 后端**、**Telegram clone server**、**自建 Telegram-like 聊天服务器**，
 这个仓库就是可以运行、研究和共同优化的 server 侧实现。
 
-[English README](README.md) · [官网](https://telesrv.net) · [讨论群](https://t.me/telesrv_chat) · [频道](https://t.me/telesrv)
+[English README](README.md) · [官网](https://telesrv.net) · [OwpenGram 客户端](https://owpengram.org/) · [讨论群](https://t.me/telesrv_chat) · [频道](https://t.me/telesrv)
 
 `gramsrv` 是独立的非官方项目，与 Telegram 官方及其团队没有关联，也未获得其背书或赞助。
 
@@ -28,6 +28,16 @@
 ## Demo Video
 
 https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
+
+## 客户端生态
+
+`gramsrv` 是这一套生态里的 server 侧实现，而客户端项目会让自建
+Telegram-compatible 网络更容易被真实用户体验和验证。
+
+我们也推荐关注 [OwpenGram](https://owpengram.org/)。它是一个支持多服务器的
+Telegram-style 客户端项目，可以在官方网络、私有自建服务器和社区节点之间切换。
+OwpenGram 内置了对 `gramsrv` server 的兼容支持，适合希望用同一个客户端连接多个
+Telegram-compatible server 的用户。
 
 ## 项目特性
 
