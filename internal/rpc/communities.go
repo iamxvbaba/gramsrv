@@ -9,6 +9,8 @@ import (
 	"telesrv/internal/domain"
 )
 
+const communitiesLayer = 228
+
 func communityErr(err error) error {
 	switch {
 	case err == nil:
@@ -160,6 +162,17 @@ func (r *Router) communityMutationUpdates(ctx context.Context, userID int64, vie
 }
 
 func (r *Router) withCommunityDialogList(ctx context.Context, userID int64, filter domain.DialogFilter, list domain.DialogList) (domain.DialogList, error) {
+	if LayerFrom(ctx) < communitiesLayer {
+		return list, nil
+	}
+	return r.withCollapsedCommunityDialogs(ctx, userID, filter, list)
+}
+
+// withCollapsedCommunityDialogs applies the account-level Community dialog
+// state without a wire-layer visibility decision. Business invariants such as
+// the shared pinned limit use this path; RPC response construction must use
+// withCommunityDialogList instead.
+func (r *Router) withCollapsedCommunityDialogs(ctx context.Context, userID int64, filter domain.DialogFilter, list domain.DialogList) (domain.DialogList, error) {
 	if r.deps.Communities == nil || (filter.HasFolderID && filter.FolderID != domain.DialogMainFolderID) {
 		return list, nil
 	}

@@ -9,6 +9,14 @@ import (
 )
 
 func (r *Router) pinnedDialogsList(ctx context.Context, userID int64, folderID int) (domain.DialogList, error) {
+	list, err := r.pinnedDialogsBaseList(ctx, userID, folderID)
+	if err != nil {
+		return domain.DialogList{}, err
+	}
+	return r.withCommunityDialogList(ctx, userID, domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: folderID}, list)
+}
+
+func (r *Router) pinnedDialogsBaseList(ctx context.Context, userID int64, folderID int) (domain.DialogList, error) {
 	if r == nil {
 		return domain.DialogList{}, nil
 	}
@@ -28,9 +36,17 @@ func (r *Router) pinnedDialogsList(ctx context.Context, userID int64, folderID i
 		return domain.DialogList{}, err
 	}
 	if list, ok := value.(domain.DialogList); ok {
-		return r.withCommunityDialogList(ctx, userID, domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: folderID}, list)
+		return list, nil
 	}
 	return domain.DialogList{}, nil
+}
+
+func (r *Router) combinedPinnedDialogsList(ctx context.Context, userID int64, folderID int) (domain.DialogList, error) {
+	list, err := r.pinnedDialogsBaseList(ctx, userID, folderID)
+	if err != nil {
+		return domain.DialogList{}, err
+	}
+	return r.withCollapsedCommunityDialogs(ctx, userID, domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: folderID}, list)
 }
 
 // combinedPinnedDialogPeers merges ordinary dialogs and collapsed Communities
@@ -74,7 +90,7 @@ func combinedPinnedDialogPeers(list domain.DialogList) []domain.Peer {
 }
 
 func (r *Router) ensureCombinedPinCapacity(ctx context.Context, userID int64, folderID int, peer domain.Peer) error {
-	list, err := r.pinnedDialogsList(ctx, userID, folderID)
+	list, err := r.combinedPinnedDialogsList(ctx, userID, folderID)
 	if err != nil {
 		return err
 	}
@@ -94,7 +110,7 @@ func (r *Router) ensureCombinedPinCapacity(ctx context.Context, userID int64, fo
 // dialogs and Communities. It is called after the underlying row is pinned so
 // both stores can project the same mixed order without owning each other's data.
 func (r *Router) promoteCombinedPinnedDialog(ctx context.Context, userID int64, folderID int, peer domain.Peer) error {
-	list, err := r.pinnedDialogsList(ctx, userID, folderID)
+	list, err := r.combinedPinnedDialogsList(ctx, userID, folderID)
 	if err != nil {
 		return err
 	}

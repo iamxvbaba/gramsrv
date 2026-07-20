@@ -39,7 +39,7 @@ func communityRPCChannel(t *testing.T, service *appchannels.Service, creator dom
 }
 
 func TestCommunityDialogsSharePinnedLimit(t *testing.T) {
-	ctx := context.Background()
+	ctx := WithLayer(context.Background(), communitiesLayer)
 	users := memory.NewUserStore()
 	owner, err := users.Create(ctx, domain.User{AccessHash: 711, Phone: "15552000011", FirstName: "Pin Owner"})
 	if err != nil {
@@ -102,6 +102,21 @@ func TestCommunityDialogsSharePinnedLimit(t *testing.T) {
 	if len(order) != domain.MaxPinnedDialogsMainFolder || order[0] != (domain.Peer{Type: domain.PeerTypeChannel, ID: ordinary.ID}) {
 		t.Fatalf("combined pinned order = %+v (dialogs=%+v communities=%+v count=%d), want ordinary dialog promoted above Communities", order, pinned.Dialogs, pinned.Communities, pinned.Count)
 	}
+	legacyPinned, err := r.pinnedDialogsList(WithLayer(ctx, 227), owner.ID, domain.DialogMainFolderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacyPinned.Communities) != 0 || len(legacyPinned.Dialogs) != 1 || legacyPinned.Count != 1 {
+		t.Fatalf("Layer 227 pinned dialogs = %+v, want only the ordinary pinned dialog", legacyPinned)
+	}
+	legacyOrdinary := communityRPCChannel(t, channelService, owner, "Legacy Ordinary Pinned Channel")
+	legacyToggle := &tg.MessagesToggleDialogPinRequest{Peer: &tg.InputDialogPeer{Peer: &tg.InputPeerChannel{
+		ChannelID: legacyOrdinary.ID, AccessHash: legacyOrdinary.AccessHash,
+	}}}
+	legacyToggle.SetPinned(true)
+	if ok, err := r.onMessagesToggleDialogPin(WithLayer(WithUserID(ctx, owner.ID), 227), legacyToggle); err == nil || ok || !tgerr.Is(err, "PINNED_DIALOGS_TOO_MUCH") {
+		t.Fatalf("Layer 227 pin beyond shared account limit = %v, %v", ok, err)
+	}
 	overLimit := &tg.MessagesToggleDialogPinRequest{Peer: &tg.InputDialogPeerCommunity{Community: inputs[len(inputs)-1]}}
 	overLimit.SetPinned(true)
 	if ok, err := r.onMessagesToggleDialogPin(WithUserID(ctx, owner.ID), overLimit); err == nil || ok || !tgerr.Is(err, "PINNED_DIALOGS_TOO_MUCH") {
@@ -116,7 +131,7 @@ func TestCommunityDialogsSharePinnedLimit(t *testing.T) {
 }
 
 func TestCommunitiesRPCLayer228Lifecycle(t *testing.T) {
-	ctx := context.Background()
+	ctx := WithLayer(context.Background(), communitiesLayer)
 	userStore := memory.NewUserStore()
 	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 701, Phone: "15552000001", FirstName: "Owner"})
 	member, _ := userStore.Create(ctx, domain.User{AccessHash: 702, Phone: "15552000002", FirstName: "Member"})
@@ -186,8 +201,12 @@ func TestCommunitiesRPCLayer228Lifecycle(t *testing.T) {
 	if len(collapsed.Chats) == 0 || !collapsed.Chats[0].(*tg.Community).CollapsedInDialogs {
 		t.Fatalf("collapsed updates = %+v", collapsed.Chats)
 	}
+	legacyList, err := r.withCommunityDialogList(WithLayer(ctx, 227), owner.ID, domain.DialogFilter{}, domain.DialogList{Count: 7})
+	if err != nil || len(legacyList.Communities) != 0 || legacyList.Count != 7 {
+		t.Fatalf("Layer 227 community dialog projection = %+v err=%v, want unchanged list", legacyList, err)
+	}
 	list, err := r.withCommunityDialogList(ctx, owner.ID, domain.DialogFilter{}, domain.DialogList{})
-	if err != nil || len(list.Communities) != 1 {
+	if err != nil || len(list.Communities) != 1 || list.Count != 1 {
 		t.Fatalf("community dialog list = %+v err=%v", list, err)
 	}
 	dialogs := tgMessagesDialogs(owner.ID, list).(*tg.MessagesDialogs)
