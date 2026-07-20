@@ -10,6 +10,21 @@ $env:TELESRV_BOT_TOKEN = "<bot_id>:<secret>"
 python .\cmd\bots\aiogramecho\echo.py --drop-pending
 ```
 
+## Ephemeral echo（Bot API 10.2）
+
+先通过 `setMyCommands` 把 `private` 注册为 `is_ephemeral=true`，再在 TDesktop Layer 228
+的群组中发送：
+
+```text
+/private@你的Bot用户名
+```
+
+aiogram 3.30.0 原生解析 `ephemeral_message_id`。示例在 15 秒 action 窗口内携带
+`receiver_user_id` 和 `ReplyParameters(ephemeral_message_id=...)` 回复
+`ephemeral echo: ...`；失败不会降级成普通消息。Alice 应看到两条带
+可见性提示的消息：自己发出的命令显示“Only visible to @Bot”，bot 回复显示
+“Only visible to you”；Bob 不应看到其中任何一条。
+
 发送三种语义色的 reply keyboard 与 inline callback 按钮：
 
 ```powershell

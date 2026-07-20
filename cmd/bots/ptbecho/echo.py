@@ -16,6 +16,14 @@ to the bot, mentions, or messages otherwise visible to bots. In a group, send:
 
     /ping hello
 
+For a command registered with ``is_ephemeral=true``, send:
+
+    /private@YourBotUsername
+
+The incoming Bot API message has ``message_id=0`` and carries the transient
+identifier in ``api_kwargs`` until python-telegram-bot exposes the Bot API 10.2
+fields directly. The demo replies through the same ephemeral action window.
+
 The same program can also send proactive messages:
 
     python cmd/bots/ptbecho/echo.py \
@@ -70,6 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default=os.getenv("TELESRV_BOT_API_BASE_URL", "http://127.0.0.1:8081/bot"))
     parser.add_argument("--base-file-url", default=os.getenv("TELESRV_BOT_API_BASE_FILE_URL", "http://127.0.0.1:8081/file/bot"))
     parser.add_argument("--prefix", default="echo: ")
+    parser.add_argument("--ephemeral-prefix", default="ephemeral echo: ")
     parser.add_argument("--drop-pending", action="store_true", help="Drop pending updates before polling")
     parser.add_argument("--timeout", type=int, default=30, help="getUpdates long-poll timeout seconds")
     parser.add_argument(
@@ -117,6 +126,38 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await echo(update, context)
 
 
+def ephemeral_message_id(message: object) -> int | None:
+    """Read a Bot API 10.2 field without depending on a PTB release cycle."""
+    raw = getattr(message, "ephemeral_message_id", None)
+    if raw is None:
+        raw = (getattr(message, "api_kwargs", None) or {}).get("ephemeral_message_id")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return None
+
+
+async def send_echo(message: object, bot: Bot, prefix: str, ephemeral_prefix: str):
+    text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+    if not text:
+        return None
+    transient_id = ephemeral_message_id(message)
+    if transient_id is None:
+        return await message.reply_text(prefix + text)
+
+    sender = getattr(message, "from_user", None)
+    if sender is None:
+        LOG.warning("ignored ephemeral message without from_user ephemeral_message_id=%s", transient_id)
+        return None
+    return await bot.send_message(
+        chat_id=message.chat_id,
+        text=ephemeral_prefix + text,
+        api_kwargs={
+            "receiver_user_id": sender.id,
+            "reply_parameters": {"ephemeral_message_id": transient_id},
+        },
+    )
+
+
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message is None or update.effective_chat is None:
         return
@@ -124,13 +165,20 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not text:
         return
     prefix = context.application.bot_data.get("prefix", "echo: ")
-    sent = await update.effective_message.reply_text(prefix + text)
+    ephemeral_prefix = context.application.bot_data.get("ephemeral_prefix", "ephemeral echo: ")
+    transient_id = ephemeral_message_id(update.effective_message)
+    sent = await send_echo(update.effective_message, context.bot, prefix, ephemeral_prefix)
+    if sent is None:
+        return
     LOG.info(
-        "echoed update_id=%s chat_id=%s message_id=%s sent_message_id=%s text=%r",
+        "echoed update_id=%s chat_id=%s message_id=%s ephemeral_message_id=%s "
+        "sent_message_id=%s sent_ephemeral_message_id=%s text=%r",
         update.update_id,
         update.effective_chat.id,
         update.effective_message.message_id,
+        transient_id,
         sent.message_id,
+        ephemeral_message_id(sent),
         text,
     )
 
@@ -239,6 +287,7 @@ def build_app(args: argparse.Namespace) -> Application:
         .build()
     )
     app.bot_data["prefix"] = args.prefix
+    app.bot_data["ephemeral_prefix"] = args.ephemeral_prefix
     app.bot_data["base_url"] = args.base_url
     app.bot_data["send_chat_id"] = args.send_chat_id
     app.bot_data["send_text"] = args.send_text
@@ -247,6 +296,7 @@ def build_app(args: argparse.Namespace) -> Application:
     app.bot_data["buttons_chat_id"] = args.buttons_chat_id
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("private", echo))
     app.add_handler(CommandHandler("buttons", buttons))
     app.add_handler(CallbackQueryHandler(callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))

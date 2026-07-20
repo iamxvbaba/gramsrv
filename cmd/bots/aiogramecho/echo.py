@@ -17,6 +17,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     Message,
+    ReplyParameters,
     ReplyKeyboardMarkup,
 )
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -45,6 +46,7 @@ def parse_args() -> argparse.Namespace:
         help="API server origin; aiogram adds /bot<TOKEN> and /file/bot<TOKEN>",
     )
     parser.add_argument("--prefix", default="aiogram echo: ")
+    parser.add_argument("--ephemeral-prefix", default="ephemeral echo: ")
     parser.add_argument("--drop-pending", action="store_true")
     parser.add_argument("--mode", choices=("polling", "webhook"), default=os.getenv("TELESRV_BOT_MODE", "polling"))
     parser.add_argument(
@@ -157,6 +159,35 @@ async def send_button_messages(bot: Bot, chat_id: int, icon_id: str | None) -> N
     )
 
 
+def ephemeral_message_id(message: object) -> int | None:
+    """Read the native aiogram field, retaining an extra-field fallback."""
+    raw = getattr(message, "ephemeral_message_id", None)
+    if raw is None:
+        raw = (getattr(message, "model_extra", None) or {}).get("ephemeral_message_id")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return None
+
+
+async def send_echo(message: Message, prefix: str, ephemeral_prefix: str):
+    text = message.text or message.caption or ""
+    if not text:
+        return None
+    transient_id = ephemeral_message_id(message)
+    if transient_id is None:
+        return await message.answer(prefix + text)
+
+    if message.from_user is None:
+        LOG.warning("ignored ephemeral message without from_user ephemeral_message_id=%s", transient_id)
+        return None
+    return await message.bot.send_message(
+        chat_id=message.chat.id,
+        text=ephemeral_prefix + text,
+        receiver_user_id=message.from_user.id,
+        reply_parameters=ReplyParameters(ephemeral_message_id=transient_id),
+    )
+
+
 def build_dispatcher(args: argparse.Namespace) -> Dispatcher:
     router = Router(name="telesrv-aiogramecho")
 
@@ -170,7 +201,17 @@ def build_dispatcher(args: argparse.Namespace) -> Dispatcher:
 
     @router.message(Command("ping"))
     async def ping(message: Message) -> None:
-        await message.answer(args.prefix + (message.text or ""))
+        await send_echo(message, args.prefix, args.ephemeral_prefix)
+
+    @router.message(Command("private"))
+    async def private(message: Message) -> None:
+        sent = await send_echo(message, args.prefix, args.ephemeral_prefix)
+        LOG.info(
+            "echoed ephemeral chat_id=%s ephemeral_message_id=%s sent_ephemeral_message_id=%s",
+            message.chat.id,
+            ephemeral_message_id(message),
+            ephemeral_message_id(sent) if sent is not None else None,
+        )
 
     @router.callback_query(F.data.startswith("aiogram-"))
     async def callback(query: CallbackQuery) -> None:
@@ -185,7 +226,7 @@ def build_dispatcher(args: argparse.Namespace) -> Dispatcher:
 
     @router.message(F.text)
     async def echo(message: Message) -> None:
-        await message.answer(args.prefix + (message.text or ""))
+        await send_echo(message, args.prefix, args.ephemeral_prefix)
         LOG.info("echoed chat_id=%s message_id=%s", message.chat.id, message.message_id)
 
     dispatcher = Dispatcher()
