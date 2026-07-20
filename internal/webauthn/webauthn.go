@@ -23,28 +23,30 @@ import (
 	"math/big"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"telesrv/internal/branding"
 )
 
 // 验证错误。调用方据此映射到 TL 错误码/拒绝登录。
 var (
-	ErrClientDataInvalid   = errors.New("webauthn: client data invalid")
-	ErrChallengeMismatch   = errors.New("webauthn: challenge mismatch")
-	ErrOriginNotAllowed    = errors.New("webauthn: origin not allowed")
-	ErrRPIDMismatch        = errors.New("webauthn: rp id hash mismatch")
-	ErrUserNotPresent      = errors.New("webauthn: user-present flag not set")
-	ErrAuthDataInvalid     = errors.New("webauthn: authenticator data invalid")
-	ErrAttestationInvalid  = errors.New("webauthn: attestation object invalid")
+	ErrClientDataInvalid    = errors.New("webauthn: client data invalid")
+	ErrChallengeMismatch    = errors.New("webauthn: challenge mismatch")
+	ErrOriginNotAllowed     = errors.New("webauthn: origin not allowed")
+	ErrRPIDMismatch         = errors.New("webauthn: rp id hash mismatch")
+	ErrUserNotPresent       = errors.New("webauthn: user-present flag not set")
+	ErrAuthDataInvalid      = errors.New("webauthn: authenticator data invalid")
+	ErrAttestationInvalid   = errors.New("webauthn: attestation object invalid")
 	ErrPublicKeyUnsupported = errors.New("webauthn: unsupported public key algorithm")
-	ErrSignatureInvalid    = errors.New("webauthn: signature invalid")
-	ErrCounterRegressed    = errors.New("webauthn: sign counter regressed (possible cloned authenticator)")
+	ErrSignatureInvalid     = errors.New("webauthn: signature invalid")
+	ErrCounterRegressed     = errors.New("webauthn: sign counter regressed (possible cloned authenticator)")
 )
 
 // authenticatorData 标志位(WebAuthn §6.1)。
 const (
-	flagUserPresent       = 0x01
-	flagUserVerified      = 0x04
-	flagAttestedCredData  = 0x40
-	flagExtensionData     = 0x80
+	flagUserPresent      = 0x01
+	flagUserVerified     = 0x04
+	flagAttestedCredData = 0x40
+	flagExtensionData    = 0x80
 )
 
 // COSE algorithm identifiers。
@@ -55,8 +57,8 @@ const (
 
 // COSE key type / curve。
 const (
-	coseKtyOKP = 1
-	coseKtyEC2 = 2
+	coseKtyOKP     = 1
+	coseKtyEC2     = 2
 	coseCrvP256    = 1
 	coseCrvEd25519 = 6
 )
@@ -76,7 +78,7 @@ func decodeB64URL(s string) ([]byte, error) {
 type RegistrationParams struct {
 	RPID          string
 	RPName        string
-	UserID        []byte   // 通常是 "dcId:userId" 的字节
+	UserID        []byte // 通常是 "dcId:userId" 的字节
 	UserName      string
 	UserDisplay   string
 	Challenge     []byte
@@ -99,7 +101,7 @@ func BuildRegistrationOptions(p RegistrationParams) ([]byte, error) {
 		exclude = append(exclude, map[string]any{"type": "public-key", "id": b64.EncodeToString(id)})
 	}
 	pub := map[string]any{
-		"rp":        map[string]any{"id": p.RPID, "name": orDefault(p.RPName, "Telegram")},
+		"rp":        map[string]any{"id": p.RPID, "name": orDefault(p.RPName, branding.ProductName)},
 		"user":      map[string]any{"id": b64.EncodeToString(p.UserID), "name": p.UserName, "displayName": orDefault(p.UserDisplay, p.UserName)},
 		"challenge": b64.EncodeToString(p.Challenge),
 		"pubKeyCredParams": []map[string]any{
@@ -199,12 +201,12 @@ func ChallengeFromClientData(clientDataJSON []byte) ([]byte, error) {
 
 // parsedAuthData 是 authenticatorData 的解析结果。
 type parsedAuthData struct {
-	rpIDHash    []byte
-	flags       byte
-	signCount   uint32
-	aaguid      []byte
-	credID      []byte
-	credPubKey  []byte // COSE 公钥原始字节(仅注册时存在)
+	rpIDHash   []byte
+	flags      byte
+	signCount  uint32
+	aaguid     []byte
+	credID     []byte
+	credPubKey []byte // COSE 公钥原始字节(仅注册时存在)
 }
 
 func parseAuthData(authData []byte) (parsedAuthData, error) {
@@ -351,8 +353,8 @@ func VerifyAssertion(in VerifyAssertionInput) (uint32, error) {
 
 // publicKey 抽象 ES256/EdDSA 验签。
 type publicKey struct {
-	ec  *ecdsa.PublicKey
-	ed  ed25519.PublicKey
+	ec *ecdsa.PublicKey
+	ed ed25519.PublicKey
 }
 
 func (p publicKey) verify(signed, sig []byte) error {

@@ -143,7 +143,7 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 		if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, peer); err != nil {
 			return nil, err
 		}
-		return &tg.PaymentsStarsRevenueAdsAccountURL{URL: "https://ads.telegram.org/"}, nil
+		return &tg.PaymentsStarsRevenueAdsAccountURL{URL: r.publicLink("")}, nil
 	})
 	registerRPC[*tg.PaymentsGetStarsRevenueStatsRequest](d, tlprofile.SemanticMethodPaymentsGetStarsRevenueStats, func(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (any, error) {
 		return r.onPaymentsGetStarsRevenueStats(ctx, req)

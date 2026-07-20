@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/seed/appearance"
 )
@@ -253,7 +254,7 @@ func appearanceDocumentAttributes(in []appearance.DocumentAttribute) []domain.Do
 			if attr.FileName != "" {
 				out = append(out, domain.DocumentAttribute{
 					Kind:     domain.DocAttrFilename,
-					FileName: attr.FileName,
+					FileName: branding.UserVisibleText(attr.FileName, ""),
 				})
 			}
 		}

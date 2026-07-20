@@ -68,7 +68,7 @@ func TestCreateCatalogRevisionPreservesHistoricalRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := svc.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
-		Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 1, Title: "First", Animation: animation,
+		Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 1, Title: "Telegram Pin", Animation: animation,
 	})
 	if err != nil {
 		t.Fatalf("create first: %v", err)
@@ -84,7 +84,7 @@ func TestCreateCatalogRevisionPreservesHistoricalRevision(t *testing.T) {
 		t.Fatalf("current=%+v found=%v", current, found)
 	}
 	historical, found, _ := svc.GiftRevisionByID(ctx, first.Gift.RevisionID)
-	if !found || historical.Stars != 50 || historical.Title != "First" {
+	if !found || historical.Stars != 50 || historical.Title != "Telesrv Pin" {
 		t.Fatalf("historical=%+v found=%v", historical, found)
 	}
 	if _, err := svc.SetCatalogEnabled(ctx, first.Gift.ID+999, false); !errors.Is(err, domain.ErrStarGiftNotFound) {

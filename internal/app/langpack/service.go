@@ -7,6 +7,7 @@ import (
 	"golang.org/x/sync/singleflight"
 	"golang.org/x/text/unicode/bidi"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -18,16 +19,34 @@ type Service struct {
 	languageCache *languageListCache
 	packLoads     singleflight.Group
 	languageLoads singleflight.Group
+	publicBaseURL string
+}
+
+// Option configures user-visible language-pack projection.
+type Option func(*Service)
+
+// WithPublicBaseURL replaces official public hosts embedded in upstream
+// language-pack values with this deployment's public link root.
+func WithPublicBaseURL(value string) Option {
+	return func(s *Service) {
+		if strings.TrimSpace(value) != "" {
+			s.publicBaseURL = value
+		}
+	}
 }
 
 // NewService 创建 langpack 服务。
-func NewService(packs store.LangPackStore) *Service {
-	return newServiceWithCacheLimits(
+func NewService(packs store.LangPackStore, opts ...Option) *Service {
+	s := newServiceWithCacheLimits(
 		packs,
 		defaultLangPackCacheMaxBytes,
 		defaultLangPackCacheMaxEntries,
 		defaultLanguageListCacheMaxEntries,
 	)
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func newServiceWithCacheLimits(packs store.LangPackStore, maxBytes int64, maxEntries, languageEntries int) *Service {
@@ -35,6 +54,7 @@ func newServiceWithCacheLimits(packs store.LangPackStore, maxBytes int64, maxEnt
 		packs:         packs,
 		packCache:     newLangPackCache(maxBytes, maxEntries),
 		languageCache: newLanguageListCache(languageEntries),
+		publicBaseURL: branding.DefaultPublicURL,
 	}
 }
 
@@ -135,7 +155,11 @@ func shouldOverlayWebA(langPack string) bool {
 func (s *Service) rawPack(ctx context.Context, langPack, langCode string) (domain.LangPack, error) {
 	key := langPackCacheKey{pack: langPack, code: langCode, kind: langPackCacheRaw}
 	return s.cachedPack(ctx, key, func() (domain.LangPack, error) {
-		return s.packs.GetPack(ctx, langPack, langCode, 0)
+		pack, err := s.packs.GetPack(ctx, langPack, langCode, 0)
+		if err != nil {
+			return domain.LangPack{}, err
+		}
+		return s.brandPack(pack), nil
 	})
 }
 
@@ -218,6 +242,7 @@ func (s *Service) cachedLanguages(ctx context.Context, langPack string) ([]domai
 			}
 			for i := range languages {
 				languages[i] = completeLanguageMetadata(langPack, languages[i])
+				languages[i] = s.brandLanguage(languages[i])
 			}
 			return cachedLanguagesLoadResult{
 				languages: languages,
@@ -235,6 +260,27 @@ func (s *Service) cachedLanguages(ctx context.Context, langPack string) ([]domai
 			return nil, err
 		}
 	}
+}
+
+func (s *Service) brandPack(pack domain.LangPack) domain.LangPack {
+	for i := range pack.Strings {
+		item := &pack.Strings[i]
+		item.Value = branding.UserVisibleText(item.Value, s.publicBaseURL)
+		item.ZeroValue = branding.UserVisibleText(item.ZeroValue, s.publicBaseURL)
+		item.OneValue = branding.UserVisibleText(item.OneValue, s.publicBaseURL)
+		item.TwoValue = branding.UserVisibleText(item.TwoValue, s.publicBaseURL)
+		item.FewValue = branding.UserVisibleText(item.FewValue, s.publicBaseURL)
+		item.ManyValue = branding.UserVisibleText(item.ManyValue, s.publicBaseURL)
+		item.OtherValue = branding.UserVisibleText(item.OtherValue, s.publicBaseURL)
+	}
+	return pack
+}
+
+func (s *Service) brandLanguage(lang domain.LangPackLanguage) domain.LangPackLanguage {
+	lang.Name = branding.UserVisibleText(lang.Name, s.publicBaseURL)
+	lang.NativeName = branding.UserVisibleText(lang.NativeName, s.publicBaseURL)
+	lang.TranslationsURL = branding.UserVisibleText(lang.TranslationsURL, s.publicBaseURL)
+	return lang
 }
 
 func (s *Service) flushCaches() {

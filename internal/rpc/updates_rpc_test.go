@@ -215,7 +215,7 @@ func TestSignInServiceNotificationMatchesEnterpriseShape(t *testing.T) {
 	if update.Popup || update.InboxDate == 0 || update.Media == nil {
 		t.Fatalf("notification flags/media = popup %v inbox %d media %T", update.Popup, update.InboxDate, update.Media)
 	}
-	for _, want := range []string{"New login.", "Test User", "Telegram Desktop", "Settings > Devices"} {
+	for _, want := range []string{"New login.", "Test User", "Telesrv Desktop", "Settings > Devices"} {
 		if !strings.Contains(update.Message, want) {
 			t.Fatalf("notification message %q missing %q", update.Message, want)
 		}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/webauthn"
@@ -40,7 +41,7 @@ type Option func(*Service)
 func WithRPName(name string) Option { return func(s *Service) { s.rpName = name } }
 
 // WithAllowedOrigins 设置允许的 WebAuthn origin 白名单;为空表示不强校验 origin
-//（服务端通常不预知 Android apk-key-hash origin)。
+// （服务端通常不预知 Android apk-key-hash origin)。
 func WithAllowedOrigins(origins []string) Option {
 	return func(s *Service) { s.allowedOrigins = append([]string(nil), origins...) }
 }
@@ -70,7 +71,7 @@ func NewService(creds store.PasskeyStore, challenges store.PasskeyChallengeStore
 		creds:        creds,
 		challenges:   challenges,
 		rpID:         rpID,
-		rpName:       "Telegram",
+		rpName:       branding.ProductName,
 		dcID:         dcID,
 		challengeTTL: defaultChallengeTTL,
 		now:          time.Now,

@@ -8,6 +8,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/branding"
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
@@ -1889,12 +1890,12 @@ func tgAuthorization(a domain.Authorization, currentAuthKeyID [8]byte, now int) 
 		Current:       a.AuthKeyID == currentAuthKeyID,
 		OfficialApp:   true,
 		Hash:          a.Hash,
-		DeviceModel:   a.DeviceModel,
-		Platform:      a.Platform,
-		SystemVersion: a.SystemVersion,
+		DeviceModel:   branding.UserVisibleText(a.DeviceModel, ""),
+		Platform:      branding.UserVisibleClientPlatform(a.Platform),
+		SystemVersion: branding.UserVisibleText(a.SystemVersion, ""),
 		APIID:         a.APIID,
-		AppName:       "Telegram Desktop",
-		AppVersion:    a.AppVersion,
+		AppName:       branding.ClientAppName(a.Platform),
+		AppVersion:    branding.UserVisibleText(a.AppVersion, ""),
 		DateCreated:   created,
 		DateActive:    active,
 		IP:            a.IP,

@@ -1,5 +1,5 @@
 {
- "source": "official telegram (appearancefetch)",
+ "source": "upstream appearance snapshot",
  "exported_at": "2026-06-25T14:04:03Z",
  "notes": {
   "server": "official",
@@ -3788,7 +3788,7 @@
      },
      {
       "kind": "filename",
-      "file_name": "background  telegram 003.jpg"
+      "file_name": "background telesrv 003.jpg"
      }
     ],
     "thumbs": [

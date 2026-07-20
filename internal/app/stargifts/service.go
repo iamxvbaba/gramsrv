@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -173,7 +174,7 @@ func (s *Service) CreateCatalogRevision(ctx context.Context, write domain.StarGi
 	if s == nil || s.store == nil || s.blobs == nil {
 		return domain.StarGiftCatalogEntry{}, fmt.Errorf("star gift catalog importer is not configured")
 	}
-	write.Title = strings.TrimSpace(write.Title)
+	write.Title = branding.UserVisibleText(strings.TrimSpace(write.Title), "")
 	if write.Stars <= 0 || write.ConvertStars < 0 || write.ConvertStars > write.Stars ||
 		write.Animation.Width != 512 || write.Animation.Height != 512 || len(write.Animation.TGS) == 0 ||
 		len([]rune(write.Title)) > domain.MaxStarGiftTitleRunes {
@@ -239,7 +240,8 @@ func (s *Service) CreateCatalogBundle(ctx context.Context, write domain.StarGift
 	if s == nil || s.store == nil || s.blobs == nil {
 		return domain.StarGiftCatalogBundleResult{}, fmt.Errorf("star gift catalog importer is not configured")
 	}
-	write.Catalog.Title = strings.TrimSpace(write.Catalog.Title)
+	write.Catalog.Title = branding.UserVisibleText(strings.TrimSpace(write.Catalog.Title), "")
+	write.Catalog.AuctionSlug = branding.UserVisibleText(strings.TrimSpace(write.Catalog.AuctionSlug), "")
 	if write.Catalog.Stars <= 0 || write.Catalog.ConvertStars < 0 || write.Catalog.ConvertStars > write.Catalog.Stars ||
 		write.Catalog.Animation.Width != 512 || write.Catalog.Animation.Height != 512 || len(write.Catalog.Animation.TGS) == 0 ||
 		len([]rune(write.Catalog.Title)) > domain.MaxStarGiftTitleRunes {
@@ -258,6 +260,9 @@ func (s *Service) CreateCatalogBundle(ctx context.Context, write domain.StarGift
 	}
 	if write.Collectible != nil {
 		write.Collectible.SlugPrefix = strings.ToLower(strings.TrimSpace(write.Collectible.SlugPrefix))
+		brandCollectibleAttributes(write.Collectible.Models)
+		brandCollectibleAttributes(write.Collectible.Patterns)
+		brandCollectibleAttributes(write.Collectible.Backdrops)
 		if write.Collectible.OfficialGiftID != write.Catalog.OfficialGiftID ||
 			!bytes.Equal(write.Collectible.SourceManifestSHA256, write.Catalog.SourceManifestSHA256) {
 			return domain.StarGiftCatalogBundleResult{}, domain.ErrStarGiftCollectibleInvalid
@@ -315,6 +320,9 @@ func (s *Service) PublishCollectibleRevision(ctx context.Context, write domain.S
 	if s == nil || s.store == nil {
 		return domain.StarGiftCollectibleRevision{}, fmt.Errorf("star gift collectible store is not configured")
 	}
+	brandCollectibleAttributes(write.Models)
+	brandCollectibleAttributes(write.Patterns)
+	brandCollectibleAttributes(write.Backdrops)
 	revision, err := s.store.PublishCollectibleRevision(ctx, write)
 	if err == nil {
 		s.InvalidateStarGiftCatalog()
@@ -330,6 +338,9 @@ func (s *Service) CreateCollectibleRevision(ctx context.Context, write domain.St
 		return domain.StarGiftCollectibleRevision{}, fmt.Errorf("star gift collectible importer is not configured")
 	}
 	write.SlugPrefix = strings.ToLower(strings.TrimSpace(write.SlugPrefix))
+	brandCollectibleAttributes(write.Models)
+	brandCollectibleAttributes(write.Patterns)
+	brandCollectibleAttributes(write.Backdrops)
 	if err := domain.ValidateStarGiftCollectibleDraft(write); err != nil {
 		return domain.StarGiftCollectibleRevision{}, err
 	}
@@ -340,6 +351,12 @@ func (s *Service) CreateCollectibleRevision(ctx context.Context, write domain.St
 		return domain.StarGiftCollectibleRevision{}, err
 	}
 	return s.PublishCollectibleRevision(ctx, write)
+}
+
+func brandCollectibleAttributes(attributes []domain.StarGiftCollectibleAttribute) {
+	for i := range attributes {
+		attributes[i].Name = branding.UserVisibleText(strings.TrimSpace(attributes[i].Name), "")
+	}
 }
 
 func (s *Service) materializeCollectibleAttributes(ctx context.Context, attributes []domain.StarGiftCollectibleAttribute) error {

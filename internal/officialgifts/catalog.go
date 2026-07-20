@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"telesrv/internal/branding"
 )
 
 const manifestSchema = 2
@@ -299,7 +301,7 @@ func (c *Catalog) List(ctx context.Context) ([]GiftSummary, error) {
 		gift := snap.gifts[id]
 		doc := snap.documents[gift.DocumentIDs[0]]
 		summary := GiftSummary{
-			ID: id, Title: gift.Title, Stars: gift.Stars, ConvertStars: gift.ConvertStars,
+			ID: id, Title: branding.UserVisibleText(gift.Title, ""), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
 			UpgradeStars: gift.UpgradeStars, AvailabilityTotal: gift.AvailabilityTotal,
 			AvailabilityRemains: gift.AvailabilityRemains, AvailabilityResale: gift.AvailabilityResale,
 			Limited: gift.Limited, SoldOut: gift.SoldOut, Birthday: gift.Birthday,
@@ -308,7 +310,7 @@ func (c *Catalog) List(ctx context.Context) ([]GiftSummary, error) {
 			FirstSaleDate: gift.FirstSaleDate, LastSaleDate: gift.LastSaleDate,
 			ResellMinStars: gift.ResellMinStars, PerUserTotal: gift.PerUserTotal,
 			PerUserRemains: gift.PerUserRemains, LockedUntilDate: gift.LockedUntilDate,
-			AuctionSlug: gift.AuctionSlug, GiftsPerRound: gift.GiftsPerRound,
+			AuctionSlug: branding.UserVisibleText(gift.AuctionSlug, ""), GiftsPerRound: gift.GiftsPerRound,
 			AuctionStartDate: gift.AuctionStartDate, UpgradeVariants: gift.UpgradeVariants,
 			Background: cloneBackground(gift.Background), DocumentID: doc.ID64,
 			AnimationValidated: doc.AnimationValidated,
@@ -342,7 +344,7 @@ func (c *Catalog) Bundle(ctx context.Context, giftID int64, includeCollectible b
 	out := Bundle{
 		ManifestSHA256: append([]byte(nil), snap.manifestSHA...),
 		SourceJSON:     append([]byte(nil), gift.SourceJSON...),
-		Gift: Gift{ID: gift.ID, Title: gift.Title, Stars: gift.Stars, ConvertStars: gift.ConvertStars,
+		Gift: Gift{ID: gift.ID, Title: branding.UserVisibleText(gift.Title, ""), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
 			UpgradeStars: gift.UpgradeStars, AvailabilityTotal: gift.AvailabilityTotal,
 			AvailabilityRemains: gift.AvailabilityRemains, Limited: gift.Limited, SoldOut: gift.SoldOut,
 			Birthday: gift.Birthday, RequirePremium: gift.RequirePremium, LimitedPerUser: gift.LimitedPerUser,
@@ -350,7 +352,7 @@ func (c *Catalog) Bundle(ctx context.Context, giftID int64, includeCollectible b
 			AvailabilityResale: gift.AvailabilityResale, FirstSaleDate: gift.FirstSaleDate,
 			LastSaleDate: gift.LastSaleDate, ResellMinStars: gift.ResellMinStars,
 			PerUserTotal: gift.PerUserTotal, PerUserRemains: gift.PerUserRemains,
-			LockedUntilDate: gift.LockedUntilDate, AuctionSlug: gift.AuctionSlug,
+			LockedUntilDate: gift.LockedUntilDate, AuctionSlug: branding.UserVisibleText(gift.AuctionSlug, ""),
 			GiftsPerRound: gift.GiftsPerRound, AuctionStartDate: gift.AuctionStartDate,
 			UpgradeVariants: gift.UpgradeVariants, Background: cloneBackground(gift.Background),
 			DocumentID: gift.DocumentIDs[0]},
@@ -372,17 +374,17 @@ func (c *Catalog) Bundle(ctx context.Context, giftID int64, includeCollectible b
 		if err != nil {
 			return Bundle{}, fmt.Errorf("model %q document %d: %w", value.Name, value.DocumentID, err)
 		}
-		collectible.Models = append(collectible.Models, Model{Name: value.Name, DocumentID: value.DocumentID, Crafted: value.Crafted, Rarity: value.Rarity, Document: doc})
+		collectible.Models = append(collectible.Models, Model{Name: branding.UserVisibleText(value.Name, ""), DocumentID: value.DocumentID, Crafted: value.Crafted, Rarity: value.Rarity, Document: doc})
 	}
 	for _, value := range set.Patterns {
 		doc, err := c.readDocument(ctx, snap.documents[value.DocumentID])
 		if err != nil {
 			return Bundle{}, fmt.Errorf("pattern %q document %d: %w", value.Name, value.DocumentID, err)
 		}
-		collectible.Patterns = append(collectible.Patterns, Pattern{Name: value.Name, DocumentID: value.DocumentID, Rarity: value.Rarity, Document: doc})
+		collectible.Patterns = append(collectible.Patterns, Pattern{Name: branding.UserVisibleText(value.Name, ""), DocumentID: value.DocumentID, Rarity: value.Rarity, Document: doc})
 	}
 	for _, value := range set.Backdrops {
-		collectible.Backdrops = append(collectible.Backdrops, Backdrop{Name: value.Name, BackdropID: value.BackdropID,
+		collectible.Backdrops = append(collectible.Backdrops, Backdrop{Name: branding.UserVisibleText(value.Name, ""), BackdropID: value.BackdropID,
 			CenterColor: value.CenterColor, EdgeColor: value.EdgeColor, PatternColor: value.PatternColor,
 			TextColor: value.TextColor, Rarity: value.Rarity})
 	}

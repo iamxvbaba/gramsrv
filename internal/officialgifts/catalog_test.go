@@ -21,7 +21,7 @@ func TestCatalogVerifiesSelectedDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	value := manifest{Schema: manifestSchema, GiftCount: 1,
-		Gifts:     []giftManifest{{Index: 0, Kind: "regular", ID: 1, Stars: 10, ConvertStars: 5, DocumentIDs: []int64{10}}},
+		Gifts:     []giftManifest{{Index: 0, Kind: "regular", ID: 1, Title: "Telegram Pin", Stars: 10, ConvertStars: 5, DocumentIDs: []int64{10}}},
 		Documents: []documentManifest{{ID64: 10, FileName: "gift.tgs", File: fileArtifact{Path: "documents/10.tgs", Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}}},
 	}
 	raw, err := json.Marshal(value)
@@ -33,11 +33,11 @@ func TestCatalogVerifiesSelectedDocument(t *testing.T) {
 	}
 	catalog := New(root)
 	items, err := catalog.List(context.Background())
-	if err != nil || len(items) != 1 || items[0].ID != 1 {
+	if err != nil || len(items) != 1 || items[0].ID != 1 || items[0].Title != "Telesrv Pin" {
 		t.Fatalf("items=%+v err=%v", items, err)
 	}
 	bundle, err := catalog.Bundle(context.Background(), 1, false)
-	if err != nil || string(bundle.BaseDocument.Data) != string(data) {
+	if err != nil || string(bundle.BaseDocument.Data) != string(data) || bundle.Gift.Title != "Telesrv Pin" {
 		t.Fatalf("bundle=%+v err=%v", bundle, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "documents", "10.tgs"), []byte("tampered---"), 0o644); err != nil {

@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/branding"
 	androidcompat "telesrv/internal/compat/android"
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
@@ -21,7 +22,7 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return tdesktop.NearestDC(r.cfg.DC), nil
 	})
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
-		return &tg.HelpInviteText{Message: "Join me on Telegram."}, nil
+		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName + "."}, nil
 	})
 	registerRPC[*tg.HelpSaveAppLogRequest](d, tlprofile.SemanticMethodHelpSaveAppLog, func(ctx context.Context, _ *tg.HelpSaveAppLogRequest) (any, error) {
 		return r.onHelpSaveAppLog(ctx)
@@ -182,7 +183,7 @@ func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismis
 // 六个字段全是 TL 必填项，空值也必须给出空集合而非缺失。
 func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumPromo, error) {
 	promo := &tg.HelpPremiumPromo{
-		StatusText:     "Telegram Premium is not active on this account.",
+		StatusText:     branding.PremiumName + " is not active on this account.",
 		StatusEntities: []tg.MessageEntityClass{},
 		VideoSections:  []string{},
 		Videos:         []tg.DocumentClass{},
@@ -199,7 +200,7 @@ func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumProm
 	}
 	if u.PremiumActiveAt(r.clock.Now().Unix()) {
 		until := time.Unix(int64(u.PremiumUntil), 0)
-		promo.StatusText = "Telegram Premium is active until " + until.Format("2006-01-02") + "."
+		promo.StatusText = branding.PremiumName + " is active until " + until.Format("2006-01-02") + "."
 	}
 	return promo, nil
 }

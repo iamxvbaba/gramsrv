@@ -66,9 +66,29 @@ func ensureOfficialSystemUserWithDB(ctx context.Context, db sqlcgen.DBTX, msg do
 		return nil
 	}
 	if _, err := db.Exec(ctx, `
-INSERT INTO users (id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-ON CONFLICT (id) DO NOTHING
+WITH upserted AS (
+    INSERT INTO users (id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT (id) DO UPDATE SET
+        access_hash = EXCLUDED.access_hash,
+        phone = EXCLUDED.phone,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        username = EXCLUDED.username,
+        country_code = EXCLUDED.country_code,
+        verified = EXCLUDED.verified,
+        support = EXCLUDED.support,
+        about = EXCLUDED.about,
+        is_bot = EXCLUDED.is_bot,
+        bot_info_version = EXCLUDED.bot_info_version,
+        updated_at = now()
+    RETURNING id, lower(username) AS username_lower
+), deleted_old_username AS (
+    DELETE FROM peer_usernames
+    WHERE peer_type = 'user' AND peer_id = (SELECT id FROM upserted)
+)
+INSERT INTO peer_usernames (username_lower, peer_type, peer_id)
+SELECT username_lower, 'user', id FROM upserted
 `, u.ID, u.AccessHash, u.Phone, u.FirstName, u.LastName, u.Username, u.CountryCode, u.Verified, u.Support, u.About, u.Bot, u.BotInfoVersion); err != nil {
 		return fmt.Errorf("ensure official system user: %w", err)
 	}

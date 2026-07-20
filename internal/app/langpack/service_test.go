@@ -74,6 +74,66 @@ func TestServiceNormalizesWebARawLangCode(t *testing.T) {
 	}
 }
 
+func TestServiceRebrandsEveryLanguagePackProjection(t *testing.T) {
+	ctx := context.Background()
+	base := memory.NewLangPackStore()
+	seed := domain.LangPack{
+		LangPack: "weba",
+		LangCode: "en",
+		Version:  7,
+		Strings: []domain.LangPackString{
+			{Key: "AppName", Value: "Telegram", Pluralized: true, ZeroValue: "No Telegram accounts", OneValue: "One Telegram account", TwoValue: "Two Telegram accounts", FewValue: "Few Telegram accounts", ManyValue: "Many Telegram accounts", OtherValue: "Other Telegram accounts"},
+			{Key: "TranslationLink", Value: "https://translations.telegram.org/en"},
+			{Key: "RuntimeIdentifier", Value: "org.telegram.messenger"},
+		},
+	}
+	if err := base.UpsertPack(ctx, seed); err != nil {
+		t.Fatalf("seed langpack: %v", err)
+	}
+	storeWithMetadata := &metadataLangPackStore{
+		LangPackStore: base,
+		languages: []domain.LangPackLanguage{{
+			LangPack:        "weba",
+			LangCode:        "en",
+			Name:            "Telegram English",
+			NativeName:      "Telegram English",
+			TranslationsURL: "https://translations.telegram.org/en",
+		}},
+	}
+	svc := NewService(storeWithMetadata, WithPublicBaseURL("https://chat.example/root/"))
+
+	for name, load := range map[string]func() (domain.LangPack, error){
+		"full":       func() (domain.LangPack, error) { return svc.GetLangPack(ctx, "weba", "en") },
+		"difference": func() (domain.LangPack, error) { return svc.GetDifference(ctx, "weba", "en", 1) },
+		"keys": func() (domain.LangPack, error) {
+			return svc.GetStrings(ctx, "weba", "en", []string{"AppName", "TranslationLink", "RuntimeIdentifier"})
+		},
+	} {
+		pack, err := load()
+		if err != nil {
+			t.Fatalf("%s projection: %v", name, err)
+		}
+		appName := findLangPackString(pack.Strings, "AppName")
+		if appName == nil || appName.Value != "Telesrv" || appName.ZeroValue != "No Telesrv accounts" || appName.OneValue != "One Telesrv account" || appName.TwoValue != "Two Telesrv accounts" || appName.FewValue != "Few Telesrv accounts" || appName.ManyValue != "Many Telesrv accounts" || appName.OtherValue != "Other Telesrv accounts" {
+			t.Fatalf("%s AppName = %+v, want all value forms rebranded", name, appName)
+		}
+		if got := stringValue(pack.Strings, "TranslationLink"); got != "https://chat.example/root/en" {
+			t.Fatalf("%s TranslationLink = %q", name, got)
+		}
+		if got := stringValue(pack.Strings, "RuntimeIdentifier"); got != "org.telegram.messenger" {
+			t.Fatalf("%s RuntimeIdentifier = %q, want protocol identifier unchanged", name, got)
+		}
+	}
+
+	languages, err := svc.ListLanguages(ctx, "weba")
+	if err != nil {
+		t.Fatalf("list languages: %v", err)
+	}
+	if len(languages) != 1 || languages[0].Name != "Telesrv English" || languages[0].NativeName != "Telesrv English" || languages[0].TranslationsURL != "https://chat.example/root/en" {
+		t.Fatalf("languages = %+v, want branded metadata", languages)
+	}
+}
+
 func TestListLanguagesUsesSeededPacks(t *testing.T) {
 	ctx := context.Background()
 	packs := memory.NewLangPackStore()
@@ -286,6 +346,15 @@ type countingLangPackStore struct {
 	listLanguages int
 }
 
+type metadataLangPackStore struct {
+	store.LangPackStore
+	languages []domain.LangPackLanguage
+}
+
+func (s *metadataLangPackStore) ListLanguages(context.Context, string) ([]domain.LangPackLanguage, error) {
+	return append([]domain.LangPackLanguage(nil), s.languages...), nil
+}
+
 func (s *countingLangPackStore) GetPack(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error) {
 	s.mu.Lock()
 	s.getPack++
@@ -333,4 +402,13 @@ func stringValue(strings []domain.LangPackString, key string) string {
 		}
 	}
 	return ""
+}
+
+func findLangPackString(strings []domain.LangPackString, key string) *domain.LangPackString {
+	for i := range strings {
+		if strings[i].Key == key {
+			return &strings[i]
+		}
+	}
+	return nil
 }

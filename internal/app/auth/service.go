@@ -17,6 +17,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	mtcrypto "github.com/iamxvbaba/td/crypto"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
@@ -1435,9 +1436,9 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 	return found && settings.HasPassword, nil
 }
 
-const loginMessageTpl = `Login code: %s. Do not give this code to anyone, even if they say they are from Telegram!
+const loginMessageTpl = `Login code: %s. Do not give this code to anyone, even if they say they are from ` + branding.ProductName + `!
 
-This code can be used to log in to your Telegram account. We never ask it for anything else.
+This code can be used to log in to your ` + branding.ProductName + ` account. We never ask it for anything else.
 
 If you didn't request this code by trying to log in on another device, simply ignore this message.`
 

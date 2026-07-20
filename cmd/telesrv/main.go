@@ -495,7 +495,7 @@ func run(logger *zap.Logger) error {
 		cfg.UploadPartGCInterval,
 		cfg.UploadPartGCBatch,
 	).Run(ctx)
-	langPackService := langpack.NewService(langPackStore)
+	langPackService := langpack.NewService(langPackStore, langpack.WithPublicBaseURL(cfg.PublicBaseURL))
 	privacyService := privacyapp.NewService(privacyStore, contactStore)
 	contactsService := contacts.NewService(contactStore, userStore).Configure(
 		contacts.WithPhotoProvider(cachedPhotos),

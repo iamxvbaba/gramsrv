@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -42,7 +43,7 @@ func (r *Router) resolveAIComposeStyleWebPage(ctx context.Context, rawURL string
 		Hash:               aiComposeToneWebPageHash(tone),
 		Date:               int(now.Unix()),
 		Type:               aiComposeToneWebPageType,
-		SiteName:           "Telegram",
+		SiteName:           branding.ProductName,
 		Title:              tone.Title,
 		Description:        tone.Prompt,
 		ComposeToneEmojiID: tone.EmojiID,

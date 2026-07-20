@@ -55,7 +55,7 @@ type appServer struct {
 func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.listen, "listen", envOr("TELESRV_WALLET_LISTEN", "127.0.0.1:8091"), "wallet mini app HTTP listen address")
-	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("TELESRV_WALLET_PUBLIC_URL"), "public HTTPS URL used in the Telegram menu button")
+	flag.StringVar(&cfg.publicURL, "public-url", os.Getenv("TELESRV_WALLET_PUBLIC_URL"), "public HTTPS URL used in the Telesrv menu button")
 	flag.StringVar(&cfg.botAPI, "bot-api", envOr("TELESRV_BOT_API_URL", "http://127.0.0.1:8081"), "telesrv Bot API base URL")
 	flag.StringVar(&cfg.token, "token", os.Getenv("TELESRV_BOT_TOKEN"), "bot token <bot_id>:<secret>")
 	flag.StringVar(&cfg.menuText, "menu-text", envOr("TELESRV_WALLET_MENU_TEXT", "Wallet"), "menu button label")

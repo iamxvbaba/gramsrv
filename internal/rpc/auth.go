@@ -15,6 +15,7 @@ import (
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/auth"
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -926,13 +927,13 @@ func (r *Router) tgSignInServiceNotification(ctx context.Context, u domain.User,
 	if ci, ok := ClientInfoFrom(ctx); ok {
 		parts := []string{}
 		if ci.DeviceModel != "" {
-			parts = append(parts, ci.DeviceModel)
+			parts = append(parts, branding.UserVisibleText(ci.DeviceModel, ""))
 		}
 		if ci.SystemVersion != "" {
-			parts = append(parts, ci.SystemVersion)
+			parts = append(parts, branding.UserVisibleText(ci.SystemVersion, ""))
 		}
 		if ci.AppVersion != "" {
-			parts = append(parts, ci.AppVersion)
+			parts = append(parts, branding.UserVisibleText(ci.AppVersion, ""))
 		}
 		if len(parts) > 0 {
 			client = strings.Join(parts, " / ")

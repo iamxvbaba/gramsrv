@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -42,7 +43,7 @@ const (
 	botFatherDraftBotUsername = "bot_username"
 )
 
-const botFatherHelpText = `I can help you create and manage Telegram bots.
+const botFatherHelpText = `I can help you create and manage ` + branding.ProductName + ` bots.
 
 You can control me by sending these commands:
 
