@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"telesrv/internal/domain"
 )
@@ -219,39 +218,19 @@ func (h *handler) editEphemeralMessage(w http.ResponseWriter, r *http.Request, b
 	input.Fields.SetReplyMarkup, input.Fields.ReplyMarkup = markupSet, markup
 	switch mode {
 	case "text":
-		if strings.TrimSpace(values["parse_mode"]) != "" {
-			writeAPIError(w, http.StatusBadRequest, "ENTITY_PARSE_UNSUPPORTED")
-			return
-		}
-		if values["text"] == "" {
-			writeAPIError(w, http.StatusBadRequest, "MESSAGE_EMPTY")
-			return
-		}
-		if !utf8.ValidString(values["text"]) || utf8.RuneCountInString(values["text"]) > domain.MaxMessageTextLength {
-			writeAPIError(w, http.StatusBadRequest, "MESSAGE_TOO_LONG")
-			return
-		}
-		entities, err := botAPIMessageEntities(values["entities"])
+		text, entities, err := botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, values["text"], entities
+		input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, text, entities
 	case "caption":
-		if strings.TrimSpace(values["parse_mode"]) != "" {
-			writeAPIError(w, http.StatusBadRequest, "ENTITY_PARSE_UNSUPPORTED")
-			return
-		}
-		entities, err := botAPIMessageEntities(values["caption_entities"])
+		caption, entities, err := botAPIFormattedTextRaw(values["caption"], values["parse_mode"], values["caption_entities"], domain.MaxEphemeralCaptionLength, false)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if !utf8.ValidString(values["caption"]) || utf8.RuneCountInString(values["caption"]) > domain.MaxEphemeralCaptionLength {
-			writeAPIError(w, http.StatusBadRequest, "MESSAGE_TOO_LONG")
-			return
-		}
-		input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, values["caption"], entities
+		input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, caption, entities
 	case "reply_markup":
 		input.Fields.SetReplyMarkup = true
 	case "media":
@@ -290,7 +269,7 @@ func parseEphemeralEditMedia(raw string, input *domain.BotAPIEphemeralEditInput)
 		Title           string          `json:"title"`
 		Performer       string          `json:"performer"`
 	}
-	if input == nil || json.Unmarshal([]byte(raw), &media) != nil || media.Type == "" || strings.TrimSpace(media.ParseMode) != "" {
+	if input == nil || json.Unmarshal([]byte(raw), &media) != nil || media.Type == "" {
 		return errors.New("MEDIA_INVALID")
 	}
 	allowed := map[string]bool{"animation": true, "audio": true, "document": true, "live_photo": true, "photo": true, "video": true}
@@ -316,14 +295,11 @@ func parseEphemeralEditMedia(raw string, input *domain.BotAPIEphemeralEditInput)
 		}
 		input.SecondaryFile = secondary
 	}
-	entities, err := botAPIMessageEntities(string(media.CaptionEntities))
+	caption, entities, err := botAPIFormattedTextRaw(media.Caption, media.ParseMode, string(media.CaptionEntities), domain.MaxEphemeralCaptionLength, false)
 	if err != nil {
 		return err
 	}
-	if !utf8.ValidString(media.Caption) || utf8.RuneCountInString(media.Caption) > domain.MaxEphemeralCaptionLength {
-		return errors.New("MESSAGE_TOO_LONG")
-	}
-	input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, media.Caption, entities
+	input.Fields.SetMessage, input.Fields.Message, input.Fields.Entities = true, caption, entities
 	return nil
 }
 

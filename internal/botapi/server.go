@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"go.uber.org/zap"
 
@@ -525,16 +524,7 @@ func (h *handler) sendMessage(w http.ResponseWriter, r *http.Request, botID int6
 		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
 		return
 	}
-	text := values["text"]
-	if text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > domain.MaxMessageTextLength {
-		writeAPIError(w, http.StatusBadRequest, "MESSAGE_EMPTY")
-		return
-	}
-	if strings.TrimSpace(values["parse_mode"]) != "" {
-		writeAPIError(w, http.StatusBadRequest, "ENTITY_PARSE_UNSUPPORTED")
-		return
-	}
-	entities, err := botAPIMessageEntities(values["entities"])
+	text, entities, err := botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -602,17 +592,9 @@ func (h *handler) sendMedia(w http.ResponseWriter, r *http.Request, botID int64,
 		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
 		return
 	}
-	if strings.TrimSpace(values["parse_mode"]) != "" {
-		writeAPIError(w, http.StatusBadRequest, "ENTITY_PARSE_UNSUPPORTED")
-		return
-	}
-	entities, err := botAPIMessageEntities(values["caption_entities"])
+	caption, entities, err := botAPIFormattedTextRaw(values["caption"], values["parse_mode"], values["caption_entities"], domain.MaxEphemeralCaptionLength, false)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if !utf8.ValidString(values["caption"]) || utf8.RuneCountInString(values["caption"]) > domain.MaxEphemeralCaptionLength {
-		writeAPIError(w, http.StatusBadRequest, "MESSAGE_TOO_LONG")
 		return
 	}
 	var markup *domain.MessageReplyMarkup
@@ -662,7 +644,7 @@ func (h *handler) sendMedia(w http.ResponseWriter, r *http.Request, botID int64,
 		message, err := gateway.BotAPISendEphemeral(r.Context(), domain.BotAPIEphemeralSendInput{
 			BotUserID: botID, ChatID: chatID, ReceiverUserID: ephemeral.receiverUserID,
 			CallbackQueryID: ephemeral.callbackQueryID, ReplyToEphemeralID: ephemeral.replyToEphemeralID,
-			TopMessageID: ephemeral.topMessageID, Kind: kind, Text: values["caption"], Entities: entities,
+			TopMessageID: ephemeral.topMessageID, Kind: kind, Text: caption, Entities: entities,
 			ReplyMarkup: markup, File: file, SecondaryFile: secondary,
 		})
 		if err != nil {
@@ -673,7 +655,7 @@ func (h *handler) sendMedia(w http.ResponseWriter, r *http.Request, botID int64,
 		return
 	}
 	locationKey, remoteURL, fileName, mimeType, fileBytes := file.LocationKey, file.RemoteURL, file.FileName, file.MimeType, file.Bytes
-	msg, err := h.gateway.BotAPISendMedia(r.Context(), botID, chatID, kind, locationKey, remoteURL, fileName, mimeType, fileBytes, values["caption"], entities, markup, apiBool(values["disable_notification"]), apiInt(values["reply_to_message_id"], 0))
+	msg, err := h.gateway.BotAPISendMedia(r.Context(), botID, chatID, kind, locationKey, remoteURL, fileName, mimeType, fileBytes, caption, entities, markup, apiBool(values["disable_notification"]), apiInt(values["reply_to_message_id"], 0))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -713,11 +695,7 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIError(w, http.StatusBadRequest, "MESSAGE_IDENTIFIER_INVALID")
 		return
 	}
-	if strings.TrimSpace(values["parse_mode"]) != "" {
-		writeAPIError(w, http.StatusBadRequest, "ENTITY_PARSE_UNSUPPORTED")
-		return
-	}
-	entities, err := botAPIMessageEntities(values["entities"])
+	text, entities, err := botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -737,7 +715,7 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		ok, err := h.gateway.BotAPIEditInlineMessageText(r.Context(), botID, inlineID, values["text"], entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+		ok, err := h.gateway.BotAPIEditInlineMessageText(r.Context(), botID, inlineID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 			return
@@ -745,7 +723,7 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIOK(w, ok)
 		return
 	}
-	msg, err := h.gateway.BotAPIEditMessageText(r.Context(), botID, chatID, messageID, values["text"], entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+	msg, err := h.gateway.BotAPIEditMessageText(r.Context(), botID, chatID, messageID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -1366,7 +1344,6 @@ func apiErrorDescription(err error) string {
 		"BOT_INVALID",
 		"CHAT_ID_INVALID",
 		"ENTITY_INVALID",
-		"ENTITY_PARSE_UNSUPPORTED",
 		"ENTITIES_TOO_LONG",
 		"ENTITY_BOUNDS_INVALID",
 		"ENTITY_TYPE_UNSUPPORTED",

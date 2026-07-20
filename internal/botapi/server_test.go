@@ -1335,12 +1335,17 @@ type fakeBotAPIGateway struct {
 	sendMediaFileName        string
 	sendMediaBytes           []byte
 	sendMediaCaption         string
+	sendMediaEntities        []domain.MessageEntity
 	sendMediaMessage         domain.Message
 	editCalled               bool
+	editText                 string
+	editEntities             []domain.MessageEntity
 	editSetMarkup            bool
 	editMessage              domain.Message
 	editInlineCalled         bool
 	editInlineID             domain.BotInlineMessageID
+	editInlineText           string
+	editInlineEntities       []domain.MessageEntity
 	deleteCalled             bool
 	callbackCalled           bool
 	callbackID               string
@@ -1450,17 +1455,22 @@ func (f *fakeBotAPIGateway) BotAPISendMedia(_ context.Context, botID, chatID int
 	f.sendMediaFileName = fileName
 	f.sendMediaBytes = append([]byte(nil), fileBytes...)
 	f.sendMediaCaption = caption
+	f.sendMediaEntities = append([]domain.MessageEntity(nil), entities...)
 	return f.sendMediaMessage, nil
 }
 
 func (f *fakeBotAPIGateway) BotAPIEditMessageText(_ context.Context, botID, chatID int64, messageID int, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (domain.Message, error) {
 	f.editCalled = true
+	f.editText = text
+	f.editEntities = append([]domain.MessageEntity(nil), entities...)
 	f.editSetMarkup = setReplyMarkup
 	return f.editMessage, nil
 }
 
-func (f *fakeBotAPIGateway) BotAPIEditInlineMessageText(_ context.Context, _ int64, inlineMessageID domain.BotInlineMessageID, _ string, _ []domain.MessageEntity, _ bool, _ *domain.MessageReplyMarkup, _ bool) (bool, error) {
+func (f *fakeBotAPIGateway) BotAPIEditInlineMessageText(_ context.Context, _ int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, _ bool, _ *domain.MessageReplyMarkup, _ bool) (bool, error) {
 	f.editInlineCalled, f.editInlineID = true, inlineMessageID
+	f.editInlineText = text
+	f.editInlineEntities = append([]domain.MessageEntity(nil), entities...)
 	return true, nil
 }
 

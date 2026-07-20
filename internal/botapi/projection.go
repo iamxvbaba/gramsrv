@@ -402,6 +402,9 @@ func apiMessageEntities(in []domain.MessageEntity, users map[int64]domain.User) 
 			"offset": entity.Offset,
 			"length": entity.Length,
 		}
+		if entity.Type == domain.MessageEntityBlockquote && entity.Collapsed {
+			item["type"] = "expandable_blockquote"
+		}
 		if entity.URL != "" {
 			item["url"] = entity.URL
 		}
@@ -417,6 +420,10 @@ func apiMessageEntities(in []domain.MessageEntity, users map[int64]domain.User) 
 		}
 		if entity.DocumentID != 0 {
 			item["custom_emoji_id"] = strconv.FormatInt(entity.DocumentID, 10)
+		}
+		if entity.Type == domain.MessageEntityFormattedDate {
+			item["unix_time"] = entity.Date
+			item["date_time_format"] = botAPIFormattedDateFormat(entity)
 		}
 		out = append(out, item)
 	}
@@ -461,6 +468,10 @@ func botAPIEntityType(in domain.MessageEntityType) (string, bool) {
 		return "email", true
 	case domain.MessageEntityPhone:
 		return "phone_number", true
+	case domain.MessageEntityBankCard:
+		return "bank_card_number", true
+	case domain.MessageEntityFormattedDate:
+		return "date_time", true
 	default:
 		return "", false
 	}

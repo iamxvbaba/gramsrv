@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -62,17 +61,7 @@ func inputTextMessageContentFromAPI(payload apiInlineResult) (string, []domain.M
 	} else if payload.MessageText != "" {
 		content.MessageText = payload.MessageText
 	}
-	if content.ParseMode != "" {
-		return "", nil, false, errors.New("ENTITY_PARSE_UNSUPPORTED")
-	}
-	message := content.MessageText
-	if message == "" {
-		return "", nil, false, errors.New("MESSAGE_EMPTY")
-	}
-	if utf8.RuneCountInString(message) > domain.MaxMessageTextLength {
-		return "", nil, false, errors.New("MESSAGE_TOO_LONG")
-	}
-	entities, err := messageEntitiesFromAPI(content.Entities)
+	message, entities, err := botAPIFormattedText(content.MessageText, content.ParseMode, content.Entities, domain.MaxMessageTextLength, true)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -97,21 +86,41 @@ func messageEntitiesFromAPI(in []apiMessageEntity) ([]domain.MessageEntity, erro
 			return nil, errors.New("ENTITY_TYPE_UNSUPPORTED")
 		}
 		item := domain.MessageEntity{
-			Type:     mapped,
-			Offset:   entity.Offset,
-			Length:   entity.Length,
-			URL:      entity.URL,
-			Language: entity.Language,
+			Type:   mapped,
+			Offset: entity.Offset,
+			Length: entity.Length,
 		}
-		if entity.User != nil {
-			item.UserID = entity.User.ID
-		}
-		if entity.CustomEmojiID != "" {
+		switch mapped {
+		case domain.MessageEntityTextURL:
+			resolved, ok := botAPITextLinkEntity(entity.URL, entity.Offset, entity.Length)
+			if !ok {
+				return nil, errors.New("ENTITY_TYPE_UNSUPPORTED")
+			}
+			item = resolved
+		case domain.MessageEntityMentionName:
+			if entity.User != nil {
+				item.UserID = entity.User.ID
+			}
+			if item.UserID <= 0 {
+				return nil, errors.New("ENTITY_TYPE_UNSUPPORTED")
+			}
+		case domain.MessageEntityPre:
+			item.Language = entity.Language
+		case domain.MessageEntityBlockquote:
+			item.Collapsed = entity.Type == "expandable_blockquote"
+		case domain.MessageEntityCustomEmoji:
 			id, err := strconv.ParseInt(entity.CustomEmojiID, 10, 64)
 			if err != nil || id <= 0 {
 				return nil, errors.New("ENTITY_TYPE_UNSUPPORTED")
 			}
 			item.DocumentID = id
+		case domain.MessageEntityFormattedDate:
+			formatted, err := botAPIFormattedDate(entity.UnixTime, entity.DateTimeFormat)
+			if err != nil {
+				return nil, errors.New("ENTITY_TYPE_UNSUPPORTED")
+			}
+			formatted.Offset, formatted.Length = entity.Offset, entity.Length
+			item = formatted
 		}
 		out = append(out, item)
 	}
@@ -140,6 +149,8 @@ func apiEntityType(in string) (domain.MessageEntityType, bool) {
 		return domain.MessageEntitySpoiler, true
 	case "blockquote":
 		return domain.MessageEntityBlockquote, true
+	case "expandable_blockquote":
+		return domain.MessageEntityBlockquote, true
 	case "custom_emoji":
 		return domain.MessageEntityCustomEmoji, true
 	case "mention":
@@ -156,6 +167,10 @@ func apiEntityType(in string) (domain.MessageEntityType, bool) {
 		return domain.MessageEntityEmail, true
 	case "phone_number":
 		return domain.MessageEntityPhone, true
+	case "bank_card_number":
+		return domain.MessageEntityBankCard, true
+	case "date_time":
+		return domain.MessageEntityFormattedDate, true
 	default:
 		return "", false
 	}
@@ -450,8 +465,10 @@ type apiMessageEntity struct {
 	User   *struct {
 		ID int64 `json:"id"`
 	} `json:"user"`
-	Language      string `json:"language"`
-	CustomEmojiID string `json:"custom_emoji_id"`
+	Language       string `json:"language"`
+	CustomEmojiID  string `json:"custom_emoji_id"`
+	UnixTime       int    `json:"unix_time"`
+	DateTimeFormat string `json:"date_time_format"`
 }
 
 type apiInlineKeyboardMarkup struct {
