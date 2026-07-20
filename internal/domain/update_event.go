@@ -114,6 +114,10 @@ type UpdateEvent struct {
 	QuickReply        QuickReply
 	QuickReplyMessage QuickReplyMessage
 	BotCallbackQuery  *BotCallbackQuery
+	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
+	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
+	BotAPIUpdateID   int64
+	EphemeralMessage *EphemeralMessage
 }
 
 // LacksWirePts 表示该事件占用了账号 pts，但它对应的 TL update 构造器没有

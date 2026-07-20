@@ -629,7 +629,11 @@ func tgBotInfoFromProfile(userID int64, profile domain.BotProfile, found bool) t
 	if len(profile.Commands) > 0 {
 		cmds := make([]tg.BotCommand, 0, len(profile.Commands))
 		for _, c := range profile.Commands {
-			cmds = append(cmds, tg.BotCommand{Command: c.Command, Description: c.Description})
+			cmds = append(cmds, tg.BotCommand{
+				Command:     c.Command,
+				Description: c.Description,
+				Ephemeral:   c.Ephemeral,
+			})
 		}
 		info.SetCommands(cmds)
 	}

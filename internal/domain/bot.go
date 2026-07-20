@@ -92,6 +92,7 @@ const (
 type BotCommand struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
+	Ephemeral   bool   `json:"ephemeral,omitempty"`
 }
 
 // BotMenuButtonType 标识菜单按钮类型。

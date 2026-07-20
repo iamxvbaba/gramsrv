@@ -189,3 +189,57 @@ func TestBotAPIInlineCallbackRoundTrip(t *testing.T) {
 		t.Fatalf("inline callback rows=%#v err=%v", rows, err)
 	}
 }
+
+func TestBotAPIEphemeralMessageVersionsAndCallbackRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store := NewBotAPIUpdateStore()
+	now := time.Now()
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: 3001}
+	incoming := domain.EphemeralMessage{
+		ID: 71, Peer: peer, SenderUserID: 2001, ReceiverUserID: 1001,
+		Date: int(now.Unix()), RandomID: 1, Content: domain.EphemeralContent{Message: "/private"},
+		Version: 1, CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralMessageRetention),
+	}
+	request := domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: 1001, Kind: domain.BotAPIUpdateMessage, Peer: peer,
+		MessageID: incoming.ID, Date: incoming.Date,
+		Ephemeral: domain.NewBotAPIEphemeralPayload(incoming),
+	}
+	first, created, err := store.EnqueueBotAPIUpdate(ctx, request)
+	if err != nil || !created || first.SourcePts != 0 || first.Ephemeral == nil {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	if replay, created, err := store.EnqueueBotAPIUpdate(ctx, request); err != nil || created || replay.ID != first.ID {
+		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
+	}
+	incoming.Version = 2
+	incoming.EditDate = incoming.Date + 1
+	incoming.Content.Message = "edited"
+	request.Kind = domain.BotAPIUpdateEditedMessage
+	request.Ephemeral = domain.NewBotAPIEphemeralPayload(incoming)
+	edited, created, err := store.EnqueueBotAPIUpdate(ctx, request)
+	if err != nil || !created || edited.ID <= first.ID {
+		t.Fatalf("edited=%+v created=%v err=%v", edited, created, err)
+	}
+
+	outgoing := incoming
+	outgoing.ID, outgoing.SenderUserID, outgoing.ReceiverUserID = 72, 1001, 2001
+	outgoing.Version, outgoing.Content.Message = 1, "button"
+	callback := &domain.BotCallbackQuery{
+		ID: 9001, BotUserID: 1001, UserID: 2001, Peer: peer,
+		MessageID: outgoing.ID, ChatInstance: 901, Data: []byte("tap"),
+	}
+	callbackRow, created, err := store.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: 1001, Kind: domain.BotAPIUpdateCallbackQuery, Peer: peer,
+		MessageID: outgoing.ID, Date: outgoing.Date, Callback: callback,
+		Ephemeral: domain.NewBotAPIEphemeralPayload(outgoing),
+	})
+	if err != nil || !created || callbackRow.Callback == nil || callbackRow.Ephemeral == nil {
+		t.Fatalf("callback=%+v created=%v err=%v", callbackRow, created, err)
+	}
+	rows, err := store.ListBotAPIUpdates(ctx, 1001, first.ID, 100)
+	if err != nil || len(rows) != 3 || rows[0].Ephemeral.Message.Content.Message != "/private" ||
+		rows[1].Ephemeral.Message.Content.Message != "edited" || string(rows[2].Callback.Data) != "tap" {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}

@@ -253,6 +253,7 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		SourcePts: req.SourcePts,
 		Date:      req.Date,
 		Callback:  cloneBotAPICallback(req.Callback),
+		Ephemeral: cloneBotAPIEphemeral(req.Ephemeral),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -433,6 +434,17 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	default:
 		return fmt.Errorf("invalid bot api update peer type %q", req.Peer.Type)
 	}
+	if req.Ephemeral != nil {
+		message := req.Ephemeral.Message
+		if req.Ephemeral.Validate() != nil || message.ID != req.MessageID || message.Peer != req.Peer || message.Expired(time.Unix(int64(req.Date), 0)) ||
+			req.Peer.Type != domain.PeerTypeChannel || req.SourcePts != 0 {
+			return fmt.Errorf("invalid bot api ephemeral update")
+		}
+		if (req.Kind == domain.BotAPIUpdateCallbackQuery && message.SenderUserID != req.BotUserID) ||
+			(req.Kind != domain.BotAPIUpdateCallbackQuery && message.ReceiverUserID != req.BotUserID) {
+			return fmt.Errorf("invalid bot api ephemeral target")
+		}
+	}
 	if req.Kind == domain.BotAPIUpdateCallbackQuery {
 		cb := req.Callback
 		if cb == nil || cb.ID == 0 || cb.BotUserID != req.BotUserID || cb.UserID <= 0 ||
@@ -457,12 +469,23 @@ func botAPIUpdateKey(req domain.EnqueueBotAPIUpdateRequest) string {
 	if req.Kind == domain.BotAPIUpdateCallbackQuery && req.Callback != nil {
 		return fmt.Sprintf("%d:%s:%d", req.BotUserID, req.Kind, req.Callback.ID)
 	}
+	if req.Ephemeral != nil {
+		return fmt.Sprintf("%d:%s:ephemeral:%s:%d:%d:%d", req.BotUserID, req.Kind, req.Peer.Type, req.Peer.ID, req.MessageID, req.Ephemeral.Message.Version)
+	}
 	return fmt.Sprintf("%d:%s:%s:%d:%d:%d", req.BotUserID, req.Kind, req.Peer.Type, req.Peer.ID, req.MessageID, req.SourcePts)
 }
 
 func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.Callback = cloneBotAPICallback(row.Callback)
+	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
 	return row
+}
+
+func cloneBotAPIEphemeral(in *domain.BotAPIEphemeralPayload) *domain.BotAPIEphemeralPayload {
+	if in == nil {
+		return nil
+	}
+	return domain.NewBotAPIEphemeralPayload(cloneEphemeralMessage(in.EphemeralMessage()))
 }
 
 func cloneBotAPICallback(in *domain.BotCallbackQuery) *domain.BotCallbackQuery {

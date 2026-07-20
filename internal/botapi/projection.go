@@ -85,24 +85,42 @@ func apiUpdates(events []domain.UpdateEvent, limit int) []map[string]any {
 }
 
 func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
-	if event.Pts <= 0 {
+	updateID := event.BotAPIUpdateID
+	if updateID <= 0 {
+		updateID = int64(event.Pts)
+	}
+	if updateID <= 0 {
 		return nil, "", false
 	}
 	switch event.Type {
 	case domain.UpdateEventNewMessage:
+		if event.EphemeralMessage != nil {
+			message, ok := apiEphemeralMessage(*event.EphemeralMessage, event.Users, event.Channels)
+			if !ok {
+				return nil, "", false
+			}
+			return map[string]any{"update_id": updateID, "message": message}, "message", true
+		}
 		if !apiMessageProjectable(event.Message) {
 			return nil, "", false
 		}
 		return map[string]any{
-			"update_id": event.Pts,
+			"update_id": updateID,
 			"message":   apiMessage(event.Message, event.Users, event.Channels),
 		}, "message", true
 	case domain.UpdateEventEditMessage:
+		if event.EphemeralMessage != nil {
+			message, ok := apiEphemeralMessage(*event.EphemeralMessage, event.Users, event.Channels)
+			if !ok {
+				return nil, "", false
+			}
+			return map[string]any{"update_id": updateID, "edited_message": message}, "edited_message", true
+		}
 		if !apiMessageProjectable(event.Message) {
 			return nil, "", false
 		}
 		return map[string]any{
-			"update_id":      event.Pts,
+			"update_id":      updateID,
 			"edited_message": apiMessage(event.Message, event.Users, event.Channels),
 		}, "edited_message", true
 	case domain.UpdateEventBotCallbackQuery:
@@ -132,6 +150,15 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 				return nil, "", false
 			}
 			query["inline_message_id"] = inlineMessageID
+		} else if event.EphemeralMessage != nil {
+			if callback.MessageID <= 0 || event.EphemeralMessage.ID != callback.MessageID || event.EphemeralMessage.Peer != callback.Peer {
+				return nil, "", false
+			}
+			message, ok := apiEphemeralMessage(*event.EphemeralMessage, event.Users, event.Channels)
+			if !ok {
+				return nil, "", false
+			}
+			query["message"] = message
 		} else {
 			if callback.MessageID <= 0 || event.Message.ID != callback.MessageID {
 				return nil, "", false
@@ -139,12 +166,52 @@ func apiUpdate(event domain.UpdateEvent) (map[string]any, string, bool) {
 			query["message"] = apiMessage(event.Message, event.Users, event.Channels)
 		}
 		return map[string]any{
-			"update_id":      event.Pts,
+			"update_id":      updateID,
 			"callback_query": query,
 		}, "callback_query", true
 	default:
 		return nil, "", false
 	}
+}
+
+func apiEphemeralMessage(message domain.EphemeralMessage, users []domain.User, channels []domain.Channel) (map[string]any, bool) {
+	return apiEphemeralMessageDepth(message, users, channels, 0)
+}
+
+func apiEphemeralMessageDepth(message domain.EphemeralMessage, users []domain.User, channels []domain.Channel, depth int) (map[string]any, bool) {
+	if message.ID <= 0 || message.Peer.Type != domain.PeerTypeChannel || message.Peer.ID <= 0 ||
+		message.SenderUserID <= 0 || message.ReceiverUserID <= 0 || message.Date <= 0 || message.Deleted {
+		return nil, false
+	}
+	if message.Content.Message == "" && (message.Content.Media == nil || message.Content.Media.IsZero()) {
+		return nil, false
+	}
+	projected := apiMessage(domain.Message{
+		ID: 0, Peer: message.Peer, From: domain.Peer{Type: domain.PeerTypeUser, ID: message.SenderUserID},
+		Date: message.Date, EditDate: message.EditDate, Body: message.Content.Message,
+		Entities: message.Content.Entities, Media: message.Content.Media, ReplyMarkup: message.Content.ReplyMarkup,
+	}, users, channels)
+	projected["message_id"] = 0
+	projected["ephemeral_message_id"] = message.ID
+	receiver := domain.User{ID: message.ReceiverUserID}
+	for _, user := range users {
+		if user.ID == message.ReceiverUserID {
+			receiver = user
+			break
+		}
+	}
+	projected["receiver_user"] = apiUser(receiver)
+	if message.ReplyToEphemeralID > 0 {
+		if depth != 0 || message.BotAPIReply == nil || message.BotAPIReply.ID != message.ReplyToEphemeralID {
+			return nil, false
+		}
+		reply, ok := apiEphemeralMessageDepth(*message.BotAPIReply, users, channels, depth+1)
+		if !ok {
+			return nil, false
+		}
+		projected["reply_to_message"] = reply
+	}
+	return projected, true
 }
 
 const botAPIInlineMessageIDVersion byte = 1
@@ -236,9 +303,7 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 	}
 	media := apiMessageMedia(msg.Media, userByID, channelByID)
 	if msg.Body != "" {
-		if _, photo := media["photo"]; photo {
-			out["caption"] = msg.Body
-		} else if _, document := media["document"]; document {
+		if apiMediaUsesCaption(media) {
 			out["caption"] = msg.Body
 		} else if poll, ok := media["poll"].(map[string]any); ok {
 			poll["description"] = msg.Body
@@ -247,9 +312,7 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 		}
 	}
 	if entities := apiMessageEntities(msg.Entities, userByID); len(entities) > 0 {
-		if _, photo := media["photo"]; photo {
-			out["caption_entities"] = entities
-		} else if _, document := media["document"]; document {
+		if apiMediaUsesCaption(media) {
 			out["caption_entities"] = entities
 		} else if poll, ok := media["poll"].(map[string]any); ok && msg.Body != "" {
 			poll["description_entities"] = entities
@@ -276,6 +339,15 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 		}
 	}
 	return out
+}
+
+func apiMediaUsesCaption(media map[string]any) bool {
+	for _, key := range []string{"photo", "live_photo", "animation", "audio", "document", "video", "voice"} {
+		if _, ok := media[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func apiChat(peer domain.Peer, users map[int64]domain.User) map[string]any {
@@ -476,12 +548,23 @@ func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, ch
 		if len(photos) == 0 {
 			return nil
 		}
+		if media.LivePhotoVideo != nil {
+			live := apiDocument(*media.LivePhotoVideo)
+			live["photo"] = photos
+			for _, attribute := range media.LivePhotoVideo.Attributes {
+				if attribute.Kind == domain.DocAttrVideo {
+					live["width"], live["height"], live["duration"] = attribute.W, attribute.H, int(attribute.Duration)
+					break
+				}
+			}
+			return map[string]any{"live_photo": live}
+		}
 		return map[string]any{"photo": photos}
 	case domain.MessageMediaKindDocument:
 		if media.Document == nil {
 			return nil
 		}
-		return map[string]any{"document": apiDocument(*media.Document)}
+		return apiDocumentMedia(*media.Document)
 	case domain.MessageMediaKindContact:
 		if media.Contact == nil {
 			return nil
@@ -540,6 +623,67 @@ func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, ch
 	default:
 		return nil
 	}
+}
+
+func apiDocumentMedia(document domain.Document) map[string]any {
+	base := apiDocument(document)
+	for _, attribute := range document.Attributes {
+		switch attribute.Kind {
+		case domain.DocAttrSticker:
+			sticker := cloneAPIMap(base)
+			sticker["type"], sticker["width"], sticker["height"] = "regular", attribute.W, attribute.H
+			sticker["is_animated"] = hasDocumentAttribute(document, domain.DocAttrAnimated)
+			sticker["is_video"] = hasDocumentAttribute(document, domain.DocAttrVideo)
+			if attribute.Alt != "" {
+				sticker["emoji"] = attribute.Alt
+			}
+			return map[string]any{"sticker": sticker}
+		case domain.DocAttrAudio:
+			audio := cloneAPIMap(base)
+			audio["duration"] = attribute.AudioDuration
+			if attribute.Voice {
+				return map[string]any{"voice": audio}
+			}
+			if attribute.Title != "" {
+				audio["title"] = attribute.Title
+			}
+			if attribute.Performer != "" {
+				audio["performer"] = attribute.Performer
+			}
+			return map[string]any{"audio": audio}
+		case domain.DocAttrVideo:
+			video := cloneAPIMap(base)
+			video["width"], video["height"], video["duration"] = attribute.W, attribute.H, int(attribute.Duration)
+			if attribute.RoundMessage {
+				video["length"] = attribute.W
+				delete(video, "width")
+				delete(video, "height")
+				return map[string]any{"video_note": video}
+			}
+			if hasDocumentAttribute(document, domain.DocAttrAnimated) {
+				return map[string]any{"animation": video, "document": base}
+			}
+			return map[string]any{"video": video}
+		}
+	}
+	return map[string]any{"document": base}
+}
+
+func hasDocumentAttribute(document domain.Document, kind domain.DocumentAttributeKind) bool {
+	for _, attribute := range document.Attributes {
+		if attribute.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneAPIMap(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input)+4)
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func apiLocation(geo domain.MessageGeoPoint, live *domain.MessageGeoLive) map[string]any {

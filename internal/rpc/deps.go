@@ -180,6 +180,15 @@ type AuthKeyTargetedSessionBinder interface {
 	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
+// ExactLayerTransientSessionBinder is the admission boundary for updates whose
+// constructors do not exist in older profiles. Implementations must filter the
+// live session index before encoding, skip unknown/not-ready profiles, and must
+// never queue the transient payload for later delivery.
+type ExactLayerTransientSessionBinder interface {
+	PushToUserTransientAtLeastLayer(ctx context.Context, userID int64, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+	PushToUserAuthKeyTransientAtLeastLayer(ctx context.Context, userID int64, businessAuthKeyID [8]byte, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+}
+
 // OnlineUserProvider exposes a bounded runtime snapshot for best-effort fanout.
 type OnlineUserProvider interface {
 	IsUserOnline(userID int64) bool
@@ -805,6 +814,22 @@ type AIComposeService interface {
 	Compose(ctx context.Context, req domain.AIComposeRequest) (domain.AIComposeResult, error)
 }
 
+// EphemeralService owns Layer 228 short-lived bot/member state. It must never
+// write ordinary messages, dialogs, pts/qts/seq logs or durable update outbox.
+type EphemeralService interface {
+	SendFromClient(ctx context.Context, request domain.SendClientEphemeralRequest) (domain.EphemeralMessage, bool, error)
+	SendFromBot(ctx context.Context, request domain.SendBotEphemeralRequest) (domain.EphemeralMessage, bool, error)
+	SendFromBotLazy(ctx context.Context, request domain.SendBotEphemeralRequest, build func(context.Context) (domain.EphemeralContent, error)) (domain.EphemeralMessage, bool, error)
+	EditFromBot(ctx context.Context, botUserID int64, peer domain.Peer, id int, content domain.EphemeralContent) (domain.EphemeralMessage, error)
+	EditFieldsFromBot(ctx context.Context, botUserID, receiverUserID int64, peer domain.Peer, id int, mode domain.EphemeralEditMode, fields domain.EditEphemeralFields) (domain.EphemeralMessage, error)
+	EditFieldsFromBotLazy(ctx context.Context, botUserID, receiverUserID int64, peer domain.Peer, id int, mode domain.EphemeralEditMode, build func(context.Context) (domain.EditEphemeralFields, error)) (domain.EphemeralMessage, error)
+	Delete(ctx context.Context, actorUserID, receiverUserID int64, peer domain.Peer, id int) (domain.EphemeralMessage, bool, error)
+	DeleteFromDevice(ctx context.Context, actorUserID, receiverUserID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, bool, error)
+	Callback(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int, data []byte) (domain.EphemeralCallback, error)
+	PutCallbackAction(ctx context.Context, action domain.EphemeralCallbackAction) (bool, error)
+	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth AuthService
@@ -817,6 +842,9 @@ type Deps struct {
 	Help                 HelpService
 	AccountFreeze        AccountFreezeService
 	AICompose            AIComposeService
+	Ephemeral            EphemeralService
+	EphemeralPush        store.EphemeralPushBroker
+	EphemeralReports     store.EphemeralReportStore
 	Users                UsersService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore

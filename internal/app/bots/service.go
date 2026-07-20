@@ -497,7 +497,7 @@ func (s *Service) SetBotCommands(ctx context.Context, botUserID int64, commands 
 		if !domain.ValidBotCommandName(cmd) || desc == "" || len(desc) > domain.MaxBotCommandDescriptionLen {
 			return 0, domain.ErrBotCommandInvalid
 		}
-		clean = append(clean, domain.BotCommand{Command: cmd, Description: desc})
+		clean = append(clean, domain.BotCommand{Command: cmd, Description: desc, Ephemeral: c.Ephemeral})
 	}
 	// 同值短路：bot 框架启动时普遍无条件重发相同命令集，跳过可避免无意义的
 	// bot_info_version bump（驱动全体客户端多打一轮 getFullUser）与多余推送。
@@ -528,7 +528,7 @@ func botCommandsEqual(a, b []domain.BotCommand) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Command != b[i].Command || a[i].Description != b[i].Description {
+		if a[i].Command != b[i].Command || a[i].Description != b[i].Description || a[i].Ephemeral != b[i].Ephemeral {
 			return false
 		}
 	}

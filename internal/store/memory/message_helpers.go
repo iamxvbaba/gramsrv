@@ -108,6 +108,12 @@ func cloneRequestedPeerMedia(media *domain.MessageMedia) *domain.MessageMedia {
 		return nil
 	}
 	clone := *media
+	if media.LivePhotoVideo != nil {
+		video := *media.LivePhotoVideo
+		video.FileReference = append([]byte(nil), media.LivePhotoVideo.FileReference...)
+		video.Attributes = append([]domain.DocumentAttribute(nil), media.LivePhotoVideo.Attributes...)
+		clone.LivePhotoVideo = &video
+	}
 	if media.ServiceAction == nil || media.ServiceAction.RequestedPeer == nil {
 		return &clone
 	}

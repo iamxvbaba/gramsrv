@@ -27,6 +27,10 @@ func tgMessageMedia(m *domain.MessageMedia) tg.MessageMediaClass {
 		if m.TTLSeconds > 0 {
 			out.TTLSeconds = m.TTLSeconds
 		}
+		if m.LivePhotoVideo != nil {
+			out.LivePhoto = true
+			out.SetVideo(tgDocument(*m.LivePhotoVideo))
+		}
 		return out
 	case domain.MessageMediaKindDocument:
 		nopremium := m.Nopremium

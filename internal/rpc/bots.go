@@ -459,7 +459,7 @@ func isDefaultBotCommandScope(scope tg.BotCommandScopeClass) bool {
 func domainBotCommands(in []tg.BotCommand) []domain.BotCommand {
 	out := make([]domain.BotCommand, 0, len(in))
 	for _, c := range in {
-		out = append(out, domain.BotCommand{Command: c.Command, Description: c.Description})
+		out = append(out, domain.BotCommand{Command: c.Command, Description: c.Description, Ephemeral: c.Ephemeral})
 	}
 	return out
 }
@@ -467,7 +467,7 @@ func domainBotCommands(in []tg.BotCommand) []domain.BotCommand {
 func tgBotCommands(in []domain.BotCommand) []tg.BotCommand {
 	out := make([]tg.BotCommand, 0, len(in))
 	for _, c := range in {
-		out = append(out, tg.BotCommand{Command: c.Command, Description: c.Description})
+		out = append(out, tg.BotCommand{Command: c.Command, Description: c.Description, Ephemeral: c.Ephemeral})
 	}
 	return out
 }

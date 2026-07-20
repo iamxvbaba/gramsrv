@@ -32,6 +32,7 @@ import (
 	chatlistsapp "telesrv/internal/app/chatlists"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
+	ephemeralapp "telesrv/internal/app/ephemeral"
 	filesapp "telesrv/internal/app/files"
 	groupcallsapp "telesrv/internal/app/groupcalls"
 	"telesrv/internal/app/help"
@@ -363,6 +364,8 @@ func run(logger *zap.Logger) error {
 	bootstrapUpdateStore := postgres.NewBootstrapUpdateJobStore(pool)
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
 	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
+	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
+	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
 	channelIDAllocator := redisstore.NewChannelIDAllocator(rdb, postgres.NewChannelIDCounterSource(pool))
 	channelMessageIDAllocator := redisstore.NewChannelMessageIDAllocator(rdb, postgres.NewChannelMessageIDCounterSource(pool))
@@ -713,6 +716,7 @@ func run(logger *zap.Logger) error {
 		channelapp.WithReadModelVersions(readModelVersionStore),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	chatlistsService := chatlistsapp.NewService(
 		chatlistStore,
 		dialogStore,
@@ -789,6 +793,9 @@ func run(logger *zap.Logger) error {
 		Help:                 help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken), help.WithAccountFreezeProvider(adminService)),
 		AccountFreeze:        adminService,
 		AICompose:            aiComposeService,
+		Ephemeral:            ephemeralService,
+		EphemeralPush:        ephemeralStore,
+		EphemeralReports:     ephemeralReportStore,
 		Users:                usersService,
 		Updates:              updatesService,
 		BootstrapUpdates:     bootstrapUpdateStore,
@@ -903,6 +910,7 @@ func run(logger *zap.Logger) error {
 	}()
 	go router.RunInlineBotPushSubscriber(ctx)
 	go router.RunBotCallbackAnswerSubscriber(ctx)
+	go router.RunEphemeralPushSubscriber(ctx)
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}

@@ -27,7 +27,7 @@ func TestSetBotCommandsAndBump(t *testing.T) {
 
 	before, _, _ := users.ByID(ctx, bot.ID)
 	v1, err := svc.SetBotCommands(ctx, bot.ID, []domain.BotCommand{
-		{Command: "/Start", Description: "begin"},
+		{Command: "/Start", Description: "begin", Ephemeral: true},
 		{Command: "help", Description: "show help"},
 	})
 	if err != nil {
@@ -40,7 +40,7 @@ func TestSetBotCommandsAndBump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get commands: %v", err)
 	}
-	if len(got) != 2 || got[0].Command != "start" || got[1].Command != "help" {
+	if len(got) != 2 || got[0].Command != "start" || !got[0].Ephemeral || got[1].Command != "help" || got[1].Ephemeral {
 		t.Fatalf("commands = %+v, want normalized [start,help]", got)
 	}
 

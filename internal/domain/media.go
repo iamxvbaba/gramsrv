@@ -716,25 +716,26 @@ type MessageStarGiftOfferDeclinedAction struct {
 
 // MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。
 type MessageMedia struct {
-	Kind          MessageMediaKind      `json:"kind"`
-	Photo         *Photo                `json:"photo,omitempty"`
-	Document      *Document             `json:"document,omitempty"`
-	Contact       *MessageContact       `json:"contact,omitempty"`
-	ServiceAction *MessageServiceAction `json:"service_action,omitempty"`
-	Geo           *MessageGeoPoint      `json:"geo,omitempty"`
-	Venue         *MessageVenue         `json:"venue,omitempty"`
-	Dice          *MessageDice          `json:"dice,omitempty"`
-	Poll          *MessagePoll          `json:"poll,omitempty"`
-	GeoLive       *MessageGeoLive       `json:"geo_live,omitempty"`
-	Todo          *MessageTodo          `json:"todo,omitempty"`
-	Story         *MessageStory         `json:"story,omitempty"`
-	WebPage       *MessageWebPage       `json:"web_page,omitempty"`
-	Spoiler       bool                  `json:"spoiler,omitempty"`
-	TTLSeconds    int                   `json:"ttl_seconds,omitempty"`
-	Nopremium     bool                  `json:"nopremium,omitempty"`
-	Voice         bool                  `json:"voice,omitempty"`
-	Round         bool                  `json:"round,omitempty"`
-	Video         bool                  `json:"video,omitempty"`
+	Kind           MessageMediaKind      `json:"kind"`
+	Photo          *Photo                `json:"photo,omitempty"`
+	LivePhotoVideo *Document             `json:"live_photo_video,omitempty"`
+	Document       *Document             `json:"document,omitempty"`
+	Contact        *MessageContact       `json:"contact,omitempty"`
+	ServiceAction  *MessageServiceAction `json:"service_action,omitempty"`
+	Geo            *MessageGeoPoint      `json:"geo,omitempty"`
+	Venue          *MessageVenue         `json:"venue,omitempty"`
+	Dice           *MessageDice          `json:"dice,omitempty"`
+	Poll           *MessagePoll          `json:"poll,omitempty"`
+	GeoLive        *MessageGeoLive       `json:"geo_live,omitempty"`
+	Todo           *MessageTodo          `json:"todo,omitempty"`
+	Story          *MessageStory         `json:"story,omitempty"`
+	WebPage        *MessageWebPage       `json:"web_page,omitempty"`
+	Spoiler        bool                  `json:"spoiler,omitempty"`
+	TTLSeconds     int                   `json:"ttl_seconds,omitempty"`
+	Nopremium      bool                  `json:"nopremium,omitempty"`
+	Voice          bool                  `json:"voice,omitempty"`
+	Round          bool                  `json:"round,omitempty"`
+	Video          bool                  `json:"video,omitempty"`
 	// InvertMedia 映射 message.invert_media：媒体（典型为链接预览）渲染在文本上方。
 	// 存于媒体快照而非消息行，避免新增消息表列；读时投影为 tg.Message.invert_media。
 	InvertMedia bool `json:"invert_media,omitempty"`

@@ -79,6 +79,9 @@ func (r *Router) botAPIQueuedUpdateEvents(ctx context.Context, botID int64, item
 		if _, ok := botAPIQueuedUpdateKind(botID, item, now); !ok {
 			continue
 		}
+		if item.Ephemeral != nil {
+			continue
+		}
 		if item.Callback != nil && item.Callback.InlineMessage != nil {
 			continue
 		}
@@ -171,6 +174,9 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	if !ok {
 		return "", false
 	}
+	if item.Ephemeral != nil && !botAPIQueuedEphemeralValid(botID, item, now) {
+		return "", false
+	}
 	if item.Kind == domain.BotAPIUpdateCallbackQuery {
 		if item.Date <= 0 || !now.Before(time.Unix(int64(item.Date), 0).Add(botCallbackTimeout)) {
 			return "", false
@@ -205,10 +211,39 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	return eventType, true
 }
 
+func botAPIQueuedEphemeralValid(botID int64, item domain.BotAPIUpdate, now time.Time) bool {
+	if item.Ephemeral == nil {
+		return true
+	}
+	message := item.Ephemeral.Message
+	if item.Ephemeral.Validate() != nil || item.SourcePts != 0 || item.Peer.Type != domain.PeerTypeChannel || item.Peer.ID <= 0 ||
+		message.ID != item.MessageID || message.Peer != item.Peer || message.Expired(now) ||
+		message.SenderUserID <= 0 || message.ReceiverUserID <= 0 {
+		return false
+	}
+	if item.Kind == domain.BotAPIUpdateCallbackQuery {
+		return message.SenderUserID == botID
+	}
+	return message.ReceiverUserID == botID
+}
+
 func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, privateMessages map[int]domain.Message, channelMessages map[int64]map[int]domain.ChannelMessage, now time.Time) (domain.UpdateEvent, bool) {
 	eventType, ok := botAPIQueuedUpdateKind(botID, item, now)
 	if !ok {
 		return domain.UpdateEvent{}, false
+	}
+	if item.Ephemeral != nil {
+		message := item.Ephemeral.EphemeralMessage()
+		event := domain.UpdateEvent{
+			UserID: botID, Type: eventType, Date: item.Date, Peer: item.Peer,
+			BotAPIUpdateID: item.ID, EphemeralMessage: &message,
+		}
+		if eventType == domain.UpdateEventBotCallbackQuery {
+			callback := *item.Callback
+			callback.Data = append([]byte(nil), item.Callback.Data...)
+			event.BotCallbackQuery = &callback
+		}
+		return event, true
 	}
 	if eventType == domain.UpdateEventBotCallbackQuery && item.Callback.InlineMessage != nil {
 		callback := *item.Callback
@@ -220,6 +255,7 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			Type:             eventType,
 			Pts:              int(item.ID),
 			PtsCount:         1,
+			BotAPIUpdateID:   item.ID,
 			Date:             item.Date,
 			BotCallbackQuery: &callback,
 		}, true
@@ -238,6 +274,7 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 				Type:             eventType,
 				Pts:              int(item.ID),
 				PtsCount:         1,
+				BotAPIUpdateID:   item.ID,
 				Date:             item.Date,
 				Peer:             item.Peer,
 				Message:          msg,
@@ -249,13 +286,14 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 		}
 		msg.Pts = int(item.ID)
 		return domain.UpdateEvent{
-			UserID:   botID,
-			Type:     eventType,
-			Pts:      int(item.ID),
-			PtsCount: 1,
-			Date:     item.Date,
-			Peer:     msg.Peer,
-			Message:  msg,
+			UserID:         botID,
+			Type:           eventType,
+			Pts:            int(item.ID),
+			PtsCount:       1,
+			BotAPIUpdateID: item.ID,
+			Date:           item.Date,
+			Peer:           msg.Peer,
+			Message:        msg,
 		}, true
 	case domain.PeerTypeChannel:
 		msg, found := channelMessages[item.Peer.ID][item.MessageID]
@@ -271,6 +309,7 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 				Type:             eventType,
 				Pts:              int(item.ID),
 				PtsCount:         1,
+				BotAPIUpdateID:   item.ID,
 				Date:             item.Date,
 				Peer:             item.Peer,
 				Message:          projected,
@@ -282,13 +321,14 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 		}
 		projected.Pts = int(item.ID)
 		return domain.UpdateEvent{
-			UserID:   botID,
-			Type:     eventType,
-			Pts:      int(item.ID),
-			PtsCount: 1,
-			Date:     item.Date,
-			Peer:     projected.Peer,
-			Message:  projected,
+			UserID:         botID,
+			Type:           eventType,
+			Pts:            int(item.ID),
+			PtsCount:       1,
+			BotAPIUpdateID: item.ID,
+			Date:           item.Date,
+			Peer:           projected.Peer,
+			Message:        projected,
 		}, true
 	default:
 		return domain.UpdateEvent{}, false

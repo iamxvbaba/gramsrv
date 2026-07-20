@@ -111,6 +111,10 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 		Date:    int(r.clock.Now().Unix()),
 	})
 
+	return r.waitBotCallbackAnswer(ctx, botUserID, queryID, pending)
+}
+
+func (r *Router) waitBotCallbackAnswer(ctx context.Context, botUserID, queryID int64, pending *pendingCallback) (*tg.MessagesBotCallbackAnswer, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, botCallbackTimeout)
 	defer cancel()
 	ticker := time.NewTicker(250 * time.Millisecond)

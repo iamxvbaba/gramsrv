@@ -406,3 +406,70 @@ ON CONFLICT (bot_user_id) DO NOTHING`, u.ID); err != nil {
 		t.Fatalf("post-retention list = %+v, want only unconfirmed fresh row %d", items, unconfirmedFresh.ID)
 	}
 }
+
+func TestBotAPIEphemeralEnvelopeRoundTrip(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	bot, err := users.Create(ctx, domain.User{AccessHash: 941, Phone: "+1941" + suffix + "01", FirstName: "EphemeralQueueBot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := users.Create(ctx, domain.User{AccessHash: 942, Phone: "+1942" + suffix + "02", FirstName: "EphemeralHuman"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, 'ephemeral-secret')`, bot.ID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", bot.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_update_states WHERE bot_user_id = $1", bot.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", bot.ID)
+	})
+
+	now := time.Now()
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: 3901}
+	message := domain.EphemeralMessage{
+		ID: 81, Peer: peer, SenderUserID: human.ID, ReceiverUserID: bot.ID,
+		Date: int(now.Unix()), RandomID: 11, Content: domain.EphemeralContent{Message: "/private"},
+		Version: 1, CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralMessageRetention),
+	}
+	store := NewBotAPIUpdateStore(pool)
+	request := domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: bot.ID, Kind: domain.BotAPIUpdateMessage, Peer: peer,
+		MessageID: message.ID, Date: message.Date,
+		Ephemeral: domain.NewBotAPIEphemeralPayload(message),
+	}
+	first, created, err := store.EnqueueBotAPIUpdate(ctx, request)
+	if err != nil || !created || first.Ephemeral == nil {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	var leakedPrivateRoutingState bool
+	if err := pool.QueryRow(ctx, `
+		SELECT (ephemeral_payload -> 'Message') ?| ARRAY[
+			'RandomID', 'OriginDevice', 'PayloadHash', 'CreatedAt', 'Deleted'
+		]
+		FROM bot_api_updates WHERE id = $1`, first.ID).Scan(&leakedPrivateRoutingState); err != nil {
+		t.Fatal(err)
+	}
+	if leakedPrivateRoutingState {
+		t.Fatal("durable Bot API envelope contains private ephemeral routing fields")
+	}
+	if replay, created, err := store.EnqueueBotAPIUpdate(ctx, request); err != nil || created || replay.ID != first.ID {
+		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
+	}
+	message.Version, message.EditDate, message.Content.Message = 2, message.Date+1, "edited"
+	request.Kind = domain.BotAPIUpdateEditedMessage
+	request.Ephemeral = domain.NewBotAPIEphemeralPayload(message)
+	second, created, err := store.EnqueueBotAPIUpdate(ctx, request)
+	if err != nil || !created || second.ID <= first.ID {
+		t.Fatalf("second=%+v created=%v err=%v", second, created, err)
+	}
+	rows, err := store.ListBotAPIUpdates(ctx, bot.ID, first.ID, 100)
+	if err != nil || len(rows) != 2 || rows[0].SourcePts != 0 || rows[0].Ephemeral == nil ||
+		rows[0].Ephemeral.Message.Content.Message != "/private" || rows[1].Ephemeral.Message.Content.Message != "edited" {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
