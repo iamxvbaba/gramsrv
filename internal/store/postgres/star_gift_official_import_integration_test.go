@@ -26,7 +26,11 @@ func TestOfficialStarGiftBundleIsAtomicPostgres(t *testing.T) {
 			value.CenterColor, value.EdgeColor, value.PatternColor, value.TextColor = 1, 2, 3, 4
 			return value
 		}
-		value.Document = collectibleTestDocumentPtr(id, name+".tgs")
+		if kind == domain.StarGiftCollectiblePattern {
+			value.Document = collectibleTestPatternDocumentPtr(id, name+".tgs")
+		} else {
+			value.Document = collectibleTestDocumentPtr(id, name+".tgs")
+		}
 		value.Blob = collectibleTestBlobPtr(id, name)
 		value.Animation = collectibleTestAnimationPtr(name + ".tgs")
 		value.OfficialDocumentID = 5200000000000000000 + id%1000

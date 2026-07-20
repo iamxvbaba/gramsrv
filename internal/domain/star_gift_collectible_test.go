@@ -93,3 +93,55 @@ func TestValidateStarGiftCollectibleDraftRejectsImplicitRarity(t *testing.T) {
 		t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
 	}
 }
+
+func storedCollectibleWrite() StarGiftCollectibleWrite {
+	write := validCollectibleDraft()
+	for i := range write.Models {
+		write.Models[i].Document = &Document{
+			ID: int64(100 + i), MimeType: "application/x-tgsticker",
+			Attributes: []DocumentAttribute{{Kind: DocAttrSticker, Alt: "🎁"}},
+		}
+		write.Models[i].Blob = &FileBlob{LocationKey: "model"}
+	}
+	write.Patterns[0].Document = &Document{
+		ID: 200, MimeType: "application/x-tgsticker",
+		Attributes: []DocumentAttribute{{Kind: DocAttrCustomEmoji, Alt: "🎁", TextColor: true}},
+		Thumbs:     []PhotoSize{{Kind: PhotoSizeKindPath, Type: "j", Bytes: []byte{1}}},
+	}
+	write.Patterns[0].Blob = &FileBlob{LocationKey: "pattern"}
+	return write
+}
+
+func TestValidateStarGiftCollectibleWriteRequiresExactDocumentRoles(t *testing.T) {
+	if err := ValidateStarGiftCollectibleWrite(storedCollectibleWrite()); err != nil {
+		t.Fatalf("valid stored collectible: %v", err)
+	}
+
+	tests := map[string]func(*StarGiftCollectibleWrite){
+		"pattern stored as sticker": func(write *StarGiftCollectibleWrite) {
+			write.Patterns[0].Document.Attributes = []DocumentAttribute{{Kind: DocAttrSticker, Alt: "🎁"}}
+		},
+		"pattern custom emoji without text color": func(write *StarGiftCollectibleWrite) {
+			write.Patterns[0].Document.Attributes[0].TextColor = false
+		},
+		"pattern without inline path thumb": func(write *StarGiftCollectibleWrite) {
+			write.Patterns[0].Document.Thumbs = nil
+		},
+		"model stored as custom emoji": func(write *StarGiftCollectibleWrite) {
+			write.Models[0].Document.Attributes = []DocumentAttribute{{Kind: DocAttrCustomEmoji, Alt: "🎁", TextColor: true}}
+		},
+		"ambiguous model render attributes": func(write *StarGiftCollectibleWrite) {
+			write.Models[0].Document.Attributes = append(write.Models[0].Document.Attributes,
+				DocumentAttribute{Kind: DocAttrCustomEmoji, Alt: "🎁", TextColor: true})
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			write := storedCollectibleWrite()
+			mutate(&write)
+			if err := ValidateStarGiftCollectibleWrite(write); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+				t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
+			}
+		})
+	}
+}

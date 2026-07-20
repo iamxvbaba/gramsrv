@@ -238,6 +238,10 @@ func collectibleRPCAttribute(kind domain.StarGiftCollectibleAttributeKind, id in
 		MimeType: "application/x-tgsticker", Size: 3, DCID: 2,
 		Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}, {Kind: domain.DocAttrFilename, FileName: "gift.tgs"}},
 	}
+	if kind == domain.StarGiftCollectiblePattern {
+		attribute.Document.Attributes[0] = domain.DocumentAttribute{Kind: domain.DocAttrCustomEmoji, TextColor: true}
+		attribute.Document.Thumbs = []domain.PhotoSize{{Kind: domain.PhotoSizeKindPath, Type: "j", Bytes: []byte{1}}}
+	}
 	attribute.Animation = &domain.StarGiftAnimation{
 		SourceName: "gift.tgs", SourceFormat: domain.StarGiftAnimationTGS,
 		JSON: []byte(`{"v":"5.7"}`), TGS: []byte("tgs"), SHA256: make([]byte, 32), Width: 512, Height: 512,
