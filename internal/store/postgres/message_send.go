@@ -66,29 +66,46 @@ func ensureOfficialSystemUserWithDB(ctx context.Context, db sqlcgen.DBTX, msg do
 		return nil
 	}
 	if _, err := db.Exec(ctx, `
-WITH upserted AS (
-    INSERT INTO users (id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    ON CONFLICT (id) DO UPDATE SET
-        access_hash = EXCLUDED.access_hash,
-        phone = EXCLUDED.phone,
-        first_name = EXCLUDED.first_name,
-        last_name = EXCLUDED.last_name,
-        username = EXCLUDED.username,
-        country_code = EXCLUDED.country_code,
-        verified = EXCLUDED.verified,
-        support = EXCLUDED.support,
-        about = EXCLUDED.about,
-        is_bot = EXCLUDED.is_bot,
-        bot_info_version = EXCLUDED.bot_info_version,
-        updated_at = now()
-    RETURNING id, lower(username) AS username_lower
-), deleted_old_username AS (
-    DELETE FROM peer_usernames
-    WHERE peer_type = 'user' AND peer_id = (SELECT id FROM upserted)
+WITH desired (
+	id, access_hash, phone, first_name, last_name, username,
+	country_code, verified, support, about, is_bot, bot_info_version
+) AS (
+	VALUES ($1::bigint, $2::bigint, $3::text, $4::text, $5::text, $6::text,
+		$7::text, $8::boolean, $9::boolean, $10::text, $11::boolean, $12::integer)
+), upserted AS (
+	INSERT INTO users (id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version)
+	SELECT id, access_hash, phone, first_name, last_name, username, country_code, verified, support, about, is_bot, bot_info_version
+	FROM desired
+	ON CONFLICT (id) DO UPDATE SET
+		access_hash = EXCLUDED.access_hash,
+		phone = EXCLUDED.phone,
+		first_name = EXCLUDED.first_name,
+		last_name = EXCLUDED.last_name,
+		username = EXCLUDED.username,
+		country_code = EXCLUDED.country_code,
+		verified = EXCLUDED.verified,
+		support = EXCLUDED.support,
+		about = EXCLUDED.about,
+		is_bot = EXCLUDED.is_bot,
+		bot_info_version = EXCLUDED.bot_info_version,
+		updated_at = now()
+	WHERE (
+		users.access_hash, users.phone, users.first_name, users.last_name,
+		users.username, users.country_code, users.verified, users.support,
+		users.about, users.is_bot, users.bot_info_version
+	) IS DISTINCT FROM (
+		EXCLUDED.access_hash, EXCLUDED.phone, EXCLUDED.first_name, EXCLUDED.last_name,
+		EXCLUDED.username, EXCLUDED.country_code, EXCLUDED.verified, EXCLUDED.support,
+		EXCLUDED.about, EXCLUDED.is_bot, EXCLUDED.bot_info_version
+	)
 )
 INSERT INTO peer_usernames (username_lower, peer_type, peer_id)
-SELECT username_lower, 'user', id FROM upserted
+SELECT lower(username), 'user', id
+FROM desired
+ON CONFLICT (peer_type, peer_id) DO UPDATE SET
+	username_lower = EXCLUDED.username_lower,
+	updated_at = now()
+WHERE peer_usernames.username_lower IS DISTINCT FROM EXCLUDED.username_lower
 `, u.ID, u.AccessHash, u.Phone, u.FirstName, u.LastName, u.Username, u.CountryCode, u.Verified, u.Support, u.About, u.Bot, u.BotInfoVersion); err != nil {
 		return fmt.Errorf("ensure official system user: %w", err)
 	}

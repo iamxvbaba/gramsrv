@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -208,7 +209,7 @@ func TestLoginCodeDeliveryPostgresCommitAckLossRecoversFromReceipt(t *testing.T)
 	}
 }
 
-func TestLoginCodeDeliveryPostgresDifferentUsersDoNotRewriteOfficialUser(t *testing.T) {
+func TestLoginCodeDeliveryPostgresDifferentUsersDoNotRewriteOfficialIdentity(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	firstUser := createLoginCodeDeliveryTestUser(t, ctx, pool, "official-row-first")
@@ -221,6 +222,16 @@ func TestLoginCodeDeliveryPostgresDifferentUsersDoNotRewriteOfficialUser(t *test
 	var xminBefore string
 	if err := pool.QueryRow(ctx, `SELECT xmin::text FROM users WHERE id = $1`, domain.OfficialSystemUserID).Scan(&xminBefore); err != nil {
 		t.Fatalf("load official user xmin: %v", err)
+	}
+	var usernameBefore, usernameXminBefore string
+	if err := pool.QueryRow(ctx, `
+SELECT username_lower, xmin::text
+FROM peer_usernames
+WHERE peer_type = 'user' AND peer_id = $1`, domain.OfficialSystemUserID).Scan(&usernameBefore, &usernameXminBefore); err != nil {
+		t.Fatalf("load official username identity: %v", err)
+	}
+	if want := strings.ToLower(domain.OfficialSystemUser().Username); usernameBefore != want {
+		t.Fatalf("official username = %q, want %q", usernameBefore, want)
 	}
 
 	const workers = 12
@@ -255,6 +266,16 @@ func TestLoginCodeDeliveryPostgresDifferentUsersDoNotRewriteOfficialUser(t *test
 	}
 	if xminAfter != xminBefore {
 		t.Fatalf("official system user row was rewritten: xmin %s -> %s", xminBefore, xminAfter)
+	}
+	var usernameAfter, usernameXminAfter string
+	if err := pool.QueryRow(ctx, `
+SELECT username_lower, xmin::text
+FROM peer_usernames
+WHERE peer_type = 'user' AND peer_id = $1`, domain.OfficialSystemUserID).Scan(&usernameAfter, &usernameXminAfter); err != nil {
+		t.Fatalf("reload official username identity: %v", err)
+	}
+	if usernameAfter != usernameBefore || usernameXminAfter != usernameXminBefore {
+		t.Fatalf("official username identity was rewritten: %q/%s -> %q/%s", usernameBefore, usernameXminBefore, usernameAfter, usernameXminAfter)
 	}
 }
 
