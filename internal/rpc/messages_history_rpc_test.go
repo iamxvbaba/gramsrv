@@ -11,24 +11,127 @@ import (
 	"go.uber.org/zap/zaptest"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
+	appcommunities "telesrv/internal/app/communities"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 	"testing"
 )
 
-func TestMessagesSearchGlobalRejectsUnsupportedCommunityScope(t *testing.T) {
-	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+func TestMessagesSearchGlobalRestrictsCommunityScope(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	owner, err := users.Create(ctx, domain.User{AccessHash: 84, Phone: "15550000084", FirstName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := users.Create(ctx, domain.User{AccessHash: 85, Phone: "15550000085", FirstName: "Viewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := memory.NewChannelStore()
+	channelService := appchannels.NewService(channels)
+	linked, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{CreatorUserID: owner.ID, Title: "Linked", Megagroup: true, MemberUserIDs: []int64{viewer.ID}, Date: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPreview, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{CreatorUserID: owner.ID, Title: "Public Preview", Megagroup: true, Date: 101})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPreview.Channel, err = channelService.UpdateUsername(ctx, owner.ID, domain.UpdateChannelUsernameRequest{
+		UserID: owner.ID, ChannelID: publicPreview.Channel.ID, Username: "community_public_preview",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := channelService.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{CreatorUserID: owner.ID, Title: "Outside", Megagroup: true, Date: 101})
+	if err != nil {
+		t.Fatal(err)
+	}
+	communityService := appcommunities.NewService(memory.NewCommunityStore(users, channels, nil, nil))
+	community, err := communityService.Create(ctx, owner.ID, domain.CreateCommunityRequest{
+		Title: "Scope", InitialPeer: domain.Peer{Type: domain.PeerTypeChannel, ID: linked.Channel.ID},
+		Visibility: domain.CommunityPeerVisible, Date: 102,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := communityService.TogglePeerLink(ctx, owner.ID, domain.CommunityTogglePeerLinkRequest{
+		CommunityID: community.Community.ID,
+		Peer:        domain.Peer{Type: domain.PeerTypeChannel, ID: publicPreview.Channel.ID},
+		Visibility:  domain.CommunityPeerVisible,
+		Date:        103,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := New(Config{}, Deps{Users: appusers.NewService(users), Channels: channelService, Communities: communityService}, zaptest.NewLogger(t), clock.System)
+	for i, channel := range []domain.Channel{linked.Channel, publicPreview.Channel, outside.Channel} {
+		_, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+			Peer: &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}, Message: "scoped result", RandomID: int64(9000 + i),
+		})
+		if err != nil {
+			t.Fatalf("send channel %d: %v", channel.ID, err)
+		}
+	}
 	req := &tg.MessagesSearchGlobalRequest{
 		Q:          "scoped",
 		Filter:     &tg.InputMessagesFilterEmpty{},
 		OffsetPeer: &tg.InputPeerEmpty{},
 		Limit:      20,
 	}
-	req.SetCommunity(&tg.InputChannel{ChannelID: 42, AccessHash: 84})
+	req.SetCommunity(&tg.InputChannel{ChannelID: community.Community.ID, AccessHash: community.Community.AccessHash})
 
-	if _, err := r.onMessagesSearchGlobal(WithUserID(context.Background(), 1000000001), req); !tgerr.Is(err, "CHANNEL_INVALID") {
-		t.Fatalf("community-scoped messages.searchGlobal err = %v, want CHANNEL_INVALID", err)
+	result, err := r.onMessagesSearchGlobal(WithUserID(ctx, viewer.ID), req)
+	if err != nil {
+		t.Fatalf("community-scoped messages.searchGlobal: %v", err)
+	}
+	response, ok := result.(*tg.MessagesMessages)
+	if !ok || len(response.Messages) != 2 {
+		t.Fatalf("community search result = %#v, want joined and public-preview linked messages", result)
+	}
+	gotChannels := map[int64]bool{}
+	for _, item := range response.Messages {
+		message, ok := item.(*tg.Message)
+		if !ok {
+			t.Fatalf("community search message = %#v, want channel message", item)
+		}
+		peer, ok := message.PeerID.(*tg.PeerChannel)
+		if !ok {
+			t.Fatalf("community search message peer = %#v", message.PeerID)
+		}
+		gotChannels[peer.ChannelID] = true
+	}
+	if !gotChannels[linked.Channel.ID] || !gotChannels[publicPreview.Channel.ID] || gotChannels[outside.Channel.ID] {
+		t.Fatalf("community search channels = %+v", gotChannels)
+	}
+
+	emptyReq := &tg.MessagesSearchGlobalRequest{
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      20,
+	}
+	emptyReq.SetCommunity(&tg.InputChannel{ChannelID: community.Community.ID, AccessHash: community.Community.AccessHash})
+	emptyResult, err := r.onMessagesSearchGlobal(WithUserID(ctx, viewer.ID), emptyReq)
+	if err != nil {
+		t.Fatalf("empty community-scoped messages.searchGlobal: %v", err)
+	}
+	emptyResponse, ok := emptyResult.(*tg.MessagesMessages)
+	if !ok || len(emptyResponse.Messages) != 0 || len(emptyResponse.Chats) != 1 {
+		t.Fatalf("empty community search result = %#v, want empty messages with validated Community chat", emptyResult)
+	}
+	if got, ok := emptyResponse.Chats[0].(*tg.Community); !ok || got.ID != community.Community.ID {
+		t.Fatalf("empty community search chat = %#v, want Community %d", emptyResponse.Chats[0], community.Community.ID)
+	}
+
+	badHashReq := &tg.MessagesSearchGlobalRequest{
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      20,
+	}
+	badHashReq.SetCommunity(&tg.InputChannel{ChannelID: community.Community.ID, AccessHash: community.Community.AccessHash + 1})
+	if _, err := r.onMessagesSearchGlobal(WithUserID(ctx, viewer.ID), badHashReq); err == nil || !tgerr.Is(err, "CHANNEL_PRIVATE") {
+		t.Fatalf("empty community search wrong access hash err = %v, want CHANNEL_PRIVATE", err)
 	}
 }
 

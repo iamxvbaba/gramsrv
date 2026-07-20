@@ -227,7 +227,7 @@ func (r *Router) onMessagesEditChatAdmin(ctx context.Context, req *tg.MessagesEd
 }
 
 func (r *Router) onMessagesEditChatAbout(ctx context.Context, req *tg.MessagesEditChatAboutRequest) (bool, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return false, notImplementedErr()
 	}
 	if utf8.RuneCountInString(req.About) > maxChannelAboutLength {
@@ -236,6 +236,22 @@ func (r *Router) onMessagesEditChatAbout(ctx context.Context, req *tg.MessagesEd
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return false, internalErr()
+	}
+	if community, ok, err := r.maybeCommunityFromInputPeer(ctx, userID, req.Peer); ok {
+		if err != nil {
+			return false, err
+		}
+		view, changed, err := r.deps.Communities.EditAbout(ctx, userID, community.Community.ID, req.About)
+		if err != nil {
+			return false, communityErr(err)
+		}
+		if changed {
+			r.pushCommunityState(ctx, userID, view)
+		}
+		return true, nil
+	}
+	if r.deps.Channels == nil {
+		return false, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	channelID, err := r.channelIDFromLegacyInputPeerChecked(ctx, userID, req.Peer)
 	if err != nil {
@@ -255,12 +271,25 @@ func (r *Router) onMessagesEditChatAbout(ctx context.Context, req *tg.MessagesEd
 }
 
 func (r *Router) onMessagesEditChatDefaultBannedRights(ctx context.Context, req *tg.MessagesEditChatDefaultBannedRightsRequest) (tg.UpdatesClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+	if community, ok, err := r.maybeCommunityFromInputPeer(ctx, userID, req.Peer); ok {
+		if err != nil {
+			return nil, err
+		}
+		view, changed, err := r.deps.Communities.EditDefaultBannedRights(ctx, userID, community.Community.ID, domainChannelBannedRights(req.BannedRights))
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		return r.communityMutationUpdates(ctx, userID, view, changed), nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {

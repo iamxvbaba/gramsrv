@@ -528,19 +528,17 @@ func (r *Router) onMessagesGetRichMessage(ctx context.Context, req *tg.MessagesG
 }
 
 func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSearchGlobalRequest) (tg.MessagesMessagesClass, error) {
-	// Layer 228 adds an optional community scope. telesrv has no Communities
-	// membership/link read model yet, so treating this as an ordinary global
-	// search would leak results outside the requested scope. Reject it before
-	// any search/store work until that model exists.
-	if _, ok := req.GetCommunity(); ok || req.Community != nil {
-		return nil, channelInvalidErr(domain.ErrChannelInvalid)
-	}
 	if req.BroadcastsOnly && req.GroupsOnly {
 		return &tg.MessagesMessages{}, nil
 	}
 	query := normalizeSearchQuery(req.Q)
 	musicOnly := messagesSearchFilterMusic(req.Filter)
-	if query == "" && !musicOnly {
+	communityInput, hasCommunity := req.GetCommunity()
+	if !hasCommunity && req.Community != nil {
+		communityInput, hasCommunity = req.Community, true
+	}
+	emptyCommunitySearch := query == "" && !musicOnly && hasCommunity && messagesSearchFilterEmpty(req.Filter)
+	if query == "" && !musicOnly && !emptyCommunitySearch {
 		return nil, searchQueryEmptyErr()
 	}
 	if utf8.RuneCountInString(query) > maxMessageSearchQLength {
@@ -552,6 +550,19 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+	var communityView *domain.CommunityView
+	var communityScope domain.CommunitySearchScope
+	if hasCommunity {
+		view, err := r.communityFromInput(ctx, userID, communityInput)
+		if err != nil {
+			return nil, err
+		}
+		scope, err := r.deps.Communities.SearchScope(ctx, userID, view.Community.ID)
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		communityView, communityScope = &view, scope
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > domain.MaxChannelGlobalSearchLimit {
@@ -565,6 +576,9 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 	if err != nil {
 		return nil, err
 	}
+	if emptyCommunitySearch {
+		return appendCommunitySearchChat(&tg.MessagesMessages{}, communityView), nil
+	}
 	var private domain.MessageList
 	if !req.BroadcastsOnly && !req.GroupsOnly && r.deps.Messages != nil {
 		filter := domain.MessageFilter{
@@ -573,6 +587,10 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 			OffsetDate: req.OffsetRate,
 			Limit:      limit + 1,
 			MusicOnly:  musicOnly,
+		}
+		if communityView != nil {
+			filter.RestrictPeerIDs = true
+			filter.PeerIDs = communityScope.BotUserIDs
 		}
 		if req.MaxDate > 0 {
 			filter.OffsetDate = req.MaxDate
@@ -586,30 +604,49 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 		}
 	}
 	if req.UsersOnly || r.deps.Channels == nil {
-		return tgMessagesMessages(userID, r.enrichMessageList(ctx, userID, limitMessageList(private, limit))), nil
+		return appendCommunitySearchChat(tgMessagesMessages(userID, r.enrichMessageList(ctx, userID, limitMessageList(private, limit))), communityView), nil
 	}
 	channelHistory, err := r.deps.Channels.SearchJoinedMessages(ctx, userID, domain.ChannelGlobalSearchRequest{
-		Query:           query,
-		BroadcastsOnly:  req.BroadcastsOnly,
-		GroupsOnly:      req.GroupsOnly,
-		MusicOnly:       musicOnly,
-		HasFolderID:     hasFolderID,
-		FolderID:        folderID,
-		OffsetRate:      req.OffsetRate,
-		OffsetChannelID: channelOffsetID,
-		OffsetID:        req.OffsetID,
-		MinDate:         req.MinDate,
-		MaxDate:         req.MaxDate,
-		Limit:           limit,
+		Query:              query,
+		ChannelIDs:         communityScope.ChannelIDs,
+		RestrictChannelIDs: communityView != nil,
+		AllowPublicPreview: communityView != nil,
+		BroadcastsOnly:     req.BroadcastsOnly,
+		GroupsOnly:         req.GroupsOnly,
+		MusicOnly:          musicOnly,
+		HasFolderID:        hasFolderID,
+		FolderID:           folderID,
+		OffsetRate:         req.OffsetRate,
+		OffsetChannelID:    channelOffsetID,
+		OffsetID:           req.OffsetID,
+		MinDate:            req.MinDate,
+		MaxDate:            req.MaxDate,
+		Limit:              limit,
 	})
 	if err != nil {
 		return nil, channelInvalidErr(err)
 	}
 	channelHistory = r.enrichChannelHistory(ctx, userID, channelHistory)
 	if req.BroadcastsOnly || req.GroupsOnly {
-		return r.tgGlobalChannelMessages(ctx, userID, limitChannelHistory(channelHistory, limit)), nil
+		return appendCommunitySearchChat(r.tgGlobalChannelMessages(ctx, userID, limitChannelHistory(channelHistory, limit)), communityView), nil
 	}
-	return r.tgGlobalSearchMessages(ctx, userID, limit, private, channelHistory), nil
+	return appendCommunitySearchChat(r.tgGlobalSearchMessages(ctx, userID, limit, private, channelHistory), communityView), nil
+}
+
+func appendCommunitySearchChat(result tg.MessagesMessagesClass, view *domain.CommunityView) tg.MessagesMessagesClass {
+	if result == nil || view == nil {
+		return result
+	}
+	chat := tgCommunityChat(*view)
+	switch out := result.(type) {
+	case *tg.MessagesMessages:
+		out.Chats = appendUniqueTGChats(out.Chats, chat)
+	case *tg.MessagesMessagesSlice:
+		out.Chats = appendUniqueTGChats(out.Chats, chat)
+	case *tg.MessagesChannelMessages:
+		out.Chats = appendUniqueTGChats(out.Chats, chat)
+	}
+	return result
 }
 
 func limitMessageList(list domain.MessageList, limit int) domain.MessageList {
@@ -788,6 +825,11 @@ func messagesSearchFilterPinned(filter tg.MessagesFilterClass) bool {
 
 func messagesSearchFilterMusic(filter tg.MessagesFilterClass) bool {
 	_, ok := filter.(*tg.InputMessagesFilterMusic)
+	return ok
+}
+
+func messagesSearchFilterEmpty(filter tg.MessagesFilterClass) bool {
+	_, ok := filter.(*tg.InputMessagesFilterEmpty)
 	return ok
 }
 

@@ -35,6 +35,12 @@ func (r *Router) notifyScopeFromInput(userID int64, in tg.InputNotifyPeerClass) 
 		return domain.NotifyScope{Kind: domain.NotifyScopeChats}, true
 	case *tg.InputNotifyBroadcasts:
 		return domain.NotifyScope{Kind: domain.NotifyScopeBroadcasts}, true
+	case *tg.InputNotifyCommunity:
+		ref, ok := inputChannelRef(p.Community)
+		if !ok {
+			return domain.NotifyScope{}, false
+		}
+		return domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: domain.Peer{Type: domain.PeerTypeCommunity, ID: ref.ID}}, true
 	case *tg.InputNotifyPeer:
 		peer, ok := r.domainPeerFromInputPeer(userID, p.Peer)
 		if !ok {
@@ -145,6 +151,7 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 	updates := make([]tg.UpdateClass, 0, len(exceptions))
 	userIDs := make([]int64, 0)
 	channelIDs := make([]int64, 0)
+	communityIDs := make([]int64, 0)
 	for _, ex := range exceptions {
 		if filterPeer != nil && ex.Peer != *filterPeer {
 			continue
@@ -163,15 +170,23 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 			userIDs = append(userIDs, ex.Peer.ID)
 		case domain.PeerTypeChannel:
 			channelIDs = append(channelIDs, ex.Peer.ID)
+		case domain.PeerTypeCommunity:
+			communityIDs = append(communityIDs, ex.Peer.ID)
 		}
 	}
 	if len(updates) == 0 {
 		return empty, nil
 	}
+	chats := r.tgChatsForChannelIDs(ctx, userID, channelIDs)
+	if r.deps.Communities != nil && len(communityIDs) > 0 {
+		if views, err := r.deps.Communities.GetMany(ctx, userID, communityIDs); err == nil {
+			chats = appendUniqueTGChats(chats, tgCommunityChats(views)...)
+		}
+	}
 	return &tg.Updates{
 		Updates: updates,
 		Users:   r.tgUsersForIDs(ctx, userID, userIDs),
-		Chats:   r.tgChatsForChannelIDs(ctx, userID, channelIDs),
+		Chats:   chats,
 		Date:    int(r.clock.Now().Unix()),
 	}, nil
 }
@@ -260,6 +275,9 @@ func tgNotifyPeer(scope domain.NotifyScope) tg.NotifyPeerClass {
 	case domain.NotifyScopeBroadcasts:
 		return &tg.NotifyBroadcasts{}
 	case domain.NotifyScopePeer:
+		if scope.Peer.Type == domain.PeerTypeCommunity {
+			return &tg.NotifyCommunity{CommunityID: scope.Peer.ID}
+		}
 		peer := tgPeer(scope.Peer)
 		if scope.TopicID != 0 {
 			return &tg.NotifyForumTopic{Peer: peer, TopMsgID: scope.TopicID}
@@ -274,7 +292,7 @@ func tgNotifyPeer(scope domain.NotifyScope) tg.NotifyPeerClass {
 // 显示且跨重启恢复。perf：从 per-user notify 缓存读取（命中即 0 PG），而非每次 getDialogs
 // 都查 notify_settings——绝大多数用户没有任何自定义静音，缓存命中后零数据库开销。
 func (r *Router) withDialogNotifySettings(ctx context.Context, viewerUserID int64, list domain.DialogList) domain.DialogList {
-	if len(list.Dialogs) == 0 {
+	if len(list.Dialogs) == 0 && len(list.Communities) == 0 {
 		return list
 	}
 	settings := r.userNotifySettings(ctx, viewerUserID)
@@ -285,6 +303,13 @@ func (r *Router) withDialogNotifySettings(ctx context.Context, viewerUserID int6
 		if s, ok := settings[list.Dialogs[i].Peer]; ok {
 			sc := s.Clone()
 			list.Dialogs[i].NotifySettings = &sc
+		}
+	}
+	for i := range list.Communities {
+		peer := domain.Peer{Type: domain.PeerTypeCommunity, ID: list.Communities[i].Community.ID}
+		if s, ok := settings[peer]; ok {
+			sc := s.Clone()
+			list.Communities[i].State.NotifySettings = &sc
 		}
 	}
 	return list

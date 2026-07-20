@@ -1,9 +1,55 @@
 package rpc
 
 import (
+	"sort"
+
 	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/domain"
 )
+
+type dialogProjection struct {
+	dialog      tg.DialogClass
+	pinned      bool
+	pinnedOrder int
+	sequence    int
+}
+
+func projectedDialogs(list domain.DialogList) []tg.DialogClass {
+	items := make([]dialogProjection, 0, len(list.Dialogs)+len(list.Communities))
+	for _, d := range list.Dialogs {
+		if dialog := tgDialog(d); dialog != nil {
+			items = append(items, dialogProjection{dialog: dialog, pinned: d.Pinned, pinnedOrder: d.PinnedOrder, sequence: len(items)})
+		}
+	}
+	for _, community := range list.Communities {
+		items = append(items, dialogProjection{
+			dialog: tgCommunityDialog(community, community.State.NotifySettings), pinned: community.State.Pinned,
+			pinnedOrder: community.State.PinnedOrder, sequence: len(items),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].pinned != items[j].pinned {
+			return items[i].pinned
+		}
+		if items[i].pinned && items[i].pinnedOrder != items[j].pinnedOrder {
+			return items[i].pinnedOrder > items[j].pinnedOrder
+		}
+		return items[i].sequence < items[j].sequence
+	})
+	out := make([]tg.DialogClass, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.dialog)
+	}
+	return out
+}
+
+func appendCommunityDialogObjects(viewerUserID int64, list domain.DialogList, chats []tg.ChatClass, users []tg.UserClass) ([]tg.ChatClass, []tg.UserClass) {
+	for _, community := range list.Communities {
+		chats = appendUniqueTGChats(chats, tgCommunityHydratedChats(viewerUserID, community)...)
+		users = appendUniqueTGUsers(users, tgUsersForViewer(viewerUserID, community.Users)...)
+	}
+	return chats, users
+}
 
 func tgMessagesDialogs(viewerUserID int64, list domain.DialogList) tg.MessagesDialogsClass {
 	dialogs := make([]tg.DialogClass, 0, len(list.Dialogs)+1)
@@ -12,11 +58,7 @@ func tgMessagesDialogs(viewerUserID int64, list domain.DialogList) tg.MessagesDi
 	if folder := tgDialogFolder(list.ArchiveSummary); folder != nil {
 		dialogs = append(dialogs, folder)
 	}
-	for _, d := range list.Dialogs {
-		if dialog := tgDialog(d); dialog != nil {
-			dialogs = append(dialogs, dialog)
-		}
-	}
+	dialogs = append(dialogs, projectedDialogs(list)...)
 	messages := make([]tg.MessageClass, 0, len(list.Messages))
 	for _, msg := range list.Messages {
 		if item := tgMessage(msg); item != nil {
@@ -30,6 +72,7 @@ func tgMessagesDialogs(viewerUserID int64, list domain.DialogList) tg.MessagesDi
 	}
 	users := tgUsersForViewer(viewerUserID, list.Users)
 	chats := tgChannelsForDialogs(viewerUserID, list.Channels, list.Dialogs)
+	chats, users = appendCommunityDialogObjects(viewerUserID, list, chats, users)
 	if list.Count > len(dialogs) {
 		return &tg.MessagesDialogsSlice{
 			Count:    list.Count,
@@ -61,11 +104,7 @@ func tgPeerDialogs(viewerUserID int64, list domain.DialogList, st domain.UpdateS
 	if folder := tgDialogFolder(list.ArchiveSummary); folder != nil {
 		out.Dialogs = append(out.Dialogs, folder)
 	}
-	for _, d := range list.Dialogs {
-		if dialog := tgDialog(d); dialog != nil {
-			out.Dialogs = append(out.Dialogs, dialog)
-		}
-	}
+	out.Dialogs = append(out.Dialogs, projectedDialogs(list)...)
 	for _, msg := range list.Messages {
 		if item := tgMessage(msg); item != nil {
 			out.Messages = append(out.Messages, item)
@@ -84,6 +123,7 @@ func tgPeerDialogs(viewerUserID int64, list domain.DialogList, st domain.UpdateS
 		}
 	}
 	out.Chats = append(out.Chats, tgChannelsForDialogs(viewerUserID, list.Channels, list.Dialogs)...)
+	out.Chats, out.Users = appendCommunityDialogObjects(viewerUserID, list, out.Chats, out.Users)
 	return out
 }
 
@@ -204,6 +244,9 @@ func tgDraftWebPage(webpage *domain.DialogDraftWebPage) tg.InputMediaClass {
 }
 
 func tgDialogPeer(p domain.Peer) tg.DialogPeerClass {
+	if p.Type == domain.PeerTypeCommunity && p.ID > 0 {
+		return &tg.DialogPeerCommunity{CommunityID: p.ID}
+	}
 	peer := tgPeer(p)
 	if peer == nil {
 		return nil

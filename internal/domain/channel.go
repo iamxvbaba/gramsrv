@@ -280,7 +280,10 @@ type ChannelBannedRights struct {
 	SendPlain       bool
 	EditRank        bool
 	SendReactions   bool
-	UntilDate       int
+	// ManageLinkedPeers is the Layer 228 default restriction used by Communities:
+	// true means only admins may add peers; false lets members submit requests.
+	ManageLinkedPeers bool
+	UntilDate         int
 }
 
 // ChannelReactionPolicyType describes which reactions are allowed in a channel.
@@ -431,6 +434,10 @@ type Channel struct {
 	// megagroup && (public || has_geo || has_link) 判定是否拉取候选列表。
 	HasLink      bool
 	LinkedChatID int64
+	// LinkedCommunityID is the unique Community containing this group/channel.
+	// A channel can belong to at most one Community and Communities themselves
+	// are stored in a separate aggregate, never in channels.
+	LinkedCommunityID int64
 	// Monoforum 标记本频道是「频道私信(Direct Messages)」的 monoforum 虚拟频道。
 	// LinkedMonoforumID:母频道指向其 monoforum;monoforum 反向指向母频道(双向)。
 	Monoforum           bool
@@ -561,11 +568,15 @@ const (
 	ChannelActionStarGiftUnique ChannelMessageActionType = "star_gift_unique"
 	// ChannelActionSetChatWallpaper 映射 messageActionSetChatWallPaper：频道外观页设置 wallpaper。
 	ChannelActionSetChatWallpaper ChannelMessageActionType = "set_chat_wallpaper"
+	// ChannelActionChangeCommunity maps messageActionChangeCommunity. A non-zero
+	// CommunityID means linked; zero means unlinked.
+	ChannelActionChangeCommunity ChannelMessageActionType = "change_community"
 )
 
 // ChannelMessageAction describes a service action without depending on tg.*.
 type ChannelMessageAction struct {
 	Type           ChannelMessageActionType
+	CommunityID    int64
 	Title          string
 	IconColor      int
 	IconEmojiID    int64
@@ -2039,18 +2050,24 @@ type ChannelSearchPostsRequest struct {
 // ChannelGlobalSearchRequest describes a bounded messages.searchGlobal page
 // over channel/supergroup messages visible to the current account.
 type ChannelGlobalSearchRequest struct {
-	Query           string
-	BroadcastsOnly  bool
-	GroupsOnly      bool
-	MusicOnly       bool
-	HasFolderID     bool
-	FolderID        int
-	OffsetRate      int
-	OffsetChannelID int64
-	OffsetID        int
-	MinDate         int
-	MaxDate         int
-	Limit           int
+	Query              string
+	ChannelIDs         []int64
+	RestrictChannelIDs bool
+	// AllowPublicPreview includes linked public channels that the account can
+	// preview without joining. It is enabled only by Layer 228 Community-scoped
+	// search; ordinary global search remains joined-dialog-only.
+	AllowPublicPreview bool
+	BroadcastsOnly     bool
+	GroupsOnly         bool
+	MusicOnly          bool
+	HasFolderID        bool
+	FolderID           int
+	OffsetRate         int
+	OffsetChannelID    int64
+	OffsetID           int
+	MinDate            int
+	MaxDate            int
+	Limit              int
 }
 
 // ChannelRepliesFilter describes messages.getReplies query conditions.

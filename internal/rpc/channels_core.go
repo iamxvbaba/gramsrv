@@ -2,9 +2,12 @@ package rpc
 
 import (
 	"context"
-	"github.com/iamxvbaba/td/tg"
-	"telesrv/internal/domain"
+	"errors"
 	"unicode/utf8"
+
+	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
 )
 
 func (r *Router) onChannelsCreateChannel(ctx context.Context, req *tg.ChannelsCreateChannelRequest) (tg.UpdatesClass, error) {
@@ -71,37 +74,54 @@ func (r *Router) onChannelsGetChannels(ctx context.Context, ids []tg.InputChanne
 	channelIDs := make([]int64, 0, len(ids))
 	for _, input := range ids {
 		ref, ok := inputChannelRef(input)
-		if !ok || ref.ID == 0 || r.deps.Channels == nil {
+		if !ok || ref.ID == 0 {
 			continue
 		}
 		refs = append(refs, ref)
 		channelIDs = append(channelIDs, ref.ID)
 	}
-	if len(channelIDs) == 0 || r.deps.Channels == nil {
+	if len(channelIDs) == 0 || (r.deps.Channels == nil && r.deps.Communities == nil) {
 		return &tg.MessagesChats{}, nil
 	}
-	views, err := r.deps.Channels.GetChannels(ctx, userID, channelIDs)
-	if err != nil {
-		return nil, internalErr()
+	var views []domain.ChannelView
+	if r.deps.Channels != nil {
+		views, err = r.deps.Channels.GetChannels(ctx, userID, channelIDs)
+		if err != nil {
+			return nil, internalErr()
+		}
 	}
 	byID := make(map[int64]domain.ChannelView, len(views))
 	for _, view := range views {
 		byID[view.Channel.ID] = view
 	}
+	communityByID := make(map[int64]domain.CommunityView)
+	if r.deps.Communities != nil {
+		communityViews, err := r.deps.Communities.GetMany(ctx, userID, channelIDs)
+		if err != nil {
+			return nil, internalErr()
+		}
+		for _, view := range communityViews {
+			communityByID[view.Community.ID] = view
+		}
+	}
 	chats := make([]tg.ChatClass, 0, len(refs))
 	for _, ref := range refs {
-		view, ok := byID[ref.ID]
-		if !ok || !inputChannelAccessHashMatches(ref, view.Channel) {
+		if view, ok := communityByID[ref.ID]; ok {
+			if !ref.CheckAccessHash || ref.AccessHash == view.Community.AccessHash {
+				chats = append(chats, tgCommunityChat(view))
+			}
 			continue
 		}
-		chats = append(chats, tgChannelChatForView(userID, view))
+		if view, ok := byID[ref.ID]; ok && inputChannelAccessHashMatches(ref, view.Channel) {
+			chats = append(chats, tgChannelChatForView(userID, view))
+		}
 	}
 	r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
 	return &tg.MessagesChats{Chats: chats}, nil
 }
 
 func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputChannelClass) (*tg.MessagesChatFull, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return &tg.MessagesChatFull{}, nil
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -110,6 +130,34 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	ref, ok := inputChannelRef(input)
 	if !ok {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
+	}
+	if r.deps.Communities != nil {
+		view, communityErrValue := r.deps.Communities.Get(ctx, userID, ref.ID)
+		if communityErrValue == nil {
+			if ref.CheckAccessHash && ref.AccessHash != view.Community.AccessHash {
+				return nil, channelInvalidErr(domain.ErrCommunityPrivate)
+			}
+			if settings := r.userNotifySettings(ctx, userID); len(settings) > 0 {
+				if setting, ok := settings[domain.Peer{Type: domain.PeerTypeCommunity, ID: view.Community.ID}]; ok {
+					copy := setting.Clone()
+					view.State.NotifySettings = &copy
+				}
+			}
+			return &tg.MessagesChatFull{
+				FullChat: tgCommunityFull(view),
+				Chats:    tgCommunityHydratedChats(userID, view),
+				Users:    tgUsers(view.Users),
+			}, nil
+		}
+		if errors.Is(communityErrValue, domain.ErrCommunityPrivate) {
+			return nil, communityErr(communityErrValue)
+		}
+		if !errors.Is(communityErrValue, domain.ErrCommunityInvalid) {
+			return nil, communityErr(communityErrValue)
+		}
+	}
+	if r.deps.Channels == nil {
 		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	loadEpoch := r.channelFullProjectionCache.LoadEpoch()

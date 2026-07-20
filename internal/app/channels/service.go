@@ -508,6 +508,15 @@ func (s *Service) ListAdminedPublicChannels(ctx context.Context, userID int64) (
 	return s.channels.ListAdminedPublicChannels(ctx, userID)
 }
 
+// ListCommunityLinkableChannels returns owned/administered channels that are not
+// already linked to another Community. Private megagroups are valid candidates.
+func (s *Service) ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return nil, nil
+	}
+	return s.channels.ListCommunityLinkableChannels(ctx, userID)
+}
+
 // ListStoryPostableChannels returns channels where user can publish stories.
 func (s *Service) ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 {

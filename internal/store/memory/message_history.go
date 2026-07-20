@@ -262,10 +262,22 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 	})
 
 	query := strings.ToLower(filter.Query)
+	peerIDs := make(map[int64]struct{}, len(filter.PeerIDs))
+	for _, id := range filter.PeerIDs {
+		peerIDs[id] = struct{}{}
+	}
 	base := make([]domain.Message, 0, len(messages))
 	for _, msg := range messages {
 		if filter.HasPeer && msg.Peer != filter.Peer {
 			continue
+		}
+		if filter.RestrictPeerIDs {
+			if msg.Peer.Type != domain.PeerTypeUser {
+				continue
+			}
+			if _, ok := peerIDs[msg.Peer.ID]; !ok {
+				continue
+			}
 		}
 		if query != "" && !strings.Contains(strings.ToLower(msg.Body), query) {
 			continue

@@ -402,7 +402,7 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err != nil {
 			return nil, err
 		}
-		if filter.Hash != 0 {
+		if filter.Hash != 0 && r.deps.Communities == nil {
 			hashCheck, err := r.deps.Dialogs.GetDialogsHash(ctx, userID, filter)
 			if err != nil {
 				return nil, internalErr()
@@ -415,6 +415,10 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err != nil {
 			return nil, internalErr()
 		}
+		list, err = r.withCommunityDialogList(ctx, userID, filter, list)
+		if err != nil {
+			return nil, communityErr(err)
+		}
 		if ClientTypeFrom(ctx) == ClientTypeTDesktop && tdesktop.ShouldMergePinnedIntoInitialDialogs(filter) {
 			pinned, err := r.pinnedDialogsList(ctx, userID, domain.DialogMainFolderID)
 			if err != nil {
@@ -422,7 +426,7 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			}
 			list = tdesktop.MergeInitialDialogsWithPinned(list, pinned)
 		}
-		if filter.Hash != 0 && list.Hash == filter.Hash {
+		if filter.Hash != 0 && r.deps.Communities == nil && list.Hash == filter.Hash {
 			return &tg.MessagesDialogsNotModified{Count: list.Count}, nil
 		}
 		return r.tgMessagesDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list)), nil
@@ -481,13 +485,30 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err := r.checkCatchupRateLimit(ctx, userID, peerDialogsRateLimitKeyPrefix); err != nil {
 			return nil, err
 		}
+		regularPeers := make([]domain.Peer, 0, len(domainPeers))
+		communityIDs := make([]int64, 0)
+		for _, peer := range domainPeers {
+			if peer.Type == domain.PeerTypeCommunity {
+				communityIDs = append(communityIDs, peer.ID)
+			} else {
+				regularPeers = append(regularPeers, peer)
+			}
+		}
 		var list domain.DialogList
-		if len(domainPeers) > 0 && r.deps.Dialogs != nil {
+		if len(regularPeers) > 0 && r.deps.Dialogs != nil {
 			var err error
-			list, err = r.deps.Dialogs.GetPeerDialogs(ctx, userID, domainPeers)
+			list, err = r.deps.Dialogs.GetPeerDialogs(ctx, userID, regularPeers)
 			if err != nil {
 				return nil, internalErr()
 			}
+		}
+		if len(communityIDs) > 0 && r.deps.Communities != nil {
+			views, err := r.deps.Communities.GetMany(ctx, userID, communityIDs)
+			if err != nil {
+				return nil, communityErr(err)
+			}
+			list.Communities = append(list.Communities, views...)
+			list.Count += len(views)
 		}
 		st := domain.UpdateState{Date: int(r.clock.Now().Unix())}
 		if r.deps.Updates != nil {

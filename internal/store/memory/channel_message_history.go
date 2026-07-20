@@ -192,7 +192,16 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	hits := make([]hit, 0, req.Limit+1)
+	channelIDs := make(map[int64]struct{}, len(req.ChannelIDs))
+	for _, id := range req.ChannelIDs {
+		channelIDs[id] = struct{}{}
+	}
 	for channelID, channel := range s.channels {
+		if req.RestrictChannelIDs {
+			if _, ok := channelIDs[channelID]; !ok {
+				continue
+			}
+		}
 		if channel.Deleted {
 			continue
 		}
@@ -203,7 +212,10 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 			continue
 		}
 		member, ok := s.members[channelID][viewerUserID]
-		if !ok || member.Status != domain.ChannelMemberActive || member.BannedRights.ViewMessages {
+		joined := ok && member.Status == domain.ChannelMemberActive && !member.BannedRights.ViewMessages
+		publicPreview := req.AllowPublicPreview && publicPreviewableChannel(channel) &&
+			(!ok || member.Status != domain.ChannelMemberKicked && !member.BannedRights.ViewMessages)
+		if !joined && !publicPreview {
 			continue
 		}
 		if req.HasFolderID {
@@ -219,7 +231,7 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 			if query == "" && !req.MusicOnly || query != "" && strings.TrimSpace(msg.Body) == "" {
 				continue
 			}
-			if member.AvailableMinID > 0 && msg.ID <= member.AvailableMinID {
+			if joined && member.AvailableMinID > 0 && msg.ID <= member.AvailableMinID {
 				continue
 			}
 			if req.MinDate > 0 && msg.Date <= req.MinDate {

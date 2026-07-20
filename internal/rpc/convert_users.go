@@ -30,6 +30,9 @@ func tgSelfUser(u domain.User) *tg.User {
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
 	applyTgUserColorFields(out, u)
+	if u.LinkedCommunityID != 0 {
+		out.SetLinkedCommunityID(u.LinkedCommunityID)
+	}
 	if photo := tgUserProfilePhoto(u); photo != nil {
 		out.Photo = photo
 	}
@@ -57,6 +60,9 @@ func tgUser(u domain.User) *tg.User {
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
 	applyTgUserColorFields(out, u)
+	if u.LinkedCommunityID != 0 {
+		out.SetLinkedCommunityID(u.LinkedCommunityID)
+	}
 	if photo := tgUserProfilePhoto(u); photo != nil {
 		out.Photo = photo
 	}

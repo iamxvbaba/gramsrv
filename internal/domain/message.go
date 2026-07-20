@@ -242,6 +242,10 @@ type MessageFilter struct {
 	// SavedPeer 非零时仅返回 self-chat 中该 saved 子会话的消息
 	// （messages.getSavedHistory）；Peer 必须同时是 self。
 	SavedPeer Peer
+	// PeerIDs restricts a global private search to these user peers. Empty is a
+	// valid restricted set, so RestrictPeerIDs carries presence separately.
+	PeerIDs         []int64
+	RestrictPeerIDs bool
 }
 
 // SendPrivateTextRequest 是私聊文本/媒体发送命令。

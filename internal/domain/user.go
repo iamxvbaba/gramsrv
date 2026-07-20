@@ -124,6 +124,9 @@ type User struct {
 	// PersonalChannelID 是资料页展示的「个人频道」（account.updatePersonalChannel）；
 	// 0 表示未设置。资料投影时按它取频道对象与最新一帖。
 	PersonalChannelID int64
+	// LinkedCommunityID is the single Community containing this bot. Ordinary
+	// users must keep it zero; the community aggregate enforces that invariant.
+	LinkedCommunityID int64
 	Color             PeerColor
 	ProfileColor      PeerColor
 	// Profile photo fields are filled by app-layer user projection. PhotoID==0 表示无头像。

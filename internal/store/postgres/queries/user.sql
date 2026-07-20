@@ -45,6 +45,7 @@ WITH matched AS (
     u.profile_color_set,
     u.profile_color,
     u.profile_color_background_emoji_id,
+	 u.linked_community_id,
     u.last_seen_at,
     (c.contact_user_id IS NOT NULL)::boolean AS contact,
     COALESCE(c.mutual, false)::boolean AS mutual,
@@ -96,6 +97,7 @@ SELECT
   profile_color_set,
   profile_color,
   profile_color_background_emoji_id,
+	linked_community_id,
   last_seen_at,
   contact,
   mutual

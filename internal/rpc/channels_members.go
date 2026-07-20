@@ -23,6 +23,13 @@ func (r *Router) onChannelsGetAdminedPublicChannels(ctx context.Context, req *tg
 	if req.ByLocation {
 		return &tg.MessagesChats{}, nil
 	}
+	if req.ForCommunityPeer {
+		channels, err := r.deps.Channels.ListCommunityLinkableChannels(ctx, userID)
+		if err != nil {
+			return nil, internalErr()
+		}
+		return &tg.MessagesChats{Chats: tgChannels(userID, channels)}, nil
+	}
 	channels, err := r.deps.Channels.ListAdminedPublicChannels(ctx, userID)
 	if err != nil {
 		return nil, internalErr()
@@ -107,7 +114,7 @@ func (r *Router) onChannelsGetMessageAuthor(ctx context.Context, req *tg.Channel
 }
 
 func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.ChannelsGetParticipantsRequest) (tg.ChannelsChannelParticipantsClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return &tg.ChannelsChannelParticipants{}, nil
 	}
 	userID, _, err := r.currentUserID(ctx)
@@ -121,6 +128,26 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 	filter := domainChannelParticipantsFilter(req.Filter)
 	if utf8.RuneCountInString(filter.Query) > domain.MaxChannelParticipantsQueryLength {
 		return nil, limitInvalidErr()
+	}
+	if community, isCommunity, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); isCommunity {
+		if err != nil {
+			return nil, err
+		}
+		list, err := r.deps.Communities.Participants(ctx, userID, community.Community.ID, filter, req.Offset, req.Limit)
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		if req.Hash != 0 && list.Hash == req.Hash {
+			return &tg.ChannelsChannelParticipantsNotModified{}, nil
+		}
+		participants := make([]tg.ChannelParticipantClass, 0, len(list.Participants))
+		for _, member := range list.Participants {
+			participants = append(participants, tgCommunityMember(userID, member))
+		}
+		return &tg.ChannelsChannelParticipants{Count: list.Count, Participants: participants, Chats: []tg.ChatClass{tgCommunityChat(community)}, Users: tgUsers(list.Users)}, nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	list, err := r.deps.Channels.GetParticipants(ctx, userID, ref.ID, filter, req.Offset, req.Limit)
 	if err != nil {
@@ -390,16 +417,12 @@ func (r *Router) recordChannelStateForUser(ctx context.Context, userID, channelI
 }
 
 func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAdminRequest) (tg.UpdatesClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
-	}
-	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
-	if err != nil {
-		return nil, err
 	}
 	target, found, err := r.userFromInput(ctx, userID, req.UserID)
 	if err != nil {
@@ -407,6 +430,33 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	}
 	if !found || target.ID == 0 {
 		return nil, peerIDInvalidErr()
+	}
+	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {
+		if err != nil {
+			return nil, err
+		}
+		view, changed, err := r.deps.Communities.EditAdmin(ctx, userID, domain.CommunityEditAdminRequest{
+			CommunityID: community.Community.ID,
+			UserID:      target.ID,
+			Rights:      domainChannelAdminRights(req.AdminRights),
+			Rank:        req.Rank,
+			Date:        int(r.clock.Now().Unix()),
+		})
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		updates := r.communityMutationUpdates(ctx, userID, view, changed)
+		if changed && target.ID != userID {
+			r.refreshAndPushCommunityState(ctx, target.ID, community.Community.ID, community.Community)
+		}
+		return updates, nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
+	}
+	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
+	if err != nil {
+		return nil, err
 	}
 	res, err := r.deps.Channels.EditAdmin(ctx, userID, domain.EditChannelAdminRequest{
 		UserID:      userID,

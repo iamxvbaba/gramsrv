@@ -6,6 +6,9 @@ type PeerType string
 const (
 	PeerTypeUser    PeerType = "user"
 	PeerTypeChannel PeerType = "channel"
+	// PeerTypeCommunity identifies a Layer 228 Community container. Communities
+	// have dialog pin/notify state but never own messages, read boundaries or pts.
+	PeerTypeCommunity PeerType = "community"
 	// PeerTypeFolder 仅用于 dialog 置顶事件中表达 dialogPeerFolder
 	// （archive folder 行本身被置顶/取消置顶），ID 为 folder_id。
 	PeerTypeFolder PeerType = "folder"
@@ -175,6 +178,7 @@ type DialogList struct {
 	ChannelMessages []ChannelMessage
 	Users           []User
 	Channels        []Channel
+	Communities     []CommunityView
 	State           UpdateState
 	Hash            int64
 	Count           int

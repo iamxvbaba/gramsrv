@@ -309,7 +309,7 @@ func (r *Router) onChannelsToggleAutotranslation(ctx context.Context, req *tg.Ch
 }
 
 func (r *Router) onChannelsEditTitle(ctx context.Context, req *tg.ChannelsEditTitleRequest) (tg.UpdatesClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
 	if !validChannelTitle(req.Title) {
@@ -318,6 +318,19 @@ func (r *Router) onChannelsEditTitle(ctx context.Context, req *tg.ChannelsEditTi
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {
+		if err != nil {
+			return nil, err
+		}
+		view, changed, err := r.deps.Communities.EditTitle(ctx, userID, community.Community.ID, req.Title)
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		return r.communityMutationUpdates(ctx, userID, view, changed), nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
@@ -354,7 +367,7 @@ func (r *Router) onChannelsEditTitle(ctx context.Context, req *tg.ChannelsEditTi
 }
 
 func (r *Router) onChannelsEditPhoto(ctx context.Context, req *tg.ChannelsEditPhotoRequest) (tg.UpdatesClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
 	if req.Photo == nil {
@@ -364,11 +377,24 @@ func (r *Router) onChannelsEditPhoto(ctx context.Context, req *tg.ChannelsEditPh
 	if err != nil {
 		return nil, internalErr()
 	}
-	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
+	photo, err := r.resolveInputChatPhoto(ctx, userID, req.Photo)
 	if err != nil {
 		return nil, err
 	}
-	photo, err := r.resolveInputChatPhoto(ctx, userID, req.Photo)
+	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {
+		if err != nil {
+			return nil, err
+		}
+		view, changed, err := r.deps.Communities.SetPhoto(ctx, userID, community.Community.ID, photo, int(r.clock.Now().Unix()))
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		return r.communityMutationUpdates(ctx, userID, view, changed), nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
+	}
+	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
 		return nil, err
 	}

@@ -1067,21 +1067,36 @@ func (r *Router) onStoriesGetPeerMaxIDs(ctx context.Context, id []tg.InputPeerCl
 		return nil, internalErr()
 	}
 	peers := make([]domain.Peer, 0, len(id))
-	for _, input := range id {
+	positions := make([]int, 0, len(id))
+	result := make([]tg.RecentStory, len(id))
+	for i, input := range id {
+		if _, community, err := r.maybeCommunityFromInputPeer(ctx, userID, input); err != nil {
+			return nil, err
+		} else if community {
+			// Communities are projected as channel peers in dialog lists, but do
+			// not own stories. Keep the batch positional by returning an empty
+			// recentStory at this index and resolve every ordinary peer normally.
+			continue
+		}
 		peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, input)
 		if err != nil {
 			return nil, err
 		}
 		peers = append(peers, peer)
+		positions = append(positions, i)
 	}
 	if r.deps.Stories == nil || userID == 0 {
-		return make([]tg.RecentStory, len(id)), nil
+		return result, nil
 	}
 	recent, err := r.deps.Stories.GetPeerMaxIDs(ctx, userID, peers, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, storyErr(err)
 	}
-	return tgRecentStories(alignStoryRecentByPeer(peers, recent)), nil
+	aligned := tgRecentStories(alignStoryRecentByPeer(peers, recent))
+	for i, position := range positions {
+		result[position] = aligned[i]
+	}
+	return result, nil
 }
 
 func alignStoryRecentByPeer(peers []domain.Peer, recent []domain.RecentStory) []domain.RecentStory {

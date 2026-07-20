@@ -538,6 +538,10 @@ base AS NOT MATERIALIZED (
       OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
     )
     AND (
+      NOT sqlc.arg(restrict_peer_ids)::boolean
+      OR (m.peer_type = 'user' AND m.peer_id = ANY(sqlc.arg(peer_ids)::bigint[]))
+    )
+    AND (
       sqlc.arg(query)::text = ''
       OR m.body ILIKE ('%' || sqlc.arg(query)::text || '%')
     )
@@ -799,6 +803,10 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
   )
   AND (
+    NOT sqlc.arg(restrict_peer_ids)::boolean
+    OR (m.peer_type = 'user' AND m.peer_id = ANY(sqlc.arg(peer_ids)::bigint[]))
+  )
+  AND (
     sqlc.arg(query)::text = ''
     OR m.body ILIKE ('%' || sqlc.arg(query)::text || '%')
   )
@@ -839,6 +847,10 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND (
     NOT sqlc.arg(has_peer)::boolean
     OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
+  )
+  AND (
+    NOT sqlc.arg(restrict_peer_ids)::boolean
+    OR (m.peer_type = 'user' AND m.peer_id = ANY(sqlc.arg(peer_ids)::bigint[]))
   )
   AND (
     sqlc.arg(query)::text = ''

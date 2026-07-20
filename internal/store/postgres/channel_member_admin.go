@@ -544,6 +544,40 @@ LIMIT $2`, userID, domain.MaxAdminedPublicChannels)
 	return out, nil
 }
 
+func (s *ChannelStore) ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
+	if userID == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT i.channel_id
+FROM user_channel_member_index i
+JOIN channels c ON c.id=i.channel_id
+WHERE i.user_id=$1
+  AND i.status='active'
+  AND i.role IN ('creator','admin')
+  AND NOT i.deleted
+  AND NOT c.monoforum
+  AND c.linked_community_id=0
+ORDER BY i.channel_id DESC
+LIMIT $2`, userID, domain.MaxCommunityPeers)
+	if err != nil {
+		return nil, fmt.Errorf("list community-linkable channels: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, domain.MaxCommunityPeers)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return listChannelsByIDsInOrder(ctx, s.db, ids)
+}
+
 // ListSendAsChannels lists the broadcast channels a user may post messages AS in groups
 // (channels.getSendAs candidates): channels where the user is the creator, or an admin holding
 // PostMessages rights. Mirrors ListStoryPostableChannels but is restricted to broadcast channels

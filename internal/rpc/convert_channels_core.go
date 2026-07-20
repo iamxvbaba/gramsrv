@@ -297,6 +297,12 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			return &tg.MessageActionSetChatWallPaper{Wallpaper: wallpaper}
 		}
 		return nil
+	case domain.ChannelActionChangeCommunity:
+		out := &tg.MessageActionChangeCommunity{}
+		if action.CommunityID != 0 {
+			out.SetCommunityID(action.CommunityID)
+		}
+		return out
 	default:
 		return nil
 	}
@@ -430,6 +436,9 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	// 内部关联行仍保留以便重新开启复用。
 	if ch.LinkedMonoforumID != 0 && ch.BroadcastMessagesAllowed {
 		out.SetLinkedMonoforumID(ch.LinkedMonoforumID)
+	}
+	if ch.LinkedCommunityID != 0 {
+		out.SetLinkedCommunityID(ch.LinkedCommunityID)
 	}
 	if ch.Username != "" {
 		out.SetUsername(ch.Username)
@@ -852,29 +861,30 @@ func domainChannelAdminRights(rights tg.ChatAdminRights) domain.ChannelAdminRigh
 
 func tgChatBannedRights(rights domain.ChannelBannedRights) tg.ChatBannedRights {
 	return tg.ChatBannedRights{
-		ViewMessages:    rights.ViewMessages,
-		SendMessages:    rights.SendMessages,
-		SendMedia:       rights.SendMedia,
-		SendStickers:    rights.SendStickers,
-		SendGifs:        rights.SendGifs,
-		SendGames:       rights.SendGames,
-		SendInline:      rights.SendInline,
-		EmbedLinks:      rights.EmbedLinks,
-		SendPolls:       rights.SendPolls,
-		ChangeInfo:      rights.ChangeInfo,
-		InviteUsers:     rights.InviteUsers,
-		PinMessages:     rights.PinMessages,
-		ManageTopics:    rights.ManageTopics,
-		SendPhotos:      rights.SendPhotos,
-		SendVideos:      rights.SendVideos,
-		SendRoundvideos: rights.SendRoundvideos,
-		SendAudios:      rights.SendAudios,
-		SendVoices:      rights.SendVoices,
-		SendDocs:        rights.SendDocs,
-		SendPlain:       rights.SendPlain,
-		EditRank:        rights.EditRank,
-		SendReactions:   rights.SendReactions,
-		UntilDate:       rights.UntilDate,
+		ViewMessages:      rights.ViewMessages,
+		SendMessages:      rights.SendMessages,
+		SendMedia:         rights.SendMedia,
+		SendStickers:      rights.SendStickers,
+		SendGifs:          rights.SendGifs,
+		SendGames:         rights.SendGames,
+		SendInline:        rights.SendInline,
+		EmbedLinks:        rights.EmbedLinks,
+		SendPolls:         rights.SendPolls,
+		ChangeInfo:        rights.ChangeInfo,
+		InviteUsers:       rights.InviteUsers,
+		PinMessages:       rights.PinMessages,
+		ManageTopics:      rights.ManageTopics,
+		SendPhotos:        rights.SendPhotos,
+		SendVideos:        rights.SendVideos,
+		SendRoundvideos:   rights.SendRoundvideos,
+		SendAudios:        rights.SendAudios,
+		SendVoices:        rights.SendVoices,
+		SendDocs:          rights.SendDocs,
+		SendPlain:         rights.SendPlain,
+		EditRank:          rights.EditRank,
+		SendReactions:     rights.SendReactions,
+		ManageLinkedPeers: rights.ManageLinkedPeers,
+		UntilDate:         rights.UntilDate,
 	}
 }
 
@@ -888,29 +898,30 @@ func tgDefaultChatBannedRights(rights domain.ChannelBannedRights) tg.ChatBannedR
 
 func domainChannelBannedRights(rights tg.ChatBannedRights) domain.ChannelBannedRights {
 	return domain.ChannelBannedRights{
-		ViewMessages:    rights.ViewMessages,
-		SendMessages:    rights.SendMessages,
-		SendMedia:       rights.SendMedia,
-		SendStickers:    rights.SendStickers,
-		SendGifs:        rights.SendGifs,
-		SendGames:       rights.SendGames,
-		SendInline:      rights.SendInline,
-		EmbedLinks:      rights.EmbedLinks,
-		SendPolls:       rights.SendPolls,
-		ChangeInfo:      rights.ChangeInfo,
-		InviteUsers:     rights.InviteUsers,
-		PinMessages:     rights.PinMessages,
-		ManageTopics:    rights.ManageTopics,
-		SendPhotos:      rights.SendPhotos,
-		SendVideos:      rights.SendVideos,
-		SendRoundvideos: rights.SendRoundvideos,
-		SendAudios:      rights.SendAudios,
-		SendVoices:      rights.SendVoices,
-		SendDocs:        rights.SendDocs,
-		SendPlain:       rights.SendPlain,
-		EditRank:        rights.EditRank,
-		SendReactions:   rights.SendReactions,
-		UntilDate:       rights.UntilDate,
+		ViewMessages:      rights.ViewMessages,
+		SendMessages:      rights.SendMessages,
+		SendMedia:         rights.SendMedia,
+		SendStickers:      rights.SendStickers,
+		SendGifs:          rights.SendGifs,
+		SendGames:         rights.SendGames,
+		SendInline:        rights.SendInline,
+		EmbedLinks:        rights.EmbedLinks,
+		SendPolls:         rights.SendPolls,
+		ChangeInfo:        rights.ChangeInfo,
+		InviteUsers:       rights.InviteUsers,
+		PinMessages:       rights.PinMessages,
+		ManageTopics:      rights.ManageTopics,
+		SendPhotos:        rights.SendPhotos,
+		SendVideos:        rights.SendVideos,
+		SendRoundvideos:   rights.SendRoundvideos,
+		SendAudios:        rights.SendAudios,
+		SendVoices:        rights.SendVoices,
+		SendDocs:          rights.SendDocs,
+		SendPlain:         rights.SendPlain,
+		EditRank:          rights.EditRank,
+		SendReactions:     rights.SendReactions,
+		ManageLinkedPeers: rights.ManageLinkedPeers,
+		UntilDate:         rights.UntilDate,
 	}
 }
 

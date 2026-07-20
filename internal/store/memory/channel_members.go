@@ -655,6 +655,31 @@ func (s *ChannelStore) ListAdminedPublicChannels(_ context.Context, userID int64
 	return append([]domain.Channel(nil), out...), nil
 }
 
+func (s *ChannelStore) ListCommunityLinkableChannels(_ context.Context, userID int64) ([]domain.Channel, error) {
+	if userID == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.Channel, 0)
+	for channelID, members := range s.members {
+		member := members[userID]
+		if member.Status != domain.ChannelMemberActive || !isChannelAdmin(member) {
+			continue
+		}
+		channel, ok := s.channels[channelID]
+		if !ok || channel.Deleted || channel.Monoforum || channel.LinkedCommunityID != 0 {
+			continue
+		}
+		out = append(out, channel)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if len(out) > domain.MaxCommunityPeers {
+		out = out[:domain.MaxCommunityPeers]
+	}
+	return append([]domain.Channel(nil), out...), nil
+}
+
 func (s *ChannelStore) ListStoryPostableChannels(_ context.Context, userID int64) ([]domain.Channel, error) {
 	if userID == 0 {
 		return nil, nil

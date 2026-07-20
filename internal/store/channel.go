@@ -36,6 +36,7 @@ type ChannelStore interface {
 	UpdateUsername(ctx context.Context, req domain.UpdateChannelUsernameRequest) (domain.Channel, error)
 	SetChannelVerified(ctx context.Context, channelID int64, verified bool) (domain.Channel, error)
 	ListAdminedPublicChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
+	ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListSendAsChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	// ResolvePublicChannelUsername resolves an active public channel/supergroup.

@@ -620,6 +620,7 @@ type ChannelsService interface {
 	CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error)
 	UpdateUsername(ctx context.Context, userID int64, req domain.UpdateChannelUsernameRequest) (domain.Channel, error)
 	ListAdminedPublicChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
+	ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListSendAsChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ResolvePublicUsername(ctx context.Context, userID int64, username string) (domain.Channel, bool, error)
@@ -731,6 +732,32 @@ type ChannelsService interface {
 	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error
 	InviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+}
+
+// CommunitiesService abstracts the Layer 228 Community aggregation domain.
+// Community containers never expose tg types and never own message/read/pts state.
+type CommunitiesService interface {
+	Create(ctx context.Context, userID int64, req domain.CreateCommunityRequest) (domain.CommunityView, error)
+	Get(ctx context.Context, userID, communityID int64) (domain.CommunityView, error)
+	GetMany(ctx context.Context, userID int64, ids []int64) ([]domain.CommunityView, error)
+	ListJoined(ctx context.Context, userID int64) ([]domain.CommunityView, error)
+	TogglePeerLink(ctx context.Context, userID int64, req domain.CommunityTogglePeerLinkRequest) (domain.CommunityTogglePeerLinkResult, error)
+	SetCollapsed(ctx context.Context, userID, communityID int64, collapsed bool) (domain.CommunityView, bool, error)
+	ListPeerLinkRequests(ctx context.Context, userID, communityID int64, offset string, limit int) (domain.CommunityPeerLinkRequestPage, error)
+	DecidePeerLinkRequest(ctx context.Context, userID, communityID int64, peer domain.Peer, reject bool, date int) (domain.CommunityTogglePeerLinkResult, error)
+	DecideAllPeerLinkRequests(ctx context.Context, userID, communityID int64, reject bool, date int) ([]domain.CommunityTogglePeerLinkResult, error)
+	ToggleParticipantBanned(ctx context.Context, userID, communityID, participantUserID int64, unban bool, date int) (domain.CommunityParticipantBanResult, error)
+	ParticipantJoinedChats(ctx context.Context, userID, communityID, participantUserID int64) (domain.CommunityParticipantJoinedChats, error)
+	Participants(ctx context.Context, userID, communityID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.CommunityParticipantList, error)
+	EditTitle(ctx context.Context, userID, communityID int64, title string) (domain.CommunityView, bool, error)
+	EditAbout(ctx context.Context, userID, communityID int64, about string) (domain.CommunityView, bool, error)
+	EditAdmin(ctx context.Context, userID int64, req domain.CommunityEditAdminRequest) (domain.CommunityView, bool, error)
+	EditDefaultBannedRights(ctx context.Context, userID, communityID int64, rights domain.ChannelBannedRights) (domain.CommunityView, bool, error)
+	SetPhoto(ctx context.Context, userID, communityID int64, photo *domain.Photo, date int) (domain.CommunityView, bool, error)
+	Delete(ctx context.Context, userID, communityID int64, date int) (domain.CommunityView, []domain.Peer, error)
+	SetPinned(ctx context.Context, userID, communityID int64, pinned bool) (bool, error)
+	ReorderPinned(ctx context.Context, userID int64, order []domain.Peer, force bool) (bool, error)
+	SearchScope(ctx context.Context, userID, communityID int64) (domain.CommunitySearchScope, error)
 }
 
 // FilesService 抽象文件上传分片、下载与媒体（document/photo）组装。
@@ -857,6 +884,7 @@ type Deps struct {
 	Translation          TranslationService
 	Stories              StoriesService
 	Channels             ChannelsService
+	Communities          CommunitiesService
 	Files                FilesService
 	Bots                 BotsService
 	Polls                PollsService

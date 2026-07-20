@@ -311,6 +311,7 @@ type BotApiUpdate struct {
 	CallbackInlineOwnerID    int64
 	CallbackInlineMessageID  int32
 	CallbackInlineAccessHash int64
+	EphemeralPayload         []byte
 }
 
 type BotApiUpdateState struct {
@@ -321,6 +322,21 @@ type BotApiUpdateState struct {
 	CursorInitialized bool
 	PollOwner         string
 	PollExpiresAt     pgtype.Timestamptz
+}
+
+type BotApiWebhook struct {
+	BotUserID         int64
+	Url               string
+	SecretToken       string
+	MaxConnections    int32
+	AllowedUpdates    []string
+	FailureCount      int32
+	LastErrorDate     int32
+	LastErrorMessage  string
+	NextAttemptAt     pgtype.Timestamptz
+	DeliveryOwner     string
+	DeliveryExpiresAt pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type BotApp struct {
@@ -487,6 +503,7 @@ type Channel struct {
 	LinkedMonoforumID             int64
 	Wallpaper                     []byte
 	Verified                      bool
+	LinkedCommunityID             int64
 }
 
 type ChannelAdminLogEvent struct {
@@ -844,6 +861,62 @@ type ChatlistMembership struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type Community struct {
+	ID                  int64
+	AccessHash          int64
+	CreatorUserID       int64
+	Title               string
+	About               string
+	DefaultBannedRights []byte
+	PhotoID             int64
+	PhotoDcID           int32
+	PhotoStripped       []byte
+	Date                int32
+	Deleted             bool
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type CommunityMember struct {
+	CommunityID int64
+	UserID      int64
+	Role        string
+	Status      string
+	AdminRights []byte
+	Rank        string
+	Date        int32
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type CommunityPeerLink struct {
+	CommunityID int64
+	PeerType    string
+	PeerID      int64
+	Visibility  string
+	CreatedBy   int64
+	Date        int32
+	CreatedAt   pgtype.Timestamptz
+}
+
+type CommunityPeerLinkRequest struct {
+	CommunityID int64
+	PeerType    string
+	PeerID      int64
+	RequestedBy int64
+	Visibility  string
+	Date        int32
+	CreatedAt   pgtype.Timestamptz
+}
+
+type CommunityUserState struct {
+	CommunityID int64
+	UserID      int64
+	Collapsed   bool
+	Pinned      bool
+	PinnedOrder int32
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Contact struct {
 	UserID            int64
 	ContactUserID     int64
@@ -1017,6 +1090,21 @@ type EncryptedStateEvent struct {
 type EncryptedStateEventDelivery struct {
 	EventID   int64
 	AuthKeyID int64
+}
+
+type EphemeralAbuseReport struct {
+	ID                 int64
+	ReporterUserID     int64
+	ChannelID          int64
+	EphemeralMessageID int32
+	SenderUserID       int64
+	ReceiverUserID     int64
+	ReportOption       string
+	ReportComment      string
+	CommentHash        []byte
+	PayloadHash        []byte
+	Evidence           []byte
+	CreatedAt          pgtype.Timestamptz
 }
 
 type FileBlob struct {
@@ -1785,6 +1873,18 @@ type StarGiftOffer struct {
 	ResolutionNotified bool
 }
 
+type StarGiftPatternDocumentRepair struct {
+	OldDocumentID int64
+	NewDocumentID int64
+	RepairedAt    pgtype.Timestamptz
+}
+
+type StarGiftPatternPreviewDocumentRepair struct {
+	OldDocumentID int64
+	NewDocumentID int64
+	RepairedAt    pgtype.Timestamptz
+}
+
 type StarGiftPrepaidUpgradeCommand struct {
 	PayerUserID  int64
 	CommandKey   string
@@ -2000,6 +2100,28 @@ type StoryView struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type TelesrvCollectiblePatternCorrectionEvent struct {
+	UserID int64
+	Pts    int32
+}
+
+type TelesrvPatternPreviewCorrectionEvent struct {
+	UserID int64
+	Pts    int32
+}
+
+type TelesrvPatternPreviewRepairedWearer struct {
+	UserID        int64
+	OldDocumentID int64
+	NewDocumentID int64
+}
+
+type TelesrvRepairedCollectibleWearer struct {
+	UserID        int64
+	OldDocumentID int64
+	NewDocumentID int64
+}
+
 type TempAuthKeyBinding struct {
 	TempAuthKeyID    int64
 	PermAuthKeyID    int64
@@ -2160,6 +2282,7 @@ type User struct {
 	AccountDeleteAt               pgtype.Timestamptz
 	EmojiStatusCollectibleID      *int64
 	EmojiStatusCollectible        []byte
+	LinkedCommunityID             int64
 }
 
 type UserBusinessProfile struct {
@@ -2298,13 +2421,17 @@ type WebviewCustomMethodQuery struct {
 }
 
 type WebviewRequestedButton struct {
-	WebappReqID string
-	BotUserID   int64
-	UserID      int64
-	ButtonID    int32
-	Text        string
-	PeerType    string
-	MaxQuantity int32
-	CreatedAt   pgtype.Timestamptz
-	ExpiresAt   pgtype.Timestamptz
+	WebappReqID       string
+	BotUserID         int64
+	UserID            int64
+	ButtonID          int32
+	Text              string
+	PeerType          string
+	MaxQuantity       int32
+	CreatedAt         pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	PeerFilter        []byte
+	NameRequested     bool
+	UsernameRequested bool
+	PhotoRequested    bool
 }

@@ -30,6 +30,7 @@ import (
 	botsapp "telesrv/internal/app/bots"
 	channelapp "telesrv/internal/app/channels"
 	chatlistsapp "telesrv/internal/app/chatlists"
+	communitiesapp "telesrv/internal/app/communities"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
 	ephemeralapp "telesrv/internal/app/ephemeral"
@@ -389,6 +390,7 @@ func run(logger *zap.Logger) error {
 		postgres.WithChannelMemberCache(channelMemberCache),
 		postgres.WithChannelDialogCache(channelDialogCache),
 		postgres.WithChannelBoostCache(channelBoostCache))
+	communityStore := postgres.NewCommunityStore(pool, channelIDAllocator, channelMessageIDAllocator)
 	pollStore := postgres.NewPollStore(pool)
 	mediaStore := postgres.NewMediaStore(pool)
 	// 头像投影缓存：所有 projector 共用一层短 TTL owner→头像缓存，消除高频「返回用户」RPC
@@ -716,6 +718,7 @@ func run(logger *zap.Logger) error {
 		channelapp.WithReadModelVersions(readModelVersionStore),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	chatlistsService := chatlistsapp.NewService(
 		chatlistStore,
@@ -807,6 +810,7 @@ func run(logger *zap.Logger) error {
 		Messages:             messagesService,
 		Translation:          translationService,
 		Channels:             channelsService,
+		Communities:          communitiesService,
 		Files:                filesService,
 		Bots:                 botsService,
 		Polls:                pollsapp.NewService(pollStore),
