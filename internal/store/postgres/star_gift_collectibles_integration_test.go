@@ -46,7 +46,7 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		}},
 		Patterns: []domain.StarGiftCollectibleAttribute{{
 			Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
-			Document: collectibleTestDocumentPtr(baseDocumentID+2, "pattern.tgs"),
+			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs"),
 		}},
 		Backdrops: []domain.StarGiftCollectibleAttribute{{
@@ -341,7 +341,7 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		}},
 		Patterns: []domain.StarGiftCollectibleAttribute{{
 			Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"),
+			Document: collectibleTestPatternDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs"),
 		}},
 		Backdrops: []domain.StarGiftCollectibleAttribute{{
@@ -448,7 +448,7 @@ func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 		}},
 		Patterns: []domain.StarGiftCollectibleAttribute{{
 			Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"),
+			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs"),
 		}},
 		Backdrops: []domain.StarGiftCollectibleAttribute{{
@@ -545,6 +545,13 @@ func collectibleTestDocument(id int64, name string) domain.Document {
 
 func collectibleTestDocumentPtr(id int64, name string) *domain.Document {
 	document := collectibleTestDocument(id, name)
+	return &document
+}
+
+func collectibleTestPatternDocumentPtr(id int64, name string) *domain.Document {
+	document := collectibleTestDocument(id, name)
+	document.Attributes[1] = domain.DocumentAttribute{Kind: domain.DocAttrCustomEmoji, Alt: "🎁", TextColor: true}
+	document.Thumbs = []domain.PhotoSize{{Kind: domain.PhotoSizeKindPath, Type: "j", Bytes: []byte{1}}}
 	return &document
 }
 

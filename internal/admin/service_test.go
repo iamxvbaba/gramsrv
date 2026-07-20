@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	stargiftapp "telesrv/internal/app/stargifts"
 	"telesrv/internal/domain"
 	"telesrv/internal/officialgifts"
+	"telesrv/internal/store/memory"
 )
 
 func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
@@ -801,6 +804,79 @@ func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testi
 		!bytes.Equal(catalog.SourceManifestSHA256, source.bundle.ManifestSHA256) {
 		t.Fatalf("official provenance was not preserved: %+v", catalog)
 	}
+}
+
+func TestImportOfficialStarGiftPublishesThroughRealGiftService(t *testing.T) {
+	const lottie = `{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":512,"h":512,"layers":[{"ty":4}],"assets":[]}`
+	document := func(id int64, name string) officialgifts.Document {
+		raw := []byte(lottie)
+		sum := sha256.Sum256(raw)
+		return officialgifts.Document{ID: id, FileName: name, SHA256: hex.EncodeToString(sum[:]), Data: raw}
+	}
+	permille := 1000
+	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
+		ManifestSHA256: bytesOf(0x24, sha256.Size),
+		SourceJSON:     []byte(`{"id":6003643167683903930,"title":"Party Sparkler"}`),
+		Gift: officialgifts.Gift{
+			ID: 6003643167683903930, Title: "Party Sparkler", Stars: 15, ConvertStars: 13,
+			UpgradeStars: 25, AvailabilityTotal: 400000, DocumentID: 1,
+		},
+		BaseDocument: document(1, "gift.json"),
+		Collectible: &officialgifts.CollectibleSet{
+			Models: []officialgifts.Model{{
+				Name: "Model", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+				Document: document(2, "model.json"),
+			}},
+			Patterns: []officialgifts.Pattern{{
+				Name: "Pattern", DocumentID: 3, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+				Document: document(3, "pattern.json"),
+			}},
+			Backdrops: []officialgifts.Backdrop{{
+				Name: "Backdrop", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+			}},
+		},
+	}}
+	ctx := context.Background()
+	giftService := stargiftapp.NewService(memory.NewStarGiftStore(), &adminGiftBlob{data: map[string][]byte{}}, 2)
+	svc := NewService(Dependencies{
+		Commands: newMemoryCommandRepo(), Gifts: giftService, OfficialGifts: source, Now: fixedNow,
+	})
+	req := ImportOfficialStarGiftRequest{
+		SourceGiftID: "6003643167683903930", Enabled: true, IncludeCollectible: true,
+		CommandMeta: CommandMeta{CommandID: "exec-official-real-service", Actor: "ops", Reason: "regression", DryRun: false},
+	}
+	result, err := svc.ImportOfficialStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("import official collectible through real service: result=%+v err=%v", result, err)
+	}
+	catalog, err := giftService.Catalog(ctx)
+	if err != nil || len(catalog) != 1 {
+		t.Fatalf("catalog=%+v err=%v, want one imported gift", catalog, err)
+	}
+	preview, ok, err := giftService.CollectiblePreview(ctx, catalog[0].ID)
+	if err != nil || !ok || len(preview.Models) != 1 || len(preview.Patterns) != 1 {
+		t.Fatalf("preview=%+v ok=%v err=%v", preview, ok, err)
+	}
+	model := preview.Models[0].Document
+	pattern := preview.Patterns[0].Document
+	if model == nil || !model.IsSticker() || model.IsCustomEmoji() || pattern == nil ||
+		pattern.IsSticker() || !pattern.IsCustomEmoji() || len(pattern.Thumbs) != 1 ||
+		pattern.Thumbs[0].Kind != domain.PhotoSizeKindPath || len(pattern.Thumbs[0].Bytes) == 0 {
+		t.Fatalf("materialized model=%+v pattern=%+v", model, pattern)
+	}
+}
+
+type adminGiftBlob struct{ data map[string][]byte }
+
+func (b *adminGiftBlob) Name() string { return "localfs" }
+func (b *adminGiftBlob) Put(_ context.Context, data []byte) (string, error) {
+	sum := sha256.Sum256(data)
+	key := hex.EncodeToString(sum[:])
+	b.data[key] = append([]byte(nil), data...)
+	return key, nil
+}
+func (b *adminGiftBlob) Get(_ context.Context, key string) ([]byte, error) {
+	return append([]byte(nil), b.data[key]...), nil
 }
 
 func bytesOf(value byte, count int) []byte {
