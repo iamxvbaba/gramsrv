@@ -1431,7 +1431,7 @@ func TestMessagesSearchGlobalExactLayerProfiles(t *testing.T) {
 	}
 }
 
-func TestMessagesSearchGlobalCommunityProjectionFailsClosedForLayer227(t *testing.T) {
+func TestMessagesSearchGlobalCommunityFieldIsAbsentFromLayer227Wire(t *testing.T) {
 	request := &tg.MessagesSearchGlobalRequest{
 		Q:          "scoped",
 		Filter:     &tg.InputMessagesFilterEmpty{},
@@ -1453,11 +1453,25 @@ func TestMessagesSearchGlobalCommunityProjectionFailsClosedForLayer227(t *testin
 	}
 
 	var body227 bin.Buffer
-	if err := tlprofile.EncodeObject(tlprofile.Profile227, request, &body227); err == nil {
-		t.Fatal("Layer 227 projection accepted a Layer 228-only community scope")
+	if err := tlprofile.EncodeObject(tlprofile.Profile227, request, &body227); err != nil {
+		t.Fatalf("encode Layer 227 searchGlobal: %v", err)
+	}
+	decoded, err := tlprofile.DecodeObject(tlprofile.Profile227, &bin.Buffer{Buf: body227.Copy()}, tlprofile.Limits{})
+	if err != nil {
+		t.Fatalf("decode Layer 227 searchGlobal: %v", err)
+	}
+	legacy, ok := decoded.(*tg.MessagesSearchGlobalRequest)
+	if !ok {
+		t.Fatalf("decoded Layer 227 request = %T", decoded)
+	}
+	if _, ok := legacy.GetCommunity(); ok {
+		t.Fatal("Layer 227 wire retained the Layer 228-only community scope")
+	}
+	if _, err := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System).AdmitLayer(tlprofile.Profile227, &body227, tlprofile.Limits{}); err != nil {
+		t.Fatalf("admit Layer 227 searchGlobal: %v", err)
 	}
 	if body227.Len() != 0 {
-		t.Fatalf("failed Layer 227 projection emitted %d partial bytes", body227.Len())
+		t.Fatalf("Layer 227 community-free admission left %d bytes", body227.Len())
 	}
 }
 
