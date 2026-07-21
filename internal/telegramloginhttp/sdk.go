@@ -30,7 +30,8 @@ function normalize(options){
   return {client_id:String(options.client_id),scope:scopes.join(' '),nonce:String(options.nonce||'').slice(0,1024),lang:String(options.lang||'').slice(0,16)};
 }
 function randomURL(bytes){var data=new Uint8Array(bytes);crypto.getRandomValues(data);var raw='';data.forEach(function(value){raw+=String.fromCharCode(value);});return btoa(raw).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
-function finish(flow,result){if(active!==flow){return;}active=null;if(flow.timer){clearInterval(flow.timer);}if(flow.listener){global.removeEventListener('message',flow.listener);}callback(flow.callback,result);}
+function finish(flow,result){if(active!==flow){return;}active=null;if(flow.timer){clearInterval(flow.timer);}if(flow.pollTimer){clearTimeout(flow.pollTimer);}if(flow.listener){global.removeEventListener('message',flow.listener);}callback(flow.callback,result);}
+async function pollFromParent(flow,token){if(active!==flow){return;}try{var body=new URLSearchParams({browser_token:token});var response=await fetch(provider+'/auth/status',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:body,credentials:'omit',cache:'no-store'});var data=await response.json();if(!response.ok){throw new Error(data.error||'request_failed');}if(data.status==='pending'){flow.pollTimer=setTimeout(function(){pollFromParent(flow,token);},1000);return;}finish(flow,data.id_token?build({result:data.id_token}):{error:data.error||data.status});}catch(error){finish(flow,{error:error.message||'login_failed'});}}
 function sendEvent(type,data){if(global.TelegramWebviewProxy&&typeof global.TelegramWebviewProxy.postEvent==='function'){global.TelegramWebviewProxy.postEvent(type,JSON.stringify(data||{}));}}
 async function receiveEvent(type,data){
   if(type==='oauth_supported'){inApp=true;return;}
@@ -44,7 +45,7 @@ async function receiveEvent(type,data){
 function begin(options,cb,isNormalized){
   var normalized;try{normalized=isNormalized?options:normalize(options);}catch(error){callback(cb,{error:error.message});return null;}
   if(active){callback(cb,{error:'login_in_progress'});return null;}
-  var flow={popup:null,callback:cb,listener:null,timer:null};active=flow;
+  var flow={popup:null,callback:cb,listener:null,timer:null,pollTimer:null,browserToken:''};active=flow;
   if(inApp){
     if(inAppPending){finish(flow,{error:'login_in_progress'});return null;}inAppPending=true;
     var inAppParams=new URLSearchParams({scope:normalized.scope,origin:global.location.origin,client_id:normalized.client_id,response_type:'id_token'});
@@ -53,8 +54,8 @@ function begin(options,cb,isNormalized){
   }
   var popup=global.open('about:blank','telegram-login-'+randomURL(8),'popup,width=550,height=650,resizable=yes,scrollbars=yes');
   if(!popup){finish(flow,{error:'popup_blocked'});return null;}flow.popup=popup;
-  flow.listener=function(event){if(event.origin!==provider||event.source!==popup){return;}var data=event.data;try{if(typeof data==='string'){data=JSON.parse(data);}}catch(_){return;}if(!data||data.event!=='auth_result'){return;}finish(flow,build(data));};
-  global.addEventListener('message',flow.listener);flow.timer=setInterval(function(){if(popup.closed){finish(flow,{error:'popup_closed'});}},500);
+  flow.listener=function(event){if(event.origin!==provider||event.source!==popup){return;}var data=event.data;try{if(typeof data==='string'){data=JSON.parse(data);}}catch(_){return;}if(!data){return;}if(data.event==='auth_pending'){var token=String(data.browser_token||'');if(!/^[A-Za-z0-9_-]{43}$/.test(token)){finish(flow,{error:'invalid_browser_token'});return;}if(flow.browserToken&&flow.browserToken!==token){finish(flow,{error:'invalid_browser_token'});return;}if(!flow.browserToken){flow.browserToken=token;pollFromParent(flow,token);}return;}if(data.event!=='auth_result'){return;}finish(flow,build(data));};
+  global.addEventListener('message',flow.listener);flow.timer=setInterval(function(){if(popup.closed&&!flow.browserToken){finish(flow,{error:'popup_closed'});}},500);
   try{var params=new URLSearchParams({client_id:normalized.client_id,redirect_uri:global.location.origin+global.location.pathname,response_type:'post_message',scope:normalized.scope});if(normalized.nonce){params.set('nonce',normalized.nonce);}if(normalized.lang){params.set('lang',normalized.lang);}popup.location.replace(provider+'/auth?'+params.toString());}
   catch(error){try{popup.close();}catch(_){}finish(flow,{error:error.message||'login_failed'});}
   return popup;

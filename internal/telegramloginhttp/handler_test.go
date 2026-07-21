@@ -494,15 +494,50 @@ func TestJavaScriptPostMessageFlowReturnsStableDirectIDToken(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("JS authorize status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
+	if got := recorder.Header().Get("Cross-Origin-Opener-Policy"); got != "unsafe-none" {
+		t.Fatalf("JS authorize COOP=%q, want unsafe-none for cross-origin opener handoff", got)
+	}
 	body := recorder.Body.String()
 	tokenMatch := regexp.MustCompile(`const token=("[^"]+")`).FindStringSubmatch(body)
 	deepLinkMatch := regexp.MustCompile(`href="([^"]+)"`).FindStringSubmatch(body)
 	if len(tokenMatch) != 2 || len(deepLinkMatch) != 2 {
 		t.Fatalf("JS authorize artifacts missing: %s", body)
 	}
+	if !strings.Contains(body, "auth_pending") || !strings.Contains(body, "browser_token") {
+		t.Fatalf("JS authorize page does not hand parent polling off before the app round-trip: %s", body)
+	}
 	var browserToken string
 	if err := json.Unmarshal([]byte(tokenMatch[1]), &browserToken); err != nil {
 		t.Fatal(err)
+	}
+	requestStatus := func(origin string) *httptest.ResponseRecorder {
+		t.Helper()
+		statusRecorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/auth/status", strings.NewReader(url.Values{"browser_token": {browserToken}}.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		f.handler.ServeHTTP(statusRecorder, request)
+		return statusRecorder
+	}
+	attackerStatus := requestStatus("https://attacker.example")
+	if attackerStatus.Code != http.StatusForbidden || attackerStatus.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("attacker parent poll status=%d headers=%v body=%s", attackerStatus.Code, attackerStatus.Header(), attackerStatus.Body.String())
+	}
+	for _, origin := range []string{"https://rp.example", "https://oauth.telesrv.test"} {
+		pendingStatus := requestStatus(origin)
+		if pendingStatus.Code != http.StatusOK || !strings.Contains(pendingStatus.Body.String(), `"status":"pending"`) {
+			t.Fatalf("pending parent poll origin=%q status=%d body=%s", origin, pendingStatus.Code, pendingStatus.Body.String())
+		}
+		allowedOrigin := pendingStatus.Header().Get("Access-Control-Allow-Origin")
+		if origin == "https://rp.example" {
+			if allowedOrigin != origin || !strings.Contains(pendingStatus.Header().Get("Vary"), "Origin") {
+				t.Fatalf("RP parent poll origin=%q headers=%v", origin, pendingStatus.Header())
+			}
+		} else if allowedOrigin != "" {
+			t.Fatalf("same-origin popup unexpectedly received CORS header: %v", pendingStatus.Header())
+		}
 	}
 	deepLink := html.UnescapeString(deepLinkMatch[1])
 	pending, err := f.service.RequestByDeepLink(context.Background(), deepLink)
@@ -520,12 +555,12 @@ func TestJavaScriptPostMessageFlowReturnsStableDirectIDToken(t *testing.T) {
 	}
 	poll := func() map[string]string {
 		t.Helper()
-		statusRecorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/auth/status", strings.NewReader(url.Values{"browser_token": {browserToken}}.Encode()))
-		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		f.handler.ServeHTTP(statusRecorder, request)
+		statusRecorder := requestStatus("https://rp.example")
 		if statusRecorder.Code != http.StatusOK {
 			t.Fatalf("JS status=%d body=%s", statusRecorder.Code, statusRecorder.Body.String())
+		}
+		if statusRecorder.Header().Get("Access-Control-Allow-Origin") != "https://rp.example" {
+			t.Fatalf("JS status CORS headers=%v", statusRecorder.Header())
 		}
 		var result map[string]string
 		if err := json.Unmarshal(statusRecorder.Body.Bytes(), &result); err != nil {
@@ -660,6 +695,9 @@ func TestTelegramLoginJavaScriptIsCacheableAndConditional(t *testing.T) {
 	if first.Code != http.StatusOK || first.Header().Get("ETag") == "" ||
 		!strings.Contains(first.Body.String(), "Telegram.Login") ||
 		!strings.Contains(first.Body.String(), "auth_result") ||
+		!strings.Contains(first.Body.String(), "auth_pending") ||
+		!strings.Contains(first.Body.String(), "pollFromParent") ||
+		!strings.Contains(first.Body.String(), "/auth/status") ||
 		!strings.Contains(first.Body.String(), "oauth_supported") ||
 		!strings.Contains(first.Body.String(), "/inapp?") ||
 		!strings.Contains(first.Body.String(), "data-client-id") {

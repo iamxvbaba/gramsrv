@@ -166,9 +166,16 @@ var authorizationPage = template.Must(template.New("telegram-login").Parse(`<!do
 <title>Log in with {{.AppName}}</title><style>
 :root{color-scheme:light dark}body{font:16px/1.45 system-ui,sans-serif;margin:0;background:#17212b;color:#fff}.card{max-width:460px;margin:10vh auto;padding:28px;border-radius:18px;background:#202b36;box-shadow:0 16px 48px #0006}h1{margin:.1em 0 .5em}.button{display:block;text-align:center;margin:24px 0;padding:13px 18px;border-radius:11px;background:#2aabee;color:#fff;text-decoration:none;font-weight:700}.match{text-align:center;margin:22px 0;padding:18px;border-radius:14px;background:#17212b}.match p{margin:0 0 8px}.match-code{font-size:44px;line-height:1.2}.muted{color:#a9b5c1;font-size:14px}.error{color:#ff8d8d}</style></head>
 <body><main class="card"><h1>Log in with {{.AppName}}</h1><p>Open the {{.AppName}} app and approve this request. Keep this page open.</p><a class="button" href="{{.DeepLink}}">Open {{.AppName}}</a>{{if .MatchCode}}<section class="match" aria-labelledby="match-title"><p id="match-title">When prompted, select this emoji in {{.AppName}}:</p><div id="match-code" class="match-code" role="img" aria-label="Matching emoji">{{.MatchCode}}</div></section>{{end}}<p id="status" class="muted">Waiting for approval…</p><p class="muted">This request expires at {{.ExpiresAt}}.</p></main>
-<script nonce="{{.CSPNonce}}">const token={{.BrowserToken}},responseType={{.ResponseType}},targetOrigin={{.TargetOrigin}};const statusNode=document.getElementById('status');function deliver(data){if(!window.opener||!targetOrigin)throw new Error('missing_opener');const payload=data.id_token?{event:'auth_result',result:data.id_token}:{event:'auth_result',error:data.error||data.status};window.opener.postMessage(payload,targetOrigin);window.close()}async function poll(){try{const body=new URLSearchParams({browser_token:token});const response=await fetch('/auth/status',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,cache:'no-store'});const data=await response.json();if(!response.ok){throw new Error(data.error||'request_failed')}if(data.status==='pending'){setTimeout(poll,1000);return}if(responseType==='post_message'){deliver(data);return}if(data.redirect_url){location.replace(data.redirect_url);return}throw new Error('invalid_response')}catch(error){statusNode.className='error';statusNode.textContent='Login status unavailable. Please restart the login flow.'}}poll();</script></body></html>`))
+<script nonce="{{.CSPNonce}}">const token={{.BrowserToken}},responseType={{.ResponseType}},targetOrigin={{.TargetOrigin}};const statusNode=document.getElementById('status');function notifyPending(){if(responseType!=='post_message'||!window.opener||!targetOrigin)return;try{window.opener.postMessage({event:'auth_pending',browser_token:token},targetOrigin)}catch(_){}}function deliver(data){if(!window.opener||!targetOrigin){statusNode.className='muted';statusNode.textContent=data.id_token?'Login approved. Return to the original login tab.':'Login finished. Return to the original login tab.';return}const payload=data.id_token?{event:'auth_result',result:data.id_token}:{event:'auth_result',error:data.error||data.status};window.opener.postMessage(payload,targetOrigin);window.close()}async function poll(){try{const body=new URLSearchParams({browser_token:token});const response=await fetch('/auth/status',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body,cache:'no-store'});const data=await response.json();if(!response.ok){throw new Error(data.error||'request_failed')}if(data.status==='pending'){setTimeout(poll,1000);return}if(responseType==='post_message'){deliver(data);return}if(data.redirect_url){location.replace(data.redirect_url);return}throw new Error('invalid_response')}catch(error){statusNode.className='error';statusNode.textContent='Login status unavailable. Please restart the login flow.'}}notifyPending();poll();</script></body></html>`))
 
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
+	// Authorization popups must retain their cross-origin opener long enough to
+	// hand the registered RP a short-lived browser token. The default
+	// same-origin-allow-popups policy isolates a document that was itself opened
+	// cross-origin, so it breaks the exact-origin postMessage flow before the
+	// external Telegram app is launched. Other provider endpoints keep the
+	// stricter default policy.
+	w.Header().Set("Cross-Origin-Opener-Policy", "unsafe-none")
 	clientIP := h.requestIP(r)
 	if !h.allow(w, r, "authorize", clientIP, 30, time.Minute) {
 		return
@@ -449,6 +456,9 @@ func (h *Handler) authorizationStatus(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid browser request")
 		return
 	}
+	if !h.authorizeStatusOrigin(w, r, request) {
+		return
+	}
 	switch request.Status {
 	case domain.TelegramLoginRequestPending:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "pending"})
@@ -489,6 +499,29 @@ func (h *Handler) authorizationStatus(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "invalid browser request")
 	}
+}
+
+// authorizeStatusOrigin keeps the original same-origin popup poll working and
+// permits the registered relying-party origin to take over polling when a
+// mobile browser drops window.opener during an external app round-trip. The
+// short-lived browser token remains a bearer credential, but browser-readable
+// responses are exposed only to the exact origin persisted on the request.
+func (h *Handler) authorizeStatusOrigin(w http.ResponseWriter, r *http.Request, request domain.TelegramLoginRequest) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	issuerOrigin, err := loginapp.NormalizeWebOrigin(h.tokens.Issuer(), h.allowLoopbackHTTP)
+	if err == nil && origin == issuerOrigin {
+		return true
+	}
+	if request.ResponseType == "post_message" && origin == request.Origin {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+		return true
+	}
+	writeOAuthError(w, http.StatusForbidden, "access_denied", "browser origin is not authorized")
+	return false
 }
 
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
