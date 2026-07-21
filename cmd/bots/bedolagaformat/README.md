@@ -89,8 +89,8 @@ enable
 
 `/setlogin` 首次创建 client 时只展示一次 OIDC Client Secret；不要写进仓库。可用
 `/logininfo` 查看 Client ID 和登记结果，或用 `/resetloginsecret` 轮换 secret。
-loopback HTTP 仅应配合 telesrv 的显式开发开关使用；测试部署/生产必须换成精确
-HTTPS origin。
+使用 HTTP 域名/IP 时，在 telesrv 配置 `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP=true`；
+demo 会接受任意合法 HTTP(S) issuer/public origin，不再限制为 loopback。
 
 把一次性 secret 和 Client ID 放入进程环境，再启动：
 

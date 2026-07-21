@@ -18,8 +18,9 @@ func TestNormalizeRedirectURIIsExactAndRejectsOpenRedirectShapes(t *testing.T) {
 	}{
 		{name: "https canonical", raw: "https://EXAMPLE.com:443/callback?tenant=one", want: "https://example.com/callback?tenant=one", valid: true},
 		{name: "idna", raw: "https://例子.测试/callback", want: "https://xn--fsqu00a.xn--0zwm56d/callback", valid: true},
-		{name: "loopback dev", raw: "http://127.0.0.1:8080/callback", allowHTTP: true, want: "http://127.0.0.1:8080/callback", valid: true},
-		{name: "http production", raw: "http://example.com/callback"},
+		{name: "http hostname enabled", raw: "http://example.com:8080/callback", allowHTTP: true, want: "http://example.com:8080/callback", valid: true},
+		{name: "http ipv4 enabled", raw: "http://192.0.2.25:3000/callback", allowHTTP: true, want: "http://192.0.2.25:3000/callback", valid: true},
+		{name: "http disabled", raw: "http://example.com/callback"},
 		{name: "userinfo", raw: "https://user@example.com/callback"},
 		{name: "fragment", raw: "https://example.com/callback#token"},
 		{name: "reserved code", raw: "https://example.com/callback?code=attacker"},
@@ -64,19 +65,19 @@ func TestNormalizeWebOriginRejectsPathAndQuery(t *testing.T) {
 	}
 }
 
-func TestNormalizeLoopbackIPv6PreservesURLBrackets(t *testing.T) {
-	origin, err := NormalizeWebOrigin("http://[0:0:0:0:0:0:0:1]:80/", true)
+func TestNormalizeHTTPIPv6PreservesURLBrackets(t *testing.T) {
+	origin, err := NormalizeWebOrigin("http://[2001:db8::25]:80/", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if origin != "http://[0:0:0:0:0:0:0:1]" {
+	if origin != "http://[2001:db8::25]" {
 		t.Fatalf("origin=%q", origin)
 	}
-	redirect, domainName, err := NormalizeRedirectURI("http://[::1]/callback", true)
+	redirect, domainName, err := NormalizeRedirectURI("http://[2001:db8::26]:3000/callback", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if redirect != "http://[::1]/callback" || domainName != "::1" {
+	if redirect != "http://[2001:db8::26]:3000/callback" || domainName != "2001:db8::26" {
 		t.Fatalf("redirect=%q domain=%q", redirect, domainName)
 	}
 }

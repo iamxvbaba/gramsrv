@@ -40,18 +40,18 @@ type Config struct {
 	AppName           string
 	Logger            *zap.Logger
 	TrustedProxyCIDRs []string
-	AllowLoopbackHTTP bool
+	AllowHTTP         bool
 }
 
 type Handler struct {
-	service           *loginapp.Service
-	tokens            *loginapp.IDTokenIssuer
-	appName           string
-	logger            *zap.Logger
-	limiter           RateLimiter
-	trustedProxies    []netip.Prefix
-	allowLoopbackHTTP bool
-	mux               *http.ServeMux
+	service        *loginapp.Service
+	tokens         *loginapp.IDTokenIssuer
+	appName        string
+	logger         *zap.Logger
+	limiter        RateLimiter
+	trustedProxies []netip.Prefix
+	allowHTTP      bool
+	mux            *http.ServeMux
 }
 
 type RateLimiter interface {
@@ -76,7 +76,7 @@ func NewHandler(cfg Config) (*Handler, error) {
 		}
 		trustedProxies = append(trustedProxies, prefix.Masked())
 	}
-	h := &Handler{service: cfg.Service, tokens: cfg.Tokens, appName: strings.TrimSpace(cfg.AppName), logger: cfg.Logger, limiter: cfg.Limiter, trustedProxies: trustedProxies, allowLoopbackHTTP: cfg.AllowLoopbackHTTP}
+	h := &Handler{service: cfg.Service, tokens: cfg.Tokens, appName: strings.TrimSpace(cfg.AppName), logger: cfg.Logger, limiter: cfg.Limiter, trustedProxies: trustedProxies, allowHTTP: cfg.AllowHTTP}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", h.discovery)
 	mux.HandleFunc("GET /.well-known/jwks.json", h.jwks)
@@ -333,7 +333,7 @@ func (h *Handler) inApp(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_response_type", "only id_token is supported")
 		return
 	}
-	origin, err := loginapp.NormalizeWebOrigin(values["origin"], h.allowLoopbackHTTP)
+	origin, err := loginapp.NormalizeWebOrigin(values["origin"], h.allowHTTP)
 	if err != nil || r.Header.Get("Origin") != origin {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "in-app origin is invalid")
 		return
@@ -511,7 +511,7 @@ func (h *Handler) authorizeStatusOrigin(w http.ResponseWriter, r *http.Request, 
 	if origin == "" {
 		return true
 	}
-	issuerOrigin, err := loginapp.NormalizeWebOrigin(h.tokens.Issuer(), h.allowLoopbackHTTP)
+	issuerOrigin, err := loginapp.NormalizeWebOrigin(h.tokens.Issuer(), h.allowHTTP)
 	if err == nil && origin == issuerOrigin {
 		return true
 	}

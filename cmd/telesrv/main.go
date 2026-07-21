@@ -366,7 +366,7 @@ func run(logger *zap.Logger) error {
 		}
 		telegramLoginService, err = telegramloginapp.NewService(postgres.NewTelegramLoginStore(pool), codeSealer, telegramloginapp.Config{
 			Issuer: cfg.TelegramLoginIssuer, AppScheme: cfg.PublicAppScheme,
-			AllowLoopbackHTTP:          cfg.TelegramLoginAllowLoopbackHTTP,
+			AllowHTTP:                  cfg.TelegramLoginAllowHTTP,
 			ClientSecretPepper:         clientSecretPepper,
 			SupportedSigningAlgorithms: signingKeys.ActiveAlgorithms(),
 			RequestTTL:                 cfg.TelegramLoginRequestTTL, CodeTTL: cfg.TelegramLoginCodeTTL,
@@ -375,7 +375,7 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("initialize telegram login service: %w", err)
 		}
 		telegramLoginIDTokens, err = telegramloginapp.NewIDTokenIssuer(signingKeys, telegramloginapp.IDTokenIssuerConfig{
-			Issuer: cfg.TelegramLoginIssuer, TTL: cfg.TelegramLoginIDTokenTTL,
+			Issuer: cfg.TelegramLoginIssuer, TTL: cfg.TelegramLoginIDTokenTTL, AllowHTTP: cfg.TelegramLoginAllowHTTP,
 		})
 		if err != nil {
 			return fmt.Errorf("initialize telegram login ID-token issuer: %w", err)
@@ -393,7 +393,7 @@ func run(logger *zap.Logger) error {
 			Service: telegramLoginService, Tokens: telegramLoginIDTokens,
 			Limiter: redisstore.NewRateLimiter(rdb), AppName: cfg.PublicAppName,
 			Logger: logger.Named("telegram-login-http"), TrustedProxyCIDRs: cfg.TelegramLoginTrustedProxyCIDRs,
-			AllowLoopbackHTTP: cfg.TelegramLoginAllowLoopbackHTTP,
+			AllowHTTP: cfg.TelegramLoginAllowHTTP,
 		})
 		if err != nil {
 			return fmt.Errorf("initialize telegram login HTTP provider: %w", err)

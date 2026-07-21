@@ -56,10 +56,10 @@ python .\cmd\bots\aiogramecho\echo.py `
 ## Webhook 模式
 
 telesrv 现在会持久化 webhook 配置，通过跨实例租约投递，并且只在目标返回 2xx
-后推进 `update_id`。aiogram 可监听本机 HTTP，由 Caddy/Nginx/Tunnel 提供公网 HTTPS：
+后推进 `update_id`。aiogram 可直接登记 HTTP/HTTPS 域名或 IP，也可以由 Caddy/Nginx/Tunnel 提供公网 HTTPS：
 
 ```powershell
-$env:TELESRV_BOT_WEBHOOK_URL = "https://bot.example.com/webhook"
+$env:TELESRV_BOT_WEBHOOK_URL = "http://192.0.2.25:8080/webhook"
 $env:TELESRV_BOT_WEBHOOK_SECRET = "replace_with_a_random_secret"
 python .\cmd\bots\aiogramecho\echo.py `
   --mode webhook `
@@ -69,8 +69,8 @@ python .\cmd\bots\aiogramecho\echo.py `
   --drop-pending
 ```
 
-公网 URL 必须是 HTTPS，端口限 Telegram 标准的 443/80/88/8443；本机监听地址
-可以是 HTTP，因为 TLS 通常在反向代理终止。`secret_token` 会由 telesrv 放入
+Webhook URL 可使用任意合法 HTTP/HTTPS 域名或 IP 及 `1..65535` 端口；本机监听地址
+也可以直接使用 HTTP。`secret_token` 会由 telesrv 放入
 `X-Telegram-Bot-Api-Secret-Token`，aiogram 会自动校验。若希望进程退出时删除配置，
 再加 `--delete-webhook-on-exit`；默认保留配置，以免普通重启造成更新丢窗。
 

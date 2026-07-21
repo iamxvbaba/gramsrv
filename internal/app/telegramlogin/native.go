@@ -45,7 +45,7 @@ func normalizeNativeVerificationID(platform domain.TelegramLoginNativePlatform, 
 // non-web custom scheme registered for a native application. Query and
 // fragment components are forbidden because OAuth response fields are
 // appended by the provider and must not collide with application input.
-func NormalizeNativeCallbackURI(raw string, allowLoopbackHTTP bool) (string, error) {
+func NormalizeNativeCallbackURI(raw string, allowHTTP bool) (string, error) {
 	if raw == "" || len(raw) > maxTelegramLoginURLLength || raw != strings.TrimSpace(raw) || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 		return "", domain.ErrTelegramLoginURLInvalid
 	}
@@ -54,7 +54,7 @@ func NormalizeNativeCallbackURI(raw string, allowLoopbackHTTP bool) (string, err
 		return "", domain.ErrTelegramLoginURLInvalid
 	}
 	if strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https") {
-		normalized, _, err := NormalizeRedirectURI(raw, allowLoopbackHTTP)
+		normalized, _, err := NormalizeRedirectURI(raw, allowHTTP)
 		return normalized, err
 	}
 	scheme := strings.ToLower(u.Scheme)

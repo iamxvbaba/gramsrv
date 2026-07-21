@@ -49,8 +49,14 @@ class LoginDemoHelpersTest(unittest.TestCase):
             demo.normalize_web_base("http://127.0.0.1:3000", name="RP"),
             "http://127.0.0.1:3000",
         )
-        with self.assertRaises(ValueError):
-            demo.normalize_web_base("http://rp.example", name="RP")
+        self.assertEqual(
+            demo.normalize_web_base("http://192.0.2.25:3000", name="RP"),
+            "http://192.0.2.25:3000",
+        )
+        self.assertEqual(
+            demo.normalize_web_base("http://rp.example:18080", name="RP"),
+            "http://rp.example:18080",
+        )
         with self.assertRaises(ValueError):
             demo.normalize_web_base("https://rp.example/callback", name="RP")
         self.assertEqual(demo.parse_listen("127.0.0.1:3000"), ("127.0.0.1", 3000))

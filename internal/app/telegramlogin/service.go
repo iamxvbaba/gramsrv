@@ -36,7 +36,7 @@ var telegramLoginMatchCodePool = []string{
 type Config struct {
 	Issuer                     string
 	AppScheme                  string
-	AllowLoopbackHTTP          bool
+	AllowHTTP                  bool
 	ClientSecretPepper         []byte
 	SupportedSigningAlgorithms []domain.TelegramLoginSigningAlgorithm
 	RequestTTL                 time.Duration
@@ -49,7 +49,7 @@ type Service struct {
 	sealer              *CodeSealer
 	issuer              string
 	appScheme           string
-	allowLoopbackHTTP   bool
+	allowHTTP           bool
 	clientSecretPepper  []byte
 	signingAlgorithms   []domain.TelegramLoginSigningAlgorithm
 	signingAlgorithmSet map[domain.TelegramLoginSigningAlgorithm]struct{}
@@ -62,7 +62,7 @@ func NewService(loginStore store.TelegramLoginStore, sealer *CodeSealer, cfg Con
 	if loginStore == nil || sealer == nil || len(cfg.ClientSecretPepper) < 32 {
 		return nil, fmt.Errorf("telegram login dependencies are incomplete")
 	}
-	issuer, err := NormalizeWebOrigin(cfg.Issuer, cfg.AllowLoopbackHTTP)
+	issuer, err := NormalizeWebOrigin(cfg.Issuer, cfg.AllowHTTP)
 	if err != nil {
 		return nil, fmt.Errorf("telegram login issuer: %w", err)
 	}
@@ -93,7 +93,7 @@ func NewService(loginStore store.TelegramLoginStore, sealer *CodeSealer, cfg Con
 	}
 	return &Service{
 		store: loginStore, sealer: sealer, issuer: issuer, appScheme: strings.ToLower(cfg.AppScheme),
-		allowLoopbackHTTP:   cfg.AllowLoopbackHTTP,
+		allowHTTP:           cfg.AllowHTTP,
 		clientSecretPepper:  append([]byte(nil), cfg.ClientSecretPepper...),
 		signingAlgorithms:   append([]domain.TelegramLoginSigningAlgorithm(nil), cfg.SupportedSigningAlgorithms...),
 		signingAlgorithmSet: signingAlgorithmSet,
@@ -248,9 +248,9 @@ func (s *Service) AddAllowedURL(ctx context.Context, botUserID int64, kind domai
 	var err error
 	switch kind {
 	case domain.TelegramLoginAllowedWebOrigin:
-		normalized, err = NormalizeWebOrigin(raw, s.allowLoopbackHTTP)
+		normalized, err = NormalizeWebOrigin(raw, s.allowHTTP)
 	case domain.TelegramLoginAllowedRedirectURI:
-		normalized, _, err = NormalizeRedirectURI(raw, s.allowLoopbackHTTP)
+		normalized, _, err = NormalizeRedirectURI(raw, s.allowHTTP)
 	default:
 		err = domain.ErrTelegramLoginURLInvalid
 	}
@@ -267,9 +267,9 @@ func (s *Service) DeleteAllowedURL(ctx context.Context, botUserID int64, kind do
 	var err error
 	switch kind {
 	case domain.TelegramLoginAllowedWebOrigin:
-		normalized, err = NormalizeWebOrigin(raw, s.allowLoopbackHTTP)
+		normalized, err = NormalizeWebOrigin(raw, s.allowHTTP)
 	case domain.TelegramLoginAllowedRedirectURI:
-		normalized, _, err = NormalizeRedirectURI(raw, s.allowLoopbackHTTP)
+		normalized, _, err = NormalizeRedirectURI(raw, s.allowHTTP)
 	default:
 		err = domain.ErrTelegramLoginURLInvalid
 	}
@@ -311,7 +311,7 @@ func (s *Service) AddNativeApp(ctx context.Context, botUserID int64, platform do
 	if err != nil {
 		return domain.TelegramLoginNativeApp{}, err
 	}
-	callbackURI, err = NormalizeNativeCallbackURI(callbackURI, s.allowLoopbackHTTP)
+	callbackURI, err = NormalizeNativeCallbackURI(callbackURI, s.allowHTTP)
 	if err != nil {
 		return domain.TelegramLoginNativeApp{}, err
 	}
@@ -335,7 +335,7 @@ func (s *Service) DeleteNativeApp(ctx context.Context, botUserID, appID int64) (
 }
 
 func (s *Service) matchNativeApp(ctx context.Context, botUserID int64, platform domain.TelegramLoginNativePlatform, rawCallbackURI string) (domain.TelegramLoginNativeApp, string, bool, error) {
-	callbackURI, err := NormalizeNativeCallbackURI(rawCallbackURI, s.allowLoopbackHTTP)
+	callbackURI, err := NormalizeNativeCallbackURI(rawCallbackURI, s.allowHTTP)
 	if err != nil {
 		return domain.TelegramLoginNativeApp{}, "", false, nil
 	}
@@ -362,7 +362,7 @@ func (s *Service) ValidateMessageButton(ctx context.Context, botUserID int64, ra
 	if !found || !client.Enabled {
 		return "", "", domain.ErrTelegramLoginClientDisabled
 	}
-	normalizedURL, domainName, err = NormalizeRedirectURI(rawURL, s.allowLoopbackHTTP)
+	normalizedURL, domainName, err = NormalizeRedirectURI(rawURL, s.allowHTTP)
 	if err != nil {
 		return "", "", err
 	}
@@ -370,7 +370,7 @@ func (s *Service) ValidateMessageButton(ctx context.Context, botUserID int64, ra
 	if err != nil {
 		return "", "", domain.ErrTelegramLoginURLInvalid
 	}
-	origin, err := NormalizeWebOrigin(u.Scheme+"://"+u.Host, s.allowLoopbackHTTP)
+	origin, err := NormalizeWebOrigin(u.Scheme+"://"+u.Host, s.allowHTTP)
 	if err != nil {
 		return "", "", err
 	}
@@ -415,7 +415,7 @@ func (s *Service) AuthorizeMessageButton(ctx context.Context, params domain.Tele
 	if err != nil {
 		return domain.TelegramLoginMessageButtonResult{}, domain.ErrTelegramLoginURLInvalid
 	}
-	origin, err := NormalizeWebOrigin(u.Scheme+"://"+u.Host, s.allowLoopbackHTTP)
+	origin, err := NormalizeWebOrigin(u.Scheme+"://"+u.Host, s.allowHTTP)
 	if err != nil {
 		return domain.TelegramLoginMessageButtonResult{}, err
 	}
@@ -552,7 +552,7 @@ func (s *Service) CreateAuthorization(ctx context.Context, params CreateAuthoriz
 	}
 	var allowed, isApp bool
 	var nativeApp domain.TelegramLoginNativeApp
-	redirectURI, domainName, redirectErr := NormalizeRedirectURI(params.RedirectURI, s.allowLoopbackHTTP)
+	redirectURI, domainName, redirectErr := NormalizeRedirectURI(params.RedirectURI, s.allowHTTP)
 	if params.ResponseType == "code" && redirectErr == nil && !params.NativePlatform.Valid() {
 		allowed, err = s.store.IsTelegramLoginURLAllowed(ctx, client.BotUserID, domain.TelegramLoginAllowedRedirectURI, redirectURI)
 		if err != nil {
@@ -603,14 +603,14 @@ func (s *Service) CreateAuthorization(ctx context.Context, params CreateAuthoriz
 			u, _ := url.Parse(redirectURI)
 			origin = u.Scheme + "://" + u.Host
 		}
-		origin, err = NormalizeWebOrigin(origin, s.allowLoopbackHTTP)
+		origin, err = NormalizeWebOrigin(origin, s.allowHTTP)
 		if err != nil {
 			return CreatedAuthorization{}, err
 		}
 	}
 	if params.ResponseType == "post_message" {
 		redirectURL, _ := url.Parse(redirectURI)
-		redirectOrigin, redirectOriginErr := NormalizeWebOrigin(redirectURL.Scheme+"://"+redirectURL.Host, s.allowLoopbackHTTP)
+		redirectOrigin, redirectOriginErr := NormalizeWebOrigin(redirectURL.Scheme+"://"+redirectURL.Host, s.allowHTTP)
 		if redirectOriginErr != nil || redirectOrigin != origin {
 			return CreatedAuthorization{}, domain.ErrTelegramLoginOriginNotAllowed
 		}
@@ -627,7 +627,7 @@ func (s *Service) CreateAuthorization(ctx context.Context, params CreateAuthoriz
 		if isApp {
 			return CreatedAuthorization{}, domain.ErrTelegramLoginOriginNotAllowed
 		}
-		inAppOrigin, err = NormalizeWebOrigin(params.InAppOrigin, s.allowLoopbackHTTP)
+		inAppOrigin, err = NormalizeWebOrigin(params.InAppOrigin, s.allowHTTP)
 		if err != nil {
 			return CreatedAuthorization{}, err
 		}
@@ -693,7 +693,7 @@ func (s *Service) ResolveAuthorizationErrorTarget(ctx context.Context, clientID,
 		redirectURI, safe, err := s.safeCodeRedirect(ctx, client.BotUserID, rawRedirectURI)
 		return AuthorizationErrorTarget{ResponseType: responseType, RedirectURI: redirectURI}, safe, err
 	case "post_message":
-		redirectURI, _, err := NormalizeRedirectURI(rawRedirectURI, s.allowLoopbackHTTP)
+		redirectURI, _, err := NormalizeRedirectURI(rawRedirectURI, s.allowHTTP)
 		if err != nil {
 			return AuthorizationErrorTarget{}, false, nil
 		}
@@ -702,12 +702,12 @@ func (s *Service) ResolveAuthorizationErrorTarget(ctx context.Context, clientID,
 			redirect, _ := url.Parse(redirectURI)
 			origin = redirect.Scheme + "://" + redirect.Host
 		}
-		origin, err = NormalizeWebOrigin(origin, s.allowLoopbackHTTP)
+		origin, err = NormalizeWebOrigin(origin, s.allowHTTP)
 		if err != nil {
 			return AuthorizationErrorTarget{}, false, nil
 		}
 		redirect, _ := url.Parse(redirectURI)
-		redirectOrigin, err := NormalizeWebOrigin(redirect.Scheme+"://"+redirect.Host, s.allowLoopbackHTTP)
+		redirectOrigin, err := NormalizeWebOrigin(redirect.Scheme+"://"+redirect.Host, s.allowHTTP)
 		if err != nil || redirectOrigin != origin {
 			return AuthorizationErrorTarget{}, false, nil
 		}
@@ -725,7 +725,7 @@ func (s *Service) ResolveAuthorizationErrorTarget(ctx context.Context, clientID,
 }
 
 func (s *Service) safeCodeRedirect(ctx context.Context, botUserID int64, raw string) (string, bool, error) {
-	if redirectURI, _, err := NormalizeRedirectURI(raw, s.allowLoopbackHTTP); err == nil {
+	if redirectURI, _, err := NormalizeRedirectURI(raw, s.allowHTTP); err == nil {
 		allowed, err := s.store.IsTelegramLoginURLAllowed(ctx, botUserID, domain.TelegramLoginAllowedRedirectURI, redirectURI)
 		if err != nil || allowed {
 			return redirectURI, allowed, err
@@ -856,7 +856,7 @@ func (s *Service) RequestByDeepLinkForOrigin(ctx context.Context, rawURL, rawOri
 	if rawOrigin == "" || request.InAppOrigin == "" {
 		return domain.TelegramLoginRequest{}, domain.ErrTelegramLoginOriginNotAllowed
 	}
-	origin, err := NormalizeWebOrigin(rawOrigin, s.allowLoopbackHTTP)
+	origin, err := NormalizeWebOrigin(rawOrigin, s.allowHTTP)
 	if err != nil {
 		return domain.TelegramLoginRequest{}, err
 	}
@@ -1067,7 +1067,7 @@ func (s *Service) ExchangeInAppTokenAndIssue(ctx context.Context, token, rawOrig
 	if issuer == nil || len(token) < 16 || len(token) > 1024 || strings.IndexFunc(token, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0 {
 		return IssuedAuthorization{}, domain.ErrTelegramLoginCodeInvalid
 	}
-	origin, err := NormalizeWebOrigin(rawOrigin, s.allowLoopbackHTTP)
+	origin, err := NormalizeWebOrigin(rawOrigin, s.allowHTTP)
 	if err != nil {
 		return IssuedAuthorization{}, domain.ErrTelegramLoginOriginNotAllowed
 	}
@@ -1294,7 +1294,7 @@ func (s *Service) exchangeAuthorizationCode(ctx context.Context, params Exchange
 			return ExchangedAuthorization{}, "", domain.ErrTelegramLoginCodeInvalid
 		}
 	} else {
-		redirectURI, _, err = NormalizeRedirectURI(params.RedirectURI, s.allowLoopbackHTTP)
+		redirectURI, _, err = NormalizeRedirectURI(params.RedirectURI, s.allowHTTP)
 		if err != nil {
 			return ExchangedAuthorization{}, "", err
 		}

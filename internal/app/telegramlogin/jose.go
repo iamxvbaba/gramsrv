@@ -293,9 +293,10 @@ func (r *SigningKeyRing) sign(algorithm domain.TelegramLoginSigningAlgorithm, to
 }
 
 type IDTokenIssuerConfig struct {
-	Issuer string
-	TTL    time.Duration
-	Now    func() time.Time
+	Issuer    string
+	TTL       time.Duration
+	Now       func() time.Time
+	AllowHTTP bool
 }
 
 type IDTokenIssuer struct {
@@ -337,7 +338,7 @@ func NewIDTokenIssuer(keys *SigningKeyRing, cfg IDTokenIssuerConfig) (*IDTokenIs
 	if keys == nil {
 		return nil, errors.New("telegram login signing key ring is required")
 	}
-	issuer, err := NormalizeWebOrigin(cfg.Issuer, true)
+	issuer, err := NormalizeWebOrigin(cfg.Issuer, cfg.AllowHTTP)
 	if err != nil {
 		return nil, fmt.Errorf("telegram login ID token issuer: %w", err)
 	}
