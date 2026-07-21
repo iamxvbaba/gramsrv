@@ -30,6 +30,7 @@ func tgSelfUser(u domain.User) *tg.User {
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
 	applyTgUserColorFields(out, u)
+	applyTgUserRestrictionFields(out, u)
 	if u.LinkedCommunityID != 0 {
 		out.SetLinkedCommunityID(u.LinkedCommunityID)
 	}
@@ -60,6 +61,7 @@ func tgUser(u domain.User) *tg.User {
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
 	applyTgUserColorFields(out, u)
+	applyTgUserRestrictionFields(out, u)
 	if u.LinkedCommunityID != 0 {
 		out.SetLinkedCommunityID(u.LinkedCommunityID)
 	}
@@ -67,6 +69,28 @@ func tgUser(u domain.User) *tg.User {
 		out.Photo = photo
 	}
 	return out
+}
+
+func applyTgUserRestrictionFields(out *tg.User, u domain.User) {
+	if out == nil || len(u.RestrictionReasons) == 0 {
+		return
+	}
+	reasons := make([]tg.RestrictionReason, 0, len(u.RestrictionReasons))
+	for _, reason := range u.RestrictionReasons {
+		if reason.Platform == "" || reason.Reason == "" || reason.Text == "" {
+			continue
+		}
+		reasons = append(reasons, tg.RestrictionReason{
+			Platform: reason.Platform,
+			Reason:   reason.Reason,
+			Text:     reason.Text,
+		})
+	}
+	if len(reasons) == 0 {
+		return
+	}
+	out.Restricted = true
+	out.SetRestrictionReason(reasons)
 }
 
 // applyTgUserPremiumFields 由到期时间即时派生 premium flag（bit28，独立位）与

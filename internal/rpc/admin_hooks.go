@@ -46,3 +46,20 @@ func (r *Router) NotifyStarsBalanceChanged(ctx context.Context, balance domain.S
 	})
 	return nil
 }
+
+// NotifyAccountFreezeChanged invalidates target-scoped projections immediately
+// and wakes the durable audience nudge worker. Cross-instance cache invalidation
+// is also carried by the committed user_visibility read-model notification.
+func (r *Router) NotifyAccountFreezeChanged(_ context.Context, freeze domain.AccountFreeze) error {
+	if r == nil || freeze.UserID == 0 {
+		return nil
+	}
+	r.invalidateRPCProjectionForUser(freeze.UserID)
+	if r.accountFreezeWake != nil {
+		select {
+		case r.accountFreezeWake <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}

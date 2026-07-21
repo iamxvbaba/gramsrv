@@ -132,5 +132,8 @@ func cloneUser(in domain.User) domain.User {
 	if in.PhotoStripped != nil {
 		in.PhotoStripped = append([]byte(nil), in.PhotoStripped...)
 	}
+	if in.RestrictionReasons != nil {
+		in.RestrictionReasons = append([]domain.UserRestrictionReason(nil), in.RestrictionReasons...)
+	}
 	return in
 }

@@ -24,6 +24,12 @@ type PrivacyEvaluator interface {
 	CanSee(ctx context.Context, ownerUserID, viewerUserID int64, key domain.PrivacyKey) (bool, error)
 }
 
+// AccountFreezeProvider returns durable account freeze facts for a bounded
+// batch. The projector only exposes them to viewers other than the frozen user.
+type AccountFreezeProvider interface {
+	AccountFreezes(ctx context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error)
+}
+
 // BatchPrivacyEvaluator 批量评估多 owner 对单 viewer 的可见性，消除 projectBatch / fan-out
 // 投影里 per-user 3×CanSee 的 N+1。可选：实现了它的 evaluator（privacy.Service）会被
 // projectBatch 优先用批量预取，否则回退逐 CanSee。结果必须与逐 CanSee 字节等价。
@@ -52,6 +58,7 @@ type Projector struct {
 	contacts store.ContactStore
 	photos   ProfilePhotoProvider
 	privacy  PrivacyEvaluator
+	freezes  AccountFreezeProvider
 }
 
 // Option configures a Projector.
@@ -72,6 +79,11 @@ func WithPrivacyEvaluator(privacy PrivacyEvaluator) Option {
 	return func(p *Projector) { p.privacy = privacy }
 }
 
+// WithAccountFreezeProvider enables viewer-scoped frozen-account visibility.
+func WithAccountFreezeProvider(provider AccountFreezeProvider) Option {
+	return func(p *Projector) { p.freezes = provider }
+}
+
 // New creates a user projector.
 func New(opts ...Option) *Projector {
 	p := &Projector{}
@@ -87,7 +99,7 @@ func (p *Projector) ForViewer(ctx context.Context, viewerUserID int64, users []d
 	if p == nil {
 		return users, nil
 	}
-	return projectBatch(ctx, p.contacts, p.photos, p.privacy, viewerUserID, users)
+	return projectBatch(ctx, p.contacts, p.photos, p.privacy, p.freezes, viewerUserID, users)
 }
 
 // One applies ForViewer to a single user.
@@ -136,6 +148,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 		fallbackRefs     map[int64]domain.ProfilePhotoRef
 		contactsByViewer map[int64]map[int64]domain.Contact
 		matrix           map[int64]map[int64]map[domain.PrivacyKey]bool
+		freezes          map[int64]domain.AccountFreeze
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	// 1) 共享头像：profile/fallback 一次批量，跨全部 viewer 复用；personal photo v1 跳过（见 doc）。
@@ -156,6 +169,13 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 		g.Go(func() error {
 			var err error
 			matrix, err = me.CanSeeMatrix(gctx, ids, viewers, privacyProjectionKeys)
+			return err
+		})
+	}
+	if p.freezes != nil && len(ids) > 0 {
+		g.Go(func() error {
+			var err error
+			freezes, err = p.freezes.AccountFreezes(gctx, ids)
 			return err
 		})
 	}
@@ -194,6 +214,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 					return nil, perr
 				}
 			}
+			pj = applyAccountFreezeProjection(pj, viewer, freezes[u.ID])
 			cache[u.ID] = pj
 			projected[i] = pj
 		}
@@ -262,6 +283,7 @@ func cloneUsers(users []domain.User) []domain.User {
 	copy(out, users)
 	for i := range out {
 		out[i].ContactNoteEntities = append([]domain.MessageEntity(nil), out[i].ContactNoteEntities...)
+		out[i].RestrictionReasons = append([]domain.UserRestrictionReason(nil), out[i].RestrictionReasons...)
 	}
 	return out
 }
@@ -357,7 +379,7 @@ func One(ctx context.Context, contacts store.ContactStore, viewerUserID int64, u
 	return projected[0], nil
 }
 
-func projectBatch(ctx context.Context, contacts store.ContactStore, photos ProfilePhotoProvider, privacy PrivacyEvaluator, viewerUserID int64, users []domain.User) ([]domain.User, error) {
+func projectBatch(ctx context.Context, contacts store.ContactStore, photos ProfilePhotoProvider, privacy PrivacyEvaluator, freezesProvider AccountFreezeProvider, viewerUserID int64, users []domain.User) ([]domain.User, error) {
 	if len(users) == 0 {
 		return users, nil
 	}
@@ -371,6 +393,7 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 		personalRefs = map[int64]domain.ProfilePhotoRef{}
 		contactsByID map[int64]domain.Contact
 		visibility   map[int64]map[domain.PrivacyKey]bool
+		freezes      map[int64]domain.AccountFreeze
 	)
 	// 这些预取查询互不依赖（头像 profile/fallback、联系人 GetMany/PersonalPhotos、privacy 可见性），
 	// 并发执行把 ~6 次串行 round-trip 收敛成一波；每个 goroutine 只写自己那一个变量，组装循环在
@@ -433,6 +456,16 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 		visibility = v
 		return nil
 	})
+	if freezesProvider != nil && len(ids) > 0 {
+		g.Go(func() error {
+			m, err := freezesProvider.AccountFreezes(gctx, ids)
+			if err != nil {
+				return err
+			}
+			freezes = m
+			return nil
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -462,10 +495,21 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 				return nil, err
 			}
 		}
+		projected = applyAccountFreezeProjection(projected, viewerUserID, freezes[u.ID])
 		cache[u.ID] = projected
 		out[i] = projected
 	}
 	return out, nil
+}
+
+func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
+	// Base users and self users must never retain a viewer-scoped restriction.
+	user.RestrictionReasons = nil
+	if user.Deleted || viewerUserID == 0 || user.ID == 0 || user.ID == viewerUserID || !freeze.Frozen {
+		return user
+	}
+	user.RestrictionReasons = domain.AccountFrozenRestrictionReasons()
+	return user
 }
 
 func prefetchPrivacyVisibility(ctx context.Context, privacy PrivacyEvaluator, viewerUserID int64, users []domain.User) (map[int64]map[domain.PrivacyKey]bool, error) {

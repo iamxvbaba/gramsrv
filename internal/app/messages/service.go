@@ -16,6 +16,7 @@ type Service struct {
 	contacts     store.ContactStore
 	photos       userprojection.ProfilePhotoProvider
 	privacy      userprojection.PrivacyEvaluator
+	freezes      userprojection.AccountFreezeProvider
 	versions     store.ReadModelVersionStore
 	projector    *userprojection.Projector
 	botResponder BotResponder
@@ -57,6 +58,10 @@ func WithPrivacyEvaluator(p userprojection.PrivacyEvaluator) Option {
 	return func(s *Service) { s.privacy = p }
 }
 
+func WithAccountFreezeProvider(p userprojection.AccountFreezeProvider) Option {
+	return func(s *Service) { s.freezes = p }
+}
+
 // WithBotResponder 启用服务端内置 bot（BotFather）对私聊消息的自动应答。
 func WithBotResponder(r BotResponder) Option {
 	return func(s *Service) { s.botResponder = r }
@@ -85,6 +90,7 @@ func NewService(messages store.MessageStore, dialogs store.DialogStore, opts ...
 		userprojection.WithContactStore(s.contacts),
 		userprojection.WithPhotoProvider(s.photos),
 		userprojection.WithPrivacyEvaluator(s.privacy),
+		userprojection.WithAccountFreezeProvider(s.freezes),
 	)
 	return s
 }

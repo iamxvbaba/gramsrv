@@ -348,6 +348,15 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 				l.caches.BotProfiles.InvalidateBotProfileReadModel(evt.PeerID)
 			}
 		}
+	case "user_visibility":
+		if evt.PeerType == "user" && evt.PeerID != 0 {
+			if l.caches.RPCProjections != nil {
+				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForUser(evt.PeerID)
+			}
+			if l.caches.Stories != nil {
+				l.caches.Stories.InvalidateStoryReadModelPeer(domain.Peer{Type: domain.PeerTypeUser, ID: evt.PeerID})
+			}
+		}
 	case "bot_full":
 		// bot 资料(name/about/description/commands/menu_button)变更经 bot_info_version
 		// bump 触发(迁移 0013)。channelFullBotInfoCache 按 (viewer,channel) 键、无法按 botID

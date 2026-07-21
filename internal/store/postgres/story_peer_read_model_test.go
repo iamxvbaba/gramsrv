@@ -17,6 +17,19 @@ type fakeStoryReadModelCache struct {
 	flushes int
 }
 
+type fakeRPCProjectionReadModelCache struct {
+	users []int64
+}
+
+func (*fakeRPCProjectionReadModelCache) InvalidateRPCProjectionReadModelForViewer(int64) {}
+func (f *fakeRPCProjectionReadModelCache) InvalidateRPCProjectionReadModelForUser(id int64) {
+	f.users = append(f.users, id)
+}
+func (*fakeRPCProjectionReadModelCache) InvalidateRPCProjectionReadModelForPeer(int64, domain.Peer) {
+}
+func (*fakeRPCProjectionReadModelCache) InvalidateRPCProjectionReadModelForChannel(int64) {}
+func (*fakeRPCProjectionReadModelCache) FlushRPCProjectionReadModel()                     {}
+
 func (f *fakeStoryReadModelCache) InvalidateStoryReadModelViewers(ids ...int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -75,6 +88,29 @@ func TestReadModelChangeListenerRoutesStoryPeer(t *testing.T) {
 	listener.handlePayload(`{"model":"story_peer","owner_user_id":0,"peer_type":"","peer_id":999,"version":5}`)
 	if got := len(stories.peersSnapshot()); got != 2 {
 		t.Fatalf("invalid story_peer events should be ignored: peers=%d, want 2", got)
+	}
+}
+
+func TestReadModelChangeListenerRoutesUserVisibility(t *testing.T) {
+	stories := &fakeStoryReadModelCache{}
+	rpcProjections := &fakeRPCProjectionReadModelCache{}
+	listener := NewReadModelChangeListener("", ReadModelCacheSet{
+		Stories:        stories,
+		RPCProjections: rpcProjections,
+	}, nil)
+
+	listener.handlePayload(`{"model":"user_visibility","owner_user_id":0,"peer_type":"user","peer_id":777,"version":2}`)
+	if len(rpcProjections.users) != 1 || rpcProjections.users[0] != 777 {
+		t.Fatalf("RPC projection invalidations = %v, want [777]", rpcProjections.users)
+	}
+	if peers := stories.peersSnapshot(); len(peers) != 1 || peers[0] != (domain.Peer{Type: domain.PeerTypeUser, ID: 777}) {
+		t.Fatalf("story projection invalidations = %+v, want user 777", peers)
+	}
+
+	listener.handlePayload(`{"model":"user_visibility","owner_user_id":0,"peer_type":"channel","peer_id":888,"version":3}`)
+	listener.handlePayload(`{"model":"user_visibility","owner_user_id":0,"peer_type":"user","peer_id":0,"version":4}`)
+	if len(rpcProjections.users) != 1 || len(stories.peersSnapshot()) != 1 {
+		t.Fatalf("invalid visibility events were not ignored: users=%v peers=%+v", rpcProjections.users, stories.peersSnapshot())
 	}
 }
 

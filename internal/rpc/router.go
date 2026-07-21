@@ -164,6 +164,7 @@ type Router struct {
 	stickerCatalog               *stickerCatalogCache
 	transientPrivateBigReactions transientPrivateBigReactionCache
 	accountSettings              *accountSettingsCache
+	accountFreezeWake            chan struct{}
 	// webPageResolveSem 是链接预览异步解析的并发信号量（有界）：发送后把 pending 占位
 	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调
 	// resolvePendingWebPage 同步验证）。
@@ -237,7 +238,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("%016x", randomNonZeroInt64())
 	}
-	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(deps.BotCallbacks), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), instanceID: instanceID}
+	r := &Router{cfg: cfg, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(deps.BotCallbacks), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), accountFreezeWake: make(chan struct{}, 1), instanceID: instanceID}
 	r.channelFanout = newChannelFanoutDispatcher(r, defaultChannelFanoutShards, defaultChannelFanoutBuffer)
 	r.botAPIEnqueueQueue = newBotAPIEnqueueDispatcher(log, defaultBotAPIEnqueueBuffer)
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)

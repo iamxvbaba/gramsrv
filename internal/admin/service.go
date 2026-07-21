@@ -52,6 +52,15 @@ type RestrictionStore interface {
 	SetAccountFreeze(ctx context.Context, freeze domain.AccountFreeze) (domain.AccountFreeze, error)
 }
 
+type accountFreezeBatchStore interface {
+	GetAccountFreezes(ctx context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error)
+}
+
+type accountFreezeNotificationStore interface {
+	ClaimAccountFreezeNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountFreezeNotification, error)
+	CompleteAccountFreezeNotification(ctx context.Context, id, version int64, now time.Time) error
+}
+
 type AuthService interface {
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
 	ResetAuthorization(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error)
@@ -78,6 +87,10 @@ type StarsNotifier interface {
 
 type UserNotifier interface {
 	NotifyUserChanged(ctx context.Context, u domain.User) error
+}
+
+type AccountFreezeNotifier interface {
+	NotifyAccountFreezeChanged(ctx context.Context, freeze domain.AccountFreeze) error
 }
 
 type ChannelsService interface {
@@ -123,6 +136,7 @@ type Dependencies struct {
 	Stars           StarsService
 	StarsNotifier   StarsNotifier
 	UserNotifier    UserNotifier
+	FreezeNotifier  AccountFreezeNotifier
 	Channels        ChannelsService
 	ChannelNotifier ChannelNotifier
 	Messages        MessagesService
@@ -140,6 +154,7 @@ type Service struct {
 	stars           StarsService
 	starsNotifier   StarsNotifier
 	userNotifier    UserNotifier
+	freezeNotifier  AccountFreezeNotifier
 	channels        ChannelsService
 	channelNotifier ChannelNotifier
 	messages        MessagesService
@@ -177,6 +192,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.UserNotifier != nil {
 		s.userNotifier = deps.UserNotifier
+	}
+	if deps.FreezeNotifier != nil {
+		s.freezeNotifier = deps.FreezeNotifier
 	}
 	if deps.Channels != nil {
 		s.channels = deps.Channels
@@ -373,6 +391,78 @@ func (s *Service) AccountFreeze(ctx context.Context, userID int64) (domain.Accou
 	return freeze, true, nil
 }
 
+// AccountFreezes is the bounded-query projection API used by user hydration.
+// Production stores use array batches; lightweight test stores keep the exact
+// same semantics through the single-row fallback.
+func (s *Service) AccountFreezes(ctx context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error) {
+	out := make(map[int64]domain.AccountFreeze)
+	if s == nil || s.restrictions == nil || len(userIDs) == 0 {
+		return out, nil
+	}
+	ids := uniqueFreezeUserIDs(userIDs)
+	if batch, ok := s.restrictions.(accountFreezeBatchStore); ok {
+		const batchSize = 1000
+		for start := 0; start < len(ids); start += batchSize {
+			end := min(start+batchSize, len(ids))
+			items, err := batch.GetAccountFreezes(ctx, ids[start:end])
+			if err != nil {
+				return nil, err
+			}
+			for id, freeze := range items {
+				if err := validateAccountFreeze(freeze); err != nil {
+					return nil, fmt.Errorf("invalid durable account freeze for user %d: %w", id, err)
+				}
+				if freeze.Frozen {
+					out[id] = freeze
+				}
+			}
+		}
+		return out, nil
+	}
+	for _, id := range ids {
+		freeze, found, err := s.AccountFreeze(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if found && freeze.Frozen {
+			out[id] = freeze
+		}
+	}
+	return out, nil
+}
+
+func uniqueFreezeUserIDs(userIDs []int64) []int64 {
+	out := make([]int64, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (s *Service) ClaimAccountFreezeNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountFreezeNotification, error) {
+	store, ok := s.restrictions.(accountFreezeNotificationStore)
+	if !ok {
+		return nil, nil
+	}
+	return store.ClaimAccountFreezeNotifications(ctx, now, limit, lease)
+}
+
+func (s *Service) CompleteAccountFreezeNotification(ctx context.Context, id, version int64, now time.Time) error {
+	store, ok := s.restrictions.(accountFreezeNotificationStore)
+	if !ok {
+		return nil
+	}
+	return store.CompleteAccountFreezeNotification(ctx, id, version, now)
+}
+
 func validateAccountFreeze(freeze domain.AccountFreeze) error {
 	if !freeze.Frozen {
 		if !freeze.Since.IsZero() || !freeze.Until.IsZero() || freeze.AppealURL != "" {
@@ -476,6 +566,10 @@ func (s *Service) SetAccountFrozen(ctx context.Context, req SetAccountFrozenRequ
 			return CommandResult{}, err
 		}
 		details["updated_at"] = updated.UpdatedAt.UTC().Format(time.RFC3339)
+		details["version"] = updated.Version
+		if err := s.notifyAccountFreezeChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
 		return CommandResult{Message: "account freeze updated", Details: details}, nil
 	})
 }
@@ -1319,6 +1413,13 @@ func (s *Service) notifyUserChanged(ctx context.Context, u domain.User) error {
 		return nil
 	}
 	return s.userNotifier.NotifyUserChanged(ctx, u)
+}
+
+func (s *Service) notifyAccountFreezeChanged(ctx context.Context, freeze domain.AccountFreeze) error {
+	if s == nil || s.freezeNotifier == nil {
+		return nil
+	}
+	return s.freezeNotifier.NotifyAccountFreezeChanged(ctx, freeze)
 }
 
 func (s *Service) notifyStarsBalanceChanged(ctx context.Context, balance domain.StarsBalance) error {

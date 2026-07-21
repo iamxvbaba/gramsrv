@@ -21,10 +21,12 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryCommandRepo()
 	restrictions := &fakeRestrictionStore{}
+	notifier := &fakeAccountFreezeNotifier{}
 	svc := NewService(Dependencies{
-		Commands:     repo,
-		Restrictions: restrictions,
-		Now:          fixedNow,
+		Commands:       repo,
+		Restrictions:   restrictions,
+		FreezeNotifier: notifier,
+		Now:            fixedNow,
 	})
 
 	dry, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
@@ -55,6 +57,9 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	if exec.Status != string(domain.AdminCommandCompleted) || restrictions.setCalls != 1 {
 		t.Fatalf("execute result=%+v setCalls=%d", exec, restrictions.setCalls)
 	}
+	if len(notifier.items) != 1 || notifier.items[0].UserID != 1001 || !notifier.items[0].Frozen || notifier.items[0].Version != 1 {
+		t.Fatalf("freeze notifications = %+v, want one versioned frozen state", notifier.items)
+	}
 	if err := svc.CanSendMessages(ctx, 1001); !errors.Is(err, domain.ErrUserFrozen) {
 		t.Fatalf("CanSendMessages err=%v, want ErrUserFrozen", err)
 	}
@@ -69,6 +74,32 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	}
 	if !again.AlreadyExecuted || restrictions.setCalls != 1 {
 		t.Fatalf("duplicate result=%+v setCalls=%d, want idempotent replay", again, restrictions.setCalls)
+	}
+	if len(notifier.items) != 1 {
+		t.Fatalf("idempotent replay emitted duplicate notification: %+v", notifier.items)
+	}
+}
+
+func TestAccountFreezesBatchesAndReturnsOnlyActiveFacts(t *testing.T) {
+	now := fixedNow()
+	store := &fakeBatchRestrictionStore{fakeRestrictionStore: fakeRestrictionStore{items: map[int64]domain.AccountFreeze{
+		1001: {
+			UserID: 1001, Frozen: true, Version: 2, Since: now,
+			Until: now.Add(time.Hour), AppealURL: "https://appeals.example.test/1001",
+		},
+		1002: {UserID: 1002, Frozen: false, Version: 4},
+	}}}
+	svc := NewService(Dependencies{Restrictions: store, Now: fixedNow})
+
+	got, err := svc.AccountFreezes(context.Background(), []int64{1001, 1001, 0, 1002})
+	if err != nil {
+		t.Fatalf("AccountFreezes: %v", err)
+	}
+	if len(store.requests) != 1 || !reflect.DeepEqual(store.requests[0], []int64{1001, 1002}) {
+		t.Fatalf("batch requests = %v, want one deduplicated request", store.requests)
+	}
+	if len(got) != 1 || !got[1001].Frozen || got[1001].Version != 2 {
+		t.Fatalf("AccountFreezes = %+v, want active user 1001 only", got)
 	}
 }
 
@@ -492,9 +523,35 @@ func (f *fakeRestrictionStore) SetAccountFreeze(_ context.Context, r domain.Acco
 		f.items = map[int64]domain.AccountFreeze{}
 	}
 	f.setCalls++
+	r.Version = f.items[r.UserID].Version + 1
 	r.UpdatedAt = fixedNow()
 	f.items[r.UserID] = r
 	return r, nil
+}
+
+type fakeBatchRestrictionStore struct {
+	fakeRestrictionStore
+	requests [][]int64
+}
+
+func (f *fakeBatchRestrictionStore) GetAccountFreezes(_ context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error) {
+	f.requests = append(f.requests, append([]int64(nil), userIDs...))
+	out := make(map[int64]domain.AccountFreeze)
+	for _, id := range userIDs {
+		if freeze, ok := f.items[id]; ok && freeze.Frozen {
+			out[id] = freeze
+		}
+	}
+	return out, nil
+}
+
+type fakeAccountFreezeNotifier struct {
+	items []domain.AccountFreeze
+}
+
+func (f *fakeAccountFreezeNotifier) NotifyAccountFreezeChanged(_ context.Context, freeze domain.AccountFreeze) error {
+	f.items = append(f.items, freeze)
+	return nil
 }
 
 type fakeMessagesService struct {

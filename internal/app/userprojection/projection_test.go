@@ -119,6 +119,64 @@ func TestProjectorUsesFallbackWhenProfilePhotoHidden(t *testing.T) {
 	}
 }
 
+func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
+	ctx := context.Background()
+	const (
+		frozenUserID = int64(4001)
+		otherViewer  = int64(4002)
+	)
+	freezes := &fakeAccountFreezes{items: map[int64]domain.AccountFreeze{
+		frozenUserID: {UserID: frozenUserID, Frozen: true, Version: 3},
+	}}
+	projector := New(WithAccountFreezeProvider(freezes))
+	base := []domain.User{{
+		ID:        frozenUserID,
+		FirstName: "Frozen",
+		// Viewer-scoped fields must never be trusted from a reused base object.
+		RestrictionReasons: []domain.UserRestrictionReason{{Platform: "all", Reason: "stale", Text: "stale"}},
+	}}
+
+	otherView, err := projector.ForViewer(ctx, otherViewer, base)
+	if err != nil {
+		t.Fatalf("ForViewer(other): %v", err)
+	}
+	got := projectionUser(t, otherView, frozenUserID)
+	if !reflect.DeepEqual(got.RestrictionReasons, domain.AccountFrozenRestrictionReasons()) {
+		t.Fatalf("other-view restriction = %+v, want frozen restriction", got.RestrictionReasons)
+	}
+	if base[0].RestrictionReasons[0].Reason != "stale" {
+		t.Fatalf("projection mutated base user: %+v", base[0])
+	}
+
+	selfView, err := projector.ForViewer(ctx, frozenUserID, base)
+	if err != nil {
+		t.Fatalf("ForViewer(self): %v", err)
+	}
+	if reasons := projectionUser(t, selfView, frozenUserID).RestrictionReasons; len(reasons) != 0 {
+		t.Fatalf("self-view restriction = %+v, want none", reasons)
+	}
+
+	batch, err := projector.ForViewers(ctx, []int64{otherViewer, frozenUserID}, base)
+	if err != nil {
+		t.Fatalf("ForViewers: %v", err)
+	}
+	if reasons := projectionUser(t, batch[otherViewer], frozenUserID).RestrictionReasons; !reflect.DeepEqual(reasons, domain.AccountFrozenRestrictionReasons()) {
+		t.Fatalf("batch other-view restriction = %+v", reasons)
+	}
+	if reasons := projectionUser(t, batch[frozenUserID], frozenUserID).RestrictionReasons; len(reasons) != 0 {
+		t.Fatalf("batch self-view restriction = %+v, want none", reasons)
+	}
+
+	freezes.items = nil
+	unfrozenView, err := projector.ForViewer(ctx, otherViewer, otherView)
+	if err != nil {
+		t.Fatalf("ForViewer(after unfreeze): %v", err)
+	}
+	if reasons := projectionUser(t, unfrozenView, frozenUserID).RestrictionReasons; len(reasons) != 0 {
+		t.Fatalf("unfrozen projection retained restriction = %+v", reasons)
+	}
+}
+
 // TestForViewersEquivalentToForViewer 锁定 fan-out 模板化的核心安全网：ForViewers(viewers, users)
 // 的每个 viewer 切片必须与逐 viewer 的 ForViewer(viewer, users) 字节等价（隐私/改名/头像投影
 // 不能因 O(owner) 模板化而漂移泄漏）。**唯一允许的差异是 personal photo overlay**：v1 模板不做
@@ -241,6 +299,20 @@ func projectionUser(t *testing.T, users []domain.User, id int64) domain.User {
 type fakeProfilePhotos struct {
 	profile  map[int64]domain.ProfilePhotoRef
 	fallback map[int64]domain.ProfilePhotoRef
+}
+
+type fakeAccountFreezes struct {
+	items map[int64]domain.AccountFreeze
+}
+
+func (f *fakeAccountFreezes) AccountFreezes(_ context.Context, ids []int64) (map[int64]domain.AccountFreeze, error) {
+	out := make(map[int64]domain.AccountFreeze)
+	for _, id := range ids {
+		if freeze, ok := f.items[id]; ok {
+			out[id] = freeze
+		}
+	}
+	return out, nil
 }
 
 func (p fakeProfilePhotos) CurrentProfilePhotos(_ context.Context, _ domain.PeerType, ids []int64) (map[int64]domain.ProfilePhotoRef, error) {
