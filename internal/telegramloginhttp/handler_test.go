@@ -109,7 +109,7 @@ func newTelegramLoginHTTPFixture(t *testing.T) telegramLoginHTTPFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(Config{Service: service, Tokens: tokens, AppName: "Telesrv", AllowLoopbackHTTP: true})
+	handler, err := NewHandler(Config{Service: service, Tokens: tokens, AppName: "Telesrv", AllowHTTP: true})
 	if err != nil {
 		t.Fatal(err)
 	}

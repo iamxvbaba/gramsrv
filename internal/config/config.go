@@ -4,7 +4,6 @@ package config
 import (
 	"bufio"
 	"fmt"
-	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -93,9 +92,11 @@ type Config struct {
 	// TelegramLoginEnabled mounts the self-hosted Telegram Login/OIDC provider
 	// on PublicLinkWebAddr. Secrets are file-backed so they are not exposed in
 	// process listings or accidentally copied into tracked .env templates.
-	TelegramLoginEnabled           bool
-	TelegramLoginIssuer            string
-	TelegramLoginAllowLoopbackHTTP bool
+	TelegramLoginEnabled bool
+	TelegramLoginIssuer  string
+	// TelegramLoginAllowHTTP permits HTTP issuers and registered Login URLs on
+	// any valid host/IP and port. HTTPS remains mandatory when false.
+	TelegramLoginAllowHTTP         bool
 	TelegramLoginSigningKeysFile   string
 	TelegramLoginCodeKeysFile      string
 	TelegramLoginSecretPepperFile  string
@@ -491,7 +492,7 @@ func Load() (Config, error) {
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		TelegramLoginEnabled:                 envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
 		TelegramLoginIssuer:                  strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),
-		TelegramLoginAllowLoopbackHTTP:       envBoolOr("TELESRV_TELEGRAM_LOGIN_ALLOW_LOOPBACK_HTTP", false),
+		TelegramLoginAllowHTTP:               envBoolOr("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", false),
 		TelegramLoginSigningKeysFile:         envOr("TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE", "data/telegram-login/signing-keys.json"),
 		TelegramLoginCodeKeysFile:            envOr("TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE", "data/telegram-login/code-keys.json"),
 		TelegramLoginSecretPepperFile:        envOr("TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE", "data/telegram-login/client-secret-pepper"),
@@ -681,10 +682,8 @@ func validateTelegramLoginConfig(cfg Config) error {
 	switch issuer.Scheme {
 	case "https":
 	case "http":
-		host := issuer.Hostname()
-		ip := net.ParseIP(host)
-		if !cfg.TelegramLoginAllowLoopbackHTTP || (host != "localhost" && (ip == nil || !ip.IsLoopback())) {
-			return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER http is allowed only for explicit loopback development")
+		if !cfg.TelegramLoginAllowHTTP {
+			return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER http requires TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP=true")
 		}
 	default:
 		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER must use https")

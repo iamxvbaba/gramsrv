@@ -14,8 +14,8 @@ import (
 
 const maxTelegramLoginURLLength = 4096
 
-func NormalizeRedirectURI(raw string, allowLoopbackHTTP bool) (normalized, domainName string, err error) {
-	u, err := parseWebURL(raw, allowLoopbackHTTP)
+func NormalizeRedirectURI(raw string, allowHTTP bool) (normalized, domainName string, err error) {
+	u, err := parseWebURL(raw, allowHTTP)
 	if err != nil {
 		return "", "", err
 	}
@@ -34,8 +34,8 @@ func NormalizeRedirectURI(raw string, allowLoopbackHTTP bool) (normalized, domai
 	return u.String(), u.Hostname(), nil
 }
 
-func NormalizeWebOrigin(raw string, allowLoopbackHTTP bool) (string, error) {
-	u, err := parseWebURL(raw, allowLoopbackHTTP)
+func NormalizeWebOrigin(raw string, allowHTTP bool) (string, error) {
+	u, err := parseWebURL(raw, allowHTTP)
 	if err != nil {
 		return "", err
 	}
@@ -46,7 +46,7 @@ func NormalizeWebOrigin(raw string, allowLoopbackHTTP bool) (string, error) {
 	return u.String(), nil
 }
 
-func parseWebURL(raw string, allowLoopbackHTTP bool) (*url.URL, error) {
+func parseWebURL(raw string, allowHTTP bool) (*url.URL, error) {
 	if raw == "" || len(raw) > maxTelegramLoginURLLength || raw != strings.TrimSpace(raw) || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 		return nil, domain.ErrTelegramLoginURLInvalid
 	}
@@ -78,7 +78,7 @@ func parseWebURL(raw string, allowLoopbackHTTP bool) (*url.URL, error) {
 			port = ""
 		}
 	case "http":
-		if !allowLoopbackHTTP || !isLoopbackHost(host) {
+		if !allowHTTP {
 			return nil, domain.ErrTelegramLoginURLInvalid
 		}
 		if port == "80" {
@@ -97,14 +97,6 @@ func parseWebURL(raw string, allowLoopbackHTTP bool) (*url.URL, error) {
 		u.Host = net.JoinHostPort(host, port)
 	}
 	return u, nil
-}
-
-func isLoopbackHost(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func AppendAuthorizationResult(redirectURI, code, state string) (string, error) {

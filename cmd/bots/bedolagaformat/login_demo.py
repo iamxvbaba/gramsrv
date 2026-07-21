@@ -68,10 +68,6 @@ class PendingFlow:
     code_verifier: str = ""
 
 
-def _is_loopback(host: str | None) -> bool:
-    return host in {"127.0.0.1", "::1", "localhost"}
-
-
 def normalize_web_base(value: str, *, name: str) -> str:
     raw = value.strip().rstrip("/")
     parsed = urlsplit(raw)
@@ -85,8 +81,6 @@ def normalize_web_base(value: str, *, name: str) -> str:
         or parsed.path not in {"", "/"}
     ):
         raise ValueError(f"{name} must be an absolute origin without path, query, or fragment")
-    if parsed.scheme != "https" and not _is_loopback(parsed.hostname):
-        raise ValueError(f"{name} must use HTTPS except on loopback")
     return f"{parsed.scheme}://{parsed.netloc}"
 
 

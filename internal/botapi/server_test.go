@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -977,6 +978,23 @@ func TestSetWebhookPersistsConfigReportsInfoAndConflictsWithPolling(t *testing.T
 	}
 }
 
+func TestSetWebhookAcceptsHTTPHostIPAndArbitraryPort(t *testing.T) {
+	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
+	for _, rawURL := range []string{
+		"http://bot.example.test:3000/hook",
+		"http://192.0.2.25:18080/hook",
+		"http://[2001:db8::25]:28080/hook",
+		"HTTP://bot.example.test:3100/hook",
+	} {
+		gateway := &fakeBotAPIGateway{}
+		h := (&handler{bots: bots, gateway: gateway}).routes()
+		rec := performBotAPIRequest(t, h, bots.profile, "setWebhook", fmt.Sprintf(`{"url":%q}`, rawURL))
+		if rec.Code != http.StatusOK || !gateway.webhookFound || gateway.webhook.URL != rawURL {
+			t.Fatalf("setWebhook url=%q status=%d body=%s config=%#v", rawURL, rec.Code, rec.Body.String(), gateway.webhook)
+		}
+	}
+}
+
 func TestSetWebhookRejectsUnsafeParameters(t *testing.T) {
 	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
 	h := (&handler{bots: bots, gateway: &fakeBotAPIGateway{}}).routes()
@@ -984,8 +1002,9 @@ func TestSetWebhookRejectsUnsafeParameters(t *testing.T) {
 		body string
 		want string
 	}{
-		{`{"url":"http://example.test/hook"}`, "WEBHOOK_URL_INVALID"},
-		{`{"url":"https://example.test:444/hook"}`, "WEBHOOK_PORT_NOT_ALLOWED"},
+		{`{"url":"ftp://example.test/hook"}`, "WEBHOOK_URL_INVALID"},
+		{`{"url":"http://user@example.test/hook"}`, "WEBHOOK_URL_INVALID"},
+		{`{"url":"http://example.test:0/hook"}`, "WEBHOOK_URL_INVALID"},
 		{`{"url":"https://example.test/hook","secret_token":"bad secret"}`, "SECRET_TOKEN_INVALID"},
 		{`{"url":"https://example.test/hook","max_connections":101}`, "MAX_CONNECTIONS_INVALID"},
 	}

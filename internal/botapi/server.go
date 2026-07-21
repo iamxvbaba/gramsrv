@@ -1077,11 +1077,18 @@ func validateWebhookURL(raw string) error {
 		return errors.New("WEBHOOK_URL_INVALID")
 	}
 	u, err := neturl.ParseRequestURI(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+	if err != nil {
 		return errors.New("WEBHOOK_URL_INVALID")
 	}
-	if port := u.Port(); port != "" && port != "443" && port != "80" && port != "88" && port != "8443" {
-		return errors.New("WEBHOOK_PORT_NOT_ALLOWED")
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("WEBHOOK_URL_INVALID")
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return errors.New("WEBHOOK_URL_INVALID")
+		}
 	}
 	return nil
 }

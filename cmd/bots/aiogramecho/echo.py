@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--webhook-url",
         default=os.getenv("TELESRV_BOT_WEBHOOK_URL", ""),
-        help="Public HTTPS URL including the webhook path",
+        help="Public HTTP(S) URL including the webhook path",
     )
     parser.add_argument(
         "--webhook-path",

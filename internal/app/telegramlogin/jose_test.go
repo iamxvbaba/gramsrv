@@ -167,6 +167,21 @@ func TestIDTokenIssuerScopeProjectionAndVerification(t *testing.T) {
 	}
 }
 
+func TestIDTokenIssuerAcceptsHTTPIPOnlyWhenEnabled(t *testing.T) {
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	ring := telegramLoginTestSigningKeys(t, &now)
+	if _, err := NewIDTokenIssuer(ring, IDTokenIssuerConfig{Issuer: "http://192.0.2.25:2401"}); err == nil {
+		t.Fatal("HTTP issuer was accepted while AllowHTTP was false")
+	}
+	issuer, err := NewIDTokenIssuer(ring, IDTokenIssuerConfig{Issuer: "http://192.0.2.25:2401", AllowHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issuer.Issuer() != "http://192.0.2.25:2401" {
+		t.Fatalf("issuer=%q", issuer.Issuer())
+	}
+}
+
 func TestSigningKeyRingRejectsWrongCurveAndDuplicateActiveKey(t *testing.T) {
 	p384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {

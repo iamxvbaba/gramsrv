@@ -94,7 +94,7 @@ func newTelegramLoginTestServiceWithAlgorithms(t *testing.T, now *time.Time, alg
 	pepper[0] = 9
 	service, err := NewService(loginStore, sealer, Config{
 		Issuer: "https://oauth.telesrv.test", AppScheme: "telesrv",
-		AllowLoopbackHTTP: true, ClientSecretPepper: pepper,
+		AllowHTTP: true, ClientSecretPepper: pepper,
 		SupportedSigningAlgorithms: algorithms,
 		Now:                        func() time.Time { return *now },
 	})

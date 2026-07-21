@@ -261,7 +261,7 @@ func TestTelegramLoginMessageButtonRereadSignsAndGrantsWriteAccess(t *testing.T)
 	pepper[0] = 8
 	loginStore := memory.NewTelegramLoginStore(telegramLoginBotPermissionAdapter{bots: f.router.deps.Bots})
 	login, err := telegramloginapp.NewService(loginStore, sealer, telegramloginapp.Config{
-		Issuer: "https://oauth.test", AppScheme: "telesrv", ClientSecretPepper: pepper,
+		Issuer: "http://192.0.2.25:2401", AppScheme: "telesrv", AllowHTTP: true, ClientSecretPepper: pepper,
 		Now: func() time.Time { return time.Unix(1_780_000_000, 0).UTC() },
 	})
 	if err != nil {
@@ -270,13 +270,13 @@ func TestTelegramLoginMessageButtonRereadSignsAndGrantsWriteAccess(t *testing.T)
 	if _, err := login.CreateClient(f.ctx, f.bot.ID, domain.TelegramLoginSigningRS256); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := login.AddAllowedURL(f.ctx, f.bot.ID, domain.TelegramLoginAllowedWebOrigin, "https://rp.test"); err != nil {
+	if _, err := login.AddAllowedURL(f.ctx, f.bot.ID, domain.TelegramLoginAllowedWebOrigin, "http://rp.test:3000"); err != nil {
 		t.Fatal(err)
 	}
 	f.router.deps.TelegramLogin = login
 
 	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
-		Type: domain.MarkupButtonLoginURL, Text: "Log in", URL: "https://rp.test/login?next=%2Fhome", RequestWriteAccess: true,
+		Type: domain.MarkupButtonLoginURL, Text: "Log in", URL: "http://rp.test:3000/login?next=%2Fhome", RequestWriteAccess: true,
 	}}}}
 	if _, err := f.router.BotAPISendMessage(f.ctx, f.bot.ID, f.owner.ID, "Authorize", nil, markup, false, false, 0); err != nil {
 		t.Fatalf("BotAPISendMessage: %v", err)

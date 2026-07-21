@@ -22,7 +22,7 @@ func newBotFatherTelegramLoginService(t *testing.T) *telegramloginapp.Service {
 	pepper := make([]byte, 32)
 	pepper[0] = 2
 	service, err := telegramloginapp.NewService(memory.NewTelegramLoginStore(nil), sealer, telegramloginapp.Config{
-		Issuer: "http://localhost:2404", AppScheme: "telesrv", AllowLoopbackHTTP: true,
+		Issuer: "http://192.0.2.25:2404", AppScheme: "telesrv", AllowHTTP: true,
 		ClientSecretPepper: pepper, Now: func() time.Time { return time.Unix(1_780_000_000, 0).UTC() },
 	})
 	if err != nil {
@@ -52,13 +52,13 @@ func TestBotFatherTelegramLoginConfigurationFlow(t *testing.T) {
 	if len(secret) < 32 {
 		t.Fatalf("client secret is unexpectedly short: %q", secret)
 	}
-	if reply := sendToBotFather(t, svc, messages, owner, "add origin http://localhost:3000"); !strings.Contains(reply, "Success!") {
+	if reply := sendToBotFather(t, svc, messages, owner, "add origin http://rp.example.test:3000"); !strings.Contains(reply, "Success!") {
 		t.Fatalf("add origin reply = %q", reply)
 	}
 
 	sendToBotFather(t, svc, messages, owner, "/setlogin")
 	sendToBotFather(t, svc, messages, owner, "login_demo_bot")
-	if reply := sendToBotFather(t, svc, messages, owner, "add redirect http://localhost:3000/auth/callback"); !strings.Contains(reply, "Success!") {
+	if reply := sendToBotFather(t, svc, messages, owner, "add redirect http://192.0.2.26:3000/auth/callback"); !strings.Contains(reply, "Success!") {
 		t.Fatalf("add redirect reply = %q", reply)
 	}
 
@@ -83,7 +83,7 @@ func TestBotFatherTelegramLoginConfigurationFlow(t *testing.T) {
 
 	sendToBotFather(t, svc, messages, owner, "/logininfo")
 	info := sendToBotFather(t, svc, messages, owner, "login_demo_bot")
-	for _, want := range []string{"Signing algorithm: ES256", "web_origin http://localhost:3000", "redirect_uri http://localhost:3000/auth/callback", "dev.bedolaga.demo", "Bedolaga iOS Demo", "Bedolaga Android Demo"} {
+	for _, want := range []string{"Signing algorithm: ES256", "web_origin http://rp.example.test:3000", "redirect_uri http://192.0.2.26:3000/auth/callback", "dev.bedolaga.demo", "Bedolaga iOS Demo", "Bedolaga Android Demo"} {
 		if !strings.Contains(info, want) {
 			t.Fatalf("login info = %q, missing %q", info, want)
 		}

@@ -2,7 +2,6 @@ package domain
 
 import (
 	"errors"
-	"net"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -397,8 +396,9 @@ func validateButtonURL(raw string) error {
 
 // validateLoginButtonURL performs only the protocol-shape validation shared by
 // Bot API and MTProto input buttons. The Telegram Login service remains the
-// authority for the deployment policy: it rejects loopback HTTP unless the
-// explicit development switch is enabled and the exact origin is registered.
+// authority for the deployment policy: HTTP is accepted here as a protocol
+// shape, then allowed only when the Login HTTP switch is enabled and the exact
+// origin is registered.
 func validateLoginButtonURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > MaxBotMenuButtonURLLen {
@@ -408,15 +408,8 @@ func validateLoginButtonURL(raw string) error {
 	if err != nil || u.Host == "" || u.User != nil {
 		return ErrButtonURLInvalid
 	}
-	if u.Scheme == "https" {
-		return nil
-	}
-	if u.Scheme != "http" {
-		return ErrButtonURLInvalid
-	}
-	host := strings.ToLower(u.Hostname())
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
 		return ErrButtonURLInvalid
 	}
 	return nil

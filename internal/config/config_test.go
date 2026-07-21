@@ -435,8 +435,8 @@ func TestLoadTelegramLoginConfig(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "127.0.0.1:2401")
 	t.Setenv("TELESRV_TELEGRAM_LOGIN_ENABLE", "true")
-	t.Setenv("TELESRV_TELEGRAM_LOGIN_ISSUER", "http://127.0.0.1:2401/")
-	t.Setenv("TELESRV_TELEGRAM_LOGIN_ALLOW_LOOPBACK_HTTP", "true")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ISSUER", "http://192.0.2.25:2401/")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", "true")
 	t.Setenv("TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE", "secrets/signing.json")
 	t.Setenv("TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE", "secrets/codes.json")
 	t.Setenv("TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE", "secrets/pepper")
@@ -452,8 +452,8 @@ func TestLoadTelegramLoginConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.TelegramLoginEnabled || cfg.TelegramLoginIssuer != "http://127.0.0.1:2401" || !cfg.TelegramLoginAllowLoopbackHTTP {
-		t.Fatalf("telegram login endpoint config = enabled:%v issuer:%q loopback:%v", cfg.TelegramLoginEnabled, cfg.TelegramLoginIssuer, cfg.TelegramLoginAllowLoopbackHTTP)
+	if !cfg.TelegramLoginEnabled || cfg.TelegramLoginIssuer != "http://192.0.2.25:2401" || !cfg.TelegramLoginAllowHTTP {
+		t.Fatalf("telegram login endpoint config = enabled:%v issuer:%q allow_http:%v", cfg.TelegramLoginEnabled, cfg.TelegramLoginIssuer, cfg.TelegramLoginAllowHTTP)
 	}
 	if cfg.TelegramLoginSigningKeysFile != "secrets/signing.json" || cfg.TelegramLoginCodeKeysFile != "secrets/codes.json" || cfg.TelegramLoginSecretPepperFile != "secrets/pepper" {
 		t.Fatalf("telegram login secret files = %q / %q / %q", cfg.TelegramLoginSigningKeysFile, cfg.TelegramLoginCodeKeysFile, cfg.TelegramLoginSecretPepperFile)
@@ -484,11 +484,7 @@ func TestValidateTelegramLoginConfigRejectsUnsafeOrUnboundedSettings(t *testing.
 	}{
 		{name: "missing listener", mutate: func(c *Config) { c.PublicLinkWebAddr = "" }},
 		{name: "issuer path", mutate: func(c *Config) { c.TelegramLoginIssuer = "https://login.example.test/oauth" }},
-		{name: "public http", mutate: func(c *Config) {
-			c.TelegramLoginIssuer = "http://login.example.test"
-			c.TelegramLoginAllowLoopbackHTTP = true
-		}},
-		{name: "loopback http disabled", mutate: func(c *Config) { c.TelegramLoginIssuer = "http://127.0.0.1:2401" }},
+		{name: "http disabled", mutate: func(c *Config) { c.TelegramLoginIssuer = "http://192.0.2.25:2401" }},
 		{name: "missing key file", mutate: func(c *Config) { c.TelegramLoginSigningKeysFile = "" }},
 		{name: "request ttl too long", mutate: func(c *Config) { c.TelegramLoginRequestTTL = 16 * time.Minute }},
 		{name: "code ttl too short", mutate: func(c *Config) { c.TelegramLoginCodeTTL = 29 * time.Second }},
@@ -505,6 +501,22 @@ func TestValidateTelegramLoginConfigRejectsUnsafeOrUnboundedSettings(t *testing.
 				t.Fatal("unsafe Telegram Login config was accepted")
 			}
 		})
+	}
+}
+
+func TestValidateTelegramLoginConfigAcceptsHTTPHostAndIPWhenEnabled(t *testing.T) {
+	valid := Config{
+		TelegramLoginEnabled: true, TelegramLoginAllowHTTP: true, PublicLinkWebAddr: "127.0.0.1:2401",
+		TelegramLoginSigningKeysFile: "signing.json", TelegramLoginCodeKeysFile: "codes.json", TelegramLoginSecretPepperFile: "pepper",
+		TelegramLoginRequestTTL: 5 * time.Minute, TelegramLoginCodeTTL: 2 * time.Minute, TelegramLoginIDTokenTTL: time.Hour,
+		TelegramLoginRetention: 7 * 24 * time.Hour, TelegramLoginSweepInterval: 5 * time.Minute, TelegramLoginSweepBatch: 500,
+	}
+	for _, issuer := range []string{"http://login.example.test:3000", "http://192.0.2.25:2401", "http://[2001:db8::25]:2401"} {
+		cfg := valid
+		cfg.TelegramLoginIssuer = issuer
+		if err := validateTelegramLoginConfig(cfg); err != nil {
+			t.Fatalf("issuer %q was rejected: %v", issuer, err)
+		}
 	}
 }
 
