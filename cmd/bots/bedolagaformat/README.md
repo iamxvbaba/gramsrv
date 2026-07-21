@@ -78,14 +78,16 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
 3. 服务端 Authorization Code + PKCE S256 → `/token` Basic Client Secret →
    JWKS 验签和 `issuer/audience/nonce/subject` 复核。
 
-先在 telesrv 的 @BotFather 中对目标 bot 运行 `/setlogin`。选择 bot 后逐条登记 demo
-的精确 origin 和 callback（本机示例）：
+先在 telesrv 的 @BotFather 中对目标 bot 运行 `/setlogin`。选择一次 bot 后，可逐条发送，
+也可把下面三行作为一条多行消息粘贴，无需每次重新运行 `/setlogin` 或重选 bot：
 
 ```text
 add origin http://127.0.0.1:3000
 add redirect http://127.0.0.1:3000/oauth/callback
 enable
 ```
+
+发送 `/done` 退出配置会话并查看最终摘要。`/cancel` 只退出，不回滚已经成功应用的命令。
 
 `/setlogin` 首次创建 client 时只展示一次 OIDC Client Secret；不要写进仓库。可用
 `/logininfo` 查看 Client ID 和登记结果，或用 `/resetloginsecret` 轮换 secret。

@@ -255,5 +255,5 @@ func (d *webhookDispatcher) fail(ctx context.Context, config domain.BotAPIWebhoo
 		d.logger.Warn("record bot api webhook failure", zap.Int64("bot_user_id", config.BotUserID), zap.Error(err))
 		return
 	}
-	d.logger.Debug("bot api webhook delivery failed", zap.Int64("bot_user_id", config.BotUserID), zap.Duration("retry_in", delay), zap.String("reason", message))
+	d.logger.Warn("bot api webhook delivery failed", zap.Int64("bot_user_id", config.BotUserID), zap.Duration("retry_in", delay), zap.String("reason", message))
 }

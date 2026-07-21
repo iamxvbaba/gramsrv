@@ -78,6 +78,7 @@ func botFatherSeedProfile() domain.BotProfile {
 			{Command: "setlogin", Description: "configure Telegram Login"},
 			{Command: "logininfo", Description: "show Telegram Login configuration"},
 			{Command: "resetloginsecret", Description: "rotate an OIDC Client Secret"},
+			{Command: "done", Description: "finish Telegram Login configuration"},
 			{Command: "cancel", Description: "cancel the current operation"},
 			{Command: "help", Description: "show help"},
 		},

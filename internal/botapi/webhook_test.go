@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"telesrv/internal/domain"
 )
@@ -115,7 +116,8 @@ func TestWebhookDispatcherOnlyConfirmsSuccessfulPrefixAndSchedulesRetry(t *testi
 		webhookFound: true,
 	}
 	gateway := &recordingWebhookGateway{fakeBotAPIGateway: base}
-	d := &webhookDispatcher{control: gateway, gateway: gateway, client: server.Client(), logger: zap.NewNop(), botSem: make(chan struct{}, 1), httpSem: make(chan struct{}, 8)}
+	logCore, observedLogs := observer.New(zap.WarnLevel)
+	d := &webhookDispatcher{control: gateway, gateway: gateway, client: server.Client(), logger: zap.New(logCore), botSem: make(chan struct{}, 1), httpSem: make(chan struct{}, 8)}
 	d.deliver(context.Background(), base.webhook)
 
 	gateway.mu.Lock()
@@ -123,5 +125,19 @@ func TestWebhookDispatcherOnlyConfirmsSuccessfulPrefixAndSchedulesRetry(t *testi
 	gateway.mu.Unlock()
 	if base.webhookConfirmed != 21 || failure != "webhook returned HTTP 503" || !retryAt.After(time.Now()) {
 		t.Fatalf("confirmed=%d failure=%q retry=%v", base.webhookConfirmed, failure, retryAt)
+	}
+	entries := observedLogs.FilterMessage("bot api webhook delivery failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("delivery failure warning count = %d, want 1", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["bot_user_id"] != int64(1001) || fields["reason"] != "webhook returned HTTP 503" {
+		t.Fatalf("delivery failure warning fields = %#v", fields)
+	}
+	if _, ok := fields["url"]; ok {
+		t.Fatalf("delivery failure warning must not include webhook URL: %#v", fields)
+	}
+	if _, ok := fields["secret_token"]; ok {
+		t.Fatalf("delivery failure warning must not include webhook secret: %#v", fields)
 	}
 }

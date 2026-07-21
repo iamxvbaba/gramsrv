@@ -35,6 +35,16 @@ func TestBotStoreRoundTripPostgres(t *testing.T) {
 	if bfProfile.TokenSecret != "" || len(bfProfile.Commands) == 0 {
 		t.Fatalf("BotFather profile = %+v, want empty token with seeded commands", bfProfile)
 	}
+	hasDone := false
+	for _, command := range bfProfile.Commands {
+		if command.Command == "done" {
+			hasDone = true
+			break
+		}
+	}
+	if !hasDone {
+		t.Fatalf("BotFather commands = %+v, want /done for persistent /setlogin sessions", bfProfile.Commands)
+	}
 	// 空 phone 查询不得命中任何行。
 	if _, found, err := users.ByPhone(ctx, ""); err != nil || found {
 		t.Fatalf("ByPhone('') found=%v err=%v, want not found", found, err)

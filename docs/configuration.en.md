@@ -77,7 +77,124 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL` | duration / `5m` | Retention worker interval; bounded to `10s..1h`. |
 | `TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH` | int / `500` | Maximum rows per retention pass; bounded to `1..1000`. |
 
-### 3.1 Complete Telegram Login / OIDC setup
+### 3.1 Bot API webhook troubleshooting
+
+Start by separating the three addresses below. Never use the webhook receiver domain as the Bot
+API endpoint unless an explicit reverse-proxy route maps that domain to telesrv:
+
+| Name | Setting/source | Direction and purpose |
+|---|---|---|
+| Bot API listener | telesrv `TELESRV_BOT_API_ADDR` | The telesrv bind address; empty disables the gateway. `0.0.0.0` is valid only for binding and is not a client request target. |
+| Bot API base URL | the bot application's `TELEGRAM_API_URL` or equivalent | A client-reachable address for telesrv, for example `http://172.17.0.1:8088`. Method URLs are `<base>/bot<TOKEN>/<method>` and file URLs are `<base>/file/bot<TOKEN>/<file_path>`. |
+| Webhook receiver URL | the bot application's `WEBHOOK_URL + WEBHOOK_PATH`, registered by `setWebhook` | The target to which telesrv actively POSTs updates, for example `https://bot.example.com/webhook`. It is not the Bot API base URL. |
+
+The network direction is different too: polling is `bot application -> telesrv Bot API`, while
+webhook delivery is `telesrv -> bot application webhook receiver`. Working polling proves only the
+first path. It does not prove webhook DNS, outbound TCP, TLS, reverse proxy, or Docker hairpin
+connectivity.
+
+#### 1. Query the authoritative webhook state from the Bot API
+
+Run this inside the bot application container with its actual Bot API base URL. Do not expand and
+paste the token into chat, tickets, or screenshots:
+
+```sh
+curl -sS -X POST \
+  "${TELEGRAM_API_URL%/}/bot${BOT_TOKEN}/getWebhookInfo" | jq
+```
+
+If the application uses a differently named variable, replace `TELEGRAM_API_URL` with the
+**client-reachable address** corresponding to `TELESRV_BOT_API_ADDR`. For example, if telesrv binds
+`0.0.0.0:8088`, a container on the same host might use `http://172.17.0.1:8088`; it must not request
+`http://0.0.0.0:8088`.
+
+Interpret the result as follows:
+
+| Result | Conclusion and next step |
+|---|---|
+| Empty `url` | No webhook is registered on this telesrv instance. Verify that the application uses this Bot API base URL and that startup `setWebhook` succeeded. |
+| Increasing `pending_update_count` | Updates reached the telesrv durable queue but are not being delivered successfully. Inspect `last_error_message`. |
+| HTTP `401`/`403` in `last_error_message` | The receiver is reachable, but its webhook secret differs or an authentication layer rejected the request. |
+| `dial tcp ... i/o timeout` | telesrv cannot connect to the target IP/port. Check outbound firewall rules, Docker networking, loopback/hairpin NAT, and security groups. |
+| `connection refused` | The address is reachable, but nothing listens on that port or the port mapping/reverse-proxy upstream is wrong. |
+| DNS/`no such host` | The webhook hostname cannot be resolved from the telesrv runtime environment. |
+| TLS/`x509` error | The certificate chain, hostname, SNI, or container CA trust is wrong. HTTPS uses the system trust store. |
+| Target type absent from `allowed_updates` | Newly produced updates of that type are not queued. A normal `/start` requires at least `message`. |
+| Pending reaches zero but the app does not react | telesrv received a 2xx response. Inspect the receiver's internal queue, workers, dispatcher, and handlers. |
+
+`getWebhookInfo` reports telesrv's persisted delivery facts. An application `/health` endpoint only
+proves that its receiver route and workers started; it cannot replace this check.
+
+#### 2. Validate the receiver with the correct header
+
+The Telegram webhook secret is distinct from the Bot token, OIDC Client Secret, and other API
+keys. The receiver validates `X-Telegram-Bot-Api-Secret-Token`, not `Authorization: Bearer`:
+
+```sh
+curl -i -X POST "${WEBHOOK_URL%/}${WEBHOOK_PATH}" \
+  -H 'Content-Type: application/json' \
+  -H "X-Telegram-Bot-Api-Secret-Token: ${WEBHOOK_SECRET_TOKEN}" \
+  -d '{"update_id":2147483000}'
+```
+
+Expect an HTTP 2xx response. `401 invalid_secret_token` proves that the request reached the
+application but the header was absent or did not match. Recreate/restart the application after
+editing `.env`; changing the file alone neither updates the secret already registered in telesrv
+nor the receiver process's startup-time secret.
+
+#### 3. Test from the actual telesrv network namespace
+
+A browser or official Telegram reaching the public webhook proves only public inbound
+connectivity. Repeat the test from the host, container, or network namespace that actually runs
+telesrv:
+
+```sh
+docker exec <telesrv-container> sh -lc \
+  'getent hosts bot.example.com; curl -vk --connect-timeout 10 https://bot.example.com/health/unified'
+```
+
+If public clients work but this returns `dial tcp ...:443: i/o timeout`, a same-host public-IP
+hairpin failure is a common cause. Prefer split DNS or a container host mapping so the public
+hostname resolves to the reverse proxy's internal entry point inside the telesrv container while
+preserving the hostname, HTTPS SNI, and certificate validation. If the reverse proxy publishes
+443 on the Docker host, test first with:
+
+```sh
+curl -vk --resolve bot.example.com:443:172.17.0.1 \
+  https://bot.example.com/health/unified
+```
+
+After that succeeds, a deployment may use a network-appropriate Compose entry such as:
+
+```yaml
+extra_hosts:
+  - "bot.example.com:host-gateway"
+```
+
+Other fixes include attaching telesrv to the reverse proxy's Docker network, allowing the Docker
+subnet to reach host port 443, or correcting cloud security-group/NAT hairpin rules. telesrv allows
+an internal HTTP receiver, but use one only on a controlled shared network and only when the
+application's `WEBHOOK_URL` is not also its public OIDC, payment, or media callback base. Do not
+blindly replace a global public URL with an internal address to mask a routing problem.
+
+#### 4. Close the loop after the fix
+
+1. Restart the bot application so it calls `setWebhook` again with the current URL, secret, and
+   `allowed_updates`.
+2. Send a new `/start` or press a callback button.
+3. Call `getWebhookInfo` again. `pending_update_count` should fall to `0`, with no new
+   `last_error_date`.
+4. Inspect telesrv Warning logs for `bot api webhook delivery failed`. The record contains
+   `bot_user_id`, `retry_in`, and the failure reason, but must not contain the webhook URL, Bot
+   token, or secret.
+5. Confirm that the receiver recorded and processed the `update_id`. Delivery is at-least-once, so
+   the application must safely handle duplicate updates caused by retries.
+
+Immediately rotate any Bot token, webhook secret, OIDC Client Secret, API key, or database
+password exposed in shell history, chat, or screenshots. Keep only redacted diagnostics in support
+material.
+
+### 3.2 Complete Telegram Login / OIDC setup
 
 #### 1. Generate `data/telegram-login` once
 
@@ -154,8 +271,10 @@ and choose that bot. Initial setup returns:
 - `Client Secret`: shown once, separate from the Bot API token, and meant to be saved immediately
   in a secret manager.
 
-Send each configuration command separately. This example runs the relying party at
-`http://192.0.2.30:3000`:
+After selecting a bot once, BotFather keeps that configuration session active; there is no need to
+repeat `/setlogin` and the bot username for every change. Send commands one at a time or paste them
+as separate lines in one message (up to 32 lines per message). This example runs the relying party
+at `http://192.0.2.30:3000`:
 
 ```text
 add origin http://192.0.2.30:3000
@@ -163,6 +282,12 @@ add redirect http://192.0.2.30:3000/oauth/callback
 algorithm RS256
 enable
 ```
+
+Send `/done` after the changes succeed. BotFather closes the session and returns the final
+configuration summary. Every successful change takes effect immediately, so `/cancel` only closes
+the session and does not roll back changes. If a multi-line message fails partway through,
+BotFather identifies the applied lines, the failed line, and the later lines that were skipped,
+then keeps the selected bot active for a corrected command.
 
 An `origin` is an exact Web origin without a path, query, or fragment; it authorizes the JS SDK,
 popup CORS, and legacy `login_url`. A `redirect` is the exact full URI that receives an
