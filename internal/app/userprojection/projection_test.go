@@ -21,6 +21,8 @@ func TestProjectorCombinesProfilePhotosAndViewerContacts(t *testing.T) {
 		Phone:         "1111",
 		FirstName:     "Alice",
 		LastName:      "Contact",
+		Note:          "private note",
+		NoteEntities:  []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 7}},
 	}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}
@@ -47,12 +49,15 @@ func TestProjectorCombinesProfilePhotosAndViewerContacts(t *testing.T) {
 	if friend.FirstName != "Alice" || friend.LastName != "Contact" || friend.Phone != "1111" || !friend.Contact {
 		t.Fatalf("friend projection = %+v, want contact name/phone", friend)
 	}
+	if friend.ContactNote != "private note" || len(friend.ContactNoteEntities) != 1 || friend.ContactNoteEntities[0].Type != domain.MessageEntityBold {
+		t.Fatalf("friend contact note = %q %+v, want owner-scoped note", friend.ContactNote, friend.ContactNoteEntities)
+	}
 	if friend.PhotoID != 9001 || friend.PhotoDCID != 2 || string(friend.PhotoStripped) != string([]byte{1, 2}) {
 		t.Fatalf("friend photo = id %d dc %d stripped %v, want 9001/2/[1 2]", friend.PhotoID, friend.PhotoDCID, friend.PhotoStripped)
 	}
 	stranger := projectionUser(t, users, strangerID)
-	if stranger.Phone != "" || stranger.Contact {
-		t.Fatalf("stranger projection = %+v, want hidden phone and non-contact", stranger)
+	if stranger.Phone != "" || stranger.Contact || stranger.ContactNote != "" || len(stranger.ContactNoteEntities) != 0 {
+		t.Fatalf("stranger projection = %+v, want hidden phone and no contact note", stranger)
 	}
 	if stranger.PhotoID != 9002 || stranger.PhotoDCID != 3 {
 		t.Fatalf("stranger photo = id %d dc %d, want 9002/3", stranger.PhotoID, stranger.PhotoDCID)

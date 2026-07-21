@@ -13,6 +13,7 @@ import (
 	appprivacy "telesrv/internal/app/privacy"
 	appstories "telesrv/internal/app/stories"
 	appupdates "telesrv/internal/app/updates"
+	"telesrv/internal/app/userprojection"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -721,6 +722,202 @@ func TestAccountUpdateProfileRPC(t *testing.T) {
 	}
 	if full.FullUser.About != "profile bio" {
 		t.Fatalf("full about = %q, want profile bio", full.FullUser.About)
+	}
+}
+
+func TestUsersGetFullUserProjectsOwnerScopedContactNoteAcrossCacheUpdates(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	rawContacts := memory.NewContactStore()
+	cachedContacts := userprojection.NewCachedContactStore(rawContacts, time.Hour)
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000001", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	altOwner, err := userStore.Create(ctx, domain.User{AccessHash: 2, Phone: "15550000002", FirstName: "Alt"})
+	if err != nil {
+		t.Fatalf("create alternate owner: %v", err)
+	}
+	friend, err := userStore.Create(ctx, domain.User{AccessHash: 3, Phone: "15550000003", FirstName: "Friend"})
+	if err != nil {
+		t.Fatalf("create friend: %v", err)
+	}
+	contactsService := appcontacts.NewService(cachedContacts, userStore)
+	usersService := appusers.NewService(userStore, appusers.WithContactStore(cachedContacts))
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{Users: usersService, Contacts: contactsService, Sessions: sessions}, zaptest.NewLogger(t), clock.System)
+	hasUserRefresh := func(updates *tg.Updates, userID int64) bool {
+		t.Helper()
+		if updates == nil {
+			return false
+		}
+		for _, update := range updates.Updates {
+			if changed, ok := update.(*tg.UpdateUser); ok && changed.UserID == userID {
+				return true
+			}
+		}
+		return false
+	}
+	add := &tg.ContactsAddContactRequest{
+		ID:        &tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		FirstName: "Friend",
+	}
+	add.SetNote(tg.TextWithEntities{
+		Text:     "owner note",
+		Entities: []tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 0, Length: 5}},
+	})
+	addedClass, err := r.onContactsAddContact(WithUserID(ctx, owner.ID), add)
+	if err != nil {
+		t.Fatalf("add owner contact through RPC: %v", err)
+	}
+	added, ok := addedClass.(*tg.Updates)
+	if !ok || !hasUserRefresh(added, friend.ID) {
+		t.Fatalf("add contact updates = %T %+v, want updateUser refresh for note", addedClass, addedClass)
+	}
+	pushed, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok || !hasUserRefresh(pushed, friend.ID) {
+		t.Fatalf("add contact push = %T %+v, want other-session updateUser refresh", sessions.lastUserPush(), sessions.lastUserPush())
+	}
+	if _, err := contactsService.AddContact(ctx, altOwner.ID, domain.ContactInput{
+		ContactUserID: friend.ID,
+		FirstName:     "Friend",
+		Note:          "alternate note",
+	}); err != nil {
+		t.Fatalf("add alternate owner contact: %v", err)
+	}
+	getNote := func(viewer domain.User) (tg.TextWithEntities, bool) {
+		t.Helper()
+		full, err := r.onUsersGetFullUser(WithUserID(ctx, viewer.ID), &tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash})
+		if err != nil {
+			t.Fatalf("get full user for viewer %d: %v", viewer.ID, err)
+		}
+		return full.FullUser.GetNote()
+	}
+
+	note, ok := getNote(owner)
+	if !ok || note.Text != "owner note" || len(note.Entities) != 1 {
+		t.Fatalf("owner note = %+v present=%v, want owner note with entity", note, ok)
+	}
+	bold, ok := note.Entities[0].(*tg.MessageEntityBold)
+	if !ok || bold.Offset != 0 || bold.Length != 5 {
+		t.Fatalf("owner note entity = %T %+v, want bold 0/5", note.Entities[0], note.Entities[0])
+	}
+	// The large UserFull LRU intentionally excludes private notes; every response
+	// overlays one from the already-loaded viewer contact projection.
+	cachedFull, ok := r.userFullProjectionCache.Lookup(owner.ID, friend.ID)
+	if !ok {
+		t.Fatal("user full projection was not cached")
+	}
+	if cachedNote, present := cachedFull.GetNote(); present {
+		t.Fatalf("cached user full leaked private note: %+v", cachedNote)
+	}
+	// Mutating one response must not leak through the cache or contact snapshot.
+	bold.Length = 99
+	note, ok = getNote(owner)
+	if !ok || note.Entities[0].(*tg.MessageEntityBold).Length != 5 {
+		t.Fatalf("owner note after response mutation = %+v present=%v", note, ok)
+	}
+
+	altNote, ok := getNote(altOwner)
+	if !ok || altNote.Text != "alternate note" {
+		t.Fatalf("alternate owner note = %+v present=%v, want isolated value", altNote, ok)
+	}
+	if ok, err := r.onContactsUpdateContactNote(WithUserID(ctx, owner.ID), &tg.ContactsUpdateContactNoteRequest{
+		ID: &tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Note: tg.TextWithEntities{
+			Text:     "bad",
+			Entities: []tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 3, Length: 1}},
+		},
+	}); err == nil || ok || !strings.Contains(err.Error(), "ENTITY_BOUNDS_INVALID") {
+		t.Fatalf("invalid contact note ok=%v err=%v, want ENTITY_BOUNDS_INVALID", ok, err)
+	}
+	note, ok = getNote(owner)
+	if !ok || note.Text != "owner note" {
+		t.Fatalf("invalid update mutated owner note: %+v present=%v", note, ok)
+	}
+
+	updated := &tg.ContactsUpdateContactNoteRequest{
+		ID: &tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Note: tg.TextWithEntities{
+			Text:     "fresh note",
+			Entities: []tg.MessageEntityClass{&tg.MessageEntityItalic{Offset: 0, Length: 5}},
+		},
+	}
+	sessions.clearMessages()
+	if ok, err := r.onContactsUpdateContactNote(WithUserID(ctx, owner.ID), updated); err != nil || !ok {
+		t.Fatalf("update contact note ok=%v err=%v", ok, err)
+	}
+	pushed, ok = sessions.lastUserPush().(*tg.Updates)
+	if !ok || !hasUserRefresh(pushed, friend.ID) {
+		t.Fatalf("update contact note push = %T %+v, want updateUser refresh", sessions.lastUserPush(), sessions.lastUserPush())
+	}
+	hasReset := false
+	for _, update := range pushed.Updates {
+		if _, ok := update.(*tg.UpdateContactsReset); ok {
+			hasReset = true
+		}
+	}
+	if !hasReset {
+		t.Fatalf("update contact note push = %+v, want contactsReset for non-reliable dispatch", pushed)
+	}
+	note, ok = getNote(owner)
+	if !ok || note.Text != "fresh note" || len(note.Entities) != 1 {
+		t.Fatalf("fresh owner note = %+v present=%v", note, ok)
+	}
+	if _, ok := note.Entities[0].(*tg.MessageEntityItalic); !ok {
+		t.Fatalf("fresh owner note entity = %T, want italic", note.Entities[0])
+	}
+	altNote, ok = getNote(altOwner)
+	if !ok || altNote.Text != "alternate note" {
+		t.Fatalf("alternate note changed with owner update: %+v present=%v", altNote, ok)
+	}
+
+	if ok, err := r.onContactsUpdateContactNote(WithUserID(ctx, owner.ID), &tg.ContactsUpdateContactNoteRequest{
+		ID:   &tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Note: tg.TextWithEntities{},
+	}); err != nil || !ok {
+		t.Fatalf("clear contact note ok=%v err=%v", ok, err)
+	}
+	if note, present := getNote(owner); present {
+		t.Fatalf("cleared contact note still present: %+v", note)
+	}
+
+	// Simulate a write committed by another instance: both the shared contact
+	// snapshot and RPC projection receive the existing contact_account NOTIFY.
+	if _, found, err := rawContacts.UpdateNote(ctx, owner.ID, friend.ID, "remote note", nil); err != nil || !found {
+		t.Fatalf("remote update found=%v err=%v", found, err)
+	}
+	cachedContacts.InvalidateViewers(owner.ID)
+	r.InvalidateRPCProjectionReadModelForViewer(owner.ID)
+	note, ok = getNote(owner)
+	if !ok || note.Text != "remote note" {
+		t.Fatalf("note after cross-instance invalidation = %+v present=%v", note, ok)
+	}
+}
+
+func TestContactNoteReliableDispatchPushesOnlyTransientUserRefresh(t *testing.T) {
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Sessions: sessions,
+		Updates:  &captureUpdates{reliableDispatch: true},
+	}, zaptest.NewLogger(t), clock.System)
+	peer := domain.User{ID: 1000000002, AccessHash: 22, FirstName: "Friend", Contact: true}
+
+	r.pushContactNoteRefreshIfReliableDispatch(WithUserID(context.Background(), 1000000001), 1000000001, peer)
+
+	pushed, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok {
+		t.Fatalf("contact note refresh = %T, want *tg.Updates", sessions.lastUserPush())
+	}
+	if len(pushed.Updates) != 1 {
+		t.Fatalf("contact note refresh updates = %+v, want one updateUser without duplicate contactsReset", pushed.Updates)
+	}
+	changed, ok := pushed.Updates[0].(*tg.UpdateUser)
+	if !ok || changed.UserID != peer.ID {
+		t.Fatalf("contact note refresh update = %T %+v, want updateUser(%d)", pushed.Updates[0], pushed.Updates[0], peer.ID)
+	}
+	if len(pushed.Users) != 1 || pushed.Users[0].GetID() != peer.ID {
+		t.Fatalf("contact note refresh users = %+v, want peer companion", pushed.Users)
 	}
 }
 

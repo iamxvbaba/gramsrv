@@ -594,7 +594,11 @@ func (r *Router) onContactsImportContacts(ctx context.Context, input []tg.InputP
 	}
 	items := make([]domain.ContactInput, 0, len(input))
 	for _, item := range input {
-		note, entities := contactNote(item.GetNote())
+		rawNote, hasNote := item.GetNote()
+		note, entities, err := contactNote(userID, rawNote, hasNote)
+		if err != nil {
+			return nil, err
+		}
 		if !validContactInput(item.Phone, item.FirstName, item.LastName, note, len(entities)) {
 			return nil, limitInvalidErr()
 		}
@@ -666,7 +670,11 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	if !found {
 		return nil, contactIDInvalidErr()
 	}
-	note, entities := contactNote(req.GetNote())
+	rawNote, hasNote := req.GetNote()
+	note, entities, err := contactNote(userID, rawNote, hasNote)
+	if err != nil {
+		return nil, err
+	}
 	if !validContactInput(req.Phone, req.FirstName, req.LastName, note, len(entities)) {
 		return nil, limitInvalidErr()
 	}
@@ -682,22 +690,20 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	if err != nil {
 		return nil, contactErr(err)
 	}
-	peerUser := contact.User
-	peerUser.Contact = true
-	peerUser.Mutual = contact.Mutual || contact.User.Mutual
-	if contact.Phone != "" {
-		peerUser.Phone = contact.Phone
-	}
-	if contact.FirstName != "" || contact.LastName != "" {
-		peerUser.FirstName = contact.FirstName
-		peerUser.LastName = contact.LastName
-	}
+	peerUser := contactUserForUpdates(contact)
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: contact.User.ID}
 	settings, err := r.deps.Contacts.GetPeerSettings(ctx, userID, peer)
 	if err != nil {
 		return nil, internalErr()
 	}
 	updates := r.contactPeerSettingsUpdates(ctx, userID, peerUser, settings, true)
+	if hasNote {
+		// TDesktop does not copy the submitted note into Data::User after
+		// contacts.addContact. updateUser is the lightweight full-info refresh
+		// signal; the private note itself remains available only from
+		// users.getFullUser for this viewer.
+		updates.Updates = append(updates.Updates, &tg.UpdateUser{UserID: peerUser.ID})
+	}
 	updates.Updates = append(updates.Updates, &tg.UpdateContactsReset{})
 	if err := r.recordPeerSettings(ctx, userID, peer, settings); err != nil {
 		return nil, internalErr()
@@ -712,6 +718,9 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	}
 	r.invalidateRPCProjectionForViewer(userID)
 	r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, updates)
+	if hasNote {
+		r.pushContactNoteRefreshIfReliableDispatch(ctx, userID, peerUser)
+	}
 	return updates, nil
 }
 
@@ -739,16 +748,7 @@ func (r *Router) onContactsAcceptContact(ctx context.Context, id tg.InputUserCla
 	if err != nil {
 		return nil, internalErr()
 	}
-	peerUser := contact.User
-	peerUser.Contact = true
-	peerUser.Mutual = contact.Mutual || contact.User.Mutual
-	if contact.Phone != "" {
-		peerUser.Phone = contact.Phone
-	}
-	if contact.FirstName != "" || contact.LastName != "" {
-		peerUser.FirstName = contact.FirstName
-		peerUser.LastName = contact.LastName
-	}
+	peerUser := contactUserForUpdates(contact)
 	updates := r.contactPeerSettingsUpdates(ctx, userID, peerUser, settings, true)
 	updates.Updates = append(updates.Updates, &tg.UpdateContactsReset{})
 	if err := r.recordPeerSettings(ctx, userID, peer, settings); err != nil {
@@ -844,17 +844,27 @@ func (r *Router) onContactsUpdateContactNote(ctx context.Context, req *tg.Contac
 	if !found {
 		return false, contactIDInvalidErr()
 	}
-	if utf8.RuneCountInString(req.Note.Text) > maxContactNoteLength || len(req.Note.Entities) > maxMessageEntityCount {
-		return false, limitInvalidErr()
+	note, entities, err := contactNote(userID, req.Note, true)
+	if err != nil {
+		return false, err
 	}
-	if _, err := r.deps.Contacts.UpdateContactNote(ctx, userID, target.ID, req.Note.Text, domainMessageEntities(req.Note.Entities)); err != nil {
+	contact, err := r.deps.Contacts.UpdateContactNote(ctx, userID, target.ID, note, entities)
+	if err != nil {
 		return false, contactErr(err)
 	}
 	if err := r.recordContactsReset(ctx, userID); err != nil {
 		return false, internalErr()
 	}
 	r.invalidateRPCProjectionForViewer(userID)
-	r.pushContactsReset(ctx, userID)
+	peerUser := contactUserForUpdates(contact)
+	if r.hasReliableUpdateDispatch() {
+		// contactsReset is already delivered by the durable outbox. updateUser
+		// is intentionally a transient online refresh hint and must not copy a
+		// private note into the shared update log.
+		r.pushContactNoteRefreshIfReliableDispatch(ctx, userID, peerUser)
+	} else {
+		r.pushUserUpdates(ctx, userID, r.contactNoteRefreshUpdates(peerUser, int(r.clock.Now().Unix()), true))
+	}
 	return true, nil
 }
 
@@ -989,11 +999,85 @@ func validContactInput(phone, firstName, lastName, note string, entities int) bo
 	return true
 }
 
-func contactNote(note tg.TextWithEntities, ok bool) (string, []domain.MessageEntity) {
+func contactNote(ownerUserID int64, note tg.TextWithEntities, ok bool) (string, []domain.MessageEntity, error) {
 	if !ok {
-		return "", nil
+		return "", nil, nil
 	}
-	return note.Text, domainMessageEntities(note.Entities)
+	if !utf8.ValidString(note.Text) || utf8.RuneCountInString(note.Text) > maxContactNoteLength || len(note.Entities) > maxMessageEntityCount {
+		return "", nil, limitInvalidErr()
+	}
+	limit := utf16CodeUnitLen(note.Text)
+	for _, entity := range note.Entities {
+		if messageEntityClassNil(entity) || !storyCaptionEntitySupported(entity) {
+			return "", nil, entityBoundsInvalidErr()
+		}
+		offset, length := entity.GetOffset(), entity.GetLength()
+		if offset < 0 || length <= 0 || offset > limit || length > limit-offset {
+			return "", nil, entityBoundsInvalidErr()
+		}
+		switch typed := entity.(type) {
+		case *tg.MessageEntityCustomEmoji:
+			if typed.DocumentID <= 0 {
+				return "", nil, entityBoundsInvalidErr()
+			}
+		case *tg.MessageEntityMentionName:
+			if typed.UserID <= 0 {
+				return "", nil, entityBoundsInvalidErr()
+			}
+		case *tg.InputMessageEntityMentionName:
+			if inputUserClassNil(typed.UserID) {
+				return "", nil, entityBoundsInvalidErr()
+			}
+		}
+	}
+	entities := domainMessageEntitiesForViewer(ownerUserID, note.Entities)
+	if len(entities) != len(note.Entities) || !validEphemeralEntityBounds(note.Text, entities) {
+		return "", nil, entityBoundsInvalidErr()
+	}
+	return note.Text, entities, nil
+}
+
+func contactUserForUpdates(contact domain.Contact) domain.User {
+	peerUser := contact.User
+	peerUser.Contact = true
+	peerUser.Mutual = contact.Mutual || contact.User.Mutual
+	if contact.Phone != "" {
+		peerUser.Phone = contact.Phone
+	}
+	if contact.FirstName != "" || contact.LastName != "" {
+		peerUser.FirstName = contact.FirstName
+		peerUser.LastName = contact.LastName
+	}
+	return peerUser
+}
+
+func (r *Router) contactNoteRefreshUpdates(peerUser domain.User, date int, includeContactsReset bool) *tg.Updates {
+	updates := make([]tg.UpdateClass, 0, 2)
+	if includeContactsReset {
+		updates = append(updates, &tg.UpdateContactsReset{})
+	}
+	updates = append(updates, &tg.UpdateUser{UserID: peerUser.ID})
+	return &tg.Updates{
+		Updates: updates,
+		Users:   []tg.UserClass{r.tgUser(peerUser)},
+		Date:    date,
+	}
+}
+
+// pushContactNoteRefreshIfReliableDispatch complements the durable
+// contactsReset event. Reliable dispatch already owns the reset, while this
+// best-effort online nudge makes other loaded TDesktop profiles refetch
+// users.getFullUser immediately. Offline correctness does not depend on it.
+func (r *Router) pushContactNoteRefreshIfReliableDispatch(ctx context.Context, userID int64, peerUser domain.User) {
+	if !r.hasReliableUpdateDispatch() || peerUser.ID == 0 {
+		return
+	}
+	r.pushUserMessageTransient(
+		ctx,
+		userID,
+		"push contact note full-user refresh",
+		r.contactNoteRefreshUpdates(peerUser, int(r.clock.Now().Unix()), false),
+	)
 }
 
 func (r *Router) contactPeerSettingsUpdates(ctx context.Context, userID int64, peerUser domain.User, settings domain.PeerSettings, includeSelf bool) *tg.Updates {

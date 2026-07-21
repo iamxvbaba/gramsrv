@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -156,6 +157,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, []tg.UserClass{user}, nil)
 	loadEpoch := r.userFullProjectionCache.LoadEpoch()
 	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
+		if !applyContactNoteToUserFull(u, &full) {
+			return nil, internalErr()
+		}
 		if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
 			return nil, err
 		}
@@ -173,6 +177,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		return nil, err
 	}
 	r.userFullProjectionCache.StoreIfEpoch(currentUserID, u.ID, full, loadEpoch)
+	if !applyContactNoteToUserFull(u, &full) {
+		return nil, internalErr()
+	}
 	if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
 		return nil, err
 	}
@@ -184,6 +191,49 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		Users:    []tg.UserClass{user},
 		Chats:    chats,
 	}, nil
+}
+
+// applyContactNoteToUserFull overlays the viewer-scoped contact note after the
+// expensive UserFull projection cache. This keeps private notes out of the
+// large LRU while reusing the contact projection already loaded by Users.ByID,
+// so users.getFullUser adds neither a PostgreSQL query nor an N+1 read.
+func applyContactNoteToUserFull(user domain.User, full *tg.UserFull) bool {
+	if full == nil {
+		return false
+	}
+	full.Flags2.Unset(22)
+	full.Note = tg.TextWithEntities{}
+	if !user.Contact {
+		return user.ContactNote == "" && len(user.ContactNoteEntities) == 0
+	}
+	if user.ContactNote == "" {
+		return len(user.ContactNoteEntities) == 0
+	}
+	if !utf8.ValidString(user.ContactNote) || utf8.RuneCountInString(user.ContactNote) > maxContactNoteLength ||
+		len(user.ContactNoteEntities) > maxMessageEntityCount || !validEphemeralEntityBounds(user.ContactNote, user.ContactNoteEntities) {
+		return false
+	}
+	entities := tgMessageEntities(user.ContactNoteEntities)
+	if len(entities) != len(user.ContactNoteEntities) {
+		return false
+	}
+	for _, entity := range user.ContactNoteEntities {
+		switch entity.Type {
+		case domain.MessageEntityCustomEmoji:
+			if entity.DocumentID <= 0 {
+				return false
+			}
+		case domain.MessageEntityMentionName:
+			if entity.UserID <= 0 {
+				return false
+			}
+		}
+	}
+	full.SetNote(tg.TextWithEntities{
+		Text:     user.ContactNote,
+		Entities: entities,
+	})
+	return true
 }
 
 func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int64, u domain.User) (tg.UserFull, error) {
