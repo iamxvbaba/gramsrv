@@ -116,12 +116,27 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("owner upgrade service message = %+v", ownerMessage)
 	}
 	uniqueAction := ownerMessage.Media.ServiceAction.StarGiftUnique
-	if uniqueAction.SavedID != int64(saved.MsgID) {
-		t.Fatalf("unique action saved_id = %d, want stable source msg id %d", uniqueAction.SavedID, saved.MsgID)
+	if uniqueAction.SavedID != 0 || uniqueAction.Peer.Type != "" || uniqueAction.Peer.ID != 0 {
+		t.Fatalf("user unique action leaked channel peer/saved_id: %+v", uniqueAction)
 	}
 	senderUniqueAction := upgraded.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
 	if senderUniqueAction == nil || senderUniqueAction.SavedID != 0 {
 		t.Fatalf("sender unique action leaked owner-only saved_id: %+v", senderUniqueAction)
+	}
+	if byOutput, found, err := gifts.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: ownerMessage.ID}); err != nil || !found || byOutput.ID != savedID {
+		t.Fatalf("owner upgrade output ref = %+v found %v err %v", byOutput, found, err)
+	}
+	var ownerAliasCount, senderAliasCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2 AND saved_gift_id=$3`, owner.ID, ownerMessage.ID, savedID).Scan(&ownerAliasCount); err != nil {
+		t.Fatalf("load owner upgrade output alias: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2`, sender.ID, ownerMessage.ID).Scan(&senderAliasCount); err != nil {
+		t.Fatalf("load sender upgrade output alias: %v", err)
+	}
+	if ownerAliasCount != 1 || senderAliasCount != 0 {
+		t.Fatalf("upgrade output aliases owner=%d sender=%d, want owner-only", ownerAliasCount, senderAliasCount)
 	}
 	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
 	if ownerSourceEdit.Event.Pts <= ownerMessage.Pts || ownerSourceEdit.Message.Media == nil ||

@@ -530,6 +530,15 @@ func (s *StarGiftStore) SetUnsaved(_ context.Context, ref domain.SavedStarGiftRe
 	for i := range s.gifts {
 		if s.savedStarGiftMatchesRef(s.gifts[i], ref) && s.gifts[i].LifecycleStatus.Live() {
 			s.gifts[i].Unsaved = unsaved
+			if unsaved && s.gifts[i].PinnedOrder > 0 {
+				removedOrder := s.gifts[i].PinnedOrder
+				s.gifts[i].PinnedOrder = 0
+				for j := range s.gifts {
+					if s.gifts[j].Owner == ref.Owner && s.gifts[j].PinnedOrder > removedOrder {
+						s.gifts[j].PinnedOrder--
+					}
+				}
+			}
 			return true, nil
 		}
 	}
@@ -701,9 +710,15 @@ func (s *StarGiftStore) ReorderCollections(_ context.Context, owner domain.Peer,
 func (s *StarGiftStore) SetPinned(_ context.Context, owner domain.Peer, savedGiftIDs []int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(savedGiftIDs) > domain.MaxPinnedStarGifts {
+		return domain.ErrStarGiftCollectibleInvalid
+	}
 	ids, err := s.validCollectionGiftIDsLocked(owner, savedGiftIDs)
 	if err != nil {
 		return err
+	}
+	if len(ids) != len(savedGiftIDs) {
+		return domain.ErrStarGiftCollectibleInvalid
 	}
 	order := make(map[int64]int, len(ids))
 	for i, id := range ids {
@@ -712,6 +727,9 @@ func (s *StarGiftStore) SetPinned(_ context.Context, owner domain.Peer, savedGif
 	for i := range s.gifts {
 		if s.gifts[i].Owner == owner {
 			s.gifts[i].PinnedOrder = order[s.gifts[i].ID]
+			if s.gifts[i].PinnedOrder > 0 {
+				s.gifts[i].Unsaved = false
+			}
 		}
 	}
 	return nil

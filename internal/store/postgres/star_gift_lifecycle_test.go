@@ -7,16 +7,35 @@ import (
 )
 
 func TestTransferUniqueActionSavedIDNamespace(t *testing.T) {
-	saved := domain.SavedStarGift{SavedID: 42}
+	saved := domain.SavedStarGift{SavedID: 42, CanCraftAt: 1_780_000_123}
 	unique := domain.UniqueStarGift{ID: 7}
 	user := domain.Peer{Type: domain.PeerTypeUser, ID: 100}
 	channel := domain.Peer{Type: domain.PeerTypeChannel, ID: 200}
 
-	if action := transferUniqueAction(unique, 1, user, saved); action.SavedID != 0 {
+	if action := transferUniqueAction(unique, 1, user, saved); action.SavedID != 0 || action.CanCraftAt != saved.CanCraftAt {
 		t.Fatalf("user transfer action leaked channel saved_id: %+v", action)
 	}
-	if action := transferUniqueAction(unique, 1, channel, saved); action.SavedID != saved.SavedID {
+	if action := transferUniqueAction(unique, 1, channel, saved); action.SavedID != saved.SavedID || action.CanCraftAt != 0 {
 		t.Fatalf("channel transfer action lost channel saved_id: %+v", action)
+	}
+}
+
+func TestStarGiftCraftReadyAt(t *testing.T) {
+	const date = 1_780_000_000
+	if got := starGiftCraftReadyAt(date, 0); got != date {
+		t.Fatalf("zero-delay craft ready_at = %d, want %d", got, date)
+	}
+	if got := starGiftCraftReadyAt(date, 60); got != date+60 {
+		t.Fatalf("delayed craft ready_at = %d, want %d", got, date+60)
+	}
+	if got := starGiftCraftReadyAt(0, 0); got != 0 {
+		t.Fatalf("invalid-date craft ready_at = %d, want 0", got)
+	}
+	if got := starGiftCraftReadyAt(1<<31-10, 60); got != 1<<31-1 {
+		t.Fatalf("overflow craft ready_at = %d, want max int32", got)
+	}
+	if got := starGiftCraftReadyAt(1<<31+10, 0); got != 1<<31-1 {
+		t.Fatalf("oversized-date craft ready_at = %d, want max int32", got)
 	}
 }
 

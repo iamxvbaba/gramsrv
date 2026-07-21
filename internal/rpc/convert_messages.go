@@ -269,7 +269,10 @@ func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) t
 	if action.DropOriginalDetailsStars > 0 {
 		out.SetDropOriginalDetailsStars(action.DropOriginalDetailsStars)
 	}
-	if action.CanCraftAt > 0 {
+	// Channel Craft is not executable yet. Gate on the authoritative gift owner
+	// as a final wire boundary so historical JSON/admin-log actions or a future
+	// constructor cannot accidentally expose Android's Craft entry marker.
+	if action.Gift.Owner.Type == domain.PeerTypeUser && action.CanCraftAt > 0 {
 		out.SetCanCraftAt(action.CanCraftAt)
 	}
 	if action.FromUserID != 0 {

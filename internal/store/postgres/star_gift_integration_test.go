@@ -142,6 +142,26 @@ func TestStarGiftStorePostgres(t *testing.T) {
 	if !slices.Equal(gotMsgIDs, wantMsgIDs) {
 		t.Fatalf("pinned paged msg ids = %v, want %v", gotMsgIDs, wantMsgIDs)
 	}
+	// Hiding a pinned gift atomically unpins it and compacts the remaining
+	// vector. Pinning it again makes it visible in the same owner transaction.
+	if ok, err := st.SetUnsaved(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100}, true); err != nil || !ok {
+		t.Fatalf("hide pinned gift = %v err %v", ok, err)
+	}
+	hiddenPinned, found, err := st.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100})
+	if err != nil || !found || !hiddenPinned.Unsaved || hiddenPinned.PinnedOrder != 0 {
+		t.Fatalf("hidden pinned gift = %+v found %v err %v", hiddenPinned, found, err)
+	}
+	remainingPinned, found, err := st.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 102})
+	if err != nil || !found || remainingPinned.PinnedOrder != 1 {
+		t.Fatalf("remaining pin after compaction = %+v found %v err %v", remainingPinned, found, err)
+	}
+	if err := st.SetPinned(ctx, ownerPeer, []int64{savedIDs[0], savedIDs[2]}); err != nil {
+		t.Fatalf("repin hidden gift: %v", err)
+	}
+	repinned, found, err := st.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: 100})
+	if err != nil || !found || repinned.Unsaved || repinned.PinnedOrder != 1 {
+		t.Fatalf("repinned hidden gift = %+v found %v err %v", repinned, found, err)
+	}
 	if err := st.SetPinned(ctx, ownerPeer, nil); err != nil {
 		t.Fatalf("clear pinned profile order: %v", err)
 	}

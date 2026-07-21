@@ -11,12 +11,44 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 const (
 	starGiftAuctionRoundDuration = 3600
 	maxStarGiftAuctionAcquired   = 1000
 )
+
+// starGiftCraftOutputIntent is the immutable message intent committed with a
+// successful craft outcome. The aggregate may subsequently be hidden, listed
+// or otherwise edited; an exact retry must still use the first intent and its
+// fingerprint instead of rebuilding a different message from mutable state.
+type starGiftCraftOutputIntent struct {
+	Media       *domain.MessageMedia
+	Fingerprint []byte
+	Date        int
+	SavedGiftID int64
+}
+
+func starGiftCraftOutputMedia(userID int64, gift domain.UniqueStarGift, saved domain.SavedStarGift) *domain.MessageMedia {
+	return &domain.MessageMedia{Kind: domain.MessageMediaKindService, ServiceAction: &domain.MessageServiceAction{
+		Kind: domain.MessageServiceActionStarGiftUnique, StarGiftUnique: &domain.MessageStarGiftUniqueAction{
+			Gift: gift, FromUserID: userID, Saved: !saved.Unsaved, Craft: true,
+			CanExportAt: saved.CanExportAt, TransferStars: saved.TransferStars, CanTransferAt: saved.CanTransferAt,
+			CanResellAt: saved.CanResellAt, DropOriginalDetailsStars: saved.DropOriginalDetailsStars,
+			CanCraftAt: saved.CanCraftAt,
+		},
+	}}
+}
+
+func starGiftCraftOutputRequest(req domain.StarGiftCraftRequest, intent starGiftCraftOutputIntent) domain.SendPrivateTextRequest {
+	return domain.SendPrivateTextRequest{
+		SenderUserID: req.UserID, RecipientUserID: req.UserID,
+		RandomID: lifecycleCommandRandomID("craft", req.UserID, req.CommandKey), Date: intent.Date,
+		OriginAuthKeyID: req.OriginAuthKeyID, OriginSessionID: req.OriginSessionID, OriginUserID: req.UserID,
+		IdempotencyFingerprint: append([]byte(nil), intent.Fingerprint...), Media: intent.Media,
+	}
+}
 
 func defaultStarGiftCraftDraw(upper int) (int, error) {
 	if upper <= 0 {
@@ -158,7 +190,8 @@ func (s *StarGiftLifecycleStore) ListCraftStarGifts(ctx context.Context, userID,
 	}
 	args := []any{userID, giftID}
 	where := `p.owner_peer_type='user' AND p.owner_peer_id=$1 AND p.gift_id=$2
-	AND p.lifecycle_status='active' AND p.unique_gift_id IS NOT NULL AND p.can_craft_at<=EXTRACT(EPOCH FROM now())::integer
+	AND p.lifecycle_status='active' AND p.unique_gift_id IS NOT NULL
+	AND p.can_craft_at>0 AND p.can_craft_at<=EXTRACT(EPOCH FROM now())::integer
 	AND NOT u.burned AND u.owner_address='' AND u.craft_chance_permille>0
 	AND EXISTS (SELECT 1 FROM star_gift_collectible_models m
 	            WHERE m.collectible_revision_id=u.collectible_revision_id AND m.crafted)`
@@ -234,11 +267,11 @@ func (s *StarGiftLifecycleStore) CraftStarGift(ctx context.Context, req domain.S
 	// A committed failed craft has already moved every input out of the active
 	// lifecycle. Consult the immutable receipt before active-gift resolution so
 	// an exact transport retry can still replay the same terminal result.
-	if replay, found, err := s.loadCraftReplay(ctx, req); err != nil || found {
+	if replay, output, found, err := s.loadCraftReplay(ctx, req); err != nil || found {
 		if err != nil || !replay.Success {
 			return replay, err
 		}
-		return s.deliverCraftSuccess(ctx, req, replay)
+		return s.deliverCraftSuccess(ctx, req, replay, output)
 	}
 	savedIDs, err := NewStarGiftStore(s.db).ResolveSavedIDs(ctx, owner, req.Refs)
 	if err != nil {
@@ -248,7 +281,7 @@ func (s *StarGiftLifecycleStore) CraftStarGift(ctx context.Context, req domain.S
 		return domain.StarGiftCraftResult{}, domain.ErrStarGiftCraftUnavailable
 	}
 	var result domain.StarGiftCraftResult
-	var resultUniqueID int64
+	var output starGiftCraftOutputIntent
 	err = withTx(ctx, s.db, "craft star gift", func(tx pgx.Tx) error {
 		lockedRows, err := tx.Query(ctx, `SELECT id FROM peer_star_gifts WHERE id=ANY($1::bigint[]) ORDER BY id FOR UPDATE`, sortedUniqueInt64(savedIDs))
 		if err != nil {
@@ -269,7 +302,7 @@ func (s *StarGiftLifecycleStore) CraftStarGift(ctx context.Context, req domain.S
 		chance := 0
 		for i := range req.Refs {
 			saved, err := lockSavedStarGiftByID(ctx, tx, savedIDs[i])
-			if err != nil || !saved.LifecycleStatus.Live() || saved.UniqueGiftID == 0 || saved.CanCraftAt > req.Date {
+			if err != nil || !saved.LifecycleStatus.Live() || saved.UniqueGiftID == 0 || saved.CanCraftAt <= 0 || saved.CanCraftAt > req.Date {
 				return domain.ErrStarGiftCraftUnavailable
 			}
 			unique, found, err := NewStarGiftStore(tx).UniqueByID(ctx, saved.UniqueGiftID)
@@ -374,111 +407,164 @@ WHERE id=ANY($1::bigint[])`, savedIDs[burnFrom:]); err != nil {
 		}
 		result.SourceEdits = sourceEdits
 		var resultID any
+		var outputMediaJSON any
+		var outputFingerprint any
 		if result.Success {
 			resultID = firstUniqueID
-			resultUniqueID = firstUniqueID
+			gift, found, err := NewStarGiftStore(tx).UniqueByID(ctx, firstUniqueID)
+			if err != nil || !found {
+				if err != nil {
+					return err
+				}
+				return domain.ErrStarGiftCraftUnavailable
+			}
+			saved, found, err := savedStarGiftByID(ctx, tx, firstSavedID)
+			if err != nil || !found || saved.Owner != owner || saved.UniqueGiftID != gift.ID ||
+				!saved.LifecycleStatus.Live() || gift.Owner != owner || gift.Burned || !gift.Crafted {
+				if err != nil {
+					return err
+				}
+				return domain.ErrStarGiftCraftUnavailable
+			}
+			media := starGiftCraftOutputMedia(req.UserID, gift, saved)
+			intent := starGiftCraftOutputIntent{Media: media, Date: req.Date, SavedGiftID: saved.ID}
+			fingerprint, err := store.PrivateSendFingerprint(starGiftCraftOutputRequest(req, intent))
+			if err != nil {
+				return fmt.Errorf("fingerprint crafted gift output: %w", err)
+			}
+			mediaJSON, err := encodeMessageMedia(media)
+			if err != nil {
+				return fmt.Errorf("encode crafted gift output: %w", err)
+			}
+			intent.Fingerprint = fingerprint
+			output = intent
+			outputMediaJSON = mediaJSON
+			outputFingerprint = fingerprint
+			giftCopy := gift
+			result.Gift = &giftCopy
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO star_gift_craft_commands(user_id,command_key,input_unique_gift_ids,gift_id,
-success,result_unique_gift_id,chance_permille,created_at,source_edit_pts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID,
-			strings.TrimSpace(req.CommandKey), uniqueIDs, giftID, result.Success, resultID, chance, req.Date, sourceEditPTS)
+success,result_unique_gift_id,chance_permille,created_at,source_edit_pts,output_media,output_fingerprint)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, req.UserID, strings.TrimSpace(req.CommandKey), uniqueIDs,
+			giftID, result.Success, resultID, chance, req.Date, sourceEditPTS, outputMediaJSON, outputFingerprint)
 		return err
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			if replay, found, replayErr := s.loadCraftReplay(ctx, req); replayErr != nil || found {
+			if replay, replayOutput, found, replayErr := s.loadCraftReplay(ctx, req); replayErr != nil || found {
+				if replayErr == nil && found && replay.Success {
+					return s.deliverCraftSuccess(ctx, req, replay, replayOutput)
+				}
 				return replay, replayErr
 			}
 		}
 		return domain.StarGiftCraftResult{}, err
 	}
 	if result.Success {
-		gift, found, err := NewStarGiftStore(s.db).UniqueByID(ctx, resultUniqueID)
-		if err != nil || !found {
-			return domain.StarGiftCraftResult{}, domain.ErrStarGiftCraftUnavailable
-		}
-		result.Gift = &gift
-	}
-	if result.Success {
-		return s.deliverCraftSuccess(ctx, req, result)
+		return s.deliverCraftSuccess(ctx, req, result, output)
 	}
 	return result, nil
 }
 
-func (s *StarGiftLifecycleStore) deliverCraftSuccess(ctx context.Context, req domain.StarGiftCraftRequest, result domain.StarGiftCraftResult) (domain.StarGiftCraftResult, error) {
-	if result.Gift == nil || s.messages == nil {
+func (s *StarGiftLifecycleStore) deliverCraftSuccess(ctx context.Context, req domain.StarGiftCraftRequest, result domain.StarGiftCraftResult, output starGiftCraftOutputIntent) (domain.StarGiftCraftResult, error) {
+	if result.Gift == nil || s.messages == nil || output.Media == nil || output.Date <= 0 || output.SavedGiftID <= 0 ||
+		store.ValidateSendFingerprint(output.Fingerprint, "crafted gift output") != nil {
 		return domain.StarGiftCraftResult{}, domain.ErrStarGiftCraftUnavailable
 	}
-	saved, found, err := savedStarGiftByUniqueID(ctx, s.db, result.Gift.ID)
-	if err != nil || !found || saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) {
-		return domain.StarGiftCraftResult{}, domain.ErrStarGiftCraftUnavailable
-	}
-	sent, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{SenderUserID: req.UserID,
-		RecipientUserID: req.UserID, RandomID: lifecycleCommandRandomID("craft", req.UserID, req.CommandKey), Date: req.Date,
-		OriginAuthKeyID: req.OriginAuthKeyID, OriginSessionID: req.OriginSessionID, OriginUserID: req.UserID,
-		Media: &domain.MessageMedia{Kind: domain.MessageMediaKindService, ServiceAction: &domain.MessageServiceAction{
-			Kind: domain.MessageServiceActionStarGiftUnique, StarGiftUnique: &domain.MessageStarGiftUniqueAction{
-				Gift: *result.Gift, FromUserID: req.UserID, Peer: saved.Owner, Saved: !saved.Unsaved, Craft: true,
-				CanExportAt: saved.CanExportAt, TransferStars: saved.TransferStars, CanTransferAt: saved.CanTransferAt,
-				CanResellAt: saved.CanResellAt, DropOriginalDetailsStars: saved.DropOriginalDetailsStars,
-				CanCraftAt: saved.CanCraftAt}}}})
+	messageReq := starGiftCraftOutputRequest(req, output)
+	hooks := privateSendTxHooks{after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
+		return registerUserStarGiftMessageRef(ctx, tx, req.UserID, sent.SenderMessage.ID, output.SavedGiftID, result.Gift.ID)
+	}}
+	sent, err := s.messages.sendPrivateTextWithHooks(ctx, messageReq, hooks)
 	if err != nil {
 		return domain.StarGiftCraftResult{}, err
+	}
+	registered, err := userStarGiftMessageRefMatches(ctx, s.db, req.UserID, sent.SenderMessage.ID, output.SavedGiftID)
+	if err != nil || !registered {
+		if err != nil {
+			return domain.StarGiftCraftResult{}, err
+		}
+		return domain.StarGiftCraftResult{}, domain.ErrStarGiftCraftUnavailable
 	}
 	result.Send = sent
 	result.Duplicate = result.Duplicate || sent.Duplicate
 	return result, nil
 }
 
-func (s *StarGiftLifecycleStore) loadCraftReplay(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, bool, error) {
+func (s *StarGiftLifecycleStore) loadCraftReplay(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, starGiftCraftOutputIntent, bool, error) {
 	var success bool
 	var resultID *int64
 	var chance int
 	var inputUniqueIDs []int64
 	var sourceEditPTS []int32
-	err := s.db.QueryRow(ctx, `SELECT input_unique_gift_ids,success,result_unique_gift_id,chance_permille,source_edit_pts
+	var createdAt int
+	var outputMediaJSON, outputFingerprint []byte
+	err := s.db.QueryRow(ctx, `SELECT input_unique_gift_ids,success,result_unique_gift_id,chance_permille,source_edit_pts,
+created_at,output_media,output_fingerprint
 FROM star_gift_craft_commands WHERE user_id=$1 AND command_key=$2`,
-		req.UserID, strings.TrimSpace(req.CommandKey)).Scan(&inputUniqueIDs, &success, &resultID, &chance, &sourceEditPTS)
+		req.UserID, strings.TrimSpace(req.CommandKey)).Scan(&inputUniqueIDs, &success, &resultID, &chance, &sourceEditPTS,
+		&createdAt, &outputMediaJSON, &outputFingerprint)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.StarGiftCraftResult{}, false, nil
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, nil
 	}
 	if err != nil {
-		return domain.StarGiftCraftResult{}, false, err
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, err
 	}
 	if len(req.Refs) != len(inputUniqueIDs) || len(req.Refs) != len(sourceEditPTS) {
-		return domain.StarGiftCraftResult{}, false, domain.ErrStarGiftCraftUnavailable
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
 	}
 	savedIDs := make([]int64, 0, len(inputUniqueIDs))
 	owner := domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}
 	for i, uniqueID := range inputUniqueIDs {
 		saved, found, err := savedStarGiftByUniqueID(ctx, s.db, uniqueID)
 		if err != nil || !found || saved.Owner != owner || saved.UniqueGiftID != uniqueID {
-			return domain.StarGiftCraftResult{}, false, domain.ErrStarGiftCraftUnavailable
+			return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
 		}
 		ref := req.Refs[i]
-		if ref.Owner != owner || ref.Slug == "" && ref.MsgID != saved.MsgID {
-			return domain.StarGiftCraftResult{}, false, domain.ErrStarGiftCraftUnavailable
+		if ref.Owner != owner {
+			return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
 		}
 		if ref.Slug != "" {
 			unique, found, err := NewStarGiftStore(s.db).UniqueByID(ctx, uniqueID)
 			if err != nil || !found || !strings.EqualFold(ref.Slug, unique.Slug) {
-				return domain.StarGiftCraftResult{}, false, domain.ErrStarGiftCraftUnavailable
+				return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
+			}
+		} else if ref.MsgID != saved.MsgID {
+			matches, err := userStarGiftMessageRefMatches(ctx, s.db, req.UserID, ref.MsgID, saved.ID)
+			if err != nil {
+				return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, err
+			}
+			if !matches {
+				return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
 			}
 		}
 		savedIDs = append(savedIDs, saved.ID)
 	}
 	sourceEdits, err := s.loadCraftInputMessageReplays(ctx, req, savedIDs, sourceEditPTS)
 	if err != nil {
-		return domain.StarGiftCraftResult{}, false, err
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, err
 	}
 	result := domain.StarGiftCraftResult{Success: success, Chance: chance, SourceEdits: sourceEdits, Duplicate: true}
-	if resultID != nil {
-		gift, found, err := NewStarGiftStore(s.db).UniqueByID(ctx, *resultID)
-		if err != nil || !found {
-			return domain.StarGiftCraftResult{}, false, domain.ErrStarGiftCraftUnavailable
+	if !success {
+		if resultID != nil || len(outputMediaJSON) != 0 || len(outputFingerprint) != 0 {
+			return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
 		}
-		result.Gift = &gift
+		return result, starGiftCraftOutputIntent{}, true, nil
 	}
-	return result, true, nil
+	if resultID == nil || createdAt <= 0 || store.ValidateSendFingerprint(outputFingerprint, "crafted gift replay") != nil {
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
+	}
+	media, err := decodeMessageMedia(string(outputMediaJSON))
+	if err != nil || media == nil || media.Kind != domain.MessageMediaKindService || media.ServiceAction == nil ||
+		media.ServiceAction.Kind != domain.MessageServiceActionStarGiftUnique || media.ServiceAction.StarGiftUnique == nil ||
+		!media.ServiceAction.StarGiftUnique.Craft || media.ServiceAction.StarGiftUnique.Gift.ID != *resultID {
+		return domain.StarGiftCraftResult{}, starGiftCraftOutputIntent{}, false, domain.ErrStarGiftCraftUnavailable
+	}
+	gift := media.ServiceAction.StarGiftUnique.Gift
+	result.Gift = &gift
+	output := starGiftCraftOutputIntent{Media: media, Fingerprint: append([]byte(nil), outputFingerprint...),
+		Date: createdAt, SavedGiftID: savedIDs[0]}
+	return result, output, true, nil
 }
 
 func chooseCraftedModel(ctx context.Context, tx pgx.Tx, revisionID int64) (int64, error) {

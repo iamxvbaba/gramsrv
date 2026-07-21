@@ -649,11 +649,16 @@ LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
   AND (p.saved_id::bigint=ANY($3::bigint[]) OR u.slug=ANY($4::text[]))`
 	if owner.Type == domain.PeerTypeUser {
-		query = `SELECT p.msg_id::bigint, COALESCE(u.slug, ''), p.id
+		query = `SELECT ref.msg_id, COALESCE(u.slug, ''), p.id
 FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
+CROSS JOIN LATERAL (
+    SELECT p.msg_id::bigint AS msg_id
+    UNION ALL
+    SELECT r.msg_id::bigint FROM star_gift_user_message_refs r WHERE r.saved_gift_id=p.id
+) ref
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
-  AND (p.msg_id::bigint=ANY($3::bigint[])
+	  AND (ref.msg_id=ANY($3::bigint[])
 	   OR u.slug=ANY($4::text[]))`
 	}
 	rows, err := s.db.Query(ctx, query, string(owner.Type), owner.ID, values, slugs)
@@ -744,15 +749,42 @@ func (s *StarGiftStore) SetUnsaved(ctx context.Context, ref domain.SavedStarGift
 	if !ref.Valid() {
 		return false, domain.ErrStarGiftNotFound
 	}
-	where, args := savedStarGiftRefWhere(ref)
-	args = append(args, unsaved)
-	tag, err := s.db.Exec(ctx, `
-UPDATE peer_star_gifts SET unsaved = $4
-WHERE `+where+` AND lifecycle_status='active'`, args...)
+	changed := false
+	err := withTx(ctx, s.db, "set star gift unsaved", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, starGiftCollectionLockKey(ref.Owner)); err != nil {
+			return err
+		}
+		where, args := savedStarGiftRefWhere(ref)
+		var savedID int64
+		var pinnedOrder int
+		err := tx.QueryRow(ctx, `SELECT id,pinned_order FROM peer_star_gifts WHERE `+where+` AND lifecycle_status='active' FOR UPDATE`, args...).Scan(&savedID, &pinnedOrder)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET unsaved=$2,pinned_order=CASE WHEN $2 THEN 0 ELSE pinned_order END WHERE id=$1`, savedID, unsaved); err != nil {
+			return err
+		}
+		if unsaved && pinnedOrder > 0 {
+			// The positive-order unique index is immediate. Move the bounded
+			// vector one vacant slot at a time so no transient duplicate order
+			// can be observed by PostgreSQL.
+			for order := pinnedOrder + 1; order <= domain.MaxPinnedStarGifts; order++ {
+				if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET pinned_order=$4
+WHERE owner_peer_type=$1 AND owner_peer_id=$2 AND pinned_order=$3`, string(ref.Owner.Type), ref.Owner.ID, order, order-1); err != nil {
+					return err
+				}
+			}
+		}
+		changed = true
+		return nil
+	})
 	if err != nil {
 		return false, fmt.Errorf("set star gift unsaved: %w", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	return changed, nil
 }
 
 func (s *StarGiftStore) MarkConverted(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, error) {
@@ -836,7 +868,11 @@ func savedStarGiftRefWhere(ref domain.SavedStarGiftRef) (string, []any) {
 		return "owner_peer_type = $1 AND owner_peer_id = $2 AND saved_id = $3", args
 	default:
 		args = append(args, ref.MsgID)
-		return "owner_peer_type = $1 AND owner_peer_id = $2 AND msg_id = $3", args
+		return `owner_peer_type = $1 AND owner_peer_id = $2 AND (
+msg_id = $3 OR EXISTS (
+    SELECT 1 FROM star_gift_user_message_refs r
+    WHERE r.saved_gift_id = id AND r.owner_user_id = $2 AND r.msg_id = $3
+))`, args
 	}
 }
 

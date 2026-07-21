@@ -122,9 +122,15 @@ WHERE collectible_revision_id=$1 AND crafted
 			}
 			craftChancePermille := 0
 			canCraftAt := 0
+			// Keep the durable Craft entitlement attached to the collectible across
+			// user/channel ownership moves. The RPC projection suppresses the
+			// readiness marker for channel owners until channel Craft execution is
+			// implemented, without destroying the official gift property.
 			if craftable {
 				craftChancePermille = s.lifecycle.CraftChancePermille
-				canCraftAt = starGiftReadyAt(req.Date, s.lifecycle.CraftDelaySeconds)
+				if craftChancePermille > 0 {
+					canCraftAt = starGiftCraftReadyAt(req.Date, s.lifecycle.CraftDelaySeconds)
+				}
 			}
 			if revision.Issued >= revision.SupplyTotal {
 				return domain.ErrStarGiftCollectibleSoldOut
@@ -230,12 +236,6 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 			}
 			return nil
 		},
-		projectMedia: func(ctx context.Context, tx pgx.Tx, messageReq *domain.SendPrivateTextRequest) (privateSendMediaProjection, error) {
-			if result.Saved.Owner.Type != domain.PeerTypeUser {
-				return privateSendMediaProjection{Shared: messageReq.Media, Sender: messageReq.Media, Recipient: messageReq.Media}, nil
-			}
-			return projectPrivateStarGiftSourceRef(ctx, tx, messageReq, result.Saved.Owner.ID, result.Saved.MsgID)
-		},
 		after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
 			ownerMessageID := sent.RecipientMessage.ID
 			if saved.FromUserID == req.UserID {
@@ -250,6 +250,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 			}
 			if tag.RowsAffected() != 1 {
 				return fmt.Errorf("save star gift upgrade message id lost aggregate row")
+			}
+			if result.Saved.Owner.Type == domain.PeerTypeUser {
+				if err := registerUserStarGiftMessageRef(ctx, tx, result.Saved.Owner.ID, ownerMessageID,
+					result.Saved.ID, result.Unique.ID); err != nil {
+					return err
+				}
 			}
 			result.Saved.UpgradeMsgID = ownerMessageID
 			if result.Saved.Owner.Type == domain.PeerTypeUser {
@@ -311,19 +317,27 @@ func starGiftUpgradeUniqueAction(saved domain.SavedStarGift, unique domain.Uniqu
 		// peer plus action.peer=channel and action.saved_id.
 		fromUserID = messageSenderID
 	}
+	peer := saved.Owner
 	savedID := saved.SavedID
+	canCraftAt := saved.CanCraftAt
 	if saved.Owner.Type == domain.PeerTypeUser {
-		// For user-owned gifts messageActionStarGiftUnique.saved_id is the
-		// stable source gift message id. TDesktop uses this back-reference as
-		// inputSavedStarGiftUser.msg_id for crafting and later lifecycle RPCs.
-		savedID = int64(saved.MsgID)
+		// peer and saved_id share one TL flag and are defined for channel gifts.
+		// For user gifts both must be absent; official clients use the emitted
+		// service-message id (registered owner-locally by the send transaction).
+		peer = domain.Peer{}
+		savedID = 0
+	} else {
+		// The current Craft state machine is user-owned only. Android treats a
+		// positive can_craft_at as the channel Craft entry marker, so do not
+		// advertise a write path that the server cannot execute yet.
+		canCraftAt = 0
 	}
 	return &domain.MessageStarGiftUniqueAction{
-		Gift: unique, FromUserID: fromUserID, Peer: saved.Owner, SavedID: savedID,
+		Gift: unique, FromUserID: fromUserID, Peer: peer, SavedID: savedID,
 		Upgrade: true, Saved: !saved.Unsaved, PrepaidUpgrade: req.RequirePrepaid,
 		CanExportAt: saved.CanExportAt, TransferStars: saved.TransferStars,
 		CanTransferAt: saved.CanTransferAt, CanResellAt: saved.CanResellAt,
-		DropOriginalDetailsStars: saved.DropOriginalDetailsStars, CanCraftAt: saved.CanCraftAt,
+		DropOriginalDetailsStars: saved.DropOriginalDetailsStars, CanCraftAt: canCraftAt,
 	}
 }
 
@@ -463,6 +477,27 @@ func starGiftReadyAt(date, delaySeconds int) int {
 		return 0
 	}
 	const maxProtocolDate = int(1<<31 - 1)
+	if delaySeconds > maxProtocolDate-date {
+		return maxProtocolDate
+	}
+	return date + delaySeconds
+}
+
+// starGiftCraftReadyAt differs intentionally from the other lifecycle delay
+// fields. Official Android clients use a positive can_craft_at both as the
+// capability marker and as the readiness boundary, so an immediately
+// craftable gift must carry its upgrade date instead of omitting the field.
+func starGiftCraftReadyAt(date, delaySeconds int) int {
+	if date <= 0 || delaySeconds < 0 {
+		return 0
+	}
+	const maxProtocolDate = int(1<<31 - 1)
+	if date >= maxProtocolDate {
+		return maxProtocolDate
+	}
+	if delaySeconds == 0 {
+		return date
+	}
 	if delaySeconds > maxProtocolDate-date {
 		return maxProtocolDate
 	}

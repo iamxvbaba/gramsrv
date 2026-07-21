@@ -118,7 +118,7 @@ func (s *craftStarGiftRPCService) GetSaved(_ context.Context, ref domain.SavedSt
 			}
 			continue
 		}
-		if saved.MsgID == ref.MsgID {
+		if saved.MsgID == ref.MsgID || saved.UpgradeMsgID == ref.MsgID {
 			return saved, true, nil
 		}
 	}
@@ -181,11 +181,12 @@ func TestCraftStarGiftAcceptsOfficialSlugAndCanonicalizesAliases(t *testing.T) {
 		t.Fatalf("duplicate aliases err=%v craft calls=%d", err, service.craftCall)
 	}
 
-	_, err = r.onPaymentsCraftStarGift(ctx, &tg.PaymentsCraftStarGiftRequest{Stargift: []tg.InputSavedStarGiftClass{
+	updates, err = r.onPaymentsCraftStarGift(ctx, &tg.PaymentsCraftStarGiftRequest{Stargift: []tg.InputSavedStarGiftClass{
 		&tg.InputSavedStarGiftUser{MsgID: 116},
 	}})
-	if !tgerr.Is(err, "STARGIFT_INVALID") || service.craftCall != 0 {
-		t.Fatalf("upgrade message id accepted as gift identity: err=%v craft calls=%d", err, service.craftCall)
+	if err != nil || updates == nil || service.craftCall != 1 || service.craftReq.CommandKey != "rpc:50" ||
+		len(service.craftReq.Refs) != 1 || service.craftReq.Refs[0].MsgID != 116 {
+		t.Fatalf("upgrade message alias craft: updates=%T req=%+v err=%v calls=%d", updates, service.craftReq, err, service.craftCall)
 	}
 }
 
@@ -311,6 +312,162 @@ func TestSavedStarGiftProjectionCombinesHistoricalCatalogWithCurrentCollectibleA
 	}
 	if _, ok := soldOutPrepaid.GetUpgradeStars(); ok {
 		t.Fatal("sold-out prepaid gift must not expose stale prepaid upgrade_stars")
+	}
+}
+
+func TestSavedStarGiftProjectionPreservesCollectibleLifecycle(t *testing.T) {
+	const (
+		giftID     = int64(8001)
+		revision   = int64(9001)
+		readyAt    = 1_780_000_123
+		exportAt   = 1_780_000_200
+		transferAt = 1_780_000_300
+		resellAt   = 1_780_000_400
+	)
+	unique := domain.UniqueStarGift{ID: 9901, GiftID: giftID, Title: "Craftable", Slug: "craftable-1", Num: 1,
+		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 7102}, CraftChancePermille: 250}
+	saved := domain.SavedStarGift{
+		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 7102}, GiftID: giftID, RevisionID: revision,
+		MsgID: 44, Date: 100, UniqueGiftID: unique.ID, Unique: &unique,
+		CanExportAt: exportAt, TransferStars: 25, CanTransferAt: transferAt, CanResellAt: resellAt,
+		DropOriginalDetailsStars: 30, CanCraftAt: readyAt,
+	}
+	projected := tgSavedStarGifts([]domain.SavedStarGift{saved}, nil, nil)
+	if len(projected) != 1 {
+		t.Fatalf("saved lifecycle projection count = %d", len(projected))
+	}
+	assertLifecycle := func(t *testing.T, item tg.SavedStarGift) {
+		t.Helper()
+		if value, ok := item.GetCanExportAt(); !ok || value != exportAt {
+			t.Fatalf("can_export_at = %d set=%v", value, ok)
+		}
+		if value, ok := item.GetTransferStars(); !ok || value != 25 {
+			t.Fatalf("transfer_stars = %d set=%v", value, ok)
+		}
+		if value, ok := item.GetCanTransferAt(); !ok || value != transferAt {
+			t.Fatalf("can_transfer_at = %d set=%v", value, ok)
+		}
+		if value, ok := item.GetCanResellAt(); !ok || value != resellAt {
+			t.Fatalf("can_resell_at = %d set=%v", value, ok)
+		}
+		if value, ok := item.GetDropOriginalDetailsStars(); !ok || value != 30 {
+			t.Fatalf("drop_original_details_stars = %d set=%v", value, ok)
+		}
+		if value, ok := item.GetCanCraftAt(); !ok || value != readyAt {
+			t.Fatalf("can_craft_at = %d set=%v", value, ok)
+		}
+	}
+	assertLifecycle(t, projected[0])
+	zero := tgSavedStarGifts([]domain.SavedStarGift{{
+		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 7102}, GiftID: giftID, RevisionID: revision,
+		MsgID: 45, Date: 101, UniqueGiftID: unique.ID, Unique: &unique,
+	}}, nil, nil)[0]
+	if _, ok := zero.GetCanExportAt(); ok {
+		t.Fatal("zero can_export_at must be absent")
+	}
+	if _, ok := zero.GetTransferStars(); ok {
+		t.Fatal("zero transfer_stars must be absent")
+	}
+	if _, ok := zero.GetCanTransferAt(); ok {
+		t.Fatal("zero can_transfer_at must be absent")
+	}
+	if _, ok := zero.GetCanResellAt(); ok {
+		t.Fatal("zero can_resell_at must be absent")
+	}
+	if _, ok := zero.GetDropOriginalDetailsStars(); ok {
+		t.Fatal("zero drop_original_details_stars must be absent")
+	}
+	if _, ok := zero.GetCanCraftAt(); ok {
+		t.Fatal("zero can_craft_at must be absent")
+	}
+	channelSaved := saved
+	channelSaved.Owner = domain.Peer{Type: domain.PeerTypeChannel, ID: 8102}
+	channelSaved.MsgID = 0
+	channelSaved.SavedID = 51
+	channelProjected := tgSavedStarGifts([]domain.SavedStarGift{channelSaved}, nil, nil)[0]
+	if _, ok := channelProjected.GetCanCraftAt(); ok {
+		t.Fatal("channel can_craft_at must be absent until channel Craft is executable")
+	}
+	if value, ok := channelProjected.GetSavedID(); !ok || value != channelSaved.SavedID {
+		t.Fatalf("channel saved_id = %d set=%v", value, ok)
+	}
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile226, tlprofile.Profile227, tlprofile.Profile228} {
+		wire := &tg.PaymentsSavedStarGifts{Count: 1, Gifts: projected, Chats: []tg.ChatClass{}, Users: []tg.UserClass{}}
+		encoded := &bin.Buffer{}
+		if err := tlprofile.EncodeObject(profile, wire, encoded); err != nil {
+			t.Fatalf("encode Layer %d saved lifecycle: %v", profile, err)
+		}
+		decodedObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: encoded.Buf}, tlprofile.Limits{})
+		if err != nil {
+			t.Fatalf("decode Layer %d saved lifecycle: %v", profile, err)
+		}
+		decoded, ok := decodedObject.(*tg.PaymentsSavedStarGifts)
+		if !ok || len(decoded.Gifts) != 1 {
+			t.Fatalf("decode Layer %d saved lifecycle type = %T", profile, decodedObject)
+		}
+		assertLifecycle(t, decoded.Gifts[0])
+
+		channelWire := &tg.PaymentsSavedStarGifts{Count: 1, Gifts: []tg.SavedStarGift{channelProjected}, Chats: []tg.ChatClass{}, Users: []tg.UserClass{}}
+		channelEncoded := &bin.Buffer{}
+		if err := tlprofile.EncodeObject(profile, channelWire, channelEncoded); err != nil {
+			t.Fatalf("encode Layer %d channel saved lifecycle: %v", profile, err)
+		}
+		channelDecodedObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: channelEncoded.Buf}, tlprofile.Limits{})
+		if err != nil {
+			t.Fatalf("decode Layer %d channel saved lifecycle: %v", profile, err)
+		}
+		channelDecoded, ok := channelDecodedObject.(*tg.PaymentsSavedStarGifts)
+		if !ok || len(channelDecoded.Gifts) != 1 {
+			t.Fatalf("decode Layer %d channel saved lifecycle type = %T", profile, channelDecodedObject)
+		}
+		if _, ok := channelDecoded.Gifts[0].GetCanCraftAt(); ok {
+			t.Fatalf("Layer %d channel saved gift exposed can_craft_at", profile)
+		}
+	}
+}
+
+func TestChannelUniqueActionSuppressesCraftReadinessAcrossProfiles(t *testing.T) {
+	const readyAt = 1_780_000_123
+	unique := domain.UniqueStarGift{
+		ID: 9902, GiftID: 8002, Title: "Channel Craftable", Slug: "channel-craftable-1", Num: 1,
+		Owner: domain.Peer{Type: domain.PeerTypeChannel, ID: 8102}, CraftChancePermille: 250,
+	}
+	action := tgMessageActionStarGiftUnique(&domain.MessageStarGiftUniqueAction{
+		Gift: unique, Peer: unique.Owner, SavedID: 52, Saved: true, CanCraftAt: readyAt,
+	}).(*tg.MessageActionStarGiftUnique)
+	if _, ok := action.GetCanCraftAt(); ok {
+		t.Fatal("channel unique action must not expose can_craft_at")
+	}
+	projectedGift, ok := action.Gift.(*tg.StarGiftUnique)
+	if !ok || projectedGift.CraftChancePermille != unique.CraftChancePermille {
+		t.Fatalf("channel unique gift lost intrinsic Craft chance: %#v", action.Gift)
+	}
+	for _, profile := range []tlprofile.Profile{tlprofile.Profile225, tlprofile.Profile226, tlprofile.Profile227, tlprofile.Profile228} {
+		wire := &bin.Buffer{}
+		if err := tlprofile.EncodeObject(profile, action, wire); err != nil {
+			t.Fatalf("encode Layer %d channel unique action: %v", profile, err)
+		}
+		decodedObject, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: wire.Buf}, tlprofile.Limits{})
+		if err != nil {
+			t.Fatalf("decode Layer %d channel unique action: %v", profile, err)
+		}
+		decoded, ok := decodedObject.(*tg.MessageActionStarGiftUnique)
+		if !ok {
+			t.Fatalf("decode Layer %d channel unique action type = %T", profile, decodedObject)
+		}
+		if _, ok := decoded.GetCanCraftAt(); ok {
+			t.Fatalf("Layer %d channel unique action exposed can_craft_at", profile)
+		}
+		gift, ok := decoded.Gift.(*tg.StarGiftUnique)
+		if !ok || gift.CraftChancePermille != unique.CraftChancePermille {
+			t.Fatalf("Layer %d channel unique gift = %#v", profile, decoded.Gift)
+		}
+	}
+}
+
+func TestStarGiftLifecycleCraftUnavailableError(t *testing.T) {
+	if err := starGiftLifecycleErr(domain.ErrStarGiftCraftUnavailable); !tgerr.Is(err, "STARGIFT_CRAFT_UNAVAILABLE") {
+		t.Fatalf("craft unavailable mapping = %v", err)
 	}
 }
 

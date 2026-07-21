@@ -1071,6 +1071,27 @@ func tgSavedStarGifts(gifts []domain.SavedStarGift, catalog map[int64]domain.Sta
 				item.SetPrepaidUpgradeHash(g.PrepaidUpgradeHash)
 			}
 		}
+		if g.CanExportAt > 0 {
+			item.SetCanExportAt(g.CanExportAt)
+		}
+		if g.TransferStars > 0 {
+			item.SetTransferStars(g.TransferStars)
+		}
+		if g.CanTransferAt > 0 {
+			item.SetCanTransferAt(g.CanTransferAt)
+		}
+		if g.CanResellAt > 0 {
+			item.SetCanResellAt(g.CanResellAt)
+		}
+		if g.DropOriginalDetailsStars > 0 {
+			item.SetDropOriginalDetailsStars(g.DropOriginalDetailsStars)
+		}
+		// Channel Craft execution is not implemented yet. Android uses this field
+		// as the entry/capability marker, so only advertise the currently
+		// executable user-owned path while retaining the durable DB entitlement.
+		if g.Owner.Type == domain.PeerTypeUser && g.CanCraftAt > 0 {
+			item.SetCanCraftAt(g.CanCraftAt)
+		}
 		if g.PinnedOrder > 0 {
 			item.PinnedToTop = true
 		}

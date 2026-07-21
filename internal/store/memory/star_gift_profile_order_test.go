@@ -47,6 +47,24 @@ func TestStarGiftProfilePinOrderAndPagination(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("paged order = %v, want %v", got, want)
 	}
+	if ok, err := store.SetUnsaved(ctx, domain.SavedStarGiftRef{Owner: owner, MsgID: 100}, true); err != nil || !ok {
+		t.Fatalf("hide pinned gift = %v err %v", ok, err)
+	}
+	hidden, found, err := store.GetByRef(ctx, domain.SavedStarGiftRef{Owner: owner, MsgID: 100})
+	if err != nil || !found || !hidden.Unsaved || hidden.PinnedOrder != 0 {
+		t.Fatalf("hidden pinned gift = %+v found %v err %v", hidden, found, err)
+	}
+	remaining, found, err := store.GetByRef(ctx, domain.SavedStarGiftRef{Owner: owner, MsgID: 102})
+	if err != nil || !found || remaining.PinnedOrder != 1 {
+		t.Fatalf("remaining pin = %+v found %v err %v", remaining, found, err)
+	}
+	if err := store.SetPinned(ctx, owner, []int64{ids[0], ids[2]}); err != nil {
+		t.Fatalf("repin hidden gift: %v", err)
+	}
+	repinned, found, err := store.GetByRef(ctx, domain.SavedStarGiftRef{Owner: owner, MsgID: 100})
+	if err != nil || !found || repinned.Unsaved || repinned.PinnedOrder != 1 {
+		t.Fatalf("repinned gift = %+v found %v err %v", repinned, found, err)
+	}
 
 	if err := store.SetPinned(ctx, owner, nil); err != nil {
 		t.Fatalf("clear pinned: %v", err)

@@ -11,11 +11,10 @@ import (
 
 // projectPrivateStarGiftSourceRef exposes a user-owned gift's stable source
 // message identity only in the gift owner's message-box projection. Telegram
-// defines gift_msg_id as receiver-only, and TDesktop also treats user unique
-// saved_id as an inputSavedStarGiftUser identity. A non-owner counterpart box
-// id is therefore not a valid substitute: it could resolve to an unrelated
-// gift owned by that viewer. The shared private_messages row omits the local
-// reference for the same reason.
+// defines gift_msg_id as receiver-only. A non-owner counterpart box id is not
+// a valid substitute: it could resolve to an unrelated gift owned by that
+// viewer. User unique actions do not use channel-only peer/saved_id fields;
+// their owner-scoped message ids are registered separately at write time.
 func projectPrivateStarGiftSourceRef(
 	_ context.Context,
 	_ pgx.Tx,
@@ -59,25 +58,6 @@ func projectPrivateStarGiftSourceRef(
 			senderAction.GiftMsgID = sourceOwnerBoxID
 		} else {
 			recipientAction.GiftMsgID = sourceOwnerBoxID
-		}
-	case privateStarGiftUniqueAction(shared) != nil:
-		sharedAction := privateStarGiftUniqueAction(shared)
-		senderAction := privateStarGiftUniqueAction(sender)
-		recipientAction := privateStarGiftUniqueAction(recipient)
-		if sharedAction.Peer.Type != domain.PeerTypeUser || sharedAction.Peer.ID != sourceOwnerUserID ||
-			sharedAction.SavedID != int64(sourceOwnerBoxID) {
-			return privateSendMediaProjection{}, fmt.Errorf(
-				"project private unique star gift source: saved_id %d does not match owner box %d",
-				sharedAction.SavedID, sourceOwnerBoxID,
-			)
-		}
-		sharedAction.SavedID = 0
-		senderAction.SavedID = 0
-		recipientAction.SavedID = 0
-		if req.SenderUserID == sourceOwnerUserID {
-			senderAction.SavedID = int64(sourceOwnerBoxID)
-		} else {
-			recipientAction.SavedID = int64(sourceOwnerBoxID)
 		}
 	default:
 		return privateSendMediaProjection{}, fmt.Errorf("project private star gift source: unsupported media")

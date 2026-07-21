@@ -690,6 +690,9 @@ func (s *StarGiftStore) ReorderCollections(ctx context.Context, owner domain.Pee
 }
 
 func (s *StarGiftStore) SetPinned(ctx context.Context, owner domain.Peer, savedGiftIDs []int64) error {
+	if len(savedGiftIDs) > domain.MaxPinnedStarGifts {
+		return domain.ErrStarGiftCollectibleInvalid
+	}
 	return withTx(ctx, s.db, "set pinned star gifts", func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, starGiftCollectionLockKey(owner)); err != nil {
 			return err
@@ -698,11 +701,14 @@ func (s *StarGiftStore) SetPinned(ctx context.Context, owner domain.Peer, savedG
 		if err != nil {
 			return err
 		}
+		if len(ids) != len(savedGiftIDs) {
+			return domain.ErrStarGiftCollectibleInvalid
+		}
 		if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET pinned_order=0 WHERE owner_peer_type=$1 AND owner_peer_id=$2 AND pinned_order<>0`, string(owner.Type), owner.ID); err != nil {
 			return err
 		}
 		for order, id := range ids {
-			if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET pinned_order=$2 WHERE id=$1`, id, order+1); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET pinned_order=$2,unsaved=false WHERE id=$1`, id, order+1); err != nil {
 				return err
 			}
 		}

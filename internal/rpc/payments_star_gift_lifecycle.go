@@ -1007,9 +1007,11 @@ func starGiftLifecycleErr(err error) error {
 		return tgerr.New(400, "STARGIFT_OWNER_INVALID")
 	case errors.Is(err, domain.ErrStarGiftWithdrawalUnavailable):
 		return tgerr.New(400, "STARGIFT_WITHDRAWAL_UNAVAILABLE")
+	case errors.Is(err, domain.ErrStarGiftCraftUnavailable):
+		return tgerr.New(400, "STARGIFT_CRAFT_UNAVAILABLE")
 	case errors.Is(err, domain.ErrStarGiftNotFound), errors.Is(err, domain.ErrStarGiftResaleUnavailable),
 		errors.Is(err, domain.ErrStarGiftTransferUnavailable), errors.Is(err, domain.ErrStarGiftOfferInvalid),
-		errors.Is(err, domain.ErrStarGiftCraftUnavailable), errors.Is(err, domain.ErrStarGiftAuctionUnavailable),
+		errors.Is(err, domain.ErrStarGiftAuctionUnavailable),
 		errors.Is(err, domain.ErrStarGiftUnavailable), errors.Is(err, domain.ErrStarGiftInvalid),
 		errors.Is(err, domain.ErrStarGiftCollectibleUnavailable):
 		return starGiftInvalidErr()

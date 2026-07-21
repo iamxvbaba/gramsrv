@@ -879,6 +879,9 @@ const (
 	MaxStarGiftCollectionTitleRunes         = 12
 	MaxStarGiftCollectionsPerPeer           = 100
 	MaxStarGiftCollectionItems              = 1000
+	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
+	// official clients. Pin requests are complete replacement vectors.
+	MaxPinnedStarGifts = 6
 )
 
 // Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
