@@ -230,6 +230,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 			}
 			return nil
 		},
+		projectMedia: func(ctx context.Context, tx pgx.Tx, messageReq *domain.SendPrivateTextRequest) (privateSendMediaProjection, error) {
+			if result.Saved.Owner.Type != domain.PeerTypeUser {
+				return privateSendMediaProjection{Shared: messageReq.Media, Sender: messageReq.Media, Recipient: messageReq.Media}, nil
+			}
+			return projectPrivateStarGiftSourceRef(ctx, tx, messageReq, result.Saved.Owner.ID, result.Saved.MsgID)
+		},
 		after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
 			ownerMessageID := sent.RecipientMessage.ID
 			if saved.FromUserID == req.UserID {
@@ -434,7 +440,10 @@ WHERE owner_user_id=$1 AND box_id=$2 AND NOT deleted`, box.OwnerUserID, box.BoxI
 			return nil, fmt.Errorf("enqueue star gift source edit: %w", err)
 		}
 		if box.OwnerUserID == box.MessageSenderID || len(privateMediaJSON) == 0 {
-			privateMediaJSON = mediaJSON
+			privateMediaJSON, err = encodeSharedPrivateStarGiftMedia(media)
+			if err != nil {
+				return nil, err
+			}
 		}
 		edits = append(edits, domain.EditedMessageForUser{UserID: msg.OwnerUserID, Message: msg, Event: event})
 	}

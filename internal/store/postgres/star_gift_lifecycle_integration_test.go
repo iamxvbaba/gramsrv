@@ -99,6 +99,39 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 	if err != nil || prepaid.Saved.PrepaidUpgradeStars != 100 || prepaid.Saved.PrepaidUpgradeHash != "" || prepaid.Balance.Balance != 9850 {
 		t.Fatalf("prepay upgrade = %+v err %v", prepaid, err)
 	}
+	prepaySenderAction := prepaid.Send.SenderMessage.Media.ServiceAction.StarGift
+	prepayOwnerAction := prepaid.Send.RecipientMessage.Media.ServiceAction.StarGift
+	if prepaySenderAction == nil || prepayOwnerAction == nil ||
+		prepaySenderAction.GiftMsgID != 0 ||
+		prepayOwnerAction.GiftMsgID != purchased.Send.RecipientMessage.ID {
+		t.Fatalf("prepay gift_msg_id is not owner-only: sender=%+v owner=%+v purchase=%+v",
+			prepaySenderAction, prepayOwnerAction, purchased.Send)
+	}
+	prepaySenderDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, buyer.ID, prepaid.Send.SenderMessage.Pts-1, 1)
+	if err != nil || len(prepaySenderDifference) != 1 || prepaySenderDifference[0].Message.Media == nil ||
+		prepaySenderDifference[0].Message.Media.ServiceAction == nil ||
+		prepaySenderDifference[0].Message.Media.ServiceAction.StarGift == nil ||
+		prepaySenderDifference[0].Message.Media.ServiceAction.StarGift.GiftMsgID != 0 {
+		t.Fatalf("payer prepay difference leaked owner-only gift_msg_id: events=%+v err=%v", prepaySenderDifference, err)
+	}
+	prepayOwnerDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, owner.ID, prepaid.Send.RecipientMessage.Pts-1, 1)
+	if err != nil || len(prepayOwnerDifference) != 1 || prepayOwnerDifference[0].Message.Media == nil ||
+		prepayOwnerDifference[0].Message.Media.ServiceAction == nil ||
+		prepayOwnerDifference[0].Message.Media.ServiceAction.StarGift == nil ||
+		prepayOwnerDifference[0].Message.Media.ServiceAction.StarGift.GiftMsgID != purchased.Send.RecipientMessage.ID {
+		t.Fatalf("owner prepay difference lost box-local gift_msg_id: events=%+v err=%v", prepayOwnerDifference, err)
+	}
+	var sharedPrepayMediaJSON string
+	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
+JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
+WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, prepaid.Send.RecipientMessage.ID).Scan(&sharedPrepayMediaJSON); err != nil {
+		t.Fatalf("load shared prepay media: %v", err)
+	}
+	sharedPrepayMedia, err := decodeMessageMedia(sharedPrepayMediaJSON)
+	if err != nil || sharedPrepayMedia == nil || sharedPrepayMedia.ServiceAction == nil ||
+		sharedPrepayMedia.ServiceAction.StarGift == nil || sharedPrepayMedia.ServiceAction.StarGift.GiftMsgID != 0 {
+		t.Fatalf("shared prepay media retained account-local gift_msg_id: media=%+v err=%v", sharedPrepayMedia, err)
+	}
 	upgraded, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
 		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: purchased.Saved.MsgID},
 		RequirePrepaid: true, KeepOriginalDetails: true, CommandKey: "upgrade-" + suffix, Date: now + 2,
@@ -111,13 +144,39 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 		t.Fatalf("issued lifecycle snapshot = saved %+v unique %+v", upgraded.Saved, upgraded.Unique)
 	}
 	upgradeAction := upgraded.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
+	senderUpgradeAction := upgraded.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
 	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
 	if upgradeAction == nil || upgradeAction.SavedID != int64(purchased.Saved.MsgID) ||
+		senderUpgradeAction == nil || senderUpgradeAction.SavedID != 0 ||
 		ownerSourceEdit.Message.Media == nil || ownerSourceEdit.Message.Media.ServiceAction == nil ||
 		ownerSourceEdit.Message.Media.ServiceAction.StarGift == nil ||
 		ownerSourceEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != upgraded.Saved.UpgradeMsgID ||
 		ownerSourceEdit.Message.Media.ServiceAction.StarGift.CanUpgrade {
 		t.Fatalf("upgrade message linkage = action %+v source edit %+v", upgradeAction, ownerSourceEdit)
+	}
+	var sharedUpgradeSourceMediaJSON string
+	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
+JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
+WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, purchased.Saved.MsgID).Scan(&sharedUpgradeSourceMediaJSON); err != nil {
+		t.Fatalf("load shared upgraded source media: %v", err)
+	}
+	sharedUpgradeSourceMedia, err := decodeMessageMedia(sharedUpgradeSourceMediaJSON)
+	if err != nil || sharedUpgradeSourceMedia == nil || sharedUpgradeSourceMedia.ServiceAction == nil ||
+		sharedUpgradeSourceMedia.ServiceAction.StarGift == nil ||
+		sharedUpgradeSourceMedia.ServiceAction.StarGift.UpgradeMsgID != 0 ||
+		sharedUpgradeSourceMedia.ServiceAction.StarGift.GiftMsgID != 0 {
+		t.Fatalf("shared upgraded source media retained account-local message id: media=%+v err=%v", sharedUpgradeSourceMedia, err)
+	}
+	var sharedUpgradeMediaJSON string
+	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
+JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
+WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, upgraded.Send.RecipientMessage.ID).Scan(&sharedUpgradeMediaJSON); err != nil {
+		t.Fatalf("load shared upgrade media: %v", err)
+	}
+	sharedUpgradeMedia, err := decodeMessageMedia(sharedUpgradeMediaJSON)
+	if err != nil || sharedUpgradeMedia == nil || sharedUpgradeMedia.ServiceAction == nil ||
+		sharedUpgradeMedia.ServiceAction.StarGiftUnique == nil || sharedUpgradeMedia.ServiceAction.StarGiftUnique.SavedID != 0 {
+		t.Fatalf("shared upgrade media retained account-local saved_id: media=%+v err=%v", sharedUpgradeMedia, err)
 	}
 	dropped, err := lifecycle.DropStarGiftOriginalDetails(ctx, domain.StarGiftDropOriginalDetailsRequest{
 		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: purchased.Saved.MsgID},
@@ -358,6 +417,21 @@ WHERE target_user_id=$1 AND pts=$2 AND event_type='user_emoji_status'`, resaleBu
 	if burnedInputAction == nil || !burnedInputAction.Gift.Burned || burnedInputAction.Gift.CraftChancePermille != 0 ||
 		burnedInputAction.Saved || burnedInputAction.CanCraftAt != 0 {
 		t.Fatalf("burned input message projection = %+v", burnedInputAction)
+	}
+	for _, edit := range []domain.EditedMessageForUser{craftedInputEdit, burnedInputEdit} {
+		var sharedCraftInputMediaJSON string
+		if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
+JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
+WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, edit.Message.ID).Scan(&sharedCraftInputMediaJSON); err != nil {
+			t.Fatalf("load shared craft input media for box %d: %v", edit.Message.ID, err)
+		}
+		sharedCraftInputMedia, err := decodeMessageMedia(sharedCraftInputMediaJSON)
+		if err != nil || sharedCraftInputMedia == nil || sharedCraftInputMedia.ServiceAction == nil ||
+			sharedCraftInputMedia.ServiceAction.StarGiftUnique == nil ||
+			sharedCraftInputMedia.ServiceAction.StarGiftUnique.SavedID != 0 {
+			t.Fatalf("shared craft input retained account-local saved_id for box %d: media=%+v err=%v",
+				edit.Message.ID, sharedCraftInputMedia, err)
+		}
 	}
 	craftReq := domain.StarGiftCraftRequest{UserID: owner.ID,
 		Refs: []domain.SavedStarGiftRef{

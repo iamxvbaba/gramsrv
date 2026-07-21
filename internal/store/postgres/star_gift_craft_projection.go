@@ -149,7 +149,10 @@ WHERE owner_user_id=$1 AND box_id=$2 AND NOT deleted`, box.OwnerUserID, box.BoxI
 			return nil, 0, fmt.Errorf("enqueue craft input edit: %w", err)
 		}
 		if box.OwnerUserID == box.MessageSenderID || len(privateMediaJSON) == 0 {
-			privateMediaJSON = mediaJSON
+			privateMediaJSON, err = encodeSharedPrivateStarGiftMedia(media)
+			if err != nil {
+				return nil, 0, err
+			}
 		}
 		edits = append(edits, domain.EditedMessageForUser{UserID: msg.OwnerUserID, Message: msg, Event: event})
 	}

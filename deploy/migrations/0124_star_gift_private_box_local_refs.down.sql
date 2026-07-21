@@ -1,0 +1,4 @@
+-- This migration emits durable per-user edit_message events. Reverting the
+-- repaired ids or rewinding pts would reintroduce cross-account references and
+-- create holes in updates.getDifference, so rollback intentionally preserves
+-- both the corrected snapshots and their update facts.

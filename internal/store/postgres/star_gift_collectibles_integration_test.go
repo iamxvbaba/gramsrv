@@ -119,6 +119,10 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	if uniqueAction.SavedID != int64(saved.MsgID) {
 		t.Fatalf("unique action saved_id = %d, want stable source msg id %d", uniqueAction.SavedID, saved.MsgID)
 	}
+	senderUniqueAction := upgraded.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
+	if senderUniqueAction == nil || senderUniqueAction.SavedID != 0 {
+		t.Fatalf("sender unique action leaked owner-only saved_id: %+v", senderUniqueAction)
+	}
 	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
 	if ownerSourceEdit.Event.Pts <= ownerMessage.Pts || ownerSourceEdit.Message.Media == nil ||
 		ownerSourceEdit.Message.Media.ServiceAction == nil || ownerSourceEdit.Message.Media.ServiceAction.StarGift == nil ||

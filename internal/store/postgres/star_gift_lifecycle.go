@@ -1148,8 +1148,15 @@ func ensureNoStarGiftMarketConflict(ctx context.Context, tx pgx.Tx, uniqueID int
 }
 
 func transferUniqueAction(unique domain.UniqueStarGift, fromUserID int64, to domain.Peer, saved domain.SavedStarGift) *domain.MessageStarGiftUniqueAction {
+	savedID := saved.SavedID
+	if to.Type == domain.PeerTypeUser {
+		// For a user-owned transferred gift the action message itself becomes
+		// inputSavedStarGiftUser.msg_id. A channel saved_id belongs to a different
+		// identity namespace and must never leak into the recipient's user view.
+		savedID = 0
+	}
 	return &domain.MessageStarGiftUniqueAction{Gift: unique, FromUserID: fromUserID, Peer: to,
-		SavedID: saved.SavedID, Transferred: true, Saved: true, CanExportAt: saved.CanExportAt,
+		SavedID: savedID, Transferred: true, Saved: true, CanExportAt: saved.CanExportAt,
 		TransferStars: saved.TransferStars, CanTransferAt: saved.CanTransferAt, CanResellAt: saved.CanResellAt,
 		DropOriginalDetailsStars: saved.DropOriginalDetailsStars, CanCraftAt: saved.CanCraftAt}
 }
