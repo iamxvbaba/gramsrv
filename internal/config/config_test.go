@@ -35,13 +35,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 	disableDefaultConfigFile(t)
-	t.Setenv("TELESRV_ADVERTISE_IP", "10.172.61.102")
+	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AdvertiseIP != "10.172.61.102" {
+	if cfg.AdvertiseIP != "203.0.113.10" {
 		t.Fatalf("AdvertiseIP = %q, want explicit env", cfg.AdvertiseIP)
 	}
 }

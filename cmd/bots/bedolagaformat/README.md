@@ -89,7 +89,7 @@ enable
 
 `/setlogin` 首次创建 client 时只展示一次 OIDC Client Secret；不要写进仓库。可用
 `/logininfo` 查看 Client ID 和登记结果，或用 `/resetloginsecret` 轮换 secret。
-loopback HTTP 仅应配合 telesrv 的显式开发开关使用；testserver/生产必须换成精确
+loopback HTTP 仅应配合 telesrv 的显式开发开关使用；测试部署/生产必须换成精确
 HTTPS origin。
 
 把一次性 secret 和 Client ID 放入进程环境，再启动：
@@ -118,7 +118,7 @@ code flow 会明确禁用。
 `/auth/status` 配 wildcard CORS，也不要在 RP 中记录 browser token 或 ID token。
 
 demo 的 flow/state/nonce 只保存在单进程内存中，带 10 分钟过期和 256 条上限，专用于
-本地与 testserver 端到端验证，不是生产 relying-party 实现。官方 iOS/Android SDK
+本地与受控测试部署端到端验证，不是生产 relying-party 实现。官方 iOS/Android SDK
 目前把 `https://oauth.telegram.org` 写死；验证自建 issuer 时需使用项目记录的最小
 base-URL patch 或等价测试构建，不能把官方生产 SDK 未修改的结果误判为自建服务结果。
 
