@@ -104,6 +104,11 @@ type User struct {
 	Contact     bool
 	Mutual      bool
 	CloseFriend bool
+	// ContactNote/ContactNoteEntities are transient viewer-scoped contact
+	// projection fields. They must never be persisted into users or a
+	// viewer-independent base-user cache.
+	ContactNote         string
+	ContactNoteEntities []MessageEntity
 	// Bot 标识 bot 账号；置位时 BotInfoVersion 必须 ≥1（TDesktop 只认
 	// user TL 是否携带 bot_info_version 字段，且与 bot flag 共用 bit14）。
 	Bot            bool

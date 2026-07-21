@@ -116,7 +116,13 @@ func (s *countingContactStore) SetPersonalPhoto(ctx context.Context, userID, con
 func TestCachedContactStoreCachesProjectionReads(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewContactStore()
-	if _, err := base.Upsert(ctx, 1, domain.ContactInput{ContactUserID: 2, FirstName: "Alice", Phone: "111"}); err != nil {
+	if _, err := base.Upsert(ctx, 1, domain.ContactInput{
+		ContactUserID: 2,
+		FirstName:     "Alice",
+		Phone:         "111",
+		Note:          "private note",
+		NoteEntities:  []domain.MessageEntity{{Type: domain.MessageEntityBold, Offset: 0, Length: 7}},
+	}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}
 	counting := &countingContactStore{ContactStore: base}
@@ -126,15 +132,16 @@ func TestCachedContactStoreCachesProjectionReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get many first: %v", err)
 	}
-	if first[2].FirstName != "Alice" {
-		t.Fatalf("first contact = %+v, want Alice", first[2])
+	if first[2].FirstName != "Alice" || first[2].Note != "private note" || len(first[2].NoteEntities) != 1 {
+		t.Fatalf("first contact = %+v, want Alice with private note", first[2])
 	}
+	first[2].NoteEntities[0].Length = 99
 	second, err := cached.GetMany(ctx, 1, []int64{2, 3})
 	if err != nil {
 		t.Fatalf("get many second: %v", err)
 	}
-	if second[2].FirstName != "Alice" {
-		t.Fatalf("second contact = %+v, want Alice", second[2])
+	if second[2].FirstName != "Alice" || second[2].Note != "private note" || len(second[2].NoteEntities) != 1 || second[2].NoteEntities[0].Length != 7 {
+		t.Fatalf("second contact = %+v, want isolated cached Alice note", second[2])
 	}
 	if counting.listCalls != 1 {
 		t.Fatalf("ListByUser calls = %d, want 1 account snapshot load", counting.listCalls)

@@ -260,6 +260,9 @@ func cloneUsers(users []domain.User) []domain.User {
 	}
 	out := make([]domain.User, len(users))
 	copy(out, users)
+	for i := range out {
+		out[i].ContactNoteEntities = append([]domain.MessageEntity(nil), out[i].ContactNoteEntities...)
+	}
 	return out
 }
 
@@ -499,30 +502,7 @@ func projectOne(ctx context.Context, contacts store.ContactStore, viewerUserID i
 	if err != nil {
 		return domain.User{}, err
 	}
-	if !found {
-		user.Phone = ""
-		user.Contact = false
-		user.Mutual = false
-		user.CloseFriend = false
-		return user, nil
-	}
-	projected := user
-	projected.Contact = true
-	projected.Mutual = contact.Mutual || contact.User.Mutual
-	projected.CloseFriend = contact.CloseFriend || contact.User.CloseFriend
-	if contact.User.Phone != "" {
-		projected.Phone = contact.User.Phone
-	} else {
-		projected.Phone = contact.Phone
-	}
-	if contact.User.FirstName != "" || contact.User.LastName != "" {
-		projected.FirstName = contact.User.FirstName
-		projected.LastName = contact.User.LastName
-	} else if contact.FirstName != "" || contact.LastName != "" {
-		projected.FirstName = contact.FirstName
-		projected.LastName = contact.LastName
-	}
-	return projected, nil
+	return applyContactProjection(user, contact, found), nil
 }
 
 func uniqueUserIDs(users []domain.User) []int64 {
@@ -575,11 +555,15 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 		user.Contact = false
 		user.Mutual = false
 		user.CloseFriend = false
+		user.ContactNote = ""
+		user.ContactNoteEntities = nil
 		return user
 	}
 	user.Contact = true
 	user.Mutual = contact.Mutual || contact.User.Mutual
 	user.CloseFriend = contact.CloseFriend || contact.User.CloseFriend
+	user.ContactNote = contact.Note
+	user.ContactNoteEntities = append([]domain.MessageEntity(nil), contact.NoteEntities...)
 	if contact.User.Phone != "" {
 		user.Phone = contact.User.Phone
 	} else {
