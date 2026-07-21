@@ -600,6 +600,101 @@ func TestSendMessageParsesEntitiesMarkupAndCallsGateway(t *testing.T) {
 	}
 }
 
+func TestSendRichMessageAndEditPreserveInlineKeyboardAndProjection(t *testing.T) {
+	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
+	projection := json.RawMessage(`{"blocks":[{"type":"heading","size":4,"text":"Admin"}],"is_rtl":true}`)
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
+		Type: domain.MarkupButtonCallback, Text: "Info", Data: []byte("menu:info"),
+	}}}}
+	message := domain.Message{
+		ID: 21, OwnerUserID: 1001,
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 2001},
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: 1001},
+		Date: 1700000021, Out: true, ReplyMarkup: markup,
+		RichMessage: &domain.MessageRichMessage{Rtl: true, Blocks: []byte{1}, BotAPIProjection: projection},
+	}
+	gateway := &fakeBotAPIGateway{
+		self:        domain.User{ID: 1001, FirstName: "Bedolaga", Username: "bedolaga_bot", Bot: true},
+		sendMessage: message,
+		editMessage: message,
+	}
+	h := (&handler{bots: bots, gateway: gateway}).routes()
+
+	rec := performBotAPIRequest(t, h, bots.profile, "sendRichMessage", `{
+		"chat_id":2001,
+		"rich_message":{"html":"<h4>Admin</h4>","is_rtl":true,"skip_entity_detection":true},
+		"reply_markup":{"inline_keyboard":[[{"text":"Info","callback_data":"menu:info"}]]},
+		"disable_notification":true,
+		"protect_content":true,
+		"reply_parameters":{"message_id":7}
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sendRichMessage status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !gateway.sendRichCalled || gateway.sendChatID != 2001 || gateway.sendRichInput.HTML != "<h4>Admin</h4>" ||
+		!gateway.sendRichInput.RTL || !gateway.sendRichInput.SkipEntityDetection || !gateway.sendSilent || gateway.sendReplyTo != 7 {
+		t.Fatalf("send rich call = %#v", gateway)
+	}
+	if gateway.sendRichMarkup == nil || len(gateway.sendRichMarkup.Inline) != 1 ||
+		string(gateway.sendRichMarkup.Inline[0][0].Data) != "menu:info" {
+		t.Fatalf("send rich markup = %#v", gateway.sendRichMarkup)
+	}
+	assertBotAPIRichMenuResponse(t, rec.Body.Bytes(), 21)
+
+	gateway.editMessage.RichMessage.BotAPIProjection = json.RawMessage(`{"blocks":[{"type":"paragraph","text":"Updated"}]}`)
+	rec = performBotAPIRequest(t, h, bots.profile, "editMessageText", `{
+		"chat_id":2001,
+		"message_id":21,
+		"rich_message":{"markdown":"**Updated**","skip_entity_detection":true},
+		"reply_markup":{"inline_keyboard":[[{"text":"Info","callback_data":"menu:info"}]]}
+	}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("editMessageText rich status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !gateway.editRichCalled || gateway.editRichInput.Markdown != "**Updated**" || !gateway.editRichInput.SkipEntityDetection || !gateway.editSetMarkup {
+		t.Fatalf("edit rich call = %#v", gateway)
+	}
+	assertBotAPIRichMenuResponse(t, rec.Body.Bytes(), 21)
+}
+
+func TestEditMessageTextRejectsTextAndRichMessageTogether(t *testing.T) {
+	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
+	h := (&handler{bots: bots, gateway: &fakeBotAPIGateway{}}).routes()
+	rec := performBotAPIRequest(t, h, bots.profile, "editMessageText", `{
+		"chat_id":2001,"message_id":21,"text":"plain","rich_message":{"html":"<p>rich</p>"}
+	}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "RICH_MESSAGE_INVALID") {
+		t.Fatalf("edit text+rich status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func assertBotAPIRichMenuResponse(t *testing.T, raw []byte, messageID int) {
+	t.Helper()
+	var response struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			MessageID   int `json:"message_id"`
+			RichMessage struct {
+				Blocks []struct {
+					Type string `json:"type"`
+				} `json:"blocks"`
+			} `json:"rich_message"`
+			ReplyMarkup struct {
+				InlineKeyboard [][]struct {
+					CallbackData string `json:"callback_data"`
+				} `json:"inline_keyboard"`
+			} `json:"reply_markup"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode rich response: %v", err)
+	}
+	if !response.OK || response.Result.MessageID != messageID || len(response.Result.RichMessage.Blocks) != 1 ||
+		len(response.Result.ReplyMarkup.InlineKeyboard) != 1 || response.Result.ReplyMarkup.InlineKeyboard[0][0].CallbackData != "menu:info" {
+		t.Fatalf("rich response = %s", raw)
+	}
+}
+
 func TestSendMessageParsesAndProjectsReplyKeyboard(t *testing.T) {
 	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
 	markup := &domain.MessageReplyMarkup{
@@ -1329,6 +1424,9 @@ type fakeBotAPIGateway struct {
 	sendSilent               bool
 	sendReplyTo              int
 	sendMessage              domain.Message
+	sendRichCalled           bool
+	sendRichInput            domain.BotAPIRichMessageInput
+	sendRichMarkup           *domain.MessageReplyMarkup
 	sendMediaCalled          bool
 	sendMediaKind            string
 	sendMediaChatID          int64
@@ -1342,6 +1440,8 @@ type fakeBotAPIGateway struct {
 	editEntities             []domain.MessageEntity
 	editSetMarkup            bool
 	editMessage              domain.Message
+	editRichCalled           bool
+	editRichInput            domain.BotAPIRichMessageInput
 	editInlineCalled         bool
 	editInlineID             domain.BotInlineMessageID
 	editInlineText           string
@@ -1448,6 +1548,17 @@ func (f *fakeBotAPIGateway) BotAPISendMessage(_ context.Context, botID, chatID i
 	return f.sendMessage, nil
 }
 
+func (f *fakeBotAPIGateway) BotAPISendRichMessage(_ context.Context, botID, chatID int64, rich domain.BotAPIRichMessageInput, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, replyToMessageID int, effectID int64) (domain.Message, error) {
+	f.sendRichCalled = true
+	f.sendBotID = botID
+	f.sendChatID = chatID
+	f.sendRichInput = rich
+	f.sendRichMarkup = replyMarkup
+	f.sendSilent = silent
+	f.sendReplyTo = replyToMessageID
+	return f.sendMessage, nil
+}
+
 func (f *fakeBotAPIGateway) BotAPISendMedia(_ context.Context, botID, chatID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error) {
 	f.sendMediaCalled = true
 	f.sendMediaKind = kind
@@ -1467,10 +1578,23 @@ func (f *fakeBotAPIGateway) BotAPIEditMessageText(_ context.Context, botID, chat
 	return f.editMessage, nil
 }
 
+func (f *fakeBotAPIGateway) BotAPIEditRichMessage(_ context.Context, botID, chatID int64, messageID int, rich domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (domain.Message, error) {
+	f.editRichCalled = true
+	f.editRichInput = rich
+	f.editSetMarkup = setReplyMarkup
+	return f.editMessage, nil
+}
+
 func (f *fakeBotAPIGateway) BotAPIEditInlineMessageText(_ context.Context, _ int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, _ bool, _ *domain.MessageReplyMarkup, _ bool) (bool, error) {
 	f.editInlineCalled, f.editInlineID = true, inlineMessageID
 	f.editInlineText = text
 	f.editInlineEntities = append([]domain.MessageEntity(nil), entities...)
+	return true, nil
+}
+
+func (f *fakeBotAPIGateway) BotAPIEditInlineRichMessage(_ context.Context, _ int64, inlineMessageID domain.BotInlineMessageID, rich domain.BotAPIRichMessageInput, _ bool, _ *domain.MessageReplyMarkup) (bool, error) {
+	f.editInlineCalled, f.editInlineID = true, inlineMessageID
+	f.editRichInput = rich
 	return true, nil
 }
 

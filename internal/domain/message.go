@@ -154,7 +154,7 @@ type Message struct {
 	// ReplyMarkup 是 bot 消息携带的 reply/inline keyboard 快照。仅 bot 出站消息可
 	// 非空；普通用户消息恒 nil（发送侧 is_bot 闸门）。双盒持同一快照（无 per-viewer 差异）。
 	ReplyMarkup *MessageReplyMarkup
-	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
 	// Pinned 是 owner 视角的置顶标志（官方私聊多置顶语义：双方各自
 	// 的 box 行独立持有，非 pm_oneside 操作两侧同步翻转）。
@@ -165,15 +165,14 @@ type Message struct {
 	SavedPeer Peer
 }
 
-// MessageRichMessage 是 Layer 227 富文本消息（richMessage）的协议中立快照：一组 IV
+// MessageRichMessage 是 Layer 228 富文本消息（richMessage）的协议中立快照：一组 IV
 // PageBlock（Blocks）+ 内嵌已解析的 Photos/Documents。
 //
 // Blocks 存 gotd TL 序列化后的 []tg.PageBlockClass 不透明字节——PageBlock 体系庞大且
 // input(inputRichMessage.blocks) 与 output(richMessage.blocks) 同构、原样透传，故不在
 // domain 逐类型建模；rpc 层负责 tg.PageBlock 向量 ↔ bytes 的序列化（domain 不依赖 tg）。
 // 与 message media 同理，Photos/Documents 存已解析快照（含 viewer 无关的 access_hash），
-// 投影复用 tgPhoto/tgDocument。Phase 1 仅支持 inputRichMessage（blocks 形态），不解析
-// HTML/Markdown 变体。
+// 投影复用 tgPhoto/tgDocument。HTML/Markdown 输入也会在 RPC 边界归一为同一组 Blocks。
 //
 // 已知局限：Blocks 是 gotd 线格式不透明字节，跨 gotd 版本（PageBlock 构造器变更）可能
 // 失效——富文本消息为全新实验特性、无存量数据，Phase 1 接受该耦合。
@@ -183,6 +182,10 @@ type MessageRichMessage struct {
 	Blocks    []byte     `json:"blocks,omitempty"`
 	Photos    []Photo    `json:"photos,omitempty"`
 	Documents []Document `json:"documents,omitempty"`
+	// BotAPIProjection 是由 RPC 边界从同一组已校验 PageBlock 派生出的
+	// Bot API RichMessage JSON。它不是第二事实源：写入边界只允许从 Blocks
+	// 生成，HTTP Bot API 投影只读，避免 botapi 包反向依赖 tg 类型。
+	BotAPIProjection []byte `json:"bot_api_projection,omitempty"`
 }
 
 // IsZero 表示无富文本载荷（落库时跳过空快照、投影时不下发 rich_message）。
@@ -289,7 +292,7 @@ type SendPrivateTextRequest struct {
 	BusinessAutomationKind BusinessAutomationKind
 	// ReplyMarkup 是 bot 出站消息的 reply/inline keyboard 快照；普通用户发送恒 nil。
 	ReplyMarkup *MessageReplyMarkup
-	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
 }
 

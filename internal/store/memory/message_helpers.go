@@ -156,7 +156,7 @@ func cloneReplyMarkup(m *domain.MessageReplyMarkup) *domain.MessageReplyMarkup {
 	return &clone
 }
 
-// cloneRichMessage 深拷 Layer 227 富文本快照：复制不透明 blocks 字节与内嵌媒体切片，
+// cloneRichMessage 深拷 Layer 228 富文本快照：复制不透明 blocks、Bot API 投影与内嵌媒体切片，
 // 避免发送方/接收方两行共享底层切片（与 postgres 每盒独立 decode 对齐）。
 func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
 	if m == nil {
@@ -166,6 +166,7 @@ func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
 	clone.Blocks = append([]byte(nil), m.Blocks...)
 	clone.Photos = append([]domain.Photo(nil), m.Photos...)
 	clone.Documents = append([]domain.Document(nil), m.Documents...)
+	clone.BotAPIProjection = append([]byte(nil), m.BotAPIProjection...)
 	return &clone
 }
 

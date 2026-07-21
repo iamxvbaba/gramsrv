@@ -2,10 +2,13 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -248,6 +251,108 @@ func TestRichMessageOrderedListNumsNormalized(t *testing.T) {
 	assertOrderedListNums(t, "new input", got.Blocks, "1", "2")
 }
 
+func TestBotAPIRichHTMLParsesBedolagaMenuStructures(t *testing.T) {
+	r := &Router{}
+	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageHTML{
+		Rtl:        true,
+		Noautolink: true,
+		HTML: `<h4>Admin</h4>
+		<table bordered striped><tr><th>Status</th><td align="right" valign="bottom"><tg-time unix="1700000000" format="R">now</tg-time></td></tr></table>
+		<details open><summary>More</summary><p><blockquote><code>healthy</code></blockquote></p></details>
+		<footer>Choose an option</footer>`,
+	})
+	if err != nil {
+		t.Fatalf("parse Bedolaga rich HTML: %v", err)
+	}
+	decoded, err := tgRichMessage(rich)
+	if err != nil {
+		t.Fatalf("decode rich HTML: %v", err)
+	}
+	if !decoded.Rtl {
+		t.Fatal("rich HTML lost is_rtl")
+	}
+	var heading, table, details, footer bool
+	for _, block := range decoded.Blocks {
+		switch value := block.(type) {
+		case *tg.PageBlockHeading4:
+			heading = true
+		case *tg.PageBlockTable:
+			table = true
+			if !value.Bordered || !value.Striped || len(value.Rows) != 1 || len(value.Rows[0].Cells) != 2 {
+				t.Fatalf("table shape = %+v", value)
+			}
+			cell := value.Rows[0].Cells[1]
+			if !cell.AlignRight || !cell.ValignBottom || !richTextContainsDate(cell.Text, 1700000000) {
+				t.Fatalf("table date/alignment = %+v", cell)
+			}
+		case *tg.PageBlockDetails:
+			details = value.Open && len(value.Blocks) != 0
+		case *tg.PageBlockFooter:
+			footer = true
+		}
+	}
+	if !heading || !table || !details || !footer {
+		t.Fatalf("parsed blocks heading=%v table=%v details=%v footer=%v: %#v", heading, table, details, footer, decoded.Blocks)
+	}
+	var projected struct {
+		RTL    bool `json:"is_rtl"`
+		Blocks []struct {
+			Type string `json:"type"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(rich.BotAPIProjection, &projected); err != nil {
+		t.Fatalf("decode Bot API projection: %v", err)
+	}
+	if !projected.RTL || len(projected.Blocks) != len(decoded.Blocks) {
+		t.Fatalf("Bot API projection = %s", rich.BotAPIProjection)
+	}
+
+	if _, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageHTML{
+		HTML: `<h4>Admin</h4><img src="https://example.test/logo.png">`,
+	}); err == nil || !tgerr.Is(err, "WEBPAGE_MEDIA_EMPTY") {
+		t.Fatalf("HTML media err = %v, want WEBPAGE_MEDIA_EMPTY for Bedolaga no-logo retry", err)
+	}
+}
+
+func TestBotAPIRichMarkdownParsesAndProjects(t *testing.T) {
+	r := &Router{}
+	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessageMarkdown{
+		Markdown: "# Bedolaga\n\n**Subscription:** active",
+	})
+	if err != nil {
+		t.Fatalf("parse rich Markdown: %v", err)
+	}
+	decoded, err := tgRichMessage(rich)
+	if err != nil {
+		t.Fatalf("decode rich Markdown: %v", err)
+	}
+	if len(decoded.Blocks) < 2 || len(rich.BotAPIProjection) == 0 || !strings.Contains(string(rich.BotAPIProjection), "Bedolaga") {
+		t.Fatalf("Markdown decoded=%#v projection=%s", decoded.Blocks, rich.BotAPIProjection)
+	}
+}
+
+func richTextContainsDate(text tg.RichTextClass, want int) bool {
+	switch value := text.(type) {
+	case *tg.TextDate:
+		return value.Date == want
+	case *tg.TextConcat:
+		for _, child := range value.Texts {
+			if richTextContainsDate(child, want) {
+				return true
+			}
+		}
+	case *tg.TextBold:
+		return richTextContainsDate(value.Text, want)
+	case *tg.TextItalic:
+		return richTextContainsDate(value.Text, want)
+	case *tg.TextFixed:
+		return richTextContainsDate(value.Text, want)
+	case *tg.TextURL:
+		return richTextContainsDate(value.Text, want)
+	}
+	return false
+}
+
 func TestRichMessageRejectsResourcesWithoutBlocks(t *testing.T) {
 	ctx := context.Background()
 	r := &Router{}
@@ -417,7 +522,7 @@ func TestSendMessageRichMessageTextBlocksRoundTrip(t *testing.T) {
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
-		Message:  "rich",
+		Message:  "",
 		RandomID: 7001,
 		RichMessage: &tg.InputRichMessage{
 			Rtl:    true,
@@ -642,7 +747,7 @@ func TestGetRichMessageWrongPeerReturnsEmpty(t *testing.T) {
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:        &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
-		Message:     "rich",
+		Message:     "",
 		RandomID:    7002,
 		RichMessage: &tg.InputRichMessage{Rtl: true, Blocks: richTextBlocks()},
 	})
@@ -681,7 +786,7 @@ func TestSendMessageRichMessageEmbeddedPhoto(t *testing.T) {
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
-		Message:  "rich+photo",
+		Message:  "",
 		RandomID: 7003,
 		RichMessage: &tg.InputRichMessage{
 			Blocks: []tg.PageBlockClass{&tg.PageBlockParagraph{Text: &tg.TextPlain{Text: "see photo"}}},

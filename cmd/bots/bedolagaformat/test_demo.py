@@ -5,6 +5,9 @@ import unittest
 from unittest.mock import AsyncMock
 
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendRichMessage
+from aiogram.types import InputRichMessage
 
 
 MODULE_PATH = Path(__file__).with_name("demo.py")
@@ -46,6 +49,45 @@ class BedolagaFormatDemoTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("parse_mode", calls[0].kwargs)
         self.assertEqual(calls[1].kwargs["parse_mode"], ParseMode.MARKDOWN)
         self.assertEqual(calls[2].kwargs["parse_mode"], ParseMode.MARKDOWN_V2)
+
+    def test_rich_menu_covers_bedolaga_html_and_keyboard(self) -> None:
+        html = demo.rich_menu_html("BEDOLAGA123", include_logo=False)
+        self.assertIn("<h4>BEDOLAGA123 Admin</h4>", html)
+        self.assertIn("<table bordered striped>", html)
+        self.assertIn("<tg-time", html)
+        self.assertIn("<details open>", html)
+        self.assertIn("<footer>", html)
+        markup = demo.rich_menu_keyboard()
+        self.assertEqual(markup.inline_keyboard[0][0].callback_data, "menu:balance")
+        self.assertEqual(markup.inline_keyboard[1][0].callback_data, "menu:info")
+
+    async def test_rich_suite_retries_without_logo_and_edits(self) -> None:
+        bot = AsyncMock()
+        media_error = TelegramBadRequest(
+            method=SendRichMessage(
+                chat_id=1780243200,
+                rich_message=InputRichMessage(html="<p>fixture</p>"),
+            ),
+            message="WEBPAGE_MEDIA_EMPTY",
+        )
+        bot.send_rich_message.side_effect = [
+            media_error,
+            SentMessage(21),
+            SentMessage(22),
+        ]
+        bot.edit_message_text.return_value = SentMessage(21)
+
+        ids = await demo.send_rich_suite(bot, 1780243200, "BEDOLAGA123")
+
+        self.assertEqual(ids, [21, 22])
+        sends = bot.send_rich_message.await_args_list
+        self.assertEqual(len(sends), 3)
+        self.assertIn("<img", sends[0].kwargs["rich_message"].html)
+        self.assertNotIn("<img", sends[1].kwargs["rich_message"].html)
+        self.assertIsNotNone(sends[2].kwargs["rich_message"].markdown)
+        edit = bot.edit_message_text.await_args
+        self.assertEqual(edit.kwargs["message_id"], 21)
+        self.assertIn("EDITED", edit.kwargs["rich_message"].html)
 
 
 if __name__ == "__main__":

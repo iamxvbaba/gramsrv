@@ -643,7 +643,7 @@ type ChannelMessage struct {
 	Reactions   *ChannelMessageReactions
 	Action      *ChannelMessageAction
 	Media       *MessageMedia
-	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
 	// FromBoostsApplied 是发送时的 sender boost 数快照（message.from_boosts_applied）。
 	FromBoostsApplied int

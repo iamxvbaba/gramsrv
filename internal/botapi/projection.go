@@ -253,7 +253,7 @@ func apiMessageProjectable(msg domain.Message) bool {
 	if msg.Out || msg.ID <= 0 {
 		return false
 	}
-	return msg.Body != "" || len(apiMessageMedia(msg.Media, nil, nil)) > 0
+	return msg.Body != "" || (msg.RichMessage != nil && len(msg.RichMessage.BotAPIProjection) > 0) || len(apiMessageMedia(msg.Media, nil, nil)) > 0
 }
 
 func apiUser(u domain.User) map[string]any {
@@ -318,6 +318,12 @@ func apiMessage(msg domain.Message, users []domain.User, channelLists ...[]domai
 			poll["description_entities"] = entities
 		} else {
 			out["entities"] = entities
+		}
+	}
+	if msg.RichMessage != nil && len(msg.RichMessage.BotAPIProjection) > 0 {
+		var richMessage any
+		if json.Unmarshal(msg.RichMessage.BotAPIProjection, &richMessage) == nil && richMessage != nil {
+			out["rich_message"] = richMessage
 		}
 	}
 	if msg.EditDate > 0 {

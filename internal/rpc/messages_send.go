@@ -184,8 +184,8 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			return nil, sendErr
 		}
 	}
-	// rich_message（Layer 227 富文本）：解析 blocks + 内嵌媒体快照；普通消息恒 nil。
-	// Phase 1 仅认 inputRichMessage（blocks 形态），HTML/Markdown 变体返回错误。
+	// rich_message（Layer 228 富文本）：blocks、HTML、Markdown 均在边界归一为
+	// PageBlock + 内嵌媒体快照；普通消息恒 nil。
 	var richMessage *domain.MessageRichMessage
 	if req.RichMessage != nil {
 		richMessage, err = r.domainRichMessageFromInput(ctx, req.RichMessage)
@@ -193,6 +193,10 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			sendErr = err
 			return nil, sendErr
 		}
+	}
+	if req.Message != "" && richMessage != nil {
+		sendErr = mediaInvalidErr()
+		return nil, sendErr
 	}
 	if req.Message == "" && richMessage == nil {
 		sendErr = messageEmptyErr()

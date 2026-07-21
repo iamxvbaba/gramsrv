@@ -41,6 +41,12 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, richErr
 		}
 	}
+	if hasMessage && hasRichMessage {
+		return nil, mediaInvalidErr()
+	}
+	// Explicit text and rich edits are replacement operations. A text edit must
+	// clear a previously stored rich payload; a rich edit already replaces it.
+	replaceRichMessage := hasRichMessage || hasMessage
 	if hasMessage && richMessage == nil {
 		// 编辑后的文本同样补服务端自动实体（url/@mention/#hashtag/bot command），与发送一致；
 		// 覆盖频道/私聊编辑与各自的定时编辑分支（editScheduledMessage 仅由本处调用）。
@@ -61,7 +67,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		if media, ok := req.GetMedia(); ok && !editMessageMediaCanDegradeToText(media) {
 			return nil, mediaInvalidErr()
 		}
-		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, hasRichMessage, scheduleDate)
+		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, replaceRichMessage, scheduleDate)
 	}
 	if media, ok := req.GetMedia(); ok {
 		// 关闭 poll 走 editMessage + InputMediaPoll(closed)（TDesktop "Stop poll" 路径）。
@@ -119,7 +125,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			Message:        message,
 			Entities:       domainMessageEntitiesForViewer(userID, entities),
 			MentionUserIDs: mentionUserIDs,
-			SetRichMessage: hasRichMessage,
+			SetRichMessage: replaceRichMessage,
 			RichMessage:    richMessage,
 			EditDate:       int(r.clock.Now().Unix()),
 		})
@@ -154,7 +160,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		OriginSessionID: sessionID,
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
-		SetRichMessage:  hasRichMessage,
+		SetRichMessage:  replaceRichMessage,
 		RichMessage:     richMessage,
 	})
 	if err != nil {

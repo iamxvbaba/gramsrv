@@ -43,9 +43,12 @@ type GatewayService interface {
 	BotAPISelf(ctx context.Context, botID int64) (domain.User, error)
 	BotAPIUpdates(ctx context.Context, botID int64, offset int64) ([]domain.UpdateEvent, error)
 	BotAPISendMessage(ctx context.Context, botID, chatID int64, text string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview, silent bool, replyToMessageID int) (domain.Message, error)
+	BotAPISendRichMessage(ctx context.Context, botID, chatID int64, rich domain.BotAPIRichMessageInput, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, replyToMessageID int, effectID int64) (domain.Message, error)
 	BotAPISendMedia(ctx context.Context, botID, chatID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte, caption string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, silent bool, replyToMessageID int) (domain.Message, error)
 	BotAPIEditMessageText(ctx context.Context, botID, chatID int64, messageID int, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (domain.Message, error)
+	BotAPIEditRichMessage(ctx context.Context, botID, chatID int64, messageID int, rich domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (domain.Message, error)
 	BotAPIEditInlineMessageText(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (bool, error)
+	BotAPIEditInlineRichMessage(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, rich domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (bool, error)
 	BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error)
 	BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, callbackQueryID, text, url string, showAlert bool, cacheTime int) (bool, error)
 	BotAPIGetFile(ctx context.Context, botID int64, locationKey string, offset int64, limit int) (domain.FileChunk, bool, error)
@@ -204,6 +207,8 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.getUpdates(w, r, botID)
 	case "sendmessage":
 		h.sendMessage(w, r, botID)
+	case "sendrichmessage":
+		h.sendRichMessage(w, r, botID)
 	case "sendphoto":
 		h.sendMedia(w, r, botID, "photo")
 	case "sendanimation":
@@ -577,6 +582,71 @@ func (h *handler) sendMessage(w http.ResponseWriter, r *http.Request, botID int6
 	writeAPIOK(w, apiMessage(msg, users))
 }
 
+func (h *handler) sendRichMessage(w http.ResponseWriter, r *http.Request, botID int64) {
+	if h.gateway == nil {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return
+	}
+	values, err := requestValues(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
+		return
+	}
+	chatID, err := strconv.ParseInt(strings.TrimSpace(values["chat_id"]), 10, 64)
+	if err != nil || chatID == 0 {
+		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+		return
+	}
+	if strings.TrimSpace(values["business_connection_id"]) != "" {
+		writeAPIError(w, http.StatusBadRequest, "BUSINESS_CONNECTION_INVALID")
+		return
+	}
+	if apiInt(values["message_thread_id"], 0) != 0 || apiInt(values["direct_messages_topic_id"], 0) != 0 {
+		writeAPIError(w, http.StatusBadRequest, "MESSAGE_THREAD_INVALID")
+		return
+	}
+	if apiBool(values["allow_paid_broadcast"]) || strings.TrimSpace(values["suggested_post_parameters"]) != "" {
+		writeAPIError(w, http.StatusBadRequest, "RICH_MESSAGE_OPTION_UNSUPPORTED")
+		return
+	}
+	rich, err := richMessageInputFromAPI(values["rich_message"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var markup *domain.MessageReplyMarkup
+	if raw := strings.TrimSpace(values["reply_markup"]); raw != "" {
+		markup, err = inlineReplyMarkupFromAPI(json.RawMessage(raw))
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	replyTo, err := richReplyMessageID(values)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	effectID, err := apiInt64(values["message_effect_id"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "EFFECT_ID_INVALID")
+		return
+	}
+	msg, err := h.gateway.BotAPISendRichMessage(
+		r.Context(), botID, chatID, rich, markup,
+		apiBool(values["disable_notification"]), apiBool(values["protect_content"]), replyTo, effectID,
+	)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+		return
+	}
+	users := []domain.User(nil)
+	if self, err := h.gateway.BotAPISelf(r.Context(), botID); err == nil && self.ID != 0 {
+		users = append(users, self)
+	}
+	writeAPIOK(w, apiMessage(msg, users))
+}
+
 func (h *handler) sendMedia(w http.ResponseWriter, r *http.Request, botID int64, kind string) {
 	if h.gateway == nil {
 		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
@@ -695,7 +765,26 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIError(w, http.StatusBadRequest, "MESSAGE_IDENTIFIER_INVALID")
 		return
 	}
-	text, entities, err := botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
+	rawRich := strings.TrimSpace(values["rich_message"])
+	_, textSpecified := values["text"]
+	if rawRich != "" && textSpecified {
+		writeAPIError(w, http.StatusBadRequest, "RICH_MESSAGE_INVALID")
+		return
+	}
+	var (
+		text     string
+		entities []domain.MessageEntity
+		rich     domain.BotAPIRichMessageInput
+	)
+	if rawRich != "" {
+		rich, err = richMessageInputFromAPI(rawRich)
+	} else {
+		if !textSpecified {
+			writeAPIError(w, http.StatusBadRequest, "MESSAGE_EMPTY")
+			return
+		}
+		text, entities, err = botAPIFormattedTextRaw(values["text"], values["parse_mode"], values["entities"], domain.MaxMessageTextLength, true)
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -715,7 +804,12 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		ok, err := h.gateway.BotAPIEditInlineMessageText(r.Context(), botID, inlineID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+		var ok bool
+		if rawRich != "" {
+			ok, err = h.gateway.BotAPIEditInlineRichMessage(r.Context(), botID, inlineID, rich, setReplyMarkup, markup)
+		} else {
+			ok, err = h.gateway.BotAPIEditInlineMessageText(r.Context(), botID, inlineID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+		}
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 			return
@@ -723,7 +817,12 @@ func (h *handler) editMessageText(w http.ResponseWriter, r *http.Request, botID 
 		writeAPIOK(w, ok)
 		return
 	}
-	msg, err := h.gateway.BotAPIEditMessageText(r.Context(), botID, chatID, messageID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+	var msg domain.Message
+	if rawRich != "" {
+		msg, err = h.gateway.BotAPIEditRichMessage(r.Context(), botID, chatID, messageID, rich, setReplyMarkup, markup)
+	} else {
+		msg, err = h.gateway.BotAPIEditMessageText(r.Context(), botID, chatID, messageID, text, entities, setReplyMarkup, markup, apiBool(values["disable_web_page_preview"]))
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
 		return
@@ -1338,6 +1437,14 @@ func apiErrorDescription(err error) string {
 		"RESULT_TYPE_INVALID",
 		"MESSAGE_EMPTY",
 		"MESSAGE_TOO_LONG",
+		"RICH_MESSAGE_INVALID",
+		"RICH_MESSAGE_TOO_LONG",
+		"RICH_MESSAGE_DATE_INVALID",
+		"RICH_MESSAGE_BLOCKS_UNSUPPORTED",
+		"RICH_MESSAGE_MEDIA_UNSUPPORTED",
+		"RICH_MESSAGE_OPTION_UNSUPPORTED",
+		"WEBPAGE_MEDIA_EMPTY",
+		"EFFECT_ID_INVALID",
 		"BUTTON_INVALID",
 		"BUTTON_DATA_INVALID",
 		"BUTTON_URL_INVALID",

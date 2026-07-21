@@ -10,10 +10,9 @@ import (
 	"telesrv/internal/domain"
 )
 
-// 本文件集中 Layer 227 富文本消息（richMessage）的 tg.* ↔ domain 转换。
-// Phase 1：仅支持 inputRichMessage（blocks 形态）；HTML/Markdown 变体（需服务端解析为
-// PageBlock）尚未实现，直接拒绝。blocks 以 TL 向量序列化为不透明字节存 domain（详见
-// domain.MessageRichMessage）。
+// 本文件集中 Layer 228 富文本消息（richMessage）的 tg.* ↔ domain 转换。
+// inputRichMessage 的 blocks、HTML 与 Markdown 三种输入均在 RPC 边界归一为 PageBlock；
+// blocks 以 TL 向量序列化为不透明字节存 domain（详见 domain.MessageRichMessage）。
 
 // encodeRichBlocks 把 []tg.PageBlockClass 序列化为 TL 向量字节（含 vector 头）。
 func encodeRichBlocks(blocks []tg.PageBlockClass) ([]byte, error) {
@@ -127,22 +126,51 @@ func normalizeOrderedListForClients(list *tg.PageBlockOrderedList) {
 }
 
 // domainRichMessageFromInput 把入站 tg.InputRichMessageClass 解析为 domain 快照：
-// 序列化 blocks + 按 id 解析内嵌 photos/documents（复用 sendMedia 同款媒体解析）。
-// 返回 nil 表示无富文本载荷。Phase 1 仅认 *tg.InputRichMessage。
+// HTML/Markdown 先在服务端解析为 PageBlock，再与 blocks 形态共用限额校验、
+// 序列化和 Bot API 输出投影；内嵌 photos/documents 复用 sendMedia 同款媒体解析。
+// 返回 nil 表示无富文本载荷。
 func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputRichMessageClass) (*domain.MessageRichMessage, error) {
 	if input == nil {
 		return nil, nil
 	}
-	in, ok := input.(*tg.InputRichMessage)
-	if !ok {
-		// Phase 1：HTML/Markdown 变体需服务端解析为 PageBlock，尚未支持。
-		return nil, mediaInvalidErr()
+	var (
+		in           *tg.InputRichMessage
+		sourceParsed bool
+	)
+	switch value := input.(type) {
+	case *tg.InputRichMessage:
+		in = value
+	case *tg.InputRichMessageHTML:
+		if value == nil || value.HTML == "" || len(value.Files) != 0 {
+			return nil, richMessageInvalidErr()
+		}
+		blocks, err := parseBotAPIRichHTML(value.HTML)
+		if err != nil {
+			return nil, err
+		}
+		in = &tg.InputRichMessage{Rtl: value.Rtl, Noautolink: value.Noautolink, Blocks: blocks}
+		sourceParsed = true
+	case *tg.InputRichMessageMarkdown:
+		if value == nil || value.Markdown == "" || len(value.Files) != 0 {
+			return nil, richMessageInvalidErr()
+		}
+		blocks, err := parseBotAPIRichMarkdown(value.Markdown)
+		if err != nil {
+			return nil, err
+		}
+		in = &tg.InputRichMessage{Rtl: value.Rtl, Noautolink: value.Noautolink, Blocks: blocks}
+		sourceParsed = true
+	default:
+		return nil, richMessageInvalidErr()
 	}
 	if len(in.Blocks) == 0 {
 		if len(in.Photos) == 0 && len(in.Documents) == 0 {
 			return nil, nil
 		}
-		return nil, mediaInvalidErr()
+		return nil, richMessageInvalidErr()
+	}
+	if err := validateRichMessageBlocks(in.Blocks); err != nil {
+		return nil, err
 	}
 	if (len(in.Photos) > 0 || len(in.Documents) > 0) && r.deps.Files == nil {
 		return nil, notImplementedErr()
@@ -155,6 +183,13 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 	rich := &domain.MessageRichMessage{
 		Rtl:    in.Rtl,
 		Blocks: blocks,
+	}
+	projection, projectionErr := botAPIRichMessageProjection(in.Blocks, in.Rtl)
+	if projectionErr != nil && sourceParsed {
+		return nil, richMessageInvalidErr()
+	}
+	if projectionErr == nil {
+		rich.BotAPIProjection = projection
 	}
 	for _, p := range in.Photos {
 		id, ok := inputPhotoID(p)

@@ -249,6 +249,112 @@ func TestBotAPISendMessageToSupergroupChatID(t *testing.T) {
 	}
 }
 
+func TestBotAPIRichMessagePrivateSendEditAndPlainReplacement(t *testing.T) {
+	fixture := newBotAPIReceiveFixture(t, false)
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
+		Type: domain.MarkupButtonCallback, Text: "Info", Data: []byte("menu:info"),
+	}}}}
+	sent, err := fixture.router.BotAPISendRichMessage(fixture.ctx, fixture.bot.ID, fixture.owner.ID, domain.BotAPIRichMessageInput{
+		HTML: `<h4>Admin</h4><p>Status: active</p>`, SkipEntityDetection: true,
+	}, markup, false, false, 0, 0)
+	if err != nil {
+		t.Fatalf("BotAPISendRichMessage: %v", err)
+	}
+	if sent.ID <= 0 || sent.Pts <= 0 || sent.Body != "" || sent.RichMessage == nil || len(sent.RichMessage.BotAPIProjection) == 0 ||
+		sent.ReplyMarkup == nil || string(sent.ReplyMarkup.Inline[0][0].Data) != "menu:info" {
+		t.Fatalf("sent rich message = %+v", sent)
+	}
+
+	botHistory := privateBotAPIHistory(t, fixture, fixture.bot.ID, fixture.owner.ID)
+	if botHistory.ID != sent.ID || botHistory.RichMessage == nil || botHistory.Body != "" {
+		t.Fatalf("bot rich history = %+v", botHistory)
+	}
+	ownerHistory := privateBotAPIHistory(t, fixture, fixture.owner.ID, fixture.bot.ID)
+	if ownerHistory.RichMessage == nil || len(ownerHistory.RichMessage.BotAPIProjection) == 0 || ownerHistory.ReplyMarkup == nil {
+		t.Fatalf("owner rich history = %+v", ownerHistory)
+	}
+
+	edited, err := fixture.router.BotAPIEditRichMessage(fixture.ctx, fixture.bot.ID, fixture.owner.ID, sent.ID, domain.BotAPIRichMessageInput{
+		Markdown: "## Updated\n\nSubscription: active", SkipEntityDetection: true,
+	}, true, markup)
+	if err != nil {
+		t.Fatalf("BotAPIEditRichMessage: %v", err)
+	}
+	if edited.RichMessage == nil || edited.Body != "" || edited.EditDate == 0 || edited.Pts <= sent.Pts ||
+		!strings.Contains(string(edited.RichMessage.BotAPIProjection), "Updated") {
+		t.Fatalf("edited rich message = %+v projection=%s", edited, edited.RichMessage.BotAPIProjection)
+	}
+	ownerHistory = privateBotAPIHistory(t, fixture, fixture.owner.ID, fixture.bot.ID)
+	if ownerHistory.RichMessage == nil || !strings.Contains(string(ownerHistory.RichMessage.BotAPIProjection), "Updated") {
+		t.Fatalf("owner edited rich history = %+v", ownerHistory)
+	}
+
+	plain, err := fixture.router.BotAPIEditMessageText(fixture.ctx, fixture.bot.ID, fixture.owner.ID, sent.ID, "Classic menu", nil, false, nil, false)
+	if err != nil {
+		t.Fatalf("BotAPIEditMessageText replacing rich: %v", err)
+	}
+	if plain.Body != "Classic menu" || plain.RichMessage != nil {
+		t.Fatalf("plain replacement = %+v", plain)
+	}
+	ownerHistory = privateBotAPIHistory(t, fixture, fixture.owner.ID, fixture.bot.ID)
+	if ownerHistory.Body != "Classic menu" || ownerHistory.RichMessage != nil {
+		t.Fatalf("owner plain replacement history = %+v", ownerHistory)
+	}
+}
+
+func TestBotAPIRichMessageSupergroupSendAndEdit(t *testing.T) {
+	fixture := newBotAPIReceiveFixture(t, false)
+	chatID := -botAPIChannelChatIDBase - fixture.channel.ID
+	markup := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: [][]domain.MarkupButton{{{
+		Type: domain.MarkupButtonCallback, Text: "Status", Data: []byte("channel:status"),
+	}}}}
+	sent, err := fixture.router.BotAPISendRichMessage(fixture.ctx, fixture.bot.ID, chatID, domain.BotAPIRichMessageInput{
+		HTML: `<h4>Group menu</h4><p>Status: active</p>`, SkipEntityDetection: true,
+	}, markup, false, false, 0, 0)
+	if err != nil {
+		t.Fatalf("BotAPISendRichMessage channel: %v", err)
+	}
+	if sent.Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: fixture.channel.ID}) || sent.ID <= 0 || sent.Pts <= 0 ||
+		sent.RichMessage == nil || sent.ReplyMarkup == nil || string(sent.ReplyMarkup.Inline[0][0].Data) != "channel:status" {
+		t.Fatalf("sent channel rich message = %+v", sent)
+	}
+	history, err := fixture.channels.GetHistory(fixture.ctx, fixture.owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: fixture.channel.ID, Limit: 1,
+	})
+	if err != nil || len(history.Messages) != 1 || history.Messages[0].RichMessage == nil || history.Messages[0].Body != "" {
+		t.Fatalf("channel rich history = %+v err=%v", history.Messages, err)
+	}
+
+	edited, err := fixture.router.BotAPIEditRichMessage(fixture.ctx, fixture.bot.ID, chatID, sent.ID, domain.BotAPIRichMessageInput{
+		Markdown: "## Updated group menu\n\nStatus: active", SkipEntityDetection: true,
+	}, true, markup)
+	if err != nil {
+		t.Fatalf("BotAPIEditRichMessage channel: %v", err)
+	}
+	if edited.RichMessage == nil || edited.Body != "" || edited.EditDate == 0 || edited.Pts <= sent.Pts ||
+		!strings.Contains(string(edited.RichMessage.BotAPIProjection), "Updated group") {
+		t.Fatalf("edited channel rich message = %+v sent_pts=%d projection=%s", edited, sent.Pts, edited.RichMessage.BotAPIProjection)
+	}
+	history, err = fixture.channels.GetHistory(fixture.ctx, fixture.owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: fixture.channel.ID, Limit: 1,
+	})
+	if err != nil || len(history.Messages) != 1 || history.Messages[0].RichMessage == nil ||
+		!strings.Contains(string(history.Messages[0].RichMessage.BotAPIProjection), "Updated group") {
+		t.Fatalf("edited channel history = %+v err=%v", history.Messages, err)
+	}
+}
+
+func privateBotAPIHistory(t *testing.T, fixture botAPIReceiveFixture, ownerID, peerID int64) domain.Message {
+	t.Helper()
+	history, err := fixture.messages.GetHistory(fixture.ctx, ownerID, domain.MessageFilter{
+		HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peerID}, Limit: 1,
+	})
+	if err != nil || len(history.Messages) != 1 {
+		t.Fatalf("GetHistory owner=%d peer=%d len=%d err=%v", ownerID, peerID, len(history.Messages), err)
+	}
+	return history.Messages[0]
+}
+
 func TestBotAPISendMessageRejectsUnsupportedNegativeChatID(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
 

@@ -200,7 +200,7 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, peer.ID, text, entities, nil, replyMarkup, silent, reply)
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, text, entities, nil, nil, replyMarkup, silent, false, reply)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
@@ -222,6 +222,66 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 		ReplyTo:         reply,
 		Date:            int(time.Now().Unix()),
 		ReplyMarkup:     replyMarkup,
+	})
+	if err != nil {
+		return domain.Message{}, err
+	}
+	return res.SenderMessage, nil
+}
+
+// BotAPISendRichMessage sends one durable rich message through the same
+// private/channel state machines as messages.sendMessage. The HTTP input is
+// parsed into canonical PageBlocks before any message row, pts or outbox entry
+// is written.
+func (r *Router) BotAPISendRichMessage(ctx context.Context, botID, chatID int64, input domain.BotAPIRichMessageInput, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, replyToMessageID int, effectID int64) (domain.Message, error) {
+	if r == nil || botID == 0 {
+		return domain.Message{}, errors.New("BOT_INVALID")
+	}
+	peer, ok := botAPIPeerFromChatID(chatID)
+	if !ok {
+		return domain.Message{}, errors.New("CHAT_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
+	}
+	if effectID != 0 && (peer.Type != domain.PeerTypeUser || r.messageEffectInvalid(ctx, effectID)) {
+		return domain.Message{}, effectIDInvalidErr()
+	}
+	wire, err := tgInputRichMessageFromBotAPI(input)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	richMessage, err := r.domainRichMessageFromInput(ctx, wire)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	if richMessage.IsZero() {
+		return domain.Message{}, richMessageInvalidErr()
+	}
+	var reply *domain.MessageReply
+	if replyToMessageID > 0 {
+		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
+	}
+	if peer.Type == domain.PeerTypeChannel {
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, "", nil, nil, richMessage, replyMarkup, silent, noForwards, reply)
+	}
+	if r.deps.Messages == nil {
+		return domain.Message{}, errors.New("BOT_INVALID")
+	}
+	if r.deps.Users != nil && peer.ID != botID {
+		if _, found, err := r.deps.Users.ByID(ctx, botID, peer.ID); err != nil {
+			return domain.Message{}, err
+		} else if !found {
+			return domain.Message{}, errors.New("CHAT_ID_INVALID")
+		}
+	}
+	res, err := r.deps.Messages.SendPrivateText(ctx, botID, domain.SendPrivateTextRequest{
+		SenderUserID: botID, RecipientUserID: peer.ID, RandomID: randomNonZeroInt64(),
+		RichMessage: richMessage, Silent: silent, NoForwards: noForwards, ReplyTo: reply,
+		Date: int(time.Now().Unix()), ReplyMarkup: replyMarkup, Effect: effectID,
 	})
 	if err != nil {
 		return domain.Message{}, err
@@ -257,7 +317,7 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
 	}
 	if peer.Type == domain.PeerTypeChannel {
-		return r.botAPISendChannelMessage(ctx, botID, peer.ID, caption, entities, media, replyMarkup, silent, reply)
+		return r.botAPISendChannelMessage(ctx, botID, peer.ID, caption, entities, media, nil, replyMarkup, silent, false, reply)
 	}
 	if r.deps.Messages == nil {
 		return domain.Message{}, errors.New("BOT_INVALID")
@@ -569,7 +629,7 @@ func botAPIPeerFromChatID(chatID int64) (domain.Peer, bool) {
 	return domain.Peer{}, false
 }
 
-func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID int64, text string, entities []domain.MessageEntity, media *domain.MessageMedia, replyMarkup *domain.MessageReplyMarkup, silent bool, reply *domain.MessageReply) (domain.Message, error) {
+func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID int64, text string, entities []domain.MessageEntity, media *domain.MessageMedia, richMessage *domain.MessageRichMessage, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, reply *domain.MessageReply) (domain.Message, error) {
 	if r.deps.Channels == nil {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
 	}
@@ -581,10 +641,12 @@ func (r *Router) botAPISendChannelMessage(ctx context.Context, botID, channelID 
 		Message:             text,
 		Entities:            append([]domain.MessageEntity(nil), entities...),
 		Media:               media,
+		RichMessage:         richMessage,
 		MentionUserIDs:      mentionUserIDs,
 		SkipRecipientLookup: true,
 		PostAuthor:          r.channelPostAuthorName(ctx, botID),
 		Silent:              silent,
+		NoForwards:          noForwards,
 		ReplyTo:             reply,
 		ReplyMarkup:         replyMarkup,
 		Date:                int(time.Now().Unix()),
@@ -781,10 +843,77 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 		EditDate:       int(time.Now().Unix()),
 		SetReplyMarkup: setReplyMarkup,
 		ReplyMarkup:    replyMarkup,
+		// An explicit plain-text edit replaces a previous rich payload. Keeping
+		// both would create a state that neither Bot API nor TDesktop permits.
+		SetRichMessage: true,
 	})
 	if err != nil {
 		return domain.Message{}, err
 	}
+	self := res.Self()
+	if self.Message.ID == 0 {
+		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
+	}
+	return self.Message, nil
+}
+
+// BotAPIEditRichMessage replaces message content with one rich payload while
+// preserving the existing durable edit/pts/outbox semantics.
+func (r *Router) BotAPIEditRichMessage(ctx context.Context, botID, chatID int64, messageID int, input domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (domain.Message, error) {
+	if r == nil || botID == 0 {
+		return domain.Message{}, errors.New("BOT_INVALID")
+	}
+	peer, ok := botAPIPeerFromChatID(chatID)
+	if !ok {
+		return domain.Message{}, errors.New("CHAT_ID_INVALID")
+	}
+	if messageID <= 0 || messageID > domain.MaxMessageBoxID {
+		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
+	}
+	wire, err := tgInputRichMessageFromBotAPI(input)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	richMessage, err := r.domainRichMessageFromInput(ctx, wire)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	if richMessage.IsZero() {
+		return domain.Message{}, richMessageInvalidErr()
+	}
+	if peer.Type == domain.PeerTypeChannel {
+		if r.deps.Channels == nil {
+			return domain.Message{}, errors.New("CHAT_ID_INVALID")
+		}
+		res, err := r.deps.Channels.EditMessage(ctx, botID, domain.EditChannelMessageRequest{
+			UserID: botID, ChannelID: peer.ID, ID: messageID, Message: "",
+			SetReplyMarkup: setReplyMarkup, ReplyMarkup: replyMarkup,
+			SetRichMessage: true, RichMessage: richMessage, EditDate: int(time.Now().Unix()),
+		})
+		if err != nil {
+			return domain.Message{}, channelEditErr(err)
+		}
+		r.enqueueChannelEditMessageFanout(ctx, botID, res)
+		return botAPIMessageFromChannel(botID, res.Message), nil
+	}
+	if r.deps.Messages == nil {
+		return domain.Message{}, errors.New("BOT_INVALID")
+	}
+	res, err := r.deps.Messages.EditMessage(ctx, botID, domain.EditMessageRequest{
+		OwnerUserID: botID, Peer: peer, ID: messageID, Message: "", EditDate: int(time.Now().Unix()),
+		SetReplyMarkup: setReplyMarkup, ReplyMarkup: replyMarkup,
+		SetRichMessage: true, RichMessage: richMessage,
+	})
+	if err != nil {
+		return domain.Message{}, err
+	}
+	r.enqueueBotAPIPrivateEditUpdatesAsync(ctx, res)
 	self := res.Self()
 	if self.Message.ID == 0 {
 		return domain.Message{}, errors.New("MESSAGE_ID_INVALID")
@@ -819,6 +948,29 @@ func (r *Router) BotAPIEditInlineMessageText(ctx context.Context, botID int64, i
 			wire = &tg.ReplyInlineMarkup{}
 		}
 		req.SetReplyMarkup(wire)
+	}
+	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
+}
+
+func (r *Router) BotAPIEditInlineRichMessage(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, input domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (bool, error) {
+	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
+		return false, errors.New("BOT_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return false, replyMarkupErr(err)
+	}
+	wire, err := tgInputRichMessageFromBotAPI(input)
+	if err != nil {
+		return false, err
+	}
+	req := &tg.MessagesEditInlineBotMessageRequest{ID: tgInputBotInlineMessageID(inlineMessageID)}
+	req.SetRichMessage(wire)
+	if setReplyMarkup {
+		markup := tgReplyMarkup(replyMarkup)
+		if markup == nil {
+			markup = &tg.ReplyInlineMarkup{}
+		}
+		req.SetReplyMarkup(markup)
 	}
 	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
 }

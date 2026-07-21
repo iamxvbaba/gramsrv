@@ -114,7 +114,23 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 	}
 	message := target.Body
 	entities := append([]domain.MessageEntity(nil), target.Entities...)
-	if rawMessage, ok := req.GetMessage(); ok {
+	richMessage := target.RichMessage
+	setRichMessage := false
+	rawRichMessage, hasRichMessage := req.GetRichMessage()
+	rawMessage, hasMessage := req.GetMessage()
+	if hasMessage && hasRichMessage {
+		return false, mediaInvalidErr()
+	}
+	if hasRichMessage {
+		richMessage, err = r.domainRichMessageFromInput(ctx, rawRichMessage)
+		if err != nil {
+			return false, err
+		}
+		if richMessage.IsZero() {
+			return false, richMessageInvalidErr()
+		}
+		message, entities, setRichMessage = "", nil, true
+	} else if hasMessage {
 		if rawMessage == "" && newMedia == nil && target.Media.IsZero() {
 			return false, messageEmptyErr()
 		}
@@ -127,6 +143,7 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 		}
 		message = rawMessage
 		entities = domainMessageEntitiesForViewer(botID, rawEntities)
+		richMessage, setRichMessage = nil, true
 	} else if req.ReplyMarkup == nil && newMedia == nil {
 		return false, messageNotModifiedErr()
 	}
@@ -152,6 +169,8 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 		EditDate:        int(r.clock.Now().Unix()),
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetRichMessage:  setRichMessage,
+		RichMessage:     richMessage,
 		ViaBotEditBotID: botID,
 	})
 	if err != nil {
@@ -171,7 +190,23 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 	message := target.Body
 	entities := append([]domain.MessageEntity(nil), target.Entities...)
 	var mentionUserIDs []int64
-	if rawMessage, ok := req.GetMessage(); ok {
+	richMessage := target.RichMessage
+	setRichMessage := false
+	rawRichMessage, hasRichMessage := req.GetRichMessage()
+	rawMessage, hasMessage := req.GetMessage()
+	if hasMessage && hasRichMessage {
+		return false, mediaInvalidErr()
+	}
+	if hasRichMessage {
+		richMessage, err = r.domainRichMessageFromInput(ctx, rawRichMessage)
+		if err != nil {
+			return false, err
+		}
+		if richMessage.IsZero() {
+			return false, richMessageInvalidErr()
+		}
+		message, entities, setRichMessage = "", nil, true
+	} else if hasMessage {
 		if rawMessage == "" && newMedia == nil && target.Media.IsZero() {
 			return false, messageEmptyErr()
 		}
@@ -184,6 +219,7 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 		}
 		message = rawMessage
 		entities = domainMessageEntitiesForViewer(botID, rawEntities)
+		richMessage, setRichMessage = nil, true
 		var err error
 		mentionUserIDs, err = r.mentionedUserIDsFromMessage(ctx, botID, message, rawEntities)
 		if err != nil {
@@ -221,6 +257,8 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 		EditDate:        int(r.clock.Now().Unix()),
 		SetReplyMarkup:  setReplyMarkup,
 		ReplyMarkup:     replyMarkup,
+		SetRichMessage:  setRichMessage,
+		RichMessage:     richMessage,
 		ViaBotEditBotID: botID,
 	})
 	if err != nil {

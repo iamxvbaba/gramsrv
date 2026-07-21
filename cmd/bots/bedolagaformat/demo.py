@@ -21,8 +21,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputRichMessage,
+    Message,
+)
 
 
 LOG = logging.getLogger("bedolagaformat")
@@ -101,6 +107,16 @@ def parse_args() -> argparse.Namespace:
         help="Send the complete suite proactively before polling",
     )
     parser.add_argument("--send-only", action="store_true")
+    parser.add_argument(
+        "--rich-menu",
+        action="store_true",
+        help="also send and edit Bedolaga-style rich HTML/Markdown menus",
+    )
+    parser.add_argument(
+        "--rich-only",
+        action="store_true",
+        help="with --send-only, send only the rich menu suite",
+    )
     parser.add_argument("--drop-pending", action="store_true")
     parser.add_argument("--polling-timeout", type=int, default=10)
     parser.add_argument("--marker", default=default_marker())
@@ -110,6 +126,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("missing --token or TELESRV_BOT_TOKEN")
     if args.send_only and args.send_chat_id is None:
         parser.error("--send-only requires --send-chat-id")
+    if args.rich_only and (not args.send_only or args.send_chat_id is None):
+        parser.error("--rich-only requires --send-only and --send-chat-id")
     if not MARKER_RE.fullmatch(args.marker):
         parser.error("--marker must contain 1-64 ASCII letters, digits, or hyphens")
     if not 0 <= args.polling_timeout <= 50:
@@ -151,6 +169,96 @@ async def send_format_suite(bot: Bot, chat_id: int, marker: str) -> list[int]:
     return message_ids
 
 
+def rich_menu_html(marker: str, *, include_logo: bool) -> str:
+    """Build the rich HTML families used by Bedolaga's main menu."""
+    logo = '<img src="https://example.com/bedolaga-logo.png">' if include_logo else ""
+    return (
+        f"{logo}<h4>{marker} Admin</h4>"
+        "<h6>Subscription overview</h6><hr>"
+        "<table bordered striped>"
+        "<tr><th>Status</th><td align=\"right\">Active</td></tr>"
+        "<tr><th>Updated</th><td align=\"right\">"
+        '<tg-time unix="1700000000" format="R">now</tg-time>'
+        "</td></tr></table>"
+        "<details open><summary>Diagnostics</summary>"
+        "<blockquote><code>rich menu online</code></blockquote></details>"
+        "<footer>Choose an option</footer>"
+    )
+
+
+def rich_menu_markdown(marker: str) -> str:
+    return (
+        f"#### {marker} Markdown menu\n\n"
+        "**Subscription:** Active\n\n"
+        "> Rich Markdown transport is online.\n\n"
+        "`callback keyboard preserved`"
+    )
+
+
+def rich_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Balance", callback_data="menu:balance"),
+                InlineKeyboardButton(text="Buy", callback_data="menu:buy"),
+            ],
+            [InlineKeyboardButton(text="Info", callback_data="menu:info")],
+        ]
+    )
+
+
+def is_rich_media_retry_error(exc: TelegramBadRequest) -> bool:
+    message = str(exc).lower()
+    return "webpage_" in message or "media_empty" in message or "media_invalid" in message
+
+
+async def send_rich_suite(bot: Bot, chat_id: int, marker: str) -> list[int]:
+    """Exercise Bedolaga's send, no-logo retry, keyboard and rich edit path."""
+    markup = rich_menu_keyboard()
+    try:
+        html_message = await bot.send_rich_message(
+            chat_id=chat_id,
+            rich_message=InputRichMessage(
+                html=rich_menu_html(marker, include_logo=True),
+                skip_entity_detection=True,
+            ),
+            reply_markup=markup,
+        )
+    except TelegramBadRequest as exc:
+        if not is_rich_media_retry_error(exc):
+            raise
+        LOG.info("rich logo fetch rejected; retrying the menu without logo")
+        html_message = await bot.send_rich_message(
+            chat_id=chat_id,
+            rich_message=InputRichMessage(
+                html=rich_menu_html(marker, include_logo=False),
+                skip_entity_detection=True,
+            ),
+            reply_markup=markup,
+        )
+
+    markdown_message = await bot.send_rich_message(
+        chat_id=chat_id,
+        rich_message=InputRichMessage(
+            markdown=rich_menu_markdown(marker),
+            skip_entity_detection=True,
+        ),
+        reply_markup=markup,
+    )
+    await bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=html_message.message_id,
+        rich_message=InputRichMessage(
+            html=rich_menu_html(f"{marker} EDITED", include_logo=False),
+            skip_entity_detection=True,
+        ),
+        reply_markup=markup,
+    )
+    ids = [html_message.message_id, markdown_message.message_id]
+    LOG.info("sent rich menu suite chat_id=%s message_ids=%s", chat_id, ids)
+    return ids
+
+
 def build_dispatcher(marker: str) -> Dispatcher:
     router = Router(name="telesrv-bedolaga-format")
 
@@ -173,6 +281,16 @@ def build_dispatcher(marker: str) -> Dispatcher:
             ids,
         )
 
+    @router.message(Command("richdemo"))
+    async def rich_demo(message: Message) -> None:
+        ids = await send_rich_suite(message.bot, message.chat.id, marker)
+        LOG.info(
+            "handled /richdemo chat_id=%s incoming_message_id=%s sent_message_ids=%s",
+            message.chat.id,
+            message.message_id,
+            ids,
+        )
+
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     return dispatcher
@@ -190,13 +308,16 @@ async def run(args: argparse.Namespace) -> None:
             args.marker,
         )
         if args.send_chat_id is not None:
-            await send_format_suite(bot, args.send_chat_id, args.marker)
+            if not args.rich_only:
+                await send_format_suite(bot, args.send_chat_id, args.marker)
+            if args.rich_menu or args.rich_only:
+                await send_rich_suite(bot, args.send_chat_id, args.marker)
         if args.send_only:
             return
 
         await bot.delete_webhook(drop_pending_updates=args.drop_pending)
         dispatcher = build_dispatcher(args.marker)
-        LOG.info("polling started; send /start or /formatdemo to @%s", me.username or me.id)
+        LOG.info("polling started; send /start, /formatdemo or /richdemo to @%s", me.username or me.id)
         await dispatcher.start_polling(
             bot,
             allowed_updates=["message"],

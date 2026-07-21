@@ -946,6 +946,7 @@ func cloneRichMessage(m *domain.MessageRichMessage) *domain.MessageRichMessage {
 	clone.Blocks = append([]byte(nil), m.Blocks...)
 	clone.Photos = append([]domain.Photo(nil), m.Photos...)
 	clone.Documents = append([]domain.Document(nil), m.Documents...)
+	clone.BotAPIProjection = append([]byte(nil), m.BotAPIProjection...)
 	return &clone
 }
 
