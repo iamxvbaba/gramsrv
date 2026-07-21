@@ -300,6 +300,9 @@ func (r *Router) domainInlineResultsFromTG(ctx context.Context, botID int64, req
 		if err != nil {
 			return domain.BotInlineResults{}, err
 		}
+		if err := r.prepareTelegramLoginMarkup(ctx, botID, item.ReplyMarkup); err != nil {
+			return domain.BotInlineResults{}, replyMarkupErr(err)
+		}
 		if _, ok := seen[item.ID]; ok {
 			return domain.BotInlineResults{}, resultIDDuplicateErr()
 		}

@@ -110,6 +110,11 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			setReplyMarkup = true
 		}
 	}
+	if setReplyMarkup {
+		if err := r.validateReplyMarkupForPeer(ctx, userID, peer, replyMarkup); err != nil {
+			return nil, err
+		}
+	}
 	if peer.Type == domain.PeerTypeChannel {
 		if r.deps.Channels == nil {
 			return nil, peerIDInvalidErr()
@@ -125,6 +130,8 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			Message:        message,
 			Entities:       domainMessageEntitiesForViewer(userID, entities),
 			MentionUserIDs: mentionUserIDs,
+			SetReplyMarkup: setReplyMarkup,
+			ReplyMarkup:    replyMarkup,
 			SetRichMessage: replaceRichMessage,
 			RichMessage:    richMessage,
 			EditDate:       int(r.clock.Now().Unix()),

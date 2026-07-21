@@ -1,4 +1,4 @@
-# Bedolaga formatted-text demo
+# Bedolaga formatted-text + Telegram Login demo
 
 这个 demo 复刻 Bedolaga 的 Bot 工厂关键配置：
 
@@ -67,3 +67,61 @@ $env:TELESRV_BOT_API_SERVER = "http://127.0.0.1:8081"
 
 `--base-url` 只接受 API server 根地址，不要追加 `/bot`。脚本不会打印 token，也不会
 把 token 写入文件。
+
+## Telegram Login 全链路
+
+同一个 demo 还提供 `/logindemo`，覆盖三个互相独立的公开契约：
+
+1. Bot API `login_url` 按钮 → TDesktop/Android 的
+   `messages.requestUrlAuth/acceptUrlAuth` → legacy HMAC 回调；
+2. telesrv 本地 `/telegram-login.js` → popup `postMessage` → JWKS 验签；
+3. 服务端 Authorization Code + PKCE S256 → `/token` Basic Client Secret →
+   JWKS 验签和 `issuer/audience/nonce/subject` 复核。
+
+先在 telesrv 的 @BotFather 中对目标 bot 运行 `/setlogin`。选择 bot 后逐条登记 demo
+的精确 origin 和 callback（本机示例）：
+
+```text
+add origin http://127.0.0.1:3000
+add redirect http://127.0.0.1:3000/oauth/callback
+enable
+```
+
+`/setlogin` 首次创建 client 时只展示一次 OIDC Client Secret；不要写进仓库。可用
+`/logininfo` 查看 Client ID 和登记结果，或用 `/resetloginsecret` 轮换 secret。
+loopback HTTP 仅应配合 telesrv 的显式开发开关使用；testserver/生产必须换成精确
+HTTPS origin。
+
+把一次性 secret 和 Client ID 放入进程环境，再启动：
+
+```powershell
+$env:TELESRV_BOT_LOGIN_DEMO = "1"
+$env:TELESRV_BOT_LOGIN_ISSUER = "http://127.0.0.1:2401"
+$env:TELESRV_BOT_LOGIN_CLIENT_ID = "<numeric bot user id>"
+$env:TELESRV_BOT_LOGIN_CLIENT_SECRET = "<one-time OIDC client secret>"
+$env:TELESRV_BOT_LOGIN_PUBLIC_URL = "http://127.0.0.1:3000"
+$env:TELESRV_BOT_LOGIN_LISTEN = "127.0.0.1:3000"
+
+& "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `
+  .\cmd\bots\bedolagaformat\demo.py --drop-pending --login-demo
+```
+
+向 bot 发送 `/logindemo`。第一颗按钮必须出现 Telegram 客户端原生授权确认框，批准
+后网页显示 `login_url HMAC verified`；第二颗按钮打开测试页，可分别运行 JS SDK popup
+和 Authorization Code + PKCE。页面只展示验签后的 claims，不展示 access token 或
+Client Secret。省略 `TELESRV_BOT_LOGIN_CLIENT_SECRET` 时仍可验证 JS popup，但服务端
+code flow 会明确禁用。
+
+demo 的 flow/state/nonce 只保存在单进程内存中，带 10 分钟过期和 256 条上限，专用于
+本地与 testserver 端到端验证，不是生产 relying-party 实现。官方 iOS/Android SDK
+目前把 `https://oauth.telegram.org` 写死；验证自建 issuer 时需使用项目记录的最小
+base-URL patch 或等价测试构建，不能把官方生产 SDK 未修改的结果误判为自建服务结果。
+
+测试命令：
+
+```powershell
+& "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `
+  .\cmd\bots\bedolagaformat\test_demo.py -v
+& "$env:TEMP\telesrv-bedolaga-demo-venv\Scripts\python.exe" `
+  .\cmd\bots\bedolagaformat\test_login_demo.py -v
+```

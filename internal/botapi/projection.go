@@ -509,6 +509,18 @@ func apiReplyMarkup(markup *domain.MessageReplyMarkup) map[string]any {
 			switch button.Type {
 			case domain.MarkupButtonURL:
 				item["url"] = button.URL
+			case domain.MarkupButtonLoginURL:
+				login := map[string]any{"url": button.URL}
+				if button.ForwardText != "" {
+					login["forward_text"] = button.ForwardText
+				}
+				if button.LoginBotUsername != "" {
+					login["bot_username"] = button.LoginBotUsername
+				}
+				if button.RequestWriteAccess {
+					login["request_write_access"] = true
+				}
+				item["login_url"] = login
 			case domain.MarkupButtonCallback:
 				item["callback_data"] = string(button.Data)
 			case domain.MarkupButtonWebView:

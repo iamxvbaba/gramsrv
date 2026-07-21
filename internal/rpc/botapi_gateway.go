@@ -834,6 +834,14 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
 	}
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: chatID}
+	if setReplyMarkup {
+		if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+			return domain.Message{}, replyMarkupErr(err)
+		}
+		if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+			return domain.Message{}, err
+		}
+	}
 	res, err := r.deps.Messages.EditMessage(ctx, botID, domain.EditMessageRequest{
 		OwnerUserID:    botID,
 		Peer:           peer,
@@ -934,6 +942,11 @@ func (r *Router) BotAPIEditInlineMessageText(ctx context.Context, botID int64, i
 	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
 		return false, replyMarkupErr(err)
 	}
+	if setReplyMarkup {
+		if err := r.prepareTelegramLoginMarkup(ctx, botID, replyMarkup); err != nil {
+			return false, replyMarkupErr(err)
+		}
+	}
 	req := &tg.MessagesEditInlineBotMessageRequest{
 		ID:        tgInputBotInlineMessageID(inlineMessageID),
 		NoWebpage: disableWebPagePreview,
@@ -958,6 +971,11 @@ func (r *Router) BotAPIEditInlineRichMessage(ctx context.Context, botID int64, i
 	}
 	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
 		return false, replyMarkupErr(err)
+	}
+	if setReplyMarkup {
+		if err := r.prepareTelegramLoginMarkup(ctx, botID, replyMarkup); err != nil {
+			return false, replyMarkupErr(err)
+		}
 	}
 	wire, err := tgInputRichMessageFromBotAPI(input)
 	if err != nil {

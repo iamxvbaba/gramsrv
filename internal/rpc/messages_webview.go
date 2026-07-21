@@ -314,6 +314,9 @@ func (r *Router) onMessagesSendWebViewResultMessage(ctx context.Context, req *tg
 	if err != nil {
 		return nil, err
 	}
+	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
+		return nil, replyMarkupErr(err)
+	}
 	if err := r.sendWebViewDomainResultMessage(ctx, botID, req.BotQueryID, result); err != nil {
 		return nil, err
 	}
@@ -335,6 +338,9 @@ func (r *Router) AnswerWebAppQueryFromBotAPI(ctx context.Context, botID int64, b
 		return "", internalErr()
 	} else if !found {
 		return "", userBotRequiredErr()
+	}
+	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
+		return "", replyMarkupErr(err)
 	}
 	if err := r.sendWebViewDomainResultMessage(ctx, botID, botQueryID, result); err != nil {
 		return "", err
@@ -361,6 +367,9 @@ func (r *Router) SavePreparedInlineMessageFromBotAPI(ctx context.Context, botID,
 		return "", 0, internalErr()
 	} else if !found {
 		return "", 0, userIDInvalidErr()
+	}
+	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
+		return "", 0, replyMarkupErr(err)
 	}
 	id, expireDate := r.inlines.savePreparedInlineContext(ctx, r.clock.Now(), botID, userID, result, peerTypes)
 	return id, expireDate, nil

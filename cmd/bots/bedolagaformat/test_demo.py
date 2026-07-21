@@ -11,6 +11,7 @@ from aiogram.types import InputRichMessage
 
 
 MODULE_PATH = Path(__file__).with_name("demo.py")
+sys.path.insert(0, str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("bedolagaformat_demo", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 demo = importlib.util.module_from_spec(SPEC)
@@ -88,6 +89,44 @@ class BedolagaFormatDemoTest(unittest.IsolatedAsyncioTestCase):
         edit = bot.edit_message_text.await_args
         self.assertEqual(edit.kwargs["message_id"], 21)
         self.assertIn("EDITED", edit.kwargs["rich_message"].html)
+
+    def test_login_demo_keyboard_has_login_url_and_plain_oidc_link(self) -> None:
+        config = demo.LoginDemoConfig(
+            issuer="https://oauth.example",
+            client_id="9001",
+            client_secret="secret",
+            public_url="https://rp.example",
+            listen_host="127.0.0.1",
+            listen_port=3000,
+        )
+        markup = demo.login_demo_keyboard(config)
+        login = markup.inline_keyboard[0][0].login_url
+        self.assertIsNotNone(login)
+        self.assertEqual(login.url, "https://rp.example/")
+        self.assertTrue(login.request_write_access)
+        self.assertEqual(markup.inline_keyboard[1][0].url, "https://rp.example/")
+
+    async def test_send_login_demo_preserves_default_html_and_keyboard(self) -> None:
+        config = demo.LoginDemoConfig(
+            issuer="https://oauth.example",
+            client_id="9001",
+            client_secret="secret",
+            public_url="https://rp.example",
+            listen_host="127.0.0.1",
+            listen_port=3000,
+        )
+        bot = AsyncMock()
+        bot.send_message.return_value = SentMessage(31)
+
+        message_id = await demo.send_login_demo(bot, 1780243200, "BEDOLAGA123", config)
+
+        self.assertEqual(message_id, 31)
+        call = bot.send_message.await_args
+        self.assertNotIn("parse_mode", call.kwargs)
+        self.assertEqual(
+            call.kwargs["reply_markup"].inline_keyboard[0][0].login_url.url,
+            "https://rp.example/",
+        )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 
+	telegramloginapp "telesrv/internal/app/telegramlogin"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
 	"telesrv/internal/store"
@@ -82,6 +83,7 @@ type Service struct {
 	stickers              stickerSetCreator
 	installer             userStickerSetInstaller
 	aiChat                aiChatGenerator
+	telegramLogin         *telegramloginapp.Service
 	hooks                 RouterHooks
 	textDrafts            TextDraftPusher
 	userCache             store.UserCache
@@ -171,6 +173,16 @@ func WithAIChatGenerator(g aiChatGenerator) Option {
 	return func(s *Service) {
 		if g != nil {
 			s.aiChat = g
+		}
+	}
+}
+
+// WithTelegramLogin injects the OIDC application service used by BotFather.
+// BotFather never writes the login tables directly.
+func WithTelegramLogin(login *telegramloginapp.Service) Option {
+	return func(s *Service) {
+		if login != nil {
+			s.telegramLogin = login
 		}
 	}
 }

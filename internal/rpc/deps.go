@@ -241,6 +241,24 @@ type UsersService interface {
 	ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
 }
 
+// TelegramLoginService is the domain-only boundary shared by the MTProto RPC
+// edge and the public OIDC provider. PostgreSQL remains authoritative for all
+// consent transitions; the RPC layer only projects domain state to TL.
+type TelegramLoginService interface {
+	ValidateMessageButton(ctx context.Context, botUserID int64, rawURL string) (normalizedURL, domainName string, err error)
+	AuthorizeMessageButton(ctx context.Context, params domain.TelegramLoginMessageButtonAuthorization) (domain.TelegramLoginMessageButtonResult, error)
+	RequestByDeepLink(ctx context.Context, deepLink string) (domain.TelegramLoginRequest, error)
+	RequestByDeepLinkForOrigin(ctx context.Context, deepLink, inAppOrigin string) (domain.TelegramLoginRequest, error)
+	CheckMatchCode(ctx context.Context, deepLink, selected string) (bool, error)
+	Approve(ctx context.Context, deepLink string, identity domain.TelegramLoginIdentitySnapshot, writeAllowed, phoneShared bool, matchCode string) (domain.TelegramLoginRequest, domain.TelegramLoginWebAuthorization, error)
+	FinalizeRedirectByDeepLink(ctx context.Context, deepLink string) (string, error)
+	FinalizeInAppRedirectByDeepLink(ctx context.Context, deepLink string) (string, error)
+	Decline(ctx context.Context, deepLink string, userID int64) (domain.TelegramLoginRequest, error)
+	ListWebAuthorizations(ctx context.Context, userID int64) ([]domain.TelegramLoginWebAuthorization, error)
+	RevokeWebAuthorization(ctx context.Context, userID, hash int64) error
+	RevokeAllWebAuthorizations(ctx context.Context, userID int64) (int64, error)
+}
+
 // BatchViewerUsersResolver 是 UsersService 的可选能力：跨多个 viewer 一次性投影同一组 user
 // （fan-out 模板化，把 per-recipient 的 ByIDs(=ForViewer) 折叠成 O(owner) 查询）。结果按 viewer
 // 与 ByIDs(viewer, ids) 字节等价（personal photo overlay 除外，见 users.ByIDsForViewers）。
@@ -873,6 +891,7 @@ type Deps struct {
 	EphemeralPush        store.EphemeralPushBroker
 	EphemeralReports     store.EphemeralReportStore
 	Users                UsersService
+	TelegramLogin        TelegramLoginService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore
 	BotAPIUpdates        store.BotAPIUpdateStore

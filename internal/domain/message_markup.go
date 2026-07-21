@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -51,7 +52,12 @@ const (
 	// MarkupButtonCallback 是 keyboardButtonCallback（点击触发 getBotCallbackAnswer）。
 	MarkupButtonCallback MarkupButtonType = "callback"
 	// MarkupButtonURL 是 keyboardButtonUrl（点击打开链接）。
-	MarkupButtonURL             MarkupButtonType = "url"
+	MarkupButtonURL MarkupButtonType = "url"
+	// MarkupButtonLoginURL is Bot API login_url / inputKeyboardButtonUrlAuth.
+	// The target bot is resolved and the linked origin is verified before the
+	// message is persisted; ButtonID is the stable flattened keyboard index
+	// returned to clients as keyboardButtonUrlAuth.button_id.
+	MarkupButtonLoginURL        MarkupButtonType = "login_url"
 	MarkupButtonRequestPhone    MarkupButtonType = "request_phone"
 	MarkupButtonRequestLocation MarkupButtonType = "request_location"
 	MarkupButtonRequestPoll     MarkupButtonType = "request_poll"
@@ -122,6 +128,13 @@ type MarkupButton struct {
 	Data []byte `json:"data,omitempty"`
 	// URL 仅 url 使用。
 	URL string `json:"url,omitempty"`
+	// Login URL-only fields. LoginBotUserID=0 means the sending bot until the
+	// RPC/Bot API edge resolves it. LoginBotUsername is input-only and must be
+	// cleared before persistence.
+	ForwardText        string `json:"forward_text,omitempty"`
+	LoginBotUserID     int64  `json:"login_bot_user_id,omitempty"`
+	LoginBotUsername   string `json:"login_bot_username,omitempty"`
+	RequestWriteAccess bool   `json:"request_write_access,omitempty"`
 	// RequiresPassword 仅 callback 使用（keyboardButtonCallback.requires_password，
 	// 2FA SRP 校验 P3 stub）。
 	RequiresPassword bool `json:"requires_password,omitempty"`
@@ -343,6 +356,14 @@ func validateMarkupButton(b MarkupButton, replyKeyboard bool) error {
 		if err := validateButtonURL(b.URL); err != nil {
 			return err
 		}
+	case MarkupButtonLoginURL:
+		if err := validateLoginButtonURL(b.URL); err != nil {
+			return err
+		}
+		if b.ButtonID < 0 || b.LoginBotUserID < 0 || utf8.RuneCountInString(b.ForwardText) > MaxReplyKeyboardButtonTextLen ||
+			utf8.RuneCountInString(b.LoginBotUsername) > 64 {
+			return ErrButtonInvalid
+		}
 	case MarkupButtonWebView:
 		if err := validateButtonURL(b.URL); err != nil {
 			return err
@@ -369,6 +390,33 @@ func validateButtonURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return ErrButtonURLInvalid
+	}
+	return nil
+}
+
+// validateLoginButtonURL performs only the protocol-shape validation shared by
+// Bot API and MTProto input buttons. The Telegram Login service remains the
+// authority for the deployment policy: it rejects loopback HTTP unless the
+// explicit development switch is enabled and the exact origin is registered.
+func validateLoginButtonURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len(raw) > MaxBotMenuButtonURLLen {
+		return ErrButtonURLInvalid
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil {
+		return ErrButtonURLInvalid
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme != "http" {
+		return ErrButtonURLInvalid
+	}
+	host := strings.ToLower(u.Hostname())
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 		return ErrButtonURLInvalid
 	}
 	return nil

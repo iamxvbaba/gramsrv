@@ -33,6 +33,10 @@ type Config struct {
 	Photos          ProfilePhotoResolver
 	UniqueGifts     UniqueStarGiftResolver
 	GiftWithdrawals StarGiftWithdrawalResolver
+	// TelegramLogin is the optional OIDC/Login HTTP adapter. Public Web owns
+	// the listener so discovery/auth/token and public links share the exact
+	// externally registered origin behind one reverse proxy.
+	TelegramLogin http.Handler
 }
 
 type StickerSetResolver interface {
@@ -166,6 +170,17 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /nft/{slug}/{$}", h.uniqueGift)
 	mux.HandleFunc("GET /gift-withdrawal/{requestID}", h.starGiftWithdrawal)
 	mux.HandleFunc("POST /gift-withdrawal/{requestID}", h.completeStarGiftWithdrawal)
+	if cfg.TelegramLogin != nil {
+		mux.Handle("GET /.well-known/openid-configuration", cfg.TelegramLogin)
+		mux.Handle("GET /.well-known/jwks.json", cfg.TelegramLogin)
+		mux.Handle("GET /auth", cfg.TelegramLogin)
+		mux.Handle("GET /crossapp", cfg.TelegramLogin)
+		mux.Handle("GET /inapp", cfg.TelegramLogin)
+		mux.Handle("POST /auth/status", cfg.TelegramLogin)
+		mux.Handle("POST /token", cfg.TelegramLogin)
+		mux.Handle("GET /telegram-login.js", cfg.TelegramLogin)
+		mux.Handle("GET /js/telegram-login.js", cfg.TelegramLogin)
+	}
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)
 	return publicSecurityHeaders(mux), nil

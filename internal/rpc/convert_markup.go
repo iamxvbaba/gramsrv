@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
@@ -14,6 +15,9 @@ import (
 // a chat input field and are not supported in broadcast channels. Inline keyboards remain
 // valid in both megagroups and broadcasts.
 func (r *Router) validateReplyMarkupForPeer(ctx context.Context, userID int64, peer domain.Peer, markup *domain.MessageReplyMarkup) error {
+	if err := r.prepareTelegramLoginMarkup(ctx, userID, markup); err != nil {
+		return replyMarkupErr(err)
+	}
 	if markup == nil || !markup.IsReplyKeyboardFamily() || peer.Type != domain.PeerTypeChannel {
 		return nil
 	}
@@ -28,6 +32,92 @@ func (r *Router) validateReplyMarkupForPeer(ctx context.Context, userID int64, p
 		return replyMarkupInvalidErr()
 	}
 	return nil
+}
+
+// prepareTelegramLoginMarkup resolves every login_url target and validates its
+// linked web origin before persistence. It mutates only the freshly parsed
+// request DTO and assigns a deterministic flattened button id, which is later
+// re-read by messages.requestUrlAuth.
+func (r *Router) prepareTelegramLoginMarkup(ctx context.Context, senderBotID int64, markup *domain.MessageReplyMarkup) error {
+	if markup == nil || markup.Kind() != domain.MessageReplyMarkupInline {
+		return nil
+	}
+	hasLoginButton := false
+	for rowIndex := range markup.Inline {
+		for buttonIndex := range markup.Inline[rowIndex] {
+			if markup.Inline[rowIndex][buttonIndex].Type == domain.MarkupButtonLoginURL {
+				hasLoginButton = true
+				break
+			}
+		}
+		if hasLoginButton {
+			break
+		}
+	}
+	if !hasLoginButton {
+		return nil
+	}
+	if r == nil || r.deps.TelegramLogin == nil || r.deps.Users == nil || senderBotID <= 0 {
+		return domain.ErrButtonTypeInvalid
+	}
+	sender, found, err := r.deps.Users.ByID(ctx, senderBotID, senderBotID)
+	if err != nil {
+		return err
+	}
+	if !found || !sender.Bot || sender.Deleted {
+		return domain.ErrButtonTypeInvalid
+	}
+	flatID := 0
+	for rowIndex := range markup.Inline {
+		for buttonIndex := range markup.Inline[rowIndex] {
+			button := &markup.Inline[rowIndex][buttonIndex]
+			if button.Type != domain.MarkupButtonLoginURL {
+				flatID++
+				continue
+			}
+			botID := button.LoginBotUserID
+			if button.LoginBotUsername != "" {
+				resolver, ok := r.deps.Users.(UserIdentityService)
+				if !ok {
+					return domain.ErrButtonInvalid
+				}
+				bot, found, err := resolver.ResolveUsername(ctx, senderBotID, strings.TrimPrefix(button.LoginBotUsername, "@"))
+				if err != nil {
+					return err
+				}
+				if !found || !bot.Bot || bot.Deleted {
+					return domain.ErrButtonInvalid
+				}
+				botID = bot.ID
+			}
+			if botID == 0 {
+				botID = senderBotID
+			}
+			bot, found, err := r.deps.Users.ByID(ctx, senderBotID, botID)
+			if err != nil {
+				return err
+			}
+			if !found || !bot.Bot || bot.Deleted {
+				return domain.ErrButtonInvalid
+			}
+			normalized, _, err := r.deps.TelegramLogin.ValidateMessageButton(ctx, botID, button.URL)
+			if err != nil {
+				if errors.Is(err, domain.ErrTelegramLoginURLInvalid) || errors.Is(err, domain.ErrTelegramLoginOriginNotAllowed) {
+					return domain.ErrButtonURLInvalid
+				}
+				if errors.Is(err, domain.ErrTelegramLoginClientDisabled) {
+					return domain.ErrButtonInvalid
+				}
+				return err
+			}
+			button.URL = normalized
+			button.LoginBotUserID = botID
+			button.LoginBotUsername = ""
+			button.ButtonID = flatID
+			flatID++
+		}
+	}
+	return domain.ValidateReplyMarkup(markup)
 }
 
 // P3 reply_markup 错误码（对齐官方）。
@@ -175,21 +265,23 @@ func domainReplyKeyboardButton(button tg.KeyboardButtonClass) (domain.MarkupButt
 
 func domainInlineMarkup(inline *tg.ReplyInlineMarkup) (*domain.MessageReplyMarkup, error) {
 	out := &domain.MessageReplyMarkup{Type: domain.MessageReplyMarkupInline, Inline: make([][]domain.MarkupButton, 0, len(inline.Rows))}
+	buttonID := 0
 	for _, row := range inline.Rows {
 		domainRow := make([]domain.MarkupButton, 0, len(row.Buttons))
 		for _, btn := range row.Buttons {
-			db, err := domainMarkupButton(btn)
+			db, err := domainMarkupButton(btn, buttonID)
 			if err != nil {
 				return nil, err
 			}
 			domainRow = append(domainRow, db)
+			buttonID++
 		}
 		out.Inline = append(out.Inline, domainRow)
 	}
 	return out, nil
 }
 
-func domainMarkupButton(btn tg.KeyboardButtonClass) (domain.MarkupButton, error) {
+func domainMarkupButton(btn tg.KeyboardButtonClass, buttonID int) (domain.MarkupButton, error) {
 	style, icon, err := domainMarkupButtonStyle(btn)
 	if err != nil {
 		return domain.MarkupButton{}, err
@@ -207,6 +299,26 @@ func domainMarkupButton(btn tg.KeyboardButtonClass) (domain.MarkupButton, error)
 	case *tg.KeyboardButtonURL:
 		return domain.MarkupButton{
 			Type: domain.MarkupButtonURL, Text: b.Text, URL: b.URL,
+			Style: style, IconCustomEmojiID: icon,
+		}, nil
+	case *tg.InputKeyboardButtonURLAuth:
+		botUserID := int64(0)
+		switch bot := b.Bot.(type) {
+		case nil, *tg.InputUserEmpty, *tg.InputUserSelf:
+		case *tg.InputUser:
+			botUserID = bot.UserID
+		default:
+			return domain.MarkupButton{}, domain.ErrButtonInvalid
+		}
+		return domain.MarkupButton{
+			Type: domain.MarkupButtonLoginURL, Text: b.Text, URL: b.URL,
+			ForwardText: b.FwdText, ButtonID: buttonID, LoginBotUserID: botUserID,
+			RequestWriteAccess: b.RequestWriteAccess, Style: style, IconCustomEmojiID: icon,
+		}, nil
+	case *tg.KeyboardButtonURLAuth:
+		return domain.MarkupButton{
+			Type: domain.MarkupButtonLoginURL, Text: b.Text, URL: b.URL,
+			ForwardText: b.FwdText, ButtonID: b.ButtonID,
 			Style: style, IconCustomEmojiID: icon,
 		}, nil
 	case *tg.KeyboardButtonWebView:
@@ -318,6 +430,15 @@ func tgMarkupButton(btn domain.MarkupButton) tg.KeyboardButtonClass {
 	switch btn.Type {
 	case domain.MarkupButtonURL:
 		out := &tg.KeyboardButtonURL{Text: btn.Text, URL: btn.URL}
+		if style, ok := tgMarkupButtonStyle(btn); ok {
+			out.SetStyle(style)
+		}
+		return out
+	case domain.MarkupButtonLoginURL:
+		out := &tg.KeyboardButtonURLAuth{Text: btn.Text, URL: btn.URL, ButtonID: btn.ButtonID}
+		if btn.ForwardText != "" {
+			out.SetFwdText(btn.ForwardText)
+		}
 		if style, ok := tgMarkupButtonStyle(btn); ok {
 			out.SetStyle(style)
 		}

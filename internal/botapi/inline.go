@@ -347,6 +347,9 @@ func markupButtonFromAPI(button apiInlineKeyboardButton) (domain.MarkupButton, e
 	if button.CopyTextSet {
 		constructors++
 	}
+	if button.LoginURLSet {
+		constructors++
+	}
 	if constructors != 1 {
 		return domain.MarkupButton{}, errors.New("BUTTON_INVALID")
 	}
@@ -356,6 +359,13 @@ func markupButtonFromAPI(button apiInlineKeyboardButton) (domain.MarkupButton, e
 	}
 	if button.URLSet {
 		return domain.MarkupButton{Type: domain.MarkupButtonURL, Text: button.Text, URL: button.URL, Style: style, IconCustomEmojiID: icon}, nil
+	}
+	if button.LoginURLSet {
+		return domain.MarkupButton{
+			Type: domain.MarkupButtonLoginURL, Text: button.Text, URL: button.LoginURL,
+			ForwardText: button.LoginForwardText, LoginBotUsername: button.LoginBotUsername,
+			RequestWriteAccess: button.LoginRequestWriteAccess, Style: style, IconCustomEmojiID: icon,
+		}, nil
 	}
 	if button.CallbackDataSet {
 		if button.CallbackData == "" || len([]byte(button.CallbackData)) > domain.MaxCallbackDataLen {
@@ -689,23 +699,28 @@ type apiForceReply struct {
 }
 
 type apiInlineKeyboardButton struct {
-	Text                  string
-	URL                   string
-	URLSet                bool
-	CallbackData          string
-	CallbackDataSet       bool
-	Style                 string
-	IconCustomEmojiID     string
-	IconCustomEmojiIDSet  bool
-	Unsupported           bool
-	WebAppURL             string
-	WebAppSet             bool
-	SwitchInlineQuery     string
-	SwitchInlineSet       bool
-	SwitchInlineSamePeer  bool
-	SwitchInlinePeerTypes []string
-	CopyText              string
-	CopyTextSet           bool
+	Text                    string
+	URL                     string
+	URLSet                  bool
+	CallbackData            string
+	CallbackDataSet         bool
+	Style                   string
+	IconCustomEmojiID       string
+	IconCustomEmojiIDSet    bool
+	Unsupported             bool
+	WebAppURL               string
+	WebAppSet               bool
+	SwitchInlineQuery       string
+	SwitchInlineSet         bool
+	SwitchInlineSamePeer    bool
+	SwitchInlinePeerTypes   []string
+	CopyText                string
+	CopyTextSet             bool
+	LoginURL                string
+	LoginForwardText        string
+	LoginBotUsername        string
+	LoginRequestWriteAccess bool
+	LoginURLSet             bool
 }
 
 func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
@@ -738,6 +753,20 @@ func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
 			return errors.New("invalid web app")
 		}
 		b.WebAppURL = app.URL
+	}
+	if raw, ok := fields["login_url"]; ok {
+		b.LoginURLSet = true
+		var login struct {
+			URL                string `json:"url"`
+			ForwardText        string `json:"forward_text"`
+			BotUsername        string `json:"bot_username"`
+			RequestWriteAccess bool   `json:"request_write_access"`
+		}
+		if json.Unmarshal(raw, &login) != nil {
+			return errors.New("invalid login url")
+		}
+		b.LoginURL, b.LoginForwardText = login.URL, login.ForwardText
+		b.LoginBotUsername, b.LoginRequestWriteAccess = login.BotUsername, login.RequestWriteAccess
 	}
 	switchActions := 0
 	if raw, ok := fields["switch_inline_query"]; ok {
@@ -807,7 +836,7 @@ func (b *apiInlineKeyboardButton) UnmarshalJSON(data []byte) error {
 	}
 	for key := range fields {
 		switch key {
-		case "text", "url", "callback_data", "web_app", "switch_inline_query", "switch_inline_query_current_chat", "switch_inline_query_chosen_chat", "copy_text", "style", "icon_custom_emoji_id":
+		case "text", "url", "callback_data", "web_app", "login_url", "switch_inline_query", "switch_inline_query_current_chat", "switch_inline_query_chosen_chat", "copy_text", "style", "icon_custom_emoji_id":
 		default:
 			b.Unsupported = true
 		}

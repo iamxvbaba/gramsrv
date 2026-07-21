@@ -71,6 +71,26 @@ func TestInlineButtonStyleTLDomainRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoginURLButtonTLDomainProjection(t *testing.T) {
+	button := &tg.InputKeyboardButtonURLAuth{
+		Text: "Log in", URL: "https://example.com/login", Bot: &tg.InputUser{UserID: 9001, AccessHash: 77},
+	}
+	button.SetRequestWriteAccess(true)
+	button.SetFwdText("Open login")
+	markup, err := domainReplyMarkupForSender(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{button}}}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := markup.Inline[0][0]
+	if got.Type != domain.MarkupButtonLoginURL || got.LoginBotUserID != 9001 || !got.RequestWriteAccess || got.ForwardText != "Open login" || got.ButtonID != 0 {
+		t.Fatalf("domain login_url = %#v", got)
+	}
+	wire, ok := tgReplyMarkup(markup).(*tg.ReplyInlineMarkup).Rows[0].Buttons[0].(*tg.KeyboardButtonURLAuth)
+	if !ok || wire.Text != "Log in" || wire.URL != "https://example.com/login" || wire.ButtonID != 0 || wire.FwdText != "Open login" {
+		t.Fatalf("wire login_url = %#v", wire)
+	}
+}
+
 func TestReplyKeyboardHideAndForceReplyTLDomainRoundTrip(t *testing.T) {
 	hide, err := domainOutgoingReplyMarkupForSender(&tg.ReplyKeyboardHide{Selective: true}, true)
 	if err != nil {

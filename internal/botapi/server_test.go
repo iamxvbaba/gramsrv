@@ -886,6 +886,19 @@ func TestReplyMarkupFromAPIReplyKeyboardVariants(t *testing.T) {
 	if err != nil || webApp == nil || webApp.Inline[0][0].Type != domain.MarkupButtonWebView {
 		t.Fatalf("web_app inline button = %#v err=%v", webApp, err)
 	}
+	login, err := replyMarkupFromAPI(json.RawMessage(`{"inline_keyboard":[[{"text":"Log in","login_url":{"url":"https://example.com/login","forward_text":"Open","bot_username":"auth_bot","request_write_access":true}}]]}`))
+	if err != nil || login == nil {
+		t.Fatalf("login_url inline button = %#v err=%v", login, err)
+	}
+	loginButton := login.Inline[0][0]
+	if loginButton.Type != domain.MarkupButtonLoginURL || loginButton.URL != "https://example.com/login" || loginButton.ForwardText != "Open" ||
+		loginButton.LoginBotUsername != "auth_bot" || !loginButton.RequestWriteAccess {
+		t.Fatalf("login_url button = %#v", loginButton)
+	}
+	projectedLogin := apiReplyMarkup(login)["inline_keyboard"].([][]map[string]any)[0][0]["login_url"].(map[string]any)
+	if projectedLogin["url"] != "https://example.com/login" || projectedLogin["bot_username"] != "auth_bot" || projectedLogin["request_write_access"] != true {
+		t.Fatalf("projected login_url = %#v", projectedLogin)
+	}
 }
 
 func TestReplyMarkupFromAPIPreservesSemanticButtonStyles(t *testing.T) {

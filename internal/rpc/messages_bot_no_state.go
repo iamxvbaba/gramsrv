@@ -35,6 +35,9 @@ func (r *Router) onMessagesSavePreparedInlineMessage(ctx context.Context, req *t
 	if err != nil {
 		return nil, err
 	}
+	if err := r.prepareTelegramLoginMarkup(ctx, botID, result.ReplyMarkup); err != nil {
+		return nil, replyMarkupErr(err)
+	}
 	peerTypes, err := preparedInlinePeerTypesFromTG(req.PeerTypes)
 	if err != nil {
 		return nil, err
@@ -159,6 +162,11 @@ func (r *Router) editPrivateInlineBotMessage(ctx context.Context, botID int64, t
 			setReplyMarkup = true
 		}
 	}
+	if setReplyMarkup {
+		if err := r.prepareTelegramLoginMarkup(ctx, botID, replyMarkup); err != nil {
+			return false, replyMarkupErr(err)
+		}
+	}
 	_, err = r.deps.Messages.EditMessage(ctx, target.OwnerUserID, domain.EditMessageRequest{
 		OwnerUserID:     target.OwnerUserID,
 		Peer:            target.Peer,
@@ -244,6 +252,11 @@ func (r *Router) editChannelInlineBotMessage(ctx context.Context, botID int64, t
 		}
 		if _, ok := req.ReplyMarkup.(*tg.ReplyInlineMarkup); ok {
 			setReplyMarkup = true
+		}
+	}
+	if setReplyMarkup {
+		if err := r.prepareTelegramLoginMarkup(ctx, botID, replyMarkup); err != nil {
+			return false, replyMarkupErr(err)
 		}
 	}
 	res, err := r.deps.Channels.EditInlineBotMessage(ctx, botID, domain.EditChannelMessageRequest{
