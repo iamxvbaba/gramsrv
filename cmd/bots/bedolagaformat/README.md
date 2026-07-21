@@ -112,6 +112,11 @@ $env:TELESRV_BOT_LOGIN_LISTEN = "127.0.0.1:3000"
 Client Secret。省略 `TELESRV_BOT_LOGIN_CLIENT_SECRET` 时仍可验证 JS popup，但服务端
 code flow 会明确禁用。
 
+移动 Chrome 会在跳入 Telegram/DrKLO 前让 popup 把短期 browser token 交给原 RP
+标签；父标签随后以精确登记 origin 轮询 `/auth/status`。因此外部 app round-trip
+关闭 popup 或丢失 `window.opener` 时，原标签仍能完成 JWKS 验签。不要给
+`/auth/status` 配 wildcard CORS，也不要在 RP 中记录 browser token 或 ID token。
+
 demo 的 flow/state/nonce 只保存在单进程内存中，带 10 分钟过期和 256 条上限，专用于
 本地与 testserver 端到端验证，不是生产 relying-party 实现。官方 iOS/Android SDK
 目前把 `https://oauth.telegram.org` 写死；验证自建 issuer 时需使用项目记录的最小
