@@ -135,7 +135,10 @@ func (r *Router) onPhoneReceivedCall(ctx context.Context, peer tg.InputPhoneCall
 	if transitioned {
 		// ⚠ P1-2：receiveDate 推送必须在 P1 就位。主叫只有收到带 receive_date 的
 		// phoneCallWaiting 才会把 20s receive 定时器换成 90s ring 定时器。
-		r.pushPhoneCall(ctx, call.AdminID, call, "phone call ringing")
+		// 这条主叫视角更新只属于 requestCall 的来源设备；账号级广播会在 DrKLO
+		// 多账号同机时按相同 call_id 覆盖被叫的 pending phoneCallRequested，丢失
+		// g_a_hash 并在接听时触发 Ga hash mismatch。
+		r.pushPhoneCallToDevice(ctx, call.AdminID, call.CallerDevice, call, "phone call ringing")
 	}
 	return true, nil
 }

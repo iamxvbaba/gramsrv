@@ -5,6 +5,7 @@ import (
 
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -32,6 +33,35 @@ func (r *Router) phoneCallUpdatesWith(ctx context.Context, view tg.PhoneCallClas
 // （ctx 携带的发起设备会被 pushUserMessage 的 except 语义排除）。
 func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call domain.PhoneCall, logMessage string) int {
 	return r.pushUserMessage(ctx, targetUserID, logMessage, r.phoneCallUpdates(ctx, call, targetUserID))
+}
+
+// pushPhoneCallToDevice 只把 phoneCall 状态推给一台精确的物理 session。
+//
+// 这是 fail-closed 路径：目标锚点缺失、session 已断开或编码/发送失败时都不得
+// 回退为 user 级广播。呼出通话的 ringing 更新只属于 requestCall 来源设备；
+// 扩大投递范围会在 DrKLO 多账号同机时污染另一账号的全局 pending 来电对象。
+func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, device domain.SessionRef, call domain.PhoneCall, logMessage string) {
+	if targetUserID == 0 || device.RawAuthKeyID == ([8]byte{}) || device.SessionID == 0 || r.deps.Sessions == nil {
+		if r.log != nil {
+			r.log.Debug(logMessage,
+				zap.Int64("target_user_id", targetUserID),
+				zap.Int64("call_id", call.ID),
+				zap.Int64("target_session_id", device.SessionID),
+				zap.String("delivery", "skipped_invalid_device_anchor"),
+			)
+		}
+		return
+	}
+
+	updates := r.phoneCallUpdates(ctx, call, targetUserID)
+	if err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, updates); err != nil && r.log != nil {
+		r.log.Debug(logMessage,
+			zap.Int64("target_user_id", targetUserID),
+			zap.Int64("call_id", call.ID),
+			zap.Int64("target_session_id", device.SessionID),
+			zap.Error(err),
+		)
+	}
 }
 
 // pushPhoneCallStopRinging 向被叫其它设备推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
