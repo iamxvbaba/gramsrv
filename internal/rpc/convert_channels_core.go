@@ -113,6 +113,9 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		if msg.Action == nil {
 			msg.Action = &tg.MessageActionEmpty{}
 		}
+		if m.SavedPeer.ID != 0 {
+			msg.SetSavedPeerID(tgPeer(m.SavedPeer))
+		}
 		if reply := tgMessageReplyHeader(domain.Message{
 			Peer:    domain.Peer{Type: domain.PeerTypeChannel, ID: m.ChannelID},
 			ReplyTo: m.ReplyTo,
@@ -140,7 +143,18 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		msg.SetSavedPeerID(tgPeer(m.SavedPeer))
 	}
 	if suggested, ok := tgSuggestedPost(m.SuggestedPost); ok {
-		msg.SetSuggestedPost(suggested)
+		if m.Post {
+			if m.SuggestedPost != nil && m.SuggestedPost.Accepted && m.SuggestedPost.Price != nil {
+				switch m.SuggestedPost.Price.Kind {
+				case domain.SuggestedPostPriceStars:
+					msg.SetPaidSuggestedPostStars(true)
+				case domain.SuggestedPostPriceTON:
+					msg.SetPaidSuggestedPostTon(true)
+				}
+			}
+		} else {
+			msg.SetSuggestedPost(suggested)
+		}
 	}
 	if m.PaidMessageStars > 0 {
 		msg.SetPaidMessageStars(m.PaidMessageStars)
@@ -303,6 +317,42 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 			out.SetCommunityID(action.CommunityID)
 		}
 		return out
+	case domain.ChannelActionSuggestedPostApproval:
+		out := &tg.MessageActionSuggestedPostApproval{
+			Rejected:      action.SuggestedPostRejected,
+			BalanceTooLow: action.SuggestedPostBalanceTooLow,
+		}
+		if action.SuggestedPostRejectComment != "" {
+			out.SetRejectComment(action.SuggestedPostRejectComment)
+		}
+		if action.SuggestedPostScheduleDate > 0 {
+			out.SetScheduleDate(action.SuggestedPostScheduleDate)
+		}
+		if price := tgSuggestedPostPrice(action.SuggestedPostPrice); price != nil {
+			out.SetPrice(price)
+		}
+		return out
+	case domain.ChannelActionSuggestedPostSuccess:
+		if price := tgSuggestedPostPrice(action.SuggestedPostPrice); price != nil {
+			return &tg.MessageActionSuggestedPostSuccess{Price: price}
+		}
+		return nil
+	case domain.ChannelActionSuggestedPostRefund:
+		return &tg.MessageActionSuggestedPostRefund{PayerInitiated: action.SuggestedPostPayerInitiated}
+	default:
+		return nil
+	}
+}
+
+func tgSuggestedPostPrice(price *domain.SuggestedPostPrice) tg.StarsAmountClass {
+	if price == nil {
+		return nil
+	}
+	switch price.Kind {
+	case domain.SuggestedPostPriceStars:
+		return &tg.StarsAmount{Amount: price.Amount, Nanos: price.Nanos}
+	case domain.SuggestedPostPriceTON:
+		return &tg.StarsTonAmount{Amount: price.Amount}
 	default:
 		return nil
 	}

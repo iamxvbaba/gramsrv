@@ -24,7 +24,7 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 	// 静态过滤（不含 offset 锚点的方向条件），结果保持 id 降序。
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
 	matched := make([]domain.ChannelMessage, 0, len(items))
-	monoforumUserView := channel.Monoforum && !isChannelAdmin(member)
+	monoforumUserView := channel.Monoforum && !member.CanManageDirectMessages()
 	for _, msg := range items {
 		if msg.Deleted {
 			continue

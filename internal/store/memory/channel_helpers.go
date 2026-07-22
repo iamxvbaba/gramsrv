@@ -363,7 +363,7 @@ func (s *ChannelStore) monoforumVisibleToUserLocked(mono domain.Channel, userID 
 	if !ok || parent.Deleted || !parent.BroadcastMessagesAllowed || parent.LinkedMonoforumID != mono.ID {
 		return false
 	}
-	if member, ok := s.members[parent.ID][userID]; ok && member.Status == domain.ChannelMemberActive && isChannelAdmin(member) {
+	if member, ok := s.members[parent.ID][userID]; ok && member.CanManageDirectMessages() {
 		return true
 	}
 	for _, msg := range s.messages[mono.ID] {
@@ -418,7 +418,7 @@ func (s *ChannelStore) channelForViewerLocked(userID, channelID int64) (domain.C
 	}
 	if channel.Monoforum && channel.LinkedMonoforumID != 0 {
 		parentMember, ok := s.members[channel.LinkedMonoforumID][userID]
-		if ok && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember) {
+		if ok && parentMember.CanManageDirectMessages() {
 			return channel, syntheticMonoforumAdminMember(channel, parentMember), true, nil
 		}
 		parent, ok := s.channels[channel.LinkedMonoforumID]

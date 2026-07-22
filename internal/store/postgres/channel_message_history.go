@@ -25,7 +25,7 @@ func (s *ChannelStore) ListChannelHistory(ctx context.Context, viewerUserID int6
 	base := "channel_id = $1 AND NOT deleted"
 	extraChannels := []domain.Channel(nil)
 	if channel.Monoforum {
-		if isChannelAdmin(member) {
+		if member.CanManageDirectMessages() {
 			base += " AND saved_peer_id = 0"
 		} else {
 			baseArgs = append(baseArgs, viewerUserID)

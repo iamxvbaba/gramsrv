@@ -310,7 +310,8 @@ WITH visible_channels AS (
     WHERE mono.monoforum AND NOT mono.deleted
       AND (EXISTS (
             SELECT 1 FROM channel_members admin
-            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active' AND admin.role IN ('creator', 'admin')
+            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active'
+              AND (admin.role = 'creator' OR (admin.role = 'admin' AND COALESCE((admin.admin_rights->>'ManageDirectMessages')::boolean, false)))
           ) OR EXISTS (
             SELECT 1 FROM channel_messages message
             WHERE message.channel_id = mono.id AND message.saved_peer_type = 'user' AND message.saved_peer_id = $1 AND NOT message.deleted
@@ -355,7 +356,8 @@ WITH visible_channels AS (
     WHERE mono.monoforum AND NOT mono.deleted
       AND (EXISTS (
             SELECT 1 FROM channel_members admin
-            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active' AND admin.role IN ('creator', 'admin')
+            WHERE admin.channel_id = parent.id AND admin.user_id = $1 AND admin.status = 'active'
+              AND (admin.role = 'creator' OR (admin.role = 'admin' AND COALESCE((admin.admin_rights->>'ManageDirectMessages')::boolean, false)))
           ) OR EXISTS (
             SELECT 1 FROM channel_messages message
             WHERE message.channel_id = mono.id AND message.saved_peer_type = 'user' AND message.saved_peer_id = $1 AND NOT message.deleted

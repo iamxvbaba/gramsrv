@@ -454,7 +454,7 @@ func (s *ChannelStore) monoforumAdminPreview(ctx context.Context, db sqlcgen.DBT
 		}
 		return domain.ChannelMember{}, domain.Channel{}, false, err
 	}
-	if !isChannelAdmin(parentMember) {
+	if !parentMember.CanManageDirectMessages() {
 		return domain.ChannelMember{}, domain.Channel{}, false, nil
 	}
 	return syntheticMonoforumAdminMember(mono, parentMember), parent, true, nil

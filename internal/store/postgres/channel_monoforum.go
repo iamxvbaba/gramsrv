@@ -99,7 +99,7 @@ FOR SHARE OF m, p`, channel.ID).Scan(
 	if parentMemberErr != nil && !errors.Is(parentMemberErr, domain.ErrChannelPrivate) {
 		return domain.SendChannelMessageResult{}, parentMemberErr
 	}
-	isAdmin := parentMemberErr == nil && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember)
+	isAdmin := parentMemberErr == nil && parentMember.CanManageDirectMessages()
 	if req.SenderUserID != req.SavedPeer.ID && !isAdmin {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelAdminRequired
 	}
@@ -237,7 +237,12 @@ SELECT EXISTS (
 		return domain.SendChannelMessageResult{}, fmt.Errorf("update monoforum top: %w", err)
 	}
 	recipients := []int64{req.SavedPeer.ID}
-	rows, err := tx.Query(ctx, `SELECT user_id FROM channel_members WHERE channel_id = $1 AND status = 'active' AND role IN ('creator', 'admin') ORDER BY user_id`, parent.ID)
+	rows, err := tx.Query(ctx, `
+SELECT user_id
+FROM channel_members
+WHERE channel_id = $1 AND status = 'active'
+  AND (role = 'creator' OR (role = 'admin' AND COALESCE((admin_rights->>'ManageDirectMessages')::boolean, false)))
+ORDER BY user_id`, parent.ID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("list monoforum recipients: %w", err)
 	}
@@ -313,7 +318,7 @@ func (s *ChannelStore) ListMonoforumHistory(ctx context.Context, filter domain.M
 }
 
 // ResolveMonoforumSend 按 id 取 monoforum 频道(不要求调用者是 monoforum 成员),并返回调用者是否为
-// 其母广播频道的创建者/管理员。非 monoforum/不存在 → ErrChannelInvalid。
+// 其母广播频道 Direct Messages 管理者。非 monoforum/不存在 → ErrChannelInvalid。
 func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error) {
 	if viewerUserID == 0 || monoforumID == 0 {
 		return domain.Channel{}, false, domain.ErrChannelInvalid
@@ -330,8 +335,7 @@ func (s *ChannelStore) ResolveMonoforumSend(ctx context.Context, viewerUserID, m
 	}
 	isAdmin := false
 	if _, member, memberErr := s.getChannelForMember(ctx, s.db, viewerUserID, mono.LinkedMonoforumID); memberErr == nil {
-		isAdmin = member.Status == domain.ChannelMemberActive &&
-			(member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin)
+		isAdmin = member.CanManageDirectMessages()
 	} else if !errors.Is(memberErr, domain.ErrChannelPrivate) {
 		return domain.Channel{}, false, memberErr
 	}

@@ -48,7 +48,7 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 			args = append(args, member.AvailableMinID)
 			where += fmt.Sprintf(" AND id > $%d", len(args))
 		}
-		if channel.Monoforum && !isChannelAdmin(member) {
+		if channel.Monoforum && !member.CanManageDirectMessages() {
 			args = append(args, req.UserID)
 			where += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(args))
 		}
@@ -147,7 +147,7 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 	}
 	rows.Close()
 	var visibleMonoforumMessageIDs map[int]struct{}
-	if channel.Monoforum && !isChannelAdmin(member) {
+	if channel.Monoforum && !member.CanManageDirectMessages() {
 		messageIDs := make([]int, 0)
 		for _, row := range eventRows {
 			messageIDs = append(messageIDs, row.event.MessageIDs...)
@@ -172,7 +172,7 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 			continue
 		}
 		event = visibleEvent
-		if channel.Monoforum && !isChannelAdmin(member) {
+		if channel.Monoforum && !member.CanManageDirectMessages() {
 			event, ok = filterMonoforumEventForUser(event, req.UserID, visibleMonoforumMessageIDs)
 			if !ok {
 				continue

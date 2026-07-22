@@ -17,9 +17,9 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestMonoforumSavedDialogsAndHistory 验证频道私信(monoforum)读侧 RPC:管理员经
-// getSavedDialogs(parent_peer=monoforum) 看订阅者子会话列表、经 getSavedHistory 看某订阅者历史
-// (消息带 saved_peer_id);订阅者经普通 getHistory 只看自己的子会话。
+// TestMonoforumSavedDialogsAndHistory 验证频道私信(monoforum)读侧 RPC：管理员经
+// getSavedDialogs/getSavedHistory 看订阅者子会话，parent_peer 同时兼容 TDesktop 实际发送的
+// 母广播频道和虚拟 monoforum；订阅者经普通 getHistory 只看自己的子会话。
 func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
@@ -64,6 +64,7 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 		t.Fatalf("get monoforum: %v", err)
 	}
 	monoInput := &tg.InputPeerChannel{ChannelID: monoID, AccessHash: mono.AccessHash}
+	parentInput := &tg.InputPeerChannel{ChannelID: created.Channel.ID, AccessHash: created.Channel.AccessHash}
 
 	// TDesktop 点 Direct Messages 入口会先按 monoforum peer 拉普通 channel history。
 	// 主历史只应返回 monoforum 自身的 service messages,不能混入 saved_peer 子会话消息。
@@ -129,7 +130,8 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 
 	// 管理员看私信列表。
 	dreq := &tg.MessagesGetSavedDialogsRequest{}
-	dreq.SetParentPeer(monoInput)
+	// TDesktop SavedSublist::loadAround() 的 parentChat()->input() 是母广播频道。
+	dreq.SetParentPeer(parentInput)
 	dres, err := r.onMessagesGetSavedDialogs(WithUserID(ctx, owner.ID), dreq)
 	if err != nil {
 		t.Fatalf("getSavedDialogs(monoforum): %v", err)
@@ -160,7 +162,7 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 
 	// 管理员看某订阅者会话历史。
 	hreq := &tg.MessagesGetSavedHistoryRequest{Peer: &tg.InputPeerUser{UserID: sub.ID}}
-	hreq.SetParentPeer(monoInput)
+	hreq.SetParentPeer(parentInput)
 	hres, err := r.onMessagesGetSavedHistory(WithUserID(ctx, owner.ID), hreq)
 	if err != nil {
 		t.Fatalf("getSavedHistory(monoforum): %v", err)
@@ -192,6 +194,18 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	}
 	if pu, ok := sp.(*tg.PeerUser); !ok || pu.UserID != sub.ID {
 		t.Fatalf("saved_peer_id = %#v, want sub %d", sp, sub.ID)
+	}
+
+	// 虚拟 monoforum peer 仍是合法的等价入口，两个 parent 不能落到不同数据集。
+	directMonoReq := &tg.MessagesGetSavedHistoryRequest{Peer: &tg.InputPeerUser{UserID: sub.ID}}
+	directMonoReq.SetParentPeer(monoInput)
+	directMonoRes, err := r.onMessagesGetSavedHistory(WithUserID(ctx, owner.ID), directMonoReq)
+	if err != nil {
+		t.Fatalf("getSavedHistory(direct monoforum): %v", err)
+	}
+	directMonoSlice, ok := directMonoRes.(*tg.MessagesMessagesSlice)
+	if !ok || len(directMonoSlice.Messages) != 1 {
+		t.Fatalf("getSavedHistory(direct monoforum) = %#v, want same single-message topic", directMonoRes)
 	}
 
 	// 非管理员(订阅者本人)经管理员入口看列表被拒。

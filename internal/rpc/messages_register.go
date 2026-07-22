@@ -91,6 +91,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesSendMessageRequest](d, tlprofile.SemanticMethodMessagesSendMessage, func(ctx context.Context, layerRequest *tg.MessagesSendMessageRequest) (any, error) {
 		return r.onMessagesSendMessage(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesToggleSuggestedPostApprovalRequest](d, tlprofile.SemanticMethodMessagesToggleSuggestedPostApproval, func(ctx context.Context, layerRequest *tg.MessagesToggleSuggestedPostApprovalRequest) (any, error) {
+		return r.onMessagesToggleSuggestedPostApproval(ctx, layerRequest)
+	})
 	registerRPC[*tg.MessagesForwardMessagesRequest](d, tlprofile.SemanticMethodMessagesForwardMessages, func(ctx context.Context, layerRequest *tg.MessagesForwardMessagesRequest) (any, error) {
 		return r.onMessagesForwardMessages(ctx, layerRequest)
 	})

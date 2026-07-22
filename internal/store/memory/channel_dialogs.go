@@ -42,7 +42,7 @@ func (s *ChannelStore) ListChannelDialogs(_ context.Context, viewerUserID int64,
 			continue
 		}
 		parentMember, ok := s.members[channel.LinkedMonoforumID][viewerUserID]
-		if !ok || parentMember.Status != domain.ChannelMemberActive || !isChannelAdmin(parentMember) {
+		if !ok || !parentMember.CanManageDirectMessages() {
 			continue
 		}
 		channelIDs = append(channelIDs, channelID)
@@ -131,7 +131,7 @@ func (s *ChannelStore) GetChannelDialogs(_ context.Context, viewerUserID int64, 
 				continue
 			}
 			parentMember, ok := s.members[channel.LinkedMonoforumID][viewerUserID]
-			if !ok || parentMember.Status != domain.ChannelMemberActive || !isChannelAdmin(parentMember) {
+			if !ok || !parentMember.CanManageDirectMessages() {
 				continue
 			}
 			member = syntheticMonoforumAdminMember(channel, parentMember)

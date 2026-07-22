@@ -267,7 +267,7 @@ WHERE i.user_id = $1
   AND NOT i.deleted
   AND i.role IN ('creator','admin')
   AND pm.status = 'active'
-  AND pm.role IN ('creator','admin')
+  AND (pm.role = 'creator' OR (pm.role = 'admin' AND COALESCE((pm.admin_rights->>'ManageDirectMessages')::boolean, false)))
 ORDER BY COALESCE(d.pinned, false) DESC,
          COALESCE(d.pinned_order, 0) DESC,
          COALESCE(top_msg.message_date, d.top_message_date, c.date) DESC,

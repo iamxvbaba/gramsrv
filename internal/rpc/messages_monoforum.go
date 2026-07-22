@@ -9,11 +9,14 @@ import (
 	"telesrv/internal/domain"
 )
 
-// resolveMonoforumForAdmin 解析 parent_peer 指向的 monoforum 虚拟频道,并校验当前用户是其母广播频道
-// 的管理员/创建者(频道私信只有频道管理员可读/回复)。monoforum 是私有零成员频道,管理员并非其成员,
-// 故走 store 的 membership-agnostic 解析,在母频道上做授权。
-// 返回 (monoforum频道, isMonoforum, err):parent 是有效频道但非 monoforum 时返回 (零, false, nil),
-// 由调用方回退良性空响应(兼容对普通频道传 parent_peer 的被动探测);是 monoforum 但非管理员→CHAT_ADMIN_REQUIRED。
+// resolveMonoforumForAdmin 解析 TDesktop messages.getSavedDialogs/getSavedHistory 的 parent_peer，
+// 并校验当前用户可管理母广播频道的 Direct Messages。TDesktop 的 SavedSublist 实际会把
+// parentChat()->input() 作为 parent_peer；根据客户端 materialize 路径，它既可能是 monoforum
+// 虚拟频道，也可能是与之关联的母广播频道。因此这里把两种 wire peer 归一到同一个 monoforum，
+// 授权仍只认母频道的 creator / ManageDirectMessages，绝不能把普通 admin 放进管理者视图。
+//
+// 返回 (monoforum频道, isMonoforum, err)：parent 是有效但未关联 Direct Messages 的普通频道时
+// 返回 (零, false, nil)，由调用方保留良性空响应；关联频道的非管理者返回 CHAT_ADMIN_REQUIRED。
 func (r *Router) resolveMonoforumForAdmin(ctx context.Context, userID int64, parent domain.Peer) (domain.Channel, bool, error) {
 	if r.deps.Channels == nil {
 		return domain.Channel{}, false, notImplementedErr()
@@ -22,9 +25,30 @@ func (r *Router) resolveMonoforumForAdmin(ctx context.Context, userID int64, par
 		return domain.Channel{}, false, parentPeerInvalidErr()
 	}
 	mono, isAdmin, err := r.deps.Channels.ResolveMonoforumSend(ctx, userID, parent.ID)
+	if errors.Is(err, domain.ErrChannelInvalid) {
+		// TDesktop 当前的 Direct Messages subsection 会传母广播频道。只接受显式的
+		// linked_monoforum 关系，不能把任意普通频道猜成 monoforum。
+		views, viewErr := r.deps.Channels.GetChannels(ctx, userID, []int64{parent.ID})
+		if viewErr != nil {
+			return domain.Channel{}, false, internalErr()
+		}
+		if len(views) != 1 {
+			return domain.Channel{}, false, nil
+		}
+		parentChannel := views[0].Channel
+		if parentChannel.ID != parent.ID || parentChannel.Deleted || parentChannel.Monoforum || parentChannel.LinkedMonoforumID == 0 {
+			return domain.Channel{}, false, nil
+		}
+		mono, isAdmin, err = r.deps.Channels.ResolveMonoforumSend(ctx, userID, parentChannel.LinkedMonoforumID)
+		if err != nil {
+			// A visible parent that advertises linked_monoforum_id but cannot resolve
+			// that target violates the durable channel-link invariant. Do not disguise
+			// it as an ordinary channel probe.
+			return domain.Channel{}, false, internalErr()
+		}
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrChannelInvalid) {
-			// 非 monoforum 频道(或不存在):非错误,交由调用方回退良性空响应。
 			return domain.Channel{}, false, nil
 		}
 		return domain.Channel{}, false, internalErr()

@@ -49,7 +49,7 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 			if msg.Deleted {
 				continue
 			}
-			if channel.Monoforum && !isChannelAdmin(member) && msg.SavedPeer != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) {
+			if channel.Monoforum && !member.CanManageDirectMessages() && msg.SavedPeer != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) {
 				continue
 			}
 			if msg.ID <= member.AvailableMinID {
@@ -72,7 +72,7 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 	events := make([]domain.ChannelUpdateEvent, 0, limit)
 	lastPts := req.Pts
 	var visibleMonoforumMessageIDs map[int]struct{}
-	if channel.Monoforum && !isChannelAdmin(member) {
+	if channel.Monoforum && !member.CanManageDirectMessages() {
 		visibleMonoforumMessageIDs = make(map[int]struct{})
 		savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}
 		for _, message := range s.messages[req.ChannelID] {
@@ -90,7 +90,7 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 		if !ok {
 			continue
 		}
-		if channel.Monoforum && !isChannelAdmin(member) {
+		if channel.Monoforum && !member.CanManageDirectMessages() {
 			visible, ok = filterMonoforumEventForUser(visible, req.UserID, visibleMonoforumMessageIDs)
 			if !ok {
 				continue

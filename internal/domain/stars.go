@@ -21,20 +21,21 @@ type StarsBalance struct {
 type StarsTransactionReason string
 
 const (
-	StarsReasonGrant        StarsTransactionReason = "grant"        // 起始余额自动授予
-	StarsReasonTopup        StarsTransactionReason = "topup"        // 充值（本地铸造）
-	StarsReasonReaction     StarsTransactionReason = "reaction"     // 付费 reaction 花费
-	StarsReasonGift         StarsTransactionReason = "gift"         // 星礼花费/收取
-	StarsReasonGiftUpgrade  StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
-	StarsReasonGiftTransfer StarsTransactionReason = "gift_transfer"
-	StarsReasonGiftResale   StarsTransactionReason = "gift_resale"
-	StarsReasonGiftOffer    StarsTransactionReason = "gift_offer"
-	StarsReasonGiftAuction  StarsTransactionReason = "gift_auction"
-	StarsReasonGiftPrepaid  StarsTransactionReason = "gift_prepaid_upgrade"
-	StarsReasonGiftDrop     StarsTransactionReason = "gift_drop_original_details"
-	StarsReasonPaidMedia    StarsTransactionReason = "paid_media"   // 付费媒体解锁
-	StarsReasonPaidMessage  StarsTransactionReason = "paid_message" // 频道 Direct Message 花费
-	StarsReasonAdjust       StarsTransactionReason = "adjust"       // 兜底/人工调整
+	StarsReasonGrant         StarsTransactionReason = "grant"        // 起始余额自动授予
+	StarsReasonTopup         StarsTransactionReason = "topup"        // 充值（本地铸造）
+	StarsReasonReaction      StarsTransactionReason = "reaction"     // 付费 reaction 花费
+	StarsReasonGift          StarsTransactionReason = "gift"         // 星礼花费/收取
+	StarsReasonGiftUpgrade   StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
+	StarsReasonGiftTransfer  StarsTransactionReason = "gift_transfer"
+	StarsReasonGiftResale    StarsTransactionReason = "gift_resale"
+	StarsReasonGiftOffer     StarsTransactionReason = "gift_offer"
+	StarsReasonGiftAuction   StarsTransactionReason = "gift_auction"
+	StarsReasonGiftPrepaid   StarsTransactionReason = "gift_prepaid_upgrade"
+	StarsReasonGiftDrop      StarsTransactionReason = "gift_drop_original_details"
+	StarsReasonPaidMedia     StarsTransactionReason = "paid_media"   // 付费媒体解锁
+	StarsReasonPaidMessage   StarsTransactionReason = "paid_message" // 频道 Direct Message 花费
+	StarsReasonSuggestedPost StarsTransactionReason = "suggested_post"
+	StarsReasonAdjust        StarsTransactionReason = "adjust" // 兜底/人工调整
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。

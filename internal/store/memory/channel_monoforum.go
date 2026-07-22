@@ -54,7 +54,7 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 		return domain.SendChannelMessageResult{}, domain.ErrChannelPrivate
 	}
 	parentMember, parentMemberOK := s.members[parent.ID][req.SenderUserID]
-	isAdmin := parentMemberOK && parentMember.Status == domain.ChannelMemberActive && isChannelAdmin(parentMember)
+	isAdmin := parentMemberOK && parentMember.CanManageDirectMessages()
 	if req.SenderUserID != req.SavedPeer.ID && !isAdmin {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelAdminRequired
 	}
@@ -157,7 +157,7 @@ func (s *ChannelStore) SendMonoforumMessage(_ context.Context, req domain.SendMo
 	s.channels[req.MonoforumID] = channel
 	recipients := []int64{req.SavedPeer.ID}
 	for userID, member := range s.members[parent.ID] {
-		if member.Status == domain.ChannelMemberActive && isChannelAdmin(member) {
+		if member.CanManageDirectMessages() {
 			recipients = append(recipients, userID)
 		}
 	}
@@ -214,7 +214,7 @@ func (s *ChannelStore) ListMonoforumHistory(_ context.Context, filter domain.Mon
 }
 
 // ResolveMonoforumSend 按 id 取 monoforum 频道(不要求调用者是 monoforum 成员——订阅者私信频道时
-// 并非 monoforum 成员),并返回调用者是否为其母广播频道的创建者/管理员。非 monoforum/不存在 → ErrChannelInvalid。
+// 并非 monoforum 成员),并返回调用者是否可管理其母广播频道的 Direct Messages。非 monoforum/不存在 → ErrChannelInvalid。
 func (s *ChannelStore) ResolveMonoforumSend(_ context.Context, viewerUserID, monoforumID int64) (domain.Channel, bool, error) {
 	if viewerUserID == 0 || monoforumID == 0 {
 		return domain.Channel{}, false, domain.ErrChannelInvalid
@@ -226,8 +226,7 @@ func (s *ChannelStore) ResolveMonoforumSend(_ context.Context, viewerUserID, mon
 		return domain.Channel{}, false, domain.ErrChannelInvalid
 	}
 	member, ok := s.members[mono.LinkedMonoforumID][viewerUserID]
-	isAdmin := ok && member.Status == domain.ChannelMemberActive &&
-		(member.Role == domain.ChannelRoleCreator || member.Role == domain.ChannelRoleAdmin)
+	isAdmin := ok && member.CanManageDirectMessages()
 	return cloneChannel(mono), isAdmin, nil
 }
 
