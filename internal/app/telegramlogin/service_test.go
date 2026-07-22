@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,10 +79,18 @@ func TestServiceClientCreationAndSecretRotationAreSingleWinner(t *testing.T) {
 }
 
 func newTelegramLoginTestService(t *testing.T, now *time.Time) (*Service, *memory.TelegramLoginStore) {
-	return newTelegramLoginTestServiceWithAlgorithms(t, now, nil)
+	return newTelegramLoginTestServiceWithConfig(t, now, nil, "")
 }
 
 func newTelegramLoginTestServiceWithAlgorithms(t *testing.T, now *time.Time, algorithms []domain.TelegramLoginSigningAlgorithm) (*Service, *memory.TelegramLoginStore) {
+	return newTelegramLoginTestServiceWithConfig(t, now, algorithms, "")
+}
+
+func newTelegramLoginTestServiceWithAppLinkBase(t *testing.T, now *time.Time, appLinkBase string) (*Service, *memory.TelegramLoginStore) {
+	return newTelegramLoginTestServiceWithConfig(t, now, nil, appLinkBase)
+}
+
+func newTelegramLoginTestServiceWithConfig(t *testing.T, now *time.Time, algorithms []domain.TelegramLoginSigningAlgorithm, appLinkBase string) (*Service, *memory.TelegramLoginStore) {
 	t.Helper()
 	key := make([]byte, 32)
 	key[0] = 7
@@ -93,7 +102,7 @@ func newTelegramLoginTestServiceWithAlgorithms(t *testing.T, now *time.Time, alg
 	pepper := make([]byte, 32)
 	pepper[0] = 9
 	service, err := NewService(loginStore, sealer, Config{
-		Issuer: "https://oauth.telesrv.test", AppScheme: "telesrv",
+		Issuer: "https://oauth.telesrv.test", AppScheme: "telesrv", AppLinkBase: appLinkBase,
 		AllowHTTP: true, ClientSecretPepper: pepper,
 		SupportedSigningAlgorithms: algorithms,
 		Now:                        func() time.Time { return *now },
@@ -107,7 +116,7 @@ func newTelegramLoginTestServiceWithAlgorithms(t *testing.T, now *time.Time, alg
 func TestServiceAcceptsOfficialClientCanonicalOAuthDeepLinks(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_780_000_000, 0).UTC()
-	service, _ := newTelegramLoginTestService(t, &now)
+	service, _ := newTelegramLoginTestServiceWithAppLinkBase(t, &now, "owpg://tenant.example.test")
 	credentials, err := service.CreateClient(ctx, 9030, domain.TelegramLoginSigningRS256)
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +141,13 @@ func TestServiceAcceptsOfficialClientCanonicalOAuthDeepLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := parsed.Query().Get("token")
+	if got, want := parsed.Scheme+"://"+parsed.Host+parsed.Path, "owpg://tenant.example.test/oauth"; got != want {
+		t.Fatalf("generated deep link root = %q, want %q", got, want)
+	}
 	valid := []string{
 		created.DeepLink,
+		"telesrv://oauth?token=" + url.QueryEscape(token),
+		"telesrv://resolve?domain=oauth&startapp=" + url.QueryEscape(token),
 		"tg://oauth?token=" + url.QueryEscape(token),
 		"tg://resolve?domain=oauth&startapp=" + url.QueryEscape(token),
 		"https://t.me/oauth?startapp=" + url.QueryEscape(token),
@@ -146,6 +160,9 @@ func TestServiceAcceptsOfficialClientCanonicalOAuthDeepLinks(t *testing.T) {
 	}
 	invalid := []string{
 		"telegram://oauth?token=" + url.QueryEscape(token),
+		"owpg://other.example.test/oauth?token=" + url.QueryEscape(token),
+		"owpg://tenant.example.test/resolve?domain=oauth&startapp=" + url.QueryEscape(token),
+		"owpg://tenant.example.test/oauth/extra?token=" + url.QueryEscape(token),
 		"tg://oauth/path?token=" + url.QueryEscape(token),
 		"tg://oauth?token=" + url.QueryEscape(token) + "&token=other",
 		"tg://resolve?domain=oauth&domain=other&startapp=" + url.QueryEscape(token),
@@ -227,6 +244,9 @@ func TestServiceAuthorizationCodeFlowAndRevocation(t *testing.T) {
 	}
 	if created.DeepLink == "" || created.Request.ID == 0 || len(created.Request.MatchCodes) != 5 {
 		t.Fatalf("created authorization = %#v", created)
+	}
+	if !strings.HasPrefix(created.DeepLink, "telesrv://oauth?token=") {
+		t.Fatalf("default deep link = %q, want legacy telesrv:// OAuth form", created.DeepLink)
 	}
 	if _, err := service.CheckMatchCode(ctx, created.DeepLink, created.Request.MatchCodes[0]); err == nil && created.Request.MatchCodes[0] != created.Request.MatchCode {
 		t.Fatal("wrong match code unexpectedly accepted")

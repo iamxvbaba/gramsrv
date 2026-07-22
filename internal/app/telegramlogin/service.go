@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/links"
 	"telesrv/internal/store"
 )
 
@@ -36,6 +37,7 @@ var telegramLoginMatchCodePool = []string{
 type Config struct {
 	Issuer                     string
 	AppScheme                  string
+	AppLinkBase                string
 	AllowHTTP                  bool
 	ClientSecretPepper         []byte
 	SupportedSigningAlgorithms []domain.TelegramLoginSigningAlgorithm
@@ -48,7 +50,7 @@ type Service struct {
 	store               store.TelegramLoginStore
 	sealer              *CodeSealer
 	issuer              string
-	appScheme           string
+	appLinks            links.AppLinkBuilder
 	allowHTTP           bool
 	clientSecretPepper  []byte
 	signingAlgorithms   []domain.TelegramLoginSigningAlgorithm
@@ -66,8 +68,9 @@ func NewService(loginStore store.TelegramLoginStore, sealer *CodeSealer, cfg Con
 	if err != nil {
 		return nil, fmt.Errorf("telegram login issuer: %w", err)
 	}
-	if !validAppScheme(cfg.AppScheme) {
-		return nil, fmt.Errorf("telegram login app scheme is invalid")
+	appLinks, err := links.NewAppLinkBuilder(cfg.AppScheme, cfg.AppLinkBase)
+	if err != nil {
+		return nil, fmt.Errorf("telegram login app links: %w", err)
 	}
 	if cfg.RequestTTL == 0 {
 		cfg.RequestTTL = defaultRequestTTL
@@ -92,7 +95,7 @@ func NewService(loginStore store.TelegramLoginStore, sealer *CodeSealer, cfg Con
 		}
 	}
 	return &Service{
-		store: loginStore, sealer: sealer, issuer: issuer, appScheme: strings.ToLower(cfg.AppScheme),
+		store: loginStore, sealer: sealer, issuer: issuer, appLinks: appLinks,
 		allowHTTP:           cfg.AllowHTTP,
 		clientSecretPepper:  append([]byte(nil), cfg.ClientSecretPepper...),
 		signingAlgorithms:   append([]domain.TelegramLoginSigningAlgorithm(nil), cfg.SupportedSigningAlgorithms...),
@@ -669,7 +672,7 @@ func (s *Service) CreateAuthorization(ctx context.Context, params CreateAuthoriz
 	if err != nil {
 		return CreatedAuthorization{}, err
 	}
-	deepLink := s.appScheme + "://oauth?token=" + url.QueryEscape(requestToken)
+	deepLink := s.appLinks.Build("oauth", url.Values{"token": []string{requestToken}})
 	return CreatedAuthorization{Request: request, RequestToken: requestToken, BrowserToken: browserToken, DeepLink: deepLink}, nil
 }
 
@@ -885,12 +888,14 @@ func (s *Service) deepLinkToken(rawURL string) (string, error) {
 	if err != nil {
 		return "", domain.ErrTelegramLoginURLInvalid
 	}
-	customOrCanonicalScheme := strings.EqualFold(u.Scheme, s.appScheme) || strings.EqualFold(u.Scheme, "tg")
 	var token string
 	switch {
-	case customOrCanonicalScheme && strings.EqualFold(u.Host, "oauth") && u.Path == "":
+	case s.appLinks.MatchesRoute(u, "oauth"):
 		token, _ = singleQueryValue(query, "token")
-	case customOrCanonicalScheme && strings.EqualFold(u.Host, "resolve") && u.Path == "":
+	case strings.EqualFold(u.Scheme, "tg") && strings.EqualFold(u.Host, "oauth") && u.Path == "":
+		token, _ = singleQueryValue(query, "token")
+	case (s.appLinks.MatchesLegacyRoute(u, "resolve") ||
+		(strings.EqualFold(u.Scheme, "tg") && strings.EqualFold(u.Host, "resolve") && u.Path == "")):
 		domainValue, domainOK := singleQueryValue(query, "domain")
 		startApp, startAppOK := singleQueryValue(query, "startapp")
 		if domainOK && startAppOK && strings.EqualFold(domainValue, "oauth") {

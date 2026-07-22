@@ -60,6 +60,7 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_ADMIN_SESSION_KEY` | secret string / empty | Encrypts/signs Admin UI session cookies. Production should use at least 32 random bytes; changing it invalidates sessions. |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
+| `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://web.telesrv.net` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |
 | `TELESRV_PUBLIC_APP_NAME` | string / `telesrv` | Public landing-page product name; trimmed, non-empty, no control characters, maximum 64 Unicode characters. |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / empty | Read-only username/avatar/sticker/emoji/chatlist/collectible-gift landing-page listener. Empty disables it. Production should bind loopback behind exact nginx routes. `.env.example` enables `127.0.0.1:2401` for development. |
@@ -237,6 +238,7 @@ that clients can actually reach. Bind `0.0.0.0:2401` for direct LAN/public acces
 TELESRV_PUBLIC_BASE_URL=http://192.0.2.25:2401
 TELESRV_PUBLIC_LINK_WEB_ADDR=0.0.0.0:2401
 TELESRV_PUBLIC_APP_SCHEME=telesrv
+# Optional for multi-server clients: TELESRV_PUBLIC_APP_LINK_BASE=owpg://example.com
 
 TELESRV_TELEGRAM_LOGIN_ENABLE=true
 TELESRV_TELEGRAM_LOGIN_ISSUER=http://192.0.2.25:2401

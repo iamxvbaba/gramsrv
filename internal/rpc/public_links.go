@@ -22,6 +22,10 @@ func (r *Router) publicLinkHost() string {
 	return links.Host(r.cfg.PublicBaseURL)
 }
 
+func (r *Router) publicAppLink(route string) string {
+	return r.appLinks.Build(route, nil)
+}
+
 func publicLinkWithBaseURL(baseURL, path string) string {
 	return links.Build(baseURL, path, nil)
 }

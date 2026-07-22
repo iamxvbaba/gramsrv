@@ -82,6 +82,10 @@ type Config struct {
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
+	// PublicAppLinkBase 是可选的 host-based 自建客户端链接根，例如
+	// owpg://example.com。为空时继续生成 PublicAppScheme://<route>；非空时
+	// 生成 <base>/<route>，同时保留旧 scheme 作为服务端输入兼容。
+	PublicAppLinkBase string
 	// PublicWebBaseURL 是公开 username 页面“Open in Web”按钮指向的 Web 客户端根 URL。
 	PublicWebBaseURL string
 	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
@@ -434,6 +438,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_SCHEME: %w", err)
 	}
+	publicAppLinkBase, err := links.ValidateAppLinkBase(envAllowEmptyOr("TELESRV_PUBLIC_APP_LINK_BASE", ""))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_LINK_BASE: %w", err)
+	}
 	publicWebBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_PUBLIC_WEB_BASE_URL", links.DefaultWebBaseURL))
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_WEB_BASE_URL: %w", err)
@@ -487,6 +495,7 @@ func Load() (Config, error) {
 		AdminAPIToken:                        envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:                        publicBaseURL,
 		PublicAppScheme:                      publicAppScheme,
+		PublicAppLinkBase:                    publicAppLinkBase,
 		PublicWebBaseURL:                     publicWebBaseURL,
 		PublicAppName:                        publicAppName,
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
