@@ -48,13 +48,16 @@ func validCollectibleDraft() StarGiftCollectibleWrite {
 		GiftID: 1, UpgradeStars: 25, SupplyTotal: 100, SlugPrefix: "official-1", CommandID: "test",
 		Models: []StarGiftCollectibleAttribute{
 			{Kind: StarGiftCollectibleModel, Name: "Regular", RarityKind: StarGiftRarityPermille, RarityPermille: 922, Animation: animation},
+			{Kind: StarGiftCollectibleModel, Name: "Regular Two", RarityKind: StarGiftRarityPermille, RarityPermille: 78, Animation: animation},
 			{Kind: StarGiftCollectibleModel, Name: "Crafted", RarityKind: StarGiftRarityLegendary, Crafted: true, Animation: animation},
 		},
 		Patterns: []StarGiftCollectibleAttribute{
 			{Kind: StarGiftCollectiblePattern, Name: "Pattern", RarityKind: StarGiftRarityPermille, RarityPermille: 989, Animation: animation},
+			{Kind: StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: StarGiftRarityPermille, RarityPermille: 11, Animation: animation},
 		},
 		Backdrops: []StarGiftCollectibleAttribute{
 			{Kind: StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 0, RarityKind: StarGiftRarityPermille, RarityPermille: 999},
+			{Kind: StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 1, RarityKind: StarGiftRarityPermille, RarityPermille: 1},
 		},
 	}
 }
@@ -103,13 +106,57 @@ func storedCollectibleWrite() StarGiftCollectibleWrite {
 		}
 		write.Models[i].Blob = &FileBlob{LocationKey: "model"}
 	}
-	write.Patterns[0].Document = &Document{
-		ID: 200, MimeType: "application/x-tgsticker",
-		Attributes: []DocumentAttribute{{Kind: DocAttrCustomEmoji, Alt: "🎁", TextColor: true}},
-		Thumbs:     []PhotoSize{{Kind: PhotoSizeKindPath, Type: "j", Bytes: []byte{1}}},
+	for i := range write.Patterns {
+		write.Patterns[i].Document = &Document{
+			ID: int64(200 + i), MimeType: "application/x-tgsticker",
+			Attributes: []DocumentAttribute{{Kind: DocAttrCustomEmoji, Alt: "🎁", TextColor: true}},
+			Thumbs:     []PhotoSize{{Kind: PhotoSizeKindPath, Type: "j", Bytes: []byte{1}}},
+		}
+		write.Patterns[i].Blob = &FileBlob{LocationKey: "pattern"}
 	}
-	write.Patterns[0].Blob = &FileBlob{LocationKey: "pattern"}
 	return write
+}
+
+func TestValidateStarGiftCollectibleDraftRequiresClientSafePreviewPool(t *testing.T) {
+	tests := map[string]func(*StarGiftCollectibleWrite){
+		"one selectable model": func(write *StarGiftCollectibleWrite) {
+			write.Models = append(write.Models[:1], write.Models[2:]...)
+		},
+		"one selectable pattern": func(write *StarGiftCollectibleWrite) {
+			write.Patterns = write.Patterns[:1]
+		},
+		"one selectable backdrop": func(write *StarGiftCollectibleWrite) {
+			write.Backdrops = write.Backdrops[:1]
+		},
+		"duplicate backdrop id": func(write *StarGiftCollectibleWrite) {
+			write.Backdrops[1].BackdropID = write.Backdrops[0].BackdropID
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			write := validCollectibleDraft()
+			mutate(&write)
+			if err := ValidateStarGiftCollectibleDraft(write); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+				t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
+			}
+		})
+	}
+}
+
+func TestValidateStarGiftCollectibleWriteRequiresDistinctPreviewDocuments(t *testing.T) {
+	for _, kind := range []StarGiftCollectibleAttributeKind{StarGiftCollectibleModel, StarGiftCollectiblePattern} {
+		t.Run(string(kind), func(t *testing.T) {
+			write := storedCollectibleWrite()
+			if kind == StarGiftCollectibleModel {
+				write.Models[1].Document = write.Models[0].Document
+			} else {
+				write.Patterns[1].Document = write.Patterns[0].Document
+			}
+			if err := ValidateStarGiftCollectibleWrite(write); !errors.Is(err, ErrStarGiftCollectibleInvalid) {
+				t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
+			}
+		})
+	}
 }
 
 func TestValidateStarGiftCollectibleWriteRequiresExactDocumentRoles(t *testing.T) {

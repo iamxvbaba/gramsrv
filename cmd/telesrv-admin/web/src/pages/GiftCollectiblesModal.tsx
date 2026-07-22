@@ -31,8 +31,38 @@ type BackdropDraft = {
 
 let draftSequence = 0;
 const nextKey = (kind: string) => `${kind}-${++draftSequence}`;
-const newAnimated = (kind: string): AnimatedDraft => ({ key: nextKey(kind), name: "", rarity: "1000", sortOrder: "0", file: null, animation: null, fileError: "" });
-const newBackdrop = (): BackdropDraft => ({ key: nextKey("backdrop"), name: "", backdropID: "1", rarity: "1000", sortOrder: "0", center: "#6f5bea", edge: "#34278f", pattern: "#a89df5", text: "#ffffff" });
+const backdropPalettes = [
+  { center: "#6f5bea", edge: "#34278f", pattern: "#a89df5", text: "#ffffff" },
+  { center: "#32a86b", edge: "#17613e", pattern: "#8ee0b3", text: "#ffffff" },
+  { center: "#df8d2f", edge: "#8c421e", pattern: "#ffd08a", text: "#ffffff" },
+  { center: "#d95878", edge: "#7b2944", pattern: "#f5a1b6", text: "#ffffff" }
+];
+
+function rebalanceRarity<T extends { rarity: string }>(rows: T[]): T[] {
+  if (!rows.length) return rows;
+  const base = Math.floor(1000 / rows.length);
+  const remainder = 1000 % rows.length;
+  return rows.map((row, index) => ({ ...row, rarity: String(base + (index < remainder ? 1 : 0)) }));
+}
+
+const newAnimated = (kind: string, sortOrder: number): AnimatedDraft => ({
+  key: nextKey(kind), name: "", rarity: "1", sortOrder: String(sortOrder), file: null, animation: null, fileError: ""
+});
+
+function newBackdrop(rows: BackdropDraft[]): BackdropDraft {
+  const backdropID = rows.reduce((maximum, row) => {
+    const value = Number(row.backdropID);
+    return Number.isInteger(value) ? Math.max(maximum, value) : maximum;
+  }, 0) + 1;
+  const colors = backdropPalettes[rows.length % backdropPalettes.length];
+  return { key: nextKey("backdrop"), name: "", backdropID: String(backdropID), rarity: "1", sortOrder: String(rows.length), ...colors };
+}
+
+const initialAnimated = (kind: string) => rebalanceRarity([newAnimated(kind, 0), newAnimated(kind, 1)]);
+const initialBackdrops = () => {
+  const first = newBackdrop([]);
+  return rebalanceRarity([first, newBackdrop([first])]);
+};
 
 function AnimationPreview({ data, compact = false }: { data: AnimationData; compact?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
@@ -87,9 +117,9 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
   const [supplyTotal, setSupplyTotal] = useState("1000");
   const [slugPrefix, setSlugPrefix] = useState(`gift-${gift.GiftID}`);
   const [reason, setReason] = useState("");
-  const [models, setModels] = useState<AnimatedDraft[]>([newAnimated("model")]);
-  const [patterns, setPatterns] = useState<AnimatedDraft[]>([newAnimated("pattern")]);
-  const [backdrops, setBackdrops] = useState<BackdropDraft[]>([newBackdrop()]);
+  const [models, setModels] = useState<AnimatedDraft[]>(() => initialAnimated("model"));
+  const [patterns, setPatterns] = useState<AnimatedDraft[]>(() => initialAnimated("pattern"));
+  const [backdrops, setBackdrops] = useState<BackdropDraft[]>(initialBackdrops);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +161,9 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
 
   function buildForm(confirm: boolean, commandID = "") {
     if (!reason.trim()) throw new Error(t("action.reasonRequired"));
+    if (models.length < 2 || patterns.length < 2 || backdrops.length < 2) throw new Error(t("collectibles.minimumAttributes"));
+    const backdropIDs = backdrops.map((row) => Number(row.backdropID));
+    if (new Set(backdropIDs).size !== backdropIDs.length) throw new Error(t("collectibles.duplicateBackdropID"));
     for (const row of [...models, ...patterns]) if (!row.file) throw new Error(t("collectibles.fileRequired"));
     const form = new FormData();
     const animatedMetadata = (rows: AnimatedDraft[]) => rows.map((row) => ({ name: row.name.trim(), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder), file_key: row.key }));
@@ -168,7 +201,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
     <section className="collectible-section">
       <div className="collectible-section-head">
         <div><strong>{t(`collectibles.${kind}`)}</strong><span>{t("collectibles.rarityHint")}</span></div>
-        <div className="collectible-section-tools"><Badge tone={rarityTotals[kind] > 0 ? "good" : "neutral"}>{rarityTotals[kind]}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setRows([...rows, newAnimated(kind === "models" ? "model" : "pattern")]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div>
+        <div className="collectible-section-tools"><Badge tone={rarityTotals[kind] > 0 ? "good" : "neutral"}>{rarityTotals[kind]}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setRows(rebalanceRarity([...rows, newAnimated(kind === "models" ? "model" : "pattern", rows.length)])); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div>
       </div>
       <div className="collectible-rows">
         {rows.map((row, index) => <div className="collectible-row animated" key={row.key}>
@@ -178,7 +211,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
           <label><span>{t("gifts.sortOrder")}</span><input type="number" value={row.sortOrder} onChange={(e) => updateAnimated(kind, row.key, { sortOrder: e.target.value })} /></label>
           <label className="collectible-file"><span>{t("gifts.animation")}</span><input type="file" accept=".tgs,.json,.lottie,application/json,application/x-tgsticker" onChange={(e) => void chooseFile(kind, row, e.target.files?.[0] ?? null)} /><em><FileJson2 size={13} />{row.file?.name ?? t("gifts.chooseFile")}</em></label>
           <div className="collectible-inline-preview">{row.animation ? <AnimationPreview data={row.animation} compact /> : <Sparkles size={16} />}</div>
-          <button className="icon-btn danger" type="button" disabled={rows.length === 1} onClick={() => { setRows(rows.filter((value) => value.key !== row.key)); invalidate(); }} aria-label={t("collectibles.remove")}><Trash2 size={14} /></button>
+          <button className="icon-btn danger" type="button" disabled={rows.length <= 2} onClick={() => { setRows(rebalanceRarity(rows.filter((value) => value.key !== row.key))); invalidate(); }} aria-label={t("collectibles.remove")}><Trash2 size={14} /></button>
           {row.fileError && <span className="collectible-file-error">{row.fileError}</span>}
         </div>)}
       </div>
@@ -211,7 +244,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
           {renderAnimatedRows("models", models, setModels)}
           {renderAnimatedRows("patterns", patterns, setPatterns)}
           <section className="collectible-section">
-            <div className="collectible-section-head"><div><strong>{t("collectibles.backdrops")}</strong><span>{t("collectibles.colorHint")}</span></div><div className="collectible-section-tools"><Badge tone={rarityTotals.backdrops > 0 ? "good" : "neutral"}>{rarityTotals.backdrops}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setBackdrops([...backdrops, newBackdrop()]); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div></div>
+            <div className="collectible-section-head"><div><strong>{t("collectibles.backdrops")}</strong><span>{t("collectibles.colorHint")}</span></div><div className="collectible-section-tools"><Badge tone={rarityTotals.backdrops > 0 ? "good" : "neutral"}>{rarityTotals.backdrops}‰</Badge><button className="btn compact-btn" type="button" onClick={() => { setBackdrops(rebalanceRarity([...backdrops, newBackdrop(backdrops)])); invalidate(); }}><Plus size={13} />{t("collectibles.addAttribute")}</button></div></div>
             <div className="collectible-rows">{backdrops.map((row, index) => <div className="collectible-row backdrop" key={row.key}>
               <div className="collectible-row-index">{index + 1}</div>
               <label><span>{t("common.name")}</span><input value={row.name} maxLength={128} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, name: e.target.value } : value)); invalidate(); }} /></label>
@@ -220,7 +253,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
               <label><span>{t("gifts.sortOrder")}</span><input type="number" value={row.sortOrder} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, sortOrder: e.target.value } : value)); invalidate(); }} /></label>
               {(["center", "edge", "pattern", "text"] as const).map((field) => <label className="collectible-color" key={field}><span>{t(`collectibles.color.${field}`)}</span><input type="color" value={row[field]} onChange={(e) => { setBackdrops(backdrops.map((value) => value.key === row.key ? { ...value, [field]: e.target.value } : value)); invalidate(); }} /></label>)}
               <div className="collectible-backdrop-preview" style={{ background: `radial-gradient(circle, ${row.center}, ${row.edge})`, color: row.text }}>Aa</div>
-              <button className="icon-btn danger" type="button" disabled={backdrops.length === 1} onClick={() => { setBackdrops(backdrops.filter((value) => value.key !== row.key)); invalidate(); }} aria-label={t("collectibles.remove")}><Trash2 size={14} /></button>
+              <button className="icon-btn danger" type="button" disabled={backdrops.length <= 2} onClick={() => { setBackdrops(rebalanceRarity(backdrops.filter((value) => value.key !== row.key))); invalidate(); }} aria-label={t("collectibles.remove")}><Trash2 size={14} /></button>
             </div>)}</div>
           </section>
         </section>

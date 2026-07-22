@@ -48,12 +48,19 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 				Document: collectibleTestDocumentPtr(baseDocumentID+1, "model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "model"), Animation: collectibleTestAnimationPtr("model.tgs")},
 			{Kind: domain.StarGiftCollectibleModel, Name: "Crafted", RarityKind: domain.StarGiftRarityLegendary, Crafted: true,
 				Document: collectibleTestDocumentPtr(baseDocumentID+2, "crafted.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "crafted"), Animation: collectibleTestAnimationPtr("crafted.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Base Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestDocumentPtr(baseDocumentID+4, "model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "model-two"), Animation: collectibleTestAnimationPtr("model-two.tgs")},
 		},
-		Patterns: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectibleBackdrop, Name: "Night", BackdropID: 77,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000}},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "pattern-two"), Animation: collectibleTestAnimationPtr("pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Night", BackdropID: 77, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Day", BackdropID: 78, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+		},
 		Actor: "integration", CommandID: "lifecycle-pool-" + suffix,
 	}); err != nil {
 		t.Fatalf("publish lifecycle pool: %v", err)
@@ -760,12 +767,19 @@ func TestStarGiftChannelLifecycleAtomicPostgres(t *testing.T) {
 				Document: collectibleTestDocumentPtr(baseDocumentID+1, "channel-model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "channel-model"), Animation: collectibleTestAnimationPtr("channel-model.tgs")},
 			{Kind: domain.StarGiftCollectibleModel, Name: "Channel Crafted", RarityKind: domain.StarGiftRarityLegendary, Crafted: true,
 				Document: collectibleTestDocumentPtr(baseDocumentID+2, "channel-crafted.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "channel-crafted"), Animation: collectibleTestAnimationPtr("channel-crafted.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Channel Model Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestDocumentPtr(baseDocumentID+4, "channel-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "channel-model-two"), Animation: collectibleTestAnimationPtr("channel-model-two.tgs")},
 		},
-		Patterns: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectiblePattern, Name: "Channel Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "channel-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "channel-pattern"), Animation: collectibleTestAnimationPtr("channel-pattern.tgs")}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectibleBackdrop, Name: "Channel Backdrop", BackdropID: 88,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000}},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Channel Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "channel-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "channel-pattern"), Animation: collectibleTestAnimationPtr("channel-pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Channel Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "channel-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "channel-pattern-two"), Animation: collectibleTestAnimationPtr("channel-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Channel Backdrop", BackdropID: 88, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Channel Backdrop Two", BackdropID: 89, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+		},
 		Actor: "integration", CommandID: "channel-gift-pool-" + suffix,
 	}); err != nil {
 		t.Fatalf("publish channel gift pool: %v", err)
@@ -1088,13 +1102,19 @@ func TestStarGiftCraftFailureConsumesThreeInputsPostgres(t *testing.T) {
 				Document: collectibleTestDocumentPtr(baseDocumentID+1, "base.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "base"), Animation: collectibleTestAnimationPtr("base.tgs")},
 			{Kind: domain.StarGiftCollectibleModel, Name: "Crafted", RarityKind: domain.StarGiftRarityLegendary, Crafted: true,
 				Document: collectibleTestDocumentPtr(baseDocumentID+2, "crafted.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "crafted"), Animation: collectibleTestAnimationPtr("crafted.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Base Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestDocumentPtr(baseDocumentID+4, "base-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "base-two"), Animation: collectibleTestAnimationPtr("base-two.tgs")},
 		},
-		Patterns: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern",
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 88,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000}},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "pattern-two"), Animation: collectibleTestAnimationPtr("pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 88, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 89, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000},
+		},
 		Actor: "integration", CommandID: "three-input-pool-" + suffix,
 	}); err != nil {
 		t.Fatalf("publish three-input collectible: %v", err)

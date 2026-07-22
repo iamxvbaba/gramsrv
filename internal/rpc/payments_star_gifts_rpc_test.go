@@ -594,16 +594,19 @@ func TestStarGiftCollectiblePreviewUpgradeFormUniqueAndServiceProjection(t *test
 		t.Fatalf("gift service = %T", r.deps.Gifts)
 	}
 	model := collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8101, "Aurora")
+	modelTwo := collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8104, "Aurora Two")
 	crafted := collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8103, "Crafted Aurora")
 	crafted.Crafted = true
 	crafted.RarityKind = domain.StarGiftRarityLegendary
 	crafted.RarityPermille = 0
 	pattern := collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8102, "Orbit")
+	patternTwo := collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8105, "Orbit Two")
 	backdrop := collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 1, "Midnight")
+	backdropTwo := collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 2, "Daylight")
 	if _, err := giftService.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: gift.ID, UpgradeStars: 75, SupplyTotal: 500, SlugPrefix: "cake",
-		Models: []domain.StarGiftCollectibleAttribute{model, crafted}, Patterns: []domain.StarGiftCollectibleAttribute{pattern},
-		Backdrops: []domain.StarGiftCollectibleAttribute{backdrop}, Actor: "test", CommandID: "collectible-rpc",
+		Models: []domain.StarGiftCollectibleAttribute{model, crafted, modelTwo}, Patterns: []domain.StarGiftCollectibleAttribute{pattern, patternTwo},
+		Backdrops: []domain.StarGiftCollectibleAttribute{backdrop, backdropTwo}, Actor: "test", CommandID: "collectible-rpc",
 	}); err != nil {
 		t.Fatalf("publish collectible pool: %v", err)
 	}
@@ -615,11 +618,11 @@ func TestStarGiftCollectiblePreviewUpgradeFormUniqueAndServiceProjection(t *test
 	}
 
 	preview, err := r.onPaymentsGetStarGiftUpgradePreview(ownerCtx, gift.ID)
-	if err != nil || len(preview.SampleAttributes) != 3 {
+	if err != nil || len(preview.SampleAttributes) != 6 {
 		t.Fatalf("upgrade preview = %#v err %v", preview, err)
 	}
 	attributes, err := r.onPaymentsGetStarGiftUpgradeAttributes(ownerCtx, gift.ID)
-	if err != nil || len(attributes.Attributes) != 4 {
+	if err != nil || len(attributes.Attributes) != 7 {
 		t.Fatalf("upgrade attributes = %#v err %v", attributes, err)
 	}
 	craftedTG, ok := attributes.Attributes[1].(*tg.StarGiftAttributeModel)
@@ -1004,10 +1007,19 @@ func TestStarGiftChannelSaga(t *testing.T) {
 	giftService := r.deps.Gifts.(*appstargifts.Service)
 	if _, err := giftService.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: gift.ID, UpgradeStars: 75, SupplyTotal: 10, SlugPrefix: "channel-cake",
-		Models:    []domain.StarGiftCollectibleAttribute{collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8201, "Aurora")},
-		Patterns:  []domain.StarGiftCollectibleAttribute{collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8202, "Orbit")},
-		Backdrops: []domain.StarGiftCollectibleAttribute{collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 2, "Midnight")},
-		Actor:     "test", CommandID: "channel-collectible-rpc",
+		Models: []domain.StarGiftCollectibleAttribute{
+			collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8201, "Aurora"),
+			collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8204, "Aurora Two"),
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8202, "Orbit"),
+			collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8205, "Orbit Two"),
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 2, "Midnight"),
+			collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 3, "Daylight"),
+		},
+		Actor: "test", CommandID: "channel-collectible-rpc",
 	}); err != nil {
 		t.Fatalf("publish channel collectible pool: %v", err)
 	}

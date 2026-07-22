@@ -43,24 +43,29 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 			Document: collectibleTestDocumentPtr(baseDocumentID+3, "crafted-model.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+3, "crafted-model"), Animation: collectibleTestAnimationPtr("crafted-model.tgs"),
 			OfficialDocumentID: 5100000000000000003,
+		}, {
+			Kind: domain.StarGiftCollectibleModel, Name: "Solar", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 78,
+			Document: collectibleTestDocumentPtr(baseDocumentID+4, "model-two.tgs"),
+			Blob:     collectibleTestBlobPtr(baseDocumentID+4, "model-two"), Animation: collectibleTestAnimationPtr("model-two.tgs"),
+			OfficialDocumentID: 5100000000000000004,
 		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999,
-		}},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Rings", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 11,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "pattern-two"), Animation: collectibleTestAnimationPtr("pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Daylight", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1},
+		},
 		Actor: "integration", CommandID: "collectibles-" + suffix,
 		OfficialGiftID: 5170145012310081615, SourceManifestSHA256: make([]byte, 32),
 	})
 	if err != nil {
 		t.Fatalf("publish collectible pool: %v", err)
 	}
-	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 2 || len(poolRevision.Patterns) != 1 || len(poolRevision.Backdrops) != 1 ||
+	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 3 || len(poolRevision.Patterns) != 2 || len(poolRevision.Backdrops) != 2 ||
 		!poolRevision.Models[1].Crafted || poolRevision.Models[1].RarityKind != domain.StarGiftRarityLegendary ||
 		poolRevision.Models[1].RarityPermille != 0 || poolRevision.Models[0].OfficialDocumentID != 5100000000000000001 {
 		t.Fatalf("published pool = %+v", poolRevision)
@@ -353,21 +358,22 @@ WHERE owner_user_id=$1 AND msg_id=$2`, sender.ID, ownerMessage.ID).Scan(&senderA
 	}
 	soldOutRevision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: soldOutEntry.Gift.ID, UpgradeStars: 10, SupplyTotal: 1, SlugPrefix: "nova-" + suffix,
-		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+101, "nova-model.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+101, "nova-model"), Animation: collectibleTestAnimationPtr("nova-model.tgs"),
-		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Void", BackdropID: 2,
-			CenterColor: 0x101010, EdgeColor: 0x202020, PatternColor: 0x303030, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-		}},
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+101, "nova-model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+101, "nova-model"), Animation: collectibleTestAnimationPtr("nova-model.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Nova Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+103, "nova-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+103, "nova-model-two"), Animation: collectibleTestAnimationPtr("nova-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Ray Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+104, "nova-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+104, "nova-pattern-two"), Animation: collectibleTestAnimationPtr("nova-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Void", BackdropID: 2, CenterColor: 0x101010, EdgeColor: 0x202020, PatternColor: 0x303030, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Light", BackdropID: 3, CenterColor: 0xeeeeee, EdgeColor: 0xcccccc, PatternColor: 0xaaaaaa, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
 		Actor: "integration", CommandID: "soldout-pool-" + suffix,
 	})
 	if err != nil {
@@ -437,6 +443,65 @@ WHERE owner_user_id=$1 AND msg_id=$2`, sender.ID, ownerMessage.ID).Scan(&senderA
 	}
 }
 
+func TestStarGiftCollectiblePreviewActivationGuardPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	gifts := NewStarGiftStore(pool)
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Unsafe Preview " + suffix, Stars: 10, ConvertStars: 5, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "unsafe-preview.tgs"), Blob: collectibleTestBlob(baseDocumentID, "unsafe-preview"),
+		Animation: collectibleTestAnimation("unsafe-preview.tgs"), Actor: "integration", CommandID: "unsafe-preview-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create unsafe-preview catalog: %v", err)
+	}
+	var revisionID int64
+	if err := pool.QueryRow(ctx, `
+INSERT INTO star_gift_collectible_revisions
+    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id)
+VALUES ($1, 1, 10, 10, $2, 'draft', 'integration', $3)
+RETURNING id`, entry.Gift.ID, "unsafe-"+suffix, "unsafe-preview-pool-"+suffix).Scan(&revisionID); err != nil {
+		t.Fatalf("insert unsafe-preview revision: %v", err)
+	}
+	animation := collectibleTestAnimation("unsafe-preview-attribute.tgs")
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_models
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, crafted, sort_order)
+VALUES ($1, 'Only Model', $2, $3::jsonb, $4, 'model.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, false, 0)`,
+		revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+		t.Fatalf("insert unsafe-preview model: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_patterns
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, sort_order)
+VALUES ($1, 'Only Pattern', $2, $3::jsonb, $4, 'pattern.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, 0)`,
+		revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+		t.Fatalf("insert unsafe-preview pattern: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_backdrops
+    (collectible_revision_id, name, backdrop_id, center_color, edge_color, pattern_color, text_color,
+     rarity_kind, rarity_permille, sort_order)
+VALUES ($1, 'Only Backdrop', 1, 1, 2, 3, 4, 'permille', 1000, 0)`, revisionID); err != nil {
+		t.Fatalf("insert unsafe-preview backdrop: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE star_gift_collectible_revisions SET status='published', published_at=now() WHERE id=$1`, revisionID); err != nil {
+		t.Fatalf("publish unsafe-preview revision directly: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_catalog SET collectible_revision_id=$2 WHERE gift_id=$1`, entry.Gift.ID, revisionID); err == nil {
+		t.Fatal("database activated a collectible preview pool with one client-distinct item per category")
+	}
+	var activeRevisionID *int64
+	if err := pool.QueryRow(ctx, `SELECT collectible_revision_id FROM star_gift_catalog WHERE gift_id=$1`, entry.Gift.ID).Scan(&activeRevisionID); err != nil || activeRevisionID != nil {
+		t.Fatalf("unsafe preview activation pointer=%v err=%v, want null", activeRevisionID, err)
+	}
+}
+
 func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -460,27 +525,28 @@ func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 	}
 	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 10, SlugPrefix: "no-craft-" + suffix,
-		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Ordinary", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+1, "no-craft-model.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+1, "no-craft-model"), Animation: collectibleTestAnimationPtr("no-craft-model.tgs"),
-		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-		}},
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Ordinary", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "no-craft-model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "no-craft-model"), Animation: collectibleTestAnimationPtr("no-craft-model.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Ordinary Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+3, "no-craft-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "no-craft-model-two"), Animation: collectibleTestAnimationPtr("no-craft-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+4, "no-craft-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "no-craft-pattern-two"), Animation: collectibleTestAnimationPtr("no-craft-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
 		Actor: "integration", CommandID: "no-craft-pool-" + suffix,
 	})
 	if err != nil {
 		t.Fatalf("publish no-craft pool: %v", err)
 	}
-	if len(revision.Models) != 1 || revision.Models[0].Crafted {
+	if len(revision.Models) != 2 || revision.Models[0].Crafted || revision.Models[1].Crafted {
 		t.Fatalf("no-craft pool models = %+v", revision.Models)
 	}
 

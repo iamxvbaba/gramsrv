@@ -22,7 +22,7 @@ func TestOfficialStarGiftBundleIsAtomicPostgres(t *testing.T) {
 	attribute := func(kind domain.StarGiftCollectibleAttributeKind, id int64, name string) domain.StarGiftCollectibleAttribute {
 		value := domain.StarGiftCollectibleAttribute{Kind: kind, Name: name, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 918}
 		if kind == domain.StarGiftCollectibleBackdrop {
-			value.BackdropID = 0
+			value.BackdropID = int(id)
 			value.CenterColor, value.EdgeColor, value.PatternColor, value.TextColor = 1, 2, 3, 4
 			return value
 		}
@@ -46,10 +46,19 @@ func TestOfficialStarGiftBundleIsAtomicPostgres(t *testing.T) {
 		},
 		Collectible: &domain.StarGiftCollectibleWrite{
 			UpgradeStars: 100, SupplyTotal: 10, SlugPrefix: "official-" + suffix,
-			Models:    []domain.StarGiftCollectibleAttribute{attribute(domain.StarGiftCollectibleModel, baseID+1, "model")},
-			Patterns:  []domain.StarGiftCollectibleAttribute{attribute(domain.StarGiftCollectiblePattern, baseID+2, "pattern")},
-			Backdrops: []domain.StarGiftCollectibleAttribute{attribute(domain.StarGiftCollectibleBackdrop, 0, "backdrop")},
-			Actor:     "integration", CommandID: "official-pool-" + suffix,
+			Models: []domain.StarGiftCollectibleAttribute{
+				attribute(domain.StarGiftCollectibleModel, baseID+1, "model"),
+				attribute(domain.StarGiftCollectibleModel, baseID+3, "model-two"),
+			},
+			Patterns: []domain.StarGiftCollectibleAttribute{
+				attribute(domain.StarGiftCollectiblePattern, baseID+2, "pattern"),
+				attribute(domain.StarGiftCollectiblePattern, baseID+4, "pattern-two"),
+			},
+			Backdrops: []domain.StarGiftCollectibleAttribute{
+				attribute(domain.StarGiftCollectibleBackdrop, 0, "backdrop"),
+				attribute(domain.StarGiftCollectibleBackdrop, 1, "backdrop-two"),
+			},
+			Actor: "integration", CommandID: "official-pool-" + suffix,
 			OfficialGiftID: 5170145012310081615, SourceManifestSHA256: manifestSHA,
 		},
 	}
@@ -81,9 +90,15 @@ FROM star_gift_catalog_revisions WHERE id=$1`, result.Catalog.Gift.RevisionID).S
 			attribute(domain.StarGiftCollectibleModel, baseID+101, "duplicate"),
 			attribute(domain.StarGiftCollectibleModel, baseID+102, "duplicate"),
 		},
-		Patterns:  []domain.StarGiftCollectibleAttribute{attribute(domain.StarGiftCollectiblePattern, baseID+103, "pattern")},
-		Backdrops: []domain.StarGiftCollectibleAttribute{attribute(domain.StarGiftCollectibleBackdrop, 0, "backdrop")},
-		Actor:     "integration", CommandID: "rollback-pool-" + suffix,
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			attribute(domain.StarGiftCollectiblePattern, baseID+103, "pattern"),
+			attribute(domain.StarGiftCollectiblePattern, baseID+104, "pattern-two"),
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			attribute(domain.StarGiftCollectibleBackdrop, 0, "backdrop"),
+			attribute(domain.StarGiftCollectibleBackdrop, 1, "backdrop-two"),
+		},
+		Actor: "integration", CommandID: "rollback-pool-" + suffix,
 	}
 	if _, err := store.CreateCatalogBundle(ctx, failing); !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
 		t.Fatalf("failing bundle err=%v", err)

@@ -120,11 +120,14 @@ func TestAdminAPIImportStarGiftMultipart(t *testing.T) {
 func TestAdminAPIPublishStarGiftCollectiblesMultipart(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	metadata := `{"command_id":"pool-1","actor":"ops","reason":"pool","dry_run":true,"upgrade_stars":125,"supply_total":100,"slug_prefix":"cake","models":[{"name":"Ruby","rarity_permille":1000,"sort_order":0,"file_key":"model-0"}],"patterns":[{"name":"Stars","rarity_permille":1000,"sort_order":0,"file_key":"pattern-0"}],"backdrops":[{"name":"Night","backdrop_id":1,"center_color":1122867,"edge_color":2241348,"pattern_color":3359829,"text_color":16777215,"rarity_permille":1000,"sort_order":0}]}`
+	metadata := `{"command_id":"pool-1","actor":"ops","reason":"pool","dry_run":true,"upgrade_stars":125,"supply_total":100,"slug_prefix":"cake","models":[{"name":"Ruby","rarity_permille":500,"sort_order":0,"file_key":"model-0"},{"name":"Sapphire","rarity_permille":500,"sort_order":1,"file_key":"model-1"}],"patterns":[{"name":"Stars","rarity_permille":500,"sort_order":0,"file_key":"pattern-0"},{"name":"Moons","rarity_permille":500,"sort_order":1,"file_key":"pattern-1"}],"backdrops":[{"name":"Night","backdrop_id":1,"center_color":1122867,"edge_color":2241348,"pattern_color":3359829,"text_color":16777215,"rarity_permille":500,"sort_order":0},{"name":"Day","backdrop_id":2,"center_color":11189196,"edge_color":7833753,"pattern_color":14544639,"text_color":1118481,"rarity_permille":500,"sort_order":1}]}`
 	if err := writer.WriteField("metadata", metadata); err != nil {
 		t.Fatal(err)
 	}
-	for key, name := range map[string]string{"model-0": "ruby.lottie", "pattern-0": "stars.tgs"} {
+	for key, name := range map[string]string{
+		"model-0": "ruby.lottie", "model-1": "sapphire.lottie",
+		"pattern-0": "stars.tgs", "pattern-1": "moons.tgs",
+	} {
 		part, err := writer.CreateFormFile(key, name)
 		if err != nil {
 			t.Fatal(err)
@@ -146,8 +149,8 @@ func TestAdminAPIPublishStarGiftCollectiblesMultipart(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if svc.req.GiftID != 11 || len(svc.req.Models) != 1 || svc.req.Models[0].FileName != "ruby.lottie" ||
-		string(svc.req.Patterns[0].Data) != "pattern-0" || len(svc.req.Backdrops) != 1 {
+	if svc.req.GiftID != 11 || len(svc.req.Models) != 2 || svc.req.Models[0].FileName != "ruby.lottie" ||
+		string(svc.req.Patterns[0].Data) != "pattern-0" || len(svc.req.Backdrops) != 2 || svc.req.Backdrops[1].BackdropID != 2 {
 		t.Fatalf("decoded collectible request = %+v", svc.req)
 	}
 }

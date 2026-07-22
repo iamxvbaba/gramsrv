@@ -132,18 +132,18 @@ func TestCreateCatalogBundleMaterializesPublishableCollectibleDocuments(t *testi
 		},
 		Collectible: &domain.StarGiftCollectibleWrite{
 			UpgradeStars: 100, SupplyTotal: 1000, SlugPrefix: "official-10",
-			Models: []domain.StarGiftCollectibleAttribute{{
-				Kind: domain.StarGiftCollectibleModel, Name: "Model", RarityKind: domain.StarGiftRarityPermille,
-				RarityPermille: 1000, Animation: &animation,
-			}},
-			Patterns: []domain.StarGiftCollectibleAttribute{{
-				Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille,
-				RarityPermille: 1000, Animation: &animation,
-			}},
-			Backdrops: []domain.StarGiftCollectibleAttribute{{
-				Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", RarityKind: domain.StarGiftRarityPermille,
-				RarityPermille: 1000,
-			}},
+			Models: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectibleModel, Name: "Model", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500, Animation: &animation},
+				{Kind: domain.StarGiftCollectibleModel, Name: "Model Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500, Animation: &animation},
+			},
+			Patterns: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500, Animation: &animation},
+				{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500, Animation: &animation},
+			},
+			Backdrops: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+				{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			},
 			Actor: "test", CommandID: "official-pool", OfficialGiftID: 10,
 			SourceManifestSHA256: manifestSHA,
 		},
@@ -151,7 +151,7 @@ func TestCreateCatalogBundleMaterializesPublishableCollectibleDocuments(t *testi
 	if err != nil {
 		t.Fatalf("create official collectible bundle: %v", err)
 	}
-	if result.Collectible == nil || len(result.Collectible.Models) != 1 || len(result.Collectible.Patterns) != 1 {
+	if result.Collectible == nil || len(result.Collectible.Models) != 2 || len(result.Collectible.Patterns) != 2 {
 		t.Fatalf("collectible result = %+v", result.Collectible)
 	}
 	model := result.Collectible.Models[0].Document
