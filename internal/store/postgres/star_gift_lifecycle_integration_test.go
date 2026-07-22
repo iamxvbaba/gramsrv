@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"telesrv/deploy"
 	"telesrv/internal/domain"
 )
 
@@ -21,10 +24,11 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 	offerBuyer := createTestUser(t, ctx, users, "+1881"+suffix+"03", "OfferBuyer", "")
 	resaleBuyer := createTestUser(t, ctx, users, "+1881"+suffix+"04", "ResaleBuyer", "")
 	loser := createTestUser(t, ctx, users, "+1881"+suffix+"05", "AuctionLoser", "")
+	prepayPayer := createTestUser(t, ctx, users, "+1881"+suffix+"06", "PrepayPayer", "")
 	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
 
 	stars := NewStarsStore(pool)
-	for _, user := range []domain.User{buyer, owner, offerBuyer, resaleBuyer, loser} {
+	for _, user := range []domain.User{buyer, owner, offerBuyer, resaleBuyer, loser, prepayPayer} {
 		if _, _, err := stars.EnsureGrant(ctx, user.ID, 10000, now); err != nil {
 			t.Fatalf("grant stars to %d: %v", user.ID, err)
 		}
@@ -100,10 +104,10 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 		t.Fatalf("prepaid target = %+v price %d err %v", target, price, err)
 	}
 	prepaid, err := lifecycle.PrepayStarGiftUpgrade(ctx, domain.StarGiftPrepaidUpgradeRequest{
-		PayerUserID: buyer.ID, Owner: ownerPeer, Hash: purchased.Saved.PrepaidUpgradeHash,
+		PayerUserID: prepayPayer.ID, Owner: ownerPeer, Hash: purchased.Saved.PrepaidUpgradeHash,
 		ChargeStars: 100, FormID: 11002, CommandKey: "prepay-" + suffix, Date: now + 1,
 	})
-	if err != nil || prepaid.Saved.PrepaidUpgradeStars != 100 || prepaid.Saved.PrepaidUpgradeHash != "" || prepaid.Balance.Balance != 9850 {
+	if err != nil || prepaid.Saved.PrepaidUpgradeStars != 100 || prepaid.Saved.PrepaidUpgradeHash != "" || prepaid.Balance.Balance != 9900 {
 		t.Fatalf("prepay upgrade = %+v err %v", prepaid, err)
 	}
 	prepaySenderAction := prepaid.Send.SenderMessage.Media.ServiceAction.StarGift
@@ -114,7 +118,7 @@ func TestStarGiftLifecycleAggregatePostgres(t *testing.T) {
 		t.Fatalf("prepay gift_msg_id is not owner-only: sender=%+v owner=%+v purchase=%+v",
 			prepaySenderAction, prepayOwnerAction, purchased.Send)
 	}
-	prepaySenderDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, buyer.ID, prepaid.Send.SenderMessage.Pts-1, 1)
+	prepaySenderDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, prepayPayer.ID, prepaid.Send.SenderMessage.Pts-1, 1)
 	if err != nil || len(prepaySenderDifference) != 1 || prepaySenderDifference[0].Message.Media == nil ||
 		prepaySenderDifference[0].Message.Media.ServiceAction == nil ||
 		prepaySenderDifference[0].Message.Media.ServiceAction.StarGift == nil ||
@@ -139,10 +143,26 @@ WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, prepaid.Send.RecipientMessa
 		sharedPrepayMedia.ServiceAction.StarGift == nil || sharedPrepayMedia.ServiceAction.StarGift.GiftMsgID != 0 {
 		t.Fatalf("shared prepay media retained account-local gift_msg_id: media=%+v err=%v", sharedPrepayMedia, err)
 	}
-	upgraded, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
-		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: purchased.Saved.MsgID},
+	if byPrepay, found, err := gifts.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: prepaid.Send.RecipientMessage.ID}); err != nil || !found || byPrepay.ID != purchased.Saved.ID {
+		t.Fatalf("prepay owner message ref = %+v found=%v err=%v", byPrepay, found, err)
+	}
+	var ownerPrepayAlias, payerPrepayAlias int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2 AND saved_gift_id=$3`, owner.ID, prepaid.Send.RecipientMessage.ID, purchased.Saved.ID).Scan(&ownerPrepayAlias); err != nil {
+		t.Fatalf("load owner prepay alias: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2`, prepayPayer.ID, prepaid.Send.SenderMessage.ID).Scan(&payerPrepayAlias); err != nil {
+		t.Fatalf("load payer prepay alias: %v", err)
+	}
+	if ownerPrepayAlias != 1 || payerPrepayAlias != 0 {
+		t.Fatalf("prepay aliases owner=%d payer=%d, want owner-only", ownerPrepayAlias, payerPrepayAlias)
+	}
+	upgradeReq := domain.StarGiftUpgradeRequest{
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: prepaid.Send.RecipientMessage.ID},
 		RequirePrepaid: true, KeepOriginalDetails: true, CommandKey: "upgrade-" + suffix, Date: now + 2,
-	})
+	}
+	upgraded, err := upgrades.UpgradeStarGift(ctx, upgradeReq)
 	if err != nil {
 		t.Fatalf("upgrade prepaid gift: %v", err)
 	}
@@ -198,7 +218,9 @@ WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, prepaid.Send.RecipientMessa
 	}
 	upgradeAction := upgraded.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
 	senderUpgradeAction := upgraded.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
-	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
+	ownerSourceEdit := upgradedSourceEditForMessage(upgraded, owner.ID, purchased.Saved.MsgID)
+	ownerPrepayEdit := upgradedSourceEditForMessage(upgraded, owner.ID, prepaid.Send.RecipientMessage.ID)
+	payerPrepayEdit := upgradedSourceEditForMessage(upgraded, prepayPayer.ID, prepaid.Send.SenderMessage.ID)
 	if upgradeAction == nil || upgradeAction.SavedID != 0 || upgradeAction.Peer.Type != "" || upgradeAction.Peer.ID != 0 ||
 		upgradeAction.CanCraftAt != now+2 || senderUpgradeAction == nil || senderUpgradeAction.SavedID != 0 ||
 		senderUpgradeAction.CanCraftAt != now+2 ||
@@ -207,6 +229,36 @@ WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, prepaid.Send.RecipientMessa
 		ownerSourceEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != upgraded.Saved.UpgradeMsgID ||
 		ownerSourceEdit.Message.Media.ServiceAction.StarGift.CanUpgrade {
 		t.Fatalf("upgrade message linkage = action %+v source edit %+v", upgradeAction, ownerSourceEdit)
+	}
+	if ownerPrepayEdit.Event.Pts <= ownerSourceEdit.Event.Pts || ownerPrepayEdit.Message.Media == nil ||
+		ownerPrepayEdit.Message.Media.ServiceAction == nil || ownerPrepayEdit.Message.Media.ServiceAction.StarGift == nil ||
+		ownerPrepayEdit.Message.Media.ServiceAction.StarGift.CanUpgrade ||
+		ownerPrepayEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != upgraded.Send.RecipientMessage.ID {
+		t.Fatalf("owner prepay card did not converge with upgrade: %+v", ownerPrepayEdit)
+	}
+	if payerPrepayEdit.Event.Pts <= prepaid.Send.SenderMessage.Pts || payerPrepayEdit.Message.Media == nil ||
+		payerPrepayEdit.Message.Media.ServiceAction == nil || payerPrepayEdit.Message.Media.ServiceAction.StarGift == nil ||
+		payerPrepayEdit.Message.Media.ServiceAction.StarGift.CanUpgrade ||
+		payerPrepayEdit.Message.Media.ServiceAction.StarGift.UpgradeMsgID != 0 {
+		t.Fatalf("third-party payer prepay card retained an owner action/link: %+v", payerPrepayEdit)
+	}
+	ownerUpgradeDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, owner.ID, upgraded.Send.RecipientMessage.Pts-1, 3)
+	if err != nil || len(ownerUpgradeDifference) != 3 ||
+		ownerUpgradeDifference[0].Type != domain.UpdateEventNewMessage ||
+		ownerUpgradeDifference[1].Type != domain.UpdateEventEditMessage || ownerUpgradeDifference[1].Message.ID != purchased.Saved.MsgID ||
+		ownerUpgradeDifference[2].Type != domain.UpdateEventEditMessage || ownerUpgradeDifference[2].Message.ID != prepaid.Send.RecipientMessage.ID {
+		t.Fatalf("owner prepaid upgrade difference = %+v err=%v", ownerUpgradeDifference, err)
+	}
+	payerUpgradeDifference, err := NewUpdateEventStore(pool).ListAfter(ctx, prepayPayer.ID, prepaid.Send.SenderMessage.Pts, 1)
+	if err != nil || len(payerUpgradeDifference) != 1 || payerUpgradeDifference[0].Type != domain.UpdateEventEditMessage ||
+		payerUpgradeDifference[0].Message.ID != prepaid.Send.SenderMessage.ID {
+		t.Fatalf("payer prepaid upgrade difference = %+v err=%v", payerUpgradeDifference, err)
+	}
+	replayedUpgrade, err := upgrades.UpgradeStarGift(ctx, upgradeReq)
+	if err != nil || !replayedUpgrade.Duplicate || replayedUpgrade.Unique.ID != upgraded.Unique.ID ||
+		upgradedSourceEditForMessage(replayedUpgrade, owner.ID, purchased.Saved.MsgID).Event.Pts != ownerSourceEdit.Event.Pts ||
+		upgradedSourceEditForMessage(replayedUpgrade, owner.ID, prepaid.Send.RecipientMessage.ID).Event.Pts != ownerPrepayEdit.Event.Pts {
+		t.Fatalf("replay prepaid upgrade from notification = %+v err=%v", replayedUpgrade, err)
 	}
 	var sharedUpgradeSourceMediaJSON string
 	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
@@ -221,6 +273,23 @@ WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, purchased.Saved.MsgID).Scan
 		sharedUpgradeSourceMedia.ServiceAction.StarGift.GiftMsgID != 0 {
 		t.Fatalf("shared upgraded source media retained account-local message id: media=%+v err=%v", sharedUpgradeSourceMedia, err)
 	}
+	var sharedUpgradedPrepayMediaJSON string
+	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
+JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
+WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, prepaid.Send.RecipientMessage.ID).Scan(&sharedUpgradedPrepayMediaJSON); err != nil {
+		t.Fatalf("load shared upgraded prepay media: %v", err)
+	}
+	sharedUpgradedPrepayMedia, err := decodeMessageMedia(sharedUpgradedPrepayMediaJSON)
+	if err != nil || sharedUpgradedPrepayMedia == nil || sharedUpgradedPrepayMedia.ServiceAction == nil ||
+		sharedUpgradedPrepayMedia.ServiceAction.StarGift == nil ||
+		sharedUpgradedPrepayMedia.ServiceAction.StarGift.CanUpgrade ||
+		sharedUpgradedPrepayMedia.ServiceAction.StarGift.PrepaidUpgradeHash != "" ||
+		sharedUpgradedPrepayMedia.ServiceAction.StarGift.UpgradeMsgID != 0 ||
+		sharedUpgradedPrepayMedia.ServiceAction.StarGift.GiftMsgID != 0 {
+		t.Fatalf("shared upgraded prepay media retained an action or account-local id: media=%+v err=%v", sharedUpgradedPrepayMedia, err)
+	}
+	verifyPrepaidMessageRefMigration(t, ctx, pool, purchased.Saved.ID, owner.ID, prepayPayer.ID,
+		prepaid.Send.RecipientMessage.ID, prepaid.Send.SenderMessage.ID, upgraded.Send.RecipientMessage.ID)
 	var sharedUpgradeMediaJSON string
 	if err := pool.QueryRow(ctx, `SELECT p.media::text FROM private_messages p
 JOIN message_boxes b ON b.message_sender_id=p.sender_user_id AND b.private_message_id=p.id
@@ -360,6 +429,16 @@ WHERE b.owner_user_id=$1 AND b.box_id=$2`, owner.ID, upgraded.Send.RecipientMess
 	})
 	if err != nil || transferred.Unique.Owner != ownerPeer || transferred.Saved.TransferStars != 25 || transferred.Balance.Balance != 9975 {
 		t.Fatalf("paid transfer = %+v err %v", transferred, err)
+	}
+	const historicalOwnerMessageID = 2_147_483_000
+	if _, err := pool.Exec(ctx, `INSERT INTO star_gift_user_message_refs(owner_user_id,msg_id,saved_gift_id)
+VALUES($1,$2,$3)`, resaleBuyer.ID, historicalOwnerMessageID, transferred.Saved.ID); err != nil {
+		t.Fatalf("insert historical old-owner message ref: %v", err)
+	}
+	if _, err := gifts.ResolveSavedIDs(ctx, ownerPeer, []domain.SavedStarGiftRef{{
+		Owner: ownerPeer, MsgID: historicalOwnerMessageID,
+	}}); !errors.Is(err, domain.ErrStarGiftNotFound) {
+		t.Fatalf("current owner resolved another owner's historical message ref: %v", err)
 	}
 	var retiredSourceMediaJSON string
 	var retiredSourcePTS int
@@ -1213,6 +1292,100 @@ func issueLifecyclePurchaseForm(t *testing.T, ctx context.Context, lifecycle *St
 	}
 	req.FormID = issued.FormID
 	return req
+}
+
+func upgradedSourceEditForMessage(result domain.StarGiftUpgradeResult, userID int64, messageID int) domain.EditedMessageForUser {
+	for _, edit := range result.SourceEdits {
+		if edit.UserID == userID && edit.Message.ID == messageID {
+			return edit
+		}
+	}
+	return domain.EditedMessageForUser{UserID: userID}
+}
+
+func verifyPrepaidMessageRefMigration(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	savedGiftID int64,
+	ownerUserID int64,
+	payerUserID int64,
+	ownerPrepayMessageID int,
+	payerPrepayMessageID int,
+	ownerUpgradeMessageID int,
+) {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin prepaid message migration probe: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	var messageSenderID, privateMessageID int64
+	if err := tx.QueryRow(ctx, `SELECT message_sender_id,private_message_id FROM message_boxes
+WHERE owner_user_id=$1 AND box_id=$2 AND NOT deleted`, ownerUserID, ownerPrepayMessageID).
+		Scan(&messageSenderID, &privateMessageID); err != nil {
+		t.Fatalf("load prepaid message root for migration probe: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2 AND saved_gift_id=$3`, ownerUserID, ownerPrepayMessageID, savedGiftID); err != nil {
+		t.Fatalf("remove prepaid alias for migration probe: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE message_boxes
+SET media=jsonb_set(media #- '{service_action,star_gift,upgrade_msg_id}',
+                    '{service_action,star_gift,can_upgrade}','true'::jsonb,true)
+WHERE message_sender_id=$1 AND private_message_id=$2 AND NOT deleted`, messageSenderID, privateMessageID); err != nil {
+		t.Fatalf("restore stale prepaid message boxes for migration probe: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE private_messages
+SET media=jsonb_set(media #- '{service_action,star_gift,upgrade_msg_id}',
+                    '{service_action,star_gift,can_upgrade}','true'::jsonb,true)
+WHERE sender_user_id=$1 AND id=$2`, messageSenderID, privateMessageID); err != nil {
+		t.Fatalf("restore stale shared prepaid message for migration probe: %v", err)
+	}
+
+	migrationSQL, err := deploy.Migrations.ReadFile("migrations/0135_star_gift_prepaid_message_refs.up.sql")
+	if err != nil {
+		t.Fatalf("read prepaid message migration: %v", err)
+	}
+	if _, err := tx.Exec(ctx, string(migrationSQL)); err != nil {
+		t.Fatalf("apply prepaid message migration probe: %v", err)
+	}
+
+	var aliasCount int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2 AND saved_gift_id=$3`, ownerUserID, ownerPrepayMessageID, savedGiftID).Scan(&aliasCount); err != nil || aliasCount != 1 {
+		t.Fatalf("migrated prepaid alias count=%d err=%v", aliasCount, err)
+	}
+	assertMigratedAction := func(userID int64, messageID int, wantUpgradeMessageID int) {
+		t.Helper()
+		var mediaJSON string
+		var pts int
+		if err := tx.QueryRow(ctx, `SELECT media::text,pts FROM message_boxes
+WHERE owner_user_id=$1 AND box_id=$2 AND NOT deleted`, userID, messageID).Scan(&mediaJSON, &pts); err != nil {
+			t.Fatalf("load migrated prepaid box %d/%d: %v", userID, messageID, err)
+		}
+		media, err := decodeMessageMedia(mediaJSON)
+		if err != nil || media == nil || media.ServiceAction == nil || media.ServiceAction.StarGift == nil ||
+			media.ServiceAction.StarGift.CanUpgrade || media.ServiceAction.StarGift.PrepaidUpgradeHash != "" ||
+			media.ServiceAction.StarGift.UpgradeMsgID != wantUpgradeMessageID {
+			t.Fatalf("migrated prepaid box %d/%d = %+v err=%v", userID, messageID, media, err)
+		}
+		var eventCount, outboxCount int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM user_update_events
+WHERE user_id=$1 AND pts=$2 AND event_type='edit_message' AND message_box_id=$3`, userID, pts, messageID).Scan(&eventCount); err != nil {
+			t.Fatalf("load migrated prepaid event: %v", err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM dispatch_outbox
+WHERE target_user_id=$1 AND pts=$2 AND event_type='edit_message'`, userID, pts).Scan(&outboxCount); err != nil {
+			t.Fatalf("load migrated prepaid outbox: %v", err)
+		}
+		if eventCount != 1 || outboxCount != 1 {
+			t.Fatalf("migrated prepaid event/outbox counts=%d/%d", eventCount, outboxCount)
+		}
+	}
+	assertMigratedAction(ownerUserID, ownerPrepayMessageID, ownerUpgradeMessageID)
+	assertMigratedAction(payerUserID, payerPrepayMessageID, 0)
 }
 
 func craftedSourceEditForUserAndGift(result domain.StarGiftCraftResult, userID, uniqueGiftID int64) domain.EditedMessageForUser {
