@@ -9,7 +9,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gotd/ige v0.2.2
 	github.com/gotd/log/logzap v0.1.1
-	github.com/iamxvbaba/td v1.1.3
+	github.com/iamxvbaba/td v1.1.4
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/lestrrat-go/jwx/v3 v3.1.1

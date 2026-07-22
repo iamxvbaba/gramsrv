@@ -39,7 +39,7 @@ func TestUpgradePrivateLayerRPCOnlyAcceptsAuditedAndroidConstructors(t *testing.
 }
 
 func TestGeneratedPrivateLayerRPCOverlayHasAllAuditedMethods(t *testing.T) {
-	if got, want := tlprofile.ClientRPCOverlayMethodCount(tlprofile.ClientRPCOverlayDrkloAndroid), 15; got != want {
+	if got, want := tlprofile.ClientRPCOverlayMethodCount(tlprofile.ClientRPCOverlayDrkloAndroid), 17; got != want {
 		t.Fatalf("generated DrKLO method count = %d, want %d", got, want)
 	}
 }

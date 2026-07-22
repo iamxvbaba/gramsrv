@@ -15,11 +15,12 @@ import (
 )
 
 type androidPrivateLayerFixture struct {
-	name      string
-	privateID uint32
-	semantic  tlprofile.SemanticID
-	method    string
-	wire      func(*testing.T) []byte
+	name              string
+	privateID         uint32
+	semantic          tlprofile.SemanticID
+	method            string
+	currentJoinResult bool
+	wire              func(*testing.T) []byte
 }
 
 // TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary is the production
@@ -34,7 +35,7 @@ type androidPrivateLayerFixture struct {
 func TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	fixtures := androidPrivateLayerFixtures()
-	if got, want := len(fixtures), 15; got != want {
+	if got, want := len(fixtures), 17; got != want {
 		t.Fatalf("private fixture count = %d, want %d", got, want)
 	}
 
@@ -86,6 +87,17 @@ func TestAndroidPrivateLayerRPCsAdaptAcrossCanonicalBoundary(t *testing.T) {
 					if !ok || call.WireID() != wantWireID {
 						t.Fatalf("admitted exact id = %#x, want %#x (ok=%v)", call.WireID(), wantWireID, ok)
 					}
+					if fixture.currentJoinResult {
+						var result bin.Buffer
+						if err := call.EncodeResult(&tg.MessagesChatInviteJoinResultOk{
+							Updates: &tg.UpdatesTooLong{},
+						}, &result); err != nil {
+							t.Fatalf("encode current join result: %v", err)
+						}
+						if wireID, err := result.PeekID(); err != nil || wireID != 0x445663a7 {
+							t.Fatalf("result wire = %#x err=%v, want chatInviteJoinResultOk#445663a7", wireID, err)
+						}
+					}
 				})
 			}
 		})
@@ -110,6 +122,24 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 			},
 		},
 		{
+			name: "messages.importChatInvite_alias", privateID: 0x6c50051c,
+			semantic: tlprofile.SemanticMethodMessagesImportChatInvite, method: "messages.importChatInvite",
+			currentJoinResult: true,
+			wire: func(t *testing.T) []byte {
+				return androidPrivateAliasWire(t, 0x6c50051c, &tg.MessagesImportChatInviteRequest{Hash: "private-invite"})
+			},
+		},
+		{
+			name: "channels.joinChannel_alias", privateID: 0x24b524c5,
+			semantic: tlprofile.SemanticMethodChannelsJoinChannel, method: "channels.joinChannel",
+			currentJoinResult: true,
+			wire: func(t *testing.T) []byte {
+				return androidPrivateAliasWire(t, 0x24b524c5, &tg.ChannelsJoinChannelRequest{
+					Channel: &tg.InputChannel{ChannelID: 45, AccessHash: 46},
+				})
+			},
+		},
+		{
 			name: "updates.getDifference_alias", privateID: 0x25939651,
 			semantic: tlprofile.SemanticMethodUpdatesGetDifference, method: "updates.getDifference",
 			wire: func(t *testing.T) []byte {
@@ -121,7 +151,6 @@ func androidPrivateLayerFixtures() []androidPrivateLayerFixture {
 			semantic: tlprofile.SemanticMethodMessagesCreateChat, method: "messages.createChat",
 			wire: func(t *testing.T) []byte {
 				return androidPrivateAliasWire(t, 0x0034a818, &tg.MessagesCreateChatRequest{
-					Users: []tg.InputUserClass{&tg.InputUser{UserID: 51, AccessHash: 52}},
 					Title: "private group",
 				})
 			},
