@@ -88,6 +88,79 @@ func TestValidateAppScheme(t *testing.T) {
 	}
 }
 
+func TestValidateAppLinkBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "disabled", raw: "", want: ""},
+		{name: "normalized", raw: " OWPG://Example.Test/ ", want: "owpg://example.test"},
+		{name: "missing host", raw: "owpg://", wantErr: true},
+		{name: "reserved scheme", raw: "https://example.test", wantErr: true},
+		{name: "credentials", raw: "owpg://user@example.test", wantErr: true},
+		{name: "port", raw: "owpg://example.test:443", wantErr: true},
+		{name: "path", raw: "owpg://example.test/root", wantErr: true},
+		{name: "query", raw: "owpg://example.test?tenant=one", wantErr: true},
+		{name: "fragment", raw: "owpg://example.test#root", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ValidateAppLinkBase(tc.raw)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateAppLinkBase(%q) error = %v, wantErr %v", tc.raw, err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("ValidateAppLinkBase(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAppLinkBuilderPreservesLegacyAndSupportsHostBase(t *testing.T) {
+	legacy, err := NewAppLinkBuilder("telesrv", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := legacy.Build("oauth", url.Values{"token": {"a+b"}}), "telesrv://oauth?token=a%2Bb"; got != want {
+		t.Fatalf("legacy OAuth = %q, want %q", got, want)
+	}
+	if got, want := legacy.BuildUsername("Alice", url.Values{"start": {"hello"}}), "telesrv://resolve?domain=Alice&start=hello"; got != want {
+		t.Fatalf("legacy username = %q, want %q", got, want)
+	}
+
+	hosted, err := NewAppLinkBuilder("telesrv", "owpg://links.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hosted.Build("oauth", url.Values{"token": {"a+b"}}), "owpg://links.example.test/oauth?token=a%2Bb"; got != want {
+		t.Fatalf("hosted OAuth = %q, want %q", got, want)
+	}
+	if got, want := hosted.BuildUsername("Alice", url.Values{"domain": {"spoofed"}, "start": {"hello"}}), "owpg://links.example.test/Alice?start=hello"; got != want {
+		t.Fatalf("hosted username = %q, want %q", got, want)
+	}
+
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "telesrv://oauth?token=x", want: true},
+		{raw: "owpg://links.example.test/oauth?token=x", want: true},
+		{raw: "owpg://other.example.test/oauth?token=x", want: false},
+		{raw: "owpg://links.example.test/oauth/extra?token=x", want: false},
+		{raw: "owpg://links.example.test/resolve?token=x", want: false},
+	} {
+		parsed, err := url.Parse(tc.raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hosted.MatchesRoute(parsed, "oauth"); got != tc.want {
+			t.Fatalf("MatchesRoute(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestValidateAppName(t *testing.T) {
 	if got, err := ValidateAppName("  Example Chat  "); err != nil || got != "Example Chat" {
 		t.Fatalf("ValidateAppName valid = %q, %v", got, err)

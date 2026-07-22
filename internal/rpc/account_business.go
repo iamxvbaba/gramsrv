@@ -458,7 +458,7 @@ func (r *Router) connectedBusinessBotPeerSettings(ctx context.Context, ownerUser
 		settings.BusinessBotManageURL = r.connectedBusinessBotManageURL(botUser)
 	}
 	if settings.BusinessBotManageURL == "" {
-		settings.BusinessBotManageURL = "telesrv://business-bot"
+		settings.BusinessBotManageURL = r.publicAppLink("business-bot")
 	}
 	return settings, nil
 }

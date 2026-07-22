@@ -754,6 +754,16 @@ func normalizeStickersBotShortName(raw string) string {
 	raw = strings.TrimPrefix(raw, "tg://addemoji?set=")
 	if strings.Contains(raw, "://") {
 		if parsed, err := url.Parse(raw); err == nil {
+			query := parsed.Query()
+			route := strings.Trim(parsed.Path, "/")
+			if route == "" {
+				route = strings.ToLower(parsed.Host)
+			}
+			if route == "addstickers" || route == "addemoji" {
+				if shortName := query.Get("set"); shortName != "" {
+					raw = shortName
+				}
+			}
 			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 			for i, part := range parts {
 				if (part == "addstickers" || part == "addemoji") && i+1 < len(parts) {

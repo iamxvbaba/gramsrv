@@ -649,3 +649,19 @@ func (h *stickersBotHookRecorder) PushStickerSetsChanged(_ context.Context, user
 	h.userID = userID
 	h.kind = kind
 }
+
+func TestNormalizeStickersBotShortNameAcceptsHostBasedAppLinks(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{raw: "telesrv://addstickers?set=Legacy_Pack", want: "legacy_pack"},
+		{raw: "owpg://tenant.example.test/addstickers?set=Hosted_Pack", want: "hosted_pack"},
+		{raw: "owpg://tenant.example.test/addemoji?set=Emoji_Pack", want: "emoji_pack"},
+		{raw: "https://telesrv.net/addstickers/Web_Pack", want: "web_pack"},
+	} {
+		if got := normalizeStickersBotShortName(tc.raw); got != tc.want {
+			t.Fatalf("normalizeStickersBotShortName(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}

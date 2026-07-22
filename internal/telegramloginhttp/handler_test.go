@@ -65,6 +65,10 @@ func (telegramLoginHTTPDenyLimiter) Allow(context.Context, string, int, time.Dur
 }
 
 func newTelegramLoginHTTPFixture(t *testing.T) telegramLoginHTTPFixture {
+	return newTelegramLoginHTTPFixtureWithAppLinkBase(t, "")
+}
+
+func newTelegramLoginHTTPFixtureWithAppLinkBase(t *testing.T, appLinkBase string) telegramLoginHTTPFixture {
 	t.Helper()
 	now := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
 	sealKey := make([]byte, 32)
@@ -76,7 +80,7 @@ func newTelegramLoginHTTPFixture(t *testing.T) telegramLoginHTTPFixture {
 	pepper := make([]byte, 32)
 	pepper[0] = 2
 	service, err := loginapp.NewService(memory.NewTelegramLoginStore(nil), sealer, loginapp.Config{
-		Issuer: "https://oauth.telesrv.test", AppScheme: "telesrv", ClientSecretPepper: pepper,
+		Issuer: "https://oauth.telesrv.test", AppScheme: "telesrv", AppLinkBase: appLinkBase, ClientSecretPepper: pepper,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -160,6 +164,14 @@ func (f telegramLoginHTTPFixture) authorize(t *testing.T) (browserToken, deepLin
 		t.Fatalf("authorization status polling is not started: %s", body)
 	}
 	return browserToken, deepLink
+}
+
+func TestAuthorizationPageUsesConfiguredHostBasedAppLink(t *testing.T) {
+	f := newTelegramLoginHTTPFixtureWithAppLinkBase(t, "owpg://tenant.example.test")
+	_, deepLink := f.authorize(t)
+	if !strings.HasPrefix(deepLink, "owpg://tenant.example.test/oauth?token=") {
+		t.Fatalf("authorization page deep link = %q, want configured host-based OAuth URL", deepLink)
+	}
 }
 
 func TestAuthorizationErrorsUseOnlyPreRegisteredTargets(t *testing.T) {

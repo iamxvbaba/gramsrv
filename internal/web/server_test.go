@@ -344,6 +344,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		}},
 		PublicBaseURL: "https://links.example.test",
 		AppScheme:     "example-chat",
+		AppLinkBase:   "owpg://tenant.example.test",
 		WebBaseURL:    "https://web.example.test/client/",
 		AppName:       "Example Chat",
 	})
@@ -357,7 +358,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		"example-chat://resolve?domain=Alice&amp;start=hello",
+		"owpg://tenant.example.test/Alice?start=hello",
 		"https://web.example.test/client/#?tgaddr=",
 		"Example Chat",
 		"Open Example Chat to send a message to @Alice.",
@@ -373,10 +374,10 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		path string
 		want string
 	}{
-		{path: "/addstickers/stickers_pack", want: "example-chat://addstickers?set=stickers_pack"},
-		{path: "/addemoji/emoji_pack", want: "example-chat://addemoji?set=emoji_pack"},
-		{path: "/addlist/shared-folder", want: "example-chat://addlist?slug=shared-folder"},
-		{path: "/nft/gift-1", want: "example-chat://nft?slug=gift-1"},
+		{path: "/addstickers/stickers_pack", want: "owpg://tenant.example.test/addstickers?set=stickers_pack"},
+		{path: "/addemoji/emoji_pack", want: "owpg://tenant.example.test/addemoji?set=emoji_pack"},
+		{path: "/addlist/shared-folder", want: "owpg://tenant.example.test/addlist?slug=shared-folder"},
+		{path: "/nft/gift-1", want: "owpg://tenant.example.test/nft?slug=gift-1"},
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -393,6 +394,8 @@ func TestNewHandlerRejectsInvalidClientLinkConfig(t *testing.T) {
 	}{
 		{name: "missing sticker resolver", cfg: Config{}},
 		{name: "official scheme", cfg: Config{StickerSets: fakeResolver{}, AppScheme: "tg"}},
+		{name: "official app link base", cfg: Config{StickerSets: fakeResolver{}, AppLinkBase: "tg://links.example.test"}},
+		{name: "app link base path", cfg: Config{StickerSets: fakeResolver{}, AppLinkBase: "owpg://links.example.test/root"}},
 		{name: "invalid Web base URL", cfg: Config{StickerSets: fakeResolver{}, WebBaseURL: "file:///tmp/web"}},
 		{name: "invalid app name", cfg: Config{StickerSets: fakeResolver{}, AppName: "bad\nname"}},
 	} {

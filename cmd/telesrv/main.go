@@ -365,7 +365,7 @@ func run(logger *zap.Logger) error {
 			return fmt.Errorf("load telegram login signing keys: %w", err)
 		}
 		telegramLoginService, err = telegramloginapp.NewService(postgres.NewTelegramLoginStore(pool), codeSealer, telegramloginapp.Config{
-			Issuer: cfg.TelegramLoginIssuer, AppScheme: cfg.PublicAppScheme,
+			Issuer: cfg.TelegramLoginIssuer, AppScheme: cfg.PublicAppScheme, AppLinkBase: cfg.PublicAppLinkBase,
 			AllowHTTP:                  cfg.TelegramLoginAllowHTTP,
 			ClientSecretPepper:         clientSecretPepper,
 			SupportedSigningAlgorithms: signingKeys.ActiveAlgorithms(),
@@ -838,6 +838,8 @@ func run(logger *zap.Logger) error {
 		GroupCallMaxParticipants: cfg.GroupCallMaxParticipants,
 		RtmpIngestURL:            cfg.LiveStreamRtmpURL,
 		PublicBaseURL:            cfg.PublicBaseURL,
+		PublicAppScheme:          cfg.PublicAppScheme,
+		PublicAppLinkBase:        cfg.PublicAppLinkBase,
 		// PFS temp→perm 解析缓存：显式撤销会清缓存并断开连接，re-bind 即时失效；
 		// 配置 TTL 只承担跨进程/异常失效兜底，避免大连接数周期性打满 PG。
 		TempKeyResolveCacheTTL:        cfg.TempKeyResolveCacheTTL,
@@ -986,6 +988,7 @@ func run(logger *zap.Logger) error {
 		Addr:            cfg.PublicLinkWebAddr,
 		PublicBaseURL:   cfg.PublicBaseURL,
 		AppScheme:       cfg.PublicAppScheme,
+		AppLinkBase:     cfg.PublicAppLinkBase,
 		WebBaseURL:      cfg.PublicWebBaseURL,
 		AppName:         cfg.PublicAppName,
 		StickerSets:     filesService,

@@ -14,6 +14,17 @@ const (
 )
 const MaxChatlistSlugBytes = 128
 
+// AppLinkBuilder builds client-visible custom-scheme links. Without an
+// explicit base it preserves Telegram's route-as-host shape, for example
+// telesrv://oauth?token=... . A configured base uses an exact server host and
+// moves the route into the path, for example owpg://example.test/oauth?token=...
+// . The legacy scheme remains accepted so in-flight links survive a rollout.
+type AppLinkBuilder struct {
+	legacyScheme string
+	baseScheme   string
+	baseHost     string
+}
+
 // ValidateAppScheme normalizes the client-visible custom URL scheme used by
 // public landing pages. Standard Web schemes and Telegram's official tg scheme
 // are deliberately rejected: the latter remains a manual compatibility link
@@ -34,6 +45,123 @@ func ValidateAppScheme(raw string) (string, error) {
 		return "", fmt.Errorf("reserved scheme %q is not allowed", scheme)
 	}
 	return scheme, nil
+}
+
+// ValidateAppLinkBase validates the optional host-based custom app-link root.
+// The base is deliberately limited to <custom-scheme>://<host>: routes, query
+// parameters, and fragments are owned by the individual link builders.
+func ValidateAppLinkBase(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse URL: %w", err)
+	}
+	if parsed.Opaque != "" {
+		return "", fmt.Errorf("opaque URLs are not allowed")
+	}
+	if parsed.Scheme == "" {
+		return "", fmt.Errorf("scheme is required")
+	}
+	scheme, err := ValidateAppScheme(parsed.Scheme)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Host == "" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("credentials are not allowed")
+	}
+	if parsed.Port() != "" {
+		return "", fmt.Errorf("port is not allowed")
+	}
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" {
+		return "", fmt.Errorf("path is not allowed")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		return "", fmt.Errorf("query parameters are not allowed")
+	}
+	if parsed.Fragment != "" {
+		return "", fmt.Errorf("fragment is not allowed")
+	}
+	parsed.Scheme = scheme
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Path = ""
+	return parsed.String(), nil
+}
+
+func NewAppLinkBuilder(legacyScheme, rawBase string) (AppLinkBuilder, error) {
+	legacyScheme, err := ValidateAppScheme(legacyScheme)
+	if err != nil {
+		return AppLinkBuilder{}, fmt.Errorf("legacy scheme: %w", err)
+	}
+	base, err := ValidateAppLinkBase(rawBase)
+	if err != nil {
+		return AppLinkBuilder{}, fmt.Errorf("app link base: %w", err)
+	}
+	builder := AppLinkBuilder{legacyScheme: legacyScheme}
+	if base != "" {
+		parsed, _ := url.Parse(base)
+		builder.baseScheme = parsed.Scheme
+		builder.baseHost = parsed.Host
+	}
+	return builder, nil
+}
+
+func (b AppLinkBuilder) Build(route string, query url.Values) string {
+	if b.baseHost != "" {
+		return (&url.URL{
+			Scheme:   b.baseScheme,
+			Host:     b.baseHost,
+			Path:     "/" + strings.Trim(route, "/"),
+			RawQuery: query.Encode(),
+		}).String()
+	}
+	return (&url.URL{Scheme: b.legacyScheme, Host: route, RawQuery: query.Encode()}).String()
+}
+
+// BuildUsername preserves the official resolve query in legacy mode while a
+// host-based multi-server client receives the public username as the path.
+func (b AppLinkBuilder) BuildUsername(username string, query url.Values) string {
+	query = cloneValues(query)
+	if b.baseHost != "" {
+		query.Del("domain")
+		return b.Build(username, query)
+	}
+	query.Set("domain", username)
+	return b.Build("resolve", query)
+}
+
+// MatchesRoute accepts the exact configured host-path form and the retained
+// legacy route-as-host form. Query validation remains the caller's concern.
+func (b AppLinkBuilder) MatchesRoute(parsed *url.URL, route string) bool {
+	if parsed == nil || parsed.Opaque != "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawPath != "" {
+		return false
+	}
+	if b.MatchesLegacyRoute(parsed, route) {
+		return true
+	}
+	return b.baseHost != "" &&
+		strings.EqualFold(parsed.Scheme, b.baseScheme) &&
+		strings.EqualFold(parsed.Host, b.baseHost) &&
+		parsed.Path == "/"+route
+}
+
+func (b AppLinkBuilder) MatchesLegacyRoute(parsed *url.URL, route string) bool {
+	return parsed != nil && parsed.Opaque == "" && parsed.User == nil && parsed.Fragment == "" && parsed.RawPath == "" &&
+		strings.EqualFold(parsed.Scheme, b.legacyScheme) &&
+		strings.EqualFold(parsed.Host, route) && parsed.Path == ""
+}
+
+func cloneValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, entries := range values {
+		cloned[key] = append([]string(nil), entries...)
+	}
+	return cloned
 }
 
 func ValidateAppName(raw string) (string, error) {

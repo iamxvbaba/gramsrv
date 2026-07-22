@@ -25,6 +25,9 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicAppScheme != "telesrv" {
 		t.Fatalf("PublicAppScheme = %q, want telesrv", cfg.PublicAppScheme)
 	}
+	if cfg.PublicAppLinkBase != "" {
+		t.Fatalf("PublicAppLinkBase = %q, want disabled", cfg.PublicAppLinkBase)
+	}
 	if cfg.PublicWebBaseURL != "https://web.telesrv.net" {
 		t.Fatalf("PublicWebBaseURL = %q, want https://web.telesrv.net", cfg.PublicWebBaseURL)
 	}
@@ -379,6 +382,7 @@ TELESRV_WEBSOCKET_ALLOWED_ORIGINS=https://one.example, https://two.example
 TELESRV_CALL_RING_TIMEOUT=2m
 TELESRV_PUBLIC_BASE_URL=links.example.test/root
 TELESRV_PUBLIC_APP_SCHEME=example-chat
+TELESRV_PUBLIC_APP_LINK_BASE=OWPG://Tenant.Example.Test/
 TELESRV_PUBLIC_WEB_BASE_URL=web.example.test/client
 TELESRV_PUBLIC_APP_NAME=Example Chat
 TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
@@ -409,6 +413,9 @@ TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 	}
 	if cfg.PublicAppScheme != "example-chat" {
 		t.Fatalf("PublicAppScheme = %q, want example-chat", cfg.PublicAppScheme)
+	}
+	if cfg.PublicAppLinkBase != "owpg://tenant.example.test" {
+		t.Fatalf("PublicAppLinkBase = %q, want owpg://tenant.example.test", cfg.PublicAppLinkBase)
 	}
 	if cfg.PublicWebBaseURL != "https://web.example.test/client" {
 		t.Fatalf("PublicWebBaseURL = %q, want https://web.example.test/client", cfg.PublicWebBaseURL)
@@ -537,6 +544,10 @@ func TestLoadRejectsInvalidPublicLinkClientConfig(t *testing.T) {
 	}{
 		{name: "official scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "tg"},
 		{name: "malformed scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "bad scheme"},
+		{name: "app link base official scheme", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "tg://links.example.test"},
+		{name: "app link base missing host", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://"},
+		{name: "app link base path", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test/root"},
+		{name: "app link base query", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test?tenant=one"},
 		{name: "invalid web base", key: "TELESRV_PUBLIC_WEB_BASE_URL", value: "file:///tmp/client"},
 		{name: "empty app name after trim", key: "TELESRV_PUBLIC_APP_NAME", value: "   "},
 		{name: "control in app name", key: "TELESRV_PUBLIC_APP_NAME", value: "bad\nname"},
