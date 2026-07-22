@@ -14,6 +14,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
+import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
 
 export function BootScreen() {
@@ -123,6 +124,7 @@ export function Shell({
             <h1>{routeTitle(route.path, t)}</h1>
           </div>
           <div className="topbar-actions">
+            <ThemeSwitch />
             <LanguageSwitch />
             <span className="actor-pill">{t("layout.actor", { actor })}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={t("layout.logout")}>
