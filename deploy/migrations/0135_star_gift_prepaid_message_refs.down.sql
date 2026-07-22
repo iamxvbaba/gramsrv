@@ -1,0 +1,4 @@
+-- The up migration registers protocol identities and emits durable per-user
+-- edit_message events. Removing aliases, reverting snapshots or rewinding pts
+-- would invalidate messages already consumed by clients and create holes in
+-- updates.getDifference, so rollback intentionally preserves the repair.

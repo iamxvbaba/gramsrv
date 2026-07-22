@@ -655,7 +655,8 @@ LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 CROSS JOIN LATERAL (
     SELECT p.msg_id::bigint AS msg_id
     UNION ALL
-    SELECT r.msg_id::bigint FROM star_gift_user_message_refs r WHERE r.saved_gift_id=p.id
+    SELECT r.msg_id::bigint FROM star_gift_user_message_refs r
+    WHERE r.saved_gift_id=p.id AND r.owner_user_id=p.owner_peer_id
 ) ref
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
 	  AND (ref.msg_id=ANY($3::bigint[])
