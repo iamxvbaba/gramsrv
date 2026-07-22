@@ -854,7 +854,7 @@ func run(logger *zap.Logger) error {
 		EphemeralPush:        ephemeralStore,
 		EphemeralReports:     ephemeralReportStore,
 		Users:                usersService,
-		TelegramLogin:        telegramLoginService,
+		TelegramLogin:        telegramLoginRPCDependency(telegramLoginService),
 		Updates:              updatesService,
 		BootstrapUpdates:     bootstrapUpdateStore,
 		BotAPIUpdates:        botAPIUpdateStore,
@@ -1045,6 +1045,17 @@ func run(logger *zap.Logger) error {
 	// This is intentionally the final startup operation. ListenAndServe owns the
 	// public listener so no seed/prewarm work can run after port 2398 is exposed.
 	return srv.ListenAndServe(ctx, cfg.ListenAddr)
+}
+
+// telegramLoginRPCDependency preserves a disabled Telegram Login service as a
+// nil interface. Assigning the nil *Service directly to rpc.Deps would create a
+// non-nil interface with a nil concrete pointer and bypass Router availability
+// checks.
+func telegramLoginRPCDependency(service *telegramloginapp.Service) rpc.TelegramLoginService {
+	if service == nil {
+		return nil
+	}
+	return service
 }
 
 func runTelegramLoginRetention(ctx context.Context, service *telegramloginapp.Service, retention, interval time.Duration, batch int, logger *zap.Logger) {
