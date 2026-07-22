@@ -232,6 +232,138 @@ LIMIT $5`, id, phone, phoneRaw, username, accountSearchLimit)
 	return out, rows.Err()
 }
 
+type BotRow struct {
+	ID          int64
+	Username    string
+	FirstName   string
+	Verified    bool
+	System      bool
+	OwnerUserID int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type BotDetail struct {
+	Bot           BotRow
+	About         string
+	Description   string
+	OwnerUsername string
+	AuditLogs     []AuditLogRow
+}
+
+// ListBots pages over live bot accounts (users.is_bot, not tombstoned) by
+// descending id. Bots are excluded from ListAccounts, so this is the dedicated
+// projection for them.
+func (s *readStore) ListBots(ctx context.Context, beforeID int64, limit int) ([]BotRow, bool, error) {
+	if limit <= 0 {
+		limit = accountListDefaultLimit
+	}
+	if limit > accountListMaxLimit {
+		limit = accountListMaxLimit
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.verified,
+	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.is_bot AND u.deleted_at IS NULL AND ($1::bigint = 0 OR u.id < $1)
+ORDER BY u.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list bots: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotRow, 0, limit+1)
+	for rows.Next() {
+		var item BotRow
+		if err := rows.Scan(&item.ID, &item.Username, &item.FirstName, &item.Verified, &item.OwnerUserID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		item.System = domain.IsSystemUserID(item.ID)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+func (s *readStore) SearchBots(ctx context.Context, q string) ([]BotRow, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, nil
+	}
+	id := int64(-1)
+	if n, err := strconv.ParseInt(q, 10, 64); err == nil {
+		id = n
+	}
+	username := strings.ToLower(strings.TrimPrefix(q, "@"))
+	rows, err := s.pool.Query(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.verified,
+	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.is_bot AND u.deleted_at IS NULL AND (u.id = $1 OR lower(u.username) = $2 OR p.username_lower = $2)
+ORDER BY u.id DESC
+LIMIT $3`, id, username, accountSearchLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search bots: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotRow, 0)
+	for rows.Next() {
+		var item BotRow
+		if err := rows.Scan(&item.ID, &item.Username, &item.FirstName, &item.Verified, &item.OwnerUserID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.System = domain.IsSystemUserID(item.ID)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *readStore) BotDetail(ctx context.Context, botUserID int64) (BotDetail, error) {
+	var out BotDetail
+	err := s.pool.QueryRow(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.about, u.verified,
+	COALESCE(b.owner_user_id, 0), COALESCE(b.description, ''),
+	u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
+		&out.Bot.ID, &out.Bot.Username, &out.Bot.FirstName, &out.About, &out.Bot.Verified,
+		&out.Bot.OwnerUserID, &out.Description, &out.Bot.CreatedAt, &out.Bot.UpdatedAt,
+	)
+	if err != nil {
+		return out, fmt.Errorf("get bot: %w", err)
+	}
+	out.Bot.System = domain.IsSystemUserID(out.Bot.ID)
+	if out.Bot.OwnerUserID > 0 {
+		var ownerUsername string
+		if err := s.pool.QueryRow(ctx, `
+SELECT COALESCE(NULLIF(u.username, ''), p.username_lower, '')
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.id = $1`, out.Bot.OwnerUserID).Scan(&ownerUsername); err != nil && err != pgx.ErrNoRows {
+			return out, fmt.Errorf("get bot owner: %w", err)
+		} else {
+			out.OwnerUsername = ownerUsername
+		}
+	}
+	out.AuditLogs, err = s.auditLogs(ctx, botUserID)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
 func (s *readStore) SearchChannels(ctx context.Context, q string) ([]ChannelRow, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {

@@ -32,6 +32,8 @@ const (
 	ActionPublishGiftCollectibles = "gifts.collectibles.publish"
 	ActionSetStarGiftEnabled      = "gifts.set_enabled"
 	ActionSetStarGiftSortOrder    = "gifts.set_sort_order"
+	ActionCreateBot               = "bot.create"
+	ActionDeleteBot               = "bot.delete"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -127,6 +129,14 @@ type OfficialGiftsSource interface {
 	Bundle(ctx context.Context, giftID int64, includeCollectible bool) (officialgifts.Bundle, error)
 }
 
+// BotService creates bot accounts on behalf of the admin. It mirrors the
+// owner-scoped /newbot flow: a bot is a users row (is_bot=true) plus a bots row
+// owned by ownerUserID, and the returned token is shown once to the operator.
+type BotService interface {
+	CreateBot(ctx context.Context, ownerUserID int64, name, username string) (domain.User, string, error)
+	DeleteBot(ctx context.Context, botUserID int64) (domain.User, error)
+}
+
 type Dependencies struct {
 	Commands        CommandRepository
 	Restrictions    RestrictionStore
@@ -142,6 +152,7 @@ type Dependencies struct {
 	Messages        MessagesService
 	Gifts           GiftsService
 	OfficialGifts   OfficialGiftsSource
+	Bots            BotService
 	Now             func() time.Time
 }
 
@@ -160,6 +171,7 @@ type Service struct {
 	messages        MessagesService
 	gifts           GiftsService
 	officialGifts   OfficialGiftsSource
+	bots            BotService
 	now             func() time.Time
 }
 
@@ -210,6 +222,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.OfficialGifts != nil {
 		s.officialGifts = deps.OfficialGifts
+	}
+	if deps.Bots != nil {
+		s.bots = deps.Bots
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -344,6 +359,18 @@ type SetChannelVerifiedRequest struct {
 	CommandMeta
 	ChannelID int64 `json:"channel_id"`
 	Verified  bool  `json:"verified"`
+}
+
+type CreateBotRequest struct {
+	CommandMeta
+	OwnerUserID int64  `json:"owner_user_id"`
+	Name        string `json:"name"`
+	Username    string `json:"username"`
+}
+
+type DeleteBotRequest struct {
+	CommandMeta
+	BotUserID int64 `json:"bot_user_id"`
 }
 
 type RevokeSessionsRequest struct {
@@ -688,6 +715,93 @@ func (s *Service) SetVerified(ctx context.Context, req SetVerifiedRequest) (Comm
 			details["notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "verified updated", Details: details}, nil
+	})
+}
+
+// CreateBot provisions a new bot account owned by ownerUserID. The dry-run stage
+// only validates the display name and username; the confirm stage creates the
+// users+bots rows and returns the freshly minted token in the result details so
+// the operator can copy it once.
+func (s *Service) CreateBot(ctx context.Context, req CreateBotRequest) (CommandResult, error) {
+	if s == nil || s.bots == nil {
+		return CommandResult{}, fmt.Errorf("admin bot dependency is not configured")
+	}
+	if req.OwnerUserID <= 0 {
+		return CommandResult{}, fmt.Errorf("owner_user_id is required")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len([]rune(name)) > domain.MaxBotNameLength {
+		return CommandResult{}, domain.ErrBotNameInvalid
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(req.Username, "@"))
+	if !domain.ValidBotUsername(username) {
+		return CommandResult{}, domain.ErrBotUsernameInvalid
+	}
+	req.Name = name
+	req.Username = username
+	return s.runCommand(ctx, req.CommandMeta, ActionCreateBot, req.OwnerUserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"owner_user_id": req.OwnerUserID,
+			"name":          name,
+			"username":      username,
+		}
+		if req.DryRun {
+			return CommandResult{Message: "bot creation validated", Details: details}, nil
+		}
+		bot, token, err := s.bots.CreateBot(ctx, req.OwnerUserID, name, username)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["bot_user_id"] = bot.ID
+		// The token is a credential. It is surfaced once so the operator can copy
+		// it; it is also persisted in the audit result, so treat admin audit logs
+		// as sensitive.
+		details["token"] = token
+		if err := s.notifyUserChanged(ctx, bot); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "bot created", Details: details}, nil
+	})
+}
+
+// DeleteBot permanently removes a user-created bot. The dry-run stage verifies
+// the target is a non-system bot; the confirm stage tombstones the account and
+// invalidates its token. System bots are rejected outright.
+func (s *Service) DeleteBot(ctx context.Context, req DeleteBotRequest) (CommandResult, error) {
+	if s == nil || s.bots == nil {
+		return CommandResult{}, fmt.Errorf("admin bot dependency is not configured")
+	}
+	if req.BotUserID <= 0 {
+		return CommandResult{}, fmt.Errorf("bot_user_id is required")
+	}
+	if domain.IsSystemUserID(req.BotUserID) {
+		return CommandResult{}, fmt.Errorf("system bots cannot be deleted")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteBot, req.BotUserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"bot_user_id": req.BotUserID}
+		if s.users != nil {
+			u, found, err := s.users.AdminUser(ctx, req.BotUserID)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			if !found || !u.Bot {
+				return CommandResult{}, domain.ErrBotNotFound
+			}
+			details["username"] = u.Username
+			details["name"] = u.FirstName
+		}
+		if req.DryRun {
+			return CommandResult{Message: "bot deletion validated", Details: details}, nil
+		}
+		deleted, err := s.bots.DeleteBot(ctx, req.BotUserID)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["deleted"] = true
+		if err := s.notifyUserChanged(ctx, deleted); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "bot deleted", Details: details}, nil
 	})
 }
 

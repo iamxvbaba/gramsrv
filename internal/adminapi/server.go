@@ -30,6 +30,8 @@ type Service interface {
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
+	CreateBot(ctx context.Context, req admin.CreateBotRequest) (admin.CommandResult, error)
+	DeleteBot(ctx context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error)
 	RevokeSessions(ctx context.Context, req admin.RevokeSessionsRequest) (admin.CommandResult, error)
 	DeletePrivateMessages(ctx context.Context, req admin.DeletePrivateMessagesRequest) (admin.CommandResult, error)
 	DeletePrivateHistory(ctx context.Context, req admin.DeletePrivateHistoryRequest) (admin.CommandResult, error)
@@ -97,6 +99,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/revoke-sessions", s.authenticated(s.handleRevokeSessions))
 	mux.HandleFunc("POST /v1/channels/set-verified", s.authenticated(s.handleSetChannelVerified))
+	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
+	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
 	mux.HandleFunc("POST /v1/messages/delete", s.authenticated(s.handleDeleteMessages))
 	mux.HandleFunc("POST /v1/messages/delete-history", s.authenticated(s.handleDeleteHistory))
 	mux.HandleFunc("POST /v1/gifts/import", s.authenticated(s.handleImportStarGift))
@@ -165,6 +169,24 @@ func (s *Server) handleSetChannelVerified(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result, err := s.svc.SetChannelVerified(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleCreateBot(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateBotRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateBot(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteBot(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteBotRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteBot(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

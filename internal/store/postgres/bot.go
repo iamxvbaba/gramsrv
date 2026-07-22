@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -85,6 +86,91 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 	}
 	profile.BotUserID = row.ID
 	return userFromModel(row), profile, nil
+}
+
+// DeleteBotAccount permanently removes a user-created bot in one transaction:
+// it revokes the bot's sessions, purges its private state, releases its
+// username, drops the bots row (which invalidates the token) and tombstones the
+// users row. System service bots and non-bot users are rejected. The reused
+// helpers are the same vetted primitives that back account deletion, so the
+// tombstone satisfies users_deletion_state_check. Returns the tombstoned user
+// for change notifications.
+func (s *BotStore) DeleteBotAccount(ctx context.Context, botUserID int64) (domain.User, error) {
+	if botUserID == 0 || domain.IsSystemUserID(botUserID) {
+		return domain.User{}, domain.ErrBotNotFound
+	}
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.User{}, fmt.Errorf("delete bot account: db does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockUsersForUpdate(ctx, tx, botUserID); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: lock: %w", err)
+	}
+	u, found, err := NewUserStore(tx).ByID(ctx, botUserID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !found || !u.Bot || u.Deleted {
+		return domain.User{}, domain.ErrBotNotFound
+	}
+	// Only bots backed by a bots row (created via /newbot or the admin) are
+	// deletable here; system service bots are already excluded above.
+	var hasBotRow bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM bots WHERE bot_user_id = $1)`, botUserID).Scan(&hasBotRow); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: probe bots row: %w", err)
+	}
+	if !hasBotRow {
+		return domain.User{}, domain.ErrBotNotFound
+	}
+
+	now := time.Now().UTC()
+	if err := enqueueAccountDeletionNotifications(ctx, tx, botUserID); err != nil {
+		return domain.User{}, err
+	}
+	if _, err := revokeByUserExceptTx(ctx, tx, botUserID, 0); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: revoke sessions: %w", err)
+	}
+	if err := purgeDeletedAccountPrivateState(ctx, tx, botUserID, now); err != nil {
+		return domain.User{}, err
+	}
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, botUserID, ""); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: release username: %w", err)
+	}
+	// Drop the bots row so the token can no longer authenticate a login.
+	if _, err := tx.Exec(ctx, `DELETE FROM bots WHERE bot_user_id = $1`, botUserID); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: delete bots row: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE users SET
+  phone = '', first_name = '', last_name = '', username = '', country_code = '', about = '',
+  verified = false, support = false, last_seen_at = 0,
+  premium_expires_at = NULL, emoji_status_document_id = 0, emoji_status_until = 0,
+  emoji_status_collectible_id = NULL, emoji_status_collectible = '{}'::jsonb,
+  color_set = false, color = 0, color_background_emoji_id = 0,
+  profile_color_set = false, profile_color = 0, profile_color_background_emoji_id = 0,
+  birthday_day = 0, birthday_month = 0, birthday_year = 0, personal_channel_id = 0,
+  deleted_at = $2, deletion_source = 'manual', deletion_reason = 'admin bot deletion',
+  account_delete_at = NULL, updated_at = $2
+WHERE id = $1 AND deleted_at IS NULL`, botUserID, now); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: tombstone: %w", err)
+	}
+	u, found, err = NewUserStore(tx).ByID(ctx, botUserID)
+	if err != nil || !found {
+		if err == nil {
+			err = domain.ErrUserNotFound
+		}
+		return domain.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, fmt.Errorf("delete bot account: commit: %w", err)
+	}
+	return u, nil
 }
 
 func (s *BotStore) GetBot(ctx context.Context, botUserID int64) (domain.BotProfile, bool, error) {

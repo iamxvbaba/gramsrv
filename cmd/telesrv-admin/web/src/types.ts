@@ -99,6 +99,25 @@ export type ChannelDetail = {
   AuditLogs: AuditLogRow[];
 };
 
+export type BotRow = {
+  ID: number;
+  Username: string;
+  FirstName: string;
+  Verified: boolean;
+  System: boolean;
+  OwnerUserID: number;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type BotDetail = {
+  Bot: BotRow;
+  About: string;
+  Description: string;
+  OwnerUsername: string;
+  AuditLogs: AuditLogRow[];
+};
+
 export type MessageRow = {
   OwnerUserID: number;
   BoxID: number;
@@ -282,6 +301,15 @@ export type ChannelListResponse = {
   has_more: boolean;
   next_before_id: number;
   next_before_updated_us: number;
+  listing: boolean;
+};
+
+export type BotListResponse = {
+  query: string;
+  limit: number;
+  rows: BotRow[];
+  has_more: boolean;
+  next_before_id: number;
   listing: boolean;
 };
 

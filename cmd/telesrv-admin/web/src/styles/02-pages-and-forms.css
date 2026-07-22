@@ -577,3 +577,40 @@ textarea:focus {
   color: var(--muted);
   text-align: center;
 }
+
+.bot-create-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bot-create-fields .duration-field input {
+  width: 100%;
+}
+
+.bot-create-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.bot-create-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@media (max-width: 760px) {
+  .bot-create-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .bot-create-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

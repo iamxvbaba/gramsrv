@@ -1,6 +1,8 @@
 import type {
   AccountDetail,
   AccountListResponse,
+  BotDetail,
+  BotListResponse,
   ChannelDetail,
   ChannelListResponse,
   CommandResult,
@@ -56,6 +58,8 @@ export const api = {
   account: (id: number) => request<AccountDetail>(`/api/accounts/${id}`),
   channels: (params: URLSearchParams) => request<ChannelListResponse>(`/api/channels?${params.toString()}`),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
+  bots: (params: URLSearchParams) => request<BotListResponse>(`/api/bots?${params.toString()}`),
+  bot: (id: number) => request<BotDetail>(`/api/bots/${id}`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),
   message: (ownerUserID: number, msgID: number) => {
     const params = new URLSearchParams({ owner_user_id: String(ownerUserID), msg_id: String(msgID) });

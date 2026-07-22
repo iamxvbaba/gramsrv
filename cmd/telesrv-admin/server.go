@@ -53,6 +53,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/channels", s.requireAuthAPI(http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleChannelDetailAPI)))
+	mux.Handle("GET /api/bots", s.requireAuthAPI(http.HandlerFunc(s.handleBotsAPI)))
+	mux.Handle("GET /api/bots/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleBotDetailAPI)))
 	mux.Handle("GET /api/messages", s.requireAuthAPI(http.HandlerFunc(s.handleMessagesAPI)))
 	mux.Handle("GET /api/messages/detail", s.requireAuthAPI(http.HandlerFunc(s.handleMessageDetailAPI)))
 	mux.Handle("GET /api/messages/groups", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessagesAPI)))
@@ -67,6 +69,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
 	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetVerifiedAPI)))
+	mux.Handle("POST /api/actions/create-bot", s.requireAuthAPI(http.HandlerFunc(s.handleCreateBotAPI)))
+	mux.Handle("POST /api/actions/delete-bot", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteBotAPI)))
 	mux.Handle("POST /api/actions/set-channel-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelVerifiedAPI)))
 	mux.Handle("POST /api/actions/revoke-sessions", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeSessionsAPI)))
 	mux.Handle("POST /api/actions/delete-messages", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteMessagesAPI)))
@@ -344,6 +348,108 @@ func (s *server) handleAccountDetailAPI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *server) handleBotsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
+	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	rows := []BotRow{}
+	hasMore := false
+	var err error
+	if strings.TrimSpace(q) != "" {
+		rows, err = s.read.SearchBots(r.Context(), q)
+	} else {
+		rows, hasMore, err = s.read.ListBots(r.Context(), beforeID, limit)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nextBeforeID := int64(0)
+	if hasMore && len(rows) > 0 {
+		nextBeforeID = rows[len(rows)-1].ID
+	}
+	if limit <= 0 {
+		limit = accountListDefaultLimit
+	}
+	if limit > accountListMaxLimit {
+		limit = accountListMaxLimit
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":          q,
+		"limit":          limit,
+		"rows":           rows,
+		"has_more":       hasMore,
+		"next_before_id": nextBeforeID,
+		"listing":        strings.TrimSpace(q) == "",
+	})
+}
+
+func (s *server) handleBotDetailAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	botID, err := parseInt64(r.PathValue("id"))
+	if err != nil || botID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	detail, err := s.read.BotDetail(r.Context(), botID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+type createBotAPIRequest struct {
+	CommandID   string `json:"command_id"`
+	Reason      string `json:"reason"`
+	Confirm     bool   `json:"confirm"`
+	OwnerUserID int64  `json:"owner_user_id"`
+	Name        string `json:"name"`
+	Username    string `json:"username"`
+}
+
+func (s *server) handleCreateBotAPI(w http.ResponseWriter, r *http.Request) {
+	var body createBotAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.CreateBotRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-bot"),
+		OwnerUserID: body.OwnerUserID,
+		Name:        body.Name,
+		Username:    body.Username,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/bots/create", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteBotAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	BotUserID int64  `json:"bot_user_id"`
+}
+
+func (s *server) handleDeleteBotAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteBotAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteBotRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-bot"),
+		BotUserID:   body.BotUserID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/bots/delete", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 func (s *server) handleChannelsAPI(w http.ResponseWriter, r *http.Request) {

@@ -250,6 +250,14 @@ func (fakeService) SetChannelVerified(_ context.Context, req admin.SetChannelVer
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) CreateBot(_ context.Context, req admin.CreateBotRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DeleteBot(_ context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) RevokeSessions(context.Context, admin.RevokeSessionsRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{}, nil
 }
