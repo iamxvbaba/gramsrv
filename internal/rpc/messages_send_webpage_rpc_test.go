@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -27,6 +28,8 @@ func TestSendMessageAttachesWebPagePending(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
 	r.deps.Files.(*fakeFiles).webPagePreviewOn = true
+	now := time.Date(2030, time.January, 2, 3, 4, 5, 0, time.UTC)
+	r.clock = fixedClock{now: now}
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:        &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
@@ -55,8 +58,49 @@ func TestSendMessageAttachesWebPagePending(t *testing.T) {
 	if url, _ := pending.GetURL(); url != wpTestURL {
 		t.Errorf("pending url = %q, want %q", url, wpTestURL)
 	}
+	wantDeadline := int(now.Add(webPagePendingLifetime).Unix())
+	if pending.Date != wantDeadline {
+		t.Errorf("pending date = %d, want retry deadline %d", pending.Date, wantDeadline)
+	}
+	if time.Unix(int64(pending.Date), 0).Sub(now) <= webPageResolveTimeout {
+		t.Errorf("pending deadline must outlive resolver timeout: deadline=%s timeout=%s", time.Unix(int64(pending.Date), 0), webPageResolveTimeout)
+	}
 	if !msg.InvertMedia {
 		t.Errorf("invert_media not projected onto message")
+	}
+}
+
+// TestSendChannelMessageUsesSameFutureWebPageDeadline 锁定频道发送也经过同一 pending
+// 截止时间构造路径，避免只修私聊 echo 而频道仍被客户端立即判定过期。
+func TestSendChannelMessageUsesSameFutureWebPageDeadline(t *testing.T) {
+	ctx := context.Background()
+	r, owner, channel := newRichChannelTestRouter(t)
+	r.deps.Files.(*fakeFiles).webPagePreviewOn = true
+	// 本测试只验证发送投影，不启动异步解析 goroutine。
+	r.webPageResolveSem = nil
+	now := time.Date(2030, time.February, 3, 4, 5, 6, 0, time.UTC)
+	r.clock = fixedClock{now: now}
+
+	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Message:  wpTestMessage,
+		Entities: wpURLEntities(),
+		RandomID: 5106,
+	})
+	if err != nil {
+		t.Fatalf("send channel message: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+	wrap, ok := msg.Media.(*tg.MessageMediaWebPage)
+	if !ok {
+		t.Fatalf("channel media = %T, want *tg.MessageMediaWebPage", msg.Media)
+	}
+	pending, ok := wrap.Webpage.(*tg.WebPagePending)
+	if !ok {
+		t.Fatalf("channel webpage = %T, want *tg.WebPagePending", wrap.Webpage)
+	}
+	if want := int(now.Add(webPagePendingLifetime).Unix()); pending.Date != want {
+		t.Errorf("channel pending date = %d, want retry deadline %d", pending.Date, want)
 	}
 }
 

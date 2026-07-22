@@ -380,7 +380,7 @@ func (r *Router) webPagePreviewMedia(ctx context.Context, message string, entiti
 
 // resolveWebPageForRequest 为交互式读 RPC 解析链接预览：先查缓存（LookupWebPage，命中即返回，
 // 不抓取不阻塞）；未命中才同步抓取，但用受限短预算（webpageRequestResolveBudget）而非异步解析
-// 的 20s，避免慢/挂上游把 RPC worker 钉死。命中（含负缓存的 empty）返回 ok=true，调用方据 state
+// 的 30s，避免慢/挂上游把 RPC worker 钉死。命中（含负缓存的 empty）返回 ok=true，调用方据 state
 // 决定；抓取失败返回 false。未启用返回 false。
 func (r *Router) resolveWebPageForRequest(ctx context.Context, url string) (domain.MessageWebPage, bool) {
 	if page, ok := r.resolveAIComposeStyleWebPage(ctx, url); ok {

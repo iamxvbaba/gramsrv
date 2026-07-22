@@ -135,9 +135,10 @@ func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string,
 			State: domain.MessageWebPageStatePending,
 			ID:    domain.WebPageURLHash(normalized),
 			URL:   normalized,
-			// Date=「processing started」时刻：留 0（=1970）会被严格客户端判为 pending 早已
-			// 过期 → 直接显示纯文本，须填发送时刻。
-			Date:            int(r.clock.Now().Unix()),
+			// date 是客户端重新拉取 pending 消息的绝对截止时间。TDesktop/DrKLO 在
+			// date<=now 时立即重取；若 resolver 此时仍运行，TDesktop 会把占位记成 sticky
+			// failed，后到的 done update 也不会重新显示卡片。
+			Date:            int(r.clock.Now().Add(webPagePendingLifetime).Unix()),
 			ForceLargeMedia: forceLarge,
 			ForceSmallMedia: forceSmall,
 		},

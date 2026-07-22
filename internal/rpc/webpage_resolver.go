@@ -18,6 +18,10 @@ import (
 const (
 	webPageResolveConcurrency = 16
 	webPageResolveTimeout     = 30 * time.Second
+	// webPagePendingLifetime 是客户端在重新拉取 pending 消息前等待的窗口。
+	// TDesktop 与 DrKLO 都把 webPagePending.date 解释为绝对截止时间，而不是处理开始时间；
+	// 该窗口必须严格大于 resolver 的最大执行时间，避免正常的慢解析被客户端提前标记为失败。
+	webPagePendingLifetime = 2 * time.Minute
 )
 
 type webPageResolveJob struct {
