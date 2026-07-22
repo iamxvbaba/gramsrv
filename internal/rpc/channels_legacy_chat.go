@@ -35,9 +35,6 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 		zap.Int("member_ids", len(memberIDs)),
 		zap.Int64s("member_user_ids", memberIDs),
 	)
-	if len(memberIDs) == 0 {
-		return nil, usersTooFewErr()
-	}
 	createRes, err := r.deps.Channels.CreateMegagroupFromCreateChat(ctx, userID, domain.CreateChannelRequest{
 		CreatorUserID: userID,
 		Title:         req.Title,
@@ -63,16 +60,25 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 	}
 
 	cache := newViewerPeerCache(r)
-	updates := r.channelOperationUpdatesWithPeerCache(ctx, userID, responseRes, cache)
+	canonicalUpdates := r.channelOperationUpdatesWithPeerCache(ctx, userID, responseRes, cache)
+	var inviteUpdates *tg.Updates
+	if inviteRes.Event.Pts != 0 {
+		inviteUpdates = r.channelOperationUpdatesWithPeerCache(ctx, userID, inviteRes, cache)
+		if inviteUpdates != nil {
+			canonicalUpdates.Updates = append(canonicalUpdates.Updates, inviteUpdates.Updates...)
+		}
+	}
+	updates := canonicalUpdates
 	if createChatNeedsLegacyChat(ctx) {
 		updates = r.tdesktopCreateChatUpdatesWithPeerCache(ctx, userID, responseRes, cache)
-	}
-	if inviteRes.Event.Pts != 0 {
-		inviteUpdates := r.channelOperationUpdatesWithPeerCache(ctx, userID, inviteRes, cache)
 		if inviteUpdates != nil {
 			updates.Updates = append(updates.Updates, inviteUpdates.Updates...)
 		}
 	}
+	// The rpc_result reaches only the calling session. Keep the creator's other
+	// sessions in sync with the same canonical channel state; compatibility-only
+	// legacy chat projection is needed solely by the synchronous create callback.
+	r.pushUserUpdates(ctx, userID, canonicalUpdates)
 	if inviteRes.Event.Pts != 0 {
 		r.pushChannelExplicitUpdates(ctx, userID, inviteRes.Channel.ID, memberIDs, func(viewerUserID int64) *tg.Updates {
 			return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, inviteRes, cache)

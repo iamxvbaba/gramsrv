@@ -243,8 +243,6 @@ func authTokenExceptionErr() error { return tgerr.New(400, "AUTH_TOKEN_EXCEPTION
 
 func userIDInvalidErr() error { return tgerr.New(400, "USER_ID_INVALID") }
 
-func usersTooFewErr() error { return tgerr.New(400, "USERS_TOO_FEW") }
-
 func firstNameInvalidErr() error { return tgerr.New(400, "FIRSTNAME_INVALID") }
 
 func aboutTooLongErr() error { return tgerr.New(400, "ABOUT_TOO_LONG") }

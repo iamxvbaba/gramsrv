@@ -6,7 +6,6 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
-	"strings"
 	appchannels "telesrv/internal/app/channels"
 	appdialogs "telesrv/internal/app/dialogs"
 	appusers "telesrv/internal/app/users"
@@ -120,22 +119,198 @@ func TestMessagesCreateChatCreatesMegagroupAndDialogsRPC(t *testing.T) {
 	}
 }
 
-func TestMessagesCreateChatRejectsEmptyInviteListRPC(t *testing.T) {
-	ctx := context.Background()
-	userStore := memory.NewUserStore()
-	owner, err := userStore.Create(ctx, domain.User{AccessHash: 21, Phone: "15550001021", FirstName: "Owner"})
-	if err != nil {
-		t.Fatalf("create owner: %v", err)
+func TestMessagesCreateChatCreatesOwnerOnlyMegagroupRPC(t *testing.T) {
+	tests := []struct {
+		name  string
+		phone string
+		users func(domain.User) []tg.InputUserClass
+	}{
+		{
+			name:  "empty vector",
+			phone: "15550001021",
+			users: func(domain.User) []tg.InputUserClass { return nil },
+		},
+		{
+			name:  "self references normalize to empty",
+			phone: "15550001022",
+			users: func(owner domain.User) []tg.InputUserClass {
+				return []tg.InputUserClass{
+					&tg.InputUserSelf{},
+					&tg.InputUser{UserID: owner.ID, AccessHash: owner.AccessHash},
+					&tg.InputUserSelf{},
+				}
+			},
+		},
 	}
-	r := New(Config{}, Deps{
-		Users:    appusers.NewService(userStore),
-		Channels: appchannels.NewService(memory.NewChannelStore()),
-	}, zaptest.NewLogger(t), clock.System)
 
-	if _, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
-		Title: "No Invitees",
-	}); err == nil || !strings.Contains(err.Error(), "USERS_TOO_FEW") {
-		t.Fatalf("create chat without users err = %v, want USERS_TOO_FEW", err)
+	for index, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			userStore := memory.NewUserStore()
+			owner, err := userStore.Create(ctx, domain.User{AccessHash: int64(21 + index), Phone: tc.phone, FirstName: "Owner"})
+			if err != nil {
+				t.Fatalf("create owner: %v", err)
+			}
+			channelStore := memory.NewChannelStore()
+			channels := appchannels.NewService(channelStore)
+			sessions := &captureScopedSessions{captureSessions: &captureSessions{}}
+			r := New(Config{}, Deps{
+				Users:    appusers.NewService(userStore),
+				Channels: channels,
+				Dialogs:  appdialogs.NewService(memory.NewDialogStore(), channelStore),
+				Sessions: sessions,
+			}, zaptest.NewLogger(t), clock.System)
+
+			authKeyID := [8]byte{0x60, byte(index + 1)}
+			sessionID := int64(70 + index)
+			requestCtx := WithClientInfo(
+				WithSessionID(WithAuthKeyID(WithUserID(ctx, owner.ID), authKeyID), sessionID),
+				ClientInfo{DeviceModel: "Android", AppVersion: "12.7.3"},
+			)
+			invited, err := r.onMessagesCreateChat(requestCtx, &tg.MessagesCreateChatRequest{
+				Users: tc.users(owner),
+				Title: "Owner Only Group",
+			})
+			if err != nil {
+				t.Fatalf("create owner-only chat: %v", err)
+			}
+			if len(invited.MissingInvitees) != 0 {
+				t.Fatalf("missing invitees = %+v, want empty", invited.MissingInvitees)
+			}
+
+			updates, ok := invited.Updates.(*tg.Updates)
+			if !ok || len(updates.Chats) != 2 {
+				t.Fatalf("updates = %T %+v, want legacy chat + channel", invited.Updates, invited.Updates)
+			}
+			legacy, ok := updates.Chats[0].(*tg.Chat)
+			if !ok || !legacy.Deactivated || !legacy.Creator || legacy.ParticipantsCount != 1 {
+				t.Fatalf("legacy chat = %#v, want migrated creator-only chat", updates.Chats[0])
+			}
+			channel, ok := updates.Chats[1].(*tg.Channel)
+			if !ok || !channel.Megagroup || channel.Broadcast || !channel.Creator || channel.ParticipantsCount != 1 {
+				t.Fatalf("channel = %#v, want owner-only megagroup", updates.Chats[1])
+			}
+			migrated, ok := legacy.GetMigratedTo()
+			if !ok {
+				t.Fatal("legacy chat missing migrated_to")
+			}
+			migratedChannel, ok := migrated.(*tg.InputChannel)
+			if !ok || migratedChannel.ChannelID != channel.ID || migratedChannel.AccessHash != channel.AccessHash {
+				t.Fatalf("migrated_to = %#v, want channel %d/%d", migrated, channel.ID, channel.AccessHash)
+			}
+			if len(updates.Updates) != 2 {
+				t.Fatalf("updates len = %d, want create service message + channel refresh only", len(updates.Updates))
+			}
+			created, ok := updates.Updates[0].(*tg.UpdateNewChannelMessage)
+			if !ok || created.Pts != 1 || created.PtsCount != 1 {
+				t.Fatalf("create update = %#v, want pts=1/count=1", updates.Updates[0])
+			}
+			createdMessage, ok := created.Message.(*tg.MessageService)
+			if !ok {
+				t.Fatalf("create message = %T, want messageService", created.Message)
+			}
+			if _, ok := createdMessage.Action.(*tg.MessageActionChannelCreate); !ok {
+				t.Fatalf("create action = %T, want messageActionChannelCreate", createdMessage.Action)
+			}
+			if refresh, ok := updates.Updates[1].(*tg.UpdateChannel); !ok || refresh.ChannelID != channel.ID {
+				t.Fatalf("refresh = %#v, want channel %d", updates.Updates[1], channel.ID)
+			}
+			if len(updates.Users) != 1 {
+				t.Fatalf("updates users len = %d, want creator only", len(updates.Users))
+			}
+			if user, ok := updates.Users[0].(*tg.User); !ok || user.ID != owner.ID {
+				t.Fatalf("updates user = %#v, want owner %d", updates.Users[0], owner.ID)
+			}
+
+			pushedUserIDs := sessions.pushedUserIDs()
+			if len(pushedUserIDs) != 1 || pushedUserIDs[0] != owner.ID {
+				t.Fatalf("push user ids = %v, want creator's other sessions", pushedUserIDs)
+			}
+			push := sessions.snapshot()
+			if push.sessionID != sessionID || sessions.scopedAuthKey() != authKeyID {
+				t.Fatalf("push exclusion = auth_key %x session %d, want %x/%d", sessions.scopedAuthKey(), push.sessionID, authKeyID, sessionID)
+			}
+			canonicalPush, ok := sessions.userMessage.(*tg.Updates)
+			if !ok || len(canonicalPush.Chats) != 1 {
+				t.Fatalf("creator push = %T %+v, want canonical channel updates", sessions.userMessage, sessions.userMessage)
+			}
+			if pushedChannel, ok := canonicalPush.Chats[0].(*tg.Channel); !ok || pushedChannel.ID != channel.ID {
+				t.Fatalf("creator pushed chat = %#v, want channel %d", canonicalPush.Chats[0], channel.ID)
+			}
+
+			participants, err := r.onChannelsGetParticipants(requestCtx, &tg.ChannelsGetParticipantsRequest{
+				Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+				Filter:  &tg.ChannelParticipantsRecent{},
+				Limit:   10,
+			})
+			if err != nil {
+				t.Fatalf("get participants: %v", err)
+			}
+			participantList, ok := participants.(*tg.ChannelsChannelParticipants)
+			if !ok || participantList.Count != 1 || len(participantList.Participants) != 1 || len(participantList.Users) != 1 {
+				t.Fatalf("participants = %T %+v, want creator only", participants, participants)
+			}
+			if creator, ok := participantList.Participants[0].(*tg.ChannelParticipantCreator); !ok || creator.UserID != owner.ID {
+				t.Fatalf("participant = %#v, want creator %d", participantList.Participants[0], owner.ID)
+			}
+
+			view, err := channels.GetChannel(ctx, owner.ID, channel.ID)
+			if err != nil {
+				t.Fatalf("get created channel: %v", err)
+			}
+			if view.Self.Role != domain.ChannelRoleCreator || view.Self.Status != domain.ChannelMemberActive {
+				t.Fatalf("self membership = %+v, want active creator", view.Self)
+			}
+			if view.Dialog.TopMessageID != createdMessage.ID || view.Dialog.ReadInboxMaxID != createdMessage.ID || view.Dialog.UnreadCount != 0 {
+				t.Fatalf("creator dialog = %+v, want creation message %d read", view.Dialog, createdMessage.ID)
+			}
+
+			var dialogsBuffer bin.Buffer
+			if err := (&tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: 20}).Encode(&dialogsBuffer); err != nil {
+				t.Fatalf("encode getDialogs: %v", err)
+			}
+			dialogsResult, err := r.Dispatch(requestCtx, authKeyID, sessionID, &dialogsBuffer)
+			if err != nil {
+				t.Fatalf("dispatch getDialogs: %v", err)
+			}
+			dialogs, ok := dialogsResult.(*tg.MessagesDialogs)
+			if !ok || len(dialogs.Dialogs) != 1 || len(dialogs.Chats) != 1 || len(dialogs.Messages) != 1 {
+				t.Fatalf("dialogs = %T %+v, want persisted owner-only group", dialogsResult, dialogsResult)
+			}
+
+			var historyBuffer bin.Buffer
+			if err := (&tg.MessagesGetHistoryRequest{
+				Peer:  &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+				Limit: 20,
+			}).Encode(&historyBuffer); err != nil {
+				t.Fatalf("encode getHistory: %v", err)
+			}
+			historyResult, err := r.Dispatch(requestCtx, authKeyID, sessionID, &historyBuffer)
+			if err != nil {
+				t.Fatalf("dispatch getHistory: %v", err)
+			}
+			history, ok := historyResult.(*tg.MessagesChannelMessages)
+			if !ok || len(history.Messages) != 1 {
+				t.Fatalf("history = %T %+v, want creation service message", historyResult, historyResult)
+			}
+			if message, ok := history.Messages[0].(*tg.MessageService); !ok || message.ID != createdMessage.ID {
+				t.Fatalf("history message = %#v, want creation service %d", history.Messages[0], createdMessage.ID)
+			}
+
+			difference, err := r.onUpdatesGetChannelDifference(requestCtx, &tg.UpdatesGetChannelDifferenceRequest{
+				Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+				Filter:  &tg.ChannelMessagesFilterEmpty{},
+				Pts:     0,
+				Limit:   10,
+			})
+			if err != nil {
+				t.Fatalf("getChannelDifference from pts=0: %v", err)
+			}
+			fullDifference, ok := difference.(*tg.UpdatesChannelDifference)
+			if !ok || fullDifference.Pts != 1 || len(fullDifference.NewMessages) != 1 {
+				t.Fatalf("difference = %T %+v, want creation event at pts=1", difference, difference)
+			}
+		})
 	}
 }
 
@@ -346,8 +521,8 @@ func TestMessagesCreateChatDispatchRemembersTDesktopClientInfo(t *testing.T) {
 	sessions.mu.Lock()
 	pushUserIDs := append([]int64(nil), sessions.pushUserIDs...)
 	sessions.mu.Unlock()
-	if len(pushUserIDs) != 1 || pushUserIDs[0] != friend.ID {
-		t.Fatalf("push user ids = %v, want only invited friend %d", pushUserIDs, friend.ID)
+	if len(pushUserIDs) != 2 || pushUserIDs[0] != owner.ID || pushUserIDs[1] != friend.ID {
+		t.Fatalf("push user ids = %v, want creator then invited friend %d/%d", pushUserIDs, owner.ID, friend.ID)
 	}
 }
 
