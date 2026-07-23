@@ -1471,7 +1471,8 @@ func validateClientContainerEnvelope(msgID int64, seqNo int32, typeID uint32) in
 
 func clientMessageAllowsEitherSeqParity(typeID uint32) bool {
 	switch typeID {
-	case mt.PingDelayDisconnectRequestTypeID,
+	case mt.MsgsAckTypeID,
+		mt.PingDelayDisconnectRequestTypeID,
 		// get_future_salts 的 seqno 奇偶在客户端间不一致：部分客户端按内容消息发奇数，
 		// gotd 按服务消息发偶数。两者都合法（官方服务器都接受），故不在此卡奇偶，避免
 		// 误判 bad_msg 触发客户端重连风暴。ack/content 行为仍由 clientMessageNeedsAck 决定。

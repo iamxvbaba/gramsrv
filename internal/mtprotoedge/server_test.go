@@ -172,6 +172,201 @@ func TestServerAcceptObfuscatedAbridged(t *testing.T) {
 	}
 }
 
+func TestServerObfuscatedTCPAlsoAcceptsPlainIntermediate(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	frames := make(chan int, 1)
+	srv := New(Options{Logger: zaptest.NewLogger(t), ObfuscatedTCP: true})
+	srv.onFrame = func(n int) {
+		select {
+		case frames <- n:
+		default:
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn, err := transport.Intermediate.Handshake(raw)
+	if err != nil {
+		_ = raw.Close()
+		t.Fatalf("transport handshake: %v", err)
+	}
+
+	var b bin.Buffer
+	b.PutInt32(0x12345678)
+	b.PutInt32(0x0badf00d)
+	sendCtx, sc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sc()
+	if err := conn.Send(sendCtx, &b); err != nil {
+		t.Fatalf("send plain intermediate: %v", err)
+	}
+
+	select {
+	case n := <-frames:
+		if n != b.Len() {
+			t.Fatalf("received frame len = %d, want %d", n, b.Len())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive plain intermediate frame in dual mode")
+	}
+
+	_ = conn.Close()
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop after ctx cancel")
+	}
+}
+
+func TestServerObfuscatedTCPAlsoAcceptsPlainFull(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	frames := make(chan int, 1)
+	srv := New(Options{Logger: zaptest.NewLogger(t), ObfuscatedTCP: true})
+	srv.onFrame = func(n int) {
+		select {
+		case frames <- n:
+		default:
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn, err := transport.Full.Handshake(raw)
+	if err != nil {
+		_ = raw.Close()
+		t.Fatalf("full transport handshake: %v", err)
+	}
+
+	var b bin.Buffer
+	b.PutInt32(0x12345678)
+	b.PutInt32(0x0badf00d)
+	sendCtx, sc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sc()
+	if err := conn.Send(sendCtx, &b); err != nil {
+		t.Fatalf("send plain full: %v", err)
+	}
+
+	select {
+	case n := <-frames:
+		if n != b.Len() {
+			t.Fatalf("received frame len = %d, want %d", n, b.Len())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive plain full frame in dual mode")
+	}
+
+	_ = conn.Close()
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop after ctx cancel")
+	}
+}
+
+func TestServerDualModeBadObfuscatedInitDoesNotBlockPlainClient(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	frames := make(chan int, 1)
+	srv := New(Options{Logger: zaptest.NewLogger(t), ObfuscatedTCP: true})
+	srv.onFrame = func(n int) {
+		select {
+		case frames <- n:
+		default:
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+
+	bad, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("bad dial: %v", err)
+	}
+	if _, err := bad.Write([]byte{0x40, 0xd5, 0x59, 0xfe}); err != nil {
+		t.Fatalf("write bad prefix: %v", err)
+	}
+	_ = bad.Close()
+
+	raw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("plain dial: %v", err)
+	}
+	conn, err := transport.Intermediate.Handshake(raw)
+	if err != nil {
+		_ = raw.Close()
+		t.Fatalf("plain transport handshake: %v", err)
+	}
+
+	var b bin.Buffer
+	b.PutInt32(0x12345678)
+	b.PutInt32(0x0badf00d)
+	sendCtx, sc := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sc()
+	if err := conn.Send(sendCtx, &b); err != nil {
+		t.Fatalf("send plain intermediate after bad init: %v", err)
+	}
+
+	select {
+	case n := <-frames:
+		if n != b.Len() {
+			t.Fatalf("received frame len = %d, want %d", n, b.Len())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive frame after bad obfuscated init")
+	}
+
+	_ = conn.Close()
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop after ctx cancel")
+	}
+}
+
 func TestServerAcceptObfuscatedAbridgedQuickAckFrame(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

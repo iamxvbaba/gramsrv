@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	tdcrypto "github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mtproxy/obfuscated2"
 	"github.com/iamxvbaba/td/proto/codec"
 	"github.com/iamxvbaba/td/transport"
 )
@@ -25,6 +27,7 @@ const quickAckResponseFlag = uint32(1 << 31)
 
 const (
 	maxCompatPacketOverhead         = 7 // 4-byte header + up to 3 bytes padded-intermediate padding.
+	maxDualModeInitialFullLength    = 4 << 10
 	maxRetainedDirectMessageScratch = 64 << 10
 	progressiveWriteMinBytes        = 64 << 10
 	progressiveWriteChunkBytes      = 32 << 10
@@ -35,6 +38,160 @@ type transportListener interface {
 	Accept() (transport.Conn, error)
 	Close() error
 	Addr() net.Addr
+}
+
+type dualModeMTProtoListener struct {
+	listener net.Listener
+}
+
+type dualModeObfuscatedConn struct {
+	reader io.Reader
+	writer io.Writer
+	net.Conn
+}
+
+func newDualModeMTProtoListener(listener net.Listener) net.Listener {
+	return &dualModeMTProtoListener{listener: listener}
+}
+
+func (l *dualModeMTProtoListener) Accept() (_ net.Conn, err error) {
+	conn, err := l.listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			multierr.AppendInto(&err, conn.Close())
+		}
+	}()
+
+	return promoteDualModeMTProtoConn(conn)
+}
+
+func (l *dualModeMTProtoListener) Close() error {
+	return l.listener.Close()
+}
+
+func (l *dualModeMTProtoListener) Addr() net.Addr {
+	return l.listener.Addr()
+}
+
+func (c *dualModeObfuscatedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
+func (c *dualModeObfuscatedConn) Write(p []byte) (int, error) {
+	return c.writer.Write(p)
+}
+
+func promoteDualModeMTProtoConn(conn net.Conn) (net.Conn, error) {
+	var header [4]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return nil, errors.Wrap(err, "read transport prefix")
+	}
+
+	if isExplicitPlainMTProtoTransportPrefix(header) {
+		return &prefixedNetConn{
+			Conn:   conn,
+			reader: io.MultiReader(bytes.NewReader(header[:]), conn),
+		}, nil
+	}
+
+	prefix, full, err := readInitialFullTransportCandidate(conn, header)
+	if err != nil {
+		return nil, err
+	}
+	if full {
+		return &prefixedNetConn{
+			Conn:   conn,
+			reader: io.MultiReader(bytes.NewReader(prefix), conn),
+		}, nil
+	}
+
+	// Full transport has no unique marker. In dual mode we only accept it after
+	// validating the complete first Full frame (length + seq_no + CRC32). Every
+	// unvalidated unmarked prefix continues through the strict Obfuscated2 path.
+	if len(prefix) < 64 {
+		need := make([]byte, 64-len(prefix))
+		if _, err := io.ReadFull(conn, need); err != nil {
+			return nil, errors.Wrap(err, "read obfuscated init")
+		}
+		prefix = append(prefix, need...)
+	}
+
+	prefixed := &prefixedNetConn{
+		Conn:   conn,
+		reader: io.MultiReader(bytes.NewReader(prefix), conn),
+	}
+	rw, md, err := obfuscated2.Accept(prefixed, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "accept obfuscated2")
+	}
+	if !isSupportedObfuscatedMTProtoProtocol(md.Protocol) {
+		return nil, errors.Errorf("unsupported obfuscated protocol tag %x", md.Protocol)
+	}
+
+	var tag *bytes.Reader
+	if md.Protocol[0] == codec.AbridgedClientStart[0] {
+		tag = bytes.NewReader(md.Protocol[:1])
+	} else {
+		tag = bytes.NewReader(md.Protocol[:])
+	}
+
+	return &dualModeObfuscatedConn{
+		reader: io.MultiReader(tag, rw),
+		writer: rw,
+		Conn:   conn,
+	}, nil
+}
+
+func readInitialFullTransportCandidate(conn net.Conn, header [4]byte) ([]byte, bool, error) {
+	n := int(binary.LittleEndian.Uint32(header[:]))
+	if n < 3*bin.Word || n > maxDualModeInitialFullLength || n%bin.Word != 0 {
+		return append([]byte(nil), header[:]...), false, nil
+	}
+
+	frame := make([]byte, n)
+	copy(frame, header[:])
+	if _, err := io.ReadFull(conn, frame[bin.Word:]); err != nil {
+		return nil, false, errors.Wrap(err, "read initial full candidate")
+	}
+
+	if !validInitialFullTransportFrame(frame) {
+		return frame, false, nil
+	}
+	return frame, true, nil
+}
+
+func validInitialFullTransportFrame(frame []byte) bool {
+	if len(frame) < 3*bin.Word {
+		return false
+	}
+	if int(binary.LittleEndian.Uint32(frame[:bin.Word])) != len(frame) {
+		return false
+	}
+	if binary.LittleEndian.Uint32(frame[bin.Word:2*bin.Word]) != 0 {
+		return false
+	}
+	got := binary.LittleEndian.Uint32(frame[len(frame)-bin.Word:])
+	want := crc32.ChecksumIEEE(frame[:len(frame)-bin.Word])
+	return got == want
+}
+
+func isExplicitPlainMTProtoTransportPrefix(header [4]byte) bool {
+	if header[0] == codec.AbridgedClientStart[0] {
+		return true
+	}
+	switch header {
+	case codec.IntermediateClientStart, codec.PaddedIntermediateClientStart:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedObfuscatedMTProtoProtocol(protocol [4]byte) bool {
+	return isExplicitPlainMTProtoTransportPrefix(protocol)
 }
 
 type quickAckTransport interface {

@@ -407,6 +407,37 @@ func TestHTTPWaitInContainerDoesNotNeedAck(t *testing.T) {
 	}
 }
 
+func TestMsgsAckOddSeqInContainerAccepted(t *testing.T) {
+	const dc = 2
+	addr, pub, _ := startTestServer(t, Options{DC: dc})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	ackMsgID := clientMsgID.New(proto.MessageFromClient)
+	pingMsgID := clientMsgID.New(proto.MessageFromClient)
+	containerMsgID := clientMsgID.New(proto.MessageFromClient)
+	ackBody := mustEncodeTL(t, &mt.MsgsAck{MsgIDs: []int64{pingMsgID}})
+	pingBody := mustEncodeTL(t, &mt.PingRequest{PingID: 17})
+
+	sendEncrypted(t, conn, cipher, auth, containerMsgID, &proto.MessageContainer{
+		Messages: []proto.Message{
+			{ID: ackMsgID, SeqNo: 1, Bytes: len(ackBody), Body: ackBody},
+			{ID: pingMsgID, SeqNo: 3, Bytes: len(pingBody), Body: pingBody},
+		},
+	})
+
+	frames := collectReplyFrames(t, conn, cipher, auth.AuthKey, map[uint32]int{mt.PongTypeID: 1})
+	for _, frame := range frames {
+		if frame.TypeID == mt.BadMsgNotificationTypeID {
+			var bad mt.BadMsgNotification
+			if err := bad.Decode(frame.Plain); err != nil {
+				t.Fatalf("decode bad_msg_notification: %v", err)
+			}
+			t.Fatalf("odd-seq msgs_ack in container was rejected: %+v", bad)
+		}
+	}
+}
+
 // TestOldMessageInFreshContainerAccepted verifies TDesktop's bad_msg recovery
 // path: an old request can be resent inside a fresh container msg_id.
 func TestOldMessageInFreshContainerAccepted(t *testing.T) {
@@ -791,18 +822,27 @@ func TestBadMsgSeqOddExpected(t *testing.T) {
 	}
 }
 
-func TestBadMsgSeqEvenExpected(t *testing.T) {
+func TestMsgsAckOddSeqAccepted(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
-	reqMsgID := clientMsgID.New(proto.MessageFromClient)
-	sendEncryptedWithSeq(t, conn, cipher, auth, reqMsgID, 1, &mt.MsgsAck{MsgIDs: []int64{reqMsgID}})
+	ackMsgID := clientMsgID.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, ackMsgID, 1, &mt.MsgsAck{MsgIDs: []int64{ackMsgID}})
 
-	bad := readBadMsgNotification(t, conn, cipher, auth.AuthKey)
-	if bad.BadMsgID != reqMsgID || bad.BadMsgSeqno != 1 || bad.ErrorCode != badMsgSeqNotEven {
-		t.Fatalf("bad_msg = %+v, want msg_id=%d seq=1 code=%d", bad, reqMsgID, badMsgSeqNotEven)
+	pingMsgID := clientMsgID.New(proto.MessageFromClient)
+	sendEncryptedWithSeq(t, conn, cipher, auth, pingMsgID, 1, &mt.PingRequest{PingID: 99})
+
+	frames := collectReplyFrames(t, conn, cipher, auth.AuthKey, map[uint32]int{mt.PongTypeID: 1})
+	for _, frame := range frames {
+		if frame.TypeID == mt.BadMsgNotificationTypeID {
+			var bad mt.BadMsgNotification
+			if err := bad.Decode(frame.Plain); err != nil {
+				t.Fatalf("decode bad_msg_notification: %v", err)
+			}
+			t.Fatalf("odd-seq msgs_ack was rejected: %+v", bad)
+		}
 	}
 }
 

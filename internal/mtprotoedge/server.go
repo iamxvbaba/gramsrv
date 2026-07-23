@@ -873,7 +873,7 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, error) {
 	var ln net.Listener = newSingleConnListener(raw)
 	if obfuscated {
-		ln = transport.ObfuscatedListener(ln)
+		ln = newDualModeMTProtoListener(ln)
 	}
 	return newCompatTransportListener(s.codec, ln, s.frameBudget).Accept()
 }
