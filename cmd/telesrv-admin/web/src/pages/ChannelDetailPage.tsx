@@ -4,6 +4,8 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, AuditTable, Badge, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
+import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
+import { ChannelSettingsAction, ColorAction, EmojiStatusAction, UsernameAction } from "../components/attributes";
 import { channelKind, displayUsername, formatDate, formatUnix } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { ChannelDetail } from "../types";
@@ -51,6 +53,7 @@ export function ChannelDetailPage({ id, navigate }: { id: number; navigate: Navi
               <div className="entity-badges">
                 <Badge>{channelKind(ch, t)}</Badge>
                 {ch.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
+                <ScamFakeBadges scam={ch.Scam} fake={ch.Fake} />
                 {ch.Deleted ? <Badge tone="danger">{t("common.deleted")}</Badge> : <Badge>{t("common.valid")}</Badge>}
               </div>
             </section>
@@ -86,6 +89,13 @@ export function ChannelDetailPage({ id, navigate }: { id: number; navigate: Navi
               payload={() => ({ channel_id: ch.ID, verified: !ch.Verified })}
               onDone={load}
             />
+            <ScamFakeActions idKey="channel_id" id={ch.ID} path="/api/actions/set-channel-flags" scam={ch.Scam} fake={ch.Fake} onDone={load} />
+            <div className="dock-title">{t("attr.settings")}</div>
+            <ChannelSettingsAction channel={ch} onDone={load} />
+            <div className="dock-title">{t("attr.attributes")}</div>
+            <UsernameAction idKey="channel_id" id={ch.ID} path="/api/actions/set-channel-username" current={ch.Username} onDone={load} />
+            <ColorAction idKey="channel_id" id={ch.ID} path="/api/actions/set-channel-color" onDone={load} />
+            <EmojiStatusAction idKey="channel_id" id={ch.ID} path="/api/actions/set-channel-emoji-status" onDone={load} />
           </section>
         }
       />

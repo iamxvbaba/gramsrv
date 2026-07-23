@@ -9,6 +9,8 @@ export type AccountRow = {
   Frozen: boolean;
   Reason: string;
   Verified: boolean;
+  Scam: boolean;
+  Fake: boolean;
   PremiumUntil: number;
   LastActiveAt: string;
   DeviceCount: number;
@@ -58,6 +60,8 @@ export type AccountDetail = {
   About: string;
   LastSeenAt: number;
   Verified: boolean;
+  Scam: boolean;
+  Fake: boolean;
   Support: boolean;
   Bot: boolean;
   StarsBalance: number;
@@ -80,7 +84,16 @@ export type ChannelRow = {
   Forum: boolean;
   Monoforum: boolean;
   Verified: boolean;
+  Scam: boolean;
+  Fake: boolean;
+  Gigagroup: boolean;
   Deleted: boolean;
+  AntiSpam: boolean;
+  ParticipantsHidden: boolean;
+  NoForwards: boolean;
+  JoinToSend: boolean;
+  JoinRequest: boolean;
+  SlowmodeSeconds: number;
   ParticipantsCount: number;
   AdminsCount: number;
   KickedCount: number;
@@ -96,6 +109,27 @@ export type ChannelRow = {
 export type ChannelDetail = {
   Channel: ChannelRow;
   ChannelJSON: string;
+  AuditLogs: AuditLogRow[];
+};
+
+export type BotRow = {
+  ID: number;
+  Username: string;
+  FirstName: string;
+  Verified: boolean;
+  Scam: boolean;
+  Fake: boolean;
+  System: boolean;
+  OwnerUserID: number;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type BotDetail = {
+  Bot: BotRow;
+  About: string;
+  Description: string;
+  OwnerUsername: string;
   AuditLogs: AuditLogRow[];
 };
 
@@ -282,6 +316,32 @@ export type ChannelListResponse = {
   has_more: boolean;
   next_before_id: number;
   next_before_updated_us: number;
+  listing: boolean;
+};
+
+export type BotListResponse = {
+  query: string;
+  limit: number;
+  rows: BotRow[];
+  has_more: boolean;
+  next_before_id: number;
+  listing: boolean;
+};
+
+export type EmojiRow = {
+  DocumentID: string;
+  Alt: string;
+  MimeType: string;
+  Size: number;
+  SetTitle: string;
+  CreatedAt: string;
+};
+
+export type EmojiListResponse = {
+  query: string;
+  rows: EmojiRow[];
+  has_more: boolean;
+  next_before_id: number;
   listing: boolean;
 };
 

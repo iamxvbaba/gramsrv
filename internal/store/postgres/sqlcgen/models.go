@@ -2283,6 +2283,8 @@ type User struct {
 	EmojiStatusCollectibleID      *int64
 	EmojiStatusCollectible        []byte
 	LinkedCommunityID             int64
+	Scam                          bool
+	Fake                          bool
 }
 
 type UserBusinessProfile struct {

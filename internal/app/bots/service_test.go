@@ -181,6 +181,7 @@ type countingBotStore struct {
 	*memory.BotStore
 	getBotCalls  int
 	getBotsCalls int
+	deleteCalls  int
 }
 
 func (s *countingBotStore) reset() {
@@ -196,6 +197,11 @@ func (s *countingBotStore) GetBot(ctx context.Context, botUserID int64) (domain.
 func (s *countingBotStore) GetBots(ctx context.Context, botUserIDs []int64) (map[int64]domain.BotProfile, error) {
 	s.getBotsCalls++
 	return s.BotStore.GetBots(ctx, botUserIDs)
+}
+
+func (s *countingBotStore) DeleteBotAccount(_ context.Context, botUserID int64) (domain.User, error) {
+	s.deleteCalls++
+	return domain.User{ID: botUserID, Bot: true, Deleted: true}, nil
 }
 
 func TestBotFatherCancelAndUnknown(t *testing.T) {

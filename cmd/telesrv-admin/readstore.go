@@ -43,6 +43,8 @@ type AccountRow struct {
 	Frozen       bool
 	Reason       string
 	Verified     bool
+	Scam         bool
+	Fake         bool
 	PremiumUntil int64
 	LastActiveAt time.Time
 	DeviceCount  int
@@ -53,6 +55,8 @@ type AccountDetail struct {
 	About          string
 	LastSeenAt     int64
 	Verified       bool
+	Scam           bool
+	Fake           bool
 	Support        bool
 	Bot            bool
 	StarsBalance   int64
@@ -112,10 +116,19 @@ type ChannelRow struct {
 	Broadcast         bool
 	Megagroup         bool
 	Forum             bool
-	Monoforum         bool
-	Verified          bool
-	Deleted           bool
-	ParticipantsCount int
+	Monoforum          bool
+	Verified           bool
+	Scam               bool
+	Fake               bool
+	Gigagroup          bool
+	Deleted            bool
+	AntiSpam           bool
+	ParticipantsHidden bool
+	NoForwards         bool
+	JoinToSend         bool
+	JoinRequest        bool
+	SlowmodeSeconds    int
+	ParticipantsCount  int
 	AdminsCount       int
 	KickedCount       int
 	BannedCount       int
@@ -206,7 +219,7 @@ WITH auth AS (
 	GROUP BY user_id
 )
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified,
+	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
@@ -224,12 +237,146 @@ LIMIT $5`, id, phone, phoneRaw, username, accountSearchLimit)
 	out := make([]AccountRow, 0)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+type BotRow struct {
+	ID          int64
+	Username    string
+	FirstName   string
+	Verified    bool
+	Scam        bool
+	Fake        bool
+	System      bool
+	OwnerUserID int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type BotDetail struct {
+	Bot           BotRow
+	About         string
+	Description   string
+	OwnerUsername string
+	AuditLogs     []AuditLogRow
+}
+
+// ListBots pages over live bot accounts (users.is_bot, not tombstoned) by
+// descending id. Bots are excluded from ListAccounts, so this is the dedicated
+// projection for them.
+func (s *readStore) ListBots(ctx context.Context, beforeID int64, limit int) ([]BotRow, bool, error) {
+	if limit <= 0 {
+		limit = accountListDefaultLimit
+	}
+	if limit > accountListMaxLimit {
+		limit = accountListMaxLimit
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.verified, u.scam, u.fake,
+	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.is_bot AND u.deleted_at IS NULL AND ($1::bigint = 0 OR u.id < $1)
+ORDER BY u.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list bots: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotRow, 0, limit+1)
+	for rows.Next() {
+		var item BotRow
+		if err := rows.Scan(&item.ID, &item.Username, &item.FirstName, &item.Verified, &item.Scam, &item.Fake, &item.OwnerUserID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		item.System = domain.IsSystemUserID(item.ID)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+func (s *readStore) SearchBots(ctx context.Context, q string) ([]BotRow, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, nil
+	}
+	id := int64(-1)
+	if n, err := strconv.ParseInt(q, 10, 64); err == nil {
+		id = n
+	}
+	username := strings.ToLower(strings.TrimPrefix(q, "@"))
+	rows, err := s.pool.Query(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.verified, u.scam, u.fake,
+	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.is_bot AND u.deleted_at IS NULL AND (u.id = $1 OR lower(u.username) = $2 OR p.username_lower = $2)
+ORDER BY u.id DESC
+LIMIT $3`, id, username, accountSearchLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search bots: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotRow, 0)
+	for rows.Next() {
+		var item BotRow
+		if err := rows.Scan(&item.ID, &item.Username, &item.FirstName, &item.Verified, &item.Scam, &item.Fake, &item.OwnerUserID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.System = domain.IsSystemUserID(item.ID)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *readStore) BotDetail(ctx context.Context, botUserID int64) (BotDetail, error) {
+	var out BotDetail
+	err := s.pool.QueryRow(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name, u.about, u.verified, u.scam, u.fake,
+	COALESCE(b.owner_user_id, 0), COALESCE(b.description, ''),
+	u.created_at, u.updated_at
+FROM users u
+LEFT JOIN bots b ON b.bot_user_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
+		&out.Bot.ID, &out.Bot.Username, &out.Bot.FirstName, &out.About, &out.Bot.Verified, &out.Bot.Scam, &out.Bot.Fake,
+		&out.Bot.OwnerUserID, &out.Description, &out.Bot.CreatedAt, &out.Bot.UpdatedAt,
+	)
+	if err != nil {
+		return out, fmt.Errorf("get bot: %w", err)
+	}
+	out.Bot.System = domain.IsSystemUserID(out.Bot.ID)
+	if out.Bot.OwnerUserID > 0 {
+		var ownerUsername string
+		if err := s.pool.QueryRow(ctx, `
+SELECT COALESCE(NULLIF(u.username, ''), p.username_lower, '')
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+WHERE u.id = $1`, out.Bot.OwnerUserID).Scan(&ownerUsername); err != nil && err != pgx.ErrNoRows {
+			return out, fmt.Errorf("get bot owner: %w", err)
+		} else {
+			out.OwnerUsername = ownerUsername
+		}
+	}
+	out.AuditLogs, err = s.auditLogs(ctx, botUserID)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func (s *readStore) SearchChannels(ctx context.Context, q string) ([]ChannelRow, error) {
@@ -245,7 +392,8 @@ func (s *readStore) SearchChannels(ctx context.Context, q string) ([]ChannelRow,
 	rows, err := s.pool.Query(ctx, `
 SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	COALESCE(NULLIF(c.username, ''), p.username_lower, '') AS display_username,
-	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.deleted,
+	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.scam, c.fake, c.gigagroup, c.deleted,
+	c.antispam, c.participants_hidden, c.noforwards, c.join_to_send, c.join_request, c.slowmode_seconds,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
@@ -278,7 +426,8 @@ func (s *readStore) ListChannels(ctx context.Context, beforeUpdatedUS, beforeID 
 	rows, err := s.pool.Query(ctx, `
 SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	COALESCE(NULLIF(c.username, ''), p.username_lower, '') AS display_username,
-	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.deleted,
+	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.scam, c.fake, c.gigagroup, c.deleted,
+	c.antispam, c.participants_hidden, c.noforwards, c.join_to_send, c.join_request, c.slowmode_seconds,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
@@ -310,7 +459,8 @@ func (s *readStore) ChannelDetail(ctx context.Context, channelID int64) (Channel
 	err := s.pool.QueryRow(ctx, `
 SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	COALESCE(NULLIF(c.username, ''), p.username_lower, '') AS display_username,
-	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.deleted,
+	c.broadcast, c.megagroup, c.forum, c.monoforum, c.verified, c.scam, c.fake, c.gigagroup, c.deleted,
+	c.antispam, c.participants_hidden, c.noforwards, c.join_to_send, c.join_request, c.slowmode_seconds,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at,
 	row_to_json(c)::jsonb
@@ -354,7 +504,8 @@ func scanChannelRow(row channelScanner, item *ChannelRow) error {
 func channelScanDest(item *ChannelRow) []any {
 	return []any{
 		&item.ID, &item.AccessHash, &item.CreatorUserID, &item.Title, &item.About, &item.Username,
-		&item.Broadcast, &item.Megagroup, &item.Forum, &item.Monoforum, &item.Verified, &item.Deleted,
+		&item.Broadcast, &item.Megagroup, &item.Forum, &item.Monoforum, &item.Verified, &item.Scam, &item.Fake, &item.Gigagroup, &item.Deleted,
+		&item.AntiSpam, &item.ParticipantsHidden, &item.NoForwards, &item.JoinToSend, &item.JoinRequest, &item.SlowmodeSeconds,
 		&item.ParticipantsCount, &item.AdminsCount, &item.KickedCount, &item.BannedCount,
 		&item.TopMessageID, &item.PinnedMessageID, &item.PTS, &item.Date, &item.CreatedAt, &item.UpdatedAt,
 	}
@@ -379,7 +530,7 @@ WITH auth AS (
 	GROUP BY user_id
 )
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified,
+	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	auth.last_active_at, auth.device_count,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
@@ -398,7 +549,7 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 	out := make([]AccountRow, 0, limit+1)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
 			return nil, false, err
 		}
 		out = append(out, item)
@@ -417,7 +568,7 @@ func (s *readStore) AccountDetail(ctx context.Context, userID int64) (AccountDet
 	var out AccountDetail
 	err := s.pool.QueryRow(ctx, `
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
-	u.about, u.last_seen_at, u.verified, u.support, u.is_bot,
+	u.about, u.last_seen_at, u.verified, u.scam, u.fake, u.support, u.is_bot,
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''),
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
@@ -428,7 +579,7 @@ LEFT JOIN stars_balances sb ON sb.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
-		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Support, &out.Bot,
+		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.Account.Username,
 	)
 	if err != nil {
@@ -829,4 +980,91 @@ func prettyJSON(raw []byte) string {
 		return string(raw)
 	}
 	return string(out)
+}
+
+// EmojiRow is a custom-emoji document projection for the admin emoji browser.
+type EmojiRow struct {
+	DocumentID int64 `json:"DocumentID,string"`
+	Alt        string
+	MimeType   string
+	Size       int64
+	SetTitle   string
+	CreatedAt  time.Time
+}
+
+const emojiListDefaultLimit = 60
+const emojiListMaxLimit = 200
+
+func scanEmojiRows(rows pgx.Rows) ([]EmojiRow, error) {
+	out := make([]EmojiRow, 0)
+	for rows.Next() {
+		var item EmojiRow
+		if err := rows.Scan(&item.DocumentID, &item.Alt, &item.MimeType, &item.Size, &item.CreatedAt, &item.SetTitle); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+const emojiSelectColumns = `d.id,
+	COALESCE((SELECT a->>'alt' FROM jsonb_array_elements(d.attributes) a WHERE a->>'kind' = 'custom_emoji' LIMIT 1), ''),
+	d.mime_type, d.size, d.created_at,
+	COALESCE((SELECT s.title FROM sticker_sets s WHERE s.emojis AND NOT s.deleted AND s.document_ids @> to_jsonb(d.id) LIMIT 1), '')`
+
+// ListEmoji pages over custom-emoji documents by descending id.
+func (s *readStore) ListEmoji(ctx context.Context, beforeID int64, limit int) ([]EmojiRow, bool, error) {
+	if limit <= 0 {
+		limit = emojiListDefaultLimit
+	}
+	if limit > emojiListMaxLimit {
+		limit = emojiListMaxLimit
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+emojiSelectColumns+`
+FROM documents d
+WHERE d.attributes @> '[{"kind":"custom_emoji"}]'::jsonb
+	AND ($1::bigint = 0 OR d.id < $1)
+ORDER BY d.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list emoji: %w", err)
+	}
+	defer rows.Close()
+	out, err := scanEmojiRows(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// SearchEmoji finds custom-emoji documents by document id or emoticon substring.
+func (s *readStore) SearchEmoji(ctx context.Context, q string) ([]EmojiRow, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil, nil
+	}
+	id := int64(-1)
+	if n, err := strconv.ParseInt(q, 10, 64); err == nil {
+		id = n
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+emojiSelectColumns+`
+FROM documents d
+WHERE d.attributes @> '[{"kind":"custom_emoji"}]'::jsonb
+	AND (d.id = $1 OR EXISTS (
+		SELECT 1 FROM jsonb_array_elements(d.attributes) a
+		WHERE a->>'kind' = 'custom_emoji' AND a->>'alt' ILIKE '%' || $2 || '%'
+	))
+ORDER BY d.id DESC
+LIMIT $3`, id, q, emojiListMaxLimit)
+	if err != nil {
+		return nil, fmt.Errorf("search emoji: %w", err)
+	}
+	defer rows.Close()
+	return scanEmojiRows(rows)
 }

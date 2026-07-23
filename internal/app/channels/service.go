@@ -500,6 +500,49 @@ func (s *Service) SetVerified(ctx context.Context, channelID int64, verified boo
 	return s.channels.SetChannelVerified(ctx, channelID, verified)
 }
 
+// SetScamFake sets or clears the channel/supergroup scam and fake flags through the internal admin path.
+func (s *Service) SetScamFake(ctx context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if scam && fake {
+		return domain.Channel{}, domain.ErrPeerModerationFlagsInvalid
+	}
+	return s.channels.SetChannelScamFake(ctx, channelID, scam, fake)
+}
+
+// AdminSetSettings applies a moderation-settings patch through the admin path (no permission checks).
+func (s *Service) AdminSetSettings(ctx context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	return s.channels.SetChannelAdminSettings(ctx, channelID, patch)
+}
+
+// AdminSetUsername force-sets or clears a channel username through the admin path.
+func (s *Service) AdminSetUsername(ctx context.Context, channelID int64, username string) (domain.Channel, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	return s.channels.SetChannelUsernameAdmin(ctx, channelID, username)
+}
+
+// AdminSetColor force-sets a channel name/profile color through the admin path.
+func (s *Service) AdminSetColor(ctx context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	return s.channels.SetChannelColorAdmin(ctx, channelID, forProfile, color)
+}
+
+// AdminSetEmojiStatus force-sets or clears a channel emoji status through the admin path.
+func (s *Service) AdminSetEmojiStatus(ctx context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	return s.channels.SetChannelEmojiStatusAdmin(ctx, channelID, status)
+}
+
 // ListAdminedPublicChannels returns public channels/supergroups administered by user.
 func (s *Service) ListAdminedPublicChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 {

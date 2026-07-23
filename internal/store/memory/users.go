@@ -283,6 +283,36 @@ func (s *UserStore) SetVerified(_ context.Context, userID int64, verified bool) 
 	return u, nil
 }
 
+// SetSupport 设置/取消用户的 support 标记（与 postgres 语义一致）。
+func (s *UserStore) SetSupport(_ context.Context, userID int64, support bool) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.byID[userID]
+	if !ok || u.Deleted {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Support = support
+	s.byID[userID] = u
+	return u, nil
+}
+
+// SetScamFake 设置/取消用户的 scam 与 fake 标记（与 postgres 语义一致）。
+func (s *UserStore) SetScamFake(_ context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	if scam && fake {
+		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.byID[userID]
+	if !ok || u.Deleted {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Scam = scam
+	u.Fake = fake
+	s.byID[userID] = u
+	return u, nil
+}
+
 // SweepExpiredPremium 清空到期会员行并返回清理后的用户（与 postgres 语义一致）。
 func (s *UserStore) SweepExpiredPremium(_ context.Context, now int64, limit int) ([]domain.User, error) {
 	if limit <= 0 {

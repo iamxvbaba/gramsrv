@@ -24,6 +24,10 @@ type UserStore interface {
 	SetPremiumUntil(ctx context.Context, userID int64, until int) (domain.User, error)
 	// SetVerified 设置/取消用户认证标记。认证是用户基础事实，读取投影统一下发。
 	SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error)
+	// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。
+	SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error)
+	// SetSupport 设置/取消用户的 support 标记（官方客服账号）。
+	SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error)
 	// SweepExpiredPremium 把到期（premium_expires_at <= now）的会员行清空并
 	// 返回清理后的用户（供推送 updateUser）；单次最多处理 limit 行。
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)

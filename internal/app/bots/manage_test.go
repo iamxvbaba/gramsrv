@@ -2,6 +2,7 @@ package bots
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -372,6 +373,38 @@ func TestRevokeBotTokenRevokesSessions(t *testing.T) {
 	}
 }
 
+func TestDeleteBotFailsClosedWhenSessionRevocationFails(t *testing.T) {
+	users := memory.NewUserStore()
+	botStore := &countingBotStore{BotStore: memory.NewBotStore(users)}
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	revocationErr := errors.New("authorization store unavailable")
+	rev := &captureRevoker{err: revocationErr}
+	svc := NewService(users, botStore, messages)
+	svc.SetRouterHooks(rev)
+	owner := newOwner(t, users, "+2099")
+	bot := makeBot(t, svc, owner, "Delete Guard Bot", "delete_guard_bot")
+
+	if _, err := svc.DeleteBot(context.Background(), bot.ID); !errors.Is(err, domain.ErrBotSessionsNotRevoked) {
+		t.Fatalf("DeleteBot error=%v, want ErrBotSessionsNotRevoked", err)
+	}
+	if botStore.deleteCalls != 0 {
+		t.Fatalf("DeleteBotAccount calls=%d after failed session revocation", botStore.deleteCalls)
+	}
+	if _, found, err := botStore.GetBot(context.Background(), bot.ID); err != nil || !found {
+		t.Fatalf("bot disappeared after failed revocation: found=%v err=%v", found, err)
+	}
+
+	rev.err = nil
+	deleted, err := svc.DeleteBot(context.Background(), bot.ID)
+	if err != nil {
+		t.Fatalf("DeleteBot after revocation recovery: %v", err)
+	}
+	if botStore.deleteCalls != 1 || deleted.ID != bot.ID || !deleted.Deleted {
+		t.Fatalf("deleted=%+v deleteCalls=%d", deleted, botStore.deleteCalls)
+	}
+}
+
 func TestBotWriteAccessGrant(t *testing.T) {
 	svc, users, _, _ := newTestService(t)
 	owner := newOwner(t, users, "+2012")
@@ -400,11 +433,12 @@ type captureRevoker struct {
 	botUserID        int64
 	pushedCommandsTo int64
 	pushedCommands   []domain.BotCommand
+	err              error
 }
 
 func (c *captureRevoker) RevokeBotSessions(_ context.Context, botUserID int64) error {
 	c.botUserID = botUserID
-	return nil
+	return c.err
 }
 
 func (c *captureRevoker) PushBotCommandsChanged(_ context.Context, botUserID int64, commands []domain.BotCommand) {

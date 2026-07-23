@@ -247,6 +247,11 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			about = ""
 		}
 	}
+	// Surface the scam/fake warning to other viewers (never to the account
+	// itself), non-destructively over the projected About.
+	if u.ID != currentUserID {
+		about = aboutWithModerationWarning(about, defaultScamWarningUser, defaultFakeWarningUser, u.Scam, u.Fake)
+	}
 	full := tg.UserFull{
 		ID:             u.ID,
 		About:          about,

@@ -327,6 +327,45 @@ type StarGiftUpgradeRequest struct {
 	Date                int
 	OriginAuthKeyID     [8]byte
 	OriginSessionID     int64
+
+	// Admin-controlled attribute overrides. When non-zero these pin the specific
+	// collectible model/pattern/backdrop instead of the random pool draw. They
+	// are only honoured on the admin grant path; the DB FK (attribute must belong
+	// to the revision) remains the source of truth. The collectible number is
+	// always assigned automatically (sequential).
+	ModelAttributeID    int64
+	PatternAttributeID  int64
+	BackdropAttributeID int64
+}
+
+// AdminStarGiftGrant is one admin "give gift" command: deliver GiftID to
+// Recipient from the official system account 777000 at no charge.
+// When Upgrade is set the gift is minted as a collectible; the optional
+// attribute IDs pin specific model/pattern/backdrop (0 => random). The
+// collectible number is always assigned automatically.
+type AdminStarGiftGrant struct {
+	SenderID            int64
+	Recipient           Peer
+	GiftID              int64
+	HideName            bool
+	Message             string
+	Upgrade             bool
+	CommandKey          string
+	Date                int
+	RecipientBlocked    bool
+	ModelAttributeID    int64
+	PatternAttributeID  int64
+	BackdropAttributeID int64
+}
+
+// AdminStarGiftGrantResult is the committed direct collectible assignment.
+// The saved gift, unique issuance, private message and replay receipt are one
+// aggregate transaction.
+type AdminStarGiftGrantResult struct {
+	Saved     SavedStarGift
+	Unique    UniqueStarGift
+	Send      SendPrivateTextResult
+	Duplicate bool
 }
 
 type StarGiftPurchaseRequest struct {

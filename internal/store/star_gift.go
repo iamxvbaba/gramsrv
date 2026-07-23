@@ -67,6 +67,7 @@ type StarGiftStore interface {
 type StarGiftUpgradeStore interface {
 	UpgradeStarGift(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
 	StarGiftUpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
+	GrantUniqueStarGift(ctx context.Context, req domain.AdminStarGiftGrant) (domain.AdminStarGiftGrantResult, error)
 }
 
 // StarGiftLifecycleStore owns transactions that span collectible ownership, listings,

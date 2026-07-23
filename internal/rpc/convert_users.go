@@ -52,6 +52,8 @@ func tgUser(u domain.User) *tg.User {
 		Username:      u.Username,
 		Phone:         u.Phone,
 		Verified:      u.Verified,
+		Scam:          u.Scam,
+		Fake:          u.Fake,
 		Support:       u.Support,
 		Contact:       u.Contact,
 		MutualContact: u.Mutual,
