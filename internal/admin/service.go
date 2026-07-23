@@ -23,7 +23,17 @@ const (
 	ActionGrantPremium            = "account.grant_premium"
 	ActionGrantStars              = "account.grant_stars"
 	ActionSetVerified             = "account.set_verified"
+	ActionSetUserFlags            = "account.set_flags"
+	ActionSetSupport              = "account.set_support"
+	ActionSetUsername             = "account.set_username"
+	ActionSetUserColor            = "account.set_color"
+	ActionSetUserEmojiStatus      = "account.set_emoji_status"
+	ActionSetChannelUsername      = "channel.set_username"
+	ActionSetChannelSettings      = "channel.set_settings"
+	ActionSetChannelColor         = "channel.set_color"
+	ActionSetChannelEmojiStatus   = "channel.set_emoji_status"
 	ActionSetChannelVerified      = "channel.set_verified"
+	ActionSetChannelFlags         = "channel.set_flags"
 	ActionRevokeSessions          = "account.revoke_sessions"
 	ActionDeletePrivateMessages   = "messages.delete_private_messages"
 	ActionDeletePrivateHistory    = "messages.delete_private_history"
@@ -32,6 +42,7 @@ const (
 	ActionPublishGiftCollectibles = "gifts.collectibles.publish"
 	ActionSetStarGiftEnabled      = "gifts.set_enabled"
 	ActionSetStarGiftSortOrder    = "gifts.set_sort_order"
+	ActionGiveGift                = "gifts.give"
 	ActionCreateBot               = "bot.create"
 	ActionDeleteBot               = "bot.delete"
 
@@ -77,6 +88,11 @@ type UsersService interface {
 	AdminUser(ctx context.Context, userID int64) (domain.User, bool, error)
 	GrantPremium(ctx context.Context, userID int64, months int) (domain.User, error)
 	SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error)
+	SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error)
+	SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error)
+	UpdateUsername(ctx context.Context, userID int64, username string) (domain.User, error)
+	UpdateColor(ctx context.Context, userID int64, forProfile bool, color domain.PeerColor) (domain.User, error)
+	UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error)
 }
 
 type StarsService interface {
@@ -98,6 +114,11 @@ type AccountFreezeNotifier interface {
 type ChannelsService interface {
 	GetChannelByID(ctx context.Context, channelID int64) (domain.Channel, error)
 	SetVerified(ctx context.Context, channelID int64, verified bool) (domain.Channel, error)
+	SetScamFake(ctx context.Context, channelID int64, scam, fake bool) (domain.Channel, error)
+	AdminSetSettings(ctx context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error)
+	AdminSetUsername(ctx context.Context, channelID int64, username string) (domain.Channel, error)
+	AdminSetColor(ctx context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error)
+	AdminSetEmojiStatus(ctx context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error)
 }
 
 type ChannelNotifier interface {
@@ -112,6 +133,7 @@ type MessagesService interface {
 }
 
 type GiftsService interface {
+	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
 	PrepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
 	PrepareOfficialAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
 	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
@@ -137,6 +159,20 @@ type BotService interface {
 	DeleteBot(ctx context.Context, botUserID int64) (domain.User, error)
 }
 
+// EmojiService renders custom-emoji document animations for the admin emoji
+// browser (Lottie JSON, TGS transparently decompressed).
+type EmojiService interface {
+	DocumentAnimationJSON(ctx context.Context, documentID int64) ([]byte, bool, error)
+}
+
+// GiftGranter delivers a catalog gift to a recipient peer on behalf of a sender
+// without charging Stars. Implemented by the RPC router, it reuses the standard
+// gift-delivery path (service message for users, saved-gift + admin log for
+// channels) so granted gifts are indistinguishable from paid ones.
+type GiftGranter interface {
+	AdminGrantStarGift(ctx context.Context, grant domain.AdminStarGiftGrant) error
+}
+
 type Dependencies struct {
 	Commands        CommandRepository
 	Restrictions    RestrictionStore
@@ -151,8 +187,10 @@ type Dependencies struct {
 	ChannelNotifier ChannelNotifier
 	Messages        MessagesService
 	Gifts           GiftsService
+	GiftGranter     GiftGranter
 	OfficialGifts   OfficialGiftsSource
 	Bots            BotService
+	Emoji           EmojiService
 	Now             func() time.Time
 }
 
@@ -170,8 +208,10 @@ type Service struct {
 	channelNotifier ChannelNotifier
 	messages        MessagesService
 	gifts           GiftsService
+	giftGranter     GiftGranter
 	officialGifts   OfficialGiftsSource
 	bots            BotService
+	emoji           EmojiService
 	now             func() time.Time
 }
 
@@ -220,11 +260,17 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	if deps.Gifts != nil {
 		s.gifts = deps.Gifts
 	}
+	if deps.GiftGranter != nil {
+		s.giftGranter = deps.GiftGranter
+	}
 	if deps.OfficialGifts != nil {
 		s.officialGifts = deps.OfficialGifts
 	}
 	if deps.Bots != nil {
 		s.bots = deps.Bots
+	}
+	if deps.Emoji != nil {
+		s.emoji = deps.Emoji
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -297,6 +343,24 @@ type SetStarGiftSortOrderRequest struct {
 	SortOrder int   `json:"sort_order"`
 }
 
+// GiveGiftRequest grants a catalog gift to a recipient (user or channel) from a
+// sender account (defaults to the official system account 777000) at no charge.
+// Exactly one of UserID / ChannelID identifies the recipient.
+type GiveGiftRequest struct {
+	CommandMeta
+	SenderUserID int64  `json:"sender_user_id"`
+	UserID       int64  `json:"user_id"`
+	ChannelID    int64  `json:"channel_id"`
+	GiftID              int64  `json:"gift_id"`
+	HideName            bool   `json:"hide_name"`
+	Message             string `json:"message"`
+	Upgrade             bool   `json:"upgrade"`
+	ModelAttributeID    int64  `json:"model_attribute_id"`
+	PatternAttributeID  int64  `json:"pattern_attribute_id"`
+	BackdropAttributeID int64  `json:"backdrop_attribute_id"`
+	Num                 int    `json:"num"`
+}
+
 type StarGiftCollectibleAnimationUpload struct {
 	Name           string `json:"name"`
 	RarityPermille int    `json:"rarity_permille"`
@@ -359,6 +423,86 @@ type SetChannelVerifiedRequest struct {
 	CommandMeta
 	ChannelID int64 `json:"channel_id"`
 	Verified  bool  `json:"verified"`
+}
+
+type SetUserFlagsRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	Scam   bool  `json:"scam"`
+	Fake   bool  `json:"fake"`
+}
+
+type SetChannelFlagsRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id"`
+	Scam      bool  `json:"scam"`
+	Fake      bool  `json:"fake"`
+}
+
+type SetSupportRequest struct {
+	CommandMeta
+	UserID  int64 `json:"user_id"`
+	Support bool  `json:"support"`
+}
+
+type SetUsernameRequest struct {
+	CommandMeta
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+}
+
+type SetChannelUsernameRequest struct {
+	CommandMeta
+	ChannelID int64  `json:"channel_id"`
+	Username  string `json:"username"`
+}
+
+type PeerColorInput struct {
+	ForProfile        bool  `json:"for_profile"`
+	HasColor          bool  `json:"has_color"`
+	Color             int   `json:"color"`
+	BackgroundEmojiID int64 `json:"background_emoji_id,string"`
+}
+
+type SetUserColorRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	PeerColorInput
+}
+
+type SetChannelColorRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id"`
+	PeerColorInput
+}
+
+type EmojiStatusInput struct {
+	DocumentID int64 `json:"document_id,string"`
+	Until      int   `json:"until"`
+}
+
+type SetUserEmojiStatusRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	EmojiStatusInput
+}
+
+type SetChannelEmojiStatusRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id"`
+	EmojiStatusInput
+}
+
+type SetChannelSettingsRequest struct {
+	CommandMeta
+	ChannelID          int64 `json:"channel_id"`
+	Gigagroup          *bool `json:"gigagroup,omitempty"`
+	AntiSpam           *bool `json:"antispam,omitempty"`
+	ParticipantsHidden *bool `json:"participants_hidden,omitempty"`
+	NoForwards         *bool `json:"noforwards,omitempty"`
+	JoinToSend         *bool `json:"join_to_send,omitempty"`
+	JoinRequest        *bool `json:"join_request,omitempty"`
+	SlowmodeSeconds    *int  `json:"slowmode_seconds,omitempty"`
 }
 
 type CreateBotRequest struct {
@@ -718,6 +862,285 @@ func (s *Service) SetVerified(ctx context.Context, req SetVerifiedRequest) (Comm
 	})
 }
 
+// SetUserFlags sets or clears the scam/fake moderation flags on a user (bots
+// reuse the same path). Both flags are applied together from the desired state.
+func (s *Service) SetUserFlags(ctx context.Context, req SetUserFlagsRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetUserFlags, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{
+			"previous_scam": u.Scam, "previous_fake": u.Fake,
+			"new_scam": req.Scam, "new_fake": req.Fake,
+			"would_change": u.Scam != req.Scam || u.Fake != req.Fake,
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.users.SetScamFake(ctx, req.UserID, req.Scam, req.Fake)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_scam"] = updated.Scam
+		details["updated_fake"] = updated.Fake
+		if err := s.notifyUserChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "user flags updated", Details: details}, nil
+	})
+}
+
+// SetSupport sets or clears the official-support flag on a user.
+func (s *Service) SetSupport(ctx context.Context, req SetSupportRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetSupport, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{"previous_support": u.Support, "new_support": req.Support, "would_change": u.Support != req.Support}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.users.SetSupport(ctx, req.UserID, req.Support)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_support"] = updated.Support
+		if err := s.notifyUserChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "support updated", Details: details}, nil
+	})
+}
+
+func collectibleAttrPresent(attrs []domain.StarGiftCollectibleAttribute, id int64) bool {
+	for _, attr := range attrs {
+		if attr.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// GiveGift grants a catalog gift to a recipient (user or channel) from a sender
+// account (defaults to the official system account 777000) without charging any
+// Stars. Delivery reuses the standard gift path via the GiftGranter dependency.
+func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandResult, error) {
+	if req.GiftID <= 0 {
+		return CommandResult{}, fmt.Errorf("gift_id is required")
+	}
+	if (req.UserID > 0) == (req.ChannelID > 0) {
+		return CommandResult{}, fmt.Errorf("exactly one of user_id or channel_id is required")
+	}
+	if s == nil || s.giftGranter == nil {
+		return CommandResult{}, fmt.Errorf("gift granter dependency is not configured")
+	}
+	sender := req.SenderUserID
+	if sender <= 0 {
+		sender = domain.OfficialSystemUserID
+	}
+	var recipient domain.Peer
+	if req.ChannelID > 0 {
+		recipient = domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	} else {
+		recipient = domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}
+	}
+	if req.Upgrade && recipient.Type != domain.PeerTypeUser {
+		return CommandResult{}, fmt.Errorf("upgraded gift delivery is supported for user recipients only")
+	}
+	if !req.Upgrade && (req.ModelAttributeID > 0 || req.PatternAttributeID > 0 || req.BackdropAttributeID > 0 || req.Num > 0) {
+		return CommandResult{}, fmt.Errorf("collectible attributes and number require upgrade")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionGiveGift, req.UserID, recipient, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"sender_user_id": sender,
+			"gift_id":        req.GiftID,
+			"recipient_type": string(recipient.Type),
+			"recipient_id":   recipient.ID,
+			"hide_name":      req.HideName,
+			"upgrade":        req.Upgrade,
+		}
+		if strings.TrimSpace(req.Message) != "" {
+			details["message"] = strings.TrimSpace(req.Message)
+		}
+		if s.gifts != nil {
+			gift, found, err := s.gifts.GiftByID(ctx, req.GiftID)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			if !found {
+				return CommandResult{}, fmt.Errorf("gift %d not found", req.GiftID)
+			}
+			details["gift_title"] = gift.Title
+			details["gift_stars"] = gift.Stars
+			if req.Upgrade {
+				preview, ok, err := s.gifts.CollectiblePreview(ctx, req.GiftID)
+				if err != nil {
+					return CommandResult{}, err
+				}
+				if !ok || preview.UpgradeStars <= 0 {
+					return CommandResult{}, fmt.Errorf("gift %d has no published collectible upgrade", req.GiftID)
+				}
+				if preview.Issued >= preview.SupplyTotal {
+					return CommandResult{}, fmt.Errorf("gift %d collectible supply is exhausted", req.GiftID)
+				}
+				if req.ModelAttributeID > 0 && !collectibleAttrPresent(preview.Models, req.ModelAttributeID) {
+					return CommandResult{}, fmt.Errorf("model attribute %d is not part of gift %d", req.ModelAttributeID, req.GiftID)
+				}
+				if req.PatternAttributeID > 0 && !collectibleAttrPresent(preview.Patterns, req.PatternAttributeID) {
+					return CommandResult{}, fmt.Errorf("pattern attribute %d is not part of gift %d", req.PatternAttributeID, req.GiftID)
+				}
+				if req.BackdropAttributeID > 0 && !collectibleAttrPresent(preview.Backdrops, req.BackdropAttributeID) {
+					return CommandResult{}, fmt.Errorf("backdrop attribute %d is not part of gift %d", req.BackdropAttributeID, req.GiftID)
+				}
+				if req.Num > 0 && req.Num > preview.SupplyTotal {
+					return CommandResult{}, fmt.Errorf("number %d exceeds collectible supply %d", req.Num, preview.SupplyTotal)
+				}
+				details["collectible_supply_total"] = preview.SupplyTotal
+				details["collectible_issued"] = preview.Issued
+				if req.ModelAttributeID > 0 {
+					details["model_attribute_id"] = req.ModelAttributeID
+				}
+				if req.PatternAttributeID > 0 {
+					details["pattern_attribute_id"] = req.PatternAttributeID
+				}
+				if req.BackdropAttributeID > 0 {
+					details["backdrop_attribute_id"] = req.BackdropAttributeID
+				}
+				if req.Num > 0 {
+					details["num"] = req.Num
+				}
+			}
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		if err := s.giftGranter.AdminGrantStarGift(ctx, domain.AdminStarGiftGrant{
+			SenderID:            sender,
+			Recipient:           recipient,
+			GiftID:              req.GiftID,
+			HideName:            req.HideName,
+			Message:             strings.TrimSpace(req.Message),
+			Upgrade:             req.Upgrade,
+			ModelAttributeID:    req.ModelAttributeID,
+			PatternAttributeID:  req.PatternAttributeID,
+			BackdropAttributeID: req.BackdropAttributeID,
+			Num:                 req.Num,
+		}); err != nil {
+			return CommandResult{}, err
+		}
+		msg := "gift granted"
+		if req.Upgrade {
+			msg = "collectible gift granted"
+		}
+		return CommandResult{Message: msg, Details: details}, nil
+	})
+}
+
+// SetUsername force-sets or clears (empty) a user/bot username. Format and
+// availability are validated by the users service.
+func (s *Service) SetUsername(ctx context.Context, req SetUsernameRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(req.Username, "@"))
+	req.Username = username
+	return s.runCommand(ctx, req.CommandMeta, ActionSetUsername, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{"previous_username": u.Username, "new_username": username}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.users.UpdateUsername(ctx, req.UserID, username)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_username"] = updated.Username
+		if err := s.notifyUserChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "username updated", Details: details}, nil
+	})
+}
+
+// SetUserColor force-sets or clears a user's name/profile color.
+func (s *Service) SetUserColor(ctx context.Context, req SetUserColorRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
+	}
+	color := domain.PeerColor{HasColor: req.HasColor, Color: req.Color, BackgroundEmojiID: req.BackgroundEmojiID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetUserColor, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"for_profile": req.ForProfile, "has_color": req.HasColor, "color": req.Color}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.users.UpdateColor(ctx, req.UserID, req.ForProfile, color)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.notifyUserChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "user color updated", Details: details}, nil
+	})
+}
+
+// SetUserEmojiStatus force-sets or clears (document_id=0) a user's emoji status.
+func (s *Service) SetUserEmojiStatus(ctx context.Context, req SetUserEmojiStatusRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
+	}
+	status := domain.UserEmojiStatus{DocumentID: req.DocumentID, Until: req.Until}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetUserEmojiStatus, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"document_id": strconv.FormatInt(req.DocumentID, 10), "until": req.Until}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.users.UpdateEmojiStatus(ctx, req.UserID, status)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.notifyUserChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "user emoji status updated", Details: details}, nil
+	})
+}
+
 // CreateBot provisions a new bot account owned by ownerUserID. The dry-run stage
 // only validates the display name and username; the confirm stage creates the
 // users+bots rows and returns the freshly minted token in the result details so
@@ -843,6 +1266,188 @@ func (s *Service) SetChannelVerified(ctx context.Context, req SetChannelVerified
 		}
 		return CommandResult{Message: "channel verified updated", Details: details}, nil
 	})
+}
+
+// SetChannelFlags sets or clears the scam/fake moderation flags on a channel or
+// supergroup. Both flags are applied together from the desired state.
+func (s *Service) SetChannelFlags(ctx context.Context, req SetChannelFlagsRequest) (CommandResult, error) {
+	if req.ChannelID <= 0 {
+		return CommandResult{}, fmt.Errorf("channel_id is required")
+	}
+	if s == nil || s.channels == nil {
+		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelFlags, 0, target, req, func() (CommandResult, error) {
+		ch, err := s.channels.GetChannelByID(ctx, req.ChannelID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if ch.Monoforum || (!ch.Broadcast && !ch.Megagroup) {
+			return CommandResult{}, domain.ErrChannelInvalid
+		}
+		details := map[string]any{
+			"title": ch.Title, "username": ch.Username,
+			"previous_scam": ch.Scam, "previous_fake": ch.Fake,
+			"new_scam": req.Scam, "new_fake": req.Fake,
+			"would_change": ch.Scam != req.Scam || ch.Fake != req.Fake,
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.channels.SetScamFake(ctx, req.ChannelID, req.Scam, req.Fake)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_scam"] = updated.Scam
+		details["updated_fake"] = updated.Fake
+		if err := s.notifyChannelChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "channel flags updated", Details: details}, nil
+	})
+}
+
+// SetChannelSettings applies an admin moderation-settings patch to a channel/supergroup.
+func (s *Service) SetChannelSettings(ctx context.Context, req SetChannelSettingsRequest) (CommandResult, error) {
+	if req.ChannelID <= 0 {
+		return CommandResult{}, fmt.Errorf("channel_id is required")
+	}
+	if s == nil || s.channels == nil {
+		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	if req.SlowmodeSeconds != nil && (*req.SlowmodeSeconds < 0 || *req.SlowmodeSeconds > 86400) {
+		return CommandResult{}, fmt.Errorf("slowmode_seconds must be between 0 and 86400")
+	}
+	patch := domain.ChannelAdminSettings{
+		Gigagroup: req.Gigagroup, AntiSpam: req.AntiSpam, ParticipantsHidden: req.ParticipantsHidden,
+		NoForwards: req.NoForwards, JoinToSend: req.JoinToSend, JoinRequest: req.JoinRequest, SlowmodeSeconds: req.SlowmodeSeconds,
+	}
+	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelSettings, 0, target, req, func() (CommandResult, error) {
+		if patch.Empty() {
+			return CommandResult{}, fmt.Errorf("no settings provided")
+		}
+		details := boolIntPatchDetails(patch)
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.channels.AdminSetSettings(ctx, req.ChannelID, patch)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated"] = true
+		if err := s.notifyChannelChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "channel settings updated", Details: details}, nil
+	})
+}
+
+// SetChannelUsername force-sets or clears a channel username.
+func (s *Service) SetChannelUsername(ctx context.Context, req SetChannelUsernameRequest) (CommandResult, error) {
+	if req.ChannelID <= 0 {
+		return CommandResult{}, fmt.Errorf("channel_id is required")
+	}
+	if s == nil || s.channels == nil {
+		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	username := strings.TrimSpace(strings.TrimPrefix(req.Username, "@"))
+	req.Username = username
+	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelUsername, 0, target, req, func() (CommandResult, error) {
+		details := map[string]any{"new_username": username}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.channels.AdminSetUsername(ctx, req.ChannelID, username)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["updated_username"] = updated.Username
+		if err := s.notifyChannelChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "channel username updated", Details: details}, nil
+	})
+}
+
+// SetChannelColor force-sets or clears a channel name/profile color.
+func (s *Service) SetChannelColor(ctx context.Context, req SetChannelColorRequest) (CommandResult, error) {
+	if req.ChannelID <= 0 {
+		return CommandResult{}, fmt.Errorf("channel_id is required")
+	}
+	if s == nil || s.channels == nil {
+		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	color := domain.ChannelPeerColor{HasColor: req.HasColor, Color: req.Color, BackgroundEmojiID: req.BackgroundEmojiID}
+	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelColor, 0, target, req, func() (CommandResult, error) {
+		details := map[string]any{"for_profile": req.ForProfile, "has_color": req.HasColor, "color": req.Color}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.channels.AdminSetColor(ctx, req.ChannelID, req.ForProfile, color)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.notifyChannelChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "channel color updated", Details: details}, nil
+	})
+}
+
+// SetChannelEmojiStatus force-sets or clears (document_id=0) a channel emoji status.
+func (s *Service) SetChannelEmojiStatus(ctx context.Context, req SetChannelEmojiStatusRequest) (CommandResult, error) {
+	if req.ChannelID <= 0 {
+		return CommandResult{}, fmt.Errorf("channel_id is required")
+	}
+	if s == nil || s.channels == nil {
+		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	status := domain.ChannelEmojiStatus{DocumentID: req.DocumentID, Until: req.Until}
+	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelEmojiStatus, 0, target, req, func() (CommandResult, error) {
+		details := map[string]any{"document_id": strconv.FormatInt(req.DocumentID, 10), "until": req.Until}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		updated, err := s.channels.AdminSetEmojiStatus(ctx, req.ChannelID, status)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.notifyChannelChanged(ctx, updated); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "channel emoji status updated", Details: details}, nil
+	})
+}
+
+func boolIntPatchDetails(p domain.ChannelAdminSettings) map[string]any {
+	details := map[string]any{}
+	if p.Gigagroup != nil {
+		details["gigagroup"] = *p.Gigagroup
+	}
+	if p.AntiSpam != nil {
+		details["antispam"] = *p.AntiSpam
+	}
+	if p.ParticipantsHidden != nil {
+		details["participants_hidden"] = *p.ParticipantsHidden
+	}
+	if p.NoForwards != nil {
+		details["noforwards"] = *p.NoForwards
+	}
+	if p.JoinToSend != nil {
+		details["join_to_send"] = *p.JoinToSend
+	}
+	if p.JoinRequest != nil {
+		details["join_request"] = *p.JoinRequest
+	}
+	if p.SlowmodeSeconds != nil {
+		details["slowmode_seconds"] = *p.SlowmodeSeconds
+	}
+	return details
 }
 
 func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest) (CommandResult, error) {
@@ -1401,6 +2006,14 @@ func (s *Service) StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, 
 		return nil, false, nil
 	}
 	return s.gifts.AnimationJSON(ctx, giftID)
+}
+
+// EmojiAnimation returns the Lottie JSON for a custom-emoji document (admin emoji browser preview).
+func (s *Service) EmojiAnimation(ctx context.Context, documentID int64) ([]byte, bool, error) {
+	if s == nil || s.emoji == nil || documentID <= 0 {
+		return nil, false, nil
+	}
+	return s.emoji.DocumentAnimationJSON(ctx, documentID)
 }
 
 func (s *Service) StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error) {

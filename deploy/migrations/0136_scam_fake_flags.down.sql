@@ -1,0 +1,7 @@
+ALTER TABLE public.channels
+	DROP COLUMN IF EXISTS scam,
+	DROP COLUMN IF EXISTS fake;
+
+ALTER TABLE public.users
+	DROP COLUMN IF EXISTS scam,
+	DROP COLUMN IF EXISTS fake;

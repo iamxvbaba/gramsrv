@@ -150,20 +150,33 @@ WHERE collectible_revision_id=$1 AND crafted
 			if err != nil {
 				return err
 			}
-			modelID, err := chooseCollectibleAttribute(ctx, tx, "star_gift_collectible_models", revision.ID)
+			modelID, err := resolveCollectibleAttribute(ctx, tx, "star_gift_collectible_models", revision.ID, req.ModelAttributeID)
 			if err != nil {
 				return err
 			}
-			patternID, err := chooseCollectibleAttribute(ctx, tx, "star_gift_collectible_patterns", revision.ID)
+			patternID, err := resolveCollectibleAttribute(ctx, tx, "star_gift_collectible_patterns", revision.ID, req.PatternAttributeID)
 			if err != nil {
 				return err
 			}
-			backdropID, err := chooseCollectibleAttribute(ctx, tx, "star_gift_collectible_backdrops", revision.ID)
+			backdropID, err := resolveCollectibleAttribute(ctx, tx, "star_gift_collectible_backdrops", revision.ID, req.BackdropAttributeID)
 			if err != nil {
 				return err
 			}
 
 			num := revision.Issued + 1
+			if req.Num > 0 {
+				if req.Num > revision.SupplyTotal {
+					return domain.ErrStarGiftCollectibleInvalid
+				}
+				var numTaken bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM unique_star_gifts WHERE gift_id=$1 AND num=$2)`, locked.GiftID, req.Num).Scan(&numTaken); err != nil {
+					return fmt.Errorf("check collectible number availability: %w", err)
+				}
+				if numTaken {
+					return domain.ErrStarGiftCollectibleNumberTaken
+				}
+				num = req.Num
+			}
 			var uniqueID int64
 			if err := tx.QueryRow(ctx, `SELECT nextval('unique_star_gift_id_seq')`).Scan(&uniqueID); err != nil {
 				return fmt.Errorf("allocate unique star gift id: %w", err)
@@ -664,6 +677,30 @@ func debitStarGiftUpgrade(ctx context.Context, tx pgx.Tx, userID, amount int64, 
 		return domain.StarsBalance{}, err
 	}
 	return result, nil
+}
+
+// resolveCollectibleAttribute returns explicitID when it names a renderable
+// attribute belonging to revisionID (admin-pinned choice), otherwise it falls
+// back to the weighted random draw. Models excluded from the random pool
+// (crafted) are also rejected for explicit selection to preserve invariants.
+func resolveCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, revisionID, explicitID int64) (int64, error) {
+	if explicitID <= 0 {
+		return chooseCollectibleAttribute(ctx, tx, table, revisionID)
+	}
+	extra := ""
+	if table == "star_gift_collectible_models" {
+		extra = " AND NOT crafted"
+	}
+	var ok bool
+	if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s
+WHERE id=$1 AND collectible_revision_id=$2 AND rarity_kind='permille' AND rarity_permille > 0%s)`, table, extra),
+		explicitID, revisionID).Scan(&ok); err != nil {
+		return 0, fmt.Errorf("validate collectible attribute: %w", err)
+	}
+	if !ok {
+		return 0, domain.ErrStarGiftCollectibleInvalid
+	}
+	return explicitID, nil
 }
 
 func chooseCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, revisionID int64) (int64, error) {

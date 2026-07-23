@@ -450,6 +450,9 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	out := &tg.Channel{
 		Creator:    ch.CreatorUserID == viewerUserID && viewerUserID != 0,
 		Verified:   ch.Verified,
+		Scam:       ch.Scam,
+		Fake:       ch.Fake,
+		Gigagroup:  ch.Gigagroup,
 		Broadcast:  ch.Broadcast,
 		Megagroup:  ch.Megagroup,
 		Forum:      ch.Forum,
@@ -540,6 +543,16 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	return out
 }
 
+// channelAboutWithModerationWarning decorates the projected channel/supergroup
+// About with the scam/fake warning when set (group vs channel wording).
+func channelAboutWithModerationWarning(ch domain.Channel) string {
+	scamText, fakeText := defaultScamWarningChannel, defaultFakeWarningChannel
+	if ch.Megagroup && !ch.Broadcast {
+		scamText, fakeText = defaultScamWarningGroup, defaultFakeWarningGroup
+	}
+	return aboutWithModerationWarning(ch.About, scamText, fakeText, ch.Scam, ch.Fake)
+}
+
 func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.ChannelFull {
 	ch := view.Channel
 	full := &tg.ChannelFull{
@@ -550,7 +563,7 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
 		ID:                  ch.ID,
-		About:               ch.About,
+		About:               channelAboutWithModerationWarning(ch),
 		ReadInboxMaxID:      view.Dialog.ReadInboxMaxID,
 		ReadOutboxMaxID:     view.Dialog.ReadOutboxMaxID,
 		UnreadCount:         view.Dialog.UnreadCount,

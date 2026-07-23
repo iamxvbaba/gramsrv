@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
+import { ColorAction, EmojiStatusAction, UsernameAction } from "../components/attributes";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
@@ -55,6 +57,7 @@ export function BotDetailPage({ id, navigate }: { id: number; navigate: Navigate
               <div className="entity-badges">
                 <Badge tone={bot.System ? "warn" : "neutral"}>{bot.System ? t("bots.system") : t("bots.user")}</Badge>
                 {bot.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
+                <ScamFakeBadges scam={bot.Scam} fake={bot.Fake} />
               </div>
             </section>
             <div className="summary-grid">
@@ -85,6 +88,11 @@ export function BotDetailPage({ id, navigate }: { id: number; navigate: Navigate
                 onDone={load}
               />
             </div>
+            <ScamFakeActions idKey="user_id" id={bot.ID} path="/api/actions/set-account-flags" scam={bot.Scam} fake={bot.Fake} onDone={load} />
+            <div className="dock-title">{t("attr.attributes")}</div>
+            <UsernameAction idKey="user_id" id={bot.ID} path="/api/actions/set-account-username" current={bot.Username} onDone={load} />
+            <ColorAction idKey="user_id" id={bot.ID} path="/api/actions/set-account-color" onDone={load} />
+            <EmojiStatusAction idKey="user_id" id={bot.ID} path="/api/actions/set-account-emoji-status" onDone={load} />
             {bot.System ? (
               <p className="bot-create-note">{t("bots.systemHint")}</p>
             ) : (

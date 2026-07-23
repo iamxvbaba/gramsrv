@@ -269,9 +269,9 @@ func (r *Router) sendStarGiftMemoryPurchase(ctx context.Context, userID int64, p
 	var updates *tg.Updates
 	switch peer.Type {
 	case domain.PeerTypeUser:
-		updates, err = r.sendStarGiftToUser(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
+		_, updates, err = r.sendStarGiftToUser(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
 	case domain.PeerTypeChannel:
-		updates, err = r.sendStarGiftToChannel(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
+		_, updates, err = r.sendStarGiftToChannel(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
 	default:
 		err = domain.ErrStarGiftInvalid
 	}
@@ -363,19 +363,19 @@ func (r *Router) sendStarsTopupForm(ctx context.Context, userID, formID int64, i
 	return &tg.PaymentsPaymentResult{Updates: starsBalanceUpdates(balance.Balance, r.clock.Now().Unix())}, nil
 }
 
-func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (*tg.Updates, error) {
+func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (domain.SavedStarGiftRef, *tg.Updates, error) {
 	prepaidUpgradeHash := ""
 	if prepaidUpgradeStars == 0 && gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal {
 		var token [32]byte
 		if _, err := rand.Read(token[:]); err != nil {
-			return nil, err
+			return domain.SavedStarGiftRef{}, nil, err
 		}
 		prepaidUpgradeHash = base64.RawURLEncoding.EncodeToString(token[:])
 	}
 	// 2. 投递礼物服务消息到收礼人私聊（双盒 + 推送）。
 	send, err := r.deliverStarGift(ctx, senderID, recipientID, gift, hideName, message, prepaidUpgradeStars, prepaidUpgradeHash)
 	if err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	// 3. 记账：收礼人收到一份礼物实例（msg_id = 收礼人侧消息 id）。
 	if _, err := r.deps.Gifts.RecordSavedGift(ctx, domain.SavedStarGift{
@@ -392,17 +392,18 @@ func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID i
 		PrepaidUpgradeHash:  prepaidUpgradeHash,
 		Message:             message,
 	}); err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	// 收礼人 stargifts_count 变化 → 失效其 userFull 投影，资料页 Gifts 区段才会出现。
 	r.invalidateRPCProjectionForUser(recipientID)
 
+	ref := domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeUser, ID: recipientID}, MsgID: send.RecipientMessage.ID}
 	users := r.usersForMessageUpdate(ctx, senderID, send.SenderMessage)
 	chats := r.chatsForMessageUpdate(ctx, senderID, send.SenderMessage)
-	return tgPrivateMessageUpdates(send.SenderEvent, send.SenderMessage, 0, false, users, chats), nil
+	return ref, tgPrivateMessageUpdates(send.SenderEvent, send.SenderMessage, 0, false, users, chats), nil
 }
 
-func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (*tg.Updates, error) {
+func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (domain.SavedStarGiftRef, *tg.Updates, error) {
 	now := int(r.clock.Now().Unix())
 	sticker := gift.Sticker
 	action := domain.ChannelMessageAction{
@@ -438,7 +439,7 @@ func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID 
 		Message:             message,
 	})
 	if err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	action.StarGift.PeerChannelID = channelID
 	action.StarGift.SavedID = savedID
@@ -451,7 +452,8 @@ func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID 
 		)
 	}
 	r.invalidateRPCProjectionForChannel(channelID)
-	return nil, nil
+	ref := domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}, SavedID: savedID}
+	return ref, nil, nil
 }
 
 // deliverStarGift 经 SendPrivateText 把 messageActionStarGift 服务消息投递到收礼人私聊。

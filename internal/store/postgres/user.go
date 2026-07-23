@@ -321,6 +321,37 @@ func (s *UserStore) SetVerified(ctx context.Context, userID int64, verified bool
 	return userFromModel(row), nil
 }
 
+// SetSupport 设置/取消用户的 support 标记（官方客服账号）。
+func (s *UserStore) SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error) {
+	row, err := s.q.SetUserSupport(ctx, sqlcgen.SetUserSupportParams{
+		ID:      userID,
+		Support: support,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.ErrUserNotFound
+		}
+		return domain.User{}, fmt.Errorf("set user support: %w", err)
+	}
+	return userFromModel(row), nil
+}
+
+// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。
+func (s *UserStore) SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	row, err := s.q.SetUserScamFake(ctx, sqlcgen.SetUserScamFakeParams{
+		ID:   userID,
+		Scam: scam,
+		Fake: fake,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.ErrUserNotFound
+		}
+		return domain.User{}, fmt.Errorf("set user scam/fake: %w", err)
+	}
+	return userFromModel(row), nil
+}
+
 // SweepExpiredPremium 清空到期会员行并返回清理后的用户。
 func (s *UserStore) SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error) {
 	if limit <= 0 {
@@ -547,6 +578,8 @@ func userFromModel(r sqlcgen.User) domain.User {
 		Username:               r.Username,
 		CountryCode:            r.CountryCode,
 		Verified:               r.Verified,
+		Scam:                   r.Scam,
+		Fake:                   r.Fake,
 		Support:                r.Support,
 		Bot:                    r.IsBot,
 		BotInfoVersion:         int(r.BotInfoVersion),

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { ScamFakeBadges } from "../components/flags";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
@@ -152,7 +153,7 @@ export function BotsPage({ navigate }: { navigate: Navigate }) {
                 <td>{displayUsername(row.Username) || "-"}</td>
                 <td>{row.FirstName || "-"}</td>
                 <td className="mono">{row.OwnerUserID > 0 ? row.OwnerUserID : "-"}</td>
-                <td>{row.Verified ? <Badge tone="good"><BadgeCheck size={12} /> {t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}</td>
+                <td>{row.Verified ? <Badge tone="good"><BadgeCheck size={12} /> {t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>} <ScamFakeBadges scam={row.Scam} fake={row.Fake} /></td>
                 <td>{row.System ? <Badge tone="warn">{t("bots.system")}</Badge> : <Badge>{t("bots.user")}</Badge>}</td>
                 <td>{formatDate(row.CreatedAt)}</td>
                 <td><button className="row-link" onClick={() => navigate(`/bots/${row.ID}`)}><Bot size={14} /> {t("common.detail")} <ChevronRight size={14} /></button></td>

@@ -284,6 +284,177 @@ func (s *ChannelStore) SetChannelVerified(ctx context.Context, channelID int64, 
 	return channel, nil
 }
 
+// SetChannelScamFake 设置/取消频道的 scam 与 fake 标记。
+func (s *ChannelStore) SetChannelScamFake(ctx context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	channel, err := s.channelByID(ctx, s.db, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if channel.Scam == scam && channel.Fake == fake {
+		return channel, nil
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE channels SET scam = $2, fake = $3, updated_at = now() WHERE id = $1 AND NOT deleted`, channelID, scam, fake); err != nil {
+		return domain.Channel{}, fmt.Errorf("set channel scam/fake: %w", err)
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	channel.Scam = scam
+	channel.Fake = fake
+	return channel, nil
+}
+
+// SetChannelAdminSettings applies an admin-direct moderation-settings patch
+// (no membership/permission checks). nil fields are left unchanged.
+func (s *ChannelStore) SetChannelAdminSettings(ctx context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if patch.Empty() {
+		return s.channelByID(ctx, s.db, channelID)
+	}
+	sets := make([]string, 0, 7)
+	args := []any{channelID}
+	idx := 2
+	add := func(col string, val any) {
+		sets = append(sets, fmt.Sprintf("%s = $%d", col, idx))
+		args = append(args, val)
+		idx++
+	}
+	if patch.Gigagroup != nil {
+		add("gigagroup", *patch.Gigagroup)
+	}
+	if patch.AntiSpam != nil {
+		add("antispam", *patch.AntiSpam)
+	}
+	if patch.ParticipantsHidden != nil {
+		add("participants_hidden", *patch.ParticipantsHidden)
+	}
+	if patch.NoForwards != nil {
+		add("noforwards", *patch.NoForwards)
+	}
+	if patch.JoinToSend != nil {
+		add("join_to_send", *patch.JoinToSend)
+	}
+	if patch.JoinRequest != nil {
+		add("join_request", *patch.JoinRequest)
+	}
+	if patch.SlowmodeSeconds != nil {
+		add("slowmode_seconds", *patch.SlowmodeSeconds)
+	}
+	query := "UPDATE channels SET " + strings.Join(sets, ", ") + ", updated_at = now() WHERE id = $1 AND NOT deleted"
+	if _, err := s.db.Exec(ctx, query, args...); err != nil {
+		return domain.Channel{}, fmt.Errorf("set channel admin settings: %w", err)
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	return s.channelByID(ctx, s.db, channelID)
+}
+
+// SetChannelUsernameAdmin force-sets or clears (empty) a channel username with
+// no permission checks. Username uniqueness is still enforced by peer_usernames.
+func (s *ChannelStore) SetChannelUsernameAdmin(ctx context.Context, channelID int64, username string) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.Channel{}, fmt.Errorf("set channel username: db does not support transactions")
+	}
+	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
+	usernameLower := strings.ToLower(username)
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.Channel{}, fmt.Errorf("begin set channel username: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	channel, err := s.channelByID(ctx, tx, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if strings.EqualFold(channel.Username, username) {
+		return channel, nil
+	}
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeChannel, channelID, usernameLower); err != nil {
+		return domain.Channel{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE channels SET username = NULLIF($2,''), updated_at = now() WHERE id = $1`, channelID, username); err != nil {
+		return domain.Channel{}, fmt.Errorf("set channel username: %w", err)
+	}
+	if err := markUserChannelMemberIndexPublicTx(ctx, tx, channelID, username != ""); err != nil {
+		return domain.Channel{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Channel{}, fmt.Errorf("commit set channel username: %w", err)
+	}
+	committed = true
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	channel.Username = username
+	return channel, nil
+}
+
+// SetChannelColorAdmin force-sets a channel name/profile color (no permission checks).
+func (s *ChannelStore) SetChannelColorAdmin(ctx context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	channel, err := s.channelByID(ctx, s.db, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if forProfile {
+		if _, err := s.db.Exec(ctx, `UPDATE channels SET profile_color_set = $2, profile_color = $3, profile_color_background_emoji_id = $4, updated_at = now() WHERE id = $1`,
+			channelID, color.HasColor, color.Color, color.BackgroundEmojiID); err != nil {
+			return domain.Channel{}, fmt.Errorf("set channel profile color: %w", err)
+		}
+		channel.ProfileColor = color
+	} else {
+		if _, err := s.db.Exec(ctx, `UPDATE channels SET color_set = $2, color = $3, color_background_emoji_id = $4, updated_at = now() WHERE id = $1`,
+			channelID, color.HasColor, color.Color, color.BackgroundEmojiID); err != nil {
+			return domain.Channel{}, fmt.Errorf("set channel color: %w", err)
+		}
+		channel.Color = color
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	return channel, nil
+}
+
+// SetChannelEmojiStatusAdmin force-sets or clears a channel emoji status (no permission checks).
+func (s *ChannelStore) SetChannelEmojiStatusAdmin(ctx context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if status.DocumentID == 0 {
+		status.Until = 0
+	}
+	channel, err := s.channelByID(ctx, s.db, channelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if _, err := s.db.Exec(ctx, `UPDATE channels SET emoji_status_document_id = $2, emoji_status_until = $3, updated_at = now() WHERE id = $1`,
+		channelID, status.DocumentID, status.Until); err != nil {
+		return domain.Channel{}, fmt.Errorf("set channel emoji status: %w", err)
+	}
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
+	channel.EmojiStatus = status
+	return channel, nil
+}
+
 func (s *ChannelStore) ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error) {
 	_ = viewerUserID // zero is the anonymous public-web view; this query is viewer-independent.
 	usernameLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))

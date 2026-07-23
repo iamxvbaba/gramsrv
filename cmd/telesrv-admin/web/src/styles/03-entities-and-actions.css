@@ -280,6 +280,69 @@
 .gift-import-modal { width: min(860px, 100%); }
 .gift-import-modal-body { gap: 14px; }
 .gift-source-tabs { display: flex; gap: 8px; }
+
+/* Give-gift flow */
+.give-gift-summary {
+  display: flex; align-items: center; gap: 11px; padding: 11px 13px;
+  background: var(--panel-subtle); border: 1px solid var(--line-strong); border-radius: 12px; color: var(--text-soft);
+}
+.give-gift-summary > svg { flex: 0 0 auto; color: var(--brand); }
+.give-gift-summary strong { display: block; font-size: 13px; color: var(--text); }
+.give-gift-summary .mono { font-size: 11px; color: var(--muted); }
+.give-gift-tabs { display: flex; width: 100%; gap: 4px; padding: 4px; background: var(--panel-subtle); border: 1px solid var(--line-strong); border-radius: 12px; }
+.give-gift-tabs .btn { flex: 1 1 0; justify-content: center; min-height: 36px; border: 1px solid transparent; background: transparent; box-shadow: none; color: var(--text-soft); border-radius: 9px; transition: color .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.give-gift-tabs .btn:not(.primary):hover { color: var(--brand); background: var(--brand-tint); }
+.give-gift-tabs .btn.primary { color: #ffffff; background: var(--brand); border-color: var(--brand); box-shadow: var(--shadow-brand); }
+.give-gift-upgrade-note { margin: 0; padding: 9px 12px; background: var(--brand-tint); border: 1px solid var(--brand-tint-border); border-radius: 10px; color: var(--text-soft); font-size: 11px; font-weight: 650; line-height: 1.45; }
+
+/* Collectible attribute pickers reuse .gift-fields-grid but need equal columns
+   and site-styled selects rather than the import modal's fixed template. */
+.give-gift-attrs { grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; }
+.give-gift-attrs select,
+.give-gift-attrs input {
+  width: 100%; min-width: 0; height: 38px; padding: 0 32px 0 10px;
+  color: var(--text); background-color: var(--input-bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font: inherit; font-size: 12px; font-weight: 600;
+  appearance: none; -webkit-appearance: none; -moz-appearance: none; cursor: pointer;
+}
+.give-gift-attrs input { padding-right: 10px; cursor: text; text-overflow: ellipsis; }
+.give-gift-attrs select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center;
+}
+.give-gift-attrs select:focus,
+.give-gift-attrs input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--focus); outline: none; }
+
+/* Give Gifts page: two-panel picker + form */
+.give-gift-layout { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.give-gift-picker { display: grid; gap: 10px; align-content: start; }
+.give-gift-picker-head { display: flex; align-items: center; gap: 12px; }
+.give-gift-picker-head .searchbox { flex: 1 1 auto; }
+.give-gift-picker-list {
+  display: grid; gap: 8px; max-height: 640px; padding: 8px; overflow: auto;
+  background: var(--panel-subtle); border: 1px solid var(--line); border-radius: var(--radius-lg); scrollbar-gutter: stable;
+}
+.give-gift-option {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 11px; align-items: center; min-width: 0;
+  padding: 9px; text-align: left; color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; box-shadow: var(--shadow-sm);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.give-gift-option:hover { border-color: var(--brand-tint-border); box-shadow: var(--shadow); transform: translateY(-1px); }
+.give-gift-option.selected { border-color: var(--brand); box-shadow: 0 0 0 2px var(--focus), var(--shadow); }
+.give-gift-option .gift-animation-shell.compact { pointer-events: none; }
+.give-gift-option-info { display: grid; gap: 3px; min-width: 0; }
+.give-gift-option-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.give-gift-option-info .mono { color: var(--muted); font-size: 10px; }
+.give-gift-option-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.give-gift-panel {
+  display: grid; gap: 12px; padding: 16px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+}
+.give-gift-form { display: grid; gap: 12px; min-width: 0; }
+.give-gift-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding-top: 4px; }
+.give-gift-empty-panel { display: grid; gap: 10px; place-items: center; padding: 48px 20px; color: var(--muted); text-align: center; }
+.give-gift-empty-panel svg { color: var(--brand); opacity: .8; }
 .official-gift-picker { display: grid; min-width: 0; gap: 12px; }
 .official-gift-tools { display: flex; align-items: center; gap: 12px; }
 .official-gift-tools .searchbox { width: 100%; }
@@ -484,6 +547,8 @@
 
 @media (max-width: 900px) {
   .gift-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .give-gift-layout { grid-template-columns: 1fr; }
+  .give-gift-picker-list { max-height: 320px; }
   .collectible-row.animated,
   .collectible-row.backdrop { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .collectible-inline-preview,
@@ -508,4 +573,106 @@
   .collectible-row.animated,
   .collectible-row.backdrop { grid-template-columns: 1fr; }
   .collectible-active-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.attr-block {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.attr-block .duration-field input {
+  width: 100%;
+}
+
+.attr-block .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.emoji-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.emoji-preview {
+  display: grid;
+  place-items: center;
+  height: 88px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.emoji-anim {
+  width: 80px;
+  height: 80px;
+}
+
+.emoji-anim canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.emoji-glyph {
+  font-size: 46px;
+  line-height: 1;
+}
+
+.emoji-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.emoji-alt {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.emoji-id {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.emoji-id .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emoji-id:hover {
+  border-color: var(--brand-tint-border);
+  color: var(--brand);
+}
+
+.emoji-sub {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

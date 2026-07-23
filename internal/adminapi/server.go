@@ -29,9 +29,19 @@ type Service interface {
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
+	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
+	SetChannelFlags(ctx context.Context, req admin.SetChannelFlagsRequest) (admin.CommandResult, error)
 	CreateBot(ctx context.Context, req admin.CreateBotRequest) (admin.CommandResult, error)
 	DeleteBot(ctx context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error)
+	SetSupport(ctx context.Context, req admin.SetSupportRequest) (admin.CommandResult, error)
+	SetUsername(ctx context.Context, req admin.SetUsernameRequest) (admin.CommandResult, error)
+	SetUserColor(ctx context.Context, req admin.SetUserColorRequest) (admin.CommandResult, error)
+	SetUserEmojiStatus(ctx context.Context, req admin.SetUserEmojiStatusRequest) (admin.CommandResult, error)
+	SetChannelSettings(ctx context.Context, req admin.SetChannelSettingsRequest) (admin.CommandResult, error)
+	SetChannelUsername(ctx context.Context, req admin.SetChannelUsernameRequest) (admin.CommandResult, error)
+	SetChannelColor(ctx context.Context, req admin.SetChannelColorRequest) (admin.CommandResult, error)
+	SetChannelEmojiStatus(ctx context.Context, req admin.SetChannelEmojiStatusRequest) (admin.CommandResult, error)
 	RevokeSessions(ctx context.Context, req admin.RevokeSessionsRequest) (admin.CommandResult, error)
 	DeletePrivateMessages(ctx context.Context, req admin.DeletePrivateMessagesRequest) (admin.CommandResult, error)
 	DeletePrivateHistory(ctx context.Context, req admin.DeletePrivateHistoryRequest) (admin.CommandResult, error)
@@ -42,7 +52,9 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
+	GiveGift(ctx context.Context, req admin.GiveGiftRequest) (admin.CommandResult, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
+	EmojiAnimation(ctx context.Context, documentID int64) ([]byte, bool, error)
 	StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
 	StarGiftCollectibleAnimation(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
 }
@@ -97,8 +109,18 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
 	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
+	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
+	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
+	mux.HandleFunc("POST /v1/accounts/set-username", s.authenticated(s.handleSetUsername))
+	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
+	mux.HandleFunc("POST /v1/accounts/set-emoji-status", s.authenticated(s.handleSetUserEmojiStatus))
 	mux.HandleFunc("POST /v1/accounts/revoke-sessions", s.authenticated(s.handleRevokeSessions))
 	mux.HandleFunc("POST /v1/channels/set-verified", s.authenticated(s.handleSetChannelVerified))
+	mux.HandleFunc("POST /v1/channels/set-flags", s.authenticated(s.handleSetChannelFlags))
+	mux.HandleFunc("POST /v1/channels/set-settings", s.authenticated(s.handleSetChannelSettings))
+	mux.HandleFunc("POST /v1/channels/set-username", s.authenticated(s.handleSetChannelUsername))
+	mux.HandleFunc("POST /v1/channels/set-color", s.authenticated(s.handleSetChannelColor))
+	mux.HandleFunc("POST /v1/channels/set-emoji-status", s.authenticated(s.handleSetChannelEmojiStatus))
 	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
 	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
 	mux.HandleFunc("POST /v1/messages/delete", s.authenticated(s.handleDeleteMessages))
@@ -110,7 +132,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
+	mux.HandleFunc("POST /v1/gifts/give", s.authenticated(s.handleGiveGift))
 	mux.HandleFunc("GET /v1/gifts/{id}/animation", s.authenticated(s.handleStarGiftAnimation))
+	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
 	return mux
@@ -169,6 +193,96 @@ func (s *Server) handleSetChannelVerified(w http.ResponseWriter, r *http.Request
 		return
 	}
 	result, err := s.svc.SetChannelVerified(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetUserFlags(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetUserFlagsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetUserFlags(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetChannelFlags(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetChannelFlagsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelFlags(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetSupport(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetSupportRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetSupport(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetUserColor(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetUserColorRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetUserColor(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetUserEmojiStatus(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetUserEmojiStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetUserEmojiStatus(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetChannelSettings(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetChannelSettingsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelSettings(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetChannelUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetChannelUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetChannelColor(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetChannelColorRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelColor(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetChannelEmojiStatus(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetChannelEmojiStatusRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelEmojiStatus(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
@@ -389,6 +503,15 @@ func (s *Server) handleSetStarGiftSortOrder(w http.ResponseWriter, r *http.Reque
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleGiveGift(w http.ResponseWriter, r *http.Request) {
+	var req admin.GiveGiftRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.GiveGift(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleStarGiftAnimation(w http.ResponseWriter, r *http.Request) {
 	giftID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || giftID <= 0 {
@@ -402,6 +525,27 @@ func (s *Server) handleStarGiftAnimation(w http.ResponseWriter, r *http.Request)
 	}
 	if !found {
 		writeError(w, http.StatusNotFound, "gift animation not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleEmojiAnimation(w http.ResponseWriter, r *http.Request) {
+	documentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || documentID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid document id")
+		return
+	}
+	raw, found, err := s.svc.EmojiAnimation(r.Context(), documentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "emoji animation not found")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

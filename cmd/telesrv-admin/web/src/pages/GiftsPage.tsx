@@ -23,7 +23,7 @@ function formatBytes(value: number | string) {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function LottiePreview({ giftID, revision, compact = false }: { giftID: string; revision: number; compact?: boolean }) {
+export function LottiePreview({ giftID, revision, compact = false }: { giftID: string; revision: number; compact?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const animation = useRef<ReturnType<typeof lottie.loadAnimation> | null>(null);
   const [playing, setPlaying] = useState(true);

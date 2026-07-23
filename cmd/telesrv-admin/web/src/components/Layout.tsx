@@ -8,8 +8,10 @@ import {
   Server,
   Shield,
   ShieldCheck,
+  Smile,
   Users,
-	Gift
+	Gift,
+	Send
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
@@ -79,6 +81,8 @@ export function Shell({
           <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{t("layout.channels")}</NavLink>
           <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{t("layout.bots")}</NavLink>
 			<NavLink icon={<Gift size={16} />} href="/gifts" route={route} navigate={navigate}>{t("layout.gifts")}</NavLink>
+          <NavLink icon={<Send size={16} />} href="/give-gifts" route={route} navigate={navigate}>{t("layout.giveGifts")}</NavLink>
+          <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{t("layout.emoji")}</NavLink>
           <div className={`nav-section ${messagesActive ? "active" : ""} ${messagesOpen ? "open" : ""}`}>
             <button
               className="nav-section-toggle"

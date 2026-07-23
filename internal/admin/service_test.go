@@ -680,6 +680,60 @@ func (f *fakeUsersService) SetVerified(_ context.Context, userID int64, verified
 	return u, nil
 }
 
+func (f *fakeUsersService) SetScamFake(_ context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Scam = scam
+	u.Fake = fake
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) SetSupport(_ context.Context, userID int64, support bool) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Support = support
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateUsername(_ context.Context, userID int64, username string) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Username = username
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateColor(_ context.Context, userID int64, forProfile bool, color domain.PeerColor) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	if forProfile {
+		u.ProfileColor = color
+	} else {
+		u.Color = color
+	}
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateEmojiStatus(_ context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	f.users[userID] = u
+	return u, nil
+}
+
 type fakeStarsService struct {
 	balances    map[int64]domain.StarsBalance
 	creditCalls int
@@ -750,6 +804,66 @@ func (f *fakeChannelsService) SetVerified(_ context.Context, channelID int64, ve
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	ch.Verified = verified
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) SetScamFake(_ context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.Scam = scam
+	ch.Fake = fake
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetSettings(_ context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if patch.Gigagroup != nil {
+		ch.Gigagroup = *patch.Gigagroup
+	}
+	if patch.SlowmodeSeconds != nil {
+		ch.SlowmodeSeconds = *patch.SlowmodeSeconds
+	}
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetUsername(_ context.Context, channelID int64, username string) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.Username = username
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetColor(_ context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if forProfile {
+		ch.ProfileColor = color
+	} else {
+		ch.Color = color
+	}
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetEmojiStatus(_ context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.EmojiStatus = status
 	f.channels[channelID] = ch
 	return ch, nil
 }
@@ -1021,6 +1135,12 @@ type fakeGiftsService struct {
 	lastBundle  domain.StarGiftCatalogBundleWrite
 }
 
+func (f *fakeGiftsService) GiftByID(_ context.Context, id int64) (domain.StarGift, bool, error) {
+	if id <= 0 {
+		return domain.StarGift{}, false, nil
+	}
+	return domain.StarGift{ID: id, Stars: 50, Title: "Test Gift"}, true, nil
+}
 func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
 	sum := sha256.Sum256(data)
 	return domain.StarGiftAnimation{
