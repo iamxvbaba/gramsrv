@@ -52,11 +52,11 @@ func SameLoginCodeFingerprint(stored []byte, expected [sha256.Size]byte) bool {
 // RestoreLoginCodeDeliveryMessage reconstructs the immutable first result from
 // a compact receipt. The secret code is not duplicated in the receipt: exact
 // replay has already proven the supplied code fingerprint matches.
-func RestoreLoginCodeDeliveryMessage(userID int64, code string, date int, privateMessageID int64, messageBoxID, pts int) (domain.Message, error) {
+func RestoreLoginCodeDeliveryMessage(userID int64, code string, date int, privateMessageID int64, messageBoxID, pts int, body string, entities []domain.MessageEntity) (domain.Message, error) {
 	if privateMessageID <= 0 || messageBoxID <= 0 || messageBoxID > domain.MaxMessageBoxID || pts <= 0 {
 		return domain.Message{}, fmt.Errorf("restore login code delivery: %w: uid=%d box=%d pts=%d", domain.ErrLoginCodeDeliveryInvalid, privateMessageID, messageBoxID, pts)
 	}
-	msg, err := domain.OfficialLoginCodeMessage(userID, code, date)
+	msg, err := loginCodeMessageFromRequestContent(userID, code, date, body, entities)
 	if err != nil {
 		return domain.Message{}, err
 	}
@@ -64,4 +64,15 @@ func RestoreLoginCodeDeliveryMessage(userID int64, code string, date int, privat
 	msg.UID = privateMessageID
 	msg.Pts = pts
 	return msg, nil
+}
+
+func LoginCodeMessageFromDeliveryRequest(req domain.LoginCodeDeliveryRequest) (domain.Message, error) {
+	return loginCodeMessageFromRequestContent(req.UserID, req.Code, req.Date, req.Body, req.Entities)
+}
+
+func loginCodeMessageFromRequestContent(userID int64, code string, date int, body string, entities []domain.MessageEntity) (domain.Message, error) {
+	if body == "" {
+		return domain.OfficialLoginCodeMessage(userID, code, date)
+	}
+	return domain.OfficialLoginCodeMessageWithContent(userID, code, date, body, entities)
 }

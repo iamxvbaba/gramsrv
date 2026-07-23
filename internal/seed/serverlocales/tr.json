@@ -1,0 +1,12 @@
+{
+  "login.code": "{{product}} giriş kodu: {{code}}. {{product}} adına konuştuklarını söyleseler bile bu kodu kimseye vermeyin!\n\nBu kod {{product}} hesabınıza giriş yapmak için kullanılabilir. Biz bunu asla başka bir şey için istemeyiz.\n\nBu kodu başka bir cihazda oturum açmaya çalışarak istemediyseniz, bu mesajı görmezden gelin.",
+  "login.code.title": "{{product}} giriş kodu:",
+  "new_login": "Yeni giriş.\nSayın {{name}}, {{time}} tarihinde yeni bir cihazdan hesabınıza giriş yapıldığını tespit ettik.\n\nCihaz: {{device}}\nKonum: {{location}}\n\nBu siz değilseniz, bu oturumu Ayarlar > Cihazlar (veya Gizlilik ve Güvenlik > Aktif Oturumlar) bölümünden sonlandırabilirsiniz.",
+  "new_login.title": "Yeni giriş.",
+  "new_login.settings": "Ayarlar > Cihazlar",
+  "new_login.active_sessions": "Gizlilik ve Güvenlik > Aktif Oturumlar",
+  "unknown_device": "Bilinmeyen cihaz",
+  "unknown_location": "Bilinmiyor",
+  "fallback_name": "kullanıcı",
+  "account.frozen": "Hesap donduruldu"
+}

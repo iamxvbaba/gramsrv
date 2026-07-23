@@ -1,0 +1,12 @@
+{
+  "login.code": "Kod logowania do {{product}}: {{code}}. Nie przekazuj tego kodu nikomu, nawet jeśli ktoś twierdzi, że jest z {{product}}!\n\nTen kod służy do logowania na Twoje konto {{product}}. Nigdy nie prosimy o niego w żadnym innym celu.\n\nJeśli nie proszono o ten kod podczas próby logowania na innym urządzeniu, po prostu zignoruj tę wiadomość.",
+  "login.code.title": "Kod logowania do {{product}}:",
+  "new_login": "Nowe logowanie.\nDrogi/a {{name}}, wykryliśmy logowanie na Twoje konto z nowego urządzenia w dniu {{time}}.\n\nUrządzenie: {{device}}\nLokalizacja: {{location}}\n\nJeśli to nie Ty, możesz zakończyć tę sesję w Ustawienia > Urządzenia (lub Prywatność i bezpieczeństwo > Aktywne sesje).",
+  "new_login.title": "Nowe logowanie.",
+  "new_login.settings": "Ustawienia > Urządzenia",
+  "new_login.active_sessions": "Prywatność i bezpieczeństwo > Aktywne sesje",
+  "unknown_device": "Nieznane urządzenie",
+  "unknown_location": "Nieznana",
+  "fallback_name": "użytkownik",
+  "account.frozen": "Konto zamrożone"
+}

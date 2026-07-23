@@ -1,0 +1,12 @@
+{
+  "login.code": "Ensaluta kodo por {{product}}: {{code}}. Ne donu ĉi tiun kodon al iu ajn, eĉ se ili diras, ke ili estas de {{product}}!\n\nĈi tiu kodo povas esti uzata por ensaluti en vian konton de {{product}}. Ni neniam petas ĝin por io alia.\n\nSe vi ne petis ĉi tiun kodon provante ensaluti en alia aparato, simple ignoru ĉi tiun mesaĝon.",
+  "login.code.title": "Ensaluta kodo por {{product}}:",
+  "new_login": "Nova ensaluto.\nKara {{name}}, ni detektis ensaluton en vian konton de nova aparato je {{time}}.\n\nAparato: {{device}}\nLoko: {{location}}\n\nSe tio ne estis vi, vi povas fini tiun seancon en Agordoj > Aparatoj (aŭ Privateco kaj Sekureco > Aktivaj seancoj).",
+  "new_login.title": "Nova ensaluto.",
+  "new_login.settings": "Agordoj > Aparatoj",
+  "new_login.active_sessions": "Privateco kaj Sekureco > Aktivaj seancoj",
+  "unknown_device": "Nekonata aparato",
+  "unknown_location": "Nekonata",
+  "fallback_name": "uzanto",
+  "account.frozen": "Konto frostigita"
+}

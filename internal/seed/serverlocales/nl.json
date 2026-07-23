@@ -1,0 +1,12 @@
+{
+  "login.code": "Inlogcode voor {{product}}: {{code}}. Geef deze code aan niemand, zelfs niet als ze zeggen dat ze van {{product}} zijn!\n\nDeze code kan worden gebruikt om in te loggen op je {{product}}-account. We vragen er nooit om voor iets anders.\n\nAls je deze code niet hebt aangevraagd door op een ander apparaat in te loggen, negeer dit bericht dan.",
+  "login.code.title": "Inlogcode voor {{product}}:",
+  "new_login": "Nieuwe aanmelding.\nBeste {{name}}, we hebben een aanmelding bij je account vanaf een nieuw apparaat gedetecteerd op {{time}}.\n\nApparaat: {{device}}\nLocatie: {{location}}\n\nAls jij dit niet was, kun je die sessie beëindigen via Instellingen > Apparaten (of Privacy en beveiliging > Actieve sessies).",
+  "new_login.title": "Nieuwe aanmelding.",
+  "new_login.settings": "Instellingen > Apparaten",
+  "new_login.active_sessions": "Privacy en beveiliging > Actieve sessies",
+  "unknown_device": "Onbekend apparaat",
+  "unknown_location": "Onbekend",
+  "fallback_name": "gebruiker",
+  "account.frozen": "Account bevroren"
+}

@@ -1,0 +1,12 @@
+{
+  "login.code": "Kode masuk {{product}}: {{code}}. Jangan berikan kode ini kepada siapa pun, bahkan jika mereka mengaku dari {{product}}!\n\nKode ini dapat digunakan untuk masuk ke akun {{product}} Anda. Kami tidak pernah memintanya untuk hal lain.\n\nJika Anda tidak meminta kode ini dengan mencoba masuk di perangkat lain, abaikan pesan ini.",
+  "login.code.title": "Kode masuk {{product}}:",
+  "new_login": "Login baru.\nHalo {{name}}, kami mendeteksi login ke akun Anda dari perangkat baru pada {{time}}.\n\nPerangkat: {{device}}\nLokasi: {{location}}\n\nJika itu bukan Anda, Anda dapat mengakhiri sesi tersebut di Pengaturan > Perangkat (atau Privasi & Keamanan > Sesi Aktif).",
+  "new_login.title": "Login baru.",
+  "new_login.settings": "Pengaturan > Perangkat",
+  "new_login.active_sessions": "Privasi & Keamanan > Sesi Aktif",
+  "unknown_device": "Perangkat tidak dikenal",
+  "unknown_location": "Tidak diketahui",
+  "fallback_name": "pengguna",
+  "account.frozen": "Akun dibekukan"
+}

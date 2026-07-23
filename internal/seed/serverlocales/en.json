@@ -1,0 +1,12 @@
+{
+  "login.code": "Login code: {{code}}. Do not give this code to anyone, even if they say they are from {{product}}!\n\nThis code can be used to log in to your {{product}} account. We never ask it for anything else.\n\nIf you didn't request this code by trying to log in on another device, simply ignore this message.",
+  "login.code.title": "Login code:",
+  "new_login": "New login.\nDear {{name}}, we detected a login into your account from a new device on {{time}}.\n\nDevice: {{device}}\nLocation: {{location}}\n\nIf this wasn't you, you can terminate that session in Settings > Devices (or Privacy & Security > Active Sessions).",
+  "new_login.title": "New login.",
+  "new_login.settings": "Settings > Devices",
+  "new_login.active_sessions": "Privacy & Security > Active Sessions",
+  "unknown_device": "Unknown device",
+  "unknown_location": "Unknown",
+  "fallback_name": "there",
+  "account.frozen": "Account frozen"
+}

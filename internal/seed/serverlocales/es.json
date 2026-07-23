@@ -1,0 +1,12 @@
+{
+  "login.code": "Código de inicio de sesión en {{product}}: {{code}}. No entregues este código a nadie, aunque diga que es de {{product}}.\n\nEste código se puede usar para iniciar sesión en tu cuenta de {{product}}. Nunca te lo pediremos para nada más.\n\nSi no solicitaste este código intentando iniciar sesión en otro dispositivo, simplemente ignora este mensaje.",
+  "login.code.title": "Código de inicio de sesión en {{product}}:",
+  "new_login": "Nuevo inicio de sesión.\nEstimado/a {{name}}, detectamos un inicio de sesión en tu cuenta desde un dispositivo nuevo el {{time}}.\n\nDispositivo: {{device}}\nUbicación: {{location}}\n\nSi no fuiste tú, puedes finalizar esa sesión en Ajustes > Dispositivos (o Privacidad y seguridad > Sesiones activas).",
+  "new_login.title": "Nuevo inicio de sesión.",
+  "new_login.settings": "Ajustes > Dispositivos",
+  "new_login.active_sessions": "Privacidad y seguridad > Sesiones activas",
+  "unknown_device": "Dispositivo desconocido",
+  "unknown_location": "Desconocida",
+  "fallback_name": "usuario",
+  "account.frozen": "Cuenta congelada"
+}

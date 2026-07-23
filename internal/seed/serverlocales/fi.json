@@ -1,0 +1,12 @@
+{
+  "login.code": "Kirjautumiskoodi palveluun {{product}}: {{code}}. Älä anna tätä koodia kenellekään, vaikka he väittäisivät olevansa {{product}}-palvelusta!\n\nTätä koodia voidaan käyttää kirjautumiseen {{product}}-tilillesi. Emme koskaan pyydä sitä mihinkään muuhun.\n\nJos et pyytänyt tätä koodia yrittämällä kirjautua toisella laitteella, jätä tämä viesti huomiotta.",
+  "login.code.title": "Kirjautumiskoodi palveluun {{product}}:",
+  "new_login": "Uusi kirjautuminen.\nHyvä {{name}}, havaitsimme kirjautumisen tilillesi uudesta laitteesta {{time}}.\n\nLaite: {{device}}\nSijainti: {{location}}\n\nJos tämä et ollut sinä, voit lopettaa istunnon kohdassa Asetukset > Laitteet (tai Yksityisyys ja turvallisuus > Aktiiviset istunnot).",
+  "new_login.title": "Uusi kirjautuminen.",
+  "new_login.settings": "Asetukset > Laitteet",
+  "new_login.active_sessions": "Yksityisyys ja turvallisuus > Aktiiviset istunnot",
+  "unknown_device": "Tuntematon laite",
+  "unknown_location": "Tuntematon",
+  "fallback_name": "käyttäjä",
+  "account.frozen": "Tili jäädytetty"
+}

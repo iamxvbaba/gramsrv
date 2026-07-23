@@ -1,0 +1,12 @@
+{
+  "login.code": "Cod de autentificare pentru {{product}}: {{code}}. Nu da acest cod nimănui, chiar dacă spune că este de la {{product}}!\n\nAcest cod poate fi folosit pentru a te autentifica în contul tău {{product}}. Nu îl cerem niciodată pentru altceva.\n\nDacă nu ai solicitat acest cod încercând să te autentifici pe alt dispozitiv, ignoră acest mesaj.",
+  "login.code.title": "Cod de autentificare pentru {{product}}:",
+  "new_login": "Autentificare nouă.\nDragă {{name}}, am detectat o autentificare în contul tău de pe un dispozitiv nou la {{time}}.\n\nDispozitiv: {{device}}\nLocație: {{location}}\n\nDacă nu ai fost tu, poți încheia acea sesiune din Setări > Dispozitive (sau Confidențialitate și securitate > Sesiuni active).",
+  "new_login.title": "Autentificare nouă.",
+  "new_login.settings": "Setări > Dispozitive",
+  "new_login.active_sessions": "Confidențialitate și securitate > Sesiuni active",
+  "unknown_device": "Dispozitiv necunoscut",
+  "unknown_location": "Necunoscută",
+  "fallback_name": "utilizator",
+  "account.frozen": "Cont înghețat"
+}

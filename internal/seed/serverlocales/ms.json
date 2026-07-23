@@ -1,0 +1,12 @@
+{
+  "login.code": "Kod log masuk {{product}}: {{code}}. Jangan berikan kod ini kepada sesiapa, walaupun mereka mengatakan mereka daripada {{product}}!\n\nKod ini boleh digunakan untuk log masuk ke akaun {{product}} anda. Kami tidak pernah memintanya untuk apa-apa yang lain.\n\nJika anda tidak meminta kod ini dengan cuba log masuk pada peranti lain, abaikan sahaja mesej ini.",
+  "login.code.title": "Kod log masuk {{product}}:",
+  "new_login": "Log masuk baharu.\nHai {{name}}, kami mengesan log masuk ke akaun anda daripada peranti baharu pada {{time}}.\n\nPeranti: {{device}}\nLokasi: {{location}}\n\nJika ini bukan anda, anda boleh menamatkan sesi itu di Tetapan > Peranti (atau Privasi & Keselamatan > Sesi Aktif).",
+  "new_login.title": "Log masuk baharu.",
+  "new_login.settings": "Tetapan > Peranti",
+  "new_login.active_sessions": "Privasi & Keselamatan > Sesi Aktif",
+  "unknown_device": "Peranti tidak diketahui",
+  "unknown_location": "Tidak diketahui",
+  "fallback_name": "pengguna",
+  "account.frozen": "Akaun dibekukan"
+}

@@ -1,0 +1,12 @@
+{
+  "login.code": "Bejelentkezési kód a {{product}} szolgáltatáshoz: {{code}}. Ne add meg ezt a kódot senkinek, akkor sem, ha azt mondják, hogy a {{product}} munkatársai!\n\nEz a kód a {{product}}-fiókodba való bejelentkezéshez használható. Soha nem kérjük semmi másra.\n\nHa nem te kérted ezt a kódot egy másik eszközön történő bejelentkezéssel, egyszerűen hagyd figyelmen kívül ezt az üzenetet.",
+  "login.code.title": "Bejelentkezési kód a {{product}} szolgáltatáshoz:",
+  "new_login": "Új bejelentkezés.\nKedves {{name}}, új eszközről történő bejelentkezést észleltünk a fiókodba ekkor: {{time}}.\n\nEszköz: {{device}}\nHely: {{location}}\n\nHa ez nem te voltál, megszakíthatod ezt a munkamenetet a Beállítások > Eszközök (vagy Adatvédelem és biztonság > Aktív munkamenetek) alatt.",
+  "new_login.title": "Új bejelentkezés.",
+  "new_login.settings": "Beállítások > Eszközök",
+  "new_login.active_sessions": "Adatvédelem és biztonság > Aktív munkamenetek",
+  "unknown_device": "Ismeretlen eszköz",
+  "unknown_location": "Ismeretlen",
+  "fallback_name": "felhasználó",
+  "account.frozen": "Fiók befagyasztva"
+}

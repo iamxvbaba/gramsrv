@@ -1,0 +1,12 @@
+{
+  "login.code": "{{product}} uchun kirish kodi: {{code}}. Bu kodni hech kimga bermang, hatto ular {{product}} nomidan ekanini aytsa ham!\n\nBu kod {{product}} hisobingizga kirish uchun ishlatiladi. Biz uni boshqa hech narsa uchun hech qachon so‘ramaymiz.\n\nAgar boshqa qurilmadan kirishga urinib bu kodni so‘ramagan bo‘lsangiz, ushbu xabarni e’tiborsiz qoldiring.",
+  "login.code.title": "{{product}} uchun kirish kodi:",
+  "new_login": "Yangi kirish.\nHurmatli {{name}}, {{time}} vaqtida hisobingizga yangi qurilmadan kirish aniqlandi.\n\nQurilma: {{device}}\nJoylashuv: {{location}}\n\nAgar bu siz bo‘lmasangiz, ushbu sessiyani Sozlamalar > Qurilmalar (yoki Maxfiylik va xavfsizlik > Faol sessiyalar) bo‘limida yakunlashingiz mumkin.",
+  "new_login.title": "Yangi kirish.",
+  "new_login.settings": "Sozlamalar > Qurilmalar",
+  "new_login.active_sessions": "Maxfiylik va xavfsizlik > Faol sessiyalar",
+  "unknown_device": "Noma’lum qurilma",
+  "unknown_location": "Noma’lum",
+  "fallback_name": "foydalanuvchi",
+  "account.frozen": "Hisob muzlatildi"
+}

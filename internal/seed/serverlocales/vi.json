@@ -1,0 +1,12 @@
+{
+  "login.code": "Mã đăng nhập {{product}}: {{code}}. Đừng đưa mã này cho bất kỳ ai, ngay cả khi họ nói rằng họ đến từ {{product}}!\n\nMã này có thể được dùng để đăng nhập vào tài khoản {{product}} của bạn. Chúng tôi không bao giờ yêu cầu nó cho bất kỳ việc gì khác.\n\nNếu bạn không yêu cầu mã này bằng cách cố đăng nhập trên thiết bị khác, hãy bỏ qua tin nhắn này.",
+  "login.code.title": "Mã đăng nhập {{product}}:",
+  "new_login": "Đăng nhập mới.\nXin chào {{name}}, chúng tôi phát hiện một lần đăng nhập vào tài khoản của bạn từ thiết bị mới vào {{time}}.\n\nThiết bị: {{device}}\nVị trí: {{location}}\n\nNếu đó không phải là bạn, bạn có thể chấm dứt phiên đó trong Cài đặt > Thiết bị (hoặc Quyền riêng tư và bảo mật > Phiên hoạt động).",
+  "new_login.title": "Đăng nhập mới.",
+  "new_login.settings": "Cài đặt > Thiết bị",
+  "new_login.active_sessions": "Quyền riêng tư và bảo mật > Phiên hoạt động",
+  "unknown_device": "Thiết bị không xác định",
+  "unknown_location": "Không xác định",
+  "fallback_name": "người dùng",
+  "account.frozen": "Tài khoản bị đóng băng"
+}

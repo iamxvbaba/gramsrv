@@ -225,6 +225,34 @@ func TestSignInServiceNotificationMatchesEnterpriseShape(t *testing.T) {
 	}
 }
 
+func TestSignInServiceNotificationUsesClientLanguage(t *testing.T) {
+	var authKeyID [8]byte
+	authKeyID[0] = 9
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), fixedClock{now: time.Date(2026, 7, 22, 22, 11, 6, 0, time.UTC)})
+	ctx := WithClientInfo(context.Background(), ClientInfo{
+		DeviceModel:   "reynard",
+		SystemVersion: "Android",
+		AppVersion:    "1.0",
+		LangCode:      "ru",
+	})
+
+	got := r.tgSignInServiceNotification(ctx, domain.User{
+		ID:        1000000001,
+		FirstName: "Reynard",
+		LastName:  "Cloud Admin",
+	}, authKeyID)
+
+	update, ok := got.Updates[0].(*tg.UpdateServiceNotification)
+	if !ok {
+		t.Fatalf("update = %T, want *tg.UpdateServiceNotification", got.Updates[0])
+	}
+	for _, want := range []string{"Вход с нового устройства.", "Reynard Cloud Admin", "22/07/2026 в 22:11:06 UTC", "Настройки > Устройства"} {
+		if !strings.Contains(update.Message, want) {
+			t.Fatalf("notification message %q missing %q", update.Message, want)
+		}
+	}
+}
+
 func TestLogOutClearsSessionAndUpdateState(t *testing.T) {
 	var authKeyID [8]byte
 	authKeyID[0] = 5

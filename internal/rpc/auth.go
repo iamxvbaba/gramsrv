@@ -15,6 +15,7 @@ import (
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/auth"
+	"telesrv/internal/app/serverlocales"
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
@@ -365,6 +366,7 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 		return nil, err
 	}
 	r.rememberClientAPIID(ctx, req.APIID)
+	ctx = withServerLocaleFromClientInfo(ctx)
 	hash, err := r.deps.Auth.SendCode(ctx, req.PhoneNumber)
 	if err != nil {
 		if errors.Is(err, auth.ErrPhoneNumberInvalid) ||
@@ -491,6 +493,7 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
 		return nil, err
 	}
+	ctx = withServerLocaleFromClientInfo(ctx)
 	if userID, authorized, err := r.currentUserID(ctx); err == nil && authorized && userID != 0 {
 		if svc, ok := r.deps.Account.(accountDeletionService); ok {
 			authKeyID, _ := AuthKeyIDFrom(ctx)
@@ -946,18 +949,22 @@ func (r *Router) tgSignInServiceNotification(ctx context.Context, u domain.User,
 	if name == "" {
 		name = "there"
 	}
-	message := fmt.Sprintf("New login.\nDear %s, we detected a login into your account from a new device on %s.\n\nDevice: %s\nLocation: Unknown\n\nIf this wasn't you, you can terminate that session in Settings > Devices (or Privacy & Security > Active Sessions).",
-		name,
-		now.UTC().Format(time.RFC1123),
-		client,
-	)
+	lang := ""
+	if ci, ok := ClientInfoFrom(ctx); ok {
+		lang = ci.LangCode
+	}
+	localized := serverlocales.NewLoginMessage(lang, serverlocales.NewLoginParams{
+		Name:   name,
+		When:   now,
+		Device: client,
+	})
 	authID := int64(binary.LittleEndian.Uint64(authKeyID[:]))
 	update := &tg.UpdateServiceNotification{
 		InboxDate: int(now.Unix()),
 		Type:      fmt.Sprintf("auth%d_%d", authID, now.Unix()),
-		Message:   message,
+		Message:   localized.Body,
 		Media:     &tg.MessageMediaEmpty{},
-		Entities:  signInNotificationEntities(message),
+		Entities:  tgServiceNotificationEntities(localized.Entities),
 	}
 	return &tg.Updates{
 		Updates: []tg.UpdateClass{update},
@@ -965,15 +972,21 @@ func (r *Router) tgSignInServiceNotification(ctx context.Context, u domain.User,
 	}
 }
 
-func signInNotificationEntities(message string) []tg.MessageEntityClass {
-	terms := []string{"New login.", "Settings > Devices", "Privacy & Security > Active Sessions"}
-	out := make([]tg.MessageEntityClass, 0, len(terms))
-	for _, term := range terms {
-		if offset := strings.Index(message, term); offset >= 0 {
-			out = append(out, &tg.MessageEntityBold{Offset: offset, Length: len(term)})
+func tgServiceNotificationEntities(entities []domain.MessageEntity) []tg.MessageEntityClass {
+	out := make([]tg.MessageEntityClass, 0, len(entities))
+	for _, entity := range entities {
+		if entity.Type == domain.MessageEntityBold {
+			out = append(out, &tg.MessageEntityBold{Offset: entity.Offset, Length: entity.Length})
 		}
 	}
 	return out
+}
+
+func withServerLocaleFromClientInfo(ctx context.Context) context.Context {
+	if ci, ok := ClientInfoFrom(ctx); ok {
+		return serverlocales.WithLanguage(ctx, ci.LangCode)
+	}
+	return ctx
 }
 
 func authKeyIDFromInt64(v int64) [8]byte {

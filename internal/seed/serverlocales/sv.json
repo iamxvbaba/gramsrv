@@ -1,0 +1,12 @@
+{
+  "login.code": "Inloggningskod för {{product}}: {{code}}. Ge inte den här koden till någon, även om de säger att de är från {{product}}!\n\nDen här koden kan användas för att logga in på ditt {{product}}-konto. Vi ber aldrig om den för något annat.\n\nOm du inte begärde den här koden genom att försöka logga in på en annan enhet kan du ignorera meddelandet.",
+  "login.code.title": "Inloggningskod för {{product}}:",
+  "new_login": "Ny inloggning.\nHej {{name}}, vi upptäckte en inloggning på ditt konto från en ny enhet {{time}}.\n\nEnhet: {{device}}\nPlats: {{location}}\n\nOm det inte var du kan du avsluta sessionen i Inställningar > Enheter (eller Integritet och säkerhet > Aktiva sessioner).",
+  "new_login.title": "Ny inloggning.",
+  "new_login.settings": "Inställningar > Enheter",
+  "new_login.active_sessions": "Integritet och säkerhet > Aktiva sessioner",
+  "unknown_device": "Okänd enhet",
+  "unknown_location": "Okänd",
+  "fallback_name": "användare",
+  "account.frozen": "Kontot är fryst"
+}

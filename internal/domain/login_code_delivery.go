@@ -22,6 +22,8 @@ type LoginCodeDeliveryRequest struct {
 	PhoneCodeHash string
 	Code          string
 	Date          int
+	Body          string
+	Entities      []MessageEntity
 	// ExpiresAt is the unix second after which the compact idempotency receipt
 	// may be reclaimed. It must cover the corresponding code's usable lifetime.
 	ExpiresAt int64
@@ -38,20 +40,27 @@ type LoginCodeDeliveryResult struct {
 // Telegram's official notification account. Persistence assigns ID, UID and
 // Pts atomically.
 func OfficialLoginCodeMessage(userID int64, code string, date int) (Message, error) {
+	body := fmt.Sprintf(officialLoginCodeMessageTemplate, code)
+	codeOffset := len("Login code: ")
+	return OfficialLoginCodeMessageWithContent(userID, code, date, body, []MessageEntity{
+		{Type: MessageEntityBold, Offset: 0, Length: len("Login code:")},
+		{Type: MessageEntityBold, Offset: codeOffset, Length: len(code)},
+	})
+}
+
+func OfficialLoginCodeMessageWithContent(userID int64, code string, date int, body string, entities []MessageEntity) (Message, error) {
 	if userID <= 0 || IsSystemUserID(userID) || strings.TrimSpace(code) == "" || len(code) > 64 || date < 0 || date > math.MaxInt32 {
 		return Message{}, fmt.Errorf("%w: user=%d code_length=%d date=%d", ErrLoginCodeDeliveryInvalid, userID, len(code), date)
 	}
-	body := fmt.Sprintf(officialLoginCodeMessageTemplate, code)
-	codeOffset := len("Login code: ")
+	if strings.TrimSpace(body) == "" || !strings.Contains(body, code) {
+		return Message{}, fmt.Errorf("%w: login message body invalid", ErrLoginCodeDeliveryInvalid)
+	}
 	return Message{
 		OwnerUserID: userID,
 		Peer:        Peer{Type: PeerTypeUser, ID: OfficialSystemUserID},
 		From:        Peer{Type: PeerTypeUser, ID: OfficialSystemUserID},
 		Date:        date,
 		Body:        body,
-		Entities: []MessageEntity{
-			{Type: MessageEntityBold, Offset: 0, Length: len("Login code:")},
-			{Type: MessageEntityBold, Offset: codeOffset, Length: len(code)},
-		},
+		Entities:    append([]MessageEntity(nil), entities...),
 	}, nil
 }

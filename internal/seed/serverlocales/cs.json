@@ -1,0 +1,12 @@
+{
+  "login.code": "Kód pro přihlášení do {{product}}: {{code}}. Nikomu tento kód nesdělujte, ani když tvrdí, že je z {{product}}!\n\nTento kód slouží k přihlášení k vašemu účtu {{product}}. Nikdy ho nepožadujeme k ničemu jinému.\n\nPokud jste si tento kód nevyžádali pokusem o přihlášení na jiném zařízení, tuto zprávu ignorujte.",
+  "login.code.title": "Kód pro přihlášení do {{product}}:",
+  "new_login": "Nové přihlášení.\nVážený/á {{name}}, zjistili jsme přihlášení k vašemu účtu z nového zařízení dne {{time}}.\n\nZařízení: {{device}}\nPoloha: {{location}}\n\nPokud jste to nebyli vy, můžete tuto relaci ukončit v Nastavení > Zařízení (nebo Soukromí a zabezpečení > Aktivní relace).",
+  "new_login.title": "Nové přihlášení.",
+  "new_login.settings": "Nastavení > Zařízení",
+  "new_login.active_sessions": "Soukromí a zabezpečení > Aktivní relace",
+  "unknown_device": "Neznámé zařízení",
+  "unknown_location": "Neznámá",
+  "fallback_name": "uživatel",
+  "account.frozen": "Účet je zmrazen"
+}

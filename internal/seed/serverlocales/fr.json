@@ -1,0 +1,12 @@
+{
+  "login.code": "Code de connexion à {{product}} : {{code}}. Ne donnez ce code à personne, même si l'on prétend venir de {{product}} !\n\nCe code peut être utilisé pour vous connecter à votre compte {{product}}. Nous ne le demandons jamais pour autre chose.\n\nSi vous n'avez pas demandé ce code en essayant de vous connecter sur un autre appareil, ignorez simplement ce message.",
+  "login.code.title": "Code de connexion à {{product}} :",
+  "new_login": "Nouvelle connexion.\nCher/chère {{name}}, nous avons détecté une connexion à votre compte depuis un nouvel appareil le {{time}}.\n\nAppareil : {{device}}\nLieu : {{location}}\n\nSi ce n'était pas vous, vous pouvez mettre fin à cette session dans Paramètres > Appareils (ou Confidentialité et sécurité > Sessions actives).",
+  "new_login.title": "Nouvelle connexion.",
+  "new_login.settings": "Paramètres > Appareils",
+  "new_login.active_sessions": "Confidentialité et sécurité > Sessions actives",
+  "unknown_device": "Appareil inconnu",
+  "unknown_location": "Inconnu",
+  "fallback_name": "utilisateur",
+  "account.frozen": "Compte gelé"
+}

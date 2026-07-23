@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"telesrv/internal/app/serverlocales"
 	"telesrv/internal/domain"
 	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
@@ -85,6 +87,34 @@ func TestExistingAccountSendCodeDeliversBeforeSignInAndDoesNotRedeliver(t *testi
 	}
 	if lateMessage.ID != 0 || len(delivery.requests) != 1 {
 		t.Fatalf("SignIn lateMessage=%+v delivery calls=%d, want zero/unchanged", lateMessage, len(delivery.requests))
+	}
+}
+
+func TestExistingAccountSendCodeUsesServerLocale(t *testing.T) {
+	ctx := serverlocales.WithLanguage(context.Background(), "ru")
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	codes := memory.NewCodeStore()
+	u, err := users.Create(context.Background(), domain.User{Phone: "15550009221", FirstName: "Existing"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	delivery := &captureLoginCodeDelivery{result: domain.LoginCodeDeliveryResult{Created: true}}
+	svc := NewService(users, authz, codes, nil, nil, "52342", WithLoginCodeDelivery(delivery))
+
+	hash, err := svc.SendCode(ctx, "+1 555 000 9221")
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if hash == "" || len(delivery.requests) != 1 {
+		t.Fatalf("SendCode hash=%q delivery calls=%d, want non-empty/1", hash, len(delivery.requests))
+	}
+	req := delivery.requests[0]
+	if req.UserID != u.ID || !strings.Contains(req.Body, "Код для входа в Telesrv: 52342") {
+		t.Fatalf("delivery request = %+v, want Russian login text for user %d", req, u.ID)
+	}
+	if len(req.Entities) != 2 {
+		t.Fatalf("entities = %+v, want title/code bold", req.Entities)
 	}
 }
 

@@ -1,0 +1,12 @@
+{
+  "login.code": "Codi d'inici de sessió a {{product}}: {{code}}. No donis aquest codi a ningú, encara que diguin que són de {{product}}!\n\nAquest codi es pot fer servir per iniciar sessió al teu compte de {{product}}. No te'l demanarem mai per a res més.\n\nSi no has sol·licitat aquest codi intentant iniciar sessió en un altre dispositiu, simplement ignora aquest missatge.",
+  "login.code.title": "Codi d'inici de sessió a {{product}}:",
+  "new_login": "Nou inici de sessió.\nBenvolgut/da {{name}}, hem detectat un inici de sessió al teu compte des d'un dispositiu nou el {{time}}.\n\nDispositiu: {{device}}\nUbicació: {{location}}\n\nSi no has estat tu, pots finalitzar aquesta sessió a Configuració > Dispositius (o Privadesa i seguretat > Sessions actives).",
+  "new_login.title": "Nou inici de sessió.",
+  "new_login.settings": "Configuració > Dispositius",
+  "new_login.active_sessions": "Privadesa i seguretat > Sessions actives",
+  "unknown_device": "Dispositiu desconegut",
+  "unknown_location": "Desconeguda",
+  "fallback_name": "usuari",
+  "account.frozen": "Compte congelat"
+}

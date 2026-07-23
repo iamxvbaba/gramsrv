@@ -16,6 +16,8 @@ type loginCodeDeliveryRecord struct {
 	messageBoxID     int
 	pts              int
 	messageDate      int
+	body             string
+	entities         []domain.MessageEntity
 }
 
 // LoginCodeDeliveryStore composes the message projection with the same
@@ -53,7 +55,7 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 	if req.ExpiresAt <= int64(req.Date) {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("memory login code receipt expiry: %w: date=%d expires_at=%d", domain.ErrLoginCodeDeliveryInvalid, req.Date, req.ExpiresAt)
 	}
-	base, err := domain.OfficialLoginCodeMessage(req.UserID, req.Code, req.Date)
+	base, err := store.LoginCodeMessageFromDeliveryRequest(req)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, err
 	}
@@ -75,6 +77,8 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 			receipt.privateMessageID,
 			receipt.messageBoxID,
 			receipt.pts,
+			receipt.body,
+			receipt.entities,
 		)
 		if err != nil {
 			return domain.LoginCodeDeliveryResult{}, fmt.Errorf("memory login code delivery replay: %w", err)
@@ -124,6 +128,8 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 		messageBoxID:     base.ID,
 		pts:              base.Pts,
 		messageDate:      base.Date,
+		body:             base.Body,
+		entities:         append([]domain.MessageEntity(nil), base.Entities...),
 	}
 	return domain.LoginCodeDeliveryResult{Message: cloneMessage(base), Created: true}, nil
 }

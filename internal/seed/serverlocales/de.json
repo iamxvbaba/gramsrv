@@ -1,0 +1,12 @@
+{
+  "login.code": "Anmeldecode für {{product}}: {{code}}. Gib diesen Code niemandem weiter, auch nicht, wenn die Person behauptet, von {{product}} zu sein!\n\nDieser Code kann verwendet werden, um dich bei deinem {{product}}-Konto anzumelden. Wir fragen ihn niemals für etwas anderes ab.\n\nWenn du diesen Code nicht durch einen Anmeldeversuch auf einem anderen Gerät angefordert hast, ignoriere diese Nachricht einfach.",
+  "login.code.title": "Anmeldecode für {{product}}:",
+  "new_login": "Neue Anmeldung.\nHallo {{name}}, wir haben eine Anmeldung bei deinem Konto von einem neuen Gerät am {{time}} erkannt.\n\nGerät: {{device}}\nStandort: {{location}}\n\nWenn du das nicht warst, kannst du diese Sitzung unter Einstellungen > Geräte (oder Privatsphäre & Sicherheit > Aktive Sitzungen) beenden.",
+  "new_login.title": "Neue Anmeldung.",
+  "new_login.settings": "Einstellungen > Geräte",
+  "new_login.active_sessions": "Privatsphäre & Sicherheit > Aktive Sitzungen",
+  "unknown_device": "Unbekanntes Gerät",
+  "unknown_location": "Unbekannt",
+  "fallback_name": "Nutzer",
+  "account.frozen": "Konto eingefroren"
+}

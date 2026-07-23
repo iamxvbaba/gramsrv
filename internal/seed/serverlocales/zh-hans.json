@@ -1,0 +1,12 @@
+{
+  "login.code": "{{product}} 登录代码：{{code}}。不要把此代码告诉任何人，即使对方声称来自 {{product}}！\n\n此代码可用于登录你的 {{product}} 账号。我们绝不会因其他用途向你索要它。\n\n如果你没有尝试在其他设备上登录并请求此代码，请直接忽略此消息。",
+  "login.code.title": "{{product}} 登录代码：",
+  "new_login": "新登录。\n亲爱的 {{name}}，我们检测到你的账号于 {{time}} 从新设备登录。\n\n设备：{{device}}\n位置：{{location}}\n\n如果这不是你本人操作，可以在 设置 > 设备（或 隐私与安全 > 活跃会话）中终止该会话。",
+  "new_login.title": "新登录。",
+  "new_login.settings": "设置 > 设备",
+  "new_login.active_sessions": "隐私与安全 > 活跃会话",
+  "unknown_device": "未知设备",
+  "unknown_location": "未知",
+  "fallback_name": "用户",
+  "account.frozen": "账号已冻结"
+}

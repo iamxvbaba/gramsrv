@@ -1,0 +1,12 @@
+{
+  "login.code": "{{product}} 登入代碼：{{code}}。請勿將此代碼提供給任何人，即使對方聲稱來自 {{product}}！\n\n此代碼可用於登入你的 {{product}} 帳號。我們絕不會因其他用途向你索取它。\n\n如果你沒有嘗試在其他裝置上登入並要求此代碼，請直接忽略此訊息。",
+  "login.code.title": "{{product}} 登入代碼：",
+  "new_login": "新登入。\n親愛的 {{name}}，我們偵測到你的帳號於 {{time}} 從新裝置登入。\n\n裝置：{{device}}\n位置：{{location}}\n\n如果這不是你本人操作，可以在 設定 > 裝置（或 隱私與安全 > 目前工作階段）中終止該工作階段。",
+  "new_login.title": "新登入。",
+  "new_login.settings": "設定 > 裝置",
+  "new_login.active_sessions": "隱私與安全 > 目前工作階段",
+  "unknown_device": "未知裝置",
+  "unknown_location": "未知",
+  "fallback_name": "使用者",
+  "account.frozen": "帳號已凍結"
+}

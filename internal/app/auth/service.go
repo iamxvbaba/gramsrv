@@ -17,7 +17,7 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	mtcrypto "github.com/iamxvbaba/td/crypto"
 
-	"telesrv/internal/branding"
+	"telesrv/internal/app/serverlocales"
 	"telesrv/internal/domain"
 	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
@@ -471,12 +471,15 @@ func (s *Service) deliverLoginCode(ctx context.Context, userID int64, phoneCodeH
 		return ErrLoginCodeDeliveryUnavailable
 	}
 	now := time.Now()
+	content := serverlocales.LoginCodeMessage(serverlocales.LanguageFromContext(ctx), code)
 	if _, err := s.loginCodeDelivery.DeliverLoginCodeMessage(ctx, domain.LoginCodeDeliveryRequest{
 		UserID:        userID,
 		PhoneCodeHash: phoneCodeHash,
 		Code:          code,
 		Date:          int(now.Unix()),
 		ExpiresAt:     now.Add(s.codeTTL).Unix(),
+		Body:          content.Body,
+		Entities:      content.Entities,
 	}); err != nil {
 		return errors.Join(ErrLoginCodeDeliveryFailed, err)
 	}
@@ -1436,28 +1439,18 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 	return found && settings.HasPassword, nil
 }
 
-const loginMessageTpl = `Login code: %s. Do not give this code to anyone, even if they say they are from ` + branding.ProductName + `!
-
-This code can be used to log in to your ` + branding.ProductName + ` account. We never ask it for anything else.
-
-If you didn't request this code by trying to log in on another device, simply ignore this message.`
-
 func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code string) (domain.Message, error) {
 	if s.messages == nil || s.dialogs == nil {
 		return domain.Message{}, nil
 	}
-	body := fmt.Sprintf(loginMessageTpl, code)
-	codeOffset := len("Login code: ")
+	content := serverlocales.LoginCodeMessage(serverlocales.LanguageFromContext(ctx), code)
 	msg, err := s.messages.Create(ctx, domain.Message{
 		OwnerUserID: userID,
 		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
 		From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
 		Date:        int(time.Now().Unix()),
-		Body:        body,
-		Entities: []domain.MessageEntity{
-			{Type: domain.MessageEntityBold, Offset: 0, Length: len("Login code:")},
-			{Type: domain.MessageEntityBold, Offset: codeOffset, Length: len(code)},
-		},
+		Body:        content.Body,
+		Entities:    content.Entities,
 	})
 	if err != nil {
 		return domain.Message{}, err

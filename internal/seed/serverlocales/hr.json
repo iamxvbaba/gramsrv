@@ -1,0 +1,12 @@
+{
+  "login.code": "Kod za prijavu u {{product}}: {{code}}. Ne dajte ovaj kod nikome, čak ni ako kažu da su iz {{product}}!\n\nOvaj se kod može koristiti za prijavu na vaš {{product}} račun. Nikada ga ne tražimo ni za što drugo.\n\nAko niste zatražili ovaj kod pokušajem prijave na drugom uređaju, jednostavno zanemarite ovu poruku.",
+  "login.code.title": "Kod za prijavu u {{product}}:",
+  "new_login": "Nova prijava.\nPoštovani {{name}}, otkrili smo prijavu na vaš račun s novog uređaja {{time}}.\n\nUređaj: {{device}}\nLokacija: {{location}}\n\nAko to niste bili vi, možete završiti tu sesiju u Postavke > Uređaji (ili Privatnost i sigurnost > Aktivne sesije).",
+  "new_login.title": "Nova prijava.",
+  "new_login.settings": "Postavke > Uređaji",
+  "new_login.active_sessions": "Privatnost i sigurnost > Aktivne sesije",
+  "unknown_device": "Nepoznat uređaj",
+  "unknown_location": "Nepoznato",
+  "fallback_name": "korisnik",
+  "account.frozen": "Račun je zamrznut"
+}

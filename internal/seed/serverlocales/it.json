@@ -1,0 +1,12 @@
+{
+  "login.code": "Codice di accesso a {{product}}: {{code}}. Non dare questo codice a nessuno, anche se dice di essere di {{product}}!\n\nQuesto codice può essere usato per accedere al tuo account {{product}}. Non lo chiediamo mai per nient'altro.\n\nSe non hai richiesto questo codice provando ad accedere da un altro dispositivo, ignora semplicemente questo messaggio.",
+  "login.code.title": "Codice di accesso a {{product}}:",
+  "new_login": "Nuovo accesso.\nGentile {{name}}, abbiamo rilevato un accesso al tuo account da un nuovo dispositivo il {{time}}.\n\nDispositivo: {{device}}\nPosizione: {{location}}\n\nSe non eri tu, puoi terminare quella sessione in Impostazioni > Dispositivi (o Privacy e sicurezza > Sessioni attive).",
+  "new_login.title": "Nuovo accesso.",
+  "new_login.settings": "Impostazioni > Dispositivi",
+  "new_login.active_sessions": "Privacy e sicurezza > Sessioni attive",
+  "unknown_device": "Dispositivo sconosciuto",
+  "unknown_location": "Sconosciuta",
+  "fallback_name": "utente",
+  "account.frozen": "Account congelato"
+}
