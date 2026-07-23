@@ -12,6 +12,9 @@ var (
 	ErrUserNotFound              = errors.New("user not found")
 	ErrUserFrozen                = errors.New("user account frozen")
 	ErrAuthenticatedScopeInvalid = errors.New("authenticated user scope invalid")
+	// ErrPeerModerationFlagsInvalid rejects the impossible scam+fake state at
+	// every write boundary shared by user, bot and channel projections.
+	ErrPeerModerationFlagsInvalid = errors.New("peer moderation flags invalid")
 	// ErrPremiumRequired 表示该操作仅限有效会员（PREMIUM_ACCOUNT_REQUIRED）。
 	ErrPremiumRequired = errors.New("premium account required")
 	// ErrPremiumBotUnsupported 表示 bot 账号不可被授予会员（官方语义）。

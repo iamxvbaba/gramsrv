@@ -365,6 +365,56 @@ func (s *Service) SetVerified(ctx context.Context, userID int64, verified bool) 
 	return updated, nil
 }
 
+// SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。scam/fake
+// 是账号基础事实，所有 user 投影统一消费；写后刷新基础缓存以便投影即时可见。
+func (s *Service) SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	if userID == 0 {
+		return domain.User{}, ErrNotAuthorized
+	}
+	if scam && fake {
+		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
+	}
+	u, found, err := s.users.ByID(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !found {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	if u.Scam == scam && u.Fake == fake {
+		return u, nil
+	}
+	updated, err := s.users.SetScamFake(ctx, userID, scam, fake)
+	if err != nil {
+		return domain.User{}, err
+	}
+	s.refreshCachedUsers(ctx, updated)
+	return updated, nil
+}
+
+// SetSupport 设置/取消用户的 support 标记（官方客服账号）。写后刷新基础缓存。
+func (s *Service) SetSupport(ctx context.Context, userID int64, support bool) (domain.User, error) {
+	if userID == 0 {
+		return domain.User{}, ErrNotAuthorized
+	}
+	u, found, err := s.users.ByID(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !found {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	if u.Support == support {
+		return u, nil
+	}
+	updated, err := s.users.SetSupport(ctx, userID, support)
+	if err != nil {
+		return domain.User{}, err
+	}
+	s.refreshCachedUsers(ctx, updated)
+	return updated, nil
+}
+
 // SweepExpiredPremium 清理到期会员（store 把过期行清 NULL）并失效用户缓存，
 // 返回清理后的用户，供 RPC 层向本人在线 session 推 updateUser。premium 下发
 // 正确性由读取路径即时派生保证，这里只做收尾与通知。

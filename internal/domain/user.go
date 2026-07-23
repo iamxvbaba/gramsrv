@@ -100,6 +100,8 @@ type User struct {
 	Username    string
 	CountryCode string
 	Verified    bool
+	Scam        bool
+	Fake        bool
 	Support     bool
 	Contact     bool
 	Mutual      bool

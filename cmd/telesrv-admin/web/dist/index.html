@@ -4,8 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>telesrv admin</title>
-    <script type="module" crossorigin src="/assets/index-Duge82ST.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DHdrFM5j.css">
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("telesrv.admin.theme");
+          var theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          document.documentElement.setAttribute("data-theme", theme);
+          document.documentElement.style.colorScheme = theme;
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CsfWywUl.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BwxAoLbQ.css">
   </head>
   <body>
     <div id="root"></div>

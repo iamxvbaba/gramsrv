@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert } from "../components/ui";
 import { LanguageSwitch, useI18n } from "../i18n";
+import { ThemeSwitch } from "../theme";
 
 export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
   const { t } = useI18n();
@@ -36,6 +37,7 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
             </span>
           </div>
           <div className="login-head-actions">
+            <ThemeSwitch />
             <LanguageSwitch />
             <span className="login-chip">{t("app.localAccess")}</span>
           </div>

@@ -4,6 +4,8 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { AuthorizationTable } from "../components/AuthorizationTable";
 import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
+import { ColorAction, EmojiStatusAction, SupportAction, UsernameAction } from "../components/attributes";
 import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
@@ -67,6 +69,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <div className="entity-badges">
                 {account.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")}</Badge> : <Badge>{t("account.notPremium")}</Badge>}
                 {detail.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}
+                <ScamFakeBadges scam={detail.Scam} fake={detail.Fake} />
                 {account.Frozen ? <Badge tone="danger">{t("account.accountFrozen")}</Badge> : <Badge>{t("account.accountActive")}</Badge>}
               </div>
             </section>
@@ -194,6 +197,12 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 onDone={load}
               />
             </div>
+            <ScamFakeActions idKey="user_id" id={account.ID} path="/api/actions/set-account-flags" scam={detail.Scam} fake={detail.Fake} onDone={load} />
+            <div className="dock-title">{t("attr.attributes")}</div>
+            <SupportAction id={account.ID} support={detail.Support} onDone={load} />
+            <UsernameAction idKey="user_id" id={account.ID} path="/api/actions/set-account-username" current={account.Username} onDone={load} />
+            <ColorAction idKey="user_id" id={account.ID} path="/api/actions/set-account-color" onDone={load} />
+            <EmojiStatusAction idKey="user_id" id={account.ID} path="/api/actions/set-account-emoji-status" onDone={load} />
           </section>
         }
       />

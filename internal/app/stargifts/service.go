@@ -517,6 +517,18 @@ func (s *Service) UpgradeReceipt(ctx context.Context, userID int64, commandKey s
 	return s.upgrades.StarGiftUpgradeReceipt(ctx, userID, commandKey)
 }
 
+// GrantUnique atomically assigns a freshly minted collectible to a user.
+func (s *Service) GrantUnique(ctx context.Context, req domain.AdminStarGiftGrant) (domain.AdminStarGiftGrantResult, error) {
+	if s == nil || s.upgrades == nil {
+		return domain.AdminStarGiftGrantResult{}, fmt.Errorf("star gift upgrade store is not configured")
+	}
+	result, err := s.upgrades.GrantUniqueStarGift(ctx, req)
+	if err == nil {
+		s.InvalidateStarGiftCatalog()
+	}
+	return result, err
+}
+
 func (s *Service) Purchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error) {
 	if s == nil || s.lifecycle == nil {
 		return domain.StarGiftPurchaseResult{}, domain.ErrStarGiftUnavailable

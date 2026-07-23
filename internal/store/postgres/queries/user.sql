@@ -153,6 +153,21 @@ SET verified = sqlc.arg(verified)::boolean,
 WHERE id = sqlc.arg(id)::bigint AND deleted_at IS NULL
 RETURNING *;
 
+-- name: SetUserScamFake :one
+UPDATE users
+SET scam = sqlc.arg(scam)::boolean,
+    fake = sqlc.arg(fake)::boolean,
+    updated_at = now()
+WHERE id = sqlc.arg(id)::bigint AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SetUserSupport :one
+UPDATE users
+SET support = sqlc.arg(support)::boolean,
+    updated_at = now()
+WHERE id = sqlc.arg(id)::bigint AND deleted_at IS NULL
+RETURNING *;
+
 -- name: SweepExpiredPremium :many
 UPDATE users
 SET premium_expires_at = NULL,

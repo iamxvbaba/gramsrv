@@ -603,6 +603,125 @@ FROM peer_star_gifts p JOIN unique_star_gifts u ON u.id=p.unique_gift_id WHERE p
 	}
 }
 
+func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	recipient := createTestUser(t, ctx, NewUserStore(pool), "+1780"+suffix+"61", "AdminGiftRecipient", "")
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Admin Grant " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "admin-grant-gift.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "admin-grant-gift"), Animation: collectibleTestAnimation("admin-grant-gift.tgs"),
+		Actor: "integration", CommandID: "admin-grant-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create admin grant catalog gift: %v", err)
+	}
+	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 2, SlugPrefix: "admin-grant-" + suffix,
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "admin-model-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "admin-model-one"), Animation: collectibleTestAnimationPtr("admin-model-one.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+2, "admin-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "admin-model-two"), Animation: collectibleTestAnimationPtr("admin-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "admin-pattern-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "admin-pattern-one"), Animation: collectibleTestAnimationPtr("admin-pattern-one.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+4, "admin-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "admin-pattern-two"), Animation: collectibleTestAnimationPtr("admin-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop One", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
+		Actor: "integration", CommandID: "admin-grant-pool-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("publish admin grant collectible pool: %v", err)
+	}
+	upgrades := NewStarGiftUpgradeStore(pool, NewMessageStore(pool))
+	invalid := domain.AdminStarGiftGrant{
+		SenderID: domain.OfficialSystemUserID, Recipient: domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		GiftID: entry.Gift.ID, Upgrade: true, CommandKey: "admin-invalid-" + suffix, Date: now,
+		ModelAttributeID: revision.Models[0].ID + 9_999_999,
+	}
+	if _, err := upgrades.GrantUniqueStarGift(ctx, invalid); !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("invalid admin grant error=%v", err)
+	}
+	var issued, messageCount, savedCount, uniqueCount, commandCount int
+	if err := pool.QueryRow(ctx, `SELECT issued FROM star_gift_collectible_revisions WHERE id=$1`, revision.ID).Scan(&issued); err != nil {
+		t.Fatal(err)
+	}
+	invalidRandomID := lifecycleCommandRandomID("admin-collectible-grant", recipient.ID, invalid.CommandKey)
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM private_messages WHERE sender_user_id=$1 AND random_id=$2`,
+		domain.OfficialSystemUserID, invalidRandomID).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM peer_star_gifts WHERE owner_peer_type='user' AND owner_peer_id=$1 AND gift_id=$2`,
+		recipient.ID, entry.Gift.ID).Scan(&savedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM unique_star_gifts WHERE gift_id=$1`, entry.Gift.ID).Scan(&uniqueCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_admin_grant_commands WHERE recipient_user_id=$1`,
+		recipient.ID).Scan(&commandCount); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 0 || messageCount != 0 || savedCount != 0 || uniqueCount != 0 || commandCount != 0 {
+		t.Fatalf("failed grant leaked state: issued=%d messages=%d saved=%d unique=%d commands=%d",
+			issued, messageCount, savedCount, uniqueCount, commandCount)
+	}
+
+	req := invalid
+	req.CommandKey = "admin-success-" + suffix
+	req.Message = "atomic collectible"
+	req.ModelAttributeID = revision.Models[0].ID
+	req.PatternAttributeID = revision.Patterns[0].ID
+	req.BackdropAttributeID = revision.Backdrops[0].ID
+	granted, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("grant admin unique gift: %v", err)
+	}
+	action := granted.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
+	if granted.Duplicate || granted.Saved.MsgID <= 0 || granted.Saved.MsgID != granted.Saved.UpgradeMsgID ||
+		granted.Saved.UniqueGiftID != granted.Unique.ID || granted.Unique.Num != 1 ||
+		action == nil || !action.Assigned || !action.Saved || action.Gift.ID != granted.Unique.ID {
+		t.Fatalf("admin grant result=%+v action=%+v", granted, action)
+	}
+	events, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, granted.Send.RecipientMessage.Pts-1, 1)
+	if err != nil || len(events) != 1 || events[0].Message.Media == nil ||
+		events[0].Message.Media.ServiceAction == nil ||
+		events[0].Message.Media.ServiceAction.StarGiftUnique == nil ||
+		events[0].Message.Media.ServiceAction.StarGiftUnique.Gift.ID != granted.Unique.ID {
+		t.Fatalf("admin grant durable update=%+v err=%v", events, err)
+	}
+
+	replay, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("replay admin unique gift: %v", err)
+	}
+	if !replay.Duplicate || replay.Saved.ID != granted.Saved.ID || replay.Unique.ID != granted.Unique.ID ||
+		replay.Send.RecipientMessage.ID != granted.Send.RecipientMessage.ID {
+		t.Fatalf("admin grant replay=%+v want saved=%d unique=%d msg=%d",
+			replay, granted.Saved.ID, granted.Unique.ID, granted.Send.RecipientMessage.ID)
+	}
+	if err := pool.QueryRow(ctx, `SELECT issued FROM star_gift_collectible_revisions WHERE id=$1`, revision.ID).Scan(&issued); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_admin_grant_commands WHERE recipient_user_id=$1`,
+		recipient.ID).Scan(&commandCount); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 1 || commandCount != 1 {
+		t.Fatalf("replay duplicated aggregate: issued=%d commands=%d", issued, commandCount)
+	}
+}
+
 func collectibleTestAnimation(name string) domain.StarGiftAnimation {
 	return domain.StarGiftAnimation{
 		SourceName: name, SourceFormat: domain.StarGiftAnimationTGS,

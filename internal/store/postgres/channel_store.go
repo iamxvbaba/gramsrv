@@ -113,7 +113,7 @@ func NewChannelStore(db sqlcgen.DBTX, opts ...ChannelStoreOption) *ChannelStore 
 	return s
 }
 
-const channelColumns = `c.id, c.access_hash, c.creator_user_id, c.title, c.about, COALESCE(c.username, ''), c.verified,
+const channelColumns = `c.id, c.access_hash, c.creator_user_id, c.title, c.about, COALESCE(c.username, ''), c.verified, c.scam, c.fake, c.gigagroup,
 c.broadcast, c.megagroup, c.forum, c.forum_tabs, c.autotranslation, c.restricted_sponsored, c.broadcast_messages_allowed, c.send_paid_messages_stars, c.noforwards, c.join_to_send, c.join_request, c.signatures, c.pre_history_hidden, c.participants_hidden, c.antispam,
 EXISTS (SELECT 1 FROM channel_invites ci WHERE ci.channel_id = c.id AND NOT ci.revoked) AS has_link,
 c.linked_chat_id, c.linked_community_id, c.monoforum, c.linked_monoforum_id, c.slowmode_seconds, c.boosts_unrestrict, c.default_banned_rights::text,

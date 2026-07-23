@@ -415,6 +415,9 @@ type Channel struct {
 	About                    string
 	Username                 string
 	Verified                 bool
+	Scam                     bool
+	Fake                     bool
+	Gigagroup                bool
 	Broadcast                bool
 	Megagroup                bool
 	Forum                    bool
@@ -1441,6 +1444,25 @@ type UpdateChannelUsernameRequest struct {
 	UserID    int64
 	ChannelID int64
 	Username  string
+}
+
+// ChannelAdminSettings is an admin-direct patch of channel moderation settings.
+// nil fields are left unchanged; set fields are applied verbatim (no membership
+// or permission checks — this is the operator/admin path).
+type ChannelAdminSettings struct {
+	Gigagroup          *bool
+	AntiSpam           *bool
+	ParticipantsHidden *bool
+	NoForwards         *bool
+	JoinToSend         *bool
+	JoinRequest        *bool
+	SlowmodeSeconds    *int
+}
+
+// Empty reports whether the patch changes nothing.
+func (p ChannelAdminSettings) Empty() bool {
+	return p.Gigagroup == nil && p.AntiSpam == nil && p.ParticipantsHidden == nil &&
+		p.NoForwards == nil && p.JoinToSend == nil && p.JoinRequest == nil && p.SlowmodeSeconds == nil
 }
 
 // SetChannelPhotoResult describes a channel avatar mutation and its durable

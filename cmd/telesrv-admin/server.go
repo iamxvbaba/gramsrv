@@ -53,6 +53,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/channels", s.requireAuthAPI(http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleChannelDetailAPI)))
+	mux.Handle("GET /api/bots", s.requireAuthAPI(http.HandlerFunc(s.handleBotsAPI)))
+	mux.Handle("GET /api/bots/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleBotDetailAPI)))
+	mux.Handle("GET /api/emoji", s.requireAuthAPI(http.HandlerFunc(s.handleEmojiAPI)))
+	mux.Handle("GET /api/emoji/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleEmojiAnimationAPI)))
 	mux.Handle("GET /api/messages", s.requireAuthAPI(http.HandlerFunc(s.handleMessagesAPI)))
 	mux.Handle("GET /api/messages/detail", s.requireAuthAPI(http.HandlerFunc(s.handleMessageDetailAPI)))
 	mux.Handle("GET /api/messages/groups", s.requireAuthAPI(http.HandlerFunc(s.handleGroupMessagesAPI)))
@@ -67,6 +71,18 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
 	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetVerifiedAPI)))
+	mux.Handle("POST /api/actions/set-account-flags", s.requireAuthAPI(http.HandlerFunc(s.handleSetUserFlagsAPI)))
+	mux.Handle("POST /api/actions/set-channel-flags", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelFlagsAPI)))
+	mux.Handle("POST /api/actions/set-support", s.requireAuthAPI(http.HandlerFunc(s.handleSetSupportAPI)))
+	mux.Handle("POST /api/actions/set-account-username", s.requireAuthAPI(http.HandlerFunc(s.handleSetUsernameAPI)))
+	mux.Handle("POST /api/actions/set-account-color", s.requireAuthAPI(http.HandlerFunc(s.handleSetUserColorAPI)))
+	mux.Handle("POST /api/actions/set-account-emoji-status", s.requireAuthAPI(http.HandlerFunc(s.handleSetUserEmojiStatusAPI)))
+	mux.Handle("POST /api/actions/set-channel-settings", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelSettingsAPI)))
+	mux.Handle("POST /api/actions/set-channel-username", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelUsernameAPI)))
+	mux.Handle("POST /api/actions/set-channel-color", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelColorAPI)))
+	mux.Handle("POST /api/actions/set-channel-emoji-status", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelEmojiStatusAPI)))
+	mux.Handle("POST /api/actions/create-bot", s.requireAuthAPI(http.HandlerFunc(s.handleCreateBotAPI)))
+	mux.Handle("POST /api/actions/delete-bot", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteBotAPI)))
 	mux.Handle("POST /api/actions/set-channel-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelVerifiedAPI)))
 	mux.Handle("POST /api/actions/revoke-sessions", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeSessionsAPI)))
 	mux.Handle("POST /api/actions/delete-messages", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteMessagesAPI)))
@@ -76,6 +92,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
+	mux.Handle("POST /api/actions/give-gift", s.requireAuthAPI(http.HandlerFunc(s.handleGiveGiftAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -186,6 +203,73 @@ func (s *server) handleStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"Gifts": rows})
+}
+
+func (s *server) handleEmojiAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
+	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	rows := []EmojiRow{}
+	hasMore := false
+	var err error
+	if strings.TrimSpace(q) != "" {
+		rows, err = s.read.SearchEmoji(r.Context(), q)
+	} else {
+		rows, hasMore, err = s.read.ListEmoji(r.Context(), beforeID, limit)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nextBeforeID := int64(0)
+	if hasMore && len(rows) > 0 {
+		nextBeforeID = rows[len(rows)-1].DocumentID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":          q,
+		"rows":           rows,
+		"has_more":       hasMore,
+		"next_before_id": nextBeforeID,
+		"listing":        strings.TrimSpace(q) == "",
+	})
+}
+
+func (s *server) handleEmojiAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	documentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || documentID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid document id")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/v1/emoji/%d/animation", s.cfg.AdminAPIURL, documentID), nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
+	if err != nil || len(raw) > 4<<20 {
+		writeAPIError(w, http.StatusBadGateway, "invalid animation response")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		writeAPIError(w, resp.StatusCode, string(raw))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *server) handleStarGiftAnimationAPI(w http.ResponseWriter, r *http.Request) {
@@ -344,6 +428,108 @@ func (s *server) handleAccountDetailAPI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *server) handleBotsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
+	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	rows := []BotRow{}
+	hasMore := false
+	var err error
+	if strings.TrimSpace(q) != "" {
+		rows, err = s.read.SearchBots(r.Context(), q)
+	} else {
+		rows, hasMore, err = s.read.ListBots(r.Context(), beforeID, limit)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nextBeforeID := int64(0)
+	if hasMore && len(rows) > 0 {
+		nextBeforeID = rows[len(rows)-1].ID
+	}
+	if limit <= 0 {
+		limit = accountListDefaultLimit
+	}
+	if limit > accountListMaxLimit {
+		limit = accountListMaxLimit
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"query":          q,
+		"limit":          limit,
+		"rows":           rows,
+		"has_more":       hasMore,
+		"next_before_id": nextBeforeID,
+		"listing":        strings.TrimSpace(q) == "",
+	})
+}
+
+func (s *server) handleBotDetailAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	botID, err := parseInt64(r.PathValue("id"))
+	if err != nil || botID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	detail, err := s.read.BotDetail(r.Context(), botID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+type createBotAPIRequest struct {
+	CommandID   string `json:"command_id"`
+	Reason      string `json:"reason"`
+	Confirm     bool   `json:"confirm"`
+	OwnerUserID int64  `json:"owner_user_id"`
+	Name        string `json:"name"`
+	Username    string `json:"username"`
+}
+
+func (s *server) handleCreateBotAPI(w http.ResponseWriter, r *http.Request) {
+	var body createBotAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.CreateBotRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-bot"),
+		OwnerUserID: body.OwnerUserID,
+		Name:        body.Name,
+		Username:    body.Username,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/bots/create", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteBotAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	BotUserID int64  `json:"bot_user_id"`
+}
+
+func (s *server) handleDeleteBotAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteBotAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteBotRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-bot"),
+		BotUserID:   body.BotUserID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/bots/delete", req)
+	writeCommandResultAPI(w, result, err)
 }
 
 func (s *server) handleChannelsAPI(w http.ResponseWriter, r *http.Request) {
@@ -597,6 +783,254 @@ func (s *server) handleSetVerifiedAPI(w http.ResponseWriter, r *http.Request) {
 		Verified:    body.Verified,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-verified", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setUserFlagsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	Scam      bool   `json:"scam"`
+	Fake      bool   `json:"fake"`
+}
+
+func (s *server) handleSetUserFlagsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setUserFlagsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetUserFlagsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-account-flags"),
+		UserID:      body.UserID,
+		Scam:        body.Scam,
+		Fake:        body.Fake,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-flags", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setChannelFlagsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	ChannelID int64  `json:"channel_id"`
+	Scam      bool   `json:"scam"`
+	Fake      bool   `json:"fake"`
+}
+
+func (s *server) handleSetChannelFlagsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setChannelFlagsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetChannelFlagsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-channel-flags"),
+		ChannelID:   body.ChannelID,
+		Scam:        body.Scam,
+		Fake:        body.Fake,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-flags", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setSupportAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	Support   bool   `json:"support"`
+}
+
+func (s *server) handleSetSupportAPI(w http.ResponseWriter, r *http.Request) {
+	var body setSupportAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetSupportRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-support"),
+		UserID:      body.UserID,
+		Support:     body.Support,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-support", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setUsernameAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+}
+
+func (s *server) handleSetUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body setUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetUsernameRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-username"),
+		UserID:      body.UserID,
+		Username:    body.Username,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-username", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setUserColorAPIRequest struct {
+	CommandID         string `json:"command_id"`
+	Reason            string `json:"reason"`
+	Confirm           bool   `json:"confirm"`
+	UserID            int64  `json:"user_id"`
+	ForProfile        bool   `json:"for_profile"`
+	HasColor          bool   `json:"has_color"`
+	Color             int    `json:"color"`
+	BackgroundEmojiID int64  `json:"background_emoji_id,string"`
+}
+
+func (s *server) handleSetUserColorAPI(w http.ResponseWriter, r *http.Request) {
+	var body setUserColorAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetUserColorRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-account-color"),
+		UserID:      body.UserID,
+		PeerColorInput: admin.PeerColorInput{
+			ForProfile: body.ForProfile, HasColor: body.HasColor, Color: body.Color, BackgroundEmojiID: body.BackgroundEmojiID,
+		},
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-color", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setUserEmojiStatusAPIRequest struct {
+	CommandID  string `json:"command_id"`
+	Reason     string `json:"reason"`
+	Confirm    bool   `json:"confirm"`
+	UserID     int64  `json:"user_id"`
+	DocumentID int64  `json:"document_id,string"`
+	Until      int    `json:"until"`
+}
+
+func (s *server) handleSetUserEmojiStatusAPI(w http.ResponseWriter, r *http.Request) {
+	var body setUserEmojiStatusAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetUserEmojiStatusRequest{
+		CommandMeta:      s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-account-emoji-status"),
+		UserID:           body.UserID,
+		EmojiStatusInput: admin.EmojiStatusInput{DocumentID: body.DocumentID, Until: body.Until},
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-emoji-status", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setChannelSettingsAPIRequest struct {
+	CommandID          string `json:"command_id"`
+	Reason             string `json:"reason"`
+	Confirm            bool   `json:"confirm"`
+	ChannelID          int64  `json:"channel_id"`
+	Gigagroup          *bool  `json:"gigagroup,omitempty"`
+	AntiSpam           *bool  `json:"antispam,omitempty"`
+	ParticipantsHidden *bool  `json:"participants_hidden,omitempty"`
+	NoForwards         *bool  `json:"noforwards,omitempty"`
+	JoinToSend         *bool  `json:"join_to_send,omitempty"`
+	JoinRequest        *bool  `json:"join_request,omitempty"`
+	SlowmodeSeconds    *int   `json:"slowmode_seconds,omitempty"`
+}
+
+func (s *server) handleSetChannelSettingsAPI(w http.ResponseWriter, r *http.Request) {
+	var body setChannelSettingsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetChannelSettingsRequest{
+		CommandMeta:        s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-channel-settings"),
+		ChannelID:          body.ChannelID,
+		Gigagroup:          body.Gigagroup,
+		AntiSpam:           body.AntiSpam,
+		ParticipantsHidden: body.ParticipantsHidden,
+		NoForwards:         body.NoForwards,
+		JoinToSend:         body.JoinToSend,
+		JoinRequest:        body.JoinRequest,
+		SlowmodeSeconds:    body.SlowmodeSeconds,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-settings", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setChannelUsernameAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	ChannelID int64  `json:"channel_id"`
+	Username  string `json:"username"`
+}
+
+func (s *server) handleSetChannelUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body setChannelUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetChannelUsernameRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-channel-username"),
+		ChannelID:   body.ChannelID,
+		Username:    body.Username,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-username", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setChannelColorAPIRequest struct {
+	CommandID         string `json:"command_id"`
+	Reason            string `json:"reason"`
+	Confirm           bool   `json:"confirm"`
+	ChannelID         int64  `json:"channel_id"`
+	ForProfile        bool   `json:"for_profile"`
+	HasColor          bool   `json:"has_color"`
+	Color             int    `json:"color"`
+	BackgroundEmojiID int64  `json:"background_emoji_id,string"`
+}
+
+func (s *server) handleSetChannelColorAPI(w http.ResponseWriter, r *http.Request) {
+	var body setChannelColorAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetChannelColorRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-channel-color"),
+		ChannelID:   body.ChannelID,
+		PeerColorInput: admin.PeerColorInput{
+			ForProfile: body.ForProfile, HasColor: body.HasColor, Color: body.Color, BackgroundEmojiID: body.BackgroundEmojiID,
+		},
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-color", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setChannelEmojiStatusAPIRequest struct {
+	CommandID  string `json:"command_id"`
+	Reason     string `json:"reason"`
+	Confirm    bool   `json:"confirm"`
+	ChannelID  int64  `json:"channel_id"`
+	DocumentID int64  `json:"document_id,string"`
+	Until      int    `json:"until"`
+}
+
+func (s *server) handleSetChannelEmojiStatusAPI(w http.ResponseWriter, r *http.Request) {
+	var body setChannelEmojiStatusAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetChannelEmojiStatusRequest{
+		CommandMeta:      s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-channel-emoji-status"),
+		ChannelID:        body.ChannelID,
+		EmojiStatusInput: admin.EmojiStatusInput{DocumentID: body.DocumentID, Until: body.Until},
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-emoji-status", req)
 	writeCommandResultAPI(w, result, err)
 }
 
@@ -920,6 +1354,44 @@ func (s *server) handleSetStarGiftSortOrderAPI(w http.ResponseWriter, r *http.Re
 		GiftID:      body.GiftID, SortOrder: body.SortOrder,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-sort-order", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type giveGiftAPIRequest struct {
+	CommandID    string `json:"command_id"`
+	Reason       string `json:"reason"`
+	Confirm      bool   `json:"confirm"`
+	SenderUserID int64  `json:"sender_user_id"`
+	UserID       int64  `json:"user_id"`
+	ChannelID    int64  `json:"channel_id"`
+	GiftID              int64  `json:"gift_id,string"`
+	HideName            bool   `json:"hide_name"`
+	Message             string `json:"message"`
+	Upgrade             bool   `json:"upgrade"`
+	ModelAttributeID    int64  `json:"model_attribute_id,string"`
+	PatternAttributeID  int64  `json:"pattern_attribute_id,string"`
+	BackdropAttributeID int64  `json:"backdrop_attribute_id,string"`
+}
+
+func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
+	var body giveGiftAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.GiveGiftRequest{
+		CommandMeta:         s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "give-gift"),
+		SenderUserID:        body.SenderUserID,
+		UserID:              body.UserID,
+		ChannelID:           body.ChannelID,
+		GiftID:              body.GiftID,
+		HideName:            body.HideName,
+		Message:             body.Message,
+		Upgrade:             body.Upgrade,
+		ModelAttributeID:    body.ModelAttributeID,
+		PatternAttributeID:  body.PatternAttributeID,
+		BackdropAttributeID: body.BackdropAttributeID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/give", req)
 	writeCommandResultAPI(w, result, err)
 }
 

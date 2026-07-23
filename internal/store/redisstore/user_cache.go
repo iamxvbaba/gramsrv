@@ -41,6 +41,10 @@ type userBaseValue struct {
 	CountryCode string `json:"country_code"`
 	Verified    bool   `json:"verified"`
 	Support     bool   `json:"support"`
+	// scam / fake 同理必须随缓存往返：丢失会让缓存命中路径把带标记的账号输出成
+	// 普通账号，导致资料页 SCAM/FAKE 标记随缓存命中/未命中间歇性消失（与 bot 列同坑）。
+	Scam bool `json:"scam,omitempty"`
+	Fake bool `json:"fake,omitempty"`
 	// bot 字段必须随缓存往返：丢失会让缓存命中路径把 bot 输出成普通用户，
 	// 污染客户端本地缓存（TDesktop 的 bot 标记不可逆）。
 	Bot            bool `json:"bot,omitempty"`
@@ -78,6 +82,8 @@ func baseValueFromUser(u domain.User) userBaseValue {
 		CountryCode:                   u.CountryCode,
 		Verified:                      u.Verified,
 		Support:                       u.Support,
+		Scam:                          u.Scam,
+		Fake:                          u.Fake,
 		Bot:                           u.Bot,
 		BotInfoVersion:                u.BotInfoVersion,
 		PremiumUntil:                  u.PremiumUntil,
@@ -110,6 +116,8 @@ func (v userBaseValue) user() domain.User {
 		CountryCode:            v.CountryCode,
 		Verified:               v.Verified,
 		Support:                v.Support,
+		Scam:                   v.Scam,
+		Fake:                   v.Fake,
 		Bot:                    v.Bot,
 		BotInfoVersion:         v.BotInfoVersion,
 		PremiumUntil:           v.PremiumUntil,

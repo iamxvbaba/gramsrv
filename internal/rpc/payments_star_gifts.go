@@ -269,9 +269,9 @@ func (r *Router) sendStarGiftMemoryPurchase(ctx context.Context, userID int64, p
 	var updates *tg.Updates
 	switch peer.Type {
 	case domain.PeerTypeUser:
-		updates, err = r.sendStarGiftToUser(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
+		_, updates, err = r.sendStarGiftToUser(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
 	case domain.PeerTypeChannel:
-		updates, err = r.sendStarGiftToChannel(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
+		_, updates, err = r.sendStarGiftToChannel(ctx, userID, peer.ID, gift, inv.HideName, giftMessage, upgradeStars)
 	default:
 		err = domain.ErrStarGiftInvalid
 	}
@@ -363,19 +363,19 @@ func (r *Router) sendStarsTopupForm(ctx context.Context, userID, formID int64, i
 	return &tg.PaymentsPaymentResult{Updates: starsBalanceUpdates(balance.Balance, r.clock.Now().Unix())}, nil
 }
 
-func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (*tg.Updates, error) {
+func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (domain.SavedStarGiftRef, *tg.Updates, error) {
 	prepaidUpgradeHash := ""
 	if prepaidUpgradeStars == 0 && gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal {
 		var token [32]byte
 		if _, err := rand.Read(token[:]); err != nil {
-			return nil, err
+			return domain.SavedStarGiftRef{}, nil, err
 		}
 		prepaidUpgradeHash = base64.RawURLEncoding.EncodeToString(token[:])
 	}
 	// 2. 投递礼物服务消息到收礼人私聊（双盒 + 推送）。
 	send, err := r.deliverStarGift(ctx, senderID, recipientID, gift, hideName, message, prepaidUpgradeStars, prepaidUpgradeHash)
 	if err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	// 3. 记账：收礼人收到一份礼物实例（msg_id = 收礼人侧消息 id）。
 	if _, err := r.deps.Gifts.RecordSavedGift(ctx, domain.SavedStarGift{
@@ -392,17 +392,18 @@ func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID i
 		PrepaidUpgradeHash:  prepaidUpgradeHash,
 		Message:             message,
 	}); err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	// 收礼人 stargifts_count 变化 → 失效其 userFull 投影，资料页 Gifts 区段才会出现。
 	r.invalidateRPCProjectionForUser(recipientID)
 
+	ref := domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeUser, ID: recipientID}, MsgID: send.RecipientMessage.ID}
 	users := r.usersForMessageUpdate(ctx, senderID, send.SenderMessage)
 	chats := r.chatsForMessageUpdate(ctx, senderID, send.SenderMessage)
-	return tgPrivateMessageUpdates(send.SenderEvent, send.SenderMessage, 0, false, users, chats), nil
+	return ref, tgPrivateMessageUpdates(send.SenderEvent, send.SenderMessage, 0, false, users, chats), nil
 }
 
-func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (*tg.Updates, error) {
+func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (domain.SavedStarGiftRef, *tg.Updates, error) {
 	now := int(r.clock.Now().Unix())
 	sticker := gift.Sticker
 	action := domain.ChannelMessageAction{
@@ -438,7 +439,7 @@ func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID 
 		Message:             message,
 	})
 	if err != nil {
-		return nil, err
+		return domain.SavedStarGiftRef{}, nil, err
 	}
 	action.StarGift.PeerChannelID = channelID
 	action.StarGift.SavedID = savedID
@@ -451,7 +452,8 @@ func (r *Router) sendStarGiftToChannel(ctx context.Context, senderID, channelID 
 		)
 	}
 	r.invalidateRPCProjectionForChannel(channelID)
-	return nil, nil
+	ref := domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}, SavedID: savedID}
+	return ref, nil, nil
 }
 
 // deliverStarGift 经 SendPrivateText 把 messageActionStarGift 服务消息投递到收礼人私聊。
@@ -521,10 +523,17 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 	if r.deps.Gifts == nil {
 		return emptySavedStarGifts(), nil
 	}
+	// Gifts hidden from the profile (unsaved) are visible only to the owner (or a
+	// channel admin). Never trust the client's exclude_unsaved flag for other
+	// viewers: force-exclude hidden gifts unless the requester manages the owner.
+	excludeUnsaved := req.ExcludeUnsaved
+	if r.ensureCanManageStarGiftOwner(ctx, userID, owner) != nil {
+		excludeUnsaved = true
+	}
 	collectionID, _ := req.GetCollectionID()
 	page, err := r.deps.Gifts.ListSavedFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner:               owner,
-		ExcludeUnsaved:      req.ExcludeUnsaved,
+		ExcludeUnsaved:      excludeUnsaved,
 		ExcludeSaved:        req.ExcludeSaved,
 		ExcludeUnlimited:    req.ExcludeUnlimited,
 		ExcludeUnique:       req.ExcludeUnique,
@@ -554,6 +563,17 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 		return emptySavedStarGifts(), nil
 	}
 	gifts := make([]domain.SavedStarGift, 0, len(refs))
+	// A gift hidden from the profile (unsaved) is visible only to the owner or a
+	// channel admin. Memoize the manage check per owner to avoid repeat lookups.
+	manageCache := make(map[domain.Peer]bool)
+	canManageOwner := func(owner domain.Peer) bool {
+		if v, ok := manageCache[owner]; ok {
+			return v
+		}
+		v := r.ensureCanManageStarGiftOwner(ctx, userID, owner) == nil
+		manageCache[owner] = v
+		return v
+	}
 	for _, ref := range refs {
 		dref, ok, err := r.starGiftRefFromInput(ctx, userID, ref)
 		if err != nil {
@@ -567,6 +587,9 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 			return nil, internalErr()
 		}
 		if found && !g.Converted {
+			if g.Unsaved && !canManageOwner(g.Owner) {
+				continue
+			}
 			gifts = append(gifts, g)
 		}
 	}
@@ -667,9 +690,14 @@ func (r *Router) onPaymentsConvertStarGift(ctx context.Context, ref tg.InputSave
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, domain.ErrStarGiftNotFound):
-			return false, starGiftInvalidErr()
-		case errors.Is(err, domain.ErrStarGiftAlreadyConverted):
+		case errors.Is(err, domain.ErrStarGiftNotFound),
+			errors.Is(err, domain.ErrStarGiftAlreadyConverted),
+			errors.Is(err, domain.ErrStarGiftAlreadyUpgraded),
+			errors.Is(err, domain.ErrStarGiftOwnerInvalid),
+			errors.Is(err, domain.ErrStarGiftUnavailable):
+			// These are known business conditions (e.g. converting an already
+			// upgraded/unique gift). Surface a clean client error instead of a
+			// 500 INTERNAL_SERVER_ERROR.
 			return false, starGiftInvalidErr()
 		default:
 			return false, internalErr()

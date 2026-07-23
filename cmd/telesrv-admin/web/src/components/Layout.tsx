@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronDown,
   Database,
   LayoutDashboard,
@@ -7,13 +8,16 @@ import {
   Server,
   Shield,
   ShieldCheck,
+  Smile,
   Users,
-	Gift
+	Gift,
+	Send
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
+import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
 
 export function BootScreen() {
@@ -75,7 +79,10 @@ export function Shell({
           <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{t("layout.dashboard")}</NavLink>
           <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{t("layout.accounts")}</NavLink>
           <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{t("layout.channels")}</NavLink>
+          <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{t("layout.bots")}</NavLink>
 			<NavLink icon={<Gift size={16} />} href="/gifts" route={route} navigate={navigate}>{t("layout.gifts")}</NavLink>
+          <NavLink icon={<Send size={16} />} href="/give-gifts" route={route} navigate={navigate}>{t("layout.giveGifts")}</NavLink>
+          <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{t("layout.emoji")}</NavLink>
           <div className={`nav-section ${messagesActive ? "active" : ""} ${messagesOpen ? "open" : ""}`}>
             <button
               className="nav-section-toggle"
@@ -123,6 +130,7 @@ export function Shell({
             <h1>{routeTitle(route.path, t)}</h1>
           </div>
           <div className="topbar-actions">
+            <ThemeSwitch />
             <LanguageSwitch />
             <span className="actor-pill">{t("layout.actor", { actor })}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={t("layout.logout")}>

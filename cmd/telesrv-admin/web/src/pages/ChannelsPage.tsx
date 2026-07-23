@@ -2,6 +2,7 @@ import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { ScamFakeBadges } from "../components/flags";
 import { useI18n } from "../i18n";
 import { channelKind, displayUsername, formatDate } from "../lib/format";
 import { channelMetrics } from "../lib/metrics";
@@ -110,7 +111,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
                 <td>{row.ParticipantsCount}</td>
                 <td>{row.AdminsCount}</td>
                 <td>{row.PTS}</td>
-                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}</td>
+                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>} <ScamFakeBadges scam={row.Scam} fake={row.Fake} /></td>
                 <td>{formatDate(row.UpdatedAt)}</td>
                 <td><button className="row-link" onClick={() => navigate(`/channels/${row.ID}`)}>{t("common.detail")} <ChevronRight size={14} /></button></td>
               </tr>

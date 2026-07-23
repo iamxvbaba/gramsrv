@@ -197,6 +197,113 @@ func (s *ChannelStore) SetChannelVerified(_ context.Context, channelID int64, ve
 	return cloneChannel(channel), nil
 }
 
+func (s *ChannelStore) SetChannelScamFake(_ context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if scam && fake {
+		return domain.Channel{}, domain.ErrPeerModerationFlagsInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	channel.Scam = scam
+	channel.Fake = fake
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
+func (s *ChannelStore) SetChannelAdminSettings(_ context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if patch.Gigagroup != nil {
+		channel.Gigagroup = *patch.Gigagroup
+	}
+	if patch.AntiSpam != nil {
+		channel.AntiSpam = *patch.AntiSpam
+	}
+	if patch.ParticipantsHidden != nil {
+		channel.ParticipantsHidden = *patch.ParticipantsHidden
+	}
+	if patch.NoForwards != nil {
+		channel.NoForwards = *patch.NoForwards
+	}
+	if patch.JoinToSend != nil {
+		channel.JoinToSend = *patch.JoinToSend
+	}
+	if patch.JoinRequest != nil {
+		channel.JoinRequest = *patch.JoinRequest
+	}
+	if patch.SlowmodeSeconds != nil {
+		channel.SlowmodeSeconds = *patch.SlowmodeSeconds
+	}
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
+func (s *ChannelStore) SetChannelUsernameAdmin(_ context.Context, channelID int64, username string) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	channel.Username = username
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
+func (s *ChannelStore) SetChannelColorAdmin(_ context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if forProfile {
+		channel.ProfileColor = color
+	} else {
+		channel.Color = color
+	}
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
+func (s *ChannelStore) SetChannelEmojiStatusAdmin(_ context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error) {
+	if channelID == 0 {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if status.DocumentID == 0 {
+		status.Until = 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	channel.EmojiStatus = status
+	s.channels[channelID] = channel
+	return cloneChannel(channel), nil
+}
+
 func (s *ChannelStore) ResolvePublicChannelUsername(_ context.Context, viewerUserID int64, username string) (domain.Channel, bool, error) {
 	_ = viewerUserID // zero is the anonymous public-web view; no membership state is projected.
 	username = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
