@@ -202,17 +202,17 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 	botsService.SetTextDraftPusher(r)
 
 	sendStickersBotText(t, r, alice, "/newpack", 9101)
-	waitForStickersReply(t, messageStore, alice.ID, "sticker pack")
+	lastBotReplyID := waitForStickersReplyAfter(t, messageStore, alice.ID, 0, "sticker pack")
 	sendStickersBotText(t, r, alice, "Alice Bot Pack", 9102)
-	waitForStickersReply(t, messageStore, alice.ID, "Lottie JSON")
+	lastBotReplyID = waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "Lottie JSON")
 	sendStickersBotDocument(t, r, alice, 401, 4401, 9103)
-	waitForStickersReply(t, messageStore, alice.ID, "emoji")
+	lastBotReplyID = waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "emoji")
 	sendStickersBotText(t, r, alice, "🙂", 9104)
-	waitForStickersReply(t, messageStore, alice.ID, "Added")
+	lastBotReplyID = waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "Added")
 	sendStickersBotText(t, r, alice, "/publish", 9105)
-	waitForStickersReply(t, messageStore, alice.ID, "short name")
+	lastBotReplyID = waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "short name")
 	sendStickersBotText(t, r, alice, "alice_bot_pack", 9106)
-	waitForStickersReply(t, messageStore, alice.ID, "https://telesrv.net/addstickers/alice_bot_pack")
+	waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "https://telesrv.net/addstickers/alice_bot_pack")
 
 	created := files.sets[domain.StickerSetKindStickers]
 	if len(created) != 1 || created[0].ShortName != "alice_bot_pack" || created[0].CreatorUserID != alice.ID {
@@ -286,7 +286,7 @@ func sendStickersBotDocument(t *testing.T, r *Router, user domain.User, docID, a
 	}
 }
 
-func waitForStickersReply(t *testing.T, messages *memory.MessageStore, userID int64, want string) string {
+func waitForStickersReplyAfter(t *testing.T, messages *memory.MessageStore, userID int64, afterID int, want string) int {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -299,12 +299,12 @@ func waitForStickersReply(t *testing.T, messages *memory.MessageStore, userID in
 			t.Fatalf("list @Stickers history: %v", err)
 		}
 		for _, msg := range list.Messages {
-			if msg.From.ID == domain.StickersBotUserID && strings.Contains(msg.Body, want) {
-				return msg.Body
+			if msg.ID > afterID && msg.From.ID == domain.StickersBotUserID && strings.Contains(msg.Body, want) {
+				return msg.ID
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no @Stickers reply containing %q; history=%+v", want, list.Messages)
+			t.Fatalf("no @Stickers reply after id %d containing %q; history=%+v", afterID, want, list.Messages)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
