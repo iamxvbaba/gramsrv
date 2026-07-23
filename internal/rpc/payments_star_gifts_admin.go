@@ -7,23 +7,29 @@ import (
 	"telesrv/internal/domain"
 )
 
+type adminUniqueStarGiftGranter interface {
+	GrantUnique(context.Context, domain.AdminStarGiftGrant) (domain.AdminStarGiftGrantResult, error)
+}
+
 // AdminGrantStarGift delivers a catalog gift to a recipient peer on behalf of
 // grant.SenderID without charging any Stars. It powers the admin console "Give
 // gift" action: the gift is loaded from the catalog and delivered through the
 // exact same path a paid send uses (messageActionStarGift service message for
 // users, saved-gift + admin log for channels), only the Stars debit is skipped.
 //
-// When SenderID is zero the official system account (777000, the telesrv
-// service account) is used as the sender. When Upgrade is true the granted gift
-// is immediately upgraded to a genuine collectible (unique) gift. The optional
-// ModelAttributeID / PatternAttributeID / BackdropAttributeID / Num pin specific
-// collectible facts (0 => random model/pattern/backdrop, auto sequential
-// number); the DB constraints remain the source of truth. Upgraded delivery is
-// supported for user recipients only.
+// SenderID must be zero or the official system account (777000). When Upgrade
+// is true, the store assigns a genuine collectible directly in the same
+// transaction as its service message and durable updates. The optional
+// ModelAttributeID / PatternAttributeID / BackdropAttributeID pin specific
+// collectible facts (0 => random; number is always sequential). Upgraded
+// delivery is supported for user recipients only.
 func (r *Router) AdminGrantStarGift(ctx context.Context, grant domain.AdminStarGiftGrant) error {
 	senderID := grant.SenderID
 	if senderID <= 0 {
 		senderID = domain.OfficialSystemUserID
+	}
+	if senderID != domain.OfficialSystemUserID {
+		return fmt.Errorf("gift sender must be the official system account")
 	}
 	if grant.GiftID <= 0 {
 		return fmt.Errorf("gift_id is required")
@@ -56,10 +62,9 @@ func (r *Router) AdminGrantStarGift(ctx context.Context, grant domain.AdminStarG
 	}
 }
 
-// adminGrantUpgradedStarGift grants a base gift carrying a prepaid upgrade
-// entitlement and then mints the collectible via the standard zero-charge
-// prepaid upgrade path, so the recipient ends up owning a real unique gift with
-// the requested (or random) attributes and number.
+// adminGrantUpgradedStarGift assigns a collectible through the atomic store
+// boundary, so a failure cannot leave a regular gift, partial issuance, pts or
+// outbox event behind.
 func (r *Router) adminGrantUpgradedStarGift(ctx context.Context, senderID int64, gift domain.StarGift, grant domain.AdminStarGiftGrant) error {
 	if grant.Recipient.Type != domain.PeerTypeUser {
 		return fmt.Errorf("upgraded gift delivery is supported for user recipients only")
@@ -74,23 +79,18 @@ func (r *Router) adminGrantUpgradedStarGift(ctx context.Context, senderID int64,
 	if preview.Issued >= preview.SupplyTotal {
 		return fmt.Errorf("gift %d collectible supply is exhausted", gift.ID)
 	}
-	// Grant the base gift with a prepaid-upgrade entitlement so the upgrade
-	// below runs on the zero-charge RequirePrepaid path.
-	ref, _, err := r.sendStarGiftToUser(ctx, senderID, grant.Recipient.ID, gift, grant.HideName, grant.Message, preview.UpgradeStars)
+	granter, ok := r.deps.Gifts.(adminUniqueStarGiftGranter)
+	if !ok {
+		return fmt.Errorf("atomic collectible grant is not configured")
+	}
+	recipientBlocked, err := r.peerBlocksUser(ctx, senderID, grant.Recipient.ID)
 	if err != nil {
 		return err
 	}
-	commandKey := fmt.Sprintf("admin-grant-upgrade:%d:%d:%d", grant.Recipient.ID, gift.ID, ref.MsgID)
-	if _, err := r.deps.Gifts.Upgrade(ctx, domain.StarGiftUpgradeRequest{
-		UserID:              grant.Recipient.ID,
-		Ref:                 ref,
-		RequirePrepaid:      true,
-		CommandKey:          commandKey,
-		Date:                int(r.clock.Now().Unix()),
-		ModelAttributeID:    grant.ModelAttributeID,
-		PatternAttributeID:  grant.PatternAttributeID,
-		BackdropAttributeID: grant.BackdropAttributeID,
-	}); err != nil {
+	grant.SenderID = senderID
+	grant.Date = int(r.clock.Now().Unix())
+	grant.RecipientBlocked = recipientBlocked
+	if _, err := granter.GrantUnique(ctx, grant); err != nil {
 		return err
 	}
 	r.invalidateStarGiftOwnerProjection(grant.Recipient)

@@ -339,7 +339,7 @@ type StarGiftUpgradeRequest struct {
 }
 
 // AdminStarGiftGrant is one admin "give gift" command: deliver GiftID to
-// Recipient from Sender (0 => official system account 777000) at no charge.
+// Recipient from the official system account 777000 at no charge.
 // When Upgrade is set the gift is minted as a collectible; the optional
 // attribute IDs pin specific model/pattern/backdrop (0 => random). The
 // collectible number is always assigned automatically.
@@ -350,9 +350,22 @@ type AdminStarGiftGrant struct {
 	HideName            bool
 	Message             string
 	Upgrade             bool
+	CommandKey          string
+	Date                int
+	RecipientBlocked    bool
 	ModelAttributeID    int64
 	PatternAttributeID  int64
 	BackdropAttributeID int64
+}
+
+// AdminStarGiftGrantResult is the committed direct collectible assignment.
+// The saved gift, unique issuance, private message and replay receipt are one
+// aggregate transaction.
+type AdminStarGiftGrantResult struct {
+	Saved     SavedStarGift
+	Unique    UniqueStarGift
+	Send      SendPrivateTextResult
+	Duplicate bool
 }
 
 type StarGiftPurchaseRequest struct {

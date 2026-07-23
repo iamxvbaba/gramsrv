@@ -338,6 +338,9 @@ func (s *UserStore) SetSupport(ctx context.Context, userID int64, support bool) 
 
 // SetScamFake 设置/取消用户的 scam 与 fake 标记（bot 复用同一路径）。
 func (s *UserStore) SetScamFake(ctx context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	if scam && fake {
+		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	row, err := s.q.SetUserScamFake(ctx, sqlcgen.SetUserScamFakeParams{
 		ID:   userID,
 		Scam: scam,

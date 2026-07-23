@@ -201,6 +201,9 @@ func (s *ChannelStore) SetChannelScamFake(_ context.Context, channelID int64, sc
 	if channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
+	if scam && fake {
+		return domain.Channel{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	channel, ok := s.channels[channelID]

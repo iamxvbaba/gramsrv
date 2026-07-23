@@ -469,12 +469,15 @@ func (s *Service) DeleteBot(ctx context.Context, botUserID int64) (domain.User, 
 	if !ok {
 		return domain.User{}, fmt.Errorf("bot deletion is not supported by the configured store")
 	}
-	// Drop live sessions up front so the token stops working even if a caller
-	// races the tombstone; DeleteBotAccount also revokes the authorization rows.
-	if s.hooks != nil {
-		if err := s.hooks.RevokeBotSessions(ctx, botUserID); err != nil {
-			s.log.Warn("revoke bot sessions before delete", zap.Int64("bot_user_id", botUserID), zap.Error(err))
-		}
+	// Session revocation is part of the deletion invariant: a deleted bot must
+	// never retain an authenticated connection. Fail closed before tombstoning
+	// when the hook is unavailable or revocation fails.
+	if s.hooks == nil {
+		return domain.User{}, domain.ErrBotSessionsNotRevoked
+	}
+	if err := s.hooks.RevokeBotSessions(ctx, botUserID); err != nil {
+		s.log.Warn("revoke bot sessions before delete", zap.Int64("bot_user_id", botUserID), zap.Error(err))
+		return domain.User{}, domain.ErrBotSessionsNotRevoked
 	}
 	u, err := deleter.DeleteBotAccount(ctx, botUserID)
 	if err != nil {

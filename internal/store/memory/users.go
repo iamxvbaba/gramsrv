@@ -298,6 +298,9 @@ func (s *UserStore) SetSupport(_ context.Context, userID int64, support bool) (d
 
 // SetScamFake 设置/取消用户的 scam 与 fake 标记（与 postgres 语义一致）。
 func (s *UserStore) SetScamFake(_ context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	if scam && fake {
+		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.byID[userID]

@@ -135,7 +135,7 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
 
       <label className="form-field">
         <span>{t("giveGift.message")}</span>
-        <textarea value={message} rows={2} maxLength={255} onChange={(event) => { setMessage(event.target.value); setResult(null); }} placeholder={t("giveGift.messagePlaceholder")} />
+        <textarea value={message} rows={2} maxLength={128} onChange={(event) => { setMessage(event.target.value); setResult(null); }} placeholder={t("giveGift.messagePlaceholder")} />
       </label>
 
       <label className="gift-switch">

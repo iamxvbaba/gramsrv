@@ -289,6 +289,9 @@ func (s *ChannelStore) SetChannelScamFake(ctx context.Context, channelID int64, 
 	if channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
+	if scam && fake {
+		return domain.Channel{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	channel, err := s.channelByID(ctx, s.db, channelID)
 	if err != nil {
 		return domain.Channel{}, err

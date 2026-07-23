@@ -80,6 +80,69 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestCreateBotReturnsTokenOnceWithoutPersistingCredential(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryCommandRepo()
+	bots := &fakeBotService{token: "test-one-time-bot-credential"}
+	svc := NewService(Dependencies{Commands: repo, Bots: bots, Now: fixedNow})
+	req := CreateBotRequest{
+		CommandMeta: CommandMeta{CommandID: "create-bot-once", Actor: "ops", Reason: "requested"},
+		OwnerUserID: 1001,
+		Name:        "Audit Safe Bot",
+		Username:    "audit_safe_bot",
+	}
+
+	first, err := svc.CreateBot(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateBot: %v", err)
+	}
+	if first.Details["token"] != bots.token || bots.createCalls != 1 {
+		t.Fatalf("first result=%+v createCalls=%d", first, bots.createCalls)
+	}
+	stored := repo.items[req.CommandID].ResultJSON
+	if bytes.Contains(stored, []byte(bots.token)) || bytes.Contains(stored, []byte(`"token"`)) {
+		t.Fatalf("persisted admin result contains bot credential: %s", stored)
+	}
+
+	replay, err := svc.CreateBot(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateBot replay: %v", err)
+	}
+	if !replay.AlreadyExecuted || bots.createCalls != 1 {
+		t.Fatalf("replay=%+v createCalls=%d", replay, bots.createCalls)
+	}
+	if _, leaked := replay.Details["token"]; leaked {
+		t.Fatalf("replayed command exposed one-time bot token: %+v", replay)
+	}
+}
+
+func TestModerationFlagsRejectImpossibleScamFakeState(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryCommandRepo()
+	users := &fakeUsersService{users: map[int64]domain.User{1001: {ID: 1001}}}
+	channels := &fakeChannelsService{channels: map[int64]domain.Channel{2001: {
+		ID: 2001, Megagroup: true,
+	}}}
+	svc := NewService(Dependencies{Commands: repo, Users: users, Channels: channels, Now: fixedNow})
+	meta := CommandMeta{CommandID: "invalid-user-flags", Actor: "ops", Reason: "test"}
+	if _, err := svc.SetUserFlags(ctx, SetUserFlagsRequest{
+		CommandMeta: meta, UserID: 1001, Scam: true, Fake: true,
+	}); !errors.Is(err, domain.ErrPeerModerationFlagsInvalid) {
+		t.Fatalf("SetUserFlags error=%v", err)
+	}
+	meta.CommandID = "invalid-channel-flags"
+	if _, err := svc.SetChannelFlags(ctx, SetChannelFlagsRequest{
+		CommandMeta: meta, ChannelID: 2001, Scam: true, Fake: true,
+	}); !errors.Is(err, domain.ErrPeerModerationFlagsInvalid) {
+		t.Fatalf("SetChannelFlags error=%v", err)
+	}
+	if len(repo.items) != 0 || users.users[1001].Scam || users.users[1001].Fake ||
+		channels.channels[2001].Scam || channels.channels[2001].Fake {
+		t.Fatalf("invalid moderation state reached command/store boundary: commands=%d user=%+v channel=%+v",
+			len(repo.items), users.users[1001], channels.channels[2001])
+	}
+}
+
 func TestAccountFreezesBatchesAndReturnsOnlyActiveFacts(t *testing.T) {
 	now := fixedNow()
 	store := &fakeBatchRestrictionStore{fakeRestrictionStore: fakeRestrictionStore{items: map[int64]domain.AccountFreeze{
@@ -503,6 +566,22 @@ func (m *memoryCommandRepo) FinishCommand(_ context.Context, commandID string, s
 	cmd.Error = errorText
 	m.items[commandID] = cmd
 	return cmd, nil
+}
+
+type fakeBotService struct {
+	token       string
+	createCalls int
+	deleteCalls int
+}
+
+func (f *fakeBotService) CreateBot(_ context.Context, _ int64, name, username string) (domain.User, string, error) {
+	f.createCalls++
+	return domain.User{ID: 2001, FirstName: name, Username: username, Bot: true}, f.token, nil
+}
+
+func (f *fakeBotService) DeleteBot(_ context.Context, botUserID int64) (domain.User, error) {
+	f.deleteCalls++
+	return domain.User{ID: botUserID, Bot: true, Deleted: true}, nil
 }
 
 type fakeRestrictionStore struct {

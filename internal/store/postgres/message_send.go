@@ -119,7 +119,12 @@ func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPriva
 type privateSendTxHooks struct {
 	before       func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
 	projectMedia func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) (privateSendMediaProjection, error)
-	after        func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error
+	// afterAllocate runs after the immutable logical message and both box IDs
+	// exist, but before either box, update event or replay snapshot is written.
+	// It may finalize req.Media using those IDs; all of its writes remain in the
+	// same private-send transaction.
+	afterAllocate func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest, int, int) error
+	after         func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error
 }
 
 // privateSendMediaProjection separates the logical private-message payload
@@ -323,6 +328,44 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		recipientPts, err = s.reservePts(ctx, tx, req.RecipientUserID)
 		if err != nil {
 			return domain.SendPrivateTextResult{}, fmt.Errorf("allocate recipient pts: %w", err)
+		}
+	}
+	if hooks.afterAllocate != nil {
+		// A callback may replace the media after the ordinary request
+		// fingerprint was computed. Requiring a complete caller-owned
+		// fingerprint keeps random_id replay bound to the final aggregate intent.
+		if err := store.ValidateSendFingerprint(req.IdempotencyFingerprint, "after-allocate private send"); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		if err := hooks.afterAllocate(ctx, tx, &req, senderBoxID, recipientBoxID); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		media = privateSendMediaProjection{Shared: req.Media, Sender: req.Media, Recipient: req.Media}
+		if hooks.projectMedia != nil {
+			media, err = hooks.projectMedia(ctx, tx, &req)
+			if err != nil {
+				return domain.SendPrivateTextResult{}, err
+			}
+		}
+		sharedMediaJSON, err = encodeMessageMedia(media.Shared)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		senderMediaJSON, err = encodeMessageMedia(media.Sender)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		recipientMediaJSON, err = encodeMessageMedia(media.Recipient)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE private_messages SET media=$3
+WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("finalize private message media: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("finalize private message media: logical message disappeared")
 		}
 	}
 

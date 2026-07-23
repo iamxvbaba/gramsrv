@@ -505,6 +505,9 @@ func (s *Service) SetScamFake(ctx context.Context, channelID int64, scam, fake b
 	if s == nil || s.channels == nil || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
+	if scam && fake {
+		return domain.Channel{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	return s.channels.SetChannelScamFake(ctx, channelID, scam, fake)
 }
 

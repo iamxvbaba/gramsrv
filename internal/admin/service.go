@@ -299,6 +299,10 @@ type CommandResult struct {
 	Message         string         `json:"message"`
 	Details         map[string]any `json:"details,omitempty"`
 	Error           string         `json:"error,omitempty"`
+	// transientDetails are returned to the initiating caller only. They are
+	// deliberately excluded from JSON so credentials can never enter command
+	// replay or audit storage.
+	transientDetails map[string]any
 }
 
 type ImportStarGiftRequest struct {
@@ -343,14 +347,14 @@ type SetStarGiftSortOrderRequest struct {
 	SortOrder int   `json:"sort_order"`
 }
 
-// GiveGiftRequest grants a catalog gift to a recipient (user or channel) from a
-// sender account (defaults to the official system account 777000) at no charge.
+// GiveGiftRequest grants a catalog gift to a recipient (user or channel) from
+// the official system account 777000 at no charge.
 // Exactly one of UserID / ChannelID identifies the recipient.
 type GiveGiftRequest struct {
 	CommandMeta
-	SenderUserID int64  `json:"sender_user_id"`
-	UserID       int64  `json:"user_id"`
-	ChannelID    int64  `json:"channel_id"`
+	SenderUserID        int64  `json:"sender_user_id"`
+	UserID              int64  `json:"user_id"`
+	ChannelID           int64  `json:"channel_id"`
 	GiftID              int64  `json:"gift_id"`
 	HideName            bool   `json:"hide_name"`
 	Message             string `json:"message"`
@@ -870,10 +874,8 @@ func (s *Service) SetUserFlags(ctx context.Context, req SetUserFlagsRequest) (Co
 	if s == nil || s.users == nil {
 		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
 	}
-	// scam and fake are mutually exclusive (a peer is never both in Telegram).
-	// scam takes precedence so the two never persist together.
-	if req.Scam {
-		req.Fake = false
+	if req.Scam && req.Fake {
+		return CommandResult{}, domain.ErrPeerModerationFlagsInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetUserFlags, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		u, found, err := s.users.AdminUser(ctx, req.UserID)
@@ -945,9 +947,9 @@ func collectibleAttrPresent(attrs []domain.StarGiftCollectibleAttribute, id int6
 	return false
 }
 
-// GiveGift grants a catalog gift to a recipient (user or channel) from a sender
-// account (defaults to the official system account 777000) without charging any
-// Stars. Delivery reuses the standard gift path via the GiftGranter dependency.
+// GiveGift grants a catalog gift to a recipient (user or channel) from the
+// official system account 777000 without charging any Stars. Delivery reuses
+// the standard gift path via the GiftGranter dependency.
 func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandResult, error) {
 	if req.GiftID <= 0 {
 		return CommandResult{}, fmt.Errorf("gift_id is required")
@@ -961,6 +963,13 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 	sender := req.SenderUserID
 	if sender <= 0 {
 		sender = domain.OfficialSystemUserID
+	}
+	if sender != domain.OfficialSystemUserID {
+		return CommandResult{}, fmt.Errorf("gift sender must be the official system account")
+	}
+	req.Message = strings.TrimSpace(req.Message)
+	if len([]rune(req.Message)) > 128 {
+		return CommandResult{}, fmt.Errorf("gift message must be <= 128 characters")
 	}
 	var recipient domain.Peer
 	if req.ChannelID > 0 {
@@ -983,8 +992,8 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 			"hide_name":      req.HideName,
 			"upgrade":        req.Upgrade,
 		}
-		if strings.TrimSpace(req.Message) != "" {
-			details["message"] = strings.TrimSpace(req.Message)
+		if req.Message != "" {
+			details["message"] = req.Message
 		}
 		if s.gifts != nil {
 			gift, found, err := s.gifts.GiftByID(ctx, req.GiftID)
@@ -1037,8 +1046,9 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 			Recipient:           recipient,
 			GiftID:              req.GiftID,
 			HideName:            req.HideName,
-			Message:             strings.TrimSpace(req.Message),
+			Message:             req.Message,
 			Upgrade:             req.Upgrade,
+			CommandKey:          "admin-gift:" + req.CommandID,
 			ModelAttributeID:    req.ModelAttributeID,
 			PatternAttributeID:  req.PatternAttributeID,
 			BackdropAttributeID: req.BackdropAttributeID,
@@ -1173,14 +1183,14 @@ func (s *Service) CreateBot(ctx context.Context, req CreateBotRequest) (CommandR
 			return CommandResult{Details: details}, err
 		}
 		details["bot_user_id"] = bot.ID
-		// The token is a credential. It is surfaced once so the operator can copy
-		// it; it is also persisted in the audit result, so treat admin audit logs
-		// as sensitive.
-		details["token"] = token
 		if err := s.notifyUserChanged(ctx, bot); err != nil {
 			details["notify_error"] = err.Error()
 		}
-		return CommandResult{Message: "bot created", Details: details}, nil
+		return CommandResult{
+			Message:          "bot created",
+			Details:          details,
+			transientDetails: map[string]any{"token": token},
+		}, nil
 	})
 }
 
@@ -1273,6 +1283,9 @@ func (s *Service) SetChannelFlags(ctx context.Context, req SetChannelFlagsReques
 	}
 	if s == nil || s.channels == nil {
 		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	}
+	if req.Scam && req.Fake {
+		return CommandResult{}, domain.ErrPeerModerationFlagsInvalid
 	}
 	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelFlags, 0, target, req, func() (CommandResult, error) {
@@ -2092,14 +2105,24 @@ func (s *Service) runCommand(ctx context.Context, meta CommandMeta, action strin
 	if marshalErr != nil {
 		return result, fmt.Errorf("marshal admin result: %w", marshalErr)
 	}
+	response := result
+	if len(result.transientDetails) > 0 {
+		response.Details = make(map[string]any, len(result.Details)+len(result.transientDetails))
+		for key, value := range result.Details {
+			response.Details[key] = value
+		}
+		for key, value := range result.transientDetails {
+			response.Details[key] = value
+		}
+	}
 	errorText := ""
 	if opErr != nil {
 		errorText = opErr.Error()
 	}
 	if _, err := s.commands.FinishCommand(ctx, meta.CommandID, status, resultJSON, errorText); err != nil {
-		return result, err
+		return response, err
 	}
-	return result, opErr
+	return response, opErr
 }
 
 func sameJSON(a, b []byte) bool {

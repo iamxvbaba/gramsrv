@@ -371,6 +371,9 @@ func (s *Service) SetScamFake(ctx context.Context, userID int64, scam, fake bool
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
 	}
+	if scam && fake {
+		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
+	}
 	u, found, err := s.users.ByID(ctx, userID)
 	if err != nil {
 		return domain.User{}, err
