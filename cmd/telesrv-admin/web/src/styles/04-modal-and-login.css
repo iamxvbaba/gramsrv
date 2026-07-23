@@ -117,6 +117,12 @@
   font-weight: 800;
 }
 
+.form-field input:disabled,
+.form-field textarea:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
 .command-preview {
   display: grid;
   gap: 8px;

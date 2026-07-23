@@ -90,7 +90,6 @@ func (r *Router) adminGrantUpgradedStarGift(ctx context.Context, senderID int64,
 		ModelAttributeID:    grant.ModelAttributeID,
 		PatternAttributeID:  grant.PatternAttributeID,
 		BackdropAttributeID: grant.BackdropAttributeID,
-		Num:                 grant.Num,
 	}); err != nil {
 		return err
 	}

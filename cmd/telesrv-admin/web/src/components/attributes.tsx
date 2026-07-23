@@ -1,5 +1,5 @@
 import { AtSign, LifeBuoy, Palette, Settings2, Smile } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ActionButton } from "./ActionButton";
 import { useI18n } from "../i18n";
 import { toInt } from "../lib/format";
@@ -134,6 +134,33 @@ export function ChannelSettingsAction({ channel, onDone }: { channel: ChannelRow
   const [joinToSend, setJoinToSend] = useState(channel.JoinToSend);
   const [joinRequest, setJoinRequest] = useState(channel.JoinRequest);
   const [slowmode, setSlowmode] = useState(String(channel.SlowmodeSeconds));
+
+  // Re-sync the toggles with the persisted state whenever the channel reloads
+  // (e.g. after applying a change), so previously-applied settings stay checked.
+  useEffect(() => {
+    setGigagroup(channel.Gigagroup);
+    setAntispam(channel.AntiSpam);
+    setHidden(channel.ParticipantsHidden);
+    setNoforwards(channel.NoForwards);
+    setJoinToSend(channel.JoinToSend);
+    setJoinRequest(channel.JoinRequest);
+    setSlowmode(String(channel.SlowmodeSeconds));
+  }, [channel]);
+
+  // Send only the fields the admin actually changed. The backend applies a
+  // partial patch (nil = leave unchanged), so an unrelated setting is never
+  // reset when another one is applied.
+  function buildPatch() {
+    const patch: Record<string, unknown> = { channel_id: channel.ID };
+    if (gigagroup !== channel.Gigagroup) patch.gigagroup = gigagroup;
+    if (antispam !== channel.AntiSpam) patch.antispam = antispam;
+    if (hidden !== channel.ParticipantsHidden) patch.participants_hidden = hidden;
+    if (noforwards !== channel.NoForwards) patch.noforwards = noforwards;
+    if (joinToSend !== channel.JoinToSend) patch.join_to_send = joinToSend;
+    if (joinRequest !== channel.JoinRequest) patch.join_request = joinRequest;
+    if (toInt(slowmode) !== channel.SlowmodeSeconds) patch.slowmode_seconds = toInt(slowmode);
+    return patch;
+  }
   return (
     <div className="attr-block">
       <label className="checkline"><input type="checkbox" checked={gigagroup} onChange={(e) => setGigagroup(e.target.checked)} /> {t("attr.gigagroup")}</label>
@@ -151,16 +178,7 @@ export function ChannelSettingsAction({ channel, onDone }: { channel: ChannelRow
         icon={<Settings2 size={15} />}
         tone="warn"
         path="/api/actions/set-channel-settings"
-        payload={() => ({
-          channel_id: channel.ID,
-          gigagroup,
-          antispam,
-          participants_hidden: hidden,
-          noforwards,
-          join_to_send: joinToSend,
-          join_request: joinRequest,
-          slowmode_seconds: toInt(slowmode)
-        })}
+        payload={buildPatch}
         onDone={onDone}
       />
     </div>

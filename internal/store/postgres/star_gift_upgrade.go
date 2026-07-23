@@ -164,19 +164,6 @@ WHERE collectible_revision_id=$1 AND crafted
 			}
 
 			num := revision.Issued + 1
-			if req.Num > 0 {
-				if req.Num > revision.SupplyTotal {
-					return domain.ErrStarGiftCollectibleInvalid
-				}
-				var numTaken bool
-				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM unique_star_gifts WHERE gift_id=$1 AND num=$2)`, locked.GiftID, req.Num).Scan(&numTaken); err != nil {
-					return fmt.Errorf("check collectible number availability: %w", err)
-				}
-				if numTaken {
-					return domain.ErrStarGiftCollectibleNumberTaken
-				}
-				num = req.Num
-			}
 			var uniqueID int64
 			if err := tx.QueryRow(ctx, `SELECT nextval('unique_star_gift_id_seq')`).Scan(&uniqueID); err != nil {
 				return fmt.Errorf("allocate unique star gift id: %w", err)

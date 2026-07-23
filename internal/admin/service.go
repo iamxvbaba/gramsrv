@@ -358,7 +358,6 @@ type GiveGiftRequest struct {
 	ModelAttributeID    int64  `json:"model_attribute_id"`
 	PatternAttributeID  int64  `json:"pattern_attribute_id"`
 	BackdropAttributeID int64  `json:"backdrop_attribute_id"`
-	Num                 int    `json:"num"`
 }
 
 type StarGiftCollectibleAnimationUpload struct {
@@ -871,6 +870,11 @@ func (s *Service) SetUserFlags(ctx context.Context, req SetUserFlagsRequest) (Co
 	if s == nil || s.users == nil {
 		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
 	}
+	// scam and fake are mutually exclusive (a peer is never both in Telegram).
+	// scam takes precedence so the two never persist together.
+	if req.Scam {
+		req.Fake = false
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetUserFlags, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		u, found, err := s.users.AdminUser(ctx, req.UserID)
 		if err != nil {
@@ -967,8 +971,8 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 	if req.Upgrade && recipient.Type != domain.PeerTypeUser {
 		return CommandResult{}, fmt.Errorf("upgraded gift delivery is supported for user recipients only")
 	}
-	if !req.Upgrade && (req.ModelAttributeID > 0 || req.PatternAttributeID > 0 || req.BackdropAttributeID > 0 || req.Num > 0) {
-		return CommandResult{}, fmt.Errorf("collectible attributes and number require upgrade")
+	if !req.Upgrade && (req.ModelAttributeID > 0 || req.PatternAttributeID > 0 || req.BackdropAttributeID > 0) {
+		return CommandResult{}, fmt.Errorf("collectible attributes require upgrade")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionGiveGift, req.UserID, recipient, req, func() (CommandResult, error) {
 		details := map[string]any{
@@ -1012,9 +1016,6 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 				if req.BackdropAttributeID > 0 && !collectibleAttrPresent(preview.Backdrops, req.BackdropAttributeID) {
 					return CommandResult{}, fmt.Errorf("backdrop attribute %d is not part of gift %d", req.BackdropAttributeID, req.GiftID)
 				}
-				if req.Num > 0 && req.Num > preview.SupplyTotal {
-					return CommandResult{}, fmt.Errorf("number %d exceeds collectible supply %d", req.Num, preview.SupplyTotal)
-				}
 				details["collectible_supply_total"] = preview.SupplyTotal
 				details["collectible_issued"] = preview.Issued
 				if req.ModelAttributeID > 0 {
@@ -1025,9 +1026,6 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 				}
 				if req.BackdropAttributeID > 0 {
 					details["backdrop_attribute_id"] = req.BackdropAttributeID
-				}
-				if req.Num > 0 {
-					details["num"] = req.Num
 				}
 			}
 		}
@@ -1044,7 +1042,6 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 			ModelAttributeID:    req.ModelAttributeID,
 			PatternAttributeID:  req.PatternAttributeID,
 			BackdropAttributeID: req.BackdropAttributeID,
-			Num:                 req.Num,
 		}); err != nil {
 			return CommandResult{}, err
 		}

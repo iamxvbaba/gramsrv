@@ -523,10 +523,17 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 	if r.deps.Gifts == nil {
 		return emptySavedStarGifts(), nil
 	}
+	// Gifts hidden from the profile (unsaved) are visible only to the owner (or a
+	// channel admin). Never trust the client's exclude_unsaved flag for other
+	// viewers: force-exclude hidden gifts unless the requester manages the owner.
+	excludeUnsaved := req.ExcludeUnsaved
+	if r.ensureCanManageStarGiftOwner(ctx, userID, owner) != nil {
+		excludeUnsaved = true
+	}
 	collectionID, _ := req.GetCollectionID()
 	page, err := r.deps.Gifts.ListSavedFiltered(ctx, domain.SavedStarGiftFilter{
 		Owner:               owner,
-		ExcludeUnsaved:      req.ExcludeUnsaved,
+		ExcludeUnsaved:      excludeUnsaved,
 		ExcludeSaved:        req.ExcludeSaved,
 		ExcludeUnlimited:    req.ExcludeUnlimited,
 		ExcludeUnique:       req.ExcludeUnique,
@@ -556,6 +563,17 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 		return emptySavedStarGifts(), nil
 	}
 	gifts := make([]domain.SavedStarGift, 0, len(refs))
+	// A gift hidden from the profile (unsaved) is visible only to the owner or a
+	// channel admin. Memoize the manage check per owner to avoid repeat lookups.
+	manageCache := make(map[domain.Peer]bool)
+	canManageOwner := func(owner domain.Peer) bool {
+		if v, ok := manageCache[owner]; ok {
+			return v
+		}
+		v := r.ensureCanManageStarGiftOwner(ctx, userID, owner) == nil
+		manageCache[owner] = v
+		return v
+	}
 	for _, ref := range refs {
 		dref, ok, err := r.starGiftRefFromInput(ctx, userID, ref)
 		if err != nil {
@@ -569,6 +587,9 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 			return nil, internalErr()
 		}
 		if found && !g.Converted {
+			if g.Unsaved && !canManageOwner(g.Owner) {
+				continue
+			}
 			gifts = append(gifts, g)
 		}
 	}
@@ -669,9 +690,14 @@ func (r *Router) onPaymentsConvertStarGift(ctx context.Context, ref tg.InputSave
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, domain.ErrStarGiftNotFound):
-			return false, starGiftInvalidErr()
-		case errors.Is(err, domain.ErrStarGiftAlreadyConverted):
+		case errors.Is(err, domain.ErrStarGiftNotFound),
+			errors.Is(err, domain.ErrStarGiftAlreadyConverted),
+			errors.Is(err, domain.ErrStarGiftAlreadyUpgraded),
+			errors.Is(err, domain.ErrStarGiftOwnerInvalid),
+			errors.Is(err, domain.ErrStarGiftUnavailable):
+			// These are known business conditions (e.g. converting an already
+			// upgraded/unique gift). Surface a clean client error instead of a
+			// 500 INTERNAL_SERVER_ERROR.
 			return false, starGiftInvalidErr()
 		default:
 			return false, internalErr()

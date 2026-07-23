@@ -1,10 +1,10 @@
 import { Gift, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
+import { StaticLottie } from "../components/StaticLottie";
 import { Alert, Badge, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { StarGiftRow } from "../types";
-import { LottiePreview } from "./GiftsPage";
 import { GiveGiftForm } from "./GiveGiftForm";
 
 export function GiveGiftsPage() {
@@ -58,13 +58,13 @@ export function GiveGiftsPage() {
                 <button key={gift.GiftID} type="button" role="option" aria-selected={active}
                   className={`give-gift-option ${active ? "selected" : ""} ${gift.Enabled ? "" : "gift-row-disabled"}`}
                   onClick={() => setSelected(gift)}>
-                  <LottiePreview giftID={gift.GiftID} revision={gift.Revision} compact />
+                  <StaticLottie className="give-gift-thumb" cacheKey={`${gift.GiftID}:${gift.Revision}`} loader={() => api.giftAnimation(gift.GiftID)} />
                   <span className="give-gift-option-info">
                     <strong>{gift.Title || `Gift #${gift.GiftID}`}</strong>
                     <span className="mono">#{gift.GiftID}</span>
-                    <span className="give-gift-option-meta">
-                      {gift.Enabled ? <Badge>⭐ {gift.Stars}</Badge> : <Badge tone="neutral">{t("common.disabled")}</Badge>}
-                    </span>
+                  </span>
+                  <span className="give-gift-option-price">
+                    {gift.Enabled ? <Badge>⭐ {gift.Stars}</Badge> : <Badge tone="neutral">{t("common.disabled")}</Badge>}
                   </span>
                 </button>
               );

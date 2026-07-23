@@ -451,7 +451,9 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 		Creator:    ch.CreatorUserID == viewerUserID && viewerUserID != 0,
 		Verified:   ch.Verified,
 		Scam:       ch.Scam,
-		Fake:       ch.Fake,
+		// scam and fake are mutually exclusive in Telegram; a peer flagged as
+		// both would render neither badge on clients. scam takes precedence.
+		Fake:       ch.Fake && !ch.Scam,
 		Gigagroup:  ch.Gigagroup,
 		Broadcast:  ch.Broadcast,
 		Megagroup:  ch.Megagroup,

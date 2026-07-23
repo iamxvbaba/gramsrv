@@ -1,7 +1,7 @@
-import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { Check, ChevronRight, Copy, Loader2, RefreshCw, Search } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { StaticLottie } from "../components/StaticLottie";
 import { Alert, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { EmojiListResponse, EmojiRow } from "../types";
@@ -18,38 +18,25 @@ function isAnimated(mime: string): boolean {
 }
 
 function EmojiPreview({ row }: { row: EmojiRow }) {
-  const host = useRef<HTMLDivElement>(null);
-  const animation = useRef<ReturnType<typeof lottie.loadAnimation> | null>(null);
   const [failed, setFailed] = useState(!isAnimated(row.MimeType));
 
   useEffect(() => {
-    if (!isAnimated(row.MimeType)) {
-      setFailed(true);
-      return;
-    }
-    let cancelled = false;
-    api.emojiAnimation(row.DocumentID).then((data) => {
-      if (cancelled || !host.current) return;
-      animation.current?.destroy();
-      animation.current = lottie.loadAnimation({
-        container: host.current,
-        renderer: "canvas",
-        loop: true,
-        autoplay: true,
-        animationData: structuredClone(data)
-      });
-    }).catch(() => setFailed(true));
-    return () => {
-      cancelled = true;
-      animation.current?.destroy();
-      animation.current = null;
-    };
+    setFailed(!isAnimated(row.MimeType));
   }, [row.DocumentID, row.MimeType]);
 
   if (failed) {
     return <div className="emoji-glyph">{row.Alt || "🙂"}</div>;
   }
-  return <div className="emoji-anim" ref={host} />;
+  // Render a static first frame (plays only on hover) so a full grid of emoji
+  // does not keep every Lottie canvas animating and lag the page.
+  return (
+    <StaticLottie
+      className="emoji-anim"
+      cacheKey={row.DocumentID}
+      loader={() => api.emojiAnimation(row.DocumentID)}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function EmojiCard({ row }: { row: EmojiRow }) {

@@ -20,7 +20,6 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
   const [kind, setKind] = useState<RecipientKind>("user");
   const [user, setUser] = useState<AccountRow | null>(null);
   const [channel, setChannel] = useState<ChannelRow | null>(null);
-  const [sender, setSender] = useState(SYSTEM_SENDER);
   const [message, setMessage] = useState("");
   const [hideName, setHideName] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
@@ -29,7 +28,6 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
   const [modelID, setModelID] = useState("0");
   const [patternID, setPatternID] = useState("0");
   const [backdropID, setBackdropID] = useState("0");
-  const [num, setNum] = useState("");
   const [reason, setReason] = useState("");
   const [result, setResult] = useState<CommandResult | null>(null);
   const [error, setError] = useState("");
@@ -47,7 +45,6 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
     setModelID("0");
     setPatternID("0");
     setBackdropID("0");
-    setNum("");
     setResult(null);
     setError("");
   }, [gift.GiftID]);
@@ -63,11 +60,10 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
   }, [upgradable, preview, gift.GiftID]);
 
   function buildPayload(confirm: boolean): Record<string, unknown> {
-    const senderID = Number.parseInt(sender.trim() || SYSTEM_SENDER, 10);
-    const parsedNum = Number.parseInt(num.trim(), 10);
     return {
       gift_id: gift.GiftID,
-      sender_user_id: Number.isFinite(senderID) ? senderID : 0,
+      // Gifts are always sent from the official system account (777000).
+      sender_user_id: Number(SYSTEM_SENDER),
       user_id: kind === "user" ? recipientID : 0,
       channel_id: kind === "channel" ? recipientID : 0,
       hide_name: hideName,
@@ -76,13 +72,12 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
       model_attribute_id: upgradable ? modelID : "0",
       pattern_attribute_id: upgradable ? patternID : "0",
       backdrop_attribute_id: upgradable ? backdropID : "0",
-      num: upgradable && Number.isFinite(parsedNum) && parsedNum > 0 ? parsedNum : 0,
       reason: reason.trim(),
       confirm
     };
   }
 
-  const previewPayload = useMemo(() => buildPayload(false), [gift.GiftID, kind, recipientID, sender, message, hideName, upgrade, modelID, patternID, backdropID, num, reason]);
+  const previewPayload = useMemo(() => buildPayload(false), [gift.GiftID, kind, recipientID, message, hideName, upgrade, modelID, patternID, backdropID, reason]);
   const canConfirm = result?.dry_run && !result.error;
 
   async function run(confirm: boolean) {
@@ -134,7 +129,7 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
 
       <label className="form-field">
         <span>{t("giveGift.sender")}</span>
-        <input value={sender} inputMode="numeric" onChange={(event) => { setSender(event.target.value.replace(/[^0-9]/g, "")); setResult(null); }} placeholder={SYSTEM_SENDER} />
+        <input value={SYSTEM_SENDER} disabled readOnly />
         <small className="field-hint">{t("giveGift.senderHint")}</small>
       </label>
 
@@ -152,7 +147,7 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
       {kind === "user" && (
         <>
           <label className="gift-switch">
-            <input type="checkbox" checked={upgrade} onChange={(event) => { setUpgrade(event.target.checked); if (!event.target.checked) { setModelID("0"); setPatternID("0"); setBackdropID("0"); setNum(""); } setResult(null); }} />
+            <input type="checkbox" checked={upgrade} onChange={(event) => { setUpgrade(event.target.checked); if (!event.target.checked) { setModelID("0"); setPatternID("0"); setBackdropID("0"); } setResult(null); }} />
             <span className="gift-switch-track" aria-hidden="true"><span /></span>
             <span>{t("giveGift.upgrade")}</span>
           </label>
@@ -180,10 +175,6 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
                   <option value="0">{t("giveGift.random")}</option>
                   {(preview.backdrops ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
                 </select>
-              </label>
-              <label>
-                <span>{t("giveGift.number")}</span>
-                <input type="number" min="1" max={preview.supply_total ?? undefined} value={num} placeholder={t("giveGift.numberAuto")} onChange={(event) => { setNum(event.target.value.replace(/[^0-9]/g, "")); setResult(null); }} />
               </label>
             </div>
           )}

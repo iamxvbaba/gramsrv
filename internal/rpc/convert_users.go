@@ -53,7 +53,9 @@ func tgUser(u domain.User) *tg.User {
 		Phone:         u.Phone,
 		Verified:      u.Verified,
 		Scam:          u.Scam,
-		Fake:          u.Fake,
+		// scam and fake are mutually exclusive in Telegram; a peer flagged as
+		// both would render neither badge on clients. scam takes precedence.
+		Fake:          u.Fake && !u.Scam,
 		Support:       u.Support,
 		Contact:       u.Contact,
 		MutualContact: u.Mutual,

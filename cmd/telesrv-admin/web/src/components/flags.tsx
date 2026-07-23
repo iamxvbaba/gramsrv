@@ -17,9 +17,9 @@ export function ScamFakeBadges({ scam, fake }: { scam: boolean; fake: boolean })
   );
 }
 
-// ScamFakeActions renders the two independent toggles. The combined setter
-// receives the full desired state, so each button flips one flag and keeps the
-// other unchanged.
+// ScamFakeActions renders the two toggles. scam and fake are mutually exclusive
+// (a peer is never both in Telegram), so enabling one clears the other; the
+// combined setter always receives the full desired state.
 export function ScamFakeActions({
   idKey,
   id,
@@ -43,7 +43,7 @@ export function ScamFakeActions({
         icon={<ShieldAlert size={15} />}
         tone="danger"
         path={path}
-        payload={() => ({ [idKey]: id, scam: !scam, fake })}
+        payload={() => ({ [idKey]: id, scam: !scam, fake: !scam ? false : fake })}
         onDone={onDone}
       />
       <ActionButton
@@ -51,7 +51,7 @@ export function ScamFakeActions({
         icon={<ShieldX size={15} />}
         tone="danger"
         path={path}
-        payload={() => ({ [idKey]: id, scam, fake: !fake })}
+        payload={() => ({ [idKey]: id, fake: !fake, scam: !fake ? false : scam })}
         onDone={onDone}
       />
     </div>

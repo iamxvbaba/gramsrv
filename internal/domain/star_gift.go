@@ -328,21 +328,21 @@ type StarGiftUpgradeRequest struct {
 	OriginAuthKeyID     [8]byte
 	OriginSessionID     int64
 
-	// Admin-controlled minting overrides. When non-zero these pin the specific
-	// collectible attributes / number instead of the random pool draw and the
-	// sequential issued+1 number. They are only honoured on the admin grant path;
-	// the DB FK (attribute must belong to the revision) and UNIQUE(gift_id,num)
-	// constraints remain the source of truth.
+	// Admin-controlled attribute overrides. When non-zero these pin the specific
+	// collectible model/pattern/backdrop instead of the random pool draw. They
+	// are only honoured on the admin grant path; the DB FK (attribute must belong
+	// to the revision) remains the source of truth. The collectible number is
+	// always assigned automatically (sequential).
 	ModelAttributeID    int64
 	PatternAttributeID  int64
 	BackdropAttributeID int64
-	Num                 int
 }
 
 // AdminStarGiftGrant is one admin "give gift" command: deliver GiftID to
 // Recipient from Sender (0 => official system account 777000) at no charge.
 // When Upgrade is set the gift is minted as a collectible; the optional
-// attribute IDs / Num pin specific collectible facts (0 => random/auto).
+// attribute IDs pin specific model/pattern/backdrop (0 => random). The
+// collectible number is always assigned automatically.
 type AdminStarGiftGrant struct {
 	SenderID            int64
 	Recipient           Peer
@@ -353,7 +353,6 @@ type AdminStarGiftGrant struct {
 	ModelAttributeID    int64
 	PatternAttributeID  int64
 	BackdropAttributeID int64
-	Num                 int
 }
 
 type StarGiftPurchaseRequest struct {
@@ -927,7 +926,6 @@ var (
 	ErrStarGiftAlreadyUpgraded        = errors.New("stargift: already upgraded")
 	ErrStarGiftCollectibleSoldOut     = errors.New("stargift: collectible supply exhausted")
 	ErrStarGiftCollectibleInvalid     = errors.New("stargift: invalid collectible definition")
-	ErrStarGiftCollectibleNumberTaken = errors.New("stargift: collectible number already taken")
 	ErrStarGiftCollectionNotFound     = errors.New("stargift: collection not found")
 	ErrStarGiftCollectionsFull        = errors.New("stargift: collections full")
 	ErrStarGiftUnavailable            = errors.New("stargift: unavailable")

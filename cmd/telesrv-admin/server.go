@@ -1371,7 +1371,6 @@ type giveGiftAPIRequest struct {
 	ModelAttributeID    int64  `json:"model_attribute_id,string"`
 	PatternAttributeID  int64  `json:"pattern_attribute_id,string"`
 	BackdropAttributeID int64  `json:"backdrop_attribute_id,string"`
-	Num                 int    `json:"num"`
 }
 
 func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -1391,7 +1390,6 @@ func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
 		ModelAttributeID:    body.ModelAttributeID,
 		PatternAttributeID:  body.PatternAttributeID,
 		BackdropAttributeID: body.BackdropAttributeID,
-		Num:                 body.Num,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/give", req)
 	writeCommandResultAPI(w, result, err)
