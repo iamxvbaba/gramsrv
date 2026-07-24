@@ -325,7 +325,7 @@ modify, distribute, and use it commercially under the terms of Apache-2.0.
 
 ## Custom Development
 
-For paid custom development, you can contact the author through the discussion.
+For paid custom development, you can contact the author through the discussion
 group or website. Custom work can cover server features, Telegram Desktop,
 Android, Web, deployment, compatibility adaptation, or other client/server
 paths around this project.
