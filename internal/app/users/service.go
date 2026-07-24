@@ -563,7 +563,9 @@ func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, user
 	return u, true, nil
 }
 
-// ResolvePhone 解析手机号到用户；当前阶段默认允许手机号深链解析，隐私规则后续接 account privacy。
+// ResolvePhone resolves a phone number only when the target's AddedByPhone
+// privacy allows the current viewer. The evaluator is backed by owner-level
+// privacy/contact snapshots in production, so this adds no per-rule SQL query.
 func (s *Service) ResolvePhone(ctx context.Context, currentUserID int64, phone string) (domain.User, bool, error) {
 	if _, err := s.loadSelf(ctx, currentUserID); err != nil {
 		return domain.User{}, false, err
@@ -577,6 +579,28 @@ func (s *Service) ResolvePhone(ctx context.Context, currentUserID int64, phone s
 		return u, found, err
 	}
 	s.putCachedUsers(ctx, u)
+	if s.privacy != nil && u.ID != currentUserID {
+		allowed := false
+		var err error
+		if batch, ok := s.privacy.(userprojection.BatchPrivacyEvaluator); ok {
+			visibility, batchErr := batch.CanSeeBatch(
+				ctx,
+				[]int64{u.ID},
+				currentUserID,
+				[]domain.PrivacyKey{domain.PrivacyKeyAddedByPhone},
+			)
+			err = batchErr
+			allowed = visibility[u.ID][domain.PrivacyKeyAddedByPhone]
+		} else {
+			allowed, err = s.privacy.CanSee(ctx, u.ID, currentUserID, domain.PrivacyKeyAddedByPhone)
+		}
+		if err != nil {
+			return domain.User{}, false, err
+		}
+		if !allowed {
+			return domain.User{}, false, domain.ErrPhoneNotOccupied
+		}
+	}
 	u, err = s.projectOne(ctx, currentUserID, u)
 	if err != nil {
 		return domain.User{}, false, err

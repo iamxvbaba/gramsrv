@@ -1126,7 +1126,7 @@ WHERE sv.owner_peer_type = $1
     OR lower(COALESCE(c.contact_last_name, u.last_name)) LIKE $7 ESCAPE '\'
     OR lower(trim(COALESCE(NULLIF(c.contact_first_name, ''), u.first_name) || ' ' || COALESCE(c.contact_last_name, u.last_name))) LIKE $7 ESCAPE '\'
     OR lower(u.username) LIKE $7 ESCAPE '\'
-    OR lower(COALESCE(NULLIF(c.contact_phone, ''), u.phone)) LIKE $7 ESCAPE '\'
+    OR lower(c.contact_phone) LIKE $7 ESCAPE '\'
   )`, string(req.Owner.Type), req.Owner.ID, int32(req.StoryID), req.ViewerUserID, req.JustContacts, querySet, queryLike).Scan(&count); err != nil {
 		return domain.StoryViewList{}, fmt.Errorf("count story views: %w", err)
 	}
@@ -1160,7 +1160,7 @@ WHERE sv.owner_peer_type = $1
     OR lower(COALESCE(c.contact_last_name, u.last_name)) LIKE $7 ESCAPE '\'
     OR lower(trim(COALESCE(NULLIF(c.contact_first_name, ''), u.first_name) || ' ' || COALESCE(c.contact_last_name, u.last_name))) LIKE $7 ESCAPE '\'
     OR lower(u.username) LIKE $7 ESCAPE '\'
-    OR lower(COALESCE(NULLIF(c.contact_phone, ''), u.phone)) LIKE $7 ESCAPE '\'
+    OR lower(c.contact_phone) LIKE $7 ESCAPE '\'
   )
   AND (
     NOT $9::boolean

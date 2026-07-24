@@ -108,7 +108,7 @@ func TestCachedPrivacyStoreUsesOwnerSnapshot(t *testing.T) {
 	}
 }
 
-func TestCachedPrivacyStoreInvalidatesOnSet(t *testing.T) {
+func TestCachedPrivacyStoreWarmsCompleteOwnerSnapshotOnSet(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewPrivacyStore()
 	counting := &countingPrivacyStore{PrivacyStore: base}
@@ -121,24 +121,34 @@ func TestCachedPrivacyStoreInvalidatesOnSet(t *testing.T) {
 		t.Fatalf("set first: %v", err)
 	}
 	if _, ok, err := cached.GetPrivacyRules(ctx, 1001, domain.PrivacyKeyPhoneNumber); err != nil || !ok {
-		t.Fatalf("prime get ok=%v err=%v", ok, err)
+		t.Fatalf("first memory get ok=%v err=%v", ok, err)
 	}
 	if err := cached.SetPrivacyRules(ctx, domain.PrivacyRules{
 		OwnerUserID: 1001,
-		Key:         domain.PrivacyKeyPhoneNumber,
-		Rules:       []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowAll}},
+		Key:         domain.PrivacyKeyProfilePhoto,
+		Rules:       []domain.PrivacyRule{{Kind: domain.PrivacyRuleDisallowAll}},
 	}); err != nil {
 		t.Fatalf("set second: %v", err)
 	}
 	got, ok, err := cached.GetPrivacyRules(ctx, 1001, domain.PrivacyKeyPhoneNumber)
 	if err != nil || !ok {
-		t.Fatalf("after invalidation get ok=%v err=%v", ok, err)
+		t.Fatalf("phone after second set ok=%v err=%v", ok, err)
 	}
-	if got.Rules[0].Kind != domain.PrivacyRuleAllowAll {
-		t.Fatalf("rules after invalidation = %+v, want allow all", got.Rules)
+	if got.Rules[0].Kind != domain.PrivacyRuleDisallowAll {
+		t.Fatalf("phone rules after second set = %+v, want disallow all", got.Rules)
+	}
+	photo, ok, err := cached.GetPrivacyRules(ctx, 1001, domain.PrivacyKeyProfilePhoto)
+	if err != nil || !ok {
+		t.Fatalf("photo after second set ok=%v err=%v", ok, err)
+	}
+	if photo.Rules[0].Kind != domain.PrivacyRuleDisallowAll {
+		t.Fatalf("photo rules after second set = %+v, want disallow all", photo.Rules)
+	}
+	if counting.setCalls != 2 {
+		t.Fatalf("SetPrivacyRules calls = %d, want 2", counting.setCalls)
 	}
 	if counting.listCalls != 2 {
-		t.Fatalf("ListPrivacyRules calls = %d, want 2 after invalidation", counting.listCalls)
+		t.Fatalf("ListPrivacyRules calls = %d, want exactly one write-path warm per set and no read-path query", counting.listCalls)
 	}
 }
 

@@ -138,9 +138,6 @@ func (s *ContactStore) Upsert(_ context.Context, userID int64, input domain.Cont
 		contact.User.EmojiStatusUntil = existing.User.EmojiStatusUntil
 		contact.CloseFriend = existing.CloseFriend
 		contact.User.CloseFriend = existing.CloseFriend || existing.User.CloseFriend
-		if contact.Phone == "" {
-			contact.User.Phone = existing.User.Phone
-		}
 		if contact.FirstName == "" {
 			contact.User.FirstName = existing.User.FirstName
 		}

@@ -162,6 +162,81 @@ func TestCachedContactStoreCachesProjectionReads(t *testing.T) {
 	}
 }
 
+func TestCachedContactStoreCachesLargeReverseContactBatch(t *testing.T) {
+	ctx := context.Background()
+	base := memory.NewContactStore()
+	owners := make([]int64, 32)
+	for i := range owners {
+		owners[i] = int64(i + 1)
+		if i%2 == 0 {
+			if _, err := base.Upsert(ctx, owners[i], domain.ContactInput{
+				ContactUserID: 9001,
+				FirstName:     "Viewer",
+			}); err != nil {
+				t.Fatalf("seed owner %d: %v", owners[i], err)
+			}
+		}
+	}
+	counting := &countingContactStore{ContactStore: base}
+	cached := NewCachedContactStore(counting, 0)
+
+	first, err := cached.GetReverseContacts(ctx, 9001, owners)
+	if err != nil {
+		t.Fatalf("first reverse lookup: %v", err)
+	}
+	if len(first) != 16 || counting.reverseCalls != 1 || counting.listCalls != 0 {
+		t.Fatalf("first reverse hits=%d reverseCalls=%d listCalls=%d, want 16/1/0", len(first), counting.reverseCalls, counting.listCalls)
+	}
+	second, err := cached.GetReverseContacts(ctx, 9001, owners)
+	if err != nil {
+		t.Fatalf("second reverse lookup: %v", err)
+	}
+	if len(second) != 16 || counting.reverseCalls != 1 || counting.listCalls != 0 {
+		t.Fatalf("cached reverse hits=%d reverseCalls=%d listCalls=%d, want 16/1/0", len(second), counting.reverseCalls, counting.listCalls)
+	}
+
+	cached.InvalidateViewers(owners[0])
+	third, err := cached.GetReverseContacts(ctx, 9001, owners)
+	if err != nil {
+		t.Fatalf("reverse lookup after owner invalidation: %v", err)
+	}
+	if len(third) != 16 || counting.reverseCalls != 2 {
+		t.Fatalf("invalidated reverse hits=%d reverseCalls=%d, want 16/2", len(third), counting.reverseCalls)
+	}
+}
+
+func TestCachedContactStoreReversePairsUsePerEntryLRU(t *testing.T) {
+	ctx := context.Background()
+	base := memory.NewContactStore()
+	for ownerID := int64(1); ownerID <= 3; ownerID++ {
+		if _, err := base.Upsert(ctx, ownerID, domain.ContactInput{
+			ContactUserID: 9001,
+			FirstName:     "Viewer",
+		}); err != nil {
+			t.Fatalf("seed owner %d: %v", ownerID, err)
+		}
+	}
+	counting := &countingContactStore{ContactStore: base}
+	cached := NewCachedContactStore(counting, 0)
+	cached.reverseCap = 2
+
+	for _, ownerID := range []int64{1, 2, 1, 3, 1, 2} {
+		got, err := cached.GetReverseContacts(ctx, 9001, []int64{ownerID})
+		if err != nil {
+			t.Fatalf("reverse owner %d: %v", ownerID, err)
+		}
+		if _, ok := got[ownerID]; !ok {
+			t.Fatalf("reverse owner %d missing", ownerID)
+		}
+	}
+	if counting.reverseCalls != 4 {
+		t.Fatalf("reverse calls = %d, want 4 (owner 1 touched, owner 2 evicted only)", counting.reverseCalls)
+	}
+	if len(cached.reverse) != 2 || cached.reverseLRU.Len() != 2 {
+		t.Fatalf("reverse cache map/list = %d/%d, want 2/2", len(cached.reverse), cached.reverseLRU.Len())
+	}
+}
+
 func TestCachedContactStoreInvalidatesAccountSnapshot(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewContactStore()
