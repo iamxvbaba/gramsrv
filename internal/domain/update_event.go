@@ -40,10 +40,7 @@ const (
 	// user's absolute profile flags (currently moderation SCAM/FAKE state).
 	// The changed user is carried in Peer; hydration attaches the authoritative
 	// viewer projection to Users before online dispatch or getDifference.
-	UpdateEventUserProfile UpdateEventType = "user_profile"
-	// UpdateEventPrivacy carries the immutable account privacy key/rule
-	// snapshot committed at this pts. updatePrivacy has no wire pts.
-	UpdateEventPrivacy        UpdateEventType = "privacy"
+	UpdateEventUserProfile    UpdateEventType = "user_profile"
 	UpdateEventDeleteMessages UpdateEventType = "delete_messages"
 	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
 	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
@@ -96,7 +93,6 @@ type UpdateEvent struct {
 	Bool             bool
 	Phone            string
 	EmojiStatus      UserEmojiStatus
-	Privacy          PrivacyRules
 	Settings         PeerSettings
 	MessageIDs       []int
 	MaxID            int
@@ -150,7 +146,6 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventUserPhone,
 		UpdateEventUserEmojiStatus,
 		UpdateEventUserProfile,
-		UpdateEventPrivacy,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,
 		UpdateEventDialogFilters,

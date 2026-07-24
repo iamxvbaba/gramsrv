@@ -247,14 +247,6 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return &tg.UpdateUser{UserID: event.Peer.ID}
-	case domain.UpdateEventPrivacy:
-		if event.Privacy.OwnerUserID == 0 || event.Privacy.Key == "" || len(event.Privacy.Rules) == 0 {
-			return nil
-		}
-		return &tg.UpdatePrivacy{
-			Key:   tgPrivacyKey(event.Privacy.Key),
-			Rules: tgPrivacyRules(event.Privacy.Rules),
-		}
 	case domain.UpdateEventChannelState:
 		if event.Peer.Type != domain.PeerTypeChannel || event.Peer.ID == 0 {
 			return nil

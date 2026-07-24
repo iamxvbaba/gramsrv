@@ -83,39 +83,6 @@ func (s *Service) SetRules(ctx context.Context, ownerUserID int64, key domain.Pr
 	return out, nil
 }
 
-// SetRulesWithUpdate uses the production atomic write boundary when available.
-// durable=false means no write was attempted; the RPC layer may then use the
-// ordinary SetRules + Updates.RecordPrivacy fallback used by memory tests.
-func (s *Service) SetRulesWithUpdate(
-	ctx context.Context,
-	ownerUserID int64,
-	key domain.PrivacyKey,
-	rules []domain.PrivacyRule,
-	date int,
-	excludeAuthKeyID [8]byte,
-	excludeSessionID int64,
-) (domain.PrivacyRules, domain.UpdateEvent, bool, error) {
-	out, err := normalizedRules(ownerUserID, key, rules)
-	if err != nil {
-		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, err
-	}
-	capability, ok := s.rules.(interface{ SupportsDurablePrivacyUpdates() bool })
-	if !ok || !capability.SupportsDurablePrivacyUpdates() {
-		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, nil
-	}
-	writer := s.rules.(store.PrivacyUpdateStore)
-	event, err := writer.SetPrivacyRulesWithUpdate(ctx, out, domain.UpdateEvent{
-		Type:     domain.UpdateEventPrivacy,
-		Date:     date,
-		Privacy:  cloneRules(out),
-		PtsCount: 1,
-	}, excludeAuthKeyID, excludeSessionID)
-	if err != nil {
-		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, err
-	}
-	return out, event, true, nil
-}
-
 func normalizedRules(ownerUserID int64, key domain.PrivacyKey, rules []domain.PrivacyRule) (domain.PrivacyRules, error) {
 	if !ValidKey(key) {
 		return domain.PrivacyRules{}, domain.ErrPrivacyKeyInvalid

@@ -487,26 +487,6 @@ type UserEmojiStatusUpdatesService interface {
 	RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
-// PrivacyUpdatesService is the fallback durable extension for stores that do
-// not support the atomic privacy+event write boundary (mainly memory tests).
-type PrivacyUpdatesService interface {
-	RecordPrivacy(ctx context.Context, stateAuthKeyID [8]byte, userID int64, rules domain.PrivacyRules, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
-}
-
-// PrivacyDurableService is implemented by the production privacy service. Its
-// successful path commits rules+pts+event+dispatch in one transaction.
-type PrivacyDurableService interface {
-	SetRulesWithUpdate(
-		ctx context.Context,
-		ownerUserID int64,
-		key domain.PrivacyKey,
-		rules []domain.PrivacyRule,
-		date int,
-		excludeAuthKeyID [8]byte,
-		excludeSessionID int64,
-	) (saved domain.PrivacyRules, event domain.UpdateEvent, durable bool, err error)
-}
-
 // ContactsService 抽象通讯录查询。
 type ContactsService interface {
 	GetContacts(ctx context.Context, userID int64, hash int64) (domain.ContactList, bool, error)
