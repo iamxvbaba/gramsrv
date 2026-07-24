@@ -119,6 +119,51 @@ func TestProjectorUsesFallbackWhenProfilePhotoHidden(t *testing.T) {
 	}
 }
 
+func TestProjectorContactWithoutKnownPhoneCannotBypassPhonePrivacy(t *testing.T) {
+	ctx := context.Background()
+	const (
+		viewerID = int64(3101)
+		ownerID  = int64(3102)
+	)
+	contacts := memory.NewContactStore()
+	if _, err := contacts.Upsert(ctx, viewerID, domain.ContactInput{
+		ContactUserID: ownerID,
+		FirstName:     "Saved",
+		Phone:         "",
+	}); err != nil {
+		t.Fatalf("upsert contact: %v", err)
+	}
+	privacy := privacyapp.NewService(memory.NewPrivacyStore(), contacts)
+	projector := New(
+		WithContactStore(contacts),
+		WithPrivacyEvaluator(privacy),
+	)
+	users, err := projector.ForViewer(ctx, viewerID, []domain.User{{
+		ID:        ownerID,
+		Phone:     "15550003102",
+		FirstName: "Owner",
+	}})
+	if err != nil {
+		t.Fatalf("ForViewer: %v", err)
+	}
+	owner := projectionUser(t, users, ownerID)
+	if !owner.Contact || owner.Phone != "" {
+		t.Fatalf("owner projection = %+v, want contact=true with hidden phone", owner)
+	}
+	batch, err := projector.ForViewers(ctx, []int64{viewerID}, []domain.User{{
+		ID:        ownerID,
+		Phone:     "15550003102",
+		FirstName: "Owner",
+	}})
+	if err != nil {
+		t.Fatalf("ForViewers: %v", err)
+	}
+	batchOwner := projectionUser(t, batch[viewerID], ownerID)
+	if !batchOwner.Contact || batchOwner.Phone != "" {
+		t.Fatalf("batch owner projection = %+v, want contact=true with hidden phone", batchOwner)
+	}
+}
+
 func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	ctx := context.Background()
 	const (

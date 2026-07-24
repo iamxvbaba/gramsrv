@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	privacyapp "telesrv/internal/app/privacy"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
@@ -57,6 +58,42 @@ func TestServiceUsernameLifecycle(t *testing.T) {
 	}
 	if cleared.Username != "" {
 		t.Fatalf("cleared username = %q, want empty", cleared.Username)
+	}
+}
+
+func TestResolvePhoneHonorsAddedByPhone(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contacts := memory.NewContactStore()
+	viewer, err := users.Create(ctx, domain.User{AccessHash: 1, Phone: "15550001001", FirstName: "Viewer"})
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+	target, err := users.Create(ctx, domain.User{AccessHash: 2, Phone: "15550001002", FirstName: "Target"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	privacy := privacyapp.NewService(memory.NewPrivacyStore(), contacts)
+	if _, err := privacy.SetRules(ctx, target.ID, domain.PrivacyKeyAddedByPhone, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
+		t.Fatalf("set AddedByPhone: %v", err)
+	}
+	svc := NewService(users,
+		WithContactStore(contacts),
+		WithPrivacyEvaluator(privacy),
+	)
+
+	if _, found, err := svc.ResolvePhone(ctx, viewer.ID, target.Phone); !errors.Is(err, domain.ErrPhoneNotOccupied) || found {
+		t.Fatalf("ResolvePhone stranger found=%v err=%v, want phone not occupied", found, err)
+	}
+	if _, err := contacts.Upsert(ctx, target.ID, domain.ContactInput{
+		ContactUserID: viewer.ID,
+		FirstName:     viewer.FirstName,
+	}); err != nil {
+		t.Fatalf("target add viewer: %v", err)
+	}
+	got, found, err := svc.ResolvePhone(ctx, viewer.ID, target.Phone)
+	if err != nil || !found || got.ID != target.ID {
+		t.Fatalf("ResolvePhone contact = %+v found=%v err=%v, want target", got, found, err)
 	}
 }
 

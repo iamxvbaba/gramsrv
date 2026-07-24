@@ -1,8 +1,10 @@
 package userprojection
 
 import (
+	"container/list"
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,7 +20,7 @@ const (
 	DefaultContactProjectionCacheTTL = 24 * time.Hour
 
 	contactSnapshotMaxViewers       = 4096
-	contactReverseSnapshotOwnerCap  = 16
+	contactReversePairMaxEntries    = 262144
 	contactPersonalPhotoSnapshotCap = 4096
 )
 
@@ -34,9 +36,30 @@ type personalPhotoSnapshot struct {
 	expireAt time.Time
 }
 
+type reverseContactKey struct {
+	ownerUserID   int64
+	contactUserID int64
+}
+
+type reverseContactSnapshot struct {
+	contact  domain.Contact
+	found    bool
+	expireAt time.Time
+}
+
+type reverseContactEntry struct {
+	key      reverseContactKey
+	snapshot reverseContactSnapshot
+}
+
 type contactSnapshotLoadResult struct {
 	snap   contactAccountSnapshot
 	stored bool
+}
+
+type reverseContactLoadResult struct {
+	contacts map[int64]domain.Contact
+	stored   bool
 }
 
 type personalPhotoSnapshotLoadResult struct {
@@ -59,6 +82,10 @@ type CachedContactStore struct {
 	mu             sync.RWMutex
 	contacts       map[int64]contactAccountSnapshot
 	personalPhotos map[int64]personalPhotoSnapshot
+	reverse        map[reverseContactKey]*list.Element
+	reverseLRU     *list.List
+	reverseByOwner map[int64]map[int64]struct{}
+	reverseCap     int
 	epoch          uint64
 	sf             singleflight.Group
 }
@@ -76,6 +103,10 @@ func NewCachedContactStore(inner store.ContactStore, ttl time.Duration) *CachedC
 		now:            time.Now,
 		contacts:       make(map[int64]contactAccountSnapshot, 1024),
 		personalPhotos: make(map[int64]personalPhotoSnapshot, 1024),
+		reverse:        make(map[reverseContactKey]*list.Element, 4096),
+		reverseLRU:     list.New(),
+		reverseByOwner: make(map[int64]map[int64]struct{}, 1024),
+		reverseCap:     contactReversePairMaxEntries,
 	}
 }
 
@@ -131,22 +162,88 @@ func (c *CachedContactStore) GetReverseContacts(ctx context.Context, userID int6
 	if len(owners) == 0 {
 		return out, nil
 	}
-	if len(owners) > contactReverseSnapshotOwnerCap {
-		// Large fan-out should keep using the store's set query until a dedicated
-		// reverse-contact read model exists; loading hundreds of full contact
-		// lists would be worse than one batched SQL.
-		return c.inner.GetReverseContacts(ctx, userID, owners)
-	}
+	missing := make([]int64, 0, len(owners))
+	now := c.now()
 	for _, ownerID := range owners {
-		snap, err := c.contactSnapshot(ctx, ownerID)
-		if err != nil {
-			return nil, err
+		// Reuse a full owner snapshot when another hot path already loaded it.
+		// Do not cold-load one full list per owner: a large projection would turn
+		// into N SQL queries.
+		if snap, ok := c.lookupContactSnapshot(ownerID, now); ok {
+			if contact, found := snap.contacts[userID]; found {
+				out[ownerID] = cloneCachedContact(contact)
+			}
+			continue
 		}
-		if contact, ok := snap.contacts[userID]; ok {
+		if contact, found, cached := c.lookupReverseContact(ownerID, userID, now); cached {
+			if found {
+				out[ownerID] = contact
+			}
+			continue
+		}
+		missing = append(missing, ownerID)
+	}
+	if len(missing) == 0 {
+		return out, nil
+	}
+	loaded, err := c.loadReverseContacts(ctx, userID, missing)
+	if err != nil {
+		return nil, err
+	}
+	for ownerID, contact := range loaded {
+		if contact.User.ID != 0 {
 			out[ownerID] = cloneCachedContact(contact)
 		}
 	}
 	return out, nil
+}
+
+// loadReverseContacts performs at most one batched cold-store read for all
+// missing owner→viewer pairs, then caches both hits and misses. Privacy
+// projection therefore stays memory-only after warm-up instead of repeating a
+// reverse-contact SQL query on every large user vector.
+func (c *CachedContactStore) loadReverseContacts(ctx context.Context, userID int64, ownerUserIDs []int64) (map[int64]domain.Contact, error) {
+	owners := append([]int64(nil), ownerUserIDs...)
+	sort.Slice(owners, func(i, j int) bool { return owners[i] < owners[j] })
+	sfKey := fmt.Sprintf("contact-reverse:%d:%v", userID, owners)
+	for {
+		v, err, _ := c.sf.Do(sfKey, func() (any, error) {
+			loadEpoch := c.cacheEpoch()
+			contacts, err := c.inner.GetReverseContacts(ctx, userID, owners)
+			if err != nil {
+				return reverseContactLoadResult{}, err
+			}
+			now := c.now()
+			expireAt := now.Add(c.ttl)
+			c.mu.Lock()
+			stored := c.epoch == loadEpoch
+			if stored {
+				for _, ownerID := range owners {
+					key := reverseContactKey{ownerUserID: ownerID, contactUserID: userID}
+					contact, found := contacts[ownerID]
+					c.storeReverseContactLocked(key, reverseContactSnapshot{
+						contact:  cloneCachedContact(contact),
+						found:    found,
+						expireAt: expireAt,
+					})
+				}
+			}
+			c.mu.Unlock()
+			return reverseContactLoadResult{
+				contacts: cloneCachedContactMap(contacts),
+				stored:   stored,
+			}, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := v.(reverseContactLoadResult)
+		if result.stored {
+			return result.contacts, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 }
 
 func (c *CachedContactStore) Upsert(ctx context.Context, userID int64, input domain.ContactInput) (domain.Contact, error) {
@@ -367,6 +464,59 @@ func (c *CachedContactStore) lookupPersonalPhotoSnapshot(userID int64, now time.
 	return snap, true
 }
 
+func (c *CachedContactStore) lookupReverseContact(ownerUserID, contactUserID int64, now time.Time) (domain.Contact, bool, bool) {
+	key := reverseContactKey{ownerUserID: ownerUserID, contactUserID: contactUserID}
+	c.mu.Lock()
+	element, ok := c.reverse[key]
+	if !ok {
+		c.mu.Unlock()
+		return domain.Contact{}, false, false
+	}
+	entry := element.Value.(*reverseContactEntry)
+	snap := entry.snapshot
+	if !snap.expireAt.After(now) {
+		c.removeReverseElementLocked(element)
+		c.mu.Unlock()
+		return domain.Contact{}, false, false
+	}
+	c.reverseLRU.MoveToFront(element)
+	c.mu.Unlock()
+	return cloneCachedContact(snap.contact), snap.found, true
+}
+
+func (c *CachedContactStore) storeReverseContactLocked(key reverseContactKey, snapshot reverseContactSnapshot) {
+	if element, ok := c.reverse[key]; ok {
+		entry := element.Value.(*reverseContactEntry)
+		entry.snapshot = snapshot
+		c.reverseLRU.MoveToFront(element)
+		return
+	}
+	element := c.reverseLRU.PushFront(&reverseContactEntry{key: key, snapshot: snapshot})
+	c.reverse[key] = element
+	if c.reverseByOwner[key.ownerUserID] == nil {
+		c.reverseByOwner[key.ownerUserID] = make(map[int64]struct{})
+	}
+	c.reverseByOwner[key.ownerUserID][key.contactUserID] = struct{}{}
+	for c.reverseLRU.Len() > c.reverseCap {
+		c.removeReverseElementLocked(c.reverseLRU.Back())
+	}
+}
+
+func (c *CachedContactStore) removeReverseElementLocked(element *list.Element) {
+	if element == nil {
+		return
+	}
+	entry := element.Value.(*reverseContactEntry)
+	delete(c.reverse, entry.key)
+	if viewers := c.reverseByOwner[entry.key.ownerUserID]; viewers != nil {
+		delete(viewers, entry.key.contactUserID)
+		if len(viewers) == 0 {
+			delete(c.reverseByOwner, entry.key.ownerUserID)
+		}
+	}
+	c.reverseLRU.Remove(element)
+}
+
 func (c *CachedContactStore) InvalidateViewers(ids ...int64) {
 	if c == nil || len(ids) == 0 {
 		return
@@ -379,6 +529,11 @@ func (c *CachedContactStore) InvalidateViewers(ids ...int64) {
 		}
 		delete(c.contacts, id)
 		delete(c.personalPhotos, id)
+		for contactUserID := range c.reverseByOwner[id] {
+			if element, ok := c.reverse[reverseContactKey{ownerUserID: id, contactUserID: contactUserID}]; ok {
+				c.removeReverseElementLocked(element)
+			}
+		}
 	}
 	c.mu.Unlock()
 }
@@ -391,6 +546,9 @@ func (c *CachedContactStore) FlushReadModelCache() {
 	c.epoch++
 	c.contacts = make(map[int64]contactAccountSnapshot, 1024)
 	c.personalPhotos = make(map[int64]personalPhotoSnapshot, 1024)
+	c.reverse = make(map[reverseContactKey]*list.Element, 4096)
+	c.reverseLRU.Init()
+	c.reverseByOwner = make(map[int64]map[int64]struct{}, 1024)
 	c.mu.Unlock()
 }
 
@@ -413,6 +571,14 @@ func buildContactAccountSnapshot(list domain.ContactList, expireAt time.Time) co
 		ordered = append(ordered, clone)
 	}
 	return contactAccountSnapshot{contacts: contacts, ordered: ordered, hash: list.Hash, expireAt: expireAt}
+}
+
+func cloneCachedContactMap(in map[int64]domain.Contact) map[int64]domain.Contact {
+	out := make(map[int64]domain.Contact, len(in))
+	for id, contact := range in {
+		out[id] = cloneCachedContact(contact)
+	}
+	return out
 }
 
 func dedupContactIDs(ids []int64) []int64 {

@@ -1627,6 +1627,33 @@ func TestStoryStoreListStoryViewsFiltersByContactsAndQuery(t *testing.T) {
 		t.Fatalf("username query = %+v, want viewer 2002", stranger)
 	}
 
+	hiddenAccountPhone, err := store.ListStoryViews(ctx, domain.StoryViewListRequest{
+		ViewerUserID: owner.ID,
+		Owner:        owner,
+		StoryID:      1,
+		Limit:        10,
+		Query:        "155502",
+	})
+	if err != nil {
+		t.Fatalf("list query hidden account phone: %v", err)
+	}
+	if hiddenAccountPhone.Count != 0 || len(hiddenAccountPhone.Views) != 0 {
+		t.Fatalf("hidden account phone query = %+v, want no match", hiddenAccountPhone)
+	}
+	knownContactPhone, err := store.ListStoryViews(ctx, domain.StoryViewListRequest{
+		ViewerUserID: owner.ID,
+		Owner:        owner,
+		StoryID:      1,
+		Limit:        10,
+		Query:        "7001",
+	})
+	if err != nil {
+		t.Fatalf("list query known contact phone: %v", err)
+	}
+	if knownContactPhone.Count != 1 || len(knownContactPhone.Views) != 1 || knownContactPhone.Views[0].ViewerID != 2001 {
+		t.Fatalf("known contact phone query = %+v, want viewer 2001", knownContactPhone)
+	}
+
 	intersection, err := store.ListStoryViews(ctx, domain.StoryViewListRequest{
 		ViewerUserID: owner.ID,
 		Owner:        owner,

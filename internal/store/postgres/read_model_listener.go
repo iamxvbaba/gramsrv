@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -12,6 +13,8 @@ import (
 )
 
 const readModelChangeNotifyChannel = "telesrv_read_model_changed"
+
+const privacyReadModelWarmTimeout = 5 * time.Second
 
 // ReadModelCacheSet 是 read_model_versions 通知可失效的进程内投影缓存集合。
 // 后续新增 read model 时，把缓存接到这里即可复用同一条 LISTEN 连接。
@@ -88,6 +91,14 @@ func (c ContactReadModelCaches) FlushReadModelCache() {
 type PrivacyReadModelCache interface {
 	InvalidateOwners(...int64)
 	FlushReadModelCache()
+}
+
+// PrivacyReadModelWarmer lets the low-frequency change stream rebuild owner
+// snapshots after invalidation, so the next user projection does not own a
+// synchronous database miss. It is optional; caches without it remain
+// cache-aside and only receive invalidation.
+type PrivacyReadModelWarmer interface {
+	WarmOwners(context.Context, ...int64) error
 }
 
 type ProfilePhotoReadModelCache interface {
@@ -392,6 +403,15 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 		if evt.OwnerUserID != 0 && l.caches.RPCProjections != nil {
 			l.caches.RPCProjections.InvalidateRPCProjectionReadModelForUser(evt.OwnerUserID)
 			l.caches.RPCProjections.InvalidateRPCProjectionReadModelForViewer(evt.OwnerUserID)
+		}
+		if warmer, ok := l.caches.Privacy.(PrivacyReadModelWarmer); ok && evt.OwnerUserID != 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), privacyReadModelWarmTimeout)
+			err := warmer.WarmOwners(ctx, evt.OwnerUserID)
+			cancel()
+			if err != nil {
+				l.log.Warn("warm privacy read model after change",
+					zap.Int64("owner_user_id", evt.OwnerUserID), zap.Error(err))
+			}
 		}
 	case "dialog_light":
 		if peerType, ok := readModelPeerType(evt.PeerType); ok && evt.OwnerUserID != 0 && evt.PeerID != 0 {

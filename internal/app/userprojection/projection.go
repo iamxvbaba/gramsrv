@@ -209,7 +209,8 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 					vis = matrix[u.ID][viewer]
 				}
 				var perr error
-				pj, perr = applyPrivacy(ctx, p.privacy, viewer, pj, found, vis, profileRefs, fallbackRefs, nil)
+				hasKnownContactPhone := found && contact.Phone != ""
+				pj, perr = applyPrivacy(ctx, p.privacy, viewer, pj, hasKnownContactPhone, vis, profileRefs, fallbackRefs, nil)
 				if perr != nil {
 					return nil, perr
 				}
@@ -341,8 +342,9 @@ func WithProfilePhotos(ctx context.Context, photos ProfilePhotoProvider, users [
 }
 
 // ForViewer applies the owner-specific user view that Telegram clients expect.
-// In particular, phone is visible for self and contacts; non-contacts should not
-// receive a phone field because TDesktop will prefer it over the public name.
+// A contact relationship alone never grants phone visibility. A viewer may retain
+// an owner-scoped phone it explicitly supplied, while the target account phone is
+// governed by PhoneNumber privacy.
 func ForViewer(ctx context.Context, contacts store.ContactStore, viewerUserID int64, users []domain.User) ([]domain.User, error) {
 	users = sanitizeDeletedUsers(users)
 	if contacts == nil || viewerUserID == 0 || len(users) == 0 {
@@ -489,8 +491,9 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 		if viewerUserID != 0 && u.ID != viewerUserID && u.ID != domain.OfficialSystemUserID && !u.Bot {
 			contact, found := contactsByID[u.ID]
 			projected = applyContactProjection(projected, contact, found)
+			hasKnownContactPhone := found && contact.Phone != ""
 			var err error
-			projected, err = applyPrivacy(ctx, privacy, viewerUserID, projected, found, visibility[u.ID], profileRefs, fallbackRefs, personalRefs)
+			projected, err = applyPrivacy(ctx, privacy, viewerUserID, projected, hasKnownContactPhone, visibility[u.ID], profileRefs, fallbackRefs, personalRefs)
 			if err != nil {
 				return nil, err
 			}
@@ -608,9 +611,11 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 	user.CloseFriend = contact.CloseFriend || contact.User.CloseFriend
 	user.ContactNote = contact.Note
 	user.ContactNoteEntities = append([]domain.MessageEntity(nil), contact.NoteEntities...)
-	if contact.User.Phone != "" {
-		user.Phone = contact.User.Phone
-	} else {
+	// contact.Phone is an owner-local fact supplied by this viewer. It may differ
+	// from the target's current account phone and is safe to preserve because the
+	// viewer already knew it. An empty contact.Phone must not replace or authorize
+	// the target account phone carried by user.Phone.
+	if contact.Phone != "" {
 		user.Phone = contact.Phone
 	}
 	if contact.User.FirstName != "" || contact.User.LastName != "" {
@@ -623,11 +628,16 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 	return user
 }
 
-func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID int64, user domain.User, isContact bool, vis map[domain.PrivacyKey]bool, profileRefs, fallbackRefs, personalRefs map[int64]domain.ProfilePhotoRef) (domain.User, error) {
+func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID int64, user domain.User, hasKnownContactPhone bool, vis map[domain.PrivacyKey]bool, profileRefs, fallbackRefs, personalRefs map[int64]domain.ProfilePhotoRef) (domain.User, error) {
 	if user.Deleted {
 		return user.DeletedTombstone(), nil
 	}
 	if privacy == nil {
+		// Missing privacy wiring must fail closed for an account phone. The only
+		// safe exception is an owner-scoped phone the viewer explicitly supplied.
+		if !hasKnownContactPhone {
+			user.Phone = ""
+		}
 		return user, nil
 	}
 	// vis 为批量预取结果（projectBatch 一次 ListPrivacyRules+GetReverseContacts 算得）；
@@ -642,7 +652,7 @@ func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID in
 	if err != nil {
 		return domain.User{}, err
 	}
-	if !phoneAllowed && !isContact {
+	if !phoneAllowed && !hasKnownContactPhone {
 		user.Phone = ""
 	}
 	statusAllowed, err := canSee(domain.PrivacyKeyStatusTimestamp)

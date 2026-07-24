@@ -1597,7 +1597,6 @@ func storyViewerMatchesQuery(viewerID int64, query string, profile domain.User, 
 		profile.LastName,
 		strings.TrimSpace(profile.FirstName + " " + profile.LastName),
 		profile.Username,
-		profile.Phone,
 		strconv.FormatInt(viewerID, 10),
 	}
 	if isContact {
@@ -1610,7 +1609,6 @@ func storyViewerMatchesQuery(viewerID int64, query string, profile domain.User, 
 			contact.User.LastName,
 			strings.TrimSpace(contact.User.FirstName+" "+contact.User.LastName),
 			contact.User.Username,
-			contact.User.Phone,
 		)
 	}
 	for _, candidate := range candidates {

@@ -1276,7 +1276,7 @@ func TestContactsAddContactPhonePrivacyExceptionUpdatesPeerSettings(t *testing.T
 
 	withoutException, err := r.onContactsAddContact(WithUserID(ctx, alice.ID), &tg.ContactsAddContactRequest{
 		ID:        &tg.InputUser{UserID: bob.ID, AccessHash: bob.AccessHash},
-		Phone:     bob.Phone,
+		Phone:     "",
 		FirstName: "Bobby",
 	})
 	if err != nil {
@@ -1290,6 +1290,19 @@ func TestContactsAddContactPhonePrivacyExceptionUpdatesPeerSettings(t *testing.T
 		t.Fatalf("bob can see alice phone: %v", err)
 	} else if allowed {
 		t.Fatalf("bob can see alice phone = true, want false before exception")
+	}
+	withoutExceptionUpdates := withoutException.(*tg.Updates)
+	for _, item := range withoutExceptionUpdates.Users {
+		if user, ok := item.(*tg.User); ok && user.ID == bob.ID && user.Phone != "" {
+			t.Fatalf("contacts.addContact(phone=\"\") leaked bob phone %q in updates", user.Phone)
+		}
+	}
+	storedBob, found, err := contactsStore.Get(ctx, alice.ID, bob.ID)
+	if err != nil || !found {
+		t.Fatalf("stored bob contact found=%v err=%v", found, err)
+	}
+	if storedBob.Phone != "" || storedBob.User.Phone != "" {
+		t.Fatalf("stored bob contact phone = local %q user %q, want empty", storedBob.Phone, storedBob.User.Phone)
 	}
 
 	withException, err := r.onContactsAddContact(WithUserID(ctx, alice.ID), &tg.ContactsAddContactRequest{
@@ -1538,8 +1551,8 @@ func TestContactsBlockGetBlockedAndUnblockRPC(t *testing.T) {
 	if peer, ok := full.Blocked[0].PeerID.(*tg.PeerUser); !ok || peer.UserID != alice.ID {
 		t.Fatalf("blocked peer = %#v, want alice", full.Blocked[0].PeerID)
 	}
-	if user, ok := full.Users[0].(*tg.User); !ok || user.ID != alice.ID {
-		t.Fatalf("blocked user = %#v, want alice", full.Users[0])
+	if user, ok := full.Users[0].(*tg.User); !ok || user.ID != alice.ID || user.Phone != "" {
+		t.Fatalf("blocked user = %#v, want alice with hidden phone", full.Users[0])
 	}
 
 	ok, err = r.onContactsUnblock(WithUserID(ctx, bob.ID), &tg.ContactsUnblockRequest{

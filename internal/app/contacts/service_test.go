@@ -168,6 +168,151 @@ func TestImportContactsBatchesPhonesAndDedupesUpserts(t *testing.T) {
 	}
 }
 
+func TestAddContactWithoutPhoneDoesNotBackfillTargetPhone(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	owner, err := users.Create(ctx, domain.User{Phone: "100", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	target, err := users.Create(ctx, domain.User{Phone: "15551234567", FirstName: "Target"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	privacySvc := privacyapp.NewService(memory.NewPrivacyStore(), contactsStore)
+	svc := NewService(contactsStore, users).Configure(WithPrivacyEvaluator(privacySvc))
+
+	contact, err := svc.AddContact(ctx, owner.ID, domain.ContactInput{
+		ContactUserID: target.ID,
+		FirstName:     "Saved",
+		Phone:         "",
+	})
+	if err != nil {
+		t.Fatalf("AddContact: %v", err)
+	}
+	if contact.Phone != "" || contact.User.Phone != "" {
+		t.Fatalf("projected contact phone = local %q user %q, want both empty", contact.Phone, contact.User.Phone)
+	}
+	stored, found, err := contactsStore.Get(ctx, owner.ID, target.ID)
+	if err != nil || !found {
+		t.Fatalf("stored contact found=%v err=%v", found, err)
+	}
+	if stored.Phone != "" || stored.User.Phone != "" {
+		t.Fatalf("stored contact phone = local %q user %q, want both empty", stored.Phone, stored.User.Phone)
+	}
+}
+
+func TestImportContactsHonorsAddedByPhoneInOneBatch(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	owner, err := users.Create(ctx, domain.User{Phone: "100", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	target, err := users.Create(ctx, domain.User{Phone: "15551234567", FirstName: "Target"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	privacySvc := privacyapp.NewService(memory.NewPrivacyStore(), contactsStore)
+	if _, err := privacySvc.SetRules(ctx, target.ID, domain.PrivacyKeyAddedByPhone, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
+		t.Fatalf("set AddedByPhone: %v", err)
+	}
+	svc := NewService(contactsStore, users).Configure(WithPrivacyEvaluator(privacySvc))
+	input := []domain.ContactInput{{ClientID: 1, Phone: target.Phone, FirstName: "Saved"}}
+
+	hidden, err := svc.ImportContacts(ctx, owner.ID, input)
+	if err != nil {
+		t.Fatalf("ImportContacts hidden: %v", err)
+	}
+	if len(hidden.Imported) != 0 || len(hidden.Contacts) != 0 {
+		t.Fatalf("hidden import = %+v, want no resolved target", hidden)
+	}
+
+	if _, err := contactsStore.Upsert(ctx, target.ID, domain.ContactInput{
+		ContactUserID: owner.ID,
+		FirstName:     owner.FirstName,
+	}); err != nil {
+		t.Fatalf("target add owner: %v", err)
+	}
+	visible, err := svc.ImportContacts(ctx, owner.ID, input)
+	if err != nil {
+		t.Fatalf("ImportContacts visible: %v", err)
+	}
+	if len(visible.Imported) != 1 || visible.Imported[0].UserID != target.ID || len(visible.Contacts) != 1 {
+		t.Fatalf("visible import = %+v, want target %d", visible, target.ID)
+	}
+}
+
+func TestPhoneSearchHonorsAddedByPhone(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	owner, err := users.Create(ctx, domain.User{Phone: "100", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	target, err := users.Create(ctx, domain.User{Phone: "15551234567", FirstName: "Target"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	privacySvc := privacyapp.NewService(memory.NewPrivacyStore(), contactsStore)
+	if _, err := privacySvc.SetRules(ctx, target.ID, domain.PrivacyKeyAddedByPhone, []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowContacts}}); err != nil {
+		t.Fatalf("set AddedByPhone: %v", err)
+	}
+	svc := NewService(contactsStore, users).Configure(WithPrivacyEvaluator(privacySvc))
+
+	hidden, err := svc.Search(ctx, owner.ID, "+1 (555) 123-4567", 50)
+	if err != nil {
+		t.Fatalf("Search hidden: %v", err)
+	}
+	if len(hidden.Results) != 0 {
+		t.Fatalf("hidden phone search results = %+v, want empty", hidden.Results)
+	}
+	if _, err := contactsStore.Upsert(ctx, owner.ID, domain.ContactInput{
+		ContactUserID: target.ID,
+		FirstName:     target.FirstName,
+		Phone:         "",
+	}); err != nil {
+		t.Fatalf("owner add target without phone: %v", err)
+	}
+	stillHidden, err := svc.Search(ctx, owner.ID, target.Phone, 50)
+	if err != nil {
+		t.Fatalf("Search owner-only contact: %v", err)
+	}
+	if len(stillHidden.MyResults)+len(stillHidden.Results) != 0 {
+		t.Fatalf("owner-only empty-phone contact search = %+v, want hidden", stillHidden)
+	}
+	if _, err := contactsStore.Upsert(ctx, owner.ID, domain.ContactInput{
+		ContactUserID: target.ID,
+		FirstName:     target.FirstName,
+		Phone:         target.Phone,
+	}); err != nil {
+		t.Fatalf("owner save target phone: %v", err)
+	}
+	knownLocally, err := svc.Search(ctx, owner.ID, target.Phone, 50)
+	if err != nil {
+		t.Fatalf("Search locally known phone: %v", err)
+	}
+	if len(knownLocally.MyResults)+len(knownLocally.Results) != 1 {
+		t.Fatalf("locally known phone search = %+v, want one local contact", knownLocally)
+	}
+	if _, err := contactsStore.Upsert(ctx, target.ID, domain.ContactInput{
+		ContactUserID: owner.ID,
+		FirstName:     owner.FirstName,
+	}); err != nil {
+		t.Fatalf("target add owner: %v", err)
+	}
+	visible, err := svc.Search(ctx, owner.ID, target.Phone, 50)
+	if err != nil {
+		t.Fatalf("Search visible: %v", err)
+	}
+	if len(visible.Results) != 1 || visible.Results[0].ID != target.ID {
+		t.Fatalf("visible phone search = %+v, want target %d", visible.Results, target.ID)
+	}
+}
+
 func TestGetContactsProjectsCurrentProfilePhoto(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
@@ -387,8 +532,8 @@ func TestAddContactNormalizesPhoneToDigits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddContact digitless phone: %v", err)
 	}
-	if emptied.Phone != bob.Phone {
-		t.Fatalf("digitless phone contact = %q, want fallback to target phone %q", emptied.Phone, bob.Phone)
+	if emptied.Phone != "" || emptied.User.Phone != "" {
+		t.Fatalf("digitless phone contact = local %q user %q, want empty without account-phone fallback", emptied.Phone, emptied.User.Phone)
 	}
 }
 
