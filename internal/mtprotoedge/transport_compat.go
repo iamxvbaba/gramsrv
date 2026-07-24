@@ -89,8 +89,7 @@ func newCompatTransportListener(codec func() transport.Codec, listener net.Liste
 }
 
 // singleConnListener 是一个只产出一条「已接受」连接、随后阻塞到关闭的 net.Listener。
-// 它让单条裸连接可以走 listener 形态的去混淆/codec 管线（ObfuscatedListener +
-// compatTransportListener），从而把这部分阻塞读取从 accept 循环挪到每连接 goroutine。
+// 生产接入已直接提升单连接；这个适配器仅保留给仍需 listener 形态的测试/调用方。
 type singleConnListener struct {
 	addr net.Addr
 	ch   chan net.Conn
@@ -131,38 +130,13 @@ func (l *compatTransportListener) Accept() (_ transport.Conn, rErr error) {
 		}
 	}()
 
-	var (
-		connCodec transport.Codec
-		reader    io.Reader = conn
-	)
-	if l.codec != nil {
-		connCodec = l.codec()
-		if classifyInboundFrameCodec(connCodec) == inboundFrameCodecUnknown {
-			// Unknown codecs are rejected before their header or first frame is read. Without an
-			// explicit preflight contract, calling Codec.Read could allocate from an attacker-
-			// controlled length before the process-wide budget can be reserved.
-			return nil, errInboundFrameCodecUnsupported
-		}
-		if err := connCodec.ReadHeader(conn); err != nil {
-			return nil, errors.Wrap(err, "read codec header")
-		}
-	} else {
-		var err error
-		connCodec, reader, err = detectCompatCodec(conn)
-		if err != nil {
-			return nil, errors.Wrap(err, "detect codec")
-		}
+	promoted, err := newCompatTransportConn(l.codec, conn, l.budget)
+	if err != nil {
+		// Avoid returning a typed nil *compatTransportConn as a non-nil
+		// transport.Conn interface on admission failure.
+		return nil, err
 	}
-
-	return &compatTransportConn{
-		conn: wrappedCompatConn{
-			reader: reader,
-			Conn:   conn,
-		},
-		codec:                   connCodec,
-		budget:                  l.budget,
-		transportPacketMessages: isTransportPacketMessageConn(conn),
-	}, nil
+	return promoted, nil
 }
 
 func isTransportPacketMessageConn(conn net.Conn) bool {
@@ -187,10 +161,87 @@ func (w wrappedCompatConn) Read(p []byte) (int, error) {
 	return w.reader.Read(p)
 }
 
+// newCompatTransportConn promotes an already accepted stream without allocating the
+// single-connection listener/channel used by the historical listener composition.
+// Detection happens once per physical connection; the selected codec remains bound to
+// the returned transport for both reads and writes.
+func newCompatTransportConn(
+	codecFactory func() transport.Codec,
+	conn net.Conn,
+	budget *inboundFrameBudget,
+) (*compatTransportConn, error) {
+	if budget == nil {
+		panic("mtprotoedge: nil inbound frame budget")
+	}
+	var (
+		connCodec transport.Codec
+		reader    io.Reader = conn
+	)
+	if codecFactory != nil {
+		connCodec = codecFactory()
+		if classifyInboundFrameCodec(connCodec) == inboundFrameCodecUnknown {
+			// Unknown codecs are rejected before their header or first frame is read. Without an
+			// explicit preflight contract, calling Codec.Read could allocate from an attacker-
+			// controlled length before the process-wide budget can be reserved.
+			return nil, errInboundFrameCodecUnsupported
+		}
+		if err := connCodec.ReadHeader(conn); err != nil {
+			return nil, errors.Wrap(err, "read codec header")
+		}
+	} else {
+		var err error
+		connCodec, reader, err = detectCompatCodec(conn)
+		if err != nil {
+			return nil, errors.Wrap(err, "detect codec")
+		}
+	}
+
+	return newCompatTransportConnWithCodec(
+		wrappedCompatConn{reader: reader, Conn: conn},
+		connCodec,
+		budget,
+		isTransportPacketMessageConn(conn),
+	)
+}
+
+// newCompatTransportConnWithCodec binds a codec whose client-side transport header
+// was already consumed by the one-time wire detector.
+func newCompatTransportConnWithCodec(
+	conn net.Conn,
+	connCodec transport.Codec,
+	budget *inboundFrameBudget,
+	transportPacketMessages bool,
+) (*compatTransportConn, error) {
+	if budget == nil {
+		panic("mtprotoedge: nil inbound frame budget")
+	}
+	codecKind := classifyInboundFrameCodec(connCodec)
+	if codecKind == inboundFrameCodecUnknown {
+		return nil, errInboundFrameCodecUnsupported
+	}
+	var budgetedCodec InboundFrameBudgetedCodec
+	if codecKind == inboundFrameCodecCustom {
+		budgetedCodec = unwrapInboundFrameBudgetedCodec(connCodec)
+		if budgetedCodec == nil {
+			return nil, errInboundFrameCodecUnsupported
+		}
+	}
+	return &compatTransportConn{
+		conn:                    conn,
+		codec:                   connCodec,
+		codecKind:               codecKind,
+		budgetedCodec:           budgetedCodec,
+		budget:                  budget,
+		transportPacketMessages: transportPacketMessages,
+	}, nil
+}
+
 type compatTransportConn struct {
-	conn   net.Conn
-	codec  transport.Codec
-	budget *inboundFrameBudget
+	conn          net.Conn
+	codec         transport.Codec
+	codecKind     inboundFrameCodecKind
+	budgetedCodec InboundFrameBudgetedCodec
+	budget        *inboundFrameBudget
 
 	transportPacketMessages bool
 	directMessageScratch    []byte
@@ -427,7 +478,10 @@ func (c *compatTransportConn) Close() error {
 }
 
 func (c *compatTransportConn) readInboundFrame(b *bin.Buffer) error {
-	kind := classifyInboundFrameCodec(c.codec)
+	// codecKind and budgetedCodec are frozen when the physical connection is
+	// promoted. The per-frame hot path never re-detects wire mode or type-switches
+	// the already selected codec.
+	kind := c.codecKind
 	if kind == inboundFrameCodecUnknown {
 		return errInboundFrameCodecUnsupported
 	}
@@ -447,11 +501,10 @@ func (c *compatTransportConn) readInboundFrame(b *bin.Buffer) error {
 
 	var err error
 	if kind == inboundFrameCodecCustom {
-		custom := unwrapInboundFrameBudgetedCodec(c.codec)
-		if custom == nil {
+		if c.budgetedCodec == nil {
 			return errInboundFrameCodecUnsupported
 		}
-		err = custom.ReadWithInboundFrameBudget(c.conn, b, reserve)
+		err = c.budgetedCodec.ReadWithInboundFrameBudget(c.conn, b, reserve)
 	} else {
 		preflight := &inboundFramePreflightReader{r: c.conn, kind: kind, reserve: reserve}
 		err = c.codec.Read(preflight, b)

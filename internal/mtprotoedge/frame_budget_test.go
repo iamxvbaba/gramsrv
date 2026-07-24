@@ -51,7 +51,13 @@ func (a frameBudgetTestAddr) String() string  { return string(a) }
 
 func newFrameBudgetTestTransport(packet []byte, c transport.Codec, budget *inboundFrameBudget) (*compatTransportConn, *frameBudgetTestConn) {
 	raw := newFrameBudgetTestConn(packet)
-	return &compatTransportConn{conn: raw, codec: c, budget: budget}, raw
+	return &compatTransportConn{
+		conn:          raw,
+		codec:         c,
+		codecKind:     classifyInboundFrameCodec(c),
+		budgetedCodec: unwrapInboundFrameBudgetedCodec(c),
+		budget:        budget,
+	}, raw
 }
 
 func TestInboundFrameBudgetSupportsBuiltInCodecs(t *testing.T) {

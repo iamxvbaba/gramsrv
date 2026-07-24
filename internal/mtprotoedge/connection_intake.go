@@ -89,7 +89,7 @@ func connLocal(conn net.Conn) string {
 
 func intakeTransport(obfuscated bool) string {
 	if obfuscated {
-		return "obfuscated_tcp"
+		return "tcp_auto"
 	}
 	return "tcp"
 }
