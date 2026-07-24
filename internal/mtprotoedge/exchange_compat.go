@@ -27,9 +27,12 @@ import (
 //
 // DrKLO Android marks media temporary auth-key exchange with a negative DC in
 // p_q_inner_data_temp_dc (for example DC 2 -> -2). gotd v0.158.0 validates this
-// field by exact equality and rejects that legitimate media-temp path. Keep the
-// permanent-key check strict, but allow temp-key DC values whose absolute value
-// matches this server DC.
+// field by exact equality and rejects that legitimate media-temp path. The
+// temp-key DC check accepts any value whose absolute value matches this
+// server DC. The permanent-key check is lenient by default too (see
+// Options.StrictDC doc) — self-hosted single-server deployments commonly
+// have clients that alias dc_id 1..5 to the one backend, so a client-chosen
+// dc_id that isn't our configured DC is expected, not an error.
 func (s *Server) runServerExchange(ctx context.Context, conn transport.Conn) (exchange.ServerExchangeResult, error) {
 	ex := serverExchangeCompat{
 		conn:      conn,
@@ -38,6 +41,7 @@ func (s *Server) runServerExchange(ctx context.Context, conn transport.Conn) (ex
 		timeout:   exchange.DefaultTimeout,
 		key:       s.key,
 		dc:        s.dc,
+		strictDC:  s.strictDC,
 		log:       s.log.Named("exchange"),
 		rng:       compatServerRNG{rand: s.rand},
 		commitKey: s.commitExchangeAuthKey,
@@ -65,6 +69,7 @@ type serverExchangeCompat struct {
 	timeout   time.Duration
 	key       exchange.PrivateKey
 	dc        int
+	strictDC  bool
 	log       *zap.Logger
 	rng       compatServerRNG
 	commitKey func(context.Context, exchange.ServerExchangeResult, int) error
@@ -345,10 +350,23 @@ func (s serverExchangeCompat) validatePQInnerDataDC(d mt.PQInnerDataClass) error
 	switch innerDataDC := d.(type) {
 	case *mt.PQInnerDataDC:
 		if innerDataDC.DC != s.dc {
+			if !s.strictDC {
+				// Lenient by default (Options.StrictDC doc has the full
+				// rationale): telesrv is a single physical backend, and
+				// self-hosted client forks commonly alias dc_id 1..5 to this
+				// one server, so a client-chosen dc_id that isn't our
+				// configured DC is expected, not an error. dc_id plays no
+				// role in key derivation, so accepting it doesn't weaken the
+				// exchange.
+				s.log.Debug("Accepted permanent auth key DC mismatch (lenient mode)",
+					zap.Int("server_dc", s.dc),
+					zap.Int("client_dc", innerDataDC.DC))
+				return nil
+			}
 			return wrongDCError(s.dc, innerDataDC.DC)
 		}
 	case *mt.PQInnerDataTempDC:
-		if !sameDCByAbs(innerDataDC.DC, s.dc) {
+		if !sameDCByAbs(innerDataDC.DC, s.dc) && s.strictDC {
 			return wrongDCError(s.dc, innerDataDC.DC)
 		}
 		if innerDataDC.DC < 0 {

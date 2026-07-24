@@ -366,9 +366,41 @@ func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
 	}
 }
 
-func TestKeyExchangeRejectsWrongNegativeTempDC(t *testing.T) {
-	ex := serverExchangeCompat{dc: 2, log: zaptest.NewLogger(t)}
+func TestKeyExchangeRejectsWrongNegativeTempDCWhenStrict(t *testing.T) {
+	ex := serverExchangeCompat{dc: 2, strictDC: true, log: zaptest.NewLogger(t)}
 	err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: -3})
+	var exErr *exchange.ServerExchangeError
+	if !errors.As(err, &exErr) {
+		t.Fatalf("err = %T %v, want ServerExchangeError", err, err)
+	}
+	if exErr.Code != codec.CodeWrongDC {
+		t.Fatalf("error code = %d, want %d", exErr.Code, codec.CodeWrongDC)
+	}
+}
+
+// TestKeyExchangeAcceptsMismatchedDCByDefault asserts that, in the default
+// lenient mode, neither permanent nor temp key exchange requires dc_id to
+// equal the server's configured DC. telesrv is always a single physical
+// backend; self-hosted client forks commonly alias dc_id 1..5 to it (see
+// Options.StrictDC doc), so a mismatched client-chosen dc_id must not be
+// rejected — doing so previously broke every account whose client picked a
+// starting dc_id other than the server's.
+func TestKeyExchangeAcceptsMismatchedDCByDefault(t *testing.T) {
+	ex := serverExchangeCompat{dc: 2, log: zaptest.NewLogger(t)}
+	if err := ex.validatePQInnerDataDC(&mt.PQInnerDataDC{DC: 3}); err != nil {
+		t.Fatalf("permanent DC mismatch: err = %v, want nil (lenient by default)", err)
+	}
+	if err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: -3}); err != nil {
+		t.Fatalf("temp DC mismatch: err = %v, want nil (lenient by default)", err)
+	}
+}
+
+// TestKeyExchangeRejectsMismatchedPermanentDCWhenStrict asserts that
+// strictDC=true still enforces exact DC-ID equality for permanent-key
+// exchange (kept for a hypothetical future real multi-DC deployment).
+func TestKeyExchangeRejectsMismatchedPermanentDCWhenStrict(t *testing.T) {
+	ex := serverExchangeCompat{dc: 2, strictDC: true, log: zaptest.NewLogger(t)}
+	err := ex.validatePQInnerDataDC(&mt.PQInnerDataDC{DC: 3})
 	var exErr *exchange.ServerExchangeError
 	if !errors.As(err, &exErr) {
 		t.Fatalf("err = %T %v, want ServerExchangeError", err, err)
