@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/proto"
@@ -10,22 +11,23 @@ import (
 )
 
 type captureSessions struct {
-	mu              sync.Mutex
-	rawAuthKeyID    [8]byte
-	sessionID       int64
-	userID          int64
-	userResolved    bool
-	authKeyID       [8]byte
-	authKeyResolved bool
-	receives        bool
-	receivesCalls   int
-	messageType     proto.MessageType
-	message         bin.Encoder
-	userMessage     bin.Encoder // 最近一次 PushToUser* 的消息（与 message 区分：message 也被 PushToSession 覆盖）
-	pushUserIDs     []int64
-	onlineUserIDs   []int64
-	channelViewers  map[int64][]int64
-	channelMembers  map[int64][]int64
+	mu                 sync.Mutex
+	rawAuthKeyID       [8]byte
+	sessionID          int64
+	userID             int64
+	userResolved       bool
+	authKeyID          [8]byte
+	authKeyResolved    bool
+	receives           bool
+	receivesCalls      int
+	messageType        proto.MessageType
+	message            bin.Encoder
+	userMessage        bin.Encoder // 最近一次 PushToUser* 的消息（与 message 区分：message 也被 PushToSession 覆盖）
+	pushUserIDs        []int64
+	onlineUserIDs      []int64
+	channelViewers     map[int64][]int64
+	channelMembers     map[int64][]int64
+	channelSubscribers map[int64][]int64
 	// channelViewersLimit 记录最近一次 OnlineChannelUserIDs 收到的 limit，验证 fan-out 封顶传参。
 	channelViewersLimit int
 }
@@ -256,6 +258,42 @@ func (s *captureSessions) OnlineChannelUserIDs(channelID int64, limit int) []int
 	defer s.mu.Unlock()
 	s.channelViewersLimit = limit
 	return limitIDs(s.channelViewers[channelID], limit)
+}
+
+func (s *captureSessions) RefreshChannelSubscription(_ [8]byte, _ int64, userID, channelID int64, _ time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.channelSubscribers == nil {
+		s.channelSubscribers = make(map[int64][]int64)
+	}
+	for _, existing := range s.channelSubscribers[channelID] {
+		if existing == userID {
+			return
+		}
+	}
+	s.channelSubscribers[channelID] = append(s.channelSubscribers[channelID], userID)
+}
+
+func (s *captureSessions) OnlineChannelSubscriberUserIDs(channelID int64, limit int) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return limitIDs(s.channelSubscribers[channelID], limit)
+}
+
+func (s *captureSessions) OnlineChannelSubscriberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]int64, 0, len(s.channelSubscribers[channelID]))
+	for _, userID := range s.channelSubscribers[channelID] {
+		if _, skip := exclude[userID]; skip {
+			continue
+		}
+		out = append(out, userID)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func (s *captureSessions) ChannelMembershipGeneration(_ [8]byte, _ int64) int64 { return 0 }

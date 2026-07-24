@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -9,6 +10,7 @@ import (
 )
 
 const channelMembershipSyncPageSize = domain.MaxSynchronousChannelDialogFanout
+const publicChannelSubscriptionTTL = 75 * time.Second
 
 func (r *Router) trackChannelInterest(ctx context.Context, userID int64, channelIDs ...int64) {
 	if userID == 0 || r.deps.Sessions == nil {
@@ -35,6 +37,25 @@ func (r *Router) trackChannelInterest(ctx context.Context, userID int64, channel
 
 func (r *Router) clearChannelInterest(ctx context.Context, userID int64) {
 	r.trackChannelInterest(ctx, userID)
+}
+
+func (r *Router) refreshPublicChannelSubscription(ctx context.Context, userID, channelID int64) {
+	if userID == 0 || channelID == 0 || r.deps.Sessions == nil {
+		return
+	}
+	provider, ok := r.deps.Sessions.(ChannelSubscriptionProvider)
+	if !ok {
+		return
+	}
+	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
+	if !ok {
+		return
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return
+	}
+	provider.RefreshChannelSubscription(rawAuthKeyID, sessionID, userID, channelID, publicChannelSubscriptionTTL)
 }
 
 func (r *Router) syncSessionChannelMemberships(ctx context.Context, userID int64) {

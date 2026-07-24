@@ -360,3 +360,52 @@ ORDER BY user_id`, channelID, candidates[start:end])
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
 }
+
+func (s *ChannelStore) FilterChannelMessageAudienceIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error) {
+	if channelID == 0 || len(userIDs) == 0 {
+		return nil, nil
+	}
+	candidates := uniqueChannelUserIDs(userIDs, 0)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	out := make([]int64, 0, len(candidates))
+	for start := 0; start < len(candidates); start += channelMemberFilterBatch {
+		end := start + channelMemberFilterBatch
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+		rows, err := s.db.Query(ctx, `
+SELECT candidate.user_id
+FROM channels c
+CROSS JOIN unnest($2::bigint[]) AS candidate(user_id)
+LEFT JOIN channel_members m
+  ON m.channel_id = c.id AND m.user_id = candidate.user_id
+WHERE c.id = $1
+  AND NOT c.deleted
+  AND NOT COALESCE((m.banned_rights->>'ViewMessages')::boolean, false)
+  AND COALESCE(m.status, '') NOT IN ('kicked', 'banned')
+  AND (
+    m.status = 'active'
+    OR (COALESCE(c.username, '') <> '' AND COALESCE(m.status, 'left') = 'left')
+  )
+ORDER BY candidate.user_id`, channelID, candidates[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("filter channel message audience: %w", err)
+		}
+		for rows.Next() {
+			var userID int64
+			if err := rows.Scan(&userID); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, userID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}

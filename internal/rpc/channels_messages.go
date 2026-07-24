@@ -335,13 +335,13 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 	if res.Event.Pts != 0 {
 		// 删除 fan-out 异步化（设计 Phase 0）。channelDeleteMessagesUpdates 是纯 CPU 构建
 		// （不碰 PG、不取 ctx），async 无竞态；同 channel 串行保 pts 单调。
-		r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
 		})
 		// 被删 broadcast post 的讨论组转发根级联删除同样要让讨论组成员收敛。
 		for _, cascade := range res.DiscussionDeletes {
 			cascade := cascade
-			r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+			r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 				return r.channelDeleteMessagesUpdates(viewerUserID, cascade.Channel, cascade.Event)
 			})
 		}
@@ -357,12 +357,12 @@ func (r *Router) NotifyModerationChannelDeletion(ctx context.Context, res domain
 	if r == nil || res.Event.Pts == 0 {
 		return
 	}
-	r.enqueueChannelFanout(ctx, channelFanoutMembers, domain.OfficialSystemUserID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+	r.enqueueChannelFanout(ctx, channelFanoutMessageBox, domain.OfficialSystemUserID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 		return r.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
 	})
 	for _, cascade := range res.DiscussionDeletes {
 		cascade := cascade
-		r.enqueueChannelFanout(ctx, channelFanoutMembers, domain.OfficialSystemUserID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, domain.OfficialSystemUserID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, cascade.Channel, cascade.Event)
 		})
 	}
@@ -403,7 +403,7 @@ func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDe
 	pushBatch := func(batch domain.DeleteChannelHistoryResult) *tg.Updates {
 		out := r.channelDeleteMessagesUpdates(userID, batch.Channel, batch.Event)
 		// 每批 fan-out 异步化；批次按 pts 递增顺序入同一 channel 分片 → FIFO 保单调。
-		r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, batch.Channel.ID, batch.Event.Pts, batch.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, batch.Channel.ID, batch.Event.Pts, batch.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelDeleteMessagesUpdates(viewerUserID, batch.Channel, batch.Event)
 		})
 		return out

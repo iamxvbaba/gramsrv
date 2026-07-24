@@ -892,6 +892,42 @@ func (s *ChannelStore) FilterActiveChannelMemberIDs(_ context.Context, channelID
 	return out, nil
 }
 
+func (s *ChannelStore) FilterChannelMessageAudienceIDs(_ context.Context, channelID int64, userIDs []int64) ([]int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if channelID == 0 || len(userIDs) == 0 {
+		return nil, nil
+	}
+	channel, ok := s.channels[channelID]
+	if !ok || channel.Deleted {
+		return nil, nil
+	}
+	public := publicPreviewableChannel(channel)
+	members := s.members[channelID]
+	out := make([]int64, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID == 0 {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		member, found := members[userID]
+		if member.BannedRights.ViewMessages ||
+			member.Status == domain.ChannelMemberKicked ||
+			member.Status == domain.ChannelMemberBanned {
+			continue
+		}
+		if member.Status == domain.ChannelMemberActive || public && (!found || member.Status == domain.ChannelMemberLeft) {
+			out = append(out, userID)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
 func (s *ChannelStore) ListActiveChannelMembers(_ context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

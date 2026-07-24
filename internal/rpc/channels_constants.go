@@ -17,5 +17,8 @@ const (
 const (
 	channelFanoutMembers channelFanoutScope = iota
 	channelFanoutViewers
+	// channelFanoutMessageBox is the durable channel message-box audience:
+	// online members plus users with an unexpired public short-poll subscription.
+	channelFanoutMessageBox
 	channelFanoutExplicit
 )

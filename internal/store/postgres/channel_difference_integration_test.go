@@ -116,7 +116,7 @@ func TestChannelStoreDifferenceStartsAtMemberAvailableMinPts(t *testing.T) {
 	}
 }
 
-func TestChannelStorePublicPreviewDifferenceSkipsNonMemberMessages(t *testing.T) {
+func TestChannelStorePublicPreviewDifferenceReplaysVisibleMessages(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -183,11 +183,56 @@ func TestChannelStorePublicPreviewDifferenceSkipsNonMemberMessages(t *testing.T)
 	if err != nil {
 		t.Fatalf("list public preview difference: %v", err)
 	}
-	if !diff.Final || diff.Pts != sent.Event.Pts || len(diff.Events) != 0 || len(diff.NewMessages) != 0 || len(diff.OtherUpdates) != 0 {
-		t.Fatalf("preview diff = %+v, want empty public preview difference at current pts", diff)
+	if !diff.Final || diff.Pts != sent.Event.Pts || len(diff.Events) != 1 || len(diff.NewMessages) != 1 || len(diff.OtherUpdates) != 0 {
+		t.Fatalf("preview diff = %+v, want one durable public preview message at pts %d", diff, sent.Event.Pts)
+	}
+	if diff.NewMessages[0].ID != sent.Message.ID || diff.NewMessages[0].Body != sent.Message.Body {
+		t.Fatalf("preview diff message = %+v, want sent message %+v", diff.NewMessages[0], sent.Message)
 	}
 	if diff.Dialog.UnreadCount != 0 || diff.Dialog.ReadInboxMaxID < sent.Message.ID {
 		t.Fatalf("preview diff dialog = %+v, want read-only public preview dialog", diff.Dialog)
+	}
+	edited, err := channels.EditChannelMessage(ctx, domain.EditChannelMessageRequest{
+		UserID: owner.ID, ChannelID: channelID, ID: sent.Message.ID,
+		Message: "public preview edited", EditDate: 1700000372,
+	})
+	if err != nil {
+		t.Fatalf("edit public preview message: %v", err)
+	}
+	pinned, err := channels.UpdatePinnedMessage(ctx, domain.UpdateChannelPinnedMessageRequest{
+		UserID: owner.ID, ChannelID: channelID, MessageID: sent.Message.ID,
+		Pinned: true, Date: 1700000373,
+	})
+	if err != nil {
+		t.Fatalf("pin public preview message: %v", err)
+	}
+	deleted, err := channels.DeleteChannelMessages(ctx, domain.DeleteChannelMessagesRequest{
+		UserID: owner.ID, ChannelID: channelID, IDs: []int{sent.Message.ID}, Date: 1700000374,
+	})
+	if err != nil {
+		t.Fatalf("delete public preview message: %v", err)
+	}
+	mutations, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+		UserID: viewer.ID, ChannelID: channelID, Pts: sent.Event.Pts, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list public preview mutations: %v", err)
+	}
+	if !mutations.Final || mutations.Pts != deleted.Event.Pts || len(mutations.NewMessages) != 0 || len(mutations.OtherUpdates) != 3 {
+		t.Fatalf("public preview mutations = %+v, want edit/pin/delete through pts %d", mutations, deleted.Event.Pts)
+	}
+	wantTypes := []domain.ChannelUpdateEventType{
+		domain.ChannelUpdateEditMessage,
+		domain.ChannelUpdatePinnedMessages,
+		domain.ChannelUpdateDeleteMessages,
+	}
+	for i, want := range wantTypes {
+		if mutations.OtherUpdates[i].Type != want {
+			t.Fatalf("public preview mutation[%d] = %+v, want %s", i, mutations.OtherUpdates[i], want)
+		}
+	}
+	if edited.Event.Pts >= pinned.Event.Pts || pinned.Event.Pts >= deleted.Event.Pts {
+		t.Fatalf("public preview mutation pts = edit %d pin %d delete %d, want strictly increasing", edited.Event.Pts, pinned.Event.Pts, deleted.Event.Pts)
 	}
 }
 

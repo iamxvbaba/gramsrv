@@ -207,7 +207,7 @@ func (r *Router) onMessagesDeleteTopicHistory(ctx context.Context, req *tg.Messa
 		return nil, forumTopicError(err)
 	}
 	if res.Event.Pts != 0 {
-		r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return &tg.Updates{
 				Updates: []tg.UpdateClass{tgChannelUpdate(viewerUserID, res.Event)},
 				Chats:   []tg.ChatClass{tgChannelChatMin(viewerUserID, res.Channel)},

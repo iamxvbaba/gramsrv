@@ -201,7 +201,7 @@ func (r *Router) onMessagesUnpinAllMessages(ctx context.Context, req *tg.Message
 		return nil, channelAdminErr(err)
 	}
 	r.invalidateRPCProjectionForChannel(res.Channel.ID)
-	r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+	r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 		return r.channelPinnedUpdates(viewerUserID, res)
 	})
 	return &tg.MessagesAffectedHistory{
@@ -370,23 +370,41 @@ func (r *Router) channelFanoutRecipients(ctx context.Context, scope channelFanou
 		online = provider.OnlineChannelMemberUserIDs(channelID, domain.MaxChannelRealtimeFanout)
 	case channelFanoutViewers:
 		online = provider.OnlineChannelUserIDs(channelID, domain.MaxChannelRealtimeFanout)
+	case channelFanoutMessageBox:
+		online = provider.OnlineChannelMemberUserIDs(channelID, domain.MaxChannelRealtimeFanout)
+		if subscriptions, ok := r.deps.Sessions.(ChannelSubscriptionProvider); ok {
+			online = append(online, subscriptions.OnlineChannelSubscriberUserIDs(channelID, domain.MaxChannelRealtimeFanout)...)
+		}
 	}
 	if len(online) == 0 {
 		return uniqueRecipientIDs(explicit)
 	}
-	active, err := r.deps.Channels.FilterActiveMemberIDs(ctx, channelID, online)
+	var (
+		authorized []int64
+		err        error
+	)
+	if scope == channelFanoutMembers {
+		authorized, err = r.deps.Channels.FilterActiveMemberIDs(ctx, channelID, online)
+	} else if audience, ok := r.deps.Channels.(ChannelMessageAudienceService); ok {
+		authorized, err = audience.FilterMessageAudienceIDs(ctx, channelID, online)
+	} else {
+		// Test/minimal adapters without public-preview authorization retain the
+		// former member-only behavior; production channels.Service implements
+		// ChannelMessageAudienceService.
+		authorized, err = r.deps.Channels.FilterActiveMemberIDs(ctx, channelID, online)
+	}
 	if err != nil {
 		return uniqueRecipientIDs(explicit)
 	}
-	if len(active) == 0 && len(explicit) == 0 {
+	if len(authorized) == 0 && len(explicit) == 0 {
 		return nil
 	}
-	if len(active) > domain.MaxChannelRealtimeFanout {
-		active = active[:domain.MaxChannelRealtimeFanout]
+	if len(authorized) > domain.MaxChannelRealtimeFanout {
+		authorized = authorized[:domain.MaxChannelRealtimeFanout]
 	}
-	out := uniqueRecipientIDs(active)
+	out := uniqueRecipientIDs(authorized)
 	seen := make(map[int64]struct{}, len(out)+len(explicit))
-	for _, userID := range active {
+	for _, userID := range authorized {
 		if userID == 0 {
 			continue
 		}

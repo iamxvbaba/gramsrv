@@ -214,6 +214,16 @@ type OnlineUserProvider interface {
 	OnlineChannelMemberUserIDs(channelID int64, limit int) []int64
 }
 
+// ChannelSubscriptionProvider is the bounded process-local implementation of
+// Telegram's public-channel short-poll subscription. A successful
+// updates.getChannelDifference refresh from one session enables passive channel
+// updates for the whole user account until the subscription expires.
+type ChannelSubscriptionProvider interface {
+	RefreshChannelSubscription(rawAuthKeyID [8]byte, sessionID, userID, channelID int64, ttl time.Duration)
+	OnlineChannelSubscriberUserIDs(channelID int64, limit int) []int64
+	OnlineChannelSubscriberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64
+}
+
 // ChannelNudgeProvider 暴露「频道在线成员中排除已投递集合后的剩余 user id」，用于 >cap
 // 在线成员的 UpdateChannelTooLong nudge（P0-8）。SessionManager 实现；测试/未装配 fake 可不实现
 // （type-assert 失败时跳过 nudge，不影响完整 payload 投递）。
@@ -759,6 +769,13 @@ type ChannelsService interface {
 	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error
 	InviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+}
+
+// ChannelMessageAudienceService is the optional production authorization
+// boundary for public short-poll subscribers. Lightweight test/domain adapters
+// that only model joined members may omit it and retain member-only behavior.
+type ChannelMessageAudienceService interface {
+	FilterMessageAudienceIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
 }
 
 // ChannelAuthoritativeProjectionService bypasses long-lived channel read

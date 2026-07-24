@@ -858,6 +858,51 @@ func TestSessionManagerChannelInterestIndex(t *testing.T) {
 	}
 }
 
+func TestSessionManagerChannelSubscriptionsAreBoundedDeduplicatedAndExpire(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	rawOne := [8]byte{1, 2, 3}
+	rawTwo := [8]byte{4, 5, 6}
+	first := &Conn{sessionID: 41, authKeyID: rawOne}
+	second := &Conn{sessionID: 42, authKeyID: rawTwo}
+	sm.Register(first)
+	sm.Register(second)
+	sm.BindUserForAuthKey(rawOne, 41, 100)
+	sm.BindUserForAuthKey(rawTwo, 42, 100)
+
+	sm.RefreshChannelSubscription(rawOne, 41, 100, 10, time.Second)
+	sm.RefreshChannelSubscription(rawTwo, 42, 100, 10, time.Second)
+	if got := sm.OnlineChannelSubscriberUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
+		t.Fatalf("deduplicated subscribers = %v, want [100]", got)
+	}
+	if got := sm.OnlineChannelIDsSnapshot(); len(got) != 1 || got[0] != 10 {
+		t.Fatalf("subscribed channel snapshot = %v, want [10]", got)
+	}
+
+	for channelID := int64(20); channelID < 20+maxChannelSubscriptionsPerSession; channelID++ {
+		sm.RefreshChannelSubscription(rawOne, 41, 100, channelID, time.Second)
+	}
+	// Channel 10 already consumes one of the ten slots, so channel 29 must be
+	// refused rather than growing the session-controlled index to eleven.
+	if got := sm.OnlineChannelSubscriberUserIDs(29, 10); len(got) != 0 {
+		t.Fatalf("subscriber beyond per-session cap = %v, want empty", got)
+	}
+	if got := sm.OnlineChannelSubscriberUserIDsExcluding(10, map[int64]struct{}{100: {}}, 10); len(got) != 0 {
+		t.Fatalf("excluded subscribers = %v, want empty", got)
+	}
+
+	sm.RefreshChannelSubscription(rawTwo, 42, 100, 99, 10*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+	if got := sm.OnlineChannelSubscriberUserIDs(99, 10); len(got) != 0 {
+		t.Fatalf("expired subscribers = %v, want empty", got)
+	}
+
+	sm.Unregister(first)
+	sm.Unregister(second)
+	if got := sm.OnlineChannelSubscriberUserIDs(10, 10); len(got) != 0 {
+		t.Fatalf("subscribers after unregister = %v, want empty", got)
+	}
+}
+
 func TestSessionManagerClearsChannelIndexesOnAuthAndReadinessChanges(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	raw := [8]byte{1, 2, 3}
@@ -869,12 +914,16 @@ func TestSessionManagerClearsChannelIndexesOnAuthAndReadinessChanges(t *testing.
 
 	track := func() {
 		sm.TrackChannelInterest(raw, 42, 100, []int64{10})
+		sm.RefreshChannelSubscription(raw, 42, 100, 10, time.Second)
 		sm.SetSessionChannelMemberships(raw, 42, 100, []int64{10}, sm.ChannelMembershipGeneration(raw, 42))
 		if got := sm.OnlineChannelUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
 			t.Fatalf("channel viewers before cleanup = %v, want [100]", got)
 		}
 		if got := sm.OnlineChannelMemberUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
 			t.Fatalf("channel members before cleanup = %v, want [100]", got)
+		}
+		if got := sm.OnlineChannelSubscriberUserIDs(10, 10); len(got) != 1 || got[0] != 100 {
+			t.Fatalf("channel subscribers before cleanup = %v, want [100]", got)
 		}
 	}
 	assertCleared := func(label string) {
@@ -883,6 +932,9 @@ func TestSessionManagerClearsChannelIndexesOnAuthAndReadinessChanges(t *testing.
 		}
 		if got := sm.OnlineChannelMemberUserIDs(10, 10); len(got) != 0 {
 			t.Fatalf("%s members = %v, want empty", label, got)
+		}
+		if got := sm.OnlineChannelSubscriberUserIDs(10, 10); len(got) != 0 {
+			t.Fatalf("%s subscribers = %v, want empty", label, got)
 		}
 	}
 
