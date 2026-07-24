@@ -207,6 +207,45 @@ func TestReadModelChangeListenerInvalidatesPrivateMediaCountCache(t *testing.T) 
 	}
 }
 
+func TestReadModelChangeListenerInvalidatesAccountSettingsCache(t *testing.T) {
+	settings := &fakeAccountSettingsReadModelCache{}
+	listener := NewReadModelChangeListener("", ReadModelCacheSet{
+		AccountSettings: settings,
+	}, nil)
+
+	listener.handlePayload(`{"model":"account_settings","owner_user_id":100,"peer_type":"user","peer_id":100,"version":2}`)
+	if len(settings.invalidated) != 1 || settings.invalidated[0] != 100 {
+		t.Fatalf("account_settings invalidations = %v, want [100]", settings.invalidated)
+	}
+	if len(settings.warmed) != 1 || settings.warmed[0] != 100 {
+		t.Fatalf("account_settings warmups = %v, want [100]", settings.warmed)
+	}
+
+	listener.flush("test")
+	if settings.flushes != 1 {
+		t.Fatalf("account_settings flushes = %d, want 1", settings.flushes)
+	}
+}
+
+type fakeAccountSettingsReadModelCache struct {
+	invalidated []int64
+	warmed      []int64
+	flushes     int
+}
+
+func (f *fakeAccountSettingsReadModelCache) InvalidateAccountSettingsReadModel(userID int64) {
+	f.invalidated = append(f.invalidated, userID)
+}
+
+func (f *fakeAccountSettingsReadModelCache) FlushAccountSettingsReadModel() {
+	f.flushes++
+}
+
+func (f *fakeAccountSettingsReadModelCache) WarmAccountSettingsReadModel(_ context.Context, userID int64) error {
+	f.warmed = append(f.warmed, userID)
+	return nil
+}
+
 // TestReadModelChangeListenerBotFullFlushesChannelFullBots 回归: bot 改资料(bot_full 事件,
 // 迁移 0013)须 flush channelFullBotInfoCache(否则群信息页 bot 简介/命令跨实例陈旧至 TTL);
 // 普通用户的 user_base 事件不得 flush(否则该缓存形同虚设)。

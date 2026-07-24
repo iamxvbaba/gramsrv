@@ -110,6 +110,14 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return nil, err
 	}
+	if toPeer.Type == domain.PeerTypeUser {
+		if req.AllowPaidFloodskip {
+			return nil, paymentUnsupportedErr()
+		}
+		if err := r.ensurePrivateContactAllowed(ctx, userID, toPeer.ID, req.AllowPaidStars, len(absentIndexes)); err != nil {
+			return nil, err
+		}
+	}
 	absentIDs := make([]int, len(absentIndexes))
 	absentRandomIDs := make([]int64, len(absentIndexes))
 	for i, originalIndex := range absentIndexes {

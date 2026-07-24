@@ -363,6 +363,21 @@ func (s *Service) CanContactForFreeBatch(ctx context.Context, ownerUserIDs []int
 	return out, nil
 }
 
+// ViewerIsPremium reads the same bounded viewer-facts read model used by
+// AllowPremium privacy rules. Contact permission checks must not bypass that
+// cache with a per-send users-table query.
+func (s *Service) ViewerIsPremium(ctx context.Context, viewerUserID int64) (bool, error) {
+	if viewerUserID == 0 {
+		return false, nil
+	}
+	facts, err := s.loadViewerFacts(ctx, []int64{viewerUserID})
+	if err != nil {
+		return false, err
+	}
+	fact := facts[viewerUserID]
+	return fact.Found && !fact.Bot && fact.PremiumUntil > s.now().Unix(), nil
+}
+
 // CanSeeMatrix 批量评估 owners × viewers × keys 的可见性矩阵，结果等价于逐 (owner,viewer,key)
 // 调 CanSee，但只用一次 ListPrivacyRules + 每 owner 一次 GetMany(owner,viewers) + 内存 Evaluate
 // （把 fan-out 投影从 O(viewer) 次 privacy 查询降到 O(owner)）。返回 map[owner]map[viewer]map[key]bool。

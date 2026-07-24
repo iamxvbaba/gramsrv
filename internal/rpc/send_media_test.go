@@ -14,6 +14,7 @@ import (
 
 	appmessages "telesrv/internal/app/messages"
 	apppolls "telesrv/internal/app/polls"
+	appprivacy "telesrv/internal/app/privacy"
 	appstories "telesrv/internal/app/stories"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
@@ -36,6 +37,8 @@ type fakeFiles struct {
 	resolveWebPageFn   func(string) (domain.MessageWebPage, error)
 	lookupWebPageFn    func(string) (domain.MessageWebPage, bool)
 	webPagePreviewOn   bool
+	getDocumentsCalls  int
+	createUploadCalls  int
 }
 
 type fakeProfilePhotoKey struct {
@@ -78,6 +81,7 @@ func (f *fakeFiles) AvailableEffects(context.Context) ([]domain.AvailableEffect,
 	return append([]domain.AvailableEffect(nil), f.effects...), hash & 0x7fffffff, nil
 }
 func (f *fakeFiles) GetDocuments(_ context.Context, ids []int64) ([]domain.Document, error) {
+	f.getDocumentsCalls++
 	out := make([]domain.Document, 0, len(ids))
 	for _, id := range ids {
 		if d, ok := f.docs[id]; ok {
@@ -564,6 +568,7 @@ func fakeAvatarStaticSizes() []domain.PhotoSize {
 	}
 }
 func (f *fakeFiles) CreateDocumentFromUpload(_ context.Context, _ domain.UploadedFileRef, spec domain.DocumentSpec) (domain.Document, error) {
+	f.createUploadCalls++
 	return domain.Document{ID: 888, AccessHash: 8, DCID: 2, MimeType: spec.MimeType, Attributes: spec.Attributes}, nil
 }
 func (f *fakeFiles) CreateDocumentFromBytes(_ context.Context, data []byte, spec domain.DocumentSpec) (domain.Document, error) {
@@ -834,6 +839,73 @@ func TestSendMediaPrivateSticker(t *testing.T) {
 	}
 	if !hasSticker {
 		t.Error("document missing sticker attribute")
+	}
+}
+
+func TestSendMediaVoicePrivacyPreflightsBeforeUploadMaterialization(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	files := r.deps.Files.(*fakeFiles)
+	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+	if _, err := privacy.SetRules(ctx, friend.ID, domain.PrivacyKeyVoiceMessages, []domain.PrivacyRule{
+		{Kind: domain.PrivacyRuleDisallowAll},
+	}); err != nil {
+		t.Fatalf("set voice privacy: %v", err)
+	}
+	r.deps.Privacy = privacy
+
+	_, err := r.onMessagesSendMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMediaRequest{
+		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Media: &tg.InputMediaUploadedDocument{
+			File:       &tg.InputFile{ID: 7001, Parts: 1, Name: "voice.ogg"},
+			MimeType:   "audio/ogg",
+			Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeAudio{Voice: true, Duration: 1}},
+		},
+		RandomID: 7001,
+	})
+	if err == nil || !tgerr.Is(err, "CHAT_SEND_VOICES_FORBIDDEN") {
+		t.Fatalf("send uploaded voice err=%v, want CHAT_SEND_VOICES_FORBIDDEN", err)
+	}
+	if files.createUploadCalls != 0 {
+		t.Fatalf("uploaded voice materialized %d documents before privacy rejection", files.createUploadCalls)
+	}
+	if files.getDocumentsCalls != 0 {
+		t.Fatalf("uploaded voice unexpectedly loaded documents: calls=%d", files.getDocumentsCalls)
+	}
+}
+
+func TestSendMediaVoicePrivacyBatchesReferencedDocumentPreflight(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	files := r.deps.Files.(*fakeFiles)
+	files.docs[7011] = domain.Document{
+		ID:         7011,
+		AccessHash: 71,
+		Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrVideo, RoundMessage: true}},
+	}
+	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+	if _, err := privacy.SetRules(ctx, friend.ID, domain.PrivacyKeyVoiceMessages, []domain.PrivacyRule{
+		{Kind: domain.PrivacyRuleDisallowAll},
+	}); err != nil {
+		t.Fatalf("set voice privacy: %v", err)
+	}
+	r.deps.Privacy = privacy
+
+	_, err := r.onMessagesSendMedia(WithUserID(ctx, owner.ID), &tg.MessagesSendMediaRequest{
+		Peer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Media: &tg.InputMediaDocument{ID: &tg.InputDocument{
+			ID: 7011, AccessHash: 71,
+		}},
+		RandomID: 7011,
+	})
+	if err == nil || !tgerr.Is(err, "CHAT_SEND_VOICES_FORBIDDEN") {
+		t.Fatalf("send referenced round video err=%v, want CHAT_SEND_VOICES_FORBIDDEN", err)
+	}
+	if files.getDocumentsCalls != 1 {
+		t.Fatalf("referenced document preflight loads=%d, want one bounded batch", files.getDocumentsCalls)
+	}
+	if files.createUploadCalls != 0 {
+		t.Fatalf("referenced document path unexpectedly materialized upload: calls=%d", files.createUploadCalls)
 	}
 }
 

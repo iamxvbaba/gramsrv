@@ -47,7 +47,8 @@ type outgoingSend struct {
 	groupedID int64
 	// effect 是消息特效 id（私聊专属，0 表无特效）。调用方已对 catalog 校验合法性；
 	// 频道侧忽略（官方群/频道不渲染特效）。
-	effect int64
+	effect         int64
+	allowPaidStars int64
 }
 
 // sendOutgoing 把一条出站消息落地到私聊或频道，返回 *tg.Updates、是否重复、错误。
@@ -126,6 +127,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	}
 	if r.deps.Messages == nil {
 		return nil, false, peerIDInvalidErr()
+	}
+	if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, p.allowPaidStars, 1); err != nil {
+		return nil, false, err
 	}
 	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, p.media != nil && p.media.HasUnreadPayload()); err != nil {
 		return nil, false, err
@@ -357,7 +361,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 			ClearDraft:             req.ClearDraft,
 		})
 	}
-	if req.AllowPaidStars > 0 || req.AllowPaidFloodskip {
+	if req.AllowPaidFloodskip {
 		return nil, paymentUnsupportedErr()
 	}
 	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
@@ -417,6 +421,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 			replyToInput:           req.ReplyTo,
 			sendAsInput:            req.SendAs,
 			clearDraft:             req.ClearDraft,
+			allowPaidStars:         req.AllowPaidStars,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 	}
 	updates, _, err := r.sendOutgoing(ctx, userID, peer, outgoingSend{
@@ -433,6 +438,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 		clearDraft:             req.ClearDraft,
 		replyMarkup:            replyMarkup,
 		effect:                 req.Effect,
+		allowPaidStars:         req.AllowPaidStars,
 	})
 	if err != nil {
 		return nil, err
@@ -451,6 +457,12 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	}
 	if len(req.MultiMedia) == 0 || len(req.MultiMedia) > maxSendMultiMediaItems {
 		return nil, limitInvalidErr()
+	}
+	if req.AllowPaidStars < 0 {
+		return nil, starsAmountInvalidErr()
+	}
+	if req.AllowPaidFloodskip {
+		return nil, paymentUnsupportedErr()
 	}
 	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
 	if !ok || peer.ID == 0 {
@@ -510,6 +522,14 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return nil, err
+	}
+	if peer.Type == domain.PeerTypeUser {
+		if req.AllowPaidFloodskip {
+			return nil, paymentUnsupportedErr()
+		}
+		if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, req.AllowPaidStars, absentCount); err != nil {
+			return nil, err
+		}
 	}
 	pendingMedia := make([]tg.InputMediaClass, 0, absentCount)
 	for i, item := range req.MultiMedia {
@@ -571,6 +591,7 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			sendAsInput:            req.SendAs,
 			clearDraft:             clearDraftPending,
 			groupedID:              groupedID,
+			allowPaidStars:         req.AllowPaidStars,
 		}
 		var result tg.UpdatesClass
 		duplicate := false

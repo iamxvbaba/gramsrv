@@ -141,10 +141,6 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		}
 		return updates, nil
 	}
-	if req.AllowPaidStars > 0 {
-		sendErr = paymentUnsupportedErr()
-		return nil, sendErr
-	}
 	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
 	if err != nil {
 		sendErr = err
@@ -227,6 +223,7 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			sendAsInput:            req.SendAs,
 			clearDraft:             req.ClearDraft,
 			richMessage:            richMessage,
+			allowPaidStars:         req.AllowPaidStars,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 		if err != nil {
 			sendErr = err
@@ -249,6 +246,7 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		replyMarkup:            replyMarkup,
 		richMessage:            richMessage,
 		effect:                 req.Effect,
+		allowPaidStars:         req.AllowPaidStars,
 	})
 	duplicate = dup
 	if err != nil {

@@ -937,6 +937,7 @@ func run(logger *zap.Logger) error {
 		BaseUsers:          userCache,
 		BotProfiles:        botsService,
 		StarGifts:          giftsService,
+		AccountSettings:    router,
 	}, logger.Named("store").Named("read-model-listener"))
 	go readModelListener.Run(ctx)
 	activeSessions.SetLifecycleObserver(router)
