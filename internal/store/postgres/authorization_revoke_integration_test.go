@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 	"telesrv/internal/store"
 )
 
-func TestAuthorizationStoreRevokeByHashDeletesProtocolKeyCascadePostgres(t *testing.T) {
+func TestAuthorizationStoreRevokeByHashKeepsProtocolIdentityPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "hash")
@@ -43,14 +42,15 @@ func TestAuthorizationStoreRevokeByHashDeletesProtocolKeyCascadePostgres(t *test
 	if err := NewUpdateStateStore(pool).Save(ctx, perm, userID, domain.UpdateState{Pts: 11, Date: int(time.Now().Unix())}); err != nil {
 		t.Fatalf("save update state: %v", err)
 	}
-	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, domain.TempAuthKeyBinding{
+	binding := domain.TempAuthKeyBinding{
 		TempAuthKeyID:    temp,
 		PermAuthKeyID:    authKeyIDToInt64(perm),
 		Nonce:            1,
 		TempSessionID:    2,
 		ExpiresAt:        tempExpiry,
 		EncryptedMessage: []byte{1, 2, 3, 4},
-	}); err != nil {
+	}
+	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, binding); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
 
@@ -61,14 +61,14 @@ func TestAuthorizationStoreRevokeByHashDeletesProtocolKeyCascadePostgres(t *test
 	if deleted.AuthKeyID != perm || !deleted.PasswordPending {
 		t.Fatalf("deleted authorization = %+v, want perm key and password_pending", deleted)
 	}
-	assertRevokeTestMissingAuthKey(t, ctx, keys, perm)
-	assertRevokeTestMissingAuthKey(t, ctx, keys, temp)
+	assertRevokeTestPresentAuthKey(t, ctx, keys, perm)
+	assertRevokeTestPresentAuthKey(t, ctx, keys, temp)
 	assertRevokeTestNoAuthorization(t, ctx, auths, perm)
 	assertRevokeTestTableCount(t, ctx, pool, "update_states", "auth_key_id", authKeyIDToInt64(perm), 0)
-	assertRevokeTestTableCount(t, ctx, pool, "temp_auth_key_bindings", "temp_auth_key_id", authKeyIDToInt64(temp), 0)
+	assertTempIdentityBinding(t, ctx, NewTempAuthKeyBindingStore(pool), binding)
 }
 
-func TestAuthorizationStoreRevokeByUserExceptDeletesOnlyRevokedKeysPostgres(t *testing.T) {
+func TestAuthorizationStoreRevokeByUserExceptKeepsRevokedProtocolIdentitiesPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "bulk")
@@ -87,14 +87,15 @@ func TestAuthorizationStoreRevokeByUserExceptDeletesOnlyRevokedKeysPostgres(t *t
 	}
 	tempExpiry := int(time.Now().Add(time.Hour).Unix())
 	saveRevokeTestAuthKey(t, ctx, keys, tempForTwo, tempExpiry)
-	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, domain.TempAuthKeyBinding{
+	binding := domain.TempAuthKeyBinding{
 		TempAuthKeyID:    tempForTwo,
 		PermAuthKeyID:    authKeyIDToInt64(revokedTwo),
 		Nonce:            3,
 		TempSessionID:    4,
 		ExpiresAt:        tempExpiry,
 		EncryptedMessage: []byte{5, 6, 7, 8},
-	}); err != nil {
+	}
+	if err := NewTempAuthKeyBindingStore(pool).Save(ctx, binding); err != nil {
 		t.Fatalf("save temp binding: %v", err)
 	}
 
@@ -107,9 +108,12 @@ func TestAuthorizationStoreRevokeByUserExceptDeletesOnlyRevokedKeysPostgres(t *t
 	}
 	assertRevokeTestPresentAuthKey(t, ctx, keys, keep)
 	assertRevokeTestPresentAuthorization(t, ctx, auths, keep)
-	assertRevokeTestMissingAuthKey(t, ctx, keys, revokedOne)
-	assertRevokeTestMissingAuthKey(t, ctx, keys, revokedTwo)
-	assertRevokeTestMissingAuthKey(t, ctx, keys, tempForTwo)
+	assertRevokeTestPresentAuthKey(t, ctx, keys, revokedOne)
+	assertRevokeTestPresentAuthKey(t, ctx, keys, revokedTwo)
+	assertRevokeTestPresentAuthKey(t, ctx, keys, tempForTwo)
+	assertRevokeTestNoAuthorization(t, ctx, auths, revokedOne)
+	assertRevokeTestNoAuthorization(t, ctx, auths, revokedTwo)
+	assertTempIdentityBinding(t, ctx, NewTempAuthKeyBindingStore(pool), binding)
 }
 
 func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
@@ -155,7 +159,7 @@ func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
 	}
 }
 
-func TestAuthorizationStoreRevokeByHashConcurrentTempBindLeavesNoDanglingStatePostgres(t *testing.T) {
+func TestAuthorizationStoreRevokeByHashConcurrentTempBindKeepsProtocolIdentityPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	userID := createRevokeTestUser(t, ctx, pool, "bind-revoke-race")
@@ -203,28 +207,17 @@ func TestAuthorizationStoreRevokeByHashConcurrentTempBindLeavesNoDanglingStatePo
 		close(start)
 
 		bindErr := <-bindResult
-		if bindErr != nil && !errors.Is(bindErr, store.ErrAuthKeyBindingInvalid) {
+		if bindErr != nil {
 			t.Fatalf("attempt %d bind/revoke race bind error = %v", attempt, bindErr)
 		}
 		revoked := <-revokeResults
 		if revoked.err != nil || !revoked.found {
 			t.Fatalf("attempt %d bind/revoke race found=%v err=%v", attempt, revoked.found, revoked.err)
 		}
-		if _, found, err := bindings.GetByTemp(ctx, temp); err != nil || found {
-			t.Fatalf("attempt %d dangling binding found=%v err=%v", attempt, found, err)
-		}
-		assertRevokeTestMissingAuthKey(t, ctx, keys, perm)
+		assertTempIdentityBinding(t, ctx, bindings, candidate)
+		assertRevokeTestPresentAuthKey(t, ctx, keys, perm)
+		assertRevokeTestPresentAuthKey(t, ctx, keys, temp)
 		assertRevokeTestNoAuthorization(t, ctx, auths, perm)
-		if bindErr == nil {
-			assertRevokeTestMissingAuthKey(t, ctx, keys, temp)
-		} else {
-			assertTempIdentityAuthKeyExpiry(t, ctx, keys, temp, tempExpiry)
-			assertRevokeTestNoAuthorization(t, ctx, auths, temp)
-			if err := keys.Delete(ctx, temp); err != nil {
-				t.Fatalf("attempt %d clean unbound loser temp: %v", attempt, err)
-			}
-			assertRevokeTestMissingAuthKey(t, ctx, keys, temp)
-		}
 	}
 }
 
@@ -520,12 +513,10 @@ func TestAuthorizationStoreRevokeByUserExceptPartiallySkipsTransferredCandidateP
 		t.Fatalf("old A state for transferred key found=%v err=%v, want absent", found, err)
 	}
 
-	assertRevokeTestMissingAuthKey(t, testCtx, keys, revoked)
-	assertRevokeTestMissingAuthKey(t, testCtx, keys, revokedTemp)
+	assertRevokeTestPresentAuthKey(t, testCtx, keys, revoked)
+	assertRevokeTestPresentAuthKey(t, testCtx, keys, revokedTemp)
 	assertRevokeTestNoAuthorization(t, testCtx, auths, revoked)
-	if _, found, err := bindings.GetByTemp(testCtx, revokedTemp); err != nil || found {
-		t.Fatalf("revoked temp binding found=%v err=%v, want absent", found, err)
-	}
+	assertTempIdentityBinding(t, testCtx, bindings, revokedBinding)
 	if _, found, err := states.Get(testCtx, revoked, userA); err != nil || found {
 		t.Fatalf("revoked A state found=%v err=%v, want absent", found, err)
 	}

@@ -12,6 +12,11 @@ import "github.com/iamxvbaba/td/tg"
 func rpcAllowedWithoutAuthorization(id uint32) bool {
 	switch id {
 	case tg.AuthBindTempAuthKeyRequestTypeID,
+		// TWeb handles a 401 from a remotely revoked session by sending
+		// auth.logOut before it clears IndexedDB/local authorization state.
+		// This cleanup RPC is idempotent when no authorization remains; rejecting
+		// it with another 401 makes Web repeat its startup/logout cycle forever.
+		tg.AuthLogOutRequestTypeID,
 		tg.AuthExportLoginTokenRequestTypeID,
 		tg.AuthImportLoginTokenRequestTypeID,
 		tg.AuthAcceptLoginTokenRequestTypeID,

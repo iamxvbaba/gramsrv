@@ -535,7 +535,7 @@ func TestLogOutThenSignInSameAuthKeySwitchesUser(t *testing.T) {
 	}
 }
 
-func TestResetAuthorizationDeletesProtocolAuthKey(t *testing.T) {
+func TestResetAuthorizationKeepsProtocolAuthKeyForRPCLogout(t *testing.T) {
 	ctx := context.Background()
 	authz := memory.NewAuthorizationStore()
 	keys := memory.NewAuthKeyStore()
@@ -562,15 +562,15 @@ func TestResetAuthorizationDeletesProtocolAuthKey(t *testing.T) {
 	if err != nil || !found || deleted.AuthKeyID != key {
 		t.Fatalf("ResetAuthorization deleted=%x found=%v err=%v, want key %x", deleted.AuthKeyID, found, err, key)
 	}
-	if _, found, err := keys.Get(ctx, key); err != nil || found {
-		t.Fatalf("auth key after reset found=%v err=%v, want missing", found, err)
+	if _, found, err := keys.Get(ctx, key); err != nil || !found {
+		t.Fatalf("auth key after reset found=%v err=%v, want present for RPC 401", found, err)
 	}
 	if _, found, err := svc.UserID(ctx, key); err != nil || found {
 		t.Fatalf("user after reset found=%v err=%v, want missing", found, err)
 	}
 }
 
-func TestResetAuthorizationsDeletesOnlyRevokedProtocolAuthKeys(t *testing.T) {
+func TestResetAuthorizationsKeepsRevokedProtocolAuthKeys(t *testing.T) {
 	ctx := context.Background()
 	authz := memory.NewAuthorizationStore()
 	keys := memory.NewAuthKeyStore()
@@ -600,11 +600,17 @@ func TestResetAuthorizationsDeletesOnlyRevokedProtocolAuthKeys(t *testing.T) {
 	if err != nil || len(deleted) != 1 || deleted[0].AuthKeyID != revoked {
 		t.Fatalf("ResetAuthorizations deleted=%v err=%v, want revoked key", deleted, err)
 	}
-	if _, found, err := keys.Get(ctx, revoked); err != nil || found {
-		t.Fatalf("revoked auth key found=%v err=%v, want missing", found, err)
+	if _, found, err := keys.Get(ctx, revoked); err != nil || !found {
+		t.Fatalf("revoked auth key found=%v err=%v, want present for RPC 401", found, err)
 	}
 	if _, found, err := keys.Get(ctx, keep); err != nil || !found {
 		t.Fatalf("kept auth key found=%v err=%v, want present", found, err)
+	}
+	if _, found, err := svc.UserID(ctx, revoked); err != nil || found {
+		t.Fatalf("revoked user found=%v err=%v, want missing", found, err)
+	}
+	if got, found, err := svc.UserID(ctx, keep); err != nil || !found || got != u.ID {
+		t.Fatalf("kept user=%d found=%v err=%v, want %d", got, found, err, u.ID)
 	}
 }
 
