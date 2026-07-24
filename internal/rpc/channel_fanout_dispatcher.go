@@ -634,9 +634,9 @@ func (d *channelFanoutDispatcher) Enqueue(reqCtx context.Context, job channelFan
 		d.releaseQueuedJob(job)
 	}
 	d.dropped.Add(1)
-	if job.scope != channelFanoutMembers || job.pts <= 0 {
-		// 当前所有 enqueue 入口均为 members + durable pts；若未来新增其它 scope，必须先
-		// 定义其 overflow 恢复面，不能误把 viewer-only/no-pts 更新伪装成 channel nudge。
+	if job.scope != channelFanoutMembers && job.scope != channelFanoutMessageBox || job.pts <= 0 {
+		// 只有 durable member/message-box payload 可折叠为 channel nudge；viewer-only/no-pts
+		// 更新没有 difference 恢复契约，不能伪装成 channel PTS 水位。
 		d.log.Error("channel fanout queue full for non-coalescible job; overflow contract violated",
 			zap.Int64("channel_id", job.channelID), zap.Int("pts", job.pts), zap.Int("scope", int(job.scope)))
 		d.enqueueMu.RUnlock()
@@ -867,7 +867,7 @@ func (r *Router) runChannelFanoutOverflowNudge(ctx context.Context, channelID in
 	if r.deps.Sessions == nil || channelID == 0 || pts <= 0 {
 		return true
 	}
-	return r.nudgeBeyondCapChannelMembers(ctx, channelID, pts, nil)
+	return r.nudgeBeyondCapChannelMessageAudience(ctx, channelID, pts, nil)
 }
 
 // runChannelFanoutJob 执行一条 fan-out：与同步 pushChannelUpdatesWithScope 等价，区别是
@@ -918,6 +918,8 @@ func (r *Router) runChannelFanoutJob(ctx context.Context, job channelFanoutJob) 
 	// 仅对会推进客户端 channel PtsWaiter 的真实 payload（members scope + 带 channel pts）做。
 	if job.scope == channelFanoutMembers && job.pts > 0 {
 		r.nudgeBeyondCapChannelMembers(pushCtx, job.channelID, job.pts, seen)
+	} else if job.scope == channelFanoutMessageBox && job.pts > 0 {
+		r.nudgeBeyondCapChannelMessageAudience(pushCtx, job.channelID, job.pts, seen)
 	}
 }
 
@@ -975,7 +977,7 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessageFanoutOwnerIDs(res, extraUserIDs)
 	skip := skipDeliverySet(res.SkipDeliveryUserIDs)
-	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMembers, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
+	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
 		0,
 		func(bgCtx context.Context, viewers []int64) {
 			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
@@ -1056,7 +1058,7 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelEditMessageFanoutOwnerIDs(res)
 	nudgePts := max(res.Event.Pts, res.ServiceEvent.Pts)
-	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMembers, originUserID, res.Channel.ID, nudgePts, res.Recipients,
+	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, nudgePts, res.Recipients,
 		0,
 		func(bgCtx context.Context, viewers []int64) {
 			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
@@ -1073,7 +1075,7 @@ func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID,
 	r.enqueueBotAPIChannelMessagesUpdate(ctx, originUserID, results)
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessagesFanoutOwnerIDs(results, extraUserIDs)
-	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMembers, originUserID, channelID, pts, recipients,
+	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, channelID, pts, recipients,
 		int64(len(results))*(64<<10),
 		func(bgCtx context.Context, viewers []int64) {
 			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
@@ -1135,4 +1137,82 @@ func (r *Router) nudgeBeyondCapChannelMembers(ctx context.Context, channelID int
 		r.pushUserUpdates(ctx, userID, updates)
 	}
 	return ctx.Err() == nil
+}
+
+// nudgeBeyondCapChannelMessageAudience extends member recovery to users with an
+// unexpired public-channel short-poll subscription. Subscribers are selected
+// first (normally a tiny set), then the remaining bounded capacity is filled
+// with joined members. One authoritative batched audience check prevents stale
+// runtime indexes from leaking even the channel id/pts to revoked viewers.
+func (r *Router) nudgeBeyondCapChannelMessageAudience(ctx context.Context, channelID int64, pts int, delivered map[int64]struct{}) bool {
+	if r.deps.Sessions == nil || channelID == 0 || pts <= 0 {
+		return true
+	}
+	if r.deps.Channels == nil {
+		return r.nudgeBeyondCapChannelMembers(ctx, channelID, pts, delivered)
+	}
+	audience, ok := r.deps.Channels.(ChannelMessageAudienceService)
+	if !ok {
+		return r.nudgeBeyondCapChannelMembers(ctx, channelID, pts, delivered)
+	}
+	limit := r.channelNudgeMaxTargets()
+	excluded := make(map[int64]struct{}, len(delivered)+16)
+	for userID := range delivered {
+		excluded[userID] = struct{}{}
+	}
+	candidates := make([]int64, 0, min(limit, 64))
+	if subscriptions, ok := r.deps.Sessions.(ChannelSubscriptionProvider); ok {
+		for _, userID := range subscriptions.OnlineChannelSubscriberUserIDsExcluding(channelID, excluded, limit) {
+			if userID == 0 {
+				continue
+			}
+			excluded[userID] = struct{}{}
+			candidates = append(candidates, userID)
+			if len(candidates) >= limit {
+				break
+			}
+		}
+	}
+	if len(candidates) < limit {
+		if members, ok := r.deps.Sessions.(ChannelNudgeProvider); ok {
+			for _, userID := range members.OnlineChannelMemberUserIDsExcluding(channelID, excluded, limit-len(candidates)) {
+				if userID == 0 {
+					continue
+				}
+				excluded[userID] = struct{}{}
+				candidates = append(candidates, userID)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return true
+	}
+	targets, err := audience.FilterMessageAudienceIDs(ctx, channelID, candidates)
+	if err != nil {
+		r.log.Warn("channel message audience nudge authorization failed",
+			zap.Int64("channel_id", channelID), zap.Int("pts", pts), zap.Error(err))
+		return false
+	}
+	if len(targets) == 0 {
+		return true
+	}
+	date := int(r.clock.Now().Unix())
+	tooLong := &tg.UpdateChannelTooLong{ChannelID: channelID}
+	tooLong.SetPts(pts)
+	updates := &tg.Updates{
+		Updates: []tg.UpdateClass{tooLong},
+		Users:   []tg.UserClass{},
+		Chats:   []tg.ChatClass{},
+		Date:    date,
+		Seq:     0,
+	}
+	for _, userID := range targets {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+		r.pushUserUpdates(ctx, userID, updates)
+	}
+	return true
 }

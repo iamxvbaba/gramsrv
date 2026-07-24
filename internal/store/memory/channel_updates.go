@@ -31,16 +31,6 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 	if preview {
 		dialog = previewChannelDialog(req.UserID, channel, member)
 	}
-	if preview && member.Status != domain.ChannelMemberActive {
-		return domain.ChannelDifference{
-			Channel: channel,
-			Self:    member,
-			Pts:     channel.Pts,
-			Final:   true,
-			Timeout: 30,
-			Dialog:  dialog,
-		}, nil
-	}
 	checkpoint := s.channelUpdateCheckpointLocked(req.ChannelID, channel)
 	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > limit {
 		messages := make([]domain.ChannelMessage, 0, domain.MaxChannelDifferenceTooLongMessages)
@@ -81,10 +71,15 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 			}
 		}
 	}
+	scanned := 0
 	for _, event := range s.events[req.ChannelID] {
 		if event.Pts <= req.Pts {
 			continue
 		}
+		if scanned >= limit {
+			break
+		}
+		scanned++
 		lastPts = event.Pts
 		visible, ok := domain.FilterChannelUpdateEventForAvailableMinID(cloneChannelEvent(event), member.AvailableMinID)
 		if !ok {
@@ -106,7 +101,7 @@ func (s *ChannelStore) ListChannelDifference(_ context.Context, req domain.Chann
 			Channel: channel,
 			Self:    member,
 			Pts:     maxInt(lastPts, req.Pts),
-			Final:   true,
+			Final:   lastPts >= channel.Pts,
 			Timeout: 30,
 			Dialog:  dialog,
 		}, nil

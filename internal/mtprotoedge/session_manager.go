@@ -56,6 +56,11 @@ const (
 	// 登记的 channel 数上限。membership 源于真实成员关系（大账号可能很多），interest 受客户端
 	// 直接控制；两者都设一个宽松上界防内存放大，超出即截断并记日志。
 	maxChannelIndexPerSession = 8192
+	// Official clients short-poll at most ten opened channels per session. Keep the
+	// server-side passive subscription index at the same hard bound.
+	maxChannelSubscriptionsPerSession = 10
+	defaultChannelSubscriptionTTL     = 75 * time.Second
+	maxChannelSubscriptionTTL         = 2 * time.Minute
 )
 
 // forceCloseBatchTimeout is one deadline for a whole revoke/replace/eviction batch. Conn.Close
@@ -136,6 +141,11 @@ type sessionKey struct {
 	sessionID int64
 }
 
+type channelSubscription struct {
+	userID    int64
+	expiresAt int64
+}
+
 // SessionLifecycleObserver receives active connection lifecycle events.
 type SessionLifecycleObserver interface {
 	SessionOffline(rawAuthKeyID [8]byte, sessionID, userID int64, lastForUser bool)
@@ -164,18 +174,20 @@ type SessionManager struct {
 	// claims owns the provisional -> active gap. A claimant is intentionally
 	// absent from every push/online index until its required session control frame
 	// is on the wire and PublishActivation validates the same owner.
-	claims            map[sessionKey]*Conn
-	claimsByAuth      map[[8]byte]map[int64]*Conn // raw authKeyID -> sessionID -> provisional claim
-	byAuthKey         map[[8]byte]map[int64]*Conn // raw authKeyID → sessionID → Conn
-	byBusinessAuthKey map[[8]byte]map[sessionKey]*Conn
-	byUser            map[int64]map[sessionKey]*Conn
-	byChannel         map[int64]map[sessionKey]int64 // channelID → session → userID，用于频道 active-viewer 临时推送
-	bySessionChannels map[sessionKey]map[int64]struct{}
-	byMemberChannel   map[int64]map[sessionKey]int64 // channelID → session → userID，用于已上线成员持久 update 推送
-	bySessionMembers  map[sessionKey]map[int64]struct{}
-	pending           map[sessionKey][]queuedPush // updates-ready 前暂存的主动推送
-	flushing          map[sessionKey]bool         // 置位时暂存正在排空的 session；排空完成前推送继续进 pending 保序
-	pendingBudget     *outboundTrackedBudget      // 未就绪 session 暂存 encoded body 的进程级上限
+	claims                 map[sessionKey]*Conn
+	claimsByAuth           map[[8]byte]map[int64]*Conn // raw authKeyID -> sessionID -> provisional claim
+	byAuthKey              map[[8]byte]map[int64]*Conn // raw authKeyID → sessionID → Conn
+	byBusinessAuthKey      map[[8]byte]map[sessionKey]*Conn
+	byUser                 map[int64]map[sessionKey]*Conn
+	byChannel              map[int64]map[sessionKey]int64 // channelID → session → userID，用于频道 active-viewer 临时推送
+	bySessionChannels      map[sessionKey]map[int64]struct{}
+	bySubscribedChannel    map[int64]map[sessionKey]channelSubscription
+	bySessionSubscriptions map[sessionKey]map[int64]int64
+	byMemberChannel        map[int64]map[sessionKey]int64 // channelID → session → userID，用于已上线成员持久 update 推送
+	bySessionMembers       map[sessionKey]map[int64]struct{}
+	pending                map[sessionKey][]queuedPush // updates-ready 前暂存的主动推送
+	flushing               map[sessionKey]bool         // 置位时暂存正在排空的 session；排空完成前推送继续进 pending 保序
+	pendingBudget          *outboundTrackedBudget      // 未就绪 session 暂存 encoded body 的进程级上限
 
 	lifecycle SessionLifecycleObserver
 	log       *zap.Logger
@@ -187,20 +199,22 @@ func NewSessionManager(log *zap.Logger) *SessionManager {
 		log = zap.NewNop()
 	}
 	return &SessionManager{
-		bySession:         make(map[sessionKey]*Conn),
-		claims:            make(map[sessionKey]*Conn),
-		claimsByAuth:      make(map[[8]byte]map[int64]*Conn),
-		byAuthKey:         make(map[[8]byte]map[int64]*Conn),
-		byBusinessAuthKey: make(map[[8]byte]map[sessionKey]*Conn),
-		byUser:            make(map[int64]map[sessionKey]*Conn),
-		byChannel:         make(map[int64]map[sessionKey]int64),
-		bySessionChannels: make(map[sessionKey]map[int64]struct{}),
-		byMemberChannel:   make(map[int64]map[sessionKey]int64),
-		bySessionMembers:  make(map[sessionKey]map[int64]struct{}),
-		pending:           make(map[sessionKey][]queuedPush),
-		flushing:          make(map[sessionKey]bool),
-		pendingBudget:     newOutboundTrackedBudget(defaultPendingPushMaxBytes),
-		log:               log,
+		bySession:              make(map[sessionKey]*Conn),
+		claims:                 make(map[sessionKey]*Conn),
+		claimsByAuth:           make(map[[8]byte]map[int64]*Conn),
+		byAuthKey:              make(map[[8]byte]map[int64]*Conn),
+		byBusinessAuthKey:      make(map[[8]byte]map[sessionKey]*Conn),
+		byUser:                 make(map[int64]map[sessionKey]*Conn),
+		byChannel:              make(map[int64]map[sessionKey]int64),
+		bySessionChannels:      make(map[sessionKey]map[int64]struct{}),
+		bySubscribedChannel:    make(map[int64]map[sessionKey]channelSubscription),
+		bySessionSubscriptions: make(map[sessionKey]map[int64]int64),
+		byMemberChannel:        make(map[int64]map[sessionKey]int64),
+		bySessionMembers:       make(map[sessionKey]map[int64]struct{}),
+		pending:                make(map[sessionKey][]queuedPush),
+		flushing:               make(map[sessionKey]bool),
+		pendingBudget:          newOutboundTrackedBudget(defaultPendingPushMaxBytes),
+		log:                    log,
 	}
 }
 
@@ -730,8 +744,7 @@ func (m *SessionManager) bindUserLocked(c *Conn, key sessionKey, userID int64) {
 	if old := c.userID.Swap(userID); old != 0 {
 		removeUserIndex(m.byUser, old, key)
 		if old != userID {
-			m.clearChannelInterestsLocked(key)
-			m.clearChannelMembershipsLocked(c, key)
+			m.clearSessionChannelIndexesLocked(c, key)
 			c.membershipsSynced.Store(false)
 			// 身份变化即丢弃暂存推送：它们属于前一个账号，flush 给新账号是跨账号泄露。
 			// 同时取消进行中的排空（runFlush 还另有 owner 校验做批内兜底）。
@@ -743,8 +756,7 @@ func (m *SessionManager) bindUserLocked(c *Conn, key sessionKey, userID int64) {
 	if userID != 0 {
 		addUserIndex(m.byUser, userID, key, c)
 	} else {
-		m.clearChannelInterestsLocked(key)
-		m.clearChannelMembershipsLocked(c, key)
+		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		m.deletePendingLocked(key)
 		delete(m.flushing, key)
@@ -808,8 +820,7 @@ func (m *SessionManager) bindAuthKeyLocked(c *Conn, key sessionKey, authKeyID [8
 		if oldUserID != 0 {
 			removeUserIndex(m.byUser, oldUserID, key)
 		}
-		m.clearChannelInterestsLocked(key)
-		m.clearChannelMembershipsLocked(c, key)
+		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		m.deletePendingLocked(key)
 		delete(m.flushing, key)
@@ -1065,8 +1076,7 @@ func (m *SessionManager) UnbindAuthKey(authKeyID [8]byte) int {
 		if old := c.userID.Swap(0); old != 0 {
 			removeUserIndex(m.byUser, old, key)
 		}
-		m.clearChannelInterestsLocked(key)
-		m.clearChannelMembershipsLocked(c, key)
+		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		// 授权解除后暂存推送属于已登出的账号，不能等下一个登录者置位时 flush 出去。
 		m.deletePendingLocked(key)
@@ -1085,8 +1095,7 @@ func (m *SessionManager) UnbindAuthKey(authKeyID [8]byte) int {
 func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, receives bool) (int64, bool) {
 	if !receives {
 		c.receivesUpdates.Store(false)
-		m.clearChannelInterestsLocked(key)
-		m.clearChannelMembershipsLocked(c, key)
+		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		// 取消进行中的排空激活：runFlush 在置位前会复查该标志，标志已删则放弃置位，
 		// 避免把刚置 false 的开关翻回 true。
@@ -1099,8 +1108,7 @@ func (m *SessionManager) setReceivesUpdatesLocked(c *Conn, key sessionKey, recei
 		// pending until generated exact admission freezes a real profile; do not
 		// start a flush which would fail layer binding and retire a healthy socket.
 		c.receivesUpdates.Store(false)
-		m.clearChannelInterestsLocked(key)
-		m.clearChannelMembershipsLocked(c, key)
+		m.clearSessionChannelIndexesLocked(c, key)
 		c.membershipsSynced.Store(false)
 		delete(m.flushing, key)
 		return 0, false
@@ -1900,6 +1908,102 @@ func (m *SessionManager) OnlineChannelUserIDs(channelID int64, limit int) []int6
 	return m.onlineChannelUsers(m.byChannel, channelID, limit)
 }
 
+// RefreshChannelSubscription refreshes one public-channel passive-update
+// subscription without replacing the other short-polled channels of the same
+// session. The index is runtime-only and bounded to the official client limit.
+func (m *SessionManager) RefreshChannelSubscription(rawAuthKeyID [8]byte, sessionID, userID, channelID int64, ttl time.Duration) {
+	if userID == 0 || channelID == 0 {
+		return
+	}
+	if ttl <= 0 {
+		ttl = defaultChannelSubscriptionTTL
+	} else if ttl > maxChannelSubscriptionTTL {
+		ttl = maxChannelSubscriptionTTL
+	}
+	key := sessionKey{authKeyID: rawAuthKeyID, sessionID: sessionID}
+	now := time.Now().UnixNano()
+	expiresAt := now + int64(ttl)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.bySession[key]
+	if !ok || c.userID.Load() != userID {
+		return
+	}
+	m.pruneSessionSubscriptionsLocked(key, now)
+	channels := m.bySessionSubscriptions[key]
+	if channels == nil {
+		channels = make(map[int64]int64, 1)
+		m.bySessionSubscriptions[key] = channels
+	}
+	if _, exists := channels[channelID]; !exists && len(channels) >= maxChannelSubscriptionsPerSession {
+		m.log.Warn("Channel passive subscription ignored at per-session cap",
+			zap.String("auth_key_id", sessionKeyLog(rawAuthKeyID)),
+			zap.Int64("session_id", sessionID),
+			zap.Int64("channel_id", channelID),
+			zap.Int("cap", maxChannelSubscriptionsPerSession))
+		return
+	}
+	channels[channelID] = expiresAt
+	sessions := m.bySubscribedChannel[channelID]
+	if sessions == nil {
+		sessions = make(map[sessionKey]channelSubscription)
+		m.bySubscribedChannel[channelID] = sessions
+	}
+	sessions[key] = channelSubscription{userID: userID, expiresAt: expiresAt}
+}
+
+// OnlineChannelSubscriberUserIDs returns users for which at least one live
+// session still holds an unexpired short-poll subscription. The user is
+// deduplicated because passive updates are subsequently pushed account-wide.
+func (m *SessionManager) OnlineChannelSubscriberUserIDs(channelID int64, limit int) []int64 {
+	return m.onlineChannelSubscriberUserIDsExcluding(channelID, nil, limit)
+}
+
+func (m *SessionManager) OnlineChannelSubscriberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64 {
+	return m.onlineChannelSubscriberUserIDsExcluding(channelID, exclude, limit)
+}
+
+func (m *SessionManager) onlineChannelSubscriberUserIDsExcluding(channelID int64, exclude map[int64]struct{}, limit int) []int64 {
+	if channelID == 0 {
+		return nil
+	}
+	now := time.Now().UnixNano()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sessions := m.bySubscribedChannel[channelID]
+	if len(sessions) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, positiveLimitOrLen(limit, len(sessions)))
+	seen := make(map[int64]struct{}, positiveLimitOrLen(limit, len(sessions)))
+	for key, subscription := range sessions {
+		if subscription.expiresAt <= now {
+			m.removeChannelSubscriptionLocked(key, channelID)
+			continue
+		}
+		if subscription.userID == 0 {
+			continue
+		}
+		if _, ok := exclude[subscription.userID]; ok {
+			continue
+		}
+		c, ok := m.bySession[key]
+		if !ok || c.userID.Load() != subscription.userID {
+			m.removeChannelSubscriptionLocked(key, channelID)
+			continue
+		}
+		if _, ok := seen[subscription.userID]; ok {
+			continue
+		}
+		seen[subscription.userID] = struct{}{}
+		out = append(out, subscription.userID)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
 // ChannelMembershipGeneration 返回该 session 的 membership 索引修订号。
 // 全量同步方必须在读取持久成员列表【之前】采样，并经 SetSessionChannelMemberships
 // 带回比对；session 不在线时返回 0（后续 Set 也会因查不到连接而放弃）。
@@ -2031,14 +2135,17 @@ func (m *SessionManager) OnlineChannelMemberUserIDsExcluding(channelID int64, ex
 	return out
 }
 
-// OnlineChannelIDsSnapshot returns every channel with at least one live joined-member session in
-// strictly ascending order. The global SessionManager lock is held only while copying map keys;
+// OnlineChannelIDsSnapshot returns every channel with at least one live joined-member session or
+// unexpired passive subscriber in strictly ascending order. The global SessionManager lock is held
+// only while copying map keys and pruning expired subscription entries;
 // sorting and all recovery database work happen after unlock. The fixed saturation-recovery actor
 // is the sole caller, so its exceptional-path temporary memory is one int64 slice (peak about 8*C
 // bytes) rather than repeated O(C) scans under the connection/membership lock.
 func (m *SessionManager) OnlineChannelIDsSnapshot() []int64 {
-	m.mu.RLock()
-	out := make([]int64, 0, len(m.byMemberChannel))
+	m.mu.Lock()
+	now := time.Now().UnixNano()
+	seen := make(map[int64]struct{}, len(m.byMemberChannel)+len(m.bySubscribedChannel))
+	out := make([]int64, 0, len(m.byMemberChannel)+len(m.bySubscribedChannel))
 	for channelID, sessions := range m.byMemberChannel {
 		if channelID <= 0 || len(sessions) == 0 {
 			continue
@@ -2053,9 +2160,35 @@ func (m *SessionManager) OnlineChannelIDsSnapshot() []int64 {
 		if !live {
 			continue
 		}
+		seen[channelID] = struct{}{}
 		out = append(out, channelID)
 	}
-	m.mu.RUnlock()
+	for channelID, sessions := range m.bySubscribedChannel {
+		if channelID <= 0 || len(sessions) == 0 {
+			continue
+		}
+		live := false
+		for key, subscription := range sessions {
+			if subscription.expiresAt <= now {
+				m.removeChannelSubscriptionLocked(key, channelID)
+				continue
+			}
+			c, ok := m.bySession[key]
+			if !ok || c.userID.Load() != subscription.userID {
+				m.removeChannelSubscriptionLocked(key, channelID)
+				continue
+			}
+			live = true
+		}
+		if !live {
+			continue
+		}
+		if _, exists := seen[channelID]; exists {
+			continue
+		}
+		out = append(out, channelID)
+	}
+	m.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
@@ -2105,8 +2238,7 @@ func (m *SessionManager) removeLocked(c *Conn, dropPending bool) int64 {
 	if uid != 0 {
 		removeUserIndex(m.byUser, uid, key)
 	}
-	m.clearChannelInterestsLocked(key)
-	m.clearChannelMembershipsLocked(c, key)
+	m.clearSessionChannelIndexesLocked(c, key)
 	if dropPending {
 		m.deletePendingLocked(key)
 	}
@@ -2201,6 +2333,50 @@ func (m *SessionManager) businessAuthKeyCandidatesLocked(authKeyID [8]byte) map[
 
 func (m *SessionManager) clearChannelInterestsLocked(key sessionKey) {
 	m.clearChannelIndexLocked(m.byChannel, m.bySessionChannels, key)
+}
+
+func (m *SessionManager) clearChannelSubscriptionsLocked(key sessionKey) {
+	channels := m.bySessionSubscriptions[key]
+	if len(channels) == 0 {
+		delete(m.bySessionSubscriptions, key)
+		return
+	}
+	for channelID := range channels {
+		sessions := m.bySubscribedChannel[channelID]
+		delete(sessions, key)
+		if len(sessions) == 0 {
+			delete(m.bySubscribedChannel, channelID)
+		}
+	}
+	delete(m.bySessionSubscriptions, key)
+}
+
+func (m *SessionManager) pruneSessionSubscriptionsLocked(key sessionKey, now int64) {
+	channels := m.bySessionSubscriptions[key]
+	for channelID, expiresAt := range channels {
+		if expiresAt <= now {
+			m.removeChannelSubscriptionLocked(key, channelID)
+		}
+	}
+}
+
+func (m *SessionManager) removeChannelSubscriptionLocked(key sessionKey, channelID int64) {
+	channels := m.bySessionSubscriptions[key]
+	delete(channels, channelID)
+	if len(channels) == 0 {
+		delete(m.bySessionSubscriptions, key)
+	}
+	sessions := m.bySubscribedChannel[channelID]
+	delete(sessions, key)
+	if len(sessions) == 0 {
+		delete(m.bySubscribedChannel, channelID)
+	}
+}
+
+func (m *SessionManager) clearSessionChannelIndexesLocked(c *Conn, key sessionKey) {
+	m.clearChannelInterestsLocked(key)
+	m.clearChannelSubscriptionsLocked(key)
+	m.clearChannelMembershipsLocked(c, key)
 }
 
 // clearChannelMembershipsLocked 整体清除某连接的 membership 索引并递增其修订号，

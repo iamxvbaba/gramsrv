@@ -93,7 +93,7 @@ func (r *Router) onMessagesUpdatePinnedMessage(ctx context.Context, req *tg.Mess
 	// builder 无 Users 数组（仅 pinned update + ChatMin），无需 owner 预热。pin 的真实变更由
 	// UpdatePinnedChannelMessages{pts} 承载、可经 getChannelDifference 兜底，bundled 的无 pts
 	// UpdateChannel 对 pin 冗余（pts payload 已含变更），丢弃无害——与 unpinAll 取舍一致。
-	r.enqueueChannelFanout(ctx, channelFanoutMembers, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+	r.enqueueChannelFanout(ctx, channelFanoutMessageBox, userID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 		return r.channelPinnedUpdates(viewerUserID, res)
 	})
 	return updates, nil

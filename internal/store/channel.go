@@ -183,6 +183,10 @@ type ChannelStore interface {
 	ListActiveChannelMembers(ctx context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error)
 	ListChannelInviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveChannelMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+	// FilterChannelMessageAudienceIDs authoritatively intersects a bounded online
+	// candidate set with users allowed to receive channel message-box updates:
+	// active members plus non-banned public-channel preview subscribers.
+	FilterChannelMessageAudienceIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
 	MaxChannelPts(ctx context.Context, channelID int64) (int, error)
 	// MaxChannelPtsBatch returns existing channel watermarks with one bounded store round trip.
 	// Missing/deleted ids are omitted so a stale process-local membership key cannot poison the

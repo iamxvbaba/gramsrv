@@ -27,16 +27,6 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 	if limit <= 0 || limit > domain.MaxChannelDifferenceLimit {
 		limit = domain.MaxChannelDifferenceLimit
 	}
-	if preview && member.Status != domain.ChannelMemberActive {
-		return domain.ChannelDifference{
-			Channel: channel,
-			Self:    member,
-			Pts:     channel.Pts,
-			Final:   true,
-			Timeout: 30,
-			Dialog:  previewChannelDialog(req.UserID, channel, member),
-		}, nil
-	}
 	checkpoint, err := getChannelUpdateCheckpoint(ctx, s.db, req.ChannelID)
 	if err != nil {
 		return domain.ChannelDifference{}, err

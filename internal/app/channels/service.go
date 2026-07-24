@@ -2295,6 +2295,21 @@ func (s *Service) FilterActiveMemberIDs(ctx context.Context, channelID int64, us
 	return s.channels.FilterActiveChannelMemberIDs(ctx, channelID, candidates)
 }
 
+// FilterMessageAudienceIDs keeps active members and currently authorized
+// public-preview viewers from a bounded online candidate set. The store performs
+// one batched authoritative check per bounded chunk so runtime session indexes
+// never become an access-control source of truth.
+func (s *Service) FilterMessageAudienceIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error) {
+	if s == nil || s.channels == nil || channelID == 0 {
+		return nil, domain.ErrChannelInvalid
+	}
+	candidates := uniqueNonZero(userIDs)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	return s.channels.FilterChannelMessageAudienceIDs(ctx, channelID, candidates)
+}
+
 // GetDifference returns channel-scoped pts difference.
 func (s *Service) GetDifference(ctx context.Context, userID int64, req domain.ChannelDifferenceRequest) (domain.ChannelDifference, error) {
 	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 {

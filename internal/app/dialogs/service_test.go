@@ -60,6 +60,7 @@ type countingDialogChannelStore struct {
 	getChannelCalls        int
 	getChannelsCalls       int
 	getChannelDialogsCalls int
+	listHistoryCalls       int
 }
 
 func (s *countingDialogChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID int64) (domain.ChannelView, error) {
@@ -75,6 +76,11 @@ func (s *countingDialogChannelStore) GetChannels(ctx context.Context, viewerUser
 func (s *countingDialogChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64, channelIDs []int64) (domain.ChannelDialogList, error) {
 	s.getChannelDialogsCalls++
 	return s.ChannelStore.GetChannelDialogs(ctx, viewerUserID, channelIDs)
+}
+
+func (s *countingDialogChannelStore) ListChannelHistory(ctx context.Context, viewerUserID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error) {
+	s.listHistoryCalls++
+	return s.ChannelStore.ListChannelHistory(ctx, viewerUserID, filter)
 }
 
 func TestGetDialogsHashUsesWarmStableHashCacheAndInvalidatesOnWrite(t *testing.T) {
@@ -695,7 +701,7 @@ func TestGetPeerDialogsRejectsHugeVector(t *testing.T) {
 	}
 }
 
-func TestGetPeerDialogsSkipsPublicChannelPreviewForNonMember(t *testing.T) {
+func TestGetPeerDialogsReturnsZeroTopBootstrapForPublicChannelPreview(t *testing.T) {
 	ctx := context.Background()
 	channelStore := memory.NewChannelStore()
 	channels := appchannels.NewService(channelStore)
@@ -716,12 +722,13 @@ func TestGetPeerDialogsSkipsPublicChannelPreviewForNonMember(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateUsername public: %v", err)
 	}
-	if _, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
+	sent, err := channels.SendMessage(ctx, 1001, domain.SendChannelMessageRequest{
 		ChannelID: public.Channel.ID,
 		RandomID:  99,
 		Message:   "public peer dialog top",
 		Date:      1700002010,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("SendMessage public: %v", err)
 	}
 	private, err := channels.CreateChannel(ctx, 1001, domain.CreateChannelRequest{
@@ -740,8 +747,19 @@ func TestGetPeerDialogsSkipsPublicChannelPreviewForNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPeerDialogs public preview: %v", err)
 	}
-	if len(list.Dialogs) != 0 || len(list.ChannelMessages) != 0 || len(list.Channels) != 0 || list.Count != 0 {
-		t.Fatalf("peer dialogs = %+v, want no materialized public preview dialog", list)
+	if len(list.Dialogs) != 1 || len(list.ChannelMessages) != 0 || len(list.Channels) != 1 || list.Count != 1 {
+		t.Fatalf("peer dialogs = %+v, want one zero-top public preview bootstrap", list)
+	}
+	dialog := list.Dialogs[0]
+	if dialog.Peer.Type != domain.PeerTypeChannel || dialog.Peer.ID != public.Channel.ID ||
+		!dialog.ChannelLeft || dialog.TopMessage != 0 || dialog.TopMessageDate != 0 ||
+		dialog.ReadInboxMaxID != 0 || dialog.ReadOutboxMaxID != 0 ||
+		dialog.UnreadCount != 0 || dialog.UnreadMentions != 0 ||
+		dialog.UnreadReactions != 0 || dialog.Pts != sent.Event.Pts {
+		t.Fatalf("public preview bootstrap dialog = %+v", dialog)
+	}
+	if list.Channels[0].ID != public.Channel.ID {
+		t.Fatalf("public preview channels = %+v, want channel %d", list.Channels, public.Channel.ID)
 	}
 }
 
@@ -810,6 +828,7 @@ func TestGetPeerDialogsBatchesMissingChannelVisibilityChecks(t *testing.T) {
 
 	channelStore.getChannelCalls = 0
 	channelStore.getChannelsCalls = 0
+	channelStore.listHistoryCalls = 0
 	list, err := dialogs.GetPeerDialogs(ctx, 1002, []domain.Peer{
 		{Type: domain.PeerTypeChannel, ID: first.Channel.ID},
 		{Type: domain.PeerTypeChannel, ID: private.Channel.ID},
@@ -822,8 +841,16 @@ func TestGetPeerDialogsBatchesMissingChannelVisibilityChecks(t *testing.T) {
 	if channelStore.getChannelsCalls != 1 || channelStore.getChannelCalls != 0 {
 		t.Fatalf("visibility channel calls: GetChannels=%d GetChannel=%d, want one batch call only", channelStore.getChannelsCalls, channelStore.getChannelCalls)
 	}
-	if len(list.Dialogs) != 0 || len(list.ChannelMessages) != 0 || len(list.Channels) != 0 || list.Count != 0 {
-		t.Fatalf("peer dialogs = %+v, want no public preview dialogs", list)
+	if channelStore.listHistoryCalls != 0 {
+		t.Fatalf("public preview history calls = %d, want zero", channelStore.listHistoryCalls)
+	}
+	if len(list.Dialogs) != 2 || len(list.ChannelMessages) != 0 || len(list.Channels) != 2 || list.Count != 2 {
+		t.Fatalf("peer dialogs = %+v, want two deduplicated zero-top public previews", list)
+	}
+	for _, dialog := range list.Dialogs {
+		if !dialog.ChannelLeft || dialog.TopMessage != 0 || dialog.ReadInboxMaxID != 0 || dialog.ReadOutboxMaxID != 0 {
+			t.Fatalf("public preview bootstrap dialog = %+v", dialog)
+		}
 	}
 }
 

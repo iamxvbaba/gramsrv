@@ -97,7 +97,7 @@ func (d *ExpiryDispatcher) dispatchChannels(ctx context.Context, now int) bool {
 			d.log.Warn("delete expired channel messages", zap.Int64("channel_id", req.ChannelID), zap.Ints("ids", req.IDs), zap.Error(err))
 			continue
 		}
-		d.router.enqueueChannelFanout(ctx, channelFanoutMembers, req.UserID, req.ChannelID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		d.router.enqueueChannelFanout(ctx, channelFanoutMessageBox, req.UserID, req.ChannelID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
 			return d.router.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
 		})
 	}
