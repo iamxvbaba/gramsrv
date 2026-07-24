@@ -31,6 +31,13 @@ type Config struct {
 	RSAKeyPath string
 	// DC 是本 server 的 DC ID。
 	DC int
+	// StrictDCCheck turns on exact DC-ID validation for the permanent-key
+	// exchange (default off = lenient). See mtprotoedge.Options.StrictDC doc
+	// for the full rationale: telesrv is always a single physical backend, but
+	// many client forks alias dc_id 1..5 to it, so a mismatched client-chosen
+	// dc_id is expected, not an attack — strict mode exists only for a
+	// hypothetical future real multi-DC deployment.
+	StrictDCCheck bool
 	// MTProtoMaxConnections / PerIP 覆盖 raw Accept、codec sniff、握手到认证 session
 	// 的完整物理连接生命周期；负数关闭对应 admission 上限。
 	MTProtoMaxConnections      int
@@ -465,6 +472,7 @@ func Load() (Config, error) {
 		AdvertiseIP:                         envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
 		RSAKeyPath:                          envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
 		DC:                                  envIntOr("TELESRV_DC", 2),
+		StrictDCCheck:                       envBoolOr("TELESRV_STRICT_DC_CHECK", false),
 		MTProtoMaxConnections:               envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
 		MTProtoMaxConnectionsPerIP:          envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
 		MTProtoMaxConcurrentHandshakes:      envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
