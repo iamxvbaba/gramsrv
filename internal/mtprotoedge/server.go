@@ -221,12 +221,14 @@ type Options struct {
 	// codec 必须是 gotd 内置四种 codec（可包 NoHeader），或实现 InboundFrameBudgetedCodec；
 	// 无法在 payload 分配前预检长度的 codec 会 fail-closed。
 	Codec func() transport.Codec
-	// ObfuscatedTCP 先按 MTProto TCP obfuscation 解包，再自动探测 codec。
-	// Telegram Desktop 的 tcpo_only endpoint 会走这个 64 字节前缀流程。
+	// ObfuscatedTCP 允许裸 TCP 使用 MTProto transport obfuscation。开启时按每条
+	// 物理连接的首 1/4/8 字节自动区分明文 transport 与 64-byte obfuscated2，
+	// 随后把 wire mode + codec 冻结到同一条双向连接；Telegram Desktop 的
+	// tcpo_only 与未开启混淆的第三方客户端可共用同一端口。
 	ObfuscatedTCP bool
 	// WebSocket 在同一个 listener 上接受 MTProto over WebSocket(/apiws*)。
 	// 开启后仅在连接建立时读取前 4 字节做 HTTP/TCP 分流；MTProto TCP
-	// 后续仍走原 ObfuscatedTCP + codec 热路径。
+	// 后续仍走原 TCP wire-mode + codec 探测路径。
 	WebSocket bool
 	// WebSocketAllowedOrigins 是允许浏览器发起 WebSocket upgrade 的页面 origin。
 	// 空列表表示只接受无 Origin 的非浏览器客户端；"*" 表示允许所有来源（仅调试）。
@@ -644,7 +646,11 @@ func (s *Server) serveTCP(ctx context.Context, ln net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	s.log.Info("Serving", zap.String("addr", ln.Addr().String()), zap.Int("dc", s.dc), zap.Bool("obfuscated_tcp", s.obfuscated))
+	s.log.Info("Serving",
+		zap.String("addr", ln.Addr().String()),
+		zap.Int("dc", s.dc),
+		zap.String("tcp_transport_mode", intakeTransport(s.obfuscated)),
+	)
 	defer s.log.Info("Stopped")
 	errCh := make(chan error, 1)
 	go func() {
@@ -680,7 +686,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	s.log.Info("Serving",
 		zap.String("addr", ln.Addr().String()),
 		zap.Int("dc", s.dc),
-		zap.Bool("obfuscated_tcp", s.obfuscated),
+		zap.String("tcp_transport_mode", intakeTransport(s.obfuscated)),
 		zap.Bool("websocket", true),
 		zap.Strings("websocket_origins", s.websocketOrigins),
 	)
@@ -705,7 +711,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 		defer wg.Done()
 		errCh <- mux.Serve(ctx)
 	}()
-	// 裸 MTProto TCP：每条连接在自己的 goroutine 里完成去混淆 + codec 探测。
+	// 裸 MTProto TCP：每条连接在自己的 goroutine 里完成 wire mode + codec 探测。
 	go func() {
 		defer wg.Done()
 		errCh <- s.acceptLoop(ctx, mux.TCP(), s.obfuscated)
@@ -746,11 +752,11 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	return firstErr
 }
 
-// acceptLoop 接受裸连接，并为每条连接单独起 goroutine 完成「去混淆 + codec 探测 +
+// acceptLoop 接受裸连接，并为每条连接单独起 goroutine 完成「wire mode + codec 探测 +
 // serveConn」。探测在 accept 循环之外、带握手超时进行——慢/半开/坏 init 的客户端只占用
 // 自己的 goroutine，绝不阻塞其他连接的接入；单条连接的握手失败也只关闭该连接，不会拖垮
-// 整个监听循环。obfuscated 为 true 时先走 obfuscated2 去混淆（裸 MTProto TCP）；WebSocket
-// 连接传 false（gotd 升级处理器已完成去混淆）。
+// 整个监听循环。obfuscated 为 true 时自动区分 plain 与 obfuscated2（裸 MTProto TCP）；
+// WebSocket 连接传 false（gotd 升级处理器已完成去混淆）。
 func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, obfuscated bool) error {
 	return s.acceptLoopTransport(ctx, ln, obfuscated, intakeTransport(obfuscated))
 }
@@ -811,7 +817,7 @@ func (s *Server) acceptLoopTransport(ctx context.Context, ln net.Listener, obfus
 func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated bool, transportName string) {
 	started := time.Now()
 	remote, local := connRemote(raw), connLocal(raw)
-	// 握手读超时只覆盖去混淆 + codec 探测这一小段；用真实墙钟时间（SetReadDeadline 语义），
+	// 握手读超时只覆盖 wire-mode + codec 探测这一小段；用真实墙钟时间（SetReadDeadline 语义），
 	// 不走可能被测试注入的逻辑 clock。
 	if err := raw.SetReadDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
 		_ = raw.Close()
@@ -830,7 +836,10 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 		}
 	}()
 
-	conn, err := s.promoteConn(raw, obfuscated)
+	conn, detectedTransport, err := s.promoteConn(raw, obfuscated)
+	if detectedTransport != "" {
+		transportName = detectedTransport
+	}
 	close(promoted)
 	if err != nil {
 		outcome := "error"
@@ -867,15 +876,15 @@ func (s *Server) serveDetectedConn(ctx context.Context, raw net.Conn, obfuscated
 	}
 }
 
-// promoteConn 复用与 listener 组合完全一致的「obfuscated2 去混淆 + codec 探测」管线，但针对
-// 单条连接，使其可在 accept 循环之外执行。obfuscated 对 WebSocket 连接必须为 false（gotd
-// 升级处理器已剥离 obfuscated2 并补回 codec tag）。
-func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, error) {
-	var ln net.Listener = newSingleConnListener(raw)
+// promoteConn 针对单条连接执行一次 transport 提升。obfuscated=true 表示裸 TCP
+// 允许混淆并自动区分 plain/obfuscated2；WebSocket 必须传 false，因为 gotd upgrade
+// handler 已剥离 obfuscated2 并补回 codec tag。
+func (s *Server) promoteConn(raw net.Conn, obfuscated bool) (transport.Conn, string, error) {
 	if obfuscated {
-		ln = transport.ObfuscatedListener(ln)
+		return s.promoteMixedTCP(raw)
 	}
-	return newCompatTransportListener(s.codec, ln, s.frameBudget).Accept()
+	conn, err := newCompatTransportConn(s.codec, raw, s.frameBudget)
+	return conn, "", err
 }
 
 // serveConn 处理单个传输连接：读帧并按 auth_key_id 分流。

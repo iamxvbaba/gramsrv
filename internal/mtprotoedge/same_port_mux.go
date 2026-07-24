@@ -1,7 +1,6 @@
 package mtprotoedge
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -195,10 +194,9 @@ func (m *samePortMux) dispatch(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	wrapped := &prefixedNetConn{
-		Conn:   conn,
-		reader: io.MultiReader(bytes.NewReader(header[:]), conn),
-	}
+	// Fixed eight-byte replay storage avoids bytes.Reader + MultiReader allocations
+	// on every accepted same-port connection.
+	wrapped := newReplayNetConn(conn, header[:])
 
 	target := m.tcp
 	transport := "tcp"
@@ -329,17 +327,6 @@ func isSamePortMuxClosed(ch <-chan struct{}) bool {
 	default:
 		return false
 	}
-}
-
-// prefixedNetConn 把被窥探掉的前缀字节回放在数据流最前面，使下游(去混淆/codec 探测/
-// http.Server)看到完整原始字节流。
-type prefixedNetConn struct {
-	reader io.Reader
-	net.Conn
-}
-
-func (p *prefixedNetConn) Read(b []byte) (int, error) {
-	return p.reader.Read(b)
 }
 
 // samePortMuxListener 是一个内存 listener：dispatch 把分流后的连接投递进来，下游

@@ -64,8 +64,8 @@ import (
 )
 
 // obfuscatedResolver 用标准无-secret MTProto TCP obfuscation（obfuscated2）连接 telesrv，
-// 匹配生产 server 的 transport.ObfuscatedListener。gotd 内置 dcs.Plain 的 obfuscated 路径
-// 走 MTProxy（强制 secret），不适用这里，所以自定义一个 Resolver。
+// 匹配生产 server 自动检测后的 obfuscated2 路径。gotd 内置 dcs.Plain 的
+// TCPObfuscatedOnly 路径走 MTProxy（强制 secret），不适用这里，所以自定义 Resolver。
 type obfuscatedResolver struct {
 	host string
 	port int

@@ -9,8 +9,8 @@
 //	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>"            # 仅登录自检
 //	go run ./cmd/bots/botcheck -token "<bot_id>:<secret>" -echo      # 自检后持续 echo
 //
-// 连接生产 telesrv（obfuscated TCP）靠 DCOption.TCPObfuscatedOnly=true，
-// gotd dcs.Plain 据此自动走 MTProto TCP obfuscation。
+// 以 obfuscated TCP 连接生产 telesrv：server 会逐连接自动区分 plain/obfuscated；
+// 此探针靠 DCOption.TCPObfuscatedOnly=true 让 gotd 客户端选择 MTProto TCP obfuscation。
 package main
 
 import (
@@ -42,7 +42,7 @@ import (
 )
 
 // obfuscatedResolver 用标准无-secret MTProto TCP obfuscation（obfuscated2）连接，
-// 匹配 telesrv 生产 server 的 transport.ObfuscatedListener（obfuscated2.Accept(conn, nil)）。
+// 匹配 telesrv 生产 server 自动检测后的 obfuscated2.Accept(conn, nil) 路径。
 // gotd 内置 dcs.Plain 的 obfuscated 路径走 MTProxy（强制 secret），不适用这里。
 type obfuscatedResolver struct {
 	host string

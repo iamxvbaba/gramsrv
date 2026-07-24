@@ -232,13 +232,13 @@ func TestServerAcceptObfuscatedAbridgedQuickAckFrame(t *testing.T) {
 	}
 }
 
-func TestServerSamePortWebSocketAndObfuscatedTCP(t *testing.T) {
+func TestServerSamePortWebSocketAndMixedTCP(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 
-	frames := make(chan int, 2)
+	frames := make(chan int, 3)
 	srv := New(Options{Logger: zaptest.NewLogger(t), ObfuscatedTCP: true, WebSocket: true})
 	srv.onFrame = func(n int) {
 		select {
@@ -301,6 +301,27 @@ func TestServerSamePortWebSocketAndObfuscatedTCP(t *testing.T) {
 	sc()
 	expectFrameLen(t, frames, tcpPayload.Len())
 	_ = tcpConn.Close()
+
+	plainRaw, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("plain tcp dial: %v", err)
+	}
+	plainConn, err := transport.Intermediate.Handshake(plainRaw)
+	if err != nil {
+		_ = plainRaw.Close()
+		t.Fatalf("plain tcp transport handshake: %v", err)
+	}
+	var plainPayload bin.Buffer
+	plainPayload.PutInt32(0x33445566)
+	plainPayload.PutInt32(0x77889900)
+	sendCtx, sc = context.WithTimeout(context.Background(), 5*time.Second)
+	if err := plainConn.Send(sendCtx, &plainPayload); err != nil {
+		sc()
+		t.Fatalf("plain tcp send: %v", err)
+	}
+	sc()
+	expectFrameLen(t, frames, plainPayload.Len())
+	_ = plainConn.Close()
 
 	cancel()
 	select {
