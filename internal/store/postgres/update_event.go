@@ -244,31 +244,8 @@ func appendUserUpdateEvent(ctx context.Context, db sqlcgen.DBTX, q *sqlcgen.Quer
 	}); err != nil {
 		return err
 	}
-	if err := appendPrivacyPayload(ctx, db, userID, event); err != nil {
-		return err
-	}
 	if err := appendQuickReplyPayload(ctx, db, userID, event); err != nil {
 		return err
-	}
-	return nil
-}
-
-func appendPrivacyPayload(ctx context.Context, db sqlcgen.DBTX, userID int64, event domain.UpdateEvent) error {
-	if event.Type != domain.UpdateEventPrivacy {
-		return nil
-	}
-	if event.Privacy.OwnerUserID != userID || event.Privacy.Key == "" || len(event.Privacy.Rules) == 0 {
-		return domain.ErrPrivacyRuleInvalid
-	}
-	raw, err := json.Marshal(event.Privacy)
-	if err != nil {
-		return fmt.Errorf("encode privacy update payload: %w", err)
-	}
-	if _, err := db.Exec(ctx, `
-INSERT INTO user_update_privacy_payloads (user_id, pts, payload)
-VALUES ($1, $2, $3::jsonb)
-`, userID, event.Pts, string(raw)); err != nil {
-		return fmt.Errorf("save privacy update payload: %w", err)
 	}
 	return nil
 }
@@ -489,9 +466,6 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 		}
 		out = append(out, event)
 	}
-	if err := s.hydratePrivacyEvents(ctx, out); err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 
@@ -691,75 +665,7 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 		}
 		out = append(out, event)
 	}
-	if err := s.hydratePrivacyEvents(ctx, out); err != nil {
-		return nil, err
-	}
 	return out, nil
-}
-
-type privacyEventCursor struct {
-	userID int64
-	pts    int
-}
-
-// hydratePrivacyEvents fetches all immutable privacy payloads for one
-// difference/outbox batch in one query. Ordinary event batches incur no extra
-// query at all.
-func (s *UpdateEventStore) hydratePrivacyEvents(ctx context.Context, events []domain.UpdateEvent) error {
-	indexes := make(map[privacyEventCursor]int)
-	userIDs := make([]int64, 0)
-	pts := make([]int32, 0)
-	for i := range events {
-		if events[i].Type != domain.UpdateEventPrivacy {
-			continue
-		}
-		key := privacyEventCursor{userID: events[i].UserID, pts: events[i].Pts}
-		indexes[key] = i
-		userIDs = append(userIDs, key.userID)
-		pts = append(pts, int32(key.pts))
-	}
-	if len(indexes) == 0 {
-		return nil
-	}
-	rows, err := s.db.Query(ctx, `
-SELECT p.user_id, p.pts, p.payload::text
-FROM unnest($1::bigint[], $2::int[]) AS requested(user_id, pts)
-JOIN user_update_privacy_payloads p USING (user_id, pts)
-`, userIDs, pts)
-	if err != nil {
-		return fmt.Errorf("list privacy update payloads: %w", err)
-	}
-	defer rows.Close()
-	found := 0
-	for rows.Next() {
-		var userID int64
-		var eventPts int
-		var raw string
-		if err := rows.Scan(&userID, &eventPts, &raw); err != nil {
-			return fmt.Errorf("scan privacy update payload: %w", err)
-		}
-		index, ok := indexes[privacyEventCursor{userID: userID, pts: eventPts}]
-		if !ok {
-			continue
-		}
-		var payload domain.PrivacyRules
-		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-			return fmt.Errorf("decode privacy update payload: %w", err)
-		}
-		if payload.OwnerUserID != userID || payload.Key == "" || len(payload.Rules) == 0 {
-			return fmt.Errorf("invalid privacy update payload for user %d pts %d", userID, eventPts)
-		}
-		events[index].Privacy = payload
-		delete(indexes, privacyEventCursor{userID: userID, pts: eventPts})
-		found++
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("list privacy update payloads rows: %w", err)
-	}
-	if found != len(userIDs) || len(indexes) != 0 {
-		return fmt.Errorf("privacy update payload missing")
-	}
-	return nil
 }
 
 func usersFromUpdateEventRow(row sqlcgen.ListUserUpdateEventsAfterRow) []domain.User {

@@ -14,7 +14,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-func TestAccountPrivacyAllKeysRoundTripAndRecordDifferenceEvents(t *testing.T) {
+func TestAccountPrivacyAllKeysRoundTripWithoutAdvancingPts(t *testing.T) {
 	ctx := context.Background()
 	const userID int64 = 8101
 	authKeyID := [8]byte{8, 1}
@@ -22,10 +22,11 @@ func TestAccountPrivacyAllKeysRoundTripAndRecordDifferenceEvents(t *testing.T) {
 	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore())
 	events := memory.NewUpdateEventStore()
 	updates := appupdates.NewService(memory.NewUpdateStateStore(), events)
+	sessions := &captureSessions{}
 	router := New(Config{}, Deps{
 		Privacy:  privacy,
 		Updates:  updates,
-		Sessions: &captureSessions{},
+		Sessions: sessions,
 	}, zaptest.NewLogger(t), clock.System)
 	requestCtx := WithSessionID(WithAuthKeyID(WithUserID(ctx, userID), authKeyID), sessionID)
 
@@ -83,40 +84,78 @@ func TestAccountPrivacyAllKeysRoundTripAndRecordDifferenceEvents(t *testing.T) {
 			if _, ok := get.Rules[0].(*tg.PrivacyValueDisallowAll); !ok {
 				t.Fatalf("getPrivacy rule=%T, want disallowAll", get.Rules[0])
 			}
+			pushed, ok := sessions.lastUserPush().(*tg.Updates)
+			if !ok || len(pushed.Updates) != 1 {
+				t.Fatalf("online push=%T/%+v, want one updatePrivacy", sessions.lastUserPush(), pushed)
+			}
+			privacyUpdate, ok := pushed.Updates[0].(*tg.UpdatePrivacy)
+			if !ok {
+				t.Fatalf("online push update=%T, want updatePrivacy(%q)", pushed.Updates[0], test.domain)
+			}
+			if !test.wire(privacyUpdate.Key) {
+				t.Fatalf("online push key=%T, want %q", privacyUpdate.Key, test.domain)
+			}
 		})
+	}
+	if pushedUserIDs := sessions.pushedUserIDs(); len(pushedUserIDs) != len(keys) {
+		t.Fatalf("online privacy pushes=%v, want exactly one per key", pushedUserIDs)
+	} else {
+		for i, pushedUserID := range pushedUserIDs {
+			if pushedUserID != userID {
+				t.Fatalf("online privacy push[%d] target=%d, want owner %d", i, pushedUserID, userID)
+			}
+		}
+	}
+	if snapshot := sessions.snapshot(); snapshot.sessionID != sessionID || snapshot.userID != userID {
+		t.Fatalf("online push exclusion/target=%+v, want current session %d excluded for user %d", snapshot, sessionID, userID)
 	}
 
 	recorded, err := events.ListAfter(ctx, userID, 0, 100)
 	if err != nil {
-		t.Fatalf("list privacy events: %v", err)
+		t.Fatalf("list account update events: %v", err)
 	}
-	if len(recorded) != len(keys) {
-		t.Fatalf("privacy events=%d, want %d", len(recorded), len(keys))
+	if len(recorded) != 0 {
+		t.Fatalf("account update events=%+v, want none for privacy changes", recorded)
 	}
-	for i, event := range recorded {
-		if event.Type != domain.UpdateEventPrivacy ||
-			event.Privacy.OwnerUserID != userID ||
-			event.Privacy.Key != keys[i].domain ||
-			event.PtsCount != 1 {
-			t.Fatalf("event[%d]=%+v, want durable privacy snapshot for %q", i, event, keys[i].domain)
-		}
+	state, err := updates.CurrentState(ctx, userID)
+	if err != nil {
+		t.Fatalf("current update state: %v", err)
+	}
+	if state.Pts != 0 {
+		t.Fatalf("privacy changes advanced pts to %d, want 0", state.Pts)
 	}
 
 	difference, err := updates.GetDifference(ctx, [8]byte{8, 2}, userID, domain.UpdateState{})
 	if err != nil {
 		t.Fatalf("getDifference: %v", err)
 	}
-	wireDifference, ok := tgUpdatesDifference(userID, difference).(*tg.UpdatesDifference)
-	if !ok || len(wireDifference.OtherUpdates) != len(keys) {
-		t.Fatalf("wire difference=%T updates=%d, want %d privacy updates", wireDifference, len(wireDifference.OtherUpdates), len(keys))
+	if difference.State.Pts != 0 || len(difference.Events) != 0 {
+		t.Fatalf("difference after privacy changes=%+v, want empty pts=0", difference)
 	}
-	for i, update := range wireDifference.OtherUpdates {
-		privacyUpdate, ok := update.(*tg.UpdatePrivacy)
-		if !ok {
-			t.Fatalf("difference update[%d]=%T, want updatePrivacy", i, update)
-		}
-		if !keys[i].wire(privacyUpdate.Key) {
-			t.Fatalf("difference update[%d] key=%T, want %q", i, privacyUpdate.Key, keys[i].domain)
-		}
+
+	// A real message-box update immediately after privacy changes must still
+	// receive pts=1. This catches both hidden privacy allocations and gaps left
+	// behind by synthetic bookkeeping events.
+	message := domain.Message{
+		ID:          1,
+		OwnerUserID: userID,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 8102},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: 8102},
+		Date:        1700000000,
+		Body:        "after privacy",
+	}
+	event, state, err := updates.RecordNewMessage(ctx, authKeyID, userID, message)
+	if err != nil {
+		t.Fatalf("record adjacent message update: %v", err)
+	}
+	if event.Pts != 1 || event.PtsCount != 1 || state.Pts != 1 {
+		t.Fatalf("adjacent message event/state=%+v/%+v, want first pts=1", event, state)
+	}
+	difference, err = updates.GetDifference(ctx, [8]byte{8, 2}, userID, domain.UpdateState{})
+	if err != nil {
+		t.Fatalf("getDifference after message: %v", err)
+	}
+	if difference.State.Pts != 1 || len(difference.Events) != 1 || difference.Events[0].Type != domain.UpdateEventNewMessage {
+		t.Fatalf("difference after adjacent message=%+v, want one contiguous new_message at pts=1", difference)
 	}
 }

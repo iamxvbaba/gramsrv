@@ -873,27 +873,7 @@ func (r *Router) onAccountSetPrivacy(ctx context.Context, req *tg.AccountSetPriv
 	if r.deps.Privacy == nil {
 		return &tg.AccountPrivacyRules{Rules: tgPrivacyRules(rules), Users: []tg.UserClass{}, Chats: []tg.ChatClass{}}, nil
 	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
-	sessionID, _ := SessionIDFrom(ctx)
-	var (
-		saved        domain.PrivacyRules
-		event        domain.UpdateEvent
-		durableWrite bool
-	)
-	if durable, ok := r.deps.Privacy.(PrivacyDurableService); ok {
-		saved, event, durableWrite, err = durable.SetRulesWithUpdate(
-			ctx,
-			userID,
-			domainKey,
-			rules,
-			int(r.clock.Now().Unix()),
-			rawAuthKeyIDForOrigin(ctx),
-			sessionID,
-		)
-	}
-	if err == nil && !durableWrite {
-		saved, err = r.deps.Privacy.SetRules(ctx, userID, domainKey, rules)
-	}
+	saved, err := r.deps.Privacy.SetRules(ctx, userID, domainKey, rules)
 	if err != nil {
 		return nil, privacyErr(err)
 	}
@@ -902,33 +882,20 @@ func (r *Router) onAccountSetPrivacy(ctx context.Context, req *tg.AccountSetPriv
 		return nil, err
 	}
 	r.invalidateRPCProjectionForUser(userID)
-	if durableWrite {
-		if sessionID != 0 {
-			r.bookkeepAuxPtsForCurrentSession(ctx, event)
-		}
-		r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, tgUpdateForOutboxEvent(event))
-	} else if updates, ok := r.deps.Updates.(PrivacyUpdatesService); ok {
-		event, _, recordErr := updates.RecordPrivacy(
-			ctx, authKeyID, userID, saved, rawAuthKeyIDForOrigin(ctx), sessionID,
-		)
-		if recordErr != nil {
-			return nil, internalErr()
-		}
-		if sessionID != 0 {
-			r.bookkeepAuxPtsForCurrentSession(ctx, event)
-		}
-		r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, tgUpdateForOutboxEvent(event))
-	} else {
-		r.pushUserUpdates(ctx, userID, &tg.Updates{
-			Updates: []tg.UpdateClass{&tg.UpdatePrivacy{
-				Key:   tgPrivacyKey(saved.Key),
-				Rules: tgPrivacyRules(saved.Rules),
-			}},
-			Users: []tg.UserClass{},
-			Chats: []tg.ChatClass{},
-			Date:  int(r.clock.Now().Unix()),
-		})
-	}
+	// updatePrivacy is an absolute, non-PTS account-state notification. The
+	// originating session applies account.setPrivacy's response; other online
+	// sessions receive this best-effort update, while offline sessions reload
+	// the authoritative rules through account.getPrivacy.
+	r.pushUserUpdates(ctx, userID, &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdatePrivacy{
+			Key:   tgPrivacyKey(saved.Key),
+			Rules: tgPrivacyRules(saved.Rules),
+		}},
+		Users: []tg.UserClass{},
+		Chats: []tg.ChatClass{},
+		Date:  int(r.clock.Now().Unix()),
+		Seq:   0,
+	})
 	if domainKey == domain.PrivacyKeyStatusTimestamp {
 		r.pushStatusPrivacyRefresh(ctx, userID)
 	}
