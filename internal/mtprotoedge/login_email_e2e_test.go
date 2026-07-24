@@ -80,7 +80,6 @@ func TestLoginEmailEndToEnd(t *testing.T) {
 		account.WithUsers(userStore),
 		account.WithLoginEmailVerification(codeStore, emailSender, 5*time.Minute, 5, 6))
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, memory.NewTempAuthKeyBindingStore(authKeyStore), code,
-		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(memory.NewLoginCodeDeliveryStore(messageStore, updateEventStore)),
 		auth.WithPasswords(passwordStore),
 		auth.WithLoginEmail(auth.LoginEmailOptions{

@@ -82,8 +82,6 @@ type Service struct {
 	authKeys               store.AuthKeyStore
 	tempKeys               store.TempAuthKeyBindingStore
 	passwords              store.PasswordStore
-	messages               store.MessageStore
-	dialogs                store.DialogStore
 	loginCodeDelivery      store.LoginCodeDeliveryStore
 	bots                   store.BotStore
 	fixedCode              string
@@ -121,16 +119,6 @@ type authorizationRevoker interface {
 
 // Option 调整登录服务的可选依赖。
 type Option func(*Service)
-
-// WithLoginMessages 在新用户注册成功后写入官方系统账号的首条登录消息与会话摘要。
-// 已有账号的 app 验证码必须在 auth.sendCode/resendCode 阶段通过
-// WithLoginCodeDelivery 持久化，禁止在 signIn 成功后补发。
-func WithLoginMessages(messages store.MessageStore, dialogs store.DialogStore) Option {
-	return func(s *Service) {
-		s.messages = messages
-		s.dialogs = dialogs
-	}
-}
 
 // WithLoginCodeDelivery 注入已有账号 app-code 的 durable 投递边界。
 // 实现必须以 user_id + phone_code_hash 幂等，并原子写入 777000
@@ -1143,17 +1131,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err
 	}
-	loginMessage := domain.Message{}
-	// A new account has no owner/dialog at issuance time. Only the development
-	// phone/App registration path creates its bootstrap 777000 message here;
-	// external SMS and email setup registration retain only their verified fact.
-	if rec.Channel == codeChannelPhone {
-		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
-		if err != nil {
-			return domain.User{}, domain.Message{}, err
-		}
-	}
-	return u, loginMessage, nil
+	return u, domain.Message{}, nil
 }
 
 // SignInBot 处理 auth.importBotAuthorization：校验 bot token 并把当前 auth_key
@@ -1437,32 +1415,6 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 		return false, err
 	}
 	return found && settings.HasPassword, nil
-}
-
-func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code string) (domain.Message, error) {
-	if s.messages == nil || s.dialogs == nil {
-		return domain.Message{}, nil
-	}
-	content := serverlocales.LoginCodeMessage(serverlocales.LanguageFromContext(ctx), code)
-	msg, err := s.messages.Create(ctx, domain.Message{
-		OwnerUserID: userID,
-		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
-		From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
-		Date:        int(time.Now().Unix()),
-		Body:        content.Body,
-		Entities:    content.Entities,
-	})
-	if err != nil {
-		return domain.Message{}, err
-	}
-	if err := s.dialogs.UpsertInbox(ctx, userID, domain.Dialog{
-		Peer:           msg.Peer,
-		TopMessage:     msg.ID,
-		TopMessageDate: msg.Date,
-	}); err != nil {
-		return domain.Message{}, err
-	}
-	return msg, nil
 }
 
 func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, int, error) {

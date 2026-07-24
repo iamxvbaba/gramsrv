@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -608,13 +607,11 @@ func TestResetAuthorizationsDeletesOnlyRevokedProtocolAuthKeys(t *testing.T) {
 	}
 }
 
-func TestSignUpWritesOfficialLoginMessage(t *testing.T) {
+func TestSignUpDoesNotWriteOfficialLoginMessage(t *testing.T) {
 	ctx := context.Background()
 	dialogs := memory.NewDialogStore()
-	messages := memory.NewMessageStore(dialogs)
 	delivery := &captureLoginCodeDelivery{}
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
-		WithLoginMessages(messages, dialogs),
 		WithLoginCodeDelivery(delivery),
 	)
 
@@ -638,20 +635,11 @@ func TestSignUpWritesOfficialLoginMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByUser: %v", err)
 	}
-	if len(list.Dialogs) != 1 || list.Dialogs[0].Peer.ID != domain.OfficialSystemUserID {
-		t.Fatalf("dialogs = %+v, want official system dialog", list.Dialogs)
+	if msg.ID != 0 {
+		t.Fatalf("SignUp returned login message %+v, want zero", msg)
 	}
-	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
-		t.Fatalf("users = %+v, want verified support system user", list.Users)
-	}
-	if msg.ID == 0 || !strings.Contains(msg.Body, "Login code: 12345") {
-		t.Fatalf("login message = %+v, want returned official login code message", msg)
-	}
-	if len(list.Messages) != 1 || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
-		t.Fatalf("messages = %+v, want login code message", list.Messages)
-	}
-	if list.Dialogs[0].TopMessage != list.Messages[0].ID || list.Dialogs[0].UnreadCount != 1 {
-		t.Fatalf("dialog top/unread = %+v, message = %+v", list.Dialogs[0], list.Messages[0])
+	if len(list.Dialogs) != 0 || len(list.Messages) != 0 || len(list.Users) != 0 {
+		t.Fatalf("SignUp created official dialog state: %+v", list)
 	}
 }
 
@@ -662,7 +650,6 @@ func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) 
 	events := memory.NewUpdateEventStore()
 	delivery := memory.NewLoginCodeDeliveryStore(messages, events)
 	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
-		WithLoginMessages(messages, dialogs),
 		WithLoginCodeDelivery(delivery),
 	)
 	phone := "+15550004312"
@@ -672,16 +659,14 @@ func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) 
 		t.Fatalf("SendCode signup: %v", err)
 	}
 	verifyCodeForSignUp(t, svc, phone, hash, "12345")
-	u, first, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "Test", "User")
+	u, signUpMessage, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "Test", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
-	peer := domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID}
-	if read, err := dialogs.MarkRead(ctx, u.ID, peer, domain.MaxMessageBoxID); err != nil {
-		t.Fatalf("MarkRead first login message: %v", err)
-	} else if read.MaxID != first.ID || read.StillUnreadCount != 0 {
-		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
+	if signUpMessage.ID != 0 {
+		t.Fatalf("SignUp returned login message %+v, want zero", signUpMessage)
 	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID}
 	assertOfficialDialog := func(wantTop, wantRead, wantUnread int) {
 		t.Helper()
 		list, err := dialogs.ListByUser(ctx, u.ID, domain.DialogFilter{Limit: 10})
@@ -717,12 +702,32 @@ func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) 
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
-		t.Fatalf("SendCode signin second: %v", err)
+		t.Fatalf("SendCode first signin: %v", err)
+	}
+	first := latestLoginMessage(1)
+	// 核心时序：SendCode 返回时 message/dialog/unread 已提交，尚未 SignIn。
+	assertOfficialDialog(first.ID, 0, 1)
+	_, signInMessage, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
+	if err != nil || needSignUp {
+		t.Fatalf("SignIn first needSignUp=%v err=%v", needSignUp, err)
+	}
+	if signInMessage.ID != 0 {
+		t.Fatalf("SignIn first returned a late login message %+v", signInMessage)
+	}
+	assertOfficialDialog(first.ID, 0, 1)
+	if read, err := dialogs.MarkRead(ctx, u.ID, peer, domain.MaxMessageBoxID); err != nil {
+		t.Fatalf("MarkRead first login message: %v", err)
+	} else if read.MaxID != first.ID || read.StillUnreadCount != 0 {
+		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
+	}
+
+	hash, err = svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode second signin: %v", err)
 	}
 	second := latestLoginMessage(2)
-	// 核心时序：SendCode 返回时 message/dialog/unread 已提交，尚未 SignIn。
 	assertOfficialDialog(second.ID, first.ID, 1)
-	_, signInMessage, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
+	_, signInMessage, needSignUp, err = svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
 	}
@@ -730,21 +735,6 @@ func TestSendCodeLoginMessagePreservesOfficialDialogReadWatermark(t *testing.T) 
 		t.Fatalf("SignIn second returned a late login message %+v", signInMessage)
 	}
 	assertOfficialDialog(second.ID, first.ID, 1)
-
-	hash, err = svc.SendCode(ctx, phone)
-	if err != nil {
-		t.Fatalf("SendCode signin third: %v", err)
-	}
-	third := latestLoginMessage(3)
-	assertOfficialDialog(third.ID, first.ID, 2)
-	_, signInMessage, needSignUp, err = svc.SignIn(ctx, domain.Authorization{}, phone, hash, "12345")
-	if err != nil || needSignUp {
-		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
-	}
-	if signInMessage.ID != 0 {
-		t.Fatalf("SignIn third returned a late login message %+v", signInMessage)
-	}
-	assertOfficialDialog(third.ID, first.ID, 2)
 }
 
 func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {

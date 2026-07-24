@@ -322,9 +322,7 @@ func TestEmailSetupVerificationAuthorizesSignUpWithout777000Message(t *testing.T
 		accountapp.WithLoginEmailVerification(codes, sender, time.Minute, 3, 6),
 	)
 	dialogs := memory.NewDialogStore()
-	messages := memory.NewMessageStore(dialogs)
 	authSvc := NewService(users, memory.NewAuthorizationStore(), codes, nil, nil, "12345",
-		WithLoginMessages(messages, dialogs),
 		WithLoginEmail(LoginEmailOptions{
 			Enabled:      true,
 			RequireSetup: true,

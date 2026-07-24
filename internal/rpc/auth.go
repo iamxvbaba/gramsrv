@@ -804,7 +804,7 @@ func (r *Router) onAuthImportBotAuthorization(ctx context.Context, req *tg.AuthI
 
 // onAuthSignUp 处理 auth.signUp：创建用户并绑定授权。
 func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (tg.AuthAuthorizationClass, error) {
-	u, loginMessage, err := r.deps.Auth.SignUp(ctx, r.authzFromCtx(ctx), req.PhoneNumber, req.PhoneCodeHash, req.FirstName, req.LastName)
+	u, _, err := r.deps.Auth.SignUp(ctx, r.authzFromCtx(ctx), req.PhoneNumber, req.PhoneCodeHash, req.FirstName, req.LastName)
 	if err != nil {
 		return nil, signInErr(err)
 	}
@@ -812,7 +812,6 @@ func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (t
 		r.setAuthUserCache(id, u.ID, true)
 	}
 	r.bindSessionUser(ctx, u.ID)
-	r.enqueueLoginMessageBootstrap(ctx, loginMessage)
 	return &tg.AuthAuthorization{User: r.tgSelfUser(u)}, nil
 }
 

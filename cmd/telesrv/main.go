@@ -823,7 +823,6 @@ func run(logger *zap.Logger) error {
 		newTranslationOptions(cfg, rateLimiter, logger)...,
 	)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyStore, tempAuthKeyStore, cfg.DevAuthCode,
-		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),

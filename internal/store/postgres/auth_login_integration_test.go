@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
+func TestAuthSignUpDoesNotWriteOfficialLoginMessagePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
@@ -33,7 +32,6 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 		nil,
 		nil,
 		"12345",
-		appauth.WithLoginMessages(messages, dialogs),
 		appauth.WithLoginCodeDelivery(messages),
 	)
 
@@ -63,8 +61,8 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
-	if u.Phone != phone || msg.ID == 0 || !strings.Contains(msg.Body, "Login code: 12345") {
-		t.Fatalf("sign-up user/message = user %+v message %+v, want login message", u, msg)
+	if u.Phone != phone || msg.ID != 0 {
+		t.Fatalf("sign-up user/message = user %+v message %+v, want user and zero message", u, msg)
 	}
 
 	systemUser, found, err := users.ByID(ctx, domain.OfficialSystemUserID)
@@ -75,14 +73,8 @@ func TestAuthSignUpWritesOfficialLoginMessagePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByUser: %v", err)
 	}
-	if len(list.Dialogs) != 1 || list.Dialogs[0].Peer.ID != domain.OfficialSystemUserID {
-		t.Fatalf("dialogs = %+v, want official login dialog", list.Dialogs)
-	}
-	if len(list.Messages) != 1 || list.Messages[0].ID != msg.ID || !strings.Contains(list.Messages[0].Body, "Login code: 12345") {
-		t.Fatalf("messages = %+v, want returned login message", list.Messages)
-	}
-	if len(list.Users) != 1 || list.Users[0].ID != domain.OfficialSystemUserID || !list.Users[0].Verified || !list.Users[0].Support {
-		t.Fatalf("users = %+v, want official support user", list.Users)
+	if len(list.Dialogs) != 0 || len(list.Messages) != 0 || len(list.Users) != 0 {
+		t.Fatalf("SignUp created official dialog state: %+v", list)
 	}
 }
 
@@ -96,7 +88,6 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	})
 
 	users := NewUserStore(pool)
-	dialogs := NewDialogStore(pool)
 	messages := NewMessageStore(pool)
 	svc := appauth.NewService(
 		users,
@@ -105,7 +96,6 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 		nil,
 		nil,
 		"12345",
-		appauth.WithLoginMessages(messages, dialogs),
 		appauth.WithLoginCodeDelivery(messages),
 	)
 
@@ -131,23 +121,14 @@ func TestAuthSendCodeOfficialLoginMessagePreservesReadWatermarkBeforeSignInPostg
 	if _, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345"); err != nil || !needSignUp {
 		t.Fatalf("SignIn before signup needSignUp=%v err=%v, want true/nil", needSignUp, err)
 	}
-	u, first, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "PgLogin", "Read")
+	u, signUpMessage, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "PgLogin", "Read")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
+	if signUpMessage.ID != 0 {
+		t.Fatalf("SignUp returned login message %+v, want zero", signUpMessage)
+	}
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID}
-	read, err := messages.ReadHistory(ctx, domain.ReadHistoryRequest{
-		OwnerUserID: u.ID,
-		Peer:        peer,
-		MaxID:       domain.MaxMessageBoxID,
-		Date:        int(time.Now().Unix()),
-	})
-	if err != nil {
-		t.Fatalf("ReadHistory first login message: %v", err)
-	}
-	if read.MaxID != first.ID || read.StillUnreadCount != 0 {
-		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
-	}
 
 	assertOfficialDialog := func(wantTop, wantRead, wantUnread int) {
 		t.Helper()
@@ -180,34 +161,64 @@ FROM target`, u.ID, domain.OfficialSystemUserID).Scan(&top, &readMax, &unread, &
 				top, readMax, unread, computed, wantTop, wantRead, wantUnread)
 		}
 	}
+	latestLoginMessage := func(wantCount int) domain.Message {
+		t.Helper()
+		history, err := messages.ListByUser(ctx, u.ID, domain.MessageFilter{
+			HasPeer: true,
+			Peer:    peer,
+			Limit:   10,
+		})
+		if err != nil || len(history.Messages) != wantCount {
+			t.Fatalf("official history count=%d err=%v, want %d", len(history.Messages), err, wantCount)
+		}
+		latest := history.Messages[0]
+		for _, msg := range history.Messages[1:] {
+			if msg.ID > latest.ID {
+				latest = msg
+			}
+		}
+		return latest
+	}
 
 	hash, err = svc.SendCode(ctx, phone)
 	if err != nil {
-		t.Fatalf("SendCode signin second: %v", err)
+		t.Fatalf("SendCode first signin: %v", err)
 	}
-	secondID := first.ID + 1
-	assertOfficialDialog(secondID, first.ID, 1)
+	first := latestLoginMessage(1)
+	assertOfficialDialog(first.ID, 0, 1)
 	_, lateSecond, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
+	if err != nil || needSignUp {
+		t.Fatalf("SignIn first needSignUp=%v err=%v", needSignUp, err)
+	}
+	if lateSecond.ID != 0 {
+		t.Fatalf("SignIn first returned late login message %+v, want zero", lateSecond)
+	}
+	assertOfficialDialog(first.ID, 0, 1)
+	read, err := messages.ReadHistory(ctx, domain.ReadHistoryRequest{
+		OwnerUserID: u.ID,
+		Peer:        peer,
+		MaxID:       domain.MaxMessageBoxID,
+		Date:        int(time.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatalf("ReadHistory first login message: %v", err)
+	}
+	if read.MaxID != first.ID || read.StillUnreadCount != 0 {
+		t.Fatalf("read first login message = %+v, want max_id %d unread 0", read, first.ID)
+	}
+
+	hash, err = svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode second signin: %v", err)
+	}
+	second := latestLoginMessage(2)
+	assertOfficialDialog(second.ID, first.ID, 1)
+	_, lateThird, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
 	if err != nil || needSignUp {
 		t.Fatalf("SignIn second needSignUp=%v err=%v", needSignUp, err)
 	}
-	if lateSecond.ID != 0 {
-		t.Fatalf("SignIn second returned late login message %+v, want zero", lateSecond)
-	}
-	assertOfficialDialog(secondID, first.ID, 1)
-
-	hash, err = svc.SendCode(ctx, phone)
-	if err != nil {
-		t.Fatalf("SendCode signin third: %v", err)
-	}
-	thirdID := first.ID + 2
-	assertOfficialDialog(thirdID, first.ID, 2)
-	_, lateThird, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: authKeyID}, phone, hash, "12345")
-	if err != nil || needSignUp {
-		t.Fatalf("SignIn third needSignUp=%v err=%v", needSignUp, err)
-	}
 	if lateThird.ID != 0 {
-		t.Fatalf("SignIn third returned late login message %+v, want zero", lateThird)
+		t.Fatalf("SignIn second returned late login message %+v, want zero", lateThird)
 	}
-	assertOfficialDialog(thirdID, first.ID, 2)
+	assertOfficialDialog(second.ID, first.ID, 1)
 }
