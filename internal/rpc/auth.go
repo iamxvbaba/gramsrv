@@ -594,7 +594,8 @@ func (r *Router) onAuthResetAuthorizations(ctx context.Context) (bool, error) {
 	for _, a := range deleted {
 		r.revokeAuthKeySessions(a.AuthKeyID)
 		_ = r.clearAuthKeyState(ctx, a.AuthKeyID)
-		// P1 修复：撤销其它会话同样销毁其 auth_key，级联 discard 该设备绑定的活跃密聊并通知对端。
+		// 撤销其它会话会删除其业务 authorization；协议 key 保留用于让客户端
+		// 重连后取得 AUTH_KEY_UNREGISTERED。密聊仍按设备授权边界 discard 并通知对端。
 		r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(a.AuthKeyID), userID)
 	}
 	return true, nil
@@ -865,8 +866,8 @@ func (r *Router) onAuthLogOut(ctx context.Context) (*tg.AuthLoggedOut, error) {
 			r.presence.clearSession(key)
 		}
 	}
-	// P1 修复：登出销毁本设备 perm auth_key 后，级联 discard 其绑定的活跃密聊并通知对端
-	//（否则对端继续往死 auth_key 投递成静默死链）。best-effort，不阻断登出。
+	// 登出撤销本设备 authorization 后，级联 discard 其绑定的活跃密聊并通知对端
+	//（否则对端继续往已退出设备投递成静默死链）。best-effort，不阻断登出。
 	if userErr == nil && userID != 0 {
 		r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(id), userID)
 	}

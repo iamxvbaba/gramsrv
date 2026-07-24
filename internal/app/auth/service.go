@@ -1328,18 +1328,7 @@ func (s *Service) ResetAuthorization(ctx context.Context, userID, hash int64) (d
 	if revoker, ok := s.auths.(authorizationRevoker); ok {
 		return revoker.RevokeByHash(ctx, userID, hash)
 	}
-	target, found, err := s.authorizationByHash(ctx, userID, hash)
-	if err != nil || !found {
-		return target, found, err
-	}
-	if err := s.deleteAuthKey(ctx, target.AuthKeyID); err != nil {
-		return target, true, err
-	}
-	deleted, found, err := s.auths.DeleteByHash(ctx, userID, hash)
-	if err != nil || !found {
-		return deleted, found, err
-	}
-	return deleted, true, nil
+	return s.auths.DeleteByHash(ctx, userID, hash)
 }
 
 func (s *Service) ResetAuthorizations(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
@@ -1349,54 +1338,7 @@ func (s *Service) ResetAuthorizations(ctx context.Context, userID int64, keepAut
 	if revoker, ok := s.auths.(authorizationRevoker); ok {
 		return revoker.RevokeByUserExcept(ctx, userID, keepAuthKeyID)
 	}
-	targets, err := s.authorizationsByUserExcept(ctx, userID, keepAuthKeyID)
-	if err != nil {
-		return nil, err
-	}
-	for _, a := range targets {
-		if err := s.deleteAuthKey(ctx, a.AuthKeyID); err != nil {
-			return nil, err
-		}
-	}
-	deleted, err := s.auths.DeleteByUserExcept(ctx, userID, keepAuthKeyID)
-	if err != nil {
-		return nil, err
-	}
-	return deleted, nil
-}
-
-func (s *Service) deleteAuthKey(ctx context.Context, authKeyID [8]byte) error {
-	if s == nil || s.authKeys == nil || authKeyID == ([8]byte{}) {
-		return nil
-	}
-	return s.authKeys.Delete(ctx, authKeyID)
-}
-
-func (s *Service) authorizationByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
-	items, err := s.auths.ListByUser(ctx, userID)
-	if err != nil {
-		return domain.Authorization{}, false, err
-	}
-	for _, a := range items {
-		if a.Hash == hash {
-			return a, true, nil
-		}
-	}
-	return domain.Authorization{}, false, nil
-}
-
-func (s *Service) authorizationsByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
-	items, err := s.auths.ListByUser(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.Authorization, 0, len(items))
-	for _, a := range items {
-		if a.AuthKeyID != keepAuthKeyID {
-			out = append(out, a)
-		}
-	}
-	return out, nil
+	return s.auths.DeleteByUserExcept(ctx, userID, keepAuthKeyID)
 }
 
 func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID int64) error {

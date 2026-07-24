@@ -195,8 +195,9 @@ WHERE auth_key_id = $1
 //
 // 同时清理把本 key 当作 perm key 的 temp auth key 行：temp_auth_key_bindings.temp_auth_key_id
 // 侧有外键 ON DELETE CASCADE，删除 temp key 会自动清绑定；perm_auth_key_id 侧由
-// RESTRICT FK 防止悬空，因此被踢/销毁 perm key 时必须先把关联 temp key 一并删掉。否则 Web/上传连接用
-// raw temp key 重连时仍能进入 RPC 层，只得到 AUTH_KEY_UNREGISTERED，而不是连接层 404。
+// RESTRICT FK 防止悬空，因此显式销毁 perm key 时必须先把关联 temp key 一并删掉。
+// 远程撤销 authorization 不得调用本方法：被踢客户端必须保留协议 key，重连进入 RPC
+// 层后取得 AUTH_KEY_UNREGISTERED，而不是只收到连接层 -404。
 func (s *AuthKeyStore) Delete(ctx context.Context, id [8]byte) error {
 	return withAuthIdentityTx(ctx, s.db, "delete auth key", func(tx pgx.Tx) error {
 		return deleteAuthKeyTx(ctx, tx, authKeyIDToInt64(id))

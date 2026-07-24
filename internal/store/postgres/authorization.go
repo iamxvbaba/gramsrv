@@ -252,9 +252,10 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 	return a, true, nil
 }
 
-// RevokeByHash 删除协议 auth_key 作为远程踢设备的持久化事实入口。
-// authorizations 通过 FK cascade 删除；update_states 没有 auth_keys FK，必须显式清理；
-// 关联 temp auth key 也显式删除，避免 raw temp key 重连。
+// RevokeByHash 是远程踢设备的持久化事实入口：删除业务 authorization 与
+// device update state，但保留 permanent/temp 协议 key 和 binding。这样被踢客户端
+// 重连后仍可完成 MTProto 解密，并由 RPC gate 返回 AUTH_KEY_UNREGISTERED；若先删除
+// 协议 key，客户端只能收到 transport -404，无法可靠清理本地登录态。
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
 	var (
 		a     domain.Authorization
@@ -315,7 +316,7 @@ FOR UPDATE`, candidate, userID, hash))
 	if !found {
 		return domain.Authorization{}, false, nil
 	}
-	if err := deleteRevocationTargetsTx(ctx, tx, []int64{candidate}); err != nil {
+	if err := deleteRevokedAuthorizationStateTx(ctx, tx, []int64{candidate}); err != nil {
 		return domain.Authorization{}, false, err
 	}
 	return a, true, nil
@@ -349,7 +350,8 @@ RETURNING auth_key_id, user_id, hash, layer, device_model, platform, system_vers
 	return out, nil
 }
 
-// RevokeByUserExcept 批量删除协议 auth_key，保留 keepAuthKeyID 对应的当前设备。
+// RevokeByUserExcept 批量删除业务 authorization，保留 keepAuthKeyID 对应的当前设备；
+// 被撤销设备的协议 key/binding 保留，以便重连后取得 RPC 401 并完成客户端退出。
 func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
 	var out []domain.Authorization
 	err := withAuthIdentityTx(ctx, s.db, "revoke authorizations by user", func(tx pgx.Tx) error {
@@ -449,13 +451,38 @@ FOR UPDATE`, userID, keepAuthKeyID, candidates)
 	for i := range out {
 		targets[i] = authKeyIDToInt64(out[i].AuthKeyID)
 	}
-	if err := deleteRevocationTargetsTx(ctx, tx, targets); err != nil {
+	if err := deleteRevokedAuthorizationStateTx(ctx, tx, targets); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func deleteRevocationTargetsTx(ctx context.Context, tx pgx.Tx, authKeyIDs []int64) error {
+func deleteRevokedAuthorizationStateTx(ctx context.Context, tx pgx.Tx, authKeyIDs []int64) error {
+	if len(authKeyIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM update_states
+WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs); err != nil {
+		return fmt.Errorf("delete revoked update states: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+DELETE FROM authorizations
+WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs)
+	if err != nil {
+		return fmt.Errorf("delete revoked authorizations: %w", err)
+	}
+	if tag.RowsAffected() != int64(len(authKeyIDs)) {
+		return fmt.Errorf("delete revoked authorizations: deleted %d of %d locked targets", tag.RowsAffected(), len(authKeyIDs))
+	}
+	return nil
+}
+
+// deleteProtocolAuthIdentitiesTx permanently removes permanent identities and
+// their derived temp keys. Remote account.resetAuthorization/
+// auth.resetAuthorizations must not use this helper: those clients need the
+// protocol key long enough to reconnect and receive an RPC-level 401.
+func deleteProtocolAuthIdentitiesTx(ctx context.Context, tx pgx.Tx, authKeyIDs []int64) error {
 	if len(authKeyIDs) == 0 {
 		return nil
 	}
@@ -466,21 +493,21 @@ WHERE auth_key_id IN (
 	FROM temp_auth_key_bindings
 	WHERE perm_auth_key_id = ANY($1::bigint[])
 )`, authKeyIDs); err != nil {
-		return fmt.Errorf("delete revoked temporary auth keys: %w", err)
+		return fmt.Errorf("delete temporary auth keys: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 DELETE FROM update_states
 WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs); err != nil {
-		return fmt.Errorf("delete revoked update states: %w", err)
+		return fmt.Errorf("delete protocol identity update states: %w", err)
 	}
 	tag, err := tx.Exec(ctx, `
 DELETE FROM auth_keys
 WHERE auth_key_id = ANY($1::bigint[])`, authKeyIDs)
 	if err != nil {
-		return fmt.Errorf("delete revoked permanent auth keys: %w", err)
+		return fmt.Errorf("delete permanent auth keys: %w", err)
 	}
 	if tag.RowsAffected() != int64(len(authKeyIDs)) {
-		return fmt.Errorf("delete revoked permanent auth keys: deleted %d of %d locked targets", tag.RowsAffected(), len(authKeyIDs))
+		return fmt.Errorf("delete permanent auth keys: deleted %d of %d locked targets", tag.RowsAffected(), len(authKeyIDs))
 	}
 	return nil
 }

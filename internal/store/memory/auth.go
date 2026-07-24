@@ -461,8 +461,9 @@ func (s *AuthorizationStore) DeleteByHash(_ context.Context, userID, hash int64)
 	return domain.Authorization{}, false, nil
 }
 
-// RevokeByHash mirrors PostgreSQL's protocol-key revocation boundary when this
-// authorization projection is linked to an in-memory auth-key authority.
+// RevokeByHash removes only the business authorization. The protocol auth key
+// and any temp binding stay usable for MTProto decryption so a kicked client can
+// reconnect and receive AUTH_KEY_UNREGISTERED from the RPC gate.
 func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int64) (domain.Authorization, bool, error) {
 	s.linkMu.RLock()
 	defer s.linkMu.RUnlock()
@@ -471,27 +472,17 @@ func (s *AuthorizationStore) RevokeByHash(ctx context.Context, userID, hash int6
 	}
 	s.authKeys.mu.Lock()
 	s.mu.Lock()
-	var (
-		targetID [8]byte
-		target   domain.Authorization
-		found    bool
-	)
 	for id, a := range s.m {
 		if a.UserID == userID && a.Hash == hash {
-			targetID, target, found = id, a, true
-			break
+			delete(s.m, id)
+			s.mu.Unlock()
+			s.authKeys.mu.Unlock()
+			return a, true, nil
 		}
 	}
-	if !found {
-		s.mu.Unlock()
-		s.authKeys.mu.Unlock()
-		return domain.Authorization{}, false, nil
-	}
-	deletedIDs := s.authKeys.deleteProtocolAuthKeyLocked(targetID)
-	s.authKeys.deleteAuthorizationMirrorsWithHeldLocked(deletedIDs, s)
 	s.mu.Unlock()
 	s.authKeys.mu.Unlock()
-	return target, true, nil
+	return domain.Authorization{}, false, nil
 }
 
 func (s *AuthorizationStore) DeleteByUserExcept(_ context.Context, userID int64, keepAuthKeyID [8]byte) ([]domain.Authorization, error) {
@@ -517,18 +508,12 @@ func (s *AuthorizationStore) RevokeByUserExcept(ctx context.Context, userID int6
 	s.authKeys.mu.Lock()
 	s.mu.Lock()
 	out := make([]domain.Authorization, 0)
-	targets := make([][8]byte, 0)
 	for id, a := range s.m {
 		if a.UserID == userID && id != keepAuthKeyID {
 			out = append(out, a)
-			targets = append(targets, id)
+			delete(s.m, id)
 		}
 	}
-	deletedIDs := make([][8]byte, 0, len(targets))
-	for _, id := range targets {
-		deletedIDs = append(deletedIDs, s.authKeys.deleteProtocolAuthKeyLocked(id)...)
-	}
-	s.authKeys.deleteAuthorizationMirrorsWithHeldLocked(deletedIDs, s)
 	s.mu.Unlock()
 	s.authKeys.mu.Unlock()
 	return out, nil

@@ -593,7 +593,8 @@ func (r *Router) onAccountResetAuthorization(ctx context.Context, hash int64) (b
 	}
 	r.revokeAuthKeySessions(deleted.AuthKeyID)
 	_ = r.clearAuthKeyState(ctx, deleted.AuthKeyID)
-	// P1 修复：撤销该会话销毁其 auth_key，级联 discard 该设备绑定的活跃密聊并通知对端。
+	// 撤销该设备的业务授权后，级联 discard 其绑定的活跃密聊并通知对端。
+	// 协议 auth key 必须保留，供客户端重连后取得 AUTH_KEY_UNREGISTERED。
 	r.discardSecretChatsForAuthKey(ctx, businessAuthKeyInt64(deleted.AuthKeyID), userID)
 	return true, nil
 }
