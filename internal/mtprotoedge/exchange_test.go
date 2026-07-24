@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"testing"
@@ -366,41 +367,85 @@ func TestKeyExchangeAcceptsAndroidMediaTempNegativeDC(t *testing.T) {
 	}
 }
 
-func TestKeyExchangeRejectsWrongNegativeTempDCWhenStrict(t *testing.T) {
-	ex := serverExchangeCompat{dc: 2, strictDC: true, log: zaptest.NewLogger(t)}
-	err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: -3})
-	var exErr *exchange.ServerExchangeError
-	if !errors.As(err, &exErr) {
-		t.Fatalf("err = %T %v, want ServerExchangeError", err, err)
-	}
-	if exErr.Code != codec.CodeWrongDC {
-		t.Fatalf("error code = %d, want %d", exErr.Code, codec.CodeWrongDC)
-	}
-}
-
-// TestKeyExchangeAcceptsMismatchedDCByDefault asserts that, in the default
-// lenient mode, neither permanent nor temp key exchange requires dc_id to
-// equal the server's configured DC. telesrv is always a single physical
-// backend; self-hosted client forks commonly alias dc_id 1..5 to it (see
-// Options.StrictDC doc), so a mismatched client-chosen dc_id must not be
-// rejected — doing so previously broke every account whose client picked a
-// starting dc_id other than the server's.
-func TestKeyExchangeAcceptsMismatchedDCByDefault(t *testing.T) {
+func TestKeyExchangeAcceptsAnyDCLabelByDefault(t *testing.T) {
 	ex := serverExchangeCompat{dc: 2, log: zaptest.NewLogger(t)}
-	if err := ex.validatePQInnerDataDC(&mt.PQInnerDataDC{DC: 3}); err != nil {
-		t.Fatalf("permanent DC mismatch: err = %v, want nil (lenient by default)", err)
+	labels := []int{
+		2,      // canonical
+		3,      // another production DC
+		0,      // no conventional DC mapping
+		-2,     // Android media-temp convention
+		10002,  // test-environment style label
+		-10002, // negative test-environment style label
+		-1 << 31,
+		1<<31 - 1,
 	}
-	if err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: -3}); err != nil {
-		t.Fatalf("temp DC mismatch: err = %v, want nil (lenient by default)", err)
+
+	for _, label := range labels {
+		t.Run(fmt.Sprintf("permanent_%d", label), func(t *testing.T) {
+			if err := ex.validatePQInnerDataDC(&mt.PQInnerDataDC{DC: label}); err != nil {
+				t.Fatalf("validate permanent DC label %d: %v", label, err)
+			}
+		})
+		t.Run(fmt.Sprintf("temporary_%d", label), func(t *testing.T) {
+			if err := ex.validatePQInnerDataDC(&mt.PQInnerDataTempDC{DC: label, ExpiresIn: 60}); err != nil {
+				t.Fatalf("validate temporary DC label %d: %v", label, err)
+			}
+		})
 	}
 }
 
-// TestKeyExchangeRejectsMismatchedPermanentDCWhenStrict asserts that
-// strictDC=true still enforces exact DC-ID equality for permanent-key
-// exchange (kept for a hypothetical future real multi-DC deployment).
-func TestKeyExchangeRejectsMismatchedPermanentDCWhenStrict(t *testing.T) {
+func TestKeyExchangePersistsArbitraryPermanentDCLabelByDefault(t *testing.T) {
+	const clientDC = 10002
+	keys := memory.NewAuthKeyStore()
+	addr, pub, _ := startTestServer(t, Options{DC: 2, AuthKeys: keys})
+
+	_, auth, _ := dialHandshake(t, addr, clientDC, pub)
+	saved, found, err := keys.Get(context.Background(), auth.AuthKey.ID)
+	if err != nil {
+		t.Fatalf("get persisted auth key: %v", err)
+	}
+	if !found {
+		t.Fatalf("auth key %x was not persisted", auth.AuthKey.ID)
+	}
+	if saved.Value != [256]byte(auth.AuthKey.Value) {
+		t.Fatal("persisted auth key value mismatch")
+	}
+}
+
+func TestKeyExchangeStrictDCValidation(t *testing.T) {
 	ex := serverExchangeCompat{dc: 2, strictDC: true, log: zaptest.NewLogger(t)}
-	err := ex.validatePQInnerDataDC(&mt.PQInnerDataDC{DC: 3})
+	tests := []struct {
+		name    string
+		data    mt.PQInnerDataClass
+		wantErr bool
+	}{
+		{name: "permanent exact", data: &mt.PQInnerDataDC{DC: 2}},
+		{name: "permanent other", data: &mt.PQInnerDataDC{DC: 3}, wantErr: true},
+		{name: "permanent zero", data: &mt.PQInnerDataDC{DC: 0}, wantErr: true},
+		{name: "temporary positive exact", data: &mt.PQInnerDataTempDC{DC: 2}},
+		{name: "temporary negative exact", data: &mt.PQInnerDataTempDC{DC: -2}},
+		{name: "temporary other", data: &mt.PQInnerDataTempDC{DC: 3}, wantErr: true},
+		{name: "temporary negative other", data: &mt.PQInnerDataTempDC{DC: -3}, wantErr: true},
+		{name: "temporary test label", data: &mt.PQInnerDataTempDC{DC: 10002}, wantErr: true},
+		{name: "temporary min int32", data: &mt.PQInnerDataTempDC{DC: -1 << 31}, wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ex.validatePQInnerDataDC(test.data)
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("validate: %v", err)
+				}
+				return
+			}
+			assertWrongDCError(t, err)
+		})
+	}
+}
+
+func assertWrongDCError(t *testing.T, err error) {
+	t.Helper()
 	var exErr *exchange.ServerExchangeError
 	if !errors.As(err, &exErr) {
 		t.Fatalf("err = %T %v, want ServerExchangeError", err, err)

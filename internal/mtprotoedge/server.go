@@ -303,20 +303,12 @@ type Options struct {
 
 	// DC 是本 server 的 DC ID。默认 2。
 	DC int
-	// StrictDC turns on exact DC-ID validation for the permanent-key exchange
-	// (default off = lenient). telesrv is always a single physical backend —
-	// there is no real multi-DC federation behind it — but self-hosted client
-	// forks commonly run in "single-server backend" mode, where dc_id 1..5 all
-	// alias to this one server so that any old data referencing a specific
-	// dc_id still resolves correctly. When a client adds a new local account it
-	// picks its own starting dc_id (its usual multi-DC load-spreading
-	// behavior, unrelated to which physical server it's actually talking to)
-	// — that choice is not guaranteed to equal our configured DC. Strict
-	// validation would reject those accounts with "-444 wrong dc_id" even
-	// though they are connecting to the right (and only) server; dc_id is a
-	// client-side routing label here, not part of key derivation, so
-	// accepting the mismatch does not weaken the exchange. The switch exists
-	// for a hypothetical future real multi-DC deployment.
+	// StrictDC enables DC-label validation during key exchange. It is false by
+	// default: this single physical backend accepts every wire int32 label for
+	// permanent and temporary keys, and the label never changes auth-key
+	// persistence, session identity, or business state. When enabled,
+	// permanent labels must equal DC and temporary labels may equal +/-DC.
+	// This diagnostic switch does not itself provide multi-DC isolation.
 	StrictDC bool
 	// RSAKey 是 server RSA 私钥，用于密钥交换。nil 时无法完成握手。
 	RSAKey *rsa.PrivateKey
