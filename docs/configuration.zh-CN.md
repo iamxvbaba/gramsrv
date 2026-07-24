@@ -21,7 +21,8 @@
 | `TELESRV_LISTEN` | string / `0.0.0.0:2398` | MTProto TCP 监听地址，必须与 patched 客户端可达地址/端口一致。 |
 | `TELESRV_ADVERTISE_IP` | string / `127.0.0.1` | 媒体、通话等回退路径使用的客户端可达 IP；当前 TDesktop 静态 DC patch 不从这里获取 MTProto 地址。 |
 | `TELESRV_RSA_KEY` | path / `data/server_rsa.pem` | MTProto RSA 私钥；缺失时自动生成。属于敏感文件，重启和升级间必须稳定保存。 |
-| `TELESRV_DC` | int / `2` | 服务端 DC ID，必须与客户端 patch 及媒体/DC 元数据一致。 |
+| `TELESRV_DC` | int / `2` | 服务端输出配置及媒体/DC 元数据使用的规范 DC ID；当前单后端不会按它分区密钥交换状态。 |
+| `TELESRV_STRICT_DC_CHECK` | bool / `false` | 默认 `false`，永久与临时密钥交换接受任意 wire int32 DC 标签。设为 `true` 时永久标签必须等于 `TELESRV_DC`、临时标签绝对值必须等于 `TELESRV_DC`；它仅是诊断开关，不提供多 DC 隔离。 |
 | `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | 在 MTProto 监听端口启用 MTProto-over-WebSocket 分流。 |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | 浏览器 WebSocket origin 白名单；`*` 只用于临时调试。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | 全局物理连接 admission 上限；负数关闭该门禁。 |

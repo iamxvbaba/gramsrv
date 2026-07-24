@@ -49,6 +49,34 @@ func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 	}
 }
 
+func TestLoadStrictDCCheck(t *testing.T) {
+	t.Run("defaults off", func(t *testing.T) {
+		disableDefaultConfigFile(t)
+		t.Setenv("TELESRV_STRICT_DC_CHECK", "")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.StrictDCCheck {
+			t.Fatal("StrictDCCheck = true, want default false")
+		}
+	})
+
+	t.Run("explicitly enabled", func(t *testing.T) {
+		disableDefaultConfigFile(t)
+		t.Setenv("TELESRV_STRICT_DC_CHECK", "true")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.StrictDCCheck {
+			t.Fatal("StrictDCCheck = false, want true")
+		}
+	})
+}
+
 func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_MTPROTO_MAX_CONNECTIONS", "12345")

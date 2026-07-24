@@ -21,7 +21,8 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_LISTEN` | string / `0.0.0.0:2398` | MTProto TCP listen address. Must match the address/port reachable by patched clients. |
 | `TELESRV_ADVERTISE_IP` | string / `127.0.0.1` | Client-reachable server IP used by media/call fallbacks. The current static Desktop DC patch does not derive its MTProto endpoint from this value. |
 | `TELESRV_RSA_KEY` | path / `data/server_rsa.pem` | MTProto RSA private key. Generated when missing. Treat the file as a secret and keep it stable across restarts. |
-| `TELESRV_DC` | int / `2` | Server DC ID. Must match patched client expectations and stored media/DC metadata. |
+| `TELESRV_DC` | int / `2` | Canonical server DC ID used in server-originated configuration and media/DC metadata. It does not partition key-exchange state on the current single backend. |
+| `TELESRV_STRICT_DC_CHECK` | bool / `false` | Default `false` accepts every wire int32 DC label for permanent and temporary key exchange. `true` requires permanent `dc_id == TELESRV_DC` and temporary `abs(dc_id) == TELESRV_DC`; it is only a diagnostic and does not provide multi-DC isolation. |
 | `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | Enables MTProto-over-WebSocket demultiplexing on the MTProto listener. |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | Browser WebSocket origin allow-list. `*` is for temporary debugging only. |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | Global physical connection admission limit. Negative disables this gate. |
