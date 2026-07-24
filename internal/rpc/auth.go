@@ -64,6 +64,9 @@ func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.AuthSendCodeRequest](d, tlprofile.SemanticMethodAuthSendCode, func(ctx context.Context, layerRequest *tg.AuthSendCodeRequest) (any, error) {
 		return r.onAuthSendCode(ctx, layerRequest)
 	})
+	registerRPC[*tg.AuthReportMissingCodeRequest](d, tlprofile.SemanticMethodAuthReportMissingCode, func(ctx context.Context, req *tg.AuthReportMissingCodeRequest) (any, error) {
+		return r.onAuthReportMissingCode(ctx, req)
+	})
 	registerRPC[*tg.AuthResendCodeRequest](d, tlprofile.SemanticMethodAuthResendCode, func(ctx context.Context, layerRequest *tg.AuthResendCodeRequest) (any, error) {
 		return r.onAuthResendCode(ctx, layerRequest)
 	})
@@ -374,6 +377,36 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 		return nil, internalErr()
 	}
 	return r.tgSentCodeForHash(ctx, hash)
+}
+
+func (r *Router) onAuthReportMissingCode(ctx context.Context, req *tg.AuthReportMissingCodeRequest) (bool, error) {
+	if req == nil || r.deps.AuthDeliveryReports == nil {
+		return false, inputRequestInvalidErr()
+	}
+	authKeyID, authKeyOK := AuthKeyIDFrom(ctx)
+	sessionID, sessionOK := SessionIDFrom(ctx)
+	if !authKeyOK || authKeyID == ([8]byte{}) || !sessionOK || sessionID == 0 {
+		return false, internalErr()
+	}
+	clientType := string(ClientTypeFrom(ctx))
+	if _, _, err := r.deps.AuthDeliveryReports.ReportMissingCode(ctx, domain.AuthMissingCodeReportRequest{
+		AuthKeyID: authKeyID, SessionID: sessionID, ClientType: clientType,
+		Phone: req.PhoneNumber, PhoneCodeHash: req.PhoneCodeHash,
+		MNC: req.Mnc, CreatedAt: r.clock.Now(),
+	}); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrPhoneCodeExpired):
+			return false, phoneCodeExpiredErr()
+		case errors.Is(err, domain.ErrPhoneCodeInvalid),
+			errors.Is(err, domain.ErrAuthDeliveryReportInvalid):
+			return false, phoneCodeInvalidErr()
+		case errors.Is(err, domain.ErrAuthDeliveryRateLimited):
+			return false, floodWaitErr(60)
+		default:
+			return false, internalErr()
+		}
+	}
+	return true, nil
 }
 
 func tgSentCode(hash string) tg.AuthSentCodeClass {

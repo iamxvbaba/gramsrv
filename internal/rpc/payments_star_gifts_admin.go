@@ -90,6 +90,10 @@ func (r *Router) adminGrantUpgradedStarGift(ctx context.Context, senderID int64,
 	grant.SenderID = senderID
 	grant.Date = int(r.clock.Now().Unix())
 	grant.RecipientBlocked = recipientBlocked
+	grant.RecipientUnsaved, err = r.starGiftRecipientUnsaved(ctx, senderID, grant.Recipient)
+	if err != nil {
+		return err
+	}
 	if _, err := granter.GrantUnique(ctx, grant); err != nil {
 		return err
 	}

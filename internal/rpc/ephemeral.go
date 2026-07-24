@@ -245,13 +245,18 @@ func (r *Router) onEphemeralReportMessage(ctx context.Context, request *tg.Ephem
 	if _, final := result.(*tg.ReportResultReported); !final {
 		return result, nil
 	}
-	if r.deps.EphemeralReports == nil {
+	reason, ok := moderationReasonForReportOption(string(request.Option))
+	if !ok {
+		return nil, tgerr.New(400, "OPTION_INVALID")
+	}
+	if r.deps.Moderation == nil {
 		return nil, internalErr()
 	}
-	report := domain.NewEphemeralAbuseReport(userID, string(request.Option), request.Message, target, r.clock.Now())
-	if _, err := r.deps.EphemeralReports.CreateEphemeralReport(ctx, report); err != nil {
+	if _, _, err := r.deps.Moderation.ReportEphemeral(
+		ctx, userID, target, reason, string(request.Option), request.Message, r.clock.Now(),
+	); err != nil {
 		r.log.Warn("persist ephemeral abuse report", zap.Int64("reporter_user_id", userID), zap.Int64("channel_id", peer.ID), zap.Int("ephemeral_message_id", request.ID), zap.Error(err))
-		return nil, internalErr()
+		return nil, moderationReportError(err)
 	}
 	return result, nil
 }

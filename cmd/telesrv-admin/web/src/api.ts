@@ -11,6 +11,9 @@ import type {
   GroupMessageListResponse,
   MessageDetail,
   MessageListResponse,
+  ModerationCaseDetail,
+  ModerationCaseRow,
+  ModerationReport,
   OfficialStarGiftListResponse,
   StarGiftCollectiblePreview,
   StarGiftListResponse
@@ -73,6 +76,27 @@ export const api = {
     const params = new URLSearchParams({ channel_id: String(channelID), msg_id: String(msgID) });
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
+  moderationCases: (params: URLSearchParams) =>
+    request<{ cases: ModerationCaseRow[] }>(`/api/moderation/cases?${params.toString()}`),
+  moderationCase: (id: number) =>
+    request<ModerationCaseDetail>(`/api/moderation/cases/${id}`),
+  moderationReport: (id: number) =>
+    request<ModerationReport>(`/api/moderation/reports/${id}`),
+  claimModerationCase: (id: number, expectedVersion: number) =>
+    request<ModerationCaseRow>(`/api/moderation/cases/${id}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ expected_version: expectedVersion })
+    }),
+  decideModerationCase: (id: number, payload: Record<string, unknown>) =>
+    request<{ created: boolean; case: ModerationCaseDetail }>(`/api/moderation/cases/${id}/decide`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  reviewModerationAppeal: (caseID: number, appealID: number, payload: Record<string, unknown>) =>
+    request<{ created: boolean; case: ModerationCaseDetail }>(`/api/moderation/cases/${caseID}/appeals/${appealID}/review`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
 	gifts: () => request<StarGiftListResponse>("/api/gifts"),
 	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
 	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),

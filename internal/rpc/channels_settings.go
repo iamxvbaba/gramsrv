@@ -206,8 +206,20 @@ func (r *Router) onChannelsReportAntiSpamFalsePositive(ctx context.Context, req 
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return false, messageIDInvalidErr()
 	}
-	if _, _, err := r.channelChangeInfoView(ctx, req.Channel); err != nil {
+	userID, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	if err != nil {
 		return false, err
+	}
+	if !view.Channel.Megagroup || view.Channel.Broadcast {
+		return false, channelInvalidErr(domain.ErrChannelInvalid)
+	}
+	if r.deps.Moderation == nil {
+		return false, internalErr()
+	}
+	if _, _, err := r.deps.Moderation.ReportAntiSpamFalsePositive(
+		ctx, userID, view.Channel.ID, req.MsgID, r.clock.Now(),
+	); err != nil {
+		return false, moderationReportError(err)
 	}
 	return true, nil
 }

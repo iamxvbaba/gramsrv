@@ -165,6 +165,16 @@ type EmojiService interface {
 	DocumentAnimationJSON(ctx context.Context, documentID int64) ([]byte, bool, error)
 }
 
+type ModerationService interface {
+	ListCases(ctx context.Context, filter domain.ModerationCaseFilter) ([]domain.ModerationCase, error)
+	Case(ctx context.Context, caseID int64) (domain.ModerationCaseDetail, bool, error)
+	Report(ctx context.Context, reportID int64) (domain.ModerationReport, bool, error)
+	ClaimCase(ctx context.Context, caseID, expectedVersion int64, actor string, now time.Time) (domain.ModerationCase, error)
+	DecideCase(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
+	SubmitAppeal(ctx context.Context, caseID, appellantUserID int64, text string, now time.Time) (domain.ModerationAppeal, bool, error)
+	ReviewAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
+}
+
 // GiftGranter delivers a catalog gift to a recipient peer on behalf of a sender
 // without charging Stars. Implemented by the RPC router, it reuses the standard
 // gift-delivery path (service message for users, saved-gift + admin log for
@@ -191,6 +201,7 @@ type Dependencies struct {
 	OfficialGifts   OfficialGiftsSource
 	Bots            BotService
 	Emoji           EmojiService
+	Moderation      ModerationService
 	Now             func() time.Time
 }
 
@@ -212,6 +223,7 @@ type Service struct {
 	officialGifts   OfficialGiftsSource
 	bots            BotService
 	emoji           EmojiService
+	moderation      ModerationService
 	now             func() time.Time
 }
 
@@ -272,6 +284,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	if deps.Emoji != nil {
 		s.emoji = deps.Emoji
 	}
+	if deps.Moderation != nil {
+		s.moderation = deps.Moderation
+	}
 	if deps.Now != nil {
 		s.now = deps.Now
 	}
@@ -279,6 +294,61 @@ func (s *Service) Configure(deps Dependencies) *Service {
 		s.now = time.Now
 	}
 	return s
+}
+
+func (s *Service) ModerationCases(ctx context.Context, filter domain.ModerationCaseFilter) ([]domain.ModerationCase, error) {
+	if s == nil || s.moderation == nil {
+		return nil, fmt.Errorf("moderation dependency is not configured")
+	}
+	return s.moderation.ListCases(ctx, filter)
+}
+
+func (s *Service) ModerationCase(ctx context.Context, caseID int64) (domain.ModerationCaseDetail, bool, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationCaseDetail{}, false, fmt.Errorf("moderation dependency is not configured")
+	}
+	return s.moderation.Case(ctx, caseID)
+}
+
+func (s *Service) ModerationReport(ctx context.Context, reportID int64) (domain.ModerationReport, bool, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationReport{}, false, fmt.Errorf("moderation dependency is not configured")
+	}
+	return s.moderation.Report(ctx, reportID)
+}
+
+func (s *Service) ClaimModerationCase(ctx context.Context, caseID, expectedVersion int64, actor string) (domain.ModerationCase, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationCase{}, fmt.Errorf("moderation dependency is not configured")
+	}
+	return s.moderation.ClaimCase(ctx, caseID, expectedVersion, actor, s.now().UTC())
+}
+
+func (s *Service) DecideModerationCase(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationCaseDetail{}, false, fmt.Errorf("moderation dependency is not configured")
+	}
+	if request.CreatedAt.IsZero() {
+		request.CreatedAt = s.now().UTC()
+	}
+	return s.moderation.DecideCase(ctx, request)
+}
+
+func (s *Service) SubmitModerationAppeal(ctx context.Context, caseID, appellantUserID int64, text string) (domain.ModerationAppeal, bool, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationAppeal{}, false, fmt.Errorf("moderation dependency is not configured")
+	}
+	return s.moderation.SubmitAppeal(ctx, caseID, appellantUserID, text, s.now().UTC())
+}
+
+func (s *Service) ReviewModerationAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	if s == nil || s.moderation == nil {
+		return domain.ModerationCaseDetail{}, false, fmt.Errorf("moderation dependency is not configured")
+	}
+	if request.CreatedAt.IsZero() {
+		request.CreatedAt = s.now().UTC()
+	}
+	return s.moderation.ReviewAppeal(ctx, request)
 }
 
 type CommandMeta struct {

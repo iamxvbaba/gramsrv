@@ -1031,6 +1031,29 @@ func (s *Service) ListMessageReactions(ctx context.Context, userID int64, req do
 	return s.channels.ListChannelMessageReactions(ctx, req)
 }
 
+type messageReactionLookupStore interface {
+	FindChannelMessageReaction(ctx context.Context, req domain.ChannelMessageReactionLookupRequest) (domain.ChannelMessageReactionLookup, bool, error)
+}
+
+func (s *Service) FindMessageReaction(ctx context.Context, userID int64, req domain.ChannelMessageReactionLookupRequest) (domain.ChannelMessageReactionLookup, bool, error) {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 ||
+		req.MessageID <= 0 || req.MessageID > domain.MaxMessageBoxID ||
+		req.ReactorUserID == 0 {
+		return domain.ChannelMessageReactionLookup{}, false, domain.ErrChannelInvalid
+	}
+	if req.ViewerUserID == 0 {
+		req.ViewerUserID = userID
+	}
+	if req.ViewerUserID != userID {
+		return domain.ChannelMessageReactionLookup{}, false, domain.ErrChannelInvalid
+	}
+	lookup, ok := s.channels.(messageReactionLookupStore)
+	if !ok {
+		return domain.ChannelMessageReactionLookup{}, false, domain.ErrChannelInvalid
+	}
+	return lookup.FindChannelMessageReaction(ctx, req)
+}
+
 type messageReactionUsageStore interface {
 	RecordMessageReactionUse(ctx context.Context, userID int64, reactions []domain.MessageReaction, addToRecent bool, date int) error
 }
@@ -1443,6 +1466,30 @@ func (s *Service) DeleteMessages(ctx context.Context, userID int64, req domain.D
 		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.DeleteChannelMessages(ctx, req)
+}
+
+type moderationChannelMessageStore interface {
+	ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error)
+}
+
+// ModerationDeleteMessages is the explicit server-authority deletion path used
+// only by the durable moderation action worker. It never accepts a client
+// identity and therefore cannot be reached by ordinary RPC permission checks.
+func (s *Service) ModerationDeleteMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error) {
+	if s == nil || s.channels == nil || channelID <= 0 ||
+		len(ids) == 0 || len(ids) > domain.MaxDeleteMessageIDs {
+		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
+	}
+	for _, id := range ids {
+		if id <= 0 || id > domain.MaxMessageBoxID {
+			return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
+		}
+	}
+	store, ok := s.channels.(moderationChannelMessageStore)
+	if !ok {
+		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
+	}
+	return store.ModerationDeleteChannelMessages(ctx, channelID, append([]int(nil), ids...), date)
 }
 
 // DeleteHistory clears the current user's history view or deletes a bounded channel history page for everyone.

@@ -90,14 +90,9 @@ type Config struct {
 	PublicWebBaseURL string
 	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
 	PublicAppName string
-	// ScamWarning / FakeWarning override the profile warning text injected into
-	// getFullUser/getFullChannel About for scam/fake peers. Empty keeps the
-	// built-in per-peer-type English defaults. Clients cannot localize
-	// server-provided text, so operators set these to their audience language.
-	ScamWarning string
-	FakeWarning string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
-	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
+	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
+	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
 	PublicLinkWebAddr string
 	// TelegramLoginEnabled mounts the self-hosted Telegram Login/OIDC provider
 	// on PublicLinkWebAddr. Secrets are file-backed so they are not exposed in
@@ -504,8 +499,6 @@ func Load() (Config, error) {
 		PublicAppLinkBase:                    publicAppLinkBase,
 		PublicWebBaseURL:                     publicWebBaseURL,
 		PublicAppName:                        publicAppName,
-		ScamWarning:                          envAllowEmptyOr("TELESRV_SCAM_WARNING", ""),
-		FakeWarning:                          envAllowEmptyOr("TELESRV_FAKE_WARNING", ""),
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		TelegramLoginEnabled:                 envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
 		TelegramLoginIssuer:                  strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),

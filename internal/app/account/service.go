@@ -1016,6 +1016,41 @@ func (s *Service) GetAccountSettings(ctx context.Context, userID int64) (domain.
 	return settings, nil
 }
 
+// GetAccountSettingsBatch is the bounded cold loader behind the RPC read
+// model. Missing rows are returned as explicit defaults so they are negative
+// cached instead of being queried again.
+func (s *Service) GetAccountSettingsBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountSettings, error) {
+	out := make(map[int64]domain.AccountSettings, len(userIDs))
+	for _, userID := range userIDs {
+		if userID > 0 {
+			out[userID] = domain.DefaultAccountSettings()
+		}
+	}
+	if s == nil || s.settings == nil || len(out) == 0 {
+		return out, nil
+	}
+	if batch, ok := s.settings.(store.AccountSettingsBatchStore); ok {
+		loaded, err := batch.GetAccountSettingsBatch(ctx, userIDs)
+		if err != nil {
+			return nil, err
+		}
+		for userID, settings := range loaded {
+			out[userID] = settings
+		}
+		return out, nil
+	}
+	for userID := range out {
+		settings, found, err := s.settings.GetAccountSettings(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			out[userID] = settings
+		}
+	}
+	return out, nil
+}
+
 // SetGlobalPrivacy 持久化账号全局隐私开关，返回合并后的完整设置。
 func (s *Service) SetGlobalPrivacy(ctx context.Context, userID int64, privacy domain.GlobalPrivacy) (domain.AccountSettings, error) {
 	settings, err := s.GetAccountSettings(ctx, userID)

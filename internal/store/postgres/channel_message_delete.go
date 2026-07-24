@@ -60,6 +60,68 @@ func (s *ChannelStore) DeleteChannelMessages(ctx context.Context, req domain.Del
 	return domain.DeleteChannelMessagesResult{Channel: channel, Event: event, DeletedIDs: deleted, Recipients: recipients, DiscussionDeletes: cascades}, nil
 }
 
+func (s *ChannelStore) ModerationDeleteChannelMessages(ctx context.Context, channelID int64, ids []int, date int) (domain.DeleteChannelMessagesResult, error) {
+	if channelID <= 0 || len(ids) == 0 || len(ids) > domain.MaxDeleteMessageIDs {
+		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
+	}
+	if date == 0 {
+		date = nowUnix()
+	}
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.DeleteChannelMessagesResult{}, fmt.Errorf("moderation delete channel messages: db does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.DeleteChannelMessagesResult{}, fmt.Errorf("begin moderation delete channel messages: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	channel, err := getChannelByID(ctx, tx, channelID)
+	if err != nil || channel.Deleted {
+		if err != nil {
+			return domain.DeleteChannelMessagesResult{}, err
+		}
+		return domain.DeleteChannelMessagesResult{}, domain.ErrChannelInvalid
+	}
+	refs, err := s.discussionRefsForMessages(ctx, tx, channel.ID, ids)
+	if err != nil {
+		return domain.DeleteChannelMessagesResult{}, err
+	}
+	systemMember := domain.ChannelMember{
+		ChannelID: channel.ID, UserID: domain.OfficialSystemUserID,
+		Role: domain.ChannelRoleCreator, Status: domain.ChannelMemberActive,
+	}
+	deleted, event, channel, err := s.deleteChannelMessagesTx(
+		ctx, tx, channel, systemMember, ids, domain.OfficialSystemUserID, date,
+	)
+	if err != nil {
+		return domain.DeleteChannelMessagesResult{}, err
+	}
+	cascades, err := s.cascadeDeleteDiscussionRootsTx(
+		ctx, tx, refs, deleted, domain.OfficialSystemUserID, date,
+	)
+	if err != nil {
+		return domain.DeleteChannelMessagesResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.DeleteChannelMessagesResult{}, fmt.Errorf("commit moderation delete channel messages: %w", err)
+	}
+	committed = true
+	recipients, _ := s.ListActiveChannelMemberIDs(ctx, 0, channel.ID, 0)
+	for i := range cascades {
+		cascades[i].Recipients, _ = s.ListActiveChannelMemberIDs(ctx, 0, cascades[i].Channel.ID, 0)
+	}
+	return domain.DeleteChannelMessagesResult{
+		Channel: channel, Event: event, DeletedIDs: deleted,
+		Recipients: recipients, DiscussionDeletes: cascades,
+	}, nil
+}
+
 // discussionRefsForMessages 取待删消息携带的讨论组转发根引用。
 func (s *ChannelStore) discussionRefsForMessages(ctx context.Context, tx pgx.Tx, channelID int64, ids []int) (map[int]domain.ChannelDiscussionRef, error) {
 	id32, _, err := validUniqueChannelMessageIDs(ids)

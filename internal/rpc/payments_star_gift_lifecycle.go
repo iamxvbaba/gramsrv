@@ -38,10 +38,15 @@ func (r *Router) sendStarGiftTransferForm(ctx context.Context, userID, formID in
 			return nil, starsErr(err)
 		}
 	}
+	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
+	if err != nil {
+		return nil, err
+	}
 	result, err := r.deps.Gifts.Transfer(ctx, domain.StarGiftTransferRequest{ActorUserID: userID,
 		Ref: domain.SavedStarGiftRef{Owner: target.Owner, MsgID: target.MsgID, SavedID: target.SavedID}, To: to,
 		ChargeStars: target.TransferStars, FormID: formID, CommandKey: fmt.Sprintf("paid-transfer:%d:%d", target.ID, formID),
-		Date: int(r.clock.Now().Unix()), OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
+		Date: int(r.clock.Now().Unix()), RecipientUnsaved: recipientUnsaved,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
@@ -105,9 +110,14 @@ func (r *Router) sendStarGiftResaleForm(ctx context.Context, userID, formID int6
 			return nil, starsErr(err)
 		}
 	}
+	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
+	if err != nil {
+		return nil, err
+	}
 	result, err := r.deps.Gifts.PurchaseResale(ctx, domain.StarGiftResalePurchaseRequest{BuyerUserID: userID,
 		Slug: gift.Slug, To: to, Amount: amount, FormID: formID, CommandKey: fmt.Sprintf("resale:%d:%d", gift.ID, formID),
-		Date: int(r.clock.Now().Unix()), OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
+		Date: int(r.clock.Now().Unix()), RecipientUnsaved: recipientUnsaved,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
@@ -566,10 +576,15 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	if err != nil {
 		return nil, err
 	}
+	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
+	if err != nil {
+		return nil, err
+	}
 	now := int(r.clock.Now().Unix())
 	result, err := r.deps.Gifts.Transfer(ctx, domain.StarGiftTransferRequest{ActorUserID: userID, Ref: ref, To: to,
 		CommandKey: fmt.Sprintf("free:%s:%d:%s:%s:%d", ref.Owner.Type, ref.Owner.ID, starGiftRefValue(ref), to.Type, to.ID),
-		Date:       now, OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
+		Date:       now, RecipientUnsaved: recipientUnsaved,
+		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}

@@ -26,6 +26,13 @@ type AccountSettingsStore interface {
 	SaveAccountSettings(ctx context.Context, userID int64, settings domain.AccountSettings) error
 }
 
+// AccountSettingsBatchStore is the cold-load boundary for the per-user account
+// settings read model. Production stores implement it so a 100-user
+// users.getRequirementsToContact request never becomes 100 SQL queries.
+type AccountSettingsBatchStore interface {
+	GetAccountSettingsBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountSettings, error)
+}
+
 // NotifySettingsStore persists per-scope notification settings (specific peer /
 // forum topic / the three category defaults: users, chats, broadcasts).
 type NotifySettingsStore interface {

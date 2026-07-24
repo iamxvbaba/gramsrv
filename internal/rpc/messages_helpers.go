@@ -14,21 +14,49 @@ func reportResultForOption(option string) (tg.ReportResultClass, error) {
 		return &tg.ReportResultChooseOption{
 			Title: "Report",
 			Options: []tg.MessageReportOption{
-				{Text: "Spam", Option: []byte("spam")},
+				{Text: "Scam or spam", Option: []byte("spam")},
 				{Text: "Violence", Option: []byte("violence")},
-				{Text: "Illegal goods", Option: []byte("illegal_goods")},
+				{Text: "Pornography", Option: []byte("pornography")},
 				{Text: "Child abuse", Option: []byte("child_abuse")},
-				{Text: "Personal data", Option: []byte("personal_data")},
+				{Text: "Illegal drugs", Option: []byte("illegal_drugs")},
+				{Text: "Personal details", Option: []byte("personal_details")},
 				{Text: "Copyright", Option: []byte("copyright")},
+				{Text: "Fake or impersonation", Option: []byte("fake")},
 				{Text: "Other", Option: []byte("other")},
 			},
 		}, nil
 	case "other":
 		return &tg.ReportResultAddComment{Optional: false, Option: []byte("other:comment")}, nil
-	case "spam", "violence", "illegal_goods", "child_abuse", "personal_data", "copyright", "other:comment":
+	case "spam", "violence", "pornography", "child_abuse", "illegal_drugs",
+		"personal_details", "copyright", "fake", "other:comment":
 		return &tg.ReportResultReported{}, nil
 	default:
 		return nil, tgerr.New(400, "OPTION_INVALID")
+	}
+}
+
+func moderationReasonForReportOption(option string) (domain.ModerationReason, bool) {
+	switch option {
+	case "spam":
+		return domain.ModerationReasonSpam, true
+	case "violence":
+		return domain.ModerationReasonViolence, true
+	case "pornography":
+		return domain.ModerationReasonPornography, true
+	case "child_abuse":
+		return domain.ModerationReasonChildAbuse, true
+	case "illegal_drugs":
+		return domain.ModerationReasonIllegalDrugs, true
+	case "personal_details":
+		return domain.ModerationReasonPersonalDetails, true
+	case "copyright":
+		return domain.ModerationReasonCopyright, true
+	case "fake":
+		return domain.ModerationReasonFake, true
+	case "other:comment":
+		return domain.ModerationReasonOther, true
+	default:
+		return "", false
 	}
 }
 

@@ -29,6 +29,10 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 		return nil, err
 	}
 	memberIDs = createChatInviteMemberIDs(memberIDs, userID)
+	memberIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, memberIDs)
+	if err != nil {
+		return nil, internalErr()
+	}
 	date := int(r.clock.Now().Unix())
 	r.log.Debug("messages.createChat resolved users",
 		zap.Int("input_users", len(req.Users)),
@@ -84,7 +88,7 @@ func (r *Router) onMessagesCreateChat(ctx context.Context, req *tg.MessagesCreat
 			return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, inviteRes, cache)
 		})
 	}
-	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: []tg.MissingInvitee{}}, nil
+	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
 
 func (r *Router) onMessagesMigrateChat(ctx context.Context, chatID int64) (tg.UpdatesClass, error) {

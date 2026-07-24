@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/compat/tdesktop"
@@ -591,17 +592,33 @@ func (r *Router) onStoriesReport(ctx context.Context, req *tg.StoriesReportReque
 	if err != nil {
 		return nil, err
 	}
-	if r.deps.Stories != nil && userID != 0 {
-		ids := uniqueStoryIDs(req.ID)
-		list, err := r.deps.Stories.GetStoriesByID(ctx, userID, peer, ids, int(r.clock.Now().Unix()))
-		if err != nil {
-			return nil, storyErr(err)
-		}
-		if len(list.Stories) != len(ids) {
+	result, err := reportResultForOption(string(req.Option))
+	if err != nil {
+		return nil, err
+	}
+	if _, final := result.(*tg.ReportResultReported); !final {
+		// Option discovery is non-mutating, but still follows the peer/access
+		// validation above so malformed targets cannot bypass normal errors.
+		return result, nil
+	}
+	reason, ok := moderationReasonForReportOption(string(req.Option))
+	if !ok {
+		return nil, tgerr.New(400, "OPTION_INVALID")
+	}
+	if r.deps.Moderation == nil {
+		return nil, internalErr()
+	}
+	if _, _, err := r.deps.Moderation.ReportStories(ctx, domain.ModerationStoryReportRequest{
+		ReporterUserID: userID, Target: peer, StoryIDs: uniqueStoryIDs(req.ID),
+		Reason: reason, Option: string(req.Option), Comment: req.Message,
+		CreatedAt: r.clock.Now(),
+	}); err != nil {
+		if errors.Is(err, domain.ErrModerationEvidenceNotFound) {
 			return nil, storyIDInvalidErr()
 		}
+		return nil, moderationReportError(err)
 	}
-	return reportResultForOption(string(req.Option))
+	return result, nil
 }
 
 func validateStoriesReportRequest(req *tg.StoriesReportRequest) error {

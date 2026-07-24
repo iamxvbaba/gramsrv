@@ -16,6 +16,12 @@ import (
 
 // registerAccount 注册 account.* RPC handler。
 func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.AccountReportPeerRequest](d, tlprofile.SemanticMethodAccountReportPeer, func(ctx context.Context, req *tg.AccountReportPeerRequest) (any, error) {
+		return r.onAccountReportPeer(ctx, req)
+	})
+	registerRPC[*tg.AccountReportProfilePhotoRequest](d, tlprofile.SemanticMethodAccountReportProfilePhoto, func(ctx context.Context, req *tg.AccountReportProfilePhotoRequest) (any, error) {
+		return r.onAccountReportProfilePhoto(ctx, req)
+	})
 	registerRPC[*tg.AccountDeleteAccountRequest](d, tlprofile.SemanticMethodAccountDeleteAccount, func(ctx context.Context, req *tg.AccountDeleteAccountRequest) (any, error) {
 		return r.onAccountDeleteAccount(ctx, req)
 	})
@@ -867,7 +873,27 @@ func (r *Router) onAccountSetPrivacy(ctx context.Context, req *tg.AccountSetPriv
 	if r.deps.Privacy == nil {
 		return &tg.AccountPrivacyRules{Rules: tgPrivacyRules(rules), Users: []tg.UserClass{}, Chats: []tg.ChatClass{}}, nil
 	}
-	saved, err := r.deps.Privacy.SetRules(ctx, userID, domainKey, rules)
+	authKeyID, _ := AuthKeyIDFrom(ctx)
+	sessionID, _ := SessionIDFrom(ctx)
+	var (
+		saved        domain.PrivacyRules
+		event        domain.UpdateEvent
+		durableWrite bool
+	)
+	if durable, ok := r.deps.Privacy.(PrivacyDurableService); ok {
+		saved, event, durableWrite, err = durable.SetRulesWithUpdate(
+			ctx,
+			userID,
+			domainKey,
+			rules,
+			int(r.clock.Now().Unix()),
+			rawAuthKeyIDForOrigin(ctx),
+			sessionID,
+		)
+	}
+	if err == nil && !durableWrite {
+		saved, err = r.deps.Privacy.SetRules(ctx, userID, domainKey, rules)
+	}
 	if err != nil {
 		return nil, privacyErr(err)
 	}
@@ -876,14 +902,36 @@ func (r *Router) onAccountSetPrivacy(ctx context.Context, req *tg.AccountSetPriv
 		return nil, err
 	}
 	r.invalidateRPCProjectionForUser(userID)
-	r.pushUserUpdates(ctx, userID, &tg.Updates{
-		Updates: []tg.UpdateClass{&tg.UpdatePrivacy{
-			Key:   tgPrivacyKey(saved.Key),
-			Rules: tgPrivacyRules(saved.Rules),
-		}},
-		Users: []tg.UserClass{},
-		Chats: []tg.ChatClass{},
-	})
+	if durableWrite {
+		if sessionID != 0 {
+			r.bookkeepAuxPtsForCurrentSession(ctx, event)
+		}
+		r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, tgUpdateForOutboxEvent(event))
+	} else if updates, ok := r.deps.Updates.(PrivacyUpdatesService); ok {
+		event, _, recordErr := updates.RecordPrivacy(
+			ctx, authKeyID, userID, saved, rawAuthKeyIDForOrigin(ctx), sessionID,
+		)
+		if recordErr != nil {
+			return nil, internalErr()
+		}
+		if sessionID != 0 {
+			r.bookkeepAuxPtsForCurrentSession(ctx, event)
+		}
+		r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, tgUpdateForOutboxEvent(event))
+	} else {
+		r.pushUserUpdates(ctx, userID, &tg.Updates{
+			Updates: []tg.UpdateClass{&tg.UpdatePrivacy{
+				Key:   tgPrivacyKey(saved.Key),
+				Rules: tgPrivacyRules(saved.Rules),
+			}},
+			Users: []tg.UserClass{},
+			Chats: []tg.ChatClass{},
+			Date:  int(r.clock.Now().Unix()),
+		})
+	}
+	if domainKey == domain.PrivacyKeyStatusTimestamp {
+		r.pushStatusPrivacyRefresh(ctx, userID)
+	}
 	return out, nil
 }
 
@@ -908,10 +956,11 @@ func (r *Router) onAccountSetAccountTTL(ctx context.Context, ttl tg.AccountDaysT
 		return false, tgerr400("TTL_DAYS_INVALID")
 	}
 	if svc, ok := r.accountSettingsSvc(); ok {
-		if _, err := svc.SetAccountTTL(ctx, userID, ttl.Days); err != nil {
+		saved, err := svc.SetAccountTTL(ctx, userID, ttl.Days)
+		if err != nil {
 			return false, internalErr()
 		}
-		r.accountSettings.Delete(userID)
+		r.accountSettings.Store(userID, saved)
 	}
 	return true, nil
 }
@@ -938,7 +987,7 @@ func (r *Router) onAccountSetGlobalPrivacySettings(ctx context.Context, settings
 		if err != nil {
 			return nil, internalErr()
 		}
-		r.accountSettings.Delete(userID)
+		r.accountSettings.Store(userID, saved)
 		return tgGlobalPrivacySettings(saved.GlobalPrivacy), nil
 	}
 	return &settings, nil
@@ -965,10 +1014,11 @@ func (r *Router) onAccountSetContentSettings(ctx context.Context, req *tg.Accoun
 		return false, inputRequestInvalidErr()
 	}
 	if svc, ok := r.accountSettingsSvc(); ok {
-		if _, err := svc.SetSensitiveContent(ctx, userID, req.SensitiveEnabled); err != nil {
+		saved, err := svc.SetSensitiveContent(ctx, userID, req.SensitiveEnabled)
+		if err != nil {
 			return false, internalErr()
 		}
-		r.accountSettings.Delete(userID)
+		r.accountSettings.Store(userID, saved)
 	}
 	return true, nil
 }
@@ -991,10 +1041,11 @@ func (r *Router) onAccountSetContactSignUpNotification(ctx context.Context, sile
 		return false, internalErr()
 	}
 	if svc, ok := r.accountSettingsSvc(); ok {
-		if _, err := svc.SetContactSignUpSilent(ctx, userID, silent); err != nil {
+		saved, err := svc.SetContactSignUpSilent(ctx, userID, silent)
+		if err != nil {
 			return false, internalErr()
 		}
-		r.accountSettings.Delete(userID)
+		r.accountSettings.Store(userID, saved)
 	}
 	return true, nil
 }

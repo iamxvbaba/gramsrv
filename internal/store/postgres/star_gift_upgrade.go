@@ -152,6 +152,7 @@ WHERE collectible_revision_id=$1 AND crafted
 				MsgID:                    ownerMessageID,
 				Date:                     req.Date,
 				NameHidden:               req.HideName,
+				Unsaved:                  req.RecipientUnsaved,
 				LifecycleStatus:          domain.StarGiftLifecycleActive,
 				Message:                  req.Message,
 				TransferStars:            s.lifecycle.TransferStars,

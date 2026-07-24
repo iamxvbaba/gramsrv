@@ -93,11 +93,23 @@ func (r *Router) onMessagesReceivedQueue(ctx context.Context, maxQts int) ([]int
 	return []int64{}, nil
 }
 
-// onMessagesReportEncryptedSpam 纯记录：服务端不自动 discard、不拉黑、不产生 update
-// （discard/block 由客户端独立 RPC 完成）。P1 接受并回 true。
-func (r *Router) onMessagesReportEncryptedSpam(ctx context.Context, _ tg.InputEncryptedChat) (bool, error) {
-	if _, err := r.secretChatRequireUser(ctx); err != nil {
+// onMessagesReportEncryptedSpam persists an immutable chat-metadata snapshot;
+// the server remains unable to inspect encrypted message plaintext. Reporting
+// does not discard or block the chat and emits no update.
+func (r *Router) onMessagesReportEncryptedSpam(ctx context.Context, peer tg.InputEncryptedChat) (bool, error) {
+	if r.deps.SecretChats == nil || r.deps.Moderation == nil {
+		return false, notImplementedErr()
+	}
+	userID, err := r.secretChatRequireUser(ctx)
+	if err != nil {
 		return false, err
+	}
+	chat, _, _, err := r.resolveSecretChatPeer(ctx, userID, peer)
+	if err != nil {
+		return false, err
+	}
+	if _, _, err := r.deps.Moderation.ReportEncryptedSpam(ctx, userID, chat, r.clock.Now()); err != nil {
+		return false, moderationReportError(err)
 	}
 	return true, nil
 }

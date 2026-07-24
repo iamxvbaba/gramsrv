@@ -67,6 +67,19 @@ type LoginCodeDeliveryRetentionStore interface {
 	DeleteExpiredLoginCodeDeliveries(ctx context.Context, expiredBefore time.Time, limit int) (int, error)
 }
 
+type ClientTelemetryRetentionStore interface {
+	DeleteExpiredClientTelemetry(ctx context.Context, olderThan time.Time, limit int) (int, error)
+}
+
+type AuthDeliveryReportRetentionStore interface {
+	DeleteExpiredAuthDeliveryReports(ctx context.Context, olderThan time.Time, limit int) (int, error)
+}
+
+type ModerationRetentionStore interface {
+	DeleteExpiredSponsoredMessageImpressions(ctx context.Context, olderThan time.Time, limit int) (int, error)
+	DeleteExpiredModerationAppealLinks(ctx context.Context, olderThan time.Time, limit int) (int, error)
+}
+
 // botAPIConfirmedGrace 是已确认 Bot API update 行的删除宽限：确认水位之下的行不会再被
 // getUpdates 读取（fromID 恒 > confirmed），宽限仅防御 offset 回拨调试；回收目标是清堆积。
 const botAPIConfirmedGrace = 15 * time.Minute
@@ -92,24 +105,29 @@ const (
 // 前缀；落后或缺 state 的任一设备都会把 floor 压回 0。客户端偶然带回已确认前的旧 pts 时，
 // updates 服务通过普通 differenceSlice checkpoint 推进，不发送 differenceTooLong。
 type RetentionWorker struct {
-	outbox                 DispatchOutboxRetentionStore
-	tempKeys               TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
-	authKeySessionLayers   AuthKeySessionLayerRetentionStore
-	botAPIUpdates          BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
-	userUpdates            UserUpdateEventRetentionStore
-	channelUpdates         ChannelUpdateEventRetentionStore
-	loginCodeDeliveries    LoginCodeDeliveryRetentionStore
-	orphanAuthKeys         OrphanAuthKeyRetentionStore
-	activeAuthKeys         ActiveRawAuthKeyProvider
-	activeAuthKeyHeartbeat ActiveAuthKeyHeartbeatStore
-	logger                 *zap.Logger
-	retention              time.Duration
-	botAPIRetention        time.Duration
-	orphanRetention        time.Duration
-	outboxPoisonRetention  time.Duration
-	outboxPoisonInterval   time.Duration
-	interval               time.Duration
-	batch                  int
+	outbox                      DispatchOutboxRetentionStore
+	tempKeys                    TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
+	authKeySessionLayers        AuthKeySessionLayerRetentionStore
+	botAPIUpdates               BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
+	userUpdates                 UserUpdateEventRetentionStore
+	channelUpdates              ChannelUpdateEventRetentionStore
+	loginCodeDeliveries         LoginCodeDeliveryRetentionStore
+	clientTelemetry             ClientTelemetryRetentionStore
+	authDeliveryReports         AuthDeliveryReportRetentionStore
+	moderation                  ModerationRetentionStore
+	orphanAuthKeys              OrphanAuthKeyRetentionStore
+	activeAuthKeys              ActiveRawAuthKeyProvider
+	activeAuthKeyHeartbeat      ActiveAuthKeyHeartbeatStore
+	logger                      *zap.Logger
+	retention                   time.Duration
+	botAPIRetention             time.Duration
+	orphanRetention             time.Duration
+	clientTelemetryRetention    time.Duration
+	authDeliveryReportRetention time.Duration
+	outboxPoisonRetention       time.Duration
+	outboxPoisonInterval        time.Duration
+	interval                    time.Duration
+	batch                       int
 }
 
 func NewRetentionWorker(outbox DispatchOutboxRetentionStore, tempKeys TempAuthKeyRetentionStore, logger *zap.Logger, retention, interval time.Duration, batch int) *RetentionWorker {
@@ -188,6 +206,29 @@ func (w *RetentionWorker) WithLoginCodeDeliveryRetention(store LoginCodeDelivery
 // per-session Layer evidence.
 func (w *RetentionWorker) WithAuthKeySessionLayerRetention(store AuthKeySessionLayerRetentionStore) *RetentionWorker {
 	w.authKeySessionLayers = store
+	return w
+}
+
+func (w *RetentionWorker) WithClientTelemetryRetention(store ClientTelemetryRetentionStore, retention time.Duration) *RetentionWorker {
+	if retention <= 0 {
+		retention = 30 * 24 * time.Hour
+	}
+	w.clientTelemetry = store
+	w.clientTelemetryRetention = retention
+	return w
+}
+
+func (w *RetentionWorker) WithAuthDeliveryReportRetention(store AuthDeliveryReportRetentionStore, retention time.Duration) *RetentionWorker {
+	if retention <= 0 {
+		retention = 30 * 24 * time.Hour
+	}
+	w.authDeliveryReports = store
+	w.authDeliveryReportRetention = retention
+	return w
+}
+
+func (w *RetentionWorker) WithModerationRetention(store ModerationRetentionStore) *RetentionWorker {
+	w.moderation = store
 	return w
 }
 
@@ -272,6 +313,45 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			w.logger.Warn("回收过期 login-code delivery 回执失败", zap.Error(err))
 		} else if deleted > 0 {
 			w.logger.Info("回收过期 login-code delivery 回执完成", zap.Int("deleted", deleted))
+		}
+	}
+	if w.clientTelemetry != nil {
+		deleted, err := w.clientTelemetry.DeleteExpiredClientTelemetry(
+			ctx, time.Now().Add(-w.clientTelemetryRetention), w.batch,
+		)
+		if err != nil {
+			w.logger.Warn("回收过期客户端 telemetry 失败", zap.Error(err))
+		} else if deleted > 0 {
+			w.logger.Info("回收过期客户端 telemetry 完成", zap.Int("deleted", deleted))
+		}
+	}
+	if w.authDeliveryReports != nil {
+		deleted, err := w.authDeliveryReports.DeleteExpiredAuthDeliveryReports(
+			ctx, time.Now().Add(-w.authDeliveryReportRetention), w.batch,
+		)
+		if err != nil {
+			w.logger.Warn("回收过期验证码投递诊断失败", zap.Error(err))
+		} else if deleted > 0 {
+			w.logger.Info("回收过期验证码投递诊断完成", zap.Int("deleted", deleted))
+		}
+	}
+	if w.moderation != nil {
+		now := time.Now()
+		impressions, err := w.moderation.DeleteExpiredSponsoredMessageImpressions(
+			ctx, now, w.batch,
+		)
+		if err != nil {
+			w.logger.Warn("回收过期 sponsored impression 失败", zap.Error(err))
+		} else if impressions > 0 {
+			w.logger.Info("回收过期 sponsored impression 完成", zap.Int("deleted", impressions))
+		}
+		links, err := w.moderation.DeleteExpiredModerationAppealLinks(
+			ctx, now, w.batch,
+		)
+		if err != nil {
+			w.logger.Warn("回收过期审核申诉链接失败", zap.Error(err))
+		} else if links > 0 {
+			w.logger.Info("回收过期审核申诉链接完成", zap.Int("deleted", links))
 		}
 	}
 	if w.tempKeys != nil {

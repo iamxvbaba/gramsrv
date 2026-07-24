@@ -353,6 +353,7 @@ type AdminStarGiftGrant struct {
 	CommandKey          string
 	Date                int
 	RecipientBlocked    bool
+	RecipientUnsaved    bool
 	ModelAttributeID    int64
 	PatternAttributeID  int64
 	BackdropAttributeID int64
@@ -382,6 +383,7 @@ type StarGiftPurchaseRequest struct {
 	CommandKey       string
 	Date             int
 	RecipientBlocked bool
+	RecipientUnsaved bool
 	OriginAuthKeyID  [8]byte
 	OriginSessionID  int64
 }
@@ -555,15 +557,16 @@ type StarGiftValueInfo struct {
 }
 
 type StarGiftTransferRequest struct {
-	ActorUserID     int64
-	Ref             SavedStarGiftRef
-	To              Peer
-	ChargeStars     int64
-	FormID          int64
-	CommandKey      string
-	Date            int
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	ActorUserID      int64
+	Ref              SavedStarGiftRef
+	To               Peer
+	ChargeStars      int64
+	FormID           int64
+	CommandKey       string
+	Date             int
+	RecipientUnsaved bool
+	OriginAuthKeyID  [8]byte
+	OriginSessionID  int64
 }
 
 type StarGiftTransferResult struct {
@@ -582,15 +585,16 @@ type StarGiftListingRequest struct {
 }
 
 type StarGiftResalePurchaseRequest struct {
-	BuyerUserID     int64
-	Slug            string
-	To              Peer
-	Amount          StarGiftAmount
-	FormID          int64
-	CommandKey      string
-	Date            int
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	BuyerUserID      int64
+	Slug             string
+	To               Peer
+	Amount           StarGiftAmount
+	FormID           int64
+	CommandKey       string
+	Date             int
+	RecipientUnsaved bool
+	OriginAuthKeyID  [8]byte
+	OriginSessionID  int64
 }
 
 type StarGiftOfferRequest struct {

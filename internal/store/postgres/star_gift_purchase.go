@@ -278,7 +278,7 @@ last_sale_date=$2,updated_at=now() WHERE gift_id=$1`, gift.ID, req.Date); err !=
 	}
 	saved := domain.SavedStarGift{Owner: req.To, FromUserID: req.BuyerUserID, GiftID: gift.ID, RevisionID: gift.RevisionID,
 		Date: req.Date, NameHidden: req.HideName, ConvertStars: gift.ConvertStars, PrepaidUpgradeStars: upgradePrice,
-		PrepaidUpgradeHash: prepayHash, Message: req.Message}
+		PrepaidUpgradeHash: prepayHash, Message: req.Message, Unsaved: req.RecipientUnsaved}
 	return gift, saved, balance, nil
 }
 

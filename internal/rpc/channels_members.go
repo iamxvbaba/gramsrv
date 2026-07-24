@@ -311,7 +311,27 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	if err != nil {
 		return nil, err
 	}
-	res, err := r.deps.Channels.InviteToChannel(ctx, userID, channelID, userIDs, int(r.clock.Now().Unix()))
+	// Authorize before evaluating target privacy, otherwise a non-admin could
+	// probe whether a target permits invites.
+	view, err := r.deps.Channels.ResolveChannel(ctx, userID, channelID)
+	if err != nil {
+		return nil, channelInviteErr(err)
+	}
+	if !view.Self.CanInviteUsers(view.Channel) {
+		return nil, channelInviteErr(domain.ErrChannelAdminRequired)
+	}
+	userIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, userIDs)
+	if err != nil {
+		return nil, internalErr()
+	}
+	date := int(r.clock.Now().Unix())
+	if len(userIDs) == 0 {
+		return &tg.MessagesInvitedUsers{
+			Updates:         emptyInvitedUsersUpdates(date),
+			MissingInvitees: missingInvitees,
+		}, nil
+	}
+	res, err := r.deps.Channels.InviteToChannel(ctx, userID, channelID, userIDs, date)
 	if err != nil {
 		return nil, channelInviteErr(err)
 	}
@@ -322,7 +342,7 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
-	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: []tg.MissingInvitee{}}, nil
+	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil
 }
 
 func (r *Router) onChannelsJoinChannel(ctx context.Context, input tg.InputChannelClass) (tg.MessagesChatInviteJoinResultClass, error) {

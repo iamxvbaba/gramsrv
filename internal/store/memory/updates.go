@@ -105,7 +105,18 @@ func cloneUpdateEvent(event domain.UpdateEvent) domain.UpdateEvent {
 	event.Reaction = cloneUpdateReaction(event.Reaction)
 	event.QuickReplies = cloneUpdateQuickReplies(event.QuickReplies)
 	event.QuickReplyMessage = cloneUpdateQuickReplyMessage(event.QuickReplyMessage)
+	event.Privacy.Rules = clonePrivacyRuleSlice(event.Privacy.Rules)
 	return event
+}
+
+func clonePrivacyRuleSlice(in []domain.PrivacyRule) []domain.PrivacyRule {
+	out := make([]domain.PrivacyRule, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].UserIDs = append([]int64(nil), in[i].UserIDs...)
+		out[i].ChatIDs = append([]int64(nil), in[i].ChatIDs...)
+	}
+	return out
 }
 
 func cloneUpdateStory(story domain.Story) domain.Story {

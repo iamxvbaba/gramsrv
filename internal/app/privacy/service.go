@@ -3,21 +3,49 @@ package privacy
 import (
 	"context"
 	"slices"
+	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/readmodelcache"
 	"telesrv/internal/store"
 )
 
-const maxPrivacyRules = 100
+const (
+	maxPrivacyRules   = 100
+	maxPrivacyRuleIDs = 5000
+)
 
 // Service owns account privacy rules and viewer-specific evaluation.
 type Service struct {
-	rules    store.PrivacyStore
-	contacts store.ContactStore
+	rules           store.PrivacyStore
+	contacts        store.ContactStore
+	baseUsers       baseUserProvider
+	memberships     channelMembershipProvider
+	viewerFacts     *readmodelcache.Cache[int64, viewerFacts]
+	membershipFacts *readmodelcache.Cache[membershipKey, bool]
+	now             func() time.Time
 }
 
 func NewService(rules store.PrivacyStore, contacts store.ContactStore) *Service {
-	return &Service{rules: rules, contacts: contacts}
+	return &Service{
+		rules:           rules,
+		contacts:        contacts,
+		viewerFacts:     newViewerFactsCache(),
+		membershipFacts: newMembershipCache(),
+		now:             time.Now,
+	}
+}
+
+// ConfigureReadModels wires the cold loaders behind the bounded in-memory
+// privacy fact caches. It is called after users/channels services are built to
+// avoid a package dependency cycle.
+func (s *Service) ConfigureReadModels(users baseUserProvider, memberships channelMembershipProvider) *Service {
+	if s == nil {
+		return s
+	}
+	s.baseUsers = users
+	s.memberships = memberships
+	return s
 }
 
 func (s *Service) GetRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey) (domain.PrivacyRules, error) {
@@ -43,6 +71,52 @@ func (s *Service) GetRules(ctx context.Context, ownerUserID int64, key domain.Pr
 }
 
 func (s *Service) SetRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, rules []domain.PrivacyRule) (domain.PrivacyRules, error) {
+	out, err := normalizedRules(ownerUserID, key, rules)
+	if err != nil {
+		return domain.PrivacyRules{}, err
+	}
+	if s != nil && s.rules != nil {
+		if err := s.rules.SetPrivacyRules(ctx, out); err != nil {
+			return domain.PrivacyRules{}, err
+		}
+	}
+	return out, nil
+}
+
+// SetRulesWithUpdate uses the production atomic write boundary when available.
+// durable=false means no write was attempted; the RPC layer may then use the
+// ordinary SetRules + Updates.RecordPrivacy fallback used by memory tests.
+func (s *Service) SetRulesWithUpdate(
+	ctx context.Context,
+	ownerUserID int64,
+	key domain.PrivacyKey,
+	rules []domain.PrivacyRule,
+	date int,
+	excludeAuthKeyID [8]byte,
+	excludeSessionID int64,
+) (domain.PrivacyRules, domain.UpdateEvent, bool, error) {
+	out, err := normalizedRules(ownerUserID, key, rules)
+	if err != nil {
+		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, err
+	}
+	capability, ok := s.rules.(interface{ SupportsDurablePrivacyUpdates() bool })
+	if !ok || !capability.SupportsDurablePrivacyUpdates() {
+		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, nil
+	}
+	writer := s.rules.(store.PrivacyUpdateStore)
+	event, err := writer.SetPrivacyRulesWithUpdate(ctx, out, domain.UpdateEvent{
+		Type:     domain.UpdateEventPrivacy,
+		Date:     date,
+		Privacy:  cloneRules(out),
+		PtsCount: 1,
+	}, excludeAuthKeyID, excludeSessionID)
+	if err != nil {
+		return domain.PrivacyRules{}, domain.UpdateEvent{}, false, err
+	}
+	return out, event, true, nil
+}
+
+func normalizedRules(ownerUserID int64, key domain.PrivacyKey, rules []domain.PrivacyRule) (domain.PrivacyRules, error) {
 	if !ValidKey(key) {
 		return domain.PrivacyRules{}, domain.ErrPrivacyKeyInvalid
 	}
@@ -52,13 +126,7 @@ func (s *Service) SetRules(ctx context.Context, ownerUserID int64, key domain.Pr
 	if err := validateRules(rules); err != nil {
 		return domain.PrivacyRules{}, err
 	}
-	out := domain.PrivacyRules{OwnerUserID: ownerUserID, Key: key, Rules: cloneRuleSlice(rules)}
-	if s != nil && s.rules != nil {
-		if err := s.rules.SetPrivacyRules(ctx, out); err != nil {
-			return domain.PrivacyRules{}, err
-		}
-	}
-	return out, nil
+	return domain.PrivacyRules{OwnerUserID: ownerUserID, Key: key, Rules: cloneRuleSlice(rules)}, nil
 }
 
 func (s *Service) AddAllowUser(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, targetUserID int64) (domain.PrivacyRules, bool, error) {
@@ -96,16 +164,32 @@ func (s *Service) CanSee(ctx context.Context, ownerUserID, viewerUserID int64, k
 	if err != nil {
 		return false, err
 	}
+	needs := needsForRules(rules)
 	evalCtx := domain.PrivacyContext{
 		OwnerUserID:  ownerUserID,
 		ViewerUserID: viewerUserID,
 	}
 	if s != nil && s.contacts != nil {
-		if _, found, err := s.contacts.Get(ctx, ownerUserID, viewerUserID); err != nil {
+		if contact, found, err := s.contacts.Get(ctx, ownerUserID, viewerUserID); err != nil {
 			return false, err
 		} else if found {
 			evalCtx.ViewerIsContact = true
+			evalCtx.ViewerCloseFriend = contact.CloseFriend
 		}
+	}
+	if needs.viewerBase {
+		facts, err := s.loadViewerFacts(ctx, []int64{viewerUserID})
+		if err != nil {
+			return false, err
+		}
+		applyViewerFacts(&evalCtx, facts[viewerUserID], s.now().Unix())
+	}
+	if len(needs.chatIDs) > 0 {
+		facts, err := s.loadMembershipFacts(ctx, needs.chatIDs, []int64{viewerUserID})
+		if err != nil {
+			return false, err
+		}
+		applyMembershipFacts(&evalCtx, needs.chatIDs, facts)
 	}
 	return Evaluate(rules, evalCtx), nil
 }
@@ -183,6 +267,16 @@ func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerU
 			rulesByOwner[r.OwnerUserID][r.Key] = cloneRules(r)
 		}
 	}
+	var needs evaluationNeeds
+	for _, owner := range owners {
+		for _, key := range keys {
+			rules, ok := rulesByOwner[owner][key]
+			if !ok {
+				rules = defaultRules(owner, key)
+			}
+			mergeNeeds(&needs, needsForRules(rules))
+		}
+	}
 	// 批量取「viewer 是否在 owner 的联系人里」（owner→viewer 方向，对应 CanSee 的
 	// contacts.Get(owner, viewer)）。
 	var reverse map[int64]domain.Contact
@@ -193,21 +287,78 @@ func (s *Service) CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerU
 			return nil, err
 		}
 	}
+	var baseFacts map[int64]viewerFacts
+	if needs.viewerBase {
+		var err error
+		baseFacts, err = s.loadViewerFacts(ctx, []int64{viewerUserID})
+		if err != nil {
+			return nil, err
+		}
+	}
+	var membershipFacts map[membershipKey]bool
+	if len(needs.chatIDs) > 0 {
+		var err error
+		membershipFacts, err = s.loadMembershipFacts(ctx, needs.chatIDs, []int64{viewerUserID})
+		if err != nil {
+			return nil, err
+		}
+	}
+	now := s.now().Unix()
 	for _, owner := range owners {
-		_, isContact := reverse[owner]
+		contact, isContact := reverse[owner]
 		m := make(map[domain.PrivacyKey]bool, len(keys))
 		for _, k := range keys {
 			rules, ok := rulesByOwner[owner][k]
 			if !ok {
 				rules = defaultRules(owner, k)
 			}
-			m[k] = Evaluate(rules, domain.PrivacyContext{
-				OwnerUserID:     owner,
-				ViewerUserID:    viewerUserID,
-				ViewerIsContact: isContact,
-			})
+			evalCtx := domain.PrivacyContext{
+				OwnerUserID:       owner,
+				ViewerUserID:      viewerUserID,
+				ViewerIsContact:   isContact,
+				ViewerCloseFriend: isContact && contact.CloseFriend,
+			}
+			applyViewerFacts(&evalCtx, baseFacts[viewerUserID], now)
+			applyMembershipFacts(&evalCtx, needs.chatIDs, membershipFacts)
+			m[k] = Evaluate(rules, evalCtx)
 		}
 		out[owner] = m
+	}
+	return out, nil
+}
+
+// CanContactForFreeBatch evaluates the complete exception predicate for
+// per-user contact requirements. Contacts are always free because the global
+// setting is explicitly "noncontact peers"; privacyKeyNoPaidMessages adds
+// exceptions beyond that relationship. Both facts come from the in-memory
+// privacy/contact read models after their bounded cold loads.
+func (s *Service) CanContactForFreeBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64) (map[int64]bool, error) {
+	owners := dedupNonZero(ownerUserIDs)
+	out := make(map[int64]bool, len(owners))
+	if viewerUserID == 0 || len(owners) == 0 {
+		return out, nil
+	}
+	visibility, err := s.CanSeeBatch(
+		ctx,
+		owners,
+		viewerUserID,
+		[]domain.PrivacyKey{domain.PrivacyKeyNoPaidMessages},
+	)
+	if err != nil {
+		return nil, err
+	}
+	var contacts map[int64]domain.Contact
+	if s != nil && s.contacts != nil {
+		contacts, err = s.contacts.GetReverseContacts(ctx, viewerUserID, owners)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, ownerUserID := range owners {
+		_, isContact := contacts[ownerUserID]
+		out[ownerUserID] = ownerUserID == viewerUserID ||
+			isContact ||
+			visibility[ownerUserID][domain.PrivacyKeyNoPaidMessages]
 	}
 	return out, nil
 }
@@ -249,6 +400,33 @@ func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs 
 			rulesByOwner[r.OwnerUserID][r.Key] = cloneRules(r)
 		}
 	}
+	var needs evaluationNeeds
+	for _, owner := range owners {
+		for _, key := range keys {
+			rules, ok := rulesByOwner[owner][key]
+			if !ok {
+				rules = defaultRules(owner, key)
+			}
+			mergeNeeds(&needs, needsForRules(rules))
+		}
+	}
+	var baseFacts map[int64]viewerFacts
+	if needs.viewerBase {
+		var err error
+		baseFacts, err = s.loadViewerFacts(ctx, viewers)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var membershipFacts map[membershipKey]bool
+	if len(needs.chatIDs) > 0 {
+		var err error
+		membershipFacts, err = s.loadMembershipFacts(ctx, needs.chatIDs, viewers)
+		if err != nil {
+			return nil, err
+		}
+	}
+	now := s.now().Unix()
 	for _, owner := range owners {
 		// owner 的联系人中哪些是本批 viewer（= privacy 的 ViewerIsContact，对应 contacts.Get(owner,viewer)）。
 		var ownerContacts map[int64]domain.Contact
@@ -269,17 +447,21 @@ func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs 
 				perViewer[viewer] = m
 				continue
 			}
-			_, isContact := ownerContacts[viewer]
+			contact, isContact := ownerContacts[viewer]
 			for _, k := range keys {
 				rules, ok := rulesByOwner[owner][k]
 				if !ok {
 					rules = defaultRules(owner, k)
 				}
-				m[k] = Evaluate(rules, domain.PrivacyContext{
-					OwnerUserID:     owner,
-					ViewerUserID:    viewer,
-					ViewerIsContact: isContact,
-				})
+				evalCtx := domain.PrivacyContext{
+					OwnerUserID:       owner,
+					ViewerUserID:      viewer,
+					ViewerIsContact:   isContact,
+					ViewerCloseFriend: isContact && contact.CloseFriend,
+				}
+				applyViewerFacts(&evalCtx, baseFacts[viewer], now)
+				applyMembershipFacts(&evalCtx, needs.chatIDs, membershipFacts)
+				m[k] = Evaluate(rules, evalCtx)
 			}
 			perViewer[viewer] = m
 		}
@@ -370,6 +552,7 @@ func validateRules(rules []domain.PrivacyRule) error {
 	if len(rules) > maxPrivacyRules {
 		return domain.ErrPrivacyRuleInvalid
 	}
+	totalIDs := 0
 	for _, rule := range rules {
 		switch rule.Kind {
 		case domain.PrivacyRuleAllowContacts,
@@ -386,6 +569,20 @@ func validateRules(rules []domain.PrivacyRule) error {
 			domain.PrivacyRuleDisallowBots:
 		default:
 			return domain.ErrPrivacyRuleInvalid
+		}
+		totalIDs += len(rule.UserIDs) + len(rule.ChatIDs)
+		if totalIDs > maxPrivacyRuleIDs {
+			return domain.ErrPrivacyRuleInvalid
+		}
+		for _, id := range rule.UserIDs {
+			if id <= 0 {
+				return domain.ErrPrivacyRuleInvalid
+			}
+		}
+		for _, id := range rule.ChatIDs {
+			if id <= 0 {
+				return domain.ErrPrivacyRuleInvalid
+			}
 		}
 	}
 	return nil

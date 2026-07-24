@@ -101,6 +101,15 @@ type PrivacyReadModelWarmer interface {
 	WarmOwners(context.Context, ...int64) error
 }
 
+type PrivacyViewerFactsReadModelCache interface {
+	InvalidateViewerFacts(...int64)
+}
+
+type PrivacyMembershipReadModelCache interface {
+	InvalidateMembership(channelID, userID int64)
+	InvalidateChannelMemberships(channelID int64)
+}
+
 type ProfilePhotoReadModelCache interface {
 	InvalidateOwner(domain.PeerType, int64)
 	FlushReadModelCache()
@@ -358,6 +367,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.BotProfiles != nil {
 				l.caches.BotProfiles.InvalidateBotProfileReadModel(evt.PeerID)
 			}
+			if cache, ok := l.caches.Privacy.(PrivacyViewerFactsReadModelCache); ok {
+				cache.InvalidateViewerFacts(evt.PeerID)
+			}
 		}
 	case "user_visibility":
 		if evt.PeerType == "user" && evt.PeerID != 0 {
@@ -457,6 +469,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 			if l.caches.RPCProjections != nil {
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForChannel(evt.PeerID)
 			}
+			if cache, ok := l.caches.Privacy.(PrivacyMembershipReadModelCache); ok {
+				cache.InvalidateChannelMemberships(evt.PeerID)
+			}
 		}
 	case "channel_media_counts":
 		if evt.PeerType == "channel" && evt.PeerID != 0 && l.caches.ChannelMediaCounts != nil {
@@ -486,6 +501,9 @@ func (l *ReadModelChangeListener) handlePayload(payload string) {
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForChannel(evt.PeerID)
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForPeer(evt.OwnerUserID, domain.Peer{Type: domain.PeerTypeChannel, ID: evt.PeerID})
 				l.caches.RPCProjections.InvalidateRPCProjectionReadModelForUser(evt.OwnerUserID)
+			}
+			if cache, ok := l.caches.Privacy.(PrivacyMembershipReadModelCache); ok {
+				cache.InvalidateMembership(evt.PeerID, evt.OwnerUserID)
 			}
 		}
 	case "channel_self_boosts":

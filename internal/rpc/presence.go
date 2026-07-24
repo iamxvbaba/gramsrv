@@ -306,6 +306,17 @@ func (r *Router) userPresenceStatusForUser(u domain.User) domain.UserStatus {
 	if userID == 0 {
 		return domain.UserStatus{Kind: domain.UserStatusRecently}
 	}
+	// The app projector marks a privacy-hidden exact timestamp with a coarse
+	// status and clears LastSeenAt. Never overlay the process presence tracker
+	// after that boundary, or every users/dialogs/history response would undo
+	// StatusTimestamp privacy.
+	switch u.Status.Kind {
+	case domain.UserStatusRecently,
+		domain.UserStatusLastWeek,
+		domain.UserStatusLastMonth,
+		domain.UserStatusEmpty:
+		return u.Status
+	}
 	now := int(r.clock.Now().Unix())
 	if status, ok := r.presence.statusFor(userID, now); ok {
 		return status
@@ -676,8 +687,13 @@ func (r *Router) pushUserStatus(ctx context.Context, userID int64, status domain
 	// contacts + dialog 对端 ∩ 在线」一次性算出（onlineRelevantPeerIDs，2 次查询 + 内存过滤），
 	// 而非遍历全部在线候选逐个 GetPeerDialogs（旧 onlinePrivateDialogPeerIDs 的 O(在线数) N+1，
 	// 断连/sweeper 风暴下 O(M×512) 串行 PG）。私聊 dialog 双向建行，两种算法得到同一集合。
-	for _, recipientID := range r.onlineRelevantPeerIDs(ctx, userID) {
+	recipients := r.onlineRelevantPeerIDs(ctx, userID)
+	visible := r.statusTimestampVisibleToViewers(ctx, userID, recipients)
+	for _, recipientID := range recipients {
 		if recipientID == userID {
+			continue
+		}
+		if !visible[recipientID] {
 			continue
 		}
 		r.pushUserMessageTransient(ctx, recipientID, "push user status", update)
@@ -690,7 +706,11 @@ func (r *Router) pushOnlinePeerStatusesToCurrentSession(ctx context.Context, use
 		return
 	}
 	updates := make([]tg.UpdateClass, 0, len(peerIDs))
+	visible := r.statusTimestampVisibleToViewer(ctx, peerIDs, userID)
 	for _, peerID := range peerIDs {
+		if !visible[peerID] {
+			continue
+		}
 		status := r.userPresenceStatus(peerID)
 		if status.Kind != domain.UserStatusOnline {
 			continue
@@ -708,6 +728,99 @@ func (r *Router) pushOnlinePeerStatusesToCurrentSession(ctx context.Context, use
 		Date:    int(r.clock.Now().Unix()),
 		Seq:     0,
 	})
+}
+
+type batchPrivacyEvaluator interface {
+	CanSeeBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64, keys []domain.PrivacyKey) (map[int64]map[domain.PrivacyKey]bool, error)
+}
+
+type matrixPrivacyEvaluator interface {
+	CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs []int64, keys []domain.PrivacyKey) (map[int64]map[int64]map[domain.PrivacyKey]bool, error)
+}
+
+func (r *Router) statusTimestampVisibleToViewer(ctx context.Context, ownerUserIDs []int64, viewerUserID int64) map[int64]bool {
+	out := make(map[int64]bool, len(ownerUserIDs))
+	if r.deps.Privacy == nil {
+		for _, ownerID := range ownerUserIDs {
+			out[ownerID] = true
+		}
+		return out
+	}
+	if batch, ok := r.deps.Privacy.(batchPrivacyEvaluator); ok {
+		visibility, err := batch.CanSeeBatch(ctx, ownerUserIDs, viewerUserID, []domain.PrivacyKey{domain.PrivacyKeyStatusTimestamp})
+		if err != nil {
+			r.log.Warn("evaluate status privacy batch", zap.Int64("viewer_user_id", viewerUserID), zap.Error(err))
+			return out
+		}
+		for _, ownerID := range ownerUserIDs {
+			out[ownerID] = visibility[ownerID][domain.PrivacyKeyStatusTimestamp]
+		}
+		return out
+	}
+	for _, ownerID := range ownerUserIDs {
+		allowed, err := r.deps.Privacy.CanSee(ctx, ownerID, viewerUserID, domain.PrivacyKeyStatusTimestamp)
+		if err == nil {
+			out[ownerID] = allowed
+		}
+	}
+	return out
+}
+
+func (r *Router) statusTimestampVisibleToViewers(ctx context.Context, ownerUserID int64, viewerUserIDs []int64) map[int64]bool {
+	out := make(map[int64]bool, len(viewerUserIDs))
+	if r.deps.Privacy == nil {
+		for _, viewerID := range viewerUserIDs {
+			out[viewerID] = true
+		}
+		return out
+	}
+	if matrix, ok := r.deps.Privacy.(matrixPrivacyEvaluator); ok {
+		visibility, err := matrix.CanSeeMatrix(ctx, []int64{ownerUserID}, viewerUserIDs, []domain.PrivacyKey{domain.PrivacyKeyStatusTimestamp})
+		if err != nil {
+			r.log.Warn("evaluate status privacy matrix", zap.Int64("owner_user_id", ownerUserID), zap.Error(err))
+			return out
+		}
+		for _, viewerID := range viewerUserIDs {
+			out[viewerID] = visibility[ownerUserID][viewerID][domain.PrivacyKeyStatusTimestamp]
+		}
+		return out
+	}
+	for _, viewerID := range viewerUserIDs {
+		allowed, err := r.deps.Privacy.CanSee(ctx, ownerUserID, viewerID, domain.PrivacyKeyStatusTimestamp)
+		if err == nil {
+			out[viewerID] = allowed
+		}
+	}
+	return out
+}
+
+// pushStatusPrivacyRefresh immediately replaces stale exact statuses on other
+// online accounts after StatusTimestamp changes. Allowed viewers receive the
+// live value; denied viewers receive only a coarse bucket.
+func (r *Router) pushStatusPrivacyRefresh(ctx context.Context, ownerUserID int64) {
+	recipients := r.onlineRelevantPeerIDs(ctx, ownerUserID)
+	visible := r.statusTimestampVisibleToViewers(ctx, ownerUserID, recipients)
+	exact := r.userPresenceStatus(ownerUserID)
+	if r.deps.Users != nil {
+		if owner, found, err := r.deps.Users.ByID(ctx, ownerUserID, ownerUserID); err == nil && found {
+			exact = r.userPresenceStatusForUser(owner)
+		}
+	}
+	coarse := domain.ApproximateUserStatus(exact.WasOnline, int(r.clock.Now().Unix()))
+	for _, recipientID := range recipients {
+		if recipientID == 0 || recipientID == ownerUserID {
+			continue
+		}
+		status := coarse
+		if visible[recipientID] {
+			status = exact
+		}
+		r.pushUserMessageTransient(ctx, recipientID, "push status privacy refresh", &tg.Updates{
+			Updates: []tg.UpdateClass{&tg.UpdateUserStatus{UserID: ownerUserID, Status: tgUserStatus(status)}},
+			Date:    int(r.clock.Now().Unix()),
+			Seq:     0,
+		})
+	}
 }
 
 // presenceCandidateCacheTTL 是 presence fan-out 候选集（联系人 ∪ 私聊对端）的缓存有效期；

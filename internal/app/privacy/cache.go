@@ -87,6 +87,34 @@ func (c *CachedPrivacyStore) SetPrivacyRules(ctx context.Context, rules domain.P
 	return nil
 }
 
+func (c *CachedPrivacyStore) SetPrivacyRulesWithUpdate(
+	ctx context.Context,
+	rules domain.PrivacyRules,
+	event domain.UpdateEvent,
+	excludeAuthKeyID [8]byte,
+	excludeSessionID int64,
+) (domain.UpdateEvent, error) {
+	writer, ok := c.inner.(store.PrivacyUpdateStore)
+	if !ok {
+		return domain.UpdateEvent{}, domain.ErrPrivacyRuleInvalid
+	}
+	recorded, err := writer.SetPrivacyRulesWithUpdate(ctx, rules, event, excludeAuthKeyID, excludeSessionID)
+	if err != nil {
+		return domain.UpdateEvent{}, err
+	}
+	c.InvalidateOwners(rules.OwnerUserID)
+	_ = c.WarmOwners(ctx, rules.OwnerUserID)
+	return recorded, nil
+}
+
+func (c *CachedPrivacyStore) SupportsDurablePrivacyUpdates() bool {
+	if c == nil {
+		return false
+	}
+	capability, ok := c.inner.(interface{ SupportsDurablePrivacyUpdates() bool })
+	return ok && capability.SupportsDurablePrivacyUpdates()
+}
+
 // WarmOwners 在低频写/变更通知路径一次性装入 owner 的完整规则集。调用方必须先
 // InvalidateOwners；epoch 保证预热期间若又发生失效，不会把旧快照写回。
 func (c *CachedPrivacyStore) WarmOwners(ctx context.Context, ownerUserIDs ...int64) error {
@@ -183,6 +211,40 @@ func (c *CachedPrivacyStore) FlushReadModelCache() {
 		return
 	}
 	c.cache.Flush()
+}
+
+// InvalidateOwners lets Service be registered as the single privacy read-model
+// cache group: rule snapshots and relationship facts then share one invalidation
+// lifecycle.
+func (s *Service) InvalidateOwners(ids ...int64) {
+	if s == nil || s.rules == nil {
+		return
+	}
+	if cache, ok := s.rules.(interface{ InvalidateOwners(...int64) }); ok {
+		cache.InvalidateOwners(ids...)
+	}
+}
+
+func (s *Service) WarmOwners(ctx context.Context, ids ...int64) error {
+	if s == nil || s.rules == nil {
+		return nil
+	}
+	if cache, ok := s.rules.(interface {
+		WarmOwners(context.Context, ...int64) error
+	}); ok {
+		return cache.WarmOwners(ctx, ids...)
+	}
+	return nil
+}
+
+func (s *Service) FlushReadModelCache() {
+	if s == nil {
+		return
+	}
+	if cache, ok := s.rules.(interface{ FlushReadModelCache() }); ok {
+		cache.FlushReadModelCache()
+	}
+	s.flushFactCaches()
 }
 
 // buildPrivacyRulesByOwner 把扁平规则按 owner 归组;每个 owner 都建一个条目(无规则即空 map),

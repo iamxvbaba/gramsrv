@@ -350,6 +350,24 @@ func (r *Router) onChannelsDeleteMessages(ctx context.Context, req *tg.ChannelsD
 	return &tg.MessagesAffectedMessages{Pts: res.Channel.Pts, PtsCount: 0}, nil
 }
 
+// NotifyModerationChannelDeletion performs the online accelerator for a
+// server-authority deletion already committed by the moderation action worker.
+// Durable channel update events remain the offline recovery source.
+func (r *Router) NotifyModerationChannelDeletion(ctx context.Context, res domain.DeleteChannelMessagesResult) {
+	if r == nil || res.Event.Pts == 0 {
+		return
+	}
+	r.enqueueChannelFanout(ctx, channelFanoutMembers, domain.OfficialSystemUserID, res.Channel.ID, res.Event.Pts, res.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+		return r.channelDeleteMessagesUpdates(viewerUserID, res.Channel, res.Event)
+	})
+	for _, cascade := range res.DiscussionDeletes {
+		cascade := cascade
+		r.enqueueChannelFanout(ctx, channelFanoutMembers, domain.OfficialSystemUserID, cascade.Channel.ID, cascade.Event.Pts, cascade.Recipients, func(_ context.Context, viewerUserID int64) *tg.Updates {
+			return r.channelDeleteMessagesUpdates(viewerUserID, cascade.Channel, cascade.Event)
+		})
+	}
+}
+
 func (r *Router) onChannelsDeleteHistory(ctx context.Context, req *tg.ChannelsDeleteHistoryRequest) (tg.UpdatesClass, error) {
 	if r.deps.Channels == nil {
 		return &tg.Updates{Date: int(r.clock.Now().Unix())}, nil

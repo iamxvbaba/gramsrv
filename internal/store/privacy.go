@@ -12,3 +12,16 @@ type PrivacyStore interface {
 	SetPrivacyRules(ctx context.Context, rules domain.PrivacyRules) error
 	ListPrivacyRules(ctx context.Context, ownerUserIDs []int64, keys []domain.PrivacyKey) ([]domain.PrivacyRules, error)
 }
+
+// PrivacyUpdateStore atomically commits an absolute privacy rule snapshot,
+// allocates account pts, appends its durable event, and enqueues online
+// dispatch. Implementations return the event with its final pts.
+type PrivacyUpdateStore interface {
+	SetPrivacyRulesWithUpdate(
+		ctx context.Context,
+		rules domain.PrivacyRules,
+		event domain.UpdateEvent,
+		excludeAuthKeyID [8]byte,
+		excludeSessionID int64,
+	) (domain.UpdateEvent, error)
+}

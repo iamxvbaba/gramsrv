@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
@@ -49,13 +51,14 @@ func TestEphemeralReportPersistsOnlyFinalIdempotentEvidence(t *testing.T) {
 		OriginDevice: domain.EphemeralDevice{UserID: userID, BusinessAuthKeyID: authKey, SessionID: 99},
 		PayloadHash:  [32]byte{9}, Version: 1, CreatedAt: now, ExpiresAt: now.Add(domain.EphemeralMessageRetention),
 	}
-	reports := memory.NewEphemeralReportStore()
+	reports := memory.NewModerationReportStore()
+	moderation := appmoderation.NewService(reports)
 	ephemeral := &ephemeralReportService{target: target}
 	channels := &ephemeralReportChannels{view: domain.ChannelView{
 		Channel: domain.Channel{ID: channelID, AccessHash: 42, Megagroup: true},
 		Self:    domain.ChannelMember{ChannelID: channelID, UserID: userID, Status: domain.ChannelMemberActive},
 	}}
-	router := New(Config{}, Deps{Ephemeral: ephemeral, EphemeralReports: reports, Channels: channels}, zaptest.NewLogger(t), clock.System)
+	router := New(Config{}, Deps{Ephemeral: ephemeral, Moderation: moderation, Channels: channels}, zaptest.NewLogger(t), clock.System)
 	ctx := WithSessionID(WithAuthKeyID(WithUserID(context.Background(), userID), authKey), 99)
 	request := &tg.EphemeralReportMessageRequest{
 		Peer: &tg.InputPeerChannel{ChannelID: channelID, AccessHash: 42}, ID: target.ID,
@@ -87,7 +90,9 @@ func TestEphemeralReportPersistsOnlyFinalIdempotentEvidence(t *testing.T) {
 		}
 	}
 	stored := reports.Reports()
-	if len(stored) != 1 || stored[0].Evidence.Content.Message != "abuse" || stored[0].Comment != "evidence comment" {
+	if len(stored) != 1 || stored[0].Source != domain.ModerationSourceEphemeral ||
+		stored[0].Comment != "evidence comment" || len(stored[0].Items) != 1 ||
+		!strings.Contains(string(stored[0].Items[0].Evidence), `"Message":"abuse"`) {
 		t.Fatalf("reports=%+v", stored)
 	}
 	if ephemeral.calls != 4 {

@@ -431,8 +431,8 @@ func (s *StarGiftLifecycleStore) TransferStarGift(ctx context.Context, req domai
 				return domain.ErrStarGiftTransferUnavailable
 			}
 			if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET owner_peer_type='user',owner_peer_id=$2,from_user_id=$3,
-			 msg_id=$4,saved_id=0,upgrade_msg_id=$4,gift_date=$5,name_hidden=false,unsaved=false,pinned_order=0,
-			 can_transfer_at=0 WHERE id=$1`, result.Saved.ID, req.To.ID, req.ActorUserID, msgID, req.Date); err != nil {
+			 msg_id=$4,saved_id=0,upgrade_msg_id=$4,gift_date=$5,name_hidden=false,unsaved=$6,pinned_order=0,
+			 can_transfer_at=0 WHERE id=$1`, result.Saved.ID, req.To.ID, req.ActorUserID, msgID, req.Date, req.RecipientUnsaved); err != nil {
 				return err
 			}
 			if err := registerUserStarGiftMessageRef(ctx, tx, req.To.ID, msgID, result.Saved.ID, result.Unique.ID); err != nil {
@@ -446,6 +446,7 @@ func (s *StarGiftLifecycleStore) TransferStarGift(ctx context.Context, req domai
 			}
 			result.Saved.MsgID, result.Saved.SavedID, result.Saved.UpgradeMsgID, result.Saved.Date = msgID, 0, msgID, req.Date
 			result.Saved.FromUserID = req.ActorUserID
+			result.Saved.Unsaved = req.RecipientUnsaved
 			if sourceSaved.Owner.Type == domain.PeerTypeUser {
 				_, err := s.retireUserStarGiftMessagesTx(ctx, tx, sourceSaved, result.Unique, req.Date)
 				return err
@@ -587,10 +588,12 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 				return domain.ErrStarGiftResaleUnavailable
 			}
 			if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET owner_peer_type=$2,owner_peer_id=$3,from_user_id=$4,
-			 msg_id=$5,saved_id=$6,upgrade_msg_id=$5,gift_date=$7,name_hidden=false,unsaved=false,pinned_order=0,can_transfer_at=0
-			 WHERE id=$1`, result.Saved.ID, string(req.To.Type), req.To.ID, messageSenderID, msgID, savedID, req.Date); err != nil {
+			 msg_id=$5,saved_id=$6,upgrade_msg_id=$5,gift_date=$7,name_hidden=false,unsaved=$8,pinned_order=0,can_transfer_at=0
+			 WHERE id=$1`, result.Saved.ID, string(req.To.Type), req.To.ID, messageSenderID, msgID, savedID, req.Date,
+				req.To.Type == domain.PeerTypeUser && req.RecipientUnsaved); err != nil {
 				return err
 			}
+			result.Saved.Unsaved = req.To.Type == domain.PeerTypeUser && req.RecipientUnsaved
 			if req.To.Type == domain.PeerTypeUser {
 				if err := registerUserStarGiftMessageRef(ctx, tx, req.To.ID, msgID, result.Saved.ID, result.Unique.ID); err != nil {
 					return err

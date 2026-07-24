@@ -6,8 +6,10 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"
 	"telesrv/internal/postresponse"
+	"telesrv/internal/store/memory"
 )
 
 // acceptChat 跑完 request→accept，返回 normal 态密聊 id 与 participant 视角 access_hash。
@@ -44,6 +46,33 @@ func encNewMessagePayload(t *testing.T, rec phonePushRecord) *tg.UpdateNewEncryp
 		t.Fatalf("pushed update = %T, want UpdateNewEncryptedMessage", updates.Updates[0])
 	}
 	return upd
+}
+
+func TestReportEncryptedSpamPersistsMetadataOnly(t *testing.T) {
+	f := newEncryptedFixture(t)
+	chatID, participantAccessHash := f.acceptChat(t)
+	reports := memory.NewModerationReportStore()
+	f.router.deps.Moderation = appmoderation.NewService(reports)
+	ok, err := f.router.onMessagesReportEncryptedSpam(
+		f.participantCtx(),
+		tg.InputEncryptedChat{ChatID: chatID, AccessHash: participantAccessHash},
+	)
+	if err != nil || !ok {
+		t.Fatalf("report encrypted spam ok=%v err=%v", ok, err)
+	}
+	stored := reports.Reports()
+	if len(stored) != 1 ||
+		stored[0].Source != domain.ModerationSourceEncryptedSpam ||
+		stored[0].ReporterUserID != f.participant.ID ||
+		stored[0].Target != (domain.Peer{Type: domain.PeerTypeUser, ID: f.admin.ID}) ||
+		len(stored[0].Items) != 1 ||
+		stored[0].Items[0].Kind != domain.ModerationItemEncryptedChat {
+		t.Fatalf("stored encrypted report=%+v", stored)
+	}
+	if string(stored[0].Items[0].Evidence) == "" ||
+		string(stored[0].Items[0].Evidence) == "plaintext" {
+		t.Fatalf("encrypted metadata evidence=%s", stored[0].Items[0].Evidence)
+	}
 }
 
 func TestSendEncryptedRPCFlow(t *testing.T) {

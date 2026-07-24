@@ -2,6 +2,7 @@ package userprojection
 
 import (
 	"context"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -660,10 +661,8 @@ func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID in
 		return domain.User{}, err
 	}
 	if !statusAllowed {
+		user.Status = domain.ApproximateUserStatus(user.LastSeenAt, int(time.Now().Unix()))
 		user.LastSeenAt = 0
-		if user.Status.Kind == domain.UserStatusOnline || user.Status.Kind == domain.UserStatusOffline {
-			user.Status = domain.UserStatus{Kind: domain.UserStatusRecently}
-		}
 	}
 	if ref, ok := personalRefs[user.ID]; ok && ref.PhotoID != 0 {
 		ref.Personal = true

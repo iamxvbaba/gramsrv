@@ -243,6 +243,26 @@ type UserStatus struct {
 	WasOnline int
 }
 
+// ApproximateUserStatus returns Telegram's coarse privacy-preserving last-seen
+// buckets. Exact online/offline timestamps must never be reattached after this
+// projection.
+func ApproximateUserStatus(lastSeenAt, now int) UserStatus {
+	if lastSeenAt <= 0 || now <= 0 || lastSeenAt >= now {
+		return UserStatus{Kind: UserStatusRecently}
+	}
+	age := now - lastSeenAt
+	switch {
+	case age <= 3*24*60*60:
+		return UserStatus{Kind: UserStatusRecently}
+	case age <= 7*24*60*60:
+		return UserStatus{Kind: UserStatusLastWeek}
+	case age <= 30*24*60*60:
+		return UserStatus{Kind: UserStatusLastMonth}
+	default:
+		return UserStatus{Kind: UserStatusEmpty}
+	}
+}
+
 // Birthday 是用户公开生日。Day/Month 为 0 表示未设置；Year 为 0 表示只填了月日不含年份。
 type Birthday struct {
 	Day   int

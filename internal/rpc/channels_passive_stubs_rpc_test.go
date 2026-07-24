@@ -3,7 +3,10 @@ package rpc
 import (
 	"github.com/iamxvbaba/td/tg"
 	"strings"
+	apptelemetry "telesrv/internal/app/clienttelemetry"
+	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 	"testing"
 	"time"
 )
@@ -11,6 +14,14 @@ import (
 func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	f := newRPCChannelFixture(t)
 	r := f.router
+	moderationReports := memory.NewModerationReportStore()
+	telemetryEvents := memory.NewClientTelemetryStore()
+	r.deps.ClientTelemetry = apptelemetry.NewService(telemetryEvents)
+	r.deps.Moderation = appmoderation.NewService(
+		moderationReports,
+		appmoderation.WithMessageReaders(nil, r.deps.Channels),
+		appmoderation.WithPeerReaders(r.deps.Users, r.deps.Channels),
+	)
 	owner := f.user(41, "15550002101", "Owner")
 	friend := f.user(42, "15550002102", "Friend")
 	invited := f.user(43, "15550002103", "Invited")
@@ -470,19 +481,15 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if _, ok := reported.(*tg.ReportResultReported); !ok {
 		t.Fatalf("messages.report spam = %#v, want reported", reported)
 	}
+	if got := moderationReports.Reports(); len(got) != 2 {
+		t.Fatalf("moderation reports = %+v, want peer-spam and message reports", got)
+	}
 	if _, err := r.onMessagesReport(ownerCtx, &tg.MessagesReportRequest{
 		Peer:   inputPeerChannel(channel),
 		ID:     []int{1},
 		Option: []byte("bogus"),
 	}); err == nil || !strings.Contains(err.Error(), "OPTION_INVALID") {
 		t.Fatalf("messages.report invalid option err = %v, want OPTION_INVALID", err)
-	}
-	if ok, err := r.onMessagesReportReaction(ownerCtx, &tg.MessagesReportReactionRequest{
-		Peer:         inputPeerChannel(channel),
-		ID:           1,
-		ReactionPeer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
-	}); err != nil || !ok {
-		t.Fatalf("messages.reportReaction = ok %v err %v, want true nil", ok, err)
 	}
 	if ok, err := r.onMessagesReportMessagesDelivery(ownerCtx, &tg.MessagesReportMessagesDeliveryRequest{
 		Peer: inputPeerChannel(channel),
@@ -503,11 +510,45 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}); err != nil || !ok {
 		t.Fatalf("messages.reportReadMetrics = ok %v err %v, want true nil", ok, err)
 	}
+	if events := telemetryEvents.Events(); len(events) != 2 ||
+		events[0].Kind != domain.ClientTelemetryMessageDelivery ||
+		events[1].Kind != domain.ClientTelemetryReadMetrics ||
+		len(moderationReports.Reports()) != 2 {
+		t.Fatalf("telemetry=%+v moderation=%+v, want separate durable streams",
+			events, moderationReports.Reports())
+	}
 	if ok, err := r.onMessagesReportMusicListen(ownerCtx, &tg.MessagesReportMusicListenRequest{
 		ID:               &tg.InputDocument{ID: 1, AccessHash: 2},
 		ListenedDuration: 1,
-	}); err != nil || !ok {
-		t.Fatalf("messages.reportMusicListen = ok %v err %v, want true nil", ok, err)
+	}); err == nil || ok || !strings.Contains(err.Error(), "DOCUMENT_INVALID") {
+		t.Fatalf("messages.reportMusicListen = ok %v err %v, want DOCUMENT_INVALID", ok, err)
+	}
+	if _, err := r.onMessagesReportSponsoredMessage(ownerCtx, &tg.MessagesReportSponsoredMessageRequest{
+		RandomID: []byte("unseen-ad"),
+	}); err == nil || !strings.Contains(err.Error(), "RANDOM_ID_INVALID") {
+		t.Fatalf("unseen sponsored report err=%v, want RANDOM_ID_INVALID", err)
+	}
+	impression, err := domain.NewSponsoredMessageImpression(
+		owner.ID, []byte("ad"),
+		domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID},
+		0, []byte(`{"schema_version":1,"text":"test sponsored message"}`),
+		time.Now().UTC(), time.Now().UTC().Add(time.Hour),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := moderationReports.CreateSponsoredMessageImpression(ownerCtx, impression); err != nil {
+		t.Fatal(err)
+	}
+	sponsoredOptions, err := r.onMessagesReportSponsoredMessage(ownerCtx, &tg.MessagesReportSponsoredMessageRequest{
+		RandomID: []byte("ad"),
+	})
+	if err != nil {
+		t.Fatalf("messages.reportSponsoredMessage options: %v", err)
+	}
+	if choices, ok := sponsoredOptions.(*tg.ChannelsSponsoredMessageReportResultChooseOption); !ok ||
+		len(choices.Options) == 0 {
+		t.Fatalf("sponsored options=%#v, want chooseOption", sponsoredOptions)
 	}
 	sponsoredReport, err := r.onMessagesReportSponsoredMessage(ownerCtx, &tg.MessagesReportSponsoredMessageRequest{
 		RandomID: []byte("ad"),
@@ -576,6 +617,13 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	friendReactionReq.SetReaction(friendReactionReq.Reaction)
 	if _, err := r.onMessagesSendReaction(friendCtx, friendReactionReq); err != nil {
 		t.Fatalf("messages.sendReaction by friend: %v", err)
+	}
+	if ok, err := r.onMessagesReportReaction(ownerCtx, &tg.MessagesReportReactionRequest{
+		Peer:         inputPeerChannel(channel),
+		ID:           viewedID,
+		ReactionPeer: &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+	}); err != nil || !ok {
+		t.Fatalf("messages.reportReaction = ok %v err %v, want true nil", ok, err)
 	}
 	unreadReactions, err := r.onMessagesGetUnreadReactions(ownerCtx, &tg.MessagesGetUnreadReactionsRequest{
 		Peer:  inputPeerChannel(channel),
