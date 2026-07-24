@@ -27,20 +27,6 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 	allUserIDs := make(map[int64]struct{})
 	allChannelIDs := make(map[int64]struct{})
 	for i := range out {
-		if out[i].Type == domain.UpdateEventUserProfile {
-			if service, ok := r.deps.Users.(UserAuthoritativeProjectionService); ok {
-				users, err := service.ByIDsAuthoritative(ctx, viewerUserID, []int64{out[i].Peer.ID})
-				if err != nil {
-					r.log.Warn("reload authoritative user profile event",
-						zap.Int64("viewer_user_id", viewerUserID),
-						zap.Int64("target_user_id", out[i].Peer.ID),
-						zap.Error(err))
-				} else {
-					out[i].Users = users
-					cache.primeUsers(viewerUserID, users)
-				}
-			}
-		}
 		if out[i].Type == domain.UpdateEventChannelState {
 			if service, ok := r.deps.Channels.(ChannelAuthoritativeProjectionService); ok {
 				views, err := service.GetChannelsAuthoritative(ctx, viewerUserID, []int64{out[i].Peer.ID})

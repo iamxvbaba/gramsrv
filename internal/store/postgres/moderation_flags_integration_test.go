@@ -49,7 +49,7 @@ func TestModerationFlagsRejectImpossibleStateAtPostgresBoundary(t *testing.T) {
 	}
 }
 
-func TestUserModerationFlagsCreateDurableViewerProfileEvents(t *testing.T) {
+func TestUserModerationFlagsDoNotAdvanceAccountPts(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -72,6 +72,15 @@ func TestUserModerationFlagsCreateDurableViewerProfileEvents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save reverse contact: %v", err)
 	}
+	viewers := []domain.User{target, savedTargetViewer, savedByTargetViewer, unrelated}
+	baseline := make(map[int64]int, len(viewers))
+	for _, viewer := range viewers {
+		pts, err := events.MaxContiguousPts(ctx, viewer.ID)
+		if err != nil {
+			t.Fatalf("viewer %d baseline pts: %v", viewer.ID, err)
+		}
+		baseline[viewer.ID] = pts
+	}
 
 	updated, err := users.SetScamFake(ctx, target.ID, true, false)
 	if err != nil {
@@ -81,19 +90,15 @@ func TestUserModerationFlagsCreateDurableViewerProfileEvents(t *testing.T) {
 		t.Fatalf("updated flags = scam:%v fake:%v", updated.Scam, updated.Fake)
 	}
 
-	for _, viewer := range []domain.User{target, savedTargetViewer, savedByTargetViewer} {
-		got, err := events.ListAfter(ctx, viewer.ID, 0, 10)
-		if err != nil {
-			t.Fatalf("list viewer %d events: %v", viewer.ID, err)
+	for _, viewer := range viewers {
+		pts, err := events.MaxContiguousPts(ctx, viewer.ID)
+		if err != nil || pts != baseline[viewer.ID] {
+			t.Fatalf("viewer %d pts=%d want=%d err=%v", viewer.ID, pts, baseline[viewer.ID], err)
 		}
-		if len(got) != 1 || got[0].Type != domain.UpdateEventUserProfile ||
-			got[0].Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: target.ID}) ||
-			got[0].Pts != 1 || got[0].PtsCount != 1 {
-			t.Fatalf("viewer %d events = %+v", viewer.ID, got)
+		got, err := events.ListAfter(ctx, viewer.ID, baseline[viewer.ID], 10)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("viewer %d moderation events=%+v err=%v", viewer.ID, got, err)
 		}
-	}
-	if got, err := events.ListAfter(ctx, unrelated.ID, 0, 10); err != nil || len(got) != 0 {
-		t.Fatalf("unrelated events = %+v err=%v", got, err)
 	}
 	var outboxCount int
 	if err := pool.QueryRow(ctx, `
@@ -102,33 +107,42 @@ FROM dispatch_outbox
 WHERE target_user_id = ANY($1::bigint[])
   AND event_type = 'user_profile'`,
 		[]int64{target.ID, savedTargetViewer.ID, savedByTargetViewer.ID, unrelated.ID},
-	).Scan(&outboxCount); err != nil || outboxCount != 3 {
+	).Scan(&outboxCount); err != nil || outboxCount != 0 {
 		t.Fatalf("profile outbox count=%d err=%v", outboxCount, err)
+	}
+
+	audience, err := users.ModerationFlagAudience(ctx, target.ID, 4096)
+	if err != nil {
+		t.Fatalf("moderation audience: %v", err)
+	}
+	audienceSet := make(map[int64]struct{}, len(audience))
+	for _, userID := range audience {
+		audienceSet[userID] = struct{}{}
+	}
+	for _, viewer := range []domain.User{target, savedTargetViewer, savedByTargetViewer} {
+		if _, ok := audienceSet[viewer.ID]; !ok {
+			t.Fatalf("viewer %d missing from audience %v", viewer.ID, audience)
+		}
+	}
+	if _, ok := audienceSet[unrelated.ID]; ok {
+		t.Fatalf("unrelated viewer included in audience %v", audience)
 	}
 
 	if _, err := users.SetScamFake(ctx, target.ID, true, false); err != nil {
 		t.Fatalf("repeat same flags: %v", err)
 	}
-	for _, viewer := range []domain.User{target, savedTargetViewer, savedByTargetViewer} {
-		got, err := events.ListAfter(ctx, viewer.ID, 0, 10)
-		if err != nil || len(got) != 1 {
-			t.Fatalf("same-state viewer %d events = %+v err=%v", viewer.ID, got, err)
-		}
-	}
-
 	if _, err := users.SetScamFake(ctx, target.ID, false, true); err != nil {
 		t.Fatalf("switch to fake: %v", err)
 	}
-	for _, viewer := range []domain.User{target, savedTargetViewer, savedByTargetViewer} {
-		got, err := events.ListAfter(ctx, viewer.ID, 1, 10)
-		if err != nil || len(got) != 1 || got[0].Pts != 2 ||
-			got[0].Type != domain.UpdateEventUserProfile {
-			t.Fatalf("second viewer %d events = %+v err=%v", viewer.ID, got, err)
+	for _, viewer := range viewers {
+		pts, err := events.MaxContiguousPts(ctx, viewer.ID)
+		if err != nil || pts != baseline[viewer.ID] {
+			t.Fatalf("viewer %d final pts=%d want=%d err=%v", viewer.ID, pts, baseline[viewer.ID], err)
 		}
 	}
 }
 
-func TestChannelModerationFlagsCreateDurableMemberStateEvents(t *testing.T) {
+func TestChannelModerationFlagsDoNotAdvanceMemberAccountPts(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	suffix := randomSuffix(t)
@@ -166,17 +180,15 @@ func TestChannelModerationFlagsCreateDurableMemberStateEvents(t *testing.T) {
 	if !updated.Scam || updated.Fake {
 		t.Fatalf("updated flags = scam:%v fake:%v", updated.Scam, updated.Fake)
 	}
-	for _, viewer := range []domain.User{owner, member} {
-		got, err := events.ListAfter(ctx, viewer.ID, baseline[viewer.ID], 10)
-		if err != nil || len(got) != 1 ||
-			got[0].Type != domain.UpdateEventChannelState ||
-			got[0].Peer != (domain.Peer{Type: domain.PeerTypeChannel, ID: created.Channel.ID}) ||
-			got[0].Pts != baseline[viewer.ID]+1 || got[0].PtsCount != 1 {
-			t.Fatalf("viewer %d events = %+v err=%v", viewer.ID, got, err)
+	for _, viewer := range []domain.User{owner, member, unrelated} {
+		pts, err := events.MaxContiguousPts(ctx, viewer.ID)
+		if err != nil || pts != baseline[viewer.ID] {
+			t.Fatalf("viewer %d pts=%d want=%d err=%v", viewer.ID, pts, baseline[viewer.ID], err)
 		}
-	}
-	if got, err := events.ListAfter(ctx, unrelated.ID, baseline[unrelated.ID], 10); err != nil || len(got) != 0 {
-		t.Fatalf("unrelated events = %+v err=%v", got, err)
+		got, err := events.ListAfter(ctx, viewer.ID, baseline[viewer.ID], 10)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("viewer %d moderation events=%+v err=%v", viewer.ID, got, err)
+		}
 	}
 
 	var outboxCount int
@@ -187,28 +199,20 @@ WHERE target_user_id = ANY($1::bigint[])
   AND event_type = 'channel_state'
   AND pts > 0`,
 		[]int64{owner.ID, member.ID, unrelated.ID},
-	).Scan(&outboxCount); err != nil || outboxCount != 2 {
+	).Scan(&outboxCount); err != nil || outboxCount != 0 {
 		t.Fatalf("channel state outbox count=%d err=%v", outboxCount, err)
 	}
 
 	if _, err := channels.SetChannelScamFake(ctx, created.Channel.ID, true, false); err != nil {
 		t.Fatalf("repeat same channel flags: %v", err)
 	}
-	for _, viewer := range []domain.User{owner, member} {
-		got, err := events.ListAfter(ctx, viewer.ID, baseline[viewer.ID], 10)
-		if err != nil || len(got) != 1 {
-			t.Fatalf("same-state viewer %d events = %+v err=%v", viewer.ID, got, err)
-		}
-	}
-
 	if _, err := channels.SetChannelScamFake(ctx, created.Channel.ID, false, true); err != nil {
 		t.Fatalf("switch channel to fake: %v", err)
 	}
-	for _, viewer := range []domain.User{owner, member} {
-		got, err := events.ListAfter(ctx, viewer.ID, baseline[viewer.ID]+1, 10)
-		if err != nil || len(got) != 1 || got[0].Pts != baseline[viewer.ID]+2 ||
-			got[0].Type != domain.UpdateEventChannelState {
-			t.Fatalf("second viewer %d events = %+v err=%v", viewer.ID, got, err)
+	for _, viewer := range []domain.User{owner, member, unrelated} {
+		pts, err := events.MaxContiguousPts(ctx, viewer.ID)
+		if err != nil || pts != baseline[viewer.ID] {
+			t.Fatalf("viewer %d final pts=%d want=%d err=%v", viewer.ID, pts, baseline[viewer.ID], err)
 		}
 	}
 }

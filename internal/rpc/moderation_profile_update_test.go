@@ -13,16 +13,17 @@ import (
 
 type moderationProjectionUsers struct {
 	UsersService
-	freshCalls int
+	audience []int64
+	viewers  []int64
 }
 
-func (s *moderationProjectionUsers) ByIDs(_ context.Context, _ int64, ids []int64) ([]domain.User, error) {
-	return []domain.User{{ID: ids[0], FirstName: "stale"}}, nil
+func (s *moderationProjectionUsers) ByIDs(_ context.Context, viewerUserID int64, ids []int64) ([]domain.User, error) {
+	s.viewers = append(s.viewers, viewerUserID)
+	return []domain.User{{ID: ids[0], FirstName: "Flagged", Scam: true}}, nil
 }
 
-func (s *moderationProjectionUsers) ByIDsAuthoritative(_ context.Context, _ int64, ids []int64) ([]domain.User, error) {
-	s.freshCalls++
-	return []domain.User{{ID: ids[0], FirstName: "fresh", Scam: true}}, nil
+func (s *moderationProjectionUsers) ModerationFlagAudience(_ context.Context, _ int64, _ int) ([]int64, error) {
+	return append([]int64(nil), s.audience...), nil
 }
 
 type moderationProjectionChannels struct {
@@ -42,84 +43,90 @@ func (s *moderationProjectionChannels) GetChannelsAuthoritative(_ context.Contex
 	}}, nil
 }
 
-func TestModerationProfileUpdateCarriesStandardFlagsAndPts(t *testing.T) {
-	const (
-		viewerID = int64(1001)
-		targetID = int64(2002)
-	)
-	event := domain.UpdateEvent{
-		UserID: viewerID,
-		Type:   domain.UpdateEventUserProfile,
-		Pts:    7, PtsCount: 1, Date: 1700000000,
-		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: targetID},
-		Users: []domain.User{{
-			ID: targetID, AccessHash: 22, FirstName: "Flagged", Scam: true,
-		}},
-	}
+func (s *moderationProjectionChannels) FilterActiveMemberIDs(_ context.Context, _ int64, userIDs []int64) ([]int64, error) {
+	return append([]int64(nil), userIDs...), nil
+}
 
-	updates := tgUpdateForOutboxEventForViewer(event, viewerID)
-	if updates == nil || len(updates.Updates) != 2 {
-		t.Fatalf("updates = %+v", updates)
+func TestUserModerationFlagsPushStandardNonPTSUpdate(t *testing.T) {
+	const (
+		targetID        = int64(2002)
+		onlineViewerID  = int64(1001)
+		offlineViewerID = int64(3003)
+	)
+	users := &moderationProjectionUsers{
+		audience: []int64{targetID, onlineViewerID, offlineViewerID},
+	}
+	sessions := &captureSessions{onlineUserIDs: []int64{targetID, onlineViewerID}}
+	r := New(Config{}, Deps{Users: users, Sessions: sessions}, zap.NewNop(), clock.System)
+
+	if err := r.NotifyUserModerationFlagsChanged(context.Background(), domain.User{
+		ID: targetID, FirstName: "Flagged", Scam: true,
+	}); err != nil {
+		t.Fatalf("notify moderation flags: %v", err)
+	}
+	pushed := sessions.pushedUserIDs()
+	if len(pushed) != 2 || pushed[0] != targetID || pushed[1] != onlineViewerID {
+		t.Fatalf("pushed user ids = %v", pushed)
+	}
+	if len(users.viewers) != 2 || users.viewers[0] != targetID || users.viewers[1] != onlineViewerID {
+		t.Fatalf("projected viewers = %v", users.viewers)
+	}
+	updates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok || len(updates.Updates) != 1 {
+		t.Fatalf("updates = %T %+v", sessions.lastUserPush(), sessions.lastUserPush())
 	}
 	refresh, ok := updates.Updates[0].(*tg.UpdateUser)
 	if !ok || refresh.UserID != targetID {
 		t.Fatalf("refresh = %T %+v", updates.Updates[0], updates.Updates[0])
 	}
-	bookkeeping, ok := updates.Updates[1].(*tg.UpdateDeleteMessages)
-	if !ok || bookkeeping.Pts != 7 || bookkeeping.PtsCount != 1 || len(bookkeeping.Messages) != 0 {
-		t.Fatalf("bookkeeping = %T %+v", updates.Updates[1], updates.Updates[1])
+	for _, update := range updates.Updates {
+		if _, syntheticDelete := update.(*tg.UpdateDeleteMessages); syntheticDelete {
+			t.Fatalf("synthetic delete bookkeeping leaked into moderation update: %+v", update)
+		}
 	}
 	if len(updates.Users) != 1 {
 		t.Fatalf("users = %+v", updates.Users)
 	}
-	user, ok := updates.Users[0].(*tg.User)
-	if !ok || user.ID != targetID || !user.Scam || user.Fake {
+	if user, ok := updates.Users[0].(*tg.User); !ok || user.ID != targetID || !user.Scam || user.Fake {
 		t.Fatalf("user = %T %+v", updates.Users[0], updates.Users[0])
-	}
-
-	difference := tgUpdatesDifference(viewerID, domain.UpdateDifference{
-		State:  domain.UpdateState{Pts: 7, Date: event.Date},
-		Events: []domain.UpdateEvent{event},
-	})
-	full, ok := difference.(*tg.UpdatesDifference)
-	if !ok || len(full.OtherUpdates) != 1 || len(full.Users) != 1 {
-		t.Fatalf("difference = %T %+v", difference, difference)
-	}
-	if refresh, ok := full.OtherUpdates[0].(*tg.UpdateUser); !ok || refresh.UserID != targetID {
-		t.Fatalf("difference refresh = %T %+v", full.OtherUpdates[0], full.OtherUpdates[0])
-	}
-	if user, ok := full.Users[0].(*tg.User); !ok || !user.Scam || user.Fake {
-		t.Fatalf("difference user = %T %+v", full.Users[0], full.Users[0])
 	}
 }
 
-func TestChannelModerationUpdateCarriesStandardFlagsAndPts(t *testing.T) {
+func TestChannelModerationFlagsPushStandardNonPTSUpdate(t *testing.T) {
 	const (
-		viewerID  = int64(3003)
+		ownerID   = int64(3003)
+		memberID  = int64(3004)
 		channelID = int64(4004)
 	)
-	event := domain.UpdateEvent{
-		UserID: viewerID,
-		Type:   domain.UpdateEventChannelState,
-		Pts:    9, PtsCount: 1, Date: 1700000001,
-		Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: channelID},
-		Channels: []domain.Channel{{
-			ID: channelID, AccessHash: 44, CreatorUserID: viewerID,
-			Title: "Flagged channel", Megagroup: true, Scam: true,
-		}},
+	channels := &moderationProjectionChannels{}
+	sessions := &captureSessions{
+		onlineUserIDs:  []int64{ownerID, memberID},
+		channelMembers: map[int64][]int64{channelID: {ownerID, memberID}},
+	}
+	r := New(Config{}, Deps{Channels: channels, Sessions: sessions}, zap.NewNop(), clock.System)
+	if err := r.NotifyChannelChanged(context.Background(), domain.Channel{
+		ID: channelID, AccessHash: 44, CreatorUserID: ownerID,
+		Title: "Flagged channel", Megagroup: true, Scam: true,
+	}); err != nil {
+		t.Fatalf("notify channel flags: %v", err)
 	}
 
-	updates := tgUpdateForOutboxEventForViewer(event, viewerID)
-	if updates == nil || len(updates.Updates) != 2 {
-		t.Fatalf("updates = %+v", updates)
+	pushed := sessions.pushedUserIDs()
+	if len(pushed) != 2 {
+		t.Fatalf("pushed user ids = %v", pushed)
+	}
+	updates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok || len(updates.Updates) != 1 {
+		t.Fatalf("updates = %T %+v", sessions.lastUserPush(), sessions.lastUserPush())
 	}
 	refresh, ok := updates.Updates[0].(*tg.UpdateChannel)
 	if !ok || refresh.ChannelID != channelID {
 		t.Fatalf("refresh = %T %+v", updates.Updates[0], updates.Updates[0])
 	}
-	bookkeeping, ok := updates.Updates[1].(*tg.UpdateDeleteMessages)
-	if !ok || bookkeeping.Pts != 9 || bookkeeping.PtsCount != 1 || len(bookkeeping.Messages) != 0 {
-		t.Fatalf("bookkeeping = %T %+v", updates.Updates[1], updates.Updates[1])
+	for _, update := range updates.Updates {
+		if _, syntheticDelete := update.(*tg.UpdateDeleteMessages); syntheticDelete {
+			t.Fatalf("synthetic delete bookkeeping leaked into moderation update: %+v", update)
+		}
 	}
 	if len(updates.Chats) != 1 {
 		t.Fatalf("chats = %+v", updates.Chats)
@@ -130,27 +137,18 @@ func TestChannelModerationUpdateCarriesStandardFlagsAndPts(t *testing.T) {
 	}
 }
 
-func TestModerationRefreshEventsBypassServerProjectionCaches(t *testing.T) {
-	users := &moderationProjectionUsers{}
+func TestChannelStateRefreshEventBypassesServerProjectionCache(t *testing.T) {
 	channels := &moderationProjectionChannels{}
-	r := New(Config{}, Deps{Users: users, Channels: channels}, zap.NewNop(), clock.System)
+	r := New(Config{}, Deps{Channels: channels}, zap.NewNop(), clock.System)
 	const viewerID = int64(5005)
 	events := r.enrichUpdateEvents(context.Background(), viewerID, []domain.UpdateEvent{
-		{
-			UserID: viewerID, Type: domain.UpdateEventUserProfile,
-			Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 6006},
-		},
 		{
 			UserID: viewerID, Type: domain.UpdateEventChannelState,
 			Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: 7007},
 		},
 	})
-	if users.freshCalls != 1 || len(events[0].Users) != 1 ||
-		events[0].Users[0].FirstName != "fresh" || !events[0].Users[0].Scam {
-		t.Fatalf("authoritative user refresh = calls:%d users:%+v", users.freshCalls, events[0].Users)
-	}
-	if channels.freshCalls != 1 || len(events[1].Channels) != 1 ||
-		events[1].Channels[0].Title != "fresh" || !events[1].Channels[0].Scam {
-		t.Fatalf("authoritative channel refresh = calls:%d channels:%+v", channels.freshCalls, events[1].Channels)
+	if channels.freshCalls != 1 || len(events[0].Channels) != 1 ||
+		events[0].Channels[0].Title != "fresh" || !events[0].Channels[0].Scam {
+		t.Fatalf("authoritative channel refresh = calls:%d channels:%+v", channels.freshCalls, events[0].Channels)
 	}
 }

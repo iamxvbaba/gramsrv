@@ -33,6 +33,10 @@ type usernameAvailabilityStore interface {
 	CheckUsername(ctx context.Context, userID int64, username string) (bool, error)
 }
 
+type moderationFlagAudienceStore interface {
+	ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error)
+}
+
 // Option 调整用户服务可选依赖。
 type Option func(*Service)
 
@@ -173,27 +177,6 @@ func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int6
 	if err != nil {
 		return nil, err
 	}
-	return s.projectUsers(ctx, currentUserID, users)
-}
-
-// ByIDsAuthoritative reloads an explicit profile-refresh target from the
-// durable store, then replaces the shared base cache before applying the
-// viewer projection. It is intentionally reserved for durable update
-// delivery; ordinary reads continue to use ByIDs.
-func (s *Service) ByIDsAuthoritative(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
-	if currentUserID == 0 {
-		return nil, ErrNotAuthorized
-	}
-	ids := uniqueUserIDs(userIDs, maxBatchUsers)
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	s.dropCachedUsers(ctx, ids...)
-	users, err := s.users.ByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	s.putCachedUsers(ctx, users...)
 	return s.projectUsers(ctx, currentUserID, users)
 }
 
@@ -419,6 +402,23 @@ func (s *Service) SetScamFake(ctx context.Context, userID int64, scam, fake bool
 	}
 	s.refreshCachedUsers(ctx, updated)
 	return updated, nil
+}
+
+// ModerationFlagAudience returns the bounded set of existing viewers that may
+// need an immediate updateUser after SCAM/FAKE changes. This is an online
+// accelerator only: it does not allocate PTS or create durable update events.
+func (s *Service) ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error) {
+	if userID == 0 {
+		return nil, ErrNotAuthorized
+	}
+	if limit <= 0 || limit > 4096 {
+		limit = 4096
+	}
+	audience, ok := s.users.(moderationFlagAudienceStore)
+	if !ok {
+		return []int64{userID}, nil
+	}
+	return audience.ModerationFlagAudience(ctx, userID, limit)
 }
 
 // SetSupport 设置/取消用户的 support 标记（官方客服账号）。写后刷新基础缓存。

@@ -36,12 +36,7 @@ const (
 	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
 	// It consumes account pts even though updateUserEmojiStatus has no pts.
 	UpdateEventUserEmojiStatus UpdateEventType = "user_emoji_status"
-	// UpdateEventUserProfile is a durable viewer-scoped refresh for another
-	// user's absolute profile flags (currently moderation SCAM/FAKE state).
-	// The changed user is carried in Peer; hydration attaches the authoritative
-	// viewer projection to Users before online dispatch or getDifference.
-	UpdateEventUserProfile    UpdateEventType = "user_profile"
-	UpdateEventDeleteMessages UpdateEventType = "delete_messages"
+	UpdateEventDeleteMessages  UpdateEventType = "delete_messages"
 	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
 	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
 	// TL 构造器自带账号 pts/pts_count，不属于 LacksWirePts。
@@ -145,7 +140,6 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventPeerStoryBlocked,
 		UpdateEventUserPhone,
 		UpdateEventUserEmojiStatus,
-		UpdateEventUserProfile,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,
 		UpdateEventDialogFilters,

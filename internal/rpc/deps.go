@@ -249,15 +249,6 @@ type UsersService interface {
 	ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
 }
 
-// UserAuthoritativeProjectionService bypasses viewer-independent base caches
-// for an explicit durable profile-refresh event. The event exists precisely
-// because a just-committed absolute user fact must replace client and server
-// caches; re-reading a stale Redis value would acknowledge the outbox row
-// without ever exposing the committed state.
-type UserAuthoritativeProjectionService interface {
-	ByIDsAuthoritative(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
-}
-
 // TelegramLoginService is the domain-only boundary shared by the MTProto RPC
 // edge and the public OIDC provider. PostgreSQL remains authoritative for all
 // consent transitions; the RPC layer only projects domain state to TL.
