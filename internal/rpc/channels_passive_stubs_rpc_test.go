@@ -449,6 +449,36 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if ok, err := r.onMessagesReportSpam(ownerCtx, inputPeerChannel(channel)); err != nil || !ok {
 		t.Fatalf("messages.reportSpam = ok %v err %v, want true nil", ok, err)
 	}
+	if _, err := r.onMessagesReport(ownerCtx, &tg.MessagesReportRequest{
+		Peer: inputPeerChannel(channel),
+	}); err == nil || !strings.Contains(err.Error(), "MESSAGE_ID_REQUIRED") {
+		t.Fatalf("desktop messages.report without ids err = %v, want MESSAGE_ID_REQUIRED", err)
+	}
+	androidReportOptions, err := r.onMessagesReport(
+		WithClientInfo(ownerCtx, ClientInfo{
+			Type:       ClientTypeAndroid,
+			AppVersion: "12.9.0 (69669) pbeta",
+		}),
+		&tg.MessagesReportRequest{Peer: inputPeerChannel(channel)},
+	)
+	if err != nil {
+		t.Fatalf("android messages.report initial options: %v", err)
+	}
+	if choices, ok := androidReportOptions.(*tg.ReportResultChooseOption); !ok || len(choices.Options) == 0 {
+		t.Fatalf("android messages.report initial options = %#v, want chooseOption", androidReportOptions)
+	}
+	if got := moderationReports.Reports(); len(got) != 1 {
+		t.Fatalf("android initial report option discovery persisted reports = %+v, want only earlier reportSpam", got)
+	}
+	if _, err := r.onMessagesReport(
+		WithClientInfo(ownerCtx, ClientInfo{Type: ClientTypeAndroid}),
+		&tg.MessagesReportRequest{
+			Peer:   inputPeerChannel(channel),
+			Option: []byte("spam"),
+		},
+	); err == nil || !strings.Contains(err.Error(), "MESSAGE_ID_REQUIRED") {
+		t.Fatalf("android selected report option without ids err = %v, want MESSAGE_ID_REQUIRED", err)
+	}
 	reportOptions, err := r.onMessagesReport(ownerCtx, &tg.MessagesReportRequest{
 		Peer: inputPeerChannel(channel),
 		ID:   []int{1},
