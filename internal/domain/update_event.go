@@ -36,7 +36,10 @@ const (
 	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
 	// It consumes account pts even though updateUserEmojiStatus has no pts.
 	UpdateEventUserEmojiStatus UpdateEventType = "user_emoji_status"
-	UpdateEventDeleteMessages  UpdateEventType = "delete_messages"
+	// UpdateEventPrivacy carries the immutable account privacy key/rule
+	// snapshot committed at this pts. updatePrivacy has no wire pts.
+	UpdateEventPrivacy        UpdateEventType = "privacy"
+	UpdateEventDeleteMessages UpdateEventType = "delete_messages"
 	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
 	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
 	// TL 构造器自带账号 pts/pts_count，不属于 LacksWirePts。
@@ -88,6 +91,7 @@ type UpdateEvent struct {
 	Bool             bool
 	Phone            string
 	EmojiStatus      UserEmojiStatus
+	Privacy          PrivacyRules
 	Settings         PeerSettings
 	MessageIDs       []int
 	MaxID            int
@@ -140,6 +144,7 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventPeerStoryBlocked,
 		UpdateEventUserPhone,
 		UpdateEventUserEmojiStatus,
+		UpdateEventPrivacy,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,
 		UpdateEventDialogFilters,

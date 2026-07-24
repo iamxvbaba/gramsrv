@@ -508,6 +508,21 @@ type ChannelMember struct {
 	Guest bool
 }
 
+// CanInviteUsers reports whether this active member may directly add users.
+// Keep this predicate aligned with both memory/postgres write boundaries so an
+// RPC cannot expose another user's privacy decision before authorizing the
+// actor.
+func (m ChannelMember) CanInviteUsers(channel Channel) bool {
+	if m.Status != ChannelMemberActive {
+		return false
+	}
+	if m.Role == ChannelRoleCreator ||
+		(m.Role == ChannelRoleAdmin && (m.AdminRights.InviteUsers || m.AdminRights.ChangeInfo)) {
+		return true
+	}
+	return channel.Megagroup && !channel.DefaultBannedRights.InviteUsers && !m.BannedRights.InviteUsers
+}
+
 // CanManageDirectMessages reports whether this active parent-channel member may
 // see and address every subscriber topic in the linked direct-messages
 // monoforum.  Telegram deliberately does not grant this capability to an
@@ -867,6 +882,22 @@ type ChannelMessageReactionsList struct {
 	Count      int
 	Reactions  []ChannelMessagePeerReaction
 	NextOffset string
+}
+
+// ChannelMessageReactionLookupRequest is the bounded exact lookup used by
+// moderation evidence capture. It avoids paging an arbitrarily large reactor
+// list merely to prove that one named participant reacted.
+type ChannelMessageReactionLookupRequest struct {
+	ViewerUserID  int64
+	ChannelID     int64
+	MessageID     int
+	ReactorUserID int64
+}
+
+type ChannelMessageReactionLookup struct {
+	Channel   Channel
+	Message   ChannelMessage
+	Reactions []ChannelMessagePeerReaction
 }
 
 // RecentMessageReaction is one account-level recently used message reaction.

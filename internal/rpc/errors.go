@@ -382,6 +382,9 @@ func callProtocolFlagsInvalidErr() error {
 
 func userIsBlockedErr() error         { return tgerr.New(400, "USER_IS_BLOCKED") }
 func userPrivacyRestrictedErr() error { return tgerr.New(403, "USER_PRIVACY_RESTRICTED") }
+func chatSendVoicesForbiddenErr() error {
+	return tgerr.New(403, "CHAT_SEND_VOICES_FORBIDDEN")
+}
 
 // signalingDataInvalidErr 表示 phone.sendSignalingData 载荷超限或非法。
 func signalingDataInvalidErr() error { return tgerr.New(400, "DATA_INVALID") }

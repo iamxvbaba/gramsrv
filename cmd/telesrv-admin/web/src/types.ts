@@ -239,6 +239,85 @@ export type OfficialStarGiftRow = {
 
 export type OfficialStarGiftListResponse = { gifts: OfficialStarGiftRow[] };
 
+export type ModerationPeer = {
+  Type: "user" | "channel";
+  ID: number;
+};
+
+export type ModerationCaseRow = {
+  ID: number;
+  Target: ModerationPeer;
+  Status: string;
+  Severity: number;
+  AssignedTo: string;
+  Version: number;
+  ReportCount: number;
+  DistinctReporterCount: number;
+  FirstReportAt: string;
+  LastReportAt: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type ModerationDecision = {
+  ID: number;
+  CaseID: number;
+  AppealID: number;
+  Kind: string;
+  Actor: string;
+  Reason: string;
+  CommandID: string;
+  CreatedAt: string;
+};
+
+export type ModerationAction = {
+  ID: number;
+  CaseID: number;
+  DecisionID: number;
+  Kind: string;
+  Payload: Record<string, unknown>;
+  Status: string;
+  Attempts: number;
+  LastError: string;
+  CommandID: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type ModerationAppeal = {
+  ID: number;
+  CaseID: number;
+  AppellantUserID: number;
+  Text: string;
+  Status: string;
+  PreviousCaseStatus: string;
+  Reviewer: string;
+  ReviewReason: string;
+  CreatedAt: string;
+  ReviewedAt: string;
+};
+
+export type ModerationCaseDetail = {
+  Case: ModerationCaseRow;
+  ReportIDs: number[];
+  Decisions: ModerationDecision[];
+  Actions: ModerationAction[];
+  Appeals: ModerationAppeal[];
+};
+
+export type ModerationReport = {
+  ID: number;
+  ReporterUserID: number;
+  Source: string;
+  Target: ModerationPeer;
+  Reason: string;
+  Option: string;
+  Comment: string;
+  Items: Array<Record<string, unknown>>;
+  MediaHolds: Array<Record<string, unknown>>;
+  CreatedAt: string;
+};
+
 export type StarGiftCollectibleAttributeRow = {
   id: string;
   kind: "model" | "pattern" | "backdrop";

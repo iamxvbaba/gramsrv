@@ -127,6 +127,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	if r.deps.Messages == nil {
 		return nil, false, peerIDInvalidErr()
 	}
+	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, p.media != nil && p.media.HasUnreadPayload()); err != nil {
+		return nil, false, err
+	}
 	if r.deps.Users != nil && peer.ID != userID {
 		if _, found, err := r.deps.Users.ByID(ctx, userID, peer.ID); err != nil {
 			return nil, false, internalErr()
@@ -375,6 +378,13 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if err != nil {
 		return nil, err
 	}
+	voiceOrRound, err := r.preflightVoiceOrRound(ctx, []tg.InputMediaClass{req.Media})
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, voiceOrRound); err != nil {
+		return nil, err
+	}
 	media, err := r.resolveInputMedia(ctx, userID, req.Media)
 	if err != nil {
 		return nil, err
@@ -499,6 +509,19 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	}
 	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
+		return nil, err
+	}
+	pendingMedia := make([]tg.InputMediaClass, 0, absentCount)
+	for i, item := range req.MultiMedia {
+		if !replays[i].found {
+			pendingMedia = append(pendingMedia, item.Media)
+		}
+	}
+	voiceOrRound, err := r.preflightVoiceOrRound(ctx, pendingMedia)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, voiceOrRound); err != nil {
 		return nil, err
 	}
 

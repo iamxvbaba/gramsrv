@@ -13,11 +13,14 @@ import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { GiftsPage } from "./GiftsPage";
 import { GiveGiftsPage } from "./GiveGiftsPage";
+import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
+import { ModerationCasesPage } from "./ModerationCasesPage";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
   const channelID = route.path.match(/^\/channels\/(\d+)$/)?.[1];
   const botID = route.path.match(/^\/bots\/(\d+)$/)?.[1];
+  const moderationCaseID = route.path.match(/^\/moderation\/(\d+)$/)?.[1];
   if (accountID) {
     return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;
   }
@@ -27,6 +30,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   if (botID) {
     return <BotDetailPage id={Number(botID)} navigate={navigate} />;
   }
+  if (moderationCaseID) {
+    return <ModerationCaseDetailPage id={Number(moderationCaseID)} navigate={navigate} />;
+  }
   if (route.path === "/accounts") {
     return <AccountsPage navigate={navigate} />;
   }
@@ -35,6 +41,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/bots") {
     return <BotsPage navigate={navigate} />;
+  }
+  if (route.path === "/moderation") {
+    return <ModerationCasesPage navigate={navigate} />;
   }
   if (route.path === "/emoji") {
     return <EmojiPage />;

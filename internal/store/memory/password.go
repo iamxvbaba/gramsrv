@@ -160,6 +160,18 @@ func (s *PasswordStore) GetAccountSettings(_ context.Context, userID int64) (dom
 	return settings, ok, nil // AccountSettings 全是值类型，无需深拷贝
 }
 
+func (s *PasswordStore) GetAccountSettingsBatch(_ context.Context, userIDs []int64) (map[int64]domain.AccountSettings, error) {
+	out := make(map[int64]domain.AccountSettings, len(userIDs))
+	s.mu.RLock()
+	for _, userID := range userIDs {
+		if settings, ok := s.accountSettings[userID]; ok {
+			out[userID] = settings
+		}
+	}
+	s.mu.RUnlock()
+	return out, nil
+}
+
 func (s *PasswordStore) SaveAccountSettings(_ context.Context, userID int64, settings domain.AccountSettings) error {
 	s.mu.Lock()
 	s.accountSettings[userID] = settings

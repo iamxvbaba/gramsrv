@@ -261,6 +261,41 @@ WHERE user_id = $1`, userID)
 	return settings, true, nil
 }
 
+func (s *PasswordStore) GetAccountSettingsBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountSettings, error) {
+	out := make(map[int64]domain.AccountSettings, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT user_id, archive_and_mute_new_noncontact_peers, keep_archived_unmuted, keep_archived_folders,
+       hide_read_marks, new_noncontact_peers_require_premium, display_gifts_button,
+       noncontact_peers_paid_stars, account_ttl_days, sensitive_content_enabled, contact_signup_silent
+FROM account_settings
+WHERE user_id = ANY($1::bigint[])`, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get account settings batch: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var userID int64
+		settings := domain.DefaultAccountSettings()
+		gp := &settings.GlobalPrivacy
+		if err := rows.Scan(
+			&userID,
+			&gp.ArchiveAndMuteNewNoncontactPeers, &gp.KeepArchivedUnmuted, &gp.KeepArchivedFolders,
+			&gp.HideReadMarks, &gp.NewNoncontactPeersRequirePremium, &gp.DisplayGiftsButton,
+			&gp.NoncontactPeersPaidStars, &settings.AccountTTLDays, &settings.SensitiveContentEnabled, &settings.ContactSignUpSilent,
+		); err != nil {
+			return nil, fmt.Errorf("scan account settings batch: %w", err)
+		}
+		out[userID] = settings
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate account settings batch: %w", err)
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) SaveAccountSettings(ctx context.Context, userID int64, settings domain.AccountSettings) error {
 	gp := settings.GlobalPrivacy
 	if _, err := s.db.Exec(ctx, `

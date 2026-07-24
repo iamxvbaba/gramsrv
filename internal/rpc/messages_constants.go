@@ -18,7 +18,7 @@ const (
 	maxReactionVector        = 16
 	maxReactionListOffset    = 128
 	maxReportOptionLength    = 32
-	maxReportCommentLength   = 1024
+	maxReportCommentLength   = domain.MaxModerationCommentRunes
 	maxReportRandomIDLength  = 128
 	maxReadMetrics           = 100
 	maxBusinessConnIDLength  = 128

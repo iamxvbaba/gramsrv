@@ -14,6 +14,7 @@ import (
 
 	appchannels "telesrv/internal/app/channels"
 	appcontacts "telesrv/internal/app/contacts"
+	appmoderation "telesrv/internal/app/moderation"
 	appprivacy "telesrv/internal/app/privacy"
 	appstories "telesrv/internal/app/stories"
 	appupdates "telesrv/internal/app/updates"
@@ -5866,6 +5867,7 @@ func TestStoriesGetStoriesArchiveReturnsOwnerExpiredStories(t *testing.T) {
 func TestStoriesLongtailCompatHandlers(t *testing.T) {
 	ctx := context.Background()
 	storyStore := memory.NewStoryStore()
+	reportStore := memory.NewModerationReportStore()
 	ownerID := int64(9311)
 	owner := domain.Peer{Type: domain.PeerTypeUser, ID: ownerID}
 	if _, err := storyStore.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
@@ -5877,8 +5879,10 @@ func TestStoriesLongtailCompatHandlers(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert story: %v", err)
 	}
+	storyService := appstories.NewService(storyStore)
 	r := New(Config{}, Deps{
-		Stories: appstories.NewService(storyStore),
+		Stories:    storyService,
+		Moderation: appmoderation.NewService(reportStore, appmoderation.WithStoryReader(storyService)),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 	reqCtx := WithUserID(ctx, ownerID)
 
@@ -6033,6 +6037,9 @@ func TestStoriesLongtailCompatHandlers(t *testing.T) {
 	}
 	if _, ok := reported.(*tg.ReportResultReported); !ok {
 		t.Fatalf("report spam = %T %+v, want reported", reported, reported)
+	}
+	if got := reportStore.Reports(); len(got) != 1 || got[0].Source != domain.ModerationSourceStory {
+		t.Fatalf("story moderation reports = %+v, want one persisted story report", got)
 	}
 	if _, err := r.onStoriesReport(reqCtx, &tg.StoriesReportRequest{
 		Peer:   &tg.InputPeerSelf{},

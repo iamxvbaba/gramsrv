@@ -21,6 +21,8 @@ func tgSelfUser(u domain.User) *tg.User {
 		Phone:         u.Phone,
 		Self:          true,
 		Verified:      u.Verified,
+		Scam:          u.Scam,
+		Fake:          u.Fake,
 		Support:       u.Support,
 		Contact:       u.Contact,
 		MutualContact: u.Mutual,

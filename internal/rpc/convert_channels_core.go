@@ -543,16 +543,6 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	return out
 }
 
-// channelAboutWithModerationWarning decorates the projected channel/supergroup
-// About with the scam/fake warning when set (group vs channel wording).
-func channelAboutWithModerationWarning(ch domain.Channel) string {
-	scamText, fakeText := defaultScamWarningChannel, defaultFakeWarningChannel
-	if ch.Megagroup && !ch.Broadcast {
-		scamText, fakeText = defaultScamWarningGroup, defaultFakeWarningGroup
-	}
-	return aboutWithModerationWarning(ch.About, scamText, fakeText, ch.Scam, ch.Fake)
-}
-
 func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.ChannelFull {
 	ch := view.Channel
 	full := &tg.ChannelFull{
@@ -563,13 +553,15 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
 		ID:                  ch.ID,
-		About:               channelAboutWithModerationWarning(ch),
-		ReadInboxMaxID:      view.Dialog.ReadInboxMaxID,
-		ReadOutboxMaxID:     view.Dialog.ReadOutboxMaxID,
-		UnreadCount:         view.Dialog.UnreadCount,
-		ChatPhoto:           tgChannelChatPhotoFull(ch),
-		NotifySettings:      *tdesktop.NotifySettings(),
-		Pts:                 ch.Pts,
+		// Official clients render localized warnings from scam/fake flags.
+		// About remains the owner's unmodified description.
+		About:           ch.About,
+		ReadInboxMaxID:  view.Dialog.ReadInboxMaxID,
+		ReadOutboxMaxID: view.Dialog.ReadOutboxMaxID,
+		UnreadCount:     view.Dialog.UnreadCount,
+		ChatPhoto:       tgChannelChatPhotoFull(ch),
+		NotifySettings:  *tdesktop.NotifySettings(),
+		Pts:             ch.Pts,
 	}
 	if ch.ParticipantsCount > 0 {
 		full.SetParticipantsCount(ch.ParticipantsCount)

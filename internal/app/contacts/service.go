@@ -149,7 +149,9 @@ func (s *Service) AddContact(ctx context.Context, userID int64, input domain.Con
 	return s.projectContact(ctx, userID, contact)
 }
 
-// AcceptContact shares the current user's phone/profile with an existing one-way contact.
+// AcceptContact creates the reciprocal contact for an existing one-way contact.
+// Phone visibility remains governed exclusively by account privacy rules; this
+// RPC has no protocol flag authorizing a hidden phone-number exception.
 func (s *Service) AcceptContact(ctx context.Context, userID, contactUserID int64) (domain.Contact, error) {
 	if s == nil || s.contacts == nil || s.users == nil || userID == 0 || contactUserID == 0 || contactUserID == userID {
 		return domain.Contact{}, ErrContactIDInvalid
@@ -188,11 +190,6 @@ func (s *Service) AcceptContact(ctx context.Context, userID, contactUserID int64
 		return domain.Contact{}, err
 	}
 	s.InvalidateViewers(userID, contactUserID)
-	if s.privacy != nil {
-		if _, _, err := s.privacy.AddAllowUser(ctx, userID, domain.PrivacyKeyPhoneNumber, contactUserID); err != nil {
-			return domain.Contact{}, err
-		}
-	}
 	contact, found, err := s.contacts.Get(ctx, userID, target.ID)
 	if err != nil {
 		return domain.Contact{}, err

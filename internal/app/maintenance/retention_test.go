@@ -131,6 +131,86 @@ func TestRetentionWorkerReclaimsExpiredLoginCodeDeliveryReceipts(t *testing.T) {
 	}
 }
 
+type fakeReportRetention struct {
+	telemetryBefore time.Time
+	authBefore      time.Time
+	sponsoredBefore time.Time
+	appealBefore    time.Time
+	telemetryCalls  int
+	authCalls       int
+	sponsoredCalls  int
+	appealCalls     int
+	limit           int
+}
+
+func (f *fakeReportRetention) DeleteExpiredClientTelemetry(_ context.Context, before time.Time, limit int) (int, error) {
+	f.telemetryCalls++
+	f.telemetryBefore = before
+	f.limit = limit
+	return 1, nil
+}
+
+func (f *fakeReportRetention) DeleteExpiredAuthDeliveryReports(_ context.Context, before time.Time, limit int) (int, error) {
+	f.authCalls++
+	f.authBefore = before
+	f.limit = limit
+	return 1, nil
+}
+
+func (f *fakeReportRetention) DeleteExpiredSponsoredMessageImpressions(_ context.Context, before time.Time, limit int) (int, error) {
+	f.sponsoredCalls++
+	f.sponsoredBefore = before
+	f.limit = limit
+	return 1, nil
+}
+
+func (f *fakeReportRetention) DeleteExpiredModerationAppealLinks(_ context.Context, before time.Time, limit int) (int, error) {
+	f.appealCalls++
+	f.appealBefore = before
+	f.limit = limit
+	return 1, nil
+}
+
+func TestRetentionWorkerSeparatesTelemetryDiagnosticsAndModerationCapabilities(t *testing.T) {
+	const (
+		telemetryTTL = 7 * 24 * time.Hour
+		authTTL      = 14 * 24 * time.Hour
+		batch        = 47
+	)
+	store := &fakeReportRetention{}
+	w := NewRetentionWorker(
+		&fakeOutboxRetention{}, nil, zap.NewNop(),
+		168*time.Hour, time.Hour, batch,
+	).WithClientTelemetryRetention(store, telemetryTTL).
+		WithAuthDeliveryReportRetention(store, authTTL).
+		WithModerationRetention(store)
+	before := time.Now()
+	w.runRetentionOnce(context.Background())
+	after := time.Now()
+	if store.telemetryCalls != 1 || store.authCalls != 1 ||
+		store.sponsoredCalls != 1 || store.appealCalls != 1 ||
+		store.limit != batch {
+		t.Fatalf("calls telemetry/auth/sponsored/appeal=%d/%d/%d/%d limit=%d",
+			store.telemetryCalls, store.authCalls,
+			store.sponsoredCalls, store.appealCalls, store.limit)
+	}
+	if store.telemetryBefore.Before(before.Add(-telemetryTTL)) ||
+		store.telemetryBefore.After(after.Add(-telemetryTTL)) {
+		t.Fatalf("telemetry boundary=%v", store.telemetryBefore)
+	}
+	if store.authBefore.Before(before.Add(-authTTL)) ||
+		store.authBefore.After(after.Add(-authTTL)) {
+		t.Fatalf("auth boundary=%v", store.authBefore)
+	}
+	if store.sponsoredBefore.Before(before) ||
+		store.sponsoredBefore.After(after) ||
+		store.appealBefore.Before(before) ||
+		store.appealBefore.After(after) {
+		t.Fatalf("moderation capability boundaries sponsored=%v appeal=%v",
+			store.sponsoredBefore, store.appealBefore)
+	}
+}
+
 func (f *fakeBotAPIRetention) DeleteDeliveredOrExpired(_ context.Context, confirmedGrace, maxAge time.Duration, limit int) (int, error) {
 	f.calls++
 	f.confirmedGrace = confirmedGrace

@@ -479,6 +479,39 @@ func (s *ChannelStore) ListChannelMessageReactions(_ context.Context, req domain
 	}, nil
 }
 
+func (s *ChannelStore) FindChannelMessageReaction(_ context.Context, req domain.ChannelMessageReactionLookupRequest) (domain.ChannelMessageReactionLookup, bool, error) {
+	if req.ViewerUserID == 0 || req.ChannelID == 0 || req.MessageID <= 0 ||
+		req.MessageID > domain.MaxMessageBoxID || req.ReactorUserID == 0 {
+		return domain.ChannelMessageReactionLookup{}, false, domain.ErrChannelInvalid
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	channel, member, err := s.channelAndMemberLocked(req.ViewerUserID, req.ChannelID)
+	if err != nil {
+		return domain.ChannelMessageReactionLookup{}, false, err
+	}
+	message, ok := s.findMessageLocked(req.ChannelID, req.MessageID)
+	if !ok || message.Deleted || message.ID <= member.AvailableMinID {
+		return domain.ChannelMessageReactionLookup{}, false, domain.ErrMessageIDInvalid
+	}
+	rows := cloneChannelPeerReactions(s.reactions[req.ChannelID][req.MessageID][req.ReactorUserID])
+	if len(rows) == 0 {
+		return domain.ChannelMessageReactionLookup{
+			Channel: cloneChannel(channel), Message: cloneChannelMessage(message),
+		}, false, nil
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ChosenOrder != rows[j].ChosenOrder {
+			return rows[i].ChosenOrder < rows[j].ChosenOrder
+		}
+		return messageReactionKey(rows[i].Reaction) < messageReactionKey(rows[j].Reaction)
+	})
+	return domain.ChannelMessageReactionLookup{
+		Channel: cloneChannel(channel), Message: cloneChannelMessage(message),
+		Reactions: rows,
+	}, true, nil
+}
+
 func (s *ChannelStore) RecordMessageReactionUse(_ context.Context, userID int64, reactions []domain.MessageReaction, addToRecent bool, date int) error {
 	if userID == 0 || len(reactions) == 0 {
 		return nil

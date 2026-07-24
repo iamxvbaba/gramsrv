@@ -75,6 +75,10 @@ func DefaultPrivacyRules(key PrivacyKey) []PrivacyRule {
 	switch key {
 	case PrivacyKeyPhoneNumber:
 		return []PrivacyRule{{Kind: PrivacyRuleDisallowAll}}
+	case PrivacyKeyNoPaidMessages:
+		// This key is an allow-list of peers exempt from paid private
+		// messages, not the base visibility of a profile field.
+		return []PrivacyRule{{Kind: PrivacyRuleDisallowAll}}
 	case PrivacyKeyBirthday:
 		return []PrivacyRule{{Kind: PrivacyRuleAllowContacts}}
 	default:

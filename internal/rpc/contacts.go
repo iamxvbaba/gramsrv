@@ -540,6 +540,7 @@ func (r *Router) onContactsGetStatuses(ctx context.Context) ([]tg.ContactStatus,
 			}
 		}
 	}
+	statusVisible := r.statusTimestampVisibleToViewer(ctx, contactUserIDs, userID)
 	seen = make(map[int64]struct{}, len(list.Contacts))
 	for _, contact := range list.Contacts {
 		id := contact.User.ID
@@ -555,9 +556,19 @@ func (r *Router) onContactsGetStatuses(ctx context.Context) ([]tg.ContactStatus,
 			u.LastSeenAt = current.LastSeenAt
 			u.Status = current.Status
 		}
+		status := u.Status
+		if statusVisible[id] {
+			status = r.userPresenceStatusForUser(u)
+		} else {
+			switch status.Kind {
+			case domain.UserStatusRecently, domain.UserStatusLastWeek, domain.UserStatusLastMonth, domain.UserStatusEmpty:
+			default:
+				status = domain.ApproximateUserStatus(u.LastSeenAt, int(r.clock.Now().Unix()))
+			}
+		}
 		out = append(out, tg.ContactStatus{
 			UserID: id,
-			Status: tgUserStatus(r.userPresenceStatusForUser(u)),
+			Status: tgUserStatus(status),
 		})
 	}
 	return out, nil

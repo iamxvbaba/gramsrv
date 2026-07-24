@@ -42,6 +42,85 @@ func TestAdminAPISetAccountFrozen(t *testing.T) {
 	}
 }
 
+type captureModerationService struct {
+	fakeService
+	filter       domain.ModerationCaseFilter
+	decision     domain.ModerationDecisionRequest
+	appealReview domain.ModerationDecisionRequest
+}
+
+func (s *captureModerationService) ModerationCases(_ context.Context, filter domain.ModerationCaseFilter) ([]domain.ModerationCase, error) {
+	s.filter = filter
+	return []domain.ModerationCase{{ID: 7}}, nil
+}
+
+func (s *captureModerationService) DecideModerationCase(_ context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	s.decision = request
+	return domain.ModerationCaseDetail{Case: domain.ModerationCase{ID: request.CaseID}}, true, nil
+}
+
+func (s *captureModerationService) ReviewModerationAppeal(_ context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	s.appealReview = request
+	return domain.ModerationCaseDetail{Case: domain.ModerationCase{ID: request.CaseID}}, true, nil
+}
+
+func TestAdminAPIModerationQueueDecisionAndAppealReview(t *testing.T) {
+	svc := &captureModerationService{}
+	srv := &Server{token: "secret", svc: svc}
+	listRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/moderation/cases?statuses=open,action_failed&assigned_to=alice&target_type=user&target_id=99&limit=25",
+		nil,
+	)
+	listRequest.Header.Set("Authorization", "Bearer secret")
+	list := httptest.NewRecorder()
+	srv.routes().ServeHTTP(list, listRequest)
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"ID":7`) {
+		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
+	}
+	if len(svc.filter.Statuses) != 2 ||
+		svc.filter.Statuses[0] != domain.ModerationCaseOpen ||
+		svc.filter.Statuses[1] != domain.ModerationCaseActionFailed ||
+		svc.filter.AssignedTo != "alice" ||
+		svc.filter.Target != (domain.Peer{Type: domain.PeerTypeUser, ID: 99}) ||
+		svc.filter.Limit != 25 {
+		t.Fatalf("filter=%+v", svc.filter)
+	}
+
+	decisionRequest := httptest.NewRequest(
+		http.MethodPost, "/v1/moderation/cases/7/decide",
+		strings.NewReader(`{"expected_version":3,"actor":"alice","reason":"confirmed","command_id":"decision-7","kind":"violation","actions":[{"kind":"mark_scam","payload":{}}]}`),
+	)
+	decisionRequest.Header.Set("Authorization", "Bearer secret")
+	decision := httptest.NewRecorder()
+	srv.routes().ServeHTTP(decision, decisionRequest)
+	if decision.Code != http.StatusOK ||
+		!strings.Contains(decision.Body.String(), `"created":true`) ||
+		svc.decision.CaseID != 7 || svc.decision.ExpectedVersion != 3 ||
+		svc.decision.Kind != domain.ModerationDecisionViolation ||
+		len(svc.decision.Actions) != 1 ||
+		svc.decision.Actions[0].Kind != domain.ModerationActionMarkScam {
+		t.Fatalf("decision status=%d request=%+v body=%s",
+			decision.Code, svc.decision, decision.Body.String())
+	}
+
+	reviewRequest := httptest.NewRequest(
+		http.MethodPost, "/v1/moderation/cases/7/appeals/8/review",
+		strings.NewReader(`{"expected_version":5,"actor":"bob","reason":"appeal accepted","command_id":"appeal-8","granted":true,"actions":[{"kind":"clear_peer_flags","payload":{}}]}`),
+	)
+	reviewRequest.Header.Set("Authorization", "Bearer secret")
+	review := httptest.NewRecorder()
+	srv.routes().ServeHTTP(review, reviewRequest)
+	if review.Code != http.StatusOK ||
+		svc.appealReview.CaseID != 7 || svc.appealReview.AppealID != 8 ||
+		svc.appealReview.Kind != domain.ModerationDecisionAppealGrant ||
+		len(svc.appealReview.Actions) != 1 ||
+		svc.appealReview.Actions[0].Kind != domain.ModerationActionClearPeerFlags {
+		t.Fatalf("review status=%d request=%+v body=%s",
+			review.Code, svc.appealReview, review.Body.String())
+	}
+}
+
 func TestAdminAPISetVerified(t *testing.T) {
 	srv := &Server{token: "secret", svc: fakeService{}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/set-verified", strings.NewReader(`{"command_id":"c2","actor":"ops","reason":"official","dry_run":true,"user_id":1001,"verified":true}`))
@@ -356,4 +435,32 @@ func (fakeService) StarGiftCollectibles(context.Context, int64) (domain.StarGift
 
 func (fakeService) StarGiftCollectibleAnimation(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
+}
+
+func (fakeService) ModerationCases(context.Context, domain.ModerationCaseFilter) ([]domain.ModerationCase, error) {
+	return nil, nil
+}
+
+func (fakeService) ModerationCase(context.Context, int64) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{}, false, nil
+}
+
+func (fakeService) ModerationReport(context.Context, int64) (domain.ModerationReport, bool, error) {
+	return domain.ModerationReport{}, false, nil
+}
+
+func (fakeService) ClaimModerationCase(context.Context, int64, int64, string) (domain.ModerationCase, error) {
+	return domain.ModerationCase{}, nil
+}
+
+func (fakeService) DecideModerationCase(context.Context, domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{}, true, nil
+}
+
+func (fakeService) SubmitModerationAppeal(context.Context, int64, int64, string) (domain.ModerationAppeal, bool, error) {
+	return domain.ModerationAppeal{}, true, nil
+}
+
+func (fakeService) ReviewModerationAppeal(context.Context, domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{}, true, nil
 }

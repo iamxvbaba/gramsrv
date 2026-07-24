@@ -607,6 +607,19 @@ func (s *Service) RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]b
 	}, true, excludeSessionID)
 }
 
+// RecordPrivacy durably synchronizes the exact immutable privacy snapshot to
+// the account's other sessions and offline difference stream.
+func (s *Service) RecordPrivacy(ctx context.Context, stateAuthKeyID [8]byte, userID int64, rules domain.PrivacyRules, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	if rules.OwnerUserID != userID || rules.Key == "" || len(rules.Rules) == 0 {
+		return domain.UpdateEvent{}, domain.UpdateState{}, domain.ErrPrivacyRuleInvalid
+	}
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
+		Type:     domain.UpdateEventPrivacy,
+		Privacy:  rules,
+		PtsCount: 1,
+	}, true, excludeSessionID)
+}
+
 // RecordDraftMessage 记录某会话云草稿变化（保存/清空都是同一事件——草稿是绝对
 // 状态，重放时按 peer 重载当前值）。updateDraftMessage 无 pts 字段，走 LacksWirePts
 // aux 簿记；topMsgID 是 forum 话题草稿键（复用 MaxID 列持久化）。

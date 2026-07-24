@@ -21,19 +21,20 @@ import (
 )
 
 type Config struct {
-	Addr            string
-	PublicBaseURL   string
-	AppScheme       string
-	AppLinkBase     string
-	WebBaseURL      string
-	AppName         string
-	StickerSets     StickerSetResolver
-	Users           UsernameResolver
-	Channels        PublicChannelResolver
-	Privacy         AnonymousPrivacyResolver
-	Photos          ProfilePhotoResolver
-	UniqueGifts     UniqueStarGiftResolver
-	GiftWithdrawals StarGiftWithdrawalResolver
+	Addr              string
+	PublicBaseURL     string
+	AppScheme         string
+	AppLinkBase       string
+	WebBaseURL        string
+	AppName           string
+	StickerSets       StickerSetResolver
+	Users             UsernameResolver
+	Channels          PublicChannelResolver
+	Privacy           AnonymousPrivacyResolver
+	Photos            ProfilePhotoResolver
+	UniqueGifts       UniqueStarGiftResolver
+	GiftWithdrawals   StarGiftWithdrawalResolver
+	ModerationAppeals ModerationAppealResolver
 	// TelegramLogin is the optional OIDC/Login HTTP adapter. Public Web owns
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
@@ -71,6 +72,12 @@ type UniqueStarGiftResolver interface {
 type StarGiftWithdrawalResolver interface {
 	ResolveWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error)
 	CompleteWithdrawal(ctx context.Context, providerRequestID string, date int) (domain.StarGiftWithdrawal, error)
+}
+
+type ModerationAppealResolver interface {
+	ResolveAppealLink(ctx context.Context, token string, now time.Time) (domain.ModerationAppealLink, bool, error)
+	Appeal(ctx context.Context, appealID int64) (domain.ModerationAppeal, bool, error)
+	SubmitAppealLink(ctx context.Context, token, text string, now time.Time) (domain.ModerationAppeal, bool, error)
 }
 
 func Start(ctx context.Context, cfg Config, logger *zap.Logger) (*http.Server, error) {
@@ -157,6 +164,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		photos:          cfg.Photos,
 		uniqueGifts:     cfg.UniqueGifts,
 		giftWithdrawals: cfg.GiftWithdrawals,
+		appeals:         cfg.ModerationAppeals,
 		publicBaseURL:   cfg.PublicBaseURL,
 		appLinks:        appLinks,
 		webBaseURL:      cfg.WebBaseURL,
@@ -173,6 +181,10 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /nft/{slug}/{$}", h.uniqueGift)
 	mux.HandleFunc("GET /gift-withdrawal/{requestID}", h.starGiftWithdrawal)
 	mux.HandleFunc("POST /gift-withdrawal/{requestID}", h.completeStarGiftWithdrawal)
+	if cfg.ModerationAppeals != nil {
+		mux.HandleFunc("GET /appeal/{token}", h.moderationAppeal)
+		mux.HandleFunc("POST /appeal/{token}", h.moderationAppeal)
+	}
 	if cfg.TelegramLogin != nil {
 		mux.Handle("GET /.well-known/openid-configuration", cfg.TelegramLogin)
 		mux.Handle("GET /.well-known/jwks.json", cfg.TelegramLogin)
@@ -197,11 +209,108 @@ type handler struct {
 	photos          ProfilePhotoResolver
 	uniqueGifts     UniqueStarGiftResolver
 	giftWithdrawals StarGiftWithdrawalResolver
+	appeals         ModerationAppealResolver
 	publicBaseURL   string
 	appLinks        links.AppLinkBuilder
 	webBaseURL      string
 	appName         string
 	logger          *zap.Logger
+}
+
+type moderationAppealPage struct {
+	AppName      string
+	CaseID       int64
+	ExpiresAt    string
+	Submitted    bool
+	AppealID     int64
+	AppealStatus domain.ModerationAppealStatus
+	Error        string
+	AppealText   string
+	CanSubmit    bool
+}
+
+var moderationAppealTemplate = template.Must(template.New("moderation-appeal").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Moderation appeal · {{.AppName}}</title><style>
+body{font:16px/1.5 system-ui,sans-serif;background:#f4f6f8;color:#17212b;margin:0;padding:24px}.card{max-width:620px;margin:6vh auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 32px #0002}h1{margin-top:0}textarea{box-sizing:border-box;width:100%;min-height:160px;padding:12px;border:1px solid #ccd4dc;border-radius:10px;font:inherit}button{border:0;border-radius:10px;padding:12px 18px;background:#2481cc;color:#fff;font-weight:600;cursor:pointer}.meta{color:#53606d}.error{color:#b42318}.done{color:#18864b;font-weight:600}
+</style></head><body><main class="card"><h1>Moderation appeal</h1><p class="meta">Case #{{.CaseID}} · link expires {{.ExpiresAt}}</p>
+{{if .Submitted}}{{if eq .AppealStatus "granted"}}<p class="done">Your appeal #{{.AppealID}} was granted. Reversible restrictions are being removed through the audited action queue.</p>
+{{else if eq .AppealStatus "rejected"}}<p class="error">Your appeal #{{.AppealID}} was not granted.</p>
+{{else}}<p class="done">Your appeal #{{.AppealID}} has been submitted. It will be reviewed by a separate moderation step.</p>{{end}}
+{{else}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}{{if .CanSubmit}}<p>Explain why the moderation decision should be reviewed. Do not include passwords, login codes, or payment details.</p><form method="post"><textarea name="appeal_text" maxlength="4000" required>{{.AppealText}}</textarea><p><button type="submit">Submit appeal</button></p></form>{{end}}{{end}}
+</main></body></html>`))
+
+func (h *handler) moderationAppeal(w http.ResponseWriter, r *http.Request) {
+	if h.appeals == nil {
+		http.NotFound(w, r)
+		return
+	}
+	token := r.PathValue("token")
+	now := time.Now().UTC()
+	link, found, err := h.appeals.ResolveAppealLink(r.Context(), token, now)
+	if err != nil || !found {
+		http.NotFound(w, r)
+		return
+	}
+	page := moderationAppealPage{
+		AppName: h.appName, CaseID: link.CaseID,
+		ExpiresAt: link.ExpiresAt.UTC().Format(time.RFC3339),
+		Submitted: link.AppealID > 0, AppealID: link.AppealID,
+		CanSubmit: link.AppealID == 0,
+	}
+	if link.AppealID > 0 {
+		appeal, appealFound, appealErr := h.appeals.Appeal(r.Context(), link.AppealID)
+		if appealErr != nil || !appealFound || appeal.CaseID != link.CaseID {
+			h.logger.Warn("resolve linked moderation appeal status failed",
+				zap.Int64("case_id", link.CaseID),
+				zap.Int64("appeal_id", link.AppealID),
+				zap.Error(appealErr))
+			http.Error(w, "The appeal status is temporarily unavailable.", http.StatusServiceUnavailable)
+			return
+		}
+		page.AppealStatus = appeal.Status
+	}
+	status := http.StatusOK
+	if r.Method == http.MethodPost && !page.Submitted {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			page.Error = "The appeal form is too large or invalid."
+			status = http.StatusBadRequest
+		} else {
+			page.AppealText = strings.TrimSpace(r.FormValue("appeal_text"))
+			appeal, _, submitErr := h.appeals.SubmitAppealLink(
+				r.Context(), token, page.AppealText, now,
+			)
+			switch {
+			case submitErr == nil:
+				page.Submitted = true
+				page.CanSubmit = false
+				page.AppealID = appeal.ID
+				page.AppealStatus = appeal.Status
+				page.AppealText = ""
+			case errors.Is(submitErr, domain.ErrModerationCaseConflict):
+				page.Error = "The moderation action is still being finalized. Please retry shortly."
+				status = http.StatusConflict
+			case errors.Is(submitErr, domain.ErrModerationCaseInvalid):
+				page.Error = "The appeal text is invalid."
+				status = http.StatusBadRequest
+			default:
+				h.logger.Warn("moderation appeal submission failed",
+					zap.Int64("case_id", link.CaseID),
+					zap.Error(submitErr))
+				page.Error = "The appeal could not be submitted. Please retry."
+				status = http.StatusInternalServerError
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.WriteHeader(status)
+	if err := moderationAppealTemplate.Execute(w, page); err != nil {
+		h.logger.Warn("render moderation appeal page failed",
+			zap.Int64("case_id", link.CaseID), zap.Error(err))
+	}
 }
 
 type starGiftWithdrawalPage struct {

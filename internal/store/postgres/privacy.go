@@ -24,6 +24,16 @@ func NewPrivacyStore(db sqlcgen.DBTX) *PrivacyStore {
 	return &PrivacyStore{db: db}
 }
 
+func (s *PrivacyStore) SupportsDurablePrivacyUpdates() bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.db.(interface {
+		Begin(context.Context) (pgx.Tx, error)
+	})
+	return ok
+}
+
 func (s *PrivacyStore) GetPrivacyRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey) (domain.PrivacyRules, bool, error) {
 	row := s.db.QueryRow(ctx, `
 SELECT rules::text
@@ -46,11 +56,15 @@ WHERE owner_user_id = $1
 }
 
 func (s *PrivacyStore) SetPrivacyRules(ctx context.Context, rules domain.PrivacyRules) error {
+	return setPrivacyRules(ctx, s.db, rules)
+}
+
+func setPrivacyRules(ctx context.Context, db sqlcgen.DBTX, rules domain.PrivacyRules) error {
 	raw, err := json.Marshal(rules.Rules)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 INSERT INTO account_privacy_rules (owner_user_id, privacy_key, rules, updated_at)
 VALUES ($1, $2, $3::jsonb, NOW())
 ON CONFLICT (owner_user_id, privacy_key) DO UPDATE SET
@@ -61,6 +75,56 @@ ON CONFLICT (owner_user_id, privacy_key) DO UPDATE SET
 		return fmt.Errorf("set privacy rules: %w", err)
 	}
 	return nil
+}
+
+// SetPrivacyRulesWithUpdate commits the mutable rule row and the immutable
+// account update snapshot in one transaction. A privacy rule can therefore
+// never become visible without a matching pts event/outbox item.
+func (s *PrivacyStore) SetPrivacyRulesWithUpdate(
+	ctx context.Context,
+	rules domain.PrivacyRules,
+	event domain.UpdateEvent,
+	excludeAuthKeyID [8]byte,
+	excludeSessionID int64,
+) (domain.UpdateEvent, error) {
+	beginner, ok := s.db.(interface {
+		Begin(context.Context) (pgx.Tx, error)
+	})
+	if !ok {
+		return domain.UpdateEvent{}, fmt.Errorf("privacy update transaction unavailable")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.UpdateEvent{}, fmt.Errorf("begin privacy update: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err := setPrivacyRules(ctx, tx, rules); err != nil {
+		return domain.UpdateEvent{}, err
+	}
+	if event.Date == 0 {
+		return domain.UpdateEvent{}, fmt.Errorf("privacy update date is required")
+	}
+	event.Type = domain.UpdateEventPrivacy
+	event.Privacy = rules
+	event.PtsCount = 1
+	qtx := sqlcgen.New(tx)
+	recorded, err := NewUpdateEventStore(tx).appendInTx(
+		ctx, tx, qtx, rules.OwnerUserID, event, true,
+		excludeAuthKeyID, excludeSessionID, true,
+	)
+	if err != nil {
+		return domain.UpdateEvent{}, fmt.Errorf("append privacy update: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.UpdateEvent{}, fmt.Errorf("commit privacy update: %w", err)
+	}
+	committed = true
+	return recorded, nil
 }
 
 func (s *PrivacyStore) ListPrivacyRules(ctx context.Context, ownerUserIDs []int64, keys []domain.PrivacyKey) ([]domain.PrivacyRules, error) {

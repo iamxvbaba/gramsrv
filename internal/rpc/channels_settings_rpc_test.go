@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
@@ -12,6 +13,7 @@ import (
 
 	appchannels "telesrv/internal/app/channels"
 	appdialogs "telesrv/internal/app/dialogs"
+	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/app/readmodel"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
@@ -598,9 +600,17 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 61, Phone: "15550002301", FirstName: "Owner"})
 	requester, _ := userStore.Create(ctx, domain.User{AccessHash: 62, Phone: "15550002302", FirstName: "Requester"})
 	channelStore := memory.NewChannelStore()
+	moderationStore := memory.NewModerationReportStore()
+	userService := appusers.NewService(userStore)
+	channelService := appchannels.NewService(channelStore)
 	r := New(Config{}, Deps{
-		Users:    appusers.NewService(userStore),
-		Channels: appchannels.NewService(channelStore),
+		Users:    userService,
+		Channels: channelService,
+		Moderation: appmoderation.NewService(
+			moderationStore,
+			appmoderation.WithMessageReaders(nil, channelService),
+			appmoderation.WithPeerReaders(userService, channelService),
+		),
 	}, zaptest.NewLogger(t), clock.System)
 	created, err := r.onChannelsCreateChannel(WithUserID(ctx, owner.ID), &tg.ChannelsCreateChannelRequest{
 		Title:     "Public Team",
@@ -621,6 +631,23 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 		t.Fatalf("send seed message: %v", err)
 	}
 	msgID := sent.(*tg.Updates).Updates[0].(*tg.UpdateMessageID).ID
+	if ok, err := r.onChannelsReportAntiSpamFalsePositive(
+		WithUserID(ctx, owner.ID),
+		&tg.ChannelsReportAntiSpamFalsePositiveRequest{Channel: input, MsgID: msgID},
+	); err == nil || ok || !strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
+		t.Fatalf("report anti-spam without native decision = ok %v err %v, want MESSAGE_ID_INVALID", ok, err)
+	}
+	antiSpamDecision, err := domain.NewChannelAntiSpamDecision(
+		channel.ID, msgID, owner.ID,
+		[]byte(`{"schema_version":1,"source":"native_antispam"}`),
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := moderationStore.CreateChannelAntiSpamDecision(ctx, antiSpamDecision); err != nil {
+		t.Fatal(err)
+	}
 
 	okUsername, err := r.onChannelsCheckUsername(WithUserID(ctx, owner.ID), &tg.ChannelsCheckUsernameRequest{
 		Channel:  input,

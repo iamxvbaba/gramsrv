@@ -138,6 +138,14 @@ func (s *Service) AdminUser(ctx context.Context, userID int64) (domain.User, boo
 	return s.loadBaseUserByID(ctx, userID)
 }
 
+// PrivacyBaseUsers returns viewer-independent bot/premium facts through the
+// shared base-user read model. Privacy uses this as a batched cold loader behind
+// its bounded process cache; no viewer projection is performed, avoiding a
+// privacy -> users -> privacy recursion.
+func (s *Service) PrivacyBaseUsers(ctx context.Context, userIDs []int64) ([]domain.User, error) {
+	return s.loadBaseUsersByIDs(ctx, userIDs)
+}
+
 // ByIDs 批量返回指定用户。调用方必须已登录；缺失用户不会出现在结果中。
 func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
 	if currentUserID == 0 {

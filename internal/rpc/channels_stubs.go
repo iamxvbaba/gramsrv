@@ -18,6 +18,12 @@ func validateEmptyChannelStickerSet(stickerset tg.InputStickerSetClass) error {
 }
 
 func (r *Router) onChannelsReportSpam(ctx context.Context, req *tg.ChannelsReportSpamRequest) (bool, error) {
+	if req == nil {
+		return false, inputRequestInvalidErr()
+	}
+	if len(req.ID) == 0 {
+		return false, tgerr.New(400, "MESSAGE_ID_REQUIRED")
+	}
 	if len(req.ID) > maxChannelReportMessageIDs {
 		return false, limitInvalidErr()
 	}
@@ -26,11 +32,29 @@ func (r *Router) onChannelsReportSpam(ctx context.Context, req *tg.ChannelsRepor
 			return false, messageIDInvalidErr()
 		}
 	}
-	if _, _, err := r.channelView(ctx, req.Channel); err != nil {
+	userID, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	if err != nil {
 		return false, err
 	}
-	if peer, ok := r.domainPeerFromInputPeer(0, req.Participant); !ok || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
+	if !view.Channel.Megagroup {
+		return false, channelInvalidErr(domain.ErrChannelInvalid)
+	}
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Participant)
+	if err != nil {
+		return false, err
+	}
+	if peer.Type != domain.PeerTypeUser || peer.ID == 0 {
 		return false, peerIDInvalidErr()
+	}
+	if r.deps.Moderation == nil {
+		return false, internalErr()
+	}
+	if _, _, err := r.deps.Moderation.ReportChannelSpam(ctx, domain.ModerationChannelSpamReportRequest{
+		ReporterUserID: userID, ChannelID: view.Channel.ID,
+		ParticipantUserID: peer.ID, MessageIDs: req.ID,
+		CreatedAt: r.clock.Now(),
+	}); err != nil {
+		return false, moderationReportError(err)
 	}
 	return true, nil
 }

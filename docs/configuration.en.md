@@ -63,9 +63,7 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://web.telesrv.net` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |
 | `TELESRV_PUBLIC_APP_NAME` | string / `telesrv` | Public landing-page product name; trimmed, non-empty, no control characters, maximum 64 Unicode characters. |
-| `TELESRV_SCAM_WARNING` | string / empty | Overrides the profile warning injected into `getFullUser`/`getFullChannel` About for SCAM-flagged peers. Empty keeps the built-in per-peer-type English default. Non-destructive: the stored bio/description is never overwritten and the warning is re-applied from the flag on every read. Clients cannot localize server-provided text. |
-| `TELESRV_FAKE_WARNING` | string / empty | Same as `TELESRV_SCAM_WARNING`, for FAKE-flagged peers. |
-| `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / empty | Read-only username/avatar/sticker/emoji/chatlist/collectible-gift landing-page listener. Empty disables it. Production should bind loopback behind exact nginx routes. `.env.example` enables `127.0.0.1:2401` for development. |
+| `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / empty | Username/avatar/sticker/emoji/chatlist/collectible-gift landing pages plus the hash-only moderation appeal form. Empty disables it. Production should bind loopback behind exact nginx routes. Moderation `freeze_account` actions fail closed when this listener is disabled because telesrv cannot issue a reachable appeal URL. `.env.example` enables `127.0.0.1:2401` for development. |
 | `TELESRV_TELEGRAM_LOGIN_ENABLE` | bool / `false` | Mount the self-hosted Telegram Login/OIDC provider on `TELESRV_PUBLIC_LINK_WEB_ADDR`. Enabling it requires that listener and all key files below. |
 | `TELESRV_TELEGRAM_LOGIN_ISSUER` | absolute origin URL / `TELESRV_PUBLIC_BASE_URL` | Exact public issuer used in discovery and tokens. HTTPS is required by default; paths, credentials, query, and fragment are rejected. The next setting permits any HTTP host/IP. |
 | `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP` | bool / `false` | When enabled, permits any valid HTTP issuer, BotFather Web origin, redirect URI, and native HTTP callback, without loopback, subnet, or port restrictions. When disabled, those Web URLs still require HTTPS. |
@@ -509,6 +507,13 @@ The following fallback keys are accepted from the **process environment only**. 
 | `TELESRV_ORPHAN_AUTH_KEY_RETENTION` | duration / `24h` | Minimum retention for handshake-created keys with no authorization/temp binding/active connection. |
 | `TELESRV_RETENTION_INTERVAL` | duration / `1h` | General retention worker interval. |
 | `TELESRV_RETENTION_BATCH` | int / `10000` | Maximum rows deleted by one general retention batch. |
+
+Moderation report/evidence/case/decision/action/appeal rows are durable audit facts and are not removed by the
+general retention worker. The same worker deletes expired sponsored impressions and appeal links in bounded seek
+batches, and deletes auth-delivery diagnostics and client telemetry after their fixed 30-day privacy retention.
+The raw appeal token is never persisted. Production reverse proxies must expose only `/appeal/<token>` to the
+public-link listener, preserve HTTPS in `TELESRV_PUBLIC_BASE_URL`, cap request bodies, and must not log the tokenized
+path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze actions.
 
 ## 10. Premium and Stars development grants
 

@@ -247,11 +247,6 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			about = ""
 		}
 	}
-	// Surface the scam/fake warning to other viewers (never to the account
-	// itself), non-destructively over the projected About.
-	if u.ID != currentUserID {
-		about = aboutWithModerationWarning(about, defaultScamWarningUser, defaultFakeWarningUser, u.Scam, u.Fake)
-	}
 	full := tg.UserFull{
 		ID:             u.ID,
 		About:          about,
@@ -261,7 +256,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	// 通话入口：客户端不见 phone_calls_available=true 不显示通话按钮（P1 前置项）。
 	// phone_calls_private 标记对端禁 P2P（p2p_allowed 真值在通话确认时另行计算）。
 	if !u.Bot && u.ID != currentUserID {
-		callsAllowed, p2pAllowed := true, true
+		callsAllowed, p2pAllowed, voiceAllowed := true, true, true
 		if r.deps.Privacy != nil {
 			allowed, err := r.deps.Privacy.CanSee(ctx, u.ID, currentUserID, domain.PrivacyKeyPhoneCall)
 			if err != nil {
@@ -273,10 +268,16 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 				return tg.UserFull{}, internalErr()
 			}
 			p2pAllowed = allowed
+			allowed, err = r.deps.Privacy.CanSee(ctx, u.ID, currentUserID, domain.PrivacyKeyVoiceMessages)
+			if err != nil {
+				return tg.UserFull{}, internalErr()
+			}
+			voiceAllowed = allowed
 		}
 		full.PhoneCallsAvailable = callsAllowed
 		full.VideoCallsAvailable = callsAllowed
 		full.PhoneCallsPrivate = !p2pAllowed
+		full.VoiceMessagesForbidden = !voiceAllowed
 	}
 	if u.Bot {
 		full.SetBotInfo(r.tgBotInfo(ctx, u))
@@ -446,11 +447,95 @@ func (r *Router) onUsersGetRequirementsToContact(ctx context.Context, ids []tg.I
 	if len(ids) > maxRequirementsToContactUsers {
 		return nil, limitInvalidErr()
 	}
-	out := make([]tg.RequirementToContactClass, 0, len(ids))
-	for range ids {
-		out = append(out, &tg.RequirementToContactEmpty{})
+	currentUserID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !authorized || r.deps.Users == nil {
+		out := make([]tg.RequirementToContactClass, len(ids))
+		for i := range out {
+			out[i] = &tg.RequirementToContactEmpty{}
+		}
+		return out, nil
+	}
+	type requirementInput struct {
+		userID     int64
+		accessHash int64
+		self       bool
+	}
+	inputs := make([]requirementInput, len(ids))
+	targetIDs := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for i, input := range ids {
+		switch value := input.(type) {
+		case *tg.InputUserSelf:
+			inputs[i] = requirementInput{userID: currentUserID, self: true}
+		case *tg.InputUser:
+			if value == nil || value.UserID == 0 {
+				continue
+			}
+			inputs[i] = requirementInput{userID: value.UserID, accessHash: value.AccessHash}
+			if _, ok := seen[value.UserID]; !ok {
+				seen[value.UserID] = struct{}{}
+				targetIDs = append(targetIDs, value.UserID)
+			}
+		}
+	}
+	usersByID := make(map[int64]domain.User, len(targetIDs))
+	if len(targetIDs) > 0 {
+		list, err := r.deps.Users.ByIDs(ctx, currentUserID, targetIDs)
+		if err != nil && !errors.Is(err, users.ErrNotAuthorized) {
+			return nil, internalErr()
+		}
+		for _, user := range list {
+			usersByID[user.ID] = user
+		}
+	}
+	validTargetIDs := make([]int64, 0, len(targetIDs))
+	for i, input := range inputs {
+		if input.self {
+			continue
+		}
+		user, ok := usersByID[input.userID]
+		if !ok || input.accessHash != 0 && input.accessHash != user.AccessHash {
+			inputs[i].userID = 0
+			continue
+		}
+		validTargetIDs = append(validTargetIDs, user.ID)
+	}
+	settingsByUser := make(map[int64]domain.AccountSettings, len(validTargetIDs))
+	if svc, ok := r.accountSettingsSvc(); ok {
+		settingsByUser, err = r.accountSettings.getOrLoadBatch(ctx, validTargetIDs, svc)
+		if err != nil {
+			return nil, internalErr()
+		}
+	}
+	freeByUser := make(map[int64]bool, len(validTargetIDs))
+	if evaluator, ok := r.deps.Privacy.(contactRequirementPrivacyEvaluator); ok {
+		freeByUser, err = evaluator.CanContactForFreeBatch(ctx, validTargetIDs, currentUserID)
+		if err != nil {
+			return nil, internalErr()
+		}
+	}
+	out := make([]tg.RequirementToContactClass, len(inputs))
+	for i, input := range inputs {
+		out[i] = &tg.RequirementToContactEmpty{}
+		if input.userID == 0 || input.self || input.userID == currentUserID || freeByUser[input.userID] {
+			continue
+		}
+		global := settingsByUser[input.userID].GlobalPrivacy
+		switch {
+		case global.NoncontactPeersPaidStars > 0:
+			out[i] = &tg.RequirementToContactPaidMessages{StarsAmount: global.NoncontactPeersPaidStars}
+		case global.NewNoncontactPeersRequirePremium:
+			out[i] = &tg.RequirementToContactPremium{}
+		}
 	}
 	return out, nil
+}
+
+type contactRequirementPrivacyEvaluator interface {
+	CanContactForFreeBatch(ctx context.Context, ownerUserIDs []int64, viewerUserID int64) (map[int64]bool, error)
 }
 
 func (r *Router) onUsersGetSavedMusic(ctx context.Context, req *tg.UsersGetSavedMusicRequest) (tg.UsersSavedMusicClass, error) {

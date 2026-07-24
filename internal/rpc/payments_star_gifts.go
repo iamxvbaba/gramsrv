@@ -230,10 +230,15 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 		ChargeStars: gift.Stars + upgradeStars, FormID: req.FormID, CommandKey: fmt.Sprintf("purchase:%d", req.FormID), Date: now,
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)}
 	recipientBlocked := false
+	recipientUnsaved := false
 	if peer.Type == domain.PeerTypeUser {
 		recipientBlocked, err = r.peerBlocksUser(ctx, userID, peer.ID)
 		if err != nil {
 			return nil, internalErr()
+		}
+		recipientUnsaved, err = r.starGiftRecipientUnsaved(ctx, userID, peer)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if capability, ok := r.deps.Gifts.(interface{ AtomicPurchaseConfigured() bool }); ok && !capability.AtomicPurchaseConfigured() {
@@ -249,6 +254,7 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 		return nil, starsErr(err)
 	}
 	purchaseReq.RecipientBlocked = recipientBlocked
+	purchaseReq.RecipientUnsaved = recipientUnsaved
 	result, err := r.deps.Gifts.Purchase(ctx, purchaseReq)
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
@@ -364,6 +370,10 @@ func (r *Router) sendStarsTopupForm(ctx context.Context, userID, formID int64, i
 }
 
 func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID int64, gift domain.StarGift, hideName bool, message string, prepaidUpgradeStars int64) (domain.SavedStarGiftRef, *tg.Updates, error) {
+	unsaved, err := r.starGiftRecipientUnsaved(ctx, senderID, domain.Peer{Type: domain.PeerTypeUser, ID: recipientID})
+	if err != nil {
+		return domain.SavedStarGiftRef{}, nil, err
+	}
 	prepaidUpgradeHash := ""
 	if prepaidUpgradeStars == 0 && gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal {
 		var token [32]byte
@@ -386,7 +396,7 @@ func (r *Router) sendStarGiftToUser(ctx context.Context, senderID, recipientID i
 		MsgID:               send.RecipientMessage.ID,
 		Date:                send.RecipientMessage.Date,
 		NameHidden:          hideName,
-		Unsaved:             false,
+		Unsaved:             unsaved,
 		ConvertStars:        gift.ConvertStars,
 		PrepaidUpgradeStars: prepaidUpgradeStars,
 		PrepaidUpgradeHash:  prepaidUpgradeHash,

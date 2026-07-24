@@ -57,6 +57,13 @@ type Service interface {
 	EmojiAnimation(ctx context.Context, documentID int64) ([]byte, bool, error)
 	StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
 	StarGiftCollectibleAnimation(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
+	ModerationCases(ctx context.Context, filter domain.ModerationCaseFilter) ([]domain.ModerationCase, error)
+	ModerationCase(ctx context.Context, caseID int64) (domain.ModerationCaseDetail, bool, error)
+	ModerationReport(ctx context.Context, reportID int64) (domain.ModerationReport, bool, error)
+	ClaimModerationCase(ctx context.Context, caseID, expectedVersion int64, actor string) (domain.ModerationCase, error)
+	DecideModerationCase(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
+	SubmitModerationAppeal(ctx context.Context, caseID, appellantUserID int64, text string) (domain.ModerationAppeal, bool, error)
+	ReviewModerationAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -137,6 +144,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
+	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
+	mux.HandleFunc("GET /v1/moderation/cases/{id}", s.authenticated(s.handleModerationCase))
+	mux.HandleFunc("GET /v1/moderation/reports/{id}", s.authenticated(s.handleModerationReport))
+	mux.HandleFunc("POST /v1/moderation/cases/{id}/claim", s.authenticated(s.handleClaimModerationCase))
+	mux.HandleFunc("POST /v1/moderation/cases/{id}/decide", s.authenticated(s.handleDecideModerationCase))
+	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals", s.authenticated(s.handleSubmitModerationAppeal))
+	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals/{appeal_id}/review", s.authenticated(s.handleReviewModerationAppeal))
 	return mux
 }
 
@@ -632,6 +646,267 @@ func (s *Server) handleStarGiftCollectibleAnimation(w http.ResponseWriter, r *ht
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+type moderationClaimRequest struct {
+	ExpectedVersion int64  `json:"expected_version"`
+	Actor           string `json:"actor"`
+}
+
+type moderationActionRequest struct {
+	Kind    domain.ModerationActionKind `json:"kind"`
+	Payload json.RawMessage             `json:"payload"`
+}
+
+type moderationDecisionRequest struct {
+	ExpectedVersion int64                         `json:"expected_version"`
+	Actor           string                        `json:"actor"`
+	Reason          string                        `json:"reason"`
+	CommandID       string                        `json:"command_id"`
+	Kind            domain.ModerationDecisionKind `json:"kind"`
+	Actions         []moderationActionRequest     `json:"actions"`
+}
+
+type moderationAppealRequest struct {
+	AppellantUserID int64  `json:"appellant_user_id"`
+	Text            string `json:"text"`
+}
+
+type moderationAppealReviewRequest struct {
+	ExpectedVersion int64                     `json:"expected_version"`
+	Actor           string                    `json:"actor"`
+	Reason          string                    `json:"reason"`
+	CommandID       string                    `json:"command_id"`
+	Granted         bool                      `json:"granted"`
+	Actions         []moderationActionRequest `json:"actions"`
+}
+
+func (s *Server) handleModerationCases(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	limit := 50
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = parsed
+	}
+	filter := domain.ModerationCaseFilter{
+		AssignedTo: query.Get("assigned_to"),
+		Limit:      limit,
+	}
+	if raw := query.Get("statuses"); raw != "" {
+		for _, status := range strings.Split(raw, ",") {
+			if status = strings.TrimSpace(status); status != "" {
+				filter.Statuses = append(filter.Statuses, domain.ModerationCaseStatus(status))
+			}
+		}
+	}
+	if raw := query.Get("target_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid target id")
+			return
+		}
+		filter.Target = domain.Peer{
+			Type: domain.PeerType(query.Get("target_type")), ID: id,
+		}
+	}
+	if raw := query.Get("before_updated_at"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid before_updated_at")
+			return
+		}
+		filter.BeforeUpdate = parsed
+		filter.BeforeID, _ = strconv.ParseInt(query.Get("before_id"), 10, 64)
+	}
+	items, err := s.svc.ModerationCases(r.Context(), filter)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cases": items})
+}
+
+func (s *Server) handleModerationCase(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	detail, found, err := s.svc.ModerationCase(r.Context(), caseID)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "moderation case not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleModerationReport(w http.ResponseWriter, r *http.Request) {
+	reportID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	report, found, err := s.svc.ModerationReport(r.Context(), reportID)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "moderation report not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleClaimModerationCase(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var request moderationClaimRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	item, err := s.svc.ClaimModerationCase(
+		r.Context(), caseID, request.ExpectedVersion, request.Actor,
+	)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) handleDecideModerationCase(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var request moderationDecisionRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	detail, created, err := s.svc.DecideModerationCase(
+		r.Context(), moderationDecisionDomain(caseID, 0, request),
+	)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created": created, "case": detail,
+	})
+}
+
+func (s *Server) handleSubmitModerationAppeal(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var request moderationAppealRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	appeal, created, err := s.svc.SubmitModerationAppeal(
+		r.Context(), caseID, request.AppellantUserID, request.Text,
+	)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created": created, "appeal": appeal,
+	})
+}
+
+func (s *Server) handleReviewModerationAppeal(w http.ResponseWriter, r *http.Request) {
+	caseID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	appealID, ok := moderationPathID(w, r, "appeal_id")
+	if !ok {
+		return
+	}
+	var request moderationAppealReviewRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	kind := domain.ModerationDecisionAppealDeny
+	if request.Granted {
+		kind = domain.ModerationDecisionAppealGrant
+	}
+	decision := moderationDecisionRequest{
+		ExpectedVersion: request.ExpectedVersion, Actor: request.Actor,
+		Reason: request.Reason, CommandID: request.CommandID,
+		Kind: kind, Actions: request.Actions,
+	}
+	detail, created, err := s.svc.ReviewModerationAppeal(
+		r.Context(), moderationDecisionDomain(caseID, appealID, decision),
+	)
+	if err != nil {
+		writeModerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created": created, "case": detail,
+	})
+}
+
+func moderationDecisionDomain(caseID, appealID int64, request moderationDecisionRequest) domain.ModerationDecisionRequest {
+	actions := make([]domain.ModerationActionDraft, 0, len(request.Actions))
+	for _, action := range request.Actions {
+		payload := action.Payload
+		if len(payload) == 0 {
+			payload = json.RawMessage(`{}`)
+		}
+		actions = append(actions, domain.ModerationActionDraft{
+			Kind: action.Kind, Payload: payload,
+		})
+	}
+	return domain.ModerationDecisionRequest{
+		CaseID: caseID, AppealID: appealID,
+		ExpectedVersion: request.ExpectedVersion, Actor: request.Actor,
+		Reason: request.Reason, CommandID: request.CommandID,
+		Kind: request.Kind, Actions: actions,
+	}
+}
+
+func moderationPathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid "+name)
+		return 0, false
+	}
+	return id, true
+}
+
+func writeModerationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, domain.ErrModerationCaseNotFound),
+		errors.Is(err, domain.ErrModerationReportNotFound),
+		errors.Is(err, domain.ErrModerationEvidenceNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, domain.ErrModerationPermissionDenied):
+		writeError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, domain.ErrModerationCaseConflict),
+		errors.Is(err, domain.ErrModerationActionConflict):
+		writeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, domain.ErrModerationRateLimited):
+		writeError(w, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, domain.ErrModerationCaseInvalid),
+		errors.Is(err, domain.ErrModerationActionInvalid),
+		errors.Is(err, domain.ErrModerationReportInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

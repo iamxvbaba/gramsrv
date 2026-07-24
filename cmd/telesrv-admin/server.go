@@ -67,6 +67,12 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/gifts/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
+	mux.Handle("GET /api/moderation/cases", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCasesAPI)))
+	mux.Handle("GET /api/moderation/cases/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCaseAPI)))
+	mux.Handle("GET /api/moderation/reports/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleModerationReportAPI)))
+	mux.Handle("POST /api/moderation/cases/{id}/claim", s.requireAuthAPI(http.HandlerFunc(s.handleClaimModerationCaseAPI)))
+	mux.Handle("POST /api/moderation/cases/{id}/decide", s.requireAuthAPI(http.HandlerFunc(s.handleDecideModerationCaseAPI)))
+	mux.Handle("POST /api/moderation/cases/{id}/appeals/{appeal_id}/review", s.requireAuthAPI(http.HandlerFunc(s.handleReviewModerationAppealAPI)))
 	mux.Handle("POST /api/actions/set-frozen", s.requireAuthAPI(http.HandlerFunc(s.handleSetAccountFrozenAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.requireAuthAPI(http.HandlerFunc(s.handleGrantPremiumAPI)))
 	mux.Handle("POST /api/actions/grant-stars", s.requireAuthAPI(http.HandlerFunc(s.handleGrantStarsAPI)))
@@ -364,6 +370,110 @@ func (s *server) proxyAdminJSON(w http.ResponseWriter, r *http.Request, apiPath 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=30")
 	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *server) handleModerationCasesAPI(w http.ResponseWriter, r *http.Request) {
+	apiPath := "/v1/moderation/cases"
+	if r.URL.RawQuery != "" {
+		apiPath += "?" + r.URL.RawQuery
+	}
+	s.proxyAdminJSON(w, r, apiPath, 4<<20)
+}
+
+func (s *server) handleModerationCaseAPI(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid moderation case id")
+		return
+	}
+	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/moderation/cases/%d", id), 4<<20)
+}
+
+func (s *server) handleModerationReportAPI(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid moderation report id")
+		return
+	}
+	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/moderation/reports/%d", id), 4<<20)
+}
+
+func (s *server) handleClaimModerationCaseAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyModerationWrite(w, r, "claim", false)
+}
+
+func (s *server) handleDecideModerationCaseAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyModerationWrite(w, r, "decide", true)
+}
+
+func (s *server) handleReviewModerationAppealAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyModerationWrite(w, r, "appeals/"+r.PathValue("appeal_id")+"/review", true)
+}
+
+func (s *server) proxyModerationWrite(w http.ResponseWriter, r *http.Request, suffix string, needsCommand bool) {
+	caseID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || caseID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid moderation case id")
+		return
+	}
+	if strings.HasPrefix(suffix, "appeals/") {
+		appealID, err := strconv.ParseInt(r.PathValue("appeal_id"), 10, 64)
+		if err != nil || appealID <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "invalid moderation appeal id")
+			return
+		}
+	}
+	defer r.Body.Close()
+	var payload map[string]any
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := decoder.Decode(&payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	payload["actor"] = actorFromContext(r.Context())
+	if needsCommand {
+		commandID, _ := payload["command_id"].(string)
+		if strings.TrimSpace(commandID) == "" {
+			payload["command_id"] = newCommandID("moderation")
+		}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.relayAdminJSON(
+		w, r, http.MethodPost,
+		fmt.Sprintf("/v1/moderation/cases/%d/%s", caseID, suffix),
+		raw, 4<<20,
+	)
+}
+
+func (s *server) relayAdminJSON(w http.ResponseWriter, r *http.Request, method, apiPath string, body []byte, maxBytes int64) {
+	req, err := http.NewRequestWithContext(
+		r.Context(), method, s.cfg.AdminAPIURL+apiPath, bytes.NewReader(body),
+	)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(raw)) > maxBytes {
+		writeAPIError(w, http.StatusBadGateway, "invalid admin api response")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(raw)
 }
 
