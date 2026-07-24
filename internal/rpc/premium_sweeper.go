@@ -78,6 +78,66 @@ func (r *Router) NotifyUserChanged(ctx context.Context, u domain.User) error {
 	return nil
 }
 
+type moderationUserAudienceService interface {
+	ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error)
+}
+
+// NotifyUserModerationFlagsChanged sends the standard, non-PTS updateUser
+// shape to online accounts that already know the peer. Offline accounts
+// converge when their next authoritative peer/dialog read carries the updated
+// User flags; no synthetic message-box event is created.
+func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.User) error {
+	if r == nil || u.ID == 0 {
+		return nil
+	}
+	r.invalidateRPCProjectionForUser(u.ID)
+	if r.deps.Users == nil {
+		return nil
+	}
+	audience := []int64{u.ID}
+	if service, ok := r.deps.Users.(moderationUserAudienceService); ok {
+		viewers, err := service.ModerationFlagAudience(ctx, u.ID, 4096)
+		if err != nil {
+			r.log.Warn("list moderation user update audience",
+				zap.Int64("target_user_id", u.ID),
+				zap.Error(err))
+		} else if len(viewers) != 0 {
+			audience = viewers
+		}
+	}
+
+	pushCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	seen := make(map[int64]struct{}, len(audience))
+	for _, viewerUserID := range audience {
+		if viewerUserID == 0 {
+			continue
+		}
+		if _, ok := seen[viewerUserID]; ok {
+			continue
+		}
+		seen[viewerUserID] = struct{}{}
+		if online, ok := r.deps.Sessions.(OnlineUserProvider); ok && !online.IsUserOnline(viewerUserID) {
+			continue
+		}
+		users, err := r.deps.Users.ByIDs(pushCtx, viewerUserID, []int64{u.ID})
+		if err != nil || len(users) == 0 {
+			r.log.Warn("project moderation user update",
+				zap.Int64("viewer_user_id", viewerUserID),
+				zap.Int64("target_user_id", u.ID),
+				zap.Error(err))
+			continue
+		}
+		r.pushUserUpdates(pushCtx, viewerUserID, &tg.Updates{
+			Updates: []tg.UpdateClass{&tg.UpdateUser{UserID: u.ID}},
+			Users:   tgUsersForViewer(viewerUserID, users),
+			Date:    int(r.clock.Now().Unix()),
+			Seq:     0,
+		})
+	}
+	return nil
+}
+
 // pushPremiumStatusUpdate 向用户本人的全部在线 session 推送会员状态变化。
 // 授予、到期与 admin 认证变更共用：updateUser 触发客户端用随附的 self user
 // 对象刷新 premium/verified 等基础 flag（TDesktop processUser 按 flag 翻转）。

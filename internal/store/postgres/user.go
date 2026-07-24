@@ -391,33 +391,6 @@ FOR UPDATE`, userID).Scan(&currentScam, &currentFake); err != nil {
 		}
 		return domain.User{}, fmt.Errorf("set user scam/fake: %w", err)
 	}
-	audience, err := moderationFlagAudience(ctx, tx, userID, maxModerationFlagAudience)
-	if err != nil {
-		return domain.User{}, err
-	}
-	date := int(time.Now().Unix())
-	for _, viewerUserID := range audience {
-		pts, err := reserveUserPts(ctx, tx, viewerUserID, 1)
-		if err != nil {
-			return domain.User{}, fmt.Errorf("reserve moderation flag pts for viewer %d: %w", viewerUserID, err)
-		}
-		event := domain.UpdateEvent{
-			UserID: viewerUserID,
-			Type:   domain.UpdateEventUserProfile,
-			Pts:    pts, PtsCount: 1, Date: date,
-			Peer: domain.Peer{Type: domain.PeerTypeUser, ID: userID},
-		}
-		if err := appendUserUpdateEvent(ctx, tx, qtx, viewerUserID, event); err != nil {
-			return domain.User{}, fmt.Errorf("append moderation flag event for viewer %d: %w", viewerUserID, err)
-		}
-		if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
-			TargetUserID: viewerUserID,
-			Pts:          int32(pts),
-			EventType:    string(event.Type),
-		}); err != nil {
-			return domain.User{}, fmt.Errorf("enqueue moderation flag dispatch for viewer %d: %w", viewerUserID, err)
-		}
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.User{}, fmt.Errorf("commit user scam/fake: %w", err)
 	}
@@ -427,10 +400,17 @@ FOR UPDATE`, userID).Scan(&currentScam, &currentFake); err != nil {
 
 const maxModerationFlagAudience = 4096
 
-// moderationFlagAudience returns the bounded set of accounts that can already
-// observe the target through a direct contact or private dialog. The final
-// user_id ordering is deliberate: concurrent moderation changes acquire user
-// pts watermarks in the same global order and cannot deadlock by target order.
+// ModerationFlagAudience returns the bounded set of accounts that can already
+// observe the target through a direct contact or private dialog. It is used
+// only for best-effort, non-PTS updateUser fanout after the authoritative flag
+// mutation commits.
+func (s *UserStore) ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error) {
+	if limit > maxModerationFlagAudience {
+		limit = maxModerationFlagAudience
+	}
+	return moderationFlagAudience(ctx, s.db, userID, limit)
+}
+
 func moderationFlagAudience(ctx context.Context, db sqlcgen.DBTX, userID int64, limit int) ([]int64, error) {
 	if userID <= 0 || limit <= 0 {
 		return nil, nil

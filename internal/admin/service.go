@@ -107,6 +107,10 @@ type UserNotifier interface {
 	NotifyUserChanged(ctx context.Context, u domain.User) error
 }
 
+type UserModerationNotifier interface {
+	NotifyUserModerationFlagsChanged(ctx context.Context, u domain.User) error
+}
+
 type AccountFreezeNotifier interface {
 	NotifyAccountFreezeChanged(ctx context.Context, freeze domain.AccountFreeze) error
 }
@@ -184,47 +188,49 @@ type GiftGranter interface {
 }
 
 type Dependencies struct {
-	Commands        CommandRepository
-	Restrictions    RestrictionStore
-	Auth            AuthService
-	Revoker         AuthKeyRevoker
-	Users           UsersService
-	Stars           StarsService
-	StarsNotifier   StarsNotifier
-	UserNotifier    UserNotifier
-	FreezeNotifier  AccountFreezeNotifier
-	Channels        ChannelsService
-	ChannelNotifier ChannelNotifier
-	Messages        MessagesService
-	Gifts           GiftsService
-	GiftGranter     GiftGranter
-	OfficialGifts   OfficialGiftsSource
-	Bots            BotService
-	Emoji           EmojiService
-	Moderation      ModerationService
-	Now             func() time.Time
+	Commands               CommandRepository
+	Restrictions           RestrictionStore
+	Auth                   AuthService
+	Revoker                AuthKeyRevoker
+	Users                  UsersService
+	Stars                  StarsService
+	StarsNotifier          StarsNotifier
+	UserNotifier           UserNotifier
+	UserModerationNotifier UserModerationNotifier
+	FreezeNotifier         AccountFreezeNotifier
+	Channels               ChannelsService
+	ChannelNotifier        ChannelNotifier
+	Messages               MessagesService
+	Gifts                  GiftsService
+	GiftGranter            GiftGranter
+	OfficialGifts          OfficialGiftsSource
+	Bots                   BotService
+	Emoji                  EmojiService
+	Moderation             ModerationService
+	Now                    func() time.Time
 }
 
 type Service struct {
-	commands        CommandRepository
-	restrictions    RestrictionStore
-	auth            AuthService
-	revoker         AuthKeyRevoker
-	users           UsersService
-	stars           StarsService
-	starsNotifier   StarsNotifier
-	userNotifier    UserNotifier
-	freezeNotifier  AccountFreezeNotifier
-	channels        ChannelsService
-	channelNotifier ChannelNotifier
-	messages        MessagesService
-	gifts           GiftsService
-	giftGranter     GiftGranter
-	officialGifts   OfficialGiftsSource
-	bots            BotService
-	emoji           EmojiService
-	moderation      ModerationService
-	now             func() time.Time
+	commands               CommandRepository
+	restrictions           RestrictionStore
+	auth                   AuthService
+	revoker                AuthKeyRevoker
+	users                  UsersService
+	stars                  StarsService
+	starsNotifier          StarsNotifier
+	userNotifier           UserNotifier
+	userModerationNotifier UserModerationNotifier
+	freezeNotifier         AccountFreezeNotifier
+	channels               ChannelsService
+	channelNotifier        ChannelNotifier
+	messages               MessagesService
+	gifts                  GiftsService
+	giftGranter            GiftGranter
+	officialGifts          OfficialGiftsSource
+	bots                   BotService
+	emoji                  EmojiService
+	moderation             ModerationService
+	now                    func() time.Time
 }
 
 func NewService(deps Dependencies) *Service {
@@ -256,6 +262,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.UserNotifier != nil {
 		s.userNotifier = deps.UserNotifier
+	}
+	if deps.UserModerationNotifier != nil {
+		s.userModerationNotifier = deps.UserModerationNotifier
 	}
 	if deps.FreezeNotifier != nil {
 		s.freezeNotifier = deps.FreezeNotifier
@@ -969,7 +978,7 @@ func (s *Service) SetUserFlags(ctx context.Context, req SetUserFlagsRequest) (Co
 		}
 		details["updated_scam"] = updated.Scam
 		details["updated_fake"] = updated.Fake
-		if err := s.notifyUserChanged(ctx, updated); err != nil {
+		if err := s.notifyUserModerationFlagsChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "user flags updated", Details: details}, nil
@@ -2230,6 +2239,13 @@ func (s *Service) notifyUserChanged(ctx context.Context, u domain.User) error {
 		return nil
 	}
 	return s.userNotifier.NotifyUserChanged(ctx, u)
+}
+
+func (s *Service) notifyUserModerationFlagsChanged(ctx context.Context, u domain.User) error {
+	if s == nil || s.userModerationNotifier == nil {
+		return s.notifyUserChanged(ctx, u)
+	}
+	return s.userModerationNotifier.NotifyUserModerationFlagsChanged(ctx, u)
 }
 
 func (s *Service) notifyAccountFreezeChanged(ctx context.Context, freeze domain.AccountFreeze) error {

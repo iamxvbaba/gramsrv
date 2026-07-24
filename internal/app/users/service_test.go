@@ -259,49 +259,6 @@ func TestServiceUsesBaseCacheWithoutCachingViewerOverlay(t *testing.T) {
 	}
 }
 
-func TestServiceAuthoritativeUserReloadReplacesStaleBaseCache(t *testing.T) {
-	ctx := context.Background()
-	base := memory.NewUserStore()
-	viewer, err := base.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000011", FirstName: "Viewer"})
-	if err != nil {
-		t.Fatalf("create viewer: %v", err)
-	}
-	target, err := base.Create(ctx, domain.User{AccessHash: 2, Phone: "15550000012", FirstName: "Target"})
-	if err != nil {
-		t.Fatalf("create target: %v", err)
-	}
-	store := &countingUserStore{UserStore: base}
-	cache := newMemoryBaseUserCache()
-	svc := NewService(store, WithBaseUserCache(cache))
-
-	primed, err := svc.ByIDs(ctx, viewer.ID, []int64{target.ID})
-	if err != nil || len(primed) != 1 || primed[0].Scam {
-		t.Fatalf("prime ByIDs users=%+v err=%v", primed, err)
-	}
-	if _, err := base.SetScamFake(ctx, target.ID, true, false); err != nil {
-		t.Fatalf("commit moderation flags behind cache: %v", err)
-	}
-	stale, err := svc.ByIDs(ctx, viewer.ID, []int64{target.ID})
-	if err != nil || len(stale) != 1 || stale[0].Scam {
-		t.Fatalf("ordinary cached ByIDs users=%+v err=%v, want stale scam=false", stale, err)
-	}
-
-	fresh, err := svc.ByIDsAuthoritative(ctx, viewer.ID, []int64{target.ID})
-	if err != nil || len(fresh) != 1 || !fresh[0].Scam || fresh[0].Fake {
-		t.Fatalf("authoritative ByIDs users=%+v err=%v, want scam=true fake=false", fresh, err)
-	}
-	if store.byIDsCalls != 2 {
-		t.Fatalf("store ByIDs calls=%d, want prime + authoritative reload", store.byIDsCalls)
-	}
-	cached, err := svc.ByIDs(ctx, viewer.ID, []int64{target.ID})
-	if err != nil || len(cached) != 1 || !cached[0].Scam || cached[0].Fake {
-		t.Fatalf("replaced cache ByIDs users=%+v err=%v, want scam=true fake=false", cached, err)
-	}
-	if store.byIDsCalls != 2 {
-		t.Fatalf("store ByIDs calls after cached read=%d, want unchanged", store.byIDsCalls)
-	}
-}
-
 func TestServiceRefreshesBaseCacheAfterProfileUpdate(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewUserStore()

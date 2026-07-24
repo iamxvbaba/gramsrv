@@ -543,17 +543,6 @@ func tgUpdateForOutboxEventForViewer(event domain.UpdateEvent, viewerUserID int6
 			Date:    event.Date,
 			Seq:     0, // 私聊不维护账号级 seq，恒 0
 		}
-	case domain.UpdateEventUserProfile:
-		update := tgOtherUpdateFromEvent(event)
-		if update == nil {
-			return nil
-		}
-		return &tg.Updates{
-			Updates: appendAuxPtsBookkeeping([]tg.UpdateClass{update}, event),
-			Users:   tgUsersForViewer(viewerUserID, event.Users),
-			Date:    event.Date,
-			Seq:     0,
-		}
 	case domain.UpdateEventChannelState:
 		update := tgOtherUpdateFromEvent(event)
 		if update == nil {

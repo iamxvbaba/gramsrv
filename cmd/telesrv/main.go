@@ -942,21 +942,22 @@ func run(logger *zap.Logger) error {
 	go readModelListener.Run(ctx)
 	activeSessions.SetLifecycleObserver(router)
 	adminService.Configure(adminapp.Dependencies{
-		Auth:            authService,
-		Revoker:         router,
-		Users:           usersService,
-		Stars:           starsService,
-		StarsNotifier:   router,
-		UserNotifier:    router,
-		FreezeNotifier:  router,
-		Channels:        channelsService,
-		ChannelNotifier: router,
-		Messages:        messagesService,
-		Gifts:           giftsService,
-		GiftGranter:     router,
-		Bots:            botsService,
-		Emoji:           filesService,
-		Moderation:      moderationService,
+		Auth:                   authService,
+		Revoker:                router,
+		Users:                  usersService,
+		Stars:                  starsService,
+		StarsNotifier:          router,
+		UserNotifier:           router,
+		UserModerationNotifier: router,
+		FreezeNotifier:         router,
+		Channels:               channelsService,
+		ChannelNotifier:        router,
+		Messages:               messagesService,
+		Gifts:                  giftsService,
+		GiftGranter:            router,
+		Bots:                   botsService,
+		Emoji:                  filesService,
+		Moderation:             moderationService,
 	})
 	moderationActionOptions := []moderationapp.ActionExecutorOption{}
 	if cfg.PublicLinkWebAddr != "" {

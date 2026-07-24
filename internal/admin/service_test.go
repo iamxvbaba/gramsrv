@@ -143,6 +143,39 @@ func TestModerationFlagsRejectImpossibleScamFakeState(t *testing.T) {
 	}
 }
 
+func TestSetUserFlagsUsesNonPTSModerationNotifier(t *testing.T) {
+	ctx := context.Background()
+	users := &fakeUsersService{users: map[int64]domain.User{
+		1001: {ID: 1001, FirstName: "Alice"},
+	}}
+	ordinaryNotifier := &fakeUserNotifier{}
+	moderationNotifier := &fakeUserModerationNotifier{}
+	svc := NewService(Dependencies{
+		Commands:               newMemoryCommandRepo(),
+		Users:                  users,
+		UserNotifier:           ordinaryNotifier,
+		UserModerationNotifier: moderationNotifier,
+		Now:                    fixedNow,
+	})
+
+	if _, err := svc.SetUserFlags(ctx, SetUserFlagsRequest{
+		CommandMeta: CommandMeta{CommandID: "set-user-scam", Actor: "ops", Reason: "confirmed report"},
+		UserID:      1001,
+		Scam:        true,
+	}); err != nil {
+		t.Fatalf("SetUserFlags: %v", err)
+	}
+	if got := users.users[1001]; !got.Scam || got.Fake {
+		t.Fatalf("updated user = %+v", got)
+	}
+	if len(moderationNotifier.users) != 1 || moderationNotifier.users[0] != 1001 {
+		t.Fatalf("moderation notifications = %v", moderationNotifier.users)
+	}
+	if len(ordinaryNotifier.users) != 0 {
+		t.Fatalf("ordinary notifications = %v, want dedicated non-PTS path", ordinaryNotifier.users)
+	}
+}
+
 func TestAccountFreezesBatchesAndReturnsOnlyActiveFacts(t *testing.T) {
 	now := fixedNow()
 	store := &fakeBatchRestrictionStore{fakeRestrictionStore: fakeRestrictionStore{items: map[int64]domain.AccountFreeze{
@@ -859,6 +892,15 @@ type fakeUserNotifier struct {
 }
 
 func (f *fakeUserNotifier) NotifyUserChanged(_ context.Context, u domain.User) error {
+	f.users = append(f.users, u.ID)
+	return nil
+}
+
+type fakeUserModerationNotifier struct {
+	users []int64
+}
+
+func (f *fakeUserModerationNotifier) NotifyUserModerationFlagsChanged(_ context.Context, u domain.User) error {
 	f.users = append(f.users, u.ID)
 	return nil
 }
