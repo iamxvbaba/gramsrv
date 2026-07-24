@@ -393,15 +393,6 @@ func TestMessagesSendMessageUnsupportedOptionErrors(t *testing.T) {
 			want: "STARS_AMOUNT_INVALID",
 		},
 		{
-			name: "paid stars",
-			req: func() *tg.MessagesSendMessageRequest {
-				req := base()
-				req.SetAllowPaidStars(1)
-				return req
-			}(),
-			want: "PAYMENT_UNSUPPORTED",
-		},
-		{
 			name: "paid floodskip",
 			req: func() *tg.MessagesSendMessageRequest {
 				req := base()
@@ -426,5 +417,29 @@ func TestMessagesSendMessageUnsupportedOptionErrors(t *testing.T) {
 				t.Fatalf("send err = %v, want %s", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestMessagesSendMessageAllowsUnusedPaidAuthorizationForFreeRecipient(t *testing.T) {
+	const (
+		senderID    = int64(1000000001)
+		recipientID = int64(1000000002)
+	)
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users: mapUsersService{users: map[int64]domain.User{
+			senderID:    {ID: senderID, FirstName: "Sender"},
+			recipientID: {ID: recipientID, FirstName: "Recipient"},
+		}},
+	}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerUser{UserID: recipientID},
+		Message:  "free",
+		RandomID: 457,
+	}
+	req.SetAllowPaidStars(10)
+	if _, err := r.onMessagesSendMessage(WithUserID(context.Background(), senderID), req); err != nil {
+		t.Fatalf("free recipient with unused authorization: %v", err)
 	}
 }

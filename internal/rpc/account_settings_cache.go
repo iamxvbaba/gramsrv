@@ -10,9 +10,10 @@ import (
 
 const (
 	accountSettingsCacheMaxEntries = 4096
-	// accountSettingsCacheTTL 兜底跨实例失效；同实例 Set 即时失效。设置页连续调
-	// getGlobalPrivacy/getAccountTTL/getContentSettings/getContactSignUp 时只查一次 PG。
-	accountSettingsCacheTTL = 60 * time.Second
+	// accountSettingsCacheTTL is only the lost-notification safety net. Normal
+	// consistency comes from account_settings read-model notifications; local
+	// writes update the cached value directly.
+	accountSettingsCacheTTL = 24 * time.Hour
 )
 
 // accountSettingsCache 缓存 userID→AccountSettings，避免设置页 4 个 get handler 各查
@@ -50,6 +51,38 @@ func (c *accountSettingsCache) Store(userID int64, settings domain.AccountSettin
 		return
 	}
 	c.cache.Store(userID, settings)
+}
+
+func (c *accountSettingsCache) Flush() {
+	if c == nil {
+		return
+	}
+	c.cache.Flush()
+}
+
+// InvalidateAccountSettingsReadModel is called by the shared PostgreSQL
+// read-model listener. Router owns this cache, so exposing the invalidation on
+// Router keeps store/postgres independent from the RPC package.
+func (r *Router) InvalidateAccountSettingsReadModel(userID int64) {
+	if r == nil || r.accountSettings == nil {
+		return
+	}
+	r.accountSettings.Delete(userID)
+}
+
+func (r *Router) FlushAccountSettingsReadModel() {
+	if r == nil || r.accountSettings == nil {
+		return
+	}
+	r.accountSettings.Flush()
+}
+
+func (r *Router) WarmAccountSettingsReadModel(ctx context.Context, userID int64) error {
+	if r == nil || userID == 0 {
+		return nil
+	}
+	_, err := r.cachedAccountSettings(ctx, userID)
+	return err
 }
 
 type accountSettingsBatchReader interface {

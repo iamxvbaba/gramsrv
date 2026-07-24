@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	appchannels "telesrv/internal/app/channels"
 	appdialogs "telesrv/internal/app/dialogs"
+	appprivacy "telesrv/internal/app/privacy"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -116,6 +117,99 @@ func TestMessagesCreateChatCreatesMegagroupAndDialogsRPC(t *testing.T) {
 	dialog := dialogs.Dialogs[0].(*tg.Dialog)
 	if peer, ok := dialog.Peer.(*tg.PeerChannel); !ok || peer.ChannelID != channel.ID {
 		t.Fatalf("dialog peer = %#v, want channel %d", dialog.Peer, channel.ID)
+	}
+}
+
+func TestMessagesCreateChatFiltersPrivacyBeforeMembershipWritesRPC(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 31, Phone: "15550001031", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	allowed, err := userStore.Create(ctx, domain.User{AccessHash: 32, Phone: "15550001032", FirstName: "Allowed"})
+	if err != nil {
+		t.Fatalf("create allowed user: %v", err)
+	}
+	denied, err := userStore.Create(ctx, domain.User{AccessHash: 33, Phone: "15550001033", FirstName: "Denied"})
+	if err != nil {
+		t.Fatalf("create denied user: %v", err)
+	}
+	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+	if _, err := privacy.SetRules(ctx, denied.ID, domain.PrivacyKeyChatInvite, []domain.PrivacyRule{
+		{Kind: domain.PrivacyRuleDisallowAll},
+	}); err != nil {
+		t.Fatalf("set denied invite privacy: %v", err)
+	}
+	channelStore := memory.NewChannelStore()
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: appchannels.NewService(channelStore),
+		Dialogs:  appdialogs.NewService(memory.NewDialogStore(), channelStore),
+		Privacy:  privacy,
+	}, zaptest.NewLogger(t), clock.System)
+
+	invited, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
+		Users: []tg.InputUserClass{
+			&tg.InputUser{UserID: allowed.ID, AccessHash: allowed.AccessHash},
+			&tg.InputUser{UserID: denied.ID, AccessHash: denied.AccessHash},
+		},
+		Title: "Privacy Group",
+	})
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	if len(invited.MissingInvitees) != 1 || invited.MissingInvitees[0].UserID != denied.ID {
+		t.Fatalf("missing invitees = %+v, want denied user %d", invited.MissingInvitees, denied.ID)
+	}
+	updates, ok := invited.Updates.(*tg.Updates)
+	if !ok {
+		t.Fatalf("updates = %T, want *tg.Updates", invited.Updates)
+	}
+	var channel *tg.Channel
+	for _, chat := range updates.Chats {
+		if candidate, ok := chat.(*tg.Channel); ok {
+			channel = candidate
+			break
+		}
+	}
+	if channel == nil || channel.ParticipantsCount != 2 {
+		t.Fatalf("channel = %#v, want owner + allowed only", channel)
+	}
+	for _, update := range updates.Updates {
+		newMessage, ok := update.(*tg.UpdateNewChannelMessage)
+		if !ok {
+			continue
+		}
+		service, ok := newMessage.Message.(*tg.MessageService)
+		if !ok {
+			continue
+		}
+		add, ok := service.Action.(*tg.MessageActionChatAddUser)
+		if !ok {
+			continue
+		}
+		if len(add.Users) != 1 || add.Users[0] != allowed.ID {
+			t.Fatalf("invite action users = %v, want allowed user %d only", add.Users, allowed.ID)
+		}
+	}
+
+	participants, err := r.onChannelsGetParticipants(WithUserID(ctx, owner.ID), &tg.ChannelsGetParticipantsRequest{
+		Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Filter:  &tg.ChannelParticipantsRecent{},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("get participants: %v", err)
+	}
+	list := participants.(*tg.ChannelsChannelParticipants)
+	if list.Count != 2 {
+		t.Fatalf("participant count = %d, want 2", list.Count)
+	}
+	for _, user := range list.Users {
+		if got, ok := user.(*tg.User); ok && got.ID == denied.ID {
+			t.Fatalf("denied user %d was written as a member", denied.ID)
+		}
 	}
 }
 

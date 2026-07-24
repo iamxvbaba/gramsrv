@@ -13,6 +13,7 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 	appchannels "telesrv/internal/app/channels"
 	appmessages "telesrv/internal/app/messages"
+	appprivacy "telesrv/internal/app/privacy"
 	appstargifts "telesrv/internal/app/stargifts"
 	appstars "telesrv/internal/app/stars"
 	appusers "telesrv/internal/app/users"
@@ -980,6 +981,72 @@ func TestStarGiftSaga(t *testing.T) {
 	// 重复转换被拒。
 	if _, err := r.onPaymentsConvertStarGift(recipientCtx, &tg.InputSavedStarGiftUser{MsgID: msgID}); err == nil {
 		t.Fatalf("double convert should error")
+	}
+}
+
+func TestStarGiftAutoSavePrivacyCreatesPendingGiftUntilRecipientApproves(t *testing.T) {
+	r, sender, recipient, gift := starGiftTestRouter(t)
+	ctx := context.Background()
+	privacy := appprivacy.NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+	if _, err := privacy.SetRules(ctx, recipient.ID, domain.PrivacyKeyStarGiftsAutoSave, []domain.PrivacyRule{
+		{Kind: domain.PrivacyRuleDisallowAll},
+	}); err != nil {
+		t.Fatalf("set gift auto-save privacy: %v", err)
+	}
+	r.deps.Privacy = privacy
+	senderCtx := WithUserID(ctx, sender.ID)
+	recipientCtx := WithUserID(ctx, recipient.ID)
+	invoice := &tg.InputInvoiceStarGift{
+		Peer:   &tg.InputPeerUser{UserID: recipient.ID, AccessHash: recipient.AccessHash},
+		GiftID: gift.ID,
+	}
+	formClass, err := r.onPaymentsGetPaymentForm(senderCtx, &tg.PaymentsGetPaymentFormRequest{Invoice: invoice})
+	if err != nil {
+		t.Fatalf("get gift form: %v", err)
+	}
+	form := formClass.(*tg.PaymentsPaymentFormStarGift)
+	if _, err := r.onPaymentsSendStarsForm(senderCtx, &tg.PaymentsSendStarsFormRequest{
+		FormID:  form.FormID,
+		Invoice: invoice,
+	}); err != nil {
+		t.Fatalf("send gift: %v", err)
+	}
+
+	all, err := r.onPaymentsGetSavedStarGifts(recipientCtx, &tg.PaymentsGetSavedStarGiftsRequest{
+		Peer:  &tg.InputPeerSelf{},
+		Limit: 10,
+	})
+	if err != nil || all.Count != 1 || len(all.Gifts) != 1 {
+		t.Fatalf("all saved gifts count=%d len=%d err=%v, want pending gift", all.Count, len(all.Gifts), err)
+	}
+	if !all.Gifts[0].Unsaved {
+		t.Fatal("privacy-denied incoming gift must be pending (unsaved=true), not rejected")
+	}
+	msgID, ok := all.Gifts[0].GetMsgID()
+	if !ok || msgID == 0 {
+		t.Fatalf("pending gift msg_id=%d present=%v", msgID, ok)
+	}
+	visible, err := r.onPaymentsGetSavedStarGifts(recipientCtx, &tg.PaymentsGetSavedStarGiftsRequest{
+		Peer:           &tg.InputPeerSelf{},
+		ExcludeUnsaved: true,
+		Limit:          10,
+	})
+	if err != nil || visible.Count != 0 || len(visible.Gifts) != 0 {
+		t.Fatalf("exclude-unsaved count=%d len=%d err=%v, want hidden pending gift", visible.Count, len(visible.Gifts), err)
+	}
+
+	if ok, err := r.onPaymentsSaveStarGift(recipientCtx, &tg.PaymentsSaveStarGiftRequest{
+		Stargift: &tg.InputSavedStarGiftUser{MsgID: msgID},
+	}); err != nil || !ok {
+		t.Fatalf("recipient approve gift = %v err=%v", ok, err)
+	}
+	visible, err = r.onPaymentsGetSavedStarGifts(recipientCtx, &tg.PaymentsGetSavedStarGiftsRequest{
+		Peer:           &tg.InputPeerSelf{},
+		ExcludeUnsaved: true,
+		Limit:          10,
+	})
+	if err != nil || visible.Count != 1 || len(visible.Gifts) != 1 || visible.Gifts[0].Unsaved {
+		t.Fatalf("approved visible gifts=%+v err=%v, want one saved gift", visible, err)
 	}
 }
 

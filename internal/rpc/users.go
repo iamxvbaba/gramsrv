@@ -154,6 +154,11 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	if err := r.applyBotCanEditToUser(ctx, currentUserID, u, user); err != nil {
 		return nil, err
 	}
+	contactRestriction, err := r.privateContactRestrictionFor(ctx, currentUserID, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	applyPrivateContactRestrictionToUser(user, contactRestriction)
 	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, []tg.UserClass{user}, nil)
 	loadEpoch := r.userFullProjectionCache.LoadEpoch()
 	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
@@ -165,6 +170,7 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		}
 		r.applyStoriesPinnedAvailableToUserFull(ctx, currentUserID, u.ID, &full)
 		r.applyNotifySettingsToUserFull(ctx, currentUserID, u.ID, &full)
+		applyPrivateContactRestrictionToUserFull(&full, contactRestriction)
 		chats := r.applyPersonalChannelToUserFull(ctx, currentUserID, u.PersonalChannelID, &full)
 		return &tg.UsersUserFull{
 			FullUser: full,
@@ -185,6 +191,7 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	}
 	r.applyStoriesPinnedAvailableToUserFull(ctx, currentUserID, u.ID, &full)
 	r.applyNotifySettingsToUserFull(ctx, currentUserID, u.ID, &full)
+	applyPrivateContactRestrictionToUserFull(&full, contactRestriction)
 	chats := r.applyPersonalChannelToUserFull(ctx, currentUserID, u.PersonalChannelID, &full)
 	return &tg.UsersUserFull{
 		FullUser: full,
