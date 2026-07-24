@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
 
+	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/domain"
 )
 
@@ -52,6 +53,14 @@ func (r *Router) onMessagesReport(ctx context.Context, req *tg.MessagesReportReq
 		return nil, err
 	}
 	if len(req.ID) == 0 {
+		if compatandroid.OfferInitialMessageReportOptions(
+			string(ClientTypeFrom(ctx)),
+			len(req.ID),
+			req.Option,
+			req.Message,
+		) {
+			return reportResultForOption("")
+		}
 		return nil, tgerr.New(400, "MESSAGE_ID_REQUIRED")
 	}
 	if len(req.ID) > maxGetMessagesIDs || len(req.Option) > maxReportOptionLength || utf8.RuneCountInString(req.Message) > maxReportCommentLength {
