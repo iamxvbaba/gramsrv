@@ -176,6 +176,27 @@ func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int6
 	return s.projectUsers(ctx, currentUserID, users)
 }
 
+// ByIDsAuthoritative reloads an explicit profile-refresh target from the
+// durable store, then replaces the shared base cache before applying the
+// viewer projection. It is intentionally reserved for durable update
+// delivery; ordinary reads continue to use ByIDs.
+func (s *Service) ByIDsAuthoritative(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
+	if currentUserID == 0 {
+		return nil, ErrNotAuthorized
+	}
+	ids := uniqueUserIDs(userIDs, maxBatchUsers)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	s.dropCachedUsers(ctx, ids...)
+	users, err := s.users.ByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	s.putCachedUsers(ctx, users...)
+	return s.projectUsers(ctx, currentUserID, users)
+}
+
 // ByIDsForViewers 跨多个 viewer 批量投影同一组 user（fan-out 模板化）：base user 只加载一次，
 // 隐私/改名/头像投影经 userprojection.ForViewers 压成 O(owner) 查询。返回 map[viewerID][]User，
 // 每个切片与 ByIDs(viewer, ids) 字节等价——**唯一例外是 personal photo overlay**（ForViewers v1

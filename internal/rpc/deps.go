@@ -249,6 +249,15 @@ type UsersService interface {
 	ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
 }
 
+// UserAuthoritativeProjectionService bypasses viewer-independent base caches
+// for an explicit durable profile-refresh event. The event exists precisely
+// because a just-committed absolute user fact must replace client and server
+// caches; re-reading a stale Redis value would acknowledge the outbox row
+// without ever exposing the committed state.
+type UserAuthoritativeProjectionService interface {
+	ByIDsAuthoritative(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
+}
+
 // TelegramLoginService is the domain-only boundary shared by the MTProto RPC
 // edge and the public OIDC provider. PostgreSQL remains authoritative for all
 // consent transitions; the RPC layer only projects domain state to TL.
@@ -779,6 +788,12 @@ type ChannelsService interface {
 	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID int64, savedID int64, date int, action domain.ChannelMessageAction) error
 	InviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+}
+
+// ChannelAuthoritativeProjectionService bypasses long-lived channel read
+// models for a durable channel_state refresh emitted by an admin mutation.
+type ChannelAuthoritativeProjectionService interface {
+	GetChannelsAuthoritative(ctx context.Context, userID int64, channelIDs []int64) ([]domain.ChannelView, error)
 }
 
 // CommunitiesService abstracts the Layer 228 Community aggregation domain.

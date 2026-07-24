@@ -216,6 +216,21 @@ func (s *Service) GetChannels(ctx context.Context, userID int64, channelIDs []in
 	return s.channels.GetChannels(ctx, userID, ids)
 }
 
+// GetChannelsAuthoritative bypasses the app-level versioned read model for a
+// durable channel_state refresh. PostgreSQL GetChannels is a bounded direct
+// projection query, so the returned flag snapshot cannot be the pre-commit
+// value that the event is intended to invalidate.
+func (s *Service) GetChannelsAuthoritative(ctx context.Context, userID int64, channelIDs []int64) ([]domain.ChannelView, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return nil, domain.ErrChannelInvalid
+	}
+	ids := uniqueNonZero(channelIDs)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return s.channels.GetChannels(ctx, userID, ids)
+}
+
 // GetJoinableChannel returns a channel shell so RPC can verify access hash before join.
 func (s *Service) GetJoinableChannel(ctx context.Context, userID, channelID int64) (domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
