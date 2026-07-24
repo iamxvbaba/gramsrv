@@ -242,6 +242,11 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return &tg.UpdateUserEmojiStatus{UserID: event.UserID, EmojiStatus: tgUserEmojiStatusValue(event.EmojiStatus)}
+	case domain.UpdateEventUserProfile:
+		if event.Peer.Type != domain.PeerTypeUser || event.Peer.ID == 0 {
+			return nil
+		}
+		return &tg.UpdateUser{UserID: event.Peer.ID}
 	case domain.UpdateEventPrivacy:
 		if event.Privacy.OwnerUserID == 0 || event.Privacy.Key == "" || len(event.Privacy.Rules) == 0 {
 			return nil

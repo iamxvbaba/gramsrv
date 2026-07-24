@@ -36,6 +36,11 @@ const (
 	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
 	// It consumes account pts even though updateUserEmojiStatus has no pts.
 	UpdateEventUserEmojiStatus UpdateEventType = "user_emoji_status"
+	// UpdateEventUserProfile is a durable viewer-scoped refresh for another
+	// user's absolute profile flags (currently moderation SCAM/FAKE state).
+	// The changed user is carried in Peer; hydration attaches the authoritative
+	// viewer projection to Users before online dispatch or getDifference.
+	UpdateEventUserProfile UpdateEventType = "user_profile"
 	// UpdateEventPrivacy carries the immutable account privacy key/rule
 	// snapshot committed at this pts. updatePrivacy has no wire pts.
 	UpdateEventPrivacy        UpdateEventType = "privacy"
@@ -144,6 +149,7 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventPeerStoryBlocked,
 		UpdateEventUserPhone,
 		UpdateEventUserEmojiStatus,
+		UpdateEventUserProfile,
 		UpdateEventPrivacy,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,

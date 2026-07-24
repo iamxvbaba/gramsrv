@@ -341,7 +341,46 @@ func (s *UserStore) SetScamFake(ctx context.Context, userID int64, scam, fake bo
 	if scam && fake {
 		return domain.User{}, domain.ErrPeerModerationFlagsInvalid
 	}
-	row, err := s.q.SetUserScamFake(ctx, sqlcgen.SetUserScamFakeParams{
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return domain.User{}, fmt.Errorf("set user scam/fake: db does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("begin set user scam/fake: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	qtx := s.q.WithTx(tx)
+
+	var currentScam, currentFake bool
+	if err := tx.QueryRow(ctx, `
+SELECT scam, fake
+FROM users
+WHERE id = $1
+FOR UPDATE`, userID).Scan(&currentScam, &currentFake); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.ErrUserNotFound
+		}
+		return domain.User{}, fmt.Errorf("lock user scam/fake: %w", err)
+	}
+	if currentScam == scam && currentFake == fake {
+		row, err := qtx.GetUserByID(ctx, userID)
+		if err != nil {
+			return domain.User{}, fmt.Errorf("reload unchanged user scam/fake: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.User{}, fmt.Errorf("commit unchanged user scam/fake: %w", err)
+		}
+		committed = true
+		return userFromModel(row), nil
+	}
+
+	row, err := qtx.SetUserScamFake(ctx, sqlcgen.SetUserScamFakeParams{
 		ID:   userID,
 		Scam: scam,
 		Fake: fake,
@@ -352,7 +391,89 @@ func (s *UserStore) SetScamFake(ctx context.Context, userID int64, scam, fake bo
 		}
 		return domain.User{}, fmt.Errorf("set user scam/fake: %w", err)
 	}
+	audience, err := moderationFlagAudience(ctx, tx, userID, maxModerationFlagAudience)
+	if err != nil {
+		return domain.User{}, err
+	}
+	date := int(time.Now().Unix())
+	for _, viewerUserID := range audience {
+		pts, err := reserveUserPts(ctx, tx, viewerUserID, 1)
+		if err != nil {
+			return domain.User{}, fmt.Errorf("reserve moderation flag pts for viewer %d: %w", viewerUserID, err)
+		}
+		event := domain.UpdateEvent{
+			UserID: viewerUserID,
+			Type:   domain.UpdateEventUserProfile,
+			Pts:    pts, PtsCount: 1, Date: date,
+			Peer: domain.Peer{Type: domain.PeerTypeUser, ID: userID},
+		}
+		if err := appendUserUpdateEvent(ctx, tx, qtx, viewerUserID, event); err != nil {
+			return domain.User{}, fmt.Errorf("append moderation flag event for viewer %d: %w", viewerUserID, err)
+		}
+		if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
+			TargetUserID: viewerUserID,
+			Pts:          int32(pts),
+			EventType:    string(event.Type),
+		}); err != nil {
+			return domain.User{}, fmt.Errorf("enqueue moderation flag dispatch for viewer %d: %w", viewerUserID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, fmt.Errorf("commit user scam/fake: %w", err)
+	}
+	committed = true
 	return userFromModel(row), nil
+}
+
+const maxModerationFlagAudience = 4096
+
+// moderationFlagAudience returns the bounded set of accounts that can already
+// observe the target through a direct contact or private dialog. The final
+// user_id ordering is deliberate: concurrent moderation changes acquire user
+// pts watermarks in the same global order and cannot deadlock by target order.
+func moderationFlagAudience(ctx context.Context, db sqlcgen.DBTX, userID int64, limit int) ([]int64, error) {
+	if userID <= 0 || limit <= 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(ctx, `
+SELECT picked.user_id
+FROM (
+  SELECT candidates.user_id
+  FROM (
+    SELECT $1::bigint AS user_id, 0 AS priority, 2147483647::bigint AS activity
+    UNION ALL
+    SELECT contact_user_id, 1, 0 FROM contacts WHERE user_id = $1
+    UNION ALL
+    SELECT user_id, 1, 0 FROM contacts WHERE contact_user_id = $1
+    UNION ALL
+    SELECT peer_id, 2, top_message_date FROM dialogs WHERE user_id = $1 AND peer_type = 'user'
+    UNION ALL
+    SELECT user_id, 2, top_message_date FROM dialogs WHERE peer_type = 'user' AND peer_id = $1
+  ) candidates
+  JOIN users u ON u.id = candidates.user_id AND u.deleted_at IS NULL
+  GROUP BY candidates.user_id
+  ORDER BY min(candidates.priority), max(candidates.activity) DESC, candidates.user_id
+  LIMIT $2
+) picked
+ORDER BY picked.user_id`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list moderation flag audience: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan moderation flag audience: %w", err)
+		}
+		if id != 0 {
+			out = append(out, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate moderation flag audience: %w", err)
+	}
+	return out, nil
 }
 
 // SweepExpiredPremium 清空到期会员行并返回清理后的用户。
