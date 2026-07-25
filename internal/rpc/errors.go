@@ -29,6 +29,9 @@ func inputConstructorInvalidErr() error { return tgerr.New(400, "INPUT_CONSTRUCT
 // langCodeNotSupportedErr 表示请求的语言码没有已导入的语言包。
 func langCodeNotSupportedErr() error { return tgerr.New(400, "LANG_CODE_NOT_SUPPORTED") }
 
+// langPackInvalidErr 表示请求的语言包目录不存在。
+func langPackInvalidErr() error { return tgerr.New(400, "LANG_PACK_INVALID") }
+
 // folderIDInvalidErr 表示客户端传入多个 folder peer 或非法 folder。
 func folderIDInvalidErr() error { return tgerr.New(400, "FOLDER_ID_INVALID") }
 

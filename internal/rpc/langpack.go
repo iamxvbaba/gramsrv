@@ -2,10 +2,13 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tlprofile"
+
+	"telesrv/internal/domain"
 )
 
 // registerLangpack 注册 langpack.* RPC handler。
@@ -20,7 +23,7 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 
 		languages, err := r.langpackLanguages(ctx, langPack)
 		if err != nil {
-			return nil, internalErr()
+			return nil, langpackServiceErr(err)
 		}
 		return languages, nil
 	})
@@ -42,7 +45,7 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 		}
 		pack, err := r.deps.LangPack.GetLangPack(ctx, langPack, req.LangCode)
 		if err != nil {
-			return nil, internalErr()
+			return nil, langpackServiceErr(err)
 		}
 		return tgLangPackDifference(pack), nil
 	})
@@ -52,7 +55,7 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 		}
 		pack, err := r.deps.LangPack.GetDifference(ctx, langPackOrClient(ctx, req.LangPack), req.LangCode, req.FromVersion)
 		if err != nil {
-			return nil, internalErr()
+			return nil, langpackServiceErr(err)
 		}
 		return tgLangPackDifference(pack), nil
 	})
@@ -62,7 +65,7 @@ func (r *Router) registerLangpack(d *tlprofile.Dispatcher) {
 		}
 		pack, err := r.deps.LangPack.GetStrings(ctx, langPackOrClient(ctx, req.LangPack), req.LangCode, req.Keys)
 		if err != nil {
-			return nil, internalErr()
+			return nil, langpackServiceErr(err)
 		}
 		return tgLangPackStrings(pack.Strings), nil
 	})
@@ -88,7 +91,7 @@ func (r *Router) langpackLanguage(ctx context.Context, langPack, langCode string
 	langCode = normalizeLangpackCode(langCode)
 	languages, err := r.langpackLanguages(ctx, langPack)
 	if err != nil {
-		return tg.LangPackLanguage{}, internalErr()
+		return tg.LangPackLanguage{}, langpackServiceErr(err)
 	}
 	for _, lang := range languages {
 		if strings.ToLower(lang.LangCode) == langCode {
@@ -149,4 +152,15 @@ func normalizeLangpackCode(langCode string) string {
 	}
 	code = strings.ReplaceAll(code, "_", "-")
 	return strings.TrimSuffix(code, "-raw")
+}
+
+func langpackServiceErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrLangPackInvalid):
+		return langPackInvalidErr()
+	case errors.Is(err, domain.ErrLangCodeNotSupported):
+		return langCodeNotSupportedErr()
+	default:
+		return internalErr()
+	}
 }

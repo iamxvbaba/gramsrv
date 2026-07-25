@@ -51,6 +51,121 @@ func TestLangpackGetLanguagesCurrentAndLegacy(t *testing.T) {
 	})
 }
 
+func TestLangpackWebAliasCoversEveryRPC(t *testing.T) {
+	r := newSeededLangpackRouter(t)
+	ctx := context.Background()
+
+	var languagesIn bin.Buffer
+	if err := (&tg.LangpackGetLanguagesRequest{LangPack: "web"}).Encode(&languagesIn); err != nil {
+		t.Fatalf("encode getLanguages: %v", err)
+	}
+	languages := dispatchLangpackLanguages(t, r, ctx, &languagesIn)
+	assertHasLangpackLanguage(t, languages, "zh-hans")
+
+	lang, err := r.langpackLanguage(ctx, "web", "zh-hans")
+	if err != nil {
+		t.Fatalf("getLanguage web alias: %v", err)
+	}
+	if lang.LangCode != "zh-hans" {
+		t.Fatalf("getLanguage web alias = %+v, want zh-hans", lang)
+	}
+
+	var fullIn bin.Buffer
+	if err := (&tg.LangpackGetLangPackRequest{LangPack: "web", LangCode: "zh-hans"}).Encode(&fullIn); err != nil {
+		t.Fatalf("encode getLangPack: %v", err)
+	}
+	full := dispatchLangpackDifference(t, r, ctx, &fullIn)
+	if full.LangCode != "zh-hans" || len(full.Strings) != 1 {
+		t.Fatalf("getLangPack web alias = %+v, want populated zh-hans pack", full)
+	}
+
+	var differenceIn bin.Buffer
+	if err := (&tg.LangpackGetDifferenceRequest{LangPack: "web", LangCode: "zh-hans", FromVersion: 1}).Encode(&differenceIn); err != nil {
+		t.Fatalf("encode getDifference: %v", err)
+	}
+	difference := dispatchLangpackDifference(t, r, ctx, &differenceIn)
+	if difference.LangCode != "zh-hans" || difference.FromVersion != 1 || len(difference.Strings) != 1 {
+		t.Fatalf("getDifference web alias = %+v, want populated zh-hans delta", difference)
+	}
+
+	var stringsIn bin.Buffer
+	if err := (&tg.LangpackGetStringsRequest{LangPack: "web", LangCode: "zh-hans", Keys: []string{"lng_settings_language"}}).Encode(&stringsIn); err != nil {
+		t.Fatalf("encode getStrings: %v", err)
+	}
+	enc, err := r.Dispatch(ctx, [8]byte{}, 0, &stringsIn)
+	if err != nil {
+		t.Fatalf("dispatch getStrings web alias: %v", err)
+	}
+	var stringsOut bin.Buffer
+	if err := enc.Encode(&stringsOut); err != nil {
+		t.Fatalf("encode getStrings response: %v", err)
+	}
+	var stringsVector tg.LangPackStringClassVector
+	if err := stringsVector.Decode(&stringsOut); err != nil {
+		t.Fatalf("decode getStrings response: %v", err)
+	}
+	if len(stringsVector.Elems) != 1 {
+		t.Fatalf("getStrings web alias = %+v, want one selected string", stringsVector.Elems)
+	}
+}
+
+func TestLangpackInvalidCatalogErrorsAreMappedForEveryRPC(t *testing.T) {
+	r := newSeededLangpackRouter(t)
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		encode  func(*bin.Buffer) error
+		wantErr string
+	}{
+		{
+			name: "getLanguages invalid pack",
+			encode: func(buf *bin.Buffer) error {
+				return (&tg.LangpackGetLanguagesRequest{LangPack: "web-invalid"}).Encode(buf)
+			},
+			wantErr: "LANG_PACK_INVALID",
+		},
+		{
+			name: "getLanguage invalid pack",
+			encode: func(buf *bin.Buffer) error {
+				return (&tg.LangpackGetLanguageRequest{LangPack: "web-invalid", LangCode: "en"}).Encode(buf)
+			},
+			wantErr: "LANG_PACK_INVALID",
+		},
+		{
+			name: "getLangPack invalid pack",
+			encode: func(buf *bin.Buffer) error {
+				return (&tg.LangpackGetLangPackRequest{LangPack: "web-invalid", LangCode: "en"}).Encode(buf)
+			},
+			wantErr: "LANG_PACK_INVALID",
+		},
+		{
+			name: "getDifference unsupported code",
+			encode: func(buf *bin.Buffer) error {
+				return (&tg.LangpackGetDifferenceRequest{LangPack: "web", LangCode: "fr", FromVersion: 1}).Encode(buf)
+			},
+			wantErr: "LANG_CODE_NOT_SUPPORTED",
+		},
+		{
+			name: "getStrings unsupported code",
+			encode: func(buf *bin.Buffer) error {
+				return (&tg.LangpackGetStringsRequest{LangPack: "web", LangCode: "fr", Keys: []string{"key"}}).Encode(buf)
+			},
+			wantErr: "LANG_CODE_NOT_SUPPORTED",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var in bin.Buffer
+			if err := test.encode(&in); err != nil {
+				t.Fatalf("encode request: %v", err)
+			}
+			if _, err := r.Dispatch(ctx, [8]byte{}, 0, &in); err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("dispatch error = %v, want %s", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestLangpackGetLanguage(t *testing.T) {
 	r := newSeededLangpackRouter(t)
 
@@ -247,6 +362,18 @@ func seededLangPackService(t testing.TB) LangPackService {
 				{Key: "TranslateLanguageFA", Value: "فارسی"},
 			},
 		},
+		{
+			LangPack: "webk",
+			LangCode: "en",
+			Version:  2,
+			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "Language"}},
+		},
+		{
+			LangPack: "webk",
+			LangCode: "zh-hans",
+			Version:  2,
+			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "语言"}},
+		},
 	} {
 		if err := store.UpsertPack(ctx, pack); err != nil {
 			t.Fatalf("seed %s/%s: %v", pack.LangPack, pack.LangCode, err)
@@ -270,6 +397,23 @@ func dispatchLangpackLanguages(t *testing.T, r *Router, ctx context.Context, in 
 		t.Fatalf("decode response: %v", err)
 	}
 	return langs.Elems
+}
+
+func dispatchLangpackDifference(t *testing.T, r *Router, ctx context.Context, in *bin.Buffer) tg.LangPackDifference {
+	t.Helper()
+	enc, err := r.Dispatch(ctx, [8]byte{}, 0, in)
+	if err != nil {
+		t.Fatalf("dispatch langpack difference: %v", err)
+	}
+	var out bin.Buffer
+	if err := enc.Encode(&out); err != nil {
+		t.Fatalf("encode langpack difference: %v", err)
+	}
+	var diff tg.LangPackDifference
+	if err := diff.Decode(&out); err != nil {
+		t.Fatalf("decode langpack difference: %v", err)
+	}
+	return diff
 }
 
 func assertHasLangpackLanguage(t *testing.T, langs []tg.LangPackLanguage, code string) {

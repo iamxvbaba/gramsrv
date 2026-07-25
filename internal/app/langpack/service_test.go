@@ -2,6 +2,7 @@ package langpack
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,106 @@ import (
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
+
+func TestServiceNormalizesWebAliasAndRejectsUnknownCatalogEntries(t *testing.T) {
+	ctx := context.Background()
+	packs := memory.NewLangPackStore()
+	svc := NewService(packs)
+	for _, pack := range []domain.LangPack{
+		{
+			LangPack: "webk",
+			LangCode: "en",
+			Version:  7,
+			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "Language"}},
+		},
+		{
+			LangPack: "webk",
+			LangCode: "zh-hans",
+			Version:  9,
+			Strings:  []domain.LangPackString{{Key: "lng_settings_language", Value: "语言"}},
+		},
+	} {
+		if err := packs.UpsertPack(ctx, pack); err != nil {
+			t.Fatalf("seed %s/%s: %v", pack.LangPack, pack.LangCode, err)
+		}
+	}
+
+	languages, err := svc.ListLanguages(ctx, " WEB ")
+	if err != nil {
+		t.Fatalf("list web languages: %v", err)
+	}
+	if len(languages) != 2 || findLanguage(languages, "zh-hans") == nil {
+		t.Fatalf("web languages = %+v, want canonical webk catalog", languages)
+	}
+
+	full, err := svc.GetLangPack(ctx, "web", "ZH_HANS")
+	if err != nil {
+		t.Fatalf("get web langpack: %v", err)
+	}
+	if full.LangPack != "webk" || full.LangCode != "zh-hans" || full.Version != 9 || stringValue(full.Strings, "lng_settings_language") != "语言" {
+		t.Fatalf("web langpack = %+v, want canonical webk/zh-hans", full)
+	}
+
+	diff, err := svc.GetDifference(ctx, "web", "zh-hans", 1)
+	if err != nil {
+		t.Fatalf("get web difference: %v", err)
+	}
+	if diff.LangPack != "webk" || diff.FromVersion != 1 || len(diff.Strings) != 1 {
+		t.Fatalf("web difference = %+v, want canonical webk delta", diff)
+	}
+
+	selected, err := svc.GetStrings(ctx, "web", "zh-hans", []string{"lng_settings_language"})
+	if err != nil {
+		t.Fatalf("get web strings: %v", err)
+	}
+	if selected.LangPack != "webk" || stringValue(selected.Strings, "lng_settings_language") != "语言" {
+		t.Fatalf("web strings = %+v, want selected webk string", selected)
+	}
+
+	invalidPackCalls := map[string]func() error{
+		"list": func() error {
+			_, err := svc.ListLanguages(ctx, "web-invalid")
+			return err
+		},
+		"full": func() error {
+			_, err := svc.GetLangPack(ctx, "web-invalid", "en")
+			return err
+		},
+		"difference": func() error {
+			_, err := svc.GetDifference(ctx, "web-invalid", "en", 1)
+			return err
+		},
+		"strings": func() error {
+			_, err := svc.GetStrings(ctx, "web-invalid", "en", []string{"key"})
+			return err
+		},
+	}
+	for name, call := range invalidPackCalls {
+		if err := call(); !errors.Is(err, domain.ErrLangPackInvalid) {
+			t.Fatalf("%s invalid pack error = %v, want ErrLangPackInvalid", name, err)
+		}
+	}
+
+	unsupportedCodeCalls := map[string]func() error{
+		"full": func() error {
+			_, err := svc.GetLangPack(ctx, "web", "fr")
+			return err
+		},
+		"difference": func() error {
+			_, err := svc.GetDifference(ctx, "web", "fr", 1)
+			return err
+		},
+		"strings": func() error {
+			_, err := svc.GetStrings(ctx, "web", "fr", []string{"key"})
+			return err
+		},
+	}
+	for name, call := range unsupportedCodeCalls {
+		if err := call(); !errors.Is(err, domain.ErrLangCodeNotSupported) {
+			t.Fatalf("%s unsupported code error = %v, want ErrLangCodeNotSupported", name, err)
+		}
+	}
+}
 
 func TestServiceNormalizesWebARawLangCode(t *testing.T) {
 	ctx := context.Background()

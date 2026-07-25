@@ -2,11 +2,13 @@ package langpack
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
 
@@ -205,8 +207,8 @@ func TestSeedDirectoryReconcilesManifest(t *testing.T) {
 		t.Fatalf("reconcile removed file = %d, %v", seeded, err)
 	}
 	languages, err = service.ListLanguages(ctx, "tdesktop")
-	if err != nil || len(languages) != 0 {
-		t.Fatalf("languages after removal = %+v, err %v", languages, err)
+	if !errors.Is(err, domain.ErrLangPackInvalid) || len(languages) != 0 {
+		t.Fatalf("languages after removal = %+v, err %v, want ErrLangPackInvalid", languages, err)
 	}
 }
 

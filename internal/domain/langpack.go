@@ -1,5 +1,14 @@
 package domain
 
+import "errors"
+
+var (
+	// ErrLangPackInvalid 表示客户端请求的语言包目录不存在。
+	ErrLangPackInvalid = errors.New("lang pack invalid")
+	// ErrLangCodeNotSupported 表示语言包目录存在，但其中没有请求的语言码。
+	ErrLangCodeNotSupported = errors.New("lang code not supported")
+)
+
 // LangPack 是一份客户端语言包的查询结果。
 type LangPack struct {
 	LangPack    string
