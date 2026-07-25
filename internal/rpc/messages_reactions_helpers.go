@@ -3,10 +3,12 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/iamxvbaba/td/tg"
 	"strings"
-	"telesrv/internal/domain"
 	"unicode/utf8"
+
+	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
 )
 
 func (r *Router) onMessagesUpdateSavedReactionTag(ctx context.Context, req *tg.MessagesUpdateSavedReactionTagRequest) (bool, error) {
@@ -18,8 +20,8 @@ func (r *Router) onMessagesUpdateSavedReactionTag(ctx context.Context, req *tg.M
 	if err != nil {
 		return false, err
 	}
-	if reaction.Type != domain.MessageReactionEmoji {
-		return false, reactionInvalidErr()
+	if !r.viewerPremium(ctx, userID) {
+		return false, premiumAccountRequiredErr()
 	}
 	title, ok := req.GetTitle()
 	if !ok {
@@ -28,13 +30,13 @@ func (r *Router) onMessagesUpdateSavedReactionTag(ctx context.Context, req *tg.M
 	if utf8.RuneCountInString(title) > maxSavedReactionTagTitle {
 		return false, limitInvalidErr()
 	}
-	if r.deps.Channels != nil {
-		if err := r.deps.Channels.UpdateSavedReactionTag(ctx, userID, domain.SavedReactionTag{
+	if r.deps.Messages != nil {
+		if err := r.deps.Messages.UpdateSavedReactionTag(ctx, userID, domain.SavedReactionTag{
 			UserID:   userID,
 			Reaction: reaction,
 			Title:    title,
 		}); err != nil {
-			return false, channelInvalidErr(err)
+			return false, messageReactionErr(err)
 		}
 	}
 	r.pushUserUpdates(ctx, userID, &tg.Updates{
@@ -166,6 +168,8 @@ func messageReactionErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrMessageIDInvalid):
 		return messageIDInvalidErr()
+	case errors.Is(err, domain.ErrReactionInvalid):
+		return reactionInvalidErr()
 	default:
 		return internalErr()
 	}

@@ -400,31 +400,9 @@ func (s *Service) PublishNewMessage(ctx context.Context, userID int64, msg domai
 	}, true, 0, false)
 }
 
-// RecordMessageReactions records a durable marker for message reaction changes.
-//
-// updateMessageReactions has no pts fields in Layer 225, but TDesktop still
-// needs getDifference to advance account pts and carry the latest reaction
-// aggregate for offline devices.
-func (s *Service) RecordMessageReactions(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
-	if userID == 0 {
-		userID = msg.OwnerUserID
-	}
-	date := msg.Date
-	if date == 0 {
-		date = int(time.Now().Unix())
-	}
-	return s.recordEventWithoutState(ctx, userID, domain.UpdateEvent{
-		Type:     domain.UpdateEventMessageReactions,
-		Date:     date,
-		Message:  msg,
-		Peer:     msg.Peer,
-		PtsCount: 1,
-	})
-}
-
 // RecordMessagePoll records a durable marker for message poll state changes
 // (vote / close). updateMessagePoll has no pts fields in Layer 225 — same
-// bookkeeping shape as RecordMessageReactions.
+// historical bookkeeping shape pending its own audit.
 func (s *Service) RecordMessagePoll(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error) {
 	if userID == 0 {
 		userID = msg.OwnerUserID

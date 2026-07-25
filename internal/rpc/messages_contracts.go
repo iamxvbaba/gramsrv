@@ -19,10 +19,6 @@ type accountPaidReactionPrivacyService interface {
 	SetPaidReactionPrivacy(ctx context.Context, userID int64, privacy domain.PaidReactionPrivacy) (domain.AccountReactionSettings, error)
 }
 
-type messageReactionUpdateRecorder interface {
-	RecordMessageReactions(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
-}
-
 type messagePollUpdateRecorder interface {
 	RecordMessagePoll(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
 }

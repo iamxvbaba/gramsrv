@@ -766,7 +766,7 @@ func (r *Router) messageFilterFromHistoryRequest(userID int64, req *tg.MessagesG
 	}, true
 }
 
-func (r *Router) messageFilterFromSearchRequest(userID int64, req *tg.MessagesSearchRequest) domain.MessageFilter {
+func (r *Router) messageFilterFromSearchRequest(ctx context.Context, userID int64, req *tg.MessagesSearchRequest) (domain.MessageFilter, error) {
 	limit := req.Limit
 	if limit > 500 {
 		limit = 500
@@ -774,6 +774,8 @@ func (r *Router) messageFilterFromSearchRequest(userID int64, req *tg.MessagesSe
 	filter := domain.MessageFilter{
 		Query:          req.Q,
 		OffsetID:       req.OffsetID,
+		MinDate:        req.MinDate,
+		MaxDate:        req.MaxDate,
 		AddOffset:      domain.ClampMessageHistoryAddOffset(req.AddOffset),
 		Limit:          limit,
 		MaxID:          req.MaxID,
@@ -786,7 +788,42 @@ func (r *Router) messageFilterFromSearchRequest(userID int64, req *tg.MessagesSe
 		filter.HasPeer = true
 		filter.Peer = peer
 	}
-	return filter
+	savedReactions, hasSavedReactions := req.GetSavedReaction()
+	savedPeerInput, hasSavedPeer := req.GetSavedPeerID()
+	if hasSavedReactions || hasSavedPeer {
+		if !filter.HasPeer ||
+			filter.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+			return domain.MessageFilter{}, peerIDInvalidErr()
+		}
+	}
+	if hasSavedPeer {
+		if savedPeerInput == nil {
+			return domain.MessageFilter{}, peerIDInvalidErr()
+		}
+		savedPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, savedPeerInput)
+		if err != nil {
+			return domain.MessageFilter{}, err
+		}
+		filter.SavedPeer = savedPeer
+	}
+	if hasSavedReactions {
+		if len(savedReactions) == 0 || len(savedReactions) > maxReactionVector {
+			return domain.MessageFilter{}, reactionInvalidErr()
+		}
+		seen := make(map[string]struct{}, len(savedReactions))
+		for _, item := range savedReactions {
+			reaction, err := domainMessageReactionFromTL(item)
+			if err != nil {
+				return domain.MessageFilter{}, err
+			}
+			if _, ok := seen[reaction.Key()]; ok {
+				continue
+			}
+			seen[reaction.Key()] = struct{}{}
+			filter.SavedReactions = append(filter.SavedReactions, reaction)
+		}
+	}
+	return filter, nil
 }
 
 func (r *Router) channelHistoryFilterFromSearchRequest(userID int64, req *tg.MessagesSearchRequest, channelID int64) (domain.ChannelHistoryFilter, bool) {

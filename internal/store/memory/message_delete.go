@@ -52,6 +52,12 @@ func (s *MessageStore) finishMemoryDeleteLocked(res domain.DeleteMessagesResult,
 	idsByOwner := make(map[int64][]int)
 	peersByOwner := make(map[int64]map[domain.Peer]struct{})
 	for _, row := range deleted {
+		if byMessage := s.savedMessageTags[row.userID]; byMessage != nil {
+			delete(byMessage, row.id)
+			if len(byMessage) == 0 {
+				delete(s.savedMessageTags, row.userID)
+			}
+		}
 		idsByOwner[row.userID] = append(idsByOwner[row.userID], row.id)
 		if peersByOwner[row.userID] == nil {
 			peersByOwner[row.userID] = make(map[domain.Peer]struct{})

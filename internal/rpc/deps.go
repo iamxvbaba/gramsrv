@@ -564,6 +564,8 @@ type MessagesService interface {
 	GetOutboxReadDate(ctx context.Context, userID int64, req domain.OutboxReadDateRequest) (int, error)
 	SetMessageReactions(ctx context.Context, userID int64, req domain.SetPrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error)
 	GetMessageReactions(ctx context.Context, userID int64, req domain.PrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error)
+	SavedReactionTags(ctx context.Context, userID int64, savedPeer domain.Peer, limit int) ([]domain.SavedReactionTag, error)
+	UpdateSavedReactionTag(ctx context.Context, userID int64, tag domain.SavedReactionTag) error
 	VoteMessagePoll(ctx context.Context, userID int64, req domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error)
 	CloseMessagePoll(ctx context.Context, userID int64, req domain.ClosePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error)
 	ListUnreadReactionMessages(ctx context.Context, userID int64, peer domain.Peer, limit int) ([]domain.Message, error)
@@ -691,8 +693,6 @@ type ChannelsService interface {
 	TopReactions(ctx context.Context, userID int64, limit int) ([]domain.MessageReaction, error)
 	RecentReactions(ctx context.Context, userID int64, limit int) ([]domain.MessageReaction, error)
 	ClearRecentReactions(ctx context.Context, userID int64) error
-	SavedReactionTags(ctx context.Context, userID int64, limit int) ([]domain.SavedReactionTag, error)
-	UpdateSavedReactionTag(ctx context.Context, userID int64, tag domain.SavedReactionTag) error
 	GetPremiumBoostStatus(ctx context.Context, userID, channelID int64, now int) (domain.PremiumBoostStatus, error)
 	ListPremiumBoosts(ctx context.Context, userID, channelID int64, gifts bool, offset string, limit, now int) (domain.PremiumBoostList, error)
 	GetPremiumMyBoosts(ctx context.Context, userID int64, now, premiumUntil int) (domain.PremiumMyBoosts, error)

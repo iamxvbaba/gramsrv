@@ -232,6 +232,8 @@ type MessageFilter struct {
 	Query      string
 	OffsetID   int
 	OffsetDate int
+	MinDate    int
+	MaxDate    int
 	AddOffset  int
 	Limit      int
 	MaxID      int
@@ -245,6 +247,9 @@ type MessageFilter struct {
 	// SavedPeer 非零时仅返回 self-chat 中该 saved 子会话的消息
 	// （messages.getSavedHistory）；Peer 必须同时是 self。
 	SavedPeer Peer
+	// SavedReactions 非空时仅返回至少带其中一个 tag 的 Saved Messages。
+	// 仅 messages.search(peer=self) 使用；普通私聊 reaction 不参与匹配。
+	SavedReactions []MessageReaction
 	// PeerIDs restricts a global private search to these user peers. Empty is a
 	// valid restricted set, so RestrictPeerIDs carries presence separately.
 	PeerIDs         []int64

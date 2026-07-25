@@ -1165,34 +1165,6 @@ func (s *Service) ClearRecentReactions(ctx context.Context, userID int64) error 
 	return s.channels.ClearRecentMessageReactions(ctx, userID)
 }
 
-// SavedReactionTags returns account-level saved-message reaction tag titles.
-func (s *Service) SavedReactionTags(ctx context.Context, userID int64, limit int) ([]domain.SavedReactionTag, error) {
-	if s == nil || s.channels == nil || userID == 0 {
-		return nil, domain.ErrChannelInvalid
-	}
-	if limit <= 0 {
-		return []domain.SavedReactionTag{}, nil
-	}
-	if limit > domain.MaxSavedReactionTags {
-		limit = domain.MaxSavedReactionTags
-	}
-	return s.channels.ListSavedReactionTags(ctx, userID, limit)
-}
-
-// UpdateSavedReactionTag stores the account-level custom title for one saved-message reaction tag.
-func (s *Service) UpdateSavedReactionTag(ctx context.Context, userID int64, tag domain.SavedReactionTag) error {
-	if s == nil || s.channels == nil || userID == 0 {
-		return domain.ErrChannelInvalid
-	}
-	if tag.UserID == 0 {
-		tag.UserID = userID
-	}
-	if tag.UserID != userID || tag.Reaction.Type != domain.MessageReactionEmoji || tag.Reaction.Emoticon == "" {
-		return domain.ErrChannelInvalid
-	}
-	return s.channels.UpsertSavedReactionTag(ctx, tag)
-}
-
 // ReadMessageContents returns visible channel messages whose content-read state can be synced.
 func (s *Service) ReadMessageContents(ctx context.Context, userID int64, req domain.ReadChannelMessageContentsRequest) (domain.ReadChannelMessageContentsResult, error) {
 	if s == nil || s.channels == nil || userID == 0 {

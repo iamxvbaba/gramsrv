@@ -4,6 +4,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"strings"
 	apptelemetry "telesrv/internal/app/clienttelemetry"
+	appmessages "telesrv/internal/app/messages"
 	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -865,28 +866,22 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if !ok || staleEmptyPage.Hash != 0 || len(staleEmptyPage.Tags) != 0 {
 		t.Fatalf("messages.getSavedReactionTags stale empty hash = %#v, want empty page hash 0", staleEmptyTags)
 	}
+	r.deps.Messages = appmessages.NewService(memory.NewMessageStore(), nil)
+	if _, err := f.users.SetPremiumUntil(ownerCtx, owner.ID, int(time.Now().Add(time.Hour).Unix())); err != nil {
+		t.Fatalf("grant owner premium for saved tag rename: %v", err)
+	}
 	updateTagReq := &tg.MessagesUpdateSavedReactionTagRequest{Reaction: &tg.ReactionEmoji{Emoticon: "ok"}}
 	updateTagReq.SetTitle("Work")
-	if ok, err := r.onMessagesUpdateSavedReactionTag(ownerCtx, updateTagReq); err != nil || !ok {
-		t.Fatalf("messages.updateSavedReactionTag = ok %v err %v, want true nil", ok, err)
+	if _, err := r.onMessagesUpdateSavedReactionTag(ownerCtx, updateTagReq); err == nil || !strings.Contains(err.Error(), "REACTION_INVALID") {
+		t.Fatalf("messages.updateSavedReactionTag unassigned err = %v, want REACTION_INVALID", err)
 	}
 	globalTags, err := r.onMessagesGetSavedReactionTags(ownerCtx, &tg.MessagesGetSavedReactionTagsRequest{})
 	if err != nil {
 		t.Fatalf("messages.getSavedReactionTags global: %v", err)
 	}
 	globalPage, ok := globalTags.(*tg.MessagesSavedReactionTags)
-	if !ok || globalPage.Hash == 0 || len(globalPage.Tags) != 1 {
-		t.Fatalf("messages.getSavedReactionTags global = %#v, want one hashable tag", globalTags)
-	}
-	if emoji, ok := globalPage.Tags[0].Reaction.(*tg.ReactionEmoji); !ok || emoji.Emoticon != "ok" || globalPage.Tags[0].Title != "Work" || globalPage.Tags[0].Count != 0 {
-		t.Fatalf("messages.getSavedReactionTags tag = %+v, want ok/Work/count0", globalPage.Tags[0])
-	}
-	globalNotModified, err := r.onMessagesGetSavedReactionTags(ownerCtx, &tg.MessagesGetSavedReactionTagsRequest{Hash: globalPage.Hash})
-	if err != nil {
-		t.Fatalf("messages.getSavedReactionTags hash: %v", err)
-	}
-	if _, ok := globalNotModified.(*tg.MessagesSavedReactionTagsNotModified); !ok {
-		t.Fatalf("messages.getSavedReactionTags hash = %#v, want notModified", globalNotModified)
+	if !ok || globalPage.Hash != 0 || len(globalPage.Tags) != 0 {
+		t.Fatalf("messages.getSavedReactionTags global = %#v, want empty", globalTags)
 	}
 	peerTagsAfterUpdate, err := r.onMessagesGetSavedReactionTags(ownerCtx, savedTagsReq)
 	if err != nil {
@@ -909,9 +904,11 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("messages.getDefaultTagReactions: %v", err)
 	}
-	if got := tagReactions.(*tg.MessagesReactions).Reactions; len(got) != 0 {
-		t.Fatalf("messages.getDefaultTagReactions = %+v, want empty", got)
+	defaultPage, ok := tagReactions.(*tg.MessagesReactions)
+	if !ok || defaultPage.Hash == 0 || len(defaultPage.Reactions) == 0 {
+		t.Fatalf("messages.getDefaultTagReactions = %#v, want non-empty hashable catalog", tagReactions)
 	}
+	r.deps.Messages = nil
 	// poll 链路已是真实现：对非 poll 消息一律 MESSAGE_ID_INVALID（与官方一致）。
 	if _, err := r.onMessagesSendVote(ownerCtx, &tg.MessagesSendVoteRequest{
 		Peer:    inputPeerChannel(channel),

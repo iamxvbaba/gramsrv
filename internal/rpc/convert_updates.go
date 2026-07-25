@@ -35,7 +35,7 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 			if update := tgReadHistoryOutboxUpdate(event); update != nil {
 				out.OtherUpdates = append(out.OtherUpdates, update)
 			}
-		case domain.UpdateEventMessageReactions, domain.UpdateEventMessagePoll:
+		case domain.UpdateEventMessagePoll:
 			// 同时下发消息快照（含最新聚合）与对应通知 update；事件无 TL pts，
 			// pts 推进靠 difference state 本身。
 			if msg := tgMessage(event.Message); msg != nil {
@@ -464,32 +464,6 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return tgUpdateMessagePoll(pollPeer, event.Message.ID, media.Poll)
-	case domain.UpdateEventMessageReactions:
-		if event.Message.ID <= 0 || event.Message.ID > domain.MaxMessageBoxID {
-			return nil
-		}
-		peer := event.Message.Peer
-		if peer.Type == "" || peer.ID == 0 {
-			peer = event.Peer
-		}
-		outPeer := tgPeer(peer)
-		if outPeer == nil {
-			return nil
-		}
-		reactions := event.Message.Reactions
-		if reactions == nil {
-			empty := domain.ChannelMessageReactions{CanSeeList: true, Results: []domain.ChannelMessageReactionCount{}, Recent: []domain.ChannelMessagePeerReaction{}}
-			reactions = &empty
-		}
-		converted := tgMessageReactions(event.UserID, reactions)
-		if converted == nil {
-			converted = &tg.MessageReactions{Results: []tg.ReactionCount{}}
-		}
-		return &tg.UpdateMessageReactions{
-			Peer:      outPeer,
-			MsgID:     event.Message.ID,
-			Reactions: *converted,
-		}
 	case domain.UpdateEventDialogFilter:
 		update := &tg.UpdateDialogFilter{ID: event.FilterID}
 		if event.DialogFilter != nil {

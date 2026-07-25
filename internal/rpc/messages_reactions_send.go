@@ -29,6 +29,10 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 	// reactions_user_max_premium=3），否则客户端允许的多 reaction 会被静默裁剪。
 	perUserMax := domain.MessageReactionsUserMax(r.viewerPremium(ctx, userID))
 	reactions = domain.TrimMessageReactionsToUserMax(reactions, perUserMax)
+	if peer.Type == domain.PeerTypeUser && peer.ID == userID &&
+		len(reactions) > 0 && !r.viewerPremium(ctx, userID) {
+		return nil, premiumAccountRequiredErr()
+	}
 	date := int(r.clock.Now().Unix())
 	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
 		res, err := r.deps.Channels.SetMessageReactions(ctx, userID, domain.SetChannelMessageReactionsRequest{
@@ -54,7 +58,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		return updates, nil
 	}
 	if peer.Type == domain.PeerTypeUser && r.deps.Messages != nil {
-		if len(reactions) == 0 && r.shouldSuppressTransientPrivateReactionClear(userID, peer, req.MsgID, date) {
+		if peer.ID != userID && len(reactions) == 0 && r.shouldSuppressTransientPrivateReactionClear(userID, peer, req.MsgID, date) {
 			res, err := r.deps.Messages.GetMessageReactions(ctx, userID, domain.PrivateMessageReactionsRequest{
 				OwnerUserID: userID,
 				Peer:        peer,
@@ -65,7 +69,7 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			}
 			return r.privateMessagesReactionsUpdates(ctx, userID, peer, res, []int{req.MsgID}), nil
 		}
-		if req.Big && len(reactions) > 0 {
+		if peer.ID != userID && req.Big && len(reactions) > 0 {
 			r.rememberTransientPrivateBigReaction(userID, peer, req.MsgID, date)
 		}
 		res, err := r.deps.Messages.SetMessageReactions(ctx, userID, domain.SetPrivateMessageReactionsRequest{
@@ -84,19 +88,13 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 		if len(reactions) == 0 {
 			r.forgetTransientPrivateBigReaction(userID, peer, req.MsgID)
 		}
-		if err := r.recordMessageReactionUse(ctx, userID, reactions, req.GetAddToRecent(), date); err != nil {
-			return nil, internalErr()
+		// Saved Messages reactions are private tags, not ordinary reaction usage.
+		if peer.ID != userID {
+			if err := r.recordMessageReactionUse(ctx, userID, reactions, req.GetAddToRecent(), date); err != nil {
+				return nil, internalErr()
+			}
 		}
-		recordedEvents, err := r.recordPrivateMessageReactionEvents(ctx, userID, res)
-		if err != nil {
-			return nil, internalErr()
-		}
-		// reaction 事件占双方账号 pts 但 updateMessageReactions 不带 pts；
-		// 在线直推必须附 pts 簿记，否则双方下一条带 pts 的更新被判空洞。
 		updates := r.privateMessageReactionsUpdates(ctx, userID, peer, res)
-		if updates != nil {
-			updates.Updates = appendAuxPtsBookkeeping(updates.Updates, recordedEvents[userID])
-		}
 		r.pushUserUpdates(ctx, userID, updates)
 		for _, msg := range res.Messages {
 			if msg.OwnerUserID == 0 || msg.OwnerUserID == userID {
@@ -104,9 +102,6 @@ func (r *Router) onMessagesSendReaction(ctx context.Context, req *tg.MessagesSen
 			}
 			viewerPeer := msg.Peer
 			viewerUpdates := r.privateMessageReactionsUpdates(ctx, msg.OwnerUserID, viewerPeer, res)
-			if viewerUpdates != nil {
-				viewerUpdates.Updates = appendAuxPtsBookkeeping(viewerUpdates.Updates, recordedEvents[msg.OwnerUserID])
-			}
 			r.pushUserUpdates(ctx, msg.OwnerUserID, viewerUpdates)
 		}
 		return updates, nil
@@ -223,33 +218,6 @@ func (r *Router) recordMessageReactionUse(ctx context.Context, userID int64, rea
 	return recorder.RecordMessageReactionUse(ctx, userID, reactions, addToRecent, date)
 }
 
-func (r *Router) recordPrivateMessageReactionEvents(ctx context.Context, requestUserID int64, res domain.PrivateMessageReactionsResult) (map[int64]domain.UpdateEvent, error) {
-	if r.deps.Updates == nil {
-		return nil, nil
-	}
-	recorder, ok := r.deps.Updates.(messageReactionUpdateRecorder)
-	if !ok {
-		return nil, nil
-	}
-	authKeyID, _ := AuthKeyIDFrom(ctx)
-	events := make(map[int64]domain.UpdateEvent, len(res.Messages))
-	for _, msg := range res.Messages {
-		if msg.OwnerUserID == 0 || msg.ID == 0 {
-			continue
-		}
-		eventAuthKeyID := [8]byte{}
-		if msg.OwnerUserID == requestUserID {
-			eventAuthKeyID = authKeyID
-		}
-		event, _, err := recorder.RecordMessageReactions(ctx, eventAuthKeyID, msg.OwnerUserID, msg)
-		if err != nil {
-			return nil, err
-		}
-		events[msg.OwnerUserID] = event
-	}
-	return events, nil
-}
-
 func (r *Router) channelMessageReactionsUpdates(ctx context.Context, viewerUserID int64, res domain.ChannelMessageReactionsResult) *tg.Updates {
 	ids := []int{res.Message.ID}
 	if res.Message.ID <= 0 && len(res.Messages) > 0 {
@@ -311,6 +279,7 @@ func minifyChannelReactionsResult(res domain.ChannelMessageReactionsResult) doma
 		}
 		out := domain.ChannelMessageReactions{
 			CanSeeList: in.CanSeeList,
+			AsTags:     in.AsTags,
 			Results:    make([]domain.ChannelMessageReactionCount, 0, len(in.Results)),
 			Recent:     make([]domain.ChannelMessagePeerReaction, 0, len(in.Recent)),
 		}

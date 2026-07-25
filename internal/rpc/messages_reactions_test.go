@@ -5,82 +5,25 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
-	appchannels "telesrv/internal/app/channels"
+	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 	"testing"
 	"time"
 )
 
-func TestUpdatesDifferenceIncludesReactionMessageAndUpdate(t *testing.T) {
-	const (
-		aliceID = int64(1000000001)
-		bobID   = int64(1000000002)
-	)
-	reaction := domain.MessageReaction{Type: domain.MessageReactionEmoji, Emoticon: "\U0001f44d"}
-	reactions := domain.ChannelMessageReactions{
-		CanSeeList: true,
-		Results: []domain.ChannelMessageReactionCount{{
-			Reaction:    reaction,
-			Count:       1,
-			ChosenOrder: 1,
-		}},
-		Recent: []domain.ChannelMessagePeerReaction{{
-			UserID:      bobID,
-			Reaction:    reaction,
-			My:          true,
-			ChosenOrder: 1,
-			Date:        1700000310,
-		}},
-	}
-	msg := domain.Message{
-		ID:          68,
-		UID:         7001,
-		OwnerUserID: aliceID,
-		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: bobID},
-		From:        domain.Peer{Type: domain.PeerTypeUser, ID: aliceID},
-		Date:        1700000300,
-		Body:        "rx",
-		Reactions:   &reactions,
-	}
-	got, ok := tgUpdatesDifference(0, domain.UpdateDifference{
-		State: domain.UpdateState{Pts: 9, Date: 1700000310},
-		Events: []domain.UpdateEvent{{
-			UserID:   aliceID,
-			Type:     domain.UpdateEventMessageReactions,
-			Pts:      9,
-			PtsCount: 1,
-			Date:     1700000310,
-			Peer:     domain.Peer{Type: domain.PeerTypeUser, ID: bobID},
-			Message:  msg,
-		}},
-	}).(*tg.UpdatesDifference)
-	if !ok {
-		t.Fatalf("difference = %T, want *tg.UpdatesDifference", got)
-	}
-	if len(got.NewMessages) != 1 || len(got.OtherUpdates) != 1 {
-		t.Fatalf("difference messages/updates = %d/%d, want 1/1", len(got.NewMessages), len(got.OtherUpdates))
-	}
-	wireMsg, ok := got.NewMessages[0].(*tg.Message)
-	if !ok || wireMsg.ID != msg.ID {
-		t.Fatalf("message = %T %+v, want message %d", got.NewMessages[0], got.NewMessages[0], msg.ID)
-	}
-	msgReactions, ok := wireMsg.GetReactions()
-	if !ok || len(msgReactions.Results) != 1 || msgReactions.Results[0].Count != 1 || msgReactions.Results[0].ChosenOrder != 1 {
-		t.Fatalf("message reactions = %+v set=%v, want chosen reaction", msgReactions, ok)
-	}
-	update, ok := got.OtherUpdates[0].(*tg.UpdateMessageReactions)
-	if !ok || update.MsgID != msg.ID || len(update.Reactions.Results) != 1 || update.Reactions.Results[0].ChosenOrder != 1 {
-		t.Fatalf("reaction update = %T %+v, want update for msg %d", got.OtherUpdates[0], got.OtherUpdates[0], msg.ID)
-	}
-}
-
 func TestMessagesUpdateSavedReactionTagPersistsAndPushesRefresh(t *testing.T) {
-	const userID = int64(1000000001)
+	userID, users := newReactionTestUsers(t, true)
 	sessions := &captureSessions{}
+	reaction := domain.MessageReaction{Type: domain.MessageReactionEmoji, Emoticon: "\U0001f44d"}
+	messages := &captureMessages{savedTags: []domain.SavedReactionTag{{
+		UserID: userID, Reaction: reaction, Count: 1,
+	}}}
 	r := New(Config{}, Deps{
-		Channels: appchannels.NewService(memory.NewChannelStore()),
+		Messages: messages,
+		Users:    users,
 		Sessions: sessions,
 	}, zaptest.NewLogger(t), clock.System)
 
@@ -118,6 +61,198 @@ func TestMessagesUpdateSavedReactionTagPersistsAndPushesRefresh(t *testing.T) {
 	}
 	if _, ok := updates.Updates[0].(*tg.UpdateSavedReactionTags); !ok {
 		t.Fatalf("update = %T, want *tg.UpdateSavedReactionTags", updates.Updates[0])
+	}
+}
+
+func TestMessagesUpdateSavedReactionTagAcceptsCustomEmoji(t *testing.T) {
+	userID, users := newReactionTestUsers(t, true)
+	custom := domain.MessageReaction{Type: domain.MessageReactionCustomEmoji, DocumentID: 90001}
+	messages := &captureMessages{savedTags: []domain.SavedReactionTag{{
+		UserID: userID, Reaction: custom, Count: 1,
+	}}}
+	r := New(Config{}, Deps{Messages: messages, Users: users}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesUpdateSavedReactionTagRequest{
+		Reaction: &tg.ReactionCustomEmoji{DocumentID: custom.DocumentID},
+	}
+	req.SetTitle("Work")
+	ok, err := r.onMessagesUpdateSavedReactionTag(WithUserID(context.Background(), userID), req)
+	if err != nil || !ok {
+		t.Fatalf("rename custom saved tag = %v, %v", ok, err)
+	}
+	if messages.updatedSavedTag.Reaction.Key() != custom.Key() || messages.updatedSavedTag.Title != "Work" {
+		t.Fatalf("updated custom tag = %+v", messages.updatedSavedTag)
+	}
+}
+
+func newReactionTestUsers(t *testing.T, premium bool) (int64, UsersService) {
+	t.Helper()
+	users := memory.NewUserStore()
+	user, err := users.Create(context.Background(), domain.User{
+		Phone:     "+15550000001",
+		FirstName: "Reaction",
+	})
+	if err != nil {
+		t.Fatalf("create reaction test user: %v", err)
+	}
+	if premium {
+		if _, err := users.SetPremiumUntil(context.Background(), user.ID, int(time.Now().Add(time.Hour).Unix())); err != nil {
+			t.Fatalf("set reaction test premium: %v", err)
+		}
+	}
+	return user.ID, appusers.NewService(users)
+}
+
+func TestMessagesSendReactionSavedMessageUsesTagsWithoutPTSBookkeeping(t *testing.T) {
+	userID, users := newReactionTestUsers(t, true)
+	messages := &captureMessages{}
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users:    users,
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1_700_000_200, 0)})
+	req := &tg.MessagesSendReactionRequest{
+		Peer:     &tg.InputPeerSelf{},
+		MsgID:    7,
+		Reaction: []tg.ReactionClass{&tg.ReactionCustomEmoji{DocumentID: 90001}},
+	}
+	req.SetReaction(req.Reaction)
+	got, err := r.onMessagesSendReaction(
+		WithSessionID(WithUserID(context.Background(), userID), 72),
+		req,
+	)
+	if err != nil {
+		t.Fatalf("send saved tag: %v", err)
+	}
+	updates, ok := got.(*tg.Updates)
+	if !ok || len(updates.Updates) != 1 {
+		t.Fatalf("saved tag result = %T %+v, want one update", got, got)
+	}
+	update, ok := updates.Updates[0].(*tg.UpdateMessageReactions)
+	if !ok || !update.Reactions.ReactionsAsTags || len(update.Reactions.Results) != 1 {
+		t.Fatalf("saved tag update = %T %+v, want reactions_as_tags", updates.Updates[0], updates.Updates[0])
+	}
+	for _, item := range updates.Updates {
+		if deleted, ok := item.(*tg.UpdateDeleteMessages); ok {
+			t.Fatalf("saved tag emitted fake delete pts bookkeeping: %+v", deleted)
+		}
+	}
+	if messages.setReactionReq.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+		t.Fatalf("saved tag peer = %+v, want self", messages.setReactionReq.Peer)
+	}
+	push := sessions.snapshot()
+	pushed, ok := push.message.(*tg.Updates)
+	if push.userID != userID || push.sessionID != 72 || !ok || len(pushed.Updates) != 1 {
+		t.Fatalf("saved tag push = user %d exclude %d %T %+v", push.userID, push.sessionID, push.message, push.message)
+	}
+	pushedReaction, ok := pushed.Updates[0].(*tg.UpdateMessageReactions)
+	if !ok || !pushedReaction.Reactions.ReactionsAsTags {
+		t.Fatalf("saved tag pushed update = %T %+v, want reactions_as_tags", pushed.Updates[0], pushed.Updates[0])
+	}
+}
+
+func TestMessagesSendReactionSavedMessageRequiresPremiumButAllowsClear(t *testing.T) {
+	userID, users := newReactionTestUsers(t, false)
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{
+		Messages: messages,
+		Users:    users,
+	}, zaptest.NewLogger(t), clock.System)
+	add := &tg.MessagesSendReactionRequest{
+		Peer:     &tg.InputPeerSelf{},
+		MsgID:    8,
+		Reaction: []tg.ReactionClass{&tg.ReactionEmoji{Emoticon: "👍"}},
+	}
+	add.SetReaction(add.Reaction)
+	if _, err := r.onMessagesSendReaction(WithUserID(context.Background(), userID), add); !tgerr.Is(err, "PREMIUM_ACCOUNT_REQUIRED") {
+		t.Fatalf("non-premium add err = %v, want PREMIUM_ACCOUNT_REQUIRED", err)
+	}
+	clear := &tg.MessagesSendReactionRequest{Peer: &tg.InputPeerSelf{}, MsgID: 8}
+	if _, err := r.onMessagesSendReaction(WithUserID(context.Background(), userID), clear); err != nil {
+		t.Fatalf("non-premium clear: %v", err)
+	}
+}
+
+func TestSavedReactionTagHashMatchesClientShape(t *testing.T) {
+	plain := domain.MessageReaction{Type: domain.MessageReactionEmoji, Emoticon: "❤️"}
+	withoutVariation := domain.MessageReaction{Type: domain.MessageReactionEmoji, Emoticon: "❤"}
+	if got, want := messageReactionListHash([]domain.MessageReaction{plain}), messageReactionListHash([]domain.MessageReaction{withoutVariation}); got != want {
+		t.Fatalf("emoji variation-selector hash = %d, want normalized %d", got, want)
+	}
+	tags := []domain.SavedReactionTag{{
+		Reaction: plain,
+		Title:    "Love",
+		Count:    3,
+	}}
+	full := savedReactionTagsFromDomain(tags, 0, true)
+	page, ok := full.(*tg.MessagesSavedReactionTags)
+	if !ok || page.Hash == 0 || len(page.Tags) != 1 || page.Tags[0].Title != "Love" {
+		t.Fatalf("saved tag page = %T %+v", full, full)
+	}
+	if page.Hash != -4770309592622053821 {
+		t.Fatalf("saved tag client hash = %d, want -4770309592622053821", page.Hash)
+	}
+	if cached := savedReactionTagsFromDomain(tags, page.Hash, true); cached == nil {
+		t.Fatal("cached saved tag result is nil")
+	} else if _, ok := cached.(*tg.MessagesSavedReactionTagsNotModified); !ok {
+		t.Fatalf("cached saved tag result = %T, want not modified", cached)
+	}
+	perPeer := savedReactionTagsFromDomain(tags, 0, false)
+	peerPage, ok := perPeer.(*tg.MessagesSavedReactionTags)
+	if !ok || peerPage.Tags[0].Title != "" || peerPage.Hash == page.Hash {
+		t.Fatalf("per-peer saved tags = %T %+v, want title omitted and scope hash", perPeer, perPeer)
+	}
+}
+
+func TestMessageFilterFromSearchRequestParsesSavedTagsAndPeer(t *testing.T) {
+	const userID = int64(1000000001)
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesSearchRequest{
+		Peer:    &tg.InputPeerSelf{},
+		Q:       "needle",
+		MinDate: 100,
+		MaxDate: 200,
+		Limit:   50,
+		Filter:  &tg.InputMessagesFilterEmpty{},
+	}
+	req.SetSavedPeerID(&tg.InputPeerSelf{})
+	req.SetSavedReaction([]tg.ReactionClass{
+		&tg.ReactionEmoji{Emoticon: "👍"},
+		&tg.ReactionCustomEmoji{DocumentID: 90001},
+	})
+	filter, err := r.messageFilterFromSearchRequest(WithUserID(context.Background(), userID), userID, req)
+	if err != nil {
+		t.Fatalf("parse saved search filter: %v", err)
+	}
+	if filter.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) ||
+		filter.SavedPeer != filter.Peer || len(filter.SavedReactions) != 2 ||
+		filter.MinDate != 100 || filter.MaxDate != 200 {
+		t.Fatalf("saved search filter = %+v", filter)
+	}
+
+	req.Peer = &tg.InputPeerUser{UserID: userID + 1, AccessHash: 1}
+	if _, err := r.messageFilterFromSearchRequest(WithUserID(context.Background(), userID), userID, req); !tgerr.Is(err, "PEER_ID_INVALID") {
+		t.Fatalf("non-self saved search err = %v, want PEER_ID_INVALID", err)
+	}
+}
+
+func TestMessagesGetDefaultTagReactionsReturnsHashableCatalog(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 1000000001)
+	got, err := r.onMessagesGetDefaultTagReactions(ctx, 0)
+	if err != nil {
+		t.Fatalf("get default tag reactions: %v", err)
+	}
+	page, ok := got.(*tg.MessagesReactions)
+	if !ok || page.Hash == 0 || len(page.Reactions) == 0 {
+		t.Fatalf("default tags = %T %+v, want non-empty hashable catalog", got, got)
+	}
+	cached, err := r.onMessagesGetDefaultTagReactions(ctx, page.Hash)
+	if err != nil {
+		t.Fatalf("get cached default tags: %v", err)
+	}
+	if _, ok := cached.(*tg.MessagesReactionsNotModified); !ok {
+		t.Fatalf("cached default tags = %T, want not modified", cached)
 	}
 }
 

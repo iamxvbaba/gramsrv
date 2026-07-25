@@ -4,8 +4,9 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"telesrv/internal/domain"
 	"time"
+
+	"telesrv/internal/domain"
 )
 
 func (s *MessageStore) GetByIDs(_ context.Context, userID int64, ids []int) (domain.MessageList, error) {
@@ -282,6 +283,12 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 		if query != "" && !strings.Contains(strings.ToLower(msg.Body), query) {
 			continue
 		}
+		if filter.MinDate > 0 && msg.Date <= filter.MinDate {
+			continue
+		}
+		if filter.MaxDate > 0 && msg.Date >= filter.MaxDate {
+			continue
+		}
 		if filter.MaxID > 0 && msg.ID >= filter.MaxID {
 			continue
 		}
@@ -295,6 +302,9 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 			continue
 		}
 		if filter.SavedPeer.ID != 0 && msg.SavedPeer != filter.SavedPeer {
+			continue
+		}
+		if len(filter.SavedReactions) > 0 && !messageHasAnySavedTag(msg, filter.SavedReactions) {
 			continue
 		}
 		base = append(base, msg)
@@ -314,6 +324,22 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 		Count:    len(base),
 		Hash:     messageListHash(base),
 	}
+}
+
+func messageHasAnySavedTag(msg domain.Message, wanted []domain.MessageReaction) bool {
+	if msg.Reactions == nil || !msg.Reactions.AsTags {
+		return false
+	}
+	have := make(map[string]struct{}, len(msg.Reactions.Results))
+	for _, result := range msg.Reactions.Results {
+		have[result.Reaction.Key()] = struct{}{}
+	}
+	for _, reaction := range wanted {
+		if _, ok := have[reaction.Key()]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func pageMessageHistory(base []domain.Message, filter domain.MessageFilter, limit int) []domain.Message {

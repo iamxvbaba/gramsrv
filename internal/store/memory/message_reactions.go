@@ -22,6 +22,9 @@ func (s *MessageStore) SetMessageReactions(_ context.Context, req domain.SetPriv
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req.Peer.ID == req.UserID {
+		return s.setSavedMessageTagsLocked(req)
+	}
 	var target domain.Message
 	for _, msg := range s.m[req.UserID] {
 		if msg.ID == req.MessageID && msg.Peer == req.Peer {
@@ -119,6 +122,10 @@ func (s *MessageStore) privateReactionResultLocked(uid int64) domain.PrivateMess
 }
 
 func (s *MessageStore) privateMessageReactionsForMessageLocked(msg domain.Message) domain.ChannelMessageReactions {
+	if msg.OwnerUserID != 0 &&
+		msg.Peer == (domain.Peer{Type: domain.PeerTypeUser, ID: msg.OwnerUserID}) {
+		return s.savedMessageTagsForMessageLocked(msg)
+	}
 	reactions := s.privateMessageReactionsLocked(msg.UID, msg.OwnerUserID)
 	if len(reactions.Recent) == 0 || msg.From.ID == 0 {
 		return reactions
@@ -232,6 +239,11 @@ func writeMessageReactionsHash(h hash.Hash64, reactions *domain.ChannelMessageRe
 		return
 	}
 	var buf [16]byte
+	if reactions.AsTags {
+		_, _ = h.Write([]byte{1})
+	} else {
+		_, _ = h.Write([]byte{0})
+	}
 	for _, item := range reactions.Results {
 		_, _ = h.Write([]byte(item.Reaction.Type))
 		_, _ = h.Write([]byte{0})

@@ -682,6 +682,14 @@ func (s projectionMessageStore) GetMessageReactions(context.Context, domain.Priv
 	return domain.PrivateMessageReactionsResult{}, nil
 }
 
+func (s projectionMessageStore) ListSavedReactionTags(context.Context, domain.SavedReactionTagsRequest) ([]domain.SavedReactionTag, error) {
+	return nil, nil
+}
+
+func (s projectionMessageStore) UpsertSavedReactionTag(context.Context, domain.SavedReactionTag) error {
+	return nil
+}
+
 func (s projectionMessageStore) VoteMessagePoll(context.Context, domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error) {
 	return domain.PrivateMessagePollResult{}, nil
 }

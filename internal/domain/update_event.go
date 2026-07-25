@@ -18,11 +18,10 @@ const (
 	// UpdateEventWebPage 映射 updateWebPage：异步解析完成后把消息里的 pending 链接预览
 	// 占位就地替换为已解析卡片。携带账号 pts（非 LacksWirePts），消息快照经 box JOIN 重建，
 	// 故 difference/dispatch 与 edit_message 同走通用消息事件路径，仅 tg 投影构造器不同。
-	UpdateEventWebPage          UpdateEventType = "web_page"
-	UpdateEventMessageReactions UpdateEventType = "message_reactions"
+	UpdateEventWebPage UpdateEventType = "web_page"
 	// UpdateEventMessagePoll 映射 updateMessagePoll（投票/关闭后 poll 状态变化；
 	// Message 为该 owner 视角消息，media 在 difference 重放时按 viewer 重新 enrich）。
-	// 与 reaction 同款：占账号 pts 但 TL 构造器无 pts，见 LacksWirePts。
+	// 当前历史实现仍将 poll 作为待复核的 LacksWirePts 事件。
 	UpdateEventMessagePoll      UpdateEventType = "message_poll"
 	UpdateEventContactsReset    UpdateEventType = "contacts_reset"
 	UpdateEventDialogPinned     UpdateEventType = "dialog_pinned"
@@ -126,8 +125,7 @@ type UpdateEvent struct {
 // 下一条真正带 pts 的更新会被判为空洞。
 func (e UpdateEvent) LacksWirePts() bool {
 	switch e.Type {
-	case UpdateEventMessageReactions,
-		UpdateEventMessagePoll,
+	case UpdateEventMessagePoll,
 		UpdateEventDraftMessage,
 		UpdateEventChannelState,
 		UpdateEventContactsReset,

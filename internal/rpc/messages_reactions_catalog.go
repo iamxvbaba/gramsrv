@@ -2,10 +2,13 @@ package rpc
 
 import (
 	"context"
-	"github.com/iamxvbaba/td/tg"
-	"hash/fnv"
-	"strconv"
+	"crypto/md5"
+	"encoding/binary"
+	"sort"
 	"strings"
+
+	"github.com/iamxvbaba/td/tg"
+
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
@@ -69,33 +72,34 @@ func (r *Router) onMessagesGetSavedReactionTags(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, internalErr()
 	}
+	var savedPeer domain.Peer
 	if peer, ok := req.GetPeer(); ok && peer != nil {
-		if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, peer); err != nil {
+		savedPeer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, peer)
+		if err != nil {
 			return nil, err
 		}
+	}
+	if r.deps.Messages == nil {
 		return savedReactionTagsEmpty(req.Hash), nil
 	}
-	if r.deps.Channels == nil {
-		return savedReactionTagsEmpty(req.Hash), nil
-	}
-	tags, err := r.deps.Channels.SavedReactionTags(ctx, userID, domain.MaxSavedReactionTags)
+	tags, err := r.deps.Messages.SavedReactionTags(ctx, userID, savedPeer, domain.MaxSavedReactionTags)
 	if err != nil {
-		return nil, channelInvalidErr(err)
+		return nil, messageReactionErr(err)
 	}
-	return savedReactionTagsFromDomain(tags, req.Hash), nil
+	return savedReactionTagsFromDomain(tags, req.Hash, savedPeer.ID == 0), nil
 }
 
 func (r *Router) onMessagesGetDefaultTagReactions(ctx context.Context, hash int64) (tg.MessagesReactionsClass, error) {
 	if _, _, err := r.currentUserID(ctx); err != nil {
 		return nil, internalErr()
 	}
-	return messagesReactionsEmpty(hash), nil
+	return messagesReactionsFromDomain(
+		r.reactionsWithCatalogFallback(ctx, nil, domain.MaxChannelMessageReactionsPerUser),
+		hash,
+	), nil
 }
 
-func messagesReactionsEmpty(hash int64) tg.MessagesReactionsClass {
-	if hash != 0 {
-		return &tg.MessagesReactionsNotModified{}
-	}
+func messagesReactionsEmpty(_ int64) tg.MessagesReactionsClass {
 	return &tg.MessagesReactions{
 		Hash:      0,
 		Reactions: []tg.ReactionClass{},
@@ -127,8 +131,15 @@ func savedReactionTagsEmpty(_ int64) tg.MessagesSavedReactionTagsClass {
 	}
 }
 
-func savedReactionTagsFromDomain(tags []domain.SavedReactionTag, requestHash int64) tg.MessagesSavedReactionTagsClass {
-	hash := savedReactionTagListHash(tags)
+func savedReactionTagsFromDomain(tags []domain.SavedReactionTag, requestHash int64, includeTitles bool) tg.MessagesSavedReactionTagsClass {
+	tags = append([]domain.SavedReactionTag(nil), tags...)
+	sort.SliceStable(tags, func(i, j int) bool {
+		if tags[i].Count != tags[j].Count {
+			return tags[i].Count > tags[j].Count
+		}
+		return savedReactionTagLongID(tags[i].Reaction) > savedReactionTagLongID(tags[j].Reaction)
+	})
+	hash := savedReactionTagListHash(tags, includeTitles)
 	if hash != 0 && requestHash == hash {
 		return &tg.MessagesSavedReactionTagsNotModified{}
 	}
@@ -142,7 +153,7 @@ func savedReactionTagsFromDomain(tags []domain.SavedReactionTag, requestHash int
 			Reaction: reaction,
 			Count:    tag.Count,
 		}
-		if tag.Title != "" {
+		if includeTitles && tag.Title != "" {
 			item.SetTitle(tag.Title)
 		}
 		out = append(out, item)
@@ -239,38 +250,47 @@ func messageReactionListHash(reactions []domain.MessageReaction) int64 {
 	if len(reactions) == 0 {
 		return 0
 	}
-	h := fnv.New64a()
+	var hash uint64
 	for _, reaction := range reactions {
-		_, _ = h.Write([]byte(reaction.Type))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(reaction.Value()))
-		_, _ = h.Write([]byte{0xff})
+		hash = telegramListHashNext(hash, savedReactionTagLongID(reaction))
 	}
-	sum := int64(h.Sum64() & 0x7fffffffffffffff)
-	if sum == 0 {
-		return 1
-	}
-	return sum
+	return int64(hash)
 }
 
-func savedReactionTagListHash(tags []domain.SavedReactionTag) int64 {
+func savedReactionTagListHash(tags []domain.SavedReactionTag, includeTitles bool) int64 {
 	if len(tags) == 0 {
 		return 0
 	}
-	h := fnv.New64a()
+	var hash uint64
 	for _, tag := range tags {
-		_, _ = h.Write([]byte(tag.Reaction.Type))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(tag.Reaction.Value()))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(tag.Title))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(strconv.Itoa(tag.Count)))
-		_, _ = h.Write([]byte{0xff})
+		hash = telegramListHashNext(hash, savedReactionTagLongID(tag.Reaction))
+		if includeTitles && tag.Title != "" {
+			hash = telegramListHashNext(hash, md5LongID(tag.Title))
+		}
+		hash = telegramListHashNext(hash, uint64(tag.Count))
 	}
-	sum := int64(h.Sum64() & 0x7fffffffffffffff)
-	if sum == 0 {
-		return 1
+	return int64(hash)
+}
+
+func savedReactionTagLongID(reaction domain.MessageReaction) uint64 {
+	switch reaction.Type {
+	case domain.MessageReactionEmoji:
+		return md5LongID(strings.ReplaceAll(reaction.Emoticon, "\ufe0f", ""))
+	case domain.MessageReactionCustomEmoji:
+		return uint64(reaction.DocumentID)
+	default:
+		return 0
 	}
-	return sum
+}
+
+func md5LongID(value string) uint64 {
+	sum := md5.Sum([]byte(value))
+	return binary.BigEndian.Uint64(sum[:8])
+}
+
+func telegramListHashNext(hash, id uint64) uint64 {
+	hash ^= hash >> 21
+	hash ^= hash << 35
+	hash ^= hash >> 4
+	return hash + id
 }

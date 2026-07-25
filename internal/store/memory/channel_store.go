@@ -76,7 +76,6 @@ type ChannelStore struct {
 	paidReactions          map[int64]map[int]map[int64]memoryPaidReaction
 	top                    map[int64]map[string]domain.TopMessageReaction
 	recent                 map[int64]map[string]domain.RecentMessageReaction
-	savedTags              map[int64]map[string]domain.SavedReactionTag
 	mentions               map[int64]map[int64]map[int]memoryMention
 	msgViews               map[int64]map[int]int
 	msgViewers             map[int64]map[int]map[int64]struct{}
@@ -124,7 +123,6 @@ func NewChannelStore() *ChannelStore {
 		paidReactions:          make(map[int64]map[int]map[int64]memoryPaidReaction),
 		top:                    make(map[int64]map[string]domain.TopMessageReaction),
 		recent:                 make(map[int64]map[string]domain.RecentMessageReaction),
-		savedTags:              make(map[int64]map[string]domain.SavedReactionTag),
 		mentions:               make(map[int64]map[int64]map[int]memoryMention),
 		msgViews:               make(map[int64]map[int]int),
 		msgViewers:             make(map[int64]map[int]map[int64]struct{}),

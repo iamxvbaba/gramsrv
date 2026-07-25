@@ -632,54 +632,6 @@ func (s *ChannelStore) ClearRecentMessageReactions(_ context.Context, userID int
 	return nil
 }
 
-func (s *ChannelStore) ListSavedReactionTags(_ context.Context, userID int64, limit int) ([]domain.SavedReactionTag, error) {
-	if userID == 0 {
-		return nil, domain.ErrChannelInvalid
-	}
-	if limit <= 0 {
-		return []domain.SavedReactionTag{}, nil
-	}
-	if limit > domain.MaxSavedReactionTags {
-		limit = domain.MaxSavedReactionTags
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	rows := make([]domain.SavedReactionTag, 0, len(s.savedTags[userID]))
-	for _, row := range s.savedTags[userID] {
-		rows = append(rows, row)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Count != rows[j].Count {
-			return rows[i].Count > rows[j].Count
-		}
-		if rows[i].Reaction.Type != rows[j].Reaction.Type {
-			return rows[i].Reaction.Type < rows[j].Reaction.Type
-		}
-		return rows[i].Reaction.Value() < rows[j].Reaction.Value()
-	})
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
-	return rows, nil
-}
-
-func (s *ChannelStore) UpsertSavedReactionTag(_ context.Context, tag domain.SavedReactionTag) error {
-	if tag.UserID == 0 || tag.Reaction.Type != domain.MessageReactionEmoji || strings.TrimSpace(tag.Reaction.Emoticon) == "" {
-		return domain.ErrChannelInvalid
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.savedTags[tag.UserID] == nil {
-		s.savedTags[tag.UserID] = make(map[string]domain.SavedReactionTag)
-	}
-	tag.Reaction.Emoticon = strings.TrimSpace(tag.Reaction.Emoticon)
-	if tag.Count < 0 {
-		tag.Count = 0
-	}
-	s.savedTags[tag.UserID][messageReactionKey(tag.Reaction)] = tag
-	return nil
-}
-
 func (s *ChannelStore) ListChannelUnreadReactions(_ context.Context, viewerUserID int64, filter domain.ChannelUnreadReactionsFilter) (domain.ChannelHistory, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

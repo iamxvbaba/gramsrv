@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/jackc/pgx/v5"
+
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres/sqlcgen"
-	"time"
 )
 
 func (s *MessageStore) GetByIDs(ctx context.Context, userID int64, ids []int) (domain.MessageList, error) {
@@ -92,6 +94,7 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 		savedPeerType = string(filter.SavedPeer.Type)
 		savedPeerID = filter.SavedPeer.ID
 	}
+	savedReactionKeys := postgresSavedReactionKeys(filter.SavedReactions)
 	// add_offset>=0 是 backward 热路径(初始加载/上滑翻页,占 getHistory 绝大多数)。
 	// 走扁平静态查询 ListMessagesBackward:规划仅单 index scan + 2 LEFT JOIN,避免
 	// ListMessagesByUser 大 CTE 把 4 个分支+total 全树规划(6.7ms→~1ms)。与 CTE
@@ -100,23 +103,26 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 	var rows []sqlcgen.ListMessagesByUserRow
 	if addOffset >= 0 {
 		bw, err := s.q.ListMessagesBackward(ctx, sqlcgen.ListMessagesBackwardParams{
-			OwnerUserID:     userID,
-			HasPeer:         filter.HasPeer,
-			PeerType:        string(filter.Peer.Type),
-			PeerID:          filter.Peer.ID,
-			RestrictPeerIds: filter.RestrictPeerIDs,
-			PeerIds:         filter.PeerIDs,
-			Query:           filter.Query,
-			MaxID:           pgInt32NonNegative(filter.MaxID),
-			MinID:           pgInt32NonNegative(filter.MinID),
-			PinnedOnly:      filter.PinnedOnly,
-			MusicOnly:       filter.MusicOnly,
-			SavedPeerType:   savedPeerType,
-			SavedPeerID:     savedPeerID,
-			OffsetDate:      pgInt32NonNegative(filter.OffsetDate),
-			OffsetID:        pgInt32NonNegative(filter.OffsetID),
-			RowOffset:       pgInt32Bounded(addOffset),
-			LimitCount:      int32(queryLimit),
+			OwnerUserID:       userID,
+			HasPeer:           filter.HasPeer,
+			PeerType:          string(filter.Peer.Type),
+			PeerID:            filter.Peer.ID,
+			RestrictPeerIds:   filter.RestrictPeerIDs,
+			PeerIds:           filter.PeerIDs,
+			Query:             filter.Query,
+			MinDate:           pgInt32NonNegative(filter.MinDate),
+			MaxDate:           pgInt32NonNegative(filter.MaxDate),
+			MaxID:             pgInt32NonNegative(filter.MaxID),
+			MinID:             pgInt32NonNegative(filter.MinID),
+			PinnedOnly:        filter.PinnedOnly,
+			MusicOnly:         filter.MusicOnly,
+			SavedPeerType:     savedPeerType,
+			SavedPeerID:       savedPeerID,
+			SavedReactionKeys: savedReactionKeys,
+			OffsetDate:        pgInt32NonNegative(filter.OffsetDate),
+			OffsetID:          pgInt32NonNegative(filter.OffsetID),
+			RowOffset:         pgInt32Bounded(addOffset),
+			LimitCount:        int32(queryLimit),
 		})
 		if err != nil {
 			return domain.MessageList{}, fmt.Errorf("list messages (backward): %w", err)
@@ -127,19 +133,22 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 		}
 		if filter.NeedTotalCount {
 			total, err := s.q.CountMessagesByUser(ctx, sqlcgen.CountMessagesByUserParams{
-				OwnerUserID:     userID,
-				HasPeer:         filter.HasPeer,
-				PeerType:        string(filter.Peer.Type),
-				PeerID:          filter.Peer.ID,
-				RestrictPeerIds: filter.RestrictPeerIDs,
-				PeerIds:         filter.PeerIDs,
-				Query:           filter.Query,
-				MaxID:           pgInt32NonNegative(filter.MaxID),
-				MinID:           pgInt32NonNegative(filter.MinID),
-				PinnedOnly:      filter.PinnedOnly,
-				MusicOnly:       filter.MusicOnly,
-				SavedPeerType:   savedPeerType,
-				SavedPeerID:     savedPeerID,
+				OwnerUserID:       userID,
+				HasPeer:           filter.HasPeer,
+				PeerType:          string(filter.Peer.Type),
+				PeerID:            filter.Peer.ID,
+				RestrictPeerIds:   filter.RestrictPeerIDs,
+				PeerIds:           filter.PeerIDs,
+				Query:             filter.Query,
+				MinDate:           pgInt32NonNegative(filter.MinDate),
+				MaxDate:           pgInt32NonNegative(filter.MaxDate),
+				MaxID:             pgInt32NonNegative(filter.MaxID),
+				MinID:             pgInt32NonNegative(filter.MinID),
+				PinnedOnly:        filter.PinnedOnly,
+				MusicOnly:         filter.MusicOnly,
+				SavedPeerType:     savedPeerType,
+				SavedPeerID:       savedPeerID,
+				SavedReactionKeys: savedReactionKeys,
 			})
 			if err != nil {
 				return domain.MessageList{}, fmt.Errorf("count messages: %w", err)
@@ -153,24 +162,27 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 	} else {
 		var err error
 		rows, err = s.q.ListMessagesByUser(ctx, sqlcgen.ListMessagesByUserParams{
-			OwnerUserID:     userID,
-			HasPeer:         filter.HasPeer,
-			PeerType:        string(filter.Peer.Type),
-			PeerID:          filter.Peer.ID,
-			RestrictPeerIds: filter.RestrictPeerIDs,
-			PeerIds:         filter.PeerIDs,
-			Query:           filter.Query,
-			OffsetID:        pgInt32NonNegative(filter.OffsetID),
-			OffsetDate:      pgInt32NonNegative(filter.OffsetDate),
-			MaxID:           pgInt32NonNegative(filter.MaxID),
-			MinID:           pgInt32NonNegative(filter.MinID),
-			AddOffset:       pgInt32Bounded(addOffset),
-			LimitCount:      int32(queryLimit),
-			PinnedOnly:      filter.PinnedOnly,
-			MusicOnly:       filter.MusicOnly,
-			NeedTotalCount:  filter.NeedTotalCount,
-			SavedPeerType:   savedPeerType,
-			SavedPeerID:     savedPeerID,
+			OwnerUserID:       userID,
+			HasPeer:           filter.HasPeer,
+			PeerType:          string(filter.Peer.Type),
+			PeerID:            filter.Peer.ID,
+			RestrictPeerIds:   filter.RestrictPeerIDs,
+			PeerIds:           filter.PeerIDs,
+			Query:             filter.Query,
+			MinDate:           pgInt32NonNegative(filter.MinDate),
+			MaxDate:           pgInt32NonNegative(filter.MaxDate),
+			OffsetID:          pgInt32NonNegative(filter.OffsetID),
+			OffsetDate:        pgInt32NonNegative(filter.OffsetDate),
+			MaxID:             pgInt32NonNegative(filter.MaxID),
+			MinID:             pgInt32NonNegative(filter.MinID),
+			AddOffset:         pgInt32Bounded(addOffset),
+			LimitCount:        int32(queryLimit),
+			PinnedOnly:        filter.PinnedOnly,
+			MusicOnly:         filter.MusicOnly,
+			NeedTotalCount:    filter.NeedTotalCount,
+			SavedPeerType:     savedPeerType,
+			SavedPeerID:       savedPeerID,
+			SavedReactionKeys: savedReactionKeys,
 		})
 		if err != nil {
 			return domain.MessageList{}, fmt.Errorf("list messages: %w", err)
@@ -271,6 +283,16 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 	}
 	out.Hash = messageListHash(out.Messages)
 	return out, nil
+}
+
+func postgresSavedReactionKeys(reactions []domain.MessageReaction) []string {
+	out := make([]string, 0, len(reactions))
+	for _, reaction := range reactions {
+		if reaction.Valid() {
+			out = append(out, string(reaction.Type)+":"+reaction.Value())
+		}
+	}
+	return out
 }
 
 func (s *MessageStore) ReadHistory(ctx context.Context, req domain.ReadHistoryRequest) (res domain.ReadHistoryResult, err error) {

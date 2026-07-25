@@ -29,6 +29,9 @@ func (s *MessageStore) SetMessageReactions(ctx context.Context, req domain.SetPr
 			return domain.PrivateMessageReactionsResult{}, domain.ErrMessageIDInvalid
 		}
 	}
+	if req.Peer.ID == req.UserID {
+		return s.setSavedMessageTags(ctx, req)
+	}
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.PrivateMessageReactionsResult{}, fmt.Errorf("set message reactions: db does not support transactions")
@@ -240,10 +243,17 @@ func (s *MessageStore) enrichPrivateMessageReactions(ctx context.Context, db sql
 	if err := s.enrichPrivateMessagePolls(ctx, db, viewerUserID, messages); err != nil {
 		return err
 	}
+	if err := s.enrichSavedMessageTags(ctx, db, messages); err != nil {
+		return err
+	}
 	keySet := make(map[privateMessageReactionKey]struct{}, len(messages))
 	senderIDs := make([]int64, 0, len(messages))
 	privateIDs := make([]int64, 0, len(messages))
 	for _, msg := range messages {
+		if msg.OwnerUserID != 0 &&
+			msg.Peer == (domain.Peer{Type: domain.PeerTypeUser, ID: msg.OwnerUserID}) {
+			continue
+		}
 		if msg.UID == 0 || msg.From.ID == 0 {
 			continue
 		}
@@ -420,6 +430,11 @@ func writeMessageReactionsHash(h hash.Hash64, reactions *domain.ChannelMessageRe
 		return
 	}
 	var buf [16]byte
+	if reactions.AsTags {
+		_, _ = h.Write([]byte{1})
+	} else {
+		_, _ = h.Write([]byte{0})
+	}
 	for _, item := range reactions.Results {
 		_, _ = h.Write([]byte(item.Reaction.Type))
 		_, _ = h.Write([]byte{0})

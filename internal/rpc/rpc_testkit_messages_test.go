@@ -27,6 +27,10 @@ type captureMessages struct {
 	setReactionRes    domain.PrivateMessageReactionsResult
 	getReactionReq    domain.PrivateMessageReactionsRequest
 	getReactionRes    domain.PrivateMessageReactionsResult
+	savedTagPeer      domain.Peer
+	savedTags         []domain.SavedReactionTag
+	updatedSavedTag   domain.SavedReactionTag
+	savedTagErr       error
 	getMessagesCalls  int
 	getMessagesIDs    [][]int
 	getMessagesListed bool
@@ -432,7 +436,12 @@ func (s *captureMessages) SetMessageReactions(_ context.Context, userID int64, r
 	s.setReactionReq = req
 	if len(s.setReactionRes.Messages) == 0 {
 		if len(req.Reactions) == 0 {
-			reactions := domain.ChannelMessageReactions{CanSeeList: true, Results: []domain.ChannelMessageReactionCount{}, Recent: []domain.ChannelMessagePeerReaction{}}
+			reactions := domain.ChannelMessageReactions{
+				CanSeeList: req.Peer.ID != userID,
+				AsTags:     req.Peer.ID == userID,
+				Results:    []domain.ChannelMessageReactionCount{},
+				Recent:     []domain.ChannelMessagePeerReaction{},
+			}
 			s.setReactionRes = domain.PrivateMessageReactionsResult{
 				Messages: []domain.Message{{
 					ID:          req.MessageID,
@@ -447,20 +456,23 @@ func (s *captureMessages) SetMessageReactions(_ context.Context, userID int64, r
 			return s.setReactionRes, nil
 		}
 		reactions := domain.ChannelMessageReactions{
-			CanSeeList: true,
+			CanSeeList: req.Peer.ID != userID,
+			AsTags:     req.Peer.ID == userID,
 			Results: []domain.ChannelMessageReactionCount{{
 				Reaction:    req.Reactions[0],
 				Count:       1,
 				ChosenOrder: 1,
 			}},
-			Recent: []domain.ChannelMessagePeerReaction{{
+		}
+		if req.Peer.ID != userID {
+			reactions.Recent = []domain.ChannelMessagePeerReaction{{
 				UserID:      userID,
 				Reaction:    req.Reactions[0],
 				My:          true,
 				Big:         req.Big,
 				ChosenOrder: 1,
 				Date:        req.Date,
-			}},
+			}}
 		}
 		s.setReactionRes = domain.PrivateMessageReactionsResult{
 			Messages: []domain.Message{{
@@ -501,6 +513,22 @@ func (s *captureMessages) GetMessageReactions(_ context.Context, userID int64, r
 		}
 	}
 	return s.getReactionRes, nil
+}
+
+func (s *captureMessages) SavedReactionTags(_ context.Context, _ int64, savedPeer domain.Peer, _ int) ([]domain.SavedReactionTag, error) {
+	s.savedTagPeer = savedPeer
+	return append([]domain.SavedReactionTag(nil), s.savedTags...), s.savedTagErr
+}
+
+func (s *captureMessages) UpdateSavedReactionTag(_ context.Context, _ int64, tag domain.SavedReactionTag) error {
+	s.updatedSavedTag = tag
+	for i := range s.savedTags {
+		if s.savedTags[i].Reaction.Key() == tag.Reaction.Key() {
+			s.savedTags[i].Title = tag.Title
+			return s.savedTagErr
+		}
+	}
+	return s.savedTagErr
 }
 
 func (s *captureMessages) EditMessage(_ context.Context, userID int64, req domain.EditMessageRequest) (domain.EditMessageResult, error) {

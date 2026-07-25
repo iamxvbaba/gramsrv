@@ -433,6 +433,31 @@ func (s *Service) GetMessageReactions(ctx context.Context, userID int64, req dom
 	return s.messages.GetMessageReactions(ctx, req)
 }
 
+// SavedReactionTags returns the global or one-sub-dialog Saved Messages tag list.
+func (s *Service) SavedReactionTags(ctx context.Context, userID int64, savedPeer domain.Peer, limit int) ([]domain.SavedReactionTag, error) {
+	if s == nil || s.messages == nil || userID == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > domain.MaxSavedReactionTags {
+		limit = domain.MaxSavedReactionTags
+	}
+	return s.messages.ListSavedReactionTags(ctx, domain.SavedReactionTagsRequest{
+		UserID:    userID,
+		SavedPeer: savedPeer,
+		Limit:     limit,
+	})
+}
+
+// UpdateSavedReactionTag stores or removes the optional global title for one
+// tag that is currently assigned to at least one visible Saved Message.
+func (s *Service) UpdateSavedReactionTag(ctx context.Context, userID int64, tag domain.SavedReactionTag) error {
+	if s == nil || s.messages == nil || userID == 0 || !tag.Reaction.Valid() {
+		return domain.ErrReactionInvalid
+	}
+	tag.UserID = userID
+	return s.messages.UpsertSavedReactionTag(ctx, tag)
+}
+
 // EditMessage 编辑当前账号发出的私聊文本消息。
 func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.EditMessageRequest) (domain.EditMessageResult, error) {
 	if s == nil || s.messages == nil || userID == 0 {

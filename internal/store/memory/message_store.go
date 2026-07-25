@@ -14,6 +14,8 @@ type MessageStore struct {
 	nextPts             map[int64]int
 	readOutboxDates     map[readOutboxDateKey]int
 	privateReactions    map[int64]map[int64][]domain.ChannelMessagePeerReaction
+	savedMessageTags    map[int64]map[int][]domain.MessageReaction
+	savedTagTitles      map[int64]map[string]string
 	privateSendDedup    map[privateSendDedupKey]privateSendDedupRecord
 	loginCodeDeliveries map[[32]byte]loginCodeDeliveryRecord
 	albumGroups         map[albumGroupKey]albumGroupRecord
@@ -44,6 +46,8 @@ func NewMessageStore(dialogs ...*DialogStore) *MessageStore {
 		nextPts:             make(map[int64]int),
 		readOutboxDates:     make(map[readOutboxDateKey]int),
 		privateReactions:    make(map[int64]map[int64][]domain.ChannelMessagePeerReaction),
+		savedMessageTags:    make(map[int64]map[int][]domain.MessageReaction),
+		savedTagTitles:      make(map[int64]map[string]string),
 		privateSendDedup:    make(map[privateSendDedupKey]privateSendDedupRecord),
 		loginCodeDeliveries: make(map[[32]byte]loginCodeDeliveryRecord),
 		albumGroups:         make(map[albumGroupKey]albumGroupRecord),

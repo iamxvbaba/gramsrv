@@ -444,6 +444,9 @@ func tgMessageReactions(viewerUserID int64, in *domain.ChannelMessageReactions) 
 	if in.CanSeeList {
 		out.SetCanSeeList(true)
 	}
+	if in.AsTags {
+		out.SetReactionsAsTags(true)
+	}
 	for _, item := range in.Results {
 		reaction := tgMessageReaction(item.Reaction)
 		if reaction == nil || item.Count <= 0 {

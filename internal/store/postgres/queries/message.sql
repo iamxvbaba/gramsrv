@@ -545,6 +545,8 @@ base AS NOT MATERIALIZED (
       sqlc.arg(query)::text = ''
       OR m.body ILIKE ('%' || sqlc.arg(query)::text || '%')
     )
+    AND (sqlc.arg(min_date)::int <= 0 OR m.message_date > sqlc.arg(min_date)::int)
+    AND (sqlc.arg(max_date)::int <= 0 OR m.message_date < sqlc.arg(max_date)::int)
     AND (sqlc.arg(max_id)::int <= 0 OR m.box_id < sqlc.arg(max_id)::int)
     AND (sqlc.arg(min_id)::int <= 0 OR m.box_id > sqlc.arg(min_id)::int)
     AND (NOT sqlc.arg(pinned_only)::boolean OR m.pinned)
@@ -563,6 +565,17 @@ base AS NOT MATERIALIZED (
     AND (
       sqlc.arg(saved_peer_type)::text = ''
       OR (m.saved_peer_type = sqlc.arg(saved_peer_type)::text AND m.saved_peer_id = sqlc.arg(saved_peer_id)::bigint)
+    )
+    AND (
+      cardinality(sqlc.arg(saved_reaction_keys)::text[]) = 0
+      OR EXISTS (
+        SELECT 1
+        FROM saved_message_reaction_tags tag
+        WHERE tag.user_id = m.owner_user_id
+          AND tag.message_box_id = m.box_id
+          AND (tag.reaction_type || ':' || tag.reaction_value)
+              = ANY(sqlc.arg(saved_reaction_keys)::text[])
+      )
     )
 ),
 total AS (
@@ -810,6 +823,8 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     sqlc.arg(query)::text = ''
     OR m.body ILIKE ('%' || sqlc.arg(query)::text || '%')
   )
+  AND (sqlc.arg(min_date)::int <= 0 OR m.message_date > sqlc.arg(min_date)::int)
+  AND (sqlc.arg(max_date)::int <= 0 OR m.message_date < sqlc.arg(max_date)::int)
   AND (sqlc.arg(max_id)::int <= 0 OR m.box_id < sqlc.arg(max_id)::int)
   AND (sqlc.arg(min_id)::int <= 0 OR m.box_id > sqlc.arg(min_id)::int)
   AND (NOT sqlc.arg(pinned_only)::boolean OR m.pinned)
@@ -828,6 +843,17 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND (
     sqlc.arg(saved_peer_type)::text = ''
     OR (m.saved_peer_type = sqlc.arg(saved_peer_type)::text AND m.saved_peer_id = sqlc.arg(saved_peer_id)::bigint)
+  )
+  AND (
+    cardinality(sqlc.arg(saved_reaction_keys)::text[]) = 0
+    OR EXISTS (
+      SELECT 1
+      FROM saved_message_reaction_tags tag
+      WHERE tag.user_id = m.owner_user_id
+        AND tag.message_box_id = m.box_id
+        AND (tag.reaction_type || ':' || tag.reaction_value)
+            = ANY(sqlc.arg(saved_reaction_keys)::text[])
+    )
   )
   AND (
     (sqlc.arg(offset_date)::int > 0 AND m.message_date < sqlc.arg(offset_date)::int)
@@ -856,6 +882,8 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     sqlc.arg(query)::text = ''
     OR m.body ILIKE ('%' || sqlc.arg(query)::text || '%')
   )
+  AND (sqlc.arg(min_date)::int <= 0 OR m.message_date > sqlc.arg(min_date)::int)
+  AND (sqlc.arg(max_date)::int <= 0 OR m.message_date < sqlc.arg(max_date)::int)
   AND (sqlc.arg(max_id)::int <= 0 OR m.box_id < sqlc.arg(max_id)::int)
   AND (sqlc.arg(min_id)::int <= 0 OR m.box_id > sqlc.arg(min_id)::int)
   AND (NOT sqlc.arg(pinned_only)::boolean OR m.pinned)
@@ -874,6 +902,17 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND (
     sqlc.arg(saved_peer_type)::text = ''
     OR (m.saved_peer_type = sqlc.arg(saved_peer_type)::text AND m.saved_peer_id = sqlc.arg(saved_peer_id)::bigint)
+  )
+  AND (
+    cardinality(sqlc.arg(saved_reaction_keys)::text[]) = 0
+    OR EXISTS (
+      SELECT 1
+      FROM saved_message_reaction_tags tag
+      WHERE tag.user_id = m.owner_user_id
+        AND tag.message_box_id = m.box_id
+        AND (tag.reaction_type || ':' || tag.reaction_value)
+            = ANY(sqlc.arg(saved_reaction_keys)::text[])
+    )
   );
 
 -- name: GetMessageBoxesByIDs :many

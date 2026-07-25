@@ -802,8 +802,11 @@ type ChannelMessagePeerReaction struct {
 // ChannelMessageReactions is the read model carried by channel messages and reaction updates.
 type ChannelMessageReactions struct {
 	CanSeeList bool
-	Results    []ChannelMessageReactionCount
-	Recent     []ChannelMessagePeerReaction
+	// AsTags marks reactions on Saved Messages as private message tags.
+	// It is never set for ordinary private/channel reactions.
+	AsTags  bool
+	Results []ChannelMessageReactionCount
+	Recent  []ChannelMessagePeerReaction
 	// Paid 是付费 reaction（Stars）聚合（nil = 无）；读路径从 channel_message_paid_reactions
 	// 填充、tg 转换注入 ReactionPaid 计数 + top reactors。与普通 reaction 分表存储。
 	Paid *ChannelMessagePaidReactions
@@ -921,6 +924,14 @@ type SavedReactionTag struct {
 	Reaction MessageReaction
 	Title    string
 	Count    int
+}
+
+// SavedReactionTagsRequest lists account-level Saved Messages tags. SavedPeer
+// is zero for the global list and non-zero for one Saved Messages sub-dialog.
+type SavedReactionTagsRequest struct {
+	UserID    int64
+	SavedPeer Peer
+	Limit     int
 }
 
 // ChannelDiscussionRef links a broadcast post to its discussion megagroup root message.

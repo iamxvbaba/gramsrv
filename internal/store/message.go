@@ -16,6 +16,8 @@ type MessageStore interface {
 	GetOutboxReadDate(ctx context.Context, req domain.OutboxReadDateRequest) (int, error)
 	SetMessageReactions(ctx context.Context, req domain.SetPrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error)
 	GetMessageReactions(ctx context.Context, req domain.PrivateMessageReactionsRequest) (domain.PrivateMessageReactionsResult, error)
+	ListSavedReactionTags(ctx context.Context, req domain.SavedReactionTagsRequest) ([]domain.SavedReactionTag, error)
+	UpsertSavedReactionTag(ctx context.Context, tag domain.SavedReactionTag) error
 	VoteMessagePoll(ctx context.Context, req domain.VotePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error)
 	CloseMessagePoll(ctx context.Context, req domain.ClosePrivateMessagePollRequest) (domain.PrivateMessagePollResult, error)
 	EditMessage(ctx context.Context, req domain.EditMessageRequest) (domain.EditMessageResult, error)

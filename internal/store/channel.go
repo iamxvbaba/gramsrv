@@ -77,8 +77,6 @@ type ChannelStore interface {
 	ListTopMessageReactions(ctx context.Context, userID int64, limit int) ([]domain.MessageReaction, error)
 	ListRecentMessageReactions(ctx context.Context, userID int64, limit int) ([]domain.MessageReaction, error)
 	ClearRecentMessageReactions(ctx context.Context, userID int64) error
-	ListSavedReactionTags(ctx context.Context, userID int64, limit int) ([]domain.SavedReactionTag, error)
-	UpsertSavedReactionTag(ctx context.Context, tag domain.SavedReactionTag) error
 	GetPremiumBoostStatus(ctx context.Context, viewerUserID, channelID int64, now int) (domain.PremiumBoostStatus, error)
 	ListPremiumBoosts(ctx context.Context, viewerUserID, channelID int64, gifts bool, offset string, limit, now int) (domain.PremiumBoostList, error)
 	GetPremiumMyBoosts(ctx context.Context, userID int64, now, premiumUntil int) (domain.PremiumMyBoosts, error)

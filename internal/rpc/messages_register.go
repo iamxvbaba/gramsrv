@@ -702,7 +702,10 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err != nil {
 			return nil, internalErr()
 		}
-		filter := r.messageFilterFromSearchRequest(userID, req)
+		filter, err := r.messageFilterFromSearchRequest(ctx, userID, req)
+		if err != nil {
+			return nil, err
+		}
 		if filter.HasPeer && filter.Peer.Type == domain.PeerTypeChannel {
 			if r.deps.Channels == nil {
 				return messagesNotModifiedOrEmpty(req.Hash), nil
