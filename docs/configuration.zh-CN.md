@@ -522,6 +522,7 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_CALL_RING_TIMEOUT` | duration / `90s` | 私聊通话 ringing/accepted 服务端兜底超时，应与客户端 `callRingTimeoutMs` 保持一致。 |
 | `TELESRV_CALL_TOMBSTONE_TTL` | duration / `60s` | 终态通话 tombstone 的幂等/晚到 RPC 吸收窗口。 |
 | `TELESRV_CALL_MAX_ACTIVE_PER_USER` | int / `4` | 单用户非终态私聊通话上限；非正值由 phone service 归一。 |
+| `TELESRV_CALL_REGISTRY_MAX_ENTRIES` | int / `10000` | 进程级私聊通话 registry 硬上限；满载返回 `CALL_OCCUPY_FAILED`，不按年龄驱逐已建立通话。 |
 | `TELESRV_CALL_SIGNALING_MAX_BYTES` | int bytes / `65536` | 单条 `phone.sendSignalingData` 载荷上限。 |
 | `TELESRV_CALL_SIGNALING_RATE` | int / `50` | 单通话每秒信令转发上限，超限静默丢弃。 |
 | `TELESRV_CALL_EXPIRY_INTERVAL` | duration / `1s` | 通话 expiry dispatcher 轮询间隔。 |

@@ -319,6 +319,8 @@ type Config struct {
 	CallTombstoneTTL time.Duration
 	// CallMaxActivePerUser 是单用户并发非终态通话上限。
 	CallMaxActivePerUser int
+	// CallRegistryMaxEntries 是进程内通话 registry 的全局硬上限。
+	CallRegistryMaxEntries int
 	// CallSignalingMaxBytes 是 phone.sendSignalingData 单条载荷上限。
 	CallSignalingMaxBytes int
 	// CallSignalingRate 是单通话每秒信令转发上限（超限静默丢弃）。
@@ -618,12 +620,13 @@ func Load() (Config, error) {
 		UploadInFlightMaxParts: envIntOr("TELESRV_UPLOAD_INFLIGHT_MAX_PARTS", 8000),
 		UploadInFlightMaxFiles: envIntOr("TELESRV_UPLOAD_INFLIGHT_MAX_FILES", 64),
 
-		CallRingTimeout:       envDurationOr("TELESRV_CALL_RING_TIMEOUT", 90*time.Second),
-		CallTombstoneTTL:      envDurationOr("TELESRV_CALL_TOMBSTONE_TTL", 60*time.Second),
-		CallMaxActivePerUser:  envIntOr("TELESRV_CALL_MAX_ACTIVE_PER_USER", 4),
-		CallSignalingMaxBytes: envIntOr("TELESRV_CALL_SIGNALING_MAX_BYTES", 65536),
-		CallSignalingRate:     envIntOr("TELESRV_CALL_SIGNALING_RATE", 50),
-		CallExpiryInterval:    envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
+		CallRingTimeout:        envDurationOr("TELESRV_CALL_RING_TIMEOUT", 90*time.Second),
+		CallTombstoneTTL:       envDurationOr("TELESRV_CALL_TOMBSTONE_TTL", 60*time.Second),
+		CallMaxActivePerUser:   envIntOr("TELESRV_CALL_MAX_ACTIVE_PER_USER", 4),
+		CallRegistryMaxEntries: envIntOr("TELESRV_CALL_REGISTRY_MAX_ENTRIES", 10_000),
+		CallSignalingMaxBytes:  envIntOr("TELESRV_CALL_SIGNALING_MAX_BYTES", 65536),
+		CallSignalingRate:      envIntOr("TELESRV_CALL_SIGNALING_RATE", 50),
+		CallExpiryInterval:     envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
 		PremiumGrantMonths:               envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
 		PasskeyRPID:                      envOr("TELESRV_PASSKEY_RP_ID", "telesrv.net"),

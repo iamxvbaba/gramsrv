@@ -727,6 +727,7 @@ func run(logger *zap.Logger) error {
 		RingTimeout:            cfg.CallRingTimeout,
 		TombstoneTTL:           cfg.CallTombstoneTTL,
 		MaxActivePerUser:       cfg.CallMaxActivePerUser,
+		MaxRegistryEntries:     cfg.CallRegistryMaxEntries,
 		SignalingRatePerSecond: cfg.CallSignalingRate,
 	})
 	// 私聊端对端加密（Secret Chat）握手状态机 + qts 投递队列（盲中继）。

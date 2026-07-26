@@ -34,6 +34,9 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicAppName != "telesrv" {
 		t.Fatalf("PublicAppName = %q, want telesrv", cfg.PublicAppName)
 	}
+	if cfg.CallRegistryMaxEntries != 10_000 {
+		t.Fatalf("CallRegistryMaxEntries = %d, want 10000", cfg.CallRegistryMaxEntries)
+	}
 }
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {

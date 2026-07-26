@@ -72,6 +72,7 @@ func newTestService(clk clock.Clock, mutate ...func(*Config)) *Service {
 		RingTimeout:            90 * time.Second,
 		TombstoneTTL:           60 * time.Second,
 		MaxActivePerUser:       4,
+		MaxRegistryEntries:     10_000,
 		SignalingRatePerSecond: 50,
 	}
 	for _, fn := range mutate {
@@ -265,9 +266,15 @@ func TestPhoneCallRandomIDIdempotent(t *testing.T) {
 	if err != nil || third.ID == first.ID {
 		t.Fatalf("post-discard request id = %d err=%v, want fresh call", third.ID, err)
 	}
+	// 旧 tombstone 到期回收时，不得误删已改指向新 call 的 random_id 索引。
+	clk.Advance(61 * time.Second)
+	retry, err := s.RequestCall(ctx, 1, req)
+	if err != nil || retry.ID != third.ID {
+		t.Fatalf("retry after old tombstone GC id = %d err=%v, want %d", retry.ID, err, third.ID)
+	}
 }
 
-func TestPhoneCallQuotaAndSweep(t *testing.T) {
+func TestPhoneCallQuotaAndExpiry(t *testing.T) {
 	clk := newTestClock()
 	s := newTestService(clk, func(c *Config) { c.MaxActivePerUser = 2 })
 	ctx := context.Background()
@@ -281,10 +288,53 @@ func TestPhoneCallQuotaAndSweep(t *testing.T) {
 	if _, err := s.RequestCall(ctx, 1, domain.PhoneCallRequest{CalleeID: 99, RandomID: 99, GAHash: gaHash, Protocol: testProtocol()}); !errors.Is(err, ErrOccupyFailed) {
 		t.Fatalf("over quota err = %v, want ErrOccupyFailed", err)
 	}
-	// 双端崩溃兜底：超过 2×RingTimeout 的僵尸通话被纯年龄 GC 回收，配额释放。
-	clk.Advance(181 * time.Second)
+	// 未建立通话只能由 ExpireDue 迁入终态，确保 dispatcher 能推送并落历史；
+	// registry GC 不得静默删除 active call。
+	clk.Advance(91 * time.Second)
+	expired := s.ExpireDue(ctx, clk.Now())
+	if len(expired) != 2 {
+		t.Fatalf("expired = %d, want 2", len(expired))
+	}
 	if _, err := s.RequestCall(ctx, 1, domain.PhoneCallRequest{CalleeID: 99, RandomID: 99, GAHash: gaHash, Protocol: testProtocol()}); err != nil {
-		t.Fatalf("request after sweep: %v", err)
+		t.Fatalf("request after expiry: %v", err)
+	}
+}
+
+func TestPhoneCallRegistryCapacityDoesNotEvictConfirmedCall(t *testing.T) {
+	clk := newTestClock()
+	s := newTestService(clk, func(c *Config) { c.MaxRegistryEntries = 1 })
+	ctx := context.Background()
+	ga, gaHash := testGA()
+
+	confirmed := mustRequest(t, s, 1, 2, gaHash)
+	if _, err := s.AcceptCall(ctx, 2, confirmed.ID, confirmed.AccessHash, testGB(), testProtocol(), domain.SessionRef{}); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if _, _, err := s.ConfirmCall(ctx, 1, confirmed.ID, confirmed.AccessHash, ga, 1, testProtocol()); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+
+	clk.Advance(365 * 24 * time.Hour)
+	if got := s.ExpireDue(ctx, clk.Now()); len(got) != 0 {
+		t.Fatalf("confirmed call expired after one year: %+v", got)
+	}
+	if _, err := s.RequestCall(ctx, 3, domain.PhoneCallRequest{
+		CalleeID: 4, RandomID: 2, GAHash: gaHash, Protocol: testProtocol(),
+	}); !errors.Is(err, ErrOccupyFailed) {
+		t.Fatalf("request at registry capacity err = %v, want ErrOccupyFailed", err)
+	}
+	if snap, ok := s.Lookup(ctx, confirmed.ID, confirmed.AccessHash); !ok || snap.State != domain.PhoneCallStateConfirmed {
+		t.Fatalf("confirmed call = %+v ok=%v, want preserved", snap, ok)
+	}
+
+	if _, _, err := s.DiscardCall(ctx, 1, confirmed.ID, confirmed.AccessHash, domain.PhoneCallDiscardReasonHangup, 1); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	clk.Advance(61 * time.Second)
+	if _, err := s.RequestCall(ctx, 3, domain.PhoneCallRequest{
+		CalleeID: 4, RandomID: 2, GAHash: gaHash, Protocol: testProtocol(),
+	}); err != nil {
+		t.Fatalf("request after tombstone GC: %v", err)
 	}
 }
 
@@ -475,5 +525,14 @@ func TestPhoneCallExpireDue(t *testing.T) {
 	// 幂等：再跑一轮无新增。
 	if got := s.ExpireDue(ctx, clk.Now()); len(got) != 0 {
 		t.Fatalf("second ExpireDue = %d, want 0", len(got))
+	}
+	// 回归：旧 registry GC 会在 2×RingTimeout 后静默删除 Confirmed，导致后续
+	// sendSignalingData/discardCall 返回 CALL_PEER_INVALID。
+	clk.Advance(91 * time.Second)
+	if got := s.ExpireDue(ctx, clk.Now()); len(got) != 0 {
+		t.Fatalf("confirmed call expired after 2×RingTimeout: %+v", got)
+	}
+	if _, ok := s.Lookup(ctx, confirmedCall.ID, confirmedCall.AccessHash); !ok {
+		t.Fatal("confirmed call must remain addressable after 2×RingTimeout")
 	}
 }

@@ -782,6 +782,55 @@ func TestPhoneExpiryDispatcherMissedCall(t *testing.T) {
 	}
 }
 
+func TestPhoneExpiryDispatcherPreservesConfirmedCallPastRingTimeout(t *testing.T) {
+	clk := &phoneTestClock{now: time.Unix(1_700_000_000, 0)}
+	messages := &phoneCaptureMessages{}
+	f := newPhoneFixtureFull(t, clk, messages)
+	peer := establishPhoneCall(t, f)
+
+	// 回归旧的 registry GC：2×RingTimeout 后触发 dispatcher 时，已建立通话
+	// 仍须可供后续 signaling/discard 寻址，不能返回 CALL_PEER_INVALID。
+	clk.Advance(181 * time.Second)
+	dispatcher := NewPhoneExpiryDispatcher(f.router, zaptest.NewLogger(t), time.Second)
+	dispatcher.DispatchOnce(f.ctx)
+	if pushes := f.sessions.records(); len(pushes) != 0 {
+		t.Fatalf("confirmed call expiry pushes = %+v, want none", pushes)
+	}
+	if sent := messages.records(); len(sent) != 0 {
+		t.Fatalf("confirmed call expiry history = %+v, want none", sent)
+	}
+
+	ok, err := f.router.onPhoneSendSignalingData(f.callerCtx(), &tg.PhoneSendSignalingDataRequest{
+		Peer: peer,
+		Data: []byte("after-ring-timeout"),
+	})
+	if err != nil || !ok {
+		t.Fatalf("sendSignalingData after 2×RingTimeout = %v err=%v", ok, err)
+	}
+	pushes := f.sessions.records()
+	if len(pushes) != 1 || pushes[0].rawAuthKeyID != phoneCalleeRawAuthKey || pushes[0].targetSession != phoneCalleeSession {
+		t.Fatalf("signaling pushes = %+v, want callee accepted session", pushes)
+	}
+	updates, ok := pushes[0].msg.(*tg.Updates)
+	if !ok || len(updates.Updates) != 1 {
+		t.Fatalf("signaling payload = %T %+v, want single-update tg.Updates", pushes[0].msg, pushes[0].msg)
+	}
+	signal, ok := updates.Updates[0].(*tg.UpdatePhoneCallSignalingData)
+	if !ok || signal.PhoneCallID != peer.ID || string(signal.Data) != "after-ring-timeout" {
+		t.Fatalf("signaling payload = %+v", updates.Updates[0])
+	}
+	f.sessions.reset()
+
+	if _, err := f.router.onPhoneDiscardCall(f.callerCtx(), &tg.PhoneDiscardCallRequest{
+		Peer: peer, Duration: 181, Reason: &tg.PhoneCallDiscardReasonHangup{},
+	}); err != nil {
+		t.Fatalf("discardCall after 2×RingTimeout: %v", err)
+	}
+	if sent := messages.records(); len(sent) != 1 {
+		t.Fatalf("discard history = %d, want 1", len(sent))
+	}
+}
+
 // TestPhoneCallHistoryThroughRealPipeline 走真实 messages 管线（memory store）验证
 // 通话历史端到端：新 action kind 经媒体 JSONB 序列化、读路径 TL 转换后完整存活。
 func TestPhoneCallHistoryThroughRealPipeline(t *testing.T) {

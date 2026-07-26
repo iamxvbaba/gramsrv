@@ -46,28 +46,27 @@ func newRegistry() *registry {
 	}
 }
 
-// sweepLocked 是 P1 的纯年龄 GC（调用方持有 r.mu）：
-//   - 终态 tombstone 超过 tombstoneTTL → 回收（密钥材料随之销毁）；
-//   - 非终态超过 2×ringTimeout → 直接回收（双端同时崩溃的兜底，防僵尸通话
-//     吃满并发上限；不推送、不落历史，正常超时由客户端定时器与 P2 dispatcher 处理）。
-func (r *registry) sweepLocked(nowUnix int64, ringTimeoutSec, tombstoneTTLSec int64) {
+// sweepTombstonesLocked 只回收超过保留期的终态 tombstone（调用方持有 r.mu）。
+//
+// 非终态绝不能在 GC 中按 Date 直接删除：Requested/Ringing/Accepted 的超时必须由
+// Service.ExpireDue 完成状态迁移、双端推送和历史落库；Confirmed 没有服务端时长
+// 上限，必须一直可供 signaling/discard 寻址，直到显式挂断或进程重启。
+func (r *registry) sweepTombstonesLocked(nowUnix, tombstoneTTLSec int64) {
 	for id, e := range r.byID {
-		switch {
-		case e.call.Terminal():
-			if nowUnix-int64(e.call.DiscardedAt) > tombstoneTTLSec {
-				r.removeLocked(id, e, false)
-			}
-		default:
-			if nowUnix-int64(e.call.Date) > 2*ringTimeoutSec {
-				r.removeLocked(id, e, true)
-			}
+		if e.call.Terminal() && nowUnix-int64(e.call.DiscardedAt) > tombstoneTTLSec {
+			r.removeLocked(id, e, false)
 		}
 	}
 }
 
 func (r *registry) removeLocked(id int64, e *entry, wasActive bool) {
 	delete(r.byID, id)
-	delete(r.byRandom, randomKey{callerID: e.call.AdminID, randomID: e.call.RandomID})
+	key := randomKey{callerID: e.call.AdminID, randomID: e.call.RandomID}
+	// 终态后允许客户端复用 random_id 创建新通话；旧 tombstone 到期时不能
+	// 把已指向新 call 的幂等索引一并删掉。
+	if indexedID, ok := r.byRandom[key]; ok && indexedID == id {
+		delete(r.byRandom, key)
+	}
 	if wasActive {
 		r.decActiveLocked(e.call.AdminID)
 	}

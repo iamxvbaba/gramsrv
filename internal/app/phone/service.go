@@ -45,6 +45,9 @@ type Config struct {
 	TombstoneTTL time.Duration
 	// MaxActivePerUser 是单用户并发非终态通话上限（防呼叫轰炸自锁）。
 	MaxActivePerUser int
+	// MaxRegistryEntries 是进程内 registry 的硬上限。达到上限时拒绝新通话，
+	// 不驱逐可能仍在进行的 Confirmed 通话。
+	MaxRegistryEntries int
 	// SignalingRatePerSecond 是单通话每秒信令转发上限；超限静默丢弃（不破坏客户端状态机）。
 	SignalingRatePerSecond int
 }
@@ -58,6 +61,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxActivePerUser <= 0 {
 		c.MaxActivePerUser = 4
+	}
+	if c.MaxRegistryEntries <= 0 {
+		c.MaxRegistryEntries = 10_000
 	}
 	if c.SignalingRatePerSecond <= 0 {
 		c.SignalingRatePerSecond = 50
@@ -103,7 +109,7 @@ func (s *Service) RequestCall(ctx context.Context, callerID int64, in domain.Pho
 
 	s.reg.mu.Lock()
 	defer s.reg.mu.Unlock()
-	s.reg.sweepLocked(nowUnix, int64(s.cfg.RingTimeout/time.Second), int64(s.cfg.TombstoneTTL/time.Second))
+	s.reg.sweepTombstonesLocked(nowUnix, int64(s.cfg.TombstoneTTL/time.Second))
 
 	// 幂等：同一 (callerID, randomID) 的未终结通话直接返回快照，吸收客户端重试。
 	key := randomKey{callerID: callerID, randomID: in.RandomID}
@@ -111,6 +117,9 @@ func (s *Service) RequestCall(ctx context.Context, callerID int64, in domain.Pho
 		if e, ok := s.reg.byID[id]; ok && !e.call.Terminal() {
 			return e.call, nil
 		}
+	}
+	if len(s.reg.byID) >= s.cfg.MaxRegistryEntries {
+		return domain.PhoneCall{}, ErrOccupyFailed
 	}
 	if s.reg.active[callerID] >= s.cfg.MaxActivePerUser {
 		return domain.PhoneCall{}, ErrOccupyFailed
@@ -306,7 +315,7 @@ func (s *Service) ExpireDue(ctx context.Context, now time.Time) []domain.PhoneCa
 		s.reg.markDiscardedLocked(e, reason, 0, int(nowUnix))
 		expired = append(expired, e.call)
 	}
-	s.reg.sweepLocked(nowUnix, ringSec, int64(s.cfg.TombstoneTTL/time.Second))
+	s.reg.sweepTombstonesLocked(nowUnix, int64(s.cfg.TombstoneTTL/time.Second))
 	return expired
 }
 

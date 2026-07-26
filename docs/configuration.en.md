@@ -545,6 +545,7 @@ path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze
 | `TELESRV_CALL_RING_TIMEOUT` | duration / `90s` | Server fallback timeout for ringing/accepted private calls; should remain aligned with the client `callRingTimeoutMs`. |
 | `TELESRV_CALL_TOMBSTONE_TTL` | duration / `60s` | Terminal-call tombstone window for idempotency and late RPC absorption. |
 | `TELESRV_CALL_MAX_ACTIVE_PER_USER` | int / `4` | Maximum non-terminal private calls per user. Non-positive values are normalized by the phone service. |
+| `TELESRV_CALL_REGISTRY_MAX_ENTRIES` | int / `10000` | Process-wide private-call registry hard limit. At capacity, new calls fail with `CALL_OCCUPY_FAILED`; established calls are never evicted by age. |
 | `TELESRV_CALL_SIGNALING_MAX_BYTES` | int bytes / `65536` | Maximum payload for one `phone.sendSignalingData`. |
 | `TELESRV_CALL_SIGNALING_RATE` | int / `50` | Signaling forwards per call per second; excess is silently dropped. |
 | `TELESRV_CALL_EXPIRY_INTERVAL` | duration / `1s` | Call-expiry dispatcher polling interval. |
