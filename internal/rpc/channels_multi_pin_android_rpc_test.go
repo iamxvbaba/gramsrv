@@ -65,8 +65,8 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 		ids = append(ids, sent.Message.ID)
 	}
-	// 三条置顶：早期、中间、最新（Android 置顶栏循环跳转需要全部三条都可跳）。
-	pins := []int{ids[4], ids[14], ids[27]}
+	// 五条置顶：覆盖用户反馈中的真实规模；Android 置顶栏循环跳转需要全部可跳。
+	pins := []int{ids[4], ids[9], ids[14], ids[20], ids[27]}
 	for _, id := range pins {
 		if _, err := channelSvc.UpdatePinnedMessage(ctx, owner.ID, domain.UpdateChannelPinnedMessageRequest{
 			ChannelID: channelID,
@@ -113,7 +113,10 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	if channelMessages.Count != len(pins) {
 		t.Fatalf("pinned search count = %d, want %d", channelMessages.Count, len(pins))
 	}
-	wantDesc := []int{pins[2], pins[1], pins[0]}
+	wantDesc := make([]int, len(pins))
+	for i := range pins {
+		wantDesc[i] = pins[len(pins)-1-i]
+	}
 	for i, raw := range channelMessages.Messages {
 		msg, ok := raw.(*tg.Message)
 		if !ok {
@@ -128,7 +131,49 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 	}
 
-	// ② 点置顶栏跳最旧 pin：scrollToMessageId → getHistory AROUND（手机 count=20）。
+	// ② tweb 冷加载：先用 limit=1 取最新 pin，并把 messages.channelMessages.count
+	// 当作完整置顶数；旧实现把 count 错算成 len(page)+hasMore，即五条只报两条。
+	twebSearchEnc := dispatch(&tg.MessagesSearchRequest{
+		Peer:   peer,
+		Q:      "",
+		Filter: &tg.InputMessagesFilterPinned{},
+		Limit:  1,
+	})
+	twebSearch, ok := twebSearchEnc.(*tg.MessagesChannelMessages)
+	if !ok {
+		t.Fatalf("tweb pinned search response = %T, want messages.channelMessages", twebSearchEnc)
+	}
+	if len(twebSearch.Messages) != 1 || twebSearch.Count != len(pins) {
+		t.Fatalf("tweb pinned search messages/count = %d/%d, want 1/%d", len(twebSearch.Messages), twebSearch.Count, len(pins))
+	}
+
+	// limit=0 是官方 count-only 入口：不得为了计数反序列化/返回消息页。
+	countOnlyEnc := dispatch(&tg.MessagesSearchRequest{
+		Peer:   peer,
+		Q:      "",
+		Filter: &tg.InputMessagesFilterPinned{},
+		Limit:  0,
+	})
+	countOnly, ok := countOnlyEnc.(*tg.MessagesChannelMessages)
+	if !ok {
+		t.Fatalf("count-only pinned search response = %T, want messages.channelMessages", countOnlyEnc)
+	}
+	if len(countOnly.Messages) != 0 || countOnly.Count != len(pins) {
+		t.Fatalf("count-only pinned search messages/count = %d/%d, want 0/%d", len(countOnly.Messages), countOnly.Count, len(pins))
+	}
+
+	counters, err := r.onMessagesGetSearchCounters(WithUserID(androidClientContext(), member.ID), &tg.MessagesGetSearchCountersRequest{
+		Peer:    peer,
+		Filters: []tg.MessagesFilterClass{&tg.InputMessagesFilterPinned{}},
+	})
+	if err != nil {
+		t.Fatalf("messages.getSearchCounters(filterPinned): %v", err)
+	}
+	if len(counters) != 1 || counters[0].Count != len(pins) {
+		t.Fatalf("pinned search counters = %+v, want count %d", counters, len(pins))
+	}
+
+	// ③ 点置顶栏跳最旧 pin：scrollToMessageId → getHistory AROUND（手机 count=20）。
 	const aroundCount = 20
 	histEnc := dispatch(&tg.MessagesGetHistoryRequest{
 		Peer:      peer,
@@ -160,7 +205,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		t.Fatalf("around history lacks anchor %d: jump shows MessageNotFound on Android", pins[0])
 	}
 
-	// ③ 本地缺对象补拉：MessagesStorage.loadChatInfo → channels.getMessages。
+	// ④ 本地缺对象补拉：MessagesStorage.loadChatInfo → channels.getMessages。
 	// DrKLO 发的是 pre-InputMessage 构造器 #93d7b347（id:Vector<int>），
 	// 该请求 500 会让客户端把这批 pin 按「已取消置顶」从本地缓存删除。
 	var legacy bin.Buffer
@@ -208,7 +253,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		}
 	}
 
-	// ④ chatFull 降级缓存：pinned_msg_id 必须是最新置顶（Android 以它判断是否重拉列表）。
+	// ⑤ chatFull 降级缓存：pinned_msg_id 必须是最新置顶（Android 以它判断是否重拉列表）。
 	fullEnc := dispatch(&tg.ChannelsGetFullChannelRequest{
 		Channel: &tg.InputChannel{ChannelID: channelID, AccessHash: memberView.Channel.AccessHash},
 	})
@@ -220,7 +265,7 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	if !ok {
 		t.Fatalf("full chat = %T, want channelFull", full.FullChat)
 	}
-	if pinnedID, _ := channelFull.GetPinnedMsgID(); pinnedID != pins[2] {
-		t.Fatalf("channelFull pinned_msg_id = %d, want latest pin %d", pinnedID, pins[2])
+	if pinnedID, _ := channelFull.GetPinnedMsgID(); pinnedID != pins[len(pins)-1] {
+		t.Fatalf("channelFull pinned_msg_id = %d, want latest pin %d", pinnedID, pins[len(pins)-1])
 	}
 }

@@ -2,13 +2,27 @@ import { ChevronRight, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { useI18n, type TFunction } from "../i18n";
 import { formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { ModerationCaseRow } from "../types";
 
 const defaultStatuses = "open,in_review,action_pending,action_failed,appeal_review";
+const allStatuses = "open,in_review,action_pending,action_failed,resolved,dismissed,appeal_review";
+const statusFilterOptions = [
+  { value: defaultStatuses, labelKey: "moderation.statusFilter.active" },
+  { value: allStatuses, labelKey: "moderation.statusFilter.all" },
+  { value: "open", labelKey: "moderation.status.open" },
+  { value: "in_review", labelKey: "moderation.status.in_review" },
+  { value: "action_pending", labelKey: "moderation.status.action_pending" },
+  { value: "action_failed", labelKey: "moderation.status.action_failed" },
+  { value: "appeal_review", labelKey: "moderation.status.appeal_review" },
+  { value: "resolved", labelKey: "moderation.status.resolved" },
+  { value: "dismissed", labelKey: "moderation.status.dismissed" }
+];
 
 export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
+  const { t } = useI18n();
   const [statuses, setStatuses] = useState(defaultStatuses);
   const [assignedTo, setAssignedTo] = useState("");
   const [rows, setRows] = useState<ModerationCaseRow[]>([]);
@@ -38,32 +52,44 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
 
   return (
     <PageFrame
-      title="举报与审核"
-      eyebrow="Moderation / Cases"
+      title={t("route.moderation")}
+      eyebrow={t("moderation.casesEyebrow")}
       actions={
         <button className="btn icon-text" type="button" onClick={load} disabled={busy}>
-          <RefreshCw size={15} className={busy ? "spin" : ""} /> 刷新
+          <RefreshCw size={15} className={busy ? "spin" : ""} /> {t("common.refresh")}
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label="当前队列" value={String(rows.length)} />
-        <Metric label="关键案件" value={String(critical)} tone={critical ? "danger" : "neutral"} />
-        <Metric label="处置待完成/失败" value={String(pendingActions)} tone={pendingActions ? "warn" : "good"} />
+        <Metric label={t("moderation.currentQueue")} value={String(rows.length)} />
+        <Metric label={t("moderation.criticalCases")} value={String(critical)} tone={critical ? "danger" : "neutral"} />
+        <Metric label={t("moderation.pendingOrFailed")} value={String(pendingActions)} tone={pendingActions ? "warn" : "good"} />
       </div>
       <QueryPanel>
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(); }}>
           <label className="field-inline">
-            <span>状态</span>
-            <input value={statuses} onChange={(event) => setStatuses(event.target.value)} />
+            <span>{t("common.status")}</span>
+            <select
+              aria-label={t("moderation.statusFilter")}
+              value={statuses}
+              onChange={(event) => setStatuses(event.target.value)}
+            >
+              {statusFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
+              ))}
+            </select>
           </label>
           <label className="field-inline">
-            <span>审核人</span>
-            <input value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)} placeholder="留空为全部" />
+            <span>{t("moderation.assignee")}</span>
+            <input
+              value={assignedTo}
+              onChange={(event) => setAssignedTo(event.target.value)}
+              placeholder={t("moderation.allAssignees")}
+            />
           </label>
           <button className="btn primary icon-text" type="submit" disabled={busy}>
-            <ShieldAlert size={15} /> 查询
+            <ShieldAlert size={15} /> {t("common.search")}
           </button>
         </form>
       </QueryPanel>
@@ -71,23 +97,29 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>案件</th><th>目标</th><th>状态</th><th>等级</th>
-              <th>举报 / 举报人</th><th>审核人</th><th>最近举报</th><th></th>
+              <th>{t("moderation.case")}</th>
+              <th>{t("moderation.target")}</th>
+              <th>{t("common.status")}</th>
+              <th>{t("moderation.severity")}</th>
+              <th>{t("moderation.reportsAndReporters")}</th>
+              <th>{t("moderation.assignee")}</th>
+              <th>{t("moderation.latestReport")}</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.ID}>
                 <td className="mono">#{row.ID}</td>
-                <td className="mono">{row.Target.Type}:{row.Target.ID}</td>
+                <td className="mono">{moderationTargetLabel(t, row.Target.Type, row.Target.ID)}</td>
                 <td><CaseStatus status={row.Status} /></td>
-                <td><Severity value={row.Severity} /></td>
+                <td><CaseSeverity value={row.Severity} /></td>
                 <td>{row.ReportCount} / {row.DistinctReporterCount}</td>
                 <td>{row.AssignedTo || "-"}</td>
                 <td>{formatDate(row.LastReportAt)}</td>
                 <td>
                   <button className="row-link" onClick={() => navigate(`/moderation/${row.ID}`)}>
-                    审核 <ChevronRight size={14} />
+                    {t("moderation.review")} <ChevronRight size={14} />
                   </button>
                 </td>
               </tr>
@@ -101,6 +133,7 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
 }
 
 export function CaseStatus({ status }: { status: string }) {
+  const { t } = useI18n();
   const tone = status === "resolved" || status === "dismissed"
     ? "good"
     : status === "action_failed"
@@ -108,10 +141,26 @@ export function CaseStatus({ status }: { status: string }) {
       : status === "action_pending"
         ? "warn"
         : "neutral";
-  return <Badge tone={tone}>{status}</Badge>;
+  return <Badge tone={tone}>{moderationEnumLabel(t, "status", status)}</Badge>;
 }
 
-function Severity({ value }: { value: number }) {
-  const labels = ["", "低", "中", "高", "关键"];
-  return <Badge tone={value >= 4 ? "danger" : value >= 3 ? "warn" : "neutral"}>{labels[value] || value}</Badge>;
+export function CaseSeverity({ value }: { value: number }) {
+  const { t } = useI18n();
+  const keys = ["", "low", "medium", "high", "critical"];
+  const key = keys[value];
+  return (
+    <Badge tone={value >= 4 ? "danger" : value >= 3 ? "warn" : "neutral"}>
+      {key ? t(`moderation.severity.${key}`) : value}
+    </Badge>
+  );
+}
+
+export function moderationEnumLabel(t: TFunction, group: string, value: string): string {
+  const key = `moderation.${group}.${value}`;
+  const translated = t(key);
+  return translated === key ? value : translated;
+}
+
+export function moderationTargetLabel(t: TFunction, type: string, id: number): string {
+  return `${moderationEnumLabel(t, "targetType", type)} #${id}`;
 }

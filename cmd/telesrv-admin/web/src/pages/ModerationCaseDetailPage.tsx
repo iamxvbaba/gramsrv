@@ -1,15 +1,22 @@
 import { ArrowLeft, CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Alert, Badge, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { Alert, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { useI18n, type TFunction } from "../i18n";
 import { formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { ModerationCaseDetail, ModerationReport } from "../types";
-import { CaseStatus } from "./ModerationCasesPage";
+import {
+  CaseSeverity,
+  CaseStatus,
+  moderationEnumLabel,
+  moderationTargetLabel
+} from "./ModerationCasesPage";
 
 type DecisionPreset = "no_violation" | "scam" | "fake" | "freeze" | "scam_freeze" | "fake_freeze" | "delete_messages" | "delete_account";
 
 export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
+  const { t } = useI18n();
   const [detail, setDetail] = useState<ModerationCaseDetail | null>(null);
   const [report, setReport] = useState<ModerationReport | null>(null);
   const [reason, setReason] = useState("");
@@ -58,8 +65,8 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
     [preset, detail?.Case.Target.Type, messageIDs, ownerUserID, revokeMessages]
   );
   const appealRemedy = useMemo(
-    () => detail ? requiredAppealRemedy(detail) : { actions: [], label: "无", blocked: false },
-    [detail]
+    () => detail ? requiredAppealRemedy(detail, t) : { actions: [], label: t("common.none"), blocked: false },
+    [detail, t]
   );
 
   async function claim() {
@@ -78,16 +85,16 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
 
   async function decide() {
     if (!detail || !reason.trim()) {
-      setError("必须填写审核理由。");
+      setError(t("moderation.reasonRequired"));
       return;
     }
     if (preset === "delete_messages" && selectedActions.length === 0) {
       setError(detail.Case.Target.Type === "user"
-        ? "私聊删除需要合法的证据消息 ID 和举报人 owner_user_id。"
-        : "频道删除需要至少一个合法的证据消息 ID。");
+        ? t("moderation.privateDeleteValidation")
+        : t("moderation.channelDeleteValidation"));
       return;
     }
-    if (!window.confirm(`确认提交 ${preset} 决定？处置会通过 durable action 队列执行。`)) return;
+    if (!window.confirm(t("moderation.confirmDecision", { decision: decisionPresetLabel(t, preset) }))) return;
     setBusy(true);
     setError("");
     try {
@@ -108,10 +115,10 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
 
   async function reviewAppeal(appealID: number, granted: boolean) {
     if (!detail || !reason.trim()) {
-      setError("必须填写申诉复核理由。");
+      setError(t("moderation.appealReasonRequired"));
       return;
     }
-    if (!window.confirm(granted ? "确认通过申诉？" : "确认驳回申诉？")) return;
+    if (!window.confirm(granted ? t("moderation.confirmGrantAppeal") : t("moderation.confirmDenyAppeal"))) return;
     setBusy(true);
     try {
       const result = await api.reviewModerationAppeal(id, appealID, {
@@ -130,7 +137,7 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
   }
 
   if (error && !detail) return <Alert>{error}</Alert>;
-  if (!detail) return <LoadingSurface label="正在加载审核案件…" />;
+  if (!detail) return <LoadingSurface label={t("moderation.loadingCase")} />;
   const item = detail.Case;
   const canClaim = item.Status === "open" || item.Status === "in_review" || item.Status === "appeal_review";
   const canDecide = (item.Status === "in_review" || item.Status === "action_failed") && Boolean(item.AssignedTo);
@@ -139,12 +146,16 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
 
   return (
     <PageFrame
-      title={`审核案件 #${item.ID}`}
-      eyebrow="Moderation / Case detail"
+      title={t("moderation.caseDetailTitle", { id: item.ID })}
+      eyebrow={t("moderation.caseDetailEyebrow")}
       actions={
         <>
-          <button className="btn icon-text" onClick={() => navigate("/moderation")}><ArrowLeft size={15} /> 返回队列</button>
-          <button className="btn icon-text" onClick={load}><RefreshCw size={15} /> 刷新</button>
+          <button className="btn icon-text" onClick={() => navigate("/moderation")}>
+            <ArrowLeft size={15} /> {t("moderation.backToQueue")}
+          </button>
+          <button className="btn icon-text" onClick={load}>
+            <RefreshCw size={15} /> {t("common.refresh")}
+          </button>
         </>
       }
     >
@@ -154,22 +165,33 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
           <div className="stacked-sections">
             <section className="entity-head">
               <div>
-                <div className="entity-title">{item.Target.Type}:{item.Target.ID}</div>
-                <div className="entity-subtitle">版本 {item.Version} · 最近更新 {formatDate(item.UpdatedAt)}</div>
+                <div className="entity-title">{moderationTargetLabel(t, item.Target.Type, item.Target.ID)}</div>
+                <div className="entity-subtitle">
+                  {t("moderation.versionAndUpdated", { version: item.Version, time: formatDate(item.UpdatedAt) })}
+                </div>
               </div>
               <div className="entity-badges">
                 <CaseStatus status={item.Status} />
-                <Badge tone={item.Severity >= 4 ? "danger" : item.Severity >= 3 ? "warn" : "neutral"}>severity {item.Severity}</Badge>
+                <CaseSeverity value={item.Severity} />
               </div>
             </section>
             <div className="summary-grid">
-              <Summary label="目标" value={`${item.Target.Type}:${item.Target.ID}`} mono />
-              <Summary label="举报数" value={`${item.ReportCount}（${item.DistinctReporterCount} 位举报人）`} />
-              <Summary label="审核人" value={item.AssignedTo || "-"} />
-              <Summary label="首个 / 最近举报" value={`${formatDate(item.FirstReportAt)} / ${formatDate(item.LastReportAt)}`} />
+              <Summary label={t("moderation.target")} value={moderationTargetLabel(t, item.Target.Type, item.Target.ID)} mono />
+              <Summary
+                label={t("moderation.reportCount")}
+                value={t("moderation.reportCountValue", {
+                  reports: item.ReportCount,
+                  reporters: item.DistinctReporterCount
+                })}
+              />
+              <Summary label={t("moderation.assignee")} value={item.AssignedTo || "-"} />
+              <Summary
+                label={t("moderation.firstAndLatestReport")}
+                value={`${formatDate(item.FirstReportAt)} / ${formatDate(item.LastReportAt)}`}
+              />
             </div>
             <section className="section-block">
-              <SectionHead title="举报证据" text="最多显示最近 100 条；快照在举报受理时冻结。" />
+              <SectionHead title={t("moderation.evidence")} text={t("moderation.evidenceHint")} />
               <div className="toolbar">
                 {detail.ReportIDs.map((reportID) => (
                   <button className="btn" key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
@@ -180,10 +202,13 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
               {report && (
                 <>
                   <div className="summary-grid">
-                    <Summary label="来源 / 原因" value={`${report.Source} / ${report.Reason}`} />
-                    <Summary label="举报人" value={String(report.ReporterUserID)} mono />
-                    <Summary label="选项" value={report.Option} mono />
-                    <Summary label="时间" value={formatDate(report.CreatedAt)} />
+                    <Summary
+                      label={t("moderation.sourceAndReason")}
+                      value={`${moderationEnumLabel(t, "source", report.Source)} / ${moderationEnumLabel(t, "reason", report.Reason)}`}
+                    />
+                    <Summary label={t("moderation.reporter")} value={String(report.ReporterUserID)} mono />
+                    <Summary label={t("moderation.option")} value={report.Option} mono />
+                    <Summary label={t("common.time")} value={formatDate(report.CreatedAt)} />
                   </div>
                   {report.Comment && <p className="about-text">{report.Comment}</p>}
                   <JsonBlock value={JSON.stringify(report, null, 2)} />
@@ -191,12 +216,12 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
               )}
             </section>
             <section className="section-block">
-              <SectionHead title="决定与处置审计" text="动作由租约 worker 幂等执行；失败保留错误与尝试次数。" />
+              <SectionHead title={t("moderation.decisionAudit")} text={t("moderation.decisionAuditHint")} />
               <JsonBlock value={JSON.stringify({ decisions: detail.Decisions, actions: detail.Actions }, null, 2)} />
             </section>
             {detail.Appeals.length > 0 && (
               <section className="section-block">
-                <SectionHead title="申诉" />
+                <SectionHead title={t("moderation.appeals")} />
                 <JsonBlock value={JSON.stringify(detail.Appeals, null, 2)} />
               </section>
             )}
@@ -204,67 +229,73 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
         }
         side={
           <section className="action-dock">
-            <div className="dock-title">案件操作</div>
+            <div className="dock-title">{t("moderation.caseActions")}</div>
             {canClaim && (
               <button className="btn primary icon-text" disabled={busy} onClick={claim}>
-                <ShieldCheck size={15} /> {item.AssignedTo ? "续领案件" : "领取案件"}
+                <ShieldCheck size={15} /> {item.AssignedTo ? t("moderation.renewClaim") : t("moderation.claimCase")}
               </button>
             )}
             <label className="field">
-              <span>审核理由</span>
+              <span>{t("moderation.reviewReason")}</span>
               <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={5} />
             </label>
             <label className="field">
-              <span>决定模板</span>
+              <span>{t("moderation.decisionPreset")}</span>
               <select value={preset} onChange={(event) => setPreset(event.target.value as DecisionPreset)}>
-                <option value="no_violation">无违规（驳回举报）</option>
-                <option value="scam">标记 SCAM</option>
-                <option value="fake">标记 FAKE</option>
-                <option value="freeze">冻结账号</option>
-                <option value="scam_freeze">SCAM + 冻结</option>
-                <option value="fake_freeze">FAKE + 冻结</option>
-                <option value="delete_messages">删除证据覆盖的消息</option>
-                <option value="delete_account">删除账号</option>
+                <option value="no_violation">{t("moderation.preset.noViolation")}</option>
+                <option value="scam">{t("moderation.preset.scam")}</option>
+                <option value="fake">{t("moderation.preset.fake")}</option>
+                <option value="freeze">{t("moderation.preset.freeze")}</option>
+                <option value="scam_freeze">{t("moderation.preset.scamFreeze")}</option>
+                <option value="fake_freeze">{t("moderation.preset.fakeFreeze")}</option>
+                <option value="delete_messages">{t("moderation.preset.deleteMessages")}</option>
+                <option value="delete_account">{t("moderation.preset.deleteAccount")}</option>
               </select>
             </label>
             {preset === "delete_messages" && (
               <>
                 <label className="field">
-                  <span>证据消息 ID（逗号分隔）</span>
+                  <span>{t("moderation.evidenceMessageIDs")}</span>
                   <input value={messageIDs} onChange={(event) => setMessageIDs(event.target.value)} placeholder="101, 102" />
                 </label>
                 {item.Target.Type === "user" && (
                   <>
                     <label className="field">
-                      <span>私聊 owner_user_id</span>
+                      <span>{t("moderation.privateOwnerUserID")}</span>
                       <input value={ownerUserID} onChange={(event) => setOwnerUserID(event.target.value)} inputMode="numeric" />
                     </label>
                     <label className="field checkbox-field">
                       <input type="checkbox" checked={revokeMessages} onChange={(event) => setRevokeMessages(event.target.checked)} />
-                      <span>双方撤回</span>
+                      <span>{t("moderation.revokeForBoth")}</span>
                     </label>
                   </>
                 )}
-                <Alert>服务端会再次校验每个消息 ID 必须存在于该案件的不可变举报证据中。</Alert>
+                <Alert>{t("moderation.evidenceValidationHint")}</Alert>
               </>
             )}
             {item.Status === "action_failed" && preset === "no_violation" && (
-              <Alert>处置已部分执行，不能直接改为无违规；请选择新的处置动作重新执行并保留旧失败审计。</Alert>
+              <Alert>{t("moderation.failedActionHint")}</Alert>
             )}
             {canDecide && (
               <button className="btn danger icon-text" disabled={busy || !canSubmitDecision} onClick={decide}>
-                <CheckCircle2 size={15} /> {item.Status === "action_failed" ? "重新执行处置" : "提交决定"}
+                <CheckCircle2 size={15} /> {item.Status === "action_failed"
+                  ? t("moderation.retryAction")
+                  : t("moderation.submitDecision")}
               </button>
             )}
             {pendingAppeal && item.AssignedTo && (
               <>
-                <div className="dock-title">申诉复核 #{pendingAppeal.ID}</div>
-                <Summary label="通过后自动恢复" value={appealRemedy.label} />
+                <div className="dock-title">{t("moderation.appealReviewTitle", { id: pendingAppeal.ID })}</div>
+                <Summary label={t("moderation.automaticRemedy")} value={appealRemedy.label} />
                 {appealRemedy.blocked && (
-                  <Alert>案件包含已成功的不可逆删除动作，不能标记为“申诉通过并已恢复”；请驳回或升级人工处理。</Alert>
+                  <Alert>{t("moderation.irreversibleAppealHint")}</Alert>
                 )}
-                <button className="btn" disabled={busy} onClick={() => reviewAppeal(pendingAppeal.ID, false)}>驳回申诉</button>
-                <button className="btn primary" disabled={busy || appealRemedy.blocked} onClick={() => reviewAppeal(pendingAppeal.ID, true)}>通过申诉</button>
+                <button className="btn" disabled={busy} onClick={() => reviewAppeal(pendingAppeal.ID, false)}>
+                  {t("moderation.denyAppeal")}
+                </button>
+                <button className="btn primary" disabled={busy || appealRemedy.blocked} onClick={() => reviewAppeal(pendingAppeal.ID, true)}>
+                  {t("moderation.grantAppeal")}
+                </button>
               </>
             )}
           </section>
@@ -317,7 +348,7 @@ function parseMessageIDs(raw: string): number[] {
   return [...new Set(values)];
 }
 
-function requiredAppealRemedy(detail: ModerationCaseDetail): {
+function requiredAppealRemedy(detail: ModerationCaseDetail, t: TFunction): {
   actions: Array<{ kind: string; payload: Record<string, unknown> }>;
   label: string;
   blocked: boolean;
@@ -352,11 +383,25 @@ function requiredAppealRemedy(detail: ModerationCaseDetail): {
   const labels: string[] = [];
   if (flagsActive) {
     actions.push({ kind: "clear_peer_flags", payload: {} });
-    labels.push("清除 SCAM / FAKE");
+    labels.push(t("moderation.remedy.clearFlags"));
   }
   if (freezeActive) {
     actions.push({ kind: "unfreeze_account", payload: {} });
-    labels.push("解除冻结");
+    labels.push(t("moderation.remedy.unfreeze"));
   }
-  return { actions, label: labels.join(" + ") || "无需恢复动作", blocked: irreversible };
+  return { actions, label: labels.join(" + ") || t("moderation.remedy.none"), blocked: irreversible };
+}
+
+function decisionPresetLabel(t: TFunction, preset: DecisionPreset): string {
+  const keys: Record<DecisionPreset, string> = {
+    no_violation: "noViolation",
+    scam: "scam",
+    fake: "fake",
+    freeze: "freeze",
+    scam_freeze: "scamFreeze",
+    fake_freeze: "fakeFreeze",
+    delete_messages: "deleteMessages",
+    delete_account: "deleteAccount"
+  };
+  return t(`moderation.preset.${keys[preset]}`);
 }

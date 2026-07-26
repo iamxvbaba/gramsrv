@@ -79,6 +79,24 @@ AND EXISTS (
 		baseArgs = append(baseArgs, filter.MinID)
 		base += fmt.Sprintf(" AND id > $%d", len(baseArgs))
 	}
+	out := domain.ChannelHistory{Channel: channel, Self: member, Channels: extraChannels}
+	needExactTotal := filter.NeedTotalCount || filter.CountOnly
+	exactTotal := 0
+	if needExactTotal {
+		// Exact totals are opt-in. messages.search first/count-only pages and
+		// messages.getSearchCounters need protocol-exact Count, while ordinary
+		// getHistory pages must stay on the single bounded page query.
+		if err := s.db.QueryRow(ctx,
+			"SELECT count(*)::int FROM channel_messages WHERE "+base,
+			baseArgs...,
+		).Scan(&exactTotal); err != nil {
+			return domain.ChannelHistory{}, fmt.Errorf("count channel history: %w", err)
+		}
+		out.Count = exactTotal
+	}
+	if filter.CountOnly {
+		return out, nil
+	}
 	scanList := func(sql string, queryArgs []any) ([]domain.ChannelMessage, error) {
 		rows, err := s.db.Query(ctx, sql, queryArgs...)
 		if err != nil {
@@ -102,7 +120,6 @@ AND EXISTS (
 	// store 层二次钳制 add_offset 到 [-100,100]（与私聊 ListMessagesByUser 对齐）：
 	// 即便某个 caller 漏在 RPC 层钳制，也不会把客户端巨大值变成大 SQL OFFSET 跳扫。
 	addOffset := domain.ClampMessageHistoryAddOffset(filter.AddOffset)
-	out := domain.ChannelHistory{Channel: channel, Self: member, Channels: extraChannels}
 	hasMoreOlder := false
 	// 锚点条件：offset_date 优先按日期、否则按消息 id（对齐私聊）；
 	// 二者皆空时向更新方向退化为空、向更旧方向退化为全部（取最新）。
@@ -199,9 +216,11 @@ AND EXISTS (
 		}
 		out.Messages = older
 	}
-	out.Count = len(out.Messages)
-	if hasMoreOlder {
-		out.Count = len(out.Messages) + 1
+	if !needExactTotal {
+		out.Count = len(out.Messages)
+		if hasMoreOlder {
+			out.Count = len(out.Messages) + 1
+		}
 	}
 	if err := s.populateChannelMessageReplies(ctx, s.db, viewerUserID, channel, out.Messages); err != nil {
 		return domain.ChannelHistory{}, err

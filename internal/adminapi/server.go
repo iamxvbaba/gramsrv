@@ -814,7 +814,9 @@ func (s *Server) handleModerationCases(w http.ResponseWriter, r *http.Request) {
 		writeModerationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cases": items})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"cases": moderationCasesResponse(items),
+	})
 }
 
 func (s *Server) handleModerationCase(w http.ResponseWriter, r *http.Request) {
@@ -831,7 +833,7 @@ func (s *Server) handleModerationCase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "moderation case not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	writeJSON(w, http.StatusOK, moderationCaseDetailResponse(detail))
 }
 
 func (s *Server) handleModerationReport(w http.ResponseWriter, r *http.Request) {
@@ -848,7 +850,7 @@ func (s *Server) handleModerationReport(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "moderation report not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	writeJSON(w, http.StatusOK, moderationReportResponse(report))
 }
 
 func (s *Server) handleClaimModerationCase(w http.ResponseWriter, r *http.Request) {
@@ -887,7 +889,7 @@ func (s *Server) handleDecideModerationCase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"created": created, "case": detail,
+		"created": created, "case": moderationCaseDetailResponse(detail),
 	})
 }
 
@@ -942,8 +944,35 @@ func (s *Server) handleReviewModerationAppeal(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"created": created, "case": detail,
+		"created": created, "case": moderationCaseDetailResponse(detail),
 	})
+}
+
+func moderationCasesResponse(items []domain.ModerationCase) []domain.ModerationCase {
+	if items == nil {
+		return []domain.ModerationCase{}
+	}
+	return items
+}
+
+func moderationCaseDetailResponse(detail domain.ModerationCaseDetail) domain.ModerationCaseDetail {
+	if detail.Decisions == nil {
+		detail.Decisions = []domain.ModerationDecision{}
+	}
+	if detail.Actions == nil {
+		detail.Actions = []domain.ModerationAction{}
+	}
+	if detail.Appeals == nil {
+		detail.Appeals = []domain.ModerationAppeal{}
+	}
+	return detail
+}
+
+func moderationReportResponse(report domain.ModerationReport) domain.ModerationReport {
+	if report.MediaHolds == nil {
+		report.MediaHolds = []domain.ModerationMediaHold{}
+	}
+	return report
 }
 
 func moderationDecisionDomain(caseID, appealID int64, request moderationDecisionRequest) domain.ModerationDecisionRequest {

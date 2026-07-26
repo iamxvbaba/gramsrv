@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -97,6 +98,70 @@ func TestChannelMultiPin(t *testing.T) {
 		if !msg.Pinned {
 			t.Fatalf("filterPinned message %d lacks pinned flag", msg.ID)
 		}
+	}
+	// 普通历史热路径保留 bounded has-more hint，不为每页额外 COUNT。
+	hint, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: channelID, PinnedOnly: true, Limit: 1,
+	})
+	if err != nil {
+		t.Fatalf("filterPinned hint page: %v", err)
+	}
+	if len(hint.Messages) != 1 || hint.Count != 2 {
+		t.Fatalf("filterPinned hint messages/count = %d/%d, want 1/2", len(hint.Messages), hint.Count)
+	}
+	// messages.search 首屏显式请求精确总数；页大小不能污染 Count。
+	exact, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: channelID, PinnedOnly: true, Limit: 1, NeedTotalCount: true,
+	})
+	if err != nil {
+		t.Fatalf("filterPinned exact page: %v", err)
+	}
+	if len(exact.Messages) != 1 || exact.Count != 3 {
+		t.Fatalf("filterPinned exact messages/count = %d/%d, want 1/3", len(exact.Messages), exact.Count)
+	}
+	// messages.getSearchCounters/limit=0 只计数，不加载消息及 reply/reaction companion。
+	countOnly, err := channels.ListChannelHistory(ctx, owner.ID, domain.ChannelHistoryFilter{
+		ChannelID: channelID, PinnedOnly: true, NeedTotalCount: true, CountOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("filterPinned count-only: %v", err)
+	}
+	if len(countOnly.Messages) != 0 || countOnly.Count != 3 {
+		t.Fatalf("filterPinned count-only messages/count = %d/%d, want 0/3", len(countOnly.Messages), countOnly.Count)
+	}
+	// 精确计数只扫描该频道的 pinned 部分索引，不能退化为全频道消息扫描。
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin pinned count explain: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+		t.Fatalf("disable seqscan for pinned count explain: %v", err)
+	}
+	rows, err := tx.Query(ctx, `EXPLAIN (COSTS OFF)
+SELECT count(*)::int
+FROM channel_messages
+WHERE channel_id = $1 AND NOT deleted AND pinned`, channelID)
+	if err != nil {
+		t.Fatalf("explain pinned count: %v", err)
+	}
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			rows.Close()
+			t.Fatalf("scan pinned count plan: %v", err)
+		}
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("read pinned count plan: %v", err)
+	}
+	rows.Close()
+	if !strings.Contains(plan.String(), "channel_messages_live_pinned_idx") {
+		t.Fatalf("pinned count plan misses partial index:\n%s", plan.String())
 	}
 	// 普通历史页的消息行直接携带 pinned 标志（多置顶都标，不只最新）。
 	page, err := channels.ListChannelHistory(ctx, member.ID, domain.ChannelHistoryFilter{ChannelID: channelID, Limit: 50})

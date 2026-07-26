@@ -2175,15 +2175,22 @@ type ChannelHistoryFilter struct {
 	SenderUserID int64
 	PinnedOnly   bool
 	MusicOnly    bool
-	OffsetID     int
-	OffsetDate   int
-	AddOffset    int
-	Limit        int
-	MinDate      int
-	MaxDate      int
-	MaxID        int
-	MinID        int
-	Hash         int64
+	// NeedTotalCount requests the exact number of messages matching the static
+	// filters before offset/add_offset pagination. Ordinary history pages leave
+	// this false and keep the bounded len(page)+has-more hint.
+	NeedTotalCount bool
+	// CountOnly skips message hydration and returns only the exact Count plus
+	// the viewer-scoped channel metadata needed for access validation.
+	CountOnly  bool
+	OffsetID   int
+	OffsetDate int
+	AddOffset  int
+	Limit      int
+	MinDate    int
+	MaxDate    int
+	MaxID      int
+	MinID      int
+	Hash       int64
 }
 
 // ChannelSearchPostsRequest describes a bounded global public post search.

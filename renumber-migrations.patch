@@ -1,0 +1,377 @@
+From bd4c214b0a7450e2a521f6534cce3b001676988b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 26 Jul 2026 21:09:29 +0000
+Subject: [PATCH] chore(migrations): renumber feature migrations to 0150..0156
+
+Upstream released 0149_channel_live_pinned_index, and this branch already used
+0149 for collectible usernames. Two files claiming one version is not a git
+conflict -- both simply coexist -- but iofs.New then fails with "duplicate
+migration file", so MigrateAndStatus errors and the server refuses to start.
+
+Version numbers are ordering, not identity, so the branch yields 0149 to upstream
+and shifts its own chain up by one:
+
+  0149 collectible_usernames        -> 0150
+  0150 account_rating               -> 0151
+  0151 collectible_username_reissue -> 0152
+  0152 verify_service_bot           -> 0153
+  0153 verification_applications    -> 0154
+  0154 bot_verification             -> 0155
+  0155 verifier_service_bot         -> 0156
+
+Renumbering is safe here only because none of these migrations has been applied
+to a production database yet: a deployment that already recorded version 149 for
+collectible_usernames would need its schema_migrations row corrected by hand
+instead. Comments, docs and the schema-version assertion move with the numbers.
+---
+ ...usernames.down.sql => 0150_collectible_usernames.down.sql} | 0
+ ...ble_usernames.up.sql => 0150_collectible_usernames.up.sql} | 0
+ ...0_account_rating.down.sql => 0151_account_rating.down.sql} | 0
+ ...{0150_account_rating.up.sql => 0151_account_rating.up.sql} | 0
+ ...ue.down.sql => 0152_collectible_username_reissue.down.sql} | 0
+ ...eissue.up.sql => 0152_collectible_username_reissue.up.sql} | 2 +-
+ ..._service_bot.down.sql => 0153_verify_service_bot.down.sql} | 0
+ ...rify_service_bot.up.sql => 0153_verify_service_bot.up.sql} | 0
+ ...tions.down.sql => 0154_verification_applications.down.sql} | 0
+ ...lications.up.sql => 0154_verification_applications.up.sql} | 0
+ ...t_verification.down.sql => 0155_bot_verification.down.sql} | 0
+ ...4_bot_verification.up.sql => 0155_bot_verification.up.sql} | 2 +-
+ ...ervice_bot.down.sql => 0156_verifier_service_bot.down.sql} | 0
+ ...er_service_bot.up.sql => 0156_verifier_service_bot.up.sql} | 0
+ docs/bot_verification.md                                      | 4 ++--
+ docs/verification.md                                          | 4 ++--
+ internal/app/bots/verifierbot_test.go                         | 2 +-
+ internal/domain/system.go                                     | 4 ++--
+ internal/store/memory/account_rating.go                       | 2 +-
+ internal/store/memory/bot_verification.go                     | 2 +-
+ internal/store/memory/collectible_username.go                 | 4 ++--
+ internal/store/memory/collectible_username_test.go            | 2 +-
+ internal/store/memory/verification.go                         | 2 +-
+ internal/store/postgres/bot_verification.go                   | 4 ++--
+ .../postgres/channel_member_index_plan_integration_test.go    | 2 +-
+ internal/store/postgres/collectible_username.go               | 2 +-
+ .../store/postgres/collectible_username_integration_test.go   | 2 +-
+ .../star_gift_lifecycle_migration_integration_test.go         | 4 ++--
+ 28 files changed, 22 insertions(+), 22 deletions(-)
+ rename deploy/migrations/{0149_collectible_usernames.down.sql => 0150_collectible_usernames.down.sql} (100%)
+ rename deploy/migrations/{0149_collectible_usernames.up.sql => 0150_collectible_usernames.up.sql} (100%)
+ rename deploy/migrations/{0150_account_rating.down.sql => 0151_account_rating.down.sql} (100%)
+ rename deploy/migrations/{0150_account_rating.up.sql => 0151_account_rating.up.sql} (100%)
+ rename deploy/migrations/{0151_collectible_username_reissue.down.sql => 0152_collectible_username_reissue.down.sql} (100%)
+ rename deploy/migrations/{0151_collectible_username_reissue.up.sql => 0152_collectible_username_reissue.up.sql} (93%)
+ rename deploy/migrations/{0152_verify_service_bot.down.sql => 0153_verify_service_bot.down.sql} (100%)
+ rename deploy/migrations/{0152_verify_service_bot.up.sql => 0153_verify_service_bot.up.sql} (100%)
+ rename deploy/migrations/{0153_verification_applications.down.sql => 0154_verification_applications.down.sql} (100%)
+ rename deploy/migrations/{0153_verification_applications.up.sql => 0154_verification_applications.up.sql} (100%)
+ rename deploy/migrations/{0154_bot_verification.down.sql => 0155_bot_verification.down.sql} (100%)
+ rename deploy/migrations/{0154_bot_verification.up.sql => 0155_bot_verification.up.sql} (99%)
+ rename deploy/migrations/{0155_verifier_service_bot.down.sql => 0156_verifier_service_bot.down.sql} (100%)
+ rename deploy/migrations/{0155_verifier_service_bot.up.sql => 0156_verifier_service_bot.up.sql} (100%)
+
+diff --git a/deploy/migrations/0149_collectible_usernames.down.sql b/deploy/migrations/0150_collectible_usernames.down.sql
+similarity index 100%
+rename from deploy/migrations/0149_collectible_usernames.down.sql
+rename to deploy/migrations/0150_collectible_usernames.down.sql
+diff --git a/deploy/migrations/0149_collectible_usernames.up.sql b/deploy/migrations/0150_collectible_usernames.up.sql
+similarity index 100%
+rename from deploy/migrations/0149_collectible_usernames.up.sql
+rename to deploy/migrations/0150_collectible_usernames.up.sql
+diff --git a/deploy/migrations/0150_account_rating.down.sql b/deploy/migrations/0151_account_rating.down.sql
+similarity index 100%
+rename from deploy/migrations/0150_account_rating.down.sql
+rename to deploy/migrations/0151_account_rating.down.sql
+diff --git a/deploy/migrations/0150_account_rating.up.sql b/deploy/migrations/0151_account_rating.up.sql
+similarity index 100%
+rename from deploy/migrations/0150_account_rating.up.sql
+rename to deploy/migrations/0151_account_rating.up.sql
+diff --git a/deploy/migrations/0151_collectible_username_reissue.down.sql b/deploy/migrations/0152_collectible_username_reissue.down.sql
+similarity index 100%
+rename from deploy/migrations/0151_collectible_username_reissue.down.sql
+rename to deploy/migrations/0152_collectible_username_reissue.down.sql
+diff --git a/deploy/migrations/0151_collectible_username_reissue.up.sql b/deploy/migrations/0152_collectible_username_reissue.up.sql
+similarity index 93%
+rename from deploy/migrations/0151_collectible_username_reissue.up.sql
+rename to deploy/migrations/0152_collectible_username_reissue.up.sql
+index 63517ee..bc6e472 100644
+--- a/deploy/migrations/0151_collectible_username_reissue.up.sql
++++ b/deploy/migrations/0152_collectible_username_reissue.up.sql
+@@ -1,6 +1,6 @@
+ -- Burning a collectible username must release the name for a fresh issue.
+ --
+--- 0149 made collectible_usernames.username_lower globally UNIQUE, which kept a
++-- 0150 made collectible_usernames.username_lower globally UNIQUE, which kept a
+ -- burned asset's name reserved forever: the registry row was gone, so an
+ -- ordinary editable username could take it, but minting the collectible again
+ -- was impossible. Retiring an asset is a bookkeeping act on that asset, not a
+diff --git a/deploy/migrations/0152_verify_service_bot.down.sql b/deploy/migrations/0153_verify_service_bot.down.sql
+similarity index 100%
+rename from deploy/migrations/0152_verify_service_bot.down.sql
+rename to deploy/migrations/0153_verify_service_bot.down.sql
+diff --git a/deploy/migrations/0152_verify_service_bot.up.sql b/deploy/migrations/0153_verify_service_bot.up.sql
+similarity index 100%
+rename from deploy/migrations/0152_verify_service_bot.up.sql
+rename to deploy/migrations/0153_verify_service_bot.up.sql
+diff --git a/deploy/migrations/0153_verification_applications.down.sql b/deploy/migrations/0154_verification_applications.down.sql
+similarity index 100%
+rename from deploy/migrations/0153_verification_applications.down.sql
+rename to deploy/migrations/0154_verification_applications.down.sql
+diff --git a/deploy/migrations/0153_verification_applications.up.sql b/deploy/migrations/0154_verification_applications.up.sql
+similarity index 100%
+rename from deploy/migrations/0153_verification_applications.up.sql
+rename to deploy/migrations/0154_verification_applications.up.sql
+diff --git a/deploy/migrations/0154_bot_verification.down.sql b/deploy/migrations/0155_bot_verification.down.sql
+similarity index 100%
+rename from deploy/migrations/0154_bot_verification.down.sql
+rename to deploy/migrations/0155_bot_verification.down.sql
+diff --git a/deploy/migrations/0154_bot_verification.up.sql b/deploy/migrations/0155_bot_verification.up.sql
+similarity index 99%
+rename from deploy/migrations/0154_bot_verification.up.sql
+rename to deploy/migrations/0155_bot_verification.up.sql
+index 1593b44..eac31e4 100644
+--- a/deploy/migrations/0154_bot_verification.up.sql
++++ b/deploy/migrations/0155_bot_verification.up.sql
+@@ -1,7 +1,7 @@
+ -- Third-party bot verification (core.telegram.org/api/bots/verification).
+ --
+ -- This is a SEPARATE mechanism from the official platform badge implemented in
+--- 0152/0153. Official verification is a boolean on the peer that only the
++-- 0153/0154. Official verification is a boolean on the peer that only the
+ -- operator can set and that clients render as the standard checkmark. Third-party
+ -- verification is an attributed mark granted by a verifier bot: it carries that
+ -- verifier's own custom-emoji icon and a human-readable description, renders
+diff --git a/deploy/migrations/0155_verifier_service_bot.down.sql b/deploy/migrations/0156_verifier_service_bot.down.sql
+similarity index 100%
+rename from deploy/migrations/0155_verifier_service_bot.down.sql
+rename to deploy/migrations/0156_verifier_service_bot.down.sql
+diff --git a/deploy/migrations/0155_verifier_service_bot.up.sql b/deploy/migrations/0156_verifier_service_bot.up.sql
+similarity index 100%
+rename from deploy/migrations/0155_verifier_service_bot.up.sql
+rename to deploy/migrations/0156_verifier_service_bot.up.sql
+diff --git a/docs/bot_verification.md b/docs/bot_verification.md
+index b87bfad..6045052 100644
+--- a/docs/bot_verification.md
++++ b/docs/bot_verification.md
+@@ -185,7 +185,7 @@ every flag unset, which is byte-identical to the pre-feature wire shape.
+ 
+ ## Migrations
+ 
+-- **`0154_bot_verification`** creates the four tables:
++- **`0155_bot_verification`** creates the four tables:
+   - `verification_icons` — the catalogue. `document_id` is unique and positive,
+     `owner_bot_id = 0` means shared, `active` retires an entry without deleting it.
+   - `bot_verifier_settings` — verifier status, keyed by `bot_id` with an optimistic
+@@ -201,7 +201,7 @@ every flag unset, which is byte-identical to the pre-feature wire shape.
+     constraints that pair each stamp with its status
+     (`(status = 'approved') = (approved_at IS NOT NULL)`) and refuse a rejection
+     without a reason.
+-- **`0155_verifier_service_bot`** seeds `@verifierbot` (id `1250000013`, fixed
++- **`0156_verifier_service_bot`** seeds `@verifierbot` (id `1250000013`, fixed
+   `access_hash` double-written with `domain.VerifierBotAccessHash`), its `bots` row
+   and command list, and its `peer_usernames` registry entry, so the handle is occupied
+   from the moment the schema is current. `verified = false` on purpose: a third-party
+diff --git a/docs/verification.md b/docs/verification.md
+index a21661b..6211f03 100644
+--- a/docs/verification.md
++++ b/docs/verification.md
+@@ -169,12 +169,12 @@ and left entirely unset for an unflagged peer.
+ 
+ ## Migrations
+ 
+-- **`0152_verify_service_bot`** seeds `@verifybot` (id `1250000011`, fixed
++- **`0153_verify_service_bot`** seeds `@verifybot` (id `1250000011`, fixed
+   `access_hash` double-written with `domain.VerifyBotAccessHash`), its `bots` row
+   and command list, and its `peer_usernames` registry entry. The handle is
+   occupied from the moment the schema is current, so an ordinary user cannot claim
+   `@verifybot` in the window before first use.
+-- **`0153_verification_applications`** creates
++- **`0154_verification_applications`** creates
+   `verification_applications` (the durable audit subject, never deleted, moved
+   through `draft → submitted → in_review → approved|rejected|cancelled` under an
+   optimistic-locking `version`), the append-only
+diff --git a/internal/app/bots/verifierbot_test.go b/internal/app/bots/verifierbot_test.go
+index 414cfd3..d170558 100644
+--- a/internal/app/bots/verifierbot_test.go
++++ b/internal/app/bots/verifierbot_test.go
+@@ -686,7 +686,7 @@ func TestVerifierBotRevokeAsksForConfirmationThenRemovesTheMark(t *testing.T) {
+ 	if cv.revokes != 1 {
+ 		t.Fatalf("RevokeMark called %d times, want 1", cv.revokes)
+ 	}
+-	// The store signature carries no actor or reason: 0154 has no revocation audit
++	// The store signature carries no actor or reason: 0155 has no revocation audit
+ 	// column, so the dialog logs them instead. What must be true here is that the
+ 	// mark of this verifier on this peer is gone.
+ 	if len(cv.revokedPeers) != 1 {
+diff --git a/internal/domain/system.go b/internal/domain/system.go
+index 6526c09..98b7f5e 100644
+--- a/internal/domain/system.go
++++ b/internal/domain/system.go
+@@ -28,7 +28,7 @@ const (
+ 	// different identity.
+ 	VerifyBotUserID int64 = 1250000011
+ 	// VerifyBotAccessHash is fixed and double-written with the seed row in
+-	// migration 0152; the two must never drift.
++	// migration 0153; the two must never drift.
+ 	VerifyBotAccessHash int64 = 7802113947355620887
+ 
+ 	// VerifierBotUserID is the built-in @verifierbot: the first THIRD-PARTY
+@@ -41,7 +41,7 @@ const (
+ 	// the operator alone and collected by VerifyBotUserID above.
+ 	VerifierBotUserID int64 = 1250000013
+ 	// VerifierBotAccessHash is fixed and double-written with the seed row in
+-	// migration 0155; the two must never drift.
++	// migration 0156; the two must never drift.
+ 	VerifierBotAccessHash int64 = 6913402578811563729
+ )
+ 
+diff --git a/internal/store/memory/account_rating.go b/internal/store/memory/account_rating.go
+index 73fbb33..f1daad7 100644
+--- a/internal/store/memory/account_rating.go
++++ b/internal/store/memory/account_rating.go
+@@ -18,7 +18,7 @@ const (
+ )
+ 
+ // AccountRatingStore is the in-memory implementation of store.AccountRatingStore.
+-// It reproduces the invariants migration 0150 encodes:
++// It reproduces the invariants migration 0151 encodes:
+ //
+ //   - account_rating is keyed by user_id, so one projection row per user.
+ //   - the version CHECK plus optimistic concurrency: a write is applied only when
+diff --git a/internal/store/memory/bot_verification.go b/internal/store/memory/bot_verification.go
+index 9a4d189..e4e264c 100644
+--- a/internal/store/memory/bot_verification.go
++++ b/internal/store/memory/bot_verification.go
+@@ -40,7 +40,7 @@ const (
+ 
+ // BotVerificationStore is the in-memory implementation of
+ // store.BotVerificationStore. The RPC, bot and admin unit tests run against it,
+-// so it reproduces every invariant migration 0154 encodes as an index, a CHECK or
++// so it reproduces every invariant migration 0155 encodes as an index, a CHECK or
+ // a transaction boundary, and returns the same domain errors the PostgreSQL
+ // backend maps its violations onto:
+ //
+diff --git a/internal/store/memory/collectible_username.go b/internal/store/memory/collectible_username.go
+index daeeb7f..dd22535 100644
+--- a/internal/store/memory/collectible_username.go
++++ b/internal/store/memory/collectible_username.go
+@@ -20,7 +20,7 @@ const (
+ 
+ // CollectibleUsernameStore is the in-memory implementation of both
+ // store.UsernameRegistryStore and store.CollectibleUsernameStore. RPC unit tests
+-// run against it, so it reproduces every invariant migration 0149 encodes as an
++// run against it, so it reproduces every invariant migration 0150 encodes as an
+ // index or CHECK constraint and returns the same domain errors PostgreSQL maps
+ // its violations onto:
+ //
+@@ -43,7 +43,7 @@ type CollectibleUsernameStore struct {
+ 	// assets is collectible_usernames keyed by identity.
+ 	assets map[int64]domain.CollectibleUsername
+ 	// assetsByName resolves a name onto the asset it currently stands for. After
+-	// migration 0151 uniqueness covers live rows only, so one name can accumulate
++	// migration 0152 uniqueness covers live rows only, so one name can accumulate
+ 	// several burned rows plus at most one live row; this index points at the live
+ 	// row when there is one and at the newest burned row otherwise, mirroring the
+ 	// SQL lookup order.
+diff --git a/internal/store/memory/collectible_username_test.go b/internal/store/memory/collectible_username_test.go
+index c77bc82..dd8391b 100644
+--- a/internal/store/memory/collectible_username_test.go
++++ b/internal/store/memory/collectible_username_test.go
+@@ -715,7 +715,7 @@ func TestCollectibleUsernameListingAndPaging(t *testing.T) {
+ 	}
+ }
+ 
+-// TestCollectibleUsernameReissueAfterBurn covers migration 0151: burning retires
++// TestCollectibleUsernameReissueAfterBurn covers migration 0152: burning retires
+ // the asset but releases the name, so the same name can be issued again while the
+ // burned rows stay as provenance.
+ func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
+diff --git a/internal/store/memory/verification.go b/internal/store/memory/verification.go
+index 6a768c7..91b93c5 100644
+--- a/internal/store/memory/verification.go
++++ b/internal/store/memory/verification.go
+@@ -31,7 +31,7 @@ const (
+ 
+ // VerificationStore is the in-memory implementation of store.VerificationStore.
+ // The RPC, bot and admin unit tests run against it, so it reproduces every
+-// invariant migration 0153 encodes as an index, a CHECK or a transaction
++// invariant migration 0154 encodes as an index, a CHECK or a transaction
+ // boundary, and returns the same domain errors the PostgreSQL backend maps its
+ // violations onto:
+ //
+diff --git a/internal/store/postgres/bot_verification.go b/internal/store/postgres/bot_verification.go
+index f1cca74..e0e699a 100644
+--- a/internal/store/postgres/bot_verification.go
++++ b/internal/store/postgres/bot_verification.go
+@@ -16,7 +16,7 @@ import (
+ )
+ 
+ // BotVerificationStore is the PostgreSQL implementation of third-party bot
+-// verification (migration 0154): the icon catalogue, verifier status, the granted
++// verification (migration 0155): the icon catalogue, verifier status, the granted
+ // marks and the application queue in front of them.
+ //
+ // Four properties are load bearing and every method below exists to keep them:
+@@ -47,7 +47,7 @@ import (
+ // already holds is reported as changed=false without touching the row.
+ //
+ // Two deliberate non-responsibilities: the store does not check
+-// icon_document_id against the catalogue (0154 has no such foreign key, and the
++// icon_document_id against the catalogue (0155 has no such foreign key, and the
+ // admin edge picks the icon from the catalogue before it gets here), and it does
+ // not refuse a grant by a disabled verifier. "May this bot verify?"
+ // (domain.ErrVerifierForbidden / BOT_VERIFIER_FORBIDDEN) is an RPC-edge decision
+diff --git a/internal/store/postgres/channel_member_index_plan_integration_test.go b/internal/store/postgres/channel_member_index_plan_integration_test.go
+index 220bed3..9add3a6 100644
+--- a/internal/store/postgres/channel_member_index_plan_integration_test.go
++++ b/internal/store/postgres/channel_member_index_plan_integration_test.go
+@@ -124,7 +124,7 @@ SELECT peer_id
+ FROM peer_usernames
+ WHERE username_lower = $1 AND peer_type = 'channel'
+ `, publicUsername)
+-	// 0149 adds peer_usernames_peer_order_idx, which covers this lookup as an
++	// 0150 adds peer_usernames_peer_order_idx, which covers this lookup as an
+ 	// index-only scan; either index is an acceptable plan, a partition scan is not.
+ 	if !strings.Contains(usernameLookupPlan, "peer_usernames_pkey") &&
+ 		!strings.Contains(usernameLookupPlan, "peer_usernames_peer_order_idx") {
+diff --git a/internal/store/postgres/collectible_username.go b/internal/store/postgres/collectible_username.go
+index eeb7fe9..a3d1a07 100644
+--- a/internal/store/postgres/collectible_username.go
++++ b/internal/store/postgres/collectible_username.go
+@@ -199,7 +199,7 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(ctx context.Context,
+ 			purchaseDate = now
+ 		}
+ 		// The registry row locks the name against editable usernames. Occupancy of
+-		// the asset itself is decided by the live rows only: 0151 narrowed
++		// the asset itself is decided by the live rows only: 0152 narrowed
+ 		// uniqueness to status <> 'burned', so a retired name can be issued again
+ 		// while its burned rows stay as provenance.
+ 		if _, found, err := getPeerUsernameOwner(ctx, tx, usernameLower, true); err != nil {
+diff --git a/internal/store/postgres/collectible_username_integration_test.go b/internal/store/postgres/collectible_username_integration_test.go
+index 279a1a0..859f930 100644
+--- a/internal/store/postgres/collectible_username_integration_test.go
++++ b/internal/store/postgres/collectible_username_integration_test.go
+@@ -464,7 +464,7 @@ func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
+ 	}
+ }
+ 
+-// TestCollectibleUsernameReissueAfterBurn covers migration 0151: uniqueness now
++// TestCollectibleUsernameReissueAfterBurn covers migration 0152: uniqueness now
+ // spans live assets only, so a burned name can be issued again while its burned
+ // rows remain as provenance.
+ func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
+diff --git a/internal/store/postgres/star_gift_lifecycle_migration_integration_test.go b/internal/store/postgres/star_gift_lifecycle_migration_integration_test.go
+index 2d0dec1..75f45be 100644
+--- a/internal/store/postgres/star_gift_lifecycle_migration_integration_test.go
++++ b/internal/store/postgres/star_gift_lifecycle_migration_integration_test.go
+@@ -14,7 +14,7 @@ func TestStarGiftLifecycleMigrationsApply(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatalf("migrate star gift lifecycle schema: %v", err)
+ 	}
+-	if status.Dirty || status.Empty || status.Version != 155 {
+-		t.Fatalf("migration status = %+v, want clean version 155", status)
++	if status.Dirty || status.Empty || status.Version != 156 {
++		t.Fatalf("migration status = %+v, want clean version 156", status)
+ 	}
+ }
+-- 
+2.43.0
+
