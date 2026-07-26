@@ -29,6 +29,7 @@ import (
 	"telesrv/internal/app/auth"
 	authdiagnosticsapp "telesrv/internal/app/authdiagnostics"
 	botsapp "telesrv/internal/app/bots"
+	botverificationapp "telesrv/internal/app/botverification"
 	channelapp "telesrv/internal/app/channels"
 	chatlistsapp "telesrv/internal/app/chatlists"
 	clienttelemetryapp "telesrv/internal/app/clienttelemetry"
@@ -356,6 +357,55 @@ func (v verificationPeerVerifier) SetChannelVerified(ctx context.Context, channe
 }
 
 var _ verificationapp.PeerVerifier = verificationPeerVerifier{}
+
+// botVerificationMarkApplier writes a third-party mark on the decision's own
+// transaction when there is one.
+//
+// postgres.DecideCustomVerificationRequest hands its callback a context carrying
+// the transaction, and the pooled store would open a second, independently
+// committing one -- so an approval whose mark write failed would leave the request
+// approved with no mark. This adapter is what makes "approved implies mark exists"
+// survive a rollback, exactly as verificationPeerVerifier does for the official flag.
+type botVerificationMarkApplier struct {
+	store storepkg.BotVerificationStore
+}
+
+func (a botVerificationMarkApplier) GrantCustomVerification(ctx context.Context, mark domain.CustomVerification) (domain.CustomVerification, bool, error) {
+	if tx, ok := postgres.VerificationTxFromContext(ctx); ok {
+		return postgres.NewBotVerificationStore(tx).GrantCustomVerification(ctx, mark)
+	}
+	return a.store.GrantCustomVerification(ctx, mark)
+}
+
+func (a botVerificationMarkApplier) RevokeCustomVerification(ctx context.Context, verifierBotID int64, peer domain.Peer) (bool, error) {
+	if tx, ok := postgres.VerificationTxFromContext(ctx); ok {
+		return postgres.NewBotVerificationStore(tx).RevokeCustomVerification(ctx, verifierBotID, peer)
+	}
+	return a.store.RevokeCustomVerification(ctx, verifierBotID, peer)
+}
+
+var _ botverificationapp.MarkApplier = botVerificationMarkApplier{}
+
+// compositeBotVerificationNotifier drops the cached peer projections before the
+// edge rebuilds and pushes the peer, so a mark change cannot be pushed with a
+// stale badge.
+type compositeBotVerificationNotifier struct {
+	cache rpcProjectionVerificationNotifier
+	edge  botverificationapp.PeerNotifier
+}
+
+func (n compositeBotVerificationNotifier) NotifyPeerBotVerification(ctx context.Context, peer domain.Peer) error {
+	if err := n.cache.NotifyPeerVerified(ctx, peer); err != nil && n.cache.log != nil {
+		n.cache.log.Warn("invalidate peer caches after third-party verification change",
+			zap.String("peer_type", string(peer.Type)), zap.Int64("peer_id", peer.ID), zap.Error(err))
+	}
+	if n.edge == nil {
+		return nil
+	}
+	return n.edge.NotifyPeerBotVerification(ctx, peer)
+}
+
+var _ botverificationapp.PeerNotifier = compositeBotVerificationNotifier{}
 
 // rpcProjectionVerificationNotifier is the fallback badge-change hook, the same
 // shape and for the same reason as rpcProjectionUsernameNotifier: the RPC edge
@@ -1057,6 +1107,29 @@ func run(logger *zap.Logger) error {
 	// verification service needs.
 	botsService.SetVerification(verificationService)
 	verificationService.SetApplicantNotifier(botsService)
+	// Third-party verification is a SEPARATE mechanism: a verifier bot marks peers
+	// with its own custom-emoji icon and description, which clients render before the
+	// name. It shares no state with the official badge above -- different tables,
+	// different rights, different TL fields (bot_verification_icon / bot_verification
+	// versus verified).
+	botVerificationStore := postgres.NewBotVerificationStore(pool)
+	botVerificationService := botverificationapp.NewService(
+		botverificationapp.WithStore(botVerificationStore),
+		botverificationapp.WithUserDirectory(usersService),
+		botverificationapp.WithBotDirectory(botsService),
+		botverificationapp.WithChannelDirectory(channelsService),
+		// The icon must be a real custom emoji document: an id no client can fetch
+		// renders as nothing, so the badge would be silently invisible.
+		botverificationapp.WithIconResolver(filesService),
+		botverificationapp.WithMarkApplier(botVerificationMarkApplier{store: botVerificationStore}),
+		botverificationapp.WithRateLimiter(rateLimiter, cfg.BotVerificationRequestRateLimit, cfg.BotVerificationRequestRateWindow),
+		botverificationapp.WithEnabled(cfg.BotVerificationEnabled),
+		botverificationapp.WithMaxPerVerifier(cfg.BotVerificationMaxPerVerifier),
+		botverificationapp.WithLogger(logger.Named("app").Named("botverification")),
+	)
+	// @verifierbot files applications with the operator and reports decisions back.
+	botsService.SetCustomVerification(botVerificationService)
+	botVerificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -1097,6 +1170,7 @@ func run(logger *zap.Logger) error {
 		Moderation:           moderationService,
 		Users:                usersService,
 		Usernames:            usernamesService,
+		BotVerifications:     botVerificationService,
 		AccountRatings:       ratingService,
 		TelegramLogin:        telegramLoginRPCDependency(telegramLoginService),
 		Updates:              updatesService,
@@ -1174,6 +1248,7 @@ func run(logger *zap.Logger) error {
 		Usernames:              usernamesService,
 		Rating:                 ratingService,
 		Verification:           verificationService,
+		BotVerification:        botVerificationService,
 	})
 	// The RPC edge owns the tg.* username update push and the projection caches,
 	// so it implements the domain-only notification hook the username service
@@ -1222,6 +1297,23 @@ func run(logger *zap.Logger) error {
 		})
 		logger.Warn("verification badge update push is not implemented by the RPC edge; only projection invalidation is wired",
 			zap.String("expected_hook", "rpc.Router.NotifyPeerVerified"))
+	}
+	// The third-party mark lives on the same peer projections as the official flag,
+	// so it needs the same edge hook. Composed with the cache drop for the same reason:
+	// the mark can be written on the decision's own transaction, bypassing the app
+	// services that would otherwise refresh the shared user:base entry.
+	if notifier, ok := any(router).(botverificationapp.PeerNotifier); ok {
+		botVerificationService.SetPeerNotifier(compositeBotVerificationNotifier{
+			cache: rpcProjectionVerificationNotifier{
+				invalidator: router,
+				users:       userCache,
+				log:         verificationLogger,
+			},
+			edge: notifier,
+		})
+	} else {
+		logger.Warn("third-party verification push is not implemented by the RPC edge",
+			zap.String("expected_hook", "rpc.Router.NotifyPeerBotVerification"))
 	}
 	go ratingapp.NewRecomputeWorker(ratingService, logger.Named("rating").Named("recompute"),
 		cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch).Run(ctx)

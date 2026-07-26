@@ -60,6 +60,19 @@ const (
 	ActionApproveVerification = "verification.approve"
 	ActionRejectVerification  = "verification.reject"
 	ActionRevokeVerification  = "verification.revoke"
+	// Third-party bot verification (see botverification.go). A namespace of its own
+	// on purpose: these actions write the verifier catalogue and the attributed
+	// marks, never the platform checkmark, and the audit trail has to keep the two
+	// mechanisms apart at a glance.
+	ActionGrantBotVerifier          = "botverification.grant_verifier"
+	ActionSetBotVerifierEnabled     = "botverification.set_verifier_enabled"
+	ActionRevokeBotVerifier         = "botverification.revoke_verifier"
+	ActionUpsertVerificationIcon    = "botverification.upsert_icon"
+	ActionSetVerificationIconActive = "botverification.set_icon_active"
+	ActionRevokeCustomVerification  = "botverification.revoke_mark"
+	ActionApproveBotVerification    = "botverification.approve"
+	ActionRejectBotVerification     = "botverification.reject"
+	ActionRevokeBotVerification     = "botverification.revoke_request"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -108,6 +121,39 @@ const (
 	CodeVerificationNotOwner            = "VERIFICATION_NOT_OWNER"
 	CodeVerificationUserTargetsDisabled = "VERIFICATION_USER_TARGETS_DISABLED"
 	CodeVerificationInvalid             = "VERIFICATION_INVALID"
+)
+
+// Stable admin error codes for third-party bot verification (see
+// botverification.go). They are a separate set from the official verification
+// codes above: the two mechanisms own separate tables and fail for separate
+// reasons, and the panel renders them in separate sections, so one shared token
+// would land a message in the wrong place.
+//
+// CodeCustomVerificationConflict is the lost optimistic-locking race -- two
+// operators deciding at once -- and is the one the panel must render as "reload
+// and look again" rather than as a bad request.
+const (
+	CodeBotVerifierNotFound             = "BOTVERIFIER_NOT_FOUND"
+	CodeBotVerifierForbidden            = "BOTVERIFIER_FORBIDDEN"
+	CodeBotVerifierInvalid              = "BOTVERIFIER_INVALID"
+	CodeBotVerifierBotNotFound          = "BOTVERIFIER_BOT_NOT_FOUND"
+	CodeBotVerifierDescriptionForbidden = "BOTVERIFIER_DESCRIPTION_FORBIDDEN"
+
+	CodeVerificationIconNotFound = "VERIFICATION_ICON_NOT_FOUND"
+	CodeVerificationIconInactive = "VERIFICATION_ICON_INACTIVE"
+	CodeVerificationIconInvalid  = "VERIFICATION_ICON_INVALID"
+
+	CodeCustomVerificationNotFound        = "CUSTOM_VERIFICATION_NOT_FOUND"
+	CodeCustomVerificationRequestNotFound = "CUSTOM_VERIFICATION_REQUEST_NOT_FOUND"
+	CodeCustomVerificationRequestExists   = "CUSTOM_VERIFICATION_REQUEST_EXISTS"
+	CodeCustomVerificationConflict        = "CUSTOM_VERIFICATION_CONFLICT"
+	CodeCustomVerificationLimit           = "CUSTOM_VERIFICATION_LIMIT"
+	CodeCustomVerificationStatusInvalid   = "CUSTOM_VERIFICATION_STATUS_INVALID"
+	CodeCustomVerificationReasonRequired  = "CUSTOM_VERIFICATION_REASON_REQUIRED"
+	CodeCustomVerificationTargetInvalid   = "CUSTOM_VERIFICATION_TARGET_INVALID"
+	CodeCustomVerificationTargetSystem    = "CUSTOM_VERIFICATION_TARGET_SYSTEM"
+	CodeCustomVerificationRateLimited     = "CUSTOM_VERIFICATION_RATE_LIMITED"
+	CodeCustomVerificationInvalid         = "CUSTOM_VERIFICATION_INVALID"
 )
 
 type CommandRepository interface {
@@ -298,7 +344,10 @@ type Dependencies struct {
 	Usernames              CollectibleUsernamesService
 	Rating                 AccountRatingService
 	Verification           VerificationService
-	Now                    func() time.Time
+	// BotVerification is the third-party mechanism, wired separately from
+	// Verification: the two never read each other's state.
+	BotVerification BotVerificationService
+	Now             func() time.Time
 }
 
 type Service struct {
@@ -324,6 +373,7 @@ type Service struct {
 	usernames              CollectibleUsernamesService
 	rating                 AccountRatingService
 	verification           VerificationService
+	botVerification        BotVerificationService
 	now                    func() time.Time
 }
 
@@ -398,6 +448,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Verification != nil {
 		s.verification = deps.Verification
+	}
+	if deps.BotVerification != nil {
+		s.botVerification = deps.BotVerification
 	}
 	if deps.Now != nil {
 		s.now = deps.Now

@@ -88,7 +88,8 @@ func (s *Service) HandlesBot(botUserID int64) bool {
 		return false
 	}
 	switch botUserID {
-	case domain.BotFatherUserID, domain.StickersBotUserID, domain.ChatBotUserID, domain.VerifyBotUserID:
+	case domain.BotFatherUserID, domain.StickersBotUserID, domain.ChatBotUserID,
+		domain.VerifyBotUserID, domain.VerifierBotUserID:
 		return true
 	default:
 		return false
@@ -115,6 +116,8 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 		go s.respondAsChatBot(userID, msg)
 	case domain.VerifyBotUserID:
 		go s.respondAsVerify(userID, msg)
+	case domain.VerifierBotUserID:
+		go s.respondAsVerifier(userID, msg)
 	}
 }
 

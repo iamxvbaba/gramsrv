@@ -447,6 +447,32 @@ type Config struct {
 	// keep open at once; 0 disables the cap.
 	VerificationMaxActivePerUser int
 
+	// BotVerificationEnabled controls THIRD-PARTY bot verification
+	// (core.telegram.org/api/bots/verification): a verifier bot marking peers with
+	// its own icon and description, projected onto
+	// user/channel.bot_verification_icon and botInfo.verifier_settings. It is a
+	// different mechanism from VerificationEnabled above -- that one is the
+	// operator-granted platform checkmark, and the two never read each other's
+	// state.
+	//
+	// Disabled refuses every third-party mutation (grants, revocations,
+	// applications, catalogue edits) while the marks already granted keep
+	// projecting: blanking one verifier's badges is what its per-verifier kill
+	// switch is for.
+	BotVerificationEnabled bool
+	// BotVerificationMaxPerVerifier bounds how many peers one verifier bot may
+	// mark. Verifier status is granted per deployment rather than earned per peer,
+	// so an unbounded verifier would be an unbounded badge printer. 0 disables the
+	// service-level bound and leaves only the storage bound
+	// (domain.MaxCustomVerificationsPerVerifier), which is also the maximum this
+	// key accepts.
+	BotVerificationMaxPerVerifier int
+	// BotVerificationRequestRateLimit / BotVerificationRequestRateWindow bound how
+	// many verification applications one applicant may file per window, across all
+	// verifier bots. 0 for either disables the budget.
+	BotVerificationRequestRateLimit  int
+	BotVerificationRequestRateWindow time.Duration
+
 	// CollectibleUsernameURLTemplate is the landing URL recorded on a minted
 	// collectible username when the mint request carries no explicit URL.
 	// Empty derives <TELESRV_PUBLIC_BASE_URL>/nft/username/<username>; a template
@@ -790,6 +816,14 @@ func Load() (Config, error) {
 		VerificationNotifyBatch:      envIntOr("TELESRV_VERIFICATION_NOTIFY_BATCH", 50),
 		VerificationMaxActivePerUser: envIntOr("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER", 3),
 
+		BotVerificationEnabled:        envBoolOr("TELESRV_BOT_VERIFICATION_ENABLED", true),
+		BotVerificationMaxPerVerifier: envIntOr("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", domain.MaxCustomVerificationsPerVerifier),
+		// The applicant budget is deliberately looser than the official one
+		// (TELESRV_VERIFICATION_APPLY_RATE_LIMIT=3): a deployment can run many
+		// verifier bots, and filing with a second company is not a retry of the first.
+		BotVerificationRequestRateLimit:  envIntOr("TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT", 5),
+		BotVerificationRequestRateWindow: envDurationOr("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", 24*time.Hour),
+
 		GroupCallCheckTTL:        envDurationOr("TELESRV_GROUPCALL_CHECK_TTL", 45*time.Second),
 		GroupCallSweepInterval:   envDurationOr("TELESRV_GROUPCALL_SWEEP_INTERVAL", 10*time.Second),
 		GroupCallMaxParticipants: envIntOr("TELESRV_GROUPCALL_MAX_PARTICIPANTS", 32),
@@ -959,8 +993,9 @@ func validateAccountRatingConfig(cfg Config) error {
 const adminPermissionAll = "*"
 
 // validateVerificationConfig rejects a verification policy that cannot be
-// enforced. It runs even when the feature is disabled, so enabling it later is
-// not the moment a typo is discovered.
+// enforced, for both mechanisms: the operator-granted platform badge and the
+// third-party bot verification marks. It runs even when either feature is
+// disabled, so enabling it later is not the moment a typo is discovered.
 func validateVerificationConfig(cfg Config) error {
 	if cfg.VerificationRejectCooldown < 0 {
 		return fmt.Errorf("TELESRV_VERIFICATION_REJECT_COOLDOWN must be non-negative")
@@ -991,6 +1026,26 @@ func validateVerificationConfig(cfg Config) error {
 	}
 	if cfg.VerificationMaxActivePerUser < 0 || cfg.VerificationMaxActivePerUser > 50 {
 		return fmt.Errorf("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER must be 0..50")
+	}
+	// Third-party bot verification. The ceiling is the storage bound: a value above
+	// it would be silently unreachable, and a configuration key that cannot do what
+	// it says is worse than no key.
+	if cfg.BotVerificationMaxPerVerifier < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER must be non-negative")
+	}
+	if cfg.BotVerificationMaxPerVerifier > domain.MaxCustomVerificationsPerVerifier {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER must not exceed %d", domain.MaxCustomVerificationsPerVerifier)
+	}
+	if cfg.BotVerificationRequestRateLimit < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT must be non-negative")
+	}
+	if cfg.BotVerificationRequestRateWindow < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW must be non-negative")
+	}
+	// Same trap as the official budget above: a positive limit with a zero window is
+	// not "unlimited", it is a limiter that can never refill.
+	if cfg.BotVerificationRequestRateLimit > 0 && cfg.BotVerificationRequestRateWindow <= 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW must be positive when TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT is set")
 	}
 	return nil
 }

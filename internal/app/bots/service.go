@@ -68,6 +68,10 @@ type verificationApplications interface {
 	Application(ctx context.Context, applicationID int64) (domain.VerificationApplication, error)
 }
 
+// The third-party verification ports live in verifierbot.go
+// (customVerifications, verifierBotTargets): they are the built-in @verifierbot's
+// only way to reach the feature, and are kept next to the dialog that uses them.
+
 // RouterHooks 是 rpc 层回调（router 创建后经 SetRouterHooks 延迟注入，打破
 // router↔bots 的构造循环；这些能力都依赖 TL/连接层边界，不能在 app 层实现）：
 //   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
@@ -104,6 +108,8 @@ type Service struct {
 	installer             userStickerSetInstaller
 	aiChat                aiChatGenerator
 	verification          verificationApplications
+	customVerification    customVerifications
+	verifierTargets       verifierBotTargets
 	telegramLogin         *telegramloginapp.Service
 	hooks                 RouterHooks
 	textDrafts            TextDraftPusher
@@ -216,6 +222,31 @@ func WithVerification(v verificationApplications) Option {
 	}
 }
 
+// WithCustomVerification injects the third-party verification service used by the
+// built-in @verifierbot. Without it the bot still answers, but every command
+// reports that third-party verification is unavailable rather than half-running the
+// dialog.
+func WithCustomVerification(v customVerifications) Option {
+	return func(s *Service) {
+		if v != nil {
+			s.customVerification = v
+		}
+	}
+}
+
+// WithVerifierTargets injects the directory of an applicant's own peers used by
+// @verifierbot's subject picker. It is optional: with nothing injected the bot
+// falls back to the official verification service's EligibleTargets, which
+// enumerates exactly the same peers (only its eligibility verdicts, which answer a
+// different question, are ignored).
+func WithVerifierTargets(t verifierBotTargets) Option {
+	return func(s *Service) {
+		if t != nil {
+			s.verifierTargets = t
+		}
+	}
+}
+
 // WithDialogRateLimiter bounds service-bot dialog traffic per user. A zero limit
 // or a nil limiter disables the bound, which is what a deployment without Redis
 // gets.
@@ -322,6 +353,23 @@ func (s *Service) SetAIChatGenerator(g aiChatGenerator) {
 func (s *Service) SetVerification(v verificationApplications) {
 	if s != nil && v != nil {
 		s.verification = v
+	}
+}
+
+// SetCustomVerification injects the third-party verification service after
+// construction. The bots service is built before the stores and directories that
+// service depends on, so in the shipped process this is the wiring order that
+// actually exists (same deferred-injection pattern as SetVerification).
+func (s *Service) SetCustomVerification(v customVerifications) {
+	if s != nil && v != nil {
+		s.customVerification = v
+	}
+}
+
+// SetVerifierTargets injects @verifierbot's subject directory after construction.
+func (s *Service) SetVerifierTargets(t verifierBotTargets) {
+	if s != nil && t != nil {
+		s.verifierTargets = t
 	}
 }
 

@@ -172,6 +172,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		r.applyStarGiftsCountToChannelFull(ctx, ref.ID, &full)
 		r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, ref.ID, &full)
 		r.applyNotifySettingsToChannelFull(ctx, userID, ref.ID, &full)
+		r.applyBotVerificationToChannelFull(ctx, ref.ID, &full)
 		r.applyAndroidChannelReactionEditorCompat(ctx, &full, cached.canChangeInfo)
 		chats := append([]tg.ChatClass(nil), cached.chats...)
 		chats = r.appendLinkedDiscussionChat(ctx, userID, ref.ID, chats)
@@ -220,6 +221,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyNotifySettingsToChannelFull(ctx, userID, view.Channel.ID, full)
+	// After StoreIfEpoch on purpose: the mark stays out of the per-(viewer,channel)
+	// projection cache so a revoked badge cannot outlive the change by a cache TTL.
+	r.applyBotVerificationToChannelFull(ctx, view.Channel.ID, full)
 	r.applyAndroidChannelReactionEditorCompat(ctx, full, canChangeInfo)
 	r.applyPeerReadModels(ctx, userID, nil, chats)
 	return &tg.MessagesChatFull{

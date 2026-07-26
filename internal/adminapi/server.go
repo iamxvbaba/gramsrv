@@ -100,6 +100,26 @@ type Service interface {
 	VerificationApplicationEvents(ctx context.Context, applicationID int64, limit int) ([]domain.VerificationApplicationEvent, error)
 	VerificationCounts(ctx context.Context) (domain.VerificationStatusCounts, error)
 	VerificationTargetSnapshot(ctx context.Context, targetType domain.VerificationTargetType, targetID int64) (domain.VerificationTarget, error)
+	// Third-party bot verification. A separate mechanism from the official
+	// verification methods above, over separate tables and separate permissions;
+	// see botverification.go.
+	GrantBotVerifier(ctx context.Context, req admin.GrantBotVerifierRequest) (admin.CommandResult, error)
+	SetBotVerifierEnabled(ctx context.Context, req admin.SetBotVerifierEnabledRequest) (admin.CommandResult, error)
+	RevokeBotVerifier(ctx context.Context, req admin.RevokeBotVerifierRequest) (admin.CommandResult, error)
+	UpsertVerificationIcon(ctx context.Context, req admin.UpsertVerificationIconRequest) (admin.CommandResult, error)
+	SetVerificationIconActive(ctx context.Context, req admin.SetVerificationIconActiveRequest) (admin.CommandResult, error)
+	RevokeCustomVerification(ctx context.Context, req admin.RevokeCustomVerificationRequest) (admin.CommandResult, error)
+	ApproveBotVerification(ctx context.Context, req admin.ApproveBotVerificationRequest) (admin.CommandResult, error)
+	RejectBotVerification(ctx context.Context, req admin.RejectBotVerificationRequest) (admin.CommandResult, error)
+	RevokeBotVerification(ctx context.Context, req admin.RevokeBotVerificationRequest) (admin.CommandResult, error)
+	BotVerifiers(ctx context.Context, enabledOnly bool, limit int) ([]domain.BotVerifierSettings, error)
+	BotVerifier(ctx context.Context, botID int64) (domain.BotVerifierSettings, error)
+	VerificationIcons(ctx context.Context, activeOnly bool, limit int) ([]domain.VerificationIcon, error)
+	CustomVerifications(ctx context.Context, filter domain.CustomVerificationFilter) ([]domain.CustomVerification, error)
+	CustomVerificationRequests(ctx context.Context, filter domain.CustomVerificationRequestFilter) ([]domain.CustomVerificationRequest, error)
+	CustomVerificationRequest(ctx context.Context, requestID int64) (domain.CustomVerificationRequest, error)
+	CustomVerificationRequestCounts(ctx context.Context) (map[domain.CustomVerificationRequestStatus]int64, error)
+	CustomVerificationMarkActive(ctx context.Context, verifierBotID int64, peer domain.Peer) (bool, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -209,6 +229,26 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/verification/applications/{id}/reject", s.authorized(PermissionVerificationReview, s.handleRejectVerification))
 	mux.HandleFunc("POST /v1/verification/revoke", s.authorizedAll(
 		[]string{PermissionVerificationReview, PermissionVerificationRevoke}, s.handleRevokeVerification))
+	// Third-party bot verification. Separate routes, separate permissions and
+	// separate tables from the official verification block above -- the two
+	// mechanisms never read each other's state. Reads and queue decisions need
+	// botverification.review; appointing verifiers, curating icons and stripping a
+	// granted mark need botverification.manage.
+	mux.HandleFunc("GET /v1/botverification/verifiers", s.authorized(PermissionBotVerificationReview, s.handleBotVerifiers))
+	mux.HandleFunc("GET /v1/botverification/icons", s.authorized(PermissionBotVerificationReview, s.handleVerificationIcons))
+	mux.HandleFunc("GET /v1/botverification/marks", s.authorized(PermissionBotVerificationReview, s.handleCustomVerifications))
+	mux.HandleFunc("GET /v1/botverification/requests", s.authorized(PermissionBotVerificationReview, s.handleCustomVerificationRequests))
+	mux.HandleFunc("GET /v1/botverification/requests/{id}", s.authorized(PermissionBotVerificationReview, s.handleCustomVerificationRequest))
+	mux.HandleFunc("GET /v1/botverification/counts", s.authorized(PermissionBotVerificationReview, s.handleCustomVerificationCounts))
+	mux.HandleFunc("POST /v1/botverification/requests/{id}/approve", s.authorized(PermissionBotVerificationReview, s.handleApproveBotVerification))
+	mux.HandleFunc("POST /v1/botverification/requests/{id}/reject", s.authorized(PermissionBotVerificationReview, s.handleRejectBotVerification))
+	mux.HandleFunc("POST /v1/botverification/requests/{id}/revoke", s.authorized(PermissionBotVerificationReview, s.handleRevokeBotVerification))
+	mux.HandleFunc("POST /v1/botverification/verifiers/grant", s.authorized(PermissionBotVerificationManage, s.handleGrantBotVerifier))
+	mux.HandleFunc("POST /v1/botverification/verifiers/set-enabled", s.authorized(PermissionBotVerificationManage, s.handleSetBotVerifierEnabled))
+	mux.HandleFunc("POST /v1/botverification/verifiers/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeBotVerifier))
+	mux.HandleFunc("POST /v1/botverification/icons/upsert", s.authorized(PermissionBotVerificationManage, s.handleUpsertVerificationIcon))
+	mux.HandleFunc("POST /v1/botverification/icons/set-active", s.authorized(PermissionBotVerificationManage, s.handleSetVerificationIconActive))
+	mux.HandleFunc("POST /v1/botverification/marks/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeCustomVerification))
 	return mux
 }
 

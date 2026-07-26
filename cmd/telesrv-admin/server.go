@@ -123,6 +123,26 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/revoke-verification", s.requireAuthAPI(
 		s.requirePermission(permissionVerificationReview,
 			s.requirePermission(permissionVerificationRevoke, http.HandlerFunc(s.handleRevokeVerificationAPI)))))
+	// Third-party bot verification. A separate section from the official
+	// verification block above -- separate tables, separate rights, separate routes.
+	// Reads and queue decisions need botverification.review; appointing verifiers,
+	// curating the icon catalogue and stripping a granted mark need
+	// botverification.manage.
+	mux.Handle("GET /api/botverification/verifiers", s.botVerificationRead(s.handleBotVerifiersAPI))
+	mux.Handle("GET /api/botverification/icons", s.botVerificationRead(s.handleVerificationIconsAPI))
+	mux.Handle("GET /api/botverification/marks", s.botVerificationRead(s.handleCustomVerificationsAPI))
+	mux.Handle("GET /api/botverification/requests", s.botVerificationRead(s.handleCustomVerificationRequestsAPI))
+	mux.Handle("GET /api/botverification/requests/{id}", s.botVerificationRead(s.handleCustomVerificationRequestDetailAPI))
+	mux.Handle("GET /api/botverification/counts", s.botVerificationRead(s.handleCustomVerificationCountsAPI))
+	mux.Handle("POST /api/botverification/requests/{id}/approve", s.botVerificationRead(s.handleApproveBotVerificationAPI))
+	mux.Handle("POST /api/botverification/requests/{id}/reject", s.botVerificationRead(s.handleRejectBotVerificationAPI))
+	mux.Handle("POST /api/botverification/requests/{id}/revoke", s.botVerificationRead(s.handleRevokeBotVerificationAPI))
+	mux.Handle("POST /api/actions/grant-bot-verifier", s.botVerificationManage(s.handleGrantBotVerifierAPI))
+	mux.Handle("POST /api/actions/set-bot-verifier-enabled", s.botVerificationManage(s.handleSetBotVerifierEnabledAPI))
+	mux.Handle("POST /api/actions/revoke-bot-verifier", s.botVerificationManage(s.handleRevokeBotVerifierAPI))
+	mux.Handle("POST /api/actions/upsert-verification-icon", s.botVerificationManage(s.handleUpsertVerificationIconAPI))
+	mux.Handle("POST /api/actions/set-verification-icon-active", s.botVerificationManage(s.handleSetVerificationIconActiveAPI))
+	mux.Handle("POST /api/actions/revoke-custom-verification", s.botVerificationManage(s.handleRevokeCustomVerificationAPI))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})

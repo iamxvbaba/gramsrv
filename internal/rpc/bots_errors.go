@@ -28,6 +28,52 @@ func rightsNotModifiedErr() error        { return tgerr.New(400, "RIGHTS_NOT_MOD
 func botVerifierForbiddenErr() error     { return tgerr.New(403, "BOT_VERIFIER_FORBIDDEN") }
 func userPermissionDeniedErr() error     { return tgerr.New(403, "USER_PERMISSION_DENIED") }
 
+// botVerifierDescriptionForbiddenErr rejects a per-peer description from a verifier
+// whose botVerifierSettings.can_modify_custom_description is false. It is a 400,
+// not the 403 above: the verifier itself is allowed to mark this peer, only the
+// custom text is refused, and a client that drops the description succeeds.
+func botVerifierDescriptionForbiddenErr() error {
+	return tgerr.New(400, "BOT_VERIFIER_DESCRIPTION_FORBIDDEN")
+}
+
+// botVerifierDescriptionInvalidErr rejects a malformed bots.setCustomVerification
+// payload: a description past
+// bot_verification_description_length_limit, or a revocation that still carries one.
+func botVerifierDescriptionInvalidErr() error {
+	return tgerr.New(400, "BOT_VERIFIER_DESCRIPTION_INVALID")
+}
+
+// setCustomVerificationErr maps the third-party verification domain errors onto TL.
+//
+// The split matters to a client: BOT_VERIFIER_FORBIDDEN means "this bot may not
+// verify anything" (no verifier row, disabled by the operator, or an icon the
+// operator retired), BOT_INVALID means "that is not a usable verifier bot",
+// PEER_ID_INVALID means "that peer cannot be verified", and LIMIT_INVALID means the
+// verifier has exhausted its per-verifier bound. Anything unmodelled stays a 500 so
+// a storage fault is never reported as a client mistake.
+func setCustomVerificationErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrVerifierForbidden),
+		errors.Is(err, domain.ErrVerifierNotFound),
+		errors.Is(err, domain.ErrVerificationIconNotFound),
+		errors.Is(err, domain.ErrVerificationIconInactive),
+		errors.Is(err, domain.ErrVerificationIconInvalid):
+		return botVerifierForbiddenErr()
+	case errors.Is(err, domain.ErrCustomVerificationTargetInvalid):
+		return peerIDInvalidErr()
+	case errors.Is(err, domain.ErrVerifierDescriptionForbidden):
+		return botVerifierDescriptionForbiddenErr()
+	case errors.Is(err, domain.ErrCustomVerificationRequestInvalid):
+		return botVerifierDescriptionInvalidErr()
+	case errors.Is(err, domain.ErrCustomVerificationLimit):
+		return limitInvalidErr()
+	case errors.Is(err, domain.ErrBotNotFound), errors.Is(err, domain.ErrVerifierSettingsInvalid):
+		return botInvalidErr()
+	default:
+		return internalErr()
+	}
+}
+
 func setBotCommandsErr(err error) error {
 	if errors.Is(err, domain.ErrBotCommandInvalid) {
 		return botCommandInvalidErr()

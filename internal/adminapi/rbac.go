@@ -41,6 +41,24 @@ const (
 	// Taking a badge away is visible to every client of a public peer, so it is
 	// deliberately not implied by the right to review new applications.
 	PermissionVerificationRevoke = "verification.revoke"
+	// PermissionBotVerificationReview guards the third-party verification read
+	// surface -- verifiers, icons, granted marks, the queue and its counters -- plus
+	// the decisions on the applications filed with a verifier bot.
+	//
+	// This is NOT verification.review. Third-party verification is a separate
+	// mechanism over separate tables (verification_icons, bot_verifier_settings,
+	// custom_verifications, custom_verification_requests), so a token trusted to
+	// work one queue is not thereby trusted with the other: neither permission
+	// implies the other.
+	PermissionBotVerificationReview = "botverification.review"
+	// PermissionBotVerificationManage guards the configuration half: granting,
+	// switching and revoking verifier status, the icon catalogue, and stripping a
+	// granted mark.
+	//
+	// It is separate from the review right because these are the actions that
+	// decide how much a third-party mark is worth. Handing out the queue is
+	// routine; handing out the ability to appoint verifiers is not.
+	PermissionBotVerificationManage = "botverification.manage"
 )
 
 // CodeForbidden is the stable code for a permission failure, so the panel can

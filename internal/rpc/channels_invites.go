@@ -80,6 +80,10 @@ func (r *Router) onMessagesCheckChatInvite(ctx context.Context, hash string) (tg
 	// scam/fake warning) appears only after joining, which is exactly backwards.
 	// Set*, not raw field assignment, so Flags stays consistent before Encode.
 	applyChatInviteModerationFlags(invite, res.Channel)
+	// bot_verification:flags.13 extends the same reasoning one field further: the
+	// third-party mark is part of what identifies the peer, so the preview a
+	// non-member sees has to carry it as well.
+	r.applyBotVerificationToChatInvite(ctx, invite, res.Channel.ID)
 	return invite, nil
 }
 

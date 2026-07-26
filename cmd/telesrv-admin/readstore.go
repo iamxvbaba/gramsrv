@@ -36,6 +36,10 @@ const (
 	verificationListDefaultLimit = 50
 	verificationListMaxLimit     = 200
 	verificationEventLimit       = 100
+	// Third-party bot verification pages. The bounds mirror app/botverification, so
+	// the panel and the admin API page the verifier tables identically.
+	botVerificationListDefaultLimit = 50
+	botVerificationListMaxLimit     = 200
 )
 
 // errReadNotFound reports a detail row that does not exist, so the API layer can
@@ -1834,4 +1838,514 @@ SELECT EXISTS (
 	default:
 		return false, nil
 	}
+}
+
+// Third-party bot verification (core.telegram.org/api/bots/verification).
+//
+// This is NOT the official platform badge read above. Official verification is a
+// boolean on the peer that only the operator sets; third-party verification is an
+// attributed mark granted by a verifier bot, carrying that verifier's own custom
+// emoji icon and description. The two mechanisms own separate tables and neither
+// reads the other's, which is why these queries never touch
+// verification_applications or users.verified.
+//
+// Peer titles and usernames are resolved from the live peer rather than from the
+// application's snapshot columns: an operator has to see the peer as it is now,
+// and the snapshot is only the fallback for a peer that has since gone. Usernames
+// come from the same users/channels + peer_usernames join every other view uses,
+// with `AND p.editable` on the peer_usernames side -- a collectible username sits
+// in the same table and is not the peer's own editable handle, so joining without
+// the predicate would report somebody else's asset as the peer's name.
+//
+// Every int64 is tagged as a JSON string. Bot ids, peer ids, custom emoji document
+// ids and the optimistic-locking version all exceed the range a JSON number
+// represents exactly, and a rounded version would send a decision against the
+// wrong revision of the row.
+
+// BotVerifierRow is one verifier bot: its operator-granted settings, the catalogue
+// name of the icon it marks with, and how many peers it has marked.
+type BotVerifierRow struct {
+	BotID                      int64 `json:"BotID,string"`
+	BotUsername                string
+	BotName                    string
+	IconDocumentID             int64 `json:"IconDocumentID,string"`
+	IconName                   string
+	CompanyName                string
+	DefaultDescription         string
+	CanModifyCustomDescription bool
+	Enabled                    bool
+	GrantedBy                  string
+	GrantReason                string
+	// MarkCount is how many peers this verifier currently marks. It is the number
+	// that would cascade away with a revocation, so it is counted rather than
+	// estimated.
+	MarkCount int64 `json:"MarkCount,string"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Version   int64 `json:"Version,string"`
+}
+
+// VerificationIconRow is one catalogue entry.
+type VerificationIconRow struct {
+	ID         int64 `json:"ID,string"`
+	DocumentID int64 `json:"DocumentID,string"`
+	// OwnerBotID is 0 for a shared entry and a bot id when the operator reserved
+	// the icon for one verifier.
+	OwnerBotID       int64 `json:"OwnerBotID,string"`
+	OwnerBotUsername string
+	Name             string
+	Active           bool
+	// UsedByVerifiers is a plain number: it counts verifier rows pointing at this
+	// document and can never approach the exactness limit an id can.
+	UsedByVerifiers int `json:"UsedByVerifiers"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// CustomVerificationRow is one granted mark.
+type CustomVerificationRow struct {
+	ID                  int64 `json:"ID,string"`
+	VerifierBotID       int64 `json:"VerifierBotID,string"`
+	VerifierBotUsername string
+	CompanyName         string
+	PeerType            string
+	PeerID              int64 `json:"PeerID,string"`
+	PeerTitle           string
+	PeerUsername        string
+	// IconDocumentID is the icon the mark was granted with, denormalised at grant
+	// time, so it keeps rendering even after the verifier changes its own.
+	IconDocumentID int64 `json:"IconDocumentID,string"`
+	Description    string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Version        int64 `json:"Version,string"`
+}
+
+// CustomVerificationRequestRow is one application filed with a verifier bot.
+type CustomVerificationRequestRow struct {
+	ID                   int64 `json:"ID,string"`
+	VerifierBotID        int64 `json:"VerifierBotID,string"`
+	VerifierBotUsername  string
+	ApplicantUserID      int64 `json:"ApplicantUserID,string"`
+	ApplicantUsername    string
+	PeerType             string
+	PeerID               int64 `json:"PeerID,string"`
+	PeerTitle            string
+	PeerUsername         string
+	Reason               string
+	RequestedDescription string
+	Status               string
+	DecidedBy            string
+	DecisionReason       string
+	// InternalNote is operator-only: it is the reviewer handover note and is never
+	// projected to the applicant. Every caller of this store already holds
+	// botverification.review.
+	InternalNote  string
+	CorrelationID string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ApprovedAt    time.Time
+	RejectedAt    time.Time
+	Version       int64 `json:"Version,string"`
+}
+
+// CustomVerificationRequestDetail is one application, the verifier behind it, and
+// whether the mark is on the peer right now.
+type CustomVerificationRequestDetail struct {
+	Request  CustomVerificationRequestRow
+	Verifier BotVerifierRow
+	// MarkActive tells "approved" apart from "approved and since stripped by the
+	// operator", which is the one thing the status alone cannot say.
+	MarkActive bool
+}
+
+const botVerifierSelectColumns = `s.bot_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS bot_username,
+	TRIM(BOTH ' ' FROM COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS bot_name,
+	s.icon_document_id, COALESCE(i.name, '') AS icon_name,
+	s.company_name, s.default_description, s.can_modify_custom_description,
+	s.enabled, s.granted_by, s.grant_reason,
+	(SELECT count(*) FROM custom_verifications cv WHERE cv.verifier_bot_id = s.bot_id) AS mark_count,
+	s.created_at, s.updated_at, s.version`
+
+// botVerifierJoins resolves the bot account behind the verifier row and the
+// catalogue label of its icon. The icon join is by document id, not by catalogue
+// id: the settings row stores the document, and an icon dropped from the catalogue
+// must still leave the verifier readable.
+const botVerifierJoins = `
+FROM bot_verifier_settings s
+LEFT JOIN users u ON u.id = s.bot_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = s.bot_id AND p.editable
+LEFT JOIN verification_icons i ON i.document_id = s.icon_document_id`
+
+func scanBotVerifierRow(scan func(dest ...any) error, item *BotVerifierRow) error {
+	return scan(
+		&item.BotID, &item.BotUsername, &item.BotName,
+		&item.IconDocumentID, &item.IconName,
+		&item.CompanyName, &item.DefaultDescription, &item.CanModifyCustomDescription,
+		&item.Enabled, &item.GrantedBy, &item.GrantReason, &item.MarkCount,
+		&item.CreatedAt, &item.UpdatedAt, &item.Version,
+	)
+}
+
+// ListBotVerifiers lists verifier bots, ordered by bot id so the table is stable
+// across reloads. enabledOnly hides the ones the operator switched off.
+func (s *readStore) ListBotVerifiers(ctx context.Context, enabledOnly bool, limit int) ([]BotVerifierRow, error) {
+	limit = clampBotVerificationLimit(limit)
+	rows, err := s.pool.Query(ctx, `
+SELECT `+botVerifierSelectColumns+botVerifierJoins+`
+WHERE NOT $1::boolean OR s.enabled
+ORDER BY s.bot_id
+LIMIT $2`, enabledOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list bot verifiers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotVerifierRow, 0, limit)
+	for rows.Next() {
+		var item BotVerifierRow
+		if err := scanBotVerifierRow(rows.Scan, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// BotVerifier reads one verifier row, enabled or not: the panel needs the disabled
+// one too, to render the kill switch. A missing row reports errReadNotFound.
+func (s *readStore) BotVerifier(ctx context.Context, botID int64) (BotVerifierRow, error) {
+	var out BotVerifierRow
+	row := s.pool.QueryRow(ctx, `
+SELECT `+botVerifierSelectColumns+botVerifierJoins+`
+WHERE s.bot_id = $1`, botID)
+	// The single-row path reuses the list scanner, so one column order serves both:
+	// a drift between them would silently mis-assign columns.
+	if err := scanBotVerifierRow(row.Scan, &out); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get bot verifier: %w", err)
+	}
+	return out, nil
+}
+
+// ListVerificationIcons lists the icon catalogue newest first, with the number of
+// verifiers each entry is currently configured on -- retiring an entry that
+// verifiers still point at is the operator's decision to make knowingly.
+func (s *readStore) ListVerificationIcons(ctx context.Context, activeOnly bool, limit int) ([]VerificationIconRow, error) {
+	limit = clampBotVerificationLimit(limit)
+	rows, err := s.pool.Query(ctx, `
+SELECT i.id, i.document_id, i.owner_bot_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS owner_bot_username,
+	i.name, i.active,
+	(SELECT count(*) FROM bot_verifier_settings s WHERE s.icon_document_id = i.document_id) AS used_by_verifiers,
+	i.created_at, i.updated_at
+FROM verification_icons i
+LEFT JOIN users u ON i.owner_bot_id <> 0 AND u.id = i.owner_bot_id
+LEFT JOIN peer_usernames p ON i.owner_bot_id <> 0
+	AND p.peer_type = 'user' AND p.peer_id = i.owner_bot_id AND p.editable
+WHERE NOT $1::boolean OR i.active
+ORDER BY i.id DESC
+LIMIT $2`, activeOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list verification icons: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationIconRow, 0, limit)
+	for rows.Next() {
+		var item VerificationIconRow
+		if err := rows.Scan(
+			&item.ID, &item.DocumentID, &item.OwnerBotID, &item.OwnerBotUsername,
+			&item.Name, &item.Active, &item.UsedByVerifiers,
+			&item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// customVerificationPeerJoins resolves a marked or applied-for peer on both sides
+// of the namespace. A third-party mark can sit on a user (bots included) or a
+// channel, so both are joined and the row's peer_type decides which contributes.
+// Each username side carries `AND editable`, so a collectible username parked in
+// peer_usernames is never mistaken for the peer's own handle.
+const customVerificationPeerJoins = `
+LEFT JOIN users tu ON %[1]s.peer_type = 'user' AND tu.id = %[1]s.peer_id
+LEFT JOIN peer_usernames tup ON %[1]s.peer_type = 'user'
+	AND tup.peer_type = 'user' AND tup.peer_id = %[1]s.peer_id AND tup.editable
+LEFT JOIN channels tc ON %[1]s.peer_type = 'channel' AND tc.id = %[1]s.peer_id
+LEFT JOIN peer_usernames tcp ON %[1]s.peer_type = 'channel'
+	AND tcp.peer_type = 'channel' AND tcp.peer_id = %[1]s.peer_id AND tcp.editable`
+
+// ListCustomVerifications pages granted marks newest first, keyset by descending
+// id. verifierBotID/peerType are exact filters; q matches a mark id, a peer id, or
+// a peer username prefix, which is how an operator looks a badge up from a report.
+func (s *readStore) ListCustomVerifications(
+	ctx context.Context,
+	verifierBotID int64,
+	peerType, q string,
+	beforeID int64,
+	limit int,
+) ([]CustomVerificationRow, bool, error) {
+	limit = clampBotVerificationLimit(limit)
+	peerType = strings.TrimSpace(peerType)
+	pattern, queryID := botVerificationSearchTerms(q)
+	rows, err := s.pool.Query(ctx, `
+SELECT cv.id, cv.verifier_bot_id,
+	COALESCE(NULLIF(vu.username, ''), vp.username_lower, '') AS verifier_bot_username,
+	COALESCE(s.company_name, '') AS company_name,
+	cv.peer_type, cv.peer_id,
+	CASE cv.peer_type
+		WHEN 'user' THEN TRIM(BOTH ' ' FROM COALESCE(tu.first_name, '') || ' ' || COALESCE(tu.last_name, ''))
+		ELSE COALESCE(tc.title, '')
+	END AS peer_title,
+	CASE cv.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(tu.username, ''), tup.username_lower, '')
+		ELSE COALESCE(NULLIF(tc.username, ''), tcp.username_lower, '')
+	END AS peer_username,
+	cv.icon_document_id, cv.description, cv.created_at, cv.updated_at, cv.version
+FROM custom_verifications cv
+LEFT JOIN users vu ON vu.id = cv.verifier_bot_id
+LEFT JOIN peer_usernames vp ON vp.peer_type = 'user' AND vp.peer_id = cv.verifier_bot_id AND vp.editable
+LEFT JOIN bot_verifier_settings s ON s.bot_id = cv.verifier_bot_id`+
+		fmt.Sprintf(customVerificationPeerJoins, "cv")+`
+WHERE ($1::bigint = 0 OR cv.verifier_bot_id = $1)
+	AND ($2::text = '' OR cv.peer_type = $2)
+	AND ($3::bigint = 0 OR cv.id < $3)
+	AND ($4::text = '' OR (
+		($5::bigint <> 0 AND (cv.id = $5 OR cv.peer_id = $5 OR cv.verifier_bot_id = $5))
+		OR lower(COALESCE(tu.username, '')) LIKE $4
+		OR lower(COALESCE(tc.username, '')) LIKE $4
+		OR lower(COALESCE(tc.title, '')) LIKE $4
+	))
+ORDER BY cv.id DESC
+LIMIT $6`, verifierBotID, peerType, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list custom verifications: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CustomVerificationRow, 0, limit+1)
+	for rows.Next() {
+		var item CustomVerificationRow
+		if err := rows.Scan(
+			&item.ID, &item.VerifierBotID, &item.VerifierBotUsername, &item.CompanyName,
+			&item.PeerType, &item.PeerID, &item.PeerTitle, &item.PeerUsername,
+			&item.IconDocumentID, &item.Description,
+			&item.CreatedAt, &item.UpdatedAt, &item.Version,
+		); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+const customVerificationRequestSelectColumns = `r.id, r.verifier_bot_id,
+	COALESCE(NULLIF(vu.username, ''), vp.username_lower, '') AS verifier_bot_username,
+	r.applicant_user_id,
+	COALESCE(NULLIF(au.username, ''), ap.username_lower, '') AS applicant_username,
+	r.peer_type, r.peer_id,
+	CASE r.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(TRIM(BOTH ' ' FROM COALESCE(tu.first_name, '') || ' ' || COALESCE(tu.last_name, '')), ''), r.peer_title)
+		ELSE COALESCE(NULLIF(tc.title, ''), r.peer_title)
+	END AS peer_title,
+	CASE r.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(tu.username, ''), NULLIF(tup.username_lower, ''), r.peer_username)
+		ELSE COALESCE(NULLIF(tc.username, ''), NULLIF(tcp.username_lower, ''), r.peer_username)
+	END AS peer_username,
+	r.reason, r.requested_description, r.status, r.decided_by, r.decision_reason,
+	r.internal_note, r.correlation_id,
+	r.created_at, r.updated_at, r.approved_at, r.rejected_at, r.version`
+
+// customVerificationRequestJoins resolves the verifier bot, the applicant and the
+// target peer. The peer title and username fall back to the application's snapshot
+// columns: a peer deleted since it applied still has to render as something the
+// reviewer recognises.
+var customVerificationRequestJoins = `
+FROM custom_verification_requests r
+LEFT JOIN users vu ON vu.id = r.verifier_bot_id
+LEFT JOIN peer_usernames vp ON vp.peer_type = 'user' AND vp.peer_id = r.verifier_bot_id AND vp.editable
+LEFT JOIN users au ON au.id = r.applicant_user_id
+LEFT JOIN peer_usernames ap ON ap.peer_type = 'user' AND ap.peer_id = r.applicant_user_id AND ap.editable` +
+	fmt.Sprintf(customVerificationPeerJoins, "r")
+
+func scanCustomVerificationRequestRow(scan func(dest ...any) error, item *CustomVerificationRequestRow) error {
+	// approved_at is NULL until an approval and rejected_at until a rejection; the
+	// table's CHECK constraints keep each in step with the status.
+	var approvedAt, rejectedAt *time.Time
+	if err := scan(
+		&item.ID, &item.VerifierBotID, &item.VerifierBotUsername,
+		&item.ApplicantUserID, &item.ApplicantUsername,
+		&item.PeerType, &item.PeerID, &item.PeerTitle, &item.PeerUsername,
+		&item.Reason, &item.RequestedDescription, &item.Status,
+		&item.DecidedBy, &item.DecisionReason, &item.InternalNote, &item.CorrelationID,
+		&item.CreatedAt, &item.UpdatedAt, &approvedAt, &rejectedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	if approvedAt != nil {
+		item.ApprovedAt = approvedAt.UTC()
+	}
+	if rejectedAt != nil {
+		item.RejectedAt = rejectedAt.UTC()
+	}
+	return nil
+}
+
+// ListCustomVerificationRequests pages the third-party review queue newest first,
+// keyset by descending id. status/verifierBotID/peerType are exact filters; q
+// matches an application id, a peer id, a verifier id, or a peer/applicant
+// username prefix.
+func (s *readStore) ListCustomVerificationRequests(
+	ctx context.Context,
+	status string,
+	verifierBotID int64,
+	peerType, q string,
+	beforeID int64,
+	limit int,
+) ([]CustomVerificationRequestRow, bool, error) {
+	limit = clampBotVerificationLimit(limit)
+	status = strings.TrimSpace(status)
+	peerType = strings.TrimSpace(peerType)
+	pattern, queryID := botVerificationSearchTerms(q)
+	rows, err := s.pool.Query(ctx, `
+SELECT `+customVerificationRequestSelectColumns+customVerificationRequestJoins+`
+WHERE ($1::text = '' OR r.status = $1)
+	AND ($2::bigint = 0 OR r.verifier_bot_id = $2)
+	AND ($3::text = '' OR r.peer_type = $3)
+	AND ($4::bigint = 0 OR r.id < $4)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND (r.id = $6 OR r.peer_id = $6 OR r.verifier_bot_id = $6 OR r.applicant_user_id = $6))
+		OR lower(r.peer_username) LIKE $5
+		OR lower(r.peer_title) LIKE $5
+		OR lower(COALESCE(tu.username, '')) LIKE $5
+		OR lower(COALESCE(tc.username, '')) LIKE $5
+		OR lower(COALESCE(au.username, '')) LIKE $5
+	))
+ORDER BY r.id DESC
+LIMIT $7`, status, verifierBotID, peerType, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list custom verification requests: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CustomVerificationRequestRow, 0, limit+1)
+	for rows.Next() {
+		var item CustomVerificationRequestRow
+		if err := scanCustomVerificationRequestRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// CustomVerificationRequestDetail returns one application with the verifier behind
+// it and whether the mark is live. A missing application reports errReadNotFound so
+// the API answers 404 rather than 500.
+func (s *readStore) CustomVerificationRequestDetail(ctx context.Context, id int64) (CustomVerificationRequestDetail, error) {
+	var out CustomVerificationRequestDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+customVerificationRequestSelectColumns+customVerificationRequestJoins+`
+WHERE r.id = $1`, id)
+	if err := scanCustomVerificationRequestRow(row.Scan, &out.Request); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get custom verification request: %w", err)
+	}
+	// The verifier may have been revoked since the application was filed, and the
+	// application survives that (it references users, not the settings row). An
+	// absent verifier is reported as a row carrying only its id, so the reviewer can
+	// still see which bot it was.
+	verifier, err := s.BotVerifier(ctx, out.Request.VerifierBotID)
+	switch {
+	case err == nil:
+		out.Verifier = verifier
+	case errors.Is(err, errReadNotFound):
+		out.Verifier = BotVerifierRow{BotID: out.Request.VerifierBotID}
+	default:
+		return out, err
+	}
+	if err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM custom_verifications
+	WHERE verifier_bot_id = $1 AND peer_type = $2 AND peer_id = $3
+)`, out.Request.VerifierBotID, out.Request.PeerType, out.Request.PeerID).Scan(&out.MarkActive); err != nil {
+		return out, fmt.Errorf("check custom verification mark: %w", err)
+	}
+	return out, nil
+}
+
+// CustomVerificationRequestCounts is the queue summary above the list. Every
+// modelled status is present, so the panel never has to tell "zero" from "absent",
+// and the values are decimal strings for the same exactness reason as the ids.
+func (s *readStore) CustomVerificationRequestCounts(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	for _, status := range []domain.CustomVerificationRequestStatus{
+		domain.CustomVerificationPending,
+		domain.CustomVerificationApproved,
+		domain.CustomVerificationRejected,
+		domain.CustomVerificationRevoked,
+	} {
+		out[string(status)] = "0"
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT status, count(*) FROM custom_verification_requests GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count custom verification requests: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		out[status] = strconv.FormatInt(count, 10)
+	}
+	return out, rows.Err()
+}
+
+// botVerificationSearchTerms turns an operator query into the LIKE pattern and the
+// optional exact id the list predicates use. LIKE metacharacters are escaped:
+// usernames legitimately contain '_', so an unescaped search for "crypto_" would
+// match "cryptoX" instead of the name that was typed.
+func botVerificationSearchTerms(q string) (string, int64) {
+	query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(q), "@"))
+	if query == "" {
+		return "", 0
+	}
+	pattern := strings.ToLower(escapeLikePattern(query)) + "%"
+	queryID := int64(0)
+	if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+		queryID = parsed
+	}
+	return pattern, queryID
+}
+
+func clampBotVerificationLimit(limit int) int {
+	if limit <= 0 {
+		return botVerificationListDefaultLimit
+	}
+	if limit > botVerificationListMaxLimit {
+		return botVerificationListMaxLimit
+	}
+	return limit
 }

@@ -38,6 +38,13 @@ const (
 	permissionAll                = "*"
 	permissionVerificationReview = "verification.review"
 	permissionVerificationRevoke = "verification.revoke"
+	// Third-party bot verification. Deliberately not implied by the official
+	// verification rights above: the two are separate mechanisms over separate
+	// tables, so a session trusted with one queue is not thereby trusted with the
+	// other. review reads and decides applications; manage appoints verifiers,
+	// curates the icon catalogue and strips granted marks.
+	permissionBotVerificationReview = "botverification.review"
+	permissionBotVerificationManage = "botverification.manage"
 )
 
 type permissionsKey struct{}

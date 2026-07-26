@@ -609,6 +609,40 @@ accounts are not accepted, a rejection costs a month, and an applicant can neith
 unbounded number of applications open. Every value is validated even when the feature is disabled, so enabling it
 later is not the moment a typo is discovered.
 
+### Third-party bot verification
+
+Third-party verification is the other badge (`botVerification`, projected onto `user.bot_verification_icon`,
+`channel.bot_verification_icon`, `userFull.bot_verification`, `channelFull.bot_verification`,
+`chatInvite.bot_verification`, and advertised by `botInfo.verifier_settings`): an outside organisation running a
+**verifier bot** marks peers with its own icon and description. The operator grants verifier status to a bot; the bot
+then applies its mark through `bots.setCustomVerification`, or through the application queue its own dialog drives. It is
+never a second route to the platform checkmark above, and the two mechanisms never read or write each other's state.
+
+The icon is a custom emoji **document id**, and clients resolve it through `messages.getCustomEmojiDocuments`. An id
+that names no fetchable custom emoji document therefore renders as *nothing at all*: the badge is invisible, the peer
+looks unverified, and the only place the mark exists is the database. That is why the icon catalogue is operator-curated
+and validated against real documents before anything is written — both when an entry is added and when a verifier is
+granted an icon.
+
+Every mutation re-derives "may this bot verify right now?" from the stored verifier row, so the per-verifier kill switch
+takes effect immediately on the RPC path *and* on the review path: an application approved after the switch was flipped
+is refused rather than granted. A verifier bot may only be driven by itself or by its owner, and an applicant may only
+file for a peer it controls (bot owner, channel creator, or an administrator carrying `change_info`). Approvals and
+revocations move the mark inside the store's decision transaction, so an approved application can never exist without
+its mark.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_BOT_VERIFICATION_ENABLED` | bool / `true` | Enables third-party bot verification. Disabled refuses every mutation explicitly (grants, revocations, applications, catalogue edits) while marks already granted keep projecting: blanking one verifier's badges is what its per-verifier kill switch is for. A deployment that wants the pre-feature wire shape leaves the service unwired instead. |
+| `TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER` | int / `10000` | Peers one verifier bot may mark. Verifier status is granted per deployment rather than earned per peer, so an unbounded verifier would be an unbounded badge printer. Spent only on a *new* mark — an existing one stays re-describable at the bound. `0` disables the service bound and leaves only the storage bound, which is also the maximum accepted (`10000`). |
+| `TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT` | int / `5` | Verification applications one applicant may file per window, across all verifier bots. Spent last among the creation checks, so a refused application costs no budget. `0` disables it; must be non-negative. |
+| `TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW` | duration / `24h` | Window for the application budget. Must be positive whenever the limit is set: a positive limit with a zero window is a limiter that never refills. |
+
+The application budget is deliberately looser than the official one (`TELESRV_VERIFICATION_APPLY_RATE_LIMIT=3`): a
+deployment can run several verifier companies, and filing with a second one is not a retry of the first. Both keys are
+validated even when the feature is disabled, and the per-verifier bound is checked against the storage bound, so a key
+that cannot do what it says fails startup instead of being silently unreachable.
+
 ## 11. Private calls, group calls, TURN, SFU, and livestream
 
 | Setting | Type / code default | Description and constraints |

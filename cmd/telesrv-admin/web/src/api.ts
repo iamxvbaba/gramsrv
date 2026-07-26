@@ -7,7 +7,13 @@ import type {
   AdminSession,
   BotDetail,
   BotListResponse,
+  BotVerificationCountsResponse,
+  BotVerifierListResponse,
   ChannelDetail,
+  CustomVerificationListResponse,
+  CustomVerificationRequestDetail,
+  CustomVerificationRequestListResponse,
+  VerificationIconListResponse,
   EmojiListResponse,
   ChannelListResponse,
   CollectibleUsernameDetail,
@@ -162,6 +168,21 @@ export const api = {
   verificationApplication: (id: string) =>
     request<VerificationApplicationDetail>(`/api/verification/applications/${encodeURIComponent(id)}`),
   verificationCounts: () => request<VerificationCountsResponse>("/api/verification/counts"),
+  // Third-party verification lives under its own prefix: the two mechanisms share
+  // no state, so they share no route either.
+  botVerifiers: (params: URLSearchParams) =>
+    request<BotVerifierListResponse>(`/api/botverification/verifiers?${params.toString()}`),
+  verificationIcons: (params: URLSearchParams) =>
+    request<VerificationIconListResponse>(`/api/botverification/icons?${params.toString()}`),
+  customVerifications: (params: URLSearchParams) =>
+    request<CustomVerificationListResponse>(`/api/botverification/marks?${params.toString()}`),
+  customVerificationRequests: (params: URLSearchParams) =>
+    request<CustomVerificationRequestListResponse>(`/api/botverification/requests?${params.toString()}`),
+  // The application id is an int64 decimal string end to end, so it is never parsed
+  // into a number on the way to the URL.
+  customVerificationRequest: (id: string) =>
+    request<CustomVerificationRequestDetail>(`/api/botverification/requests/${encodeURIComponent(id)}`),
+  botVerificationCounts: () => request<BotVerificationCountsResponse>("/api/botverification/counts"),
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),

@@ -992,6 +992,38 @@ type AccountRatingService interface {
 	RatingBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountRating, error)
 }
 
+// BotVerificationService is the third-party bot verification boundary
+// (core.telegram.org/api/bots/verification): a verifier bot marking peers with its
+// own icon and description, which official clients render as a badge distinct from
+// the operator-granted checkmark.
+//
+// It is the single source for every surface that projects the feature --
+// user.bot_verification_icon, channel.bot_verification_icon,
+// userFull.bot_verification, channelFull.bot_verification,
+// chatInvite.bot_verification and botInfo.verifier_settings -- so no two responses
+// can disagree about which mark a peer carries.
+//
+// Optional like UsernameRegistryService and AccountRatingService: a nil field, or
+// any read error, must leave every flag unset and bots.setCustomVerification
+// answering BOT_VERIFIER_FORBIDDEN, which is exactly the pre-feature wire shape.
+type BotVerificationService interface {
+	// PeerVerification returns the mark a peer is rendered with (the newest one when
+	// several verifiers marked it), or domain.ErrCustomVerificationNotFound.
+	PeerVerification(ctx context.Context, peer domain.Peer) (domain.CustomVerification, error)
+	// PeerVerificationBatch is the N+1-free variant used by the response-boundary
+	// overlay. Peers without a mark may be omitted from the result map.
+	PeerVerificationBatch(ctx context.Context, peers []domain.Peer) (map[domain.Peer]domain.CustomVerification, error)
+	// VerifierSettings reads one bot's verifier status, or
+	// domain.ErrVerifierNotFound.
+	VerifierSettings(ctx context.Context, botID int64) (domain.BotVerifierSettings, error)
+	// VerifierSettingsBatch resolves several bots at once for the botInfo
+	// projection; bots without verifier status may be omitted.
+	VerifierSettingsBatch(ctx context.Context, botIDs []int64) (map[int64]domain.BotVerifierSettings, error)
+	// SetCustomVerification applies bots.setCustomVerification. changed is false
+	// when the stored state already matched, which the RPC answers as Bool false.
+	SetCustomVerification(ctx context.Context, req domain.SetCustomVerificationRequest) (changed bool, err error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth                AuthService
@@ -1012,6 +1044,7 @@ type Deps struct {
 	Users                UsersService
 	Usernames            UsernameRegistryService
 	AccountRatings       AccountRatingService
+	BotVerifications     BotVerificationService
 	TelegramLogin        TelegramLoginService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore

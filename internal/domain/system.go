@@ -30,6 +30,19 @@ const (
 	// VerifyBotAccessHash is fixed and double-written with the seed row in
 	// migration 0152; the two must never drift.
 	VerifyBotAccessHash int64 = 7802113947355620887
+
+	// VerifierBotUserID is the built-in @verifierbot: the first THIRD-PARTY
+	// verifier of a deployment (core.telegram.org/api/bots/verification). It
+	// collects applications for its own icon+description mark and reports the
+	// operator's decision back to the applicant. The id is reserved and stable, so
+	// a restart never re-creates the account under a different identity.
+	//
+	// It is not a second route to the platform checkmark: that badge is granted by
+	// the operator alone and collected by VerifyBotUserID above.
+	VerifierBotUserID int64 = 1250000013
+	// VerifierBotAccessHash is fixed and double-written with the seed row in
+	// migration 0155; the two must never drift.
+	VerifierBotAccessHash int64 = 6913402578811563729
 )
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
@@ -98,6 +111,24 @@ func VerifyBotUser() User {
 	}
 }
 
+// VerifierBotUser returns the built-in @verifierbot account.
+//
+// Verified is false on purpose: the official checkmark is the platform's own
+// mechanism, and a third-party verifier wearing it would blur exactly the
+// distinction this bot has to explain to every applicant. What makes the account a
+// verifier is the operator-granted BotVerifierSettings row, not this seed.
+func VerifierBotUser() User {
+	return User{
+		ID:             VerifierBotUserID,
+		AccessHash:     VerifierBotAccessHash,
+		FirstName:      "Verifier Bot",
+		Username:       "verifierbot",
+		Verified:       false,
+		Bot:            true,
+		BotInfoVersion: 1,
+	}
+}
+
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
 // 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
 func SystemUserByID(id int64) (User, bool) {
@@ -112,6 +143,8 @@ func SystemUserByID(id int64) (User, bool) {
 		return ChatBotUser(), true
 	case VerifyBotUserID:
 		return VerifyBotUser(), true
+	case VerifierBotUserID:
+		return VerifierBotUser(), true
 	}
 	return User{}, false
 }
@@ -123,7 +156,7 @@ func IsSystemUserID(id int64) bool {
 
 func SystemUserByPhone(phone string) (User, bool) {
 	phone = NormalizePhone(phone)
-	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID, VerifyBotUserID} {
+	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID, VerifyBotUserID, VerifierBotUserID} {
 		u, ok := SystemUserByID(id)
 		if !ok || u.Phone == "" {
 			continue

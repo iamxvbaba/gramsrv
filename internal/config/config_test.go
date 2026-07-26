@@ -885,6 +885,84 @@ func TestLoadRejectsInvalidVerificationConfig(t *testing.T) {
 	}
 }
 
+func TestLoadBotVerificationDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.BotVerificationEnabled {
+		t.Fatal("BotVerificationEnabled = false, want the feature shipped on")
+	}
+	// The default is the storage bound itself, so the shipped behaviour is the same
+	// whether or not the key is set.
+	if cfg.BotVerificationMaxPerVerifier != domain.MaxCustomVerificationsPerVerifier {
+		t.Fatalf("BotVerificationMaxPerVerifier = %d, want %d", cfg.BotVerificationMaxPerVerifier, domain.MaxCustomVerificationsPerVerifier)
+	}
+	if cfg.BotVerificationRequestRateLimit != 5 || cfg.BotVerificationRequestRateWindow != 24*time.Hour {
+		t.Fatalf("request rate = %d/%v, want 5/24h", cfg.BotVerificationRequestRateLimit, cfg.BotVerificationRequestRateWindow)
+	}
+}
+
+func TestLoadBotVerificationOverrides(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_BOT_VERIFICATION_ENABLED", "false")
+	t.Setenv("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", "0")
+	t.Setenv("TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT", "0")
+	t.Setenv("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", "0s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BotVerificationEnabled {
+		t.Fatal("BotVerificationEnabled = true, want the override honoured")
+	}
+	if cfg.BotVerificationMaxPerVerifier != 0 {
+		t.Fatalf("BotVerificationMaxPerVerifier = %d, want the service bound disabled", cfg.BotVerificationMaxPerVerifier)
+	}
+	// A zero limit disables the budget, so a zero window is accepted with it.
+	if cfg.BotVerificationRequestRateLimit != 0 || cfg.BotVerificationRequestRateWindow != 0 {
+		t.Fatalf("request rate = %d/%v, want the budget disabled", cfg.BotVerificationRequestRateLimit, cfg.BotVerificationRequestRateWindow)
+	}
+}
+
+func TestLoadRejectsInvalidBotVerificationConfig(t *testing.T) {
+	for _, test := range []struct {
+		key   string
+		value string
+	}{
+		{"TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", "-1"},
+		{"TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", "10001"},
+		{"TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT", "-1"},
+		{"TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", "-5m"},
+		// A positive limit with no window is a limiter that never refills.
+		{"TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", "0s"},
+	} {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
+	}
+}
+
+// TestLoadValidatesBotVerificationWhileDisabled pins that the policy is checked
+// even with the feature off, so switching it on later is not the moment a typo is
+// discovered.
+func TestLoadValidatesBotVerificationWhileDisabled(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_BOT_VERIFICATION_ENABLED", "false")
+	t.Setenv("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", "-3")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted a negative per-verifier bound while the feature was disabled")
+	}
+}
+
 func TestLoadAdminRBACDefaults(t *testing.T) {
 	disableDefaultConfigFile(t)
 

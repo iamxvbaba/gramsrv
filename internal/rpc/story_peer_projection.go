@@ -507,6 +507,7 @@ func appendUniqueTGChats(base []tg.ChatClass, extra ...tg.ChatClass) []tg.ChatCl
 func (r *Router) applyPeerReadModels(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {
 	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, users, chats)
 	r.applyUsernamesToPeerObjects(ctx, users, chats)
+	r.applyBotVerificationIconsToPeerObjects(ctx, users, chats)
 }
 
 func (r *Router) applyStoryMaxIDsToPeerObjects(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {

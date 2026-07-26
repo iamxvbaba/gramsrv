@@ -545,6 +545,141 @@ export type VerificationCountsResponse = {
   counts: Record<string, string> | null;
 };
 
+// Third-party bot verification (core.telegram.org/api/bots/verification): a
+// verifier bot marks a peer with its OWN icon and description, rendered before the
+// name. It is a different mechanism from the official checkmark above — the two
+// never read each other's state — so it gets its own row types rather than reusing
+// VerificationApplicationRow.
+//
+// Every int64 the backend tags `,string` stays a decimal string here: bot ids, peer
+// ids, custom emoji document ids and the optimistic-locking version all outgrow the
+// exact range of a JSON number.
+export type BotVerificationPeerType = "user" | "channel";
+
+export type CustomVerificationRequestStatus = "pending" | "approved" | "rejected" | "revoked";
+
+// MarkCount is tagged `,string` like the ids (it is the count that would cascade
+// away with a revocation, read as int64), while VerificationIconRow.UsedByVerifiers
+// is a plain number — it counts verifier rows and cannot approach the exactness
+// limit. Both are rendered through String(), so neither shape can surprise a cell.
+export type BotVerifierRow = {
+  BotID: string;
+  BotUsername: string;
+  BotName: string;
+  // IconDocumentID is the custom emoji document the verifier marks with. Clients
+  // resolve it through messages.getCustomEmojiDocuments, so an id naming no
+  // fetchable document renders as no badge at all.
+  IconDocumentID: string;
+  IconName: string;
+  CompanyName: string;
+  DefaultDescription: string;
+  // CanModifyCustomDescription mirrors botVerifierSettings flags.1: when false the
+  // verifier may only apply DefaultDescription.
+  CanModifyCustomDescription: boolean;
+  // Enabled is the operator kill switch: a disabled verifier keeps its granted
+  // marks but can no longer mark anything new.
+  Enabled: boolean;
+  GrantedBy: string;
+  GrantReason: string;
+  MarkCount: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+  Version: string;
+};
+
+export type VerificationIconRow = {
+  ID: string;
+  DocumentID: string;
+  // OwnerBotID is "0" for a catalogue entry any verifier may use, and a bot id
+  // when the operator reserved the icon for one verifier.
+  OwnerBotID: string;
+  OwnerBotUsername: string;
+  Name: string;
+  Active: boolean;
+  UsedByVerifiers: number;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type CustomVerificationRow = {
+  ID: string;
+  VerifierBotID: string;
+  VerifierBotUsername: string;
+  CompanyName: string;
+  PeerType: BotVerificationPeerType;
+  PeerID: string;
+  PeerTitle: string;
+  PeerUsername: string;
+  // Denormalised at grant time, so a mark keeps the icon it was granted with even
+  // after the verifier changes its own.
+  IconDocumentID: string;
+  Description: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+  Version: string;
+};
+
+export type CustomVerificationRequestRow = {
+  ID: string;
+  VerifierBotID: string;
+  VerifierBotUsername: string;
+  ApplicantUserID: string;
+  ApplicantUsername: string;
+  PeerType: BotVerificationPeerType;
+  PeerID: string;
+  PeerTitle: string;
+  PeerUsername: string;
+  Reason: string;
+  RequestedDescription: string;
+  Status: CustomVerificationRequestStatus;
+  DecidedBy: string;
+  DecisionReason: string;
+  // InternalNote is the operator handover note: never shown to the applicant.
+  InternalNote: string;
+  CorrelationID: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+  ApprovedAt: string;
+  RejectedAt: string;
+  Version: string;
+};
+
+export type BotVerifierListResponse = {
+  rows: BotVerifierRow[] | null;
+};
+
+export type VerificationIconListResponse = {
+  rows: VerificationIconRow[] | null;
+};
+
+export type CustomVerificationListResponse = {
+  rows: CustomVerificationRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type CustomVerificationRequestListResponse = {
+  rows: CustomVerificationRequestRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type CustomVerificationRequestDetail = {
+  request: CustomVerificationRequestRow;
+  // The verifier row as it is now: it can be disabled, or revoked entirely, after
+  // the application was filed.
+  verifier: BotVerifierRow | null;
+  // mark_active describes the peer right now, not the application status: an
+  // approved application whose mark a verifier later withdrew reads false.
+  mark_active: boolean;
+};
+
+// Counts are decimal strings for the same exactness reason as the ids; the backend
+// always sends all four statuses.
+export type BotVerificationCountsResponse = {
+  counts: Record<string, string> | null;
+};
+
 export type AdminSession = {
   actor: string;
   // The right set the signed session was issued with; ["*"] means everything.

@@ -9,6 +9,11 @@ import { useI18n } from "./i18n";
 export const permissionAll = "*";
 export const permissionVerificationReview = "verification.review";
 export const permissionVerificationRevoke = "verification.revoke";
+// Third-party verification is a separate mechanism and therefore a separate pair of
+// rights: review reads the section and decides applications, manage owns the
+// verifier roster, the icon catalogue and taking a granted mark away.
+export const permissionBotVerificationReview = "botverification.review";
+export const permissionBotVerificationManage = "botverification.manage";
 
 // GET /api/session is read once at boot; the panel keeps the answer here so a
 // section the session may not use is hidden instead of rendered into a 403. This

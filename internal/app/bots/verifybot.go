@@ -350,6 +350,11 @@ func (s *Service) OnCallbackQuery(ctx context.Context, query domain.BotCallbackQ
 	if query.UserID <= 0 || query.UserID == query.BotUserID {
 		return domain.BotCallbackAnswer{}, false, nil
 	}
+	if query.BotUserID == domain.VerifierBotUserID {
+		// The built-in third-party verifier owns its own token table and dialog
+		// (verifierbot.go).
+		return s.onVerifierCallback(ctx, query)
+	}
 	if query.BotUserID != domain.VerifyBotUserID {
 		// The other built-in bots never attach an inline keyboard, so there is
 		// nothing to route. An empty answer still beats hanging the click for the
