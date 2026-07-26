@@ -66,6 +66,20 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 		}
 		matched = append(matched, msg)
 	}
+	extraChannels := []domain.Channel(nil)
+	if channel.Monoforum && channel.LinkedMonoforumID != 0 {
+		if parent, ok := s.channels[channel.LinkedMonoforumID]; ok && !parent.Deleted {
+			extraChannels = append(extraChannels, cloneChannel(parent))
+		}
+	}
+	if filter.CountOnly {
+		return domain.ChannelHistory{
+			Channel:  channel,
+			Self:     member,
+			Channels: extraChannels,
+			Count:    len(matched),
+		}, nil
+	}
 	// add_offset 决定加载方向（对齐 postgres ListChannelHistory）：
 	//   >= 0           backward：锚点更旧方向（不含锚点），先跳过 add_offset 条
 	//   < 0 且 +limit>0 around：以锚点为中心，向更新取 -add_offset 条 + 向更旧（含锚点）取 limit+add_offset 条
@@ -160,14 +174,11 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 	if hasMoreOlder {
 		count = len(out) + 1
 	}
+	if filter.NeedTotalCount {
+		count = len(matched)
+	}
 	s.populateChannelMessageRepliesLocked(viewerUserID, filter.ChannelID, out)
 	s.populateChannelMessageReactionsLocked(viewerUserID, channel, out)
-	extraChannels := []domain.Channel(nil)
-	if channel.Monoforum && channel.LinkedMonoforumID != 0 {
-		if parent, ok := s.channels[channel.LinkedMonoforumID]; ok && !parent.Deleted {
-			extraChannels = append(extraChannels, cloneChannel(parent))
-		}
-	}
 	return domain.ChannelHistory{
 		Channel:  channel,
 		Self:     member,
