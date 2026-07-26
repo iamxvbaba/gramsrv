@@ -8,7 +8,7 @@ import (
 
 const (
 	DefaultPublicBaseURL = "https://telesrv.net"
-	DefaultWebBaseURL    = "https://web.telesrv.net"
+	DefaultWebBaseURL    = "https://weba.telesrv.net"
 	DefaultAppScheme     = "telesrv"
 	DefaultAppName       = "telesrv"
 )

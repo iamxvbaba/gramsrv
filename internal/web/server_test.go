@@ -508,7 +508,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 			t.Fatalf("body missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "telesrv://") || strings.Contains(body, "https://web.telesrv.net") {
+	if strings.Contains(body, "telesrv://") || strings.Contains(body, "https://weba.telesrv.net") {
 		t.Fatalf("body contains stale default client link:\n%s", body)
 	}
 	for _, tc := range []struct {

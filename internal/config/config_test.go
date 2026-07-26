@@ -28,8 +28,8 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicAppLinkBase != "" {
 		t.Fatalf("PublicAppLinkBase = %q, want disabled", cfg.PublicAppLinkBase)
 	}
-	if cfg.PublicWebBaseURL != "https://web.telesrv.net" {
-		t.Fatalf("PublicWebBaseURL = %q, want https://web.telesrv.net", cfg.PublicWebBaseURL)
+	if cfg.PublicWebBaseURL != "https://weba.telesrv.net" {
+		t.Fatalf("PublicWebBaseURL = %q, want https://weba.telesrv.net", cfg.PublicWebBaseURL)
 	}
 	if cfg.PublicAppName != "telesrv" {
 		t.Fatalf("PublicAppName = %q, want telesrv", cfg.PublicAppName)
