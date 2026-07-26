@@ -852,3 +852,69 @@ func TestUserFullOmitsStarsRatingAtMaxLevel(t *testing.T) {
 		t.Fatalf("next_level_stars set at max level, want absent")
 	}
 }
+
+// materializingRatings is an AccountRatingService that also implements
+// AccountRatingMaterializer, so the RPC layer can be checked for which profile
+// views are allowed to create a projection.
+type materializingRatings struct {
+	fakeAccountRatings
+	ensured []int64
+}
+
+func (m *materializingRatings) EnsureRating(_ context.Context, userID int64) (domain.AccountRating, error) {
+	m.ensured = append(m.ensured, userID)
+	if rating, ok := m.byUser[userID]; ok {
+		return rating, nil
+	}
+	rating := domain.AccountRating{
+		UserID:            userID,
+		Level:             1,
+		Stars:             150,
+		CurrentLevelStars: domain.AccountRatingLevelThreshold(1),
+		NextLevelStars:    domain.AccountRatingLevelThreshold(2),
+		HasNextLevel:      true,
+	}
+	m.byUser[userID] = rating
+	return rating, nil
+}
+
+var _ AccountRatingMaterializer = (*materializingRatings)(nil)
+
+// TestUserFullMaterializesOnlyTheViewersOwnRating pins which side of the profile
+// read is allowed to write. An account with no projection yet must still see its own
+// rating -- the background cycle can be a whole interval away -- but a stranger's
+// profile has to stay a pure read, or browsing profiles becomes a write amplifier.
+func TestUserFullMaterializesOnlyTheViewersOwnRating(t *testing.T) {
+	ratings := &materializingRatings{fakeAccountRatings: fakeAccountRatings{byUser: map[int64]domain.AccountRating{}}}
+	r, owner, other := newRatingFixture(t, ratings)
+	ctx := WithUserID(context.Background(), owner.ID)
+
+	// Own profile: nothing stored, so it is computed on the spot and projected.
+	full, err := r.onUsersGetFullUser(ctx, &tg.InputUserSelf{})
+	if err != nil {
+		t.Fatalf("get own full user: %v", err)
+	}
+	rating, ok := full.FullUser.GetStarsRating()
+	if !ok || rating.Level != 1 || rating.Stars != 150 {
+		t.Fatalf("own stars_rating = %+v (present=%v), want the materialised rating", rating, ok)
+	}
+	if len(ratings.ensured) != 1 || ratings.ensured[0] != owner.ID {
+		t.Fatalf("materialised %v, want exactly the viewer's own id %d", ratings.ensured, owner.ID)
+	}
+
+	// A stranger's profile: still nothing stored for them, and the read must leave
+	// it that way, so no rating is projected either.
+	strangerFull, err := r.onUsersGetFullUser(ctx, &tg.InputUser{UserID: other.ID, AccessHash: other.AccessHash})
+	if err != nil {
+		t.Fatalf("get other full user: %v", err)
+	}
+	if rating, ok := strangerFull.FullUser.GetStarsRating(); ok {
+		t.Fatalf("stranger stars_rating = %+v, want absent until the worker seeds it", rating)
+	}
+	if len(ratings.ensured) != 1 {
+		t.Fatalf("materialised %v, want the stranger's profile to stay a pure read", ratings.ensured)
+	}
+	if _, stored := ratings.byUser[other.ID]; stored {
+		t.Fatalf("viewing a stranger created a projection for %d", other.ID)
+	}
+}

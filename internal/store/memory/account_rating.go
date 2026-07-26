@@ -52,6 +52,14 @@ type AccountRatingStore struct {
 	// the manual total is derived here, from the ledger, because the ledger is
 	// this store's own data.
 	signals map[int64]domain.AccountRatingSignals
+	// accounts is the account universe UnratedAccounts seeds from, in declaration
+	// order.
+	//
+	// PostgreSQL reads it from the users table. This store has no users table and
+	// inventing one from whichever ids happen to appear in the ledger would be
+	// circular -- an account with no rating and no adjustment is exactly the case
+	// seeding exists for. So the universe is declared, like signals above.
+	accounts []int64
 }
 
 // NewAccountRatingStore creates an empty rating store.
@@ -275,6 +283,50 @@ func (s *AccountRatingStore) StaleAccountRatings(_ context.Context, olderThanUni
 	out := make([]int64, 0, len(stale))
 	for _, rating := range stale {
 		out = append(out, rating.UserID)
+	}
+	return out, nil
+}
+
+// SeedAccounts declares the account universe UnratedAccounts walks. Repeating an
+// id is a no-op, so a test can declare accounts as it creates them.
+func (s *AccountRatingStore) SeedAccounts(userIDs ...int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	known := make(map[int64]struct{}, len(s.accounts))
+	for _, id := range s.accounts {
+		known[id] = struct{}{}
+	}
+	for _, id := range userIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := known[id]; ok {
+			continue
+		}
+		known[id] = struct{}{}
+		s.accounts = append(s.accounts, id)
+	}
+}
+
+// UnratedAccounts returns declared accounts that have no projection yet, in
+// declaration order -- the memory stand-in for PostgreSQL's oldest-account-first
+// walk. A store nobody seeded reports no candidates rather than erroring: the
+// worker treats that as "nothing to seed", which is the truth.
+func (s *AccountRatingStore) UnratedAccounts(_ context.Context, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = defaultAccountRatingStaleLimit
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]int64, 0, limit)
+	for _, id := range s.accounts {
+		if _, rated := s.ratings[id]; rated {
+			continue
+		}
+		out = append(out, id)
+		if len(out) == limit {
+			break
+		}
 	}
 	return out, nil
 }

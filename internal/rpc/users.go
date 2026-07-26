@@ -428,7 +428,7 @@ func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID,
 	if r.deps.AccountRatings == nil || full == nil || targetUserID == 0 {
 		return
 	}
-	rating, err := r.deps.AccountRatings.Rating(ctx, targetUserID)
+	rating, err := r.accountRatingForUserFull(ctx, viewerUserID, targetUserID)
 	if err != nil {
 		// Includes domain.ErrAccountRatingNotFound: an account with no rating row
 		// simply has no rating to show.
@@ -444,6 +444,23 @@ func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID,
 	}
 	full.SetStarsMyPendingRating(tgStarsRating(pending))
 	full.SetStarsMyPendingRatingDate(int(rating.PendingDate.Unix()))
+}
+
+// accountRatingForUserFull reads the projection, materialising it first when the
+// account is looking at its own profile and has none yet.
+//
+// The background cycle seeds every account, but only every recompute interval, and
+// an account that has just signed up would otherwise see nothing on its own profile
+// and be unable to tell that from a rating of zero. A stranger's view never
+// materialises: it stays a pure read, so browsing profiles cannot be turned into a
+// write amplifier. A service without the materialiser extension always reads.
+func (r *Router) accountRatingForUserFull(ctx context.Context, viewerUserID, targetUserID int64) (domain.AccountRating, error) {
+	if viewerUserID != 0 && viewerUserID == targetUserID {
+		if materializer, ok := r.deps.AccountRatings.(AccountRatingMaterializer); ok {
+			return materializer.EnsureRating(ctx, targetUserID)
+		}
+	}
+	return r.deps.AccountRatings.Rating(ctx, targetUserID)
 }
 
 // tgStarsRating projects domain.StarsRating onto starsRating#1b0e4f07.

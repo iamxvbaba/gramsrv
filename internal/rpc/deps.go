@@ -992,6 +992,19 @@ type AccountRatingService interface {
 	RatingBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountRating, error)
 }
 
+// AccountRatingMaterializer is the optional extension that lets an account's own
+// profile compute its rating on the spot instead of waiting for the background
+// cycle to reach it.
+//
+// It is deliberately a second interface rather than two more methods on
+// AccountRatingService: every surface that projects somebody else's rating must
+// only ever read, and keeping the write behind its own type makes that boundary
+// something the compiler enforces instead of something a reviewer has to notice.
+// A service that does not implement it simply never materialises early.
+type AccountRatingMaterializer interface {
+	EnsureRating(ctx context.Context, userID int64) (domain.AccountRating, error)
+}
+
 // BotVerificationService is the third-party bot verification boundary
 // (core.telegram.org/api/bots/verification): a verifier bot marking peers with its
 // own icon and description, which official clients render as a badge distinct from

@@ -1,9 +1,19 @@
+// AccountUsername is one collectible username the peer holds. Active mirrors the
+// username#b4073647 flag: an inactive collectible is owned but does not resolve.
+export type AccountUsername = {
+  Username: string;
+  Active: boolean;
+};
+
 export type AccountRow = {
   ID: number;
   Phone: string;
   Username: string;
   FirstName: string;
   LastName: string;
+  // Collectible usernames in projection order; never includes the editable slot
+  // above. Always an array, so it can be iterated unconditionally.
+  Collectibles: AccountUsername[];
   CreatedAt: string;
   UpdatedAt: string;
   Frozen: boolean;

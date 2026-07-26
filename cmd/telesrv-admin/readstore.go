@@ -63,12 +63,27 @@ func newReadStore(pool *pgxpool.Pool) *readStore {
 	return &readStore{pool: pool}
 }
 
+// AccountUsername is one collectible (Fragment-style) username a peer holds.
+//
+// Active mirrors the username#b4073647 flag: an inactive collectible is still
+// owned, it just does not resolve publicly, and an operator has to be able to
+// tell those two apart -- so the row is listed either way and carries the flag
+// rather than being filtered out.
+type AccountUsername struct {
+	Username string
+	Active   bool
+}
+
 type AccountRow struct {
-	ID           int64
-	Phone        string
-	Username     string
-	FirstName    string
-	LastName     string
+	ID        int64
+	Phone     string
+	Username  string
+	FirstName string
+	LastName  string
+	// Collectibles are the peer's collectible usernames in the order clients
+	// project them. The editable slot in Username is never repeated here: it is a
+	// different kind of row that a different RPC owns.
+	Collectibles []AccountUsername
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	Frozen       bool
@@ -80,6 +95,22 @@ type AccountRow struct {
 	LastActiveAt time.Time
 	DeviceCount  int
 }
+
+// accountCollectibleUsernamesColumn aggregates a peer's collectible usernames
+// into one jsonb value, so a list page costs one indexed subquery per row instead
+// of a second round trip per account.
+//
+// The object keys are the AccountUsername field names on purpose: pgx unmarshals
+// jsonb straight into the Go value, and matching the field names keeps the panel's
+// JSON shape identical to every other field on the row (PascalCase) instead of
+// introducing one lowercase island. Ordering matches domain.SortUsernames for
+// collectible rows -- stored order, then the name as a stable tiebreak.
+const accountCollectibleUsernamesColumn = `COALESCE((
+	SELECT jsonb_agg(jsonb_build_object('Username', pc.username, 'Active', pc.active)
+		ORDER BY pc.sort_order, pc.username_lower)
+	FROM peer_usernames pc
+	WHERE pc.peer_type = 'user' AND pc.peer_id = u.id AND pc.collectible_id IS NOT NULL
+), '[]'::jsonb)`
 
 type AccountDetail struct {
 	Account        AccountRow
@@ -564,7 +595,8 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	auth.last_active_at, auth.device_count,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	`+accountCollectibleUsernamesColumn+` AS collectibles
 FROM users u
 JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
@@ -580,7 +612,7 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 	out := make([]AccountRow, 0, limit+1)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Collectibles); err != nil {
 			return nil, false, err
 		}
 		out = append(out, item)
@@ -603,7 +635,8 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''),
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	`+accountCollectibleUsernamesColumn+` AS collectibles
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
@@ -612,6 +645,7 @@ WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
 		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.Account.Username,
+		&out.Account.Collectibles,
 	)
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)

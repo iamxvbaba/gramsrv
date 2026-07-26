@@ -351,3 +351,104 @@ func TestAccountRatingLeaderboardPaging(t *testing.T) {
 	}
 	_ = ids
 }
+
+// TestAccountRatingUnratedAccountsSeedsTheReadModel proves the SQL behind the
+// bootstrap pass: only accounts with no projection are returned, bots and deleted
+// tombstones are excluded, the walk is oldest-account-first, and a user drops out of
+// the candidate set the moment a projection exists.
+//
+// Without this query the read model can never populate itself -- StaleAccountRatings
+// walks account_rating and so cannot return a user who is not in it.
+func TestAccountRatingUnratedAccountsSeedsTheReadModel(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	store := NewAccountRatingStore(pool)
+	seed := time.Now().UnixNano() % 1_000_000
+	base := time.Now().UTC().Add(-72 * time.Hour).Truncate(time.Second)
+
+	oldest := ratingTestUser(t, pool, 4_100_000_000+seed, base)
+	middle := ratingTestUser(t, pool, 4_200_000_000+seed, base.Add(time.Hour))
+	newest := ratingTestUser(t, pool, 4_300_000_000+seed, base.Add(2*time.Hour))
+	bot := ratingTestUser(t, pool, 4_400_000_000+seed, base.Add(3*time.Hour))
+	deleted := ratingTestUser(t, pool, 4_500_000_000+seed, base.Add(4*time.Hour))
+
+	if _, err := pool.Exec(ctx, `UPDATE users SET is_bot = true WHERE id = $1`, bot); err != nil {
+		t.Fatalf("mark bot: %v", err)
+	}
+	// A deleted account is a tombstone: every profile field is already cleared, so
+	// there is no rating to show and no reason to compute one.
+	if _, err := pool.Exec(ctx, `
+UPDATE users SET deleted_at = now(), deletion_source = 'manual', deletion_reason = 'test',
+	phone = '', first_name = '', last_name = '', username = '', country_code = '', about = '',
+	verified = false, support = false, premium_expires_at = NULL,
+	emoji_status_document_id = 0, emoji_status_until = 0,
+	emoji_status_collectible_id = NULL, emoji_status_collectible = '{}'::jsonb,
+	color_set = false, color = 0, color_background_emoji_id = 0,
+	profile_color_set = false, profile_color = 0, profile_color_background_emoji_id = 0,
+	birthday_day = 0, birthday_month = 0, birthday_year = 0,
+	personal_channel_id = 0, last_seen_at = 0, account_delete_at = NULL
+WHERE id = $1`, deleted); err != nil {
+		t.Fatalf("mark deleted: %v", err)
+	}
+
+	// The table is shared with every other account in the test database, so assert
+	// on relative order and membership rather than on an exact page.
+	positions := func(t *testing.T) (map[int64]int, []int64) {
+		t.Helper()
+		ids, err := store.UnratedAccounts(ctx, maxAccountRatingListLimit)
+		if err != nil {
+			t.Fatalf("UnratedAccounts: %v", err)
+		}
+		index := make(map[int64]int, len(ids))
+		for i, id := range ids {
+			index[id] = i
+		}
+		return index, ids
+	}
+
+	index, ids := positions(t)
+	for _, id := range []int64{oldest, middle, newest} {
+		if _, ok := index[id]; !ok {
+			t.Fatalf("account %d with no projection is absent from %d candidates", id, len(ids))
+		}
+	}
+	if _, ok := index[bot]; ok {
+		t.Fatalf("bot %d was offered as a rating candidate", bot)
+	}
+	if _, ok := index[deleted]; ok {
+		t.Fatalf("deleted account %d was offered as a rating candidate", deleted)
+	}
+	if !(index[oldest] < index[middle] && index[middle] < index[newest]) {
+		t.Fatalf("candidate order = oldest %d, middle %d, newest %d; want oldest first",
+			index[oldest], index[middle], index[newest])
+	}
+
+	// Seeding one account removes it from the candidate set, so the pass converges
+	// instead of offering the same user every cycle.
+	if _, changed, err := store.SaveAccountRating(ctx, domain.AccountRating{
+		UserID: middle, Level: 1, Stars: 150,
+		CurrentLevelStars: domain.AccountRatingLevelThreshold(1),
+		ComputedAt:        time.Now().UTC(), Version: 1,
+	}); err != nil || !changed {
+		t.Fatalf("seed projection = %v changed=%v", err, changed)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM account_rating WHERE user_id = $1`, middle)
+	})
+	index, _ = positions(t)
+	if _, ok := index[middle]; ok {
+		t.Fatalf("account %d is still a candidate after being seeded", middle)
+	}
+	if _, ok := index[oldest]; !ok {
+		t.Fatalf("seeding %d removed unrelated candidate %d", middle, oldest)
+	}
+
+	// The limit is honoured, so one cycle can never walk the whole users table.
+	capped, err := store.UnratedAccounts(ctx, 2)
+	if err != nil {
+		t.Fatalf("UnratedAccounts with a limit: %v", err)
+	}
+	if len(capped) != 2 {
+		t.Fatalf("limited candidates = %d, want 2", len(capped))
+	}
+}

@@ -127,6 +127,16 @@
   border-top: 1px solid var(--line);
 }
 
+/* A .dock-title already draws the rule under itself, so a .danger-zone placed
+   directly after one must not draw a second: the verification and bot-verification
+   detail docks label the zone with a dock-title and rendered two lines 10px apart
+   above the revoke button. */
+.dock-title + .danger-zone {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .authorization-block {
   display: grid;
   gap: 10px;
@@ -751,4 +761,49 @@
   .breakdown-value {
     text-align: left;
   }
+}
+
+/* Collectible usernames branching off the peer's editable one. The guide is drawn
+   with borders rather than a "↳" character so it lines up at any font size and is
+   not read out by a screen reader as punctuation. */
+.username-branch {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.username-branch li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.username-branch li::before {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 6px;
+  height: 11px;
+  border-left: 1px solid var(--line-strong, var(--line));
+  border-bottom: 1px solid var(--line-strong, var(--line));
+  content: "";
+}
+
+.username-branch li.inactive {
+  color: var(--muted);
+}
+
+.username-branch li.inactive span {
+  text-decoration: line-through;
+}
+
+.username-branch li em {
+  margin-left: 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }

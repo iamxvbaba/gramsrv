@@ -25,6 +25,11 @@ type fakeRatingStore struct {
 	staleOlderThan int64
 	staleLimit     int
 
+	unrated      []int64
+	unratedLimit int
+	unratedCalls int
+	unratedErr   error
+
 	saves          []domain.AccountRating
 	forceConflicts int
 	signalsErr     error
@@ -128,6 +133,25 @@ func (f *fakeRatingStore) StaleAccountRatings(_ context.Context, olderThanUnix i
 		return append([]int64(nil), f.stale[:limit]...), nil
 	}
 	return append([]int64(nil), f.stale...), nil
+}
+
+func (f *fakeRatingStore) UnratedAccounts(_ context.Context, limit int) ([]int64, error) {
+	f.unratedCalls++
+	f.unratedLimit = limit
+	if f.unratedErr != nil {
+		return nil, f.unratedErr
+	}
+	out := make([]int64, 0, len(f.unrated))
+	for _, userID := range f.unrated {
+		if _, rated := f.ratings[userID]; rated {
+			continue
+		}
+		out = append(out, userID)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func newTestService(st *fakeRatingStore, opts ...Option) *Service {
@@ -528,5 +552,132 @@ func TestRecomputeWorkerExitsWhenNotReady(t *testing.T) {
 	}
 	if worker.batch != defaultRecomputeBatch {
 		t.Fatalf("batch = %d, want the default fallback", worker.batch)
+	}
+}
+
+// TestRunRecomputeCycleSeedsAccountsWithNoProjection is the report "the ratings tab
+// is empty and no client shows a rating". StaleAccountRatings reads account_rating,
+// so it can only ever refresh rows that already exist; without a seeding pass the
+// very first row for a user has to come from an operator recomputing that user by
+// hand, and the read model stays permanently empty.
+func TestRunRecomputeCycleSeedsAccountsWithNoProjection(t *testing.T) {
+	st := newFakeRatingStore()
+	st.unrated = []int64{11, 12, 13}
+	for _, userID := range st.unrated {
+		st.signals[userID] = domain.AccountRatingSignals{StarsReceived: 100 * userID}
+	}
+	service := newTestService(st)
+
+	processed, err := service.RunRecomputeCycle(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("RunRecomputeCycle: %v", err)
+	}
+	if processed != 3 {
+		t.Fatalf("processed = %d, want the three seeded accounts", processed)
+	}
+	for _, userID := range st.unrated {
+		if _, ok := st.ratings[userID]; !ok {
+			t.Fatalf("account %d was not seeded", userID)
+		}
+	}
+	// A second cycle has nothing left to seed, so seeding converges instead of
+	// rewriting the same rows every interval.
+	if processed, err := service.RunRecomputeCycle(context.Background(), 10); err != nil || processed != 0 {
+		t.Fatalf("second cycle = %d,%v, want 0,nil", processed, err)
+	}
+}
+
+// The batch bound belongs to the cycle, not to each pass: a backlog of stale rows
+// must not let one cycle do an unbounded amount of work.
+func TestRunRecomputeCycleSharesTheBatchBudget(t *testing.T) {
+	st := newFakeRatingStore()
+	st.stale = []int64{1, 2}
+	st.unrated = []int64{11, 12, 13, 14}
+	service := newTestService(st)
+
+	processed, err := service.RunRecomputeCycle(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("RunRecomputeCycle: %v", err)
+	}
+	if processed != 3 {
+		t.Fatalf("processed = %d, want the batch bound of 3", processed)
+	}
+	if st.unratedLimit != 1 {
+		t.Fatalf("seeding limit = %d, want the 1 left after two stale rows", st.unratedLimit)
+	}
+
+	// A cycle whose stale pass already fills the batch does not query for seeds at
+	// all: refreshing rows somebody is looking at comes first.
+	full := newFakeRatingStore()
+	full.stale = []int64{1, 2, 3}
+	full.unrated = []int64{11}
+	if _, err := newTestService(full).RunRecomputeCycle(context.Background(), 3); err != nil {
+		t.Fatalf("RunRecomputeCycle: %v", err)
+	}
+	if full.unratedCalls != 0 {
+		t.Fatalf("seeding was queried %d times, want none when the batch is already full", full.unratedCalls)
+	}
+}
+
+// Seeding extends the cycle; it is not its purpose. A store that cannot enumerate
+// accounts must not turn a successful stale pass into a failed cycle.
+func TestRunRecomputeCycleSurvivesSeedingFailure(t *testing.T) {
+	st := newFakeRatingStore()
+	st.stale = []int64{1}
+	st.unratedErr = errors.New("no users table")
+	service := newTestService(st)
+
+	processed, err := service.RunRecomputeCycle(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("RunRecomputeCycle = %v, want the stale pass to stand", err)
+	}
+	if processed != 1 {
+		t.Fatalf("processed = %d, want the one stale row", processed)
+	}
+}
+
+// TestEnsureRatingMaterializesOnce covers the self-profile path: an account opening
+// its own profile before the worker reached it must see a rating rather than
+// nothing, and the second read must not write again.
+func TestEnsureRatingMaterializesOnce(t *testing.T) {
+	st := newFakeRatingStore()
+	st.signals[7] = domain.AccountRatingSignals{StarsReceived: 900}
+	service := newTestService(st)
+
+	if _, err := service.Rating(context.Background(), 7); !errors.Is(err, domain.ErrAccountRatingNotFound) {
+		t.Fatalf("Rating before materialising = %v, want ErrAccountRatingNotFound", err)
+	}
+	rating, err := service.EnsureRating(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("EnsureRating: %v", err)
+	}
+	if rating.UserID != 7 || rating.Stars == 0 {
+		t.Fatalf("materialised rating = %+v, want a computed rating for user 7", rating)
+	}
+	writes := len(st.saves)
+	again, err := service.EnsureRating(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("second EnsureRating: %v", err)
+	}
+	if again.Version != rating.Version {
+		t.Fatalf("second EnsureRating rewrote the row: version %d then %d", rating.Version, again.Version)
+	}
+	if len(st.saves) != writes {
+		t.Fatalf("second EnsureRating issued %d extra saves, want none", len(st.saves)-writes)
+	}
+}
+
+// A disabled feature materialises nothing, which keeps "disabled" indistinguishable
+// on the wire from "before ratings existed".
+func TestEnsureRatingDisabledStaysEmpty(t *testing.T) {
+	st := newFakeRatingStore()
+	st.signals[7] = domain.AccountRatingSignals{StarsReceived: 900}
+	service := newTestService(st, WithEnabled(false))
+
+	if _, err := service.EnsureRating(context.Background(), 7); !errors.Is(err, domain.ErrAccountRatingNotFound) {
+		t.Fatalf("EnsureRating while disabled = %v, want ErrAccountRatingNotFound", err)
+	}
+	if len(st.saves) != 0 {
+		t.Fatalf("EnsureRating while disabled wrote %d rows, want none", len(st.saves))
 	}
 }

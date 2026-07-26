@@ -36,4 +36,15 @@ type AccountRatingStore interface {
 	// StaleAccountRatings returns user ids whose projection is older than the
 	// given horizon, for the background recompute worker.
 	StaleAccountRatings(ctx context.Context, olderThanUnix int64, limit int) ([]int64, error)
+	// UnratedAccounts returns user ids that have no projection at all, oldest
+	// account first, for the same worker.
+	//
+	// Without this the read model can never populate itself: StaleAccountRatings
+	// walks account_rating, so it can only refresh rows that already exist, and the
+	// very first row for a user would have to come from an operator recomputing
+	// that user by hand. Seeding is what makes the feature visible at all -- in the
+	// admin leaderboard and in userFull.stars_rating on other people's profiles.
+	//
+	// Deleted accounts and bots are excluded: neither has a rating to show.
+	UnratedAccounts(ctx context.Context, limit int) ([]int64, error)
 }

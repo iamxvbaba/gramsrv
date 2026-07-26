@@ -336,9 +336,18 @@ func (s *Service) Events(ctx context.Context, userID int64, limit int) ([]domain
 	return st.AccountRatingEvents(ctx, userID, clampLimit(limit, defaultEventLimit, maxEventLimit))
 }
 
-// RunRecomputeCycle recomputes one bounded batch of stale projections and
-// returns how many users were recomputed. A single user's failure is logged and
-// skipped: one poisoned row must not stall the whole cycle.
+// RunRecomputeCycle advances the read model by one bounded batch and returns how
+// many users it wrote. A single user's failure is logged and skipped: one poisoned
+// row must not stall the whole cycle.
+//
+// The cycle does two things, and the order matters. It first refreshes projections
+// that have gone stale, because those are rows somebody is already looking at.
+// Whatever batch budget is left it spends seeding accounts that have no projection
+// at all -- without that pass the read model can never populate itself, since
+// StaleAccountRatings walks account_rating and cannot return a user who is not in
+// it. Staleness keeps existing ratings honest; seeding is what makes them exist at
+// all, which is what both the admin leaderboard and a stranger's profile badge
+// depend on.
 func (s *Service) RunRecomputeCycle(ctx context.Context, limit int) (int, error) {
 	if s == nil || !s.enabled {
 		return 0, nil
@@ -353,6 +362,31 @@ func (s *Service) RunRecomputeCycle(ctx context.Context, limit int) (int, error)
 	if err != nil {
 		return 0, err
 	}
+	processed, err := s.recomputeEach(ctx, userIDs, "recompute account rating failed")
+	if err != nil {
+		return processed, err
+	}
+	// The bound belongs to the cycle, not to each pass, so a backlog of stale rows
+	// can never turn one cycle into an unbounded amount of work.
+	remaining := limit - len(userIDs)
+	if remaining <= 0 {
+		return processed, nil
+	}
+	unrated, err := st.UnratedAccounts(ctx, remaining)
+	if err != nil {
+		// Seeding extends the cycle rather than being its purpose: a store that
+		// cannot enumerate accounts must not turn a successful stale pass into a
+		// failed cycle.
+		s.log.Warn("list unrated accounts failed", zap.Error(err))
+		return processed, nil
+	}
+	seeded, err := s.recomputeEach(ctx, unrated, "seed account rating failed")
+	return processed + seeded, err
+}
+
+// recomputeEach recomputes a list of users, skipping the ones that fail, and
+// giving up early only when the context is done.
+func (s *Service) recomputeEach(ctx context.Context, userIDs []int64, failureMessage string) (int, error) {
 	processed := 0
 	for _, userID := range userIDs {
 		if err := ctx.Err(); err != nil {
@@ -362,7 +396,7 @@ func (s *Service) RunRecomputeCycle(ctx context.Context, limit int) (int, error)
 			continue
 		}
 		if _, err := s.Recompute(ctx, userID); err != nil {
-			s.log.Warn("recompute account rating failed",
+			s.log.Warn(failureMessage,
 				zap.Int64("user_id", userID),
 				zap.Error(err))
 			continue
@@ -370,6 +404,29 @@ func (s *Service) RunRecomputeCycle(ctx context.Context, limit int) (int, error)
 		processed++
 	}
 	return processed, nil
+}
+
+// EnsureRating returns the stored projection, computing and storing it first when
+// the user has none.
+//
+// This is the self-profile path. The background cycle reaches every account
+// eventually, but "eventually" is up to a whole recompute interval, and an account
+// opening its own profile for the first time would see no rating and have no way to
+// tell that apart from a rating of zero. Only the viewer's own profile takes this
+// path: making a stranger's view materialise a projection would turn looking at
+// profiles into a write amplifier.
+func (s *Service) EnsureRating(ctx context.Context, userID int64) (domain.AccountRating, error) {
+	if s == nil || !s.enabled || userID <= 0 {
+		return domain.AccountRating{}, domain.ErrAccountRatingNotFound
+	}
+	rating, err := s.Rating(ctx, userID)
+	if err == nil {
+		return rating, nil
+	}
+	if !errors.Is(err, domain.ErrAccountRatingNotFound) {
+		return domain.AccountRating{}, err
+	}
+	return s.Recompute(ctx, userID)
 }
 
 // previous reads the stored projection the pending policy is resolved against.

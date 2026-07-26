@@ -462,6 +462,46 @@ LIMIT $2`, olderThanUnix, limit)
 	return out, nil
 }
 
+// UnratedAccounts returns accounts that have no projection yet, oldest account
+// first so the walk is stable and every account is eventually reached.
+//
+// Bots and deleted accounts are skipped: a bot has no star rating, and a deleted
+// account is a tombstone whose every profile field has already been cleared.
+func (s *AccountRatingStore) UnratedAccounts(ctx context.Context, limit int) ([]int64, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("account rating store is not configured")
+	}
+	if limit <= 0 {
+		limit = defaultAccountRatingListLimit
+	}
+	if limit > maxAccountRatingListLimit {
+		limit = maxAccountRatingListLimit
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT u.id FROM users u
+WHERE NOT u.is_bot
+  AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM account_rating r WHERE r.user_id = u.id)
+ORDER BY u.created_at, u.id
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unrated accounts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0, limit)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("scan unrated account: %w", err)
+		}
+		out = append(out, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unrated accounts: %w", err)
+	}
+	return out, nil
+}
+
 func accountRatingEventByCommandKey(ctx context.Context, db sqlcgen.DBTX, commandKey string) (domain.AccountRatingEvent, bool, error) {
 	if commandKey == "" {
 		return domain.AccountRatingEvent{}, false, nil
