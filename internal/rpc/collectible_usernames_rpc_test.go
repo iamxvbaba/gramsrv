@@ -573,8 +573,13 @@ func TestChannelsUsernameManagementUsesRegistry(t *testing.T) {
 			t.Fatalf("collectible still active after deactivateAll: %+v", item)
 		}
 	}
-	if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); ok || !tgerr.Is(err, "USERNAME_NOT_MODIFIED") {
-		t.Fatalf("repeat deactivate all = %v,%v, want false,USERNAME_NOT_MODIFIED", ok, err)
+	// Repeating either bulk call is a no-op, not a 400: see
+	// TestChannelsDeactivateAllUsernamesIsIdempotent for why clients depend on it.
+	if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); !ok || err != nil {
+		t.Fatalf("repeat deactivate all = %v,%v, want true,nil", ok, err)
+	}
+	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"bravo", "alpha"}}); !ok || err != nil {
+		t.Fatalf("repeat reorder = %v,%v, want true,nil", ok, err)
 	}
 
 	// A non-admin must not reach the registry at all.
@@ -597,6 +602,51 @@ func TestChannelsUsernameManagementWithoutRegistryKeepsLegacyAnswers(t *testing.
 	}
 	if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); !ok || err != nil {
 		t.Fatalf("deactivate without registry = %v,%v, want true,nil", ok, err)
+	}
+}
+
+// TestChannelsDeactivateAllUsernamesIsIdempotent covers the report "I created a
+// channel without a username and later could not set one": Telegram Desktop
+// drives its channel-username editor by calling channels.deactivateAllUsernames
+// first and only continuing when it answers true. A channel that owns no
+// collectible username at all -- every freshly created channel -- has nothing to
+// deactivate, and answering USERNAME_NOT_MODIFIED there aborted the whole flow
+// client-side. Deactivating an empty set is success.
+//
+// channels.reorderUsernames gets the same treatment for the same reason: a
+// client that re-sends the order it already has is not making a mistake.
+func TestChannelsDeactivateAllUsernamesIsIdempotent(t *testing.T) {
+	registry := newFakeUsernameRegistry()
+	r, owner, channel := newCollectibleChannelFixture(t, registry)
+	ctx := WithUserID(context.Background(), owner.ID)
+	input := &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}
+
+	// A channel with only its editable slot: no collectible username exists.
+	registry.byPeer[peer] = []domain.Username{{Username: "chan_slot", Editable: true, Active: true}}
+	for attempt := 0; attempt < 2; attempt++ {
+		if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); !ok || err != nil {
+			t.Fatalf("deactivate all with nothing collectible (attempt %d) = %v,%v, want true,nil", attempt, ok, err)
+		}
+	}
+	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: nil}); !ok || err != nil {
+		t.Fatalf("reorder with nothing collectible = %v,%v, want true,nil", ok, err)
+	}
+	// The editable slot is untouched by either call: only collectibles are hidden.
+	if len(registry.byPeer[peer]) != 1 || !registry.byPeer[peer][0].Active {
+		t.Fatalf("editable slot after bulk calls = %+v, want it left active", registry.byPeer[peer])
+	}
+
+	// A channel with no rows at all behaves the same way.
+	delete(registry.byPeer, peer)
+	if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); !ok || err != nil {
+		t.Fatalf("deactivate all on an empty registry = %v,%v, want true,nil", ok, err)
+	}
+
+	// Permission is still checked before the registry is consulted.
+	stranger := WithUserID(context.Background(), owner.ID+4242)
+	if ok, err := r.onChannelsDeactivateAllUsernames(stranger, input); ok || err == nil {
+		t.Fatalf("deactivate all as stranger = %v,%v, want false and a permission failure", ok, err)
 	}
 }
 

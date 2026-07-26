@@ -167,21 +167,30 @@ func (r *Router) reorderRegistryUsernames(ctx context.Context, peer domain.Peer,
 		return collectibleUsernameErr(err)
 	}
 	if !changed {
-		return usernameNotModifiedErr()
+		// Re-sending the order a peer already has is idempotent, not an error: a
+		// client that reconciles its local list against the server would otherwise
+		// see a 400 for doing nothing wrong.
+		return nil
 	}
 	r.invalidateRegistryProjection(peer)
 	return nil
 }
 
 // deactivateAllRegistryUsernames is the shared body of
-// channels.deactivateAllUsernames.
+// channels.deactivateAllUsernames: it hides every collectible username of a peer.
+//
+// Deactivating an empty set is success, not USERNAME_NOT_MODIFIED: Telegram
+// Desktop calls channels.deactivateAllUsernames as a step of its "set the
+// username" flow, so a peer that has no collectible usernames yet -- the common
+// case for a freshly created channel -- would abort that flow on a 400. The
+// no-op stub this replaced also answered true, and clients depend on it.
 func (r *Router) deactivateAllRegistryUsernames(ctx context.Context, peer domain.Peer) error {
 	changed, err := r.deps.Usernames.DeactivateAllUsernames(ctx, peer)
 	if err != nil {
 		return collectibleUsernameErr(err)
 	}
 	if !changed {
-		return usernameNotModifiedErr()
+		return nil
 	}
 	r.invalidateRegistryProjection(peer)
 	return nil
