@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync"
 	"time"
 
 	"telesrv/internal/domain"
@@ -71,6 +72,13 @@ type Service struct {
 	// effectsHash 在 seed 时算一次,handler 直接比对返回 NotModified,无需每次 RPC 重算。
 	effects     []domain.AvailableEffect
 	effectsHash int
+
+	// premiumPromo is populated during startup seed and then read by RPC
+	// handlers. Keep a lock so the ownership boundary remains race-safe even
+	// when exercised concurrently in tests.
+	premiumPromoMu    sync.RWMutex
+	premiumPromo      domain.PremiumPromoCatalog
+	premiumPromoReady bool
 }
 
 // Option 配置 files 服务的可选能力。

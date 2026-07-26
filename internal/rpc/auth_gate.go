@@ -55,7 +55,6 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		tg.HelpGetPeerProfileColorsRequestTypeID,
 		tg.HelpGetPromoDataRequestTypeID,
 		tg.HelpGetTermsOfServiceUpdateRequestTypeID,
-		tg.HelpGetPremiumPromoRequestTypeID,
 		tg.LangpackGetLanguagesRequestTypeID,
 		tg.LangpackGetLanguageRequestTypeID,
 		tg.LangpackGetLangPackRequestTypeID,

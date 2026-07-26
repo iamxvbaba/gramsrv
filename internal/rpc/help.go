@@ -176,11 +176,10 @@ func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismis
 	return androidcompat.DismissSuggestion(req.Suggestion), nil
 }
 
-// onHelpGetPremiumPromo 返回最小真实的 Premium 状态页数据：状态文案按 viewer
-// 的会员有效期生成；videos/period_options 留空——购买入口已被 appConfig
-// premium_purchase_blocked=true 关闭，订阅价格 UI 不会消费这些字段（TDesktop
-// 空 period_options 仅隐藏价格按钮，DrKLO 回退到无价文案，均不报错）。
-// 六个字段全是 TL 必填项，空值也必须给出空集合而非缺失。
+// onHelpGetPremiumPromo returns the viewer-specific Premium status plus the
+// immutable, startup-seeded video catalog. Period options intentionally remain
+// empty: telesrv has no subscription purchase backend and must not advertise
+// dead payment URLs. All six TL fields are mandatory.
 func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumPromo, error) {
 	promo := &tg.HelpPremiumPromo{
 		StatusText:     branding.PremiumName + " is not active on this account.",
@@ -190,17 +189,42 @@ func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumProm
 		PeriodOptions:  []tg.PremiumSubscriptionOption{},
 		Users:          []tg.UserClass{},
 	}
-	userID, _, err := r.currentUserID(ctx)
-	if err != nil || r.deps.Users == nil {
-		return promo, nil
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !authorized || userID == 0 {
+		return nil, authKeyUnregisteredErr()
+	}
+	if r.deps.Users == nil {
+		return nil, notImplementedErr()
 	}
 	u, err := r.deps.Users.Self(ctx, userID)
 	if err != nil {
-		return promo, nil
+		return nil, internalErr()
+	}
+	if u.ID != userID {
+		return nil, internalErr()
+	}
+	if u.Bot {
+		return nil, botMethodInvalidErr()
 	}
 	if u.PremiumActiveAt(r.clock.Now().Unix()) {
 		until := time.Unix(int64(u.PremiumUntil), 0)
 		promo.StatusText = branding.PremiumName + " is active until " + until.Format("2006-01-02") + "."
+	}
+	if r.deps.PremiumPromo != nil {
+		catalog, found, err := r.deps.PremiumPromo.PremiumPromo(ctx)
+		if err != nil {
+			return nil, internalErr()
+		}
+		if found {
+			if len(catalog.VideoSections) != len(catalog.Videos) {
+				return nil, internalErr()
+			}
+			promo.VideoSections = append([]string(nil), catalog.VideoSections...)
+			promo.Videos = tgDocuments(catalog.Videos)
+		}
 	}
 	return promo, nil
 }

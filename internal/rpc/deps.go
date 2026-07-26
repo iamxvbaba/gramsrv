@@ -924,6 +924,13 @@ type ModerationService interface {
 	ReportAntiSpamFalsePositive(ctx context.Context, reporterUserID, channelID int64, messageID int, now time.Time) (domain.ModerationReport, bool, error)
 }
 
+// PremiumPromoService exposes the immutable promo media catalog through a
+// domain-only boundary. File bytes remain served by upload.getFile through the
+// ordinary Files service.
+type PremiumPromoService interface {
+	PremiumPromo(ctx context.Context) (domain.PremiumPromoCatalog, bool, error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth                AuthService
@@ -956,6 +963,7 @@ type Deps struct {
 	Channels             ChannelsService
 	Communities          CommunitiesService
 	Files                FilesService
+	PremiumPromo         PremiumPromoService
 	Bots                 BotsService
 	Polls                PollsService
 	Phone                PhoneService

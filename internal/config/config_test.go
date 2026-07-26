@@ -37,6 +37,22 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.CallRegistryMaxEntries != 10_000 {
 		t.Fatalf("CallRegistryMaxEntries = %d, want 10000", cfg.CallRegistryMaxEntries)
 	}
+	if cfg.PremiumPromoSeedDir != "data/premium-promo" {
+		t.Fatalf("PremiumPromoSeedDir = %q, want data/premium-promo", cfg.PremiumPromoSeedDir)
+	}
+}
+
+func TestLoadPremiumPromoSeedDirOverride(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PREMIUM_PROMO_SEED_DIR", `D:\seed\premium-promo`)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PremiumPromoSeedDir != `D:\seed\premium-promo` {
+		t.Fatalf("PremiumPromoSeedDir = %q", cfg.PremiumPromoSeedDir)
+	}
 }
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
