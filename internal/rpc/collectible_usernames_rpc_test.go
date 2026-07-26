@@ -93,11 +93,11 @@ func (f *fakeUsernameRegistry) ReorderUsernames(_ context.Context, peer domain.P
 	if err != nil {
 		return false, err
 	}
-	if sameUsernameOrder(current, next) {
-		return false, nil
-	}
+	// Same contract as both real backends: the renumbering is always persisted,
+	// and "changed" is only about what a client can see.
+	changed := !domain.SameUsernameOrder(current, next)
 	f.byPeer[peer] = next
-	return true, nil
+	return changed, nil
 }
 
 func (f *fakeUsernameRegistry) DeactivateAllUsernames(_ context.Context, peer domain.Peer) (bool, error) {
@@ -126,21 +126,6 @@ func (f *fakeUsernameRegistry) CollectibleInfo(_ context.Context, username strin
 		return domain.CollectibleInfo{}, domain.ErrCollectibleUsernameNotFound
 	}
 	return info, nil
-}
-
-// sameUsernameOrder reports whether a reorder is a no-op, so the fake can answer
-// "nothing changed" the way a real store does.
-func sameUsernameOrder(before, after []domain.Username) bool {
-	if len(before) != len(after) {
-		return false
-	}
-	sortedBefore := domain.SortUsernames(before)
-	for i, item := range domain.SortUsernames(after) {
-		if sortedBefore[i].Username != item.Username || sortedBefore[i].SortOrder != item.SortOrder {
-			return false
-		}
-	}
-	return true
 }
 
 // fakeAccountRatings is an in-memory AccountRatingService.
@@ -178,18 +163,42 @@ var (
 	_ AccountRatingService    = (*fakeAccountRatings)(nil)
 )
 
-func TestTgUsernamesFromRegistryOrdersEditableFirst(t *testing.T) {
-	list := []domain.Username{
-		{Username: "second", Active: false, SortOrder: 1, CollectibleID: 22},
-		{Username: "editable_slot", Active: true, Editable: true, SortOrder: 99},
-		{Username: "first", Active: true, SortOrder: 0, CollectibleID: 11},
-	}
+func TestTgUsernamesFromRegistryFollowsStoredOrder(t *testing.T) {
+	// Legacy numbering, which is what every peer that never reordered carries:
+	// the editable slot and the first collectible share sort_order 0 and the
+	// editable slot wins the tie, so it still projects first.
+	assertUsernameVector(t,
+		[]domain.Username{
+			{Username: "second", Active: false, SortOrder: 1, CollectibleID: 22},
+			{Username: "editable_slot", Active: true, Editable: true, SortOrder: 0},
+			{Username: "first", Active: true, SortOrder: 0, CollectibleID: 11},
+		},
+		[]tg.Username{
+			{Editable: true, Active: true, Username: "editable_slot"},
+			{Editable: false, Active: true, Username: "first"},
+			{Editable: false, Active: false, Username: "second"},
+		})
+
+	// After a reorder made a collectible primary, stored order wins: clients read
+	// usernames[0] as the peer's primary username
+	// (core.telegram.org/api/fragment), so the editable slot must be able to
+	// leave that position.
+	assertUsernameVector(t,
+		[]domain.Username{
+			{Username: "second", Active: false, SortOrder: 2, CollectibleID: 22},
+			{Username: "editable_slot", Active: true, Editable: true, SortOrder: 1},
+			{Username: "first", Active: true, SortOrder: 0, CollectibleID: 11},
+		},
+		[]tg.Username{
+			{Editable: false, Active: true, Username: "first"},
+			{Editable: true, Active: true, Username: "editable_slot"},
+			{Editable: false, Active: false, Username: "second"},
+		})
+}
+
+func assertUsernameVector(t *testing.T, list []domain.Username, want []tg.Username) {
+	t.Helper()
 	got := tgUsernamesFromRegistry(list, "editable_slot")
-	want := []tg.Username{
-		{Editable: true, Active: true, Username: "editable_slot"},
-		{Editable: false, Active: true, Username: "first"},
-		{Editable: false, Active: false, Username: "second"},
-	}
 	if len(got) != len(want) {
 		t.Fatalf("usernames = %+v, want %+v", got, want)
 	}
@@ -443,23 +452,31 @@ func TestAccountToggleAndReorderUsernamesRPC(t *testing.T) {
 		t.Fatalf("toggle unknown = %v,%v, want false,USERNAME_NOT_OCCUPIED", ok, err)
 	}
 
-	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"bravo", "alpha"}}); !ok || err != nil {
+	// alpha is inactive at this point, so the order does not have to mention it.
+	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"owner_slot", "bravo"}}); !ok || err != nil {
 		t.Fatalf("reorder = %v,%v, want true,nil", ok, err)
 	}
 	list := domain.SortUsernames(registry.byPeer[peer])
 	if len(list) != 3 || !list[0].Editable || list[1].Username != "bravo" || list[2].Username != "alpha" {
 		t.Fatalf("order after reorder = %+v, want editable, bravo, alpha", list)
 	}
-	// A partial order is not a permutation of the peer's collectibles.
-	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"alpha"}}); ok || !tgerr.Is(err, "USERNAME_INVALID") {
+	// The editable slot may lead the order or follow a collectible.
+	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"bravo", "owner_slot"}}); !ok || err != nil {
+		t.Fatalf("reorder with a collectible first = %v,%v, want true,nil", ok, err)
+	}
+	if list := domain.SortUsernames(registry.byPeer[peer]); list[0].Username != "bravo" || !list[1].Editable {
+		t.Fatalf("order after promoting a collectible = %+v, want bravo, editable, alpha", list)
+	}
+	// An order that omits an active username is still rejected.
+	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"bravo"}}); ok || !tgerr.Is(err, "USERNAME_INVALID") {
 		t.Fatalf("partial reorder = %v,%v, want false,USERNAME_INVALID", ok, err)
 	}
-	// The editable slot must never appear in a reorder.
-	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"owner_slot", "alpha", "bravo"}}); ok || !tgerr.Is(err, "USERNAME_INVALID") {
-		t.Fatalf("reorder including editable slot = %v,%v, want false,USERNAME_INVALID", ok, err)
+	// So is one naming something the peer does not own.
+	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{Order: []string{"owner_slot", "bravo", "ghost"}}); ok || !tgerr.Is(err, "USERNAME_INVALID") {
+		t.Fatalf("reorder with an unknown name = %v,%v, want false,USERNAME_INVALID", ok, err)
 	}
 	if ok, err := f.router.onAccountReorderUsernames(ctx, &tg.AccountReorderUsernamesRequest{
-		Order: make([]string, domain.MaxPeerCollectibleUsernames+1),
+		Order: make([]string, domain.MaxPeerCollectibleUsernames+2),
 	}); ok || !tgerr.Is(err, "LIMIT_INVALID") {
 		t.Fatalf("oversized reorder = %v,%v, want false,LIMIT_INVALID", ok, err)
 	}
@@ -559,7 +576,8 @@ func TestChannelsUsernameManagementUsesRegistry(t *testing.T) {
 	if ok, err := r.onChannelsToggleUsername(ctx, &tg.ChannelsToggleUsernameRequest{Channel: input, Username: "chan_slot", Active: false}); ok || !tgerr.Is(err, "USERNAME_INVALID") {
 		t.Fatalf("toggle channel editable slot = %v,%v, want false,USERNAME_INVALID", ok, err)
 	}
-	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"bravo", "alpha"}}); !ok || err != nil {
+	// alpha was just deactivated, so the order carries only the active names.
+	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"chan_slot", "bravo"}}); !ok || err != nil {
 		t.Fatalf("reorder channel usernames = %v,%v, want true,nil", ok, err)
 	}
 	if list := domain.SortUsernames(registry.byPeer[peer]); list[1].Username != "bravo" {
@@ -578,8 +596,8 @@ func TestChannelsUsernameManagementUsesRegistry(t *testing.T) {
 	if ok, err := r.onChannelsDeactivateAllUsernames(ctx, input); !ok || err != nil {
 		t.Fatalf("repeat deactivate all = %v,%v, want true,nil", ok, err)
 	}
-	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"bravo", "alpha"}}); !ok || err != nil {
-		t.Fatalf("repeat reorder = %v,%v, want true,nil", ok, err)
+	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"chan_slot"}}); !ok || err != nil {
+		t.Fatalf("repeat reorder after deactivateAll = %v,%v, want true,nil", ok, err)
 	}
 
 	// A non-admin must not reach the registry at all.
@@ -629,7 +647,9 @@ func TestChannelsDeactivateAllUsernamesIsIdempotent(t *testing.T) {
 			t.Fatalf("deactivate all with nothing collectible (attempt %d) = %v,%v, want true,nil", attempt, ok, err)
 		}
 	}
-	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: nil}); !ok || err != nil {
+	// The whole visible list is just the editable slot, which is exactly what
+	// Telegram Desktop sends here.
+	if ok, err := r.onChannelsReorderUsernames(ctx, &tg.ChannelsReorderUsernamesRequest{Channel: input, Order: []string{"chan_slot"}}); !ok || err != nil {
 		t.Fatalf("reorder with nothing collectible = %v,%v, want true,nil", ok, err)
 	}
 	// The editable slot is untouched by either call: only collectibles are hidden.

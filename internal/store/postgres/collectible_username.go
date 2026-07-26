@@ -101,9 +101,10 @@ WHERE username_lower = $1 AND peer_type = $2 AND peer_id = $3
 	return changed, nil
 }
 
-// ReorderUsernames rewrites collectible sort order. order must be a permutation
-// of the peer's collectible usernames; the editable slot always projects first
-// and is never touched.
+// ReorderUsernames rewrites the peer's username sort order. order carries every
+// active username the peer has, the editable slot included -- see
+// domain.ValidateUsernameReorder -- so the editable row is repositioned like any
+// other and a collectible may end up first.
 func (s *CollectibleUsernameStore) ReorderUsernames(ctx context.Context, peer domain.Peer, order []string) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("collectible username store is not configured")
@@ -125,21 +126,19 @@ func (s *CollectibleUsernameStore) ReorderUsernames(ctx context.Context, peer do
 		for _, item := range current {
 			previous[strings.ToLower(item.Username)] = item.SortOrder
 		}
+		// Renumbering always happens; "changed" is about what a client can see.
+		changed = !domain.SameUsernameOrder(current, next)
 		for _, item := range next {
-			if !item.Collectible() {
-				continue
-			}
 			key := strings.ToLower(item.Username)
-			if previous[key] == item.SortOrder {
+			if key == "" || previous[key] == item.SortOrder {
 				continue
 			}
 			if _, err := tx.Exec(ctx, `
 UPDATE peer_usernames SET sort_order = $4, updated_at = now()
 WHERE username_lower = $1 AND peer_type = $2 AND peer_id = $3`,
 				key, string(peer.Type), peer.ID, item.SortOrder); err != nil {
-				return fmt.Errorf("update collectible username sort order: %w", err)
+				return fmt.Errorf("update username sort order: %w", err)
 			}
-			changed = true
 		}
 		return nil
 	})

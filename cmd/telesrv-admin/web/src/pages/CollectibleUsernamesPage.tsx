@@ -5,7 +5,7 @@ import { ActionButton } from "../components/ActionButton";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
-import { displayUsername, formatDate, formatQuantity } from "../lib/format";
+import { currencyExponent, displayUsername, formatCurrency, formatDate, toSmallestUnits } from "../lib/format";
 import type { Navigate } from "../routing";
 import type {
   AccountRow,
@@ -72,11 +72,19 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
   // int64 request fields are sent as decimal strings (the backend tags them
   // `,string`); purchase_date is Unix seconds. Optional owner keys are omitted
   // entirely rather than sent empty, because `,string,omitempty` cannot decode "".
+  // Both amounts are typed in whole currency units and converted here: the API
+  // and fragment.collectibleInfo carry smallest units, so 900 TON has to leave
+  // the panel as 900000000000 nanotons or clients render 0.0000009.
+  const minorAmount = toSmallestUnits(amount, currency);
+  const minorCryptoAmount = cryptoCurrency ? toSmallestUnits(cryptoAmount, cryptoCurrency) : "0";
+  const amountInvalid = minorAmount === null;
+  const cryptoAmountInvalid = minorCryptoAmount === null;
+
   function mintPayload(): Record<string, unknown> {
     const payload: Record<string, unknown> = {
       username: mintUsername.trim().replace(/^@/, ""),
       currency,
-      amount: amount.trim() || "0"
+      amount: minorAmount ?? "0"
     };
     if (ownerKind === "user" && owner) payload.owner_user_id = String(owner.ID);
     if (ownerKind === "channel" && ownerChannel) payload.owner_channel_id = String(ownerChannel.ID);
@@ -84,7 +92,7 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
     // nanoton amount — never a currency without an amount.
     if (cryptoCurrency) {
       payload.crypto_currency = cryptoCurrency;
-      payload.crypto_amount = cryptoAmount.trim() || "0";
+      payload.crypto_amount = minorCryptoAmount ?? "0";
     }
     if (url.trim()) payload.url = url.trim();
     if (purchaseDate) {
@@ -141,8 +149,8 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
             </select>
           </label>
           <label className="duration-field">
-            <span>{t("usernames.amount")}</span>
-            <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="numeric" placeholder="1000" />
+            <span>{t("usernames.amount", { currency })}</span>
+            <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="1000" />
           </label>
           <label className="duration-field">
             <span>{t("usernames.cryptoCurrency")}</span>
@@ -153,8 +161,8 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
           </label>
           {cryptoCurrency !== "" && (
             <label className="duration-field">
-              <span>{t("usernames.cryptoAmount")}</span>
-              <input value={cryptoAmount} onChange={(event) => setCryptoAmount(event.target.value)} inputMode="numeric" placeholder="0" />
+              <span>{t("usernames.cryptoAmount", { currency: cryptoCurrency })}</span>
+              <input value={cryptoAmount} onChange={(event) => setCryptoAmount(event.target.value)} inputMode="decimal" placeholder="12.5" />
             </label>
           )}
           <label className="duration-field">
@@ -166,9 +174,21 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
             <input value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} type="date" />
           </label>
         </div>
+        <p className="bot-create-note">
+          {t("usernames.amountHint", {
+            currency,
+            decimals: String(currencyExponent(currency)),
+            preview: formatCurrency(minorAmount ?? "0", currency)
+          })}
+        </p>
+        {amountInvalid && <Alert>{t("usernames.amountInvalid", { currency, decimals: String(currencyExponent(currency)) })}</Alert>}
+        {cryptoCurrency !== "" && cryptoAmountInvalid && (
+          <Alert>{t("usernames.amountInvalid", { currency: cryptoCurrency, decimals: String(currencyExponent(cryptoCurrency)) })}</Alert>
+        )}
         <div className="bot-create-actions">
           <span className="bot-create-note">{t("usernames.mintNote")}</span>
           <ActionButton
+            disabled={amountInvalid || cryptoAmountInvalid}
             label={t("usernames.mint")}
             icon={<Plus size={15} />}
             tone="neutral"
@@ -263,10 +283,12 @@ export function ownerLabel(row: CollectibleUsernameRow, vaultLabel: string): str
   return `${name} · ${row.OwnerPeerType}:${row.OwnerPeerID}`;
 }
 
+// priceLabel renders what a Telegram client will draw, not the stored integer:
+// both legs are smallest units on the wire (see formatCurrency).
 export function priceLabel(row: CollectibleUsernameRow): string {
-  const base = `${formatQuantity(row.Amount)} ${row.Currency}`.trim();
+  const base = formatCurrency(row.Amount, row.Currency);
   if (row.CryptoCurrency && row.CryptoAmount && row.CryptoAmount !== "0") {
-    return `${base} (${formatQuantity(row.CryptoAmount)} ${row.CryptoCurrency})`;
+    return `${base} (${formatCurrency(row.CryptoAmount, row.CryptoCurrency)})`;
   }
   return base;
 }

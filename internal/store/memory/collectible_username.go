@@ -185,8 +185,9 @@ func (s *CollectibleUsernameStore) SetUsernameActive(_ context.Context, peer dom
 	return true, nil
 }
 
-// ReorderUsernames rewrites collectible sort order. Validation and the resulting
-// order both come from the domain helper, so the two backends cannot drift.
+// ReorderUsernames rewrites the peer's username sort order, editable slot
+// included. Validation and the resulting order both come from the domain helper,
+// so the two backends cannot drift.
 func (s *CollectibleUsernameStore) ReorderUsernames(_ context.Context, peer domain.Peer, order []string) (bool, error) {
 	if !validCollectibleUsernamePeer(peer) {
 		return false, domain.ErrUsernameInvalid
@@ -198,19 +199,19 @@ func (s *CollectibleUsernameStore) ReorderUsernames(_ context.Context, peer doma
 	if err != nil {
 		return false, err
 	}
-	changed := false
+	// Renumbering always happens; "changed" is about what a client can see.
+	changed := !domain.SameUsernameOrder(current, reordered)
 	for _, row := range reordered {
-		if !row.Collectible() {
+		key := strings.ToLower(row.Username)
+		if key == "" {
 			continue
 		}
-		key := strings.ToLower(row.Username)
 		entry := s.registry[key]
 		if entry.row.SortOrder == row.SortOrder {
 			continue
 		}
 		entry.row.SortOrder = row.SortOrder
 		s.registry[key] = entry
-		changed = true
 	}
 	return changed, nil
 }

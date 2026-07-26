@@ -399,7 +399,9 @@ func TestCollectibleUsernameRegistryToggleAndReorder(t *testing.T) {
 	if _, err := store.SetUsernameActive(ctx, holder, editable, false); !errors.Is(err, domain.ErrUsernameNotCollectible) {
 		t.Fatalf("toggling the editable slot err = %v, want ErrUsernameNotCollectible", err)
 	}
-	changed, err = store.ReorderUsernames(ctx, holder, []string{second, first})
+	// first is inactive now, so a client would send only the active names; the
+	// editable slot is one of them and listing it is required, not rejected.
+	changed, err = store.ReorderUsernames(ctx, holder, []string{editable, second})
 	if err != nil || !changed {
 		t.Fatalf("reorder changed=%v err=%v", changed, err)
 	}
@@ -407,8 +409,34 @@ func TestCollectibleUsernameRegistryToggleAndReorder(t *testing.T) {
 	if len(list) != 3 || list[0].Username != editable || list[1].Username != second || list[2].Username != first {
 		t.Fatalf("registry order = %+v", list)
 	}
+	// Re-sending the order the peer already has is a no-op a client can repeat.
+	if changed, err := store.ReorderUsernames(ctx, holder, []string{editable, second}); err != nil || changed {
+		t.Fatalf("repeat reorder changed=%v err=%v", changed, err)
+	}
+	// A collectible may be promoted above the editable slot, which is what makes
+	// it the peer's primary username for clients.
+	changed, err = store.ReorderUsernames(ctx, holder, []string{second, editable})
+	if err != nil || !changed {
+		t.Fatalf("promote collectible changed=%v err=%v", changed, err)
+	}
+	list = registryRows(t, pool, holder)
+	if len(list) != 3 || list[0].Username != second || list[1].Username != editable {
+		t.Fatalf("registry order after promoting a collectible = %+v", list)
+	}
+	if domain.ActiveUsername(list) != second {
+		t.Fatalf("active username after promoting a collectible = %q, want %q", domain.ActiveUsername(list), second)
+	}
+	changed, err = store.ReorderUsernames(ctx, holder, []string{editable, second})
+	if err != nil || !changed {
+		t.Fatalf("restore order changed=%v err=%v", changed, err)
+	}
+	// An order that omits an active username is still rejected, and so is one
+	// naming something the peer does not own.
 	if _, err := store.ReorderUsernames(ctx, holder, []string{second}); !errors.Is(err, domain.ErrUsernameOrderInvalid) {
 		t.Fatalf("partial reorder err = %v, want ErrUsernameOrderInvalid", err)
+	}
+	if _, err := store.ReorderUsernames(ctx, holder, []string{editable, second, "nobodyowns" + editable}); !errors.Is(err, domain.ErrUsernameOrderInvalid) {
+		t.Fatalf("reorder with a foreign name err = %v, want ErrUsernameOrderInvalid", err)
 	}
 	changed, err = store.DeactivateAllUsernames(ctx, holder)
 	if err != nil || !changed {

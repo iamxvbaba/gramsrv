@@ -16,6 +16,7 @@ export function ActionButton({
   icon,
   compact = false,
   tone = "danger",
+  disabled = false,
   onDone,
   onError
 }: {
@@ -25,6 +26,10 @@ export function ActionButton({
   icon?: ReactNode;
   compact?: boolean;
   tone?: ActionTone;
+  // disabled keeps a form from opening the confirm flow at all while its own
+  // validation is unhappy, so the operator fixes the field instead of reading a
+  // backend rejection.
+  disabled?: boolean;
   onDone?: () => void;
   // onError lets a page react to a failure the operator cannot fix by editing the
   // form — an optimistic-locking 409, say — and replace the raw backend text with
@@ -80,6 +85,7 @@ export function ActionButton({
       <button
         className={triggerClass}
         type="button"
+        disabled={disabled}
         onClick={() => {
           reset();
           setOpen(true);

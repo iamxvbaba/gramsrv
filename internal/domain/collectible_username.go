@@ -320,17 +320,24 @@ func validUsernameChars(username string, minLen, maxLen int) bool {
 	return true
 }
 
-// SortUsernames returns the projection order clients expect: the editable slot
-// first, then collectibles by stored order, with the name as a stable tiebreak.
-// The input is not mutated.
+// SortUsernames returns the projection order clients expect: stored order first,
+// then the editable slot ahead of a collectible that shares its position, then
+// the name as a stable tiebreak. The input is not mutated.
+//
+// Order beats editability because core.telegram.org/api/fragment makes the first
+// entry of the vector the peer's primary username, and reorderUsernames is
+// allowed to move the editable slot out of that position. Editability is only the
+// tiebreak, which is what keeps a peer that never reordered anything projecting
+// exactly as before: every such row carries sort_order 0, including the editable
+// one, so the tiebreak alone decides and the editable slot stays first.
 func SortUsernames(list []Username) []Username {
 	out := append([]Username(nil), list...)
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Editable != out[j].Editable {
-			return out[i].Editable
-		}
 		if out[i].SortOrder != out[j].SortOrder {
 			return out[i].SortOrder < out[j].SortOrder
+		}
+		if out[i].Editable != out[j].Editable {
+			return out[i].Editable
 		}
 		return strings.ToLower(out[i].Username) < strings.ToLower(out[j].Username)
 	})
@@ -338,8 +345,8 @@ func SortUsernames(list []Username) []Username {
 }
 
 // ActiveUsername returns the name clients treat as the peer's primary username:
-// the active editable slot when present, otherwise the first active collectible.
-// It is what the legacy scalar users.username / channels.username column mirrors.
+// the first active entry of the projected vector, which is the active editable
+// slot until a reorder moves a collectible ahead of it.
 func ActiveUsername(list []Username) string {
 	for _, item := range SortUsernames(list) {
 		if item.Active && item.Username != "" {
@@ -349,17 +356,36 @@ func ActiveUsername(list []Username) string {
 	return ""
 }
 
-// ValidateUsernameReorder checks that order is a permutation of the peer's
-// current collectible usernames. Reordering never touches the editable slot,
-// which always projects first.
+// ValidateUsernameReorder checks that order is a valid new ordering of the peer's
+// usernames.
+//
+// The contract is the one clients implement, not a collectible-only one:
+// core.telegram.org/api/fragment says "all currently active usernames must be
+// specified", and the editable slot is an active username. Telegram Desktop
+// therefore sends the whole visible list -- editable slot included -- and a
+// server that rejects the editable name answers USERNAME_INVALID to a correct
+// client, which is what made a channel's username editor unusable.
+//
+// So: every name in order must belong to the peer, without duplicates, and every
+// *active* username of the peer must appear. Inactive names are optional, because
+// they are not part of what the client is showing; when a client does include
+// them they are positioned like any other name.
 func ValidateUsernameReorder(current []Username, order []string) error {
-	if len(order) > MaxPeerCollectibleUsernames {
+	// The bound is the collectible bound plus the one editable slot, because the
+	// editable name is a legitimate member of the vector.
+	if len(order) > MaxPeerCollectibleUsernames+1 {
 		return ErrUsernameOrderInvalid
 	}
-	collectibles := make(map[string]struct{}, len(current))
+	owned := make(map[string]struct{}, len(current))
+	active := make(map[string]struct{}, len(current))
 	for _, item := range current {
-		if item.Collectible() {
-			collectibles[strings.ToLower(item.Username)] = struct{}{}
+		key := strings.ToLower(item.Username)
+		if key == "" {
+			continue
+		}
+		owned[key] = struct{}{}
+		if item.Active {
+			active[key] = struct{}{}
 		}
 	}
 	seen := make(map[string]struct{}, len(order))
@@ -368,7 +394,7 @@ func ValidateUsernameReorder(current []Username, order []string) error {
 		if key == "" {
 			return ErrUsernameOrderInvalid
 		}
-		if _, ok := collectibles[key]; !ok {
+		if _, ok := owned[key]; !ok {
 			return ErrUsernameOrderInvalid
 		}
 		if _, dup := seen[key]; dup {
@@ -376,14 +402,42 @@ func ValidateUsernameReorder(current []Username, order []string) error {
 		}
 		seen[key] = struct{}{}
 	}
-	if len(seen) != len(collectibles) {
-		return ErrUsernameOrderInvalid
+	for key := range active {
+		if _, ok := seen[key]; !ok {
+			return ErrUsernameOrderInvalid
+		}
 	}
 	return nil
 }
 
-// ApplyUsernameReorder returns the list with collectible sort orders rewritten
-// to follow order. The editable row is preserved untouched.
+// SameUsernameOrder reports whether two lists project the same visible sequence
+// of names. It is what a reorder reports as "changed", rather than whether the
+// stored sort_order integers moved: legacy rows numbered the editable slot and
+// the first collectible both 0, so the very first reorder renumbers rows without
+// moving anything a client can see, and every peer of the peer would be notified
+// for nothing.
+func SameUsernameOrder(a, b []Username) bool {
+	left, right := SortUsernames(a), SortUsernames(b)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !strings.EqualFold(left[i].Username, right[i].Username) {
+			return false
+		}
+	}
+	return true
+}
+
+// ApplyUsernameReorder returns the list with sort orders rewritten to follow
+// order, the editable slot included: a client is allowed to move its own username
+// below a collectible one, and the first entry of the vector is what clients show
+// as the peer's primary username.
+//
+// Names absent from order -- only ever inactive ones, since ValidateUsernameReorder
+// requires every active name -- keep their relative position and are placed after
+// everything the client ordered, so an inactive name can never displace a visible
+// one.
 func ApplyUsernameReorder(current []Username, order []string) ([]Username, error) {
 	if err := ValidateUsernameReorder(current, order); err != nil {
 		return nil, err
@@ -393,11 +447,28 @@ func ApplyUsernameReorder(current []Username, order []string) ([]Username, error
 		position[strings.ToLower(NormalizeUsername(name))] = i
 	}
 	out := append([]Username(nil), current...)
-	for i := range out {
-		if !out[i].Collectible() {
+	// Unordered rows follow the ordered block in their previous projection order.
+	trailing := len(order)
+	for _, item := range SortUsernames(current) {
+		key := strings.ToLower(item.Username)
+		if key == "" {
 			continue
 		}
-		out[i].SortOrder = position[strings.ToLower(out[i].Username)]
+		if _, ok := position[key]; ok {
+			continue
+		}
+		position[key] = trailing
+		trailing++
+	}
+	if trailing > MaxUsernameSortOrder {
+		return nil, ErrUsernameOrderInvalid
+	}
+	for i := range out {
+		key := strings.ToLower(out[i].Username)
+		if key == "" {
+			continue
+		}
+		out[i].SortOrder = position[key]
 	}
 	return SortUsernames(out), nil
 }

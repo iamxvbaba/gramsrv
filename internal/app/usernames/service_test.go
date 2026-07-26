@@ -189,15 +189,36 @@ func newTestService(t *testing.T, registry *fakeRegistry, collectibles *fakeColl
 	return NewService(append(base, opts...)...), notifier
 }
 
-func TestPeerUsernamesProjectsEditableSlotFirst(t *testing.T) {
+func TestPeerUsernamesProjectsStoredOrder(t *testing.T) {
+	// Legacy numbering: the editable slot and the first collectible both carry
+	// sort_order 0, and the editable slot wins that tie, so a peer that never
+	// reordered anything projects its own username first.
 	registry := newFakeRegistry()
 	registry.lists[testUser] = []domain.Username{
 		{Username: "zeta", Active: true, SortOrder: 1, CollectibleID: 2},
 		{Username: "alpha", Active: true, SortOrder: 0, CollectibleID: 1},
-		{Username: "editable", Active: true, Editable: true, SortOrder: 9},
+		{Username: "editable", Active: true, Editable: true, SortOrder: 0},
 	}
 	service, _ := newTestService(t, registry, newFakeCollectibles())
 
+	if got := projectedNames(t, service); got != "editable,alpha,zeta" {
+		t.Fatalf("projection order = %v, want editable,alpha,zeta", got)
+	}
+
+	// After a reorder that made a collectible primary, stored order decides and
+	// the editable slot is no longer first: clients show usernames[0] as primary.
+	registry.lists[testUser] = []domain.Username{
+		{Username: "zeta", Active: true, SortOrder: 2, CollectibleID: 2},
+		{Username: "alpha", Active: true, SortOrder: 0, CollectibleID: 1},
+		{Username: "editable", Active: true, Editable: true, SortOrder: 1},
+	}
+	if got := projectedNames(t, service); got != "alpha,editable,zeta" {
+		t.Fatalf("reordered projection = %v, want alpha,editable,zeta", got)
+	}
+}
+
+func projectedNames(t *testing.T, service *Service) string {
+	t.Helper()
 	list, err := service.PeerUsernames(context.Background(), testUser)
 	if err != nil {
 		t.Fatalf("PeerUsernames: %v", err)
@@ -206,9 +227,7 @@ func TestPeerUsernamesProjectsEditableSlotFirst(t *testing.T) {
 	for _, item := range list {
 		got = append(got, item.Username)
 	}
-	if strings.Join(got, ",") != "editable,alpha,zeta" {
-		t.Fatalf("projection order = %v, want editable,alpha,zeta", got)
-	}
+	return strings.Join(got, ",")
 }
 
 func TestUsernamesBatchSkipsInvalidAndEmptyPeers(t *testing.T) {
@@ -308,12 +327,12 @@ func TestReorderUsernamesNormalizesPermutation(t *testing.T) {
 	}
 	service, notifier := newTestService(t, registry, newFakeCollectibles())
 
-	changed, err := service.ReorderUsernames(context.Background(), testUser, []string{"@zeta", " alpha "})
+	changed, err := service.ReorderUsernames(context.Background(), testUser, []string{"@zeta", " alpha ", "editable"})
 	if err != nil || !changed {
 		t.Fatalf("ReorderUsernames = %v, %v", changed, err)
 	}
-	if len(registry.orders) != 1 || strings.Join(registry.orders[0], ",") != "zeta,alpha" {
-		t.Fatalf("store order = %#v, want normalized zeta,alpha", registry.orders)
+	if len(registry.orders) != 1 || strings.Join(registry.orders[0], ",") != "zeta,alpha,editable" {
+		t.Fatalf("store order = %#v, want normalized zeta,alpha,editable", registry.orders)
 	}
 	if len(notifier.peers) != 1 {
 		t.Fatalf("notified peers = %#v, want one", notifier.peers)
@@ -333,6 +352,40 @@ func TestReorderUsernamesRejectsIncompletePermutation(t *testing.T) {
 	}
 	if len(registry.orders) != 0 {
 		t.Fatalf("store was called with a non-permutation: %#v", registry.orders)
+	}
+}
+
+// TestReorderUsernamesAcceptsTheEditableSlot is the report "channels.reorderUsernames
+// answers USERNAME_INVALID": Telegram Desktop sends the whole visible list, and
+// core.telegram.org/api/fragment requires exactly that ("all currently active
+// usernames must be specified"), so the editable slot is a legitimate member of
+// the order -- including as its first entry, and including when it is the only
+// username the peer has.
+func TestReorderUsernamesAcceptsTheEditableSlot(t *testing.T) {
+	registry := newFakeRegistry()
+	registry.lists[testChannel] = []domain.Username{
+		{Username: "chan_slot", Active: true, Editable: true},
+	}
+	service, _ := newTestService(t, registry, newFakeCollectibles())
+
+	if _, err := service.ReorderUsernames(context.Background(), testChannel, []string{"chan_slot"}); err != nil {
+		t.Fatalf("editable-only reorder: %v", err)
+	}
+	if len(registry.orders) != 1 || strings.Join(registry.orders[0], ",") != "chan_slot" {
+		t.Fatalf("store order = %#v, want chan_slot", registry.orders)
+	}
+
+	// An inactive collectible does not have to be listed, and listing an unknown
+	// name is still rejected.
+	registry.lists[testChannel] = []domain.Username{
+		{Username: "chan_slot", Active: true, Editable: true},
+		{Username: "hidden", Active: false, CollectibleID: 7},
+	}
+	if _, err := service.ReorderUsernames(context.Background(), testChannel, []string{"chan_slot"}); err != nil {
+		t.Fatalf("reorder omitting an inactive collectible: %v", err)
+	}
+	if _, err := service.ReorderUsernames(context.Background(), testChannel, []string{"chan_slot", "nothere"}); !errors.Is(err, domain.ErrUsernameOrderInvalid) {
+		t.Fatalf("reorder with an unknown name = %v, want ErrUsernameOrderInvalid", err)
 	}
 }
 

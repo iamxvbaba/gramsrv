@@ -572,6 +572,14 @@ later is not the moment a typo is discovered. The defaults above are exactly the
 is identical whether or not these keys are set. The final score is clamped at zero: penalties can erase a rating but
 never invert it.
 
+**Collectible username prices are stored in the smallest units of their currency**, because that is what
+`fragment.collectibleInfo` carries: `amount` is "the total price in the smallest units of the currency (integer, not
+float/double)" and `crypto_amount` likewise. So `USD 1000` is ten dollars, `TON 900` is 900 nanotons, and `XTR 1000` is
+a thousand Stars, since Stars have no subunit. Clients divide by that exponent before drawing the price. The admin panel
+is the conversion boundary: prices are typed and displayed there in whole currency units and converted on the way to the
+API, so an operator never has to count zeros. An integration writing to `/api/actions/mint-collectible-username`
+directly is talking to the API, not the panel, and must send smallest units itself.
+
 ### Official platform verification
 
 Official verification is the platform badge (`user.verified` / `channel.verified`): an application is filed through the

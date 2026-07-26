@@ -5,7 +5,7 @@ import { ActionButton } from "../components/ActionButton";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";
 import { Alert, Badge, EmptyRow, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n } from "../i18n";
-import { displayUsername, formatDate, formatQuantity } from "../lib/format";
+import { displayUsername, formatCurrency, formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
 import type {
   AccountRow,
@@ -180,7 +180,7 @@ export function CollectibleUsernameDetailPage({ id, navigate }: { id: string; na
                         <td><TransferKind kind={row.Kind} /></td>
                         <td className="mono">{peerLabel(row.FromPeerType, row.FromPeerID, vaultLabel, row.FromUsername)}</td>
                         <td className="mono">{peerLabel(row.ToPeerType, row.ToPeerID, vaultLabel, row.ToUsername)}</td>
-                        <td className="mono">{row.Amount && row.Amount !== "0" ? `${formatQuantity(row.Amount)} ${row.Currency}`.trim() : "-"}</td>
+                        <td className="mono">{row.Amount && row.Amount !== "0" ? formatCurrency(row.Amount, row.Currency) : "-"}</td>
                         <td>{row.Actor || "-"}</td>
                         <td className="truncate">{row.Reason || "-"}</td>
                         <td>{formatDate(row.CreatedAt) || "-"}</td>

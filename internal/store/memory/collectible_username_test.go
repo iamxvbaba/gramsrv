@@ -524,44 +524,52 @@ func TestCollectibleUsernameReorder(t *testing.T) {
 		wantOrder   []string
 	}{
 		{
+			// Clients send the whole active list, editable slot included.
 			name:        "valid permutation",
-			order:       []string{"gammathree", "@AlphaOne", "betatwo"},
+			order:       []string{"holderslot", "gammathree", "@AlphaOne", "betatwo"},
 			wantChanged: true,
-			wantOrder:   []string{"holderslot", "alphaone", "betatwo", "gammathree"},
+			wantOrder:   []string{"holderslot", "gammathree", "alphaone", "betatwo"},
 		},
 		{
 			name:        "identity permutation",
-			order:       []string{"alphaone", "betatwo", "gammathree"},
+			order:       []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 			wantChanged: false,
 			wantOrder:   []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 		},
 		{
+			// The editable slot is reorderable: a collectible may be made primary.
+			name:        "collectible ahead of the editable slot",
+			order:       []string{"gammathree", "holderslot", "alphaone", "betatwo"},
+			wantChanged: true,
+			wantOrder:   []string{"gammathree", "holderslot", "alphaone", "betatwo"},
+		},
+		{
 			name:      "partial order",
-			order:     []string{"alphaone"},
+			order:     []string{"holderslot", "alphaone"},
+			wantErr:   domain.ErrUsernameOrderInvalid,
+			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
+		},
+		{
+			name:      "active editable slot omitted",
+			order:     []string{"alphaone", "betatwo", "gammathree"},
 			wantErr:   domain.ErrUsernameOrderInvalid,
 			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 		},
 		{
 			name:      "duplicate entry",
-			order:     []string{"alphaone", "alphaone", "betatwo"},
+			order:     []string{"holderslot", "alphaone", "alphaone", "betatwo"},
 			wantErr:   domain.ErrUsernameOrderInvalid,
 			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 		},
 		{
 			name:      "unknown username",
-			order:     []string{"alphaone", "betatwo", "nothere"},
-			wantErr:   domain.ErrUsernameOrderInvalid,
-			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
-		},
-		{
-			name:      "editable slot is not reorderable",
-			order:     []string{"holderslot", "alphaone", "betatwo", "gammathree"},
+			order:     []string{"holderslot", "alphaone", "betatwo", "nothere"},
 			wantErr:   domain.ErrUsernameOrderInvalid,
 			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 		},
 		{
 			name:      "garbage input",
-			order:     []string{"", "@", "alphaone"},
+			order:     []string{"holderslot", "", "@", "alphaone"},
 			wantErr:   domain.ErrUsernameOrderInvalid,
 			wantOrder: []string{"holderslot", "alphaone", "betatwo", "gammathree"},
 		},
@@ -587,9 +595,6 @@ func TestCollectibleUsernameReorder(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := tc.wantOrder
-			if tc.wantChanged {
-				want = []string{"holderslot", "gammathree", "alphaone", "betatwo"}
-			}
 			if len(rows) != len(want) {
 				t.Fatalf("rows=%+v want %v", rows, want)
 			}
@@ -601,9 +606,19 @@ func TestCollectibleUsernameReorder(t *testing.T) {
 		})
 	}
 
-	t.Run("no collectibles", func(t *testing.T) {
+	// A peer whose only username is the editable slot: sending just that name is
+	// the identity order, and sending nothing at all is the no-op every client
+	// gets when it reconciles an empty collectible list.
+	t.Run("editable slot only", func(t *testing.T) {
 		s := NewCollectibleUsernameStore()
 		mustSetEditable(t, s, holder, "holderslot")
+		if changed, err := s.ReorderUsernames(ctx, holder, []string{"holderslot"}); err != nil || changed {
+			t.Fatalf("editable-only order: changed=%v err=%v", changed, err)
+		}
+	})
+
+	t.Run("no usernames at all", func(t *testing.T) {
+		s := NewCollectibleUsernameStore()
 		if changed, err := s.ReorderUsernames(ctx, holder, nil); err != nil || changed {
 			t.Fatalf("changed=%v err=%v", changed, err)
 		}
