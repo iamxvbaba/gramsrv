@@ -346,6 +346,20 @@ func (s *server) handleStarGiftCollectibleAnimationAPI(w http.ResponseWriter, r 
 }
 
 func (s *server) proxyAdminJSON(w http.ResponseWriter, r *http.Request, apiPath string, maxBytes int64) {
+	s.proxyAdminJSONWithCache(w, r, apiPath, maxBytes, "private, max-age=30")
+}
+
+func (s *server) proxyAdminJSONNoStore(w http.ResponseWriter, r *http.Request, apiPath string, maxBytes int64) {
+	s.proxyAdminJSONWithCache(w, r, apiPath, maxBytes, "no-store")
+}
+
+func (s *server) proxyAdminJSONWithCache(
+	w http.ResponseWriter,
+	r *http.Request,
+	apiPath string,
+	maxBytes int64,
+	cacheControl string,
+) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -368,7 +382,7 @@ func (s *server) proxyAdminJSON(w http.ResponseWriter, r *http.Request, apiPath 
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "private, max-age=30")
+	w.Header().Set("Cache-Control", cacheControl)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }
@@ -378,7 +392,7 @@ func (s *server) handleModerationCasesAPI(w http.ResponseWriter, r *http.Request
 	if r.URL.RawQuery != "" {
 		apiPath += "?" + r.URL.RawQuery
 	}
-	s.proxyAdminJSON(w, r, apiPath, 4<<20)
+	s.proxyAdminJSONNoStore(w, r, apiPath, 4<<20)
 }
 
 func (s *server) handleModerationCaseAPI(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +401,7 @@ func (s *server) handleModerationCaseAPI(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "invalid moderation case id")
 		return
 	}
-	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/moderation/cases/%d", id), 4<<20)
+	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/moderation/cases/%d", id), 4<<20)
 }
 
 func (s *server) handleModerationReportAPI(w http.ResponseWriter, r *http.Request) {
@@ -396,7 +410,7 @@ func (s *server) handleModerationReportAPI(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, http.StatusBadRequest, "invalid moderation report id")
 		return
 	}
-	s.proxyAdminJSON(w, r, fmt.Sprintf("/v1/moderation/reports/%d", id), 4<<20)
+	s.proxyAdminJSONNoStore(w, r, fmt.Sprintf("/v1/moderation/reports/%d", id), 4<<20)
 }
 
 func (s *server) handleClaimModerationCaseAPI(w http.ResponseWriter, r *http.Request) {

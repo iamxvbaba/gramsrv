@@ -83,6 +83,67 @@ func TestSetAccountFrozenBFFForwardsClientVisibleState(t *testing.T) {
 	}
 }
 
+func TestModerationReadAPIDisablesBrowserCaching(t *testing.T) {
+	tests := []struct {
+		name         string
+		requestPath  string
+		upstreamPath string
+		invoke       func(*server, http.ResponseWriter, *http.Request)
+	}{
+		{
+			name:         "case list",
+			requestPath:  "/api/moderation/cases?status=open",
+			upstreamPath: "/v1/moderation/cases?status=open",
+			invoke:       (*server).handleModerationCasesAPI,
+		},
+		{
+			name:         "case detail",
+			requestPath:  "/api/moderation/cases/7",
+			upstreamPath: "/v1/moderation/cases/7",
+			invoke: func(s *server, w http.ResponseWriter, r *http.Request) {
+				r.SetPathValue("id", "7")
+				s.handleModerationCaseAPI(w, r)
+			},
+		},
+		{
+			name:         "report detail",
+			requestPath:  "/api/moderation/reports/9",
+			upstreamPath: "/v1/moderation/reports/9",
+			invoke: func(s *server, w http.ResponseWriter, r *http.Request) {
+				r.SetPathValue("id", "9")
+				s.handleModerationReportAPI(w, r)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.RequestURI(); got != test.upstreamPath {
+					t.Fatalf("upstream request URI = %q, want %q", got, test.upstreamPath)
+				}
+				if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+					t.Fatalf("upstream authorization = %q", got)
+				}
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer upstream.Close()
+
+			srv := &server{cfg: uiConfig{AdminAPIURL: upstream.URL, AdminAPIToken: "secret"}}
+			req := httptest.NewRequest(http.MethodGet, test.requestPath, nil)
+			rec := httptest.NewRecorder()
+			test.invoke(srv, rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+		})
+	}
+}
+
 func TestStarGiftRowJSONPreservesInt64AsDecimalStrings(t *testing.T) {
 	const maxInt64 = int64(9223372036854775807)
 	raw, err := json.Marshal(StarGiftRow{

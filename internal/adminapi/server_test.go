@@ -3,6 +3,7 @@ package adminapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,147 @@ func TestAdminAPIModerationQueueDecisionAndAppealReview(t *testing.T) {
 		svc.appealReview.Actions[0].Kind != domain.ModerationActionClearPeerFlags {
 		t.Fatalf("review status=%d request=%+v body=%s",
 			review.Code, svc.appealReview, review.Body.String())
+	}
+}
+
+type emptyModerationCollectionsService struct {
+	fakeService
+}
+
+func (emptyModerationCollectionsService) ModerationCases(
+	context.Context,
+	domain.ModerationCaseFilter,
+) ([]domain.ModerationCase, error) {
+	return nil, nil
+}
+
+func (emptyModerationCollectionsService) ModerationCase(
+	_ context.Context,
+	caseID int64,
+) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{
+		Case:      domain.ModerationCase{ID: caseID},
+		ReportIDs: []int64{9},
+	}, true, nil
+}
+
+func (emptyModerationCollectionsService) ModerationReport(
+	_ context.Context,
+	reportID int64,
+) (domain.ModerationReport, bool, error) {
+	return domain.ModerationReport{
+		ID:    reportID,
+		Items: []domain.ModerationReportItem{{ItemID: 10}},
+	}, true, nil
+}
+
+func (emptyModerationCollectionsService) DecideModerationCase(
+	_ context.Context,
+	request domain.ModerationDecisionRequest,
+) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{
+		Case:      domain.ModerationCase{ID: request.CaseID},
+		ReportIDs: []int64{9},
+	}, true, nil
+}
+
+func (emptyModerationCollectionsService) ReviewModerationAppeal(
+	_ context.Context,
+	request domain.ModerationDecisionRequest,
+) (domain.ModerationCaseDetail, bool, error) {
+	return domain.ModerationCaseDetail{
+		Case:      domain.ModerationCase{ID: request.CaseID},
+		ReportIDs: []int64{9},
+	}, true, nil
+}
+
+func TestAdminAPIModerationCollectionsAreJSONArrays(t *testing.T) {
+	srv := &Server{token: "secret", svc: emptyModerationCollectionsService{}}
+	tests := []struct {
+		name         string
+		method       string
+		path         string
+		body         string
+		keys         []string
+		nonEmptyKeys []string
+		nested       string
+	}{
+		{
+			name: "empty queue", method: http.MethodGet,
+			path: "/v1/moderation/cases", keys: []string{"cases"},
+		},
+		{
+			name: "fresh case", method: http.MethodGet,
+			path:         "/v1/moderation/cases/7",
+			keys:         []string{"Decisions", "Actions", "Appeals"},
+			nonEmptyKeys: []string{"ReportIDs"},
+		},
+		{
+			name: "report without media holds", method: http.MethodGet,
+			path:         "/v1/moderation/reports/9",
+			keys:         []string{"MediaHolds"},
+			nonEmptyKeys: []string{"Items"},
+		},
+		{
+			name: "decision response", method: http.MethodPost,
+			path: "/v1/moderation/cases/7/decide", body: `{}`,
+			nested:       "case",
+			keys:         []string{"Decisions", "Actions", "Appeals"},
+			nonEmptyKeys: []string{"ReportIDs"},
+		},
+		{
+			name: "appeal review response", method: http.MethodPost,
+			path: "/v1/moderation/cases/7/appeals/8/review", body: `{}`,
+			nested:       "case",
+			keys:         []string{"Decisions", "Actions", "Appeals"},
+			nonEmptyKeys: []string{"ReportIDs"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Authorization", "Bearer secret")
+			rec := httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var response map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if tt.nested != "" {
+				nestedValue := response[tt.nested]
+				var ok bool
+				response, ok = nestedValue.(map[string]any)
+				if !ok {
+					t.Fatalf("%s=%T, want object; body=%s",
+						tt.nested, nestedValue, rec.Body.String())
+				}
+			}
+			for _, key := range tt.keys {
+				value, ok := response[key]
+				if !ok {
+					t.Fatalf("%s missing; body=%s", key, rec.Body.String())
+				}
+				items, ok := value.([]any)
+				if !ok || len(items) != 0 {
+					t.Fatalf("%s=%#v, want empty JSON array; body=%s",
+						key, value, rec.Body.String())
+				}
+			}
+			for _, key := range tt.nonEmptyKeys {
+				value, ok := response[key]
+				if !ok {
+					t.Fatalf("%s missing; body=%s", key, rec.Body.String())
+				}
+				items, ok := value.([]any)
+				if !ok || len(items) == 0 {
+					t.Fatalf("%s=%#v, want non-empty JSON array; body=%s",
+						key, value, rec.Body.String())
+				}
+			}
+		})
 	}
 }
 
