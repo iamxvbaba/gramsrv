@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowLeftRight, ExternalLink, Flame, RefreshCw, Undo2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ExternalLink, Flame, Trash2, RefreshCw, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -221,6 +221,15 @@ export function CollectibleUsernameDetailPage({ id, navigate }: { id: string; na
                     onDone={load}
                   />
                   <p className="bot-create-note">{t("usernames.burnHint")}</p>
+                  <ActionButton
+                    label={t("usernames.delete")}
+                    icon={<Trash2 size={15} />}
+                    tone="danger"
+                    path="/api/actions/delete-collectible-username"
+                    payload={() => ({ username: asset.Username })}
+                    onDone={() => navigate("/collectible-usernames")}
+                  />
+                  <p className="bot-create-note">{t("usernames.deleteHint")}</p>
                 </div>
               </>
             )}

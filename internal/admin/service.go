@@ -49,6 +49,7 @@ const (
 	ActionMintCollectibleUsername     = "usernames.collectible.mint"
 	ActionTransferCollectibleUsername = "usernames.collectible.transfer"
 	ActionRevokeCollectibleUsername   = "usernames.collectible.revoke"
+	ActionDeleteCollectibleUsername   = "usernames.collectible.delete"
 	// Composite account rating.
 	ActionRecomputeAccountRating = "rating.recompute"
 	ActionAdjustAccountRating    = "rating.adjust"
@@ -218,6 +219,7 @@ type CollectibleUsernamesService interface {
 	Mint(ctx context.Context, req domain.MintCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
 	Transfer(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
 	Revoke(ctx context.Context, req domain.RevokeCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+	Delete(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error)
 	Collectible(ctx context.Context, username string) (domain.CollectibleUsername, error)
 	List(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
 	Transfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error)
@@ -787,6 +789,14 @@ type RevokeCollectibleUsernameRequest struct {
 	CommandMeta
 	Username string `json:"username"`
 	Burn     bool   `json:"burn"`
+}
+
+// DeleteCollectibleUsernameRequest erases a collectible asset entirely. Unlike a
+// burn, which retires the asset and keeps its provenance, this drops the record
+// and frees the name for a fresh issue -- the escape hatch for a mistaken mint.
+type DeleteCollectibleUsernameRequest struct {
+	CommandMeta
+	Username string `json:"username"`
 }
 
 // RecomputeAccountRatingRequest forces one user's composite rating to be
@@ -1711,6 +1721,56 @@ func (s *Service) RevokeCollectibleUsername(ctx context.Context, req RevokeColle
 			message = "collectible username burned"
 		}
 		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// DeleteCollectibleUsername erases the asset and its provenance, releasing the
+// name. Because the history disappears with the record, the command journal is
+// the only remaining trace: the details below are captured before the delete so
+// the entry still says what was removed and from whom.
+func (s *Service) DeleteCollectibleUsername(ctx context.Context, req DeleteCollectibleUsernameRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	if !domain.ValidCollectibleUsername(req.Username) {
+		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteCollectibleUsername, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"username": req.Username}
+		asset, err := s.usernames.Collectible(ctx, req.Username)
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["collectible_id"] = strconv.FormatInt(asset.ID, 10)
+		details["previous_status"] = string(asset.Status)
+		details["previous_owner_type"] = string(asset.Owner.Type)
+		details["previous_owner_id"] = strconv.FormatInt(asset.Owner.ID, 10)
+		details["transfer_count"] = asset.TransferCount
+		details["currency"] = asset.Currency
+		details["amount"] = strconv.FormatInt(asset.Amount, 10)
+		if asset.Status == domain.CollectibleUsernameStatusBurned {
+			// Only live assets can be deleted; burned rows are history and are
+			// released by re-issuing the name instead.
+			return CommandResult{Details: details}, codedError(CodeCollectibleBurned, domain.ErrCollectibleUsernameBurned)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "collectible username delete validated", Details: details}, nil
+		}
+		deleted, err := s.usernames.Delete(ctx, domain.DeleteCollectibleUsernameRequest{
+			Username:   req.Username,
+			Actor:      req.Actor,
+			Reason:     req.Reason,
+			CommandKey: "admin-collectible-delete:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["deleted"] = deleted
+		if !deleted {
+			return CommandResult{Message: "collectible username already absent", Details: details}, nil
+		}
+		return CommandResult{Message: "collectible username deleted", Details: details}, nil
 	})
 }
 

@@ -69,6 +69,7 @@ type Service interface {
 	MintCollectibleUsername(ctx context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error)
 	TransferCollectibleUsername(ctx context.Context, req admin.TransferCollectibleUsernameRequest) (admin.CommandResult, error)
 	RevokeCollectibleUsername(ctx context.Context, req admin.RevokeCollectibleUsernameRequest) (admin.CommandResult, error)
+	DeleteCollectibleUsername(ctx context.Context, req admin.DeleteCollectibleUsernameRequest) (admin.CommandResult, error)
 	CollectibleUsernames(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
 	CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error)
 	CollectibleUsernameTransfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error)
@@ -167,6 +168,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/collectible-usernames/mint", s.authenticated(s.handleMintCollectibleUsername))
 	mux.HandleFunc("POST /v1/collectible-usernames/transfer", s.authenticated(s.handleTransferCollectibleUsername))
 	mux.HandleFunc("POST /v1/collectible-usernames/revoke", s.authenticated(s.handleRevokeCollectibleUsername))
+	mux.HandleFunc("POST /v1/collectible-usernames/delete", s.authenticated(s.handleDeleteCollectibleUsername))
 	mux.HandleFunc("GET /v1/collectible-usernames", s.authenticated(s.handleCollectibleUsernames))
 	mux.HandleFunc("GET /v1/collectible-usernames/{id}", s.authenticated(s.handleCollectibleUsername))
 	mux.HandleFunc("POST /v1/account-ratings/recompute", s.authenticated(s.handleRecomputeAccountRating))
@@ -955,6 +957,15 @@ func (s *Server) handleRevokeCollectibleUsername(w http.ResponseWriter, r *http.
 		return
 	}
 	result, err := s.svc.RevokeCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteCollectibleUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteCollectibleUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteCollectibleUsername(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

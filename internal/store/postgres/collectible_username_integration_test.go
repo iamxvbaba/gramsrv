@@ -463,3 +463,124 @@ func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
 		t.Fatalf("editable slot over own collectible err = %v, want ErrUsernameOccupied", err)
 	}
 }
+
+// TestCollectibleUsernameReissueAfterBurn covers migration 0151: uniqueness now
+// spans live assets only, so a burned name can be issued again while its burned
+// rows remain as provenance.
+func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	store := NewCollectibleUsernameStore(pool)
+	seed := time.Now().UnixNano() % 1_000_000
+	holder := collectibleTestUser(t, pool, 3_500_000_000+seed, "")
+	name := fmt.Sprintf("reissue%d", seed)
+	cleanupCollectible(t, pool, lowerASCII(name))
+
+	first, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, ""))
+	if err != nil {
+		t.Fatalf("first mint: %v", err)
+	}
+	if _, _, err := store.RevokeCollectibleUsername(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: name, Burn: true, Actor: "ops", Reason: "retire",
+	}); err != nil {
+		t.Fatalf("burn: %v", err)
+	}
+
+	second, created, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, ""))
+	if err != nil || !created {
+		t.Fatalf("reissue: created=%v err=%v", created, err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("reissue reused asset id %d", second.ID)
+	}
+	// Both rows coexist: the live one is what the name resolves to.
+	live, err := store.CollectibleUsername(ctx, name)
+	if err != nil || live.ID != second.ID {
+		t.Fatalf("lookup after reissue = %+v err=%v, want live asset %d", live, err, second.ID)
+	}
+	burned, err := store.CollectibleUsernameByID(ctx, first.ID)
+	if err != nil || burned.Status != domain.CollectibleUsernameStatusBurned {
+		t.Fatalf("burned provenance row = %+v err=%v", burned, err)
+	}
+	var rowCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM collectible_usernames WHERE username_lower = $1`,
+		lowerASCII(name)).Scan(&rowCount); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if rowCount != 2 {
+		t.Fatalf("rows for reissued name = %d, want 2", rowCount)
+	}
+	// The live asset still blocks another mint.
+	if _, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, "")); !errors.Is(err, domain.ErrUsernameOccupied) {
+		t.Fatalf("mint over live asset err = %v, want ErrUsernameOccupied", err)
+	}
+	if list := registryRows(t, pool, holder); len(list) != 1 || list[0].CollectibleID != second.ID {
+		t.Fatalf("holder registry after reissue = %+v", list)
+	}
+}
+
+// TestCollectibleUsernameDelete covers the hard delete: asset, registry row and
+// provenance all disappear and the name becomes fully free.
+func TestCollectibleUsernameDelete(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	store := NewCollectibleUsernameStore(pool)
+	seed := time.Now().UnixNano() % 1_000_000
+	holder := collectibleTestUser(t, pool, 3_600_000_000+seed, "")
+	name := fmt.Sprintf("mistake%d", seed)
+	cleanupCollectible(t, pool, lowerASCII(name))
+	editable := fmt.Sprintf("keep%d", seed)
+	setEditableUsername(t, pool, holder, editable)
+
+	asset, _, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, ""))
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	deleted, err := store.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: "@" + name, Actor: "ops", Reason: "issued by mistake",
+	})
+	if err != nil || !deleted {
+		t.Fatalf("delete: deleted=%v err=%v", deleted, err)
+	}
+	if _, err := store.CollectibleUsernameByID(ctx, asset.ID); !errors.Is(err, domain.ErrCollectibleUsernameNotFound) {
+		t.Fatalf("asset after delete err = %v, want not found", err)
+	}
+	// ON DELETE CASCADE took the provenance rows with the asset.
+	var transfers int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM collectible_username_transfers WHERE collectible_id = $1`,
+		asset.ID).Scan(&transfers); err != nil {
+		t.Fatalf("count transfers: %v", err)
+	}
+	if transfers != 0 {
+		t.Fatalf("provenance rows after delete = %d, want 0", transfers)
+	}
+	// The holder keeps its editable slot and loses only the collectible row.
+	list := registryRows(t, pool, holder)
+	if len(list) != 1 || !list[0].Editable || list[0].Username != editable {
+		t.Fatalf("holder registry after delete = %+v", list)
+	}
+	// The name is free again, with no burned history left behind.
+	if _, created, err := store.MintCollectibleUsername(ctx, mintRequest(name, holder, "")); err != nil || !created {
+		t.Fatalf("mint after delete: created=%v err=%v", created, err)
+	}
+	// Deleting a name that has no live asset is a no-op, not an error.
+	if _, _, err := store.RevokeCollectibleUsername(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: name, Burn: true, Actor: "ops", Reason: "retire",
+	}); err != nil {
+		t.Fatalf("burn before repeat delete: %v", err)
+	}
+	deleted, err = store.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: name, Actor: "ops", Reason: "again",
+	})
+	if err != nil || deleted {
+		t.Fatalf("delete of burned-only name = %v err=%v, want (false, nil)", deleted, err)
+	}
+	deleted, err = store.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: fmt.Sprintf("absent%d", seed), Actor: "ops", Reason: "again",
+	})
+	if err != nil || deleted {
+		t.Fatalf("delete of unknown name = %v err=%v, want (false, nil)", deleted, err)
+	}
+}

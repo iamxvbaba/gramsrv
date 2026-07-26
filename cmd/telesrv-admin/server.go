@@ -106,6 +106,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/mint-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/transfer-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleTransferCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/revoke-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeCollectibleUsernameAPI)))
+	mux.Handle("POST /api/actions/delete-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/recompute-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
 	mux.Handle("POST /api/actions/adjust-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
@@ -1666,6 +1667,29 @@ func (s *server) handleRevokeCollectibleUsernameAPI(w http.ResponseWriter, r *ht
 	writeCommandResultAPI(w, result, err)
 }
 
+type deleteCollectibleUsernameAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Username  string `json:"username"`
+}
+
+// handleDeleteCollectibleUsernameAPI erases an asset and its provenance. The
+// panel gates it behind the same reason + dry-run + confirm flow as a burn, but
+// the outcome differs: the name becomes issuable again from scratch.
+func (s *server) handleDeleteCollectibleUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteCollectibleUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteCollectibleUsernameRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-collectible-username"),
+		Username:    body.Username,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/delete", req)
+	writeCommandResultAPI(w, result, err)
+}
+
 type recomputeAccountRatingAPIRequest struct {
 	CommandID string    `json:"command_id"`
 	Reason    string    `json:"reason"`
@@ -1811,7 +1835,7 @@ func (s *server) handleAccountRatingsAPI(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "invalid limit")
 		return
 	}
-	rows, hasMore, err := s.read.ListAccountRatings(r.Context(), minLevel, userID, beforeID, limit)
+	rows, hasMore, err := s.read.ListAccountRatings(r.Context(), minLevel, userID, beforeID, limit, query.Get("q"))
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

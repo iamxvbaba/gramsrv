@@ -79,6 +79,7 @@ type fakeCollectibles struct {
 	mints     []domain.MintCollectibleUsernameRequest
 	transfers []domain.TransferCollectibleUsernameRequest
 	revokes   []domain.RevokeCollectibleUsernameRequest
+	deletes   []domain.DeleteCollectibleUsernameRequest
 	filters   []domain.CollectibleUsernameFilter
 	logLimits []int
 	created   bool
@@ -126,6 +127,16 @@ func (f *fakeCollectibles) RevokeCollectibleUsername(_ context.Context, req doma
 	}
 	f.assets[strings.ToLower(req.Username)] = asset
 	return asset, f.changed, nil
+}
+
+func (f *fakeCollectibles) DeleteCollectibleUsername(_ context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error) {
+	f.deletes = append(f.deletes, req)
+	key := strings.ToLower(req.Username)
+	if _, ok := f.assets[key]; !ok {
+		return false, nil
+	}
+	delete(f.assets, key)
+	return true, nil
 }
 
 func (f *fakeCollectibles) CollectibleUsername(_ context.Context, username string) (domain.CollectibleUsername, error) {
@@ -624,5 +635,53 @@ func TestNotifierFailureDoesNotFailTheMutation(t *testing.T) {
 	changed, err := service.ToggleUsername(context.Background(), testUser, "alpha", false)
 	if err != nil || !changed {
 		t.Fatalf("ToggleUsername = %v, %v; committed mutation must survive a failed push", changed, err)
+	}
+}
+
+// TestServiceDeleteNotifiesPreviousOwner covers the hard delete: the request is
+// normalised and validated before the store is touched, and the peer that held
+// the asset is invalidated so its projection stops advertising the username.
+func TestServiceDeleteNotifiesPreviousOwner(t *testing.T) {
+	ctx := context.Background()
+	registry := newFakeRegistry()
+	collectibles := newFakeCollectibles()
+	holder := domain.Peer{Type: domain.PeerTypeUser, ID: 501}
+	collectibles.assets["gone"] = domain.CollectibleUsername{
+		ID: 9, Username: "Gone", Status: domain.CollectibleUsernameStatusOwned, Owner: holder,
+	}
+	svc, notifier := newTestService(t, registry, collectibles)
+
+	deleted, err := svc.Delete(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: " @Gone ", Actor: "admin", Reason: "issued by mistake",
+	})
+	if err != nil || !deleted {
+		t.Fatalf("delete: deleted=%v err=%v", deleted, err)
+	}
+	if len(collectibles.deletes) != 1 || collectibles.deletes[0].Username != "Gone" {
+		t.Fatalf("store received %+v, want the normalised name", collectibles.deletes)
+	}
+	if len(notifier.peers) != 1 || notifier.peers[0] != holder {
+		t.Fatalf("notified peers = %#v, want the previous owner %+v", notifier.peers, holder)
+	}
+
+	// An invalid name never reaches the store.
+	before := len(collectibles.deletes)
+	if _, err := svc.Delete(ctx, domain.DeleteCollectibleUsernameRequest{Username: "no"}); err == nil {
+		t.Fatalf("delete of a too-short name = nil error, want rejection")
+	}
+	if len(collectibles.deletes) != before {
+		t.Fatalf("store was called with an invalid request: %+v", collectibles.deletes)
+	}
+
+	// Nothing live left is not an error, and nothing is notified.
+	notifier.peers = nil
+	deleted, err = svc.Delete(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: "absentname", Actor: "admin", Reason: "again",
+	})
+	if err != nil || deleted {
+		t.Fatalf("delete of unknown name = %v err=%v, want (false, nil)", deleted, err)
+	}
+	if len(notifier.peers) != 0 {
+		t.Fatalf("no-op delete notified %+v", notifier.peers)
 	}
 }

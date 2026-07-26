@@ -542,6 +542,33 @@ func (r RevokeCollectibleUsernameRequest) Validate() error {
 	return nil
 }
 
+// DeleteCollectibleUsernameRequest removes an asset outright, releasing its name
+// and discarding its provenance. Revoke+Burn retires an asset but keeps the
+// history; this is the escape hatch for a name that was issued by mistake.
+type DeleteCollectibleUsernameRequest struct {
+	Username   string
+	Actor      string
+	Reason     string
+	CommandKey string
+}
+
+// Validate checks the request shape.
+func (r DeleteCollectibleUsernameRequest) Validate() error {
+	if !ValidCollectibleUsername(r.Username) {
+		return ErrUsernameInvalid
+	}
+	if len(r.Reason) > MaxCollectibleUsernameReasonLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	if len(r.Actor) > MaxCollectibleUsernameActorLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	if len(r.CommandKey) > MaxCollectibleUsernameCommandKeyLength {
+		return ErrCollectibleUsernameStateInvalid
+	}
+	return nil
+}
+
 // CollectibleUsernameFilter bounds an admin listing query.
 type CollectibleUsernameFilter struct {
 	Status   CollectibleUsernameStatus

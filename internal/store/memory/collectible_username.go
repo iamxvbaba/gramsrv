@@ -42,8 +42,11 @@ type CollectibleUsernameStore struct {
 	nextTransferID int64
 	// assets is collectible_usernames keyed by identity.
 	assets map[int64]domain.CollectibleUsername
-	// assetsByName is the collectible_usernames.username_lower unique index. A
-	// burned asset stays in it: the name was minted and never mints again.
+	// assetsByName resolves a name onto the asset it currently stands for. After
+	// migration 0151 uniqueness covers live rows only, so one name can accumulate
+	// several burned rows plus at most one live row; this index points at the live
+	// row when there is one and at the newest burned row otherwise, mirroring the
+	// SQL lookup order.
 	assetsByName map[string]int64
 	// registry is peer_usernames keyed by username_lower, which is exactly how
 	// the table enforces global uniqueness.
@@ -245,9 +248,10 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(_ context.Context, re
 		return asset, false, nil
 	}
 	key := strings.ToLower(req.Username)
-	// A name mints once ever (collectible_usernames.username_lower UNIQUE) and
-	// cannot be taken from a peer that already holds it in the registry.
-	if _, ok := s.assetsByName[key]; ok {
+	// Only a live asset occupies a name. A name whose history is entirely burned
+	// is free to be issued again, and the new asset takes over the index entry
+	// while the burned rows stay as provenance.
+	if id, ok := s.assetsByName[key]; ok && s.assets[id].Status != domain.CollectibleUsernameStatusBurned {
 		return domain.CollectibleUsername{}, false, domain.ErrUsernameOccupied
 	}
 	if _, ok := s.registry[key]; ok {
@@ -420,6 +424,67 @@ func (s *CollectibleUsernameStore) RevokeCollectibleUsername(_ context.Context, 
 }
 
 // CollectibleUsername looks the asset up by name, case-insensitively.
+// DeleteCollectibleUsername removes the live asset for a name completely --
+// registry row, asset and provenance -- and frees the name for any use. Revoke
+// with Burn retires an asset but keeps its history; this is the escape hatch for
+// an asset issued by mistake.
+//
+// A command key cannot make this idempotent: the record it would resolve to is
+// gone. A repeated call therefore reports deleted=false once no live asset is
+// left, which is also what a delete of a burned-only name reports.
+func (s *CollectibleUsernameStore) DeleteCollectibleUsername(_ context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strings.ToLower(req.Username)
+	id, ok := s.assetsByName[key]
+	if !ok {
+		return false, nil
+	}
+	asset, ok := s.assets[id]
+	if !ok || asset.Status == domain.CollectibleUsernameStatusBurned {
+		return false, nil
+	}
+	s.detachLocked(id)
+	delete(s.assets, id)
+	delete(s.transfers, id)
+	for commandKey, target := range s.commands {
+		if target == id {
+			delete(s.commands, commandKey)
+		}
+	}
+	s.rebindAssetNameLocked(key)
+	return true, nil
+}
+
+// rebindAssetNameLocked re-points the name index after a row disappears: the
+// newest remaining row wins, and the entry is dropped when none is left.
+func (s *CollectibleUsernameStore) rebindAssetNameLocked(key string) {
+	best := int64(0)
+	for id, asset := range s.assets {
+		if strings.ToLower(asset.Username) != key {
+			continue
+		}
+		if best == 0 || id > best {
+			best = id
+		}
+	}
+	if best == 0 {
+		delete(s.assetsByName, key)
+		return
+	}
+	s.assetsByName[key] = best
+}
+
 func (s *CollectibleUsernameStore) CollectibleUsername(_ context.Context, username string) (domain.CollectibleUsername, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

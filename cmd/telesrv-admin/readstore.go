@@ -247,7 +247,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 LEFT JOIN auth a ON a.user_id = u.id
 WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
 ORDER BY u.id
@@ -303,7 +303,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND ($1::bigint = 0 OR u.id < $1)
 ORDER BY u.id DESC
 LIMIT $2`, beforeID, limit+1)
@@ -345,7 +345,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND (u.id = $1 OR lower(u.username) = $2 OR p.username_lower = $2)
 ORDER BY u.id DESC
 LIMIT $3`, id, username, accountSearchLimit)
@@ -373,7 +373,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
 		&out.Bot.ID, &out.Bot.Username, &out.Bot.FirstName, &out.About, &out.Bot.Verified, &out.Bot.Scam, &out.Bot.Fake,
 		&out.Bot.OwnerUserID, &out.Description, &out.Bot.CreatedAt, &out.Bot.UpdatedAt,
@@ -387,7 +387,7 @@ WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
 		if err := s.pool.QueryRow(ctx, `
 SELECT COALESCE(NULLIF(u.username, ''), p.username_lower, '')
 FROM users u
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, out.Bot.OwnerUserID).Scan(&ownerUsername); err != nil && err != pgx.ErrNoRows {
 			return out, fmt.Errorf("get bot owner: %w", err)
 		} else {
@@ -419,7 +419,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE NOT c.deleted
 	AND NOT c.monoforum
 	AND (c.broadcast OR c.megagroup)
@@ -453,7 +453,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE NOT c.deleted
 	AND NOT c.monoforum
 	AND (c.broadcast OR c.megagroup)
@@ -487,7 +487,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at,
 	row_to_json(c)::jsonb
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE c.id = $1
 	AND NOT c.deleted
 	AND NOT c.monoforum
@@ -559,7 +559,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 FROM users u
 JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
 ORDER BY auth.last_active_at DESC, u.id DESC
@@ -598,7 +598,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
 		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
@@ -1365,7 +1365,11 @@ func scanAccountRatingRow(scan func(dest ...any) error, item *AccountRatingRow) 
 // ListAccountRatings pages the leaderboard. Ordering and the keyset predicate
 // mirror the rating store exactly -- (level DESC, stars DESC, user_id) with the
 // cursor row resolved from beforeID -- so both surfaces page identically.
-func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID, beforeID int64, limit int) ([]AccountRatingRow, bool, error) {
+// ListAccountRatings pages the leaderboard. query is a free-text operator search:
+// it matches a username prefix (editable or collectible), a first/last name
+// prefix, and -- when the term is numeric -- the user id, so an operator can find
+// an account the same way they do on the accounts tab.
+func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID, beforeID int64, limit int, query string) ([]AccountRatingRow, bool, error) {
 	if limit <= 0 {
 		limit = ratingListDefaultLimit
 	}
@@ -1378,6 +1382,15 @@ func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID
 	if minLevel > domain.MaxAccountRatingLevel {
 		minLevel = domain.MaxAccountRatingLevel
 	}
+	query = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@"))
+	pattern := ""
+	queryUserID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryUserID = parsed
+		}
+	}
 	rows, err := s.pool.Query(ctx, `
 WITH cursor_row AS (
 	SELECT level AS c_level, stars AS c_stars, user_id AS c_user_id
@@ -1387,6 +1400,17 @@ SELECT `+accountRatingSelectColumns+accountRatingJoins+`
 LEFT JOIN cursor_row c ON true
 WHERE r.level >= $1
 	AND ($2::bigint = 0 OR r.user_id = $2)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND r.user_id = $6)
+		OR lower(COALESCE(u.username, '')) LIKE $5
+		OR lower(COALESCE(u.first_name, '')) LIKE $5
+		OR lower(COALESCE(u.last_name, '')) LIKE $5
+		OR EXISTS (
+			SELECT 1 FROM peer_usernames pu
+			WHERE pu.peer_type = 'user' AND pu.peer_id = r.user_id
+				AND pu.username_lower LIKE $5
+		)
+	))
 	AND (
 		c.c_user_id IS NULL
 		OR r.level < c.c_level
@@ -1394,7 +1418,7 @@ WHERE r.level >= $1
 		OR (r.level = c.c_level AND r.stars = c.c_stars AND r.user_id > c.c_user_id)
 	)
 ORDER BY r.level DESC, r.stars DESC, r.user_id
-LIMIT $4`, minLevel, userID, beforeID, limit+1)
+LIMIT $4`, minLevel, userID, beforeID, limit+1, pattern, queryUserID)
 	if err != nil {
 		return nil, false, fmt.Errorf("list account ratings: %w", err)
 	}

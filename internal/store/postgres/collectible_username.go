@@ -198,9 +198,10 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(ctx context.Context, 
 		if req.PurchaseDate.IsZero() {
 			purchaseDate = now
 		}
-		// The registry row locks the name; collectible_usernames.username_lower is
-		// globally unique even for burned assets, so a retired name cannot be
-		// re-minted and reports the same occupancy error as a live one.
+		// The registry row locks the name against editable usernames. Occupancy of
+		// the asset itself is decided by the live rows only: 0151 narrowed
+		// uniqueness to status <> 'burned', so a retired name can be issued again
+		// while its burned rows stay as provenance.
 		if _, found, err := getPeerUsernameOwner(ctx, tx, usernameLower, true); err != nil {
 			return err
 		} else if found {
@@ -208,7 +209,8 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(ctx context.Context, 
 		}
 		var existing int64
 		switch err := tx.QueryRow(ctx, `
-SELECT id FROM collectible_usernames WHERE username_lower = $1 FOR UPDATE`, usernameLower).Scan(&existing); {
+SELECT id FROM collectible_usernames
+WHERE username_lower = $1 AND status <> 'burned' FOR UPDATE`, usernameLower).Scan(&existing); {
 		case err == nil:
 			return domain.ErrUsernameOccupied
 		case errors.Is(err, pgx.ErrNoRows):
@@ -451,8 +453,64 @@ WHERE id = $1`, current.ID, string(status), now); err != nil {
 	return asset, changed, nil
 }
 
-// CollectibleUsername looks the asset up by name, including burned ones: the
-// provenance of a retired name still has to be inspectable.
+// DeleteCollectibleUsername removes the live asset for a name outright: the
+// registry row, the asset and its provenance log all go away, and the name
+// becomes free for any use. This is the operator's escape hatch for a mistaken
+// issue, as opposed to Revoke+Burn, which retires an asset but keeps its history.
+//
+// The command key cannot make this idempotent -- a replay has no record left to
+// return -- so a second call simply reports deleted=false once no live asset
+// remains.
+func (s *CollectibleUsernameStore) DeleteCollectibleUsername(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("collectible username store is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return false, err
+	}
+	usernameLower := strings.ToLower(req.Username)
+	deleted := false
+	err := withTx(ctx, s.db, "delete collectible username", func(tx pgx.Tx) error {
+		var id int64
+		switch err := tx.QueryRow(ctx, `
+SELECT id FROM collectible_usernames
+WHERE username_lower = $1 AND status <> 'burned'
+ORDER BY id DESC
+LIMIT 1
+FOR UPDATE`, usernameLower).Scan(&id); {
+		case err == nil:
+		case errors.Is(err, pgx.ErrNoRows):
+			// Either the name was never issued, or only burned history remains.
+			// Both are "nothing live to delete" rather than an error, so a repeated
+			// command stays safe.
+			return nil
+		default:
+			return fmt.Errorf("lock collectible username for delete: %w", err)
+		}
+		if err := deleteCollectiblePeerUsernameTx(ctx, tx, id); err != nil {
+			return err
+		}
+		// collectible_username_transfers references the asset with ON DELETE
+		// CASCADE, so the provenance rows go with it.
+		if _, err := tx.Exec(ctx, `DELETE FROM collectible_usernames WHERE id = $1`, id); err != nil {
+			return fmt.Errorf("delete collectible username: %w", err)
+		}
+		deleted = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return deleted, nil
+}
+
+// CollectibleUsername looks the asset up by name. A live asset wins; when the
+// name only has burned rows the newest one is returned, because the provenance of
+// a retired name still has to be inspectable.
 func (s *CollectibleUsernameStore) CollectibleUsername(ctx context.Context, username string) (domain.CollectibleUsername, error) {
 	if s == nil || s.db == nil {
 		return domain.CollectibleUsername{}, fmt.Errorf("collectible username store is not configured")
@@ -463,7 +521,10 @@ func (s *CollectibleUsernameStore) CollectibleUsername(ctx context.Context, user
 	}
 	asset, err := scanCollectibleUsername(s.db.QueryRow(ctx, `
 SELECT `+collectibleUsernameColumns+`
-FROM collectible_usernames WHERE username_lower = $1`, usernameLower))
+FROM collectible_usernames
+WHERE username_lower = $1
+ORDER BY (status <> 'burned') DESC, id DESC
+LIMIT 1`, usernameLower))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotFound
 	}
@@ -639,10 +700,19 @@ SELECT collectible_id FROM collectible_username_transfers WHERE command_key = $1
 	return asset, true, nil
 }
 
+// lockCollectibleUsernameTx locks the row a name currently resolves to. After
+// 0151 one name can carry several burned rows plus at most one live row, so the
+// live row wins and the newest burned row is the fallback. That keeps a mutation
+// of a retired name reporting ErrCollectibleUsernameBurned instead of degrading
+// to a not-found.
 func lockCollectibleUsernameTx(ctx context.Context, tx pgx.Tx, usernameLower string) (domain.CollectibleUsername, error) {
 	asset, err := scanCollectibleUsername(tx.QueryRow(ctx, `
 SELECT `+collectibleUsernameColumns+`
-FROM collectible_usernames WHERE username_lower = $1 FOR UPDATE`, usernameLower))
+FROM collectible_usernames
+WHERE username_lower = $1
+ORDER BY (status <> 'burned') DESC, id DESC
+LIMIT 1
+FOR UPDATE`, usernameLower))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotFound
 	}

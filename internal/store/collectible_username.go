@@ -44,6 +44,11 @@ type CollectibleUsernameStore interface {
 	// RevokeCollectibleUsername returns the asset to the vault, or burns it when
 	// req.Burn is set. Burning releases the name back to the free pool.
 	RevokeCollectibleUsername(ctx context.Context, req domain.RevokeCollectibleUsernameRequest) (asset domain.CollectibleUsername, changed bool, err error)
+	// DeleteCollectibleUsername removes the live asset for a name completely --
+	// registry row, asset and provenance -- and frees the name for any use. A
+	// replay finds nothing live left and reports deleted=false without an error,
+	// because the record a command key would key on is gone.
+	DeleteCollectibleUsername(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (deleted bool, err error)
 	// CollectibleUsername looks the asset up by name.
 	CollectibleUsername(ctx context.Context, username string) (domain.CollectibleUsername, error)
 	// CollectibleUsernameByID looks the asset up by identity.

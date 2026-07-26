@@ -471,6 +471,7 @@ type captureCollectibleUsernameService struct {
 	mint     admin.MintCollectibleUsernameRequest
 	transfer admin.TransferCollectibleUsernameRequest
 	revoke   admin.RevokeCollectibleUsernameRequest
+	del      admin.DeleteCollectibleUsernameRequest
 	filter   domain.CollectibleUsernameFilter
 	assetID  int64
 }
@@ -487,6 +488,11 @@ func (s *captureCollectibleUsernameService) TransferCollectibleUsername(_ contex
 
 func (s *captureCollectibleUsernameService) RevokeCollectibleUsername(_ context.Context, req admin.RevokeCollectibleUsernameRequest) (admin.CommandResult, error) {
 	s.revoke = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (s *captureCollectibleUsernameService) DeleteCollectibleUsername(_ context.Context, req admin.DeleteCollectibleUsernameRequest) (admin.CommandResult, error) {
+	s.del = req
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
@@ -787,6 +793,10 @@ func (fakeService) TransferCollectibleUsername(_ context.Context, req admin.Tran
 }
 
 func (fakeService) RevokeCollectibleUsername(_ context.Context, req admin.RevokeCollectibleUsernameRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DeleteCollectibleUsername(_ context.Context, req admin.DeleteCollectibleUsernameRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 

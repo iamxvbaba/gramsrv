@@ -10,7 +10,7 @@ import type { AccountRatingRow } from "../types";
 export function AccountRatingsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [minLevel, setMinLevel] = useState("");
-  const [userID, setUserID] = useState("");
+  const [search, setSearch] = useState("");
   const [limit, setLimit] = useState("50");
   const [rows, setRows] = useState<AccountRatingRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -19,18 +19,14 @@ export function AccountRatingsPage({ navigate }: { navigate: Navigate }) {
   const [error, setError] = useState("");
 
   async function load(next = false) {
-    const wantedUser = userID.trim();
-    // The endpoint filters by a numeric user id, so catch a typo here instead of
-    // rendering a bare 400 from the backend.
-    if (wantedUser && !/^\d+$/.test(wantedUser)) {
-      setError(t("rating.userIDInvalid"));
-      return;
-    }
+    // One free-text field: the backend matches a username prefix (editable or
+    // collectible), a first/last name prefix, and a bare number as the user id.
+    const wanted = search.trim();
     setBusy(true);
     setError("");
     const params = new URLSearchParams({ limit });
     if (minLevel.trim()) params.set("min_level", minLevel.trim());
-    if (wantedUser) params.set("user_id", wantedUser);
+    if (wanted) params.set("q", wanted);
     if (next && cursor) params.set("before_id", cursor);
     try {
       const result = await api.accountRatings(params);
@@ -77,7 +73,7 @@ export function AccountRatingsPage({ navigate }: { navigate: Navigate }) {
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
           <label className="searchbox">
             <Search size={15} />
-            <input value={userID} onChange={(event) => setUserID(event.target.value)} inputMode="numeric" placeholder={t("rating.userIDPlaceholder")} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("rating.searchPlaceholder")} />
           </label>
           <label className="field-inline">
             <span>{t("rating.minLevel")}</span>

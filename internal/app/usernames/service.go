@@ -401,6 +401,35 @@ func (s *Service) Revoke(ctx context.Context, req domain.RevokeCollectibleUserna
 	return asset, changed, nil
 }
 
+// Delete removes an asset outright, releasing its name and discarding its
+// provenance. Revoke with Burn retires an asset but keeps the history; this is
+// the operator's escape hatch for an asset issued by mistake.
+//
+// The previous owner is notified exactly like a revoke: the peer's projection
+// still carries the username until it is invalidated.
+func (s *Service) Delete(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error) {
+	collectibles, err := s.collectibleStore()
+	if err != nil {
+		return false, err
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	req.Actor = strings.TrimSpace(req.Actor)
+	req.Reason = strings.TrimSpace(req.Reason)
+	req.CommandKey = strings.TrimSpace(req.CommandKey)
+	if err := req.Validate(); err != nil {
+		return false, err
+	}
+	previousOwner := s.currentOwner(ctx, collectibles, req.Username)
+	deleted, err := collectibles.DeleteCollectibleUsername(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	if deleted {
+		s.notifyPeers(ctx, previousOwner, domain.Peer{})
+	}
+	return deleted, nil
+}
+
 // List is the admin listing query. The limit is always bounded, so an
 // unfiltered operator request can never ask the store for an unbounded scan.
 func (s *Service) List(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error) {

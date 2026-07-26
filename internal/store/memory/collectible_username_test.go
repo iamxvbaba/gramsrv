@@ -714,3 +714,117 @@ func TestCollectibleUsernameListingAndPaging(t *testing.T) {
 		t.Fatalf("unknown id err=%v", err)
 	}
 }
+
+// TestCollectibleUsernameReissueAfterBurn covers migration 0151: burning retires
+// the asset but releases the name, so the same name can be issued again while the
+// burned rows stay as provenance.
+func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {
+	ctx := context.Background()
+	s := NewCollectibleUsernameStore()
+	holder := domain.Peer{Type: domain.PeerTypeUser, ID: 4001}
+
+	first := mustMintCollectible(t, s, "Nfts", holder)
+	if _, _, err := s.RevokeCollectibleUsername(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: "nfts", Burn: true, Actor: "admin", Reason: "retire", CommandKey: "burn-1",
+	}); err != nil {
+		t.Fatalf("burn: %v", err)
+	}
+
+	second, created, err := s.MintCollectibleUsername(ctx,
+		collectibleMintRequest("NFTS", holder, "mint-again-1"))
+	if err != nil || !created {
+		t.Fatalf("reissue after burn: created=%v err=%v", created, err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("reissue reused asset id %d", second.ID)
+	}
+	if second.Status != domain.CollectibleUsernameStatusOwned {
+		t.Fatalf("reissued status = %q, want owned", second.Status)
+	}
+
+	// The name now resolves to the live asset, not to either burned row.
+	live, err := s.CollectibleUsername(ctx, "nfts")
+	if err != nil {
+		t.Fatalf("lookup after reissue: %v", err)
+	}
+	if live.ID != second.ID {
+		t.Fatalf("lookup id = %d, want the live asset %d", live.ID, second.ID)
+	}
+	// The burned row is still readable by identity: it is the provenance record.
+	burned, err := s.CollectibleUsernameByID(ctx, first.ID)
+	if err != nil || burned.Status != domain.CollectibleUsernameStatusBurned {
+		t.Fatalf("burned row = %+v err=%v", burned, err)
+	}
+	// A second burn releases the name again, so the cycle repeats.
+	if _, _, err := s.RevokeCollectibleUsername(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: "nfts", Burn: true, Actor: "admin", Reason: "retire", CommandKey: "burn-2",
+	}); err != nil {
+		t.Fatalf("second burn: %v", err)
+	}
+	if _, created, err := s.MintCollectibleUsername(ctx,
+		collectibleMintRequest("nfts", domain.Peer{}, "mint-again-2")); err != nil || !created {
+		t.Fatalf("second reissue: created=%v err=%v", created, err)
+	}
+	// A live asset still blocks a mint, burned history or not.
+	if _, _, err := s.MintCollectibleUsername(ctx,
+		collectibleMintRequest("nfts", domain.Peer{}, "mint-again-3")); !errors.Is(err, domain.ErrUsernameOccupied) {
+		t.Fatalf("mint over live asset err = %v, want ErrUsernameOccupied", err)
+	}
+}
+
+func TestCollectibleUsernameDelete(t *testing.T) {
+	ctx := context.Background()
+	s := NewCollectibleUsernameStore()
+	holder := domain.Peer{Type: domain.PeerTypeUser, ID: 4101}
+	mustSetEditable(t, s, holder, "holder_main")
+	asset := mustMintCollectible(t, s, "Gone", holder)
+
+	deleted, err := s.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: "@gone", Actor: "admin", Reason: "issued by mistake", CommandKey: "del-1",
+	})
+	if err != nil || !deleted {
+		t.Fatalf("delete: deleted=%v err=%v", deleted, err)
+	}
+	if _, err := s.CollectibleUsernameByID(ctx, asset.ID); !errors.Is(err, domain.ErrCollectibleUsernameNotFound) {
+		t.Fatalf("asset after delete err = %v, want not found", err)
+	}
+	if _, err := s.CollectibleUsername(ctx, "gone"); !errors.Is(err, domain.ErrCollectibleUsernameNotFound) {
+		t.Fatalf("lookup after delete err = %v, want not found", err)
+	}
+	log, err := s.CollectibleUsernameTransfers(ctx, asset.ID, 10)
+	if err != nil || len(log) != 0 {
+		t.Fatalf("provenance after delete = %d rows err=%v, want none", len(log), err)
+	}
+	rows, err := s.PeerUsernames(ctx, holder)
+	if err != nil {
+		t.Fatalf("peer usernames: %v", err)
+	}
+	if len(rows) != 1 || !rows[0].Editable {
+		t.Fatalf("owner rows after delete = %+v, want only the editable slot", rows)
+	}
+	// The name is completely free afterwards, for a collectible or an editable slot.
+	if _, created, err := s.MintCollectibleUsername(ctx,
+		collectibleMintRequest("gone", domain.Peer{}, "mint-after-delete")); err != nil || !created {
+		t.Fatalf("mint after delete: created=%v err=%v", created, err)
+	}
+
+	// A repeat is a no-op rather than an error: the record a command key would
+	// resolve to is gone, so idempotency degrades to "nothing live left".
+	if _, _, err := s.RevokeCollectibleUsername(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: "gone", Burn: true, Actor: "admin", Reason: "retire", CommandKey: "burn-after-delete",
+	}); err != nil {
+		t.Fatalf("burn reissued asset: %v", err)
+	}
+	deleted, err = s.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: "gone", Actor: "admin", Reason: "again", CommandKey: "del-2",
+	})
+	if err != nil || deleted {
+		t.Fatalf("delete of burned-only name = %v err=%v, want (false, nil)", deleted, err)
+	}
+	deleted, err = s.DeleteCollectibleUsername(ctx, domain.DeleteCollectibleUsernameRequest{
+		Username: "never_issued", Actor: "admin", Reason: "again", CommandKey: "del-3",
+	})
+	if err != nil || deleted {
+		t.Fatalf("delete of unknown name = %v err=%v, want (false, nil)", deleted, err)
+	}
+}

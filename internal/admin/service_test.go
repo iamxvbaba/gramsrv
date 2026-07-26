@@ -1335,6 +1335,7 @@ type fakeCollectibleUsernamesService struct {
 	mintCalls     int
 	transferCalls int
 	revokeCalls   int
+	deleteCalls   int
 }
 
 func newFakeCollectibleUsernames() *fakeCollectibleUsernamesService {
@@ -1398,6 +1399,20 @@ func (f *fakeCollectibleUsernamesService) Transfer(_ context.Context, req domain
 	asset.Version++
 	f.assets[key] = asset
 	return asset, true, nil
+}
+
+func (f *fakeCollectibleUsernamesService) Delete(_ context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error) {
+	f.deleteCalls++
+	key := strings.ToLower(req.Username)
+	asset, ok := f.assets[key]
+	if !ok {
+		return false, nil
+	}
+	if asset.Status == domain.CollectibleUsernameStatusBurned {
+		return false, nil
+	}
+	delete(f.assets, key)
+	return true, nil
 }
 
 func (f *fakeCollectibleUsernamesService) Revoke(_ context.Context, req domain.RevokeCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error) {
@@ -1875,5 +1890,86 @@ func TestCollectibleAndRatingCommandsRequireConfiguredDependencies(t *testing.T)
 	}
 	if _, err := svc.AccountRatings(ctx, domain.AccountRatingFilter{}); err == nil {
 		t.Fatal("rating listing without dependency succeeded")
+	}
+}
+
+// TestDeleteCollectibleUsernameCommand covers the hard-delete command: the
+// journal captures what was removed before the record disappears, a dry-run
+// mutates nothing, and a burned asset is refused.
+func TestDeleteCollectibleUsernameCommand(t *testing.T) {
+	ctx := context.Background()
+	usernames := newFakeCollectibleUsernames()
+	repo := newMemoryCommandRepo()
+	svc := NewService(Dependencies{Commands: repo, Usernames: usernames, Now: fixedNow})
+	holder := domain.Peer{Type: domain.PeerTypeUser, ID: 8801}
+	if _, _, err := usernames.Mint(ctx, domain.MintCollectibleUsernameRequest{
+		Username: "wrongname", Owner: holder, Currency: domain.CollectibleCurrencyStars, Amount: 100,
+	}); err != nil {
+		t.Fatalf("seed mint: %v", err)
+	}
+
+	dry, err := svc.DeleteCollectibleUsername(ctx, DeleteCollectibleUsernameRequest{
+		CommandMeta: CommandMeta{CommandID: "del-dry", Actor: "ops", Reason: "mistake", DryRun: true},
+		Username:    "@wrongname",
+	})
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if !dry.DryRun || usernames.deleteCalls != 0 {
+		t.Fatalf("dry run mutated: result=%+v calls=%d", dry, usernames.deleteCalls)
+	}
+	if dry.Details["previous_owner_id"] != "8801" {
+		t.Fatalf("dry run details = %+v, want the holder captured", dry.Details)
+	}
+
+	exec, err := svc.DeleteCollectibleUsername(ctx, DeleteCollectibleUsernameRequest{
+		CommandMeta: CommandMeta{CommandID: "del-exec", Actor: "ops", Reason: "mistake"},
+		Username:    "wrongname",
+	})
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if usernames.deleteCalls != 1 || exec.Details["deleted"] != true {
+		t.Fatalf("exec = %+v calls=%d", exec, usernames.deleteCalls)
+	}
+	if exec.Details["previous_status"] != string(domain.CollectibleUsernameStatusOwned) {
+		t.Fatalf("journal lost the pre-delete state: %+v", exec.Details)
+	}
+
+	// Replaying the same command id must not touch the store again.
+	if _, err := svc.DeleteCollectibleUsername(ctx, DeleteCollectibleUsernameRequest{
+		CommandMeta: CommandMeta{CommandID: "del-exec", Actor: "ops", Reason: "mistake"},
+		Username:    "wrongname",
+	}); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if usernames.deleteCalls != 1 {
+		t.Fatalf("replay called the store again: calls=%d", usernames.deleteCalls)
+	}
+
+	// A burned asset is history: it is released by re-issuing the name, not deleted.
+	if _, _, err := usernames.Mint(ctx, domain.MintCollectibleUsernameRequest{
+		Username: "burnedname", Owner: holder, Currency: domain.CollectibleCurrencyStars, Amount: 100,
+	}); err != nil {
+		t.Fatalf("seed burned mint: %v", err)
+	}
+	if _, _, err := usernames.Revoke(ctx, domain.RevokeCollectibleUsernameRequest{
+		Username: "burnedname", Burn: true,
+	}); err != nil {
+		t.Fatalf("seed burn: %v", err)
+	}
+	if _, err := svc.DeleteCollectibleUsername(ctx, DeleteCollectibleUsernameRequest{
+		CommandMeta: CommandMeta{CommandID: "del-burned", Actor: "ops", Reason: "cleanup"},
+		Username:    "burnedname",
+	}); err == nil || !strings.Contains(err.Error(), CodeCollectibleBurned) {
+		t.Fatalf("delete of burned asset err = %v, want %s", err, CodeCollectibleBurned)
+	}
+
+	// A short name is rejected before a command is journalled at all.
+	if _, err := svc.DeleteCollectibleUsername(ctx, DeleteCollectibleUsernameRequest{
+		CommandMeta: CommandMeta{CommandID: "del-short", Actor: "ops", Reason: "cleanup"},
+		Username:    "no",
+	}); err == nil {
+		t.Fatalf("delete of invalid name = nil error, want rejection")
 	}
 }
