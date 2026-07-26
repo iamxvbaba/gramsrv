@@ -325,6 +325,7 @@
 }
 
 input,
+select,
 textarea {
   color: var(--text);
   background: var(--input-bg);
@@ -345,6 +346,25 @@ input {
   padding: 0 10px;
 }
 
+select {
+  height: 34px;
+  padding: 0 30px 0 10px;
+  font: inherit;
+  font-weight: 600;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+select:disabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
 textarea {
   width: 100%;
   padding: 9px 10px;
@@ -352,6 +372,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px var(--focus);

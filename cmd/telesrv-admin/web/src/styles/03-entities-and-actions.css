@@ -103,7 +103,8 @@
   font-weight: 800;
 }
 
-.duration-field input {
+.duration-field input,
+.duration-field select {
   width: 100%;
 }
 
@@ -585,7 +586,8 @@
   border-radius: var(--radius-sm);
 }
 
-.attr-block .duration-field input {
+.attr-block .duration-field input,
+.duration-field select {
   width: 100%;
 }
 
