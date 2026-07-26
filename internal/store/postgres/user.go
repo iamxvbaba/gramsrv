@@ -97,11 +97,28 @@ func (s *UserStore) ByUsername(ctx context.Context, username string) (domain.Use
 	row, err := s.q.GetUserByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.User{}, false, nil
+			// The scalar users.username column only holds the editable slot, so a
+			// collectible username resolves through the registry instead. This is a
+			// fallback rather than the primary path: the fast lookup above stays
+			// untouched for every pre-existing username.
+			return s.byCollectibleUsername(ctx, strings.ToLower(username))
 		}
 		return domain.User{}, false, fmt.Errorf("get user by username: %w", err)
 	}
 	return userFromModel(row), true, nil
+}
+
+// byCollectibleUsername resolves an active collectible username to its holder.
+// An inactive (client-hidden) name stays occupied but must not resolve.
+func (s *UserStore) byCollectibleUsername(ctx context.Context, usernameLower string) (domain.User, bool, error) {
+	owner, found, err := getPeerUsernameOwner(ctx, s.db, usernameLower, false)
+	if err != nil {
+		return domain.User{}, false, fmt.Errorf("get user by collectible username: %w", err)
+	}
+	if !found || !owner.collectible || !owner.active || owner.peerType != peerUsernameTypeUser {
+		return domain.User{}, false, nil
+	}
+	return s.ByID(ctx, owner.peerID)
 }
 
 func (s *UserStore) CheckUsername(ctx context.Context, userID int64, username string) (bool, error) {
@@ -210,7 +227,7 @@ func (s *UserStore) UpdateUsername(ctx context.Context, userID int64, username s
 		}
 		return domain.User{}, fmt.Errorf("lock user for username update: %w", err)
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, usernameLower); err != nil {
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, username, usernameLower); err != nil {
 		return domain.User{}, err
 	}
 	row, err := qtx.UpdateUserUsername(ctx, sqlcgen.UpdateUserUsernameParams{
@@ -280,7 +297,7 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 	}
 	usernameLower := strings.ToLower(row.Username)
 	if usernameLower != "" {
-		if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, row.ID, usernameLower); err != nil {
+		if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, row.ID, row.Username, usernameLower); err != nil {
 			return domain.User{}, err
 		}
 	}

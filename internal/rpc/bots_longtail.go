@@ -77,15 +77,33 @@ func (r *Router) onBotsSetBotGroupDefaultAdminRights(ctx context.Context, _ tg.C
 	return false, rightsNotModifiedErr()
 }
 
+// onBotsReorderUsernames reorders a bot's collectible usernames. A bot is a user
+// peer in the registry, so the only difference from account.reorderUsernames is
+// the ownership gate: resolveOwnedBotUser already rejects a caller who does not
+// own the bot.
+//
+// With no registry wired the historical USERNAME_NOT_MODIFIED answer is kept --
+// a bot with a single editable username genuinely has nothing to reorder.
 func (r *Router) onBotsReorderUsernames(ctx context.Context, req *tg.BotsReorderUsernamesRequest) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return false, internalErr()
 	}
-	if _, err := r.resolveOwnedBotUser(ctx, userID, req.Bot); err != nil {
+	if req == nil {
+		return false, botInvalidErr()
+	}
+	bot, err := r.resolveOwnedBotUser(ctx, userID, req.Bot)
+	if err != nil {
 		return false, err
 	}
-	return false, usernameNotModifiedErr()
+	if r.deps.Usernames == nil {
+		return false, usernameNotModifiedErr()
+	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}
+	if err := r.reorderRegistryUsernames(ctx, peer, req.Order); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Router) onBotsToggleUsername(ctx context.Context, req *tg.BotsToggleUsernameRequest) (bool, error) {
@@ -93,10 +111,21 @@ func (r *Router) onBotsToggleUsername(ctx context.Context, req *tg.BotsToggleUse
 	if err != nil {
 		return false, internalErr()
 	}
-	if _, err := r.resolveOwnedBotUser(ctx, userID, req.Bot); err != nil {
+	if req == nil {
+		return false, botInvalidErr()
+	}
+	bot, err := r.resolveOwnedBotUser(ctx, userID, req.Bot)
+	if err != nil {
 		return false, err
 	}
-	return false, usernameNotModifiedErr()
+	if r.deps.Usernames == nil {
+		return false, usernameNotModifiedErr()
+	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}
+	if err := r.toggleRegistryUsername(ctx, peer, req.Username, req.Active); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Router) onBotsCanSendMessage(ctx context.Context, bot tg.InputUserClass) (bool, error) {

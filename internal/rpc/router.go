@@ -288,6 +288,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.registerPremium(d)
 	r.registerAiCompose(d)
 	r.registerBots(d)
+	r.registerFragment(d)
 	r.registerEphemeral(d)
 
 	r.dispatcher = d

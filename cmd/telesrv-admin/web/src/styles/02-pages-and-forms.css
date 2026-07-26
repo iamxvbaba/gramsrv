@@ -614,3 +614,43 @@ textarea:focus {
     align-items: stretch;
   }
 }
+
+/* Level progress bars (account rating leaderboard and detail). */
+.progress-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 130px;
+}
+
+.progress-cell small,
+.progress-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.progress-bar {
+  overflow: hidden;
+  width: 100%;
+  height: 6px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--brand-2);
+}
+
+.progress-bar.good > span {
+  background: var(--good);
+}
+
+.progress-bar.danger > span {
+  background: var(--danger);
+}
+
+.progress-wide .progress-cell {
+  min-width: 0;
+}

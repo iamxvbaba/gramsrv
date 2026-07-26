@@ -539,6 +539,37 @@ path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze
 | `TELESRV_STARGIFT_CRAFT_DELAY` | duration / `0s` | Delay snapshotted into `can_craft_at`. |
 | `TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE` | int / `250` | Per-input local craft success contribution, capped at 1000 permille. |
 
+### Composite account rating and collectible usernames
+
+The account rating projected into `userFull.stars_rating` is a server-local composite: Stars received and spent,
+bounded account activity, and moderation penalties. Every component is stored separately, so the admin panel can
+explain a level and recomputing one signal never discards another. The weights are integers, so a score is exactly
+reproducible across recomputes and store backends. Collectible (NFT) usernames are minted by the operator; no
+external marketplace, wallet or chain node is configured or contacted.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_RATING_ENABLED` | bool / `true` | Enables the composite rating. Disabled keeps every rating projection empty and refuses rating writes; no other subsystem changes behaviour. |
+| `TELESRV_RATING_PENDING_DELAY` | duration / `24h` | How long a rating increase stays parked in `stars_my_pending_rating` before it becomes the visible level. A decrease is always applied immediately, so a penalty is never delayed. `0` applies every change at once; must be `0..720h`. |
+| `TELESRV_RATING_RECOMPUTE_INTERVAL` | duration / `15m` | Background recompute worker interval; must be positive. |
+| `TELESRV_RATING_RECOMPUTE_BATCH` | int / `500` | Stale projections recomputed per cycle; must be `1..10000`. |
+| `TELESRV_RATING_STALE_AFTER` | duration / `6h` | Projection age after which the worker recomputes a user; must be positive. |
+| `TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE` | int64 / `1000` | Weight of Stars credited to the account (gifts, reactions, paid messages received), in permille of the raw amount. |
+| `TELESRV_RATING_WEIGHT_STARS_SPENT_PERMILLE` | int64 / `250` | Weight of Stars the account spent, in permille. Spending is a weaker signal than receiving. |
+| `TELESRV_RATING_WEIGHT_MESSAGE_SENT` | int64 / `1` | Score per sent message. |
+| `TELESRV_RATING_WEIGHT_ACCOUNT_AGE_DAY` | int64 / `2` | Score per day of account age. |
+| `TELESRV_RATING_WEIGHT_GIFT_RECEIVED` | int64 / `25` | Score per collectible gift held. |
+| `TELESRV_RATING_WEIGHT_MODERATION_CASE` | int64 / `150` | Penalty magnitude per upheld moderation case; the formula subtracts it. |
+| `TELESRV_RATING_WEIGHT_SCAM_PENALTY` | int64 / `5000` | Flat penalty magnitude for the scam flag. |
+| `TELESRV_RATING_WEIGHT_FAKE_PENALTY` | int64 / `5000` | Flat penalty magnitude for the fake flag. |
+| `TELESRV_RATING_ACTIVITY_CAP` | int64 / `5000` | Upper bound of the activity component so activity alone cannot outweigh Stars and moderation; `0` leaves it uncapped. |
+| `TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE` | URL template / empty | Landing URL recorded on a minted collectible username when the mint command carries no explicit URL. Empty derives `<TELESRV_PUBLIC_BASE_URL>/nft/username/<username>`. A configured template must be an absolute http(s) URL without userinfo; it may carry the `{username}` placeholder, and without it the name is appended as the last path segment. |
+
+All rating weights are non-negative magnitudes and are validated even when the feature is disabled, so enabling it
+later is not the moment a typo is discovered. The defaults above are exactly the shipped domain formula, so behaviour
+is identical whether or not these keys are set. The final score is clamped at zero: penalties can erase a rating but
+never invert it.
+
 ## 11. Private calls, group calls, TURN, SFU, and livestream
 
 | Setting | Type / code default | Description and constraints |

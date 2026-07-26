@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/links"
 )
 
@@ -366,6 +367,46 @@ type Config struct {
 	StarGiftCraftDelay               time.Duration
 	StarGiftCraftChancePermille      int
 
+	// RatingEnabled controls the composite account rating (userFull.stars_rating).
+	// Disabled keeps every rating projection empty and refuses rating writes; no
+	// other subsystem changes behaviour.
+	RatingEnabled bool
+	// RatingPendingDelay is how long a rating increase stays parked in
+	// stars_my_pending_rating before it becomes the visible level. A decrease is
+	// always applied immediately: a penalty must not sit behind a delay.
+	// 0 applies every change immediately.
+	RatingPendingDelay time.Duration
+	// RatingRecomputeInterval / RatingRecomputeBatch drive the background
+	// recompute worker. The rating derives from signals owned by other
+	// subsystems, so freshness is a worker property, not a write-path one.
+	RatingRecomputeInterval time.Duration
+	RatingRecomputeBatch    int
+	// RatingStaleAfter is the projection age after which the worker recomputes a
+	// user.
+	RatingStaleAfter time.Duration
+	// Rating weights are the integer composite formula. Defaults mirror
+	// domain.DefaultAccountRatingWeights() exactly, so the shipped behaviour is
+	// identical whether or not these keys are set. Every weight is a magnitude:
+	// the penalties are subtracted by the domain formula, so all values are
+	// non-negative and a negative value fails startup.
+	RatingWeightStarsReceivedPermille int64
+	RatingWeightStarsSpentPermille    int64
+	RatingWeightMessageSent           int64
+	RatingWeightAccountAgeDay         int64
+	RatingWeightGiftReceived          int64
+	RatingWeightModerationCase        int64
+	RatingWeightScamPenalty           int64
+	RatingWeightFakePenalty           int64
+	// RatingActivityCap bounds the activity component so activity alone cannot
+	// outweigh Stars and moderation; 0 leaves it uncapped.
+	RatingActivityCap int64
+	// CollectibleUsernameURLTemplate is the landing URL recorded on a minted
+	// collectible username when the mint request carries no explicit URL.
+	// Empty derives <TELESRV_PUBLIC_BASE_URL>/nft/username/<username>; a template
+	// may carry the {username} placeholder, and without it the name is appended
+	// as the last path segment. No external marketplace is contacted.
+	CollectibleUsernameURLTemplate string
+
 	// GroupCallCheckTTL 是群通话参与者保活水位的过期阈值（客户端 Connecting 态
 	// 4s 一跳；M1 起 SFU liveness reporter 同样刷新该水位）。
 	GroupCallCheckTTL time.Duration
@@ -461,6 +502,9 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_NAME: %w", err)
 	}
+	// The composite rating weight defaults are the domain formula's own defaults;
+	// see RatingWeight* below.
+	defaultRatingWeights := domain.DefaultAccountRatingWeights()
 
 	cfg := Config{
 		ListenAddr:      envOr("TELESRV_LISTEN", "0.0.0.0:2398"),
@@ -651,6 +695,24 @@ func Load() (Config, error) {
 		StarGiftCraftDelay:               envDurationOr("TELESRV_STARGIFT_CRAFT_DELAY", 0),
 		StarGiftCraftChancePermille:      envIntOr("TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE", 250),
 
+		RatingEnabled:           envBoolOr("TELESRV_RATING_ENABLED", true),
+		RatingPendingDelay:      envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
+		RatingRecomputeInterval: envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
+		RatingRecomputeBatch:    envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
+		RatingStaleAfter:        envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
+		// Weight defaults are read from the domain formula itself so the shipped
+		// behaviour cannot drift from domain.DefaultAccountRatingWeights().
+		RatingWeightStarsReceivedPermille: envInt64Or("TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", defaultRatingWeights.StarsReceivedPermille),
+		RatingWeightStarsSpentPermille:    envInt64Or("TELESRV_RATING_WEIGHT_STARS_SPENT_PERMILLE", defaultRatingWeights.StarsSpentPermille),
+		RatingWeightMessageSent:           envInt64Or("TELESRV_RATING_WEIGHT_MESSAGE_SENT", defaultRatingWeights.PerMessageSent),
+		RatingWeightAccountAgeDay:         envInt64Or("TELESRV_RATING_WEIGHT_ACCOUNT_AGE_DAY", defaultRatingWeights.PerAccountAgeDay),
+		RatingWeightGiftReceived:          envInt64Or("TELESRV_RATING_WEIGHT_GIFT_RECEIVED", defaultRatingWeights.PerGiftReceived),
+		RatingWeightModerationCase:        envInt64Or("TELESRV_RATING_WEIGHT_MODERATION_CASE", defaultRatingWeights.PerModerationCase),
+		RatingWeightScamPenalty:           envInt64Or("TELESRV_RATING_WEIGHT_SCAM_PENALTY", defaultRatingWeights.ScamPenalty),
+		RatingWeightFakePenalty:           envInt64Or("TELESRV_RATING_WEIGHT_FAKE_PENALTY", defaultRatingWeights.FakePenalty),
+		RatingActivityCap:                 envInt64Or("TELESRV_RATING_ACTIVITY_CAP", defaultRatingWeights.ActivityCap),
+		CollectibleUsernameURLTemplate:    strings.TrimSpace(envAllowEmptyOr("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", "")),
+
 		GroupCallCheckTTL:        envDurationOr("TELESRV_GROUPCALL_CHECK_TTL", 45*time.Second),
 		GroupCallSweepInterval:   envDurationOr("TELESRV_GROUPCALL_SWEEP_INTERVAL", 10*time.Second),
 		GroupCallMaxParticipants: envIntOr("TELESRV_GROUPCALL_MAX_PARTICIPANTS", 32),
@@ -682,6 +744,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if err := validateStarGiftConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateAccountRatingConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateCollectibleUsernameConfig(cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateTelegramLoginConfig(cfg); err != nil {
@@ -756,6 +824,72 @@ func validateStarGiftConfig(cfg Config) error {
 	if cfg.StarGiftStarsProceedsPermille < 0 || cfg.StarGiftStarsProceedsPermille > 1000 ||
 		cfg.StarGiftTONProceedsPermille < 0 || cfg.StarGiftTONProceedsPermille > 1000 {
 		return fmt.Errorf("TELESRV_STARGIFT_*_PROCEEDS_PERMILLE must be 0..1000")
+	}
+	return nil
+}
+
+// AccountRatingWeights renders the configured composite rating formula. It is
+// the single conversion point between env keys and the domain formula, so the
+// app service and the admin explanation always use the same numbers.
+func (c Config) AccountRatingWeights() domain.AccountRatingWeights {
+	return domain.AccountRatingWeights{
+		StarsReceivedPermille: c.RatingWeightStarsReceivedPermille,
+		StarsSpentPermille:    c.RatingWeightStarsSpentPermille,
+		PerMessageSent:        c.RatingWeightMessageSent,
+		PerAccountAgeDay:      c.RatingWeightAccountAgeDay,
+		PerGiftReceived:       c.RatingWeightGiftReceived,
+		PerModerationCase:     c.RatingWeightModerationCase,
+		ScamPenalty:           c.RatingWeightScamPenalty,
+		FakePenalty:           c.RatingWeightFakePenalty,
+		ActivityCap:           c.RatingActivityCap,
+	}
+}
+
+// validateAccountRatingConfig rejects a formula or worker cadence that cannot
+// produce a reproducible rating. Weights are validated even when the feature is
+// disabled: enabling it later must not be the moment a typo is discovered.
+func validateAccountRatingConfig(cfg Config) error {
+	if err := cfg.AccountRatingWeights().Validate(); err != nil {
+		return fmt.Errorf("TELESRV_RATING_WEIGHT_* and TELESRV_RATING_ACTIVITY_CAP must be non-negative: %w", err)
+	}
+	if cfg.RatingPendingDelay < 0 {
+		return fmt.Errorf("TELESRV_RATING_PENDING_DELAY must be non-negative")
+	}
+	const maxRatingPendingDelay = 30 * 24 * time.Hour
+	if cfg.RatingPendingDelay > maxRatingPendingDelay {
+		return fmt.Errorf("TELESRV_RATING_PENDING_DELAY must not exceed 720h")
+	}
+	if cfg.RatingRecomputeInterval <= 0 {
+		return fmt.Errorf("TELESRV_RATING_RECOMPUTE_INTERVAL must be positive")
+	}
+	if cfg.RatingStaleAfter <= 0 {
+		return fmt.Errorf("TELESRV_RATING_STALE_AFTER must be positive")
+	}
+	if cfg.RatingRecomputeBatch <= 0 || cfg.RatingRecomputeBatch > 10000 {
+		return fmt.Errorf("TELESRV_RATING_RECOMPUTE_BATCH must be 1..10000")
+	}
+	return nil
+}
+
+// validateCollectibleUsernameConfig checks the optional mint URL template. An
+// empty template is the documented default (the public-link route is derived
+// from TELESRV_PUBLIC_BASE_URL); a configured one must be a client-openable
+// absolute http(s) URL that still fits the registry's url column.
+func validateCollectibleUsernameConfig(cfg Config) error {
+	template := strings.TrimSpace(cfg.CollectibleUsernameURLTemplate)
+	if template == "" {
+		return nil
+	}
+	if len(template)+domain.MaxCollectibleUsernameLength > domain.MaxCollectibleUsernameURLLength {
+		return fmt.Errorf("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE is too long to hold a rendered username")
+	}
+	// Render the placeholder before parsing so a templated path segment is
+	// validated in its final shape.
+	rendered := strings.ReplaceAll(template, "{username}", "username")
+	parsed, err := url.Parse(rendered)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE must be an absolute http(s) URL without userinfo")
 	}
 	return nil
 }

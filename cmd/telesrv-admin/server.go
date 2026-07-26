@@ -67,6 +67,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/gifts/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
+	mux.Handle("GET /api/collectible-usernames", s.requireAuthAPI(http.HandlerFunc(s.handleCollectibleUsernamesAPI)))
+	mux.Handle("GET /api/collectible-usernames/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleCollectibleUsernameDetailAPI)))
+	mux.Handle("GET /api/account-ratings", s.requireAuthAPI(http.HandlerFunc(s.handleAccountRatingsAPI)))
+	mux.Handle("GET /api/account-ratings/{user_id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountRatingDetailAPI)))
 	mux.Handle("GET /api/moderation/cases", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCasesAPI)))
 	mux.Handle("GET /api/moderation/cases/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCaseAPI)))
 	mux.Handle("GET /api/moderation/reports/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleModerationReportAPI)))
@@ -99,6 +103,11 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
 	mux.Handle("POST /api/actions/give-gift", s.requireAuthAPI(http.HandlerFunc(s.handleGiveGiftAPI)))
+	mux.Handle("POST /api/actions/mint-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
+	mux.Handle("POST /api/actions/transfer-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleTransferCollectibleUsernameAPI)))
+	mux.Handle("POST /api/actions/revoke-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeCollectibleUsernameAPI)))
+	mux.Handle("POST /api/actions/recompute-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
+	mux.Handle("POST /api/actions/adjust-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -1468,12 +1477,12 @@ func (s *server) handleSetStarGiftSortOrderAPI(w http.ResponseWriter, r *http.Re
 }
 
 type giveGiftAPIRequest struct {
-	CommandID    string `json:"command_id"`
-	Reason       string `json:"reason"`
-	Confirm      bool   `json:"confirm"`
-	SenderUserID int64  `json:"sender_user_id"`
-	UserID       int64  `json:"user_id"`
-	ChannelID    int64  `json:"channel_id"`
+	CommandID           string `json:"command_id"`
+	Reason              string `json:"reason"`
+	Confirm             bool   `json:"confirm"`
+	SenderUserID        int64  `json:"sender_user_id"`
+	UserID              int64  `json:"user_id"`
+	ChannelID           int64  `json:"channel_id"`
 	GiftID              int64  `json:"gift_id,string"`
 	HideName            bool   `json:"hide_name"`
 	Message             string `json:"message"`
@@ -1503,6 +1512,344 @@ func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/give", req)
 	writeCommandResultAPI(w, result, err)
+}
+
+// flexInt64 decodes an int64 the panel may send either as a JSON number or as a
+// decimal string. Ids and nanoton amounts are sent as strings to stay exact past
+// 2^53, while a picker-supplied peer id arrives as a plain number; an empty
+// string and null both mean "unset", which is how an untouched form field looks.
+type flexInt64 int64
+
+// Int64 returns the decoded value.
+func (v flexInt64) Int64() int64 { return int64(v) }
+
+func (v *flexInt64) UnmarshalJSON(raw []byte) error {
+	text, empty := flexScalarText(raw)
+	if empty {
+		*v = 0
+		return nil
+	}
+	parsed, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid integer %s", string(raw))
+	}
+	*v = flexInt64(parsed)
+	return nil
+}
+
+// flexUnix decodes an optional timestamp as a Unix second count. A date input
+// produces an RFC3339 string and a scripted call a plain number, so both are
+// accepted; empty means "unset", which the mint command stamps with its clock.
+type flexUnix int64
+
+// Unix returns the decoded timestamp in seconds, or zero when unset.
+func (v flexUnix) Unix() int64 { return int64(v) }
+
+func (v *flexUnix) UnmarshalJSON(raw []byte) error {
+	text, empty := flexScalarText(raw)
+	if empty {
+		*v = 0
+		return nil
+	}
+	if parsed, err := strconv.ParseInt(text, 10, 64); err == nil {
+		*v = flexUnix(parsed)
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		if parsed, err := time.Parse(layout, text); err == nil {
+			*v = flexUnix(parsed.UTC().Unix())
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid timestamp %s", string(raw))
+}
+
+// flexScalarText unwraps a JSON scalar to its textual form and reports whether
+// it carries no value at all (null, empty string, blank).
+func flexScalarText(raw []byte) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return "", true
+	}
+	if unquoted, err := strconv.Unquote(text); err == nil {
+		text = strings.TrimSpace(unquoted)
+	}
+	if text == "" {
+		return "", true
+	}
+	return text, false
+}
+
+type mintCollectibleUsernameAPIRequest struct {
+	CommandID      string    `json:"command_id"`
+	Reason         string    `json:"reason"`
+	Confirm        bool      `json:"confirm"`
+	Username       string    `json:"username"`
+	OwnerUserID    flexInt64 `json:"owner_user_id"`
+	OwnerChannelID flexInt64 `json:"owner_channel_id"`
+	Currency       string    `json:"currency"`
+	Amount         flexInt64 `json:"amount"`
+	CryptoCurrency string    `json:"crypto_currency"`
+	CryptoAmount   flexInt64 `json:"crypto_amount"`
+	URL            string    `json:"url"`
+	PurchaseDate   flexUnix  `json:"purchase_date"`
+}
+
+func (s *server) handleMintCollectibleUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body mintCollectibleUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.MintCollectibleUsernameRequest{
+		CommandMeta:    s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "mint-collectible-username"),
+		Username:       body.Username,
+		OwnerUserID:    body.OwnerUserID.Int64(),
+		OwnerChannelID: body.OwnerChannelID.Int64(),
+		Currency:       body.Currency,
+		Amount:         body.Amount.Int64(),
+		CryptoCurrency: body.CryptoCurrency,
+		CryptoAmount:   body.CryptoAmount.Int64(),
+		URL:            body.URL,
+		PurchaseDate:   body.PurchaseDate.Unix(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/mint", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type transferCollectibleUsernameAPIRequest struct {
+	CommandID   string    `json:"command_id"`
+	Reason      string    `json:"reason"`
+	Confirm     bool      `json:"confirm"`
+	Username    string    `json:"username"`
+	ToUserID    flexInt64 `json:"to_user_id"`
+	ToChannelID flexInt64 `json:"to_channel_id"`
+}
+
+func (s *server) handleTransferCollectibleUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body transferCollectibleUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.TransferCollectibleUsernameRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "transfer-collectible-username"),
+		Username:    body.Username,
+		ToUserID:    body.ToUserID.Int64(),
+		ToChannelID: body.ToChannelID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/transfer", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type revokeCollectibleUsernameAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Username  string `json:"username"`
+	Burn      bool   `json:"burn"`
+}
+
+func (s *server) handleRevokeCollectibleUsernameAPI(w http.ResponseWriter, r *http.Request) {
+	var body revokeCollectibleUsernameAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	prefix := "revoke-collectible-username"
+	if body.Burn {
+		prefix = "burn-collectible-username"
+	}
+	req := admin.RevokeCollectibleUsernameRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, prefix),
+		Username:    body.Username,
+		Burn:        body.Burn,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/collectible-usernames/revoke", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type recomputeAccountRatingAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	UserID    flexInt64 `json:"user_id"`
+}
+
+func (s *server) handleRecomputeAccountRatingAPI(w http.ResponseWriter, r *http.Request) {
+	var body recomputeAccountRatingAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.RecomputeAccountRatingRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "recompute-account-rating"),
+		UserID:      body.UserID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/account-ratings/recompute", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type adjustAccountRatingAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	UserID    flexInt64 `json:"user_id"`
+	Amount    flexInt64 `json:"amount"`
+}
+
+func (s *server) handleAdjustAccountRatingAPI(w http.ResponseWriter, r *http.Request) {
+	var body adjustAccountRatingAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.AdjustAccountRatingRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "adjust-account-rating"),
+		UserID:      body.UserID.Int64(),
+		Amount:      body.Amount.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/account-ratings/adjust", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// handleCollectibleUsernamesAPI pages the collectible asset table straight from
+// PostgreSQL, like every other table view, and echoes the keyset cursor as a
+// decimal string so an int64 id survives the round trip through the browser.
+func (s *server) handleCollectibleUsernamesAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	query := r.URL.Query()
+	status := strings.TrimSpace(query.Get("status"))
+	switch status {
+	case "", string(domain.CollectibleUsernameStatusVault),
+		string(domain.CollectibleUsernameStatusOwned),
+		string(domain.CollectibleUsernameStatusBurned):
+	default:
+		writeAPIError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	ownerUserID, err := parseInt64(query.Get("owner_user_id"))
+	if err != nil || ownerUserID < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid owner_user_id")
+		return
+	}
+	beforeID, err := parseInt64(query.Get("before_id"))
+	if err != nil || beforeID < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid before_id")
+		return
+	}
+	limit, err := parseInt(query.Get("limit"))
+	if err != nil || limit < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	rows, hasMore, err := s.read.ListCollectibleUsernames(r.Context(), status, ownerUserID, beforeID, query.Get("q"), limit)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nextBeforeID := ""
+	if hasMore && len(rows) > 0 {
+		nextBeforeID = strconv.FormatInt(rows[len(rows)-1].ID, 10)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":           rows,
+		"has_more":       hasMore,
+		"next_before_id": nextBeforeID,
+	})
+}
+
+func (s *server) handleCollectibleUsernameDetailAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	detail, err := s.read.CollectibleUsernameDetail(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, errReadNotFound) {
+			writeAPIError(w, http.StatusNotFound, "collectible username not found")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"asset":     detail.Asset,
+		"transfers": detail.Transfers,
+	})
+}
+
+// handleAccountRatingsAPI pages the leaderboard. next_before_id is the last
+// user id: the keyset predicate resolves the full (level, stars, user_id) cursor
+// from it, so one opaque-looking value is enough to continue the page.
+func (s *server) handleAccountRatingsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	query := r.URL.Query()
+	minLevel, err := parseInt(query.Get("min_level"))
+	if err != nil || minLevel < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid min_level")
+		return
+	}
+	userID, err := parseInt64(query.Get("user_id"))
+	if err != nil || userID < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	beforeID, err := parseInt64(query.Get("before_id"))
+	if err != nil || beforeID < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid before_id")
+		return
+	}
+	limit, err := parseInt(query.Get("limit"))
+	if err != nil || limit < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	rows, hasMore, err := s.read.ListAccountRatings(r.Context(), minLevel, userID, beforeID, limit)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nextBeforeID := ""
+	if hasMore && len(rows) > 0 {
+		nextBeforeID = strconv.FormatInt(rows[len(rows)-1].UserID, 10)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":           rows,
+		"has_more":       hasMore,
+		"next_before_id": nextBeforeID,
+	})
+}
+
+func (s *server) handleAccountRatingDetailAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	userID, err := parseInt64(r.PathValue("user_id"))
+	if err != nil || userID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	detail, err := s.read.AccountRatingDetail(r.Context(), userID)
+	if err != nil {
+		if errors.Is(err, errReadNotFound) {
+			writeAPIError(w, http.StatusNotFound, "account rating not found")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rating": detail.Rating,
+		"events": detail.Events,
+	})
 }
 
 func (s *server) commandMetaFromAPI(r *http.Request, commandID, reason string, confirm bool, prefix string) admin.CommandMeta {

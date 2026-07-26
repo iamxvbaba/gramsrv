@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,7 +23,28 @@ const (
 	channelListDefaultLimit = 50
 	channelListMaxLimit     = 100
 	messagePageLimit        = 100
+	// Collectible username and account rating pages. The bounds mirror the
+	// use-case layer, so a table page costs the same whichever surface asks.
+	collectibleListDefaultLimit = 50
+	collectibleListMaxLimit     = 200
+	collectibleTransferLimit    = 50
+	ratingListDefaultLimit      = 50
+	ratingListMaxLimit          = 200
+	ratingEventLimit            = 50
 )
+
+// errReadNotFound reports a detail row that does not exist, so the API layer can
+// answer 404 without importing the driver's sentinel.
+var errReadNotFound = errors.New("read row not found")
+
+// escapeLikePattern neutralises LIKE metacharacters in an operator query.
+// Usernames legitimately contain '_', so an unescaped search for "crypto_" would
+// silently match "cryptoX" instead of the name the operator typed.
+func escapeLikePattern(value string) string {
+	replaced := strings.ReplaceAll(value, `\`, `\\`)
+	replaced = strings.ReplaceAll(replaced, "%", `\%`)
+	return strings.ReplaceAll(replaced, "_", `\_`)
+}
 
 type readStore struct {
 	pool *pgxpool.Pool
@@ -107,15 +129,15 @@ type AuditLogRow struct {
 }
 
 type ChannelRow struct {
-	ID                int64
-	AccessHash        int64
-	CreatorUserID     int64
-	Title             string
-	About             string
-	Username          string
-	Broadcast         bool
-	Megagroup         bool
-	Forum             bool
+	ID                 int64
+	AccessHash         int64
+	CreatorUserID      int64
+	Title              string
+	About              string
+	Username           string
+	Broadcast          bool
+	Megagroup          bool
+	Forum              bool
 	Monoforum          bool
 	Verified           bool
 	Scam               bool
@@ -129,15 +151,15 @@ type ChannelRow struct {
 	JoinRequest        bool
 	SlowmodeSeconds    int
 	ParticipantsCount  int
-	AdminsCount       int
-	KickedCount       int
-	BannedCount       int
-	TopMessageID      int
-	PinnedMessageID   int
-	PTS               int
-	Date              int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	AdminsCount        int
+	KickedCount        int
+	BannedCount        int
+	TopMessageID       int
+	PinnedMessageID    int
+	PTS                int
+	Date               int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type ChannelDetail struct {
@@ -1067,4 +1089,408 @@ LIMIT $3`, id, q, emojiListMaxLimit)
 	}
 	defer rows.Close()
 	return scanEmojiRows(rows)
+}
+
+// CollectibleUsernameRow is one collectible (Fragment-style) username asset with
+// its holder resolved for display.
+//
+// Every int64 is tagged as a JSON string: asset ids, nanoton amounts and the
+// optimistic-concurrency version all exceed the range a JSON number represents
+// exactly, and a rounded id would address the wrong asset.
+type CollectibleUsernameRow struct {
+	ID                    int64 `json:"ID,string"`
+	Username              string
+	Status                string
+	OwnerPeerType         string
+	OwnerPeerID           int64 `json:"OwnerPeerID,string"`
+	OwnerUsername         string
+	OwnerName             string
+	PurchaseDate          time.Time
+	Currency              string
+	Amount                int64 `json:"Amount,string"`
+	CryptoCurrency        string
+	CryptoAmount          int64 `json:"CryptoAmount,string"`
+	URL                   string
+	OriginalOwnerPeerType string
+	OriginalOwnerPeerID   int64 `json:"OriginalOwnerPeerID,string"`
+	OriginalOwnerUsername string
+	TransferCount         int
+	Version               int64 `json:"Version,string"`
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	// RegistryActive / RegistrySortOrder mirror the holder's username registry
+	// row, so the panel can tell an owned-but-hidden name from an active one.
+	RegistryActive    bool
+	RegistrySortOrder int
+}
+
+// CollectibleUsernameTransferRow is one provenance log entry.
+type CollectibleUsernameTransferRow struct {
+	ID            int64 `json:"ID,string"`
+	CollectibleID int64 `json:"CollectibleID,string"`
+	Kind          string
+	FromPeerType  string
+	FromPeerID    int64 `json:"FromPeerID,string"`
+	FromUsername  string
+	ToPeerType    string
+	ToPeerID      int64 `json:"ToPeerID,string"`
+	ToUsername    string
+	Currency      string
+	Amount        int64 `json:"Amount,string"`
+	Actor         string
+	Reason        string
+	CommandKey    string
+	CreatedAt     time.Time
+}
+
+// CollectibleUsernameDetail is the asset plus its provenance log.
+type CollectibleUsernameDetail struct {
+	Asset     CollectibleUsernameRow
+	Transfers []CollectibleUsernameTransferRow
+}
+
+const collectibleUsernameSelectColumns = `cu.id, cu.username, cu.status,
+	cu.owner_peer_type, cu.owner_peer_id,
+	COALESCE(NULLIF(ou.username, ''), NULLIF(oc.username, ''), '') AS owner_username,
+	COALESCE(NULLIF(ou.first_name, ''), NULLIF(oc.title, ''), '') AS owner_name,
+	cu.purchase_date, cu.currency, cu.amount, cu.crypto_currency, cu.crypto_amount, cu.url,
+	cu.original_owner_peer_type, cu.original_owner_peer_id,
+	COALESCE(NULLIF(gu.username, ''), NULLIF(gc.username, ''), '') AS original_owner_username,
+	cu.transfer_count, cu.version, cu.created_at, cu.updated_at,
+	COALESCE(pu.active, false), COALESCE(pu.sort_order, 0)`
+
+// collectibleUsernameJoins resolves the current holder, the original holder and
+// the holder's registry row. Owners are users or channels, so both sides are
+// joined and the peer type decides which one contributes.
+const collectibleUsernameJoins = `
+FROM collectible_usernames cu
+LEFT JOIN users ou ON cu.owner_peer_type = 'user' AND ou.id = cu.owner_peer_id
+LEFT JOIN channels oc ON cu.owner_peer_type = 'channel' AND oc.id = cu.owner_peer_id
+LEFT JOIN users gu ON cu.original_owner_peer_type = 'user' AND gu.id = cu.original_owner_peer_id
+LEFT JOIN channels gc ON cu.original_owner_peer_type = 'channel' AND gc.id = cu.original_owner_peer_id
+LEFT JOIN peer_usernames pu ON pu.collectible_id = cu.id`
+
+func collectibleUsernameScanDest(item *CollectibleUsernameRow) []any {
+	return []any{
+		&item.ID, &item.Username, &item.Status,
+		&item.OwnerPeerType, &item.OwnerPeerID, &item.OwnerUsername, &item.OwnerName,
+		&item.PurchaseDate, &item.Currency, &item.Amount, &item.CryptoCurrency, &item.CryptoAmount, &item.URL,
+		&item.OriginalOwnerPeerType, &item.OriginalOwnerPeerID, &item.OriginalOwnerUsername,
+		&item.TransferCount, &item.Version, &item.CreatedAt, &item.UpdatedAt,
+		&item.RegistryActive, &item.RegistrySortOrder,
+	}
+}
+
+// ListCollectibleUsernames pages over collectible assets newest first, keyset by
+// descending id. status/ownerUserID/q are optional filters; q matches a username
+// prefix, which is how an operator looks a name up.
+func (s *readStore) ListCollectibleUsernames(ctx context.Context, status string, ownerUserID, beforeID int64, q string, limit int) ([]CollectibleUsernameRow, bool, error) {
+	if limit <= 0 {
+		limit = collectibleListDefaultLimit
+	}
+	if limit > collectibleListMaxLimit {
+		limit = collectibleListMaxLimit
+	}
+	status = strings.TrimSpace(status)
+	query := escapeLikePattern(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(q), "@")))
+	rows, err := s.pool.Query(ctx, `
+SELECT `+collectibleUsernameSelectColumns+collectibleUsernameJoins+`
+WHERE ($1 = '' OR cu.status = $1)
+	AND ($2::bigint = 0 OR (cu.owner_peer_type = 'user' AND cu.owner_peer_id = $2))
+	AND ($3 = '' OR cu.username_lower LIKE $3 || '%')
+	AND ($4::bigint = 0 OR cu.id < $4)
+ORDER BY cu.id DESC
+LIMIT $5`, status, ownerUserID, query, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list collectible usernames: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CollectibleUsernameRow, 0, limit+1)
+	for rows.Next() {
+		var item CollectibleUsernameRow
+		if err := rows.Scan(collectibleUsernameScanDest(&item)...); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// CollectibleUsernameDetail returns one asset with its provenance log. A missing
+// asset reports errReadNotFound so the API answers 404 rather than 500.
+func (s *readStore) CollectibleUsernameDetail(ctx context.Context, id int64) (CollectibleUsernameDetail, error) {
+	var out CollectibleUsernameDetail
+	err := s.pool.QueryRow(ctx, `
+SELECT `+collectibleUsernameSelectColumns+collectibleUsernameJoins+`
+WHERE cu.id = $1`, id).Scan(collectibleUsernameScanDest(&out.Asset)...)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get collectible username: %w", err)
+	}
+	out.Transfers, err = s.collectibleUsernameTransfers(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (s *readStore) collectibleUsernameTransfers(ctx context.Context, collectibleID int64) ([]CollectibleUsernameTransferRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT t.id, t.collectible_id, t.kind,
+	t.from_peer_type, t.from_peer_id,
+	COALESCE(NULLIF(fu.username, ''), NULLIF(fc.username, ''), '') AS from_username,
+	t.to_peer_type, t.to_peer_id,
+	COALESCE(NULLIF(tu.username, ''), NULLIF(tc.username, ''), '') AS to_username,
+	t.currency, t.amount, t.actor, t.reason, COALESCE(t.command_key, ''), t.created_at
+FROM collectible_username_transfers t
+LEFT JOIN users fu ON t.from_peer_type = 'user' AND fu.id = t.from_peer_id
+LEFT JOIN channels fc ON t.from_peer_type = 'channel' AND fc.id = t.from_peer_id
+LEFT JOIN users tu ON t.to_peer_type = 'user' AND tu.id = t.to_peer_id
+LEFT JOIN channels tc ON t.to_peer_type = 'channel' AND tc.id = t.to_peer_id
+WHERE t.collectible_id = $1
+ORDER BY t.id DESC
+LIMIT $2`, collectibleID, collectibleTransferLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list collectible username transfers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CollectibleUsernameTransferRow, 0)
+	for rows.Next() {
+		var item CollectibleUsernameTransferRow
+		if err := rows.Scan(
+			&item.ID, &item.CollectibleID, &item.Kind,
+			&item.FromPeerType, &item.FromPeerID, &item.FromUsername,
+			&item.ToPeerType, &item.ToPeerID, &item.ToUsername,
+			&item.Currency, &item.Amount, &item.Actor, &item.Reason, &item.CommandKey, &item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// AccountRatingRow is one user's composite rating projection with the account
+// resolved for display. The score and every component are int64 decimal strings
+// for the same exactness reason as the collectible amounts.
+type AccountRatingRow struct {
+	UserID            int64 `json:"UserID,string"`
+	Username          string
+	FirstName         string
+	Level             int
+	Stars             int64 `json:"Stars,string"`
+	CurrentLevelStars int64 `json:"CurrentLevelStars,string"`
+	NextLevelStars    int64 `json:"NextLevelStars,string"`
+	HasNextLevel      bool
+	StarsComponent    int64 `json:"StarsComponent,string"`
+	ActivityComponent int64 `json:"ActivityComponent,string"`
+	PenaltyComponent  int64 `json:"PenaltyComponent,string"`
+	ManualComponent   int64 `json:"ManualComponent,string"`
+	PendingStars      int64 `json:"PendingStars,string"`
+	PendingDate       time.Time
+	ComputedAt        time.Time
+	UpdatedAt         time.Time
+	Version           int64 `json:"Version,string"`
+	// Computed is false for an account that has no stored projection yet. The
+	// detail view still renders it, so the operator can trigger the first
+	// recompute instead of facing a dead end.
+	Computed bool
+}
+
+// AccountRatingEventRow is one contribution ledger entry.
+type AccountRatingEventRow struct {
+	ID         int64 `json:"ID,string"`
+	UserID     int64 `json:"UserID,string"`
+	Kind       string
+	Amount     int64 `json:"Amount,string"`
+	Reason     string
+	Actor      string
+	CommandKey string
+	CreatedAt  time.Time
+}
+
+// AccountRatingDetail is the projection plus the ledger that explains it.
+type AccountRatingDetail struct {
+	Rating AccountRatingRow
+	Events []AccountRatingEventRow
+}
+
+const accountRatingSelectColumns = `r.user_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(u.first_name, ''),
+	r.level, r.stars, r.current_level_stars, r.next_level_stars,
+	r.stars_component, r.activity_component, r.penalty_component, r.manual_component,
+	r.pending_stars, r.pending_date, r.computed_at, r.updated_at, r.version`
+
+const accountRatingJoins = `
+FROM account_rating r
+LEFT JOIN users u ON u.id = r.user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = r.user_id AND p.editable`
+
+func scanAccountRatingRow(scan func(dest ...any) error, item *AccountRatingRow) error {
+	// next_level_stars and pending_date are nullable: the first is NULL at the top
+	// level, the second whenever no score is parked.
+	var nextLevelStars *int64
+	var pendingDate *time.Time
+	if err := scan(
+		&item.UserID, &item.Username, &item.FirstName,
+		&item.Level, &item.Stars, &item.CurrentLevelStars, &nextLevelStars,
+		&item.StarsComponent, &item.ActivityComponent, &item.PenaltyComponent, &item.ManualComponent,
+		&item.PendingStars, &pendingDate, &item.ComputedAt, &item.UpdatedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	// A NULL next threshold is the maxed-out level: the TL flag is omitted, so the
+	// panel must render "no next level" instead of a next level of zero.
+	item.HasNextLevel = nextLevelStars != nil
+	if nextLevelStars != nil {
+		item.NextLevelStars = *nextLevelStars
+	}
+	if pendingDate != nil {
+		item.PendingDate = pendingDate.UTC()
+	}
+	item.Computed = true
+	return nil
+}
+
+// ListAccountRatings pages the leaderboard. Ordering and the keyset predicate
+// mirror the rating store exactly -- (level DESC, stars DESC, user_id) with the
+// cursor row resolved from beforeID -- so both surfaces page identically.
+func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID, beforeID int64, limit int) ([]AccountRatingRow, bool, error) {
+	if limit <= 0 {
+		limit = ratingListDefaultLimit
+	}
+	if limit > ratingListMaxLimit {
+		limit = ratingListMaxLimit
+	}
+	if minLevel < 0 {
+		minLevel = 0
+	}
+	if minLevel > domain.MaxAccountRatingLevel {
+		minLevel = domain.MaxAccountRatingLevel
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH cursor_row AS (
+	SELECT level AS c_level, stars AS c_stars, user_id AS c_user_id
+	FROM account_rating WHERE $3::bigint <> 0 AND user_id = $3
+)
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+LEFT JOIN cursor_row c ON true
+WHERE r.level >= $1
+	AND ($2::bigint = 0 OR r.user_id = $2)
+	AND (
+		c.c_user_id IS NULL
+		OR r.level < c.c_level
+		OR (r.level = c.c_level AND r.stars < c.c_stars)
+		OR (r.level = c.c_level AND r.stars = c.c_stars AND r.user_id > c.c_user_id)
+	)
+ORDER BY r.level DESC, r.stars DESC, r.user_id
+LIMIT $4`, minLevel, userID, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list account ratings: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingRow, 0, limit+1)
+	for rows.Next() {
+		var item AccountRatingRow
+		if err := scanAccountRatingRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// AccountRatingDetail returns one user's projection with its contribution
+// ledger.
+//
+// An account that exists but was never computed is answered with a zero-valued
+// projection carrying Computed=false, because the recompute command lives on this
+// very page: reporting "not found" for a real account would leave the operator
+// with no way to create the first projection. Only an unknown account is a 404.
+func (s *readStore) AccountRatingDetail(ctx context.Context, userID int64) (AccountRatingDetail, error) {
+	var out AccountRatingDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+WHERE r.user_id = $1`, userID)
+	err := scanAccountRatingRow(row.Scan, &out.Rating)
+	switch {
+	case err == nil:
+	case errors.Is(err, pgx.ErrNoRows):
+		placeholder, uncomputedErr := s.uncomputedAccountRating(ctx, userID)
+		if uncomputedErr != nil {
+			return out, uncomputedErr
+		}
+		out.Rating = placeholder
+	default:
+		return out, fmt.Errorf("get account rating: %w", err)
+	}
+	events, err := s.accountRatingEvents(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	out.Events = events
+	return out, nil
+}
+
+// uncomputedAccountRating renders the projection an account would start from,
+// derived through the same threshold policy the store persists, so the panel's
+// level maths does not have to special-case a missing row.
+func (s *readStore) uncomputedAccountRating(ctx context.Context, userID int64) (AccountRatingRow, error) {
+	var row AccountRatingRow
+	err := s.pool.QueryRow(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
+WHERE u.id = $1`, userID).Scan(&row.UserID, &row.Username, &row.FirstName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return row, errReadNotFound
+		}
+		return row, fmt.Errorf("get account for rating: %w", err)
+	}
+	level, current, next, hasNext := domain.AccountRatingLevelForStars(0)
+	row.Level = level
+	row.CurrentLevelStars = current
+	row.NextLevelStars = next
+	row.HasNextLevel = hasNext
+	return row, nil
+}
+
+func (s *readStore) accountRatingEvents(ctx context.Context, userID int64) ([]AccountRatingEventRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, user_id, kind, amount, reason, actor, COALESCE(command_key, ''), created_at
+FROM account_rating_events
+WHERE user_id = $1
+ORDER BY id DESC
+LIMIT $2`, userID, ratingEventLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list account rating events: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingEventRow, 0)
+	for rows.Next() {
+		var item AccountRatingEventRow
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Kind, &item.Amount, &item.Reason, &item.Actor, &item.CommandKey, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

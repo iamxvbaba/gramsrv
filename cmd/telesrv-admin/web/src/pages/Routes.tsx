@@ -1,6 +1,10 @@
 import { type Navigate, type RouteState } from "../routing";
 import { AccountDetailPage } from "./AccountDetailPage";
+import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
+import { AccountRatingsPage } from "./AccountRatingsPage";
 import { AccountsPage } from "./AccountsPage";
+import { CollectibleUsernameDetailPage } from "./CollectibleUsernameDetailPage";
+import { CollectibleUsernamesPage } from "./CollectibleUsernamesPage";
 import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { BotDetailPage } from "./BotDetailPage";
@@ -21,6 +25,21 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   const channelID = route.path.match(/^\/channels\/(\d+)$/)?.[1];
   const botID = route.path.match(/^\/bots\/(\d+)$/)?.[1];
   const moderationCaseID = route.path.match(/^\/moderation\/(\d+)$/)?.[1];
+  // int64 ids stay strings so large values never lose precision.
+  const collectibleUsernameID = route.path.match(/^\/collectible-usernames\/(\d+)$/)?.[1];
+  const ratingUserID = route.path.match(/^\/account-ratings\/(\d+)$/)?.[1];
+  if (collectibleUsernameID) {
+    return <CollectibleUsernameDetailPage id={collectibleUsernameID} navigate={navigate} />;
+  }
+  if (ratingUserID) {
+    return <AccountRatingDetailPage userID={ratingUserID} navigate={navigate} />;
+  }
+  if (route.path === "/collectible-usernames") {
+    return <CollectibleUsernamesPage navigate={navigate} />;
+  }
+  if (route.path === "/account-ratings") {
+    return <AccountRatingsPage navigate={navigate} />;
+  }
   if (accountID) {
     return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;
   }

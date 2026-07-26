@@ -71,8 +71,8 @@ func TestChannelStoreResolvePublicUsernameRejectsStaleIndex(t *testing.T) {
 		t.Fatalf("clear username: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-INSERT INTO peer_usernames (username_lower, peer_type, peer_id)
-VALUES ($1,'channel',$2)
+INSERT INTO peer_usernames (username_lower, username, peer_type, peer_id, active, editable, sort_order)
+VALUES ($1,$1,'channel',$2,true,true,0)
 ON CONFLICT (username_lower) DO UPDATE SET peer_type = EXCLUDED.peer_type, peer_id = EXCLUDED.peer_id, updated_at = now()
 `, strings.ToLower(publicUsername), publicChannel.ID); err != nil {
 		t.Fatalf("insert stale username index: %v", err)

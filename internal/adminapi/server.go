@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,17 @@ type Service interface {
 	DecideModerationCase(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
 	SubmitModerationAppeal(ctx context.Context, caseID, appellantUserID int64, text string) (domain.ModerationAppeal, bool, error)
 	ReviewModerationAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
+	MintCollectibleUsername(ctx context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error)
+	TransferCollectibleUsername(ctx context.Context, req admin.TransferCollectibleUsernameRequest) (admin.CommandResult, error)
+	RevokeCollectibleUsername(ctx context.Context, req admin.RevokeCollectibleUsernameRequest) (admin.CommandResult, error)
+	CollectibleUsernames(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
+	CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error)
+	CollectibleUsernameTransfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error)
+	RecomputeAccountRating(ctx context.Context, req admin.RecomputeAccountRatingRequest) (admin.CommandResult, error)
+	AdjustAccountRating(ctx context.Context, req admin.AdjustAccountRatingRequest) (admin.CommandResult, error)
+	AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error)
+	AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
+	AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -151,6 +164,15 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/moderation/cases/{id}/decide", s.authenticated(s.handleDecideModerationCase))
 	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals", s.authenticated(s.handleSubmitModerationAppeal))
 	mux.HandleFunc("POST /v1/moderation/cases/{id}/appeals/{appeal_id}/review", s.authenticated(s.handleReviewModerationAppeal))
+	mux.HandleFunc("POST /v1/collectible-usernames/mint", s.authenticated(s.handleMintCollectibleUsername))
+	mux.HandleFunc("POST /v1/collectible-usernames/transfer", s.authenticated(s.handleTransferCollectibleUsername))
+	mux.HandleFunc("POST /v1/collectible-usernames/revoke", s.authenticated(s.handleRevokeCollectibleUsername))
+	mux.HandleFunc("GET /v1/collectible-usernames", s.authenticated(s.handleCollectibleUsernames))
+	mux.HandleFunc("GET /v1/collectible-usernames/{id}", s.authenticated(s.handleCollectibleUsername))
+	mux.HandleFunc("POST /v1/account-ratings/recompute", s.authenticated(s.handleRecomputeAccountRating))
+	mux.HandleFunc("POST /v1/account-ratings/adjust", s.authenticated(s.handleAdjustAccountRating))
+	mux.HandleFunc("GET /v1/account-ratings", s.authenticated(s.handleAccountRatings))
+	mux.HandleFunc("GET /v1/account-ratings/{id}", s.authenticated(s.handleAccountRating))
 	return mux
 }
 
@@ -907,6 +929,363 @@ func writeModerationError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+func (s *Server) handleMintCollectibleUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.MintCollectibleUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.MintCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleTransferCollectibleUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.TransferCollectibleUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.TransferCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRevokeCollectibleUsername(w http.ResponseWriter, r *http.Request) {
+	var req admin.RevokeCollectibleUsernameRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RevokeCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRecomputeAccountRating(w http.ResponseWriter, r *http.Request) {
+	var req admin.RecomputeAccountRatingRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RecomputeAccountRating(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleAdjustAccountRating(w http.ResponseWriter, r *http.Request) {
+	var req admin.AdjustAccountRatingRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.AdjustAccountRating(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleCollectibleUsernames(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	filter := domain.CollectibleUsernameFilter{
+		Status: domain.CollectibleUsernameStatus(strings.TrimSpace(query.Get("status"))),
+		Query:  query.Get("q"),
+	}
+	if filter.Status != "" && !filter.Status.Valid() {
+		writeCodedError(w, http.StatusBadRequest, admin.CodeCollectibleStateInvalid, "invalid status")
+		return
+	}
+	owner, ok := collectibleOwnerFilter(w, query)
+	if !ok {
+		return
+	}
+	filter.Owner = owner
+	limit, ok := optionalQueryInt(w, query, "limit")
+	if !ok {
+		return
+	}
+	filter.Limit = limit
+	beforeID, ok := optionalQueryInt64(w, query, "before_id")
+	if !ok {
+		return
+	}
+	filter.BeforeID = beforeID
+	items, err := s.svc.CollectibleUsernames(r.Context(), filter)
+	if err != nil {
+		writeCollectibleUsernameError(w, err)
+		return
+	}
+	assets := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		assets = append(assets, collectibleUsernameResponse(item))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"assets": assets})
+}
+
+func (s *Server) handleCollectibleUsername(w http.ResponseWriter, r *http.Request) {
+	id, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	asset, err := s.svc.CollectibleUsernameByID(r.Context(), id)
+	if err != nil {
+		writeCollectibleUsernameError(w, err)
+		return
+	}
+	limit, ok := optionalQueryInt(w, r.URL.Query(), "limit")
+	if !ok {
+		return
+	}
+	transfers, err := s.svc.CollectibleUsernameTransfers(r.Context(), asset.ID, limit)
+	if err != nil {
+		writeCollectibleUsernameError(w, err)
+		return
+	}
+	log := make([]map[string]any, 0, len(transfers))
+	for _, item := range transfers {
+		log = append(log, collectibleUsernameTransferResponse(item))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"asset": collectibleUsernameResponse(asset), "transfers": log,
+	})
+}
+
+func (s *Server) handleAccountRatings(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	minLevel, ok := optionalQueryInt(w, query, "min_level")
+	if !ok {
+		return
+	}
+	userID, ok := optionalQueryInt64(w, query, "user_id")
+	if !ok {
+		return
+	}
+	beforeID, ok := optionalQueryInt64(w, query, "before_id")
+	if !ok {
+		return
+	}
+	limit, ok := optionalQueryInt(w, query, "limit")
+	if !ok {
+		return
+	}
+	items, err := s.svc.AccountRatings(r.Context(), domain.AccountRatingFilter{
+		MinLevel: minLevel, UserID: userID, BeforeID: beforeID, Limit: limit,
+	})
+	if err != nil {
+		writeAccountRatingError(w, err)
+		return
+	}
+	ratings := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		ratings = append(ratings, accountRatingResponse(item))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ratings": ratings})
+}
+
+func (s *Server) handleAccountRating(w http.ResponseWriter, r *http.Request) {
+	userID, ok := moderationPathID(w, r, "id")
+	if !ok {
+		return
+	}
+	rating, err := s.svc.AccountRating(r.Context(), userID)
+	if err != nil {
+		writeAccountRatingError(w, err)
+		return
+	}
+	limit, ok := optionalQueryInt(w, r.URL.Query(), "limit")
+	if !ok {
+		return
+	}
+	events, err := s.svc.AccountRatingEvents(r.Context(), userID, limit)
+	if err != nil {
+		writeAccountRatingError(w, err)
+		return
+	}
+	ledger := make([]map[string]any, 0, len(events))
+	for _, item := range events {
+		ledger = append(ledger, accountRatingEventResponse(item))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rating": accountRatingResponse(rating), "events": ledger,
+	})
+}
+
+// collectibleOwnerFilter reads the optional owner filter. At most one of the two
+// identifiers may be present, mirroring the mint/transfer request shape.
+func collectibleOwnerFilter(w http.ResponseWriter, query url.Values) (domain.Peer, bool) {
+	userID, ok := optionalQueryInt64(w, query, "owner_user_id")
+	if !ok {
+		return domain.Peer{}, false
+	}
+	channelID, ok := optionalQueryInt64(w, query, "owner_channel_id")
+	if !ok {
+		return domain.Peer{}, false
+	}
+	switch {
+	case userID > 0 && channelID > 0:
+		writeError(w, http.StatusBadRequest, "at most one owner filter is allowed")
+		return domain.Peer{}, false
+	case userID > 0:
+		return domain.Peer{Type: domain.PeerTypeUser, ID: userID}, true
+	case channelID > 0:
+		return domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}, true
+	default:
+		return domain.Peer{}, true
+	}
+}
+
+func optionalQueryInt64(w http.ResponseWriter, query url.Values, name string) (int64, bool) {
+	raw := strings.TrimSpace(query.Get(name))
+	if raw == "" {
+		return 0, true
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 0 {
+		writeError(w, http.StatusBadRequest, "invalid "+name)
+		return 0, false
+	}
+	return value, true
+}
+
+func optionalQueryInt(w http.ResponseWriter, query url.Values, name string) (int, bool) {
+	value, ok := optionalQueryInt64(w, query, name)
+	if !ok {
+		return 0, false
+	}
+	if value > math.MaxInt32 {
+		writeError(w, http.StatusBadRequest, "invalid "+name)
+		return 0, false
+	}
+	return int(value), true
+}
+
+// collectibleUsernameResponse renders one asset. Every int64 crosses the JSON
+// boundary as a decimal string: asset ids and nanoton amounts exceed the exact
+// range of a JSON number, and a rounded id would address the wrong asset.
+func collectibleUsernameResponse(asset domain.CollectibleUsername) map[string]any {
+	out := map[string]any{
+		"id":                  strconv.FormatInt(asset.ID, 10),
+		"username":            asset.Username,
+		"status":              string(asset.Status),
+		"owner_type":          string(asset.Owner.Type),
+		"owner_id":            strconv.FormatInt(asset.Owner.ID, 10),
+		"purchase_date":       asset.Info().PurchaseDate,
+		"currency":            asset.Currency,
+		"amount":              strconv.FormatInt(asset.Amount, 10),
+		"crypto_currency":     asset.CryptoCurrency,
+		"crypto_amount":       strconv.FormatInt(asset.CryptoAmount, 10),
+		"url":                 asset.URL,
+		"original_owner_type": string(asset.OriginalOwner.Type),
+		"original_owner_id":   strconv.FormatInt(asset.OriginalOwner.ID, 10),
+		"transfer_count":      asset.TransferCount,
+		"version":             strconv.FormatInt(asset.Version, 10),
+	}
+	if !asset.CreatedAt.IsZero() {
+		out["created_at"] = asset.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if !asset.UpdatedAt.IsZero() {
+		out["updated_at"] = asset.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+func collectibleUsernameTransferResponse(item domain.CollectibleUsernameTransfer) map[string]any {
+	out := map[string]any{
+		"id":             strconv.FormatInt(item.ID, 10),
+		"collectible_id": strconv.FormatInt(item.CollectibleID, 10),
+		"kind":           string(item.Kind),
+		"from_type":      string(item.From.Type),
+		"from_id":        strconv.FormatInt(item.From.ID, 10),
+		"to_type":        string(item.To.Type),
+		"to_id":          strconv.FormatInt(item.To.ID, 10),
+		"currency":       item.Currency,
+		"amount":         strconv.FormatInt(item.Amount, 10),
+		"actor":          item.Actor,
+		"reason":         item.Reason,
+		"command_key":    item.CommandKey,
+	}
+	if !item.CreatedAt.IsZero() {
+		out["created_at"] = item.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// accountRatingResponse renders one composite rating. The score and every
+// component stay decimal strings for the same exactness reason as the asset ids.
+func accountRatingResponse(rating domain.AccountRating) map[string]any {
+	out := map[string]any{
+		"user_id":             strconv.FormatInt(rating.UserID, 10),
+		"level":               rating.Level,
+		"stars":               strconv.FormatInt(rating.Stars, 10),
+		"current_level_stars": strconv.FormatInt(rating.CurrentLevelStars, 10),
+		"has_next_level":      rating.HasNextLevel,
+		"stars_component":     strconv.FormatInt(rating.StarsComponent, 10),
+		"activity_component":  strconv.FormatInt(rating.ActivityComponent, 10),
+		"penalty_component":   strconv.FormatInt(rating.PenaltyComponent, 10),
+		"manual_component":    strconv.FormatInt(rating.ManualComponent, 10),
+		"pending_stars":       strconv.FormatInt(rating.PendingStars, 10),
+		"version":             strconv.FormatInt(rating.Version, 10),
+	}
+	if rating.HasNextLevel {
+		out["next_level_stars"] = strconv.FormatInt(rating.NextLevelStars, 10)
+	}
+	if !rating.PendingDate.IsZero() {
+		out["pending_date"] = rating.PendingDate.UTC().Format(time.RFC3339)
+	}
+	if !rating.ComputedAt.IsZero() {
+		out["computed_at"] = rating.ComputedAt.UTC().Format(time.RFC3339)
+	}
+	if !rating.UpdatedAt.IsZero() {
+		out["updated_at"] = rating.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+func accountRatingEventResponse(event domain.AccountRatingEvent) map[string]any {
+	out := map[string]any{
+		"id":          strconv.FormatInt(event.ID, 10),
+		"user_id":     strconv.FormatInt(event.UserID, 10),
+		"kind":        string(event.Kind),
+		"amount":      strconv.FormatInt(event.Amount, 10),
+		"reason":      event.Reason,
+		"actor":       event.Actor,
+		"command_key": event.CommandKey,
+	}
+	if !event.CreatedAt.IsZero() {
+		out["created_at"] = event.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
+// writeCollectibleUsernameError maps a collectible-username failure onto its
+// stable admin code and the matching HTTP status, the way writeModerationError
+// does for moderation. An unmapped failure stays a 500 with its own text rather
+// than being dressed up as a client error.
+func writeCollectibleUsernameError(w http.ResponseWriter, err error) {
+	code := admin.CollectibleUsernameErrorCode(err)
+	status := http.StatusInternalServerError
+	switch code {
+	case admin.CodeCollectibleNotFound:
+		status = http.StatusNotFound
+	case admin.CodeUsernameOccupied, admin.CodeCollectibleBurned,
+		admin.CodeCollectiblePeerLimit, admin.CodeCollectibleNotOwned:
+		status = http.StatusConflict
+	case admin.CodeUsernameInvalid, admin.CodeUsernameNotCollectible,
+		admin.CodeCollectibleCurrencyInvalid, admin.CodeCollectibleStateInvalid:
+		status = http.StatusBadRequest
+	}
+	writeCodedError(w, status, code, err.Error())
+}
+
+func writeAccountRatingError(w http.ResponseWriter, err error) {
+	code := admin.AccountRatingErrorCode(err)
+	status := http.StatusInternalServerError
+	switch code {
+	case admin.CodeRatingNotFound:
+		status = http.StatusNotFound
+	case admin.CodeRatingAdjustmentInvalid, admin.CodeRatingWeightsInvalid:
+		status = http.StatusBadRequest
+	}
+	writeCodedError(w, status, code, err.Error())
+}
+
+func writeCodedError(w http.ResponseWriter, status int, code, msg string) {
+	body := map[string]string{"error": msg}
+	if code != "" {
+		body["code"] = code
+	}
+	writeJSON(w, status, body)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

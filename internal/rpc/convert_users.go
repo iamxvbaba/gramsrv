@@ -240,11 +240,49 @@ func tgUserStatus(status domain.UserStatus) tg.UserStatusClass {
 	return &tg.UserStatusRecently{}
 }
 
+// tgUsernames is the legacy scalar projection and the mandatory fallback for
+// every username vector. It stays the shape a client saw before the collectible
+// registry existed: the editable slot alone, active.
+//
+// It is never wrong, only incomplete: the scalar column mirrors
+// domain.ActiveUsername, so a client that only ever sees this still resolves the
+// peer. Every registry-aware path degrades to it.
 func tgUsernames(username string) []tg.Username {
 	if username == "" {
 		return nil
 	}
 	return []tg.Username{{Editable: true, Active: true, Username: username}}
+}
+
+// tgUsernamesFromRegistry is the single builder of the full username#b4073647
+// vector: the editable slot first, then collectibles in stored order (see
+// domain.SortUsernames), with editable/active taken from the registry row rather
+// than assumed.
+//
+// It degrades to tgUsernames(fallback) whenever the registry contributed nothing
+// usable, which is what keeps a missing/failing registry service byte-identical
+// to the pre-collectible wire shape.
+func tgUsernamesFromRegistry(list []domain.Username, fallback string) []tg.Username {
+	if len(list) == 0 {
+		return tgUsernames(fallback)
+	}
+	sorted := domain.SortUsernames(list)
+	out := make([]tg.Username, 0, len(sorted))
+	for _, item := range sorted {
+		name := domain.NormalizeUsername(item.Username)
+		if name == "" {
+			continue
+		}
+		out = append(out, tg.Username{
+			Editable: item.Editable,
+			Active:   item.Active,
+			Username: name,
+		})
+	}
+	if len(out) == 0 {
+		return tgUsernames(fallback)
+	}
+	return out
 }
 
 func tgContacts(list domain.ContactList) tg.ContactsContactsClass {

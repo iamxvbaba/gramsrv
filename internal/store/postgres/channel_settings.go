@@ -238,7 +238,7 @@ func (s *ChannelStore) UpdateUsername(ctx context.Context, req domain.UpdateChan
 	if strings.EqualFold(channel.Username, username) {
 		return domain.Channel{}, domain.ErrChannelNotModified
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeChannel, req.ChannelID, usernameLower); err != nil {
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeChannel, req.ChannelID, username, usernameLower); err != nil {
 		return domain.Channel{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE channels SET username = NULLIF($2,''), updated_at = now() WHERE id = $1`, req.ChannelID, username); err != nil {
@@ -426,7 +426,7 @@ func (s *ChannelStore) SetChannelUsernameAdmin(ctx context.Context, channelID in
 	if strings.EqualFold(channel.Username, username) {
 		return channel, nil
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeChannel, channelID, usernameLower); err != nil {
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeChannel, channelID, username, usernameLower); err != nil {
 		return domain.Channel{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE channels SET username = NULLIF($2,''), updated_at = now() WHERE id = $1`, channelID, username); err != nil {
@@ -517,7 +517,17 @@ func (s *ChannelStore) ResolvePublicChannelUsername(ctx context.Context, viewerU
 		}
 		return domain.Channel{}, false, fmt.Errorf("resolve public channel username channel: %w", err)
 	}
-	if !publicPreviewableChannel(ch) || !strings.EqualFold(ch.Username, usernameLower) {
+	if !publicPreviewableChannel(ch) {
+		return domain.Channel{}, false, nil
+	}
+	// A collectible row is authoritative for its own name: the channel's scalar
+	// username column only ever mirrors the editable slot, so re-checking it here
+	// would make collectible names unresolvable. The scalar comparison stays for
+	// the editable slot, where it guards against a stale registry row.
+	if !owner.collectible && !strings.EqualFold(ch.Username, usernameLower) {
+		return domain.Channel{}, false, nil
+	}
+	if owner.collectible && !owner.active {
 		return domain.Channel{}, false, nil
 	}
 	return ch, true, nil

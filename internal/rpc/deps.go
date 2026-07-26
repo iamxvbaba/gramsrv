@@ -931,6 +931,46 @@ type PremiumPromoService interface {
 	PremiumPromo(ctx context.Context) (domain.PremiumPromoCatalog, bool, error)
 }
 
+// UsernameRegistryService is the collectible (Fragment-style) username registry
+// boundary. It owns the full per-peer username list -- the editable slot the
+// client owns through account/channels.updateUsername plus every collectible
+// asset attached to the peer -- and the purchase record behind a collectible.
+//
+// The registry is deliberately optional. Every RPC surface that consults it must
+// degrade to the legacy single-editable-username behaviour when the field is nil
+// or a call fails, because the scalar users.username / channels.username column
+// remains the authoritative mirror of domain.ActiveUsername.
+type UsernameRegistryService interface {
+	// PeerUsernames returns one peer's full username list. Order is irrelevant:
+	// callers project through domain.SortUsernames.
+	PeerUsernames(ctx context.Context, peer domain.Peer) ([]domain.Username, error)
+	// UsernamesBatch is the N+1-free variant used by list projections. Peers with
+	// no registry row may be omitted from the result map.
+	UsernamesBatch(ctx context.Context, peers []domain.Peer) (map[domain.Peer][]domain.Username, error)
+	// ToggleUsername activates/deactivates one collectible username. The bool
+	// reports whether anything changed; false maps to USERNAME_NOT_MODIFIED.
+	ToggleUsername(ctx context.Context, peer domain.Peer, username string, active bool) (bool, error)
+	// ReorderUsernames rewrites the collectible display order. order must be a
+	// permutation of the peer's collectibles (domain.ValidateUsernameReorder).
+	ReorderUsernames(ctx context.Context, peer domain.Peer, order []string) (bool, error)
+	// DeactivateAllUsernames deactivates every collectible username of the peer.
+	DeactivateAllUsernames(ctx context.Context, peer domain.Peer) (bool, error)
+	// CollectibleInfo returns the fragment.collectibleInfo payload for a
+	// collectible username, or domain.ErrCollectibleUsernameNotFound /
+	// domain.ErrUsernameNotCollectible.
+	CollectibleInfo(ctx context.Context, username string) (domain.CollectibleInfo, error)
+}
+
+// AccountRatingService exposes the composite account rating read model projected
+// onto userFull.stars_rating / userFull.stars_my_pending_rating.
+//
+// Optional like UsernameRegistryService: a nil field must leave both flags unset,
+// which is exactly the pre-rating wire shape.
+type AccountRatingService interface {
+	Rating(ctx context.Context, userID int64) (domain.AccountRating, error)
+	RatingBatch(ctx context.Context, userIDs []int64) (map[int64]domain.AccountRating, error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth                AuthService
@@ -949,6 +989,8 @@ type Deps struct {
 	EphemeralPush        store.EphemeralPushBroker
 	Moderation           ModerationService
 	Users                UsersService
+	Usernames            UsernameRegistryService
+	AccountRatings       AccountRatingService
 	TelegramLogin        TelegramLoginService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore

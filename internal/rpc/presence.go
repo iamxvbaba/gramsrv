@@ -567,6 +567,10 @@ func (r *Router) withUserSearchPresence(res domain.UserSearchResult) domain.User
 	return res
 }
 
+// tgUser / tgSelfUser deliberately do NOT overlay the username registry: they
+// are called inside per-id loops (users.getUsers), and a per-object registry read
+// there would be exactly the N+1 the batch overlay exists to avoid. Single-object
+// handlers pick the vector up from applyPeerReadModels at the response boundary.
 func (r *Router) tgUser(u domain.User) *tg.User {
 	return r.withBotProfileFlags(context.Background(), tgUser(r.withUserPresence(u)))
 }
@@ -578,6 +582,7 @@ func (r *Router) tgSelfUser(u domain.User) *tg.User {
 func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 	out := tgUsers(r.withUsersPresence(users))
 	r.withBotProfileFlagsForUsers(context.Background(), out)
+	r.applyUsernamesToPeerObjects(context.Background(), out, nil)
 	return out
 }
 
@@ -586,6 +591,7 @@ func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 func (r *Router) tgUsersForViewer(viewerUserID int64, users []domain.User) []tg.UserClass {
 	out := tgUsersForViewer(viewerUserID, r.withUsersPresence(users))
 	r.withBotProfileFlagsForUsers(context.Background(), out)
+	r.applyUsernamesToPeerObjects(context.Background(), out, nil)
 	return out
 }
 

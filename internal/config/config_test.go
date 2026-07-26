@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"telesrv/internal/domain"
 )
 
 func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
@@ -676,6 +678,114 @@ func TestValidateStarGiftConfigRejectsNegativeInternalTONGrant(t *testing.T) {
 	}
 	if err := validateStarGiftConfig(cfg); err == nil {
 		t.Fatal("negative internal TON starting grant was accepted")
+	}
+}
+
+func TestLoadAccountRatingDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RatingEnabled {
+		t.Fatal("RatingEnabled = false, want the feature on by default")
+	}
+	if cfg.RatingPendingDelay != 24*time.Hour || cfg.RatingRecomputeInterval != 15*time.Minute ||
+		cfg.RatingRecomputeBatch != 500 || cfg.RatingStaleAfter != 6*time.Hour {
+		t.Fatalf("rating worker defaults = %v/%v/%d/%v, want 24h/15m/500/6h",
+			cfg.RatingPendingDelay, cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch, cfg.RatingStaleAfter)
+	}
+	if got, want := cfg.AccountRatingWeights(), domain.DefaultAccountRatingWeights(); got != want {
+		t.Fatalf("rating weights = %#v, want the domain defaults %#v", got, want)
+	}
+	if cfg.CollectibleUsernameURLTemplate != "" {
+		t.Fatalf("CollectibleUsernameURLTemplate = %q, want empty (derived from the public base URL)",
+			cfg.CollectibleUsernameURLTemplate)
+	}
+}
+
+func TestLoadAccountRatingOverrides(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_RATING_ENABLED", "false")
+	t.Setenv("TELESRV_RATING_PENDING_DELAY", "1h")
+	t.Setenv("TELESRV_RATING_RECOMPUTE_INTERVAL", "90s")
+	t.Setenv("TELESRV_RATING_RECOMPUTE_BATCH", "42")
+	t.Setenv("TELESRV_RATING_STALE_AFTER", "30m")
+	t.Setenv("TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", "500")
+	t.Setenv("TELESRV_RATING_WEIGHT_MESSAGE_SENT", "0")
+	t.Setenv("TELESRV_RATING_ACTIVITY_CAP", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RatingEnabled {
+		t.Fatal("RatingEnabled = true, want the explicit override")
+	}
+	weights := cfg.AccountRatingWeights()
+	if weights.StarsReceivedPermille != 500 || weights.PerMessageSent != 0 || weights.ActivityCap != 0 {
+		t.Fatalf("weights = %#v, want the overridden values", weights)
+	}
+	if weights.StarsSpentPermille != domain.DefaultAccountRatingWeights().StarsSpentPermille {
+		t.Fatalf("unset weight = %d, want the domain default", weights.StarsSpentPermille)
+	}
+	if cfg.RatingPendingDelay != time.Hour || cfg.RatingRecomputeInterval != 90*time.Second ||
+		cfg.RatingRecomputeBatch != 42 || cfg.RatingStaleAfter != 30*time.Minute {
+		t.Fatalf("rating worker overrides = %v/%v/%d/%v",
+			cfg.RatingPendingDelay, cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch, cfg.RatingStaleAfter)
+	}
+}
+
+func TestLoadRejectsInvalidAccountRatingConfig(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "negative stars weight", key: "TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", value: "-1"},
+		{name: "negative moderation weight", key: "TELESRV_RATING_WEIGHT_MODERATION_CASE", value: "-150"},
+		{name: "negative scam penalty", key: "TELESRV_RATING_WEIGHT_SCAM_PENALTY", value: "-1"},
+		{name: "negative activity cap", key: "TELESRV_RATING_ACTIVITY_CAP", value: "-5000"},
+		{name: "negative pending delay", key: "TELESRV_RATING_PENDING_DELAY", value: "-1h"},
+		{name: "zero recompute interval", key: "TELESRV_RATING_RECOMPUTE_INTERVAL", value: "0s"},
+		{name: "zero stale horizon", key: "TELESRV_RATING_STALE_AFTER", value: "0s"},
+		{name: "zero recompute batch", key: "TELESRV_RATING_RECOMPUTE_BATCH", value: "0"},
+		{name: "oversized recompute batch", key: "TELESRV_RATING_RECOMPUTE_BATCH", value: "20000"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadCollectibleUsernameURLTemplate(t *testing.T) {
+	t.Run("absolute template accepted", func(t *testing.T) {
+		disableDefaultConfigFile(t)
+		t.Setenv("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", " https://frag.example/u/{username} ")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CollectibleUsernameURLTemplate != "https://frag.example/u/{username}" {
+			t.Fatalf("template = %q, want the trimmed value", cfg.CollectibleUsernameURLTemplate)
+		}
+	})
+
+	for _, invalid := range []string{"/nft/{username}", "ftp://frag.example/{username}", "https://user:pass@frag.example/{username}"} {
+		t.Run("rejects "+invalid, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", invalid)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted template %q", invalid)
+			}
+		})
 	}
 }
 

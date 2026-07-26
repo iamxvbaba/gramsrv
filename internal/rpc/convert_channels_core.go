@@ -495,6 +495,10 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	}
 	if ch.Username != "" {
 		out.SetUsername(ch.Username)
+		// Legacy vector: the editable slot alone. Router.applyUsernamesToPeerObjects
+		// upgrades this to the full collectible list at the response boundary when a
+		// username registry is wired; this stays the guaranteed fallback, and the
+		// scalar username keeps mirroring domain.ActiveUsername either way.
 		out.SetUsernames(tgUsernames(ch.Username))
 	}
 	if color := tgPeerColor(ch.Color); color != nil {

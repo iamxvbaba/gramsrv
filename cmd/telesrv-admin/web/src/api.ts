@@ -1,11 +1,15 @@
 import type {
   AccountDetail,
   AccountListResponse,
+  AccountRatingDetail,
+  AccountRatingListResponse,
   BotDetail,
   BotListResponse,
   ChannelDetail,
   EmojiListResponse,
   ChannelListResponse,
+  CollectibleUsernameDetail,
+  CollectibleUsernameListResponse,
   CommandResult,
   GroupMessageDetail,
   GroupMessageListResponse,
@@ -64,6 +68,14 @@ export const api = {
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
   bots: (params: URLSearchParams) => request<BotListResponse>(`/api/bots?${params.toString()}`),
   bot: (id: number) => request<BotDetail>(`/api/bots/${id}`),
+  collectibleUsernames: (params: URLSearchParams) =>
+    request<CollectibleUsernameListResponse>(`/api/collectible-usernames?${params.toString()}`),
+  collectibleUsername: (id: string) =>
+    request<CollectibleUsernameDetail>(`/api/collectible-usernames/${encodeURIComponent(id)}`),
+  accountRatings: (params: URLSearchParams) =>
+    request<AccountRatingListResponse>(`/api/account-ratings?${params.toString()}`),
+  accountRating: (userID: string) =>
+    request<AccountRatingDetail>(`/api/account-ratings/${encodeURIComponent(userID)}`),
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),

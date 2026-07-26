@@ -48,6 +48,7 @@ import (
 	phoneapp "telesrv/internal/app/phone"
 	pollsapp "telesrv/internal/app/polls"
 	privacyapp "telesrv/internal/app/privacy"
+	ratingapp "telesrv/internal/app/rating"
 	secretchatapp "telesrv/internal/app/secretchat"
 	"telesrv/internal/app/stargifts"
 	"telesrv/internal/app/stars"
@@ -56,6 +57,7 @@ import (
 	themesapp "telesrv/internal/app/themes"
 	translationapp "telesrv/internal/app/translation"
 	"telesrv/internal/app/updates"
+	usernamesapp "telesrv/internal/app/usernames"
 	"telesrv/internal/app/userprojection"
 	"telesrv/internal/app/users"
 	"telesrv/internal/botapi"
@@ -269,6 +271,34 @@ func liveStreamDep(s *livestream.Service) rpc.LiveStreamsService {
 	}
 	return s
 }
+
+// rpcProjectionUsernameNotifier adapts the RPC edge's exported read-model
+// invalidation surface onto the username notification port. It is the fallback
+// used until the edge implements the richer NotifyPeerUsernamesChanged hook:
+// invalidation is the part that must not be skipped, because an operator-driven
+// mint/transfer/revoke changes the username vector embedded in cached
+// user/channel projections.
+type rpcProjectionUsernameNotifier struct {
+	invalidator interface {
+		InvalidateRPCProjectionReadModelForUser(userID int64)
+		InvalidateRPCProjectionReadModelForChannel(channelID int64)
+	}
+}
+
+func (n rpcProjectionUsernameNotifier) NotifyPeerUsernamesChanged(_ context.Context, peer domain.Peer) error {
+	if n.invalidator == nil {
+		return nil
+	}
+	switch peer.Type {
+	case domain.PeerTypeUser:
+		n.invalidator.InvalidateRPCProjectionReadModelForUser(peer.ID)
+	case domain.PeerTypeChannel:
+		n.invalidator.InvalidateRPCProjectionReadModelForChannel(peer.ID)
+	}
+	return nil
+}
+
+var _ usernamesapp.PeerUsernameNotifier = rpcProjectionUsernameNotifier{}
 
 func externalMediaOption(cfg config.Config) filesapp.Option {
 	if !cfg.ExternalMediaEnable {
@@ -858,6 +888,27 @@ func run(logger *zap.Logger) error {
 			Store:        accountService,
 			Sender:       loginEmailSender,
 		}))
+	// Collectible (NFT) usernames and the composite account rating. Both are
+	// optional read models on the protocol edge: without them a peer keeps the
+	// legacy single editable username and userFull carries no stars_rating flags,
+	// so wiring them changes no existing wire shape by itself.
+	collectibleUsernameStore := postgres.NewCollectibleUsernameStore(pool)
+	accountRatingStore := postgres.NewAccountRatingStore(pool)
+	usernamesService := usernamesapp.NewService(
+		usernamesapp.WithRegistryStore(collectibleUsernameStore),
+		usernamesapp.WithCollectibleStore(collectibleUsernameStore),
+		usernamesapp.WithURLTemplate(cfg.CollectibleUsernameURLTemplate),
+		usernamesapp.WithPublicBaseURL(cfg.PublicBaseURL),
+		usernamesapp.WithLogger(logger.Named("app").Named("usernames")),
+	)
+	ratingService := ratingapp.NewService(
+		ratingapp.WithStore(accountRatingStore),
+		ratingapp.WithEnabled(cfg.RatingEnabled),
+		ratingapp.WithWeights(cfg.AccountRatingWeights()),
+		ratingapp.WithPendingDelay(cfg.RatingPendingDelay),
+		ratingapp.WithStaleAfter(cfg.RatingStaleAfter),
+		ratingapp.WithLogger(logger.Named("app").Named("rating")),
+	)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -897,6 +948,8 @@ func run(logger *zap.Logger) error {
 		EphemeralPush:        ephemeralStore,
 		Moderation:           moderationService,
 		Users:                usersService,
+		Usernames:            usernamesService,
+		AccountRatings:       ratingService,
 		TelegramLogin:        telegramLoginRPCDependency(telegramLoginService),
 		Updates:              updatesService,
 		BootstrapUpdates:     bootstrapUpdateStore,
@@ -969,7 +1022,29 @@ func run(logger *zap.Logger) error {
 		Bots:                   botsService,
 		Emoji:                  filesService,
 		Moderation:             moderationService,
+		Usernames:              usernamesService,
+		Rating:                 ratingService,
 	})
+	// The RPC edge owns the tg.* username update push and the projection caches,
+	// so it implements the domain-only notification hook the username service
+	// calls after a registry mutation. The assertion is deliberately dynamic: the
+	// hook lands with the edge agent, and until then a missing hook only means the
+	// operator-driven mutations converge through the client's next peer read.
+	if notifier, ok := any(router).(usernamesapp.PeerUsernameNotifier); ok {
+		usernamesService.SetPeerUsernameNotifier(notifier)
+	} else {
+		// TODO(integration): expects rpc.Router to implement
+		// NotifyPeerUsernamesChanged(ctx context.Context, peer domain.Peer) error,
+		// which must invalidate the peer projections *and* push the username update
+		// to online clients. Until it lands only invalidation is wired, so an
+		// operator-driven mint/transfer/revoke can never be masked by a stale
+		// projection; clients converge on their next authoritative peer read.
+		usernamesService.SetPeerUsernameNotifier(rpcProjectionUsernameNotifier{invalidator: router})
+		logger.Warn("collectible username update push is not implemented by the RPC edge; only projection invalidation is wired",
+			zap.String("expected_hook", "rpc.Router.NotifyPeerUsernamesChanged"))
+	}
+	go ratingapp.NewRecomputeWorker(ratingService, logger.Named("rating").Named("recompute"),
+		cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch).Run(ctx)
 	moderationActionOptions := []moderationapp.ActionExecutorOption{}
 	if cfg.PublicLinkWebAddr != "" {
 		moderationActionOptions = append(

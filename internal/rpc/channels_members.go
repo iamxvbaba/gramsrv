@@ -199,7 +199,7 @@ func (r *Router) onChannelsGetParticipants(ctx context.Context, req *tg.Channels
 			users = append(users, r.tgUsersForIDs(ctx, userID, missing)...)
 		}
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, userID, users, nil)
+	r.applyPeerReadModels(ctx, userID, users, nil)
 	r.log.Debug("channels.getParticipants result",
 		zap.Int64("channel_id", ref.ID),
 		zap.String("filter", string(filter.Kind)),
@@ -237,7 +237,7 @@ func (r *Router) onChannelsGetParticipant(ctx context.Context, req *tg.ChannelsG
 	}
 	participant := tgChannelParticipant(userID, member)
 	users := r.tgUsersForIDs(ctx, userID, channelParticipantUserRefs(participant))
-	r.applyStoryMaxIDsToPeerObjects(ctx, userID, users, nil)
+	r.applyPeerReadModels(ctx, userID, users, nil)
 	return &tg.ChannelsChannelParticipant{
 		Participant: participant,
 		Users:       users,
@@ -597,7 +597,7 @@ func (r *Router) onChannelsGetAdminLog(ctx context.Context, req *tg.ChannelsGetA
 	events := tgChannelAdminLogEvents(userID, res.Events)
 	chats := []tg.ChatClass{tgChannelChatMin(userID, res.Channel)}
 	users := r.channelAdminLogUsers(ctx, userID, res.Events)
-	r.applyStoryMaxIDsToPeerObjects(ctx, userID, users, chats)
+	r.applyPeerReadModels(ctx, userID, users, chats)
 	return &tg.ChannelsAdminLogResults{
 		Events: events,
 		Chats:  chats,

@@ -125,7 +125,7 @@ func (r *Router) onUsersGetUsers(ctx context.Context, ids []tg.InputUserClass) (
 		}
 		out = append(out, r.tgUser(u))
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, out, nil)
+	r.applyPeerReadModels(ctx, currentUserID, out, nil)
 	return out, nil
 }
 
@@ -159,7 +159,7 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		return nil, err
 	}
 	applyPrivateContactRestrictionToUser(user, contactRestriction)
-	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, []tg.UserClass{user}, nil)
+	r.applyPeerReadModels(ctx, currentUserID, []tg.UserClass{user}, nil)
 	loadEpoch := r.userFullProjectionCache.LoadEpoch()
 	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
 		if !applyContactNoteToUserFull(u, &full) {
@@ -402,10 +402,58 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			full.SetBirthday(tgBirthday(u.Birthday))
 		}
 	}
+	r.applyAccountRatingToUserFull(ctx, currentUserID, u.ID, &full)
 	// 个人频道（account.updatePersonalChannel）不在此落地：它按 viewer 实时解析，作为缓存后的
 	// overlay 处理（applyPersonalChannelToUserFull），避免烤进 per-(viewer,target) 投影缓存以及
 	// build/chats 两次解析同一频道。
 	return full, nil
+}
+
+// applyAccountRatingToUserFull fills userFull.stars_rating and, for the account's
+// own profile only, stars_my_pending_rating / stars_my_pending_rating_date.
+//
+// The pending field is named stars_MY_pending_rating for a reason: it is a score
+// the account has earned but that is not yet reflected in the visible level, so
+// leaking a stranger's pending rating would expose a future state the peer has not
+// published. It is therefore gated on viewer == target, not on any privacy rule.
+//
+// A nil AccountRatings service (or any read error) leaves every flag unset, which
+// is exactly the wire shape from before ratings existed.
+func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID, targetUserID int64, full *tg.UserFull) {
+	if r.deps.AccountRatings == nil || full == nil || targetUserID == 0 {
+		return
+	}
+	rating, err := r.deps.AccountRatings.Rating(ctx, targetUserID)
+	if err != nil {
+		// Includes domain.ErrAccountRatingNotFound: an account with no rating row
+		// simply has no rating to show.
+		return
+	}
+	full.SetStarsRating(tgStarsRating(rating.StarsRating()))
+	if viewerUserID == 0 || viewerUserID != targetUserID {
+		return
+	}
+	pending, ok := rating.PendingStarsRating()
+	if !ok {
+		return
+	}
+	full.SetStarsMyPendingRating(tgStarsRating(pending))
+	full.SetStarsMyPendingRatingDate(int(rating.PendingDate.Unix()))
+}
+
+// tgStarsRating projects domain.StarsRating onto starsRating#1b0e4f07.
+// next_level_stars is a flagged field and stays absent at the top level, where
+// there is no next threshold to report.
+func tgStarsRating(in domain.StarsRating) tg.StarsRating {
+	out := tg.StarsRating{
+		Level:             in.Level,
+		CurrentLevelStars: in.CurrentLevelStars,
+		Stars:             in.Stars,
+	}
+	if in.HasNextLevelStars {
+		out.SetNextLevelStars(in.NextLevelStars)
+	}
+	return out
 }
 
 // tgBirthday 把 domain 生日转 tg.Birthday（Year 可选，0 表示不含年份）。

@@ -50,6 +50,30 @@ export function toInt(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+// int64 values arrive as JSON strings; keep parsing tolerant so an unexpected
+// empty string or "null" never renders as NaN.
+export function toNumeric(value: string): number {
+  const raw = (value ?? "").trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function formatQuantity(value: string): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "0";
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed.toLocaleString() : raw;
+}
+
+export function formatSigned(value: string): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "0";
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return raw;
+  return parsed > 0 ? `+${parsed.toLocaleString()}` : parsed.toLocaleString();
+}
+
 export function parseIDs(value: string, invalidMessage = "msg ids invalid"): number[] {
   const ids = value
     .split(/[\s,]+/)

@@ -116,7 +116,7 @@ func (r *Router) onChannelsGetChannels(ctx context.Context, ids []tg.InputChanne
 			chats = append(chats, tgChannelChatForView(userID, view))
 		}
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
+	r.applyPeerReadModels(ctx, userID, nil, chats)
 	return &tg.MessagesChats{Chats: chats}, nil
 }
 
@@ -176,7 +176,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		chats := append([]tg.ChatClass(nil), cached.chats...)
 		chats = r.appendLinkedDiscussionChat(ctx, userID, ref.ID, chats)
 		r.trackChannelInterest(ctx, userID, ref.ID)
-		r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
+		r.applyPeerReadModels(ctx, userID, nil, chats)
 		return &tg.MessagesChatFull{
 			FullChat: &full,
 			Chats:    chats,
@@ -221,7 +221,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyNotifySettingsToChannelFull(ctx, userID, view.Channel.ID, full)
 	r.applyAndroidChannelReactionEditorCompat(ctx, full, canChangeInfo)
-	r.applyStoryMaxIDsToPeerObjects(ctx, userID, nil, chats)
+	r.applyPeerReadModels(ctx, userID, nil, chats)
 	return &tg.MessagesChatFull{
 		FullChat: full,
 		Chats:    chats,

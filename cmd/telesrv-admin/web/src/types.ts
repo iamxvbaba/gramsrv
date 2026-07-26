@@ -349,6 +349,115 @@ export type StarGiftCollectiblePreview = {
   backdrops?: StarGiftCollectibleAttributeRow[];
 };
 
+export type CollectibleUsernameStatus = "vault" | "owned" | "burned";
+
+export type CollectiblePeerType = "" | "user" | "channel";
+
+export type CollectibleCurrency = "XTR" | "TON" | "USD";
+
+// int64 columns arrive as JSON strings to survive the 2^53 boundary.
+export type CollectibleUsernameRow = {
+  ID: string;
+  Username: string;
+  Status: CollectibleUsernameStatus;
+  OwnerPeerType: CollectiblePeerType;
+  OwnerPeerID: string;
+  OwnerUsername: string;
+  OwnerName: string;
+  PurchaseDate: string;
+  Currency: CollectibleCurrency;
+  Amount: string;
+  CryptoCurrency: string;
+  CryptoAmount: string;
+  URL: string;
+  OriginalOwnerPeerType: string;
+  OriginalOwnerPeerID: string;
+  OriginalOwnerUsername: string;
+  TransferCount: number;
+  Version: string;
+  // Mirrors the holder's username-registry row: an owned asset can still be
+  // hidden from the profile.
+  RegistryActive: boolean;
+  RegistrySortOrder: number;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type CollectibleUsernameTransferKind = "mint" | "transfer" | "revoke" | "burn";
+
+export type CollectibleUsernameTransferRow = {
+  ID: string;
+  CollectibleID: string;
+  Kind: CollectibleUsernameTransferKind;
+  FromPeerType: string;
+  FromPeerID: string;
+  FromUsername: string;
+  ToPeerType: string;
+  ToPeerID: string;
+  ToUsername: string;
+  Currency: string;
+  Amount: string;
+  Actor: string;
+  Reason: string;
+  CommandKey: string;
+  CreatedAt: string;
+};
+
+export type CollectibleUsernameListResponse = {
+  rows: CollectibleUsernameRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type CollectibleUsernameDetail = {
+  asset: CollectibleUsernameRow;
+  transfers: CollectibleUsernameTransferRow[] | null;
+};
+
+export type AccountRatingRow = {
+  UserID: string;
+  Username: string;
+  FirstName: string;
+  Level: number;
+  Stars: string;
+  CurrentLevelStars: string;
+  NextLevelStars: string;
+  HasNextLevel: boolean;
+  StarsComponent: string;
+  ActivityComponent: string;
+  PenaltyComponent: string;
+  ManualComponent: string;
+  PendingStars: string;
+  PendingDate: string;
+  ComputedAt: string;
+  UpdatedAt: string;
+  Version: string;
+};
+
+export type AccountRatingEventKind = "stars" | "activity" | "moderation" | "manual" | "recompute";
+
+export type AccountRatingEventRow = {
+  ID: string;
+  UserID: string;
+  Kind: AccountRatingEventKind;
+  Amount: string;
+  Reason: string;
+  Actor: string;
+  CommandKey: string;
+  CreatedAt: string;
+};
+
+export type AccountRatingListResponse = {
+  rows: AccountRatingRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type AccountRatingDetail = {
+  rating: AccountRatingRow;
+  events: AccountRatingEventRow[] | null;
+};
+
 export type MessageDetail = {
   Message: MessageRow;
   MessageJSON: string;

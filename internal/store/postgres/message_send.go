@@ -99,13 +99,15 @@ WITH desired (
 		EXCLUDED.about, EXCLUDED.is_bot, EXCLUDED.bot_info_version
 	)
 )
-INSERT INTO peer_usernames (username_lower, peer_type, peer_id)
-SELECT lower(username), 'user', id
+INSERT INTO peer_usernames (username_lower, username, peer_type, peer_id, active, editable, sort_order)
+SELECT lower(username), username, 'user', id, true, true, 0
 FROM desired
-ON CONFLICT (peer_type, peer_id) DO UPDATE SET
+ON CONFLICT (peer_type, peer_id) WHERE editable DO UPDATE SET
 	username_lower = EXCLUDED.username_lower,
+	username = EXCLUDED.username,
 	updated_at = now()
-WHERE peer_usernames.username_lower IS DISTINCT FROM EXCLUDED.username_lower
+WHERE (peer_usernames.username_lower, peer_usernames.username)
+	IS DISTINCT FROM (EXCLUDED.username_lower, EXCLUDED.username)
 `, u.ID, u.AccessHash, u.Phone, u.FirstName, u.LastName, u.Username, u.CountryCode, u.Verified, u.Support, u.About, u.Bot, u.BotInfoVersion); err != nil {
 		return fmt.Errorf("ensure official system user: %w", err)
 	}
