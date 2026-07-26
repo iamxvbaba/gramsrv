@@ -60,6 +60,7 @@ import (
 	usernamesapp "telesrv/internal/app/usernames"
 	"telesrv/internal/app/userprojection"
 	"telesrv/internal/app/users"
+	verificationapp "telesrv/internal/app/verification"
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
@@ -299,6 +300,123 @@ func (n rpcProjectionUsernameNotifier) NotifyPeerUsernamesChanged(_ context.Cont
 }
 
 var _ usernamesapp.PeerUsernameNotifier = rpcProjectionUsernameNotifier{}
+
+// verificationPeerVerifier writes the platform verification flag onto the peer
+// record for app/verification.
+//
+// It is called from *inside* the store transaction that decides the application,
+// which is the whole point of the port: "approved" and "target carries the badge"
+// must commit together. That is why the transaction is taken from the context
+// (postgres.VerificationTxFromContext) and written through — a write on a separate
+// pool connection would survive a rollback of the decision and leave a peer
+// wearing a badge no approved application backs.
+//
+// The app-service path is only the fallback for a context that carries no
+// transaction (a non-postgres store, or a direct call): there is nothing to join
+// then, and going through the services keeps their cache refresh behaviour.
+type verificationPeerVerifier struct {
+	users interface {
+		SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error)
+	}
+	channels interface {
+		SetVerified(ctx context.Context, channelID int64, verified bool) (domain.Channel, error)
+	}
+	// channelRowCache is handed to the transaction-scoped channel store so the
+	// cached channel row is dropped on the flag write, exactly as the pooled store
+	// does it.
+	channelRowCache *postgres.ChannelRowCache
+}
+
+func (v verificationPeerVerifier) SetUserVerified(ctx context.Context, userID int64, verified bool) error {
+	if tx, ok := postgres.VerificationTxFromContext(ctx); ok {
+		_, err := postgres.NewUserStore(tx).SetVerified(ctx, userID, verified)
+		return err
+	}
+	if v.users == nil {
+		return fmt.Errorf("verification peer verifier: user service is not wired")
+	}
+	_, err := v.users.SetVerified(ctx, userID, verified)
+	return err
+}
+
+func (v verificationPeerVerifier) SetChannelVerified(ctx context.Context, channelID int64, verified bool) error {
+	if tx, ok := postgres.VerificationTxFromContext(ctx); ok {
+		opts := []postgres.ChannelStoreOption(nil)
+		if v.channelRowCache != nil {
+			opts = append(opts, postgres.WithChannelRowCache(v.channelRowCache))
+		}
+		_, err := postgres.NewChannelStore(tx, opts...).SetChannelVerified(ctx, channelID, verified)
+		return err
+	}
+	if v.channels == nil {
+		return fmt.Errorf("verification peer verifier: channel service is not wired")
+	}
+	_, err := v.channels.SetVerified(ctx, channelID, verified)
+	return err
+}
+
+var _ verificationapp.PeerVerifier = verificationPeerVerifier{}
+
+// rpcProjectionVerificationNotifier is the fallback badge-change hook, the same
+// shape and for the same reason as rpcProjectionUsernameNotifier: the RPC edge
+// owns both the cached peer projections and the tg.* push, and until it exposes
+// NotifyPeerVerified only the invalidation half can be wired here. Invalidation is
+// the half that must not be skipped — a decided application whose peer projection
+// still says "not verified" would keep showing the old badge state to every client
+// that reads from cache.
+type rpcProjectionVerificationNotifier struct {
+	invalidator interface {
+		InvalidateRPCProjectionReadModelForUser(userID int64)
+		InvalidateRPCProjectionReadModelForChannel(channelID int64)
+	}
+	users storepkg.UserCache
+	log   *zap.Logger
+}
+
+func (n rpcProjectionVerificationNotifier) NotifyPeerVerified(ctx context.Context, peer domain.Peer) error {
+	if n.invalidator == nil {
+		return nil
+	}
+	switch peer.Type {
+	case domain.PeerTypeUser:
+		n.invalidator.InvalidateRPCProjectionReadModelForUser(peer.ID)
+		// The shared user:base cache is the source the projection rebuilds from, so
+		// dropping only the projection would let it rebuild from a stale row.
+		if n.users != nil {
+			if err := n.users.Delete(ctx, []int64{peer.ID}); err != nil && n.log != nil {
+				n.log.Warn("invalidate base user cache after verification change",
+					zap.Int64("user_id", peer.ID), zap.Error(err))
+			}
+		}
+	case domain.PeerTypeChannel:
+		n.invalidator.InvalidateRPCProjectionReadModelForChannel(peer.ID)
+	}
+	return nil
+}
+
+// compositeVerificationNotifier drops the cached peer projections first and only
+// then lets the protocol edge push the change, so the pushed peer is rebuilt from
+// the committed row rather than from a cache entry written before the decision.
+// A cache failure must not swallow the push: the push is what online clients see.
+type compositeVerificationNotifier struct {
+	cache rpcProjectionVerificationNotifier
+	edge  verificationapp.PeerNotifier
+}
+
+func (n compositeVerificationNotifier) NotifyPeerVerified(ctx context.Context, peer domain.Peer) error {
+	if err := n.cache.NotifyPeerVerified(ctx, peer); err != nil && n.cache.log != nil {
+		n.cache.log.Warn("invalidate peer caches after verification change",
+			zap.String("peer_type", string(peer.Type)), zap.Int64("peer_id", peer.ID), zap.Error(err))
+	}
+	if n.edge == nil {
+		return nil
+	}
+	return n.edge.NotifyPeerVerified(ctx, peer)
+}
+
+var _ verificationapp.PeerNotifier = compositeVerificationNotifier{}
+
+var _ verificationapp.PeerNotifier = rpcProjectionVerificationNotifier{}
 
 func externalMediaOption(cfg config.Config) filesapp.Option {
 	if !cfg.ExternalMediaEnable {
@@ -688,6 +806,7 @@ func run(logger *zap.Logger) error {
 		botsapp.WithStickerSetCreator(filesService),
 		botsapp.WithUserStickerSets(accountService),
 		botsapp.WithTelegramLogin(telegramLoginService),
+		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
 		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	groupCallStore := postgres.NewGroupCallStore(pool)
 	groupCallsService := groupcallsapp.NewService(groupCallStore, groupcallsapp.WithPublicBaseURL(cfg.PublicBaseURL))
@@ -909,6 +1028,35 @@ func run(logger *zap.Logger) error {
 		ratingapp.WithStaleAfter(cfg.RatingStaleAfter),
 		ratingapp.WithLogger(logger.Named("app").Named("rating")),
 	)
+	// Official platform verification: applications are filed through the built-in
+	// @verifybot and decided in the admin panel. Every eligibility rule lives in
+	// this service; the bot and the panel are only its two surfaces.
+	verificationStore := postgres.NewVerificationStore(pool)
+	verificationLogger := logger.Named("app").Named("verification")
+	verificationService := verificationapp.NewService(
+		verificationapp.WithStore(verificationStore),
+		verificationapp.WithUserDirectory(usersService),
+		verificationapp.WithBotDirectory(botsService),
+		verificationapp.WithChannelDirectory(channelsService),
+		verificationapp.WithAccountFreezeProvider(adminService),
+		verificationapp.WithPeerVerifier(verificationPeerVerifier{
+			users:           usersService,
+			channels:        channelsService,
+			channelRowCache: channelRowCache,
+		}),
+		verificationapp.WithRateLimiter(rateLimiter, cfg.VerificationApplyRateLimit, cfg.VerificationApplyRateWindow),
+		verificationapp.WithEnabled(cfg.VerificationEnabled),
+		verificationapp.WithAllowUserTargets(cfg.VerificationAllowUserTargets),
+		verificationapp.WithRejectCooldown(cfg.VerificationRejectCooldown),
+		verificationapp.WithMaxActivePerUser(cfg.VerificationMaxActivePerUser),
+		verificationapp.WithLogger(verificationLogger),
+	)
+	// @verifybot is the applicant surface, and the notifier that carries decisions
+	// back to the applicant as ordinary messages. Both directions are deferred
+	// injections because the bots service is built before the peer directories the
+	// verification service needs.
+	botsService.SetVerification(verificationService)
+	verificationService.SetApplicantNotifier(botsService)
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -965,6 +1113,7 @@ func run(logger *zap.Logger) error {
 		Files:                filesService,
 		PremiumPromo:         filesService,
 		Bots:                 botsService,
+		ServiceBotCallbacks:  botsService,
 		Polls:                pollsapp.NewService(pollStore),
 		Stories:              storiesService,
 		Phone:                phoneService,
@@ -1024,6 +1173,7 @@ func run(logger *zap.Logger) error {
 		Moderation:             moderationService,
 		Usernames:              usernamesService,
 		Rating:                 ratingService,
+		Verification:           verificationService,
 	})
 	// The RPC edge owns the tg.* username update push and the projection caches,
 	// so it implements the domain-only notification hook the username service
@@ -1043,8 +1193,43 @@ func run(logger *zap.Logger) error {
 		logger.Warn("collectible username update push is not implemented by the RPC edge; only projection invalidation is wired",
 			zap.String("expected_hook", "rpc.Router.NotifyPeerUsernamesChanged"))
 	}
+	// The badge change is a peer fact the protocol edge caches and pushes, so the
+	// verification service gets the same hook the username registry uses. The
+	// assertion is deliberately dynamic: NotifyPeerVerified lands with the edge
+	// agent, and until then only projection invalidation is wired — a decision can
+	// then never be masked by a stale projection, and clients converge on their next
+	// authoritative peer read.
+	if notifier, ok := any(router).(verificationapp.PeerNotifier); ok {
+		// Compose rather than choose: the decision writes users.verified inside the
+		// verification transaction (through postgres.VerificationTxFromContext), so it
+		// bypasses users.Service and its cache refresh. Dropping the shared user:base
+		// entry before the edge builds the pushed tg.User is what keeps the badge in
+		// that push from being one beat stale; the cross-instance read-model listener
+		// would otherwise only catch up asynchronously.
+		verificationService.SetPeerNotifier(compositeVerificationNotifier{
+			cache: rpcProjectionVerificationNotifier{
+				invalidator: router,
+				users:       userCache,
+				log:         verificationLogger,
+			},
+			edge: notifier,
+		})
+	} else {
+		verificationService.SetPeerNotifier(rpcProjectionVerificationNotifier{
+			invalidator: router,
+			users:       userCache,
+			log:         verificationLogger,
+		})
+		logger.Warn("verification badge update push is not implemented by the RPC edge; only projection invalidation is wired",
+			zap.String("expected_hook", "rpc.Router.NotifyPeerVerified"))
+	}
 	go ratingapp.NewRecomputeWorker(ratingService, logger.Named("rating").Named("recompute"),
 		cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch).Run(ctx)
+	// Applicant notifications are delivered from a durable outbox, never inside the
+	// decision transaction: @verifybot may be blocked and the panel must not wait on
+	// a message send.
+	go verificationapp.NewNotificationWorker(verificationService, logger.Named("verification").Named("notify"),
+		cfg.VerificationNotifyInterval, cfg.VerificationNotifyBatch).Run(ctx)
 	moderationActionOptions := []moderationapp.ActionExecutorOption{}
 	if cfg.PublicLinkWebAddr != "" {
 		moderationActionOptions = append(
@@ -1120,7 +1305,21 @@ func run(logger *zap.Logger) error {
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}
-	if _, err := adminapi.Start(ctx, adminapi.Config{Addr: cfg.AdminAPIAddr, Token: cfg.AdminAPIToken}, adminService, logger.Named("adminapi")); err != nil {
+	// Scoped tokens carry a bounded permission set; the master token stays
+	// unrestricted, so a deployment that configures none behaves exactly as before.
+	adminScopedTokens := make([]adminapi.ScopedToken, 0, len(cfg.AdminScopedTokens))
+	for _, item := range cfg.AdminScopedTokens {
+		adminScopedTokens = append(adminScopedTokens, adminapi.ScopedToken{
+			Name:        item.Name,
+			Token:       item.Token,
+			Permissions: item.Permissions,
+		})
+	}
+	if _, err := adminapi.Start(ctx, adminapi.Config{
+		Addr:         cfg.AdminAPIAddr,
+		Token:        cfg.AdminAPIToken,
+		ScopedTokens: adminScopedTokens,
+	}, adminService, logger.Named("adminapi")); err != nil {
 		return fmt.Errorf("start admin api: %w", err)
 	}
 	if _, err := web.Start(ctx, web.Config{

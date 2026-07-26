@@ -47,7 +47,10 @@ func newServer(cfg uiConfig, read *readStore) (*server, error) {
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/login", s.handleAPILogin)
-	mux.HandleFunc("POST /api/logout", s.handleAPILogout)
+	// Logout goes through the same gate as every other mutating route: a forced
+	// logout is a state change, and an invalid session is cleared by the gate
+	// itself, so nothing is stranded by protecting it.
+	mux.Handle("POST /api/logout", s.requireAuthAPI(http.HandlerFunc(s.handleAPILogout)))
 	mux.Handle("GET /api/session", s.requireAuthAPI(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/accounts", s.requireAuthAPI(http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
@@ -109,6 +112,17 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/delete-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/recompute-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
 	mux.Handle("POST /api/actions/adjust-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
+	// Official platform verification. Every route needs verification.review;
+	// clearing an existing badge needs verification.revoke on top of it.
+	mux.Handle("GET /api/verification/applications", s.verificationRead(s.handleVerificationApplicationsAPI))
+	mux.Handle("GET /api/verification/applications/{id}", s.verificationRead(s.handleVerificationApplicationDetailAPI))
+	mux.Handle("GET /api/verification/counts", s.verificationRead(s.handleVerificationCountsAPI))
+	mux.Handle("POST /api/verification/applications/{id}/claim", s.verificationRead(s.handleClaimVerificationAPI))
+	mux.Handle("POST /api/verification/applications/{id}/approve", s.verificationRead(s.handleApproveVerificationAPI))
+	mux.Handle("POST /api/verification/applications/{id}/reject", s.verificationRead(s.handleRejectVerificationAPI))
+	mux.Handle("POST /api/actions/revoke-verification", s.requireAuthAPI(
+		s.requirePermission(permissionVerificationReview,
+			s.requirePermission(permissionVerificationRevoke, http.HandlerFunc(s.handleRevokeVerificationAPI)))))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -117,23 +131,6 @@ func (s *server) routes() http.Handler {
 }
 
 type actorKey struct{}
-
-func (s *server) requireAuthAPI(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(sessionCookieName)
-		if err != nil {
-			writeAPIError(w, http.StatusUnauthorized, "not authenticated")
-			return
-		}
-		claims, ok := verifySession(s.cfg.SessionKey, cookie.Value, time.Now())
-		if !ok {
-			clearSessionCookie(w)
-			writeAPIError(w, http.StatusUnauthorized, "not authenticated")
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, claims.Actor)))
-	})
-}
 
 func actorFromContext(ctx context.Context) string {
 	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
@@ -159,7 +156,18 @@ type loginRequest struct {
 	Secret string `json:"secret"`
 }
 
+// sessionTTL bounds a signed panel session and the CSRF cookie that goes with it,
+// so the two never outlive each other.
+const sessionTTL = 12 * time.Hour
+
 func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
+	// Login is the one mutating route without a CSRF token, because no session
+	// exists yet to bind one to. The Origin check still applies, and the request
+	// carries the operator credential, which a forging page does not have.
+	if !sameOriginRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "origin is not allowed")
+		return
+	}
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
@@ -169,10 +177,18 @@ func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
+	csrfToken, err := newCSRFToken()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	permissions := newPanelPermissions(s.cfg.Permissions)
 	value, err := signSession(s.cfg.SessionKey, sessionClaims{
-		Actor: "admin",
-		Exp:   time.Now().Add(12 * time.Hour).Unix(),
-		Nonce: newCommandID("sess"),
+		Actor:       "admin",
+		Exp:         time.Now().Add(sessionTTL).Unix(),
+		Nonce:       newCommandID("sess"),
+		Permissions: permissions.List(),
+		CSRF:        csrfToken,
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -182,11 +198,16 @@ func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     "/",
-		MaxAge:   int((12 * time.Hour).Seconds()),
+		MaxAge:   int(sessionTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"actor": "admin"})
+	setCSRFCookie(w, csrfToken, sessionTTL)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"actor":       "admin",
+		"permissions": permissions.List(),
+		"csrf_token":  csrfToken,
+	})
 }
 
 func (s *server) validSecret(secret string) bool {
@@ -204,8 +225,14 @@ func (s *server) handleAPILogout(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleSession is what the panel asks on load. It reports the permissions the
+// session carries, so the UI can hide a section the operator may not use rather
+// than letting them walk into a 403.
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"actor": actorFromContext(r.Context())})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"actor":       actorFromContext(r.Context()),
+		"permissions": permissionsFromContext(r.Context()).List(),
+	})
 }
 
 func (s *server) handleStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
@@ -1925,6 +1952,42 @@ func (s *server) callAdminAPI(ctx context.Context, apiPath string, payload any) 
 		return result, errors.New(result.Error)
 	}
 	return result, nil
+}
+
+// callAdminCommand is callAdminAPI with the upstream status preserved.
+//
+// callAdminAPI deliberately loses it: every caller it has answers 502 for any
+// failure. A verification decision needs the distinction, so this variant returns
+// the HTTP status alongside the result and lets the handler map it. A status of 0
+// means no HTTP answer was obtained at all.
+func (s *server) callAdminCommand(ctx context.Context, apiPath string, payload any) (admin.CommandResult, int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return admin.CommandResult{}, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.AdminAPIURL+apiPath, bytes.NewReader(body))
+	if err != nil {
+		return admin.CommandResult{}, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return admin.CommandResult{}, 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var result admin.CommandResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return result, 0, fmt.Errorf("admin api %s: status=%d body=%s", apiPath, resp.StatusCode, string(raw))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if result.Error == "" {
+			result.Error = resp.Status
+		}
+		return result, resp.StatusCode, errors.New(result.Error)
+	}
+	return result, resp.StatusCode, nil
 }
 
 func (s *server) callAdminMultipart(ctx context.Context, apiPath string, metadata any, fileName string, data []byte) (admin.CommandResult, error) {

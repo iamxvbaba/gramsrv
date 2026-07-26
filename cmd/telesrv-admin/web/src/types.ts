@@ -458,6 +458,103 @@ export type AccountRatingDetail = {
   events: AccountRatingEventRow[] | null;
 };
 
+// Official platform verification. Every int64 the backend tags `,string` stays a
+// decimal string here: application ids, peer ids and the optimistic-locking
+// version all outgrow the exact range of a JSON number, and a rounded version
+// would send a decision against the wrong revision of the row.
+export type VerificationTargetType = "bot" | "channel" | "supergroup" | "user";
+
+export type VerificationStatus =
+  | "draft"
+  | "submitted"
+  | "in_review"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export type VerificationEventKind =
+  | "created"
+  | "updated"
+  | "submitted"
+  | "claimed"
+  | "approved"
+  | "rejected"
+  | "cancelled"
+  | "revoked"
+  | "notified";
+
+export type VerificationApplicationRow = {
+  ID: string;
+  ApplicantUserID: string;
+  ApplicantUsername: string;
+  ApplicantName: string;
+  TargetType: VerificationTargetType;
+  TargetID: string;
+  TargetTitle: string;
+  TargetUsername: string;
+  TargetVerified: boolean;
+  Category: string;
+  Description: string;
+  OfficialWebsite: string;
+  // Go marshals an empty slice as null, so both shapes have to be tolerated.
+  SocialLinks: string[] | null;
+  PressLinks: string[] | null;
+  AdditionalNote: string;
+  Status: VerificationStatus;
+  ReviewerAdminID: string;
+  DecisionReason: string;
+  // InternalNote is the reviewer handover note: operator-only, never shown to the
+  // applicant.
+  InternalNote: string;
+  CorrelationID: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+  SubmittedAt: string;
+  ReviewedAt: string;
+  Version: string;
+};
+
+export type VerificationEventRow = {
+  ID: string;
+  Kind: VerificationEventKind;
+  FromStatus: string;
+  ToStatus: string;
+  Actor: string;
+  Reason: string;
+  Note: string;
+  CreatedAt: string;
+};
+
+export type VerificationApplicationListResponse = {
+  rows: VerificationApplicationRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type VerificationApplicationDetail = {
+  application: VerificationApplicationRow;
+  events: VerificationEventRow[] | null;
+  // Both flags describe the target as it is now, not as it was at submission.
+  applicant_controls_target: boolean;
+  target_verified: boolean;
+};
+
+// Counts are decimal strings for the same exactness reason as the ids; the
+// backend always sends all six statuses.
+export type VerificationCountsResponse = {
+  counts: Record<string, string> | null;
+};
+
+export type AdminSession = {
+  actor: string;
+  // The right set the signed session was issued with; ["*"] means everything.
+  permissions?: string[] | null;
+};
+
+export type AdminLoginResult = AdminSession & {
+  csrf_token: string;
+};
+
 export type MessageDetail = {
   Message: MessageRow;
   MessageJSON: string;

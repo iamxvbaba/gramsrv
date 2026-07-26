@@ -31,6 +31,11 @@ const (
 	ratingListDefaultLimit      = 50
 	ratingListMaxLimit          = 200
 	ratingEventLimit            = 50
+	// Verification review queue pages. The bounds mirror app/verification, so the
+	// panel and the admin API page the queue identically.
+	verificationListDefaultLimit = 50
+	verificationListMaxLimit     = 200
+	verificationEventLimit       = 100
 )
 
 // errReadNotFound reports a detail row that does not exist, so the API layer can
@@ -1517,4 +1522,316 @@ LIMIT $2`, userID, ratingEventLimit)
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// Official platform verification review queue.
+//
+// The application record is the audit subject and is read here directly, with the
+// applicant resolved through the same users/peer_usernames join every other view
+// uses. target_verified is read from the live peer rather than from the
+// submission snapshot: a reviewer has to see the badge as it is now, and the
+// snapshot columns exist precisely because the live peer may have drifted.
+//
+// Every int64 is tagged as a JSON string. Application ids, peer ids and the
+// optimistic-locking version all exceed the range a JSON number represents
+// exactly, and a rounded version would send a decision against the wrong
+// revision of the row.
+type VerificationApplicationRow struct {
+	ID                int64 `json:"ID,string"`
+	ApplicantUserID   int64 `json:"ApplicantUserID,string"`
+	ApplicantUsername string
+	ApplicantName     string
+	TargetType        string
+	TargetID          int64 `json:"TargetID,string"`
+	TargetTitle       string
+	TargetUsername    string
+	TargetVerified    bool
+	Category          string
+	Description       string
+	OfficialWebsite   string
+	SocialLinks       []string
+	PressLinks        []string
+	AdditionalNote    string
+	Status            string
+	ReviewerAdminID   string
+	DecisionReason    string
+	// InternalNote is operator-only: it is the reviewer handover note and is never
+	// projected to the applicant. Every caller of this store already holds
+	// verification.review.
+	InternalNote  string
+	CorrelationID string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	SubmittedAt   time.Time
+	ReviewedAt    time.Time
+	Version       int64 `json:"Version,string"`
+}
+
+// VerificationEventRow is one entry of the immutable application history.
+type VerificationEventRow struct {
+	ID         int64 `json:"ID,string"`
+	Kind       string
+	FromStatus string
+	ToStatus   string
+	Actor      string
+	Reason     string
+	Note       string
+	CreatedAt  time.Time
+}
+
+// VerificationApplicationDetail is the application, its history, and whether the
+// applicant still controls the target.
+type VerificationApplicationDetail struct {
+	Application VerificationApplicationRow
+	Events      []VerificationEventRow
+	// ApplicantControlsTarget re-derives ownership from the live records, using the
+	// same authorities the use-case layer does: the bots table for a bot, the
+	// public-channel admin index for a channel or supergroup, identity for a user.
+	// Control can be lost between submission and review, and approving a peer the
+	// applicant no longer holds is exactly what the flag exists to prevent.
+	ApplicantControlsTarget bool
+}
+
+const verificationSelectColumns = `va.id, va.applicant_user_id,
+	COALESCE(NULLIF(au.username, ''), p.username_lower, '') AS applicant_username,
+	TRIM(BOTH ' ' FROM COALESCE(au.first_name, '') || ' ' || COALESCE(au.last_name, '')) AS applicant_name,
+	va.target_type, va.target_id, va.target_title, va.target_username,
+	COALESCE(tu.verified, tc.verified, false) AS target_verified,
+	va.category, va.description, va.official_website, va.social_links, va.press_links,
+	va.additional_note, va.status, va.reviewer_admin_id, va.decision_reason,
+	va.internal_note, va.correlation_id,
+	va.created_at, va.updated_at, va.submitted_at, va.reviewed_at, va.version`
+
+// verificationJoins resolves the applicant and the live target. Bots and users
+// live in the user namespace, channels and supergroups in the channel one, so
+// both sides are joined and the target type decides which one contributes.
+const verificationJoins = `
+FROM verification_applications va
+LEFT JOIN users au ON au.id = va.applicant_user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = va.applicant_user_id AND p.editable
+LEFT JOIN users tu ON va.target_type IN ('bot', 'user') AND tu.id = va.target_id
+LEFT JOIN channels tc ON va.target_type IN ('channel', 'supergroup') AND tc.id = va.target_id`
+
+func scanVerificationApplicationRow(scan func(dest ...any) error, item *VerificationApplicationRow) error {
+	// submitted_at is NULL while the application is still a draft and reviewed_at
+	// until a reviewer closes it.
+	var submittedAt, reviewedAt *time.Time
+	if err := scan(
+		&item.ID, &item.ApplicantUserID, &item.ApplicantUsername, &item.ApplicantName,
+		&item.TargetType, &item.TargetID, &item.TargetTitle, &item.TargetUsername, &item.TargetVerified,
+		&item.Category, &item.Description, &item.OfficialWebsite, &item.SocialLinks, &item.PressLinks,
+		&item.AdditionalNote, &item.Status, &item.ReviewerAdminID, &item.DecisionReason,
+		&item.InternalNote, &item.CorrelationID,
+		&item.CreatedAt, &item.UpdatedAt, &submittedAt, &reviewedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	if submittedAt != nil {
+		item.SubmittedAt = submittedAt.UTC()
+	}
+	if reviewedAt != nil {
+		item.ReviewedAt = reviewedAt.UTC()
+	}
+	if item.SocialLinks == nil {
+		item.SocialLinks = []string{}
+	}
+	if item.PressLinks == nil {
+		item.PressLinks = []string{}
+	}
+	return nil
+}
+
+// ListVerificationApplications pages the review queue newest first, keyset by
+// descending id. status/targetType/reviewer are exact filters; q matches an
+// application id, a target peer id, or a target/applicant username prefix, which
+// is how an operator looks a case up from a report.
+func (s *readStore) ListVerificationApplications(
+	ctx context.Context,
+	status, targetType, reviewer, q string,
+	beforeID int64,
+	limit int,
+) ([]VerificationApplicationRow, bool, error) {
+	if limit <= 0 {
+		limit = verificationListDefaultLimit
+	}
+	if limit > verificationListMaxLimit {
+		limit = verificationListMaxLimit
+	}
+	status = strings.TrimSpace(status)
+	targetType = strings.TrimSpace(targetType)
+	reviewer = strings.TrimSpace(reviewer)
+	query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(q), "@"))
+	pattern := ""
+	queryID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryID = parsed
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+verificationSelectColumns+verificationJoins+`
+WHERE ($1 = '' OR va.status = $1)
+	AND ($2 = '' OR va.target_type = $2)
+	AND ($3 = '' OR va.reviewer_admin_id = $3)
+	AND ($4::bigint = 0 OR va.id < $4)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND (va.id = $6 OR va.target_id = $6 OR va.applicant_user_id = $6))
+		OR lower(va.target_username) LIKE $5
+		OR lower(va.target_title) LIKE $5
+		OR lower(COALESCE(au.username, '')) LIKE $5
+	))
+ORDER BY va.id DESC
+LIMIT $7`, status, targetType, reviewer, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list verification applications: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationApplicationRow, 0, limit+1)
+	for rows.Next() {
+		var item VerificationApplicationRow
+		if err := scanVerificationApplicationRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// VerificationApplicationDetail returns one application with its history and the
+// live ownership check. A missing application reports errReadNotFound so the API
+// answers 404 rather than 500.
+func (s *readStore) VerificationApplicationDetail(ctx context.Context, id int64) (VerificationApplicationDetail, error) {
+	var out VerificationApplicationDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+verificationSelectColumns+verificationJoins+`
+WHERE va.id = $1`, id)
+	// The single-row path reuses the list scanner, so one column order serves
+	// both: a drift between them would silently mis-assign columns.
+	err := scanVerificationApplicationRow(row.Scan, &out.Application)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get verification application: %w", err)
+	}
+	out.Events, err = s.verificationApplicationEvents(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	controls, err := s.applicantControlsVerificationTarget(
+		ctx, out.Application.ApplicantUserID, out.Application.TargetType, out.Application.TargetID,
+	)
+	if err != nil {
+		return out, err
+	}
+	out.ApplicantControlsTarget = controls
+	return out, nil
+}
+
+func (s *readStore) verificationApplicationEvents(ctx context.Context, applicationID int64) ([]VerificationEventRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, kind, from_status, to_status, actor, reason, note, created_at
+FROM verification_application_events
+WHERE application_id = $1
+ORDER BY id DESC
+LIMIT $2`, applicationID, verificationEventLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list verification application events: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationEventRow, 0)
+	for rows.Next() {
+		var item VerificationEventRow
+		if err := rows.Scan(
+			&item.ID, &item.Kind, &item.FromStatus, &item.ToStatus,
+			&item.Actor, &item.Reason, &item.Note, &item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// VerificationStatusCounts is the queue summary above the list. Every modelled
+// status is present with a zero, so the panel never has to tell "none" from
+// "missing", and the counts are decimal strings for the same exactness reason as
+// the ids.
+func (s *readStore) VerificationStatusCounts(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	for _, status := range []domain.VerificationStatus{
+		domain.VerificationStatusDraft,
+		domain.VerificationStatusSubmitted,
+		domain.VerificationStatusInReview,
+		domain.VerificationStatusApproved,
+		domain.VerificationStatusRejected,
+		domain.VerificationStatusCancelled,
+	} {
+		out[string(status)] = "0"
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT status, count(*) FROM verification_applications GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count verification applications: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		out[status] = strconv.FormatInt(count, 10)
+	}
+	return out, rows.Err()
+}
+
+// applicantControlsVerificationTarget re-derives ownership from the live records.
+//
+// The authorities are the ones app/verification uses, so the panel's answer and
+// the approval path's answer cannot disagree: the bots table for a bot (minus
+// BotFather, which nobody owns), the public-channel admin index for a channel or
+// supergroup, and plain identity for a user account.
+func (s *readStore) applicantControlsVerificationTarget(ctx context.Context, applicantUserID int64, targetType string, targetID int64) (bool, error) {
+	if applicantUserID <= 0 || targetID <= 0 {
+		return false, nil
+	}
+	switch domain.VerificationTargetType(targetType) {
+	case domain.VerificationTargetUser:
+		return applicantUserID == targetID, nil
+	case domain.VerificationTargetBot:
+		var owns bool
+		err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM bots b
+	WHERE b.bot_user_id = $1 AND b.owner_user_id = $2 AND b.bot_user_id <> $3
+)`, targetID, applicantUserID, domain.BotFatherUserID).Scan(&owns)
+		if err != nil {
+			return false, fmt.Errorf("check verification bot ownership: %w", err)
+		}
+		return owns, nil
+	case domain.VerificationTargetChannel, domain.VerificationTargetSupergroup:
+		var admins bool
+		err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM user_channel_member_index i
+	WHERE i.user_id = $1 AND i.channel_id = $2
+		AND i.status = 'active' AND i.role IN ('creator', 'admin')
+		AND i.public_username AND NOT i.deleted
+)`, applicantUserID, targetID).Scan(&admins)
+		if err != nil {
+			return false, fmt.Errorf("check verification channel ownership: %w", err)
+		}
+		return admins, nil
+	default:
+		return false, nil
+	}
 }

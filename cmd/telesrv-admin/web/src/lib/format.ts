@@ -44,6 +44,22 @@ export function formatUnix(value: number): string {
   return date.toLocaleString();
 }
 
+// safeHttpURL vets a link an applicant typed. Only http(s) is turned into an
+// anchor: a submitted string may just as well be javascript:, data: or a bare
+// word, and must stay inert text in that case. The parsed href is returned so a
+// malformed authority cannot slip through the prefix test.
+export function safeHttpURL(value: string): string {
+  const raw = (value ?? "").trim();
+  if (!/^https?:\/\//i.test(raw)) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.href;
+  } catch {
+    return "";
+  }
+}
+
 export function toInt(value: string): number {
   if (!value.trim()) return 0;
   const parsed = Number.parseInt(value, 10);

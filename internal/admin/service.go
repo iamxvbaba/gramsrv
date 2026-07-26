@@ -53,6 +53,13 @@ const (
 	// Composite account rating.
 	ActionRecomputeAccountRating = "rating.recompute"
 	ActionAdjustAccountRating    = "rating.adjust"
+	// Official platform verification review. Claim/approve/reject act on one
+	// application; revoke acts on a target, because clearing a badge is not a
+	// decision on the application that granted it.
+	ActionClaimVerification   = "verification.claim"
+	ActionApproveVerification = "verification.approve"
+	ActionRejectVerification  = "verification.reject"
+	ActionRevokeVerification  = "verification.revoke"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -84,6 +91,23 @@ const (
 	CodeRatingNotFound             = "RATING_NOT_FOUND"
 	CodeRatingAdjustmentInvalid    = "RATING_ADJUSTMENT_INVALID"
 	CodeRatingWeightsInvalid       = "RATING_WEIGHTS_INVALID"
+	// Official platform verification review. CodeVerificationConflict is the lost
+	// optimistic-locking race -- two reviewers deciding at once -- and is the one
+	// the panel must render as "reload and look again" rather than as a bad
+	// request.
+	CodeVerificationNotFound            = "VERIFICATION_NOT_FOUND"
+	CodeVerificationConflict            = "VERIFICATION_CONFLICT"
+	CodeVerificationStatusInvalid       = "VERIFICATION_STATUS_INVALID"
+	CodeVerificationReasonRequired      = "VERIFICATION_REASON_REQUIRED"
+	CodeVerificationTargetInvalid       = "VERIFICATION_TARGET_INVALID"
+	CodeVerificationTargetOccupied      = "VERIFICATION_TARGET_OCCUPIED"
+	CodeVerificationTargetVerified      = "VERIFICATION_TARGET_ALREADY_VERIFIED"
+	CodeVerificationTargetNotPublic     = "VERIFICATION_TARGET_NOT_PUBLIC"
+	CodeVerificationTargetRestricted    = "VERIFICATION_TARGET_RESTRICTED"
+	CodeVerificationTargetSystem        = "VERIFICATION_TARGET_SYSTEM"
+	CodeVerificationNotOwner            = "VERIFICATION_NOT_OWNER"
+	CodeVerificationUserTargetsDisabled = "VERIFICATION_USER_TARGETS_DISABLED"
+	CodeVerificationInvalid             = "VERIFICATION_INVALID"
 )
 
 type CommandRepository interface {
@@ -273,6 +297,7 @@ type Dependencies struct {
 	Moderation             ModerationService
 	Usernames              CollectibleUsernamesService
 	Rating                 AccountRatingService
+	Verification           VerificationService
 	Now                    func() time.Time
 }
 
@@ -298,6 +323,7 @@ type Service struct {
 	moderation             ModerationService
 	usernames              CollectibleUsernamesService
 	rating                 AccountRatingService
+	verification           VerificationService
 	now                    func() time.Time
 }
 
@@ -369,6 +395,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Rating != nil {
 		s.rating = deps.Rating
+	}
+	if deps.Verification != nil {
+		s.verification = deps.Verification
 	}
 	if deps.Now != nil {
 		s.now = deps.Now

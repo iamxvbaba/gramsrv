@@ -3,6 +3,8 @@ import type {
   AccountListResponse,
   AccountRatingDetail,
   AccountRatingListResponse,
+  AdminLoginResult,
+  AdminSession,
   BotDetail,
   BotListResponse,
   ChannelDetail,
@@ -20,7 +22,10 @@ import type {
   ModerationReport,
   OfficialStarGiftListResponse,
   StarGiftCollectiblePreview,
-  StarGiftListResponse
+  StarGiftListResponse,
+  VerificationApplicationDetail,
+  VerificationApplicationListResponse,
+  VerificationCountsResponse
 } from "./types";
 
 export class APIError extends Error {
@@ -32,12 +37,81 @@ export class APIError extends Error {
   }
 }
 
+// The backend publishes the CSRF token in a deliberately readable cookie and
+// refuses every mutating request whose X-CSRF-Token header does not repeat it
+// (cmd/telesrv-admin/security.go). Echoing it here — inside request<T> — is what
+// keeps a new endpoint from silently shipping without the header.
+const csrfCookieName = "telesrv_admin_csrf";
+const csrfHeaderName = "X-CSRF-Token";
+
+// Login answers with the token in the body as well as in Set-Cookie. Keeping the
+// body value is the fallback for the window where the browser has not applied
+// the cookie yet, or where the cookie is not readable back to the script.
+let issuedCSRFToken = "";
+
+export function rememberCSRFToken(token: string | undefined): void {
+  issuedCSRFToken = (token ?? "").trim();
+}
+
+function readCSRFCookie(): string {
+  if (typeof document === "undefined") return "";
+  for (const chunk of document.cookie.split(";")) {
+    const entry = chunk.trim();
+    const separator = entry.indexOf("=");
+    if (separator <= 0 || entry.slice(0, separator) !== csrfCookieName) continue;
+    try {
+      return decodeURIComponent(entry.slice(separator + 1));
+    } catch {
+      return entry.slice(separator + 1);
+    }
+  }
+  return "";
+}
+
+// The cookie wins: it is the value the server compares against, and it survives
+// a page reload that the in-memory copy does not.
+export function csrfToken(): string {
+  return readCSRFCookie() || issuedCSRFToken;
+}
+
+// Same classification the backend uses: GET/HEAD/OPTIONS are safe, everything
+// else carries a token.
+function mutatingMethod(method: string | undefined): boolean {
+  const verb = (method ?? "GET").toUpperCase();
+  return verb !== "GET" && verb !== "HEAD" && verb !== "OPTIONS";
+}
+
+function plainHeaders(source: HeadersInit | undefined): Record<string, string> {
+  if (!source) return {};
+  if (source instanceof Headers) {
+    const out: Record<string, string> = {};
+    source.forEach((value, key) => {
+      out[key] = value;
+    });
+    return out;
+  }
+  if (Array.isArray(source)) {
+    return Object.fromEntries(source);
+  }
+  return { ...source };
+}
+
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
 	const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
+  // A multipart body must keep the boundary the browser generates, so its
+  // Content-Type is left alone; the CSRF header is added either way.
+  const headers: Record<string, string> = isForm ? {} : { "Content-Type": "application/json" };
+  Object.assign(headers, plainHeaders(init.headers));
+  if (mutatingMethod(init.method)) {
+    const token = csrfToken();
+    if (token) {
+      headers[csrfHeaderName] = token;
+    }
+  }
   const response = await fetch(url, {
     credentials: "same-origin",
-    headers: isForm ? init.headers : { "Content-Type": "application/json", ...(init.headers ?? {}) },
-    ...init
+    ...init,
+    headers
   });
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
@@ -56,11 +130,16 @@ export function errorMessage(error: unknown): string {
 }
 
 export const api = {
-  session: () => request<{ actor: string }>("/api/session"),
-  login: (secret: string) => request<{ actor: string }>("/api/login", {
-    method: "POST",
-    body: JSON.stringify({ secret })
-  }),
+  session: () => request<AdminSession>("/api/session"),
+  login: async (secret: string) => {
+    const result = await request<AdminLoginResult>("/api/login", {
+      method: "POST",
+      body: JSON.stringify({ secret })
+    });
+    // Stashed here rather than in the caller so no login path can forget it.
+    rememberCSRFToken(result.csrf_token);
+    return result;
+  },
   logout: () => request<{ ok: boolean }>("/api/logout", { method: "POST", body: "{}" }),
   accounts: (params: URLSearchParams) => request<AccountListResponse>(`/api/accounts?${params.toString()}`),
   account: (id: number) => request<AccountDetail>(`/api/accounts/${id}`),
@@ -76,6 +155,13 @@ export const api = {
     request<AccountRatingListResponse>(`/api/account-ratings?${params.toString()}`),
   accountRating: (userID: string) =>
     request<AccountRatingDetail>(`/api/account-ratings/${encodeURIComponent(userID)}`),
+  verificationApplications: (params: URLSearchParams) =>
+    request<VerificationApplicationListResponse>(`/api/verification/applications?${params.toString()}`),
+  // The application id is an int64 decimal string end to end, so it is never
+  // parsed into a number on the way to the URL.
+  verificationApplication: (id: string) =>
+    request<VerificationApplicationDetail>(`/api/verification/applications/${encodeURIComponent(id)}`),
+  verificationCounts: () => request<VerificationCountsResponse>("/api/verification/counts"),
   emoji: (params: URLSearchParams) => request<EmojiListResponse>(`/api/emoji?${params.toString()}`),
   emojiAnimation: (documentID: string) => request<Record<string, unknown>>(`/api/emoji/${encodeURIComponent(documentID)}/animation`),
   messages: (params: URLSearchParams) => request<MessageListResponse>(`/api/messages?${params.toString()}`),

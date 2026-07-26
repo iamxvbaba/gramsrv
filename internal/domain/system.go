@@ -21,6 +21,15 @@ const (
 	ChatBotUserID int64 = 1250000007
 	// ChatBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
 	ChatBotAccessHash int64 = 6332902371644871201
+
+	// VerifyBotUserID is the built-in @verifybot: it collects official platform
+	// verification applications and reports decisions back to the applicant. The
+	// id is reserved and stable, so a restart never re-creates the account under a
+	// different identity.
+	VerifyBotUserID int64 = 1250000011
+	// VerifyBotAccessHash is fixed and double-written with the seed row in
+	// migration 0152; the two must never drift.
+	VerifyBotAccessHash int64 = 7802113947355620887
 )
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
@@ -75,6 +84,20 @@ func ChatBotUser() User {
 	}
 }
 
+// VerifyBotUser returns the built-in @verifybot account. It is verified itself,
+// so the applicant sees the same badge on the account that grants it.
+func VerifyBotUser() User {
+	return User{
+		ID:             VerifyBotUserID,
+		AccessHash:     VerifyBotAccessHash,
+		FirstName:      "Verify Bot",
+		Username:       "verifybot",
+		Verified:       true,
+		Bot:            true,
+		BotInfoVersion: 1,
+	}
+}
+
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
 // 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
 func SystemUserByID(id int64) (User, bool) {
@@ -87,6 +110,8 @@ func SystemUserByID(id int64) (User, bool) {
 		return StickersBotUser(), true
 	case ChatBotUserID:
 		return ChatBotUser(), true
+	case VerifyBotUserID:
+		return VerifyBotUser(), true
 	}
 	return User{}, false
 }
@@ -98,7 +123,7 @@ func IsSystemUserID(id int64) bool {
 
 func SystemUserByPhone(phone string) (User, bool) {
 	phone = NormalizePhone(phone)
-	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID} {
+	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID, VerifyBotUserID} {
 		u, ok := SystemUserByID(id)
 		if !ok || u.Phone == "" {
 			continue

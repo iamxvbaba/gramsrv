@@ -789,6 +789,173 @@ func TestLoadCollectibleUsernameURLTemplate(t *testing.T) {
 	}
 }
 
+func TestLoadVerificationDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.VerificationEnabled {
+		t.Fatal("VerificationEnabled = false, want the feature shipped on")
+	}
+	if cfg.VerificationAllowUserTargets {
+		t.Fatal("VerificationAllowUserTargets = true, want user targets opt-in")
+	}
+	if cfg.VerificationRejectCooldown != 720*time.Hour {
+		t.Fatalf("VerificationRejectCooldown = %v, want 720h", cfg.VerificationRejectCooldown)
+	}
+	if cfg.VerificationApplyRateLimit != 3 || cfg.VerificationApplyRateWindow != 24*time.Hour {
+		t.Fatalf("apply rate = %d/%v, want 3/24h", cfg.VerificationApplyRateLimit, cfg.VerificationApplyRateWindow)
+	}
+	if cfg.VerificationBotRateLimit != 30 || cfg.VerificationBotRateWindow != time.Minute {
+		t.Fatalf("bot rate = %d/%v, want 30/1m", cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow)
+	}
+	if cfg.VerificationNotifyInterval != 15*time.Second || cfg.VerificationNotifyBatch != 50 {
+		t.Fatalf("notify = %v/%d, want 15s/50", cfg.VerificationNotifyInterval, cfg.VerificationNotifyBatch)
+	}
+	if cfg.VerificationMaxActivePerUser != 3 {
+		t.Fatalf("VerificationMaxActivePerUser = %d, want 3", cfg.VerificationMaxActivePerUser)
+	}
+}
+
+func TestLoadVerificationOverrides(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_VERIFICATION_ENABLED", "false")
+	t.Setenv("TELESRV_VERIFICATION_ALLOW_USER_TARGETS", "true")
+	t.Setenv("TELESRV_VERIFICATION_REJECT_COOLDOWN", "48h")
+	t.Setenv("TELESRV_VERIFICATION_APPLY_RATE_LIMIT", "7")
+	t.Setenv("TELESRV_VERIFICATION_APPLY_RATE_WINDOW", "12h")
+	t.Setenv("TELESRV_VERIFICATION_BOT_RATE_LIMIT", "0")
+	t.Setenv("TELESRV_VERIFICATION_BOT_RATE_WINDOW", "0s")
+	t.Setenv("TELESRV_VERIFICATION_NOTIFY_INTERVAL", "5s")
+	t.Setenv("TELESRV_VERIFICATION_NOTIFY_BATCH", "200")
+	t.Setenv("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.VerificationEnabled || !cfg.VerificationAllowUserTargets {
+		t.Fatalf("enabled=%v allowUserTargets=%v", cfg.VerificationEnabled, cfg.VerificationAllowUserTargets)
+	}
+	if cfg.VerificationRejectCooldown != 48*time.Hour {
+		t.Fatalf("cooldown = %v", cfg.VerificationRejectCooldown)
+	}
+	if cfg.VerificationApplyRateLimit != 7 || cfg.VerificationApplyRateWindow != 12*time.Hour {
+		t.Fatalf("apply rate = %d/%v", cfg.VerificationApplyRateLimit, cfg.VerificationApplyRateWindow)
+	}
+	// A zero limit disables the budget, so a zero window is accepted with it.
+	if cfg.VerificationBotRateLimit != 0 || cfg.VerificationBotRateWindow != 0 {
+		t.Fatalf("bot rate = %d/%v", cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow)
+	}
+	if cfg.VerificationNotifyInterval != 5*time.Second || cfg.VerificationNotifyBatch != 200 {
+		t.Fatalf("notify = %v/%d", cfg.VerificationNotifyInterval, cfg.VerificationNotifyBatch)
+	}
+	if cfg.VerificationMaxActivePerUser != 0 {
+		t.Fatalf("maxActive = %d, want the cap disabled", cfg.VerificationMaxActivePerUser)
+	}
+}
+
+func TestLoadRejectsInvalidVerificationConfig(t *testing.T) {
+	for _, test := range []struct {
+		key   string
+		value string
+	}{
+		{"TELESRV_VERIFICATION_REJECT_COOLDOWN", "-1h"},
+		{"TELESRV_VERIFICATION_REJECT_COOLDOWN", "9000h"},
+		{"TELESRV_VERIFICATION_APPLY_RATE_LIMIT", "-1"},
+		{"TELESRV_VERIFICATION_APPLY_RATE_WINDOW", "0s"},
+		{"TELESRV_VERIFICATION_APPLY_RATE_WINDOW", "-5m"},
+		{"TELESRV_VERIFICATION_BOT_RATE_LIMIT", "-2"},
+		{"TELESRV_VERIFICATION_BOT_RATE_WINDOW", "0s"},
+		{"TELESRV_VERIFICATION_NOTIFY_INTERVAL", "0s"},
+		{"TELESRV_VERIFICATION_NOTIFY_BATCH", "0"},
+		{"TELESRV_VERIFICATION_NOTIFY_BATCH", "501"},
+		{"TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER", "-1"},
+		{"TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER", "51"},
+	} {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadAdminRBACDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.AdminUIPermissions) != 1 || cfg.AdminUIPermissions[0] != "*" {
+		t.Fatalf("AdminUIPermissions = %v, want the wildcard default", cfg.AdminUIPermissions)
+	}
+	if len(cfg.AdminScopedTokens) != 0 {
+		t.Fatalf("AdminScopedTokens = %+v, want none by default", cfg.AdminScopedTokens)
+	}
+}
+
+func TestLoadAdminScopedTokens(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_ADMIN_UI_PERMISSIONS", "users.read, verification:decide")
+	t.Setenv("TELESRV_ADMIN_SCOPED_TOKENS", "ops:tok-ops-1:users.read,users.write; audit:tok-audit-2:verification.*")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.AdminUIPermissions) != 2 ||
+		cfg.AdminUIPermissions[0] != "users.read" || cfg.AdminUIPermissions[1] != "verification:decide" {
+		t.Fatalf("AdminUIPermissions = %v", cfg.AdminUIPermissions)
+	}
+	if len(cfg.AdminScopedTokens) != 2 {
+		t.Fatalf("AdminScopedTokens = %+v, want 2 entries", cfg.AdminScopedTokens)
+	}
+	first := cfg.AdminScopedTokens[0]
+	if first.Name != "ops" || first.Token != "tok-ops-1" ||
+		len(first.Permissions) != 2 || first.Permissions[0] != "users.read" || first.Permissions[1] != "users.write" {
+		t.Fatalf("first scoped token = %+v", first)
+	}
+	second := cfg.AdminScopedTokens[1]
+	if second.Name != "audit" || second.Token != "tok-audit-2" ||
+		len(second.Permissions) != 1 || second.Permissions[0] != "verification.*" {
+		t.Fatalf("second scoped token = %+v", second)
+	}
+}
+
+func TestLoadRejectsInvalidAdminRBACConfig(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"missing permissions field": {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-ops-1"},
+		"too many fields":           {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok:extra:users.read"},
+		"empty name":                {"TELESRV_ADMIN_SCOPED_TOKENS": ":tok-ops-1:users.read"},
+		"empty token":               {"TELESRV_ADMIN_SCOPED_TOKENS": "ops::users.read"},
+		"no permissions listed":     {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-ops-1:"},
+		"invalid permission":        {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-ops-1:users read"},
+		"duplicate name":            {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-a:users.read;OPS:tok-b:users.read"},
+		"duplicate token":           {"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-a:users.read;audit:tok-a:users.read"},
+		"reuses the admin api token": {
+			"TELESRV_ADMIN_API_TOKEN":     "tok-a",
+			"TELESRV_ADMIN_SCOPED_TOKENS": "ops:tok-a:users.read",
+		},
+		"invalid ui permission": {"TELESRV_ADMIN_UI_PERMISSIONS": "users/read"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			for key, value := range env {
+				t.Setenv(key, value)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted %v", env)
+			}
+		})
+	}
+}
+
 func writeConfigFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

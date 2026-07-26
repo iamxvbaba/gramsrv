@@ -59,6 +59,8 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_ADMIN_UI_PASSWORD` | secret string / empty | Admin UI login password. Configure this or `TELESRV_ADMIN_UI_TOKEN`. |
 | `TELESRV_ADMIN_UI_TOKEN` | secret string / empty | Alternative Admin UI login credential. Admin write calls still use the separate `TELESRV_ADMIN_API_TOKEN`. |
 | `TELESRV_ADMIN_SESSION_KEY` | secret string / empty | Encrypts/signs Admin UI session cookies. Production should use at least 32 random bytes; changing it invalidates sessions. |
+| `TELESRV_ADMIN_UI_PERMISSIONS` | comma-separated list / `*` | Permissions granted to an Admin UI session authenticated with `TELESRV_ADMIN_UI_PASSWORD` / `_TOKEN`. `*` grants every permission and is the default, so enabling RBAC never locks an operator out of a panel that worked before. Names use letters, digits and `._:-`, at most 64 characters, and may end in `namespace.*` to grant a whole namespace. An empty list or an unparsable name fails startup. |
+| `TELESRV_ADMIN_SCOPED_TOKENS` | `name:token:perm1,perm2` entries separated by `;` / empty | Additional Admin API bearer tokens carrying a bounded permission set each, so an integration gets exactly the rights it needs instead of the unrestricted `TELESRV_ADMIN_API_TOKEN`. A token may contain neither `:` nor whitespace, every entry must list at least one permission, names and tokens must be unique, and reusing `TELESRV_ADMIN_API_TOKEN` as a scoped token is refused because it would silently widen it to every permission. Any malformed entry fails startup rather than silently granting or dropping rights. |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
@@ -569,6 +571,43 @@ All rating weights are non-negative magnitudes and are validated even when the f
 later is not the moment a typo is discovered. The defaults above are exactly the shipped domain formula, so behaviour
 is identical whether or not these keys are set. The final score is clamped at zero: penalties can erase a rating but
 never invert it.
+
+### Official platform verification
+
+Official verification is the platform badge (`user.verified` / `channel.verified`): an application is filed through the
+built-in `@verifybot`, decided in the admin panel, and an approval flips that one flag on that one peer record. It is
+deliberately not the third-party `botVerification` icon, where an outside organisation attaches its own mark. The
+application row is the durable audit subject and is never deleted, only moved through its status machine.
+
+Every eligibility check runs twice: once when the application is filed and again, against a freshly loaded snapshot, at
+the moment of approval. A target must exist, carry a public username, be controlled by the applicant (bot owner, or
+channel creator/administrator), not already be verified, not be deleted/frozen/scam/fake, and not be a built-in system
+entity. A target that changed between submission and review is refused at the second gate, so the review queue cannot
+be used to grant a state the submission path forbids. The flag itself is written inside the decision transaction, so
+"approved" and "target verified" commit together.
+
+Submitted links (website, social, press) are validated as plain http(s) URLs to public hosts: credentials, non-web
+schemes, non-standard ports, loopback, link-local, private and other reserved address space are all refused. **The
+server never fetches a submitted link** — not at submission, not during review, not from the admin panel. That is a
+deliberate anti-SSRF decision, and validation is the only thing ever done to an applicant-controlled URL.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_VERIFICATION_ENABLED` | bool / `true` | Enables official verification. Disabled refuses every verification use case explicitly; peers already carrying the badge keep it, because the flag lives on the peer record. |
+| `TELESRV_VERIFICATION_ALLOW_USER_TARGETS` | bool / `false` | Accepts plain user accounts as verification subjects. Off by default: the official process verifies a public presence (bot, public channel, public supergroup), and a private account has nothing to check. |
+| `TELESRV_VERIFICATION_REJECT_COOLDOWN` | duration / `720h` | Wait imposed on an applicant/target pair after a rejection, measured from the decision so a slow review never shortens it. `0` disables it; must be `0..8760h`. |
+| `TELESRV_VERIFICATION_APPLY_RATE_LIMIT` | int / `3` | Applications one applicant may create per window. `0` disables the budget; must be non-negative. |
+| `TELESRV_VERIFICATION_APPLY_RATE_WINDOW` | duration / `24h` | Window for the creation budget. Must be positive whenever the limit is set: a positive limit with a zero window is a limiter that never refills. |
+| `TELESRV_VERIFICATION_BOT_RATE_LIMIT` | int / `30` | `@verifybot` dialog rate per applicant, independent of how many applications are actually created. `0` disables it. |
+| `TELESRV_VERIFICATION_BOT_RATE_WINDOW` | duration / `1m` | Window for the bot dialog rate; must be positive whenever that limit is set. |
+| `TELESRV_VERIFICATION_NOTIFY_INTERVAL` | duration / `15s` | Applicant-notification worker interval; must be positive. A decision commits with its outbox row, never with a message send, so delivery is a separate retrying cycle over durable rows. |
+| `TELESRV_VERIFICATION_NOTIFY_BATCH` | int / `50` | Outbox rows delivered per cycle; must be `1..500`. |
+| `TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER` | int / `3` | Applications one applicant may keep open (draft, submitted, in review) at once. `0` disables the cap; must be `0..50`. |
+
+The defaults ship the feature on with the official bar in place, so no existing deployment changes behaviour: user
+accounts are not accepted, a rejection costs a month, and an applicant can neither flood the queue nor keep an
+unbounded number of applications open. Every value is validated even when the feature is disabled, so enabling it
+later is not the moment a typo is discovered.
 
 ## 11. Private calls, group calls, TURN, SFU, and livestream
 

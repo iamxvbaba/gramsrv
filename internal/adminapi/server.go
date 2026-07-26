@@ -2,7 +2,6 @@ package adminapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,20 @@ import (
 type Config struct {
 	Addr  string
 	Token string
+	// ScopedTokens are additional bearer tokens with a bounded permission set
+	// each. Token stays the unrestricted master token, so a deployment that
+	// configures no scoped token behaves exactly as it did before.
+	//
+	// The shape mirrors config.AdminScopedToken without importing the loader --
+	// only the main packages depend on internal/config -- so the caller converts:
+	//
+	//	scoped := make([]adminapi.ScopedToken, 0, len(cfg.AdminScopedTokens))
+	//	for _, item := range cfg.AdminScopedTokens {
+	//		scoped = append(scoped, adminapi.ScopedToken{
+	//			Name: item.Name, Token: item.Token, Permissions: item.Permissions,
+	//		})
+	//	}
+	ScopedTokens []ScopedToken
 }
 
 type Service interface {
@@ -78,6 +91,15 @@ type Service interface {
 	AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error)
 	AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
 	AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
+	ClaimVerification(ctx context.Context, req admin.ClaimVerificationRequest) (admin.CommandResult, error)
+	ApproveVerification(ctx context.Context, req admin.ApproveVerificationRequest) (admin.CommandResult, error)
+	RejectVerification(ctx context.Context, req admin.RejectVerificationRequest) (admin.CommandResult, error)
+	RevokeVerification(ctx context.Context, req admin.RevokeVerificationRequest) (admin.CommandResult, error)
+	VerificationApplications(ctx context.Context, filter domain.VerificationApplicationFilter) ([]domain.VerificationApplication, error)
+	VerificationApplication(ctx context.Context, applicationID int64) (domain.VerificationApplication, error)
+	VerificationApplicationEvents(ctx context.Context, applicationID int64, limit int) ([]domain.VerificationApplicationEvent, error)
+	VerificationCounts(ctx context.Context) (domain.VerificationStatusCounts, error)
+	VerificationTargetSnapshot(ctx context.Context, targetType domain.VerificationTargetType, targetID int64) (domain.VerificationTarget, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -94,7 +116,7 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 	if log == nil {
 		log = zap.NewNop()
 	}
-	server := &Server{token: cfg.Token, svc: svc, log: log}
+	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log}
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.routes(),
@@ -116,9 +138,10 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 }
 
 type Server struct {
-	token string
-	svc   Service
-	log   *zap.Logger
+	token  string
+	scoped []ScopedToken
+	svc    Service
+	log    *zap.Logger
 }
 
 func (s *Server) routes() http.Handler {
@@ -175,18 +198,18 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/account-ratings/adjust", s.authenticated(s.handleAdjustAccountRating))
 	mux.HandleFunc("GET /v1/account-ratings", s.authenticated(s.handleAccountRatings))
 	mux.HandleFunc("GET /v1/account-ratings/{id}", s.authenticated(s.handleAccountRating))
+	// Official platform verification. Unlike every route above, these carry a
+	// named permission, so a scoped token can be given the review surface and
+	// nothing else. Revocation additionally requires verification.revoke.
+	mux.HandleFunc("GET /v1/verification/applications", s.authorized(PermissionVerificationReview, s.handleVerificationApplications))
+	mux.HandleFunc("GET /v1/verification/applications/{id}", s.authorized(PermissionVerificationReview, s.handleVerificationApplication))
+	mux.HandleFunc("GET /v1/verification/counts", s.authorized(PermissionVerificationReview, s.handleVerificationCounts))
+	mux.HandleFunc("POST /v1/verification/applications/{id}/claim", s.authorized(PermissionVerificationReview, s.handleClaimVerification))
+	mux.HandleFunc("POST /v1/verification/applications/{id}/approve", s.authorized(PermissionVerificationReview, s.handleApproveVerification))
+	mux.HandleFunc("POST /v1/verification/applications/{id}/reject", s.authorized(PermissionVerificationReview, s.handleRejectVerification))
+	mux.HandleFunc("POST /v1/verification/revoke", s.authorizedAll(
+		[]string{PermissionVerificationReview, PermissionVerificationRevoke}, s.handleRevokeVerification))
 	return mux
-}
-
-func (s *Server) authenticated(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		next(w, r)
-	}
 }
 
 func (s *Server) handleSetAccountFrozen(w http.ResponseWriter, r *http.Request) {

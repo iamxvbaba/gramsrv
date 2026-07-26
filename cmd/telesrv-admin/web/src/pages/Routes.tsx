@@ -19,6 +19,9 @@ import { GiftsPage } from "./GiftsPage";
 import { GiveGiftsPage } from "./GiveGiftsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
+import { VerificationDetailPage } from "./VerificationDetailPage";
+import { VerificationPage } from "./VerificationPage";
+import { PermissionGate, permissionVerificationReview } from "../permissions";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
@@ -28,6 +31,24 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   // int64 ids stay strings so large values never lose precision.
   const collectibleUsernameID = route.path.match(/^\/collectible-usernames\/(\d+)$/)?.[1];
   const ratingUserID = route.path.match(/^\/account-ratings\/(\d+)$/)?.[1];
+  const verificationID = route.path.match(/^\/verification\/(\d+)$/)?.[1];
+  // The detail match has to be tested before the exact "/verification" branch, and
+  // the whole section is wrapped in the permission gate so a direct URL explains
+  // itself instead of rendering an empty queue.
+  if (verificationID) {
+    return (
+      <PermissionGate permission={permissionVerificationReview}>
+        <VerificationDetailPage id={verificationID} navigate={navigate} />
+      </PermissionGate>
+    );
+  }
+  if (route.path === "/verification") {
+    return (
+      <PermissionGate permission={permissionVerificationReview}>
+        <VerificationPage navigate={navigate} />
+      </PermissionGate>
+    );
+  }
   if (collectibleUsernameID) {
     return <CollectibleUsernameDetailPage id={collectibleUsernameID} navigate={navigate} />;
   }

@@ -327,6 +327,27 @@ type BotsService interface {
 	PutWebViewCustomMethodQuery(ctx context.Context, botUserID, userID int64, method, paramsJSON string) (domain.BotWebViewCustomMethodQuery, error)
 }
 
+// ServiceBotCallbacks answers inline-button clicks for the built-in bots that run
+// inside this process (@verifybot and friends); app/bots implements it.
+//
+// It exists because the ordinary callback path cannot serve them: an internal bot
+// has no MTProto session to receive updateBotCallbackQuery and no Bot API consumer
+// to drain the update queue, so pushing the query at it and waiting could only
+// ever end in BOT_RESPONSE_TIMEOUT after the full 25-second window. A bot claimed
+// here is answered synchronously instead, by the responder that owns it.
+//
+// OnCallbackQuery reports handled=false when the bot is not one of the responder's
+// own, which the edge treats as invalid callback data. The answer is final:
+// nothing is registered in the shared callback registry for it, so no external
+// setBotCallbackAnswer can overwrite or spoof it.
+//
+// A nil Deps.ServiceBotCallbacks keeps the edge behaviour exactly as it was:
+// every callback is pushed to the bot's session and waited on.
+type ServiceBotCallbacks interface {
+	HandlesBot(botUserID int64) bool
+	OnCallbackQuery(ctx context.Context, query domain.BotCallbackQuery) (domain.BotCallbackAnswer, bool, error)
+}
+
 // UserIdentityService 是 UsersService 的资料扩展能力，用于 username/phone 解析。
 type UserIdentityService interface {
 	CheckUsername(ctx context.Context, userID int64, username string) (bool, error)
@@ -1007,6 +1028,7 @@ type Deps struct {
 	Files                FilesService
 	PremiumPromo         PremiumPromoService
 	Bots                 BotsService
+	ServiceBotCallbacks  ServiceBotCallbacks
 	Polls                PollsService
 	Phone                PhoneService
 	GroupCalls           GroupCallsService

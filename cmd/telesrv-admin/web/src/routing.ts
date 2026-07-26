@@ -17,6 +17,7 @@ export function currentRoute(): RouteState {
 }
 
 export function routeTitle(pathname: string, t: TFunction): string {
+  if (pathname.startsWith("/verification")) return t("route.verification");
   if (pathname.startsWith("/collectible-usernames")) return t("route.collectibleUsernames");
   if (pathname.startsWith("/account-ratings")) return t("route.accountRatings");
   if (pathname.startsWith("/accounts")) return t("route.accounts");
@@ -31,6 +32,7 @@ export function routeTitle(pathname: string, t: TFunction): string {
 }
 
 export function routeSubtitle(pathname: string, t: TFunction): string {
+  if (pathname.startsWith("/verification")) return t("route.verificationSubtitle");
   if (pathname.startsWith("/collectible-usernames")) return t("route.collectibleUsernamesSubtitle");
   if (pathname.startsWith("/account-ratings")) return t("route.accountRatingsSubtitle");
   if (pathname.startsWith("/accounts")) return t("route.accountsSubtitle");
