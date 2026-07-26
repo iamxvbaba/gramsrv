@@ -686,7 +686,7 @@ func TestVerifierBotRevokeAsksForConfirmationThenRemovesTheMark(t *testing.T) {
 	if cv.revokes != 1 {
 		t.Fatalf("RevokeMark called %d times, want 1", cv.revokes)
 	}
-	// The store signature carries no actor or reason: 0154 has no revocation audit
+	// The store signature carries no actor or reason: 0155 has no revocation audit
 	// column, so the dialog logs them instead. What must be true here is that the
 	// mark of this verifier on this peer is gone.
 	if len(cv.revokedPeers) != 1 {

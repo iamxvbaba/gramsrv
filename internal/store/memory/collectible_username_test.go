@@ -715,7 +715,7 @@ func TestCollectibleUsernameListingAndPaging(t *testing.T) {
 	}
 }
 
-// TestCollectibleUsernameReissueAfterBurn covers migration 0151: burning retires
+// TestCollectibleUsernameReissueAfterBurn covers migration 0152: burning retires
 // the asset but releases the name, so the same name can be issued again while the
 // burned rows stay as provenance.
 func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {

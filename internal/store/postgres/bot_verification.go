@@ -16,7 +16,7 @@ import (
 )
 
 // BotVerificationStore is the PostgreSQL implementation of third-party bot
-// verification (migration 0154): the icon catalogue, verifier status, the granted
+// verification (migration 0155): the icon catalogue, verifier status, the granted
 // marks and the application queue in front of them.
 //
 // Four properties are load bearing and every method below exists to keep them:
@@ -47,7 +47,7 @@ import (
 // already holds is reported as changed=false without touching the row.
 //
 // Two deliberate non-responsibilities: the store does not check
-// icon_document_id against the catalogue (0154 has no such foreign key, and the
+// icon_document_id against the catalogue (0155 has no such foreign key, and the
 // admin edge picks the icon from the catalogue before it gets here), and it does
 // not refuse a grant by a disabled verifier. "May this bot verify?"
 // (domain.ErrVerifierForbidden / BOT_VERIFIER_FORBIDDEN) is an RPC-edge decision

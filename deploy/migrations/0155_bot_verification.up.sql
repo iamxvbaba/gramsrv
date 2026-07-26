@@ -1,7 +1,7 @@
 -- Third-party bot verification (core.telegram.org/api/bots/verification).
 --
 -- This is a SEPARATE mechanism from the official platform badge implemented in
--- 0152/0153. Official verification is a boolean on the peer that only the
+-- 0153/0154. Official verification is a boolean on the peer that only the
 -- operator can set and that clients render as the standard checkmark. Third-party
 -- verification is an attributed mark granted by a verifier bot: it carries that
 -- verifier's own custom-emoji icon and a human-readable description, renders

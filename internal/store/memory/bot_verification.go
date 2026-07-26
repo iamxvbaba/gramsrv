@@ -40,7 +40,7 @@ const (
 
 // BotVerificationStore is the in-memory implementation of
 // store.BotVerificationStore. The RPC, bot and admin unit tests run against it,
-// so it reproduces every invariant migration 0154 encodes as an index, a CHECK or
+// so it reproduces every invariant migration 0155 encodes as an index, a CHECK or
 // a transaction boundary, and returns the same domain errors the PostgreSQL
 // backend maps its violations onto:
 //

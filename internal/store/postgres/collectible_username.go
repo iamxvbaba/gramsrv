@@ -199,7 +199,7 @@ func (s *CollectibleUsernameStore) MintCollectibleUsername(ctx context.Context, 
 			purchaseDate = now
 		}
 		// The registry row locks the name against editable usernames. Occupancy of
-		// the asset itself is decided by the live rows only: 0151 narrowed
+		// the asset itself is decided by the live rows only: 0152 narrowed
 		// uniqueness to status <> 'burned', so a retired name can be issued again
 		// while its burned rows stay as provenance.
 		if _, found, err := getPeerUsernameOwner(ctx, tx, usernameLower, true); err != nil {

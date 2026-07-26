@@ -28,7 +28,7 @@ const (
 	// different identity.
 	VerifyBotUserID int64 = 1250000011
 	// VerifyBotAccessHash is fixed and double-written with the seed row in
-	// migration 0152; the two must never drift.
+	// migration 0153; the two must never drift.
 	VerifyBotAccessHash int64 = 7802113947355620887
 
 	// VerifierBotUserID is the built-in @verifierbot: the first THIRD-PARTY
@@ -41,7 +41,7 @@ const (
 	// the operator alone and collected by VerifyBotUserID above.
 	VerifierBotUserID int64 = 1250000013
 	// VerifierBotAccessHash is fixed and double-written with the seed row in
-	// migration 0155; the two must never drift.
+	// migration 0156; the two must never drift.
 	VerifierBotAccessHash int64 = 6913402578811563729
 )
 

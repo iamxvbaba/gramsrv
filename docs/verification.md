@@ -169,12 +169,12 @@ and left entirely unset for an unflagged peer.
 
 ## Migrations
 
-- **`0152_verify_service_bot`** seeds `@verifybot` (id `1250000011`, fixed
+- **`0153_verify_service_bot`** seeds `@verifybot` (id `1250000011`, fixed
   `access_hash` double-written with `domain.VerifyBotAccessHash`), its `bots` row
   and command list, and its `peer_usernames` registry entry. The handle is
   occupied from the moment the schema is current, so an ordinary user cannot claim
   `@verifybot` in the window before first use.
-- **`0153_verification_applications`** creates
+- **`0154_verification_applications`** creates
   `verification_applications` (the durable audit subject, never deleted, moved
   through `draft → submitted → in_review → approved|rejected|cancelled` under an
   optimistic-locking `version`), the append-only

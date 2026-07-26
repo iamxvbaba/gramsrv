@@ -185,7 +185,7 @@ every flag unset, which is byte-identical to the pre-feature wire shape.
 
 ## Migrations
 
-- **`0154_bot_verification`** creates the four tables:
+- **`0155_bot_verification`** creates the four tables:
   - `verification_icons` — the catalogue. `document_id` is unique and positive,
     `owner_bot_id = 0` means shared, `active` retires an entry without deleting it.
   - `bot_verifier_settings` — verifier status, keyed by `bot_id` with an optimistic
@@ -201,7 +201,7 @@ every flag unset, which is byte-identical to the pre-feature wire shape.
     constraints that pair each stamp with its status
     (`(status = 'approved') = (approved_at IS NOT NULL)`) and refuse a rejection
     without a reason.
-- **`0155_verifier_service_bot`** seeds `@verifierbot` (id `1250000013`, fixed
+- **`0156_verifier_service_bot`** seeds `@verifierbot` (id `1250000013`, fixed
   `access_hash` double-written with `domain.VerifierBotAccessHash`), its `bots` row
   and command list, and its `peer_usernames` registry entry, so the handle is occupied
   from the moment the schema is current. `verified = false` on purpose: a third-party

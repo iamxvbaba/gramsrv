@@ -20,7 +20,7 @@ const (
 
 // CollectibleUsernameStore is the in-memory implementation of both
 // store.UsernameRegistryStore and store.CollectibleUsernameStore. RPC unit tests
-// run against it, so it reproduces every invariant migration 0149 encodes as an
+// run against it, so it reproduces every invariant migration 0150 encodes as an
 // index or CHECK constraint and returns the same domain errors PostgreSQL maps
 // its violations onto:
 //
@@ -43,7 +43,7 @@ type CollectibleUsernameStore struct {
 	// assets is collectible_usernames keyed by identity.
 	assets map[int64]domain.CollectibleUsername
 	// assetsByName resolves a name onto the asset it currently stands for. After
-	// migration 0151 uniqueness covers live rows only, so one name can accumulate
+	// migration 0152 uniqueness covers live rows only, so one name can accumulate
 	// several burned rows plus at most one live row; this index points at the live
 	// row when there is one and at the newest burned row otherwise, mirroring the
 	// SQL lookup order.

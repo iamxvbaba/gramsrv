@@ -464,7 +464,7 @@ func TestCollectibleUsernameEditableEditKeepsCollectibles(t *testing.T) {
 	}
 }
 
-// TestCollectibleUsernameReissueAfterBurn covers migration 0151: uniqueness now
+// TestCollectibleUsernameReissueAfterBurn covers migration 0152: uniqueness now
 // spans live assets only, so a burned name can be issued again while its burned
 // rows remain as provenance.
 func TestCollectibleUsernameReissueAfterBurn(t *testing.T) {

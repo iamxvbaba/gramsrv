@@ -18,7 +18,7 @@ const (
 )
 
 // AccountRatingStore is the in-memory implementation of store.AccountRatingStore.
-// It reproduces the invariants migration 0150 encodes:
+// It reproduces the invariants migration 0151 encodes:
 //
 //   - account_rating is keyed by user_id, so one projection row per user.
 //   - the version CHECK plus optimistic concurrency: a write is applied only when

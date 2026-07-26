@@ -1,6 +1,6 @@
 -- Burning a collectible username must release the name for a fresh issue.
 --
--- 0149 made collectible_usernames.username_lower globally UNIQUE, which kept a
+-- 0150 made collectible_usernames.username_lower globally UNIQUE, which kept a
 -- burned asset's name reserved forever: the registry row was gone, so an
 -- ordinary editable username could take it, but minting the collectible again
 -- was impossible. Retiring an asset is a bookkeeping act on that asset, not a

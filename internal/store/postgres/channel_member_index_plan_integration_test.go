@@ -124,7 +124,7 @@ SELECT peer_id
 FROM peer_usernames
 WHERE username_lower = $1 AND peer_type = 'channel'
 `, publicUsername)
-	// 0149 adds peer_usernames_peer_order_idx, which covers this lookup as an
+	// 0150 adds peer_usernames_peer_order_idx, which covers this lookup as an
 	// index-only scan; either index is an acceptable plan, a partition scan is not.
 	if !strings.Contains(usernameLookupPlan, "peer_usernames_pkey") &&
 		!strings.Contains(usernameLookupPlan, "peer_usernames_peer_order_idx") {
