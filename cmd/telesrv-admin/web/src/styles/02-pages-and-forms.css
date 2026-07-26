@@ -325,6 +325,7 @@
 }
 
 input,
+select,
 textarea {
   color: var(--text);
   background: var(--input-bg);
@@ -339,10 +340,15 @@ textarea::placeholder {
   color: var(--muted-2);
 }
 
-input {
+input,
+select {
   width: 190px;
   height: 34px;
   padding: 0 10px;
+}
+
+select {
+  min-width: 220px;
 }
 
 textarea {
@@ -352,6 +358,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: var(--brand);
   box-shadow: 0 0 0 3px var(--focus);

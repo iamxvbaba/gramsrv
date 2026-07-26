@@ -8,6 +8,18 @@ import type { Navigate } from "../routing";
 import type { ModerationCaseRow } from "../types";
 
 const defaultStatuses = "open,in_review,action_pending,action_failed,appeal_review";
+const allStatuses = "open,in_review,action_pending,action_failed,resolved,dismissed,appeal_review";
+const statusFilterOptions = [
+  { value: defaultStatuses, labelKey: "moderation.statusFilter.active" },
+  { value: allStatuses, labelKey: "moderation.statusFilter.all" },
+  { value: "open", labelKey: "moderation.status.open" },
+  { value: "in_review", labelKey: "moderation.status.in_review" },
+  { value: "action_pending", labelKey: "moderation.status.action_pending" },
+  { value: "action_failed", labelKey: "moderation.status.action_failed" },
+  { value: "appeal_review", labelKey: "moderation.status.appeal_review" },
+  { value: "resolved", labelKey: "moderation.status.resolved" },
+  { value: "dismissed", labelKey: "moderation.status.dismissed" }
+];
 
 export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
@@ -58,11 +70,15 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(); }}>
           <label className="field-inline">
             <span>{t("common.status")}</span>
-            <input
+            <select
               aria-label={t("moderation.statusFilter")}
               value={statuses}
               onChange={(event) => setStatuses(event.target.value)}
-            />
+            >
+              {statusFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
+              ))}
+            </select>
           </label>
           <label className="field-inline">
             <span>{t("moderation.assignee")}</span>
