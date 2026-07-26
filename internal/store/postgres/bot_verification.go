@@ -73,11 +73,16 @@ const (
 	// violate a CHECK. Guarding here keeps that a domain error instead of an
 	// opaque constraint violation from the driver, and keeps the two backends
 	// answering identically.
-	maxVerificationIconNameBytes          = 128
-	maxVerifierCompanyBytes               = 128
-	maxVerifierDescriptionBytes           = 1024
+	maxVerificationIconNameBytes = 128
+	maxVerifierCompanyBytes      = 128
+	// The description bounds are four times the 1024-rune domain limit, which is
+	// what 0158 widened the columns to: a rune is up to four bytes, one emoji is
+	// exactly four and one Cyrillic letter is two, so an octet bound of 1024
+	// rejected descriptions the domain allows -- and rejected them with an error
+	// that says nothing about length.
+	maxVerifierDescriptionBytes           = 4096
 	maxVerifierGrantReasonBytes           = 1024
-	maxCustomVerificationDescriptionBytes = 1024
+	maxCustomVerificationDescriptionBytes = 4096
 	maxCustomVerificationTitleBytes       = 1024
 	maxCustomVerificationUsernameBytes    = 64
 	maxCustomVerificationReasonBytes      = 4096

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -1001,5 +1002,76 @@ func TestCustomVerificationRequestQueuePostgres(t *testing.T) {
 	}
 	if _, err := s.CustomVerificationRequest(ctx, reapplied.ID+1<<40); !errors.Is(err, domain.ErrCustomVerificationRequestNotFound) {
 		t.Fatalf("unknown application err = %v, want ErrCustomVerificationRequestNotFound", err)
+	}
+}
+
+// TestBotVerificationDescriptionsAcceptEmojiPostgres is the "emoji in the
+// description" report. The domain bounds a description at 1024 *runes*
+// (utf8.RuneCountInString), while the columns bounded it at 1024 *octets* -- the
+// same number only for ASCII. One emoji is four bytes and one Cyrillic letter is
+// two, so a description well inside the documented limit was rejected by the
+// database with a constraint error that says nothing about length.
+//
+// 0158 widened the three third-party CHECKs to 4096 octets, which is the worst case
+// of 1024 four-byte runes and what the official verification table already used.
+func TestBotVerificationDescriptionsAcceptEmojiPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := NewBotVerificationStore(pool)
+	bot := botVerificationTestUser(t, pool)
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: botVerificationTestUser(t, pool)}
+	icon := botVerificationTestIcon(t, pool, s, "emoji icon", 0)
+
+	// 400 emoji: 400 runes, comfortably inside the 1024-rune domain limit, and
+	// 1600 bytes -- which the old 1024-octet CHECK refused.
+	emoji := strings.Repeat("🛡", 400)
+	if utf8.RuneCountInString(emoji) > domain.MaxCustomVerificationDescriptionLength {
+		t.Fatalf("test description is %d runes, over the domain limit", utf8.RuneCountInString(emoji))
+	}
+	if len(emoji) <= 1024 {
+		t.Fatalf("test description is %d bytes, which the old octet bound allowed anyway", len(emoji))
+	}
+
+	settings, err := s.UpsertBotVerifierSettings(ctx, domain.BotVerifierSettings{
+		BotID: bot, IconDocumentID: icon.DocumentID, CompanyName: "Acme",
+		DefaultDescription: emoji, Enabled: true, CanModifyCustomDescription: true,
+	})
+	if err != nil {
+		t.Fatalf("verifier settings with an emoji description: %v", err)
+	}
+	if settings.DefaultDescription != emoji {
+		t.Fatalf("stored default description was altered: %d runes back, %d in",
+			utf8.RuneCountInString(settings.DefaultDescription), utf8.RuneCountInString(emoji))
+	}
+
+	// The granted mark carries the same text, so widening only the settings column
+	// would move the failure one step later instead of fixing it.
+	mark, _, err := s.GrantCustomVerification(ctx, domain.CustomVerification{
+		VerifierBotID: bot, Peer: peer, IconDocumentID: icon.DocumentID, Description: emoji,
+	})
+	if err != nil {
+		t.Fatalf("grant with an emoji description: %v", err)
+	}
+	if mark.Description != emoji {
+		t.Fatalf("stored mark description was altered: %d runes back, %d in",
+			utf8.RuneCountInString(mark.Description), utf8.RuneCountInString(emoji))
+	}
+
+	// And so does an application, which is where an applicant types one.
+	if _, err := s.CreateCustomVerificationRequest(ctx, domain.CustomVerificationRequest{
+		VerifierBotID: bot, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: botVerificationTestUser(t, pool)},
+		ApplicantUserID: bot, RequestedDescription: emoji,
+	}); err != nil {
+		t.Fatalf("application with an emoji description: %v", err)
+	}
+
+	// Past the rune limit it is still a domain error, not a constraint error: the
+	// bound moved, it did not disappear.
+	tooLong := strings.Repeat("🛡", domain.MaxCustomVerificationDescriptionLength+1)
+	if _, err := s.UpsertBotVerifierSettings(ctx, domain.BotVerifierSettings{
+		BotID: bot, IconDocumentID: icon.DocumentID, CompanyName: "Acme",
+		DefaultDescription: tooLong, Version: settings.Version,
+	}); !errors.Is(err, domain.ErrVerifierSettingsInvalid) {
+		t.Fatalf("over-long description err = %v, want ErrVerifierSettingsInvalid", err)
 	}
 }
