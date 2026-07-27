@@ -681,3 +681,39 @@ func TestEnsureRatingDisabledStaysEmpty(t *testing.T) {
 		t.Fatalf("EnsureRating while disabled wrote %d rows, want none", len(st.saves))
 	}
 }
+
+// TestRecomputeRefusesServiceAccounts pins that the platform account and the
+// built-in bots carry no rating. The platform account is not flagged is_bot, so the
+// bot exclusion in the seeding query does not cover it -- which is how it acquired a
+// rating in the first place -- and an operator must not be able to create one by
+// hand either.
+func TestRecomputeRefusesServiceAccounts(t *testing.T) {
+	for _, userID := range domain.SystemUserIDs() {
+		st := newFakeRatingStore()
+		st.signals[userID] = domain.AccountRatingSignals{StarsReceived: 5000}
+		st.unrated = []int64{userID}
+		service := newTestService(st)
+
+		if _, err := service.Recompute(context.Background(), userID); !errors.Is(err, domain.ErrAccountRatingAdjustmentInvalid) {
+			t.Fatalf("Recompute(%d) = %v, want ErrAccountRatingAdjustmentInvalid", userID, err)
+		}
+		if _, err := service.EnsureRating(context.Background(), userID); err == nil {
+			t.Fatalf("EnsureRating(%d) succeeded, want a refusal", userID)
+		}
+		if len(st.ratings) != 0 {
+			t.Fatalf("service account %d ended up with a projection: %#v", userID, st.ratings)
+		}
+		// A seeding pass that is somehow handed one skips it rather than failing the
+		// whole cycle.
+		if processed, err := service.RunRecomputeCycle(context.Background(), 10); err != nil || processed != 0 {
+			t.Fatalf("cycle over service account %d = %d,%v, want 0,nil", userID, processed, err)
+		}
+	}
+
+	// An ordinary account is unaffected.
+	st := newFakeRatingStore()
+	st.signals[42] = domain.AccountRatingSignals{StarsReceived: 5000}
+	if _, err := newTestService(st).Recompute(context.Background(), 42); err != nil {
+		t.Fatalf("Recompute of an ordinary account: %v", err)
+	}
+}

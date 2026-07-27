@@ -918,3 +918,64 @@ func TestUserFullMaterializesOnlyTheViewersOwnRating(t *testing.T) {
 		t.Fatalf("viewing a stranger created a projection for %d", other.ID)
 	}
 }
+
+// TestUserFullOmitsStarsRatingForBotsAndServiceAccounts pins that infrastructure
+// carries no level badge even if a projection row exists -- a deployment that ran a
+// recompute cycle before the exclusion landed has one for the platform account,
+// which is not flagged is_bot and so was seeded like an ordinary user.
+func TestUserFullOmitsStarsRatingForBotsAndServiceAccounts(t *testing.T) {
+	ratings := &fakeAccountRatings{byUser: map[int64]domain.AccountRating{}}
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	viewer, err := userStore.Create(ctx, domain.User{AccessHash: 31, Phone: "15550004101", FirstName: "Viewer"})
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+	bot, err := userStore.Create(ctx, domain.User{AccessHash: 32, Phone: "15550004102", FirstName: "Helper", Bot: true})
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+	rated := func(userID int64) domain.AccountRating {
+		return domain.AccountRating{
+			UserID: userID, Level: 4, Stars: 9000,
+			CurrentLevelStars: domain.AccountRatingLevelThreshold(4),
+		}
+	}
+	ratings.byUser[bot.ID] = rated(bot.ID)
+	ratings.byUser[viewer.ID] = rated(viewer.ID)
+	for _, serviceID := range domain.SystemUserIDs() {
+		ratings.byUser[serviceID] = rated(serviceID)
+	}
+	r := New(Config{}, Deps{Users: appusers.NewService(userStore), AccountRatings: ratings}, zaptest.NewLogger(t), clock.System)
+	viewerCtx := WithUserID(ctx, viewer.ID)
+
+	full, err := r.onUsersGetFullUser(viewerCtx, &tg.InputUser{UserID: bot.ID, AccessHash: bot.AccessHash})
+	if err != nil {
+		t.Fatalf("get bot full user: %v", err)
+	}
+	if rating, ok := full.FullUser.GetStarsRating(); ok {
+		t.Fatalf("bot stars_rating = %+v, want absent", rating)
+	}
+
+	// The platform account is reachable by every client, and it is the one that
+	// actually acquired a rating, so check it end to end rather than only in the
+	// domain predicate.
+	official, err := r.onUsersGetFullUser(viewerCtx, &tg.InputUser{
+		UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash,
+	})
+	if err != nil {
+		t.Fatalf("get official full user: %v", err)
+	}
+	if rating, ok := official.FullUser.GetStarsRating(); ok {
+		t.Fatalf("platform account stars_rating = %+v, want absent", rating)
+	}
+
+	// An ordinary account still gets its badge, so the guard is not simply off.
+	own, err := r.onUsersGetFullUser(viewerCtx, &tg.InputUserSelf{})
+	if err != nil {
+		t.Fatalf("get own full user: %v", err)
+	}
+	if rating, ok := own.FullUser.GetStarsRating(); !ok || rating.Level != 4 {
+		t.Fatalf("own stars_rating = %+v (present=%v), want level 4", rating, ok)
+	}
+}

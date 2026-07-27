@@ -465,8 +465,11 @@ LIMIT $2`, olderThanUnix, limit)
 // UnratedAccounts returns accounts that have no projection yet, oldest account
 // first so the walk is stable and every account is eventually reached.
 //
-// Bots and deleted accounts are skipped: a bot has no star rating, and a deleted
-// account is a tombstone whose every profile field has already been cleared.
+// Three kinds of account are skipped, per domain.RatableAccount: bots, which do
+// not transact on their own behalf; the built-in service accounts, which are
+// infrastructure -- and note that the platform account is not flagged is_bot, so
+// excluding bots alone would still have seeded it; and deleted accounts, which are
+// tombstones whose every profile field has already been cleared.
 func (s *AccountRatingStore) UnratedAccounts(ctx context.Context, limit int) ([]int64, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("account rating store is not configured")
@@ -481,9 +484,10 @@ func (s *AccountRatingStore) UnratedAccounts(ctx context.Context, limit int) ([]
 SELECT u.id FROM users u
 WHERE NOT u.is_bot
   AND u.deleted_at IS NULL
+  AND u.id <> ALL($2::bigint[])
   AND NOT EXISTS (SELECT 1 FROM account_rating r WHERE r.user_id = u.id)
 ORDER BY u.created_at, u.id
-LIMIT $1`, limit)
+LIMIT $1`, limit, domain.SystemUserIDs())
 	if err != nil {
 		return nil, fmt.Errorf("list unrated accounts: %w", err)
 	}

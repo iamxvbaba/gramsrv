@@ -407,7 +407,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			full.SetBirthday(tgBirthday(u.Birthday))
 		}
 	}
-	r.applyAccountRatingToUserFull(ctx, currentUserID, u.ID, &full)
+	r.applyAccountRatingToUserFull(ctx, currentUserID, u, &full)
 	// 个人频道（account.updatePersonalChannel）不在此落地：它按 viewer 实时解析，作为缓存后的
 	// overlay 处理（applyPersonalChannelToUserFull），避免烤进 per-(viewer,target) 投影缓存以及
 	// build/chats 两次解析同一频道。
@@ -424,8 +424,16 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 //
 // A nil AccountRatings service (or any read error) leaves every flag unset, which
 // is exactly the wire shape from before ratings existed.
-func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID, targetUserID int64, full *tg.UserFull) {
+func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID int64, target domain.User, full *tg.UserFull) {
+	targetUserID := target.ID
 	if r.deps.AccountRatings == nil || full == nil || targetUserID == 0 {
+		return
+	}
+	// A bot or a service account carries no rating: it does not transact on its own
+	// behalf, and a level badge on the platform account would claim something about
+	// transaction volume that means nothing. Suppressing it here as well as at the
+	// write paths keeps a row left over from before that rule out of the wire.
+	if !domain.RatableAccount(targetUserID, target.Bot) {
 		return
 	}
 	rating, err := r.accountRatingForUserFull(ctx, viewerUserID, targetUserID)

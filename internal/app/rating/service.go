@@ -245,6 +245,13 @@ func (s *Service) Recompute(ctx context.Context, userID int64) (domain.AccountRa
 	if userID <= 0 {
 		return domain.AccountRating{}, domain.ErrAccountRatingAdjustmentInvalid
 	}
+	// The service accounts are infrastructure, not participants. Refusing here as
+	// well as in the seeding query means an operator cannot create a rating for one
+	// by hand either -- the platform account is not flagged is_bot, so nothing else
+	// would stop it.
+	if !domain.RatableAccount(userID, false) {
+		return domain.AccountRating{}, domain.ErrAccountRatingAdjustmentInvalid
+	}
 	signals, err := st.AccountRatingSignals(ctx, userID)
 	if err != nil {
 		return domain.AccountRating{}, err

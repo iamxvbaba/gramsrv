@@ -154,9 +154,25 @@ func IsSystemUserID(id int64) bool {
 	return ok
 }
 
+// SystemUserIDs returns every built-in account id, in a stable order.
+//
+// It is the one list to extend when a service account is added, so a caller that
+// has to enumerate them -- a SQL predicate excluding infrastructure, say -- cannot
+// silently miss one the way an inline literal would.
+func SystemUserIDs() []int64 {
+	return []int64{
+		OfficialSystemUserID,
+		BotFatherUserID,
+		StickersBotUserID,
+		ChatBotUserID,
+		VerifyBotUserID,
+		VerifierBotUserID,
+	}
+}
+
 func SystemUserByPhone(phone string) (User, bool) {
 	phone = NormalizePhone(phone)
-	for _, id := range []int64{OfficialSystemUserID, BotFatherUserID, StickersBotUserID, ChatBotUserID, VerifyBotUserID, VerifierBotUserID} {
+	for _, id := range SystemUserIDs() {
 		u, ok := SystemUserByID(id)
 		if !ok || u.Phone == "" {
 			continue

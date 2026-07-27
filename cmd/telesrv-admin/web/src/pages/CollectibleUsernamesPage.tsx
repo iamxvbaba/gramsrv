@@ -40,6 +40,7 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
   const [cryptoAmount, setCryptoAmount] = useState("");
   const [url, setUrl] = useState("");
   const [purchaseDate, setPurchaseDate] = useState("");
+  const [purchaseTime, setPurchaseTime] = useState("");
 
   async function load(next = false) {
     setBusy(true);
@@ -96,7 +97,11 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
     }
     if (url.trim()) payload.url = url.trim();
     if (purchaseDate) {
-      const parsed = Date.parse(`${purchaseDate}T00:00:00Z`);
+      // fragment.collectibleInfo.purchase_date is a unix timestamp, and the date has
+      // always been read as UTC here. The time follows the same clock rather than the
+      // operator's local one, so adding it cannot silently shift what a date-only
+      // entry used to mean; the field label says UTC.
+      const parsed = Date.parse(`${purchaseDate}T${purchaseTime || "00:00"}:00Z`);
       if (Number.isFinite(parsed)) payload.purchase_date = Math.floor(parsed / 1000);
     }
     return payload;
@@ -172,6 +177,16 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
           <label className="duration-field">
             <span>{t("usernames.purchaseDate")}</span>
             <input value={purchaseDate} onChange={(event) => setPurchaseDate(event.target.value)} type="date" />
+          </label>
+          <label className="duration-field">
+            <span>{t("usernames.purchaseTime")}</span>
+            <input
+              value={purchaseTime}
+              onChange={(event) => setPurchaseTime(event.target.value)}
+              type="time"
+              step={60}
+              disabled={!purchaseDate}
+            />
           </label>
         </div>
         <p className="bot-create-note">

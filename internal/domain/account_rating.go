@@ -98,6 +98,27 @@ type StarsRating struct {
 	HasNextLevelStars bool
 }
 
+// RatableAccount reports whether an account may carry a composite rating.
+//
+// The rating measures what an account did with Stars -- gifts bought, paid
+// messages sent, activity, moderation history. Two kinds of account have no
+// meaningful answer there and are excluded everywhere the rating is computed,
+// seeded or projected:
+//
+//   - Bots. A bot does not buy gifts or send paid messages on its own behalf, so
+//     its score would only ever be the flat account-age term.
+//   - The built-in service accounts (the platform account, BotFather, @Stickers,
+//     @ChatBot, the verification bots). They are infrastructure rather than
+//     participants: a leaderboard entry for the platform account is noise, and a
+//     level badge on it would claim something about transaction volume that means
+//     nothing.
+//
+// Note that the platform account is not flagged is_bot, so the bot check alone
+// does not cover it -- which is exactly how it ended up in the seeding pass.
+func RatableAccount(userID int64, bot bool) bool {
+	return userID > 0 && !bot && !IsSystemUserID(userID)
+}
+
 // StarsRating returns the userFull.stars_rating projection.
 func (r AccountRating) StarsRating() StarsRating {
 	return StarsRating{

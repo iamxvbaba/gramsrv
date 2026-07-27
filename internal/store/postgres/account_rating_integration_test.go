@@ -418,6 +418,14 @@ WHERE id = $1`, deleted); err != nil {
 	if _, ok := index[deleted]; ok {
 		t.Fatalf("deleted account %d was offered as a rating candidate", deleted)
 	}
+	// The service accounts are infrastructure. The platform account in particular is
+	// NOT flagged is_bot, so excluding bots alone would still have seeded it -- which
+	// is exactly how it got a rating.
+	for _, serviceID := range domain.SystemUserIDs() {
+		if _, ok := index[serviceID]; ok {
+			t.Fatalf("service account %d was offered as a rating candidate", serviceID)
+		}
+	}
 	if !(index[oldest] < index[middle] && index[middle] < index[newest]) {
 		t.Fatalf("candidate order = oldest %d, middle %d, newest %d; want oldest first",
 			index[oldest], index[middle], index[newest])
