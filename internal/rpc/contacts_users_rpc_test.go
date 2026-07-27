@@ -672,8 +672,8 @@ func TestUsernameRPCLifecycle(t *testing.T) {
 		t.Fatalf("update username: %v", err)
 	}
 	self, ok := user.(*tg.User)
-	if !ok || self.Username != "owner_name" || len(self.Usernames) != 1 || !self.Usernames[0].Active {
-		t.Fatalf("updated user = %T %+v, want self with active username", user, user)
+	if !ok || self.Username != "owner_name" || len(self.Usernames) != 0 {
+		t.Fatalf("updated user = %T %+v, want self with scalar username only", user, user)
 	}
 
 	resolved, err := r.onContactsResolveUsername(reqCtx, &tg.ContactsResolveUsernameRequest{Username: "@OWNER_NAME"})

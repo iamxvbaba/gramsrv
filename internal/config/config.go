@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/text/language"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/links"
 )
 
@@ -130,6 +131,19 @@ type Config struct {
 	AdminUIPassword string
 	AdminUIToken    string
 	AdminSessionKey string
+	// AdminUIPermissions is the permission set granted to a panel session that
+	// authenticated with TELESRV_ADMIN_UI_PASSWORD / _TOKEN. The single entry "*"
+	// means "every permission" and is the shipped default, so enabling RBAC never
+	// silently locks an operator out of a panel that worked before.
+	AdminUIPermissions []string
+	// AdminScopedTokens are additional adminapi bearer tokens with a bounded
+	// permission set each. They exist so an integration can be given exactly the
+	// rights it needs instead of the unrestricted TELESRV_ADMIN_API_TOKEN. Parsed
+	// from
+	// "name:token:perm1,perm2" entries separated by ';'; a malformed entry, a
+	// duplicate name or a duplicate token fails startup rather than silently
+	// granting or dropping rights.
+	AdminScopedTokens []AdminScopedToken
 
 	// PostgresDSN 是业务数据（auth_key / user / authorization 等）持久化的 PostgreSQL 连接串。
 	// 依赖由 deploy/docker-compose.yml 启动；职责划分见 docs/persistence-layer.md。
@@ -374,6 +388,106 @@ type Config struct {
 	StarGiftCraftDelay               time.Duration
 	StarGiftCraftChancePermille      int
 
+	// RatingEnabled controls the local admin-only composite account rating.
+	// Disabled keeps every local projection empty and refuses rating writes; no
+	// client-facing Telegram field changes in either mode.
+	RatingEnabled bool
+	// RatingPendingDelay is how long a rating increase stays parked as a pending
+	// local score before it becomes the visible admin level. A decrease is
+	// always applied immediately: a penalty must not sit behind a delay.
+	// 0 applies every change immediately.
+	RatingPendingDelay time.Duration
+	// RatingRecomputeInterval / RatingRecomputeBatch drive the background
+	// recompute worker. The rating derives from signals owned by other
+	// subsystems, so freshness is a worker property, not a write-path one.
+	RatingRecomputeInterval time.Duration
+	RatingRecomputeBatch    int
+	// RatingStaleAfter is the projection age after which the worker recomputes a
+	// user.
+	RatingStaleAfter time.Duration
+	// Rating weights are the integer composite formula. Defaults mirror
+	// domain.DefaultAccountRatingWeights() exactly, so the shipped behaviour is
+	// identical whether or not these keys are set. Every weight is a magnitude:
+	// the penalties are subtracted by the domain formula, so all values are
+	// non-negative and a negative value fails startup.
+	RatingWeightStarsReceivedPermille int64
+	RatingWeightStarsSpentPermille    int64
+	RatingWeightMessageSent           int64
+	RatingWeightAccountAgeDay         int64
+	RatingWeightGiftReceived          int64
+	RatingWeightModerationCase        int64
+	RatingWeightScamPenalty           int64
+	RatingWeightFakePenalty           int64
+	// RatingActivityCap bounds the activity component so activity alone cannot
+	// outweigh Stars and moderation; 0 leaves it uncapped.
+	RatingActivityCap int64
+	// VerificationEnabled controls official platform verification: the @verifybot
+	// application flow and the panel's review queue. Disabled refuses every
+	// verification use case explicitly; already-verified peers keep their badge,
+	// because the flag lives on the peer record and is not derived from this
+	// feature being on.
+	VerificationEnabled bool
+	// VerificationAllowUserTargets opts plain user accounts in as verification
+	// subjects. Off by default: the official process verifies a public presence
+	// (bot, public channel, public supergroup), and a private account has nothing
+	// to check.
+	VerificationAllowUserTargets bool
+	// VerificationRejectCooldown is how long an applicant must wait before filing
+	// the same target again after a rejection. Measured from the decision, so a
+	// slow review never shortens it; 0 disables the cooldown.
+	VerificationRejectCooldown time.Duration
+	// VerificationApplyRateLimit / VerificationApplyRateWindow bound how many
+	// applications one applicant may create per window. 0 for either disables the
+	// budget.
+	VerificationApplyRateLimit  int
+	VerificationApplyRateWindow time.Duration
+	// VerificationBotRateLimit / VerificationBotRateWindow bound the @verifybot
+	// dialog itself (per-applicant command rate), independently of how many
+	// applications are actually created.
+	VerificationBotRateLimit  int
+	VerificationBotRateWindow time.Duration
+	// VerificationNotifyInterval / VerificationNotifyBatch drive the applicant
+	// notification worker. A decision commits with its outbox row, never with a
+	// message send, so delivery cadence is a worker property.
+	VerificationNotifyInterval time.Duration
+	VerificationNotifyBatch    int
+	// VerificationMaxActivePerUser bounds how many applications one applicant may
+	// keep open at once; 0 disables the cap.
+	VerificationMaxActivePerUser int
+
+	// BotVerificationEnabled controls THIRD-PARTY bot verification
+	// (core.telegram.org/api/bots/verification): a verifier bot marking peers with
+	// its own icon and description, projected onto
+	// user/channel.bot_verification_icon and botInfo.verifier_settings. It is a
+	// different mechanism from VerificationEnabled above -- that one is the
+	// operator-granted platform checkmark, and the two never read each other's
+	// state.
+	//
+	// Disabled refuses every third-party mutation (grants, revocations,
+	// applications, catalogue edits) while the marks already granted keep
+	// projecting: blanking one verifier's badges is what its per-verifier kill
+	// switch is for.
+	BotVerificationEnabled bool
+	// BotVerificationMaxPerVerifier bounds how many peers one verifier bot may
+	// mark. Verifier status is granted per deployment rather than earned per peer,
+	// so an unbounded verifier would be an unbounded badge printer. 0 disables the
+	// service-level bound and leaves only the storage bound
+	// (domain.MaxCustomVerificationsPerVerifier), which is also the maximum this
+	// key accepts.
+	BotVerificationMaxPerVerifier int
+	// BotVerificationRequestRateLimit / BotVerificationRequestRateWindow bound how
+	// many verification applications one applicant may file per window, across all
+	// verifier bots. 0 for either disables the budget.
+	BotVerificationRequestRateLimit  int
+	BotVerificationRequestRateWindow time.Duration
+
+	// CollectibleUsernameURLTemplate is the landing URL recorded on a minted
+	// collectible username when the mint request carries no explicit URL.
+	// Empty derives <TELESRV_PUBLIC_BASE_URL>/nft/username/<username>; a template
+	// may carry the {username} placeholder, and without it the name is appended
+	// as the last path segment. No external marketplace is contacted.
+	CollectibleUsernameURLTemplate string
+
 	// GroupCallCheckTTL 是群通话参与者保活水位的过期阈值（客户端 Connecting 态
 	// 4s 一跳；M1 起 SFU liveness reporter 同样刷新该水位）。
 	GroupCallCheckTTL time.Duration
@@ -421,6 +535,15 @@ type Config struct {
 	// SFUAdvertiseIP 是写进下行 candidate 的客户端可达地址，默认回落 AdvertiseIP。
 	// ⚠ 127.0.0.1 会让真机 ICE 永远连不上且无任何 RPC 错误（纯媒体面静默失败）。
 	SFUAdvertiseIP string
+}
+
+// AdminScopedToken is one adminapi bearer token restricted to a permission set.
+// Name is the audit identity written next to actions performed with the token;
+// Permissions is the closed list of rights it carries ("*" means all).
+type AdminScopedToken struct {
+	Name        string
+	Token       string
+	Permissions []string
 }
 
 type AIProviderConfig struct {
@@ -472,6 +595,13 @@ func Load() (Config, error) {
 	countryCode, err := normalizeDefaultCountryCode(envOr("TELESRV_DEFAULT_COUNTRY_CODE", defaultCountryCode))
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_DEFAULT_COUNTRY_CODE: %w", err)
+	}
+	// The composite rating weight defaults are the domain formula's own defaults;
+	// see RatingWeight* below.
+	defaultRatingWeights := domain.DefaultAccountRatingWeights()
+	adminScopedTokens, err := parseAdminScopedTokens(envAllowEmptyOr("TELESRV_ADMIN_SCOPED_TOKENS", ""))
+	if err != nil {
+		return Config{}, err
 	}
 
 	cfg := Config{
@@ -537,6 +667,8 @@ func Load() (Config, error) {
 		TelegramLoginRetention:               envDurationOr("TELESRV_TELEGRAM_LOGIN_RETENTION", 7*24*time.Hour),
 		TelegramLoginSweepInterval:           envDurationOr("TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL", 5*time.Minute),
 		TelegramLoginSweepBatch:              envIntOr("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", 500),
+		AdminUIPermissions:                   envListOr("TELESRV_ADMIN_UI_PERMISSIONS", []string{adminPermissionAll}),
+		AdminScopedTokens:                    adminScopedTokens,
 		AdminUIAddr:                          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:                      envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:                         envOr("TELESRV_ADMIN_UI_TOKEN", ""),
@@ -664,6 +796,47 @@ func Load() (Config, error) {
 		StarGiftCraftDelay:               envDurationOr("TELESRV_STARGIFT_CRAFT_DELAY", 0),
 		StarGiftCraftChancePermille:      envIntOr("TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE", 250),
 
+		RatingEnabled:           envBoolOr("TELESRV_RATING_ENABLED", true),
+		RatingPendingDelay:      envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
+		RatingRecomputeInterval: envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
+		RatingRecomputeBatch:    envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
+		RatingStaleAfter:        envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
+		// Weight defaults are read from the domain formula itself so the shipped
+		// behaviour cannot drift from domain.DefaultAccountRatingWeights().
+		RatingWeightStarsReceivedPermille: envInt64Or("TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", defaultRatingWeights.StarsReceivedPermille),
+		RatingWeightStarsSpentPermille:    envInt64Or("TELESRV_RATING_WEIGHT_STARS_SPENT_PERMILLE", defaultRatingWeights.StarsSpentPermille),
+		RatingWeightMessageSent:           envInt64Or("TELESRV_RATING_WEIGHT_MESSAGE_SENT", defaultRatingWeights.PerMessageSent),
+		RatingWeightAccountAgeDay:         envInt64Or("TELESRV_RATING_WEIGHT_ACCOUNT_AGE_DAY", defaultRatingWeights.PerAccountAgeDay),
+		RatingWeightGiftReceived:          envInt64Or("TELESRV_RATING_WEIGHT_GIFT_RECEIVED", defaultRatingWeights.PerGiftReceived),
+		RatingWeightModerationCase:        envInt64Or("TELESRV_RATING_WEIGHT_MODERATION_CASE", defaultRatingWeights.PerModerationCase),
+		RatingWeightScamPenalty:           envInt64Or("TELESRV_RATING_WEIGHT_SCAM_PENALTY", defaultRatingWeights.ScamPenalty),
+		RatingWeightFakePenalty:           envInt64Or("TELESRV_RATING_WEIGHT_FAKE_PENALTY", defaultRatingWeights.FakePenalty),
+		RatingActivityCap:                 envInt64Or("TELESRV_RATING_ACTIVITY_CAP", defaultRatingWeights.ActivityCap),
+		CollectibleUsernameURLTemplate:    strings.TrimSpace(envAllowEmptyOr("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", "")),
+
+		// Official verification defaults ship the feature on with the official bar
+		// in place: user accounts are not accepted, a rejection costs a month, and
+		// an applicant can neither flood the queue nor keep an unbounded number of
+		// applications open.
+		VerificationEnabled:          envBoolOr("TELESRV_VERIFICATION_ENABLED", true),
+		VerificationAllowUserTargets: envBoolOr("TELESRV_VERIFICATION_ALLOW_USER_TARGETS", false),
+		VerificationRejectCooldown:   envDurationOr("TELESRV_VERIFICATION_REJECT_COOLDOWN", 720*time.Hour),
+		VerificationApplyRateLimit:   envIntOr("TELESRV_VERIFICATION_APPLY_RATE_LIMIT", 3),
+		VerificationApplyRateWindow:  envDurationOr("TELESRV_VERIFICATION_APPLY_RATE_WINDOW", 24*time.Hour),
+		VerificationBotRateLimit:     envIntOr("TELESRV_VERIFICATION_BOT_RATE_LIMIT", 30),
+		VerificationBotRateWindow:    envDurationOr("TELESRV_VERIFICATION_BOT_RATE_WINDOW", time.Minute),
+		VerificationNotifyInterval:   envDurationOr("TELESRV_VERIFICATION_NOTIFY_INTERVAL", 15*time.Second),
+		VerificationNotifyBatch:      envIntOr("TELESRV_VERIFICATION_NOTIFY_BATCH", 50),
+		VerificationMaxActivePerUser: envIntOr("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER", 3),
+
+		BotVerificationEnabled:        envBoolOr("TELESRV_BOT_VERIFICATION_ENABLED", true),
+		BotVerificationMaxPerVerifier: envIntOr("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER", domain.MaxCustomVerificationsPerVerifier),
+		// The applicant budget is deliberately looser than the official one
+		// (TELESRV_VERIFICATION_APPLY_RATE_LIMIT=3): a deployment can run many
+		// verifier bots, and filing with a second company is not a retry of the first.
+		BotVerificationRequestRateLimit:  envIntOr("TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT", 5),
+		BotVerificationRequestRateWindow: envDurationOr("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", 24*time.Hour),
+
 		GroupCallCheckTTL:        envDurationOr("TELESRV_GROUPCALL_CHECK_TTL", 45*time.Second),
 		GroupCallSweepInterval:   envDurationOr("TELESRV_GROUPCALL_SWEEP_INTERVAL", 10*time.Second),
 		GroupCallMaxParticipants: envIntOr("TELESRV_GROUPCALL_MAX_PARTICIPANTS", 32),
@@ -695,6 +868,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if err := validateStarGiftConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateAccountRatingConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateCollectibleUsernameConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateVerificationConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateAdminRBACConfig(cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateTelegramLoginConfig(cfg); err != nil {
@@ -781,6 +966,247 @@ func validateStarGiftConfig(cfg Config) error {
 	if cfg.StarGiftStarsProceedsPermille < 0 || cfg.StarGiftStarsProceedsPermille > 1000 ||
 		cfg.StarGiftTONProceedsPermille < 0 || cfg.StarGiftTONProceedsPermille > 1000 {
 		return fmt.Errorf("TELESRV_STARGIFT_*_PROCEEDS_PERMILLE must be 0..1000")
+	}
+	return nil
+}
+
+// AccountRatingWeights renders the configured composite rating formula. It is
+// the single conversion point between env keys and the domain formula, so the
+// app service and the admin explanation always use the same numbers.
+func (c Config) AccountRatingWeights() domain.AccountRatingWeights {
+	return domain.AccountRatingWeights{
+		StarsReceivedPermille: c.RatingWeightStarsReceivedPermille,
+		StarsSpentPermille:    c.RatingWeightStarsSpentPermille,
+		PerMessageSent:        c.RatingWeightMessageSent,
+		PerAccountAgeDay:      c.RatingWeightAccountAgeDay,
+		PerGiftReceived:       c.RatingWeightGiftReceived,
+		PerModerationCase:     c.RatingWeightModerationCase,
+		ScamPenalty:           c.RatingWeightScamPenalty,
+		FakePenalty:           c.RatingWeightFakePenalty,
+		ActivityCap:           c.RatingActivityCap,
+	}
+}
+
+// validateAccountRatingConfig rejects a formula or worker cadence that cannot
+// produce a reproducible rating. Weights are validated even when the feature is
+// disabled: enabling it later must not be the moment a typo is discovered.
+func validateAccountRatingConfig(cfg Config) error {
+	if err := cfg.AccountRatingWeights().Validate(); err != nil {
+		return fmt.Errorf("TELESRV_RATING_WEIGHT_* and TELESRV_RATING_ACTIVITY_CAP must be non-negative: %w", err)
+	}
+	if cfg.RatingPendingDelay < 0 {
+		return fmt.Errorf("TELESRV_RATING_PENDING_DELAY must be non-negative")
+	}
+	const maxRatingPendingDelay = 30 * 24 * time.Hour
+	if cfg.RatingPendingDelay > maxRatingPendingDelay {
+		return fmt.Errorf("TELESRV_RATING_PENDING_DELAY must not exceed 720h")
+	}
+	if cfg.RatingRecomputeInterval <= 0 {
+		return fmt.Errorf("TELESRV_RATING_RECOMPUTE_INTERVAL must be positive")
+	}
+	if cfg.RatingStaleAfter <= 0 {
+		return fmt.Errorf("TELESRV_RATING_STALE_AFTER must be positive")
+	}
+	if cfg.RatingRecomputeBatch <= 0 || cfg.RatingRecomputeBatch > 10000 {
+		return fmt.Errorf("TELESRV_RATING_RECOMPUTE_BATCH must be 1..10000")
+	}
+	return nil
+}
+
+// adminPermissionAll is the wildcard permission: a session or token carrying it
+// may perform every admin action.
+const adminPermissionAll = "*"
+
+// validateVerificationConfig rejects a verification policy that cannot be
+// enforced, for both mechanisms: the operator-granted platform badge and the
+// third-party bot verification marks. It runs even when either feature is
+// disabled, so enabling it later is not the moment a typo is discovered.
+func validateVerificationConfig(cfg Config) error {
+	if cfg.VerificationRejectCooldown < 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_REJECT_COOLDOWN must be non-negative")
+	}
+	const maxVerificationRejectCooldown = 365 * 24 * time.Hour
+	if cfg.VerificationRejectCooldown > maxVerificationRejectCooldown {
+		return fmt.Errorf("TELESRV_VERIFICATION_REJECT_COOLDOWN must not exceed 8760h")
+	}
+	if cfg.VerificationApplyRateLimit < 0 || cfg.VerificationBotRateLimit < 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_APPLY_RATE_LIMIT and TELESRV_VERIFICATION_BOT_RATE_LIMIT must be non-negative")
+	}
+	if cfg.VerificationApplyRateWindow < 0 || cfg.VerificationBotRateWindow < 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_APPLY_RATE_WINDOW and TELESRV_VERIFICATION_BOT_RATE_WINDOW must be non-negative")
+	}
+	// A positive limit with a zero window is not "unlimited", it is a limiter that
+	// can never refill: reject it instead of shipping a permanent lockout.
+	if cfg.VerificationApplyRateLimit > 0 && cfg.VerificationApplyRateWindow <= 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_APPLY_RATE_WINDOW must be positive when TELESRV_VERIFICATION_APPLY_RATE_LIMIT is set")
+	}
+	if cfg.VerificationBotRateLimit > 0 && cfg.VerificationBotRateWindow <= 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_BOT_RATE_WINDOW must be positive when TELESRV_VERIFICATION_BOT_RATE_LIMIT is set")
+	}
+	if cfg.VerificationNotifyInterval <= 0 {
+		return fmt.Errorf("TELESRV_VERIFICATION_NOTIFY_INTERVAL must be positive")
+	}
+	if cfg.VerificationNotifyBatch <= 0 || cfg.VerificationNotifyBatch > 500 {
+		return fmt.Errorf("TELESRV_VERIFICATION_NOTIFY_BATCH must be 1..500")
+	}
+	if cfg.VerificationMaxActivePerUser < 0 || cfg.VerificationMaxActivePerUser > 50 {
+		return fmt.Errorf("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER must be 0..50")
+	}
+	// Third-party bot verification. The ceiling is the storage bound: a value above
+	// it would be silently unreachable, and a configuration key that cannot do what
+	// it says is worse than no key.
+	if cfg.BotVerificationMaxPerVerifier < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER must be non-negative")
+	}
+	if cfg.BotVerificationMaxPerVerifier > domain.MaxCustomVerificationsPerVerifier {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER must not exceed %d", domain.MaxCustomVerificationsPerVerifier)
+	}
+	if cfg.BotVerificationRequestRateLimit < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT must be non-negative")
+	}
+	if cfg.BotVerificationRequestRateWindow < 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW must be non-negative")
+	}
+	// Same trap as the official budget above: a positive limit with a zero window is
+	// not "unlimited", it is a limiter that can never refill.
+	if cfg.BotVerificationRequestRateLimit > 0 && cfg.BotVerificationRequestRateWindow <= 0 {
+		return fmt.Errorf("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW must be positive when TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT is set")
+	}
+	return nil
+}
+
+// validateAdminRBACConfig checks the panel/adminapi permission configuration.
+// An unparsable permission name is refused rather than ignored: a silently
+// dropped permission is either a lockout or an unintended grant.
+func validateAdminRBACConfig(cfg Config) error {
+	if len(cfg.AdminUIPermissions) == 0 {
+		return fmt.Errorf("TELESRV_ADMIN_UI_PERMISSIONS must not be empty; use * to grant every permission")
+	}
+	for _, permission := range cfg.AdminUIPermissions {
+		if !validAdminPermission(permission) {
+			return fmt.Errorf("TELESRV_ADMIN_UI_PERMISSIONS contains invalid permission %q", permission)
+		}
+	}
+	names := make(map[string]struct{}, len(cfg.AdminScopedTokens))
+	tokens := make(map[string]struct{}, len(cfg.AdminScopedTokens))
+	for _, scoped := range cfg.AdminScopedTokens {
+		if _, dup := names[strings.ToLower(scoped.Name)]; dup {
+			return fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS has duplicate name %q", scoped.Name)
+		}
+		names[strings.ToLower(scoped.Name)] = struct{}{}
+		if _, dup := tokens[scoped.Token]; dup {
+			return fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS reuses one token for several names")
+		}
+		tokens[scoped.Token] = struct{}{}
+		if scoped.Token == cfg.AdminAPIToken && strings.TrimSpace(cfg.AdminAPIToken) != "" {
+			return fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q reuses TELESRV_ADMIN_API_TOKEN, which would silently widen it to every permission", scoped.Name)
+		}
+		if len(scoped.Permissions) == 0 {
+			return fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q has no permissions", scoped.Name)
+		}
+		for _, permission := range scoped.Permissions {
+			if !validAdminPermission(permission) {
+				return fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q has invalid permission %q", scoped.Name, permission)
+			}
+		}
+	}
+	return nil
+}
+
+// parseAdminScopedTokens reads "name:token:perm1,perm2" entries separated by ';'.
+//
+// The shape is strict on purpose: the value carries credentials, and a
+// half-understood entry must fail startup rather than produce a token whose
+// rights nobody can predict. The permission list is the last field, so a token
+// itself may not contain ':' -- which is also why it is validated here rather
+// than being re-split later by a consumer.
+func parseAdminScopedTokens(raw string) ([]AdminScopedToken, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := make([]AdminScopedToken, 0, 4)
+	for _, entry := range strings.Split(raw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.Split(entry, ":")
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q must be name:token:perm1,perm2", entry)
+		}
+		name := strings.TrimSpace(parts[0])
+		token := strings.TrimSpace(parts[1])
+		if name == "" || token == "" {
+			return nil, fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q must carry a non-empty name and token", entry)
+		}
+		if strings.ContainsAny(token, " \t\r\n") {
+			return nil, fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q has whitespace inside its token", name)
+		}
+		permissions := make([]string, 0, 4)
+		for _, permission := range strings.Split(parts[2], ",") {
+			permission = strings.TrimSpace(permission)
+			if permission == "" {
+				continue
+			}
+			permissions = append(permissions, permission)
+		}
+		if len(permissions) == 0 {
+			return nil, fmt.Errorf("TELESRV_ADMIN_SCOPED_TOKENS entry %q must list at least one permission", name)
+		}
+		out = append(out, AdminScopedToken{Name: name, Token: token, Permissions: permissions})
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// validAdminPermission accepts the wildcard and dotted/namespaced permission
+// names such as "users.read" or "verification:decide".
+func validAdminPermission(permission string) bool {
+	if permission == adminPermissionAll {
+		return true
+	}
+	if permission == "" || len(permission) > 64 {
+		return false
+	}
+	for i := 0; i < len(permission); i++ {
+		c := permission[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == '-':
+		case (c == '.' || c == ':') && i != 0 && i != len(permission)-1:
+		case c == '*' && i == len(permission)-1 && i > 0 && (permission[i-1] == '.' || permission[i-1] == ':'):
+			// A trailing "namespace.*" grants a whole namespace.
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// validateCollectibleUsernameConfig checks the optional mint URL template. An
+// empty template is the documented default (the public-link route is derived
+// from TELESRV_PUBLIC_BASE_URL); a configured one must be a client-openable
+// absolute http(s) URL that still fits the registry's url column.
+func validateCollectibleUsernameConfig(cfg Config) error {
+	template := strings.TrimSpace(cfg.CollectibleUsernameURLTemplate)
+	if template == "" {
+		return nil
+	}
+	if len(template)+domain.MaxCollectibleUsernameLength > domain.MaxCollectibleUsernameURLLength {
+		return fmt.Errorf("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE is too long to hold a rendered username")
+	}
+	// Render the placeholder before parsing so a templated path segment is
+	// validated in its final shape.
+	rendered := strings.ReplaceAll(template, "{username}", "username")
+	parsed, err := url.Parse(rendered)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE must be an absolute http(s) URL without userinfo")
 	}
 	return nil
 }

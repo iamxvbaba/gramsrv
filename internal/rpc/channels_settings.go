@@ -102,28 +102,66 @@ func (r *Router) onChannelsSetEmojiStickers(ctx context.Context, req *tg.Channel
 	return true, nil
 }
 
+// onChannelsReorderUsernames rewrites the channel's collectible username order.
+// Permissions are the ordinary change_info gate every other channels.* setting
+// uses (channelChangeInfoView).
+//
+// With no username registry wired the handler keeps its historical accept-and-
+// ignore answer: the channel then owns exactly one editable username, whose order
+// is not expressible, so reporting success is both true and what shipped clients
+// already saw.
 func (r *Router) onChannelsReorderUsernames(ctx context.Context, req *tg.ChannelsReorderUsernamesRequest) (bool, error) {
+	if req == nil {
+		return false, channelInvalidErr(domain.ErrChannelInvalid)
+	}
 	if len(req.Order) > maxChannelUsernameOrder {
 		return false, limitInvalidErr()
 	}
-	if _, _, err := r.channelChangeInfoView(ctx, req.Channel); err != nil {
+	_, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	if err != nil {
+		return false, err
+	}
+	if r.deps.Usernames == nil {
+		return true, nil
+	}
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: view.Channel.ID}
+	if err := r.reorderRegistryUsernames(ctx, peer, req.Order); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
 func (r *Router) onChannelsToggleUsername(ctx context.Context, req *tg.ChannelsToggleUsernameRequest) (bool, error) {
+	if req == nil {
+		return false, channelInvalidErr(domain.ErrChannelInvalid)
+	}
 	if req.Username != "" && !validChannelManagementUsername(req.Username) {
 		return false, usernameInvalidErr()
 	}
-	if _, _, err := r.channelChangeInfoView(ctx, req.Channel); err != nil {
+	_, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	if err != nil {
+		return false, err
+	}
+	if r.deps.Usernames == nil {
+		return true, nil
+	}
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: view.Channel.ID}
+	if err := r.toggleRegistryUsername(ctx, peer, req.Username, req.Active); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
 func (r *Router) onChannelsDeactivateAllUsernames(ctx context.Context, input tg.InputChannelClass) (bool, error) {
-	if _, _, err := r.channelChangeInfoView(ctx, input); err != nil {
+	_, view, err := r.channelChangeInfoView(ctx, input)
+	if err != nil {
+		return false, err
+	}
+	if r.deps.Usernames == nil {
+		return true, nil
+	}
+	peer := domain.Peer{Type: domain.PeerTypeChannel, ID: view.Channel.ID}
+	if err := r.deactivateAllRegistryUsernames(ctx, peer); err != nil {
 		return false, err
 	}
 	return true, nil

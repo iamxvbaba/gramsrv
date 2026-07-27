@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -123,7 +124,12 @@ SELECT peer_id
 FROM peer_usernames
 WHERE username_lower = $1 AND peer_type = 'channel'
 `, publicUsername)
-	requirePlanContains(t, usernameLookupPlan, "peer_usernames_pkey")
+	// 0150 adds peer_usernames_peer_order_idx, which covers this lookup as an
+	// index-only scan; either index is an acceptable plan, a partition scan is not.
+	if !strings.Contains(usernameLookupPlan, "peer_usernames_pkey") &&
+		!strings.Contains(usernameLookupPlan, "peer_usernames_peer_order_idx") {
+		t.Fatalf("username lookup plan = %s, want a peer_usernames index scan", usernameLookupPlan)
+	}
 	requirePlanNotMatches(t, usernameLookupPlan, `channels_p\d+`)
 
 	usernameChannelDetailPlan := explainText(t, ctx, tx, `

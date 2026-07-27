@@ -4,8 +4,9 @@ import { api, errorMessage } from "../api";
 import { Alert } from "../components/ui";
 import { LanguageSwitch, useI18n } from "../i18n";
 import { ThemeSwitch } from "../theme";
+import type { AdminSession } from "../types";
 
-export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
+export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => void }) {
   const { t } = useI18n();
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
@@ -16,8 +17,10 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
     setBusy(true);
     setError("");
     try {
+      // The login answer carries the permission set and the CSRF token; api.login
+      // remembers the token, the session state keeps the rights.
       const result = await api.login(secret);
-      onLogin(result.actor);
+      onLogin({ actor: result.actor, permissions: result.permissions ?? [] });
     } catch (err) {
       setError(errorMessage(err));
     } finally {

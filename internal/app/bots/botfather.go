@@ -74,15 +74,26 @@ You can control me by sending these commands:
 /cancel - cancel the current operation
 /help - show this message`
 
-// botReply 是 BotFather 的一条回复。
+// botReply 是内置 service bot 的一条回复。ReplyMarkup 为可选 inline keyboard
+// 快照（@verifybot 的按钮式对话使用）；落库前经 domain.ValidateReplyMarkup 校验。
 type botReply struct {
-	Text     string
-	Entities []domain.MessageEntity
+	Text        string
+	Entities    []domain.MessageEntity
+	ReplyMarkup *domain.MessageReplyMarkup
 }
 
 // HandlesBot 报告该收件人是否为内置应答 bot（messages.BotResponder 实现）。
 func (s *Service) HandlesBot(botUserID int64) bool {
-	return s != nil && (botUserID == domain.BotFatherUserID || botUserID == domain.StickersBotUserID || botUserID == domain.ChatBotUserID)
+	if s == nil {
+		return false
+	}
+	switch botUserID {
+	case domain.BotFatherUserID, domain.StickersBotUserID, domain.ChatBotUserID,
+		domain.VerifyBotUserID, domain.VerifierBotUserID:
+		return true
+	default:
+		return false
+	}
 }
 
 // OnPrivateMessage 处理投递给内置 bot 的私聊消息（messages.BotResponder 实现）。
@@ -103,6 +114,10 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 		go s.respondAsStickers(userID, msg)
 	case domain.ChatBotUserID:
 		go s.respondAsChatBot(userID, msg)
+	case domain.VerifyBotUserID:
+		go s.respondAsVerify(userID, msg)
+	case domain.VerifierBotUserID:
+		go s.respondAsVerifier(userID, msg)
 	}
 }
 
@@ -145,12 +160,24 @@ func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, user
 	if s == nil || s.messages == nil || reply.Text == "" {
 		return domain.SendPrivateTextResult{}, false
 	}
+	markup := reply.ReplyMarkup
+	if err := domain.ValidateReplyMarkup(markup); err != nil {
+		// 键盘校验必须先于落库（I9）：结构非法的 markup 绝不写库，但正文仍然发出
+		// ——用户至少收到提示文本，不会因为一颗坏按钮而完全失联。
+		s.log.Error("service bot: invalid reply markup",
+			zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
+		markup = nil
+	}
+	if markup.IsZero() {
+		markup = nil
+	}
 	res, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
 		SenderUserID:     botUserID,
 		RecipientUserID:  userID,
 		RandomID:         s.botReplyRandomID(),
 		Message:          reply.Text,
 		Entities:         serviceBotReplyEntities(reply.Text, reply.Entities),
+		ReplyMarkup:      markup,
 		Date:             int(s.now().Unix()),
 		RecipientBlocked: s.serviceBotRecipientBlocked(ctx, botUserID, userID),
 	})

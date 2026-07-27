@@ -17,6 +17,12 @@ export function currentRoute(): RouteState {
 }
 
 export function routeTitle(pathname: string, t: TFunction): string {
+  // Third-party verification is tested before the official section and before
+  // "/bots": three different prefixes that all read as "verification of a bot".
+  if (pathname.startsWith("/bot-verification")) return t("route.botVerification");
+  if (pathname.startsWith("/verification")) return t("route.verification");
+  if (pathname.startsWith("/collectible-usernames")) return t("route.collectibleUsernames");
+  if (pathname.startsWith("/account-ratings")) return t("route.accountRatings");
   if (pathname.startsWith("/accounts")) return t("route.accounts");
   if (pathname.startsWith("/channels")) return t("route.channels");
   if (pathname.startsWith("/bots")) return t("route.bots");
@@ -29,6 +35,10 @@ export function routeTitle(pathname: string, t: TFunction): string {
 }
 
 export function routeSubtitle(pathname: string, t: TFunction): string {
+  if (pathname.startsWith("/bot-verification")) return t("route.botVerificationSubtitle");
+  if (pathname.startsWith("/verification")) return t("route.verificationSubtitle");
+  if (pathname.startsWith("/collectible-usernames")) return t("route.collectibleUsernamesSubtitle");
+  if (pathname.startsWith("/account-ratings")) return t("route.accountRatingsSubtitle");
   if (pathname.startsWith("/accounts")) return t("route.accountsSubtitle");
   if (pathname.startsWith("/channels")) return t("route.channelsSubtitle");
   if (pathname.startsWith("/bots")) return t("route.botsSubtitle");

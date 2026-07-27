@@ -60,6 +60,8 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_ADMIN_UI_PASSWORD` | secret string / empty | Admin UI login password. Configure this or `TELESRV_ADMIN_UI_TOKEN`. |
 | `TELESRV_ADMIN_UI_TOKEN` | secret string / empty | Alternative Admin UI login credential. Admin write calls still use the separate `TELESRV_ADMIN_API_TOKEN`. |
 | `TELESRV_ADMIN_SESSION_KEY` | secret string / empty | Encrypts/signs Admin UI session cookies. Production should use at least 32 random bytes; changing it invalidates sessions. |
+| `TELESRV_ADMIN_UI_PERMISSIONS` | comma-separated list / `*` | Permissions granted to an Admin UI session authenticated with `TELESRV_ADMIN_UI_PASSWORD` / `_TOKEN`. `*` grants every permission and is the default, so enabling RBAC never locks an operator out of a panel that worked before. Names use letters, digits and `._:-`, at most 64 characters, and may end in `namespace.*` to grant a whole namespace. An empty list or an unparsable name fails startup. |
+| `TELESRV_ADMIN_SCOPED_TOKENS` | `name:token:perm1,perm2` entries separated by `;` / empty | Additional Admin API bearer tokens carrying a bounded permission set each, so an integration gets exactly the rights it needs instead of the unrestricted `TELESRV_ADMIN_API_TOKEN`. A token may contain neither `:` nor whitespace, every entry must list at least one permission, names and tokens must be unique, and reusing `TELESRV_ADMIN_API_TOKEN` as a scoped token is refused because it would silently widen it to every permission. Any malformed entry fails startup rather than silently granting or dropping rights. |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
 | `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
@@ -539,6 +541,116 @@ path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze
 | `TELESRV_STARGIFT_RESELL_DELAY` | duration / `0s` | Delay snapshotted into `can_resell_at`. |
 | `TELESRV_STARGIFT_CRAFT_DELAY` | duration / `0s` | Delay snapshotted into `can_craft_at`. |
 | `TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE` | int / `250` | Per-input local craft success contribution, capped at 1000 permille. |
+
+### Composite account rating and collectible usernames
+
+The account rating is a server-local admin score combining Stars received and spent, bounded account activity, and
+moderation penalties. It is intentionally **not** projected into Telegram's `userFull.stars_rating` or
+`stars_my_pending_rating`: those fields represent official Stars transaction-volume semantics, which this composite
+does not implement. Every component is stored separately so operators can explain and reproduce a level. Collectible
+(NFT) usernames are minted by the operator; no external marketplace, wallet or chain node is configured or contacted.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_RATING_ENABLED` | bool / `true` | Enables the local admin composite rating. Disabled refuses rating writes; client-facing Telegram rating fields remain unset in either mode. |
+| `TELESRV_RATING_PENDING_DELAY` | duration / `24h` | How long a local rating increase stays pending before it becomes the visible admin level. A decrease is always applied immediately, so a penalty is never delayed. `0` applies every change at once; must be `0..720h`. |
+| `TELESRV_RATING_RECOMPUTE_INTERVAL` | duration / `15m` | Background recompute worker interval; must be positive. |
+| `TELESRV_RATING_RECOMPUTE_BATCH` | int / `500` | Stale projections recomputed per cycle; must be `1..10000`. |
+| `TELESRV_RATING_STALE_AFTER` | duration / `6h` | Projection age after which the worker recomputes a user; must be positive. |
+| `TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE` | int64 / `1000` | Weight of Stars credited to the account (gifts, reactions, paid messages received), in permille of the raw amount. |
+| `TELESRV_RATING_WEIGHT_STARS_SPENT_PERMILLE` | int64 / `250` | Weight of Stars the account spent, in permille. Spending is a weaker signal than receiving. |
+| `TELESRV_RATING_WEIGHT_MESSAGE_SENT` | int64 / `1` | Score per sent message. |
+| `TELESRV_RATING_WEIGHT_ACCOUNT_AGE_DAY` | int64 / `2` | Score per day of account age. |
+| `TELESRV_RATING_WEIGHT_GIFT_RECEIVED` | int64 / `25` | Score per collectible gift held. |
+| `TELESRV_RATING_WEIGHT_MODERATION_CASE` | int64 / `150` | Penalty magnitude per upheld moderation case; the formula subtracts it. |
+| `TELESRV_RATING_WEIGHT_SCAM_PENALTY` | int64 / `5000` | Flat penalty magnitude for the scam flag. |
+| `TELESRV_RATING_WEIGHT_FAKE_PENALTY` | int64 / `5000` | Flat penalty magnitude for the fake flag. |
+| `TELESRV_RATING_ACTIVITY_CAP` | int64 / `5000` | Upper bound of the activity component so activity alone cannot outweigh Stars and moderation; `0` leaves it uncapped. |
+| `TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE` | URL template / empty | Landing URL recorded on a minted collectible username when the mint command carries no explicit URL. Empty derives `<TELESRV_PUBLIC_BASE_URL>/nft/username/<username>`. A configured template must be an absolute http(s) URL without userinfo; it may carry the `{username}` placeholder, and without it the name is appended as the last path segment. |
+
+All rating weights are non-negative magnitudes and are validated even when the feature is disabled, so enabling it
+later is not the moment a typo is discovered. The defaults above are exactly the shipped domain formula, so behaviour
+is identical whether or not these keys are set. The final score is clamped at zero: penalties can erase a rating but
+never invert it.
+
+**Collectible username prices are stored in the smallest units of their currency**, because that is what
+`fragment.collectibleInfo` carries: `amount` is "the total price in the smallest units of the currency (integer, not
+float/double)" and `crypto_amount` likewise. So `USD 1000` is ten dollars, `TON 900` is 900 nanotons, and `XTR 1000` is
+a thousand Stars, since Stars have no subunit. Clients divide by that exponent before drawing the price. The admin panel
+is the conversion boundary: prices are typed and displayed there in whole currency units and converted on the way to the
+API, so an operator never has to count zeros. An integration writing to `/api/actions/mint-collectible-username`
+directly is talking to the API, not the panel, and must send smallest units itself.
+
+### Official platform verification
+
+Official verification is the platform badge (`user.verified` / `channel.verified`): an application is filed through the
+built-in `@verifybot`, decided in the admin panel, and an approval flips that one flag on that one peer record. It is
+deliberately not the third-party `botVerification` icon, where an outside organisation attaches its own mark. The
+application row is the durable audit subject and is never deleted, only moved through its status machine.
+
+Every eligibility check runs twice: once when the application is filed and again, against a freshly loaded snapshot, at
+the moment of approval. A target must exist, carry a public username, be controlled by the applicant (bot owner, or
+channel creator/administrator), not already be verified, not be deleted/frozen/scam/fake, and not be a built-in system
+entity. A target that changed between submission and review is refused at the second gate, so the review queue cannot
+be used to grant a state the submission path forbids. The flag itself is written inside the decision transaction, so
+"approved" and "target verified" commit together.
+
+Submitted links (website, social, press) are validated as plain http(s) URLs to public hosts: credentials, non-web
+schemes, non-standard ports, loopback, link-local, private and other reserved address space are all refused. **The
+server never fetches a submitted link** — not at submission, not during review, not from the admin panel. That is a
+deliberate anti-SSRF decision, and validation is the only thing ever done to an applicant-controlled URL.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_VERIFICATION_ENABLED` | bool / `true` | Enables official verification. Disabled refuses every verification use case explicitly; peers already carrying the badge keep it, because the flag lives on the peer record. |
+| `TELESRV_VERIFICATION_ALLOW_USER_TARGETS` | bool / `false` | Accepts plain user accounts as verification subjects. Off by default: the official process verifies a public presence (bot, public channel, public supergroup), and a private account has nothing to check. |
+| `TELESRV_VERIFICATION_REJECT_COOLDOWN` | duration / `720h` | Wait imposed on an applicant/target pair after a rejection, measured from the decision so a slow review never shortens it. `0` disables it; must be `0..8760h`. |
+| `TELESRV_VERIFICATION_APPLY_RATE_LIMIT` | int / `3` | Applications one applicant may create per window. `0` disables the budget; must be non-negative. |
+| `TELESRV_VERIFICATION_APPLY_RATE_WINDOW` | duration / `24h` | Window for the creation budget. Must be positive whenever the limit is set: a positive limit with a zero window is a limiter that never refills. |
+| `TELESRV_VERIFICATION_BOT_RATE_LIMIT` | int / `30` | `@verifybot` dialog rate per applicant, independent of how many applications are actually created. `0` disables it. |
+| `TELESRV_VERIFICATION_BOT_RATE_WINDOW` | duration / `1m` | Window for the bot dialog rate; must be positive whenever that limit is set. |
+| `TELESRV_VERIFICATION_NOTIFY_INTERVAL` | duration / `15s` | Applicant-notification worker interval; must be positive. A decision commits with its outbox row, never with a message send, so delivery is a separate retrying cycle over durable rows. |
+| `TELESRV_VERIFICATION_NOTIFY_BATCH` | int / `50` | Outbox rows delivered per cycle; must be `1..500`. |
+| `TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER` | int / `3` | Applications one applicant may keep open (draft, submitted, in review) at once. `0` disables the cap; must be `0..50`. |
+
+The defaults ship the feature on with the official bar in place, so no existing deployment changes behaviour: user
+accounts are not accepted, a rejection costs a month, and an applicant can neither flood the queue nor keep an
+unbounded number of applications open. Every value is validated even when the feature is disabled, so enabling it
+later is not the moment a typo is discovered.
+
+### Third-party bot verification
+
+Third-party verification is the other badge (`botVerification`, projected onto `user.bot_verification_icon`,
+`channel.bot_verification_icon`, `userFull.bot_verification`, `channelFull.bot_verification`,
+`chatInvite.bot_verification`, and advertised by `botInfo.verifier_settings`): an outside organisation running a
+**verifier bot** marks peers with its own icon and description. The operator grants verifier status to a bot; the bot
+then applies its mark through `bots.setCustomVerification`, or through the application queue its own dialog drives. It is
+never a second route to the platform checkmark above, and the two mechanisms never read or write each other's state.
+
+The icon is a custom emoji **document id**, and clients resolve it through `messages.getCustomEmojiDocuments`. An id
+that names no fetchable custom emoji document therefore renders as *nothing at all*: the badge is invisible, the peer
+looks unverified, and the only place the mark exists is the database. That is why the icon catalogue is operator-curated
+and validated against real documents before anything is written — both when an entry is added and when a verifier is
+granted an icon.
+
+Every mutation re-derives "may this bot verify right now?" from the stored verifier row, so the per-verifier kill switch
+takes effect immediately on the RPC path *and* on the review path: an application approved after the switch was flipped
+is refused rather than granted. A verifier bot may only be driven by itself or by its owner, and an applicant may only
+file for a peer it controls (bot owner, channel creator, or an administrator carrying `change_info`). Approvals and
+revocations move the mark inside the store's decision transaction, so an approved application can never exist without
+its mark.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_BOT_VERIFICATION_ENABLED` | bool / `true` | Enables third-party bot verification. Disabled refuses every mutation explicitly (grants, revocations, applications, catalogue edits) while marks already granted keep projecting: blanking one verifier's badges is what its per-verifier kill switch is for. A deployment that wants the pre-feature wire shape leaves the service unwired instead. |
+| `TELESRV_BOT_VERIFICATION_MAX_PER_VERIFIER` | int / `10000` | Peers one verifier bot may mark. Verifier status is granted per deployment rather than earned per peer, so an unbounded verifier would be an unbounded badge printer. Spent only on a *new* mark — an existing one stays re-describable at the bound. `0` disables the service bound and leaves only the storage bound, which is also the maximum accepted (`10000`). |
+| `TELESRV_BOT_VERIFICATION_REQUEST_RATE_LIMIT` | int / `5` | Verification applications one applicant may file per window, across all verifier bots. Spent last among the creation checks, so a refused application costs no budget. `0` disables it; must be non-negative. |
+| `TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW` | duration / `24h` | Window for the application budget. Must be positive whenever the limit is set: a positive limit with a zero window is a limiter that never refills. |
+
+The application budget is deliberately looser than the official one (`TELESRV_VERIFICATION_APPLY_RATE_LIMIT=3`): a
+deployment can run several verifier companies, and filing with a second one is not a retry of the first. Both keys are
+validated even when the feature is disabled, and the per-verifier bound is checked against the storage bound, so a key
+that cannot do what it says fails startup instead of being silently unreachable.
 
 ## 11. Private calls, group calls, TURN, SFU, and livestream
 

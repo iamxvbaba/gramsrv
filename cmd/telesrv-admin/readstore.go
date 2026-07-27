@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,7 +23,37 @@ const (
 	channelListDefaultLimit = 50
 	channelListMaxLimit     = 100
 	messagePageLimit        = 100
+	// Collectible username and account rating pages. The bounds mirror the
+	// use-case layer, so a table page costs the same whichever surface asks.
+	collectibleListDefaultLimit = 50
+	collectibleListMaxLimit     = 200
+	collectibleTransferLimit    = 50
+	ratingListDefaultLimit      = 50
+	ratingListMaxLimit          = 200
+	ratingEventLimit            = 50
+	// Verification review queue pages. The bounds mirror app/verification, so the
+	// panel and the admin API page the queue identically.
+	verificationListDefaultLimit = 50
+	verificationListMaxLimit     = 200
+	verificationEventLimit       = 100
+	// Third-party bot verification pages. The bounds mirror app/botverification, so
+	// the panel and the admin API page the verifier tables identically.
+	botVerificationListDefaultLimit = 50
+	botVerificationListMaxLimit     = 200
 )
+
+// errReadNotFound reports a detail row that does not exist, so the API layer can
+// answer 404 without importing the driver's sentinel.
+var errReadNotFound = errors.New("read row not found")
+
+// escapeLikePattern neutralises LIKE metacharacters in an operator query.
+// Usernames legitimately contain '_', so an unescaped search for "crypto_" would
+// silently match "cryptoX" instead of the name the operator typed.
+func escapeLikePattern(value string) string {
+	replaced := strings.ReplaceAll(value, `\`, `\\`)
+	replaced = strings.ReplaceAll(replaced, "%", `\%`)
+	return strings.ReplaceAll(replaced, "_", `\_`)
+}
 
 type readStore struct {
 	pool *pgxpool.Pool
@@ -32,12 +63,27 @@ func newReadStore(pool *pgxpool.Pool) *readStore {
 	return &readStore{pool: pool}
 }
 
+// AccountUsername is one collectible (Fragment-style) username a peer holds.
+//
+// Active mirrors the username#b4073647 flag: an inactive collectible is still
+// owned, it just does not resolve publicly, and an operator has to be able to
+// tell those two apart -- so the row is listed either way and carries the flag
+// rather than being filtered out.
+type AccountUsername struct {
+	Username string
+	Active   bool
+}
+
 type AccountRow struct {
-	ID           int64
-	Phone        string
-	Username     string
-	FirstName    string
-	LastName     string
+	ID        int64
+	Phone     string
+	Username  string
+	FirstName string
+	LastName  string
+	// Collectibles are the peer's collectible usernames in the order clients
+	// project them. The editable slot in Username is never repeated here: it is a
+	// different kind of row that a different RPC owns.
+	Collectibles []AccountUsername
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	Frozen       bool
@@ -49,6 +95,22 @@ type AccountRow struct {
 	LastActiveAt time.Time
 	DeviceCount  int
 }
+
+// accountCollectibleUsernamesColumn aggregates a peer's collectible usernames
+// into one jsonb value, so a list page costs one indexed subquery per row instead
+// of a second round trip per account.
+//
+// The object keys are the AccountUsername field names on purpose: pgx unmarshals
+// jsonb straight into the Go value, and matching the field names keeps the panel's
+// JSON shape identical to every other field on the row (PascalCase) instead of
+// introducing one lowercase island. Ordering matches domain.SortUsernames for
+// collectible rows -- stored order, then the name as a stable tiebreak.
+const accountCollectibleUsernamesColumn = `COALESCE((
+	SELECT jsonb_agg(jsonb_build_object('Username', pc.username, 'Active', pc.active)
+		ORDER BY pc.sort_order, pc.username_lower)
+	FROM peer_usernames pc
+	WHERE pc.peer_type = 'user' AND pc.peer_id = u.id AND pc.collectible_id IS NOT NULL
+), '[]'::jsonb)`
 
 type AccountDetail struct {
 	Account        AccountRow
@@ -107,15 +169,15 @@ type AuditLogRow struct {
 }
 
 type ChannelRow struct {
-	ID                int64
-	AccessHash        int64
-	CreatorUserID     int64
-	Title             string
-	About             string
-	Username          string
-	Broadcast         bool
-	Megagroup         bool
-	Forum             bool
+	ID                 int64
+	AccessHash         int64
+	CreatorUserID      int64
+	Title              string
+	About              string
+	Username           string
+	Broadcast          bool
+	Megagroup          bool
+	Forum              bool
 	Monoforum          bool
 	Verified           bool
 	Scam               bool
@@ -129,15 +191,15 @@ type ChannelRow struct {
 	JoinRequest        bool
 	SlowmodeSeconds    int
 	ParticipantsCount  int
-	AdminsCount       int
-	KickedCount       int
-	BannedCount       int
-	TopMessageID      int
-	PinnedMessageID   int
-	PTS               int
-	Date              int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	AdminsCount        int
+	KickedCount        int
+	BannedCount        int
+	TopMessageID       int
+	PinnedMessageID    int
+	PTS                int
+	Date               int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type ChannelDetail struct {
@@ -225,7 +287,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 LEFT JOIN auth a ON a.user_id = u.id
 WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
 ORDER BY u.id
@@ -281,7 +343,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND ($1::bigint = 0 OR u.id < $1)
 ORDER BY u.id DESC
 LIMIT $2`, beforeID, limit+1)
@@ -323,7 +385,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	COALESCE(b.owner_user_id, 0), u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND (u.id = $1 OR lower(u.username) = $2 OR p.username_lower = $2)
 ORDER BY u.id DESC
 LIMIT $3`, id, username, accountSearchLimit)
@@ -351,7 +413,7 @@ SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_nam
 	u.created_at, u.updated_at
 FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
 		&out.Bot.ID, &out.Bot.Username, &out.Bot.FirstName, &out.About, &out.Bot.Verified, &out.Bot.Scam, &out.Bot.Fake,
 		&out.Bot.OwnerUserID, &out.Description, &out.Bot.CreatedAt, &out.Bot.UpdatedAt,
@@ -365,7 +427,7 @@ WHERE u.id = $1 AND u.is_bot AND u.deleted_at IS NULL`, botUserID).Scan(
 		if err := s.pool.QueryRow(ctx, `
 SELECT COALESCE(NULLIF(u.username, ''), p.username_lower, '')
 FROM users u
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, out.Bot.OwnerUserID).Scan(&ownerUsername); err != nil && err != pgx.ErrNoRows {
 			return out, fmt.Errorf("get bot owner: %w", err)
 		} else {
@@ -397,7 +459,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE NOT c.deleted
 	AND NOT c.monoforum
 	AND (c.broadcast OR c.megagroup)
@@ -431,7 +493,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.participants_count, c.admins_count, c.kicked_count, c.banned_count,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE NOT c.deleted
 	AND NOT c.monoforum
 	AND (c.broadcast OR c.megagroup)
@@ -465,7 +527,7 @@ SELECT c.id, c.access_hash, c.creator_user_id, c.title, c.about,
 	c.top_message_id, c.pinned_message_id, c.pts, c.date, c.created_at, c.updated_at,
 	row_to_json(c)::jsonb
 FROM channels c
-LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'channel' AND p.peer_id = c.id AND p.editable
 WHERE c.id = $1
 	AND NOT c.deleted
 	AND NOT c.monoforum
@@ -533,11 +595,12 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	auth.last_active_at, auth.device_count,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	`+accountCollectibleUsernamesColumn+` AS collectibles
 FROM users u
 JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
 ORDER BY auth.last_active_at DESC, u.id DESC
@@ -549,7 +612,7 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 	out := make([]AccountRow, 0, limit+1)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.Scam, &item.Fake, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.Collectibles); err != nil {
 			return nil, false, err
 		}
 		out = append(out, item)
@@ -572,15 +635,17 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''),
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	`+accountCollectibleUsernamesColumn+` AS collectibles
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
-LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.id = $1`, userID).Scan(
 		&out.Account.ID, &out.Account.Phone, &out.Account.Username, &out.Account.FirstName, &out.Account.LastName,
 		&out.Account.CreatedAt, &out.Account.UpdatedAt, &out.About, &out.LastSeenAt, &out.Verified, &out.Scam, &out.Fake, &out.Support, &out.Bot,
 		&out.Account.Frozen, &out.Account.Reason, &out.Account.PremiumUntil, &out.StarsBalance, &out.StarsGranted, &out.Account.Username,
+		&out.Account.Collectibles,
 	)
 	if err != nil {
 		return out, fmt.Errorf("get account: %w", err)
@@ -1067,4 +1132,1254 @@ LIMIT $3`, id, q, emojiListMaxLimit)
 	}
 	defer rows.Close()
 	return scanEmojiRows(rows)
+}
+
+// CollectibleUsernameRow is one collectible (Fragment-style) username asset with
+// its holder resolved for display.
+//
+// Every int64 is tagged as a JSON string: asset ids, nanoton amounts and the
+// optimistic-concurrency version all exceed the range a JSON number represents
+// exactly, and a rounded id would address the wrong asset.
+type CollectibleUsernameRow struct {
+	ID                    int64 `json:"ID,string"`
+	Username              string
+	Status                string
+	OwnerPeerType         string
+	OwnerPeerID           int64 `json:"OwnerPeerID,string"`
+	OwnerUsername         string
+	OwnerName             string
+	PurchaseDate          time.Time
+	Currency              string
+	Amount                int64 `json:"Amount,string"`
+	CryptoCurrency        string
+	CryptoAmount          int64 `json:"CryptoAmount,string"`
+	URL                   string
+	OriginalOwnerPeerType string
+	OriginalOwnerPeerID   int64 `json:"OriginalOwnerPeerID,string"`
+	OriginalOwnerUsername string
+	TransferCount         int
+	Version               int64 `json:"Version,string"`
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	// RegistryActive / RegistrySortOrder mirror the holder's username registry
+	// row, so the panel can tell an owned-but-hidden name from an active one.
+	RegistryActive    bool
+	RegistrySortOrder int
+}
+
+// CollectibleUsernameTransferRow is one provenance log entry.
+type CollectibleUsernameTransferRow struct {
+	ID            int64 `json:"ID,string"`
+	CollectibleID int64 `json:"CollectibleID,string"`
+	Kind          string
+	FromPeerType  string
+	FromPeerID    int64 `json:"FromPeerID,string"`
+	FromUsername  string
+	ToPeerType    string
+	ToPeerID      int64 `json:"ToPeerID,string"`
+	ToUsername    string
+	Currency      string
+	Amount        int64 `json:"Amount,string"`
+	Actor         string
+	Reason        string
+	CommandKey    string
+	CreatedAt     time.Time
+}
+
+// CollectibleUsernameDetail is the asset plus its provenance log.
+type CollectibleUsernameDetail struct {
+	Asset     CollectibleUsernameRow
+	Transfers []CollectibleUsernameTransferRow
+}
+
+const collectibleUsernameSelectColumns = `cu.id, cu.username, cu.status,
+	cu.owner_peer_type, cu.owner_peer_id,
+	COALESCE(NULLIF(ou.username, ''), NULLIF(oc.username, ''), '') AS owner_username,
+	COALESCE(NULLIF(ou.first_name, ''), NULLIF(oc.title, ''), '') AS owner_name,
+	cu.purchase_date, cu.currency, cu.amount, cu.crypto_currency, cu.crypto_amount, cu.url,
+	cu.original_owner_peer_type, cu.original_owner_peer_id,
+	COALESCE(NULLIF(gu.username, ''), NULLIF(gc.username, ''), '') AS original_owner_username,
+	cu.transfer_count, cu.version, cu.created_at, cu.updated_at,
+	COALESCE(pu.active, false), COALESCE(pu.sort_order, 0)`
+
+// collectibleUsernameJoins resolves the current holder, the original holder and
+// the holder's registry row. Owners are users or channels, so both sides are
+// joined and the peer type decides which one contributes.
+const collectibleUsernameJoins = `
+FROM collectible_usernames cu
+LEFT JOIN users ou ON cu.owner_peer_type = 'user' AND ou.id = cu.owner_peer_id
+LEFT JOIN channels oc ON cu.owner_peer_type = 'channel' AND oc.id = cu.owner_peer_id
+LEFT JOIN users gu ON cu.original_owner_peer_type = 'user' AND gu.id = cu.original_owner_peer_id
+LEFT JOIN channels gc ON cu.original_owner_peer_type = 'channel' AND gc.id = cu.original_owner_peer_id
+LEFT JOIN peer_usernames pu ON pu.collectible_id = cu.id`
+
+func collectibleUsernameScanDest(item *CollectibleUsernameRow) []any {
+	return []any{
+		&item.ID, &item.Username, &item.Status,
+		&item.OwnerPeerType, &item.OwnerPeerID, &item.OwnerUsername, &item.OwnerName,
+		&item.PurchaseDate, &item.Currency, &item.Amount, &item.CryptoCurrency, &item.CryptoAmount, &item.URL,
+		&item.OriginalOwnerPeerType, &item.OriginalOwnerPeerID, &item.OriginalOwnerUsername,
+		&item.TransferCount, &item.Version, &item.CreatedAt, &item.UpdatedAt,
+		&item.RegistryActive, &item.RegistrySortOrder,
+	}
+}
+
+// ListCollectibleUsernames pages over collectible assets newest first, keyset by
+// descending id. status/ownerUserID/q are optional filters; q matches a username
+// prefix, which is how an operator looks a name up.
+func (s *readStore) ListCollectibleUsernames(ctx context.Context, status string, ownerUserID, beforeID int64, q string, limit int) ([]CollectibleUsernameRow, bool, error) {
+	if limit <= 0 {
+		limit = collectibleListDefaultLimit
+	}
+	if limit > collectibleListMaxLimit {
+		limit = collectibleListMaxLimit
+	}
+	status = strings.TrimSpace(status)
+	query := escapeLikePattern(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(q), "@")))
+	rows, err := s.pool.Query(ctx, `
+SELECT `+collectibleUsernameSelectColumns+collectibleUsernameJoins+`
+WHERE ($1 = '' OR cu.status = $1)
+	AND ($2::bigint = 0 OR (cu.owner_peer_type = 'user' AND cu.owner_peer_id = $2))
+	AND ($3 = '' OR cu.username_lower LIKE $3 || '%')
+	AND ($4::bigint = 0 OR cu.id < $4)
+ORDER BY cu.id DESC
+LIMIT $5`, status, ownerUserID, query, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list collectible usernames: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CollectibleUsernameRow, 0, limit+1)
+	for rows.Next() {
+		var item CollectibleUsernameRow
+		if err := rows.Scan(collectibleUsernameScanDest(&item)...); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// CollectibleUsernameDetail returns one asset with its provenance log. A missing
+// asset reports errReadNotFound so the API answers 404 rather than 500.
+func (s *readStore) CollectibleUsernameDetail(ctx context.Context, id int64) (CollectibleUsernameDetail, error) {
+	var out CollectibleUsernameDetail
+	err := s.pool.QueryRow(ctx, `
+SELECT `+collectibleUsernameSelectColumns+collectibleUsernameJoins+`
+WHERE cu.id = $1`, id).Scan(collectibleUsernameScanDest(&out.Asset)...)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get collectible username: %w", err)
+	}
+	out.Transfers, err = s.collectibleUsernameTransfers(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (s *readStore) collectibleUsernameTransfers(ctx context.Context, collectibleID int64) ([]CollectibleUsernameTransferRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT t.id, t.collectible_id, t.kind,
+	t.from_peer_type, t.from_peer_id,
+	COALESCE(NULLIF(fu.username, ''), NULLIF(fc.username, ''), '') AS from_username,
+	t.to_peer_type, t.to_peer_id,
+	COALESCE(NULLIF(tu.username, ''), NULLIF(tc.username, ''), '') AS to_username,
+	t.currency, t.amount, t.actor, t.reason, COALESCE(t.command_key, ''), t.created_at
+FROM collectible_username_transfers t
+LEFT JOIN users fu ON t.from_peer_type = 'user' AND fu.id = t.from_peer_id
+LEFT JOIN channels fc ON t.from_peer_type = 'channel' AND fc.id = t.from_peer_id
+LEFT JOIN users tu ON t.to_peer_type = 'user' AND tu.id = t.to_peer_id
+LEFT JOIN channels tc ON t.to_peer_type = 'channel' AND tc.id = t.to_peer_id
+WHERE t.collectible_id = $1
+ORDER BY t.id DESC
+LIMIT $2`, collectibleID, collectibleTransferLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list collectible username transfers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CollectibleUsernameTransferRow, 0)
+	for rows.Next() {
+		var item CollectibleUsernameTransferRow
+		if err := rows.Scan(
+			&item.ID, &item.CollectibleID, &item.Kind,
+			&item.FromPeerType, &item.FromPeerID, &item.FromUsername,
+			&item.ToPeerType, &item.ToPeerID, &item.ToUsername,
+			&item.Currency, &item.Amount, &item.Actor, &item.Reason, &item.CommandKey, &item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// AccountRatingRow is one user's composite rating projection with the account
+// resolved for display. The score and every component are int64 decimal strings
+// for the same exactness reason as the collectible amounts.
+type AccountRatingRow struct {
+	UserID            int64 `json:"UserID,string"`
+	Username          string
+	FirstName         string
+	Level             int
+	Stars             int64 `json:"Stars,string"`
+	CurrentLevelStars int64 `json:"CurrentLevelStars,string"`
+	NextLevelStars    int64 `json:"NextLevelStars,string"`
+	HasNextLevel      bool
+	StarsComponent    int64 `json:"StarsComponent,string"`
+	ActivityComponent int64 `json:"ActivityComponent,string"`
+	PenaltyComponent  int64 `json:"PenaltyComponent,string"`
+	ManualComponent   int64 `json:"ManualComponent,string"`
+	PendingStars      int64 `json:"PendingStars,string"`
+	PendingDate       time.Time
+	ComputedAt        time.Time
+	UpdatedAt         time.Time
+	Version           int64 `json:"Version,string"`
+	// Computed is false for an account that has no stored projection yet. The
+	// detail view still renders it, so the operator can trigger the first
+	// recompute instead of facing a dead end.
+	Computed bool
+}
+
+// AccountRatingEventRow is one contribution ledger entry.
+type AccountRatingEventRow struct {
+	ID         int64 `json:"ID,string"`
+	UserID     int64 `json:"UserID,string"`
+	Kind       string
+	Amount     int64 `json:"Amount,string"`
+	Reason     string
+	Actor      string
+	CommandKey string
+	CreatedAt  time.Time
+}
+
+// AccountRatingDetail is the projection plus the ledger that explains it.
+type AccountRatingDetail struct {
+	Rating AccountRatingRow
+	Events []AccountRatingEventRow
+}
+
+const accountRatingSelectColumns = `r.user_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(u.first_name, ''),
+	r.level, r.stars, r.current_level_stars, r.next_level_stars,
+	r.stars_component, r.activity_component, r.penalty_component, r.manual_component,
+	r.pending_stars, r.pending_date, r.computed_at, r.updated_at, r.version`
+
+const accountRatingJoins = `
+FROM account_rating r
+LEFT JOIN users u ON u.id = r.user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = r.user_id AND p.editable`
+
+func scanAccountRatingRow(scan func(dest ...any) error, item *AccountRatingRow) error {
+	// next_level_stars and pending_date are nullable: the first is NULL at the top
+	// level, the second whenever no score is parked.
+	var nextLevelStars *int64
+	var pendingDate *time.Time
+	if err := scan(
+		&item.UserID, &item.Username, &item.FirstName,
+		&item.Level, &item.Stars, &item.CurrentLevelStars, &nextLevelStars,
+		&item.StarsComponent, &item.ActivityComponent, &item.PenaltyComponent, &item.ManualComponent,
+		&item.PendingStars, &pendingDate, &item.ComputedAt, &item.UpdatedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	// A NULL next threshold is the maxed-out level: the TL flag is omitted, so the
+	// panel must render "no next level" instead of a next level of zero.
+	item.HasNextLevel = nextLevelStars != nil
+	if nextLevelStars != nil {
+		item.NextLevelStars = *nextLevelStars
+	}
+	if pendingDate != nil {
+		item.PendingDate = pendingDate.UTC()
+	}
+	item.Computed = true
+	return nil
+}
+
+// ListAccountRatings pages the leaderboard. Ordering and the keyset predicate
+// mirror the rating store exactly -- (level DESC, stars DESC, user_id) with the
+// cursor row resolved from beforeID -- so both surfaces page identically.
+// ListAccountRatings pages the leaderboard. query is a free-text operator search:
+// it matches a username prefix (editable or collectible), a first/last name
+// prefix, and -- when the term is numeric -- the user id, so an operator can find
+// an account the same way they do on the accounts tab.
+func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID, beforeID int64, limit int, query string) ([]AccountRatingRow, bool, error) {
+	if limit <= 0 {
+		limit = ratingListDefaultLimit
+	}
+	if limit > ratingListMaxLimit {
+		limit = ratingListMaxLimit
+	}
+	if minLevel < 0 {
+		minLevel = 0
+	}
+	if minLevel > domain.MaxAccountRatingLevel {
+		minLevel = domain.MaxAccountRatingLevel
+	}
+	query = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@"))
+	pattern := ""
+	queryUserID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryUserID = parsed
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH cursor_row AS (
+	SELECT level AS c_level, stars AS c_stars, user_id AS c_user_id
+	FROM account_rating WHERE $3::bigint <> 0 AND user_id = $3
+)
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+LEFT JOIN cursor_row c ON true
+WHERE r.level >= $1
+	AND ($2::bigint = 0 OR r.user_id = $2)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND r.user_id = $6)
+		OR lower(COALESCE(u.username, '')) LIKE $5
+		OR lower(COALESCE(u.first_name, '')) LIKE $5
+		OR lower(COALESCE(u.last_name, '')) LIKE $5
+		OR EXISTS (
+			SELECT 1 FROM peer_usernames pu
+			WHERE pu.peer_type = 'user' AND pu.peer_id = r.user_id
+				AND pu.username_lower LIKE $5
+		)
+	))
+	AND (
+		c.c_user_id IS NULL
+		OR r.level < c.c_level
+		OR (r.level = c.c_level AND r.stars < c.c_stars)
+		OR (r.level = c.c_level AND r.stars = c.c_stars AND r.user_id > c.c_user_id)
+	)
+ORDER BY r.level DESC, r.stars DESC, r.user_id
+LIMIT $4`, minLevel, userID, beforeID, limit+1, pattern, queryUserID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list account ratings: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingRow, 0, limit+1)
+	for rows.Next() {
+		var item AccountRatingRow
+		if err := scanAccountRatingRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// AccountRatingDetail returns one user's projection with its contribution
+// ledger.
+//
+// An account that exists but was never computed is answered with a zero-valued
+// projection carrying Computed=false, because the recompute command lives on this
+// very page: reporting "not found" for a real account would leave the operator
+// with no way to create the first projection. Only an unknown account is a 404.
+func (s *readStore) AccountRatingDetail(ctx context.Context, userID int64) (AccountRatingDetail, error) {
+	var out AccountRatingDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+WHERE r.user_id = $1`, userID)
+	err := scanAccountRatingRow(row.Scan, &out.Rating)
+	switch {
+	case err == nil:
+	case errors.Is(err, pgx.ErrNoRows):
+		placeholder, uncomputedErr := s.uncomputedAccountRating(ctx, userID)
+		if uncomputedErr != nil {
+			return out, uncomputedErr
+		}
+		out.Rating = placeholder
+	default:
+		return out, fmt.Errorf("get account rating: %w", err)
+	}
+	events, err := s.accountRatingEvents(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	out.Events = events
+	return out, nil
+}
+
+// uncomputedAccountRating renders the projection an account would start from,
+// derived through the same threshold policy the store persists, so the panel's
+// level maths does not have to special-case a missing row.
+func (s *readStore) uncomputedAccountRating(ctx context.Context, userID int64) (AccountRatingRow, error) {
+	var row AccountRatingRow
+	err := s.pool.QueryRow(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
+WHERE u.id = $1`, userID).Scan(&row.UserID, &row.Username, &row.FirstName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return row, errReadNotFound
+		}
+		return row, fmt.Errorf("get account for rating: %w", err)
+	}
+	level, current, next, hasNext := domain.AccountRatingLevelForStars(0)
+	row.Level = level
+	row.CurrentLevelStars = current
+	row.NextLevelStars = next
+	row.HasNextLevel = hasNext
+	return row, nil
+}
+
+func (s *readStore) accountRatingEvents(ctx context.Context, userID int64) ([]AccountRatingEventRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, user_id, kind, amount, reason, actor, COALESCE(command_key, ''), created_at
+FROM account_rating_events
+WHERE user_id = $1
+ORDER BY id DESC
+LIMIT $2`, userID, ratingEventLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list account rating events: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingEventRow, 0)
+	for rows.Next() {
+		var item AccountRatingEventRow
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Kind, &item.Amount, &item.Reason, &item.Actor, &item.CommandKey, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// Official platform verification review queue.
+//
+// The application record is the audit subject and is read here directly, with the
+// applicant resolved through the same users/peer_usernames join every other view
+// uses. target_verified is read from the live peer rather than from the
+// submission snapshot: a reviewer has to see the badge as it is now, and the
+// snapshot columns exist precisely because the live peer may have drifted.
+//
+// Every int64 is tagged as a JSON string. Application ids, peer ids and the
+// optimistic-locking version all exceed the range a JSON number represents
+// exactly, and a rounded version would send a decision against the wrong
+// revision of the row.
+type VerificationApplicationRow struct {
+	ID                int64 `json:"ID,string"`
+	ApplicantUserID   int64 `json:"ApplicantUserID,string"`
+	ApplicantUsername string
+	ApplicantName     string
+	TargetType        string
+	TargetID          int64 `json:"TargetID,string"`
+	TargetTitle       string
+	TargetUsername    string
+	TargetVerified    bool
+	Category          string
+	Description       string
+	OfficialWebsite   string
+	SocialLinks       []string
+	PressLinks        []string
+	AdditionalNote    string
+	Status            string
+	ReviewerAdminID   string
+	DecisionReason    string
+	// InternalNote is operator-only: it is the reviewer handover note and is never
+	// projected to the applicant. Every caller of this store already holds
+	// verification.review.
+	InternalNote  string
+	CorrelationID string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	SubmittedAt   time.Time
+	ReviewedAt    time.Time
+	Version       int64 `json:"Version,string"`
+}
+
+// VerificationEventRow is one entry of the immutable application history.
+type VerificationEventRow struct {
+	ID         int64 `json:"ID,string"`
+	Kind       string
+	FromStatus string
+	ToStatus   string
+	Actor      string
+	Reason     string
+	Note       string
+	CreatedAt  time.Time
+}
+
+// VerificationApplicationDetail is the application, its history, and whether the
+// applicant still controls the target.
+type VerificationApplicationDetail struct {
+	Application VerificationApplicationRow
+	Events      []VerificationEventRow
+	// ApplicantControlsTarget re-derives ownership from the live records, using the
+	// same authorities the use-case layer does: the bots table for a bot, the
+	// public-channel admin index for a channel or supergroup, identity for a user.
+	// Control can be lost between submission and review, and approving a peer the
+	// applicant no longer holds is exactly what the flag exists to prevent.
+	ApplicantControlsTarget bool
+}
+
+const verificationSelectColumns = `va.id, va.applicant_user_id,
+	COALESCE(NULLIF(au.username, ''), p.username_lower, '') AS applicant_username,
+	TRIM(BOTH ' ' FROM COALESCE(au.first_name, '') || ' ' || COALESCE(au.last_name, '')) AS applicant_name,
+	va.target_type, va.target_id, va.target_title, va.target_username,
+	COALESCE(tu.verified, tc.verified, false) AS target_verified,
+	va.category, va.description, va.official_website, va.social_links, va.press_links,
+	va.additional_note, va.status, va.reviewer_admin_id, va.decision_reason,
+	va.internal_note, va.correlation_id,
+	va.created_at, va.updated_at, va.submitted_at, va.reviewed_at, va.version`
+
+// verificationJoins resolves the applicant and the live target. Bots and users
+// live in the user namespace, channels and supergroups in the channel one, so
+// both sides are joined and the target type decides which one contributes.
+const verificationJoins = `
+FROM verification_applications va
+LEFT JOIN users au ON au.id = va.applicant_user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = va.applicant_user_id AND p.editable
+LEFT JOIN users tu ON va.target_type IN ('bot', 'user') AND tu.id = va.target_id
+LEFT JOIN channels tc ON va.target_type IN ('channel', 'supergroup') AND tc.id = va.target_id`
+
+func scanVerificationApplicationRow(scan func(dest ...any) error, item *VerificationApplicationRow) error {
+	// submitted_at is NULL while the application is still a draft and reviewed_at
+	// until a reviewer closes it.
+	var submittedAt, reviewedAt *time.Time
+	if err := scan(
+		&item.ID, &item.ApplicantUserID, &item.ApplicantUsername, &item.ApplicantName,
+		&item.TargetType, &item.TargetID, &item.TargetTitle, &item.TargetUsername, &item.TargetVerified,
+		&item.Category, &item.Description, &item.OfficialWebsite, &item.SocialLinks, &item.PressLinks,
+		&item.AdditionalNote, &item.Status, &item.ReviewerAdminID, &item.DecisionReason,
+		&item.InternalNote, &item.CorrelationID,
+		&item.CreatedAt, &item.UpdatedAt, &submittedAt, &reviewedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	if submittedAt != nil {
+		item.SubmittedAt = submittedAt.UTC()
+	}
+	if reviewedAt != nil {
+		item.ReviewedAt = reviewedAt.UTC()
+	}
+	if item.SocialLinks == nil {
+		item.SocialLinks = []string{}
+	}
+	if item.PressLinks == nil {
+		item.PressLinks = []string{}
+	}
+	return nil
+}
+
+// ListVerificationApplications pages the review queue newest first, keyset by
+// descending id. status/targetType/reviewer are exact filters; q matches an
+// application id, a target peer id, or a target/applicant username prefix, which
+// is how an operator looks a case up from a report.
+func (s *readStore) ListVerificationApplications(
+	ctx context.Context,
+	status, targetType, reviewer, q string,
+	beforeID int64,
+	limit int,
+) ([]VerificationApplicationRow, bool, error) {
+	if limit <= 0 {
+		limit = verificationListDefaultLimit
+	}
+	if limit > verificationListMaxLimit {
+		limit = verificationListMaxLimit
+	}
+	status = strings.TrimSpace(status)
+	targetType = strings.TrimSpace(targetType)
+	reviewer = strings.TrimSpace(reviewer)
+	query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(q), "@"))
+	pattern := ""
+	queryID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryID = parsed
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT `+verificationSelectColumns+verificationJoins+`
+WHERE ($1 = '' OR va.status = $1)
+	AND ($2 = '' OR va.target_type = $2)
+	AND ($3 = '' OR va.reviewer_admin_id = $3)
+	AND ($4::bigint = 0 OR va.id < $4)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND (va.id = $6 OR va.target_id = $6 OR va.applicant_user_id = $6))
+		OR lower(va.target_username) LIKE $5
+		OR lower(va.target_title) LIKE $5
+		OR lower(COALESCE(au.username, '')) LIKE $5
+	))
+ORDER BY va.id DESC
+LIMIT $7`, status, targetType, reviewer, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list verification applications: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationApplicationRow, 0, limit+1)
+	for rows.Next() {
+		var item VerificationApplicationRow
+		if err := scanVerificationApplicationRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// VerificationApplicationDetail returns one application with its history and the
+// live ownership check. A missing application reports errReadNotFound so the API
+// answers 404 rather than 500.
+func (s *readStore) VerificationApplicationDetail(ctx context.Context, id int64) (VerificationApplicationDetail, error) {
+	var out VerificationApplicationDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+verificationSelectColumns+verificationJoins+`
+WHERE va.id = $1`, id)
+	// The single-row path reuses the list scanner, so one column order serves
+	// both: a drift between them would silently mis-assign columns.
+	err := scanVerificationApplicationRow(row.Scan, &out.Application)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get verification application: %w", err)
+	}
+	out.Events, err = s.verificationApplicationEvents(ctx, id)
+	if err != nil {
+		return out, err
+	}
+	controls, err := s.applicantControlsVerificationTarget(
+		ctx, out.Application.ApplicantUserID, out.Application.TargetType, out.Application.TargetID,
+	)
+	if err != nil {
+		return out, err
+	}
+	out.ApplicantControlsTarget = controls
+	return out, nil
+}
+
+func (s *readStore) verificationApplicationEvents(ctx context.Context, applicationID int64) ([]VerificationEventRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, kind, from_status, to_status, actor, reason, note, created_at
+FROM verification_application_events
+WHERE application_id = $1
+ORDER BY id DESC
+LIMIT $2`, applicationID, verificationEventLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list verification application events: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationEventRow, 0)
+	for rows.Next() {
+		var item VerificationEventRow
+		if err := rows.Scan(
+			&item.ID, &item.Kind, &item.FromStatus, &item.ToStatus,
+			&item.Actor, &item.Reason, &item.Note, &item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// VerificationStatusCounts is the queue summary above the list. Every modelled
+// status is present with a zero, so the panel never has to tell "none" from
+// "missing", and the counts are decimal strings for the same exactness reason as
+// the ids.
+func (s *readStore) VerificationStatusCounts(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	for _, status := range []domain.VerificationStatus{
+		domain.VerificationStatusDraft,
+		domain.VerificationStatusSubmitted,
+		domain.VerificationStatusInReview,
+		domain.VerificationStatusApproved,
+		domain.VerificationStatusRejected,
+		domain.VerificationStatusCancelled,
+	} {
+		out[string(status)] = "0"
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT status, count(*) FROM verification_applications GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count verification applications: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		out[status] = strconv.FormatInt(count, 10)
+	}
+	return out, rows.Err()
+}
+
+// applicantControlsVerificationTarget re-derives ownership from the live records.
+//
+// The authorities are the ones app/verification uses, so the panel's answer and
+// the approval path's answer cannot disagree: the bots table for a bot (minus
+// BotFather, which nobody owns), the public-channel admin index for a channel or
+// supergroup, and plain identity for a user account.
+func (s *readStore) applicantControlsVerificationTarget(ctx context.Context, applicantUserID int64, targetType string, targetID int64) (bool, error) {
+	if applicantUserID <= 0 || targetID <= 0 {
+		return false, nil
+	}
+	switch domain.VerificationTargetType(targetType) {
+	case domain.VerificationTargetUser:
+		return applicantUserID == targetID, nil
+	case domain.VerificationTargetBot:
+		var owns bool
+		err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM bots b
+	WHERE b.bot_user_id = $1 AND b.owner_user_id = $2 AND b.bot_user_id <> $3
+)`, targetID, applicantUserID, domain.BotFatherUserID).Scan(&owns)
+		if err != nil {
+			return false, fmt.Errorf("check verification bot ownership: %w", err)
+		}
+		return owns, nil
+	case domain.VerificationTargetChannel, domain.VerificationTargetSupergroup:
+		var admins bool
+		err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM user_channel_member_index i
+	WHERE i.user_id = $1 AND i.channel_id = $2
+		AND i.status = 'active' AND i.role IN ('creator', 'admin')
+		AND i.public_username AND NOT i.deleted
+)`, applicantUserID, targetID).Scan(&admins)
+		if err != nil {
+			return false, fmt.Errorf("check verification channel ownership: %w", err)
+		}
+		return admins, nil
+	default:
+		return false, nil
+	}
+}
+
+// Third-party bot verification (core.telegram.org/api/bots/verification).
+//
+// This is NOT the official platform badge read above. Official verification is a
+// boolean on the peer that only the operator sets; third-party verification is an
+// attributed mark granted by a verifier bot, carrying that verifier's own custom
+// emoji icon and description. The two mechanisms own separate tables and neither
+// reads the other's, which is why these queries never touch
+// verification_applications or users.verified.
+//
+// Peer titles and usernames are resolved from the live peer rather than from the
+// application's snapshot columns: an operator has to see the peer as it is now,
+// and the snapshot is only the fallback for a peer that has since gone. Usernames
+// come from the same users/channels + peer_usernames join every other view uses,
+// with `AND p.editable` on the peer_usernames side -- a collectible username sits
+// in the same table and is not the peer's own editable handle, so joining without
+// the predicate would report somebody else's asset as the peer's name.
+//
+// Every int64 is tagged as a JSON string. Bot ids, peer ids, custom emoji document
+// ids and the optimistic-locking version all exceed the range a JSON number
+// represents exactly, and a rounded version would send a decision against the
+// wrong revision of the row.
+
+// BotVerifierRow is one verifier bot: its operator-granted settings, the catalogue
+// name of the icon it marks with, and how many peers it has marked.
+type BotVerifierRow struct {
+	BotID                      int64 `json:"BotID,string"`
+	BotUsername                string
+	BotName                    string
+	IconDocumentID             int64 `json:"IconDocumentID,string"`
+	IconName                   string
+	CompanyName                string
+	DefaultDescription         string
+	CanModifyCustomDescription bool
+	Enabled                    bool
+	GrantedBy                  string
+	GrantReason                string
+	// MarkCount is how many peers this verifier currently marks. It is the number
+	// that would cascade away with a revocation, so it is counted rather than
+	// estimated.
+	MarkCount int64 `json:"MarkCount,string"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Version   int64 `json:"Version,string"`
+}
+
+// VerificationIconRow is one catalogue entry.
+type VerificationIconRow struct {
+	ID         int64 `json:"ID,string"`
+	DocumentID int64 `json:"DocumentID,string"`
+	// OwnerBotID is 0 for a shared entry and a bot id when the operator reserved
+	// the icon for one verifier.
+	OwnerBotID       int64 `json:"OwnerBotID,string"`
+	OwnerBotUsername string
+	Name             string
+	Active           bool
+	// UsedByVerifiers is a plain number: it counts verifier rows pointing at this
+	// document and can never approach the exactness limit an id can.
+	UsedByVerifiers int `json:"UsedByVerifiers"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// CustomVerificationRow is one granted mark.
+type CustomVerificationRow struct {
+	ID                  int64 `json:"ID,string"`
+	VerifierBotID       int64 `json:"VerifierBotID,string"`
+	VerifierBotUsername string
+	CompanyName         string
+	PeerType            string
+	PeerID              int64 `json:"PeerID,string"`
+	PeerTitle           string
+	PeerUsername        string
+	// IconDocumentID is the icon the mark was granted with, denormalised at grant
+	// time, so it keeps rendering even after the verifier changes its own.
+	IconDocumentID int64 `json:"IconDocumentID,string"`
+	Description    string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Version        int64 `json:"Version,string"`
+}
+
+// CustomVerificationRequestRow is one application filed with a verifier bot.
+type CustomVerificationRequestRow struct {
+	ID                   int64 `json:"ID,string"`
+	VerifierBotID        int64 `json:"VerifierBotID,string"`
+	VerifierBotUsername  string
+	ApplicantUserID      int64 `json:"ApplicantUserID,string"`
+	ApplicantUsername    string
+	PeerType             string
+	PeerID               int64 `json:"PeerID,string"`
+	PeerTitle            string
+	PeerUsername         string
+	Reason               string
+	RequestedDescription string
+	Status               string
+	DecidedBy            string
+	DecisionReason       string
+	// InternalNote is operator-only: it is the reviewer handover note and is never
+	// projected to the applicant. Every caller of this store already holds
+	// botverification.review.
+	InternalNote  string
+	CorrelationID string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ApprovedAt    time.Time
+	RejectedAt    time.Time
+	Version       int64 `json:"Version,string"`
+}
+
+// CustomVerificationRequestDetail is one application, the verifier behind it, and
+// whether the mark is on the peer right now.
+type CustomVerificationRequestDetail struct {
+	Request  CustomVerificationRequestRow
+	Verifier BotVerifierRow
+	// MarkActive tells "approved" apart from "approved and since stripped by the
+	// operator", which is the one thing the status alone cannot say.
+	MarkActive bool
+}
+
+const botVerifierSelectColumns = `s.bot_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS bot_username,
+	TRIM(BOTH ' ' FROM COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS bot_name,
+	s.icon_document_id, COALESCE(i.name, '') AS icon_name,
+	s.company_name, s.default_description, s.can_modify_custom_description,
+	s.enabled, s.granted_by, s.grant_reason,
+	(SELECT count(*) FROM custom_verifications cv WHERE cv.verifier_bot_id = s.bot_id) AS mark_count,
+	s.created_at, s.updated_at, s.version`
+
+// botVerifierJoins resolves the bot account behind the verifier row and the
+// catalogue label of its icon. The icon join is by document id, not by catalogue
+// id: the settings row stores the document, and an icon dropped from the catalogue
+// must still leave the verifier readable.
+const botVerifierJoins = `
+FROM bot_verifier_settings s
+LEFT JOIN users u ON u.id = s.bot_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = s.bot_id AND p.editable
+LEFT JOIN verification_icons i ON i.document_id = s.icon_document_id`
+
+func scanBotVerifierRow(scan func(dest ...any) error, item *BotVerifierRow) error {
+	return scan(
+		&item.BotID, &item.BotUsername, &item.BotName,
+		&item.IconDocumentID, &item.IconName,
+		&item.CompanyName, &item.DefaultDescription, &item.CanModifyCustomDescription,
+		&item.Enabled, &item.GrantedBy, &item.GrantReason, &item.MarkCount,
+		&item.CreatedAt, &item.UpdatedAt, &item.Version,
+	)
+}
+
+// ListBotVerifiers lists verifier bots, ordered by bot id so the table is stable
+// across reloads. enabledOnly hides the ones the operator switched off.
+func (s *readStore) ListBotVerifiers(ctx context.Context, enabledOnly bool, limit int) ([]BotVerifierRow, error) {
+	limit = clampBotVerificationLimit(limit)
+	rows, err := s.pool.Query(ctx, `
+SELECT `+botVerifierSelectColumns+botVerifierJoins+`
+WHERE NOT $1::boolean OR s.enabled
+ORDER BY s.bot_id
+LIMIT $2`, enabledOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list bot verifiers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]BotVerifierRow, 0, limit)
+	for rows.Next() {
+		var item BotVerifierRow
+		if err := scanBotVerifierRow(rows.Scan, &item); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// BotVerifier reads one verifier row, enabled or not: the panel needs the disabled
+// one too, to render the kill switch. A missing row reports errReadNotFound.
+func (s *readStore) BotVerifier(ctx context.Context, botID int64) (BotVerifierRow, error) {
+	var out BotVerifierRow
+	row := s.pool.QueryRow(ctx, `
+SELECT `+botVerifierSelectColumns+botVerifierJoins+`
+WHERE s.bot_id = $1`, botID)
+	// The single-row path reuses the list scanner, so one column order serves both:
+	// a drift between them would silently mis-assign columns.
+	if err := scanBotVerifierRow(row.Scan, &out); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get bot verifier: %w", err)
+	}
+	return out, nil
+}
+
+// ListVerificationIcons lists the icon catalogue newest first, with the number of
+// verifiers each entry is currently configured on -- retiring an entry that
+// verifiers still point at is the operator's decision to make knowingly.
+func (s *readStore) ListVerificationIcons(ctx context.Context, activeOnly bool, limit int) ([]VerificationIconRow, error) {
+	limit = clampBotVerificationLimit(limit)
+	rows, err := s.pool.Query(ctx, `
+SELECT i.id, i.document_id, i.owner_bot_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS owner_bot_username,
+	i.name, i.active,
+	(SELECT count(*) FROM bot_verifier_settings s WHERE s.icon_document_id = i.document_id) AS used_by_verifiers,
+	i.created_at, i.updated_at
+FROM verification_icons i
+LEFT JOIN users u ON i.owner_bot_id <> 0 AND u.id = i.owner_bot_id
+LEFT JOIN peer_usernames p ON i.owner_bot_id <> 0
+	AND p.peer_type = 'user' AND p.peer_id = i.owner_bot_id AND p.editable
+WHERE NOT $1::boolean OR i.active
+ORDER BY i.id DESC
+LIMIT $2`, activeOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list verification icons: %w", err)
+	}
+	defer rows.Close()
+	out := make([]VerificationIconRow, 0, limit)
+	for rows.Next() {
+		var item VerificationIconRow
+		if err := rows.Scan(
+			&item.ID, &item.DocumentID, &item.OwnerBotID, &item.OwnerBotUsername,
+			&item.Name, &item.Active, &item.UsedByVerifiers,
+			&item.CreatedAt, &item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// customVerificationPeerJoins resolves a marked or applied-for peer on both sides
+// of the namespace. A third-party mark can sit on a user (bots included) or a
+// channel, so both are joined and the row's peer_type decides which contributes.
+// Each username side carries `AND editable`, so a collectible username parked in
+// peer_usernames is never mistaken for the peer's own handle.
+const customVerificationPeerJoins = `
+LEFT JOIN users tu ON %[1]s.peer_type = 'user' AND tu.id = %[1]s.peer_id
+LEFT JOIN peer_usernames tup ON %[1]s.peer_type = 'user'
+	AND tup.peer_type = 'user' AND tup.peer_id = %[1]s.peer_id AND tup.editable
+LEFT JOIN channels tc ON %[1]s.peer_type = 'channel' AND tc.id = %[1]s.peer_id
+LEFT JOIN peer_usernames tcp ON %[1]s.peer_type = 'channel'
+	AND tcp.peer_type = 'channel' AND tcp.peer_id = %[1]s.peer_id AND tcp.editable`
+
+// ListCustomVerifications pages granted marks newest first, keyset by descending
+// id. verifierBotID/peerType are exact filters; q matches a mark id, a peer id, or
+// a peer username prefix, which is how an operator looks a badge up from a report.
+func (s *readStore) ListCustomVerifications(
+	ctx context.Context,
+	verifierBotID int64,
+	peerType, q string,
+	beforeID int64,
+	limit int,
+) ([]CustomVerificationRow, bool, error) {
+	limit = clampBotVerificationLimit(limit)
+	peerType = strings.TrimSpace(peerType)
+	pattern, queryID := botVerificationSearchTerms(q)
+	rows, err := s.pool.Query(ctx, `
+SELECT cv.id, cv.verifier_bot_id,
+	COALESCE(NULLIF(vu.username, ''), vp.username_lower, '') AS verifier_bot_username,
+	COALESCE(s.company_name, '') AS company_name,
+	cv.peer_type, cv.peer_id,
+	CASE cv.peer_type
+		WHEN 'user' THEN TRIM(BOTH ' ' FROM COALESCE(tu.first_name, '') || ' ' || COALESCE(tu.last_name, ''))
+		ELSE COALESCE(tc.title, '')
+	END AS peer_title,
+	CASE cv.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(tu.username, ''), tup.username_lower, '')
+		ELSE COALESCE(NULLIF(tc.username, ''), tcp.username_lower, '')
+	END AS peer_username,
+	cv.icon_document_id, cv.description, cv.created_at, cv.updated_at, cv.version
+FROM custom_verifications cv
+LEFT JOIN users vu ON vu.id = cv.verifier_bot_id
+LEFT JOIN peer_usernames vp ON vp.peer_type = 'user' AND vp.peer_id = cv.verifier_bot_id AND vp.editable
+LEFT JOIN bot_verifier_settings s ON s.bot_id = cv.verifier_bot_id`+
+		fmt.Sprintf(customVerificationPeerJoins, "cv")+`
+WHERE ($1::bigint = 0 OR cv.verifier_bot_id = $1)
+	AND ($2::text = '' OR cv.peer_type = $2)
+	AND ($3::bigint = 0 OR cv.id < $3)
+	AND ($4::text = '' OR (
+		($5::bigint <> 0 AND (cv.id = $5 OR cv.peer_id = $5 OR cv.verifier_bot_id = $5))
+		OR lower(COALESCE(tu.username, '')) LIKE $4
+		OR lower(COALESCE(tc.username, '')) LIKE $4
+		OR lower(COALESCE(tc.title, '')) LIKE $4
+	))
+ORDER BY cv.id DESC
+LIMIT $6`, verifierBotID, peerType, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list custom verifications: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CustomVerificationRow, 0, limit+1)
+	for rows.Next() {
+		var item CustomVerificationRow
+		if err := rows.Scan(
+			&item.ID, &item.VerifierBotID, &item.VerifierBotUsername, &item.CompanyName,
+			&item.PeerType, &item.PeerID, &item.PeerTitle, &item.PeerUsername,
+			&item.IconDocumentID, &item.Description,
+			&item.CreatedAt, &item.UpdatedAt, &item.Version,
+		); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+const customVerificationRequestSelectColumns = `r.id, r.verifier_bot_id,
+	COALESCE(NULLIF(vu.username, ''), vp.username_lower, '') AS verifier_bot_username,
+	r.applicant_user_id,
+	COALESCE(NULLIF(au.username, ''), ap.username_lower, '') AS applicant_username,
+	r.peer_type, r.peer_id,
+	CASE r.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(TRIM(BOTH ' ' FROM COALESCE(tu.first_name, '') || ' ' || COALESCE(tu.last_name, '')), ''), r.peer_title)
+		ELSE COALESCE(NULLIF(tc.title, ''), r.peer_title)
+	END AS peer_title,
+	CASE r.peer_type
+		WHEN 'user' THEN COALESCE(NULLIF(tu.username, ''), NULLIF(tup.username_lower, ''), r.peer_username)
+		ELSE COALESCE(NULLIF(tc.username, ''), NULLIF(tcp.username_lower, ''), r.peer_username)
+	END AS peer_username,
+	r.reason, r.requested_description, r.status, r.decided_by, r.decision_reason,
+	r.internal_note, r.correlation_id,
+	r.created_at, r.updated_at, r.approved_at, r.rejected_at, r.version`
+
+// customVerificationRequestJoins resolves the verifier bot, the applicant and the
+// target peer. The peer title and username fall back to the application's snapshot
+// columns: a peer deleted since it applied still has to render as something the
+// reviewer recognises.
+var customVerificationRequestJoins = `
+FROM custom_verification_requests r
+LEFT JOIN users vu ON vu.id = r.verifier_bot_id
+LEFT JOIN peer_usernames vp ON vp.peer_type = 'user' AND vp.peer_id = r.verifier_bot_id AND vp.editable
+LEFT JOIN users au ON au.id = r.applicant_user_id
+LEFT JOIN peer_usernames ap ON ap.peer_type = 'user' AND ap.peer_id = r.applicant_user_id AND ap.editable` +
+	fmt.Sprintf(customVerificationPeerJoins, "r")
+
+func scanCustomVerificationRequestRow(scan func(dest ...any) error, item *CustomVerificationRequestRow) error {
+	// approved_at is NULL until an approval and rejected_at until a rejection; the
+	// table's CHECK constraints keep each in step with the status.
+	var approvedAt, rejectedAt *time.Time
+	if err := scan(
+		&item.ID, &item.VerifierBotID, &item.VerifierBotUsername,
+		&item.ApplicantUserID, &item.ApplicantUsername,
+		&item.PeerType, &item.PeerID, &item.PeerTitle, &item.PeerUsername,
+		&item.Reason, &item.RequestedDescription, &item.Status,
+		&item.DecidedBy, &item.DecisionReason, &item.InternalNote, &item.CorrelationID,
+		&item.CreatedAt, &item.UpdatedAt, &approvedAt, &rejectedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	if approvedAt != nil {
+		item.ApprovedAt = approvedAt.UTC()
+	}
+	if rejectedAt != nil {
+		item.RejectedAt = rejectedAt.UTC()
+	}
+	return nil
+}
+
+// ListCustomVerificationRequests pages the third-party review queue newest first,
+// keyset by descending id. status/verifierBotID/peerType are exact filters; q
+// matches an application id, a peer id, a verifier id, or a peer/applicant
+// username prefix.
+func (s *readStore) ListCustomVerificationRequests(
+	ctx context.Context,
+	status string,
+	verifierBotID int64,
+	peerType, q string,
+	beforeID int64,
+	limit int,
+) ([]CustomVerificationRequestRow, bool, error) {
+	limit = clampBotVerificationLimit(limit)
+	status = strings.TrimSpace(status)
+	peerType = strings.TrimSpace(peerType)
+	pattern, queryID := botVerificationSearchTerms(q)
+	rows, err := s.pool.Query(ctx, `
+SELECT `+customVerificationRequestSelectColumns+customVerificationRequestJoins+`
+WHERE ($1::text = '' OR r.status = $1)
+	AND ($2::bigint = 0 OR r.verifier_bot_id = $2)
+	AND ($3::text = '' OR r.peer_type = $3)
+	AND ($4::bigint = 0 OR r.id < $4)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND (r.id = $6 OR r.peer_id = $6 OR r.verifier_bot_id = $6 OR r.applicant_user_id = $6))
+		OR lower(r.peer_username) LIKE $5
+		OR lower(r.peer_title) LIKE $5
+		OR lower(COALESCE(tu.username, '')) LIKE $5
+		OR lower(COALESCE(tc.username, '')) LIKE $5
+		OR lower(COALESCE(au.username, '')) LIKE $5
+	))
+ORDER BY r.id DESC
+LIMIT $7`, status, verifierBotID, peerType, beforeID, pattern, queryID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list custom verification requests: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CustomVerificationRequestRow, 0, limit+1)
+	for rows.Next() {
+		var item CustomVerificationRequestRow
+		if err := scanCustomVerificationRequestRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// CustomVerificationRequestDetail returns one application with the verifier behind
+// it and whether the mark is live. A missing application reports errReadNotFound so
+// the API answers 404 rather than 500.
+func (s *readStore) CustomVerificationRequestDetail(ctx context.Context, id int64) (CustomVerificationRequestDetail, error) {
+	var out CustomVerificationRequestDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+customVerificationRequestSelectColumns+customVerificationRequestJoins+`
+WHERE r.id = $1`, id)
+	if err := scanCustomVerificationRequestRow(row.Scan, &out.Request); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, errReadNotFound
+		}
+		return out, fmt.Errorf("get custom verification request: %w", err)
+	}
+	// The verifier may have been revoked since the application was filed, and the
+	// application survives that (it references users, not the settings row). An
+	// absent verifier is reported as a row carrying only its id, so the reviewer can
+	// still see which bot it was.
+	verifier, err := s.BotVerifier(ctx, out.Request.VerifierBotID)
+	switch {
+	case err == nil:
+		out.Verifier = verifier
+	case errors.Is(err, errReadNotFound):
+		out.Verifier = BotVerifierRow{BotID: out.Request.VerifierBotID}
+	default:
+		return out, err
+	}
+	if err := s.pool.QueryRow(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM custom_verifications
+	WHERE verifier_bot_id = $1 AND peer_type = $2 AND peer_id = $3
+)`, out.Request.VerifierBotID, out.Request.PeerType, out.Request.PeerID).Scan(&out.MarkActive); err != nil {
+		return out, fmt.Errorf("check custom verification mark: %w", err)
+	}
+	return out, nil
+}
+
+// CustomVerificationRequestCounts is the queue summary above the list. Every
+// modelled status is present, so the panel never has to tell "zero" from "absent",
+// and the values are decimal strings for the same exactness reason as the ids.
+func (s *readStore) CustomVerificationRequestCounts(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	for _, status := range []domain.CustomVerificationRequestStatus{
+		domain.CustomVerificationPending,
+		domain.CustomVerificationApproved,
+		domain.CustomVerificationRejected,
+		domain.CustomVerificationRevoked,
+	} {
+		out[string(status)] = "0"
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT status, count(*) FROM custom_verification_requests GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("count custom verification requests: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int64
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		out[status] = strconv.FormatInt(count, 10)
+	}
+	return out, rows.Err()
+}
+
+// botVerificationSearchTerms turns an operator query into the LIKE pattern and the
+// optional exact id the list predicates use. LIKE metacharacters are escaped:
+// usernames legitimately contain '_', so an unescaped search for "crypto_" would
+// match "cryptoX" instead of the name that was typed.
+func botVerificationSearchTerms(q string) (string, int64) {
+	query := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(q), "@"))
+	if query == "" {
+		return "", 0
+	}
+	pattern := strings.ToLower(escapeLikePattern(query)) + "%"
+	queryID := int64(0)
+	if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+		queryID = parsed
+	}
+	return pattern, queryID
+}
+
+func clampBotVerificationLimit(limit int) int {
+	if limit <= 0 {
+		return botVerificationListDefaultLimit
+	}
+	if limit > botVerificationListMaxLimit {
+		return botVerificationListMaxLimit
+	}
+	return limit
 }

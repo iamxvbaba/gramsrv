@@ -13,7 +13,7 @@ func (r *Router) tgStoriesAllStories(ctx context.Context, viewerUserID int64, li
 	list = r.withStoryListPeerObjects(ctx, viewerUserID, list)
 	out := tgStoriesAllStories(viewerUserID, list)
 	if stories, ok := out.(*tg.StoriesAllStories); ok {
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, stories.Users, stories.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, stories.Users, stories.Chats)
 	}
 	return out
 }
@@ -21,14 +21,14 @@ func (r *Router) tgStoriesAllStories(ctx context.Context, viewerUserID int64, li
 func (r *Router) tgStoriesStories(ctx context.Context, viewerUserID int64, list domain.StoryList) *tg.StoriesStories {
 	list = r.withStoryListPeerObjects(ctx, viewerUserID, list)
 	out := tgStoriesStories(viewerUserID, list)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) tgStoriesPeerStories(ctx context.Context, viewerUserID int64, peerStories domain.PeerStories) *tg.StoriesPeerStories {
 	peerStories = r.withPeerStoriesPeerObjects(ctx, viewerUserID, peerStories)
 	out := tgStoriesPeerStories(viewerUserID, peerStories)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
@@ -40,7 +40,7 @@ func (r *Router) tgStoryViewsList(ctx context.Context, viewerUserID int64, list 
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
@@ -52,16 +52,16 @@ func (r *Router) tgStoryReactionsList(ctx context.Context, viewerUserID int64, l
 	if len(peerChannels) > 0 {
 		out.Chats = appendUniqueTGChats(out.Chats, tgChannels(viewerUserID, peerChannels)...)
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) applyStoryMaxIDsToChats(ctx context.Context, viewerUserID int64, out tg.MessagesChatsClass) tg.MessagesChatsClass {
 	switch v := out.(type) {
 	case *tg.MessagesChats:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, nil, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, nil, v.Chats)
 	case *tg.MessagesChatsSlice:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, nil, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, nil, v.Chats)
 	}
 	return out
 }
@@ -71,9 +71,9 @@ func (r *Router) tgMessagesDialogs(ctx context.Context, viewerUserID int64, list
 	out := tgMessagesDialogs(viewerUserID, list)
 	switch v := out.(type) {
 	case *tg.MessagesDialogs:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesDialogsSlice:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out
 }
@@ -81,33 +81,33 @@ func (r *Router) tgMessagesDialogs(ctx context.Context, viewerUserID int64, list
 func (r *Router) tgPeerDialogs(ctx context.Context, viewerUserID int64, list domain.DialogList, st domain.UpdateState) *tg.MessagesPeerDialogs {
 	list = r.withDialogNotifySettings(ctx, viewerUserID, list)
 	out := tgPeerDialogs(viewerUserID, list, st)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) tgContacts(ctx context.Context, viewerUserID int64, list domain.ContactList) tg.ContactsContactsClass {
 	out := tgContacts(list)
 	if contacts, ok := out.(*tg.ContactsContacts); ok {
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, contacts.Users, nil)
+		r.applyPeerReadModels(ctx, viewerUserID, contacts.Users, nil)
 	}
 	return out
 }
 
 func (r *Router) tgContactsFound(ctx context.Context, viewerUserID int64, res domain.UserSearchResult) *tg.ContactsFound {
 	out := tgContactsFound(viewerUserID, res)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) tgResolvedUserPeerWithStories(ctx context.Context, viewerUserID int64, u domain.User) *tg.ContactsResolvedPeer {
 	out := r.tgResolvedUserPeer(viewerUserID, u)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, nil)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, nil)
 	return out
 }
 
 func (r *Router) tgResolvedChannelPeerWithStories(ctx context.Context, viewerUserID int64, view domain.ChannelView) *tg.ContactsResolvedPeer {
 	out := tgResolvedChannelPeer(viewerUserID, view)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, nil, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, nil, out.Chats)
 	return out
 }
 
@@ -147,27 +147,27 @@ func (r *Router) tgMessagesDiscussionMessage(ctx context.Context, viewerUserID i
 	// 用带 presence + self 标志的投影覆盖裸 tgUsers，防止 viewer 自己以 self=false
 	// 进入 Users（Android putUsers 会覆盖 currentUser）。
 	out.Users = r.tgUsersForViewer(viewerUserID, discussion.Users)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 
 func (r *Router) applyStoryMaxIDsToForumTopics(ctx context.Context, viewerUserID int64, out *tg.MessagesForumTopics) *tg.MessagesForumTopics {
 	if out != nil {
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	}
 	return out
 }
 
 func (r *Router) applyStoryMaxIDsToMessageViews(ctx context.Context, viewerUserID int64, out *tg.MessagesMessageViews) *tg.MessagesMessageViews {
 	if out != nil {
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	}
 	return out
 }
 
 func (r *Router) applyStoryMaxIDsToMessageReactionsList(ctx context.Context, viewerUserID int64, out *tg.MessagesMessageReactionsList) *tg.MessagesMessageReactionsList {
 	if out != nil {
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
 	}
 	return out
 }
@@ -181,11 +181,11 @@ func (r *Router) tgGlobalSearchMessages(ctx context.Context, viewerUserID int64,
 func (r *Router) applyStoryMaxIDsToMessages(ctx context.Context, viewerUserID int64, out tg.MessagesMessagesClass) {
 	switch v := out.(type) {
 	case *tg.MessagesMessages:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesMessagesSlice:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.MessagesChannelMessages:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 }
 
@@ -206,9 +206,9 @@ func (r *Router) tgUpdatesDifference(ctx context.Context, viewerUserID int64, di
 	out := tgUpdatesDifference(viewerUserID, diff)
 	switch v := out.(type) {
 	case *tg.UpdatesDifference:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	case *tg.UpdatesDifferenceSlice:
-		r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, v.Users, v.Chats)
+		r.applyPeerReadModels(ctx, viewerUserID, v.Users, v.Chats)
 	}
 	return out
 }
@@ -224,7 +224,7 @@ func (r *Router) withStoryUpdatePeerObjects(ctx context.Context, viewerUserID in
 	if len(channels) > 0 {
 		updates.Chats = appendUniqueTGChats(updates.Chats, tgChannels(viewerUserID, channels)...)
 	}
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, updates.Users, updates.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, updates.Users, updates.Chats)
 	return updates
 }
 
@@ -271,7 +271,7 @@ func (r *Router) appendStoryPrivacyUsers(ctx context.Context, viewerUserID int64
 		return
 	}
 	updates.Users = appendUniqueTGUsers(updates.Users, r.tgUsersForViewer(viewerUserID, users)...)
-	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, updates.Users, updates.Chats)
+	r.applyPeerReadModels(ctx, viewerUserID, updates.Users, updates.Chats)
 }
 
 func storyViewUserIDs(views []domain.StoryView) []int64 {
@@ -495,6 +495,19 @@ func appendUniqueTGChats(base []tg.ChatClass, extra ...tg.ChatClass) []tg.ChatCl
 		appendOne(item)
 	}
 	return out
+}
+
+// applyPeerReadModels is the response-boundary overlay pass for peer objects that
+// have already been projected. Every read model it drives is batched over the
+// whole user/chat set, so a handler pays one call per read model per response
+// rather than one per peer.
+//
+// It is the single hook every handler uses; adding a read model here reaches all
+// of them at once.
+func (r *Router) applyPeerReadModels(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {
+	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, users, chats)
+	r.applyUsernamesToPeerObjects(ctx, users, chats)
+	r.applyBotVerificationIconsToPeerObjects(ctx, users, chats)
 }
 
 func (r *Router) applyStoryMaxIDsToPeerObjects(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {

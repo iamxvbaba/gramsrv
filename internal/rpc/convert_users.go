@@ -27,7 +27,6 @@ func tgSelfUser(u domain.User) *tg.User {
 		Contact:       u.Contact,
 		MutualContact: u.Mutual,
 		CloseFriend:   u.CloseFriend,
-		Usernames:     tgUsernames(u.Username),
 	}
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
@@ -60,7 +59,6 @@ func tgUser(u domain.User) *tg.User {
 		Contact:       u.Contact,
 		MutualContact: u.Mutual,
 		CloseFriend:   u.CloseFriend,
-		Usernames:     tgUsernames(u.Username),
 	}
 	applyTgUserBotFields(out, u)
 	applyTgUserPremiumFields(out, u)
@@ -240,11 +238,53 @@ func tgUserStatus(status domain.UserStatus) tg.UserStatusClass {
 	return &tg.UserStatusRecently{}
 }
 
+// tgUsernames builds the vector carried by updateUserName. Ordinary user/channel
+// constructors keep using their scalar username until at least one collectible
+// is associated with the peer.
 func tgUsernames(username string) []tg.Username {
 	if username == "" {
 		return nil
 	}
 	return []tg.Username{{Editable: true, Active: true, Username: username}}
+}
+
+// tgUsernamesFromRegistry is the single builder of the full username#b4073647
+// vector in stored order (see domain.SortUsernames), with editable/active taken
+// from the registry row rather than assumed.
+//
+// It degrades to tgUsernames(fallback) whenever the registry contributed nothing
+// usable, which is what keeps a missing/failing registry service byte-identical
+// to the pre-collectible wire shape.
+func tgUsernamesFromRegistry(list []domain.Username, fallback string) []tg.Username {
+	if len(list) == 0 {
+		return tgUsernames(fallback)
+	}
+	sorted := domain.SortUsernames(list)
+	out := make([]tg.Username, 0, len(sorted))
+	for _, item := range sorted {
+		name := domain.NormalizeUsername(item.Username)
+		if name == "" {
+			continue
+		}
+		out = append(out, tg.Username{
+			Editable: item.Editable,
+			Active:   item.Active,
+			Username: name,
+		})
+	}
+	if len(out) == 0 {
+		return tgUsernames(fallback)
+	}
+	return out
+}
+
+func hasCollectibleUsername(list []domain.Username) bool {
+	for _, item := range list {
+		if item.Collectible() {
+			return true
+		}
+	}
+	return false
 }
 
 func tgContacts(list domain.ContactList) tg.ContactsContactsClass {

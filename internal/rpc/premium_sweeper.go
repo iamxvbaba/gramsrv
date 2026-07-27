@@ -108,6 +108,8 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 
 	pushCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	botVerificationIcon := r.peerBotVerificationIcon(pushCtx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID})
+	usernames := r.usernameRegistryMap(pushCtx, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
 	seen := make(map[int64]struct{}, len(audience))
 	for _, viewerUserID := range audience {
 		if viewerUserID == 0 {
@@ -128,9 +130,18 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 				zap.Error(err))
 			continue
 		}
+		projected := tgUsersForViewer(viewerUserID, users)
+		// The pushed peer object has to match what users.getUsers would answer, or the
+		// client refreshes the peer straight back into the stale shape. The third-party
+		// verification icon (user#b1b8cc83 bot_verification_icon:flags2.14) lives in a
+		// read model rather than on domain.User, so it is stamped on here -- from the
+		// single read taken before the loop, since it is the same peer for every
+		// recipient. Zero leaves flags2.14 unset, which is the pre-feature shape.
+		applyBotVerificationIconToUsers(projected, u.ID, botVerificationIcon)
+		applyUsernamesFromRegistry(projected, nil, usernames)
 		r.pushUserUpdates(pushCtx, viewerUserID, &tg.Updates{
 			Updates: []tg.UpdateClass{&tg.UpdateUser{UserID: u.ID}},
-			Users:   tgUsersForViewer(viewerUserID, users),
+			Users:   projected,
 			Date:    int(r.clock.Now().Unix()),
 			Seq:     0,
 		})

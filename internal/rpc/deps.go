@@ -327,6 +327,27 @@ type BotsService interface {
 	PutWebViewCustomMethodQuery(ctx context.Context, botUserID, userID int64, method, paramsJSON string) (domain.BotWebViewCustomMethodQuery, error)
 }
 
+// ServiceBotCallbacks answers inline-button clicks for the built-in bots that run
+// inside this process (@verifybot and friends); app/bots implements it.
+//
+// It exists because the ordinary callback path cannot serve them: an internal bot
+// has no MTProto session to receive updateBotCallbackQuery and no Bot API consumer
+// to drain the update queue, so pushing the query at it and waiting could only
+// ever end in BOT_RESPONSE_TIMEOUT after the full 25-second window. A bot claimed
+// here is answered synchronously instead, by the responder that owns it.
+//
+// OnCallbackQuery reports handled=false when the bot is not one of the responder's
+// own, which the edge treats as invalid callback data. The answer is final:
+// nothing is registered in the shared callback registry for it, so no external
+// setBotCallbackAnswer can overwrite or spoof it.
+//
+// A nil Deps.ServiceBotCallbacks keeps the edge behaviour exactly as it was:
+// every callback is pushed to the bot's session and waited on.
+type ServiceBotCallbacks interface {
+	HandlesBot(botUserID int64) bool
+	OnCallbackQuery(ctx context.Context, query domain.BotCallbackQuery) (domain.BotCallbackAnswer, bool, error)
+}
+
 // UserIdentityService 是 UsersService 的资料扩展能力，用于 username/phone 解析。
 type UserIdentityService interface {
 	CheckUsername(ctx context.Context, userID int64, username string) (bool, error)
@@ -931,6 +952,67 @@ type PremiumPromoService interface {
 	PremiumPromo(ctx context.Context) (domain.PremiumPromoCatalog, bool, error)
 }
 
+// UsernameRegistryService is the collectible (Fragment-style) username registry
+// boundary. It owns the full per-peer username list -- the editable slot the
+// client owns through account/channels.updateUsername plus every collectible
+// asset attached to the peer -- and the purchase record behind a collectible.
+//
+// The registry is deliberately optional. Every RPC surface that consults it must
+// degrade to the legacy single-editable-username behaviour when the field is nil
+// or a call fails, because the scalar users.username / channels.username column
+// remains the editable-name persistence slot.
+type UsernameRegistryService interface {
+	// PeerUsernames returns one peer's full username list. Order is irrelevant:
+	// callers project through domain.SortUsernames.
+	PeerUsernames(ctx context.Context, peer domain.Peer) ([]domain.Username, error)
+	// UsernamesBatch is the N+1-free variant used by list projections. Peers with
+	// no registry row may be omitted from the result map.
+	UsernamesBatch(ctx context.Context, peers []domain.Peer) (map[domain.Peer][]domain.Username, error)
+	// ToggleUsername activates/deactivates one collectible username. The bool
+	// reports whether anything changed; false maps to USERNAME_NOT_MODIFIED.
+	ToggleUsername(ctx context.Context, peer domain.Peer, username string, active bool) (bool, error)
+	// ReorderUsernames rewrites the active username display order, including the
+	// editable slot when present (domain.ValidateUsernameReorder).
+	ReorderUsernames(ctx context.Context, peer domain.Peer, order []string) (bool, error)
+	// DeactivateAllUsernames deactivates every collectible username of the peer.
+	DeactivateAllUsernames(ctx context.Context, peer domain.Peer) (bool, error)
+	// Collectible returns the asset and owner needed by the RPC edge to enforce
+	// fragment visibility before projecting fragment.collectibleInfo.
+	Collectible(ctx context.Context, username string) (domain.CollectibleUsername, error)
+}
+
+// BotVerificationService is the third-party bot verification boundary
+// (core.telegram.org/api/bots/verification): a verifier bot marking peers with its
+// own icon and description, which official clients render as a badge distinct from
+// the operator-granted checkmark.
+//
+// It is the single source for every surface that projects the feature --
+// user.bot_verification_icon, channel.bot_verification_icon,
+// userFull.bot_verification, channelFull.bot_verification,
+// chatInvite.bot_verification and botInfo.verifier_settings -- so no two responses
+// can disagree about which mark a peer carries.
+//
+// Optional like UsernameRegistryService: a nil field, or
+// any read error, must leave every flag unset and bots.setCustomVerification
+// answering BOT_VERIFIER_FORBIDDEN, which is exactly the pre-feature wire shape.
+type BotVerificationService interface {
+	// PeerVerification returns the peer's single mark, or
+	// domain.ErrCustomVerificationNotFound.
+	PeerVerification(ctx context.Context, peer domain.Peer) (domain.CustomVerification, error)
+	// PeerVerificationBatch is the N+1-free variant used by the response-boundary
+	// overlay. Peers without a mark may be omitted from the result map.
+	PeerVerificationBatch(ctx context.Context, peers []domain.Peer) (map[domain.Peer]domain.CustomVerification, error)
+	// VerifierSettings reads one bot's verifier status, or
+	// domain.ErrVerifierNotFound.
+	VerifierSettings(ctx context.Context, botID int64) (domain.BotVerifierSettings, error)
+	// VerifierSettingsBatch resolves several bots at once for the botInfo
+	// projection; bots without verifier status may be omitted.
+	VerifierSettingsBatch(ctx context.Context, botIDs []int64) (map[int64]domain.BotVerifierSettings, error)
+	// SetCustomVerification applies bots.setCustomVerification. changed controls
+	// update fan-out only; the RPC returns Bool true for an idempotent success.
+	SetCustomVerification(ctx context.Context, req domain.SetCustomVerificationRequest) (changed bool, err error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth                AuthService
@@ -949,6 +1031,8 @@ type Deps struct {
 	EphemeralPush        store.EphemeralPushBroker
 	Moderation           ModerationService
 	Users                UsersService
+	Usernames            UsernameRegistryService
+	BotVerifications     BotVerificationService
 	TelegramLogin        TelegramLoginService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore
@@ -965,6 +1049,7 @@ type Deps struct {
 	Files                FilesService
 	PremiumPromo         PremiumPromoService
 	Bots                 BotsService
+	ServiceBotCallbacks  ServiceBotCallbacks
 	Polls                PollsService
 	Phone                PhoneService
 	GroupCalls           GroupCallsService

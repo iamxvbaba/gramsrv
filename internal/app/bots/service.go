@@ -48,6 +48,30 @@ type aiChatGenerator interface {
 	GenerateTextStream(ctx context.Context, req domain.AITextGenerationRequest, emit func(domain.AIComposeText) error) (domain.AIComposeText, error)
 }
 
+// verificationApplications is the applicant-side surface of official platform
+// verification used by the built-in @verifybot (app/verification.Service
+// satisfies it as-is).
+//
+// It is declared as a narrow port rather than taken as a concrete service for the
+// usual reason plus one specific to this feature: every verification rule --
+// ownership, public username, restrictions, already-verified, cooldown, rate
+// limit, the status machine -- belongs to that service, and the bot must not be
+// able to reach past it. Nothing here can write a peer's verified flag.
+type verificationApplications interface {
+	EligibleTargets(ctx context.Context, applicantUserID int64) ([]domain.VerificationTarget, error)
+	StartDraft(ctx context.Context, req domain.SubmitVerificationApplicationRequest) (domain.VerificationApplication, bool, error)
+	SaveDraft(ctx context.Context, applicantUserID, applicationID, version int64, draft domain.VerificationDraftInput) (domain.VerificationApplication, error)
+	Submit(ctx context.Context, applicantUserID, applicationID, version int64) (domain.VerificationApplication, error)
+	Cancel(ctx context.Context, applicantUserID, applicationID, version int64, reason string) (domain.VerificationApplication, error)
+	Draft(ctx context.Context, applicantUserID int64) (domain.VerificationApplication, error)
+	ApplicantApplications(ctx context.Context, applicantUserID int64, limit int) ([]domain.VerificationApplication, error)
+	Application(ctx context.Context, applicationID int64) (domain.VerificationApplication, error)
+}
+
+// The third-party verification ports live in verifierbot.go
+// (customVerifications, verifierBotTargets): they are the built-in @verifierbot's
+// only way to reach the feature, and are kept next to the dialog that uses them.
+
 // RouterHooks 是 rpc 层回调（router 创建后经 SetRouterHooks 延迟注入，打破
 // router↔bots 的构造循环；这些能力都依赖 TL/连接层边界，不能在 app 层实现）：
 //   - RevokeBotSessions：token revoke 后撤销 bot 的全部已登录 session（删
@@ -83,6 +107,9 @@ type Service struct {
 	stickers              stickerSetCreator
 	installer             userStickerSetInstaller
 	aiChat                aiChatGenerator
+	verification          verificationApplications
+	customVerification    customVerifications
+	verifierTargets       verifierBotTargets
 	telegramLogin         *telegramloginapp.Service
 	hooks                 RouterHooks
 	textDrafts            TextDraftPusher
@@ -92,6 +119,13 @@ type Service struct {
 	now                   func() time.Time
 	chatBotStreamThrottle time.Duration
 	publicBaseURL         string
+	// dialogLimiter bounds how often one applicant can drive a service-bot dialog.
+	// The verification service already rate-limits application creation; this is the
+	// separate bound on dialog traffic itself, so a script cannot spin the state
+	// machine (and its writes) even without ever submitting anything.
+	dialogLimiter    store.RateLimiter
+	dialogRateLimit  int
+	dialogRateWindow time.Duration
 	// replySeq 是回复 randomID 在 crypto/rand 失败时的兜底单调序列。
 	replySeq   atomic.Int64
 	replyLocks [replyLockStripes]sync.Mutex
@@ -177,6 +211,56 @@ func WithAIChatGenerator(g aiChatGenerator) Option {
 	}
 }
 
+// WithVerification injects the official verification service used by the
+// built-in @verifybot. Without it the bot still answers, but every command
+// reports that verification is unavailable rather than half-running the dialog.
+func WithVerification(v verificationApplications) Option {
+	return func(s *Service) {
+		if v != nil {
+			s.verification = v
+		}
+	}
+}
+
+// WithCustomVerification injects the third-party verification service used by the
+// built-in @verifierbot. Without it the bot still answers, but every command
+// reports that third-party verification is unavailable rather than half-running the
+// dialog.
+func WithCustomVerification(v customVerifications) Option {
+	return func(s *Service) {
+		if v != nil {
+			s.customVerification = v
+		}
+	}
+}
+
+// WithVerifierTargets injects the directory of an applicant's own peers used by
+// @verifierbot's subject picker. It is optional: with nothing injected the bot
+// falls back to the official verification service's EligibleTargets, which
+// enumerates exactly the same peers (only its eligibility verdicts, which answer a
+// different question, are ignored).
+func WithVerifierTargets(t verifierBotTargets) Option {
+	return func(s *Service) {
+		if t != nil {
+			s.verifierTargets = t
+		}
+	}
+}
+
+// WithDialogRateLimiter bounds service-bot dialog traffic per user. A zero limit
+// or a nil limiter disables the bound, which is what a deployment without Redis
+// gets.
+func WithDialogRateLimiter(limiter store.RateLimiter, limit int, window time.Duration) Option {
+	return func(s *Service) {
+		if limiter == nil || limit <= 0 || window <= 0 {
+			return
+		}
+		s.dialogLimiter = limiter
+		s.dialogRateLimit = limit
+		s.dialogRateWindow = window
+	}
+}
+
 // WithTelegramLogin injects the OIDC application service used by BotFather.
 // BotFather never writes the login tables directly.
 func WithTelegramLogin(login *telegramloginapp.Service) Option {
@@ -259,6 +343,33 @@ func (s *Service) SetTextDraftPusher(p TextDraftPusher) {
 func (s *Service) SetAIChatGenerator(g aiChatGenerator) {
 	if s != nil {
 		s.aiChat = g
+	}
+}
+
+// SetVerification injects the official verification service after construction.
+// The bots service is built before the peer directories that service depends on,
+// so in the shipped process this is the wiring order that actually exists (same
+// deferred-injection pattern as SetRouterHooks).
+func (s *Service) SetVerification(v verificationApplications) {
+	if s != nil && v != nil {
+		s.verification = v
+	}
+}
+
+// SetCustomVerification injects the third-party verification service after
+// construction. The bots service is built before the stores and directories that
+// service depends on, so in the shipped process this is the wiring order that
+// actually exists (same deferred-injection pattern as SetVerification).
+func (s *Service) SetCustomVerification(v customVerifications) {
+	if s != nil && v != nil {
+		s.customVerification = v
+	}
+}
+
+// SetVerifierTargets injects @verifierbot's subject directory after construction.
+func (s *Service) SetVerifierTargets(t verifierBotTargets) {
+	if s != nil && t != nil {
+		s.verifierTargets = t
 	}
 }
 

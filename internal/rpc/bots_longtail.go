@@ -77,15 +77,33 @@ func (r *Router) onBotsSetBotGroupDefaultAdminRights(ctx context.Context, _ tg.C
 	return false, rightsNotModifiedErr()
 }
 
+// onBotsReorderUsernames reorders a bot's collectible usernames. A bot is a user
+// peer in the registry, so the only difference from account.reorderUsernames is
+// the ownership gate: resolveOwnedBotUser already rejects a caller who does not
+// own the bot.
+//
+// With no registry wired the historical USERNAME_NOT_MODIFIED answer is kept --
+// a bot with a single editable username genuinely has nothing to reorder.
 func (r *Router) onBotsReorderUsernames(ctx context.Context, req *tg.BotsReorderUsernamesRequest) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return false, internalErr()
 	}
-	if _, err := r.resolveOwnedBotUser(ctx, userID, req.Bot); err != nil {
+	if req == nil {
+		return false, botInvalidErr()
+	}
+	bot, err := r.resolveOwnedBotUser(ctx, userID, req.Bot)
+	if err != nil {
 		return false, err
 	}
-	return false, usernameNotModifiedErr()
+	if r.deps.Usernames == nil {
+		return false, usernameNotModifiedErr()
+	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}
+	if err := r.reorderRegistryUsernames(ctx, peer, req.Order); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Router) onBotsToggleUsername(ctx context.Context, req *tg.BotsToggleUsernameRequest) (bool, error) {
@@ -93,10 +111,21 @@ func (r *Router) onBotsToggleUsername(ctx context.Context, req *tg.BotsToggleUse
 	if err != nil {
 		return false, internalErr()
 	}
-	if _, err := r.resolveOwnedBotUser(ctx, userID, req.Bot); err != nil {
+	if req == nil {
+		return false, botInvalidErr()
+	}
+	bot, err := r.resolveOwnedBotUser(ctx, userID, req.Bot)
+	if err != nil {
 		return false, err
 	}
-	return false, usernameNotModifiedErr()
+	if r.deps.Usernames == nil {
+		return false, usernameNotModifiedErr()
+	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: bot.ID}
+	if err := r.toggleRegistryUsername(ctx, peer, req.Username, req.Active); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Router) onBotsCanSendMessage(ctx context.Context, bot tg.InputUserClass) (bool, error) {
@@ -481,22 +510,72 @@ func (r *Router) onBotsUpdateStarRefProgram(ctx context.Context, req *tg.BotsUpd
 	return nil, botInvalidErr()
 }
 
+// onBotsSetCustomVerification answers bots.setCustomVerification#8b89dfbd: a
+// verifier bot adding or removing its own third-party mark on a peer
+// (core.telegram.org/api/bots/verification).
+//
+// The TL constructor allows exactly two callers, and the schema encodes which:
+// bot:flags.0?InputUser "must not be set if invoked by a bot, must be set to the ID
+// of an owned bot if invoked by a user". Both branches are resolved to the same
+// verifier bot id before anything is written, so a user can only ever act through a
+// bot they own and a bot can only ever act as itself.
+//
+// Bool reports successful handling. Idempotent retries still return true; both
+// official clients and the Bot API interpret boolFalse as failure.
 func (r *Router) onBotsSetCustomVerification(ctx context.Context, req *tg.BotsSetCustomVerificationRequest) (bool, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return false, internalErr()
 	}
+	if req == nil {
+		return false, peerIDInvalidErr()
+	}
+	var verifierBotID int64
 	if bot, ok := req.GetBot(); ok {
-		if _, err := r.resolveOwnedBotUser(ctx, userID, bot); err != nil {
+		owned, err := r.resolveOwnedBotUser(ctx, userID, bot)
+		if err != nil {
 			return false, err
 		}
-	} else if _, err := r.callerBotID(ctx); err != nil {
+		verifierBotID = owned.ID
+	} else {
+		botID, err := r.callerBotID(ctx)
+		if err != nil {
+			return false, err
+		}
+		verifierBotID = botID
+	}
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
 		return false, err
 	}
-	if _, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer); err != nil {
-		return false, err
+	if r.deps.BotVerifications == nil {
+		// Unwired deployment: no bot can be a verifier, which is exactly what
+		// BOT_VERIFIER_FORBIDDEN says.
+		return false, botVerifierForbiddenErr()
 	}
-	return false, botVerifierForbiddenErr()
+	setRequest := domain.SetCustomVerificationRequest{
+		VerifierBotID: verifierBotID,
+		Peer:          peer,
+		Enabled:       req.GetEnabled(),
+		CallerUserID:  userID,
+	}
+	if description, ok := req.GetCustomDescription(); ok {
+		setRequest.CustomDescription = description
+	}
+	// Shape-only validation at the edge (peer kind, description length, revoke that
+	// still carries a description) so a malformed request gets a deterministic TL
+	// error regardless of how strict the wired service is.
+	if err := setRequest.Validate(); err != nil {
+		return false, setCustomVerificationErr(err)
+	}
+	_, err = r.deps.BotVerifications.SetCustomVerification(ctx, setRequest)
+	if err != nil {
+		return false, setCustomVerificationErr(err)
+	}
+	// The push belongs to the service, not here: it owns the same invalidation for
+	// all three drivers (this RPC, the bot dialog and the admin panel), so pushing
+	// again would fan out to the whole audience twice per change.
+	return true, nil
 }
 
 func (r *Router) onBotsGetBotRecommendations(ctx context.Context, _ tg.InputUserClass) (tg.UsersUsersClass, error) {

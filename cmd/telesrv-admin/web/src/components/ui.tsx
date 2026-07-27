@@ -1,8 +1,8 @@
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n } from "../i18n";
-import { formatDate } from "../lib/format";
-import type { AuditLogRow } from "../types";
+import { displayUsername, formatDate } from "../lib/format";
+import type { AccountUsername, AuditLogRow } from "../types";
 
 type Tone = "neutral" | "good" | "danger" | "warn";
 
@@ -128,4 +128,34 @@ export function LoadingSurface({ label }: { label: string }) {
 
 export function JsonBlock({ value }: { value: string }) {
   return <pre className="json-block">{value || "{}"}</pre>;
+}
+
+// UsernameCell renders a peer's editable username with its collectible usernames
+// branching off underneath, in the order clients project them.
+//
+// An inactive collectible is shown rather than hidden: the peer still owns it, it
+// just does not resolve publicly, and an operator looking for "where did that name
+// go" needs to see it. It is marked instead of dropped.
+// Pass an empty username to render the branch on its own, which is what the
+// detail header does: it already shows the editable slot on the line above.
+export function UsernameCell({ username, collectibles }: { username?: string; collectibles?: AccountUsername[] | null }) {
+  const { t } = useI18n();
+  const main = displayUsername(username ?? "");
+  const branch = collectibles ?? [];
+  if (branch.length === 0) {
+    return <>{main || "-"}</>;
+  }
+  return (
+    <>
+      {main}
+      <ul className="username-branch">
+        {branch.map((item) => (
+          <li key={item.Username} className={item.Active ? "" : "inactive"}>
+            <span>{displayUsername(item.Username)}</span>
+            {!item.Active && <em>{t("usernames.inactive")}</em>}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }

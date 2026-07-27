@@ -445,16 +445,28 @@ func uniqueRecipientIDs(ids []int64) []int64 {
 }
 
 func (r *Router) pushChannelStateToMembers(ctx context.Context, originUserID int64, channel domain.Channel) {
-	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, originUserID, channel, domain.Channel{}, false)
+	// The third-party verification icon is resolved once here, outside the
+	// per-recipient builder: see channelStateUpdatesWithLinkedMonoforum.
+	icon := r.peerBotVerificationIcon(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID})
+	usernames := r.channelStateUsernameRegistry(ctx, channel, domain.Channel{}, false)
+	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, originUserID, channel, domain.Channel{}, false, icon, usernames)
 }
 
-func (r *Router) pushChannelStateToMembersWithLinkedMonoforum(ctx context.Context, originUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool) {
+func (r *Router) pushChannelStateToMembersWithLinkedMonoforum(ctx context.Context, originUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64, usernames map[domain.Peer][]domain.Username) {
 	if r.deps.Channels == nil || channel.ID == 0 {
 		return
 	}
 	r.pushChannelUpdates(ctx, originUserID, channel.ID, []int64{originUserID}, func(viewerUserID int64) *tg.Updates {
-		return r.channelStateUpdatesWithLinkedMonoforum(viewerUserID, channel, mono, includeMono)
+		return r.channelStateUpdatesWithLinkedMonoforum(viewerUserID, channel, mono, includeMono, botVerificationIcon, usernames)
 	})
+}
+
+func (r *Router) channelStateUsernameRegistry(ctx context.Context, channel domain.Channel, mono domain.Channel, includeMono bool) map[domain.Peer][]domain.Username {
+	peers := []domain.Peer{{Type: domain.PeerTypeChannel, ID: channel.ID}}
+	if includeMono && mono.ID != 0 && mono.ID != channel.ID {
+		peers = append(peers, domain.Peer{Type: domain.PeerTypeChannel, ID: mono.ID})
+	}
+	return r.usernameRegistryMap(ctx, peers)
 }
 
 func (r *Router) tgUsersForIDs(ctx context.Context, currentUserID int64, ids []int64) []tg.UserClass {

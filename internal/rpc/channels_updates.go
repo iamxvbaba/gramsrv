@@ -145,7 +145,11 @@ func appendChannelStateUpdates(dst *tg.Updates, extra *tg.Updates) {
 	}
 }
 
-func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool) *tg.Updates {
+// channelStateUpdatesWithLinkedMonoforum builds one recipient's channel-state
+// update. Peer-wide overlays are passed in already resolved rather than read
+// here: this builder runs once per online recipient, so reads inside it would
+// turn one state change into one query per member.
+func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64, usernames map[domain.Peer][]domain.Username) *tg.Updates {
 	updates := r.channelStateUpdates(viewerUserID, channel)
 	// 母广播频道有/曾有关联 monoforum 时,按完整(非 min)形态下发。关闭 Direct Messages 时
 	// linked_monoforum_id 在投影里被隐藏,只有完整频道对象才能覆盖客户端缓存里旧的 linked_monoforum_id,
@@ -158,6 +162,12 @@ func (r *Router) channelStateUpdatesWithLinkedMonoforum(viewerUserID int64, chan
 	if includeMono {
 		updates.Chats = appendUniqueTGChats(updates.Chats, tgChannelChat(viewerUserID, mono, nil))
 	}
+	// The third-party mark travels with the state mutation for the same reason
+	// verified:flags.7 does -- it is part of how the peer identifies itself -- but it
+	// lives in a read model rather than on domain.Channel, so it is stamped on here
+	// instead of being projected from the row.
+	applyBotVerificationIconToChannelChats(updates.Chats, channel.ID, botVerificationIcon)
+	applyUsernamesFromRegistry(nil, updates.Chats, usernames)
 	return updates
 }
 

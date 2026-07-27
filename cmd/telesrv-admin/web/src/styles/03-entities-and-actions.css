@@ -103,7 +103,8 @@
   font-weight: 800;
 }
 
-.duration-field input {
+.duration-field input,
+.duration-field select {
   width: 100%;
 }
 
@@ -124,6 +125,16 @@
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
+}
+
+/* A .dock-title already draws the rule under itself, so a .danger-zone placed
+   directly after one must not draw a second: the verification and bot-verification
+   detail docks label the zone with a dock-title and rendered two lines 10px apart
+   above the revoke button. */
+.dock-title + .danger-zone {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .authorization-block {
@@ -585,7 +596,8 @@
   border-radius: var(--radius-sm);
 }
 
-.attr-block .duration-field input {
+.attr-block .duration-field input,
+.duration-field select {
   width: 100%;
 }
 
@@ -684,4 +696,114 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Account rating component breakdown. */
+.breakdown-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 260px) 1fr minmax(80px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.breakdown-row.total {
+  grid-template-columns: 1fr minmax(80px, auto);
+  background: transparent;
+}
+
+.breakdown-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.breakdown-label strong {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.breakdown-label small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.breakdown-value {
+  color: var(--text);
+  font-weight: 800;
+  text-align: right;
+}
+
+.breakdown-value.good {
+  color: var(--good);
+}
+
+.breakdown-value.danger {
+  color: var(--danger-text);
+}
+
+@media (max-width: 760px) {
+  .breakdown-row,
+  .breakdown-row.total {
+    grid-template-columns: 1fr;
+  }
+
+  .breakdown-value {
+    text-align: left;
+  }
+}
+
+/* Collectible usernames branching off the peer's editable one. The guide is drawn
+   with borders rather than a "↳" character so it lines up at any font size and is
+   not read out by a screen reader as punctuation. */
+.username-branch {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.username-branch li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.username-branch li::before {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  width: 6px;
+  height: 11px;
+  border-left: 1px solid var(--line-strong, var(--line));
+  border-bottom: 1px solid var(--line-strong, var(--line));
+  content: "";
+}
+
+.username-branch li.inactive {
+  color: var(--muted);
+}
+
+.username-branch li.inactive span {
+  text-decoration: line-through;
+}
+
+.username-branch li em {
+  margin-left: 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }

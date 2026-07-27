@@ -45,6 +45,34 @@ const (
 	ActionGiveGift                = "gifts.give"
 	ActionCreateBot               = "bot.create"
 	ActionDeleteBot               = "bot.delete"
+	// Collectible (Fragment-style) username lifecycle.
+	ActionMintCollectibleUsername     = "usernames.collectible.mint"
+	ActionTransferCollectibleUsername = "usernames.collectible.transfer"
+	ActionRevokeCollectibleUsername   = "usernames.collectible.revoke"
+	ActionDeleteCollectibleUsername   = "usernames.collectible.delete"
+	// Composite account rating.
+	ActionRecomputeAccountRating = "rating.recompute"
+	ActionAdjustAccountRating    = "rating.adjust"
+	// Official platform verification review. Claim/approve/reject act on one
+	// application; revoke acts on a target, because clearing a badge is not a
+	// decision on the application that granted it.
+	ActionClaimVerification   = "verification.claim"
+	ActionApproveVerification = "verification.approve"
+	ActionRejectVerification  = "verification.reject"
+	ActionRevokeVerification  = "verification.revoke"
+	// Third-party bot verification (see botverification.go). A namespace of its own
+	// on purpose: these actions write the verifier catalogue and the attributed
+	// marks, never the platform checkmark, and the audit trail has to keep the two
+	// mechanisms apart at a glance.
+	ActionGrantBotVerifier          = "botverification.grant_verifier"
+	ActionSetBotVerifierEnabled     = "botverification.set_verifier_enabled"
+	ActionRevokeBotVerifier         = "botverification.revoke_verifier"
+	ActionUpsertVerificationIcon    = "botverification.upsert_icon"
+	ActionSetVerificationIconActive = "botverification.set_icon_active"
+	ActionRevokeCustomVerification  = "botverification.revoke_mark"
+	ActionApproveBotVerification    = "botverification.approve"
+	ActionRejectBotVerification     = "botverification.reject"
+	ActionRevokeBotVerification     = "botverification.revoke_request"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -53,6 +81,79 @@ const (
 	maxPremiumMonths         = 120
 	maxStarsGrant            = 1_000_000_000
 	maxFreezeAppealURLLength = 2048
+	// maxAccountRatingAdjustment bounds one manual rating adjustment in either
+	// direction. The domain only rejects a zero delta, so the operator-facing
+	// bound lives here next to the other grant limits.
+	maxAccountRatingAdjustment = 1_000_000_000
+)
+
+// Stable admin error codes for the collectible-username and account-rating
+// subsystems. The panel switches on the code, so a command failure and a read
+// failure describe the same condition with the same token instead of leaking a
+// Go error string the UI would have to pattern-match.
+const (
+	CodeUsernameOccupied           = "USERNAME_OCCUPIED"
+	CodeUsernameInvalid            = "USERNAME_INVALID"
+	CodeUsernameNotCollectible     = "USERNAME_NOT_COLLECTIBLE"
+	CodeCollectibleNotFound        = "COLLECTIBLE_NOT_FOUND"
+	CodeCollectibleNotOwned        = "COLLECTIBLE_NOT_OWNED"
+	CodeCollectibleBurned          = "COLLECTIBLE_BURNED"
+	CodeCollectiblePeerLimit       = "COLLECTIBLE_PEER_LIMIT"
+	CodeCollectibleCurrencyInvalid = "COLLECTIBLE_CURRENCY_INVALID"
+	CodeCollectibleStateInvalid    = "COLLECTIBLE_STATE_INVALID"
+	CodeRatingNotFound             = "RATING_NOT_FOUND"
+	CodeRatingAdjustmentInvalid    = "RATING_ADJUSTMENT_INVALID"
+	CodeRatingWeightsInvalid       = "RATING_WEIGHTS_INVALID"
+	// Official platform verification review. CodeVerificationConflict is the lost
+	// optimistic-locking race -- two reviewers deciding at once -- and is the one
+	// the panel must render as "reload and look again" rather than as a bad
+	// request.
+	CodeVerificationNotFound            = "VERIFICATION_NOT_FOUND"
+	CodeVerificationConflict            = "VERIFICATION_CONFLICT"
+	CodeVerificationStatusInvalid       = "VERIFICATION_STATUS_INVALID"
+	CodeVerificationReasonRequired      = "VERIFICATION_REASON_REQUIRED"
+	CodeVerificationTargetInvalid       = "VERIFICATION_TARGET_INVALID"
+	CodeVerificationTargetOccupied      = "VERIFICATION_TARGET_OCCUPIED"
+	CodeVerificationTargetVerified      = "VERIFICATION_TARGET_ALREADY_VERIFIED"
+	CodeVerificationTargetNotPublic     = "VERIFICATION_TARGET_NOT_PUBLIC"
+	CodeVerificationTargetRestricted    = "VERIFICATION_TARGET_RESTRICTED"
+	CodeVerificationTargetSystem        = "VERIFICATION_TARGET_SYSTEM"
+	CodeVerificationNotOwner            = "VERIFICATION_NOT_OWNER"
+	CodeVerificationUserTargetsDisabled = "VERIFICATION_USER_TARGETS_DISABLED"
+	CodeVerificationInvalid             = "VERIFICATION_INVALID"
+)
+
+// Stable admin error codes for third-party bot verification (see
+// botverification.go). They are a separate set from the official verification
+// codes above: the two mechanisms own separate tables and fail for separate
+// reasons, and the panel renders them in separate sections, so one shared token
+// would land a message in the wrong place.
+//
+// CodeCustomVerificationConflict is the lost optimistic-locking race -- two
+// operators deciding at once -- and is the one the panel must render as "reload
+// and look again" rather than as a bad request.
+const (
+	CodeBotVerifierNotFound             = "BOTVERIFIER_NOT_FOUND"
+	CodeBotVerifierForbidden            = "BOTVERIFIER_FORBIDDEN"
+	CodeBotVerifierInvalid              = "BOTVERIFIER_INVALID"
+	CodeBotVerifierBotNotFound          = "BOTVERIFIER_BOT_NOT_FOUND"
+	CodeBotVerifierDescriptionForbidden = "BOTVERIFIER_DESCRIPTION_FORBIDDEN"
+
+	CodeVerificationIconNotFound = "VERIFICATION_ICON_NOT_FOUND"
+	CodeVerificationIconInactive = "VERIFICATION_ICON_INACTIVE"
+	CodeVerificationIconInvalid  = "VERIFICATION_ICON_INVALID"
+
+	CodeCustomVerificationNotFound        = "CUSTOM_VERIFICATION_NOT_FOUND"
+	CodeCustomVerificationRequestNotFound = "CUSTOM_VERIFICATION_REQUEST_NOT_FOUND"
+	CodeCustomVerificationRequestExists   = "CUSTOM_VERIFICATION_REQUEST_EXISTS"
+	CodeCustomVerificationConflict        = "CUSTOM_VERIFICATION_CONFLICT"
+	CodeCustomVerificationLimit           = "CUSTOM_VERIFICATION_LIMIT"
+	CodeCustomVerificationStatusInvalid   = "CUSTOM_VERIFICATION_STATUS_INVALID"
+	CodeCustomVerificationReasonRequired  = "CUSTOM_VERIFICATION_REASON_REQUIRED"
+	CodeCustomVerificationTargetInvalid   = "CUSTOM_VERIFICATION_TARGET_INVALID"
+	CodeCustomVerificationTargetSystem    = "CUSTOM_VERIFICATION_TARGET_SYSTEM"
+	CodeCustomVerificationRateLimited     = "CUSTOM_VERIFICATION_RATE_LIMITED"
+	CodeCustomVerificationInvalid         = "CUSTOM_VERIFICATION_INVALID"
 )
 
 type CommandRepository interface {
@@ -179,6 +280,39 @@ type ModerationService interface {
 	ReviewAppeal(ctx context.Context, request domain.ModerationDecisionRequest) (domain.ModerationCaseDetail, bool, error)
 }
 
+// CollectibleUsernamesService is the operator-facing slice of the collectible
+// username use cases: the mint/transfer/revoke lifecycle plus the reads the
+// admin panel explains an asset with. It is deliberately narrow -- the client
+// facing toggle/reorder entry points stay out of the admin surface, because the
+// editable slot and the row order belong to the peer, not to the operator.
+type CollectibleUsernamesService interface {
+	Mint(ctx context.Context, req domain.MintCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+	Transfer(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+	Revoke(ctx context.Context, req domain.RevokeCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+	Delete(ctx context.Context, req domain.DeleteCollectibleUsernameRequest) (bool, error)
+	Collectible(ctx context.Context, username string) (domain.CollectibleUsername, error)
+	List(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
+	Transfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error)
+}
+
+// collectibleUsernameByIDLookup is the optional by-identity read. Stores that
+// expose it answer a detail request in one round trip; the keyset fallback in
+// CollectibleUsernameByID keeps a service without it correct.
+type collectibleUsernameByIDLookup interface {
+	CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error)
+}
+
+// AccountRatingService is the operator-facing slice of the composite account
+// rating use cases: read the stored projection, force a recompute, adjust the
+// manual component and page the ledger that explains a level.
+type AccountRatingService interface {
+	Rating(ctx context.Context, userID int64) (domain.AccountRating, error)
+	Recompute(ctx context.Context, userID int64) (domain.AccountRating, error)
+	Adjust(ctx context.Context, req domain.AdjustAccountRatingRequest) (domain.AccountRating, bool, error)
+	List(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
+	Events(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
+}
+
 // GiftGranter delivers a catalog gift to a recipient peer on behalf of a sender
 // without charging Stars. Implemented by the RPC router, it reuses the standard
 // gift-delivery path (service message for users, saved-gift + admin log for
@@ -207,7 +341,13 @@ type Dependencies struct {
 	Bots                   BotService
 	Emoji                  EmojiService
 	Moderation             ModerationService
-	Now                    func() time.Time
+	Usernames              CollectibleUsernamesService
+	Rating                 AccountRatingService
+	Verification           VerificationService
+	// BotVerification is the third-party mechanism, wired separately from
+	// Verification: the two never read each other's state.
+	BotVerification BotVerificationService
+	Now             func() time.Time
 }
 
 type Service struct {
@@ -230,6 +370,10 @@ type Service struct {
 	bots                   BotService
 	emoji                  EmojiService
 	moderation             ModerationService
+	usernames              CollectibleUsernamesService
+	rating                 AccountRatingService
+	verification           VerificationService
+	botVerification        BotVerificationService
 	now                    func() time.Time
 }
 
@@ -296,6 +440,18 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	if deps.Moderation != nil {
 		s.moderation = deps.Moderation
 	}
+	if deps.Usernames != nil {
+		s.usernames = deps.Usernames
+	}
+	if deps.Rating != nil {
+		s.rating = deps.Rating
+	}
+	if deps.Verification != nil {
+		s.verification = deps.Verification
+	}
+	if deps.BotVerification != nil {
+		s.botVerification = deps.BotVerification
+	}
 	if deps.Now != nil {
 		s.now = deps.Now
 	}
@@ -358,6 +514,87 @@ func (s *Service) ReviewModerationAppeal(ctx context.Context, request domain.Mod
 		request.CreatedAt = s.now().UTC()
 	}
 	return s.moderation.ReviewAppeal(ctx, request)
+}
+
+// CollectibleUsernames is the admin listing read. The filter is passed through
+// unchanged: the use-case layer owns normalisation and the page bound, so the
+// admin API and the RPC edge page the registry identically.
+func (s *Service) CollectibleUsernames(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error) {
+	if s == nil || s.usernames == nil {
+		return nil, fmt.Errorf("collectible username dependency is not configured")
+	}
+	return s.usernames.List(ctx, filter)
+}
+
+// CollectibleUsername resolves one asset by name.
+func (s *Service) CollectibleUsername(ctx context.Context, username string) (domain.CollectibleUsername, error) {
+	if s == nil || s.usernames == nil {
+		return domain.CollectibleUsername{}, fmt.Errorf("collectible username dependency is not configured")
+	}
+	return s.usernames.Collectible(ctx, username)
+}
+
+// CollectibleUsernameByID resolves one asset by identity, which is how the admin
+// panel links a row to its detail view.
+//
+// A service exposing the direct by-identity read is used as-is. Otherwise the
+// bounded keyset listing answers it: the listing is ordered by descending id, so
+// the single row taken before id+1 is the asset itself whenever it exists, and
+// any other id proves the asset is gone.
+func (s *Service) CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error) {
+	if s == nil || s.usernames == nil {
+		return domain.CollectibleUsername{}, fmt.Errorf("collectible username dependency is not configured")
+	}
+	if id <= 0 {
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotFound
+	}
+	if lookup, ok := s.usernames.(collectibleUsernameByIDLookup); ok {
+		return lookup.CollectibleUsernameByID(ctx, id)
+	}
+	before := int64(0)
+	if id < math.MaxInt64 {
+		before = id + 1
+	}
+	items, err := s.usernames.List(ctx, domain.CollectibleUsernameFilter{BeforeID: before, Limit: 1})
+	if err != nil {
+		return domain.CollectibleUsername{}, err
+	}
+	if len(items) == 0 || items[0].ID != id {
+		return domain.CollectibleUsername{}, domain.ErrCollectibleUsernameNotFound
+	}
+	return items[0], nil
+}
+
+// CollectibleUsernameTransfers returns one asset's provenance log, newest first.
+func (s *Service) CollectibleUsernameTransfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error) {
+	if s == nil || s.usernames == nil {
+		return nil, fmt.Errorf("collectible username dependency is not configured")
+	}
+	return s.usernames.Transfers(ctx, collectibleID, limit)
+}
+
+// AccountRating returns one user's stored composite rating projection.
+func (s *Service) AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error) {
+	if s == nil || s.rating == nil {
+		return domain.AccountRating{}, fmt.Errorf("account rating dependency is not configured")
+	}
+	return s.rating.Rating(ctx, userID)
+}
+
+// AccountRatings is the admin leaderboard read.
+func (s *Service) AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error) {
+	if s == nil || s.rating == nil {
+		return nil, fmt.Errorf("account rating dependency is not configured")
+	}
+	return s.rating.List(ctx, filter)
+}
+
+// AccountRatingEvents returns the contribution ledger that explains a level.
+func (s *Service) AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error) {
+	if s == nil || s.rating == nil {
+		return nil, fmt.Errorf("account rating dependency is not configured")
+	}
+	return s.rating.Events(ctx, userID, limit)
 }
 
 type CommandMeta struct {
@@ -597,6 +834,67 @@ type CreateBotRequest struct {
 type DeleteBotRequest struct {
 	CommandMeta
 	BotUserID int64 `json:"bot_user_id"`
+}
+
+// MintCollectibleUsernameRequest mints a collectible username asset. At most one
+// of OwnerUserID / OwnerChannelID may be set: neither mints into the operator
+// vault, one assigns the asset to that holder in the same command.
+//
+// Amount and CryptoAmount are minor units (nanotons for TON), so they cross the
+// JSON boundary as decimal strings and stay exact. PurchaseDate is an optional
+// Unix timestamp; zero is stamped with the command clock.
+type MintCollectibleUsernameRequest struct {
+	CommandMeta
+	Username       string `json:"username"`
+	OwnerUserID    int64  `json:"owner_user_id,string,omitempty"`
+	OwnerChannelID int64  `json:"owner_channel_id,string,omitempty"`
+	Currency       string `json:"currency"`
+	Amount         int64  `json:"amount,string"`
+	CryptoCurrency string `json:"crypto_currency,omitempty"`
+	CryptoAmount   int64  `json:"crypto_amount,string,omitempty"`
+	URL            string `json:"url,omitempty"`
+	PurchaseDate   int64  `json:"purchase_date,omitempty"`
+}
+
+// TransferCollectibleUsernameRequest moves an asset out of the vault or between
+// holders. Exactly one of ToUserID / ToChannelID identifies the new holder.
+type TransferCollectibleUsernameRequest struct {
+	CommandMeta
+	Username    string `json:"username"`
+	ToUserID    int64  `json:"to_user_id,string,omitempty"`
+	ToChannelID int64  `json:"to_channel_id,string,omitempty"`
+}
+
+// RevokeCollectibleUsernameRequest returns an asset to the vault, or retires it
+// permanently when Burn is set.
+type RevokeCollectibleUsernameRequest struct {
+	CommandMeta
+	Username string `json:"username"`
+	Burn     bool   `json:"burn"`
+}
+
+// DeleteCollectibleUsernameRequest erases a collectible asset entirely. Unlike a
+// burn, which retires the asset and keeps its provenance, this drops the record
+// and frees the name for a fresh issue -- the escape hatch for a mistaken mint.
+type DeleteCollectibleUsernameRequest struct {
+	CommandMeta
+	Username string `json:"username"`
+}
+
+// RecomputeAccountRatingRequest forces one user's composite rating to be
+// recomputed from the current contribution signals.
+type RecomputeAccountRatingRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id,string"`
+}
+
+// AdjustAccountRatingRequest moves one user's manual rating component by a
+// signed delta. The delta survives recomputes, so it is the operator's durable
+// override rather than a one-off nudge.
+type AdjustAccountRatingRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id,string"`
+	Amount int64 `json:"amount,string"`
 }
 
 type RevokeSessionsRequest struct {
@@ -1312,6 +1610,467 @@ func (s *Service) DeleteBot(ctx context.Context, req DeleteBotRequest) (CommandR
 		}
 		return CommandResult{Message: "bot deleted", Details: details}, nil
 	})
+}
+
+// MintCollectibleUsername creates a collectible username asset and optionally
+// assigns it in the same command. Shape validation runs before the command is
+// journalled; occupancy is checked inside it, so a dry-run reports a taken name
+// without minting and a replay of a completed command stays idempotent.
+func (s *Service) MintCollectibleUsername(ctx context.Context, req MintCollectibleUsernameRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	if !domain.ValidCollectibleUsername(req.Username) {
+		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
+	}
+	owner, err := collectibleOwnerPeer(req.OwnerUserID, req.OwnerChannelID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.CryptoCurrency = strings.ToUpper(strings.TrimSpace(req.CryptoCurrency))
+	if err := domain.ValidateCollectibleAmounts(req.Currency, req.Amount, req.CryptoCurrency, req.CryptoAmount); err != nil {
+		return CommandResult{}, codedError(CodeCollectibleCurrencyInvalid, err)
+	}
+	req.URL = strings.TrimSpace(req.URL)
+	if len(req.URL) > domain.MaxCollectibleUsernameURLLength {
+		return CommandResult{}, fmt.Errorf("url must be <= %d bytes", domain.MaxCollectibleUsernameURLLength)
+	}
+	purchase, err := collectiblePurchaseDate(req.PurchaseDate, s.now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	req.PurchaseDate = purchase.Unix()
+	return s.runCommand(ctx, req.CommandMeta, ActionMintCollectibleUsername, req.OwnerUserID, owner, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"username":        req.Username,
+			"owner_type":      string(owner.Type),
+			"owner_id":        strconv.FormatInt(owner.ID, 10),
+			"currency":        req.Currency,
+			"amount":          strconv.FormatInt(req.Amount, 10),
+			"crypto_currency": req.CryptoCurrency,
+			"crypto_amount":   strconv.FormatInt(req.CryptoAmount, 10),
+			"purchase_date":   purchase.Format(time.RFC3339),
+			"url":             req.URL,
+		}
+		existing, err := s.usernames.Collectible(ctx, req.Username)
+		switch {
+		case err == nil:
+			details["existing_collectible_id"] = strconv.FormatInt(existing.ID, 10)
+			details["existing_status"] = string(existing.Status)
+			return CommandResult{Details: details}, codedError(CodeUsernameOccupied, domain.ErrUsernameOccupied)
+		case !errors.Is(err, domain.ErrCollectibleUsernameNotFound):
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "collectible username mint validated", Details: details}, nil
+		}
+		asset, created, err := s.usernames.Mint(ctx, domain.MintCollectibleUsernameRequest{
+			Username:       req.Username,
+			Owner:          owner,
+			PurchaseDate:   purchase,
+			Currency:       req.Currency,
+			Amount:         req.Amount,
+			CryptoCurrency: req.CryptoCurrency,
+			CryptoAmount:   req.CryptoAmount,
+			URL:            req.URL,
+			Actor:          req.Actor,
+			Reason:         req.Reason,
+			CommandKey:     "admin-collectible-mint:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["collectible_id"] = strconv.FormatInt(asset.ID, 10)
+		details["status"] = string(asset.Status)
+		details["url"] = asset.URL
+		details["created"] = created
+		message := "collectible username minted"
+		if !created {
+			message = "collectible username mint replayed"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// TransferCollectibleUsername moves an asset to a new holder. The asset must
+// exist and must not be burned; the store keeps the move atomic with the
+// receiving peer's username registry row.
+func (s *Service) TransferCollectibleUsername(ctx context.Context, req TransferCollectibleUsernameRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	if !domain.ValidCollectibleUsername(req.Username) {
+		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
+	}
+	to, err := collectibleOwnerPeer(req.ToUserID, req.ToChannelID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if to.Type == "" {
+		return CommandResult{}, fmt.Errorf("exactly one of to_user_id or to_channel_id is required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionTransferCollectibleUsername, req.ToUserID, to, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"username": req.Username,
+			"to_type":  string(to.Type),
+			"to_id":    strconv.FormatInt(to.ID, 10),
+		}
+		asset, err := s.usernames.Collectible(ctx, req.Username)
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["collectible_id"] = strconv.FormatInt(asset.ID, 10)
+		details["previous_status"] = string(asset.Status)
+		details["previous_owner_type"] = string(asset.Owner.Type)
+		details["previous_owner_id"] = strconv.FormatInt(asset.Owner.ID, 10)
+		details["transfer_count"] = asset.TransferCount
+		if asset.Status == domain.CollectibleUsernameStatusBurned {
+			return CommandResult{Details: details}, codedError(CodeCollectibleBurned, domain.ErrCollectibleUsernameBurned)
+		}
+		details["would_change"] = !asset.Owned() || asset.Owner != to
+		if req.DryRun {
+			return CommandResult{Message: "collectible username transfer validated", Details: details}, nil
+		}
+		updated, changed, err := s.usernames.Transfer(ctx, domain.TransferCollectibleUsernameRequest{
+			Username:   req.Username,
+			To:         to,
+			Actor:      req.Actor,
+			Reason:     req.Reason,
+			CommandKey: "admin-collectible-transfer:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["status"] = string(updated.Status)
+		details["owner_type"] = string(updated.Owner.Type)
+		details["owner_id"] = strconv.FormatInt(updated.Owner.ID, 10)
+		details["changed"] = changed
+		message := "collectible username transferred"
+		if !changed {
+			message = "collectible username transfer was a no-op"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// RevokeCollectibleUsername returns an asset to the operator vault, or burns it
+// permanently when Burn is set. Revoking an asset nobody holds is rejected:
+// there is nothing to take back, and a silent no-op would read as success.
+func (s *Service) RevokeCollectibleUsername(ctx context.Context, req RevokeCollectibleUsernameRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	if !domain.ValidCollectibleUsername(req.Username) {
+		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRevokeCollectibleUsername, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"username": req.Username, "burn": req.Burn}
+		asset, err := s.usernames.Collectible(ctx, req.Username)
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["collectible_id"] = strconv.FormatInt(asset.ID, 10)
+		details["previous_status"] = string(asset.Status)
+		details["previous_owner_type"] = string(asset.Owner.Type)
+		details["previous_owner_id"] = strconv.FormatInt(asset.Owner.ID, 10)
+		if asset.Status == domain.CollectibleUsernameStatusBurned {
+			return CommandResult{Details: details}, codedError(CodeCollectibleBurned, domain.ErrCollectibleUsernameBurned)
+		}
+		if !req.Burn && !asset.Owned() {
+			return CommandResult{Details: details}, codedError(CodeCollectibleNotOwned, domain.ErrCollectibleUsernameNotOwned)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "collectible username revoke validated", Details: details}, nil
+		}
+		updated, changed, err := s.usernames.Revoke(ctx, domain.RevokeCollectibleUsernameRequest{
+			Username:   req.Username,
+			Burn:       req.Burn,
+			Actor:      req.Actor,
+			Reason:     req.Reason,
+			CommandKey: "admin-collectible-revoke:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["status"] = string(updated.Status)
+		details["changed"] = changed
+		message := "collectible username returned to vault"
+		if req.Burn {
+			message = "collectible username burned"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// DeleteCollectibleUsername erases the asset and its provenance, releasing the
+// name. Because the history disappears with the record, the command journal is
+// the only remaining trace: the details below are captured before the delete so
+// the entry still says what was removed and from whom.
+func (s *Service) DeleteCollectibleUsername(ctx context.Context, req DeleteCollectibleUsernameRequest) (CommandResult, error) {
+	if s == nil || s.usernames == nil {
+		return CommandResult{}, fmt.Errorf("admin collectible username dependency is not configured")
+	}
+	req.Username = domain.NormalizeUsername(req.Username)
+	if !domain.ValidCollectibleUsername(req.Username) {
+		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteCollectibleUsername, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"username": req.Username}
+		asset, err := s.usernames.Collectible(ctx, req.Username)
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["collectible_id"] = strconv.FormatInt(asset.ID, 10)
+		details["previous_status"] = string(asset.Status)
+		details["previous_owner_type"] = string(asset.Owner.Type)
+		details["previous_owner_id"] = strconv.FormatInt(asset.Owner.ID, 10)
+		details["transfer_count"] = asset.TransferCount
+		details["currency"] = asset.Currency
+		details["amount"] = strconv.FormatInt(asset.Amount, 10)
+		if asset.Status == domain.CollectibleUsernameStatusBurned {
+			// Only live assets can be deleted; burned rows are history and are
+			// released by re-issuing the name instead.
+			return CommandResult{Details: details}, codedError(CodeCollectibleBurned, domain.ErrCollectibleUsernameBurned)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "collectible username delete validated", Details: details}, nil
+		}
+		deleted, err := s.usernames.Delete(ctx, domain.DeleteCollectibleUsernameRequest{
+			Username:   req.Username,
+			Actor:      req.Actor,
+			Reason:     req.Reason,
+			CommandKey: "admin-collectible-delete:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, collectibleUsernameError(err)
+		}
+		details["deleted"] = deleted
+		if !deleted {
+			return CommandResult{Message: "collectible username already absent", Details: details}, nil
+		}
+		return CommandResult{Message: "collectible username deleted", Details: details}, nil
+	})
+}
+
+// RecomputeAccountRating rebuilds one user's composite rating from the current
+// contribution signals. A dry-run only reports the stored projection, so the
+// operator can see what a recompute would start from without writing.
+func (s *Service) RecomputeAccountRating(ctx context.Context, req RecomputeAccountRatingRequest) (CommandResult, error) {
+	if s == nil || s.rating == nil {
+		return CommandResult{}, fmt.Errorf("admin account rating dependency is not configured")
+	}
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRecomputeAccountRating, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"user_id": strconv.FormatInt(req.UserID, 10)}
+		previous, err := s.rating.Rating(ctx, req.UserID)
+		switch {
+		case err == nil:
+			details["previous_found"] = true
+			details["previous_level"] = previous.Level
+			details["previous_stars"] = strconv.FormatInt(previous.Stars, 10)
+		case errors.Is(err, domain.ErrAccountRatingNotFound):
+			details["previous_found"] = false
+		default:
+			return CommandResult{Details: details}, accountRatingError(err)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "account rating recompute validated", Details: details}, nil
+		}
+		rating, err := s.rating.Recompute(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{Details: details}, accountRatingError(err)
+		}
+		mergeAccountRatingDetails(details, rating)
+		return CommandResult{Message: "account rating recomputed", Details: details}, nil
+	})
+}
+
+// AdjustAccountRating moves the manual component of one user's rating by a
+// signed delta and recomputes the projection so the change is visible at once.
+// The command id doubles as the ledger key, so a retried command records the
+// adjustment exactly once.
+func (s *Service) AdjustAccountRating(ctx context.Context, req AdjustAccountRatingRequest) (CommandResult, error) {
+	if s == nil || s.rating == nil {
+		return CommandResult{}, fmt.Errorf("admin account rating dependency is not configured")
+	}
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if req.Amount == 0 || req.Amount < -maxAccountRatingAdjustment || req.Amount > maxAccountRatingAdjustment {
+		return CommandResult{}, codedError(CodeRatingAdjustmentInvalid, domain.ErrAccountRatingAdjustmentInvalid)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionAdjustAccountRating, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"user_id": strconv.FormatInt(req.UserID, 10),
+			"amount":  strconv.FormatInt(req.Amount, 10),
+		}
+		previous, err := s.rating.Rating(ctx, req.UserID)
+		switch {
+		case err == nil:
+			details["previous_found"] = true
+			details["previous_level"] = previous.Level
+			details["previous_stars"] = strconv.FormatInt(previous.Stars, 10)
+			details["previous_manual_component"] = strconv.FormatInt(previous.ManualComponent, 10)
+		case errors.Is(err, domain.ErrAccountRatingNotFound):
+			details["previous_found"] = false
+		default:
+			return CommandResult{Details: details}, accountRatingError(err)
+		}
+		if req.DryRun {
+			return CommandResult{Message: "account rating adjustment validated", Details: details}, nil
+		}
+		rating, applied, err := s.rating.Adjust(ctx, domain.AdjustAccountRatingRequest{
+			UserID:     req.UserID,
+			Amount:     req.Amount,
+			Reason:     req.Reason,
+			Actor:      req.Actor,
+			CommandKey: "admin-rating-adjust:" + req.CommandID,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, accountRatingError(err)
+		}
+		details["applied"] = applied
+		mergeAccountRatingDetails(details, rating)
+		message := "account rating adjusted"
+		if !applied {
+			message = "account rating adjustment replayed"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// collectibleOwnerPeer resolves the optional owner of a collectible asset. At
+// most one identifier may be set; neither yields the zero peer, which the
+// lifecycle reads as "the operator vault".
+func collectibleOwnerPeer(userID, channelID int64) (domain.Peer, error) {
+	if userID < 0 || channelID < 0 {
+		return domain.Peer{}, fmt.Errorf("owner id must be positive")
+	}
+	if userID > 0 && channelID > 0 {
+		return domain.Peer{}, fmt.Errorf("at most one of user id or channel id is allowed")
+	}
+	switch {
+	case userID > 0:
+		return domain.Peer{Type: domain.PeerTypeUser, ID: userID}, nil
+	case channelID > 0:
+		return domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}, nil
+	default:
+		return domain.Peer{}, nil
+	}
+}
+
+// collectiblePurchaseDate resolves the optional Unix purchase timestamp. Zero
+// means "now", so a mint always records a complete, reproducible provenance
+// entry; the int32 bound matches the TL date field clients render.
+func collectiblePurchaseDate(unix int64, now func() time.Time) (time.Time, error) {
+	if unix == 0 {
+		return now().UTC(), nil
+	}
+	if unix < 0 || unix > math.MaxInt32 {
+		return time.Time{}, fmt.Errorf("purchase_date must be a non-negative int32 Unix timestamp")
+	}
+	return time.Unix(unix, 0).UTC(), nil
+}
+
+// mergeAccountRatingDetails records the computed projection in command details.
+// Every score component crosses the JSON boundary as a decimal string so an
+// audit entry reproduces the exact int64 the store holds.
+func mergeAccountRatingDetails(details map[string]any, rating domain.AccountRating) {
+	details["level"] = rating.Level
+	details["stars"] = strconv.FormatInt(rating.Stars, 10)
+	details["current_level_stars"] = strconv.FormatInt(rating.CurrentLevelStars, 10)
+	details["has_next_level"] = rating.HasNextLevel
+	if rating.HasNextLevel {
+		details["next_level_stars"] = strconv.FormatInt(rating.NextLevelStars, 10)
+	}
+	details["stars_component"] = strconv.FormatInt(rating.StarsComponent, 10)
+	details["activity_component"] = strconv.FormatInt(rating.ActivityComponent, 10)
+	details["penalty_component"] = strconv.FormatInt(rating.PenaltyComponent, 10)
+	details["manual_component"] = strconv.FormatInt(rating.ManualComponent, 10)
+	details["pending_stars"] = strconv.FormatInt(rating.PendingStars, 10)
+	if !rating.PendingDate.IsZero() {
+		details["pending_date"] = rating.PendingDate.UTC().Format(time.RFC3339)
+	}
+	details["version"] = strconv.FormatInt(rating.Version, 10)
+}
+
+// CollectibleUsernameErrorCode maps a collectible-username domain error onto the
+// stable code the admin panel switches on. An unmapped error returns "" so the
+// caller can fall back to a generic failure instead of inventing a code.
+func CollectibleUsernameErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, domain.ErrUsernameOccupied):
+		return CodeUsernameOccupied
+	case errors.Is(err, domain.ErrCollectibleUsernameNotFound), errors.Is(err, domain.ErrUsernameNotOccupied):
+		return CodeCollectibleNotFound
+	case errors.Is(err, domain.ErrCollectibleUsernameBurned):
+		return CodeCollectibleBurned
+	case errors.Is(err, domain.ErrCollectibleUsernameLimit):
+		return CodeCollectiblePeerLimit
+	case errors.Is(err, domain.ErrCollectibleUsernameNotOwned):
+		return CodeCollectibleNotOwned
+	case errors.Is(err, domain.ErrCollectibleCurrencyInvalid):
+		return CodeCollectibleCurrencyInvalid
+	case errors.Is(err, domain.ErrUsernameNotCollectible), errors.Is(err, domain.ErrUsernameNotEditable):
+		return CodeUsernameNotCollectible
+	case errors.Is(err, domain.ErrUsernameInvalid):
+		return CodeUsernameInvalid
+	case errors.Is(err, domain.ErrCollectibleUsernameStateInvalid), errors.Is(err, domain.ErrUsernameOrderInvalid):
+		return CodeCollectibleStateInvalid
+	default:
+		return ""
+	}
+}
+
+// AccountRatingErrorCode maps an account-rating domain error onto its stable
+// admin code. An unmapped error returns "".
+func AccountRatingErrorCode(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, domain.ErrAccountRatingNotFound):
+		return CodeRatingNotFound
+	case errors.Is(err, domain.ErrAccountRatingAdjustmentInvalid):
+		return CodeRatingAdjustmentInvalid
+	case errors.Is(err, domain.ErrAccountRatingWeightsInvalid):
+		return CodeRatingWeightsInvalid
+	default:
+		return ""
+	}
+}
+
+// collectibleUsernameError / accountRatingError prefix a recognised domain error
+// with its stable code, so the journalled command result and the operator both
+// see "CODE: message" instead of a bare Go string. Unrecognised errors are
+// returned untouched: inventing a code for an unknown failure would be worse
+// than reporting it verbatim.
+func collectibleUsernameError(err error) error {
+	if code := CollectibleUsernameErrorCode(err); code != "" {
+		return codedError(code, err)
+	}
+	return err
+}
+
+func accountRatingError(err error) error {
+	if code := AccountRatingErrorCode(err); code != "" {
+		return codedError(code, err)
+	}
+	return err
+}
+
+func codedError(code string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", code, err)
 }
 
 func (s *Service) SetChannelVerified(ctx context.Context, req SetChannelVerifiedRequest) (CommandResult, error) {

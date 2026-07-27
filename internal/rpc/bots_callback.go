@@ -61,6 +61,25 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	}
 	botUserID := callback.BotUserID
 
+	// 内置（进程内）service bot 分支：@verifybot 这类 bot 没有 MTProto session、也没有
+	// Bot API 消费者，走下面的「推 updateBotCallbackQuery + 挂起 25s」必然超时回
+	// BOT_RESPONSE_TIMEOUT。因此在 registerContext / 推送之前同步问 responder：点击本身
+	// 已由 resolveBotCallbackQuery 校验过（消息在请求者自己的盒里、对端正是该 bot、data
+	// 确实出现在该消息的 inline keyboard 中），此处只是把答案交给拥有该 bot 的实现。
+	// 不注册 query id：外部 setBotCallbackAnswer 因此无法伪造/覆盖内置 bot 的应答。
+	if r.deps.ServiceBotCallbacks != nil && r.deps.ServiceBotCallbacks.HandlesBot(botUserID) {
+		ans, handled, err := r.deps.ServiceBotCallbacks.OnCallbackQuery(ctx, callback)
+		if err != nil {
+			r.log.Warn("service bot callback query",
+				zap.Int64("bot_user_id", botUserID), zap.Int64("user_id", userID), zap.Error(err))
+			return nil, internalErr()
+		}
+		if !handled {
+			return nil, dataInvalidErr()
+		}
+		return tgBotCallbackAnswer(ans), nil
+	}
+
 	queryID, pending, err := r.callbacks.registerContext(ctx, r.clock.Now(), botUserID, userID, botCallbackTimeout)
 	if err != nil {
 		r.log.Warn("register shared bot callback query", zap.Int64("bot_user_id", botUserID), zap.Error(err))
