@@ -445,18 +445,15 @@ func uniqueRecipientIDs(ids []int64) []int64 {
 }
 
 func (r *Router) pushChannelStateToMembers(ctx context.Context, originUserID int64, channel domain.Channel) {
-	// The third-party verification icon is resolved once here, outside the
-	// per-recipient builder: see channelStateUpdatesWithLinkedMonoforum.
-	icon := r.peerBotVerificationIcon(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID})
-	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, originUserID, channel, domain.Channel{}, false, icon)
+	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, originUserID, channel, domain.Channel{}, false)
 }
 
-func (r *Router) pushChannelStateToMembersWithLinkedMonoforum(ctx context.Context, originUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool, botVerificationIcon int64) {
+func (r *Router) pushChannelStateToMembersWithLinkedMonoforum(ctx context.Context, originUserID int64, channel domain.Channel, mono domain.Channel, includeMono bool) {
 	if r.deps.Channels == nil || channel.ID == 0 {
 		return
 	}
 	r.pushChannelUpdates(ctx, originUserID, channel.ID, []int64{originUserID}, func(viewerUserID int64) *tg.Updates {
-		return r.channelStateUpdatesWithLinkedMonoforum(viewerUserID, channel, mono, includeMono, botVerificationIcon)
+		return r.channelStateUpdatesWithLinkedMonoforum(viewerUserID, channel, mono, includeMono)
 	})
 }
 

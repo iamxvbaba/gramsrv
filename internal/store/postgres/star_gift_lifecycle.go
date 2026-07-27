@@ -598,6 +598,15 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 				if err := registerUserStarGiftMessageRef(ctx, tx, req.To.ID, msgID, result.Saved.ID, result.Unique.ID); err != nil {
 					return err
 				}
+			} else {
+				notificationMessageID := sent.RecipientMessage.ID
+				if notificationMessageID <= 0 {
+					return fmt.Errorf("channel resale notification missing buyer box")
+				}
+				if err := registerViewerStarGiftMessageRef(ctx, tx, req.BuyerUserID, notificationMessageID,
+					result.Saved.ID, req.To, result.Unique.ID); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO star_gift_sales(unique_gift_id,seller_peer_type,seller_peer_id,
 			 buyer_peer_type,buyer_peer_id,currency,amount,commission_amount,sold_at,command_key)
@@ -1397,6 +1406,18 @@ func (s *StarGiftLifecycleStore) SetStarGiftNotifications(ctx context.Context, u
 	_, err := s.db.Exec(ctx, `INSERT INTO star_gift_notification_settings(user_id,channel_id,enabled) VALUES($1,$2,$3)
 ON CONFLICT(user_id,channel_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=now()`, userID, channelID, enabled)
 	return err
+}
+
+func (s *StarGiftLifecycleStore) StarGiftNotificationsEnabled(ctx context.Context, userID, channelID int64) (bool, error) {
+	if s == nil || s.db == nil || userID <= 0 || channelID <= 0 {
+		return false, domain.ErrStarGiftOwnerInvalid
+	}
+	var enabled bool
+	err := s.db.QueryRow(ctx, `SELECT COALESCE((
+SELECT enabled FROM star_gift_notification_settings
+WHERE user_id=$1 AND channel_id=$2
+),TRUE)`, userID, channelID).Scan(&enabled)
+	return enabled, err
 }
 
 func (s *StarGiftLifecycleStore) RecordStarGiftWithdrawal(ctx context.Context, req domain.StarGiftWithdrawalRequest, provider, providerRequestID, url string, expiresAt int) (domain.StarGiftWithdrawal, error) {

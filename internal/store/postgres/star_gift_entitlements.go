@@ -147,6 +147,14 @@ VALUES($1,$2,$3,$4,$5,$6,$7)`, req.PayerUserID, req.CommandKey, locked.ID, req.F
 			}
 			return registerUserStarGiftMessageRef(ctx, tx, req.Owner.ID, ownerMessageID, result.Saved.ID, 0)
 		}
+		notificationMessageID := sent.RecipientMessage.ID
+		if notificationMessageID <= 0 {
+			return fmt.Errorf("prepaid channel gift notification missing recipient box")
+		}
+		if err := registerViewerStarGiftMessageRef(ctx, tx, req.PayerUserID, notificationMessageID,
+			result.Saved.ID, req.Owner, 0); err != nil {
+			return err
+		}
 		action := messageReq.Media.ServiceAction.StarGift
 		return NewChannelStore(tx).appendStarGiftAdminLogTx(ctx, tx, req.Owner.ID, req.PayerUserID,
 			result.Saved.SavedID, req.Date, domain.ChannelMessageAction{Type: domain.ChannelActionStarGift, StarGift: action})

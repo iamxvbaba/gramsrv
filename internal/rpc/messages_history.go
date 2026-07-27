@@ -804,8 +804,13 @@ func (r *Router) messageFilterFromSearchRequest(ctx context.Context, userID int6
 		filter.Peer = peer
 	}
 	savedReactions, hasSavedReactions := req.GetSavedReaction()
+	// An empty optional vector carries no reaction-filtering semantics. Some TL
+	// clients emit flags.3 with a zero-length vector on ordinary peer searches.
+	// Keep the wire presence intact at the TL edge, but only apply Saved
+	// Messages scope and reaction validation when the vector has values.
+	hasSavedReactionFilter := hasSavedReactions && len(savedReactions) > 0
 	savedPeerInput, hasSavedPeer := req.GetSavedPeerID()
-	if hasSavedReactions || hasSavedPeer {
+	if hasSavedReactionFilter || hasSavedPeer {
 		if !filter.HasPeer ||
 			filter.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
 			return domain.MessageFilter{}, peerIDInvalidErr()
@@ -821,8 +826,8 @@ func (r *Router) messageFilterFromSearchRequest(ctx context.Context, userID int6
 		}
 		filter.SavedPeer = savedPeer
 	}
-	if hasSavedReactions {
-		if len(savedReactions) == 0 || len(savedReactions) > maxReactionVector {
+	if hasSavedReactionFilter {
+		if len(savedReactions) > maxReactionVector {
 			return domain.MessageFilter{}, reactionInvalidErr()
 		}
 		seen := make(map[string]struct{}, len(savedReactions))

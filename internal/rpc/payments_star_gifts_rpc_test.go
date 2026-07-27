@@ -93,6 +93,48 @@ func (s *uniqueGiftRPCService) UniqueBySlug(_ context.Context, slug string) (dom
 	return s.unique, slug == s.unique.Slug, nil
 }
 
+type starGiftMessageAliasRPCService struct {
+	GiftsService
+	viewerUserID int64
+	msgID        int
+	ref          domain.SavedStarGiftRef
+}
+
+func (s *starGiftMessageAliasRPCService) ResolveUserMessageRef(_ context.Context, viewerUserID int64, msgID int) (domain.SavedStarGiftRef, bool, error) {
+	if viewerUserID == s.viewerUserID && msgID == s.msgID {
+		return s.ref, true, nil
+	}
+	return domain.SavedStarGiftRef{}, false, nil
+}
+
+func TestStarGiftUserInputResolvesOnlyExplicitChannelNotificationAlias(t *testing.T) {
+	channelRef := domain.SavedStarGiftRef{
+		Owner:   domain.Peer{Type: domain.PeerTypeChannel, ID: 8801},
+		SavedID: 91,
+	}
+	service := &starGiftMessageAliasRPCService{viewerUserID: 7102, msgID: 44, ref: channelRef}
+	r := New(Config{DC: 2}, Deps{Gifts: service}, zaptest.NewLogger(t), clock.System)
+
+	resolved, ok, err := r.starGiftRefFromInput(context.Background(), 7102, &tg.InputSavedStarGiftUser{MsgID: 44})
+	if err != nil || !ok || resolved != channelRef {
+		t.Fatalf("channel notification alias = %+v ok=%v err=%v", resolved, ok, err)
+	}
+	fallback, ok, err := r.starGiftRefFromInput(context.Background(), 7102, &tg.InputSavedStarGiftUser{MsgID: 45})
+	wantFallback := domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 7102}, MsgID: 45}
+	if err != nil || !ok || fallback != wantFallback {
+		t.Fatalf("unknown notification alias = %+v ok=%v err=%v, want user fallback %+v", fallback, ok, err, wantFallback)
+	}
+}
+
+type starGiftNotificationSettingsRPCService struct {
+	GiftsService
+	enabled bool
+}
+
+func (s *starGiftNotificationSettingsRPCService) NotificationsEnabled(context.Context, int64, int64) (bool, error) {
+	return s.enabled, nil
+}
+
 type craftStarGiftRPCService struct {
 	GiftsService
 	uniques   map[string]domain.UniqueStarGift
@@ -1154,9 +1196,40 @@ func TestStarGiftChannelSaga(t *testing.T) {
 	if !savedRes.Gifts[0].CanUpgrade {
 		t.Fatal("channel saved gift must advertise upgrade when a collectible pool is available")
 	}
+	ownerSavedRes, err := r.onPaymentsGetSavedStarGifts(ownerCtx, &tg.PaymentsGetSavedStarGiftsRequest{Peer: channelPeer})
+	if err != nil {
+		t.Fatalf("getSavedStarGifts(channel owner): %v", err)
+	}
+	if enabled, ok := ownerSavedRes.GetChatNotificationsEnabled(); !ok || !enabled {
+		t.Fatalf("channel owner notification setting enabled=%v ok=%v, want default true", enabled, ok)
+	}
+	baseGifts := r.deps.Gifts
+	r.deps.Gifts = &starGiftNotificationSettingsRPCService{GiftsService: baseGifts, enabled: false}
+	disabledSavedRes, err := r.onPaymentsGetSavedStarGifts(ownerCtx, &tg.PaymentsGetSavedStarGiftsRequest{Peer: channelPeer})
+	r.deps.Gifts = baseGifts
+	if err != nil {
+		t.Fatalf("getSavedStarGifts(channel notifications disabled): %v", err)
+	}
+	if enabled, ok := disabledSavedRes.GetChatNotificationsEnabled(); !ok || enabled {
+		t.Fatalf("disabled channel notification setting enabled=%v ok=%v, want false/present", enabled, ok)
+	}
 	savedID, ok := savedRes.Gifts[0].GetSavedID()
 	if !ok || savedID <= 0 {
 		t.Fatalf("saved gift saved_id = %d ok %v, want positive", savedID, ok)
+	}
+	baseGifts = r.deps.Gifts
+	r.deps.Gifts = &starGiftMessageAliasRPCService{
+		GiftsService: baseGifts,
+		viewerUserID: sender.ID,
+		msgID:        777,
+		ref:          domain.SavedStarGiftRef{Owner: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, SavedID: savedID},
+	}
+	_, aliasPermissionErr := r.onPaymentsSaveStarGift(senderCtx, &tg.PaymentsSaveStarGiftRequest{
+		Stargift: &tg.InputSavedStarGiftUser{MsgID: 777},
+	})
+	r.deps.Gifts = baseGifts
+	if !tgerr.Is(aliasPermissionErr, "CHAT_ADMIN_REQUIRED") {
+		t.Fatalf("non-admin channel notification alias err=%v, want CHAT_ADMIN_REQUIRED", aliasPermissionErr)
 	}
 	if _, ok := savedRes.Gifts[0].GetMsgID(); ok {
 		t.Fatalf("channel saved gift should not expose inputSavedStarGiftUser.msg_id")

@@ -17,7 +17,8 @@ import (
 )
 
 // Star gift（payments.* 礼物 RPC）：目录 / 购买表单 / 发送 / 收礼列表 / 展示切换 / 转换回 Stars。
-// 扣费经 r.deps.Stars 账本；用户礼物走私聊服务消息，频道礼物只落 saved gifts + admin log。
+// 扣费经原子礼物聚合账本；用户礼物走私聊服务消息，频道礼物落 saved gift/admin log，
+// 并由持久 notification job 向启用通知的礼物管理员投递私聊 service message。
 
 func starGiftInvalidErr() error { return tgerr.New(400, "STARGIFT_INVALID") }
 
@@ -560,6 +561,15 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 	if err != nil {
 		return nil, internalErr()
 	}
+	if settings, ok := r.deps.Gifts.(interface {
+		NotificationsEnabled(context.Context, int64, int64) (bool, error)
+	}); ok && owner.Type == domain.PeerTypeChannel && r.ensureCanManageStarGiftOwner(ctx, userID, owner) == nil {
+		enabled, settingsErr := settings.NotificationsEnabled(ctx, userID, owner.ID)
+		if settingsErr != nil {
+			return nil, internalErr()
+		}
+		response.SetChatNotificationsEnabled(enabled)
+	}
 	return response, nil
 }
 
@@ -752,6 +762,17 @@ func (r *Router) starGiftRefFromInput(ctx context.Context, userID int64, ref tg.
 	case *tg.InputSavedStarGiftUser:
 		if v == nil || v.MsgID <= 0 {
 			return domain.SavedStarGiftRef{}, false, nil
+		}
+		if resolver, ok := r.deps.Gifts.(interface {
+			ResolveUserMessageRef(context.Context, int64, int) (domain.SavedStarGiftRef, bool, error)
+		}); ok {
+			resolved, found, err := resolver.ResolveUserMessageRef(ctx, userID, v.MsgID)
+			if err != nil {
+				return domain.SavedStarGiftRef{}, false, internalErr()
+			}
+			if found {
+				return resolved, resolved.Valid(), nil
+			}
 		}
 		return domain.SavedStarGiftRef{
 			Owner: domain.Peer{Type: domain.PeerTypeUser, ID: userID},

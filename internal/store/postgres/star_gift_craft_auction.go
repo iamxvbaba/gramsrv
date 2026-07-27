@@ -181,7 +181,8 @@ WHERE saved_gift_id IS NULL ORDER BY gift_id LIMIT $1`, minAuctionInt(remaining,
 			}
 		}
 	}
-	return nil
+	_, err := s.dispatchChannelStarGiftNotifications(ctx, now, minAuctionInt(limit, 100), 0)
+	return err
 }
 
 func (s *StarGiftLifecycleStore) ListCraftStarGifts(ctx context.Context, userID, giftID int64, offset string, limit int) (domain.SavedStarGiftPage, error) {

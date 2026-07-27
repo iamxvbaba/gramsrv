@@ -637,7 +637,7 @@ func (r *Router) onContactsImportContacts(ctx context.Context, input []tg.InputP
 	for _, contact := range res.Contacts {
 		out.Users = append(out.Users, r.tgUser(contact.User))
 	}
-	r.applyPeerReadModels(ctx, userID, out.Users, nil)
+	r.applyStoryMaxIDsToPeerObjects(ctx, userID, out.Users, nil)
 	out.RetryContacts = append(out.RetryContacts, res.RetryContacts...)
 	for _, contact := range res.Contacts {
 		peer := domain.Peer{Type: domain.PeerTypeUser, ID: contact.User.ID}
@@ -1110,7 +1110,7 @@ func (r *Router) contactPeerSettingsUpdates(ctx context.Context, userID int64, p
 		Date:  int(r.clock.Now().Unix()),
 		Seq:   0,
 	}
-	r.applyPeerReadModels(ctx, userID, out.Users, nil)
+	r.applyStoryMaxIDsToPeerObjects(ctx, userID, out.Users, nil)
 	return out
 }
 

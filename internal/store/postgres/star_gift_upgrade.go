@@ -518,7 +518,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 			locked.CanCraftAt = canCraftAt
 			locked.Unique = &unique
 			result.Saved, result.Unique, result.Balance = locked, unique, balance
-			action := starGiftUpgradeUniqueAction(locked, unique, req, messageSenderID)
+			action := starGiftUpgradeUniqueAction(locked, unique, req)
 			messageReq.Media = &domain.MessageMedia{
 				Kind: domain.MessageMediaKindService,
 				ServiceAction: &domain.MessageServiceAction{
@@ -530,7 +530,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 		},
 		after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
 			ownerMessageID := sent.RecipientMessage.ID
-			if saved.FromUserID == req.UserID {
+			if result.Saved.Owner.Type == domain.PeerTypeUser && saved.FromUserID == req.UserID {
 				ownerMessageID = sent.SenderMessage.ID
 			}
 			if ownerMessageID <= 0 {
@@ -548,6 +548,9 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 					result.Saved.ID, result.Unique.ID); err != nil {
 					return err
 				}
+			} else if err := registerViewerStarGiftMessageRef(ctx, tx, req.UserID, ownerMessageID,
+				result.Saved.ID, result.Saved.Owner, result.Unique.ID); err != nil {
+				return err
 			}
 			result.Saved.UpgradeMsgID = ownerMessageID
 			if result.Saved.Owner.Type == domain.PeerTypeUser {
@@ -576,7 +579,7 @@ WHERE user_id=$1 AND command_key=$2`, req.UserID, commandKey, ownerEditPts)
 					return fmt.Errorf("save star gift source edit pts lost command row")
 				}
 			} else {
-				action := starGiftUpgradeUniqueAction(result.Saved, result.Unique, req, messageSenderID)
+				action := starGiftUpgradeUniqueAction(result.Saved, result.Unique, req)
 				if err := NewChannelStore(tx).appendStarGiftAdminLogTx(ctx, tx, result.Saved.Owner.ID,
 					req.UserID, result.Saved.SavedID, req.Date, domain.ChannelMessageAction{
 						Type: domain.ChannelActionStarGiftUnique, StarGiftUnique: action,
@@ -599,15 +602,16 @@ WHERE user_id=$1 AND command_key=$2`, req.UserID, commandKey, ownerEditPts)
 	return result, nil
 }
 
-func starGiftUpgradeUniqueAction(saved domain.SavedStarGift, unique domain.UniqueStarGift, req domain.StarGiftUpgradeRequest, messageSenderID int64) *domain.MessageStarGiftUniqueAction {
+func starGiftUpgradeUniqueAction(saved domain.SavedStarGift, unique domain.UniqueStarGift, req domain.StarGiftUpgradeRequest) *domain.MessageStarGiftUniqueAction {
 	fromUserID := saved.FromUserID
 	if saved.NameHidden {
 		fromUserID = 0
 	}
 	if saved.Owner.Type == domain.PeerTypeChannel {
-		// TDesktop recognizes a channel-owned upgrade from the official service
-		// peer plus action.peer=channel and action.saved_id.
-		fromUserID = messageSenderID
+		// The private envelope is sent by 777000, while action.from_id identifies
+		// the administrator who performed the upgrade. TDesktop uses that
+		// distinction to render "upgraded" instead of an unknown transfer.
+		fromUserID = req.UserID
 	}
 	peer := saved.Owner
 	savedID := saved.SavedID

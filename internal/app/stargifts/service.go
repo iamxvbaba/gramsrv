@@ -740,6 +740,25 @@ func (s *Service) SetNotifications(ctx context.Context, userID, channelID int64,
 	return s.lifecycle.SetStarGiftNotifications(ctx, userID, channelID, enabled)
 }
 
+func (s *Service) NotificationsEnabled(ctx context.Context, userID, channelID int64) (bool, error) {
+	if s == nil {
+		return false, domain.ErrStarGiftUnavailable
+	}
+	if s.lifecycle == nil {
+		// Isolated memory/RPC adapters have no settings table; production's
+		// persisted default is enabled, so preserve that wire behavior.
+		return true, nil
+	}
+	return s.lifecycle.StarGiftNotificationsEnabled(ctx, userID, channelID)
+}
+
+func (s *Service) ResolveUserMessageRef(ctx context.Context, viewerUserID int64, msgID int) (domain.SavedStarGiftRef, bool, error) {
+	if s == nil || s.store == nil {
+		return domain.SavedStarGiftRef{}, false, nil
+	}
+	return s.store.ResolveUserMessageRef(ctx, viewerUserID, msgID)
+}
+
 func (s *Service) Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error) {
 	if s == nil || s.lifecycle == nil || s.withdrawal == nil {
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable

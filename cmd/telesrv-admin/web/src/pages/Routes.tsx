@@ -1,10 +1,6 @@
 import { type Navigate, type RouteState } from "../routing";
 import { AccountDetailPage } from "./AccountDetailPage";
-import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
-import { AccountRatingsPage } from "./AccountRatingsPage";
 import { AccountsPage } from "./AccountsPage";
-import { CollectibleUsernameDetailPage } from "./CollectibleUsernameDetailPage";
-import { CollectibleUsernamesPage } from "./CollectibleUsernamesPage";
 import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { BotDetailPage } from "./BotDetailPage";
@@ -19,71 +15,12 @@ import { GiftsPage } from "./GiftsPage";
 import { GiveGiftsPage } from "./GiveGiftsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
-import { BotVerificationPage } from "./BotVerificationPage";
-import { BotVerificationRequestPage } from "./BotVerificationRequestPage";
-import { VerificationDetailPage } from "./VerificationDetailPage";
-import { VerificationPage } from "./VerificationPage";
-import {
-  PermissionGate,
-  permissionBotVerificationReview,
-  permissionVerificationReview
-} from "../permissions";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
   const channelID = route.path.match(/^\/channels\/(\d+)$/)?.[1];
   const botID = route.path.match(/^\/bots\/(\d+)$/)?.[1];
   const moderationCaseID = route.path.match(/^\/moderation\/(\d+)$/)?.[1];
-  // int64 ids stay strings so large values never lose precision.
-  const collectibleUsernameID = route.path.match(/^\/collectible-usernames\/(\d+)$/)?.[1];
-  const ratingUserID = route.path.match(/^\/account-ratings\/(\d+)$/)?.[1];
-  const verificationID = route.path.match(/^\/verification\/(\d+)$/)?.[1];
-  // Third-party verification: a separate section with its own rights, matched before
-  // the official one so neither prefix can shadow the other.
-  const botVerificationRequestID = route.path.match(/^\/bot-verification\/(\d+)$/)?.[1];
-  if (botVerificationRequestID) {
-    return (
-      <PermissionGate permission={permissionBotVerificationReview}>
-        <BotVerificationRequestPage id={botVerificationRequestID} navigate={navigate} />
-      </PermissionGate>
-    );
-  }
-  if (route.path === "/bot-verification") {
-    return (
-      <PermissionGate permission={permissionBotVerificationReview}>
-        <BotVerificationPage navigate={navigate} />
-      </PermissionGate>
-    );
-  }
-  // The detail match has to be tested before the exact "/verification" branch, and
-  // the whole section is wrapped in the permission gate so a direct URL explains
-  // itself instead of rendering an empty queue.
-  if (verificationID) {
-    return (
-      <PermissionGate permission={permissionVerificationReview}>
-        <VerificationDetailPage id={verificationID} navigate={navigate} />
-      </PermissionGate>
-    );
-  }
-  if (route.path === "/verification") {
-    return (
-      <PermissionGate permission={permissionVerificationReview}>
-        <VerificationPage navigate={navigate} />
-      </PermissionGate>
-    );
-  }
-  if (collectibleUsernameID) {
-    return <CollectibleUsernameDetailPage id={collectibleUsernameID} navigate={navigate} />;
-  }
-  if (ratingUserID) {
-    return <AccountRatingDetailPage userID={ratingUserID} navigate={navigate} />;
-  }
-  if (route.path === "/collectible-usernames") {
-    return <CollectibleUsernamesPage navigate={navigate} />;
-  }
-  if (route.path === "/account-ratings") {
-    return <AccountRatingsPage navigate={navigate} />;
-  }
   if (accountID) {
     return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;
   }

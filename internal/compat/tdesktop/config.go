@@ -58,13 +58,3 @@ func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL strin
 	config.SetReactionsDefault(&tg.ReactionEmoji{Emoticon: DefaultReactionEmoticon})
 	return config
 }
-
-// NearestDC 构造 help.getNearestDc 返回值。
-func NearestDC(dc int) *tg.NearestDC {
-	return &tg.NearestDC{
-		// 默认国家=中国：DrKLO/TDesktop 登录页据此预选区号(+86)。
-		Country:   "CN",
-		ThisDC:    dc,
-		NearestDC: dc,
-	}
-}

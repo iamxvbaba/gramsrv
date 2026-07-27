@@ -64,12 +64,6 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountUpdateUsername(ctx, layerRequest.
 			Username)
 	})
-	registerRPC[*tg.AccountReorderUsernamesRequest](d, tlprofile.SemanticMethodAccountReorderUsernames, func(ctx context.Context, layerRequest *tg.AccountReorderUsernamesRequest) (any, error) {
-		return r.onAccountReorderUsernames(ctx, layerRequest)
-	})
-	registerRPC[*tg.AccountToggleUsernameRequest](d, tlprofile.SemanticMethodAccountToggleUsername, func(ctx context.Context, layerRequest *tg.AccountToggleUsernameRequest) (any, error) {
-		return r.onAccountToggleUsername(ctx, layerRequest)
-	})
 	registerRPC[*tg.AccountUpdateBirthdayRequest](d, tlprofile.SemanticMethodAccountUpdateBirthday, func(ctx context.Context, layerRequest *tg.AccountUpdateBirthdayRequest) (any, error) {
 		return r.onAccountUpdateBirthday(ctx, layerRequest)
 	})
@@ -1561,71 +1555,6 @@ func (r *Router) onAccountUpdateUsername(ctx context.Context, username string) (
 	return r.tgSelfUser(u), nil
 }
 
-// onAccountReorderUsernames rewrites the caller's own collectible username order
-// (account.reorderUsernames). The editable slot is never part of the order --
-// domain.ValidateUsernameReorder rejects it, and it always projects first anyway.
-//
-// Without a username registry the account owns a single editable username, which
-// has no order to change: USERNAME_NOT_MODIFIED is the accurate answer and keeps
-// clients from believing a reorder took effect.
-func (r *Router) onAccountReorderUsernames(ctx context.Context, req *tg.AccountReorderUsernamesRequest) (bool, error) {
-	userID, _, err := r.currentUserID(ctx)
-	if err != nil {
-		return false, internalErr()
-	}
-	if req == nil {
-		return false, usernameInvalidErr()
-	}
-	if len(req.Order) > domain.MaxPeerCollectibleUsernames {
-		return false, limitInvalidErr()
-	}
-	if r.deps.Usernames == nil {
-		return false, usernameNotModifiedErr()
-	}
-	if err := r.reorderRegistryUsernames(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: userID}, req.Order); err != nil {
-		return false, err
-	}
-	r.pushSelfUsernamesUpdate(ctx, userID)
-	return true, nil
-}
-
-// onAccountToggleUsername activates/deactivates one of the caller's own
-// collectible usernames (account.toggleUsername). Deactivating the editable slot
-// through this method is rejected by the domain rules with USERNAME_INVALID:
-// clearing the editable username is account.updateUsername's job.
-func (r *Router) onAccountToggleUsername(ctx context.Context, req *tg.AccountToggleUsernameRequest) (bool, error) {
-	userID, _, err := r.currentUserID(ctx)
-	if err != nil {
-		return false, internalErr()
-	}
-	if req == nil {
-		return false, usernameInvalidErr()
-	}
-	if r.deps.Usernames == nil {
-		return false, usernameNotModifiedErr()
-	}
-	if err := r.toggleRegistryUsername(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: userID}, req.Username, req.Active); err != nil {
-		return false, err
-	}
-	r.pushSelfUsernamesUpdate(ctx, userID)
-	return true, nil
-}
-
-// pushSelfUsernamesUpdate re-reads the account and echoes updateUserName so the
-// caller's other sessions pick up the new username vector, mirroring what
-// account.updateUsername already does. Best-effort: a failed read only costs the
-// echo, never the mutation that already committed.
-func (r *Router) pushSelfUsernamesUpdate(ctx context.Context, userID int64) {
-	if r.deps.Users == nil || userID == 0 {
-		return
-	}
-	u, err := r.deps.Users.Self(ctx, userID)
-	if err != nil || u.ID == 0 {
-		return
-	}
-	r.pushUsernameUpdate(ctx, u)
-}
-
 // onAccountUpdateBirthday 持久化资料页生日（account.updateBirthday）。birthday 缺省即清除；
 // 月/日/年非法返回 BIRTHDAY_INVALID。生日落在 userFull（按隐私 PrivacyKeyBirthday 对外裁剪）。
 // 写入后推 updateUser 信号给本人其它在线 session，促使已加载 full profile 的客户端重拉。
@@ -1940,24 +1869,14 @@ func (r *Router) pushUsernameUpdate(ctx context.Context, u domain.User) {
 	if u.ID == 0 {
 		return
 	}
-	// updateUserName carries the vector clients persist, so it has to be the full
-	// registry list when one exists. One peer, one registry read; the overlay
-	// degrades to tgUsernames(u.Username) whenever the registry is unavailable.
-	self := r.tgSelfUser(u)
-	users := []tg.UserClass{self}
-	r.applyUsernamesToPeerObjects(ctx, users, nil)
-	usernames := tgUsernames(u.Username)
-	if vector, ok := self.GetUsernames(); ok && len(vector) > 0 {
-		usernames = vector
-	}
 	r.pushUserUpdates(ctx, u.ID, &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateUserName{
 			UserID:    u.ID,
 			FirstName: u.FirstName,
 			LastName:  u.LastName,
-			Usernames: usernames,
+			Usernames: tgUsernames(u.Username),
 		}},
-		Users: users,
+		Users: []tg.UserClass{r.tgSelfUser(u)},
 		Date:  int(r.clock.Now().Unix()),
 	})
 }

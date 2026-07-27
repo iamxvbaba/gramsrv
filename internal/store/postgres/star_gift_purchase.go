@@ -188,6 +188,9 @@ func (s *StarGiftLifecycleStore) purchaseStarGiftToChannel(ctx context.Context, 
 		if err := NewChannelStore(tx).appendStarGiftAdminLogTx(ctx, tx, req.To.ID, req.BuyerUserID, id, req.Date, action); err != nil {
 			return err
 		}
+		if err := enqueueChannelStarGiftNotifications(ctx, tx, id, req.To.ID, req.Date, action.StarGift); err != nil {
+			return err
+		}
 		if err := s.insertStarGiftPurchaseCommand(ctx, tx, req, id, gift.Stars+saved.PrepaidUpgradeStars, balance.Balance); err != nil {
 			return err
 		}
@@ -202,6 +205,9 @@ func (s *StarGiftLifecycleStore) purchaseStarGiftToChannel(ctx context.Context, 
 		}
 		return domain.StarGiftPurchaseResult{}, err
 	}
+	// The purchase remains successful once its transaction has committed. Any
+	// immediate delivery failure leaves a durable job for the lifecycle sweeper.
+	_, _ = s.dispatchChannelStarGiftNotifications(ctx, req.Date, maxChannelStarGiftNotificationRecipients, result.Saved.ID)
 	return result, nil
 }
 

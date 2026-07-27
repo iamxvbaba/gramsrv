@@ -170,7 +170,7 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	if err := purgeDeletedAccountPrivateState(ctx, tx, userID, now); err != nil {
 		return domain.AccountDeletionResult{}, err
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, "", ""); err != nil {
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, ""); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("release deleted account username: %w", err)
 	}
 	reason = strings.TrimSpace(reason)

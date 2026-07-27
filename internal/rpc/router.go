@@ -52,6 +52,7 @@ var (
 // Config 是 Router 所需的服务端信息。
 type Config struct {
 	DC                  int
+	DefaultCountryCode  string // help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
 	IP                  string // 对外公布的 DC IP（写入 DCOptions）
 	Port                int    // 对外公布的 DC 端口
 	InstanceID          string // 进程内唯一标识，用于跨实例 ephemeral push 去重。
@@ -288,7 +289,6 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.registerPremium(d)
 	r.registerAiCompose(d)
 	r.registerBots(d)
-	r.registerFragment(d)
 	r.registerEphemeral(d)
 
 	r.dispatcher = d

@@ -71,6 +71,31 @@ func TestDispatchUnwrapsWrappers(t *testing.T) {
 	}
 }
 
+func TestDispatchNearestDCUsesConfiguredDefaultCountryCode(t *testing.T) {
+	r := New(Config{
+		DC:                 2,
+		DefaultCountryCode: "US",
+		IP:                 "127.0.0.1",
+		Port:               2398,
+	}, Deps{}, zaptest.NewLogger(t), clock.System)
+
+	var b bin.Buffer
+	if err := (&tg.HelpGetNearestDCRequest{}).Encode(&b); err != nil {
+		t.Fatalf("encode help.getNearestDc: %v", err)
+	}
+	enc, err := r.Dispatch(context.Background(), [8]byte{}, 0, &b)
+	if err != nil {
+		t.Fatalf("dispatch help.getNearestDc: %v", err)
+	}
+	nearest, ok := enc.(*tg.NearestDC)
+	if !ok {
+		t.Fatalf("result type = %T, want *tg.NearestDC", enc)
+	}
+	if nearest.Country != "US" || nearest.ThisDC != 2 || nearest.NearestDC != 2 {
+		t.Fatalf("nearestDc = %+v", nearest)
+	}
+}
+
 func TestDispatchRejectsAuthorizedRPCBeforeLogin(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
 		Auth: &captureAuthService{},

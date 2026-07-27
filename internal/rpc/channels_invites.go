@@ -59,11 +59,9 @@ func (r *Router) onMessagesCheckChatInvite(ctx context.Context, hash string) (tg
 		return nil, channelInviteErr(err)
 	}
 	if res.Already {
-		// chatInviteAlready#5a686d7c wraps a full Chat, so the badge flags already
-		// travel through tgChannelChat; nothing to re-apply here.
 		return &tg.ChatInviteAlready{Chat: tgChannelChat(userID, res.Channel, &res.Self)}, nil
 	}
-	invite := &tg.ChatInvite{
+	return &tg.ChatInvite{
 		Channel:           true,
 		Broadcast:         res.Channel.Broadcast,
 		Megagroup:         res.Channel.Megagroup,
@@ -73,37 +71,7 @@ func (r *Router) onMessagesCheckChatInvite(ctx context.Context, hash string) (tg
 		About:             res.Channel.About,
 		Photo:             &tg.PhotoEmpty{},
 		ParticipantsCount: res.Channel.ParticipantsCount,
-	}
-	// chatInvite#5c9d3702 carries verified:flags.7 / scam:flags.8 / fake:flags.9.
-	// A non-member sees only this preview, so the peer's moderation and official
-	// verification state must already be visible here: without it the badge (or the
-	// scam/fake warning) appears only after joining, which is exactly backwards.
-	// Set*, not raw field assignment, so Flags stays consistent before Encode.
-	applyChatInviteModerationFlags(invite, res.Channel)
-	// bot_verification:flags.13 extends the same reasoning one field further: the
-	// third-party mark is part of what identifies the peer, so the preview a
-	// non-member sees has to carry it as well.
-	r.applyBotVerificationToChatInvite(ctx, invite, res.Channel.ID)
-	return invite, nil
-}
-
-// applyChatInviteModerationFlags mirrors the persistent channel record's official
-// verification and moderation flags onto an invite preview. Absent flags are left
-// unset rather than explicitly cleared, so the encoded chatInvite matches what an
-// official server sends for an unflagged peer.
-func applyChatInviteModerationFlags(invite *tg.ChatInvite, ch domain.Channel) {
-	if invite == nil {
-		return
-	}
-	if ch.Verified {
-		invite.SetVerified(true)
-	}
-	if ch.Scam {
-		invite.SetScam(true)
-	}
-	if ch.Fake {
-		invite.SetFake(true)
-	}
+	}, nil
 }
 
 func (r *Router) onMessagesImportChatInvite(ctx context.Context, hash string) (tg.MessagesChatInviteJoinResultClass, error) {

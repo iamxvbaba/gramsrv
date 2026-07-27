@@ -47,12 +47,8 @@ func (r *Router) channelStateMutationUpdates(ctx context.Context, userID int64, 
 		r.invalidateRPCProjectionForChannel(channel.LinkedMonoforumID)
 	}
 	mono, includeMono := r.linkedMonoforumForChannelState(ctx, userID, channel)
-	// One read for the whole fan-out plus the returned updates: the third-party
-	// verification mark is a peer-wide fact, and the per-recipient builder must stay
-	// read-free (see channelStateUpdatesWithLinkedMonoforum).
-	icon := r.peerBotVerificationIcon(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID})
-	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, userID, channel, mono, includeMono, icon)
-	return r.channelStateUpdatesWithLinkedMonoforum(userID, channel, mono, includeMono, icon)
+	r.pushChannelStateToMembersWithLinkedMonoforum(ctx, userID, channel, mono, includeMono)
+	return r.channelStateUpdatesWithLinkedMonoforum(userID, channel, mono, includeMono)
 }
 
 func (r *Router) channelPaidMessagesPriceUpdates(ctx context.Context, userID int64, res domain.ChannelPaidMessagesPriceResult) tg.UpdatesClass {

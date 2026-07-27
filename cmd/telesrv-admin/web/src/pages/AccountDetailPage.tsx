@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { AuthorizationTable } from "../components/AuthorizationTable";
-import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary, UsernameCell } from "../components/ui";
+import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
 import { ColorAction, EmojiStatusAction, SupportAction, UsernameAction } from "../components/attributes";
 import { useI18n } from "../i18n";
@@ -65,11 +65,6 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
               <div>
                 <div className="entity-title">{displayName(account)}</div>
                 <div className="entity-subtitle">{displayUsername(account.Username) || t("account.noUsername")} · {displayPhone(account.Phone) || t("account.noPhone")}</div>
-                {account.Collectibles?.length > 0 && (
-                  <div className="entity-subtitle">
-                    <UsernameCell username="" collectibles={account.Collectibles} />
-                  </div>
-                )}
               </div>
               <div className="entity-badges">
                 {account.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")}</Badge> : <Badge>{t("account.notPremium")}</Badge>}

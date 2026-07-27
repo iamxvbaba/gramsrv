@@ -234,6 +234,23 @@ func TestMessageFilterFromSearchRequestParsesSavedTagsAndPeer(t *testing.T) {
 	if _, err := r.messageFilterFromSearchRequest(WithUserID(context.Background(), userID), userID, req); !tgerr.Is(err, "PEER_ID_INVALID") {
 		t.Fatalf("non-self saved search err = %v, want PEER_ID_INVALID", err)
 	}
+
+	emptyTagReq := &tg.MessagesSearchRequest{
+		Peer:   &tg.InputPeerUser{UserID: userID + 1, AccessHash: 1},
+		Q:      "ordinary",
+		Filter: &tg.InputMessagesFilterEmpty{},
+		Limit:  20,
+	}
+	emptyTagReq.SetSavedReaction([]tg.ReactionClass{})
+	ordinary, err := r.messageFilterFromSearchRequest(WithUserID(context.Background(), userID), userID, emptyTagReq)
+	if err != nil {
+		t.Fatalf("empty saved reaction on ordinary peer search: %v", err)
+	}
+	if !ordinary.HasPeer ||
+		ordinary.Peer != (domain.Peer{Type: domain.PeerTypeUser, ID: userID + 1}) ||
+		len(ordinary.SavedReactions) != 0 {
+		t.Fatalf("ordinary peer filter with empty saved reaction = %+v", ordinary)
+	}
 }
 
 func TestMessagesGetDefaultTagReactionsReturnsHashableCatalog(t *testing.T) {

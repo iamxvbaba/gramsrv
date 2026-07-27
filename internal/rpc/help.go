@@ -19,7 +19,11 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return r.onHelpGetConfig(ctx)
 	})
 	registerRPC[*tg.HelpGetNearestDCRequest](d, tlprofile.SemanticMethodHelpGetNearestDC, func(ctx context.Context, layerRequest *tg.HelpGetNearestDCRequest) (any, error) {
-		return tdesktop.NearestDC(r.cfg.DC), nil
+		return &tg.NearestDC{
+			Country:   r.cfg.DefaultCountryCode,
+			ThisDC:    r.cfg.DC,
+			NearestDC: r.cfg.DC,
+		}, nil
 	})
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
 		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName + "."}, nil

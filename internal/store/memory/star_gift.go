@@ -506,6 +506,10 @@ func (s *StarGiftStore) GetByRef(_ context.Context, ref domain.SavedStarGiftRef)
 	return domain.SavedStarGift{}, false, nil
 }
 
+func (s *StarGiftStore) ResolveUserMessageRef(_ context.Context, _ int64, _ int) (domain.SavedStarGiftRef, bool, error) {
+	return domain.SavedStarGiftRef{}, false, nil
+}
+
 func (s *StarGiftStore) CountByOwner(_ context.Context, owner domain.Peer) (int, error) {
 	if !validStarGiftOwner(owner) {
 		return 0, nil

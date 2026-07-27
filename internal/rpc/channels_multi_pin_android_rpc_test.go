@@ -97,12 +97,17 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 	}
 
 	// ① 打开聊天：MediaDataController.loadPinnedMessages → messages.search filterPinned。
-	searchEnc := dispatch(&tg.MessagesSearchRequest{
+	androidPinnedSearch := &tg.MessagesSearchRequest{
 		Peer:   peer,
 		Q:      "",
 		Filter: &tg.InputMessagesFilterPinned{},
 		Limit:  40,
-	})
+	}
+	// DrKLO initializes saved_reaction to an empty non-nil ArrayList and its
+	// serializer consequently emits flags.3 + Vector length 0 on every
+	// messages.search, including channel filterPinned.
+	androidPinnedSearch.SetSavedReaction([]tg.ReactionClass{})
+	searchEnc := dispatch(androidPinnedSearch)
 	channelMessages, ok := searchEnc.(*tg.MessagesChannelMessages)
 	if !ok {
 		t.Fatalf("pinned search response = %T, want messages.channelMessages", searchEnc)

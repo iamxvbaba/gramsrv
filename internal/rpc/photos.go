@@ -422,7 +422,7 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 		selfUser = r.tgSelfUser(target)
 	}
 	users := []tg.UserClass{selfUser}
-	r.applyPeerReadModels(ctx, currentUserID, users, nil)
+	r.applyStoryMaxIDsToPeerObjects(ctx, currentUserID, users, nil)
 	countOffset := offset
 	if countOffset < 0 {
 		countOffset = 0

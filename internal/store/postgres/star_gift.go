@@ -735,6 +735,61 @@ WHERE `+where, args...)
 	return g, true, nil
 }
 
+func (s *StarGiftStore) ResolveUserMessageRef(ctx context.Context, viewerUserID int64, msgID int) (domain.SavedStarGiftRef, bool, error) {
+	if s == nil || s.db == nil || viewerUserID <= 0 || msgID <= 0 {
+		return domain.SavedStarGiftRef{}, false, nil
+	}
+	var ownerType string
+	var ownerID, savedID int64
+	err := s.db.QueryRow(ctx, `
+SELECT gift.owner_peer_type,gift.owner_peer_id,gift.saved_id
+FROM star_gift_user_message_refs ref
+JOIN peer_star_gifts gift ON gift.id=ref.saved_gift_id
+JOIN message_boxes box
+  ON box.owner_user_id=ref.owner_user_id AND box.box_id=ref.msg_id
+WHERE ref.owner_user_id=$1 AND ref.msg_id=$2
+  AND NOT box.deleted
+  AND gift.lifecycle_status='active'
+  AND (
+      (gift.owner_peer_type='user' AND gift.owner_peer_id=$1)
+      OR (
+          gift.owner_peer_type='channel'
+          AND (
+              (
+                  box.media #>> '{service_action,kind}'='star_gift'
+                  AND box.media #>> '{service_action,star_gift,peer_channel_id}'=gift.owner_peer_id::text
+                  AND box.media #>> '{service_action,star_gift,saved_id}'=gift.saved_id::text
+              )
+              OR (
+                  box.media #>> '{service_action,kind}'='star_gift_unique'
+                  AND box.media #>> '{service_action,star_gift_unique,peer,Type}'='channel'
+                  AND box.media #>> '{service_action,star_gift_unique,peer,ID}'=gift.owner_peer_id::text
+                  AND box.media #>> '{service_action,star_gift_unique,saved_id}'=gift.saved_id::text
+              )
+          )
+      )
+  )`,
+		viewerUserID, msgID).Scan(&ownerType, &ownerID, &savedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.SavedStarGiftRef{}, false, nil
+	}
+	if err != nil {
+		return domain.SavedStarGiftRef{}, false, fmt.Errorf("resolve star gift user message ref: %w", err)
+	}
+	owner := domain.Peer{Type: domain.PeerType(ownerType), ID: ownerID}
+	switch owner.Type {
+	case domain.PeerTypeUser:
+		return domain.SavedStarGiftRef{Owner: owner, MsgID: msgID}, true, nil
+	case domain.PeerTypeChannel:
+		if savedID <= 0 {
+			return domain.SavedStarGiftRef{}, false, domain.ErrStarGiftOwnerInvalid
+		}
+		return domain.SavedStarGiftRef{Owner: owner, SavedID: savedID}, true, nil
+	default:
+		return domain.SavedStarGiftRef{}, false, domain.ErrStarGiftOwnerInvalid
+	}
+}
+
 func (s *StarGiftStore) CountByOwner(ctx context.Context, owner domain.Peer) (int, error) {
 	if !validStarGiftOwner(owner) {
 		return 0, nil

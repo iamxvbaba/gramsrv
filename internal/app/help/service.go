@@ -135,8 +135,10 @@ func defaultAppConfigHashFor(mapboxToken string) int {
 }
 
 // GetAppConfig returns the cached global app config plus an authenticated,
-// per-account freeze overlay. The overlay owns its own deterministic hash so a
-// FROZEN_METHOD_INVALID-triggered refresh can never be answered notModified.
+// per-account freeze overlay. Only active freezes add account fields; an
+// inactive account receives the field-free base config. The overlay owns its
+// own deterministic hash so a FROZEN_METHOD_INVALID-triggered refresh and a
+// later unfreeze can never be answered notModified against the other state.
 func (s *Service) GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error) {
 	cfg := s.loadAppConfig(ctx)
 	var err error
@@ -160,15 +162,6 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 		}
 	}
 	if userID > 0 {
-		// DrKLO applies only keys present in the new JSON object and retains old
-		// SharedPreferences values for missing keys. Authenticated non-frozen
-		// accounts therefore need an explicit zero/empty triplet to converge after
-		// an unfreeze; merely omitting the overlay works in TDesktop but leaves
-		// Android frozen indefinitely. Unauthenticated config remains unscoped.
-		values["freeze_since_date"] = json.RawMessage("0")
-		values["freeze_until_date"] = json.RawMessage("0")
-		values["freeze_appeal_url"] = json.RawMessage(`""`)
-		changed = true
 		if s != nil && s.accountFreeze != nil {
 			freeze, found, err := s.accountFreeze.AccountFreeze(ctx, userID)
 			if err != nil {
@@ -179,6 +172,7 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 				values["freeze_until_date"] = json.RawMessage(strconv.FormatInt(freeze.Until.Unix(), 10))
 				appeal, _ := json.Marshal(freeze.AppealURL)
 				values["freeze_appeal_url"] = appeal
+				changed = true
 			}
 		}
 	}

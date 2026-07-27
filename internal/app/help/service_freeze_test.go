@@ -46,7 +46,7 @@ func TestAccountAppConfigFreezeOverlayIsUserScopedAndHashAware(t *testing.T) {
 	if err != nil || notModified || other.Hash != normal.Hash {
 		t.Fatalf("other user = hash:%d notModified:%v err:%v", other.Hash, notModified, err)
 	}
-	assertClearedFreezeConfig(t, other.JSON)
+	assertNoFreezeConfig(t, other.JSON)
 	unauthorized, _, err := svc.GetAppConfig(context.Background(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -58,21 +58,24 @@ func TestAccountAppConfigFreezeOverlayIsUserScopedAndHashAware(t *testing.T) {
 	if err != nil || notModified || unfrozen.Hash != normal.Hash {
 		t.Fatalf("unfreeze refresh = hash:%d notModified:%v err:%v", unfrozen.Hash, notModified, err)
 	}
-	assertClearedFreezeConfig(t, unfrozen.JSON)
+	assertNoFreezeConfig(t, unfrozen.JSON)
 }
 
-func TestAuthenticatedAppConfigClearsPersistedFreezeWithoutProvider(t *testing.T) {
+func TestAuthenticatedNonFrozenAppConfigOmitsFreezeFieldsAndReusesBaseHash(t *testing.T) {
 	svc := NewService(nil, nil)
 	unauthorized, _, err := svc.GetAppConfig(context.Background(), 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertNoFreezeConfig(t, unauthorized.JSON)
-	authenticated, notModified, err := svc.GetAppConfig(context.Background(), 1001, unauthorized.Hash)
-	if err != nil || notModified || authenticated.Hash == unauthorized.Hash {
-		t.Fatalf("authenticated clear config = hash:%d base:%d notModified:%v err:%v", authenticated.Hash, unauthorized.Hash, notModified, err)
+	authenticated, notModified, err := svc.GetAppConfig(context.Background(), 1001, 0)
+	if err != nil || notModified || authenticated.Hash != unauthorized.Hash {
+		t.Fatalf("authenticated config = hash:%d base:%d notModified:%v err:%v", authenticated.Hash, unauthorized.Hash, notModified, err)
 	}
-	assertClearedFreezeConfig(t, authenticated.JSON)
+	assertNoFreezeConfig(t, authenticated.JSON)
+	if _, notModified, err := svc.GetAppConfig(context.Background(), 1001, authenticated.Hash); err != nil || !notModified {
+		t.Fatalf("authenticated hash replay = notModified:%v err:%v", notModified, err)
+	}
 }
 
 func TestAccountAppConfigStripsGlobalFreezeFields(t *testing.T) {
@@ -109,17 +112,6 @@ func assertNoFreezeConfig(t *testing.T, body []byte) {
 		if _, exists := values[key]; exists {
 			t.Fatalf("unexpected %s in config", key)
 		}
-	}
-}
-
-func assertClearedFreezeConfig(t *testing.T, body []byte) {
-	t.Helper()
-	var values map[string]any
-	if err := json.Unmarshal(body, &values); err != nil {
-		t.Fatal(err)
-	}
-	if values["freeze_since_date"] != float64(0) || values["freeze_until_date"] != float64(0) || values["freeze_appeal_url"] != "" {
-		t.Fatalf("freeze clear config = %#v", values)
 	}
 }
 

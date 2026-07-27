@@ -16,9 +16,7 @@ export function ActionButton({
   icon,
   compact = false,
   tone = "danger",
-  disabled = false,
-  onDone,
-  onError
+  onDone
 }: {
   label: string;
   path: string;
@@ -26,15 +24,7 @@ export function ActionButton({
   icon?: ReactNode;
   compact?: boolean;
   tone?: ActionTone;
-  // disabled keeps a form from opening the confirm flow at all while its own
-  // validation is unhappy, so the operator fixes the field instead of reading a
-  // backend rejection.
-  disabled?: boolean;
   onDone?: () => void;
-  // onError lets a page react to a failure the operator cannot fix by editing the
-  // form — an optimistic-locking 409, say — and replace the raw backend text with
-  // an explanation by returning it.
-  onError?: (error: unknown) => string | undefined;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -64,7 +54,7 @@ export function ActionButton({
         onDone?.();
       }
     } catch (err) {
-      setError(onError?.(err) || errorMessage(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -85,7 +75,6 @@ export function ActionButton({
       <button
         className={triggerClass}
         type="button"
-        disabled={disabled}
         onClick={() => {
           reset();
           setOpen(true);

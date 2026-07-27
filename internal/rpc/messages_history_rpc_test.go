@@ -225,6 +225,9 @@ func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 		Filter: &tg.InputMessagesFilterPhotos{},
 		Limit:  0,
 	}
+	// Match DrKLO's ordinary messages.search wire shape: flags.3 is present
+	// even though the saved_reaction vector is empty.
+	mediaCountReq.SetSavedReaction([]tg.ReactionClass{})
 	in.Reset()
 	if err := mediaCountReq.Encode(&in); err != nil {
 		t.Fatalf("encode shared media count search: %v", err)

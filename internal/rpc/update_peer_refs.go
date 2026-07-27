@@ -234,11 +234,7 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
 	}
-	if msg.Media != nil && msg.Media.ServiceAction != nil && msg.Media.ServiceAction.RequestedPeer != nil {
-		for _, peer := range msg.Media.ServiceAction.RequestedPeer.Peers {
-			addDomainPeerRef(peer, currentChannelID, userIDs, channelIDs)
-		}
-	}
+	collectServiceActionPeerRefs(msg.Media, currentChannelID, userIDs, channelIDs)
 	collectPollMediaUserRefs(msg.Media, userIDs)
 	collectTodoMediaUserRefs(msg.Media, userIDs)
 	if msg.Reactions != nil {
@@ -332,6 +328,7 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 				channelIDs[id] = struct{}{}
 			}
 		}
+		collectStarGiftUniquePeerRefs(msg.Action.StarGiftUnique, currentChannelID, userIDs, channelIDs)
 	}
 	if msg.Reactions != nil {
 		for _, reaction := range msg.Reactions.Recent {
@@ -339,6 +336,49 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 				userIDs[reaction.UserID] = struct{}{}
 			}
 		}
+	}
+}
+
+func collectServiceActionPeerRefs(media *domain.MessageMedia, currentChannelID int64, userIDs, channelIDs map[int64]struct{}) {
+	if media == nil || media.ServiceAction == nil {
+		return
+	}
+	action := media.ServiceAction
+	if action.RequestedPeer != nil {
+		for _, peer := range action.RequestedPeer.Peers {
+			addDomainPeerRef(peer, currentChannelID, userIDs, channelIDs)
+		}
+	}
+	if gift := action.StarGift; gift != nil {
+		if gift.FromUserID != 0 && !gift.NameHidden {
+			userIDs[gift.FromUserID] = struct{}{}
+		}
+		if gift.PeerUserID != 0 {
+			userIDs[gift.PeerUserID] = struct{}{}
+		}
+		if gift.PeerChannelID != 0 && gift.PeerChannelID != currentChannelID {
+			channelIDs[gift.PeerChannelID] = struct{}{}
+		}
+		addDomainPeerRef(gift.To, currentChannelID, userIDs, channelIDs)
+	}
+	collectStarGiftUniquePeerRefs(action.StarGiftUnique, currentChannelID, userIDs, channelIDs)
+}
+
+func collectStarGiftUniquePeerRefs(action *domain.MessageStarGiftUniqueAction, currentChannelID int64, userIDs, channelIDs map[int64]struct{}) {
+	if action == nil {
+		return
+	}
+	if action.FromUserID != 0 {
+		userIDs[action.FromUserID] = struct{}{}
+	}
+	addDomainPeerRef(action.Peer, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(action.Gift.Owner, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(action.Gift.OriginalOwner, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(action.Gift.ReleasedBy, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(action.Gift.ThemePeer, currentChannelID, userIDs, channelIDs)
+	addDomainPeerRef(action.Gift.Host, currentChannelID, userIDs, channelIDs)
+	if action.Gift.OriginalFromUserID != 0 && !action.Gift.OriginalNameHidden {
+		userIDs[action.Gift.OriginalFromUserID] = struct{}{}
 	}
 }
 

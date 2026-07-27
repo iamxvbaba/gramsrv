@@ -70,7 +70,7 @@ func (s *BotStore) CreateBotAccount(ctx context.Context, user domain.User, profi
 		return domain.User{}, domain.BotProfile{}, fmt.Errorf("create bot account: insert user: %w", err)
 	}
 	if usernameLower := strings.ToLower(row.Username); usernameLower != "" {
-		if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, row.ID, row.Username, usernameLower); err != nil {
+		if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, row.ID, usernameLower); err != nil {
 			return domain.User{}, domain.BotProfile{}, err
 		}
 	}
@@ -139,7 +139,7 @@ func (s *BotStore) DeleteBotAccount(ctx context.Context, botUserID int64) (domai
 	if err := purgeDeletedAccountPrivateState(ctx, tx, botUserID, now); err != nil {
 		return domain.User{}, err
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, botUserID, "", ""); err != nil {
+	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, botUserID, ""); err != nil {
 		return domain.User{}, fmt.Errorf("delete bot account: release username: %w", err)
 	}
 	// Drop the bots row so the token can no longer authenticate a login.

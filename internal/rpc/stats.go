@@ -295,7 +295,7 @@ func (r *Router) tgStatsPublicForwards(ctx context.Context, viewerUserID int64, 
 	if list.NextOffset != "" {
 		out.SetNextOffset(list.NextOffset)
 	}
-	r.applyPeerReadModels(ctx, viewerUserID, out.Users, out.Chats)
+	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, out.Users, out.Chats)
 	return out
 }
 

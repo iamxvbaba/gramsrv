@@ -42,6 +42,10 @@ type StarGiftStore interface {
 	ListByOwnerFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
 	// GetByRef 按协议引用取礼物实例：用户用 msg_id，频道用 saved_id。
 	GetByRef(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error)
+	// ResolveUserMessageRef resolves only an explicit viewer-local service-message
+	// alias. The returned ref retains the saved gift's authoritative user/channel
+	// owner; callers must still authorize that owner.
+	ResolveUserMessageRef(ctx context.Context, viewerUserID int64, msgID int) (domain.SavedStarGiftRef, bool, error)
 	// ResolveSavedIDs resolves an ordered batch of protocol references without
 	// per-gift round trips. Every ref must belong to owner and resolve to a live gift.
 	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
@@ -95,6 +99,7 @@ type StarGiftLifecycleStore interface {
 	PrepayStarGiftUpgrade(ctx context.Context, req domain.StarGiftPrepaidUpgradeRequest) (domain.StarGiftPrepaidUpgradeResult, error)
 	DropStarGiftOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
 	SetStarGiftNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
+	StarGiftNotificationsEnabled(ctx context.Context, userID, channelID int64) (bool, error)
 	RecordStarGiftWithdrawal(ctx context.Context, req domain.StarGiftWithdrawalRequest, provider, providerRequestID, url string, expiresAt int) (domain.StarGiftWithdrawal, error)
 	ResolveStarGiftWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error)
 	CompleteStarGiftWithdrawal(ctx context.Context, providerRequestID string, date int) (domain.StarGiftWithdrawal, error)
