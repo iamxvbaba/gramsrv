@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: gramsrv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-telesrv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telesrv}
+      POSTGRES_DB: ${POSTGRES_DB:-telesrv}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-telesrv} -d ${POSTGRES_DB:-telesrv}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - gramsrv-net
+    # No ports exposed to host
+
+  redis:
+    image: redis:7-alpine
+    container_name: gramsrv-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--port", "6399"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6399", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - gramsrv-net
+    # No ports exposed to host
+
+  telesrv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gramsrv-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TELESRV_POSTGRES_DSN=postgres://${POSTGRES_USER:-telesrv}:${POSTGRES_PASSWORD:-telesrv}@postgres:5432/${POSTGRES_DB:-telesrv}?sslmode=disable
+      - TELESRV_REDIS_ADDR=redis:6399
+      - TELESRV_DATA_DIR=/app/data
+      - TELESRV_RSA_KEY=/app/data/server_rsa.pem
+      # Bind listeners inside the container so they accept incoming bridge traffic
+      - TELESRV_LISTEN=0.0.0.0:2398
+      - TELESRV_PUBLIC_LINK_WEB_ADDR=0.0.0.0:2401
+      - TELESRV_LIVESTREAM_RTMP_ADDR=0.0.0.0:2400
+    ports:
+      # --- Public client & media ingress only ---
+      - "2398:2398"                    # MTProto TCP / WebSocket
+      - "2400:2400"                    # RTMP Ingest (OBS)
+      - "2401:2401"                    # Public Web / OIDC Login
+      - "12399:12399/udp"              # SFU / WebRTC Media
+      - "12400:12400/udp"              # TURN control
+      - "12500-12999:12500-12999/udp"  # Dynamic TURN Relay allocation
+    volumes:
+      - gramsrv_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - gramsrv-net
+
+  telesrv-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gramsrv-admin
+    restart: unless-stopped
+    entrypoint: ["/app/bin/telesrv-admin"]
+    env_file:
+      - .env
+    environment:
+      - TELESRV_POSTGRES_DSN=postgres://${POSTGRES_USER:-telesrv}:${POSTGRES_PASSWORD:-telesrv}@postgres:5432/${POSTGRES_DB:-telesrv}?sslmode=disable
+      - TELESRV_REDIS_ADDR=redis:6399
+      - TELESRV_ADMIN_UI_ADDR=0.0.0.0:2600
+    ports:
+      - "2600:2600"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      telesrv:
+        condition: service_started
+    networks:
+      - gramsrv-net
+
+networks:
+  gramsrv-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  gramsrv_data:
