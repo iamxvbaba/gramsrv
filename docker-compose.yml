@@ -1,0 +1,275 @@
+name: telesrv
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: telesrv-postgres
+    command:
+      - "postgres"
+      - "-c"
+      - "max_locks_per_transaction=512"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "track_io_timing=on"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-telesrv}
+      POSTGRES_USER: ${POSTGRES_USER:-telesrv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: UTC
+    ports:
+      - "${TELESRV_LOCAL_LISTEN_IP:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-telesrv} -d ${POSTGRES_DB:-telesrv}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: telesrv-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${TELESRV_LOCAL_LISTEN_IP:-127.0.0.1}:${REDIS_PORT:-6399}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-file:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-file
+    command: ["telesrv-file", "--config", "/app/configs/docker/file.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server,storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2520"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-core:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-core
+    command: ["telesrv-core", "--config", "/app/configs/docker/core.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server,storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      telesrv-file:
+        # telesrv-file has no schema migrations of its own to wait on, but
+        # core's boot sequence hard-fails (fatal: connect filedata grpc) if
+        # file's gRPC port isn't actually accepting connections yet --
+        # service_started only proves the container process launched, not
+        # that it's listening. Wait for the real healthcheck instead.
+        condition: service_healthy
+    ports:
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_PUBLIC_LINK_PORT:-2401}:2401"
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_BOT_API_PORT:-8081}:8081"
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_TURN_UDP_PORT:-12400}:${TELESRV_TURN_UDP_PORT:-12400}/udp"
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_TURN_RELAY_MIN_PORT:-12500}-${TELESRV_TURN_RELAY_MAX_PORT:-12999}:${TELESRV_TURN_RELAY_MIN_PORT:-12500}-${TELESRV_TURN_RELAY_MAX_PORT:-12999}/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2440"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-egress:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-egress
+    command: ["telesrv-egress", "--config", "/app/configs/docker/egress.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      telesrv-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2510"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-sfu:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-sfu
+    command: ["telesrv-sfu", "--config", "/app/configs/docker/sfu.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server
+    depends_on:
+      redis:
+        condition: service_healthy
+      telesrv-core:
+        # SFU needs core's group-call control interface and (like every other
+        # service here) the Postgres schema that only core's boot migrates --
+        # service_started races both.
+        condition: service_healthy
+    ports:
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_SFU_UDP_PORT:-12399}:12399/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2450"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-edge:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-edge
+    command: ["telesrv-edge", "--config", "/app/configs/docker/edge.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server,storage
+    depends_on:
+      redis:
+        condition: service_healthy
+      telesrv-core:
+        condition: service_healthy
+      telesrv-file:
+        condition: service_healthy
+      telesrv-egress:
+        # egress's ACK-writeback gRPC port isn't guaranteed listening just
+        # because the container started -- same race as telesrv-core/file.
+        condition: service_healthy
+    ports:
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_EDGE_PORT:-2398}:2398"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2398"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-admin:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-admin
+    command: ["telesrv-admin", "--config", "/app/configs/docker/admin.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server,storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      telesrv-core:
+        # Only telesrv-core's boot runs schema migrations; admin queries the
+        # same tables directly, so it must wait for that to actually finish,
+        # not just for the core container to have launched.
+        condition: service_healthy
+    ports:
+      - "${TELESRV_LOCAL_LISTEN_IP:-127.0.0.1}:${TELESRV_ADMIN_UI_PORT:-2600}:2600"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2600"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-update:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-update
+    environment:
+      TELESRV_INIT_PROFILE: none
+    command: ["telesrv-update", "--listen", "0.0.0.0:2402", "--manifest", "/app/data/updates/manifest.json", "--files", "/app/data/updates/files"]
+    ports:
+      - "${TELESRV_LISTEN_IP:-0.0.0.0}:${TELESRV_UPDATE_PORT:-2402}:2402"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2402"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - ./data/updates:/app/data/updates:ro
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+  telesrv-ton:
+    image: ${TELESRV_IMAGE:-ghcr.io/iamxvbaba/gramsrv:latest}
+    container_name: telesrv-ton
+    profiles:
+      - ton
+    command: ["telesrv-ton", "--config", "/app/configs/docker/ton.yaml"]
+    env_file:
+      - .env
+    environment:
+      TELESRV_INIT_PROFILE: server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      telesrv-core:
+        # Same schema-migration ordering as telesrv-admin above.
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - telesrv-net
+
+networks:
+  telesrv-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

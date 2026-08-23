@@ -1,0 +1,31 @@
+version: 1
+
+instance:
+  id: sfu-docker-1
+
+debug:
+  addr: 127.0.0.1:6064
+
+public:
+  advertise:
+    ip: ${TELESRV_ADVERTISE_IP}
+
+redis:
+  addr: ${TELESRV_REDIS_ADDR}
+  password: ${TELESRV_REDIS_PASSWORD}
+  db: ${TELESRV_REDIS_DB}
+
+sfu:
+  udp_port: ${TELESRV_SFU_UDP_PORT}
+  advertise_ip: ${TELESRV_ADVERTISE_IP}
+  instance_ttl: 90s
+  instance_heartbeat_interval: 30s
+  max_active_calls: 0
+  control:
+    addr: 0.0.0.0:2450
+    url: grpc://telesrv-sfu:2450
+    token: ${TELESRV_SFU_CONTROL_TOKEN}
+
+group_call:
+  control_url: http://telesrv-core:2420
+  control_token: ${TELESRV_GROUPCALL_CONTROL_TOKEN}

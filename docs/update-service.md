@@ -12,6 +12,10 @@ an immutable artifact in the configured `files` directory and atomically
 replacing `manifest.json`. The catalog validates the file size and SHA-256
 before exposing it, so truncated or accidentally replaced packages fail closed.
 
+The runtime container mounts only `data/updates` read-only. It does not create
+directories, generate identity keys, or modify the catalog. Publish updates
+from a separate operator or release job.
+
 ## Quick start
 
 Create the working directories and start with the disabled example catalog:
@@ -44,6 +48,25 @@ TELESRV_UPDATE_REQUEST_TIMEOUT=2s
 private route. When both routes are identical, `SERVICE_URL` may be omitted.
 Production deployments should place an HTTPS reverse proxy in front of the
 service without rewriting `/current4` or `/files/*`.
+
+### Publish a manifest
+
+Place the immutable package in `data/updates/files`, create a candidate
+manifest, and validate and publish it atomically:
+
+```bash
+docker run --rm \
+  -v "$PWD/data/updates:/data/updates" \
+  telesrv:latest \
+  telesrv-update-publish \
+  -manifest /data/updates/manifest.next.json \
+  -active /data/updates/manifest.json \
+  -files /data/updates/files
+```
+
+The command refuses malformed manifests, missing packages, size mismatches, or
+SHA-256 mismatches before replacing the active catalog. Keep the candidate and
+active manifest in the same filesystem so `rename` remains atomic.
 
 Standalone service settings:
 

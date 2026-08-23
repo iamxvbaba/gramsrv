@@ -151,7 +151,7 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | 名称 | 配置/来源 | 方向与用途 |
 |---|---|---|
 | Bot API listener | telesrv 的 `TELESRV_BOT_API_ADDR` | telesrv 的监听地址；空值表示关闭。`0.0.0.0` 只能用于 bind，不能作为客户端请求目标。 |
-| Bot API base URL | bot 应用的 `TELEGRAM_API_URL` 等配置 | bot 应用访问 telesrv 的可达地址，例如 `http://172.17.0.1:8088`。方法地址为 `<base>/bot<TOKEN>/<method>`，文件地址为 `<base>/file/bot<TOKEN>/<file_path>`。 |
+| Bot API base URL | bot 应用的 `TELEGRAM_API_URL` 等配置 | bot 应用访问 telesrv 的可达地址，例如 `http://172.17.0.1:8081`。方法地址为 `<base>/bot<TOKEN>/<method>`，文件地址为 `<base>/file/bot<TOKEN>/<file_path>`。 |
 | Webhook receiver URL | bot 应用的 `WEBHOOK_URL + WEBHOOK_PATH`，经 `setWebhook` 登记 | telesrv 主动 POST update 的目标，例如 `https://bot.example.com/webhook`。它不是 Bot API base URL。 |
 
 网络方向也不同：polling 是 `bot 应用 -> telesrv Bot API`，webhook 是
@@ -170,8 +170,8 @@ curl -sS -X POST \
 
 若没有 `TELEGRAM_API_URL` 这个变量，就把它替换成与
 `TELESRV_BOT_API_ADDR` 对应的**客户端可达地址**。例如 telesrv 监听
-`0.0.0.0:8088`，同宿主 Docker 容器可能使用 `http://172.17.0.1:8088`；不要请求
-`http://0.0.0.0:8088`。
+`0.0.0.0:8081`，同宿主 Docker 容器可能使用 `http://172.17.0.1:8081`；不要请求
+`http://0.0.0.0:8081`。
 
 按下表判读响应：
 

@@ -1,0 +1,95 @@
+version: 1
+
+instance:
+  id: core-docker-1
+
+debug:
+  addr: 127.0.0.1:6061
+
+public:
+  dc: ${TELESRV_DC}
+  default_country_code: ${TELESRV_DEFAULT_COUNTRY_CODE}
+  advertise:
+    ip: ${TELESRV_ADVERTISE_IP}
+    port: ${TELESRV_ADVERTISE_PORT}
+  base_url: ${TELESRV_PUBLIC_BASE_URL}
+  app_scheme: ${TELESRV_PUBLIC_APP_SCHEME}
+  web_base_url: ${TELESRV_PUBLIC_WEB_BASE_URL}
+
+branding:
+  product_name: ${TELESRV_BRAND_PRODUCT_NAME}
+  product_username: ${TELESRV_BRAND_PRODUCT_USERNAME}
+  desktop_app_name: ${TELESRV_BRAND_DESKTOP_APP_NAME}
+  android_app_name: ${TELESRV_BRAND_ANDROID_APP_NAME}
+  ios_app_name: ${TELESRV_BRAND_IOS_APP_NAME}
+  macos_app_name: ${TELESRV_BRAND_MACOS_APP_NAME}
+  web_a_app_name: ${TELESRV_BRAND_WEB_A_APP_NAME}
+  web_k_app_name: ${TELESRV_BRAND_WEB_K_APP_NAME}
+  premium_name: ${TELESRV_BRAND_PREMIUM_NAME}
+  stars_name: ${TELESRV_BRAND_STARS_NAME}
+
+postgres:
+  dsn: ${TELESRV_POSTGRES_DSN}
+  max_conns: ${TELESRV_POSTGRES_MAX_CONNS}
+  min_conns: ${TELESRV_POSTGRES_MIN_CONNS}
+
+redis:
+  addr: ${TELESRV_REDIS_ADDR}
+  password: ${TELESRV_REDIS_PASSWORD}
+  db: ${TELESRV_REDIS_DB}
+
+core_exec:
+  addr: 0.0.0.0:2440
+  token: ${TELESRV_CORE_EXEC_TOKEN}
+
+file_data:
+  resolver: static
+  targets:
+    - telesrv-file:2520
+  token: ${TELESRV_FILE_TOKEN}
+  timeout: ${TELESRV_FILE_GRPC_REQUEST_TIMEOUT}
+
+group_call:
+  control_addr: 0.0.0.0:2420
+  control_token: ${TELESRV_GROUPCALL_CONTROL_TOKEN}
+
+sfu:
+  control:
+    token: ${TELESRV_SFU_CONTROL_TOKEN}
+    timeout: 5s
+  owner:
+    ttl: 2m
+    heartbeat_interval: 30s
+    health_timeout: 1s
+
+turn:
+  enabled: false
+
+livestream:
+  enabled: false
+
+translation:
+  enabled: ${TELESRV_TRANSLATION_ENABLED}
+
+http:
+  bot_api_addr: 0.0.0.0:8081
+  admin_api_addr: 0.0.0.0:2599
+  admin_api_token: ${TELESRV_ADMIN_API_TOKEN}
+  public_link_web_addr: 0.0.0.0:2401
+
+outbox:
+  lease_timeout: 30s
+  outbound_push_timeout: 200ms
+
+media:
+  external_media_enable: ${TELESRV_EXTERNAL_MEDIA_ENABLE}
+  web_page_preview_enable: ${TELESRV_WEBPAGE_PREVIEW_ENABLE}
+
+star_gifts:
+  export:
+    mode: local
+
+storage:
+  blob_backend: ${TELESRV_BLOB_BACKEND}
+  blob_dir: /app/data/blobs
+  blob_staging_dir: /app/data/blob-staging

@@ -1,0 +1,38 @@
+version: 1
+
+instance:
+  id: file-docker-1
+
+debug:
+  addr: 127.0.0.1:6063
+
+public:
+  dc: ${TELESRV_DC}
+
+postgres:
+  dsn: ${TELESRV_POSTGRES_DSN}
+  max_conns: ${TELESRV_POSTGRES_MAX_CONNS}
+  min_conns: ${TELESRV_POSTGRES_MIN_CONNS}
+
+file_data:
+  addr: 0.0.0.0:2520
+  token: ${TELESRV_FILE_TOKEN}
+
+storage:
+  blob_backend: ${TELESRV_BLOB_BACKEND}
+  blob_dir: /app/data/blobs
+  blob_staging_dir: /app/data/blob-staging
+  low_space_guard_enabled: ${TELESRV_STORAGE_LOW_SPACE_GUARD_ENABLE}
+  min_free_bytes: ${TELESRV_STORAGE_MIN_FREE_BYTES}
+  max_total_bytes: ${TELESRV_STORAGE_MAX_TOTAL_BYTES}
+  usage_refresh_interval: ${TELESRV_STORAGE_USAGE_REFRESH_INTERVAL}
+
+upload:
+  part_ttl: ${TELESRV_UPLOAD_PART_TTL}
+  part_gc_interval: ${TELESRV_UPLOAD_PART_GC_INTERVAL}
+  part_gc_batch: ${TELESRV_UPLOAD_PART_GC_BATCH}
+
+media:
+  map_tile_cache_dir: /app/data/maptiles
+  external_media_enable: ${TELESRV_EXTERNAL_MEDIA_ENABLE}
+  web_page_preview_enable: ${TELESRV_WEBPAGE_PREVIEW_ENABLE}

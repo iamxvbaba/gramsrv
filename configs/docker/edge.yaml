@@ -1,0 +1,75 @@
+version: 1
+
+instance:
+  id: edge-docker-1
+
+debug:
+  addr: 127.0.0.1:6060
+
+public:
+  dc: ${TELESRV_DC}
+  default_country_code: ${TELESRV_DEFAULT_COUNTRY_CODE}
+  strict_dc_check: ${TELESRV_STRICT_DC_CHECK}
+  advertise:
+    ip: ${TELESRV_ADVERTISE_IP}
+    port: ${TELESRV_ADVERTISE_PORT}
+  base_url: ${TELESRV_PUBLIC_BASE_URL}
+  app_scheme: ${TELESRV_PUBLIC_APP_SCHEME}
+  web_base_url: ${TELESRV_PUBLIC_WEB_BASE_URL}
+
+branding:
+  product_name: ${TELESRV_BRAND_PRODUCT_NAME}
+  product_username: ${TELESRV_BRAND_PRODUCT_USERNAME}
+  desktop_app_name: ${TELESRV_BRAND_DESKTOP_APP_NAME}
+  android_app_name: ${TELESRV_BRAND_ANDROID_APP_NAME}
+  ios_app_name: ${TELESRV_BRAND_IOS_APP_NAME}
+  macos_app_name: ${TELESRV_BRAND_MACOS_APP_NAME}
+  web_a_app_name: ${TELESRV_BRAND_WEB_A_APP_NAME}
+  web_k_app_name: ${TELESRV_BRAND_WEB_K_APP_NAME}
+  premium_name: ${TELESRV_BRAND_PREMIUM_NAME}
+  stars_name: ${TELESRV_BRAND_STARS_NAME}
+
+redis:
+  addr: ${TELESRV_REDIS_ADDR}
+  password: ${TELESRV_REDIS_PASSWORD}
+  db: ${TELESRV_REDIS_DB}
+
+edge:
+  listen: 0.0.0.0:2398
+  rsa_key: /app/data/server_rsa.pem
+  websocket:
+    enabled: ${TELESRV_WEBSOCKET_ENABLE}
+    allowed_origins:
+      - http://localhost:1234
+      - http://127.0.0.1:1234
+  location:
+    ttl: ${TELESRV_EDGE_LOCATION_TTL}
+    heartbeat_interval: ${TELESRV_EDGE_LOCATION_HEARTBEAT_INTERVAL}
+  auth_key_cache:
+    max_entries: ${TELESRV_AUTH_KEY_CACHE_MAX_ENTRIES}
+    ttl: ${TELESRV_AUTH_KEY_CACHE_TTL}
+  temp_key_cache:
+    max_entries: ${TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES}
+    ttl: ${TELESRV_TEMP_KEY_CACHE_TTL}
+
+core_exec:
+  resolver: static
+  targets:
+    - telesrv-core:2440
+  token: ${TELESRV_CORE_EXEC_TOKEN}
+  timeout: ${TELESRV_CORE_EXEC_GRPC_REQUEST_TIMEOUT}
+
+file_data:
+  resolver: static
+  targets:
+    - telesrv-file:2520
+  token: ${TELESRV_FILE_TOKEN}
+  timeout: ${TELESRV_FILE_GRPC_REQUEST_TIMEOUT}
+
+egress:
+  ack:
+    resolver: static
+    targets:
+      - telesrv-egress:2510
+    token: ${TELESRV_EGRESS_ACK_TOKEN}
+    timeout: ${TELESRV_EGRESS_ACK_GRPC_REQUEST_TIMEOUT}

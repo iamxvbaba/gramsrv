@@ -1,0 +1,32 @@
+version: 1
+
+instance:
+  id: egress-docker-1
+
+debug:
+  addr: 127.0.0.1:6062
+
+public:
+  dc: ${TELESRV_DC}
+  advertise:
+    ip: ${TELESRV_ADVERTISE_IP}
+    port: ${TELESRV_ADVERTISE_PORT}
+
+postgres:
+  dsn: ${TELESRV_POSTGRES_DSN}
+  max_conns: ${TELESRV_POSTGRES_MAX_CONNS}
+  min_conns: ${TELESRV_POSTGRES_MIN_CONNS}
+
+redis:
+  addr: ${TELESRV_REDIS_ADDR}
+  password: ${TELESRV_REDIS_PASSWORD}
+  db: ${TELESRV_REDIS_DB}
+
+egress:
+  ack_server:
+    addr: 0.0.0.0:2510
+    token: ${TELESRV_EGRESS_ACK_TOKEN}
+  workers: ${TELESRV_OUTBOX_WORKERS}
+  batch: ${TELESRV_OUTBOX_BATCH}
+  lease_timeout: ${TELESRV_OUTBOX_LEASE_TIMEOUT}
+  outbound_push_timeout: ${TELESRV_OUTBOUND_PUSH_TIMEOUT}

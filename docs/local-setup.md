@@ -41,32 +41,35 @@ Review at least these values in `.env`:
 - `TELESRV_DEV_AUTH_CODE=12345` is convenient for local development but must not
   be exposed as a production login code.
 
-## 3. Start Postgres and Redis
+## 3. Run Telesrv Stack with Docker
 
-The development compose file exposes Postgres on `127.0.0.1:5432` and Redis on
-`127.0.0.1:6399`, matching the defaults in `.env.example`.
+To build and run the entire microservice stack locally:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f docker-compose-development.yml up --build -d
 ```
 
-If you use external Postgres or Redis, update `TELESRV_POSTGRES_DSN` and
-`TELESRV_REDIS_ADDR` in `.env`.
+Or for production deployment using prebuilt GHCR images, see [`docs/production.md`](production.md).
 
-## 4. Build and run the server
+If you want to run only PostgreSQL and Redis locally with Docker while running Go binaries on the host:
+
+```bash
+docker compose -f docker-compose-development.yml up -d postgres redis
+```
+
+## 4. Build and run individual microservices on host
 
 Linux / macOS:
 
 ```bash
-go build -o bin/gramsrv ./cmd/telesrv
-./bin/gramsrv
+go build -o bin/telesrv-edge ./cmd/telesrv-edge
+go build -o bin/telesrv-core ./cmd/telesrv-core
 ```
 
 Windows PowerShell:
 
 ```powershell
-go build -o bin/gramsrv.exe ./cmd/telesrv
-.\bin\gramsrv.exe
+.\scripts\restart-local-microservices.ps1
 ```
 
 ## 5. First-start checklist

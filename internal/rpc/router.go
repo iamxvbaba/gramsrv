@@ -497,6 +497,10 @@ func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, s
 
 func (r *Router) bindEffectiveAuthKey(rawAuthKeyID [8]byte, sessionID int64, effective [8]byte) {
 	if r.deps.Sessions != nil {
+		previous, resolved := r.deps.Sessions.AuthKeyIDForSession(rawAuthKeyID, sessionID)
+		if resolved && previous != effective {
+			r.deps.Sessions.BindUserForAuthKey(rawAuthKeyID, sessionID, 0)
+		}
 		r.deps.Sessions.BindAuthKeyForSession(rawAuthKeyID, sessionID, effective)
 	}
 }

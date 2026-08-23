@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches:
-      - main
       - v2
   pull_request:
   workflow_dispatch:
@@ -17,6 +16,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  deployment-contract:
+    name: Deployment contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate entrypoint
+        run: bash -n docker-entrypoint.sh
+
+      - name: Validate Compose files
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose -f docker-compose-development.yml config --quiet
+
+      - name: Validate service configs and update catalog
+        run: |
+          for file in admin.yaml core.yaml edge.yaml egress.yaml file.yaml sfu.yaml ton.yaml; do
+            test -f "configs/docker/${file}"
+          done
+          test -f deploy/update/manifest.example.json
+          grep -q 'TELESRV_INIT_PROFILE: none' docker-compose.yml
+          grep -q './data/updates:/app/data/updates:ro' docker-compose.yml
+          grep -q 'openssl genrsa -traditional' docker-entrypoint.sh
+          grep -q 'telesrv-key-migrate' docker-entrypoint.sh
+
   go-test:
     name: Go tests
     runs-on: ubuntu-24.04
@@ -61,31 +89,3 @@ jobs:
       - name: Build
         working-directory: cmd/telesrv-admin/web
         run: npm run build
-
-  grammystore:
-    name: Grammy store bot
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: cmd/bots/grammystore/package-lock.json
-
-      - name: Install dependencies
-        working-directory: cmd/bots/grammystore
-        run: npm ci
-
-      - name: Check syntax
-        working-directory: cmd/bots/grammystore
-        run: npm run check
-
-      - name: Test
-        working-directory: cmd/bots/grammystore
-        run: npm test

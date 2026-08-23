@@ -154,7 +154,7 @@ API endpoint unless an explicit reverse-proxy route maps that domain to telesrv:
 | Name | Setting/source | Direction and purpose |
 |---|---|---|
 | Bot API listener | telesrv `TELESRV_BOT_API_ADDR` | The telesrv bind address; empty disables the gateway. `0.0.0.0` is valid only for binding and is not a client request target. |
-| Bot API base URL | the bot application's `TELEGRAM_API_URL` or equivalent | A client-reachable address for telesrv, for example `http://172.17.0.1:8088`. Method URLs are `<base>/bot<TOKEN>/<method>` and file URLs are `<base>/file/bot<TOKEN>/<file_path>`. |
+| Bot API base URL | the bot application's `TELEGRAM_API_URL` or equivalent | A client-reachable address for telesrv, for example `http://172.17.0.1:8081`. Method URLs are `<base>/bot<TOKEN>/<method>` and file URLs are `<base>/file/bot<TOKEN>/<file_path>`. |
 | Webhook receiver URL | the bot application's `WEBHOOK_URL + WEBHOOK_PATH`, registered by `setWebhook` | The target to which telesrv actively POSTs updates, for example `https://bot.example.com/webhook`. It is not the Bot API base URL. |
 
 The network direction is different too: polling is `bot application -> telesrv Bot API`, while
@@ -174,8 +174,8 @@ curl -sS -X POST \
 
 If the application uses a differently named variable, replace `TELEGRAM_API_URL` with the
 **client-reachable address** corresponding to `TELESRV_BOT_API_ADDR`. For example, if telesrv binds
-`0.0.0.0:8088`, a container on the same host might use `http://172.17.0.1:8088`; it must not request
-`http://0.0.0.0:8088`.
+`0.0.0.0:8081`, a container on the same host might use `http://172.17.0.1:8081`; it must not request
+`http://0.0.0.0:8081`.
 
 Interpret the result as follows:
 
@@ -874,6 +874,177 @@ that cannot do what it says fails startup instead of being silently unreachable.
 | `TELESRV_LIVESTREAM_WORK_DIR` | path / empty | Segment working directory. Empty uses the system temporary directory. |
 | `TELESRV_LIVESTREAM_SEGMENT_KEEP` | int seconds / `32` | Per-stream segment duration/window retained in memory; non-positive values are normalized by the livestream service. |
 
-## 12. Production minimum checklist
+## 12. Container-specific configuration reference
+
+### PostgreSQL Container
+
+The `postgres` service provides the primary durable business database.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `POSTGRES_PORT` | int / `5432` | Host port mapping for PostgreSQL (Docker: container port always `5432`). |
+| `POSTGRES_USER` | string / `telesrv` | PostgreSQL superuser name for database initialization. |
+| `POSTGRES_PASSWORD` | secret string / empty | PostgreSQL password; must be set before startup. Production should use a strong random value. |
+| `POSTGRES_DB` | string / `telesrv` | Initial database name created by the PostgreSQL container. |
+| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@postgres:5432/telesrv?sslmode=disable` | Connection string for telesrv services. Must use service name `postgres` (not container name) for Docker Compose internal DNS. Production must enable `sslmode=require` and provide verified certificates. |
+| `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool maximum connections. Recommended `50-100` for production. |
+| `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool pre-warmed minimum connections. Recommended `10-20` for production. |
+
+### Redis Container
+
+The `redis` service provides volatile storage for codes, rate limits, and shared session state.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `REDIS_PORT` | int / `6399` | Host port mapping for Redis (Docker: container port always `6379`). |
+| `TELESRV_REDIS_ADDR` | address / `redis:6379` | Redis connection address. Must use service name `redis` (not container name) for Docker Compose internal DNS. |
+| `TELESRV_REDIS_PASSWORD` | secret string / empty | Redis password. Leave empty for local development; production should enforce a strong password and `requirepass` configuration. |
+| `TELESRV_REDIS_DB` | int / `0` | Redis logical database number (0-15). Multiple deployments on the same Redis instance should use different numbers. |
+
+### telesrv-file Service
+
+Handles file upload/download, blob storage, and media persistence.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_FILE_GRPC_ADDR` | address / `0.0.0.0:2520` | Internal listen address for FileData gRPC API. |
+| `TELESRV_FILE_GRPC_TARGETS` | resolver target(s) / `file:2520` | Endpoint used by Edge/Core to call FileData gRPC. Docker Compose: use `file:2520`. |
+| `TELESRV_FILE_TOKEN` | secret string / empty | Bearer token for FileData gRPC. Must match across `telesrv-file`, `telesrv-core`, and `telesrv-edge`. Generate with `openssl rand -hex 24`. |
+| `TELESRV_BLOB_BACKEND` | enum / `localfs` | Storage backend: `localfs` (local filesystem) or `s3` (S3-compatible object storage). |
+| `TELESRV_BLOB_DIR` | path / `data/blobs` | Local blob storage directory (for `localfs` backend). |
+| `TELESRV_BLOB_STAGING_DIR` | path / `data/blob-staging` | Transient upload staging directory. |
+| `TELESRV_STORAGE_LOW_SPACE_GUARD_ENABLE` | bool / `true` | Enable storage capacity checks. |
+| `TELESRV_STORAGE_MIN_FREE_BYTES` | int64 / `1073741824` | Minimum free disk space before upload rejection (1 GiB default). |
+| `TELESRV_STORAGE_MAX_TOTAL_BYTES` | int64 / `0` | Max total blob bytes (S3 mode only); `0` = unlimited. |
+| `TELESRV_STORAGE_USAGE_REFRESH_INTERVAL` | duration / `1m` | How often to refresh storage usage snapshot. |
+| `TELESRV_UPLOAD_PART_TTL` | duration / `24h` | Retention period for incomplete upload parts. |
+| `TELESRV_UPLOAD_PART_GC_INTERVAL` | duration / `30m` | Upload garbage collection interval. |
+| `TELESRV_UPLOAD_PART_GC_BATCH` | int / `10000` | Maximum rows cleaned per GC batch. |
+
+S3 configuration (when `TELESRV_BLOB_BACKEND=s3`):
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_S3_ENDPOINT` | host[:port] / empty | S3 endpoint without scheme (e.g., `s3.amazonaws.com` or `minio.example.com:9000`). |
+| `TELESRV_S3_REGION` | string / `us-east-1` | AWS region or S3-compatible region code. |
+| `TELESRV_S3_BUCKET` | string / empty | S3 bucket name for blob storage. |
+| `TELESRV_S3_ACCESS_KEY_ID` | secret string / empty | AWS access key ID or equivalent. Never commit. |
+| `TELESRV_S3_SECRET_ACCESS_KEY` | secret string / empty | AWS secret access key or equivalent. Never commit. |
+| `TELESRV_S3_USE_SSL` | bool / `true` | Use TLS for S3 connection. Set `false` for local MinIO. |
+| `TELESRV_S3_PATH_STYLE` | bool / `false` | Force path-style bucket URLs (required for MinIO, some private S3). |
+| `TELESRV_S3_CREATE_BUCKET` | bool / `false` | Auto-create bucket on startup if missing. Requires write permissions. |
+
+### telesrv-core Service
+
+The main RPC dispatcher and business logic handler. Requires PostgreSQL and Redis connectivity.
+
+Core-specific settings are detailed in sections 2-11 above. Critical ones:
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_CORE_EXEC_GRPC_ADDR` | address / `0.0.0.0:2440` | Internal listen address for CoreExec gRPC. Required. |
+| `TELESRV_CORE_EXEC_TOKEN` | secret string / empty | Bearer token for CoreExec gRPC. Generate with `openssl rand -hex 24`. Must match `telesrv-edge`. |
+| `TELESRV_GROUPCALL_CONTROL_ADDR` | address / `0.0.0.0:2420` | Internal listen address for group call control API. Required for SFU. |
+| `TELESRV_GROUPCALL_CONTROL_URL` | URL / `http://telesrv-core:2420` | SFU-accessible URL for group call control. Docker Compose: use service name. |
+| `TELESRV_GROUPCALL_CONTROL_TOKEN` | secret string / empty | Bearer token for group call API. Must match `telesrv-sfu`. |
+| `TELESRV_SFU_CONTROL_GRPC_TARGETS` | resolver target(s) / empty | SFU gRPC control endpoint(s). Docker Compose: `sfu:2450`. |
+| `TELESRV_SFU_CONTROL_TOKEN` | secret string / empty | Bearer token for SFU control. Must match `telesrv-sfu`. |
+
+### telesrv-edge Service
+
+Client-facing MTProto listener. Routes to Core via gRPC, manages connection state, and coordinates with Egress.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_EDGE_PORT` | int / `2398` | Host port mapping for Edge (Docker: container `2398`). Clients connect here. |
+| `TELESRV_LISTEN_IP` | string / `0.0.0.0` | Edge bind address. Use `0.0.0.0` for production unless behind a reverse proxy. |
+| `TELESRV_ADVERTISE_IP` | string / `127.0.0.1` | Public IP advertised to clients. Production: set to LAN/public IP. |
+| `TELESRV_ADVERTISE_PORT` | int / `2398` | Public port advertised to clients. Must match client-reachable address. |
+| `TELESRV_CORE_EXEC_GRPC_TARGETS` | resolver target(s) / empty | Core gRPC endpoint(s). Docker Compose: `core:2440`. |
+| `TELESRV_CORE_EXEC_TOKEN` | secret string / empty | Bearer token for Core RPC. Must match `telesrv-core`. |
+| `TELESRV_FILE_GRPC_TARGETS` | resolver target(s) / empty | File gRPC endpoint(s). Docker Compose: `file:2520`. |
+| `TELESRV_FILE_TOKEN` | secret string / empty | Bearer token for File API. Must match `telesrv-file` and `telesrv-core`. |
+| `TELESRV_EGRESS_ACK_GRPC_TARGETS` | resolver target(s) / empty | Egress ACK gRPC endpoint(s). Docker Compose: `egress:2510`. |
+| `TELESRV_EGRESS_ACK_TOKEN` | secret string / empty | Bearer token for Egress ACK. Must match `telesrv-egress`. |
+| `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | Enable MTProto-over-WebSocket. Recommended `true`. |
+| `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | Comma-separated browser origins. Production: list actual origins; use `*` only for debugging. |
+
+### telesrv-egress Service
+
+Handles outbox delivery, message push, and PTS state management. Requires PostgreSQL and Redis.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_EGRESS_ACK_GRPC_ADDR` | address / `0.0.0.0:2510` | Internal listen address for Egress ACK API. Required. |
+| `TELESRV_EGRESS_ACK_TOKEN` | secret string / empty | Bearer token for Egress ACK. Must match `telesrv-edge`. |
+| `TELESRV_OUTBOX_WORKERS` | int / `4` | Concurrent outbox delivery workers. Increase for higher throughput; 4-8 is typical. |
+| `TELESRV_OUTBOX_BATCH` | int / `100` | Max rows claimed per batch. Larger = higher throughput; tune based on DB performance. |
+| `TELESRV_OUTBOX_LEASE_TIMEOUT` | duration / `30s` | Time before a dispatching row can be reclaimed. Must exceed worst-case delivery time. |
+| `TELESRV_OUTBOX_POISON_RETENTION` | duration / `1m` | Retention for terminal failed heads (diagnostic). |
+| `TELESRV_OUTBOUND_PUSH_TIMEOUT` | duration / `200ms` | Timeout for Edge confirmation of update enqueue. |
+
+### telesrv-sfu Service
+
+Handles group call media (audio/video) via WebRTC. Uses Redis for instance discovery.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_SFU_UDP_PORT` | int / `12399` | Pion ICE UDPMux port for media. Open in firewall. |
+| `TELESRV_SFU_ADVERTISE_IP` | string / empty | Client-reachable SFU IP. Empty = use `TELESRV_ADVERTISE_IP`. Production: must be reachable by remote clients. |
+| `TELESRV_SFU_CONTROL_GRPC_ADDR` | address / `0.0.0.0:2450` | Internal listen address for SFU control. Required. |
+| `TELESRV_SFU_CONTROL_TOKEN` | secret string / empty | Bearer token for SFU control. Generate with `openssl rand -hex 24`. Must match `telesrv-core`. |
+| `TELESRV_GROUPCALL_CONTROL_URL` | URL / `http://telesrv-core:2420` | Core group call control endpoint. |
+| `TELESRV_GROUPCALL_CONTROL_TOKEN` | secret string / empty | Bearer token for group call API. Must match `telesrv-core`. |
+| `TELESRV_SFU_OWNER_TTL` | duration / `2m` | Owner lease TTL; one call sticks to one SFU instance. |
+| `TELESRV_SFU_OWNER_HEARTBEAT_INTERVAL` | duration / `30s` | Owner lease refresh interval. Must be `< TELESRV_SFU_OWNER_TTL`. |
+| `TELESRV_SFU_INSTANCE_TTL` | duration / `90s` | SFU media instance discovery TTL in Redis. |
+| `TELESRV_SFU_INSTANCE_HEARTBEAT_INTERVAL` | duration / `30s` | Instance discovery heartbeat. Must be `< TELESRV_SFU_INSTANCE_TTL`. |
+
+### telesrv-admin Service
+
+Web-based administrative UI for managing users, channels, moderation, and configuration.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_ADMIN_UI_PORT` | int / `2600` | Host port mapping (Docker: container `2600`). Local development only; production uses reverse proxy on loopback. |
+| `TELESRV_LOCAL_LISTEN_IP` | string / `127.0.0.1` | Admin UI bind address. Keep as `127.0.0.1` for loopback-only. |
+| `TELESRV_ADMIN_API_ADDR` | address / `127.0.0.1:2601` | Internal Admin API listener on main `telesrv-core`. Empty = disabled. |
+| `TELESRV_ADMIN_API_TOKEN` | secret string / empty | Admin API authentication token. Must match `TELESRV_ADMIN_UI_TOKEN` (same value). |
+| `TELESRV_ADMIN_UI_TOKEN` | secret string / empty | Admin UI login credential (alternative to password). At least one of `TELESRV_ADMIN_UI_PASSWORD` or `TELESRV_ADMIN_UI_TOKEN` must be set. |
+| `TELESRV_ADMIN_UI_PASSWORD` | secret string / empty | Admin UI login password. At least one of password or token must be set. |
+| `TELESRV_ADMIN_SESSION_KEY` | secret string / empty | Session cookie encryption key. Production: 32+ random bytes. Change invalidates all sessions. |
+| `TELESRV_ADMIN_UI_PERMISSIONS` | comma-separated list / `*` | Permissions for password/token login. `*` = all permissions. Examples: `users.list`, `channels.manage`, `moderation.*`. |
+| `TELESRV_ADMIN_SCOPED_TOKENS` | semicolon-separated / empty | Additional API tokens with bounded permissions. Format: `name:token:perm1,perm2;name2:token2:perm3`. |
+
+### telesrv-ton Service
+
+Optional isolated worker for TON blockchain interactions (Star Gift export/minting). Only deployed if TON features are enabled.
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_TON_NETWORK` | enum / `testnet` | TON network: `mainnet` or `testnet`. Core and TON worker must use the same network. |
+| `TELESRV_TON_LITESERVER_ADDR` | address / `127.0.0.1:19949` | TON liteserver endpoint (IP:port format). |
+| `TELESRV_TON_LITESERVER_PUBLIC_KEY` | hex string / empty | Base64-encoded ED25519 public key of the liteserver for verification. |
+| `TELESRV_TON_TRUSTED_BLOCK_SEQNO` | int / empty | Masterchain block sequence number for initial trust anchor. |
+| `TELESRV_TON_TRUSTED_BLOCK_ROOT_HASH` | hex string / empty | Root hash of the trusted masterchain block. |
+| `TELESRV_TON_TRUSTED_BLOCK_FILE_HASH` | hex string / empty | File hash of the trusted masterchain block. |
+| `TELESRV_TON_COLLECTION_ADDRESS` | string / empty | TEP-62 NFT collection address (must match Core config). |
+| `TELESRV_TON_COLLECTION_CODE_HASH` | hex string / empty | Collection code hash for verification. |
+| `TELESRV_TON_INITIAL_ITEM_INDEX` | int / `0` | First telesrv-managed NFT index. Never decrease or reuse after rollout. |
+| `TELESRV_TON_MNEMONIC_FILE` | path / empty | Relayer wallet mnemonic (24 words). Required for minting. Never commit. |
+| `TELESRV_TON_MINT_ENABLE` | bool / `false` | Enable minting. Keep `false` until full testing/canary complete. |
+
+### telesrv-update Service
+
+Standalone HTTP server for native client auto-updates (optional, separate process).
+
+| Setting | Type / code default | Description and constraints |
+|---|---|---|
+| `TELESRV_UPDATE_PORT` | int / `2402` | Host port mapping (Docker: container `2402`). |
+| `TELESRV_UPDATE_PUBLIC_URL` | HTTP(S) URL / empty | Public update endpoint advertised in `help.getConfig.autoupdate_url_prefix`. Empty = updates disabled. |
+| `TELESRV_UPDATE_SERVICE_URL` | HTTP(S) URL / `TELESRV_UPDATE_PUBLIC_URL` | Internal update resolver (may differ from public; useful for loopback in dev). Empty = use public URL. |
+| `TELESRV_UPDATE_REQUEST_TIMEOUT` | duration / `2s` | Update check timeout. Must be `0s < timeout <= 30s`. |
+
+## 13. Production minimum checklist
 
 At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, OTP Webhook/SMTP secrets, AI/Mapbox API keys, CoreExec/FileData/Egress ACK/SFU gRPC control TLS/mTLS, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices. TON Star Gift rollout additionally requires pinned lite servers/checkpoint/collection code hash, separate capability/bot/relayer secrets, a one-user allowlist, a `mint.enabled: false` preflight, and complete testnet/canary/rollback gates.
