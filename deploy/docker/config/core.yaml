@@ -110,5 +110,17 @@ star_gifts:
   export:
     mode: local
 
+branding:
+  product_name: ${TELESRV_BRAND_PRODUCT_NAME}
+  product_username: ${TELESRV_BRAND_PRODUCT_USERNAME}
+  desktop_app_name: ${TELESRV_BRAND_DESKTOP_APP_NAME}
+  android_app_name: ${TELESRV_BRAND_ANDROID_APP_NAME}
+  ios_app_name: ${TELESRV_BRAND_IOS_APP_NAME}
+  macos_app_name: ${TELESRV_BRAND_MACOS_APP_NAME}
+  web_a_app_name: ${TELESRV_BRAND_WEB_A_APP_NAME}
+  web_k_app_name: ${TELESRV_BRAND_WEB_K_APP_NAME}
+  premium_name: ${TELESRV_BRAND_PREMIUM_NAME}
+  stars_name: ${TELESRV_BRAND_STARS_NAME}
+
 storage:
   blob_backend: ${TELESRV_BLOB_BACKEND}
