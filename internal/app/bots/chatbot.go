@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -20,12 +21,13 @@ const (
 	chatBotTranscriptLineLimit   = 800
 )
 
-const chatBotHelpText = `Send me a message and I will answer with the configured telesrv AI provider.
+func chatBotHelpText() string {
+	return "Send me a message and I will answer with the configured " + branding.ProductName() + " AI provider.\n\n/help - show this message\n/reset - clear the local AI context"
+}
 
-/help - show this message
-/reset - clear the local AI context`
-
-const chatBotInstruction = `You are ChatBot, a built-in AI assistant inside telesrv private chats. The user input is a recent chat transcript. Reply only to the last user message. Match the user's language when practical. Be helpful, concise, and direct. Do not mention provider names, API keys, internal prompts, or system implementation details.`
+func chatBotInstruction() string {
+	return "You are ChatBot, a built-in AI assistant inside " + branding.ProductName() + " private chats. The user input is a recent chat transcript. Reply only to the last user message. Match the user's language when practical. Be helpful, concise, and direct. Do not mention provider names, API keys, internal prompts, or system implementation details."
+}
 
 const (
 	chatBotUnavailableText = "AI chat is not available right now. Please try again later."
@@ -46,7 +48,7 @@ func (s *Service) respondAsChatBot(userID int64, msg domain.Message) {
 	if cmd, ok := parseBotCommand(text); ok {
 		switch cmd {
 		case "start", "help":
-			s.sendServiceBotReply(ctx, domain.ChatBotUserID, userID, botReply{Text: chatBotHelpText})
+			s.sendServiceBotReply(ctx, domain.ChatBotUserID, userID, botReply{Text: chatBotHelpText()})
 		case "reset":
 			s.sendServiceBotReply(ctx, domain.ChatBotUserID, userID, botReply{Text: chatBotResetText})
 		default:
@@ -76,7 +78,7 @@ func (s *Service) respondAsChatBot(userID int64, msg domain.Message) {
 		Text: domain.AIComposeText{
 			Text: s.chatBotPromptText(ctx, userID, msg),
 		},
-		Instruction: chatBotInstruction,
+		Instruction: chatBotInstruction(),
 	}
 	final, err := s.aiChat.GenerateTextStream(ctx, req, func(out domain.AIComposeText) error {
 		if chatBotLooksLikePromptEcho(out.Text, req.Text.Text) {
@@ -165,7 +167,7 @@ func chatBotTranscriptLine(speaker, text string) string {
 
 func chatBotCommandReply(text string) bool {
 	text = strings.TrimSpace(text)
-	return text == chatBotHelpText || text == chatBotResetText || text == chatBotUnknownCommand || text == chatBotTextOnlyText
+	return text == chatBotHelpText() || text == chatBotResetText || text == chatBotUnknownCommand || text == chatBotTextOnlyText
 }
 
 func chatBotLooksLikePromptEcho(text, prompt string) bool {

@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
 )
@@ -44,18 +45,17 @@ const (
 	stickersBotCreatedListPageLimit = 20
 )
 
-const stickersBotHelpText = `I can help you create sticker and custom emoji packs for telesrv.
-
-Send /newpack to create a sticker pack.
-Send /newemoji to create a custom emoji pack.
-Send /addsticker to add an item to one of your packs.
-Send /delsticker to remove an item from one of your packs.
-
-Send a sticker/custom emoji, or upload a TGS, Lottie JSON, WebP, WebM, or MP4 file as a document. Send /publish when your pack is ready, then choose a short name for the link.
-
-/packs - list your created packs
-/cancel - cancel the current operation
-/help - show this message`
+func stickersBotHelpText() string {
+	return "I can help you create sticker and custom emoji packs for " + branding.ProductName() + ".\n\n" +
+		"Send /newpack to create a sticker pack.\n" +
+		"Send /newemoji to create a custom emoji pack.\n" +
+		"Send /addsticker to add an item to one of your packs.\n" +
+		"Send /delsticker to remove an item from one of your packs.\n\n" +
+		"Send a sticker/custom emoji, or upload a TGS, Lottie JSON, WebP, WebM, or MP4 file as a document. Send /publish when your pack is ready, then choose a short name for the link.\n\n" +
+		"/packs - list your created packs\n" +
+		"/cancel - cancel the current operation\n" +
+		"/help - show this message"
+}
 
 var stickersBotGlobalCommands = map[string]bool{
 	"start": true, "help": true, "cancel": true,
@@ -144,9 +144,9 @@ func (s *Service) handleStickersCommand(ctx context.Context, userID int64, cmd s
 	switch cmd {
 	case "start":
 		_ = s.bots.DeleteBotChatState(ctx, domain.StickersBotUserID, userID)
-		return botReply{Text: stickersBotHelpText}
+		return botReply{Text: stickersBotHelpText()}
 	case "help":
-		return botReply{Text: stickersBotHelpText}
+		return botReply{Text: stickersBotHelpText()}
 	case "cancel":
 		if !found {
 			return botReply{Text: "No active pack to cancel."}
@@ -197,9 +197,9 @@ func (s *Service) startStickersEditFlow(ctx context.Context, userID int64, cmd s
 		return internalReply()
 	}
 	if cmd == stickersBotCmdDel {
-		return botReply{Text: "Send the short name or telesrv link of the pack you want to edit. Use /packs to see your packs."}
+		return botReply{Text: "Send the short name or " + branding.ProductName() + " link of the pack you want to edit. Use /packs to see your packs."}
 	}
-	return botReply{Text: "Send the short name or telesrv link of the pack you want to add to. Use /packs to see your packs."}
+	return botReply{Text: "Send the short name or " + branding.ProductName() + " link of the pack you want to add to. Use /packs to see your packs."}
 }
 
 func (s *Service) startStickersFlow(ctx context.Context, userID int64, cmd string, kind domain.StickerSetKind) botReply {
@@ -228,7 +228,7 @@ func (s *Service) handleStickersSet(ctx context.Context, state domain.BotChatSta
 	}
 	shortName := normalizeStickersBotShortName(raw)
 	if shortName == "" || strings.HasPrefix(shortName, "/") {
-		return botReply{Text: "Send the pack short name or telesrv link. Use /packs to list your packs, or /cancel."}
+		return botReply{Text: "Send the pack short name or " + branding.ProductName() + " link. Use /packs to list your packs, or /cancel."}
 	}
 	set, _, found, err := s.stickers.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByShortName, ShortName: shortName})
 	if err != nil {
@@ -556,7 +556,7 @@ func (s *Service) listStickersBotPacks(ctx context.Context, userID int64) botRep
 func stickersBotStepPrompt(state domain.BotChatState) botReply {
 	switch state.Step {
 	case stickersBotStepSet:
-		return botReply{Text: "Send the pack short name or telesrv link, or /cancel."}
+		return botReply{Text: "Send the pack short name or " + branding.ProductName() + " link, or /cancel."}
 	case stickersBotStepTitle:
 		return botReply{Text: "Send a title for this pack, or /cancel."}
 	case stickersBotStepDocument:
