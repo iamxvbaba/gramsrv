@@ -671,6 +671,19 @@ func (s *Service) Transfer(ctx context.Context, req domain.StarGiftTransferReque
 	return s.lifecycle.TransferStarGift(ctx, req)
 }
 
+// DeleteEverywhere is the admin panel's "delete gift" action -- see
+// store.StarGiftLifecycleStore.DeleteStarGiftEverywhere's own doc.
+func (s *Service) DeleteEverywhere(ctx context.Context, giftID int64, refund, dryRun bool, date int) (domain.StarGiftDeletionResult, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.StarGiftDeletionResult{}, domain.ErrStarGiftUnavailable
+	}
+	result, err := s.lifecycle.DeleteStarGiftEverywhere(ctx, giftID, refund, dryRun, date)
+	if err == nil && !dryRun {
+		s.InvalidateStarGiftCatalog()
+	}
+	return result, err
+}
+
 func (s *Service) PurchaseResale(ctx context.Context, req domain.StarGiftResalePurchaseRequest) (domain.StarGiftTransferResult, error) {
 	if s == nil || s.lifecycle == nil {
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
@@ -961,6 +974,21 @@ func (s *Service) SweepLifecycle(ctx context.Context, now, limit int) error {
 		return nil
 	}
 	return s.lifecycle.SweepStarGiftLifecycle(ctx, now, limit)
+}
+
+// SweepSoldOut is the daily "sold out gift disappears from the catalog" job
+// -- see store.StarGiftStore.SweepSoldOutStarGifts's own doc for the exact
+// scope (limited, non-auction, availability_remains<=0; never the secondary
+// NFT marketplace).
+func (s *Service) SweepSoldOut(ctx context.Context) (int, error) {
+	if s == nil || s.store == nil {
+		return 0, nil
+	}
+	disabled, err := s.store.SweepSoldOutStarGifts(ctx)
+	if err == nil && disabled > 0 {
+		s.InvalidateStarGiftCatalog()
+	}
+	return disabled, err
 }
 
 func (s *Service) ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error) {

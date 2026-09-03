@@ -21,6 +21,11 @@ type StarGiftStore interface {
 	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
+	// SweepSoldOutStarGifts disables every enabled, sold-out (limited,
+	// availability_remains<=0), non-auction catalog gift -- see the postgres
+	// implementation's own doc for why auctions and the secondary NFT
+	// marketplace are both deliberately untouched.
+	SweepSoldOutStarGifts(ctx context.Context) (int, error)
 	// AnimationJSON 返回当前版本的规范化 Lottie JSON，供管理后台安全预览。
 	AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error)
 	// PublishCollectibleRevision validates and atomically publishes a new immutable attribute pool.
@@ -121,4 +126,7 @@ type StarGiftLifecycleStore interface {
 	// SweepStarGiftLifecycle advances time-driven offer/auction aggregates and
 	// drains their durable notification/delivery outboxes in bounded batches.
 	SweepStarGiftLifecycle(ctx context.Context, now, limit int) error
+	// DeleteStarGiftEverywhere is the admin panel's "delete gift" action --
+	// see the postgres implementation's own doc for the full semantics.
+	DeleteStarGiftEverywhere(ctx context.Context, giftID int64, refund, dryRun bool, date int) (domain.StarGiftDeletionResult, error)
 }

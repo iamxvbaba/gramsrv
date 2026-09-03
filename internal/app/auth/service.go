@@ -102,6 +102,15 @@ type Service struct {
 	loginEmailCodeLength   int
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
+	// autoSubscribe joins a freshly created account into every admin panel
+	// auto-subscribe channel (see internal/app/autosubscribe). Nil-safe --
+	// an unconfigured deployment just skips this, same as loginEmails.
+	autoSubscribe autoSubscribeJoiner
+}
+
+// autoSubscribeJoiner is the one autosubscribe.Service method SignUp needs.
+type autoSubscribeJoiner interface {
+	JoinNewUser(ctx context.Context, userID int64)
 }
 
 type loginEmailStore interface {
@@ -163,6 +172,14 @@ func WithBotLogin(bots store.BotStore) Option {
 func WithPremiumGrant(months int) Option {
 	return func(s *Service) {
 		s.premiumGrantMonths = months
+	}
+}
+
+// WithAutoSubscribe wires the admin panel's auto-subscribe channel list into
+// SignUp -- see autoSubscribeJoiner's own doc comment.
+func WithAutoSubscribe(joiner autoSubscribeJoiner) Option {
+	return func(s *Service) {
+		s.autoSubscribe = joiner
 	}
 }
 
@@ -1174,6 +1191,12 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	u, err := s.users.Create(ctx, newUser)
 	if err != nil {
 		return domain.User{}, domain.Message{}, err
+	}
+	// Best-effort, same idiom as every other post-creation side effect in this
+	// function (login email, login message below): a channel join going wrong
+	// must never fail the signup itself.
+	if s.autoSubscribe != nil {
+		s.autoSubscribe.JoinNewUser(ctx, u.ID)
 	}
 	if rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) != "" && s.loginEmails != nil {
 		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {

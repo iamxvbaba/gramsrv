@@ -193,6 +193,20 @@ func (s *StarGiftStore) SetCatalogSortOrder(_ context.Context, giftID int64, sor
 	return changed, nil
 }
 
+func (s *StarGiftStore) SweepSoldOutStarGifts(_ context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	disabled := 0
+	for giftID, gift := range s.catalog {
+		if !s.enabled[giftID] || !gift.Limited || gift.Auction || gift.AvailabilityRemains > 0 {
+			continue
+		}
+		s.enabled[giftID] = false
+		disabled++
+	}
+	return disabled, nil
+}
+
 func (s *StarGiftStore) AnimationJSON(_ context.Context, giftID int64) ([]byte, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

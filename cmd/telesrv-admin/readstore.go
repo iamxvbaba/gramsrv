@@ -439,6 +439,20 @@ type StarGiftRow struct {
 	ReceivedCount int64 `json:"ReceivedCount,string"`
 	CreatedBy     string
 	UpdatedAt     time.Time
+	// Supply: zero-value (Limited=false) means unlimited, matching every
+	// other reader of these same columns (tgStarGift, the auction monitor).
+	Limited             bool
+	SoldOut             bool
+	AvailabilityTotal   int
+	AvailabilityRemains int
+	// Collectible pool -- a SEPARATE metric from Availability* above (that
+	// one caps plain, not-yet-upgraded copies; this one caps how many can
+	// ever be upgraded to a unique/NFT instance). Nil when the gift has no
+	// published collectible pool at all. Mirrors openfragment/server.js's
+	// own fetchStarGiftCatalog query -- same two-column "Sold"/"Issued"
+	// split shown there.
+	CollectibleIssued      *int
+	CollectibleSupplyTotal *int
 }
 
 func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
@@ -447,11 +461,14 @@ SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
        encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
        (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
-       r.created_by, c.updated_at
+       r.created_by, c.updated_at,
+       r.limited, r.sold_out, r.availability_total, c.availability_remains,
+       cr.issued, cr.supply_total
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
-ORDER BY c.sort_order, c.gift_id
+LEFT JOIN star_gift_collectible_revisions cr ON cr.id = c.collectible_revision_id
+ORDER BY c.enabled DESC, c.sort_order, c.gift_id
 LIMIT $1`, domain.MaxStarGiftCatalogSize)
 	if err != nil {
 		return nil, fmt.Errorf("list star gifts: %w", err)
@@ -465,6 +482,8 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize)
 			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
 			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
 			&row.ReceivedCount, &row.CreatedBy, &row.UpdatedAt,
+			&row.Limited, &row.SoldOut, &row.AvailabilityTotal, &row.AvailabilityRemains,
+			&row.CollectibleIssued, &row.CollectibleSupplyTotal,
 		); err != nil {
 			return nil, err
 		}

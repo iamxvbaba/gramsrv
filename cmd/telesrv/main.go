@@ -29,6 +29,7 @@ import (
 	aiapp "telesrv/internal/app/ai"
 	"telesrv/internal/app/auth"
 	authdiagnosticsapp "telesrv/internal/app/authdiagnostics"
+	autosubscribeapp "telesrv/internal/app/autosubscribe"
 	botsapp "telesrv/internal/app/bots"
 	botverificationapp "telesrv/internal/app/botverification"
 	broadcastapp "telesrv/internal/app/broadcast"
@@ -1356,6 +1357,16 @@ func run(logger *zap.Logger) error {
 		),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	// Admin panel "auto-subscribe channel" list: adding a channel here joins
+	// every current real user right away and every account created afterwards
+	// on signup (see auth.WithAutoSubscribe below). See
+	// internal/app/autosubscribe's own package doc for the full semantics.
+	autoSubscribeStore := postgres.NewAutoSubscribeStore(pool)
+	autoSubscribeService := autosubscribeapp.NewService(
+		autosubscribeapp.WithStore(autoSubscribeStore),
+		autosubscribeapp.WithChannels(channelsService),
+		autosubscribeapp.WithLogger(logger.Named("app").Named("autosubscribe")),
+	)
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	welcomeMessageService := welcomemessagesapp.NewService(welcomeMessageStore, channelsService)
@@ -1405,6 +1416,7 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		auth.WithAutoSubscribe(autoSubscribeService),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1656,6 +1668,7 @@ func run(logger *zap.Logger) error {
 		Rating:                 ratingService,
 		Verification:           verificationService,
 		BotVerification:        botVerificationService,
+		AutoSubscribe:          autoSubscribeService,
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
@@ -1793,6 +1806,35 @@ func run(logger *zap.Logger) error {
 				return
 			case <-ticker.C:
 				run()
+			}
+		}
+	}()
+	// Daily "sold out gift disappears from the catalog" sweep, timed to
+	// Kyiv midnight -- see stargifts.Service.SweepSoldOut's own doc for the
+	// exact scope. Self-rescheduling on time.Until(next) rather than a
+	// fixed-interval ticker so it fires once at the real boundary instead
+	// of drifting or double-firing across a restart.
+	go func() {
+		loc, err := time.LoadLocation("Europe/Kyiv")
+		if err != nil {
+			logger.Warn("star_gift_sold_out_sweep: Europe/Kyiv zone unavailable, falling back to UTC", zap.Error(err))
+			loc = time.UTC
+		}
+		for {
+			now := time.Now().In(loc)
+			next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+			timer := time.NewTimer(time.Until(next))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				disabled, err := giftsService.SweepSoldOut(ctx)
+				if err != nil && ctx.Err() == nil {
+					logger.Warn("star_gift_sold_out_sweep_failed", zap.Error(err))
+				} else if disabled > 0 {
+					logger.Info("star_gift_sold_out_sweep", zap.Int("disabled", disabled))
+				}
 			}
 		}
 	}()

@@ -782,6 +782,10 @@ func (fakeService) SetStarGiftSortOrder(_ context.Context, req admin.SetStarGift
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) DeleteStarGift(_ context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) StarGiftAnimation(context.Context, int64) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
 }
@@ -1207,4 +1211,16 @@ func (fakeService) AccountRatings(context.Context, domain.AccountRatingFilter) (
 
 func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.AccountRatingEvent, error) {
 	return nil, nil
+}
+
+func (fakeService) ListAutoSubscribeChannels(context.Context) ([]domain.AutoSubscribeChannel, error) {
+	return nil, nil
+}
+
+func (fakeService) AddAutoSubscribeChannel(_ context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) RemoveAutoSubscribeChannel(_ context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

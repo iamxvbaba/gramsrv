@@ -82,6 +82,7 @@ type Service interface {
 	OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error)
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
+	DeleteStarGift(ctx context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
 	GiveGift(ctx context.Context, req admin.GiveGiftRequest) (admin.CommandResult, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
@@ -113,6 +114,9 @@ type Service interface {
 	AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error)
 	AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
 	AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
+	ListAutoSubscribeChannels(ctx context.Context) ([]domain.AutoSubscribeChannel, error)
+	AddAutoSubscribeChannel(ctx context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error)
+	RemoveAutoSubscribeChannel(ctx context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error)
 	ClaimVerification(ctx context.Context, req admin.ClaimVerificationRequest) (admin.CommandResult, error)
 	ApproveVerification(ctx context.Context, req admin.ApproveVerificationRequest) (admin.CommandResult, error)
 	RejectVerification(ctx context.Context, req admin.RejectVerificationRequest) (admin.CommandResult, error)
@@ -260,6 +264,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/official-gifts/import", s.authenticated(s.handleImportOfficialStarGift))
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
+	mux.HandleFunc("POST /v1/gifts/delete", s.authenticated(s.handleDeleteStarGift))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
 	mux.HandleFunc("POST /v1/gifts/give", s.authenticated(s.handleGiveGift))
 	mux.HandleFunc("GET /v1/gifts/{id}/animation", s.authenticated(s.handleStarGiftAnimation))
@@ -296,6 +301,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/account-ratings/adjust", s.authenticated(s.handleAdjustAccountRating))
 	mux.HandleFunc("GET /v1/account-ratings", s.authenticated(s.handleAccountRatings))
 	mux.HandleFunc("GET /v1/account-ratings/{id}", s.authenticated(s.handleAccountRating))
+	mux.HandleFunc("GET /v1/channels/auto-subscribe", s.authenticated(s.handleListAutoSubscribeChannels))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/add", s.authenticated(s.handleAddAutoSubscribeChannel))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/remove", s.authenticated(s.handleRemoveAutoSubscribeChannel))
 	// Official platform verification. Unlike every route above, these carry a
 	// named permission, so a scoped token can be given the review surface and
 	// nothing else. Revocation additionally requires verification.revoke.
@@ -1083,6 +1091,15 @@ func (s *Server) handleSetStarGiftEnabled(w http.ResponseWriter, r *http.Request
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleDeleteStarGift(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteStarGiftRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteStarGift(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleSetStarGiftSortOrder(w http.ResponseWriter, r *http.Request) {
 	var req admin.SetStarGiftSortOrderRequest
 	if !decodeJSON(w, r, &req) {
@@ -1636,6 +1653,42 @@ func (s *Server) handleDeleteCollectibleUsername(w http.ResponseWriter, r *http.
 		return
 	}
 	result, err := s.svc.DeleteCollectibleUsername(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleListAutoSubscribeChannels(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListAutoSubscribeChannels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	channels := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		channels = append(channels, map[string]any{
+			"channel_id": strconv.FormatInt(item.ChannelID, 10),
+			"title":      item.Title,
+			"added_by":   item.AddedBy,
+			"added_at":   item.AddedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
+}
+
+func (s *Server) handleAddAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.AddAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.AddAutoSubscribeChannel(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRemoveAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.RemoveAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RemoveAutoSubscribeChannel(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

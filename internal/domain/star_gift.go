@@ -103,6 +103,11 @@ const (
 	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
 	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
 	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
+	// StarGiftLifecycleRevoked marks an instance an admin removed via
+	// "delete gift everywhere" -- distinct from every user-initiated
+	// terminal state above. Used for a REGULAR (never-upgraded) instance;
+	// an already-unique one still goes through the existing Burned path.
+	StarGiftLifecycleRevoked StarGiftLifecycleStatus = "revoked"
 )
 
 func (s StarGiftLifecycleStatus) Live() bool {
@@ -593,6 +598,32 @@ type StarGiftTransferResult struct {
 	Duplicate bool
 }
 
+// StarGiftDeletionCompensation is one user's Stars refund for a deleted
+// gift, broken down by the transaction kind it came from -- the admin panel
+// shows this breakdown so an operator can see exactly what was paid before
+// confirming.
+type StarGiftDeletionCompensation struct {
+	UserID   int64
+	Purchase int64
+	Transfer int64
+	Upgrade  int64
+}
+
+func (c StarGiftDeletionCompensation) Total() int64 { return c.Purchase + c.Transfer + c.Upgrade }
+
+// StarGiftDeletionResult summarizes what "delete gift everywhere" removed.
+// RevokedInstances counts every previously-active peer_star_gifts row this
+// touched, upgraded (burned) and regular (revoked) combined.
+type StarGiftDeletionResult struct {
+	GiftID            int64
+	RevokedInstances  int
+	CancelledListings int
+	CancelledOffers   int
+	Refunded          bool
+	Compensation      []StarGiftDeletionCompensation
+	TotalCompensation int64
+}
+
 type StarGiftListingRequest struct {
 	ActorUserID int64
 	Ref         SavedStarGiftRef
@@ -980,15 +1011,31 @@ func (w StarGiftCatalogWrite) ValidateLifecycleAuthoring(now int) error {
 // AvailabilityRemains seeds the client's "N left" projection; auction settlement
 // keeps it in step with gifts_left afterwards.
 func (w *StarGiftCatalogWrite) NormalizeLifecycleAuthoring(now int) {
-	if !w.Auction {
+	if w.Auction {
+		w.Limited = true
+		if w.AuctionStartDate <= 0 {
+			w.AuctionStartDate = now
+		}
+		if w.AvailabilityRemains <= 0 {
+			w.AvailabilityRemains = w.AvailabilityTotal
+		}
 		return
 	}
-	w.Limited = true
-	if w.AuctionStartDate <= 0 {
-		w.AuctionStartDate = now
-	}
-	if w.AvailabilityRemains <= 0 {
-		w.AvailabilityRemains = w.AvailabilityTotal
+	// Bug fixed: this early-returned for every non-auction gift, so an
+	// operator-supplied AvailabilityTotal on a plain (non-auction) import --
+	// a limited-edition regular gift, e.g. "only 10,000 available" with no
+	// auction or scheduled drop attached -- silently never became Limited.
+	// ValidateLifecycleAuthoring already allows AvailabilityTotal > 0 here
+	// (it only rejects auction-only fields on a non-auction write), so
+	// nothing upstream was actually gating this on Auction being true; it
+	// just never got wired through. The same hard cap should apply
+	// everywhere a gift has a real supply -- auctions, scheduled drops, and
+	// ordinary gifts alike -- not only auctions.
+	if w.AvailabilityTotal > 0 {
+		w.Limited = true
+		if w.AvailabilityRemains <= 0 {
+			w.AvailabilityRemains = w.AvailabilityTotal
+		}
 	}
 }
 
