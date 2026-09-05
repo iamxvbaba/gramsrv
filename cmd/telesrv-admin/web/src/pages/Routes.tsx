@@ -3,6 +3,7 @@ import { AccountDetailPage } from "./AccountDetailPage";
 import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
 import { AccountRatingsPage } from "./AccountRatingsPage";
 import { AccountsPage } from "./AccountsPage";
+import { AutoSubscribeChannelsPage } from "./AutoSubscribeChannelsPage";
 import { CollectibleUsernameDetailPage } from "./CollectibleUsernameDetailPage";
 import { CollectibleUsernamesPage } from "./CollectibleUsernamesPage";
 import { CollectiblePhonesPage } from "./CollectiblePhonesPage";
@@ -94,6 +95,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/account-ratings") {
     return <AccountRatingsPage navigate={navigate} />;
+  }
+  if (route.path === "/auto-subscribe-channels") {
+    return <AutoSubscribeChannelsPage />;
   }
   if (route.path === "/storage") {
     return <StoragePage />;

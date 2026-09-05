@@ -57,6 +57,7 @@ const (
 	ActionSetStarGiftEnabled      = "gifts.set_enabled"
 	ActionSetStarGiftSortOrder    = "gifts.set_sort_order"
 	ActionGiveGift                = "gifts.give"
+	ActionDeleteStarGift          = "gifts.delete"
 	ActionCreateBot               = "bot.create"
 	ActionCreateBroadcast         = "broadcast.create"
 	ActionSetStickerSetArchived   = "stickers.set_archived"
@@ -85,6 +86,9 @@ const (
 	// Composite account rating.
 	ActionRecomputeAccountRating = "rating.recompute"
 	ActionAdjustAccountRating    = "rating.adjust"
+	// Admin panel auto-subscribe channel list.
+	ActionAddAutoSubscribeChannel    = "channels.auto_subscribe.add"
+	ActionRemoveAutoSubscribeChannel = "channels.auto_subscribe.remove"
 	// Official platform verification review. Claim/approve/reject act on one
 	// application; revoke acts on a target, because clearing a badge is not a
 	// decision on the application that granted it.
@@ -308,6 +312,9 @@ type GiftsService interface {
 	CreateCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error)
 	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
 	CollectibleAnimationJSON(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
+	// DeleteEverywhere backs the admin panel's "delete gift" action -- see
+	// store.StarGiftLifecycleStore.DeleteStarGiftEverywhere's own doc.
+	DeleteEverywhere(ctx context.Context, giftID int64, refund, dryRun bool, date int) (domain.StarGiftDeletionResult, error)
 }
 
 type OfficialGiftsSource interface {
@@ -422,6 +429,14 @@ type AccountRatingService interface {
 	Events(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
 }
 
+// AutoSubscribeService backs the admin panel's auto-subscribe channel list --
+// see internal/app/autosubscribe's own package doc for the full semantics.
+type AutoSubscribeService interface {
+	List(ctx context.Context) ([]domain.AutoSubscribeChannel, error)
+	Add(ctx context.Context, channelID int64, addedBy string) (added bool, joined int, err error)
+	Remove(ctx context.Context, channelID int64) (removed bool, err error)
+}
+
 // GiftGranter delivers a catalog gift to a recipient peer on behalf of a sender
 // without charging Stars. Implemented by the RPC router, it reuses the standard
 // gift-delivery path (service message for users, saved-gift + admin log for
@@ -463,6 +478,7 @@ type Dependencies struct {
 	// BotVerification is the third-party mechanism, wired separately from
 	// Verification: the two never read each other's state.
 	BotVerification BotVerificationService
+	AutoSubscribe   AutoSubscribeService
 	Now             func() time.Time
 }
 
@@ -497,6 +513,7 @@ type Service struct {
 	rating                 AccountRatingService
 	verification           VerificationService
 	botVerification        BotVerificationService
+	autoSubscribe          AutoSubscribeService
 	now                    func() time.Time
 }
 
@@ -595,6 +612,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.BotVerification != nil {
 		s.botVerification = deps.BotVerification
+	}
+	if deps.AutoSubscribe != nil {
+		s.autoSubscribe = deps.AutoSubscribe
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -804,6 +824,16 @@ type ImportOfficialStarGiftRequest struct {
 	UpgradeStars       int64  `json:"upgrade_stars,omitempty"`
 	SupplyTotal        int    `json:"supply_total,omitempty"`
 	SlugPrefix         string `json:"slug_prefix,omitempty"`
+	// AvailabilityTotal caps how many REGULAR (not-yet-upgraded) copies of
+	// this gift are purchasable -- distinct from SupplyTotal above, which
+	// only bounds the collectible/upgrade pool. Previously only auctions
+	// could ever get a real regular-gift cap here (see
+	// StarGiftCatalogWrite.NormalizeLifecycleAuthoring's own fix); this is
+	// the same "everywhere gifts exist" cap applied to an ordinary
+	// (non-auction) official import. Ignored for an auction import, which
+	// already derives its own supply from the snapshot (see auctionTotal
+	// below).
+	AvailabilityTotal int `json:"availability_total,omitempty"`
 	// LockedUntilDate schedules the local release of an imported official gift.
 	// Zero keeps whatever release time the snapshot carries. Validated in
 	// ImportOfficialStarGift, which requires a future timestamp.
@@ -822,6 +852,21 @@ type SetStarGiftSortOrderRequest struct {
 	CommandMeta
 	GiftID    int64 `json:"gift_id"`
 	SortOrder int   `json:"sort_order"`
+}
+
+// DeleteStarGiftRequest removes a catalog gift everywhere it's visible to
+// users -- the catalog entry, every current owner's copy, every live
+// listing/pending offer -- while keeping the official gift snapshot (so it
+// can be re-imported later) and every audit/ledger table untouched. See
+// domain.StarGiftDeletionResult and the postgres store's own doc for the
+// exact mechanics. Refund, when true, credits Stars back through the same
+// dry-run preview this request always computes (see Details in the
+// CommandResult): purchase + transfer + upgrade, one sum per user, read
+// from the actual command tables so it's scoped to only this gift.
+type DeleteStarGiftRequest struct {
+	CommandMeta
+	GiftID int64 `json:"gift_id,string"`
+	Refund bool  `json:"refund"`
 }
 
 // GiveGiftRequest grants a catalog gift to a recipient (user or channel) from
@@ -2947,6 +2992,81 @@ func (s *Service) AdjustAccountRating(ctx context.Context, req AdjustAccountRati
 	})
 }
 
+// AddAutoSubscribeChannelRequest adds a channel/supergroup to the admin
+// panel's auto-subscribe list -- see autosubscribe.Service.Add for the full
+// "join everyone right now, join every future signup" semantics.
+type AddAutoSubscribeChannelRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id,string"`
+}
+
+// RemoveAutoSubscribeChannelRequest takes a channel off the list. It never
+// removes anyone already joined -- see autosubscribe.Service.Remove.
+type RemoveAutoSubscribeChannelRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id,string"`
+}
+
+func (s *Service) ListAutoSubscribeChannels(ctx context.Context) ([]domain.AutoSubscribeChannel, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return nil, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	return s.autoSubscribe.List(ctx)
+}
+
+func (s *Service) AddAutoSubscribeChannel(ctx context.Context, req AddAutoSubscribeChannelRequest) (CommandResult, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return CommandResult{}, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	if req.ChannelID <= 0 {
+		return CommandResult{}, domain.ErrAutoSubscribeChannelInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionAddAutoSubscribeChannel, 0, domain.Peer{}, req,
+		func() (CommandResult, error) {
+			details := map[string]any{"channel_id": strconv.FormatInt(req.ChannelID, 10)}
+			if req.DryRun {
+				return CommandResult{Message: "dry-run completed", Details: details}, nil
+			}
+			added, joined, err := s.autoSubscribe.Add(ctx, req.ChannelID, req.Actor)
+			if err != nil {
+				return CommandResult{Details: details}, err
+			}
+			details["added"] = added
+			details["joined_existing_users"] = joined
+			message := "channel added to auto-subscribe list"
+			if !added {
+				message = "channel was already on the auto-subscribe list"
+			}
+			return CommandResult{Message: message, Details: details}, nil
+		})
+}
+
+func (s *Service) RemoveAutoSubscribeChannel(ctx context.Context, req RemoveAutoSubscribeChannelRequest) (CommandResult, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return CommandResult{}, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	if req.ChannelID <= 0 {
+		return CommandResult{}, domain.ErrAutoSubscribeChannelInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRemoveAutoSubscribeChannel, 0, domain.Peer{}, req,
+		func() (CommandResult, error) {
+			details := map[string]any{"channel_id": strconv.FormatInt(req.ChannelID, 10)}
+			if req.DryRun {
+				return CommandResult{Message: "dry-run completed", Details: details}, nil
+			}
+			removed, err := s.autoSubscribe.Remove(ctx, req.ChannelID)
+			if err != nil {
+				return CommandResult{Details: details}, err
+			}
+			details["removed"] = removed
+			message := "channel removed from auto-subscribe list"
+			if !removed {
+				message = "channel was not on the auto-subscribe list"
+			}
+			return CommandResult{Message: message, Details: details}, nil
+		})
+}
+
 // collectibleOwnerPeer resolves the optional owner of a collectible asset. At
 // most one identifier may be set; neither yields the zero peer, which the
 // lifecycle reads as "the operator vault".
@@ -3697,12 +3817,20 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	// the supply check then requires availability_total > 0. Leaving both zero made
 	// every official auction import fail on the INSERT. Carry the snapshot's supply
 	// for that case only, and let the shared normalizer derive the rest.
+	//
+	// A plain (non-auction) import can carry the same real cap now too --
+	// req.AvailabilityTotal (see that field's own doc comment on why it's
+	// separate from SupplyTotal, the collectible pool size). Auction imports
+	// ignore it; their supply comes from the snapshot/SupplyTotal fallback
+	// above, same as before this fix.
 	auctionLimited, auctionTotal := false, 0
 	if bundle.Gift.Auction {
 		auctionLimited, auctionTotal = true, bundle.Gift.AvailabilityTotal
 		if auctionTotal <= 0 {
 			auctionTotal = req.SupplyTotal
 		}
+	} else if req.AvailabilityTotal > 0 {
+		auctionLimited, auctionTotal = true, req.AvailabilityTotal
 	}
 
 	baseAnimation, err := s.gifts.PrepareOfficialAnimation(bundle.BaseDocument.FileName, bundle.BaseDocument.Data)
@@ -3988,6 +4116,49 @@ func (s *Service) SetStarGiftSortOrder(ctx context.Context, req SetStarGiftSortO
 		changed, err := s.gifts.SetCatalogSortOrder(ctx, req.GiftID, req.SortOrder)
 		details["changed"] = changed
 		return CommandResult{Message: "star gift order updated", Details: details}, err
+	})
+}
+
+func (s *Service) DeleteStarGift(ctx context.Context, req DeleteStarGiftRequest) (CommandResult, error) {
+	if s == nil || s.gifts == nil || req.GiftID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid star gift and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteStarGift, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		// DeleteEverywhere itself honors DryRun (it runs every real query
+		// inside a transaction it then rolls back), so the preview below
+		// always reflects the actual counts and compensation figures a real
+		// run would produce -- never a canned "validated" message.
+		result, err := s.gifts.DeleteEverywhere(ctx, req.GiftID, req.Refund, req.DryRun, int(s.now().Unix()))
+		if err != nil {
+			return CommandResult{}, err
+		}
+		compensation := make([]map[string]any, 0, len(result.Compensation))
+		for _, c := range result.Compensation {
+			if c.Total() <= 0 {
+				continue
+			}
+			compensation = append(compensation, map[string]any{
+				"user_id":  strconv.FormatInt(c.UserID, 10),
+				"purchase": strconv.FormatInt(c.Purchase, 10),
+				"transfer": strconv.FormatInt(c.Transfer, 10),
+				"upgrade":  strconv.FormatInt(c.Upgrade, 10),
+				"total":    strconv.FormatInt(c.Total(), 10),
+			})
+		}
+		details := map[string]any{
+			"gift_id":            strconv.FormatInt(req.GiftID, 10),
+			"revoked_instances":  result.RevokedInstances,
+			"cancelled_listings": result.CancelledListings,
+			"cancelled_offers":   result.CancelledOffers,
+			"refunded":           result.Refunded,
+			"total_compensation": strconv.FormatInt(result.TotalCompensation, 10),
+			"compensation":       compensation,
+		}
+		message := "star gift deleted everywhere"
+		if req.DryRun {
+			message = "star gift deletion validated"
+		}
+		return CommandResult{Message: message, Details: details}, nil
 	})
 }
 

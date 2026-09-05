@@ -5,6 +5,7 @@ import type {
   AccountRatingListResponse,
   AdminLoginResult,
   AdminSession,
+  AutoSubscribeChannelListResponse,
   BotDetail,
   BotListResponse,
   BroadcastListResponse,
@@ -174,6 +175,7 @@ export const api = {
     request<CollectiblePhoneDetail>(`/api/collectible-phones/${encodeURIComponent(id)}`),
   accountRatings: (params: URLSearchParams) =>
     request<AccountRatingListResponse>(`/api/account-ratings?${params.toString()}`),
+  autoSubscribeChannels: () => request<AutoSubscribeChannelListResponse>("/api/auto-subscribe-channels"),
   accountRating: (userID: string) =>
     request<AccountRatingDetail>(`/api/account-ratings/${encodeURIComponent(userID)}`),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),

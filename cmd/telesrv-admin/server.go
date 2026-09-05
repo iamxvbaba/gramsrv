@@ -90,6 +90,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/collectible-phones/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleCollectiblePhoneDetailAPI)))
 	mux.Handle("GET /api/account-ratings", s.requireAuthAPI(http.HandlerFunc(s.handleAccountRatingsAPI)))
 	mux.Handle("GET /api/account-ratings/{user_id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountRatingDetailAPI)))
+	mux.Handle("GET /api/auto-subscribe-channels", s.requireAuthAPI(http.HandlerFunc(s.handleAutoSubscribeChannelsAPI)))
 	mux.Handle("GET /api/storage/stats", s.requireAuthAPI(http.HandlerFunc(s.handleStorageStatsAPI)))
 	mux.Handle("GET /api/moderation/cases", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCasesAPI)))
 	mux.Handle("GET /api/moderation/cases/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleModerationCaseAPI)))
@@ -140,6 +141,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/import-official-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportOfficialStarGiftAPI)))
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
+	mux.Handle("POST /api/actions/delete-gift", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteStarGiftAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
 	mux.Handle("POST /api/actions/give-gift", s.requireAuthAPI(http.HandlerFunc(s.handleGiveGiftAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
@@ -153,6 +155,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/delete-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/recompute-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
 	mux.Handle("POST /api/actions/adjust-account-rating", s.requireAuthAPI(http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
+	mux.Handle("POST /api/actions/add-auto-subscribe-channel", s.requireAuthAPI(http.HandlerFunc(s.handleAddAutoSubscribeChannelAPI)))
+	mux.Handle("POST /api/actions/remove-auto-subscribe-channel", s.requireAuthAPI(http.HandlerFunc(s.handleRemoveAutoSubscribeChannelAPI)))
 	// Official platform verification. Every route needs verification.review;
 	// clearing an existing badge needs verification.revoke on top of it.
 	mux.Handle("GET /api/verification/applications", s.verificationRead(s.handleVerificationApplicationsAPI))
@@ -2136,6 +2140,12 @@ type importOfficialStarGiftAPIRequest struct {
 	// Unix seconds at which the imported gift becomes purchasable. Zero keeps the
 	// snapshot's own release time.
 	LockedUntilDate int `json:"locked_until_date"`
+	// Regular (not-yet-upgraded) copy cap -- see
+	// admin.ImportOfficialStarGiftRequest.AvailabilityTotal's own doc. This
+	// field was missing here entirely, so the supply cap silently never
+	// reached the backend for an official-snapshot import even once the UI
+	// started sending it.
+	AvailabilityTotal int `json:"availability_total"`
 }
 
 func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2153,7 +2163,8 @@ func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.
 		Stars: body.Stars, ConvertStars: body.ConvertStars, Enabled: body.Enabled, SortOrder: body.SortOrder,
 		IncludeCollectible: body.IncludeCollectible, UpgradeStars: body.UpgradeStars,
 		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
-		LockedUntilDate: body.LockedUntilDate,
+		LockedUntilDate:   body.LockedUntilDate,
+		AvailabilityTotal: body.AvailabilityTotal,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
 	writeCommandResultAPI(w, result, err)
@@ -2259,6 +2270,27 @@ func (s *server) handleSetStarGiftEnabledAPI(w http.ResponseWriter, r *http.Requ
 		GiftID:      body.GiftID, Enabled: body.Enabled,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-enabled", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteStarGiftAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	GiftID    flexInt64 `json:"gift_id"`
+	Refund    bool      `json:"refund"`
+}
+
+func (s *server) handleDeleteStarGiftAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteStarGiftAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteStarGiftRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-gift"),
+		GiftID:      body.GiftID.Int64(), Refund: body.Refund,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/delete", req)
 	writeCommandResultAPI(w, result, err)
 }
 
@@ -2635,6 +2667,50 @@ func (s *server) handleAdjustAccountRatingAPI(w http.ResponseWriter, r *http.Req
 		Amount:      body.Amount.Int64(),
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/account-ratings/adjust", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+func (s *server) handleAutoSubscribeChannelsAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSON(w, r, "/v1/channels/auto-subscribe", 1<<20)
+}
+
+type addAutoSubscribeChannelAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	ChannelID flexInt64 `json:"channel_id"`
+}
+
+func (s *server) handleAddAutoSubscribeChannelAPI(w http.ResponseWriter, r *http.Request) {
+	var body addAutoSubscribeChannelAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.AddAutoSubscribeChannelRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "add-auto-subscribe-channel"),
+		ChannelID:   body.ChannelID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/auto-subscribe/add", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type removeAutoSubscribeChannelAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	ChannelID flexInt64 `json:"channel_id"`
+}
+
+func (s *server) handleRemoveAutoSubscribeChannelAPI(w http.ResponseWriter, r *http.Request) {
+	var body removeAutoSubscribeChannelAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.RemoveAutoSubscribeChannelRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-auto-subscribe-channel"),
+		ChannelID:   body.ChannelID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/auto-subscribe/remove", req)
 	writeCommandResultAPI(w, result, err)
 }
 

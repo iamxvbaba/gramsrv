@@ -1,4 +1,4 @@
-import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -102,6 +102,14 @@ export function GiftsPage() {
   const [upgradeStars, setUpgradeStars] = useState("0");
   const [supplyTotal, setSupplyTotal] = useState("0");
   const [slugPrefix, setSlugPrefix] = useState("");
+  // Regular (not-yet-upgraded) copy cap -- distinct from supplyTotal above,
+  // which only bounds the collectible/upgrade pool. Applies to both import
+  // sources and to every non-auction lifecycle mode (the auction mode has
+  // its own supply field). 0 means unlimited.
+  const [availabilityLimit, setAvailabilityLimit] = useState("0");
+  // "Delete gift" refund toggle -- off by default (an explicit, deliberate
+  // opt-in, not a default that could silently pay out Stars).
+  const [deleteRefund, setDeleteRefund] = useState(false);
 	const [giftID, setGiftID] = useState("0");
   const [title, setTitle] = useState("");
   const [stars, setStars] = useState("50");
@@ -201,12 +209,15 @@ export function GiftsPage() {
         auction_start_date: startDate
       };
     }
+    // Auction already carries its own supply above; every other mode
+    // (regular, drop) can additionally cap the plain-copy count.
+    const limit = Number(availabilityLimit);
     if (lifecycleMode === "drop") {
       const unlock = toUnixSeconds(unlockAt);
       if (unlock <= now) throw new Error(t("gifts.lifecycle.unlockRequired"));
-      return { locked_until_date: unlock };
+      return { locked_until_date: unlock, ...(limit > 0 ? { availability_total: limit } : {}) };
     }
-    return {};
+    return limit > 0 ? { availability_total: limit } : {};
   }
 
   function uploadForm(confirm: boolean, commandID = "") {
@@ -246,7 +257,8 @@ export function GiftsPage() {
 		stars, convert_stars: convertStars, enabled, sort_order: Number(sortOrder),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
       supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
-      locked_until_date: lockedUntil
+      locked_until_date: lockedUntil,
+      ...(Number(availabilityLimit) > 0 ? { availability_total: Number(availabilityLimit) } : {})
     };
   }
 
@@ -259,6 +271,12 @@ export function GiftsPage() {
 		setUpgradeStars(gift.upgrade_stars);
 		setSupplyTotal(String(gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)));
     setSlugPrefix(`official-${gift.source_gift_id}`);
+    // Deliberately NOT resetting availabilityLimit here: a card click
+    // fires this on every selection, including a re-click of the SAME
+    // already-selected gift (e.g. to double-check details before
+    // submitting) -- resetting on every call silently wiped out whatever
+    // the operator had just typed, with the live preview badge the only
+    // (easy to miss) sign it had reverted to unlimited.
     setPreview(null);
   }
 
@@ -289,6 +307,9 @@ export function GiftsPage() {
 	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
     setEnabled(true); setReason(""); setFile(null); setPreview(null); setImportError("");
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
+    // Reset here (a fresh import, opened once), not on every gift-card
+    // click -- see chooseOfficial's own comment on why.
+    setAvailabilityLimit("0");
   }
 
   function startRevision(gift: StarGiftRow) {
@@ -296,6 +317,10 @@ export function GiftsPage() {
     setConvertStars(String(gift.ConvertStars)); setSortOrder(String(gift.SortOrder)); setEnabled(gift.Enabled);
     setReason(""); setFile(null); setPreview(null); setImportError("");
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
+    // Pre-fill with whatever limit this gift already carries, so replacing
+    // a revision shows (and lets the operator adjust) the current cap
+    // instead of silently reverting it to unlimited.
+    setAvailabilityLimit(gift.Limited ? String(gift.AvailabilityTotal) : "0");
   }
 
   return (
@@ -314,11 +339,16 @@ export function GiftsPage() {
         <div className="toolbar">
           <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("gifts.searchPlaceholder")} /></label>
           <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
+          <label className="gift-switch" title={t("gifts.deleteRefundHint")}>
+            <input type="checkbox" checked={deleteRefund} onChange={(e) => setDeleteRefund(e.target.checked)} />
+            <span className="gift-switch-track" aria-hidden="true"><span /></span>
+            <span>{t("gifts.deleteRefundToggle")}</span>
+          </label>
         </div>
       </QueryPanel>
       <div className="table-wrap gift-table-wrap">
         <table className="data-table gift-table">
-          <thead><tr><th>{t("gifts.animation")}</th><th>{t("gifts.idRevision")}</th><th>{t("gifts.title")}</th><th>{t("gifts.price")}</th><th>{t("gifts.source")}</th><th>{t("gifts.received")}</th><th>{t("common.status")}</th><th>{t("common.updatedAt")}</th><th>{t("common.actions")}</th></tr></thead>
+          <thead><tr><th>{t("gifts.animation")}</th><th>{t("gifts.idRevision")}</th><th>{t("gifts.title")}</th><th>{t("gifts.price")}</th><th>{t("gifts.source")}</th><th>{t("gifts.received")}</th><th>{t("gifts.supply")}</th><th>{t("gifts.issued")}</th><th>{t("common.status")}</th><th>{t("common.updatedAt")}</th><th>{t("common.actions")}</th></tr></thead>
           <tbody>
             {visibleGifts.map((gift) => (
               <tr className={gift.Enabled ? "" : "gift-row-disabled"} key={gift.GiftID}>
@@ -328,12 +358,22 @@ export function GiftsPage() {
                 <td><strong className="gift-table-price">⭐ {gift.Stars}</strong><span className="gift-convert-price">→ {gift.ConvertStars}</span></td>
                 <td><Badge>{gift.SourceFormat}</Badge><span className="gift-source-size">{formatBytes(gift.AnimationSize)}</span></td>
                 <td>{gift.ReceivedCount}</td>
+                <td>{gift.Limited
+                  ? <Badge tone={gift.SoldOut || gift.AvailabilityRemains <= 0 ? "danger" : "neutral"}>
+                      {t("gifts.soldOfTotal", { sold: gift.AvailabilityTotal - gift.AvailabilityRemains, total: gift.AvailabilityTotal })}
+                    </Badge>
+                  : <span className="gift-source-size">{t("gifts.unlimited")}</span>}</td>
+                <td>{gift.CollectibleSupplyTotal != null
+                  ? <Badge tone={gift.CollectibleIssued != null && gift.CollectibleIssued >= gift.CollectibleSupplyTotal ? "danger" : "neutral"}>
+                      {t("gifts.soldOfTotal", { sold: gift.CollectibleIssued ?? 0, total: gift.CollectibleSupplyTotal })}
+                    </Badge>
+                  : <span className="gift-source-size">—</span>}</td>
                 <td><Badge tone={gift.Enabled ? "good" : "neutral"}>{gift.Enabled ? t("common.enabled") : t("common.disabled")}</Badge></td>
                 <td>{formatDate(gift.UpdatedAt)}</td>
-                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
+                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /><ActionButton compact tone="danger" icon={<Trash2 size={13} />} label={t("gifts.delete")} path="/api/actions/delete-gift" payload={() => ({ gift_id: gift.GiftID, refund: deleteRefund })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
-            {visibleGifts.length === 0 && <EmptyRow colSpan={9} />}
+            {visibleGifts.length === 0 && <EmptyRow colSpan={11} />}
           </tbody>
         </table>
       </div>
@@ -417,6 +457,19 @@ export function GiftsPage() {
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
               </div>
+              <section className="gift-lifecycle gift-availability-section">
+                <span className="gift-field-label">{t("gifts.availabilityLimit")}</span>
+                <div className="gift-import-note"><span>{t("gifts.availabilityLimitHint")}</span></div>
+                <div className="gift-fields-grid">
+                  <label><span>{t("gifts.availabilityLimit")}</span><input type="number" min="0" value={availabilityLimit} onChange={(e) => { setAvailabilityLimit(e.target.value); setPreview(null); }} /></label>
+                </div>
+                <div className="gift-import-note">
+                  <span>{t("gifts.availabilityLimitPreviewLabel")}: </span>
+                  {Number(availabilityLimit) > 0
+                    ? <Badge tone="neutral">{t("gifts.soldOfTotal", { sold: 0, total: Number(availabilityLimit) })}</Badge>
+                    : <Badge tone="neutral">{t("gifts.unlimited")}</Badge>}
+                </div>
+              </section>
               {importSource === "file" ? <section className="gift-lifecycle">
                 <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
                 <div className="gift-source-tabs" role="group" aria-label={t("gifts.lifecycle.label")}>

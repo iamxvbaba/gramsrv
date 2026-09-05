@@ -280,10 +280,25 @@ WHERE NOT $3 OR star_gift_user_purchases.purchased_count<$4 RETURNING purchased_
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, err
 	}
 	if gift.Limited {
-		if tag, err := tx.Exec(ctx, `UPDATE star_gift_catalog SET availability_remains=availability_remains-1,
+		var remains int
+		err := tx.QueryRow(ctx, `UPDATE star_gift_catalog SET availability_remains=availability_remains-1,
 first_sale_date=CASE WHEN first_sale_date=0 THEN $2 ELSE first_sale_date END,last_sale_date=$2,updated_at=now()
-WHERE gift_id=$1 AND availability_remains>0`, gift.ID, req.Date); err != nil || tag.RowsAffected() != 1 {
+WHERE gift_id=$1 AND availability_remains>0 RETURNING availability_remains`, gift.ID, req.Date).Scan(&remains)
+		if err != nil {
 			return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftUnavailable
+		}
+		// The "Sold Out" ribbon a real client renders comes from the
+		// sold_out TL flag, not from availability_remains reaching zero on
+		// its own (see tgStarGift's own comment on why) -- flip it here,
+		// at the exact purchase that empties the count, so the badge
+		// appears immediately rather than waiting for the daily sweep that
+		// only removes the gift from the catalog. Auctions are excluded:
+		// they have their own end-of-rounds closing lifecycle.
+		if remains <= 0 && !gift.Auction {
+			if _, err := tx.Exec(ctx, `UPDATE star_gift_catalog_revisions r SET sold_out=true
+FROM star_gift_catalog c WHERE r.id = c.active_revision_id AND c.gift_id = $1 AND NOT r.sold_out`, gift.ID); err != nil {
+				return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, err
+			}
 		}
 	} else if _, err := tx.Exec(ctx, `UPDATE star_gift_catalog SET first_sale_date=CASE WHEN first_sale_date=0 THEN $2 ELSE first_sale_date END,
 last_sale_date=$2,updated_at=now() WHERE gift_id=$1`, gift.ID, req.Date); err != nil {
