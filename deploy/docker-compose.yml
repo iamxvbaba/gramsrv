@@ -28,9 +28,9 @@ services:
       - "-c"
       - "track_io_timing=on"
     environment:
-      POSTGRES_DB: telesrv
+      POSTGRES_DB: telesrv_main
       POSTGRES_USER: telesrv
-      POSTGRES_PASSWORD: telesrv
+      POSTGRES_PASSWORD: ${TELESRV_POSTGRES_PASSWORD:?set TELESRV_POSTGRES_PASSWORD in /opt/gramsrv/.env}
       TZ: UTC
     ports:
       - "5432:5432"
@@ -38,7 +38,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U telesrv -d telesrv"]
+      test: ["CMD-SHELL", "pg_isready -U telesrv -d telesrv_main"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -47,13 +47,18 @@ services:
   redis:
     image: redis:7-alpine
     container_name: telesrv-redis
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${TELESRV_REDIS_PASSWORD:?set TELESRV_REDIS_PASSWORD in /opt/gramsrv/.env}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
     ports:
       - "6399:6379"   # 宿主 6379 常被其他项目占用，telesrv 对外用 6399（容器内仍 6379）
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -qx PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
