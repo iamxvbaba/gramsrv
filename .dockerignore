@@ -31,10 +31,16 @@ secrets
 *.pem
 *.key
 
-# Runtime data is excluded except for the tracked language-pack seed.
+# Runtime data is excluded except for the tracked language-pack seed and
+# whatever sticker/reaction seed the deploy host has fetched locally into
+# data/sticker-seed (see cmd/stickerfetch, cmd/reactionfetch) -- gitignored,
+# but the image build still needs to see it to bake it in (Dockerfile's
+# "server" stage COPYs it to /app/data/sticker-seed).
 data/*
 !data/langpack/
 !data/langpack/**
+!data/sticker-seed/
+!data/sticker-seed/**
 
 # Deployment-local state and overrides.
 deploy/docker/.env

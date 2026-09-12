@@ -74,6 +74,7 @@ RUN apk add --no-cache ffmpeg openssl \
       /var/lib/telesrv/livestream
 COPY --from=build-server /out/telesrv /usr/local/bin/telesrv
 COPY --chown=telesrv:telesrv data/langpack/ /usr/share/telesrv/langpack/
+COPY --chown=telesrv:telesrv data/sticker-seed/ /app/data/sticker-seed/
 USER 10001:10001
 EXPOSE 2398 2400 2401 2599 12399/udp 12400/udp
 CMD ["telesrv"]

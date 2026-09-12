@@ -44,6 +44,26 @@ func sessionPath() string {
 	return "/tmp/appearance.session"
 }
 
+// defaultSetDirLabel maps a "system" spec to the DefaultSet_<label> directory
+// name systemKeyForDefaultSet (internal/app/files/seed.go) expects. Both
+// status-related specs collapse onto the same label: Telegram serves the same
+// underlying set for chats and channels, and seed.go maps both back to the
+// one StickerSetSystemKeyEmojiDefaultStatuses key.
+func defaultSetDirLabel(spec string) (string, bool) {
+	switch spec {
+	case "emoji_default_statuses", "emoji_channel_default_statuses":
+		return "EmojiDefaultStatuses", true
+	case "emoji_default_topic_icons":
+		return "EmojiDefaultTopicIcons", true
+	case "premium_gifts":
+		return "PremiumGifts", true
+	case "ton_gifts":
+		return "TonGifts", true
+	default:
+		return "", false
+	}
+}
+
 func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 	switch {
 	case strings.HasPrefix(spec, "short:"):
@@ -214,7 +234,17 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 	if setName == "" {
 		setName = label
 	}
+	// The 5 special (non "short:") specs are telesrv's own "system" sets --
+	// internal/app/files/seed.go's seedStickerSets only recognizes them by
+	// this exact telegram_default_stickers_export/DefaultSet_<Label> layout
+	// (see systemKeyForDefaultSet), not by the set's own short_name (which
+	// for these is a generic Telegram-side name like "StatusPack" shared by
+	// two different specs). Everything else (short:<name>) keeps going into
+	// a flat <shortname>_<id> directory under outRoot, same as before.
 	setDir := filepath.Join(outRoot, fmt.Sprintf("%s_%d", setName, full.Set.ID))
+	if defaultLabel, ok := defaultSetDirLabel(spec); ok {
+		setDir = filepath.Join(outRoot, "telegram_default_stickers_export", "DefaultSet_"+defaultLabel)
+	}
 	stickersDir := filepath.Join(setDir, "stickers")
 	if err := os.MkdirAll(stickersDir, 0o755); err != nil {
 		return err
