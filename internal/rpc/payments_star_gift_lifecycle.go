@@ -527,7 +527,19 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 		}
 		if found {
 			hash := int64(preview.Revision)
-			out.SetAttributesHash(hash)
+			// attributes_hash and attributes share one TL flag bit (both are
+			// only ever conditional together -- see
+			// PaymentsResaleStarGifts.SetAttributes/SetAttributesHash, both of
+			// which set flags bit 1): the wire format cannot express "hash
+			// present, attributes absent". Calling SetAttributesHash
+			// unconditionally here (outside the hash-mismatch branch) set that
+			// bit even on a cache-hit response, leaving Attributes nil while
+			// the flag claimed it was present -- the encoder then rejected the
+			// whole response ("malformed canonical value: explicit flag has
+			// nil interface field attributes"), which looked like the
+			// marketplace silently refusing to load past whatever page first
+			// hit a hash match. Only set the hash when actually sending
+			// attributes alongside it.
 			if attributesHash != hash {
 				attributes := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
 				for _, attribute := range preview.Models {
@@ -539,6 +551,7 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 				for _, attribute := range preview.Backdrops {
 					attributes = append(attributes, tgStarGiftAttribute(attribute))
 				}
+				out.SetAttributesHash(hash)
 				out.SetAttributes(attributes)
 			}
 		}
