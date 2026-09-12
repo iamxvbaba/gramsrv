@@ -1385,15 +1385,19 @@ func savedStarGiftByUniqueID(ctx context.Context, db sqlcgen.DBTX, uniqueID int6
 	return saved, err == nil, err
 }
 
-// updateStarGiftResaleProjection refreshes the listing count for gift_id.
-// It deliberately leaves resell_min_stars untouched: that column no longer
-// drives SetStarGiftListing's floor check (see domain.MinStarGiftResaleStars
-// and its own doc comment on why a market-derived floor only ratchets
-// upward), so it stays whatever the catalog/official snapshot set it to --
-// informational only, same as real Telegram's own per-gift value.
+// updateStarGiftResaleProjection refreshes the listing count and the
+// displayed "lowest listed price" for gift_id. resell_min_stars here is
+// purely informational -- it's what the client shows as the current market
+// floor -- and is kept live on purpose. It stopped driving any enforcement
+// after domain.MinStarGiftResaleStars (see its doc comment): SetStarGiftListing
+// checks that flat threshold directly now, so recomputing this column back
+// to the live MIN() can no longer reproduce the old ratchet-only-upward
+// lockout -- a seller can still list at 125 even while this column displays
+// a much higher number from other listings.
 func updateStarGiftResaleProjection(ctx context.Context, tx pgx.Tx, giftID int64) error {
 	_, err := tx.Exec(ctx, `UPDATE star_gift_catalog c SET
  availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id),
+ resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR'),0),
  updated_at=now() WHERE c.gift_id=$1`, giftID)
 	return err
 }
