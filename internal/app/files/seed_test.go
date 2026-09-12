@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/freeze"
 	"telesrv/internal/store"
 )
 
@@ -1240,6 +1241,9 @@ func blobKeyDoc(id int64) string {
 	return "doc:" + itoa(id)
 }
 
+func freezeSeedDocumentID() int64 { return freeze.DocumentID }
+func freezeSeedSetID() int64      { return freeze.SetID }
+
 func itoa(v int64) string {
 	if v == 0 {
 		return "0"
@@ -1260,4 +1264,53 @@ func itoa(v int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+func TestSeedFreezeEmojiMarkDocumentImportsFromBinary(t *testing.T) {
+	media := newFakeMediaStore()
+	blobs, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	svc := NewService(media, blobs, 2)
+
+	stats, err := svc.SeedFreezeEmoji(context.Background())
+	if err != nil {
+		t.Fatalf("seed freeze emoji: %v", err)
+	}
+	if !stats.Imported || stats.Skipped {
+		t.Fatalf("first import stats = %+v, want imported", stats)
+	}
+	// Idempotent second run must skip without errors.
+	if stats, err := svc.SeedFreezeEmoji(context.Background()); err != nil || !stats.Skipped {
+		t.Fatalf("second import stats = %+v err=%v, want skipped", stats, err)
+	}
+
+	doc, ok, err := media.GetDocument(context.Background(), freezeSeedDocumentID())
+	if err != nil || !ok {
+		t.Fatalf("freeze document ok=%v err=%v (accountFrozenMarkIcon must resolve)", ok, err)
+	}
+	isEmoji := false
+	for _, attr := range doc.Attributes {
+		if attr.Kind == domain.DocAttrCustomEmoji {
+			isEmoji = true
+		}
+	}
+	if !isEmoji {
+		t.Fatalf("freeze document lacks DocumentAttributeCustomEmoji, icon won't render")
+	}
+	blob, ok, err := media.GetFileBlob(context.Background(), "doc:"+itoa(doc.ID))
+	if err != nil || !ok {
+		t.Fatalf("freeze document blob ok=%v err=%v", ok, err)
+	}
+	if blob.MimeType != "application/x-tgsticker" {
+		t.Fatalf("freeze document mime = %q, want application/x-tgsticker", blob.MimeType)
+	}
+	set, ok, err := media.GetStickerSetByID(context.Background(), freezeSeedSetID())
+	if err != nil || !ok {
+		t.Fatalf("freeze set ok=%v err=%v", ok, err)
+	}
+	if set.Kind != domain.StickerSetKindEmoji || !set.Emojis {
+		t.Fatalf("freeze set kind = %v emojis=%v, want emoji set", set.Kind, set.Emojis)
+	}
 }

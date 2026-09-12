@@ -79,6 +79,7 @@ import (
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
+	freezeseed "telesrv/internal/seed/freeze"
 	"telesrv/internal/sfu"
 	storepkg "telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -1003,6 +1004,14 @@ func run(logger *zap.Logger) error {
 			zap.Int("wallpapers", stats.Wallpapers),
 			zap.Int("documents", stats.Documents),
 			zap.Int("blobs", stats.Blobs),
+		)
+	}
+	if stats, err := filesService.SeedFreezeEmoji(ctx); err != nil {
+		return fmt.Errorf("seed freeze emoji: %w", err)
+	} else if stats.Imported {
+		logger.Info("内置 freeze 表情种子导入完成",
+			zap.Int64("document_id", freezeseed.DocumentID),
+			zap.Int64("set_id", freezeseed.SetID),
 		)
 	}
 	if stats, err := filesService.WarmCaches(ctx); err != nil {

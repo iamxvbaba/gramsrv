@@ -8,6 +8,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/freeze"
 )
 
 // Third-party bot verification on the protocol edge
@@ -38,12 +39,15 @@ import (
 // userFull#6cbe645 bot_verification:flags2.12). It must name a real custom emoji
 // document in the operator catalogue -- clients resolve it through
 // messages.getCustomEmojiDocuments, so an id without a concrete document decodes
-// to an invisible badge. accountFrozenMarkBotID is the reserved verifierbot
+// to an invisible badge. The icon is bundled straight into the binary by
+// SeedFreezeEmoji (package telesrv/internal/seed/freeze, "freeze" custom emoji
+// set), so every server carries the resolvable document even without an on-disk
+// sticker seed directory. accountFrozenMarkBotID is the reserved verifierbot
 // identity used as the mark's issuer; the mark itself is a viewer-scoped
 // synthetic projection derived from the freeze state, never a custom_verifications
 // row, so it disappears the moment the account is unfrozen.
 const (
-	accountFrozenMarkIcon        int64 = 5470113211959251530
+	accountFrozenMarkIcon        int64 = freeze.DocumentID
 	accountFrozenMarkBotID       int64 = domain.VerifierBotUserID
 	accountFrozenMarkDescription       = "The account was frozen"
 )
