@@ -237,12 +237,16 @@ type AccountService interface {
 	LoginEmail(ctx context.Context, userID int64) (string, bool, error)
 }
 
-// UserLookup resolves an account by its phone number without viewer privacy
-// projection. The grammystore bot uses it to discover an existing account's
-// numeric ID from the phone the user already bound to the bot, so the operator
-// flagging "fetch my ID" never needs to type it by hand.
+// UserLookup resolves an account by phone or username without viewer privacy
+// projection. ByPhone: the grammystore bot uses it to discover an existing
+// account's numeric ID from the phone the user already bound to the bot, so
+// the operator flagging "fetch my ID" never needs to type it by hand.
+// ByUsername: backs the "released by @username" attribution on gift catalog
+// writes (see ImportStarGift/ImportOfficialStarGift) -- the operator types a
+// handle instead of having to look up a numeric peer ID first.
 type UserLookup interface {
 	ByPhone(ctx context.Context, phone string) (domain.User, bool, error)
+	ByUsername(ctx context.Context, username string) (domain.User, bool, error)
 }
 
 type StarsService interface {
@@ -802,6 +806,22 @@ type ImportStarGiftRequest struct {
 	AuctionRoundDuration int    `json:"auction_round_duration,omitempty"`
 	AvailabilityTotal    int    `json:"availability_total,omitempty"`
 	LockedUntilDate      int    `json:"locked_until_date,omitempty"`
+
+	// Limited: a plain (non-collectible) gift's own "X of Y" sales cap --
+	// independent of both auction (which has its own AvailabilityTotal) and
+	// of a collectible pool's supply. AvailabilityTotal above doubles as Y;
+	// AvailabilityIssued is X, "already sold" at the moment of authoring (0
+	// for a fresh drop). Mutually exclusive with Auction: applyLimitedSupply
+	// rejects both set together.
+	Limited            bool `json:"limited,omitempty"`
+	AvailabilityIssued int  `json:"availability_issued,omitempty"`
+
+	// ReleasedByUsername attributes the release to an account, the same way
+	// real Telegram shows "Released by @name" on a gift. Empty leaves
+	// ReleasedBy unset. Resolved to a peer via UserLookup.ByUsername in
+	// resolveReleasedBy, same as everywhere else an operator types a handle
+	// instead of a numeric peer ID.
+	ReleasedByUsername string `json:"released_by_username,omitempty"`
 }
 
 type ImportOfficialStarGiftRequest struct {
@@ -823,6 +843,35 @@ type ImportOfficialStarGiftRequest struct {
 	LockedUntilDate int      `json:"locked_until_date,omitempty"`
 	ManifestSHA256  string   `json:"manifest_sha256,omitempty"`
 	AssetSHA256     []string `json:"asset_sha256,omitempty"`
+
+	// Auction* mirrors ImportStarGiftRequest's own auction-authoring fields
+	// above (see its doc comment) -- the admin panel previously only exposed
+	// these on the file-upload path and left an official/snapshot import
+	// stuck with the snapshot's own auction state. SupplyTotal above doubles
+	// as the auction's availability_total when Auction is set, same as
+	// ImportStarGiftRequest's AvailabilityTotal. Validated in
+	// ImportOfficialStarGift via domain.StarGiftCatalogWrite.
+	// ValidateLifecycleAuthoring, unlike the rest of this request (see that
+	// function's own doc comment on why the official path otherwise skips it).
+	Auction              bool   `json:"auction,omitempty"`
+	AuctionSlug          string `json:"auction_slug,omitempty"`
+	GiftsPerRound        int    `json:"gifts_per_round,omitempty"`
+	AuctionStartDate     int    `json:"auction_start_date,omitempty"`
+	AuctionRoundDuration int    `json:"auction_round_duration,omitempty"`
+
+	// Limited/AvailabilityIssued -- see ImportStarGiftRequest's fields of the
+	// same name; identical meaning here. AvailabilityTotal is Y ("X of Y
+	// sold"), a plain gift's own cap -- separate from SupplyTotal above
+	// (the collectible pool's variant count, also reused as the auction's
+	// own inventory) since the two are conceptually different caps that can
+	// legitimately differ even when both are set.
+	Limited            bool `json:"limited,omitempty"`
+	AvailabilityTotal  int  `json:"availability_total,omitempty"`
+	AvailabilityIssued int  `json:"availability_issued,omitempty"`
+
+	// ReleasedByUsername -- see ImportStarGiftRequest's field of the same
+	// name; identical meaning here.
+	ReleasedByUsername string `json:"released_by_username,omitempty"`
 }
 
 type SetStarGiftEnabledRequest struct {
@@ -3582,6 +3631,9 @@ func (s *Service) ImportStarGift(ctx context.Context, req ImportStarGiftRequest)
 		// the bid ladder; see domain.MaxStarGiftAuctionBidStars.
 		Stars: req.Stars,
 	}
+	if err := applyLimitedSupply(&lifecycle, req.Limited, req.AvailabilityTotal, req.AvailabilityIssued); err != nil {
+		return CommandResult{}, err
+	}
 	now := int(s.now().Unix())
 	if err := lifecycle.ValidateLifecycleAuthoring(now); err != nil {
 		return CommandResult{}, err
@@ -3589,6 +3641,10 @@ func (s *Service) ImportStarGift(ctx context.Context, req ImportStarGiftRequest)
 	// Fills in limited / availability_remains / a concrete auction_start_date,
 	// which the revision's CHECK constraints require for an auction.
 	lifecycle.NormalizeLifecycleAuthoring(now)
+	releasedBy, err := s.resolveReleasedBy(ctx, req.ReleasedByUsername)
+	if err != nil {
+		return CommandResult{}, err
+	}
 	animation, err := s.gifts.PrepareAnimation(req.FileName, req.Data)
 	if err != nil {
 		return CommandResult{}, err
@@ -3616,13 +3672,16 @@ func (s *Service) ImportStarGift(ctx context.Context, req ImportStarGiftRequest)
 		if lifecycle.LockedUntilDate > 0 {
 			details["locked_until_date"] = lifecycle.LockedUntilDate
 		}
+		if releasedBy.ID != 0 {
+			details["released_by_user_id"] = strconv.FormatInt(releasedBy.ID, 10)
+		}
 		if req.DryRun {
 			return CommandResult{Message: "star gift import validated", Details: details}, nil
 		}
 		entry, err := s.gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
 			GiftID: req.GiftID, Title: req.Title, Stars: req.Stars, ConvertStars: req.ConvertStars,
 			Enabled: req.Enabled, SortOrder: req.SortOrder, Animation: animation,
-			Actor: req.Actor, CommandID: req.CommandID,
+			Actor: req.Actor, CommandID: req.CommandID, ReleasedBy: releasedBy,
 			Auction: lifecycle.Auction, AuctionSlug: lifecycle.AuctionSlug, GiftsPerRound: lifecycle.GiftsPerRound,
 			AuctionStartDate: lifecycle.AuctionStartDate, AuctionRoundDuration: lifecycle.AuctionRoundDuration,
 			AvailabilityTotal: lifecycle.AvailabilityTotal, LockedUntilDate: lifecycle.LockedUntilDate,
@@ -3723,18 +3782,58 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		lockedUntilDate = req.LockedUntilDate
 	}
 
+	// Auction authoring: the snapshot's own auction state (from real Telegram,
+	// usually long since concluded) is the default, but an operator can author
+	// a fresh local auction the same way the upload path already could -- the
+	// admin panel previously only exposed these fields there and left a
+	// snapshot import stuck replaying Telegram's own (elapsed) auction.
+	auction, auctionSlug, giftsPerRound := bundle.Gift.Auction, bundle.Gift.AuctionSlug, bundle.Gift.GiftsPerRound
+	auctionStartDate, auctionRoundDuration := bundle.Gift.AuctionStartDate, 0
+	if req.Auction {
+		if lockedUntilDate != 0 {
+			return CommandResult{}, fmt.Errorf("%w: auctions do not use a scheduled-release time",
+				domain.ErrStarGiftLifecycleInvalid)
+		}
+		auction = true
+		auctionSlug = strings.ToLower(strings.TrimSpace(req.AuctionSlug))
+		giftsPerRound = req.GiftsPerRound
+		auctionStartDate = req.AuctionStartDate
+		auctionRoundDuration = req.AuctionRoundDuration
+	}
+
 	// Auctions require finite inventory. For ordinary gifts, collectible supply
 	// limits a new base gift only when the operator imports that pool. A hidden,
 	// inactive collectible input must never cap a basic gift's sales.
 	limited, availabilityTotal := false, 0
-	if bundle.Gift.Auction {
+	if auction {
 		limited, availabilityTotal = true, bundle.Gift.AvailabilityTotal
-		if availabilityTotal <= 0 {
+		if req.Auction || availabilityTotal <= 0 {
 			availabilityTotal = req.SupplyTotal
 		}
 	}
 	if req.IncludeCollectible && req.SupplyTotal > 0 && !limited {
 		limited, availabilityTotal = true, req.SupplyTotal
+	}
+	// req.Limited is the plain gift's own, operator-authored "X of Y sold" cap
+	// (see applyLimitedSupply's doc comment) -- it wins over the collectible-
+	// pool fallback above, since that one is an automatic default rather than
+	// deliberate operator intent.
+	check := domain.StarGiftCatalogWrite{Auction: auction, Limited: limited, AvailabilityTotal: availabilityTotal}
+	if err := applyLimitedSupply(&check, req.Limited, req.AvailabilityTotal, req.AvailabilityIssued); err != nil {
+		return CommandResult{}, err
+	}
+	limited, availabilityTotal = check.Limited, check.AvailabilityTotal
+	availabilityRemains, soldOut := check.AvailabilityRemains, check.SoldOut
+	if err := (domain.StarGiftCatalogWrite{
+		Stars: req.Stars, Auction: auction, AuctionSlug: auctionSlug, GiftsPerRound: giftsPerRound,
+		AuctionStartDate: auctionStartDate, AuctionRoundDuration: auctionRoundDuration,
+		AvailabilityTotal: availabilityTotal, LockedUntilDate: lockedUntilDate,
+	}).ValidateLifecycleAuthoring(int(s.now().Unix())); err != nil {
+		return CommandResult{}, err
+	}
+	releasedBy, err := s.resolveReleasedBy(ctx, req.ReleasedByUsername)
+	if err != nil {
+		return CommandResult{}, err
 	}
 
 	baseAnimation, err := s.gifts.PrepareOfficialAnimation(bundle.BaseDocument.FileName, bundle.BaseDocument.Data)
@@ -3825,16 +3924,17 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		// regular official imports as a fresh, locally purchasable catalog entry.
 		// Base supply is selected above; resale counters and sale dates come from
 		// local lifecycle writes. Existing inventory is preserved under the store lock.
-		Limited: limited, SoldOut: false, Birthday: bundle.Gift.Birthday,
+		Limited: limited, SoldOut: soldOut, Birthday: bundle.Gift.Birthday,
 		RequirePremium: bundle.Gift.RequirePremium, LimitedPerUser: bundle.Gift.LimitedPerUser,
-		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: bundle.Gift.Auction,
-		AvailabilityRemains: 0, AvailabilityTotal: availabilityTotal,
+		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: auction,
+		AvailabilityRemains: availabilityRemains, AvailabilityTotal: availabilityTotal,
 		AvailabilityResale: 0, FirstSaleDate: 0,
-		LastSaleDate: 0, ResellMinStars: 0,
+		LastSaleDate: 0, ResellMinStars: 0, ReleasedBy: releasedBy,
 		PerUserTotal: bundle.Gift.PerUserTotal, LockedUntilDate: lockedUntilDate,
-		AuctionSlug: bundle.Gift.AuctionSlug, GiftsPerRound: bundle.Gift.GiftsPerRound,
-		AuctionStartDate: bundle.Gift.AuctionStartDate, UpgradeVariants: bundle.Gift.UpgradeVariants,
-		Background: background,
+		AuctionSlug: auctionSlug, GiftsPerRound: giftsPerRound,
+		AuctionStartDate: auctionStartDate, AuctionRoundDuration: auctionRoundDuration,
+		UpgradeVariants: bundle.Gift.UpgradeVariants,
+		Background:      background,
 	}, Collectible: collectible}
 	// Seed only new finite identities; also resolve a zero auction_start_date.
 	// Existing inventory is resolved by the store under its write lock. The full
@@ -3861,6 +3961,12 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		if write.Catalog.Auction {
 			details["auction_availability_total"] = write.Catalog.AvailabilityTotal
 			details["auction_start_date"] = write.Catalog.AuctionStartDate
+			details["auction_slug"] = write.Catalog.AuctionSlug
+			details["gifts_per_round"] = write.Catalog.GiftsPerRound
+			details["auction_round_duration"] = write.Catalog.AuctionRoundDuration
+		}
+		if releasedBy.ID != 0 {
+			details["released_by_user_id"] = strconv.FormatInt(releasedBy.ID, 10)
 		}
 		if req.GiftID != 0 {
 			details["inventory_policy"] = "preserve existing supply and remaining stock; rechecked at execution"
@@ -3899,6 +4005,65 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		}
 		return CommandResult{Message: "official star gift bundle imported", Details: details}, nil
 	})
+}
+
+// applyLimitedSupply fills in the plain-gift "X of Y sold" sales cap onto a
+// StarGiftCatalogWrite in progress. This is the non-collectible gift's own
+// cap -- orthogonal to an auction's AvailabilityTotal (its own inventory) and
+// to a collectible pool's SupplyTotal (the NFT variant count) -- so it only
+// applies when neither of those is already driving Limited/AvailabilityTotal.
+// total is Y, issued is X ("already sold" at authoring time; 0 for a fresh
+// drop). Shared by ImportStarGift and ImportOfficialStarGift so the two
+// paths can't drift on this arithmetic.
+func applyLimitedSupply(write *domain.StarGiftCatalogWrite, limited bool, total, issued int) error {
+	if !limited {
+		return nil
+	}
+	if write.Auction {
+		return fmt.Errorf("%w: limited supply and auction are mutually exclusive authoring paths", domain.ErrStarGiftLifecycleInvalid)
+	}
+	if total <= 0 {
+		return fmt.Errorf("%w: limited supply requires a total > 0", domain.ErrStarGiftLifecycleInvalid)
+	}
+	if issued < 0 || issued > total {
+		return fmt.Errorf("%w: already-sold count must be between 0 and the total", domain.ErrStarGiftLifecycleInvalid)
+	}
+	write.Limited = true
+	write.AvailabilityTotal = total
+	if remains := total - issued; remains > 0 {
+		write.AvailabilityRemains = remains
+	} else {
+		// Authored as sold out from the start -- SoldOut disambiguates this
+		// from "uninitialized", which NormalizeLifecycleAuthoring would
+		// otherwise refill back up to AvailabilityTotal (see its own comment
+		// on why zero can't mean uninitialized for an existing identity).
+		write.AvailabilityRemains, write.SoldOut = 0, true
+	}
+	return nil
+}
+
+// resolveReleasedBy turns an operator-typed "@username" (or bare username)
+// into the domain.Peer stored on StarGiftCatalogWrite.ReleasedBy -- the same
+// field real Telegram surfaces as "Released by @name" on a gift. Empty input
+// is not an error: it just means no attribution, same as today. Only user
+// accounts are supported for now, matching every other username-typed input
+// in this admin surface (see UserLookup's doc comment).
+func (s *Service) resolveReleasedBy(ctx context.Context, username string) (domain.Peer, error) {
+	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+	if username == "" {
+		return domain.Peer{}, nil
+	}
+	if s.userLookup == nil {
+		return domain.Peer{}, fmt.Errorf("%w: released-by username lookup is not configured", domain.ErrStarGiftInvalid)
+	}
+	user, found, err := s.userLookup.ByUsername(ctx, username)
+	if err != nil {
+		return domain.Peer{}, fmt.Errorf("resolve released-by username %q: %w", username, err)
+	}
+	if !found {
+		return domain.Peer{}, fmt.Errorf("%w: released-by username %q not found", domain.ErrStarGiftInvalid, username)
+	}
+	return domain.Peer{Type: domain.PeerTypeUser, ID: user.ID}, nil
 }
 
 func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityKind, int, error) {

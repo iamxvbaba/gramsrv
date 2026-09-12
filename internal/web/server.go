@@ -185,7 +185,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
-	mux.HandleFunc("GET /payments/dev-stars", h.devStarsCheckout)
+	// GET /payments/dev-stars (h.devStarsCheckout) intentionally removed: it
+	// was a dev-only fake Stars checkout page, not a real payment provider.
+	// No route registered here means the mux returns a plain 404 for it.
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)

@@ -6,7 +6,7 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
-import { formatDate, localInputValue, toUnixSeconds } from "../lib/format";
+import { formatDate, toUnixSeconds } from "../lib/format";
 import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
@@ -114,10 +114,13 @@ export function GiftsPage() {
   const [roundDuration, setRoundDuration] = useState("3600");
   const [auctionStartAt, setAuctionStartAt] = useState("");
   const [unlockAt, setUnlockAt] = useState("");
-  // The snapshot path carries its own scheduling state: the mode selector above
-  // belongs to the upload form, and an official gift cannot be auctioned here.
-  const [officialScheduled, setOfficialScheduled] = useState(false);
-  const [officialUnlockAt, setOfficialUnlockAt] = useState(() => localInputValue(3600));
+  // "Rare": a plain (non-collectible) gift's own sales cap -- independent of
+  // both auction (its own inventory) and a collectible pool's supply. Total
+  // is Y, issued is X ("already sold" at authoring time; 0 for a fresh drop).
+  const [limitedEnabled, setLimitedEnabled] = useState(false);
+  const [limitedTotal, setLimitedTotal] = useState("100");
+  const [limitedIssued, setLimitedIssued] = useState("0");
+  const [releasedByUsername, setReleasedByUsername] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<CommandResult | null>(null);
@@ -177,8 +180,10 @@ export function GiftsPage() {
   }, [gifts, query]);
 
   // Mirrors domain.StarGiftCatalogWrite.ValidateLifecycleAuthoring so the operator
-  // sees the problem before the upload round-trip. Only the keys belonging to the
-  // selected mode are sent — the server rejects auction fields on a plain gift.
+  // sees the problem before the round-trip. Only the keys belonging to the selected
+  // mode are sent — the server rejects auction fields on a plain gift. Shared by
+  // both import sources: the server now authors auctions/scheduled drops for an
+  // official snapshot import the same way it always could for a file upload.
   function lifecyclePayload() {
     const now = Math.floor(Date.now() / 1000);
     if (lifecycleMode === "auction") {
@@ -209,6 +214,18 @@ export function GiftsPage() {
     return {};
   }
 
+  // "Rare": a plain gift's own "X of Y sold" cap. Orthogonal to lifecycleMode
+  // except auction, which owns its own inventory (the toggle is hidden for
+  // that mode -- see the JSX -- so this only ever fires for regular/drop).
+  function limitedPayload() {
+    if (!limitedEnabled) return {};
+    const total = Number(limitedTotal);
+    const issued = Number(limitedIssued);
+    if (!(total > 0)) throw new Error(t("gifts.limited.totalRequired"));
+    if (issued < 0 || issued > total) throw new Error(t("gifts.limited.issuedInvalid"));
+    return { limited: true, availability_total: total, availability_issued: issued };
+  }
+
   function uploadForm(confirm: boolean, commandID = "") {
     if (!file) throw new Error(t("gifts.fileRequired"));
     if (!reason.trim()) throw new Error(t("action.reasonRequired"));
@@ -223,7 +240,9 @@ export function GiftsPage() {
 			convert_stars: convertStars,
       enabled,
       sort_order: Number(sortOrder),
-      ...lifecyclePayload()
+      released_by_username: releasedByUsername.trim(),
+      ...lifecyclePayload(),
+      ...limitedPayload()
     }));
     form.set("file", file, file.name);
     return form;
@@ -232,21 +251,15 @@ export function GiftsPage() {
   function officialPayload(confirm: boolean, commandID = "") {
     if (!sourceGiftID) throw new Error(t("gifts.officialRequired"));
     if (!reason.trim()) throw new Error(t("action.reasonRequired"));
-    // A snapshot import can be scheduled but not auctioned: an auction needs its own
-    // supply and animation, which is the upload path. Sending 0 keeps whatever
-    // release time the snapshot itself carries.
-    let lockedUntil = 0;
-    if (officialScheduled) {
-      lockedUntil = toUnixSeconds(officialUnlockAt);
-      if (lockedUntil <= Math.floor(Date.now() / 1000)) throw new Error(t("gifts.lifecycle.unlockRequired"));
-    }
     return {
       command_id: commandID, reason: reason.trim(), confirm,
 		source_gift_id: sourceGiftID, gift_id: giftID, title: title.trim(),
 		stars, convert_stars: convertStars, enabled, sort_order: Number(sortOrder),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
       supply_total: includeCollectible ? Number(supplyTotal) : 0, slug_prefix: slugPrefix.trim().toLowerCase(),
-      locked_until_date: lockedUntil
+      released_by_username: releasedByUsername.trim(),
+      ...lifecyclePayload(),
+      ...limitedPayload()
     };
   }
 
@@ -418,7 +431,7 @@ export function GiftsPage() {
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
               </div>
-              {importSource === "file" ? <section className="gift-lifecycle">
+              <section className="gift-lifecycle">
                 <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
                 <div className="gift-source-tabs" role="group" aria-label={t("gifts.lifecycle.label")}>
                   {(["regular", "auction", "drop"] as const).map((mode) => (
@@ -442,17 +455,18 @@ export function GiftsPage() {
                 {lifecycleMode === "drop" && <div className="gift-fields-grid">
                   <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={unlockAt} onChange={(e) => { setUnlockAt(e.target.value); setPreview(null); }} /></label>
                 </div>}
-              </section> : <section className="gift-lifecycle">
-                <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
-                <div className="gift-import-note"><span>{t("gifts.lifecycle.auctionFileOnly")}</span></div>
-                <label className="gift-switch"><input type="checkbox" checked={officialScheduled} onChange={(e) => { setOfficialScheduled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.drop.schedule")}</span></label>
-                {officialScheduled && <>
-                  <div className="gift-import-note"><span>{t("gifts.lifecycle.hintDrop")}</span></div>
+              </section>
+              {lifecycleMode !== "auction" && <section className="gift-lifecycle">
+                <label className="gift-switch"><input type="checkbox" checked={limitedEnabled} onChange={(e) => { setLimitedEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.limited.label")}</span></label>
+                {limitedEnabled && <>
+                  <div className="gift-import-note"><span>{t("gifts.limited.hint")}</span></div>
                   <div className="gift-fields-grid">
-                    <label><span>{t("gifts.drop.unlockAt")}</span><input type="datetime-local" value={officialUnlockAt} onChange={(e) => { setOfficialUnlockAt(e.target.value); setPreview(null); }} /></label>
+                    <label><span>{t("gifts.limited.total")}</span><input type="number" min="1" value={limitedTotal} onChange={(e) => { setLimitedTotal(e.target.value); setPreview(null); }} /></label>
+                    <label><span>{t("gifts.limited.issued")}</span><input type="number" min="0" max={limitedTotal} value={limitedIssued} onChange={(e) => { setLimitedIssued(e.target.value); setPreview(null); }} /></label>
                   </div>
                 </>}
               </section>}
+              <label className="gift-reason-field"><span>{t("gifts.releasedBy")}</span><input value={releasedByUsername} placeholder={t("gifts.releasedByPlaceholder")} onChange={(e) => { setReleasedByUsername(e.target.value); setPreview(null); }} /></label>
               <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
               <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
               {importError && <Alert>{importError}</Alert>}

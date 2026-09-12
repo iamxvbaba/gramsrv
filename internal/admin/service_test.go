@@ -2327,6 +2327,15 @@ func (f *fakeUserLookup) ByPhone(_ context.Context, phone string) (domain.User, 
 	return domain.User{}, false, nil
 }
 
+func (f *fakeUserLookup) ByUsername(_ context.Context, username string) (domain.User, bool, error) {
+	for _, u := range f.users {
+		if strings.EqualFold(u.Username, username) {
+			return u, true, nil
+		}
+	}
+	return domain.User{}, false, nil
+}
+
 func TestResolveUserByPhoneFindsAndNormalizes(t *testing.T) {
 	ctx := context.Background()
 	lookup := &fakeUserLookup{users: []domain.User{{ID: 1_780_243_207, Phone: "79991234567"}}}
