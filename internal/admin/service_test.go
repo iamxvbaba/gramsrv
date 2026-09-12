@@ -2336,6 +2336,57 @@ func (f *fakeUserLookup) ByUsername(_ context.Context, username string) (domain.
 	return domain.User{}, false, nil
 }
 
+type fakeChannelLookup struct{ channels []domain.Channel }
+
+func (f *fakeChannelLookup) ByUsername(_ context.Context, username string) (domain.Channel, bool, error) {
+	for _, c := range f.channels {
+		if strings.EqualFold(c.Username, username) {
+			return c, true, nil
+		}
+	}
+	return domain.Channel{}, false, nil
+}
+
+func TestResolveReleasedByFindsUserFirst(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(Dependencies{
+		UserLookup:    &fakeUserLookup{users: []domain.User{{ID: 1_780_243_207, Username: "alice"}}},
+		ChannelLookup: &fakeChannelLookup{channels: []domain.Channel{{ID: 372, Username: "alice"}}},
+	})
+	peer, err := svc.resolveReleasedBy(ctx, "@alice")
+	if err != nil || peer.Type != domain.PeerTypeUser || peer.ID != 1_780_243_207 {
+		t.Fatalf("resolveReleasedBy = %+v, err=%v, want user 1780243207", peer, err)
+	}
+}
+
+func TestResolveReleasedByFallsBackToChannel(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(Dependencies{
+		UserLookup:    &fakeUserLookup{},
+		ChannelLookup: &fakeChannelLookup{channels: []domain.Channel{{ID: 372, Username: "ShuzaGram"}}},
+	})
+	peer, err := svc.resolveReleasedBy(ctx, "ShuzaGram")
+	if err != nil || peer.Type != domain.PeerTypeChannel || peer.ID != 372 {
+		t.Fatalf("resolveReleasedBy = %+v, err=%v, want channel 372", peer, err)
+	}
+}
+
+func TestResolveReleasedByNotFoundInEither(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(Dependencies{UserLookup: &fakeUserLookup{}, ChannelLookup: &fakeChannelLookup{}})
+	if _, err := svc.resolveReleasedBy(ctx, "nobody"); err == nil || !strings.Contains(err.Error(), `"nobody" not found`) {
+		t.Fatalf("resolveReleasedBy err=%v, want not-found error", err)
+	}
+}
+
+func TestResolveReleasedByEmptyIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(Dependencies{})
+	if peer, err := svc.resolveReleasedBy(ctx, "  "); err != nil || peer != (domain.Peer{}) {
+		t.Fatalf("resolveReleasedBy(empty) = %+v, err=%v, want zero value, no error", peer, err)
+	}
+}
+
 func TestResolveUserByPhoneFindsAndNormalizes(t *testing.T) {
 	ctx := context.Background()
 	lookup := &fakeUserLookup{users: []domain.User{{ID: 1_780_243_207, Phone: "79991234567"}}}

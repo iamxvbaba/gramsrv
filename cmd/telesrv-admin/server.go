@@ -2089,6 +2089,15 @@ type importStarGiftAPIRequest struct {
 	AuctionRoundDuration int    `json:"auction_round_duration"`
 	AvailabilityTotal    int    `json:"availability_total"`
 	LockedUntilDate      int    `json:"locked_until_date"`
+
+	// Limited/AvailabilityIssued/ReleasedByUsername mirror
+	// admin.ImportStarGiftRequest's own fields of the same name -- see that
+	// struct's doc comments for what each means. Missing here previously,
+	// which made the panel's browser-facing decoder reject them with
+	// "unknown field" before the request ever reached the shared admin type.
+	Limited            bool   `json:"limited"`
+	AvailabilityIssued int    `json:"availability_issued"`
+	ReleasedByUsername string `json:"released_by_username"`
 }
 
 func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2136,6 +2145,10 @@ func (s *server) handleImportStarGiftAPI(w http.ResponseWriter, r *http.Request)
 		AuctionRoundDuration: body.AuctionRoundDuration,
 		AvailabilityTotal:    body.AvailabilityTotal,
 		LockedUntilDate:      body.LockedUntilDate,
+
+		Limited:            body.Limited,
+		AvailabilityIssued: body.AvailabilityIssued,
+		ReleasedByUsername: body.ReleasedByUsername,
 	}
 	result, err := s.callAdminMultipart(r.Context(), "/v1/gifts/import", req, header.Filename, data)
 	writeCommandResultAPI(w, result, err)
@@ -2159,6 +2172,24 @@ type importOfficialStarGiftAPIRequest struct {
 	// Unix seconds at which the imported gift becomes purchasable. Zero keeps the
 	// snapshot's own release time.
 	LockedUntilDate int `json:"locked_until_date"`
+
+	// Auction*/Limited/AvailabilityTotal/AvailabilityIssued/ReleasedByUsername
+	// mirror admin.ImportOfficialStarGiftRequest's own fields of the same
+	// name -- see that struct's doc comments for what each means. Missing
+	// here previously, which made the panel's browser-facing decoder reject
+	// them with "unknown field" before the request ever reached the shared
+	// admin type (auction authoring and Released-by never actually worked
+	// for an official/snapshot import from the panel, only from raw API
+	// calls that bypassed this proxy).
+	Auction              bool   `json:"auction"`
+	AuctionSlug          string `json:"auction_slug"`
+	GiftsPerRound        int    `json:"gifts_per_round"`
+	AuctionStartDate     int    `json:"auction_start_date"`
+	AuctionRoundDuration int    `json:"auction_round_duration"`
+	Limited              bool   `json:"limited"`
+	AvailabilityTotal    int    `json:"availability_total"`
+	AvailabilityIssued   int    `json:"availability_issued"`
+	ReleasedByUsername   string `json:"released_by_username"`
 }
 
 func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2177,6 +2208,11 @@ func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.
 		IncludeCollectible: body.IncludeCollectible, UpgradeStars: body.UpgradeStars,
 		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
 		LockedUntilDate: body.LockedUntilDate,
+
+		Auction: body.Auction, AuctionSlug: body.AuctionSlug, GiftsPerRound: body.GiftsPerRound,
+		AuctionStartDate: body.AuctionStartDate, AuctionRoundDuration: body.AuctionRoundDuration,
+		Limited: body.Limited, AvailabilityTotal: body.AvailabilityTotal, AvailabilityIssued: body.AvailabilityIssued,
+		ReleasedByUsername: body.ReleasedByUsername,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
 	writeCommandResultAPI(w, result, err)

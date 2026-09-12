@@ -249,6 +249,15 @@ type UserLookup interface {
 	ByUsername(ctx context.Context, username string) (domain.User, bool, error)
 }
 
+// ChannelLookup resolves a channel by its public @username. Used only by
+// resolveReleasedBy as a fallback when the typed handle isn't a user account
+// -- real Telegram lets a gift's "Released by" plaque point at an official
+// channel just as often as a personal account (e.g. the platform's own
+// channel), not only at a person.
+type ChannelLookup interface {
+	ByUsername(ctx context.Context, username string) (domain.Channel, bool, error)
+}
+
 type StarsService interface {
 	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
 	Debit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
@@ -449,6 +458,7 @@ type Dependencies struct {
 	Revoker                AuthKeyRevoker
 	Users                  UsersService
 	UserLookup             UserLookup
+	ChannelLookup          ChannelLookup
 	Account                AccountService
 	Photos                 AvatarResolver
 	Stars                  StarsService
@@ -486,6 +496,7 @@ type Service struct {
 	revoker                AuthKeyRevoker
 	users                  UsersService
 	userLookup             UserLookup
+	channelLookup          ChannelLookup
 	account                AccountService
 	photos                 AvatarResolver
 	stars                  StarsService
@@ -537,6 +548,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.UserLookup != nil {
 		s.userLookup = deps.UserLookup
+	}
+	if deps.ChannelLookup != nil {
+		s.channelLookup = deps.ChannelLookup
 	}
 	if deps.Account != nil {
 		s.account = deps.Account
@@ -4045,25 +4059,38 @@ func applyLimitedSupply(write *domain.StarGiftCatalogWrite, limited bool, total,
 // resolveReleasedBy turns an operator-typed "@username" (or bare username)
 // into the domain.Peer stored on StarGiftCatalogWrite.ReleasedBy -- the same
 // field real Telegram surfaces as "Released by @name" on a gift. Empty input
-// is not an error: it just means no attribution, same as today. Only user
-// accounts are supported for now, matching every other username-typed input
-// in this admin surface (see UserLookup's doc comment).
+// is not an error: it just means no attribution, same as today. A user
+// account is tried first (the common case); a channel is tried next (real
+// Telegram attributes plenty of official drops to a channel, e.g. the
+// platform's own), since the two live in one shared username namespace and
+// an operator has no reason to know which kind a given handle is.
 func (s *Service) resolveReleasedBy(ctx context.Context, username string) (domain.Peer, error) {
 	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
 	if username == "" {
 		return domain.Peer{}, nil
 	}
-	if s.userLookup == nil {
+	if s.userLookup == nil && s.channelLookup == nil {
 		return domain.Peer{}, fmt.Errorf("%w: released-by username lookup is not configured", domain.ErrStarGiftInvalid)
 	}
-	user, found, err := s.userLookup.ByUsername(ctx, username)
-	if err != nil {
-		return domain.Peer{}, fmt.Errorf("resolve released-by username %q: %w", username, err)
+	if s.userLookup != nil {
+		user, found, err := s.userLookup.ByUsername(ctx, username)
+		if err != nil {
+			return domain.Peer{}, fmt.Errorf("resolve released-by username %q: %w", username, err)
+		}
+		if found {
+			return domain.Peer{Type: domain.PeerTypeUser, ID: user.ID}, nil
+		}
 	}
-	if !found {
-		return domain.Peer{}, fmt.Errorf("%w: released-by username %q not found", domain.ErrStarGiftInvalid, username)
+	if s.channelLookup != nil {
+		channel, found, err := s.channelLookup.ByUsername(ctx, username)
+		if err != nil {
+			return domain.Peer{}, fmt.Errorf("resolve released-by channel username %q: %w", username, err)
+		}
+		if found {
+			return domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, nil
+		}
 	}
-	return domain.Peer{Type: domain.PeerTypeUser, ID: user.ID}, nil
+	return domain.Peer{}, fmt.Errorf("%w: released-by username %q not found", domain.ErrStarGiftInvalid, username)
 }
 
 func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityKind, int, error) {

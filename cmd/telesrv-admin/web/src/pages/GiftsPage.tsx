@@ -162,6 +162,53 @@ export function GiftsPage() {
     });
   }, [officialGifts, officialQuery, officialCategory]);
 
+  // The official-gift picker can hold 150+ cards; mounting all of them at
+  // once is what made the import dialog stutter. Only the rows actually
+  // inside the scrollable window (plus a small overscan) are rendered --
+  // the rest collapse into two spacer cells so scrollHeight/scrollbar stay
+  // correct. Columns and row height are measured off the real grid instead
+  // of hard-coded, so this keeps working across the mobile 1-column layout.
+  const officialListRef = useRef<HTMLDivElement | null>(null);
+  const officialRowRef = useRef<HTMLButtonElement | null>(null);
+  const [officialViewport, setOfficialViewport] = useState({ scrollTop: 0, height: 314 });
+  const [officialColumns, setOfficialColumns] = useState(2);
+  const [officialRowHeight, setOfficialRowHeight] = useState(112);
+
+  useEffect(() => {
+    const el = officialListRef.current;
+    if (!el) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      setOfficialViewport({ scrollTop: el.scrollTop, height: el.clientHeight });
+      const rowEl = officialRowRef.current;
+      if (rowEl && rowEl.offsetWidth > 0) {
+        setOfficialColumns(Math.max(1, Math.round(el.clientWidth / rowEl.offsetWidth)));
+        setOfficialRowHeight(rowEl.offsetHeight + 8 /* grid gap, see .official-gift-list */);
+      }
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    measure();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new ResizeObserver(onScroll);
+    observer.observe(el);
+    return () => { el.removeEventListener("scroll", onScroll); observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, [visibleOfficial.length]);
+
+  const officialWindow = useMemo(() => {
+    const rowCount = Math.ceil(visibleOfficial.length / officialColumns);
+    const overscanRows = 3;
+    const firstRow = Math.max(0, Math.floor(officialViewport.scrollTop / officialRowHeight) - overscanRows);
+    const lastRow = Math.min(rowCount, Math.ceil((officialViewport.scrollTop + officialViewport.height) / officialRowHeight) + overscanRows);
+    const start = firstRow * officialColumns;
+    const end = Math.min(visibleOfficial.length, lastRow * officialColumns);
+    return {
+      items: visibleOfficial.slice(start, end),
+      topSpacer: firstRow * officialRowHeight,
+      bottomSpacer: Math.max(0, (rowCount - lastRow) * officialRowHeight)
+    };
+  }, [visibleOfficial, officialViewport, officialColumns, officialRowHeight]);
+
   const auctionRounds = useMemo(() => {
     const supply = Number(auctionSupply);
     const perRound = Number(giftsPerRound);
@@ -270,8 +317,12 @@ export function GiftsPage() {
     setConvertStars(String(gift.convert_stars));
     setIncludeCollectible(gift.can_upgrade);
 		setUpgradeStars(gift.upgrade_stars);
-    setSupplyTotal(String(gift.can_upgrade ? (gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)) : 0));
-    setSlugPrefix(`official-${gift.source_gift_id}`);
+    // Саплай — не догадка по счётчику вариантов каталога (upgrade_variants к
+    // реальному тиражу отношения не имеет), а отдельное поле: администратор
+    // заполняет его сам под конкретный релиз. Не указано -- бэкенд сам
+    // подставит availability_total снапшота (см. ImportOfficialStarGift).
+    setSupplyTotal("");
+    setSlugPrefix(gift.title ? gift.title.trim().toLowerCase().replace(/\s+/g, "-") : `official-${gift.source_gift_id}`);
     setPreview(null);
   }
 
@@ -382,10 +433,12 @@ export function GiftsPage() {
                     </button>
                   ))}
                 </div>
-                <div className="official-gift-list" role="listbox" aria-label={t("gifts.officialSelect")}>
-                  {visibleOfficial.map((gift) => {
+                <div className="official-gift-list" ref={officialListRef} role="listbox" aria-label={t("gifts.officialSelect")}>
+                  {officialWindow.topSpacer > 0 && <div aria-hidden style={{ gridColumn: "1 / -1", height: officialWindow.topSpacer }} />}
+                  {officialWindow.items.map((gift, index) => {
                     const selected = gift.source_gift_id === sourceGiftID;
-                    return <button key={gift.source_gift_id} className={`official-gift-option ${selected ? "selected" : ""}`}
+                    return <button key={gift.source_gift_id} ref={index === 0 ? officialRowRef : undefined}
+                      className={`official-gift-option ${selected ? "selected" : ""}`}
                       type="button" role="option" aria-selected={selected} onClick={() => chooseOfficial(gift)}>
                       <span className="official-gift-option-head">
                         <strong>{gift.title || t("gifts.officialUnnamed", { id: gift.source_gift_id })}</strong>
@@ -401,6 +454,7 @@ export function GiftsPage() {
                       </span>
                     </button>;
                   })}
+                  {officialWindow.bottomSpacer > 0 && <div aria-hidden style={{ gridColumn: "1 / -1", height: officialWindow.bottomSpacer }} />}
                   {visibleOfficial.length === 0 && <div className="official-gift-empty">{t("gifts.officialEmpty")}</div>}
                 </div>
                 {selectedOfficial && <div className="official-gift-selected">
@@ -411,7 +465,7 @@ export function GiftsPage() {
                   <label className="gift-switch"><input type="checkbox" checked={includeCollectible} onChange={(e) => { setIncludeCollectible(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.includeCollectible")}</span></label>
                   {includeCollectible && <div className="gift-fields-grid">
                     <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
+                    <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} placeholder={t("collectibles.supplyPlaceholder")} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
                   </div>}
                   {includeCollectible && <div className="gift-import-note"><span>{t("gifts.officialSupplyHint")}</span></div>}

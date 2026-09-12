@@ -282,43 +282,6 @@ type moderationAppealPage struct {
 	CanSubmit    bool
 }
 
-type devStarsCheckoutPage struct {
-	AppName string
-	FormID  string
-}
-
-var devStarsCheckoutTemplate = template.Must(template.New("dev-stars-checkout").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow">
-<title>Dev Stars checkout · {{.AppName}}</title><style>
-body{font:16px/1.5 system-ui,sans-serif;background:#f4f6f8;color:#17212b;margin:0;padding:24px}.card{max-width:520px;margin:9vh auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 32px #0002}h1{margin-top:0}.note{color:#53606d}.status{min-height:24px;color:#b42318}button{width:100%;border:0;border-radius:10px;padding:13px 18px;background:#2481cc;color:#fff;font:inherit;font-weight:650;cursor:pointer}button:disabled{opacity:.55;cursor:default}
-</style></head><body><main class="card"><h1>Complete dev purchase</h1>
-<p>This is a local telesrv test checkout. No card, Google Play, App Store, or external payment provider will be charged.</p>
-<p class="note">The package and fiat amount shown by the client are bound to form {{.FormID}}.</p>
-<button id="complete" type="button">Complete test purchase</button><p id="status" class="status" role="status"></p>
-</main><script>
-(() => { const button=document.getElementById('complete'), status=document.getElementById('status');
-button.addEventListener('click', () => { const proxy=window.TelegramWebviewProxy;
-if(!proxy || typeof proxy.postEvent !== 'function'){status.textContent='Open this checkout inside Telegram.';return;}
-button.disabled=true;status.textContent='Submitting…';
-proxy.postEvent('payment_form_submit', JSON.stringify({title:'telesrv dev payment',credentials:{type:'telesrv_dev',form_id:'{{.FormID}}'}}));
-}); })();
-</script></body></html>`))
-
-func (h *handler) devStarsCheckout(w http.ResponseWriter, r *http.Request) {
-	raw := strings.TrimSpace(r.URL.Query().Get("form_id"))
-	formID, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || formID == 0 || raw != strconv.FormatInt(formID, 10) {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := devStarsCheckoutTemplate.Execute(w, devStarsCheckoutPage{AppName: h.appName, FormID: raw}); err != nil {
-		h.logger.Warn("render dev Stars checkout failed", zap.Error(err))
-	}
-}
-
 var moderationAppealTemplate = template.Must(template.New("moderation-appeal").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>Moderation appeal · {{.AppName}}</title><style>

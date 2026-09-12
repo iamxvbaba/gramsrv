@@ -130,6 +130,18 @@ WHERE r.id = $1`, revisionID))
 	return gift, true, nil
 }
 
+// nullableReleasedBy turns a domain.Peer into the (type, id) pair the
+// released_by_peer_type/released_by_peer_id columns expect: an empty type and
+// zero id for "no attribution", the same convention used everywhere these
+// columns are read back (see scanCatalogGift above and the unique_star_gifts
+// scan in star_gift_collectibles.go).
+func nullableReleasedBy(p domain.Peer) (string, int64) {
+	if p.ID == 0 {
+		return "", 0
+	}
+	return string(p.Type), p.ID
+}
+
 func scanCatalogGift(row rowScanner) (domain.StarGift, error) {
 	var gift domain.StarGift
 	var attrsJSON, thumbsJSON string

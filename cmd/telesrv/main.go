@@ -435,6 +435,19 @@ func (v verificationPeerVerifier) SetChannelVerified(ctx context.Context, channe
 
 var _ verificationapp.PeerVerifier = verificationPeerVerifier{}
 
+// channelUsernameLookup adapts postgres.ChannelStore's public-username
+// resolver to admin.ChannelLookup (used by resolveReleasedBy). Viewer ID 0 is
+// deliberate: ResolvePublicChannelUsername treats it as the anonymous
+// public-web view, which is exactly right for an admin operator attributing
+// a gift to a channel -- there is no signed-in "viewer" in that context.
+type channelUsernameLookup struct {
+	channels *postgres.ChannelStore
+}
+
+func (l channelUsernameLookup) ByUsername(ctx context.Context, username string) (domain.Channel, bool, error) {
+	return l.channels.ResolvePublicChannelUsername(ctx, 0, username)
+}
+
 // botVerificationMarkApplier writes a third-party mark on the decision's own
 // transaction when there is one.
 //
@@ -1640,6 +1653,7 @@ func run(logger *zap.Logger) error {
 		Revoker:                router,
 		Users:                  usersService,
 		UserLookup:             userStore,
+		ChannelLookup:          channelUsernameLookup{channelStore},
 		Account:                accountService,
 		Photos:                 filesService,
 		Stars:                  starsService,
