@@ -67,10 +67,33 @@ func getPeerUsernameOwner(ctx context.Context, db sqlcgen.DBTX, usernameLower st
 
 func peerUsernameAvailable(ctx context.Context, db sqlcgen.DBTX, usernameLower, peerType string, peerID int64) (bool, error) {
 	owner, found, err := getPeerUsernameOwner(ctx, db, usernameLower, false)
-	if err != nil || !found {
-		return !found, err
+	if err != nil {
+		return false, err
 	}
-	return owner.matches(peerType, peerID), nil
+	if found {
+		return owner.matches(peerType, peerID), nil
+	}
+	reserved, err := collectibleUsernameReserved(ctx, db, usernameLower)
+	return !reserved, err
+}
+
+// collectibleUsernameReserved reports whether usernameLower belongs to a
+// non-burned collectible asset that has no peer_usernames row of its own yet.
+// That's exactly a name sitting unassigned in the admin panel's vault
+// (MintCollectibleUsername skips the peer_usernames insert when there's no
+// owner to attach it to -- see its own comment) -- without this check an
+// ordinary user could grab it as a plain editable username before it's ever
+// granted, and the later grant would then fail with ErrUsernameOccupied
+// against the very account it was minted for.
+func collectibleUsernameReserved(ctx context.Context, db sqlcgen.DBTX, usernameLower string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(ctx, `
+SELECT EXISTS (SELECT 1 FROM collectible_usernames WHERE username_lower = $1 AND status <> 'burned')`,
+		usernameLower).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check collectible username reservation: %w", err)
+	}
+	return exists, nil
 }
 
 // activeCollectibleUsernamePeerIDs returns the requested peers that own at
@@ -123,6 +146,17 @@ func replacePeerUsernameTx(ctx context.Context, tx pgx.Tx, peerType string, peer
 		// editable slot cannot duplicate a name the peer already holds as an asset.
 		if found && (!owner.matches(peerType, peerID) || owner.collectible) {
 			return domain.ErrUsernameOccupied
+		}
+		if !found {
+			// No live registry row, but the name may still be sitting unassigned
+			// in the admin panel's collectible-username vault -- see
+			// collectibleUsernameReserved's own doc comment for why that's
+			// otherwise invisible to an ordinary claim.
+			if reserved, err := collectibleUsernameReserved(ctx, tx, usernameLower); err != nil {
+				return err
+			} else if reserved {
+				return domain.ErrUsernameOccupied
+			}
 		}
 	}
 	if _, err := tx.Exec(ctx, `
