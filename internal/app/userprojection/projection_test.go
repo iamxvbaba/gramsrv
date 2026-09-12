@@ -255,6 +255,9 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	if !got.Deleted {
 		t.Fatalf("other-view Deleted = false, want true (frozen account shown as deleted to peers)")
 	}
+	if !got.FrozenForViewer {
+		t.Fatalf("other-view FrozenForViewer = false, want true (mark flows to RPC boundary)")
+	}
 	if got.FirstName != "" || got.Username != "" || len(got.RestrictionReasons) != 0 {
 		t.Fatalf("other-view kept persona fields: %+v, want tombstone", got)
 	}
@@ -266,7 +269,7 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForViewer(self): %v", err)
 	}
-	if self := projectionUser(t, selfView, frozenUserID); self.Deleted || self.FirstName != "Frozen" || len(self.RestrictionReasons) != 0 {
+	if self := projectionUser(t, selfView, frozenUserID); self.Deleted || self.FrozenForViewer || self.FirstName != "Frozen" || len(self.RestrictionReasons) != 0 {
 		t.Fatalf("self-view = %+v, want live account without restriction", self)
 	}
 
@@ -274,10 +277,10 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForViewers: %v", err)
 	}
-	if peer := projectionUser(t, batch[otherViewer], frozenUserID); !peer.Deleted || len(peer.RestrictionReasons) != 0 {
-		t.Fatalf("batch other-view = %+v, want deleted tombstone", peer)
+	if peer := projectionUser(t, batch[otherViewer], frozenUserID); !peer.Deleted || !peer.FrozenForViewer || len(peer.RestrictionReasons) != 0 {
+		t.Fatalf("batch other-view = %+v, want deleted tombstone with frozen mark", peer)
 	}
-	if self := projectionUser(t, batch[frozenUserID], frozenUserID); self.Deleted || self.FirstName != "Frozen" || len(self.RestrictionReasons) != 0 {
+	if self := projectionUser(t, batch[frozenUserID], frozenUserID); self.Deleted || self.FrozenForViewer || self.FirstName != "Frozen" || len(self.RestrictionReasons) != 0 {
 		t.Fatalf("batch self-view = %+v, want live account", self)
 	}
 
@@ -286,7 +289,7 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForViewer(after unfreeze): %v", err)
 	}
-	if unfrozen := projectionUser(t, unfrozenView, frozenUserID); unfrozen.Deleted || unfrozen.FirstName != "Frozen" || len(unfrozen.RestrictionReasons) != 0 {
+	if unfrozen := projectionUser(t, unfrozenView, frozenUserID); unfrozen.Deleted || unfrozen.FrozenForViewer || unfrozen.FirstName != "Frozen" || len(unfrozen.RestrictionReasons) != 0 {
 		t.Fatalf("unfrozen projection = %+v, want live account", unfrozen)
 	}
 }

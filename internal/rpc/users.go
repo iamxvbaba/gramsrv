@@ -153,9 +153,15 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	}
 	// A deleted account is a durable peer tombstone. Its retained rows keep
 	// message and membership references resolvable, but none of those private
-	// read models belong in users.getFullUser after deletion.
+	// read models belong in users.getFullUser after deletion. A frozen account is
+	// projected as a peer tombstone too, but carries the synthetic "frozen"
+	// third-party mark (icon + description) alongside the deleted presentation.
 	if u.Deleted {
-		return deletedUserFull(u.ID, user), nil
+		out := deletedUserFull(u.ID, user)
+		if u.FrozenForViewer {
+			applyFrozenUserFullMark(&out.FullUser, u)
+		}
+		return out, nil
 	}
 	if err := r.applyBotCanEditToUser(ctx, currentUserID, u, user); err != nil {
 		return nil, err

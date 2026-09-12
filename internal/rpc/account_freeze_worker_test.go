@@ -21,7 +21,9 @@ func TestAccountFreezeNotificationPushesCurrentViewerProjection(t *testing.T) {
 	sessions := &captureSessions{}
 	freezeSvc := &freezeWorkerService{}
 	projectedBase := domain.User{ID: frozenID, FirstName: "Frozen", Deleted: true}
-	users := &freezeWorkerUsers{user: projectedBase.DeletedTombstone()}
+	tombstone := projectedBase.DeletedTombstone()
+	tombstone.FrozenForViewer = true
+	users := &freezeWorkerUsers{user: tombstone}
 	r := New(Config{}, Deps{
 		AccountFreezeNotifications: freezeSvc,
 		Users:                      users,
@@ -54,6 +56,9 @@ func TestAccountFreezeNotificationPushesCurrentViewerProjection(t *testing.T) {
 	}
 	if username, _ := projected.GetUsername(); username != "" {
 		t.Fatalf("projected user = %#v, want persona stripped", updates.Users[0])
+	}
+	if icon, _ := projected.GetBotVerificationIcon(); icon != accountFrozenMarkIcon {
+		t.Fatalf("projected user = %#v, want frozen mark icon %d", updates.Users[0], accountFrozenMarkIcon)
 	}
 }
 

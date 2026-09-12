@@ -11,7 +11,9 @@ import (
 func tgSelfUser(u domain.User) *tg.User {
 	u = officialSystemUserPresentation(u)
 	if u.Deleted {
-		return &tg.User{ID: u.ID, Deleted: true}
+		out := &tg.User{ID: u.ID, Deleted: true}
+		applyFrozenUserMark(out, u)
+		return out
 	}
 	out := &tg.User{
 		ID:            u.ID,
@@ -45,7 +47,9 @@ func tgSelfUser(u domain.User) *tg.User {
 func tgUser(u domain.User) *tg.User {
 	u = officialSystemUserPresentation(u)
 	if u.Deleted {
-		return &tg.User{ID: u.ID, Deleted: true}
+		out := &tg.User{ID: u.ID, Deleted: true}
+		applyFrozenUserMark(out, u)
+		return out
 	}
 	out := &tg.User{
 		ID:            u.ID,
@@ -73,6 +77,18 @@ func tgUser(u domain.User) *tg.User {
 		out.Photo = photo
 	}
 	return out
+}
+
+// applyFrozenUserMark stamps user#b1b8cc83 bot_verification_icon:flags2.14 on a
+// peer tombstone when the deleted presentation comes from an account freeze. The
+// icon id must name a real custom emoji document in the operator catalogue,
+// otherwise the client resolves it through messages.getCustomEmojiDocuments as
+// empty and draws no badge; it is a synthetic projection only, never persisted.
+func applyFrozenUserMark(out *tg.User, u domain.User) {
+	if out == nil || !u.FrozenForViewer {
+		return
+	}
+	out.SetBotVerificationIcon(accountFrozenMarkIcon)
 }
 
 // officialSystemUserPresentation keeps the durable reserved identity stable

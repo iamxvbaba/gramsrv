@@ -157,6 +157,12 @@ type User struct {
 	DeletionReason  string
 	CreatedAt       time.Time
 	AccountDeleteAt time.Time
+	// FrozenForViewer is a transient, viewer-scoped marker: the account is served
+	// to this viewer as a deleted tombstone because it is frozen, not because it
+	// was deleted. It must never be persisted into users or a viewer-independent
+	// base-user cache; the RPC boundary uses it to attach the synthetic
+	// "frozen" third-party mark alongside the deleted presentation.
+	FrozenForViewer bool
 }
 
 // UserRestrictionReason is the protocol-neutral form of Telegram's

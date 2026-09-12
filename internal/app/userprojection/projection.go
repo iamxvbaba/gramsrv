@@ -540,10 +540,14 @@ func reapplyExclusiveCollectiblePhone(user domain.User, phone domain.Collectible
 func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
 	// Frozen accounts are presented to peers as deleted accounts: the client
 	// renders "Deleted account" instead of the frozen persona. The owner and
-	// unauthenticated/system views keep the live account.
+	// unauthenticated/system views keep the live account. The tombstone carries
+	// FrozenForViewer so the RPC boundary can attach the synthetic "frozen"
+	// third-party mark alongside the deleted presentation.
 	if freeze.Frozen && viewerUserID != 0 && user.ID != 0 && user.ID != viewerUserID && user.ID != domain.OfficialSystemUserID {
 		user.Deleted = true
-		return user.DeletedTombstone()
+		tombstone := user.DeletedTombstone()
+		tombstone.FrozenForViewer = true
+		return tombstone
 	}
 	user.RestrictionReasons = nil
 	return user
