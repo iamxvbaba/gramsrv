@@ -537,10 +537,14 @@ func reapplyExclusiveCollectiblePhone(user domain.User, phone domain.Collectible
 	return user
 }
 
-func applyAccountFreezeProjection(user domain.User, _ int64, _ domain.AccountFreeze) domain.User {
-	// Frozen restriction badges are intentionally not shown to peers, so a
-	// chat with a frozen account opens cleanly instead of showing the
-	// "This account is frozen" banner and a restricted user card.
+func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
+	// Frozen accounts are presented to peers as deleted accounts: the client
+	// renders "Deleted account" instead of the frozen persona. The owner and
+	// unauthenticated/system views keep the live account.
+	if freeze.Frozen && viewerUserID != 0 && user.ID != 0 && user.ID != viewerUserID && user.ID != domain.OfficialSystemUserID {
+		user.Deleted = true
+		return user.DeletedTombstone()
+	}
 	user.RestrictionReasons = nil
 	return user
 }
