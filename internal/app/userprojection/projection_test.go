@@ -252,8 +252,8 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 		t.Fatalf("ForViewer(other): %v", err)
 	}
 	got := projectionUser(t, otherView, frozenUserID)
-	if !reflect.DeepEqual(got.RestrictionReasons, domain.AccountFrozenRestrictionReasons()) {
-		t.Fatalf("other-view restriction = %+v, want frozen restriction", got.RestrictionReasons)
+	if len(got.RestrictionReasons) != 0 {
+		t.Fatalf("other-view restriction = %+v, want none (frozen badge dropped for peers)", got.RestrictionReasons)
 	}
 	if base[0].RestrictionReasons[0].Reason != "stale" {
 		t.Fatalf("projection mutated base user: %+v", base[0])
@@ -271,8 +271,8 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ForViewers: %v", err)
 	}
-	if reasons := projectionUser(t, batch[otherViewer], frozenUserID).RestrictionReasons; !reflect.DeepEqual(reasons, domain.AccountFrozenRestrictionReasons()) {
-		t.Fatalf("batch other-view restriction = %+v", reasons)
+	if reasons := projectionUser(t, batch[otherViewer], frozenUserID).RestrictionReasons; len(reasons) != 0 {
+		t.Fatalf("batch other-view restriction = %+v, want none (frozen badge dropped for peers)", reasons)
 	}
 	if reasons := projectionUser(t, batch[frozenUserID], frozenUserID).RestrictionReasons; len(reasons) != 0 {
 		t.Fatalf("batch self-view restriction = %+v, want none", reasons)

@@ -537,13 +537,11 @@ func reapplyExclusiveCollectiblePhone(user domain.User, phone domain.Collectible
 	return user
 }
 
-func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
-	// Base users and self users must never retain a viewer-scoped restriction.
+func applyAccountFreezeProjection(user domain.User, _ int64, _ domain.AccountFreeze) domain.User {
+	// Frozen restriction badges are intentionally not shown to peers, so a
+	// chat with a frozen account opens cleanly instead of showing the
+	// "This account is frozen" banner and a restricted user card.
 	user.RestrictionReasons = nil
-	if user.Deleted || viewerUserID == 0 || user.ID == 0 || user.ID == viewerUserID || !freeze.Frozen {
-		return user
-	}
-	user.RestrictionReasons = domain.AccountFrozenRestrictionReasons()
 	return user
 }
 
