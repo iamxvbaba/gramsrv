@@ -56,6 +56,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/logout", s.requireAuthAPI(http.HandlerFunc(s.handleAPILogout)))
 	mux.Handle("GET /api/session", s.requireAuthAPI(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/dashboard", s.requireAuthAPI(http.HandlerFunc(s.handleDashboardAPI)))
+	mux.Handle("GET /api/auto-subscribe-channels", s.requireAuthAPI(http.HandlerFunc(s.handleAutoSubscribeChannelsAPI)))
 	mux.Handle("GET /api/accounts", s.requireAuthAPI(http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/accounts/{id}/avatar", s.requireAuthAPI(http.HandlerFunc(s.handleAccountAvatarAPI)))
@@ -105,6 +106,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetVerifiedAPI)))
 	mux.Handle("POST /api/actions/set-account-flags", s.requireAuthAPI(http.HandlerFunc(s.handleSetUserFlagsAPI)))
 	mux.Handle("POST /api/actions/set-channel-flags", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelFlagsAPI)))
+	mux.Handle("POST /api/actions/add-auto-subscribe-channel", s.requireAuthAPI(http.HandlerFunc(s.handleAddAutoSubscribeChannelAPI)))
+	mux.Handle("POST /api/actions/remove-auto-subscribe-channel", s.requireAuthAPI(http.HandlerFunc(s.handleRemoveAutoSubscribeChannelAPI)))
 	mux.Handle("POST /api/actions/set-support", s.requireAuthAPI(http.HandlerFunc(s.handleSetSupportAPI)))
 	mux.Handle("POST /api/actions/set-account-username", s.requireAuthAPI(http.HandlerFunc(s.handleSetUsernameAPI)))
 	mux.Handle("POST /api/actions/set-account-profile", s.requireAuthAPI(http.HandlerFunc(s.handleSetProfileAPI)))
@@ -1627,6 +1630,50 @@ func (s *server) handleSetChannelFlagsAPI(w http.ResponseWriter, r *http.Request
 		Fake:        body.Fake,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/channels/set-flags", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+func (s *server) handleAutoSubscribeChannelsAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSON(w, r, "/v1/channels/auto-subscribe", 1<<20)
+}
+
+type addAutoSubscribeChannelAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	ChannelID flexInt64 `json:"channel_id"`
+}
+
+func (s *server) handleAddAutoSubscribeChannelAPI(w http.ResponseWriter, r *http.Request) {
+	var body addAutoSubscribeChannelAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.AddAutoSubscribeChannelRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "add-auto-subscribe-channel"),
+		ChannelID:   body.ChannelID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/auto-subscribe/add", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type removeAutoSubscribeChannelAPIRequest struct {
+	CommandID string    `json:"command_id"`
+	Reason    string    `json:"reason"`
+	Confirm   bool      `json:"confirm"`
+	ChannelID flexInt64 `json:"channel_id"`
+}
+
+func (s *server) handleRemoveAutoSubscribeChannelAPI(w http.ResponseWriter, r *http.Request) {
+	var body removeAutoSubscribeChannelAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.RemoveAutoSubscribeChannelRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-auto-subscribe-channel"),
+		ChannelID:   body.ChannelID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/channels/auto-subscribe/remove", req)
 	writeCommandResultAPI(w, result, err)
 }
 

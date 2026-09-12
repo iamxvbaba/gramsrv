@@ -29,6 +29,7 @@ import (
 	aiapp "telesrv/internal/app/ai"
 	"telesrv/internal/app/auth"
 	authdiagnosticsapp "telesrv/internal/app/authdiagnostics"
+	autosubscribeapp "telesrv/internal/app/autosubscribe"
 	botsapp "telesrv/internal/app/bots"
 	botverificationapp "telesrv/internal/app/botverification"
 	broadcastapp "telesrv/internal/app/broadcast"
@@ -876,6 +877,7 @@ func run(logger *zap.Logger) error {
 		postgres.WithChannelDialogCache(channelDialogCache),
 		postgres.WithChannelDifferenceBaseCache(channelDifferenceCache),
 		postgres.WithChannelBoostCache(channelBoostCache))
+	autoSubscribeStore := postgres.NewAutoSubscribeStore(pool)
 	activeChannelIDsPageBatcher, err := postgres.NewActiveChannelIDsPageBatcher(
 		channelStore,
 		postgres.ActiveChannelIDsBatchConfig{
@@ -1385,6 +1387,11 @@ func run(logger *zap.Logger) error {
 		),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	autoSubscribeService := autosubscribeapp.NewService(
+		autosubscribeapp.WithStore(autoSubscribeStore),
+		autosubscribeapp.WithChannels(channelsService),
+		autosubscribeapp.WithLogger(logger.Named("app").Named("autosubscribe")),
+	)
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	welcomeMessageService := welcomemessagesapp.NewService(welcomeMessageStore, channelsService)
@@ -1619,6 +1626,7 @@ func run(logger *zap.Logger) error {
 		Gifts:                      giftsService,
 		Passkey:                    passkeyService,
 		Themes:                     themeService,
+		AutoSubscribe:              autoSubscribeService,
 		GroupCalls:                 groupCallsService,
 		LiveStreams:                liveStreamDep(liveStreamService),
 		SFU:                        sfuService,
@@ -1673,6 +1681,7 @@ func run(logger *zap.Logger) error {
 		FreezeNotifier:         router,
 		Channels:               channelsService,
 		ChannelNotifier:        router,
+		AutoSubscribe:          autoSubscribeService,
 		Messages:               messagesService,
 		Gifts:                  giftsService,
 		GiftGranter:            router,

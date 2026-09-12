@@ -1171,6 +1171,15 @@ type Deps struct {
 	Gifts                      GiftsService
 	Passkey                    PasskeyService
 	Themes                     ThemeService
+	AutoSubscribe              AutoSubscribeJoiner
+}
+
+// AutoSubscribeJoiner is the one autosubscribe.Service method onAuthSignUp
+// needs -- narrow on purpose, same idiom as every other dependency interface
+// in this file. See internal/app/autosubscribe's package doc for the full
+// "join everyone" semantics.
+type AutoSubscribeJoiner interface {
+	JoinNewUser(ctx context.Context, userID int64)
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。

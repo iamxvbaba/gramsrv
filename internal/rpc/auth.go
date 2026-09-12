@@ -900,6 +900,9 @@ func (r *Router) onAuthSignUp(ctx context.Context, req *tg.AuthSignUpRequest) (t
 	}
 	r.bindSessionUser(ctx, u.ID)
 	r.enqueueLoginMessageBootstrap(ctx, loginMessage)
+	if r.deps.AutoSubscribe != nil {
+		r.deps.AutoSubscribe.JoinNewUser(ctx, u.ID)
+	}
 	return &tg.AuthAuthorization{User: r.tgSelfUserWithUsernames(ctx, u)}, nil
 }
 

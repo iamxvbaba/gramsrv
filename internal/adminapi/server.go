@@ -47,6 +47,9 @@ type Service interface {
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
 	SetChannelFlags(ctx context.Context, req admin.SetChannelFlagsRequest) (admin.CommandResult, error)
+	ListAutoSubscribeChannels(ctx context.Context) ([]domain.AutoSubscribeChannel, error)
+	AddAutoSubscribeChannel(ctx context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error)
+	RemoveAutoSubscribeChannel(ctx context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error)
 	CreateBot(ctx context.Context, req admin.CreateBotRequest) (admin.CommandResult, error)
 	DeleteBot(ctx context.Context, req admin.DeleteBotRequest) (admin.CommandResult, error)
 	ExportBotToken(ctx context.Context, req admin.ExportBotTokenRequest) (admin.CommandResult, error)
@@ -242,6 +245,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/channels/set-verified", s.authenticated(s.handleSetChannelVerified))
 	mux.HandleFunc("POST /v1/channels/set-flags", s.authenticated(s.handleSetChannelFlags))
 	mux.HandleFunc("POST /v1/channels/set-settings", s.authenticated(s.handleSetChannelSettings))
+	mux.HandleFunc("GET /v1/channels/auto-subscribe", s.authenticated(s.handleListAutoSubscribeChannels))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/add", s.authenticated(s.handleAddAutoSubscribeChannel))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/remove", s.authenticated(s.handleRemoveAutoSubscribeChannel))
 	mux.HandleFunc("POST /v1/channels/set-username", s.authenticated(s.handleSetChannelUsername))
 	mux.HandleFunc("POST /v1/channels/set-color", s.authenticated(s.handleSetChannelColor))
 	mux.HandleFunc("POST /v1/channels/set-emoji-status", s.authenticated(s.handleSetChannelEmojiStatus))
@@ -519,6 +525,42 @@ func (s *Server) handleSetChannelFlags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.SetChannelFlags(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleListAutoSubscribeChannels(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListAutoSubscribeChannels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	channels := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		channels = append(channels, map[string]any{
+			"channel_id": strconv.FormatInt(item.ChannelID, 10),
+			"title":      item.Title,
+			"added_by":   item.AddedBy,
+			"added_at":   item.AddedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
+}
+
+func (s *Server) handleAddAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.AddAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.AddAutoSubscribeChannel(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRemoveAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.RemoveAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RemoveAutoSubscribeChannel(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

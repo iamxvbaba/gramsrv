@@ -12,6 +12,7 @@ import {
   Megaphone,
   Phone,
   BadgeDollarSign,
+  Rss,
   Server,
   Shield,
   ShieldAlert,
@@ -116,6 +117,7 @@ export function Shell({
           <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{t("layout.collectibleUsernames")}</NavLink>
           <NavLink icon={<Phone size={16} />} href="/collectible-phones" route={route} navigate={navigate}>{t("layout.collectiblePhones")}</NavLink>
           <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{t("layout.accountRatings")}</NavLink>
+          <NavLink icon={<Rss size={16} />} href="/auto-subscribe-channels" route={route} navigate={navigate}>{t("layout.autoSubscribeChannels")}</NavLink>
 		  <NavLink icon={<Database size={16} />} href="/storage" route={route} navigate={navigate}>{t("layout.storage")}</NavLink>
 			<NavLink icon={<Gift size={16} />} href="/gifts" route={route} navigate={navigate}>{t("layout.gifts")}</NavLink>
           <NavLink icon={<Send size={16} />} href="/give-gifts" route={route} navigate={navigate}>{t("layout.giveGifts")}</NavLink>

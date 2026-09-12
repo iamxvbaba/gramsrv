@@ -1253,3 +1253,15 @@ func (fakeService) AccountRatings(context.Context, domain.AccountRatingFilter) (
 func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.AccountRatingEvent, error) {
 	return nil, nil
 }
+
+func (fakeService) ListAutoSubscribeChannels(context.Context) ([]domain.AutoSubscribeChannel, error) {
+	return nil, nil
+}
+
+func (fakeService) AddAutoSubscribeChannel(_ context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{}, nil
+}
+
+func (fakeService) RemoveAutoSubscribeChannel(_ context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{}, nil
+}

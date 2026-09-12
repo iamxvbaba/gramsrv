@@ -978,3 +978,17 @@ export type GroupMessageListResponse = {
   limit: number;
   rows: GroupMessageRow[];
 };
+
+// Admin panel "auto-subscribe channel" list -- see
+// deploy/migrations/0204_channel_auto_subscribe.up.sql for the add/remove
+// semantics this reflects.
+export type AutoSubscribeChannelRow = {
+  channel_id: string;
+  title: string;
+  added_by: string;
+  added_at: string;
+};
+
+export type AutoSubscribeChannelListResponse = {
+  channels: AutoSubscribeChannelRow[] | null;
+};

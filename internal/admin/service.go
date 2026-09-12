@@ -96,15 +96,17 @@ const (
 	// on purpose: these actions write the verifier catalogue and the attributed
 	// marks, never the platform checkmark, and the audit trail has to keep the two
 	// mechanisms apart at a glance.
-	ActionGrantBotVerifier          = "botverification.grant_verifier"
-	ActionSetBotVerifierEnabled     = "botverification.set_verifier_enabled"
-	ActionRevokeBotVerifier         = "botverification.revoke_verifier"
-	ActionUpsertVerificationIcon    = "botverification.upsert_icon"
-	ActionSetVerificationIconActive = "botverification.set_icon_active"
-	ActionRevokeCustomVerification  = "botverification.revoke_mark"
-	ActionApproveBotVerification    = "botverification.approve"
-	ActionRejectBotVerification     = "botverification.reject"
-	ActionRevokeBotVerification     = "botverification.revoke_request"
+	ActionGrantBotVerifier           = "botverification.grant_verifier"
+	ActionSetBotVerifierEnabled      = "botverification.set_verifier_enabled"
+	ActionRevokeBotVerifier          = "botverification.revoke_verifier"
+	ActionUpsertVerificationIcon     = "botverification.upsert_icon"
+	ActionSetVerificationIconActive  = "botverification.set_icon_active"
+	ActionRevokeCustomVerification   = "botverification.revoke_mark"
+	ActionApproveBotVerification     = "botverification.approve"
+	ActionRejectBotVerification      = "botverification.reject"
+	ActionRevokeBotVerification      = "botverification.revoke_request"
+	ActionAddAutoSubscribeChannel    = "channels.auto_subscribe.add"
+	ActionRemoveAutoSubscribeChannel = "channels.auto_subscribe.remove"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -306,6 +308,14 @@ type ChannelsService interface {
 	AdminSetPhoto(ctx context.Context, channelID int64, photo domain.Photo) (domain.Channel, error)
 }
 
+// AutoSubscribeService backs the admin panel's auto-subscribe channel list --
+// see internal/app/autosubscribe's own package doc for the full semantics.
+type AutoSubscribeService interface {
+	List(ctx context.Context) ([]domain.AutoSubscribeChannel, error)
+	Add(ctx context.Context, channelID int64, addedBy string) (added bool, joined int, err error)
+	Remove(ctx context.Context, channelID int64) (removed bool, err error)
+}
+
 type ChannelNotifier interface {
 	NotifyChannelChanged(ctx context.Context, ch domain.Channel) error
 }
@@ -469,6 +479,7 @@ type Dependencies struct {
 	FreezeNotifier         AccountFreezeNotifier
 	Channels               ChannelsService
 	ChannelNotifier        ChannelNotifier
+	AutoSubscribe          AutoSubscribeService
 	Messages               MessagesService
 	Gifts                  GiftsService
 	GiftGranter            GiftGranter
@@ -507,6 +518,7 @@ type Service struct {
 	freezeNotifier         AccountFreezeNotifier
 	channels               ChannelsService
 	channelNotifier        ChannelNotifier
+	autoSubscribe          AutoSubscribeService
 	messages               MessagesService
 	gifts                  GiftsService
 	giftGranter            GiftGranter
@@ -581,6 +593,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.ChannelNotifier != nil {
 		s.channelNotifier = deps.ChannelNotifier
+	}
+	if deps.AutoSubscribe != nil {
+		s.autoSubscribe = deps.AutoSubscribe
 	}
 	if deps.Messages != nil {
 		s.messages = deps.Messages
@@ -5002,4 +5017,79 @@ func messageIDs(messages []domain.Message) []int {
 		out = append(out, msg.ID)
 	}
 	return out
+}
+
+// AddAutoSubscribeChannelRequest adds a channel/supergroup to the admin
+// panel's auto-subscribe list -- see autosubscribe.Service.Add for the full
+// "join everyone right now, join every future signup" semantics.
+type AddAutoSubscribeChannelRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id,string"`
+}
+
+// RemoveAutoSubscribeChannelRequest takes a channel off the list. It never
+// removes anyone already joined -- see autosubscribe.Service.Remove.
+type RemoveAutoSubscribeChannelRequest struct {
+	CommandMeta
+	ChannelID int64 `json:"channel_id,string"`
+}
+
+func (s *Service) ListAutoSubscribeChannels(ctx context.Context) ([]domain.AutoSubscribeChannel, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return nil, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	return s.autoSubscribe.List(ctx)
+}
+
+func (s *Service) AddAutoSubscribeChannel(ctx context.Context, req AddAutoSubscribeChannelRequest) (CommandResult, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return CommandResult{}, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	if req.ChannelID <= 0 {
+		return CommandResult{}, domain.ErrAutoSubscribeChannelInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionAddAutoSubscribeChannel, 0, domain.Peer{}, req,
+		func() (CommandResult, error) {
+			details := map[string]any{"channel_id": strconv.FormatInt(req.ChannelID, 10)}
+			if req.DryRun {
+				return CommandResult{Message: "dry-run completed", Details: details}, nil
+			}
+			added, joined, err := s.autoSubscribe.Add(ctx, req.ChannelID, req.Actor)
+			if err != nil {
+				return CommandResult{Details: details}, err
+			}
+			details["added"] = added
+			details["joined_existing_users"] = joined
+			message := "channel added to auto-subscribe list"
+			if !added {
+				message = "channel was already on the auto-subscribe list"
+			}
+			return CommandResult{Message: message, Details: details}, nil
+		})
+}
+
+func (s *Service) RemoveAutoSubscribeChannel(ctx context.Context, req RemoveAutoSubscribeChannelRequest) (CommandResult, error) {
+	if s == nil || s.autoSubscribe == nil {
+		return CommandResult{}, fmt.Errorf("auto-subscribe dependency is not configured")
+	}
+	if req.ChannelID <= 0 {
+		return CommandResult{}, domain.ErrAutoSubscribeChannelInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRemoveAutoSubscribeChannel, 0, domain.Peer{}, req,
+		func() (CommandResult, error) {
+			details := map[string]any{"channel_id": strconv.FormatInt(req.ChannelID, 10)}
+			if req.DryRun {
+				return CommandResult{Message: "dry-run completed", Details: details}, nil
+			}
+			removed, err := s.autoSubscribe.Remove(ctx, req.ChannelID)
+			if err != nil {
+				return CommandResult{Details: details}, err
+			}
+			details["removed"] = removed
+			message := "channel removed from auto-subscribe list"
+			if !removed {
+				message = "channel was not on the auto-subscribe list"
+			}
+			return CommandResult{Message: message, Details: details}, nil
+		})
 }
