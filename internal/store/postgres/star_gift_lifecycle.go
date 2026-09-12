@@ -340,14 +340,8 @@ func (s *StarGiftLifecycleStore) SetStarGiftListing(ctx context.Context, req dom
 			if unique.ResaleTonOnly && req.Amount.Currency != domain.StarGiftCurrencyTON {
 				return domain.ErrStarGiftResaleUnavailable
 			}
-			var minimum int64
-			if req.Amount.Currency == domain.StarGiftCurrencyStars {
-				if err := tx.QueryRow(ctx, `SELECT resell_min_stars FROM star_gift_catalog WHERE gift_id=$1`, unique.GiftID).Scan(&minimum); err != nil {
-					return err
-				}
-				if req.Amount.Amount < minimum {
-					return domain.ErrStarGiftResaleUnavailable
-				}
+			if req.Amount.Currency == domain.StarGiftCurrencyStars && req.Amount.Amount < domain.MinStarGiftResaleStars {
+				return domain.ErrStarGiftResaleUnavailable
 			}
 			_, err = tx.Exec(ctx, `INSERT INTO star_gift_listings(unique_gift_id,seller_peer_type,seller_peer_id,currency,amount,listed_at,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$6)
@@ -1391,10 +1385,15 @@ func savedStarGiftByUniqueID(ctx context.Context, db sqlcgen.DBTX, uniqueID int6
 	return saved, err == nil, err
 }
 
+// updateStarGiftResaleProjection refreshes the listing count for gift_id.
+// It deliberately leaves resell_min_stars untouched: that column no longer
+// drives SetStarGiftListing's floor check (see domain.MinStarGiftResaleStars
+// and its own doc comment on why a market-derived floor only ratchets
+// upward), so it stays whatever the catalog/official snapshot set it to --
+// informational only, same as real Telegram's own per-gift value.
 func updateStarGiftResaleProjection(ctx context.Context, tx pgx.Tx, giftID int64) error {
 	_, err := tx.Exec(ctx, `UPDATE star_gift_catalog c SET
  availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id),
- resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR'),0),
  updated_at=now() WHERE c.gift_id=$1`, giftID)
 	return err
 }

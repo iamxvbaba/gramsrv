@@ -1136,6 +1136,17 @@ const (
 	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
 	// official clients. Pin requests are complete replacement vectors.
 	MaxPinnedStarGifts = 6
+	// MinStarGiftResaleStars is the floor SetStarGiftListing enforces on a
+	// Stars-denominated resale price. Deliberately a flat threshold, not
+	// derived from whatever the lowest current listing on the market happens
+	// to be: a market-derived floor only ever ratchets upward (each new
+	// lowest listing raises the floor for everyone after it, since it can
+	// never fall below the last MIN() once every existing listing sits above
+	// the old floor), eventually locking sellers out of pricing below
+	// whatever the first lister picked. See resell_min_stars's own column
+	// comment in the catalog schema for why that field itself stays
+	// read-only/informational instead of driving this check.
+	MinStarGiftResaleStars int64 = 125
 )
 
 // Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
