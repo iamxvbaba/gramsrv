@@ -125,6 +125,20 @@ services:
       TELESRV_OTP_WEBHOOK_SECRET: ${TELESRV_OTP_WEBHOOK_SECRET:-}
       TELESRV_OTP_WEBHOOK_TIMEOUT: ${TELESRV_OTP_WEBHOOK_TIMEOUT:-5s}
       TELESRV_OFFICIAL_GIFTS_DIR: ${TELESRV_OFFICIAL_GIFTS_DIR:-data/official-gifts}
+      # Product identity shown to clients (internal/branding). Without these,
+      # the process falls back to branding.DefaultConfig()'s own "Telesrv"
+      # values -- confirmed live as the cause of system messages (account
+      # 777000) showing "Telesrv" instead of "ShuzaGram".
+      TELESRV_BRAND_PRODUCT_NAME: ${TELESRV_BRAND_PRODUCT_NAME:-ShuzaGram}
+      TELESRV_BRAND_PRODUCT_USERNAME: ${TELESRV_BRAND_PRODUCT_USERNAME:-shuzagram}
+      TELESRV_BRAND_DESKTOP_APP_NAME: ${TELESRV_BRAND_DESKTOP_APP_NAME:-ShuzaGram Desktop}
+      TELESRV_BRAND_ANDROID_APP_NAME: ${TELESRV_BRAND_ANDROID_APP_NAME:-ShuzaGram Android}
+      TELESRV_BRAND_IOS_APP_NAME: ${TELESRV_BRAND_IOS_APP_NAME:-ShuzaGram iOS}
+      TELESRV_BRAND_MACOS_APP_NAME: ${TELESRV_BRAND_MACOS_APP_NAME:-ShuzaGram macOS}
+      TELESRV_BRAND_WEB_A_APP_NAME: ${TELESRV_BRAND_WEB_A_APP_NAME:-ShuzaGram Web A}
+      TELESRV_BRAND_WEB_K_APP_NAME: ${TELESRV_BRAND_WEB_K_APP_NAME:-ShuzaGram Web K}
+      TELESRV_BRAND_PREMIUM_NAME: ${TELESRV_BRAND_PREMIUM_NAME:-ShuzaGram Premium}
+      TELESRV_BRAND_STARS_NAME: ${TELESRV_BRAND_STARS_NAME:-ShuzaGram Stars}
       TELESRV_RSA_KEY: /var/lib/telesrv/server_rsa.pem
       TELESRV_RSA_IDENTITY_MODE: ${TELESRV_RSA_IDENTITY_MODE:-test}
       TELESRV_SFU_ENABLE: ${TELESRV_SFU_ENABLE:-true}
