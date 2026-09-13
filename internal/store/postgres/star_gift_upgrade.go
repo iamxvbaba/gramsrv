@@ -937,6 +937,20 @@ FROM peer_star_gifts p WHERE `+where+` FOR UPDATE`, args...)
 	return saved, err
 }
 
+// lockActiveCollectibleRevision locks BOTH the catalog row and its active
+// collectible revision, always in that order (catalog first). Every caller
+// eventually reaches an INSERT INTO unique_star_gifts, whose FK to
+// star_gift_catalog(gift_id) takes an implicit FOR KEY SHARE on that same
+// row -- so a caller that only locked the revision here (never the catalog
+// row) was taking that catalog lock late, while a sibling caller that
+// separately pre-locks the catalog row (e.g. an admin grant, or a purchase
+// with an upgrade) takes it early and only reaches this revision lock
+// second. Two concurrent transactions following those two different orders
+// deadlock on each other (confirmed live: ERROR 40P01 during a gift-give
+// batch racing a real owner-initiated upgrade). Locking both rows together
+// here, in one statement, makes every one of this function's call sites
+// acquire them in the same catalog-then-revision order regardless of what
+// each one does before or after calling it.
 func lockActiveCollectibleRevision(ctx context.Context, tx pgx.Tx, giftID int64) (domain.StarGiftCollectibleRevision, error) {
 	var revision domain.StarGiftCollectibleRevision
 	var status string
@@ -944,7 +958,7 @@ func lockActiveCollectibleRevision(ctx context.Context, tx pgx.Tx, giftID int64)
 SELECT r.id, r.gift_id, r.upgrade_stars, r.supply_total, r.issued, r.slug_prefix, r.status
 FROM star_gift_catalog c
 JOIN star_gift_collectible_revisions r ON r.id=c.collectible_revision_id
-WHERE c.gift_id=$1 FOR UPDATE OF r`, giftID).Scan(
+WHERE c.gift_id=$1 FOR UPDATE OF c, r`, giftID).Scan(
 		&revision.ID, &revision.GiftID, &revision.UpgradeStars, &revision.SupplyTotal,
 		&revision.Issued, &revision.SlugPrefix, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
