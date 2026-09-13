@@ -2403,6 +2403,7 @@ type giveGiftAPIRequest struct {
 	ModelAttributeID    int64  `json:"model_attribute_id,string"`
 	PatternAttributeID  int64  `json:"pattern_attribute_id,string"`
 	BackdropAttributeID int64  `json:"backdrop_attribute_id,string"`
+	Count               int    `json:"count,omitempty"`
 }
 
 func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -2422,6 +2423,7 @@ func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
 		ModelAttributeID:    body.ModelAttributeID,
 		PatternAttributeID:  body.PatternAttributeID,
 		BackdropAttributeID: body.BackdropAttributeID,
+		Count:               body.Count,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/give", req)
 	writeCommandResultAPI(w, result, err)

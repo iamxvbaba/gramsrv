@@ -119,6 +119,10 @@ const (
 	// direction. The domain only rejects a zero delta, so the operator-facing
 	// bound lives here next to the other grant limits.
 	maxAccountRatingAdjustment = 1_000_000_000
+	// maxGiveGiftCount bounds one GiveGift batch. Each unit is its own
+	// AdminGrantStarGift call/delivery message, so this is also the ceiling
+	// on how much synchronous work one admin command does.
+	maxGiveGiftCount = 50
 )
 
 // Stable admin error codes for the collectible-username and account-rating
@@ -918,6 +922,15 @@ type SetStarGiftSortOrderRequest struct {
 // GiveGiftRequest grants a catalog gift to a recipient (user or channel) from
 // the official system account 777000 at no charge.
 // Exactly one of UserID / ChannelID identifies the recipient.
+//
+// Count repeats the delivery that many times in one command instead of
+// making the operator resend the whole form per copy. Each copy is granted
+// independently: a chosen (nonzero) attribute is reused as-is on every copy,
+// while an attribute left at 0 ("random") is re-resolved by
+// AdminGrantStarGift on every single copy -- so "model fixed, pattern/backdrop
+// random" naturally comes out as one repeated model with a fresh
+// pattern/backdrop roll each time, with no extra logic beyond looping the
+// existing single-gift call.
 type GiveGiftRequest struct {
 	CommandMeta
 	SenderUserID        int64  `json:"sender_user_id"`
@@ -930,6 +943,7 @@ type GiveGiftRequest struct {
 	ModelAttributeID    int64  `json:"model_attribute_id"`
 	PatternAttributeID  int64  `json:"pattern_attribute_id"`
 	BackdropAttributeID int64  `json:"backdrop_attribute_id"`
+	Count               int    `json:"count,omitempty"`
 }
 
 type StarGiftCollectibleAnimationUpload struct {
@@ -2001,6 +2015,12 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 	if !req.Upgrade && (req.ModelAttributeID > 0 || req.PatternAttributeID > 0 || req.BackdropAttributeID > 0) {
 		return CommandResult{}, fmt.Errorf("collectible attributes require upgrade")
 	}
+	if req.Count <= 0 {
+		req.Count = 1
+	}
+	if req.Count > maxGiveGiftCount {
+		return CommandResult{}, fmt.Errorf("count must be <= %d", maxGiveGiftCount)
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionGiveGift, req.UserID, recipient, req, func() (CommandResult, error) {
 		details := map[string]any{
 			"sender_user_id": sender,
@@ -2009,6 +2029,7 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 			"recipient_id":   recipient.ID,
 			"hide_name":      req.HideName,
 			"upgrade":        req.Upgrade,
+			"count":          req.Count,
 		}
 		if req.Message != "" {
 			details["message"] = req.Message
@@ -2031,8 +2052,9 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 				if !ok || preview.UpgradeStars <= 0 {
 					return CommandResult{}, fmt.Errorf("gift %d has no published collectible upgrade", req.GiftID)
 				}
-				if preview.Issued >= preview.SupplyTotal {
-					return CommandResult{}, fmt.Errorf("gift %d collectible supply is exhausted", req.GiftID)
+				if preview.SupplyTotal-preview.Issued < req.Count {
+					return CommandResult{}, fmt.Errorf("gift %d collectible supply cannot cover %d copies (issued %d/%d)",
+						req.GiftID, req.Count, preview.Issued, preview.SupplyTotal)
 				}
 				if req.ModelAttributeID > 0 && !collectibleAttrPresent(preview.Models, req.ModelAttributeID) {
 					return CommandResult{}, fmt.Errorf("model attribute %d is not part of gift %d", req.ModelAttributeID, req.GiftID)
@@ -2059,23 +2081,35 @@ func (s *Service) GiveGift(ctx context.Context, req GiveGiftRequest) (CommandRes
 		if req.DryRun {
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
-		if err := s.giftGranter.AdminGrantStarGift(ctx, domain.AdminStarGiftGrant{
-			SenderID:            sender,
-			Recipient:           recipient,
-			GiftID:              req.GiftID,
-			HideName:            req.HideName,
-			Message:             req.Message,
-			Upgrade:             req.Upgrade,
-			CommandKey:          "admin-gift:" + req.CommandID,
-			ModelAttributeID:    req.ModelAttributeID,
-			PatternAttributeID:  req.PatternAttributeID,
-			BackdropAttributeID: req.BackdropAttributeID,
-		}); err != nil {
-			return CommandResult{}, err
+		// Each copy is its own AdminGrantStarGift call with its own CommandKey:
+		// a fixed (nonzero) attribute is passed through unchanged every time, so
+		// it comes out identical on every copy, while an attribute left at 0
+		// ("random") is re-resolved fresh by the granter on every single call --
+		// see GiveGiftRequest's own doc comment.
+		for i := 0; i < req.Count; i++ {
+			if err := s.giftGranter.AdminGrantStarGift(ctx, domain.AdminStarGiftGrant{
+				SenderID:            sender,
+				Recipient:           recipient,
+				GiftID:              req.GiftID,
+				HideName:            req.HideName,
+				Message:             req.Message,
+				Upgrade:             req.Upgrade,
+				CommandKey:          fmt.Sprintf("admin-gift:%s:%d", req.CommandID, i),
+				ModelAttributeID:    req.ModelAttributeID,
+				PatternAttributeID:  req.PatternAttributeID,
+				BackdropAttributeID: req.BackdropAttributeID,
+			}); err != nil {
+				details["granted"] = i
+				return CommandResult{Details: details}, fmt.Errorf("copy %d/%d: %w", i+1, req.Count, err)
+			}
 		}
+		details["granted"] = req.Count
 		msg := "gift granted"
 		if req.Upgrade {
 			msg = "collectible gift granted"
+		}
+		if req.Count > 1 {
+			msg = fmt.Sprintf("%d %s", req.Count, strings.Replace(msg, "gift", "gifts", 1))
 		}
 		return CommandResult{Message: msg, Details: details}, nil
 	})

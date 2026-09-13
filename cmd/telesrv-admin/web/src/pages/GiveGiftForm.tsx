@@ -7,6 +7,7 @@ import { useI18n } from "../i18n";
 import type { AccountRow, ChannelRow, CommandResult, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview, StarGiftRow } from "../types";
 
 const SYSTEM_SENDER = "777000";
+const MAX_GIVE_GIFT_COUNT = 50;
 
 type RecipientKind = "user" | "channel";
 
@@ -28,6 +29,7 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
   const [modelID, setModelID] = useState("0");
   const [patternID, setPatternID] = useState("0");
   const [backdropID, setBackdropID] = useState("0");
+  const [count, setCount] = useState("1");
   const [reason, setReason] = useState("");
   const [result, setResult] = useState<CommandResult | null>(null);
   const [error, setError] = useState("");
@@ -45,6 +47,7 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
     setModelID("0");
     setPatternID("0");
     setBackdropID("0");
+    setCount("1");
     setResult(null);
     setError("");
   }, [gift.GiftID]);
@@ -72,17 +75,23 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
       model_attribute_id: upgradable ? modelID : "0",
       pattern_attribute_id: upgradable ? patternID : "0",
       backdrop_attribute_id: upgradable ? backdropID : "0",
+      count: Number(count),
       reason: reason.trim(),
       confirm
     };
   }
 
-  const previewPayload = useMemo(() => buildPayload(false), [gift.GiftID, kind, recipientID, message, hideName, upgrade, modelID, patternID, backdropID, reason]);
+  const previewPayload = useMemo(() => buildPayload(false), [gift.GiftID, kind, recipientID, message, hideName, upgrade, modelID, patternID, backdropID, count, reason]);
   const canConfirm = result?.dry_run && !result.error;
 
   async function run(confirm: boolean) {
     if (recipientID <= 0) {
       setError(t("giveGift.recipientRequired"));
+      return;
+    }
+    const countValue = Number(count);
+    if (!Number.isInteger(countValue) || countValue < 1 || countValue > MAX_GIVE_GIFT_COUNT) {
+      setError(t("giveGift.countInvalid", { max: MAX_GIVE_GIFT_COUNT }));
       return;
     }
     if (!reason.trim()) {
@@ -142,6 +151,13 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftRow; onDone?: () 
         <input type="checkbox" checked={hideName} onChange={(event) => { setHideName(event.target.checked); setResult(null); }} />
         <span className="gift-switch-track" aria-hidden="true"><span /></span>
         <span>{t("giveGift.hideName")}</span>
+      </label>
+
+      <label className="form-field">
+        <span>{t("giveGift.count")}</span>
+        <input type="number" min={1} max={MAX_GIVE_GIFT_COUNT} value={count}
+          onChange={(event) => { setCount(event.target.value); setResult(null); }} />
+        <small className="field-hint">{t("giveGift.countHint")}</small>
       </label>
 
       {kind === "user" && (

@@ -2411,3 +2411,59 @@ func TestResolveUserByPhoneRejectsMissingDependency(t *testing.T) {
 		t.Fatalf("without dependency err=%v", err)
 	}
 }
+
+type fakeGiftGranter struct{ grants []domain.AdminStarGiftGrant }
+
+func (f *fakeGiftGranter) AdminGrantStarGift(_ context.Context, grant domain.AdminStarGiftGrant) error {
+	f.grants = append(f.grants, grant)
+	return nil
+}
+
+func TestGiveGiftDefaultsCountToOne(t *testing.T) {
+	granter := &fakeGiftGranter{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), GiftGranter: granter})
+	if _, err := svc.GiveGift(context.Background(), GiveGiftRequest{
+		CommandMeta: CommandMeta{CommandID: "t1", Actor: "test", Reason: "test"},
+		UserID:      1, GiftID: 1,
+	}); err != nil {
+		t.Fatalf("give gift: %v", err)
+	}
+	if len(granter.grants) != 1 {
+		t.Fatalf("grants = %d, want 1", len(granter.grants))
+	}
+}
+
+func TestGiveGiftGrantsOneCopyPerCountWithDistinctCommandKeys(t *testing.T) {
+	granter := &fakeGiftGranter{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), GiftGranter: granter})
+	if _, err := svc.GiveGift(context.Background(), GiveGiftRequest{
+		CommandMeta: CommandMeta{CommandID: "t2", Actor: "test", Reason: "test"},
+		UserID:      1, GiftID: 1, Count: 3,
+	}); err != nil {
+		t.Fatalf("give gift: %v", err)
+	}
+	if len(granter.grants) != 3 {
+		t.Fatalf("grants = %d, want 3", len(granter.grants))
+	}
+	seen := map[string]bool{}
+	for _, g := range granter.grants {
+		if seen[g.CommandKey] {
+			t.Fatalf("duplicate command key %q across copies", g.CommandKey)
+		}
+		seen[g.CommandKey] = true
+	}
+}
+
+func TestGiveGiftRejectsCountAboveLimit(t *testing.T) {
+	granter := &fakeGiftGranter{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), GiftGranter: granter})
+	if _, err := svc.GiveGift(context.Background(), GiveGiftRequest{
+		CommandMeta: CommandMeta{CommandID: "t3", Actor: "test", Reason: "test"},
+		UserID:      1, GiftID: 1, Count: maxGiveGiftCount + 1,
+	}); err == nil {
+		t.Fatal("expected an error for a count above the limit")
+	}
+	if len(granter.grants) != 0 {
+		t.Fatalf("grants = %d, want 0 (rejected before granting anything)", len(granter.grants))
+	}
+}
