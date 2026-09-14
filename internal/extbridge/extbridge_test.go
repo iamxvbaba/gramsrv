@@ -247,6 +247,35 @@ func TestPurchaseUsernameSuccess(t *testing.T) {
 	}
 }
 
+// TestPurchaseUsernamePurchaseIsRetrySafe covers a retried request after the
+// first attempt already completed (e.g. the client never saw the response):
+// it must read as success -- the buyer already paid and already owns the
+// name -- rather than the confusing "not listed for sale" conflict a naive
+// status check would produce, and it must not debit a second time.
+func TestPurchaseUsernamePurchaseIsRetrySafe(t *testing.T) {
+	balances := map[int64]int64{100: 10_000_000_000}
+	usernames := map[string]domain.CollectibleUsername{
+		"forsale": {Username: "forsale", Status: domain.CollectibleUsernameStatusVault, Currency: "TON", Amount: 5_000_000_000},
+	}
+	h := newMarketTestHandler(t, balances, usernames, nil)
+	body := `{"username":"forsale","buyer_user_id":"100"}`
+
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, authed(httptest.NewRequest(http.MethodPost, "/bridge/v1/usernames/purchase", strings.NewReader(body))))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first attempt status = %d, want 200, body=%s", first.Code, first.Body.String())
+	}
+
+	retry := httptest.NewRecorder()
+	h.ServeHTTP(retry, authed(httptest.NewRequest(http.MethodPost, "/bridge/v1/usernames/purchase", strings.NewReader(body))))
+	if retry.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 (already-owned should read as success), body=%s", retry.Code, retry.Body.String())
+	}
+	if balances[100] != 5_000_000_000 {
+		t.Fatalf("buyer balance = %d, want still 5_000_000_000 -- retry must not debit again", balances[100])
+	}
+}
+
 func TestPurchaseUsernameInsufficientBalanceDoesNotTransfer(t *testing.T) {
 	balances := map[int64]int64{100: 1_000_000_000}
 	usernames := map[string]domain.CollectibleUsername{

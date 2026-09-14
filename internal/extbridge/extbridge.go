@@ -281,6 +281,16 @@ func (h *handler) purchaseUsername(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if asset.Status != marketplaceListedStatus {
+		// A retried purchase (same command_key, response lost the first
+		// time) lands here once the first attempt already transferred the
+		// asset -- Transfer() is itself idempotent on command_key, but that
+		// only helps if we get as far as calling it. Recognize "the caller
+		// already owns this" as success rather than a confusing conflict:
+		// the buyer already paid and already has it.
+		if asset.Status == domain.CollectibleUsernameStatusOwned && asset.Owner == (domain.Peer{Type: domain.PeerTypeUser, ID: buyerID}) {
+			writeJSON(w, http.StatusOK, map[string]any{"username": toUsernameResponse(asset)})
+			return
+		}
 		http.Error(w, "username is not listed for sale", http.StatusConflict)
 		return
 	}
@@ -381,6 +391,13 @@ func (h *handler) purchasePhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if asset.Status != marketplaceListedStatus {
+		// See the matching comment in purchaseUsername: a retried purchase
+		// whose first attempt already succeeded should read as success, not
+		// a conflict -- the buyer already paid and already owns it.
+		if asset.Status == domain.CollectibleUsernameStatusOwned && asset.OwnerUserID == buyerID {
+			writeJSON(w, http.StatusOK, map[string]any{"phone": toPhoneResponse(asset)})
+			return
+		}
 		http.Error(w, "phone is not listed for sale", http.StatusConflict)
 		return
 	}
