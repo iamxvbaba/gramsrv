@@ -188,6 +188,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/upsert-verification-icon", s.botVerificationManage(s.handleUpsertVerificationIconAPI))
 	mux.Handle("POST /api/actions/set-verification-icon-active", s.botVerificationManage(s.handleSetVerificationIconActiveAPI))
 	mux.Handle("POST /api/actions/revoke-custom-verification", s.botVerificationManage(s.handleRevokeCustomVerificationAPI))
+	mux.Handle("POST /api/actions/grant-custom-verification", s.botVerificationManage(s.handleGrantCustomVerificationAPI))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})

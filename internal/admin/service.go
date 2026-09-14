@@ -102,6 +102,7 @@ const (
 	ActionUpsertVerificationIcon     = "botverification.upsert_icon"
 	ActionSetVerificationIconActive  = "botverification.set_icon_active"
 	ActionRevokeCustomVerification   = "botverification.revoke_mark"
+	ActionGrantCustomVerification    = "botverification.grant_mark"
 	ActionApproveBotVerification     = "botverification.approve"
 	ActionRejectBotVerification      = "botverification.reject"
 	ActionRevokeBotVerification      = "botverification.revoke_request"

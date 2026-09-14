@@ -134,6 +134,7 @@ type Service interface {
 	UpsertVerificationIcon(ctx context.Context, req admin.UpsertVerificationIconRequest) (admin.CommandResult, error)
 	SetVerificationIconActive(ctx context.Context, req admin.SetVerificationIconActiveRequest) (admin.CommandResult, error)
 	RevokeCustomVerification(ctx context.Context, req admin.RevokeCustomVerificationRequest) (admin.CommandResult, error)
+	GrantCustomVerification(ctx context.Context, req admin.GrantCustomVerificationRequest) (admin.CommandResult, error)
 	ApproveBotVerification(ctx context.Context, req admin.ApproveBotVerificationRequest) (admin.CommandResult, error)
 	RejectBotVerification(ctx context.Context, req admin.RejectBotVerificationRequest) (admin.CommandResult, error)
 	RevokeBotVerification(ctx context.Context, req admin.RevokeBotVerificationRequest) (admin.CommandResult, error)
@@ -340,6 +341,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/botverification/icons/upsert", s.authorized(PermissionBotVerificationManage, s.handleUpsertVerificationIcon))
 	mux.HandleFunc("POST /v1/botverification/icons/set-active", s.authorized(PermissionBotVerificationManage, s.handleSetVerificationIconActive))
 	mux.HandleFunc("POST /v1/botverification/marks/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeCustomVerification))
+	mux.HandleFunc("POST /v1/botverification/marks/grant", s.authorized(PermissionBotVerificationManage, s.handleGrantCustomVerification))
 	return mux
 }
 

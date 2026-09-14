@@ -765,6 +765,24 @@ function MarksBlock({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // Direct grant: no application in the queue, no verifier bot call. Its own
+  // form state, separate from the filter above -- picking a verifier to
+  // search by and picking one to grant with are different questions.
+  const [grantVerifierBotID, setGrantVerifierBotID] = useState("");
+  const [grantPeerType, setGrantPeerType] = useState<BotVerificationPeerType>("user");
+  const [grantPeerID, setGrantPeerID] = useState("");
+  const [grantDescription, setGrantDescription] = useState("");
+  const grantPayload = () => ({
+    verifier_bot_id: grantVerifierBotID,
+    peer_type: grantPeerType,
+    peer_id: grantPeerID,
+    description: grantDescription.trim()
+  });
+  function resetGrantForm() {
+    setGrantPeerID("");
+    setGrantDescription("");
+  }
+
   async function load(next = false) {
     setBusy(true);
     setError("");
@@ -804,6 +822,64 @@ function MarksBlock({
         />
         {error && <Alert>{error}</Alert>}
       </section>
+
+      {canManage && (
+        <section className="section-block">
+          <SectionHead title={t("botverification.grantMarkTitle")} text={t("botverification.grantMarkHint")} />
+          <div className="bot-create-fields">
+            <label className="duration-field">
+              <span>{t("botverification.verifier")}</span>
+              <select value={grantVerifierBotID} onChange={(event) => setGrantVerifierBotID(event.target.value)}>
+                <option value="">{t("botverification.grantMarkPickVerifier")}</option>
+                {verifiers.map((row) => (
+                  <option key={row.BotID} value={row.BotID}>
+                    {row.CompanyName || displayUsername(row.BotUsername) || row.BotID}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="duration-field">
+              <span>{t("botverification.peerType")}</span>
+              <select value={grantPeerType} onChange={(event) => setGrantPeerType(event.target.value as BotVerificationPeerType)}>
+                {peerTypes.map((item) => (
+                  <option key={item} value={item}>{t(`botverification.peer.${item}`)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="duration-field">
+              <span>{t("common.id")}</span>
+              <input
+                value={grantPeerID}
+                onChange={(event) => setGrantPeerID(event.target.value)}
+                placeholder={t("botverification.grantMarkPeerIdPlaceholder")}
+                inputMode="numeric"
+              />
+            </label>
+            <label className="duration-field">
+              <span>{t("botverification.description")}</span>
+              <input
+                value={grantDescription}
+                onChange={(event) => setGrantDescription(event.target.value)}
+                placeholder={t("botverification.grantMarkDescriptionPlaceholder")}
+              />
+            </label>
+          </div>
+          <div className="bot-create-actions">
+            <span className="bot-create-note">{t("botverification.grantMarkNote")}</span>
+            <ActionButton
+              label={t("botverification.grantMark")}
+              icon={<Plus size={15} />}
+              tone="neutral"
+              path="/api/actions/grant-custom-verification"
+              payload={grantPayload}
+              onDone={() => {
+                resetGrantForm();
+                load(false);
+              }}
+            />
+          </div>
+        </section>
+      )}
 
       <QueryPanel>
         <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>

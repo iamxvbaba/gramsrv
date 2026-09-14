@@ -65,6 +65,10 @@ type BotVerificationService interface {
 	Approve(ctx context.Context, requestID, version int64, decidedBy, reason, note string) (domain.CustomVerificationRequest, bool, error)
 	Reject(ctx context.Context, requestID, version int64, decidedBy, reason, note string) (domain.CustomVerificationRequest, bool, error)
 	RevokeRequest(ctx context.Context, requestID, version int64, decidedBy, reason, note string) (domain.CustomVerificationRequest, bool, error)
+
+	// GrantDirect issues a mark straight from the panel, with no application
+	// in the queue -- see GrantCustomVerificationRequest below.
+	GrantDirect(ctx context.Context, verifierBotID int64, peer domain.Peer, customDescription string, grantedByUserID int64) (domain.CustomVerification, bool, error)
 }
 
 // botVerificationCatalogueScan bounds the catalogue page a dry run reads to
@@ -138,6 +142,20 @@ type RevokeCustomVerificationRequest struct {
 	VerifierBotID int64           `json:"verifier_bot_id"`
 	PeerType      domain.PeerType `json:"peer_type"`
 	PeerID        int64           `json:"peer_id"`
+}
+
+// GrantCustomVerificationRequest issues a mark straight from the panel, with
+// no application in the queue at all -- the operator picks an already
+// appointed verifier and a target peer directly, same as
+// RevokeCustomVerificationRequest addresses a peer rather than an
+// application. Description is optional: left blank, the verifier's own
+// default is used, exactly like an application that requested none.
+type GrantCustomVerificationRequest struct {
+	CommandMeta
+	VerifierBotID int64           `json:"verifier_bot_id"`
+	PeerType      domain.PeerType `json:"peer_type"`
+	PeerID        int64           `json:"peer_id"`
+	Description   string          `json:"description,omitempty"`
 }
 
 // ApproveBotVerificationRequest grants the mark an application asked for. The
@@ -585,6 +603,73 @@ func (s *Service) RevokeCustomVerification(ctx context.Context, req RevokeCustom
 		message := "custom verification revoked"
 		if !removed {
 			message = "custom verification was already absent"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// GrantCustomVerification issues a mark from the panel directly, with no
+// verifier bot ever calling the API and no application sitting in the
+// queue first -- the "сторонние метки" action: an operator with
+// botverification.manage can decorate any markable peer on the appointed
+// verifier's behalf on the spot.
+//
+// This deliberately reuses GrantDirect, the exact use-case the request/
+// approve path calls once it has an application to decide: the verifier
+// must be enabled, the target peer must exist and be markable, and the
+// per-verifier mark quota is spent the same way. A mark issued here is
+// indistinguishable from one a real application produced -- same
+// rendering, same quota accounting, same peer notification -- except that
+// GrantedByUserID records the operator's own account rather than the
+// verifier bot, since there was no application and no bot-side call.
+func (s *Service) GrantCustomVerification(ctx context.Context, req GrantCustomVerificationRequest) (CommandResult, error) {
+	if s == nil || s.botVerification == nil {
+		return CommandResult{}, errBotVerificationNotConfigured
+	}
+	if req.VerifierBotID <= 0 {
+		return CommandResult{}, botVerificationCoded(domain.ErrVerifierNotFound)
+	}
+	peer := domain.Peer{Type: req.PeerType, ID: req.PeerID}
+	if !markableAdminPeer(peer) {
+		return CommandResult{}, botVerificationCoded(domain.ErrCustomVerificationTargetInvalid)
+	}
+	targetUserID := int64(0)
+	if peer.Type == domain.PeerTypeUser {
+		targetUserID = peer.ID
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionGrantCustomVerification, targetUserID, peer, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"verifier_bot_id": strconv.FormatInt(req.VerifierBotID, 10),
+			"peer_type":       string(peer.Type),
+			"peer_id":         strconv.FormatInt(peer.ID, 10),
+			"correlation_id":  strings.TrimSpace(req.CommandID),
+		}
+		if description := strings.TrimSpace(req.Description); description != "" {
+			details["requested_description"] = description
+		}
+		if err := s.mergeVerifierDecisionDetails(ctx, details, req.VerifierBotID, true); err != nil {
+			return CommandResult{Details: details}, err
+		}
+		present, err := s.CustomVerificationMarkActive(ctx, req.VerifierBotID, peer)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["mark_already_present"] = present
+		if req.DryRun {
+			return CommandResult{Message: "custom verification grant validated", Details: details}, nil
+		}
+		stored, changed, err := s.botVerification.GrantDirect(
+			ctx, req.VerifierBotID, peer, req.Description, premiumAdminActorID(req.Actor))
+		if err != nil {
+			return CommandResult{Details: details}, botVerificationError(err)
+		}
+		details["mark_id"] = strconv.FormatInt(stored.ID, 10)
+		details["icon_document_id"] = strconv.FormatInt(stored.IconDocumentID, 10)
+		details["description"] = stored.Description
+		details["changed"] = changed
+		message := "custom verification granted"
+		if !changed {
+			message = "custom verification was already granted with this description and icon"
 		}
 		return CommandResult{Message: message, Details: details}, nil
 	})

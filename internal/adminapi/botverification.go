@@ -287,6 +287,18 @@ func (s *Server) handleRevokeCustomVerification(w http.ResponseWriter, r *http.R
 	writeBotVerificationCommandResult(w, result, err)
 }
 
+// handleGrantCustomVerification issues a mark directly -- no verifier bot
+// call, no application in the queue. The "сторонние метки" action.
+func (s *Server) handleGrantCustomVerification(w http.ResponseWriter, r *http.Request) {
+	var req admin.GrantCustomVerificationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	s.applyVerificationPrincipal(r, &req.CommandMeta)
+	result, err := s.svc.GrantCustomVerification(r.Context(), req)
+	writeBotVerificationCommandResult(w, result, err)
+}
+
 func (s *Server) handleApproveBotVerification(w http.ResponseWriter, r *http.Request) {
 	id, ok := moderationPathID(w, r, "id")
 	if !ok {

@@ -990,6 +990,57 @@ func (s *Service) Approve(ctx context.Context, requestID, version int64, decided
 	return stored, changed, nil
 }
 
+// GrantDirect grants a custom verification mark to a peer without an
+// application in the queue at all -- the admin panel's own "issue a mark"
+// action (ShuzaGram: skips needing an actual verifier bot to call the API
+// or file a request through it). Runs the exact same verifier/quota/peer
+// checks Approve makes, so a directly-granted mark behaves identically in
+// every way -- rendering, quota accounting, peer notification -- to one
+// that came through a real application; only the applicant notification is
+// skipped, since there was no applicant.
+func (s *Service) GrantDirect(ctx context.Context, verifierBotID int64, peer domain.Peer, customDescription string, grantedByUserID int64) (domain.CustomVerification, bool, error) {
+	st, err := s.writeStore()
+	if err != nil {
+		return domain.CustomVerification{}, false, err
+	}
+	if !markablePeer(peer) {
+		return domain.CustomVerification{}, false, domain.ErrCustomVerificationTargetInvalid
+	}
+	settings, err := s.enabledVerifier(ctx, st, verifierBotID)
+	if err != nil {
+		return domain.CustomVerification{}, false, err
+	}
+	if _, err := s.resolvePeer(ctx, peer); err != nil {
+		return domain.CustomVerification{}, false, err
+	}
+	// As on the request/approve path, the bound is only spent when this would
+	// create a mark rather than update the verifier's existing one.
+	if _, exists, err := s.markState(ctx, st, verifierBotID, peer); err != nil {
+		return domain.CustomVerification{}, false, err
+	} else if !exists {
+		if err := s.checkVerifierQuota(ctx, st, verifierBotID); err != nil {
+			return domain.CustomVerification{}, false, err
+		}
+	}
+	description := s.approvedDescription(settings, customDescription)
+	stored, changed, err := st.GrantCustomVerification(ctx, domain.CustomVerification{
+		VerifierBotID:  verifierBotID,
+		Peer:           peer,
+		IconDocumentID: settings.IconDocumentID,
+		Description:    description,
+		// Attributed to the admin operator who issued it, not to any bot: there
+		// was no applicant and no bot-side API call in this path.
+		GrantedByUserID: grantedByUserID,
+	})
+	if err != nil {
+		return domain.CustomVerification{}, false, err
+	}
+	if changed {
+		s.notifyPeer(ctx, stored.Peer, "approve")
+	}
+	return stored, changed, nil
+}
+
 // Reject closes an application against the applicant. A reason is mandatory: the
 // audit trail must never contain a decision nobody can explain, and the applicant
 // is told what it was. No peer state changes, so only the applicant is notified.

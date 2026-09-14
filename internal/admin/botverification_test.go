@@ -52,6 +52,14 @@ type fakeBotVerificationService struct {
 	decidedVersion    int64
 	decidedRequestID  int64
 	markFilterCapture domain.CustomVerificationFilter
+
+	grantDirectCalls         int
+	grantDirectVerifierBotID int64
+	grantDirectPeer          domain.Peer
+	grantDirectDescription   string
+	grantDirectByUserID      int64
+	grantDirectResult        domain.CustomVerification
+	grantDirectChanged       bool
 }
 
 func (f *fakeBotVerificationService) Icons(context.Context, bool, int) ([]domain.VerificationIcon, error) {
@@ -160,6 +168,28 @@ func (f *fakeBotVerificationService) RevokeMark(_ context.Context, verifierBotID
 		return false, f.writeErr
 	}
 	return len(f.marks) > 0, nil
+}
+
+func (f *fakeBotVerificationService) GrantDirect(_ context.Context, verifierBotID int64, peer domain.Peer, description string, grantedByUserID int64) (domain.CustomVerification, bool, error) {
+	f.grantDirectCalls++
+	f.grantDirectVerifierBotID = verifierBotID
+	f.grantDirectPeer = peer
+	f.grantDirectDescription = description
+	f.grantDirectByUserID = grantedByUserID
+	if f.writeErr != nil {
+		return domain.CustomVerification{}, false, f.writeErr
+	}
+	if f.grantDirectResult.VerifierBotID == 0 {
+		f.grantDirectResult = domain.CustomVerification{
+			ID:              1,
+			VerifierBotID:   verifierBotID,
+			Peer:            peer,
+			IconDocumentID:  f.verifier.IconDocumentID,
+			Description:     description,
+			GrantedByUserID: grantedByUserID,
+		}
+	}
+	return f.grantDirectResult, f.grantDirectChanged, nil
 }
 
 func (f *fakeBotVerificationService) Requests(context.Context, domain.CustomVerificationRequestFilter) ([]domain.CustomVerificationRequest, error) {
