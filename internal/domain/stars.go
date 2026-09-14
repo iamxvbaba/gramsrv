@@ -118,6 +118,9 @@ const (
 	StarsReasonPremium       StarsTransactionReason = "premium"
 	StarsReasonWithdrawal    StarsTransactionReason = "withdrawal"
 	StarsReasonAdjust        StarsTransactionReason = "adjust" // 兜底/人工调整
+	// StarsReasonFragment marks a TON balance change coming from the Fragment
+	// (ShuzaFrag/frag.sgq.me) marketplace, applied via internal/extbridge.
+	StarsReasonFragment StarsTransactionReason = "fragment"
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。

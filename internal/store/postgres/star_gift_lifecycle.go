@@ -1614,6 +1614,52 @@ VALUES($1,$2,$3,$4)`, userID, s.tonStartingGrant, string(domain.StarsReasonGrant
 	return balance, nil
 }
 
+// AdjustTonBalance atomically applies deltaNanotons (negative to debit,
+// positive to credit) to userID's internal TON balance and logs a
+// ton_transactions row under reason, returning the resulting balance. Ensures
+// the starting-grant row exists first (same as TonBalance) so a first-ever
+// caller doesn't race the grant. A debit that would go negative fails with
+// domain.ErrStarsInsufficient rather than applying partially -- this mirrors
+// debitLifecycleAmount's TON path, the only other TON debit site, so both
+// converge on the same "insufficient balance" semantics.
+//
+// This is the one write path internal/extbridge's gram-balance endpoint
+// calls; nothing else outside this package should touch ton_balances for a
+// reason other than the star-gift lifecycle's own flows.
+func (s *StarGiftLifecycleStore) AdjustTonBalance(ctx context.Context, userID, deltaNanotons int64, reason domain.StarsTransactionReason) (int64, error) {
+	if userID <= 0 {
+		return 0, domain.ErrStarGiftOwnerInvalid
+	}
+	if deltaNanotons == 0 {
+		return s.TonBalance(ctx, userID)
+	}
+	date := int(time.Now().Unix())
+	var balance int64
+	err := withTx(ctx, s.db, "adjust ton balance", func(tx pgx.Tx) error {
+		if _, err := s.ensureTonGrantTx(ctx, tx, userID, date); err != nil {
+			return err
+		}
+		var err error
+		if deltaNanotons < 0 {
+			err = tx.QueryRow(ctx, `UPDATE ton_balances SET balance_nanoton=balance_nanoton+$2,updated_at=now()
+WHERE user_id=$1 AND balance_nanoton>=$3 RETURNING balance_nanoton`, userID, deltaNanotons, -deltaNanotons).Scan(&balance)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrStarsInsufficient
+			}
+		} else {
+			err = tx.QueryRow(ctx, `UPDATE ton_balances SET balance_nanoton=balance_nanoton+$2,updated_at=now()
+WHERE user_id=$1 RETURNING balance_nanoton`, userID, deltaNanotons).Scan(&balance)
+		}
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO ton_transactions(user_id,amount_nanoton,reason,date)
+VALUES($1,$2,$3,$4)`, userID, deltaNanotons, string(reason), date)
+		return err
+	})
+	return balance, err
+}
+
 func (s *StarGiftLifecycleStore) TonTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error) {
 	if userID <= 0 {
 		return domain.TonTransactionPage{}, domain.ErrStarGiftOwnerInvalid

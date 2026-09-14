@@ -90,6 +90,13 @@ type Config struct {
 	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
 	// app/store 事实源，不维护独立 bot 状态。
 	BotAPIAddr string
+	// ExtBridgeAddr 是 internal/extbridge 监听地址（第三方 Shuza 产品，如
+	// ShuzaFrag，读写自己账号上极少数字段用）。为空关闭。恒绑 127.0.0.1 ——
+	// 只通过对方 VPS 自己保持的 SSH 隧道触达，绝不对外网开放。
+	ExtBridgeAddr string
+	// ExtBridgeSharedSecret 是 extbridge 每个请求 Authorization: Bearer 头必须
+	// 携带的口令。ExtBridgeAddr 非空时必须设置。
+	ExtBridgeSharedSecret string
 	// AdminAPIAddr 是 telesrv 进程内管理写 API 监听地址；为空关闭。
 	AdminAPIAddr string
 	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
@@ -842,6 +849,8 @@ func Load() (Config, error) {
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
 		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		ExtBridgeAddr:                         envAllowEmptyOr("TELESRV_EXTBRIDGE_ADDR", ""),
+		ExtBridgeSharedSecret:                 envOr("TELESRV_EXTBRIDGE_SHARED_SECRET", ""),
 		AdminAPIAddr:                          envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
 		AdminAPIToken:                         envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:                         publicBaseURL,
@@ -910,7 +919,7 @@ func Load() (Config, error) {
 		SMTPTimeout:                       envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:                   envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
 		OfficialGiftsDir:                  envOr("TELESRV_OFFICIAL_GIFTS_DIR", "data/official-gifts"),
-		StarGiftTONStartingGrant:          envInt64Or("TELESRV_STARGIFT_TON_STARTING_GRANT", 10_000_000_000),
+		StarGiftTONStartingGrant:          envInt64Or("TELESRV_STARGIFT_TON_STARTING_GRANT", 0),
 		BlobBackendKind:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_BLOB_BACKEND", "localfs"))),
 		BlobDir:                           envOr("TELESRV_BLOB_DIR", "data/blobs"),
 		BlobStagingDir:                    envOr("TELESRV_BLOB_STAGING_DIR", "data/blob-staging"),
@@ -1169,6 +1178,9 @@ func Load() (Config, error) {
 	if err := validateTelegramLoginConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateExtBridgeConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	if err := validateBlobStorageConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -1420,6 +1432,16 @@ func validateTelegramLoginConfig(cfg Config) error {
 		if _, err := netip.ParsePrefix(strings.TrimSpace(raw)); err != nil {
 			return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_TRUSTED_PROXY_CIDRS contains invalid CIDR %q: %w", raw, err)
 		}
+	}
+	return nil
+}
+
+func validateExtBridgeConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.ExtBridgeAddr) == "" {
+		return nil
+	}
+	if strings.TrimSpace(cfg.ExtBridgeSharedSecret) == "" {
+		return fmt.Errorf("TELESRV_EXTBRIDGE_ADDR requires TELESRV_EXTBRIDGE_SHARED_SECRET")
 	}
 	return nil
 }

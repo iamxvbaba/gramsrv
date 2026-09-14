@@ -72,6 +72,7 @@ import (
 	"telesrv/internal/branding"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
+	"telesrv/internal/extbridge"
 	"telesrv/internal/mtprotoedge"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/officialgifts"
@@ -278,6 +279,30 @@ func startDebugServer(ctx context.Context, addr string, metricsHandler http.Hand
 			zap.String("hint", "go tool pprof http://"+addr+"/debug/pprof/profile?seconds=30"))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Warn("pprof 端点退出", zap.Error(err))
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+}
+
+// startExtBridgeServer serves internal/extbridge's handler on a loopback-only
+// address (see that package's doc comment for why: reached exclusively over
+// the private SSH tunnel each third-party Shuza product's own VPS holds
+// open to this host, never a public port). Mirrors startDebugServer's
+// listen/shutdown shape.
+func startExtBridgeServer(ctx context.Context, addr string, handler http.Handler, logger *zap.Logger) {
+	if addr == "" || handler == nil {
+		return
+	}
+	srv := &http.Server{Addr: addr, Handler: handler}
+	go func() {
+		logger.Info("extbridge 端点已启用", zap.String("addr", addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Warn("extbridge 端点退出", zap.Error(err))
 		}
 	}()
 	go func() {
@@ -1319,6 +1344,16 @@ func run(logger *zap.Logger) error {
 			StarsProceedsPermille: cfg.StarGiftStarsProceedsPermille,
 			TONProceedsPermille:   cfg.StarGiftTONProceedsPermille,
 		}))
+	if cfg.ExtBridgeAddr != "" {
+		extBridgeHandler, err := extbridge.NewHandler(extbridge.Config{
+			Ledger: starGiftLifecycleStore, SharedSecret: cfg.ExtBridgeSharedSecret,
+			Logger: logger.Named("extbridge"),
+		})
+		if err != nil {
+			return fmt.Errorf("initialize extbridge: %w", err)
+		}
+		startExtBridgeServer(ctx, cfg.ExtBridgeAddr, extBridgeHandler, logger)
+	}
 	starGiftWithdrawalOption, err := localStarGiftWithdrawalOption(cfg.PublicBaseURL, cfg.PublicLinkWebAddr)
 	if err != nil {
 		return fmt.Errorf("init local star gift withdrawal provider: %w", err)
