@@ -125,6 +125,24 @@ services:
       TELESRV_OTP_WEBHOOK_SECRET: ${TELESRV_OTP_WEBHOOK_SECRET:-}
       TELESRV_OTP_WEBHOOK_TIMEOUT: ${TELESRV_OTP_WEBHOOK_TIMEOUT:-5s}
       TELESRV_OFFICIAL_GIFTS_DIR: ${TELESRV_OFFICIAL_GIFTS_DIR:-data/official-gifts}
+      # Self-hosted "Login with Telegram" OIDC provider -- Fragment
+      # (frag.sgq.me) and any future third-party product authenticate against
+      # this instead of re-implementing login. Off by default (empty issuer
+      # leaves TELEGRAM_LOGIN_ENABLE effectively meaningless until set).
+      TELESRV_TELEGRAM_LOGIN_ENABLE: ${TELESRV_TELEGRAM_LOGIN_ENABLE:-false}
+      TELESRV_TELEGRAM_LOGIN_ISSUER: ${TELESRV_TELEGRAM_LOGIN_ISSUER:-}
+      # Overridden off the config package's own "data/telegram-login/..."
+      # default, which resolves relative to /app (the image's ephemeral
+      # WORKDIR, not the server_state volume) -- these must live on the
+      # persistent volume or every container recreate rotates the JWT
+      # signing keys out from under any still-live session.
+      TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE: ${TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE:-/var/lib/telesrv/telegram-login/signing-keys.json}
+      TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE: ${TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE:-/var/lib/telesrv/telegram-login/code-keys.json}
+      TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE: ${TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE:-/var/lib/telesrv/telegram-login/client-secret-pepper}
+      # internal/extbridge: loopback-only HTTP bridge for third-party Shuza
+      # products (see that package's doc comment). Off by default.
+      TELESRV_EXTBRIDGE_ADDR: ${TELESRV_EXTBRIDGE_ADDR:-}
+      TELESRV_EXTBRIDGE_SHARED_SECRET: ${TELESRV_EXTBRIDGE_SHARED_SECRET:-}
       # Product identity shown to clients (internal/branding). Without these,
       # the process falls back to branding.DefaultConfig()'s own "Telesrv"
       # values -- confirmed live as the cause of system messages (account
