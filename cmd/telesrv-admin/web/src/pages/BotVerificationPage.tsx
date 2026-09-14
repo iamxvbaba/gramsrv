@@ -18,7 +18,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { api, APIError, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { BotPicker } from "../components/EntityPicker";
+import { BotPicker, ChannelPicker, UserPicker } from "../components/EntityPicker";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
@@ -29,9 +29,11 @@ import {
 } from "../permissions";
 import type { Navigate } from "../routing";
 import type {
+  AccountRow,
   BotRow,
   BotVerificationPeerType,
   BotVerifierRow,
+  ChannelRow,
   CustomVerificationRequestRow,
   CustomVerificationRequestStatus,
   CustomVerificationRow,
@@ -770,8 +772,10 @@ function MarksBlock({
   // search by and picking one to grant with are different questions.
   const [grantVerifierBotID, setGrantVerifierBotID] = useState("");
   const [grantPeerType, setGrantPeerType] = useState<BotVerificationPeerType>("user");
-  const [grantPeerID, setGrantPeerID] = useState("");
+  const [grantUser, setGrantUser] = useState<AccountRow | null>(null);
+  const [grantChannel, setGrantChannel] = useState<ChannelRow | null>(null);
   const [grantDescription, setGrantDescription] = useState("");
+  const grantPeerID = grantPeerType === "user" ? grantUser?.ID : grantChannel?.ID;
   const grantPayload = () => ({
     verifier_bot_id: grantVerifierBotID,
     peer_type: grantPeerType,
@@ -779,7 +783,8 @@ function MarksBlock({
     description: grantDescription.trim()
   });
   function resetGrantForm() {
-    setGrantPeerID("");
+    setGrantUser(null);
+    setGrantChannel(null);
     setGrantDescription("");
   }
 
@@ -840,20 +845,20 @@ function MarksBlock({
             </label>
             <label className="duration-field">
               <span>{t("botverification.peerType")}</span>
-              <select value={grantPeerType} onChange={(event) => setGrantPeerType(event.target.value as BotVerificationPeerType)}>
+              <select
+                value={grantPeerType}
+                onChange={(event) => {
+                  // A stale pick from the other type would silently send the
+                  // wrong peer_id once the type toggles back.
+                  setGrantUser(null);
+                  setGrantChannel(null);
+                  setGrantPeerType(event.target.value as BotVerificationPeerType);
+                }}
+              >
                 {peerTypes.map((item) => (
                   <option key={item} value={item}>{t(`botverification.peer.${item}`)}</option>
                 ))}
               </select>
-            </label>
-            <label className="duration-field">
-              <span>{t("common.id")}</span>
-              <input
-                value={grantPeerID}
-                onChange={(event) => setGrantPeerID(event.target.value)}
-                placeholder={t("botverification.grantMarkPeerIdPlaceholder")}
-                inputMode="numeric"
-              />
             </label>
             <label className="duration-field">
               <span>{t("botverification.description")}</span>
@@ -864,6 +869,11 @@ function MarksBlock({
               />
             </label>
           </div>
+          {grantPeerType === "user" ? (
+            <UserPicker label={t("botverification.grantMarkPickPeer")} value={grantUser} onChange={setGrantUser} />
+          ) : (
+            <ChannelPicker label={t("botverification.grantMarkPickPeer")} value={grantChannel} onChange={setGrantChannel} />
+          )}
           <div className="bot-create-actions">
             <span className="bot-create-note">{t("botverification.grantMarkNote")}</span>
             <ActionButton
