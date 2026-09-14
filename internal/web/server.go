@@ -41,6 +41,13 @@ type Config struct {
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
 	TelegramLogin http.Handler
+	// GiftPreviewDir caches rendered /nft/{slug} preview images on disk, one
+	// render per collectible ever. Defaults to
+	// /var/lib/telesrv/gift-previews when empty.
+	GiftPreviewDir string
+	// GiftRenderSidecarURL is the Lottie/TGS compositor sidecar's /render
+	// endpoint (see gift_preview.go). Defaults to http://127.0.0.1:8091/render.
+	GiftRenderSidecarURL string
 }
 
 type StickerSetResolver interface {
@@ -141,6 +148,12 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if cfg.StickerSets == nil {
 		return nil, fmt.Errorf("public Web sticker set resolver is nil")
 	}
+	if strings.TrimSpace(cfg.GiftPreviewDir) == "" {
+		cfg.GiftPreviewDir = "/var/lib/telesrv/gift-previews"
+	}
+	if strings.TrimSpace(cfg.GiftRenderSidecarURL) == "" {
+		cfg.GiftRenderSidecarURL = "http://127.0.0.1:8091/render"
+	}
 	if strings.TrimSpace(cfg.WebBaseURL) == "" {
 		cfg.WebBaseURL = links.DefaultWebBaseURL
 	}
@@ -168,20 +181,22 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		logger = zap.NewNop()
 	}
 	h := &handler{
-		stickerSets:        cfg.StickerSets,
-		users:              cfg.Users,
-		channels:           cfg.Channels,
-		privacy:            cfg.Privacy,
-		photos:             cfg.Photos,
-		uniqueGifts:        cfg.UniqueGifts,
-		giftWithdrawals:    cfg.GiftWithdrawals,
-		revenueWithdrawals: cfg.RevenueWithdrawals,
-		appeals:            cfg.ModerationAppeals,
-		publicBaseURL:      cfg.PublicBaseURL,
-		appLinks:           appLinks,
-		webBaseURL:         cfg.WebBaseURL,
-		appName:            cfg.AppName,
-		logger:             logger,
+		stickerSets:          cfg.StickerSets,
+		users:                cfg.Users,
+		channels:             cfg.Channels,
+		privacy:              cfg.Privacy,
+		photos:               cfg.Photos,
+		uniqueGifts:          cfg.UniqueGifts,
+		giftWithdrawals:      cfg.GiftWithdrawals,
+		revenueWithdrawals:   cfg.RevenueWithdrawals,
+		appeals:              cfg.ModerationAppeals,
+		publicBaseURL:        cfg.PublicBaseURL,
+		appLinks:             appLinks,
+		webBaseURL:           cfg.WebBaseURL,
+		appName:              cfg.AppName,
+		giftPreviewDir:       cfg.GiftPreviewDir,
+		giftRenderSidecarURL: cfg.GiftRenderSidecarURL,
+		logger:               logger,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
@@ -189,6 +204,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	// was a dev-only fake Stars checkout page, not a real payment provider.
 	// No route registered here means the mux returns a plain 404 for it.
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
+	mux.HandleFunc("GET /_public/gift-preview/{slug}", h.giftPreviewImage)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
@@ -267,7 +283,11 @@ type handler struct {
 	appLinks           links.AppLinkBuilder
 	webBaseURL         string
 	appName            string
-	logger             *zap.Logger
+	// giftPreviewDir/giftRenderSidecarURL back the /_public/gift-preview/
+	// route -- see gift_preview.go.
+	giftPreviewDir       string
+	giftRenderSidecarURL string
+	logger               *zap.Logger
 }
 
 type moderationAppealPage struct {
@@ -599,6 +619,12 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 		CanonicalURL: h.publicURL("nft", canonicalSlug),
 		AppURL:       template.URL(app),
 		LegacyTgURL:  template.URL(legacyTgURL("nft", "slug", canonicalSlug)),
+	}
+	// Only offer an image once the collectible actually carries a renderable
+	// model+pattern: a gift with either document missing would 404 the
+	// preview URL, leaving link-unfurlers with a broken image reference.
+	if unique.Model.Document != nil && unique.Pattern.Document != nil {
+		data.PhotoURL = h.publicGiftPreviewURL(canonicalSlug)
 	}
 	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1255,9 +1281,14 @@ type pageData struct {
 	Subtitle     string
 	Description  string
 	CanonicalURL string
-	AppURL       template.URL
-	LegacyTgURL  template.URL
-	AppURLJS     template.JS
+	// PhotoURL is optional: only /nft/{slug} sets it today (see
+	// gift_preview.go), the addstickers/addemoji/addlist routes that share
+	// this template leave it empty and the og:image/twitter:image tags omit
+	// themselves accordingly.
+	PhotoURL    string
+	AppURL      template.URL
+	LegacyTgURL template.URL
+	AppURLJS    template.JS
 }
 
 type usernamePageData struct {
@@ -1394,9 +1425,18 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} - {{.AppName}}</title>
   <link rel="canonical" href="{{.CanonicalURL}}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{.AppName}}">
   <meta property="og:title" content="{{.Title}}">
   <meta property="og:description" content="{{.Description}}">
   <meta property="og:url" content="{{.CanonicalURL}}">
+  {{if .PhotoURL}}<meta property="og:image" content="{{.PhotoURL}}">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">{{end}}
+  <meta name="twitter:card" content="{{if .PhotoURL}}summary_large_image{{else}}summary{{end}}">
+  <meta name="twitter:title" content="{{.Title}}">
+  <meta name="twitter:description" content="{{.Description}}">
+  {{if .PhotoURL}}<meta name="twitter:image" content="{{.PhotoURL}}">{{end}}
   <meta name="robots" content="noindex">
   <style>
     :root { color-scheme: light dark; font-family: Arial, Helvetica, sans-serif; }
