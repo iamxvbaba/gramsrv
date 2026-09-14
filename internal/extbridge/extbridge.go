@@ -30,13 +30,21 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
 
-const maxAdjustBodyBytes = 4 << 10
+const (
+	maxAdjustBodyBytes   = 4 << 10
+	maxPurchaseBodyBytes = 4 << 10
+	// marketplaceListedStatus is the internal collectible status ("vault" --
+	// unclaimed, sitting in gramsrv's own vault, matches real Fragment's
+	// meaning of the term) that ShuzaFrag's public API surfaces as "listed".
+	marketplaceListedStatus = domain.CollectibleUsernameStatusVault
+)
 
 // TonLedger is the store surface extbridge's balance endpoints need --
 // satisfied by *postgres.StarGiftLifecycleStore.
@@ -45,9 +53,34 @@ type TonLedger interface {
 	AdjustTonBalance(ctx context.Context, userID, deltaNanotons int64, reason domain.StarsTransactionReason) (int64, error)
 }
 
+// Usernames is the store surface the usernames marketplace endpoints need --
+// satisfied by *usernamesapp.Service.
+type Usernames interface {
+	List(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
+	Collectible(ctx context.Context, username string) (domain.CollectibleUsername, error)
+	Transfer(ctx context.Context, req domain.TransferCollectibleUsernameRequest) (domain.CollectibleUsername, bool, error)
+}
+
+// Phones is the store surface the phone-number marketplace endpoints need --
+// satisfied by *postgres.CollectiblePhoneStore.
+type Phones interface {
+	ListCollectiblePhones(ctx context.Context, filter domain.CollectiblePhoneFilter) ([]domain.CollectiblePhone, error)
+	CollectiblePhone(ctx context.Context, phone string) (domain.CollectiblePhone, error)
+	TransferCollectiblePhone(ctx context.Context, req domain.TransferCollectiblePhoneRequest) (domain.CollectiblePhone, bool, error)
+}
+
+// Stars is the store surface the Stars-purchase endpoint needs -- satisfied
+// by *postgres.StarsStore.
+type Stars interface {
+	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, date int, title, desc string) (domain.StarsBalance, error)
+}
+
 // Config configures NewHandler.
 type Config struct {
-	Ledger TonLedger
+	Ledger    TonLedger
+	Usernames Usernames
+	Phones    Phones
+	Stars     Stars
 	// SharedSecret is compared (constant-time) against every request's
 	// "Authorization: Bearer <secret>" header. Required -- this endpoint sits
 	// behind a tunnel, not behind gramsrv's own MTProto auth, so it must
@@ -57,9 +90,12 @@ type Config struct {
 }
 
 type handler struct {
-	ledger TonLedger
-	secret string
-	log    *zap.Logger
+	ledger    TonLedger
+	usernames Usernames
+	phones    Phones
+	stars     Stars
+	secret    string
+	log       *zap.Logger
 }
 
 // NewHandler builds the extbridge HTTP handler. Callers are expected to
@@ -76,10 +112,24 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	if log == nil {
 		log = zap.NewNop()
 	}
-	h := &handler{ledger: cfg.Ledger, secret: cfg.SharedSecret, log: log}
+	h := &handler{
+		ledger: cfg.Ledger, usernames: cfg.Usernames, phones: cfg.Phones, stars: cfg.Stars,
+		secret: cfg.SharedSecret, log: log,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/ton-balance/{user_id}", h.getBalance)
 	mux.HandleFunc("POST /v1/ton-balance/{user_id}/adjust", h.adjustBalance)
+	if cfg.Usernames != nil {
+		mux.HandleFunc("GET /bridge/v1/usernames", h.listUsernames)
+		mux.HandleFunc("POST /bridge/v1/usernames/purchase", h.purchaseUsername)
+	}
+	if cfg.Phones != nil {
+		mux.HandleFunc("GET /bridge/v1/phones", h.listPhones)
+		mux.HandleFunc("POST /bridge/v1/phones/purchase", h.purchasePhone)
+	}
+	if cfg.Stars != nil {
+		mux.HandleFunc("POST /bridge/v1/stars/buy", h.buyStars)
+	}
 	return h.withAuth(mux), nil
 }
 
@@ -161,6 +211,245 @@ func (h *handler) writeBalanceErr(w http.ResponseWriter, err error) {
 		h.log.Error("extbridge: ton balance store error", zap.Error(err))
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
+}
+
+// usernameResponse and phoneResponse are the wire shapes bridgeclient.go
+// already expects (Username/Phone structs there) -- keep these fields
+// exactly in sync with that client.
+
+type usernameResponse struct {
+	Username string `json:"username"`
+	Status   string `json:"status"`
+	Currency string `json:"currency,omitempty"`
+	Amount   string `json:"amount,omitempty"`
+	URL      string `json:"url,omitempty"`
+}
+
+func toUsernameResponse(c domain.CollectibleUsername) usernameResponse {
+	resp := usernameResponse{Username: c.Username, Status: string(c.Status), URL: c.URL}
+	if c.Status == marketplaceListedStatus {
+		resp.Status = "listed"
+	}
+	if c.Amount > 0 {
+		resp.Currency = c.Currency
+		resp.Amount = strconv.FormatInt(c.Amount, 10)
+	}
+	return resp
+}
+
+func (h *handler) listUsernames(w http.ResponseWriter, r *http.Request) {
+	filter := domain.CollectibleUsernameFilter{Query: r.URL.Query().Get("q"), Limit: 200}
+	if status := r.URL.Query().Get("status"); status == "listed" || status == "" {
+		filter.Status = marketplaceListedStatus
+	}
+	items, err := h.usernames.List(r.Context(), filter)
+	if err != nil {
+		h.log.Error("extbridge: list usernames failed", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]usernameResponse, len(items))
+	for i, c := range items {
+		out[i] = toUsernameResponse(c)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usernames": out})
+}
+
+type purchaseUsernameRequest struct {
+	Username    string `json:"username"`
+	BuyerUserID string `json:"buyer_user_id"`
+	Actor       string `json:"actor"`
+	Reason      string `json:"reason"`
+	CommandKey  string `json:"command_key"`
+}
+
+func (h *handler) purchaseUsername(w http.ResponseWriter, r *http.Request) {
+	var req purchaseUsernameRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxPurchaseBodyBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	buyerID, err := strconv.ParseInt(req.BuyerUserID, 10, 64)
+	if err != nil || buyerID <= 0 {
+		http.Error(w, "invalid buyer_user_id", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	asset, err := h.usernames.Collectible(ctx, req.Username)
+	if err != nil {
+		http.Error(w, "username not found", http.StatusNotFound)
+		return
+	}
+	if asset.Status != marketplaceListedStatus {
+		http.Error(w, "username is not listed for sale", http.StatusConflict)
+		return
+	}
+	// Listings this marketplace surfaces must be TON-priced -- there is no
+	// defined conversion from other currencies (XTR, USD, ...) to nanotons.
+	// Mint/reprice a listing with Currency="TON" for it to be purchasable here.
+	if asset.Amount > 0 && asset.Currency != "TON" {
+		h.log.Error("extbridge: username listing has non-TON currency", zap.String("username", req.Username), zap.String("currency", asset.Currency))
+		http.Error(w, "listing is not TON-priced", http.StatusConflict)
+		return
+	}
+	if asset.Amount > 0 {
+		if _, err := h.ledger.AdjustTonBalance(ctx, buyerID, -asset.Amount, domain.StarsReasonFragment); err != nil {
+			h.writeBalanceErr(w, err)
+			return
+		}
+	}
+	transferred, found, err := h.usernames.Transfer(ctx, domain.TransferCollectibleUsernameRequest{
+		Username: req.Username, To: domain.Peer{Type: domain.PeerTypeUser, ID: buyerID},
+		Actor: req.Actor, Reason: req.Reason, CommandKey: req.CommandKey,
+	})
+	if err != nil || !found {
+		if asset.Amount > 0 {
+			if _, refundErr := h.ledger.AdjustTonBalance(ctx, buyerID, asset.Amount, domain.StarsReasonFragment); refundErr != nil {
+				h.log.Error("extbridge: refund after failed username transfer also failed",
+					zap.Int64("buyer_user_id", buyerID), zap.String("username", req.Username), zap.Error(refundErr))
+			}
+		}
+		h.log.Error("extbridge: username transfer failed", zap.String("username", req.Username), zap.Error(err))
+		http.Error(w, "purchase failed", http.StatusBadGateway)
+		return
+	}
+	h.log.Info("extbridge: username purchased", zap.String("username", req.Username), zap.Int64("buyer_user_id", buyerID), zap.Int64("amount_nanoton", asset.Amount))
+	writeJSON(w, http.StatusOK, map[string]any{"username": toUsernameResponse(transferred)})
+}
+
+type phoneResponse struct {
+	Phone    string `json:"phone"`
+	Tier     string `json:"tier"`
+	Status   string `json:"status"`
+	Currency string `json:"currency,omitempty"`
+	Amount   string `json:"amount,omitempty"`
+}
+
+func toPhoneResponse(c domain.CollectiblePhone) phoneResponse {
+	resp := phoneResponse{Phone: c.Phone, Tier: string(c.Tier), Status: string(c.Status)}
+	if c.Status == marketplaceListedStatus {
+		resp.Status = "listed"
+	}
+	if c.Amount > 0 {
+		resp.Currency = c.Currency
+		resp.Amount = strconv.FormatInt(c.Amount, 10)
+	}
+	return resp
+}
+
+func (h *handler) listPhones(w http.ResponseWriter, r *http.Request) {
+	filter := domain.CollectiblePhoneFilter{Limit: 200}
+	if status := r.URL.Query().Get("status"); status == "listed" || status == "" {
+		filter.Status = marketplaceListedStatus
+	}
+	items, err := h.phones.ListCollectiblePhones(r.Context(), filter)
+	if err != nil {
+		h.log.Error("extbridge: list phones failed", zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]phoneResponse, len(items))
+	for i, c := range items {
+		out[i] = toPhoneResponse(c)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"phones": out})
+}
+
+type purchasePhoneRequest struct {
+	Phone       string `json:"phone"`
+	BuyerUserID string `json:"buyer_user_id"`
+	Actor       string `json:"actor"`
+	Reason      string `json:"reason"`
+	CommandKey  string `json:"command_key"`
+}
+
+func (h *handler) purchasePhone(w http.ResponseWriter, r *http.Request) {
+	var req purchasePhoneRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxPurchaseBodyBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	buyerID, err := strconv.ParseInt(req.BuyerUserID, 10, 64)
+	if err != nil || buyerID <= 0 {
+		http.Error(w, "invalid buyer_user_id", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	asset, err := h.phones.CollectiblePhone(ctx, req.Phone)
+	if err != nil {
+		http.Error(w, "phone not found", http.StatusNotFound)
+		return
+	}
+	if asset.Status != marketplaceListedStatus {
+		http.Error(w, "phone is not listed for sale", http.StatusConflict)
+		return
+	}
+	if asset.Amount > 0 && asset.Currency != "TON" {
+		h.log.Error("extbridge: phone listing has non-TON currency", zap.String("phone", req.Phone), zap.String("currency", asset.Currency))
+		http.Error(w, "listing is not TON-priced", http.StatusConflict)
+		return
+	}
+	if asset.Amount > 0 {
+		if _, err := h.ledger.AdjustTonBalance(ctx, buyerID, -asset.Amount, domain.StarsReasonFragment); err != nil {
+			h.writeBalanceErr(w, err)
+			return
+		}
+	}
+	transferred, found, err := h.phones.TransferCollectiblePhone(ctx, domain.TransferCollectiblePhoneRequest{
+		Phone: req.Phone, ToUserID: buyerID, Actor: req.Actor, Reason: req.Reason, CommandKey: req.CommandKey,
+	})
+	if err != nil || !found {
+		if asset.Amount > 0 {
+			if _, refundErr := h.ledger.AdjustTonBalance(ctx, buyerID, asset.Amount, domain.StarsReasonFragment); refundErr != nil {
+				h.log.Error("extbridge: refund after failed phone transfer also failed",
+					zap.Int64("buyer_user_id", buyerID), zap.String("phone", req.Phone), zap.Error(refundErr))
+			}
+		}
+		h.log.Error("extbridge: phone transfer failed", zap.String("phone", req.Phone), zap.Error(err))
+		http.Error(w, "purchase failed", http.StatusBadGateway)
+		return
+	}
+	h.log.Info("extbridge: phone purchased", zap.String("phone", req.Phone), zap.Int64("buyer_user_id", buyerID), zap.Int64("amount_nanoton", asset.Amount))
+	writeJSON(w, http.StatusOK, map[string]any{"phone": toPhoneResponse(transferred)})
+}
+
+type buyStarsRequest struct {
+	UserID      string `json:"user_id"`
+	Stars       int64  `json:"stars"`
+	NanotonCost int64  `json:"nanoton_cost"`
+}
+
+func (h *handler) buyStars(w http.ResponseWriter, r *http.Request) {
+	var req buyStarsRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxPurchaseBodyBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	userID, err := strconv.ParseInt(req.UserID, 10, 64)
+	if err != nil || userID <= 0 || req.Stars <= 0 || req.NanotonCost <= 0 {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	tonBalance, err := h.ledger.AdjustTonBalance(ctx, userID, -req.NanotonCost, domain.StarsReasonFragment)
+	if err != nil {
+		h.writeBalanceErr(w, err)
+		return
+	}
+	starsBalance, err := h.stars.Credit(ctx, userID, req.Stars, domain.StarsReasonFragment, domain.Peer{}, int(time.Now().Unix()), "ShuzaFrag", "")
+	if err != nil {
+		if _, refundErr := h.ledger.AdjustTonBalance(ctx, userID, req.NanotonCost, domain.StarsReasonFragment); refundErr != nil {
+			h.log.Error("extbridge: refund after failed stars credit also failed", zap.Int64("user_id", userID), zap.Error(refundErr))
+		}
+		h.log.Error("extbridge: stars credit failed", zap.Int64("user_id", userID), zap.Error(err))
+		http.Error(w, "purchase failed", http.StatusBadGateway)
+		return
+	}
+	h.log.Info("extbridge: stars purchased", zap.Int64("user_id", userID), zap.Int64("stars", req.Stars), zap.Int64("nanoton_cost", req.NanotonCost))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ton_balance_nanoton": strconv.FormatInt(tonBalance, 10),
+		"stars_balance":       strconv.FormatInt(starsBalance.Balance, 10),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

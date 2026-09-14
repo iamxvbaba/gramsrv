@@ -1344,16 +1344,6 @@ func run(logger *zap.Logger) error {
 			StarsProceedsPermille: cfg.StarGiftStarsProceedsPermille,
 			TONProceedsPermille:   cfg.StarGiftTONProceedsPermille,
 		}))
-	if cfg.ExtBridgeAddr != "" {
-		extBridgeHandler, err := extbridge.NewHandler(extbridge.Config{
-			Ledger: starGiftLifecycleStore, SharedSecret: cfg.ExtBridgeSharedSecret,
-			Logger: logger.Named("extbridge"),
-		})
-		if err != nil {
-			return fmt.Errorf("initialize extbridge: %w", err)
-		}
-		startExtBridgeServer(ctx, cfg.ExtBridgeAddr, extBridgeHandler, logger)
-	}
 	starGiftWithdrawalOption, err := localStarGiftWithdrawalOption(cfg.PublicBaseURL, cfg.PublicLinkWebAddr)
 	if err != nil {
 		return fmt.Errorf("init local star gift withdrawal provider: %w", err)
@@ -1509,6 +1499,18 @@ func run(logger *zap.Logger) error {
 		usernamesapp.WithPublicBaseURL(cfg.PublicBaseURL),
 		usernamesapp.WithLogger(logger.Named("app").Named("usernames")),
 	)
+	if cfg.ExtBridgeAddr != "" {
+		extBridgeHandler, err := extbridge.NewHandler(extbridge.Config{
+			Ledger: starGiftLifecycleStore, Usernames: usernamesService,
+			Phones: postgres.NewCollectiblePhoneStore(pool), Stars: postgres.NewStarsStore(pool),
+			SharedSecret: cfg.ExtBridgeSharedSecret,
+			Logger:       logger.Named("extbridge"),
+		})
+		if err != nil {
+			return fmt.Errorf("initialize extbridge: %w", err)
+		}
+		startExtBridgeServer(ctx, cfg.ExtBridgeAddr, extBridgeHandler, logger)
+	}
 	ratingService := ratingapp.NewService(
 		ratingapp.WithStore(accountRatingStore),
 		ratingapp.WithEnabled(cfg.RatingEnabled),
