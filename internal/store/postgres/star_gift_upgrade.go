@@ -183,7 +183,18 @@ WHERE collectible_revision_id=$1 AND crafted
 			// minted from it keeps the same attribution permanently, same as real
 			// Telegram, instead of the plaque only ever showing on the catalog
 			// listing and disappearing the moment someone actually owns the NFT.
+			// nullableReleasedBy's ("", 0) reads back fine through the SELECTs'
+			// COALESCE(...,'')/COALESCE(...,0), but an INSERT has to write a
+			// real SQL NULL here: the check constraint on these two columns
+			// accepts only "both NULL" or "a valid (type, id>0) pair", and a
+			// literal empty string satisfies neither -- confirmed live, every
+			// gift catalogued without a "released by" plaque failed every
+			// upgrade attempt with unique_star_gift_released_by_check.
 			releasedByType, releasedByID := nullableReleasedBy(gift.ReleasedBy)
+			var releasedByTypeArg, releasedByIDArg any
+			if releasedByID != 0 {
+				releasedByTypeArg, releasedByIDArg = releasedByType, releasedByID
+			}
 			if _, err := tx.Exec(ctx, `
 INSERT INTO unique_star_gifts
     (id, gift_id, collectible_revision_id, source_saved_gift_id, title, slug, num,
@@ -194,7 +205,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13,$14,$15,$16,$17,$18)`,
 				uniqueID, gift.ID, revision.ID, savedID, gift.Title, slug, num,
 				string(req.Recipient.Type), req.Recipient.ID, modelID, patternID, backdropID,
 				string(req.Recipient.Type), req.Recipient.ID, craftChancePermille, s.lifecycle.OfferMinStars,
-				releasedByType, releasedByID); err != nil {
+				releasedByTypeArg, releasedByIDArg); err != nil {
 				return fmt.Errorf("insert admin unique star gift: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `UPDATE star_gift_collectible_revisions SET issued=issued+1 WHERE id=$1`, revision.ID); err != nil {
@@ -485,7 +496,15 @@ FROM star_gift_catalog_revisions WHERE id=$1`, locked.RevisionID).Scan(&title, &
 			}
 			// See the admin-grant path above for why this attribution has to follow
 			// the gift onto its unique row, not just live on the catalog listing.
+			// Same NULL-vs-empty-string fix as there: nullableReleasedBy's ("", 0)
+			// is only safe for reads (COALESCE turns real NULL into it); writing
+			// it back literally trips unique_star_gift_released_by_check for
+			// every gift without a "released by" plaque.
 			releasedByType, releasedByID := nullableReleasedBy(domain.Peer{Type: domain.PeerType(releasedByPeerType), ID: releasedByPeerID})
+			var releasedByTypeArg, releasedByIDArg any
+			if releasedByID != 0 {
+				releasedByTypeArg, releasedByIDArg = releasedByType, releasedByID
+			}
 			slug := fmt.Sprintf("%s-%d", revision.SlugPrefix, num)
 			if _, err := tx.Exec(ctx, `
 INSERT INTO unique_star_gifts
@@ -497,7 +516,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 				uniqueID, locked.GiftID, revision.ID, locked.ID, title, slug, num,
 				string(locked.Owner.Type), locked.Owner.ID, modelID, patternID, backdropID, req.KeepOriginalDetails,
 				string(locked.Owner.Type), locked.Owner.ID, craftChancePermille, s.lifecycle.OfferMinStars,
-				releasedByType, releasedByID); err != nil {
+				releasedByTypeArg, releasedByIDArg); err != nil {
 				return fmt.Errorf("insert unique star gift: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `UPDATE star_gift_collectible_revisions SET issued=issued+1 WHERE id=$1`, revision.ID); err != nil {
