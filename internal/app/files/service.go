@@ -71,6 +71,12 @@ type Service struct {
 	mapTiles           *mapTileProxy
 	externalMedia      *externalMediaFetcher
 	webpage            *webpageFetcher
+	// giftLinkBaseURL/giftLinkAppName/giftLinks back the /nft/{slug} link-preview
+	// fast path (see SetGiftLinkPreview, webpage.go): wired post-construction
+	// because the gifts service is built after this one.
+	giftLinkBaseURL string
+	giftLinkAppName string
+	giftLinks       UniqueStarGiftLookup
 	// effects 是消息发送特效目录(messages.getAvailableEffects)。全局静态,启动 seedEffects
 	// 一次写入后只读,故无锁——与各 read-model 缓存一样在服务就绪前完成填充。
 	// effectsHash 在 seed 时算一次,handler 直接比对返回 NotModified,无需每次 RPC 重算。

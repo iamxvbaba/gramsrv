@@ -563,6 +563,11 @@ type MessageWebPage struct {
 	// ComposeToneEmojiID 映射 webPageAttributeAiComposeTone，用于 TDesktop 渲染
 	// addstyle tone 分享卡片；0 表示普通网页。
 	ComposeToneEmojiID int64 `json:"compose_tone_emoji_id,omitempty"`
+	// UniqueGift 映射 webPageAttributeUniqueStarGift：仅当链接预览指向我们自己的
+	// /nft/{slug} 落地页（Type=="telegram_nft"）时才非 nil，携带完整快照，使 TL 转换
+	// （tgWebPage）保持纯投影、无需在渲染时再查库。客户端据此本地渲染 pattern/model/
+	// backdrop，与在应用内直接打开该礼物时效果一致，而不是回退成一张服务端合成的静态图。
+	UniqueGift *UniqueStarGift `json:"unique_gift,omitempty"`
 
 	ForceLargeMedia bool `json:"force_large_media,omitempty"`
 	ForceSmallMedia bool `json:"force_small_media,omitempty"`

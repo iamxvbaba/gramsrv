@@ -231,3 +231,91 @@ func TestResolveWebPageDisabled(t *testing.T) {
 		t.Fatalf("expected ErrWebPagePreviewDisabled")
 	}
 }
+
+type fakeUniqueGiftLookup struct {
+	bySlug map[string]domain.UniqueStarGift
+}
+
+func (f fakeUniqueGiftLookup) UniqueBySlug(_ context.Context, slug string) (domain.UniqueStarGift, bool, error) {
+	g, ok := f.bySlug[slug]
+	return g, ok, nil
+}
+
+// TestResolveWebPageGiftLinkFastPath 验证 /nft/{slug} 链接直接查库铸造 telegram_nft 卡片，
+// 完全不打 HTTP（httptest server 上没挂任何 handler，命中就会 404）。
+func TestResolveWebPageGiftLinkFastPath(t *testing.T) {
+	// 用一个没挂任何 handler 的 server 当"我们自己的站点"：一旦快路径失手落回 HTTP 抓取，
+	// 请求会打空路由 404，断言就会因为不是 telegram_nft 卡片而失败。
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+
+	svc := newWebpageTestService(t, true)
+	svc.SetGiftLinkPreview(srv.URL, "ShuzaGram", fakeUniqueGiftLookup{bySlug: map[string]domain.UniqueStarGift{
+		"chill-flame-1": {Title: "Chill Flame", Num: 168424},
+	}})
+
+	page, err := svc.ResolveWebPage(context.Background(), srv.URL+"/nft/chill-flame-1")
+	if err != nil {
+		t.Fatalf("ResolveWebPage: %v", err)
+	}
+	if page.State != domain.MessageWebPageStateDone {
+		t.Fatalf("state = %q, want done", page.State)
+	}
+	if page.Type != "telegram_nft" {
+		t.Fatalf("type = %q, want telegram_nft", page.Type)
+	}
+	if page.SiteName != "ShuzaGram" {
+		t.Fatalf("site name = %q, want ShuzaGram", page.SiteName)
+	}
+	if page.Title != "Chill Flame #168424" {
+		t.Fatalf("title = %q, want %q", page.Title, "Chill Flame #168424")
+	}
+	if page.UniqueGift == nil || page.UniqueGift.Title != "Chill Flame" {
+		t.Fatalf("UniqueGift = %+v, want the resolved gift snapshot", page.UniqueGift)
+	}
+}
+
+// TestResolveWebPageGiftLinkFastPathNotFound 验证未知 slug 收敛为空预览而不是报错。
+func TestResolveWebPageGiftLinkFastPathNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+
+	svc := newWebpageTestService(t, true)
+	svc.SetGiftLinkPreview(srv.URL, "ShuzaGram", fakeUniqueGiftLookup{bySlug: map[string]domain.UniqueStarGift{}})
+
+	page, err := svc.ResolveWebPage(context.Background(), srv.URL+"/nft/does-not-exist")
+	if err != nil {
+		t.Fatalf("ResolveWebPage: %v", err)
+	}
+	if page.State != domain.MessageWebPageStateEmpty {
+		t.Fatalf("state = %q, want empty", page.State)
+	}
+}
+
+// TestResolveWebPageGiftLinkFastPathDoesNotShadowOtherPaths 验证只有 /nft/ 路径走快路径：
+// 同一站点的其它路径仍然照常发起 HTTP 抓取。
+func TestResolveWebPageGiftLinkFastPathDoesNotShadowOtherPaths(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/other", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, `<html><head><meta property="og:title" content="Other Page"></head></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	svc := newWebpageTestService(t, true)
+	svc.SetGiftLinkPreview(srv.URL, "ShuzaGram", fakeUniqueGiftLookup{bySlug: map[string]domain.UniqueStarGift{
+		"chill-flame-1": {Title: "Chill Flame", Num: 168424},
+	}})
+
+	page, err := svc.ResolveWebPage(context.Background(), srv.URL+"/other")
+	if err != nil {
+		t.Fatalf("ResolveWebPage: %v", err)
+	}
+	if page.Type == "telegram_nft" || page.UniqueGift != nil {
+		t.Fatalf("non-/nft/ path incorrectly took the gift-link fast path: %+v", page)
+	}
+	if page.Title != "Other Page" {
+		t.Fatalf("title = %q, want Other Page (should have gone through normal HTTP fetch)", page.Title)
+	}
+}

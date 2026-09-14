@@ -1331,6 +1331,10 @@ func run(logger *zap.Logger) error {
 		starGiftOptions = append(starGiftOptions, starGiftWithdrawalOption)
 	}
 	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC, starGiftOptions...)
+	// Gifts 服务在 filesService 之后才建好，故走构造后注入（见 SetGiftLinkPreview 文档）：
+	// 打开 /nft/{slug} 链接预览的直查快路径，客户端得到 webPageAttributeUniqueStarGift
+	// 而非服务端合成静态图，与应用内直接打开该礼物时的本地渲染一致。
+	filesService.SetGiftLinkPreview(cfg.PublicBaseURL, cfg.PublicAppName, giftsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)

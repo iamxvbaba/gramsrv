@@ -217,10 +217,17 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 				}
 			}
 		}
+		var attrs []tg.WebPageAttributeClass
 		if w.ComposeToneEmojiID != 0 {
-			page.SetAttributes([]tg.WebPageAttributeClass{
-				&tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID},
-			})
+			attrs = append(attrs, &tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID})
+		}
+		if w.UniqueGift != nil {
+			// telegram_nft 卡片：客户端按此属性本地渲染 pattern/model/backdrop
+			// （与应用内直接打开该礼物一致），不依赖上面的 Photo。
+			attrs = append(attrs, &tg.WebPageAttributeUniqueStarGift{Gift: tgUniqueStarGift(*w.UniqueGift)})
+		}
+		if len(attrs) > 0 {
+			page.SetAttributes(attrs)
 		}
 		return page
 	case domain.MessageWebPageStateEmpty:

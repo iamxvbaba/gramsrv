@@ -83,6 +83,90 @@ type webpageFetcher struct {
 	fetchTimes []time.Time
 }
 
+// UniqueStarGiftLookup 按 slug 解析唯一藏品，供 SetGiftLinkPreview 使用。
+type UniqueStarGiftLookup interface {
+	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
+}
+
+// SetGiftLinkPreview 打开对我们自己 /nft/{slug} 落地页链接的特判：resolve() 不再把这类
+// URL 当成任意网页去抓取+解析 OG 标签，而是直接查库铸造一张携带 UniqueGift 快照的卡片
+// （见 domain.MessageWebPage.UniqueGift），使客户端能用与应用内直接打开该礼物时相同的本
+// 地 Lottie 渲染出 pattern/model/backdrop，而不是退化成一张服务端合成的静态图。
+//
+// 礼物服务在这个服务构造完之后才建好，故走构造后注入（与 botsService.SetPremium 等同一
+// 惯例），baseURL 不带末尾斜杠（如 "https://sgq.me"，即 cfg.PublicBaseURL）。
+func (s *Service) SetGiftLinkPreview(baseURL, appName string, lookup UniqueStarGiftLookup) {
+	if s == nil || lookup == nil {
+		return
+	}
+	s.giftLinkBaseURL = strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
+	s.giftLinkAppName = appName
+	s.giftLinks = lookup
+}
+
+// giftLinkSlug 报告 normalizedURL 是否为我们自己的 /nft/{slug} 落地页链接，返回其 slug。
+// normalizedURL 来自 domain.NormalizeWebPageURL：scheme/host 已小写、无 fragment。
+func (s *Service) giftLinkSlug(normalizedURL string) (string, bool) {
+	if s.giftLinkBaseURL == "" || s.giftLinks == nil {
+		return "", false
+	}
+	prefix := s.giftLinkBaseURL + "/nft/"
+	if !strings.HasPrefix(normalizedURL, prefix) {
+		return "", false
+	}
+	slug := strings.TrimPrefix(normalizedURL, prefix)
+	if i := strings.IndexAny(slug, "?#/"); i >= 0 {
+		slug = slug[:i] // 拒绝额外路径段/查询串，只接受裸 slug（镜像 web 层 validStarGiftSlugPath 的用法）。
+	}
+	if slug == "" || len(slug) > domain.MaxStarGiftSlugBytes || !giftSlugCharsetValid(slug) {
+		return "", false
+	}
+	return slug, true
+}
+
+func giftSlugCharsetValid(slug string) bool {
+	for _, r := range slug {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// resolveGiftLinkWebPage 直接查库铸造一张 telegram_nft 类型的卡片，跳过 HTTP 抓取。
+func (s *Service) resolveGiftLinkWebPage(ctx context.Context, normalizedURL string, urlHash int64, slug string) (domain.MessageWebPage, error) {
+	unique, found, err := s.giftLinks.UniqueBySlug(ctx, slug)
+	if err != nil {
+		return domain.MessageWebPage{}, err // 瞬时失败：不缓存，GetOrLoad 允许重试。
+	}
+	if !found {
+		return emptyWebPage(normalizedURL, urlHash), nil
+	}
+	title := strings.TrimSpace(unique.Title)
+	if title == "" {
+		title = "Collectible gift"
+	}
+	if unique.Num > 0 {
+		title = fmt.Sprintf("%s #%d", title, unique.Num)
+	}
+	displayURL := strings.TrimPrefix(strings.TrimPrefix(normalizedURL, "https://"), "http://")
+	return domain.MessageWebPage{
+		State:      domain.MessageWebPageStateDone,
+		ID:         urlHash,
+		URL:        normalizedURL,
+		DisplayURL: displayURL,
+		Type:       "telegram_nft",
+		SiteName:   s.giftLinkAppName,
+		Title:      title,
+		UniqueGift: &unique,
+	}, nil
+}
+
 // WithWebPagePreview 启用链接预览抓取。maxBytes<=0 / ratePerMin<=0 用默认。SSRF 防护恒开。
 func WithWebPagePreview(maxBytes int64, ratePerMin int) Option {
 	return func(s *Service) {
@@ -286,6 +370,13 @@ func (f *webpageFetcher) maybeRefresh(s *Service, normalizedURL string, urlHash 
 
 // resolve 实际抓取并构造卡片。HTML 与预览图共享 ctx 总时长预算。
 func (f *webpageFetcher) resolve(ctx context.Context, s *Service, normalizedURL string, urlHash int64) (domain.MessageWebPage, error) {
+	// 我们自己的 /nft/{slug} 链接直接查库铸造卡片，不走下面的通用 HTTP 抓取+OG 解析——
+	// 那条路径只对外部网站是对的，对内部链接会把服务端合成的静态预览图当成唯一信号，
+	// 丢失客户端本可以本地渲染的完整 pattern/model/backdrop。
+	if slug, ok := s.giftLinkSlug(normalizedURL); ok {
+		return s.resolveGiftLinkWebPage(ctx, normalizedURL, urlHash, slug)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, webpageTotalTimeout)
 	defer cancel()
 

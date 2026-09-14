@@ -131,6 +131,53 @@ func TestTgMessageMediaWebPageAiComposeToneAttribute(t *testing.T) {
 	}
 }
 
+// TestTgMessageMediaWebPageUniqueGiftAttribute 验证 UniqueGift 快照投影为
+// webPageAttributeUniqueStarGift，让客户端本地渲染 pattern/model/backdrop
+// （见 internal/app/files/webpage.go 的 gift-link 快路径）。
+func TestTgMessageMediaWebPageUniqueGiftAttribute(t *testing.T) {
+	src := &domain.MessageMedia{
+		Kind: domain.MessageMediaKindWebPage,
+		WebPage: &domain.MessageWebPage{
+			State:      domain.MessageWebPageStateDone,
+			ID:         123,
+			URL:        "https://sgq.me/nft/chill-flame-1",
+			DisplayURL: "sgq.me/nft/chill-flame-1",
+			Hash:       7,
+			Type:       "telegram_nft",
+			SiteName:   "ShuzaGram",
+			Title:      "Chill Flame #168424",
+			UniqueGift: &domain.UniqueStarGift{
+				ID: 1, GiftID: 1, Title: "Chill Flame", Slug: "chill-flame-1", Num: 168424,
+			},
+		},
+	}
+	got := tgMessageMedia(jsonRoundTripMedia(t, src))
+	wrap, ok := got.(*tg.MessageMediaWebPage)
+	if !ok {
+		t.Fatalf("tgMessageMedia = %T, want *tg.MessageMediaWebPage", got)
+	}
+	page, ok := wrap.Webpage.(*tg.WebPage)
+	if !ok {
+		t.Fatalf("Webpage = %T, want *tg.WebPage", wrap.Webpage)
+	}
+	attrs, ok := page.GetAttributes()
+	if !ok || len(attrs) != 1 {
+		t.Fatalf("attributes = %#v ok=%v, want one", attrs, ok)
+	}
+	attr, ok := attrs[0].(*tg.WebPageAttributeUniqueStarGift)
+	if !ok {
+		t.Fatalf("attribute = %#v, want WebPageAttributeUniqueStarGift", attrs[0])
+	}
+	gift, ok := attr.Gift.(*tg.StarGiftUnique)
+	if !ok || gift.Slug != "chill-flame-1" || gift.Num != 168424 {
+		t.Fatalf("gift = %#v, want slug=chill-flame-1 num=168424", attr.Gift)
+	}
+	var buf bin.Buffer
+	if err := wrap.Encode(&buf); err != nil {
+		t.Fatalf("encode messageMediaWebPage with unique gift attribute: %v", err)
+	}
+}
+
 // TestTgMessageMediaWebPagePending 验证 pending 形态投影为 webPagePending{id,url,date}。
 func TestTgMessageMediaWebPagePending(t *testing.T) {
 	src := &domain.MessageMedia{
