@@ -47,6 +47,13 @@ const (
 	// curates the icon catalogue and strips granted marks.
 	permissionBotVerificationReview = "botverification.review"
 	permissionBotVerificationManage = "botverification.manage"
+	// permissionServerManage gates the whole Server Settings surface (identity
+	// name/description/icon, restart, .env viewing) -- one right rather than
+	// split review/manage like the sections above: every action here is a
+	// direct operational lever over the server process itself, not a
+	// business-data review queue with a separate "just look" tier worth
+	// having.
+	permissionServerManage = "server.manage"
 )
 
 type permissionsKey struct{}

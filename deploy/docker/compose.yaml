@@ -143,6 +143,13 @@ services:
       # products (see that package's doc comment). Off by default.
       TELESRV_EXTBRIDGE_ADDR: ${TELESRV_EXTBRIDGE_ADDR:-}
       TELESRV_EXTBRIDGE_SHARED_SECRET: ${TELESRV_EXTBRIDGE_SHARED_SECRET:-}
+      # internal/identity: admin-editable server name/description/icon,
+      # served over /server-info + /server-icon (internal/mtprotoedge).
+      # Overridden off the config package's own "data/identity" default,
+      # which resolves relative to /app (the image's ephemeral WORKDIR) --
+      # must live on the persistent volume like the telegram-login keys
+      # above, or every container recreate wipes it.
+      TELESRV_IDENTITY_DIR: ${TELESRV_IDENTITY_DIR:-/var/lib/telesrv/identity}
       # Product identity shown to clients (internal/branding). Without these,
       # the process falls back to branding.DefaultConfig()'s own "Telesrv"
       # values -- confirmed live as the cause of system messages (account

@@ -73,6 +73,7 @@ import (
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
 	"telesrv/internal/extbridge"
+	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/officialgifts"
@@ -1926,6 +1927,7 @@ func run(logger *zap.Logger) error {
 		DC:                             cfg.DC,
 		StrictDC:                       cfg.StrictDCCheck,
 		RSAKey:                         rsaKey,
+		IdentityStore:                  identity.NewStore(cfg.IdentityDir),
 		LayerRPC:                       router,
 		AuthKeys:                       authKeyGetBatchStore,
 		ActiveSessions:                 activeSessions,

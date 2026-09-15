@@ -26,6 +26,7 @@ import (
 	"github.com/iamxvbaba/td/transport"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/identity"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -347,6 +348,10 @@ type Options struct {
 	StrictDC bool
 	// RSAKey 是 server RSA 私钥，用于密钥交换。nil 时无法完成握手。
 	RSAKey *rsa.PrivateKey
+	// IdentityStore 后端 /server-info、/server-icon 这两个 same-port HTTP
+	// 端点（见 server_info_http.go）。nil 时这两个端点仍然用 RSAKey/DC 应答，
+	// 只是 name/description/icon 始终为空——不是这两个端点整体禁用的开关。
+	IdentityStore *identity.Store
 	// AuthKeys 持久化 auth key。默认内存实现。
 	AuthKeys store.AuthKeyStore
 	// ActiveSessions 管理活跃连接。默认新建；传入时可让 RPC 层共享同一注册表。
@@ -521,10 +526,11 @@ type Server struct {
 	outboundOpPool           *outboundOpPool
 	outboundReplayBodyPool   *outboundReplayBodyPool
 
-	dc        int
-	strictDC  bool
-	key       exchange.PrivateKey
-	authKeys  store.AuthKeyStore
+	dc            int
+	strictDC      bool
+	key           exchange.PrivateKey
+	identityStore *identity.Store
+	authKeys      store.AuthKeyStore
 	conns     *SessionManager
 	rpc       legacyRPCHandler
 	layerRPC  LayerRPCHandler
@@ -581,6 +587,7 @@ func New(opts Options) *Server {
 		dc:                       opts.DC,
 		strictDC:                 opts.StrictDC,
 		key:                      exchange.PrivateKey{RSA: opts.RSAKey},
+		identityStore:            opts.IdentityStore,
 		authKeys:                 opts.AuthKeys,
 		conns:                    conns,
 		rpc:                      opts.legacyRPC,
@@ -741,7 +748,8 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	wsLn := newTransportPacketMessageListener(wsRawLn)
 
 	httpServer := &http.Server{
-		Handler:           websocketRouteHandler(wsHandler, s.websocketOrigins),
+		Handler: serverInfoHTTPHandler(websocketRouteHandler(wsHandler, s.websocketOrigins),
+			s.dc, rsaPublicKeyPEM(s.key.RSA), s.identityStore),
 		ReadHeaderTimeout: minDuration(10*time.Second, s.handshakeTimeout),
 		BaseContext: func(net.Listener) context.Context {
 			return ctx

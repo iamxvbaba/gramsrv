@@ -36,6 +36,9 @@ type Config struct {
 	AdvertiseIP string
 	// RSAKeyPath 是 server RSA 私钥的 PEM 路径；不存在时自动生成。
 	RSAKeyPath string
+	// IdentityDir 存放 internal/identity 的 identity.json + icon 文件——admin
+	// 面板可编辑的 server 名称/描述/图标，立即生效、无需重启。
+	IdentityDir string
 	// DC 是本 server 的 DC ID。
 	DC int
 	// DefaultCountryCode 是 help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
@@ -821,6 +824,7 @@ func Load() (Config, error) {
 		// 沿用 loopback 默认值，需显式设置客户端实际可达的 IP。
 		AdvertiseIP:                       advertiseIP,
 		RSAKeyPath:                        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
+		IdentityDir:                       envOr("TELESRV_IDENTITY_DIR", "data/identity"),
 		DC:                                envIntOr("TELESRV_DC", 2),
 		DefaultCountryCode:                countryCode,
 		StrictDCCheck:                     envBoolOr("TELESRV_STRICT_DC_CHECK", false),

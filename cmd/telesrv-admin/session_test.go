@@ -32,7 +32,7 @@ func TestSignedSessionRoundTripAndTamper(t *testing.T) {
 }
 
 func TestSPAFallbackSmoke(t *testing.T) {
-	srv, err := newServer(uiConfig{SessionKey: []byte("01234567890123456789012345678901")}, nil, nil)
+	srv, err := newServer(uiConfig{SessionKey: []byte("01234567890123456789012345678901")}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestFlexScalarsAcceptNumbersStringsAndBlanks(t *testing.T) {
 }
 
 func TestNewCollectibleAndRatingRoutesRequireSession(t *testing.T) {
-	srv, err := newServer(uiConfig{SessionKey: []byte("01234567890123456789012345678901")}, nil, nil)
+	srv, err := newServer(uiConfig{SessionKey: []byte("01234567890123456789012345678901")}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}

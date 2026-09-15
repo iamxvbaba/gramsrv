@@ -22,7 +22,7 @@ func panelServer(t *testing.T, permissions ...string) *server {
 		SessionKey:  []byte(testSessionKey),
 		Password:    "letmein",
 		Permissions: permissions,
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}

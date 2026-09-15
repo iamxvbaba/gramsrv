@@ -18,6 +18,7 @@ import (
 
 	"telesrv/internal/config"
 	"telesrv/internal/hoststats"
+	"telesrv/internal/identity"
 )
 
 const (
@@ -48,7 +49,7 @@ func run() error {
 	hs := hoststats.NewPoller(cfg.DiskStatsPath)
 	go hs.Run(ctx, hostStatsPollInterval)
 
-	srv, err := newServer(cfg, newReadStore(pool), hs)
+	srv, err := newServer(cfg, newReadStore(pool), hs, identity.NewStore(cfg.IdentityDir))
 	if err != nil {
 		return err
 	}
@@ -87,6 +88,10 @@ type uiConfig struct {
 	// entry, so introducing the permission model never locks an operator out of a
 	// panel that worked before.
 	Permissions []string
+	// IdentityDir backs the Server Settings panel's identity.Store -- see
+	// server.go's identity field. Must match cmd/telesrv's own
+	// TELESRV_IDENTITY_DIR (both processes read/write the same directory).
+	IdentityDir string
 }
 
 // loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
@@ -123,6 +128,7 @@ func loadConfig() (uiConfig, error) {
 		SessionKey:    sum[:],
 		DiskStatsPath: dashboardDiskPath(appCfg),
 		Permissions:   appCfg.AdminUIPermissions,
+		IdentityDir:   appCfg.IdentityDir,
 	}, nil
 }
 
