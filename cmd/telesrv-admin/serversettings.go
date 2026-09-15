@@ -1,17 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"telesrv/internal/admin"
 )
 
-// Server Settings: admin-editable server identity (name/description/icon),
-// backed by internal/identity -- takes effect immediately, no restart.
+// Server Settings: admin-editable server identity (name/description/icon,
+// backed by internal/identity, takes effect immediately, no restart) plus
+// Restart and .env viewing/editing, backed by internal/procctl.
 //
 // Adapted (not copied verbatim) from the sibling project owpengram-server
 // (github.com/owpengram/owpengram-server, Apache-2.0), which forks the same
@@ -19,10 +22,14 @@ import (
 // welcome-message/login-code template overrides and a first-run setup
 // wizard -- both dropped here, gramsrv has no such template-override system
 // or wizard to hang them on (see internal/identity's package doc comment).
-// Their version also handles restart/update/.env-editing/docker-status
-// through internal/procctl (bare-process + git-pull deployment); gramsrv's
-// production deploy is Docker Compose, a different enough shape that a
-// straight port doesn't apply -- not ported here.
+// Their version's Restart/Update/.env-editing/docker-status is built for a
+// bare-process + git-pull deployment (internal/procctl there manages PID
+// files and does `git pull && go build`); gramsrv's production deploy is
+// Docker Compose, different enough that a straight port doesn't apply --
+// see internal/procctl's package doc comment for what changed. No Update
+// action at all here (a deliberate scope choice, not an oversight): Restart
+// is `docker restart` on the already-running server container, nothing to
+// rebuild first.
 
 // serverManage gates the whole Server Settings surface.
 func (s *server) serverManage(handler http.HandlerFunc) http.Handler {
@@ -213,4 +220,90 @@ func (s *server) handleRemoveServerIconAPI(w http.ResponseWriter, r *http.Reques
 	}
 	err := s.identity.RemoveIcon()
 	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", err, "server icon removed", nil))
+}
+
+// --- status / restart / .env editing (internal/procctl) ------------------
+
+func (s *server) handleServerStatusAPI(w http.ResponseWriter, r *http.Request) {
+	if s.serverCtl == nil {
+		writeAPIError(w, http.StatusNotFound, "server control is not configured")
+		return
+	}
+	status, err := s.serverCtl.Status(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+type restartServerAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+}
+
+// restartTimeout bounds `docker restart`, which waits up to the server
+// container's stop_grace_period for a graceful shutdown before Docker
+// escalates to SIGKILL -- generous enough to cover that plus the new
+// process's own startup and healthcheck.
+const restartTimeout = 60 * time.Second
+
+func (s *server) handleRestartServerAPI(w http.ResponseWriter, r *http.Request) {
+	if s.serverCtl == nil {
+		writeAPIError(w, http.StatusNotFound, "server control is not configured")
+		return
+	}
+	var body restartServerAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "restart-server")
+	if meta.DryRun {
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- runs `docker restart` on the server container", nil))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), restartTimeout)
+	defer cancel()
+	log, err := s.serverCtl.Restart(ctx)
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", err, "server restarted", map[string]any{"log": log}))
+}
+
+func (s *server) handleServerEnvAPI(w http.ResponseWriter, r *http.Request) {
+	if s.serverCtl == nil {
+		writeAPIError(w, http.StatusNotFound, "server control is not configured")
+		return
+	}
+	groups, err := s.serverCtl.ReadEnvGroups()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, groups)
+}
+
+type updateServerEnvAPIRequest struct {
+	CommandID string            `json:"command_id"`
+	Reason    string            `json:"reason"`
+	Confirm   bool              `json:"confirm"`
+	Values    map[string]string `json:"values"`
+}
+
+func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request) {
+	if s.serverCtl == nil {
+		writeAPIError(w, http.StatusNotFound, "server control is not configured")
+		return
+	}
+	var body updateServerEnvAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server-env")
+	details := map[string]any{"keys_changed": len(body.Values)}
+	if meta.DryRun {
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", nil, "would update .env -- takes effect on next Restart", details))
+		return
+	}
+	err := s.serverCtl.WriteEnvValues(body.Values)
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", err, ".env updated -- restart the server for changes to take effect", details))
 }

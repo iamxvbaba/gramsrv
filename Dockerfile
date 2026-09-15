@@ -87,6 +87,16 @@ COPY --chown=telesrv:telesrv --chmod=0444 deploy/docker/assets/test-server-rsa.p
 USER 10001:10001
 
 FROM runtime-base AS admin
+USER root
+# docker-cli backs internal/procctl's Restart action (docker restart on the
+# server container, over the host's /var/run/docker.sock -- see that
+# package's doc comment and the compose.yaml admin service's docker.sock
+# bind mount). Stays USER root (not 10001:10001 like every other stage
+# here): the mounted socket is host-root-equivalent access regardless of
+# which UID inside the container holds it, so there is no real isolation
+# benefit to dropping privileges afterward, only a GID-matching puzzle that
+# varies by host.
+RUN apk add --no-cache docker-cli
 COPY --from=build-admin /out/telesrv-admin /usr/local/bin/telesrv-admin
 EXPOSE 2600
 CMD ["telesrv-admin"]

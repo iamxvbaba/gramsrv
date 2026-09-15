@@ -39,6 +39,14 @@ type Config struct {
 	// IdentityDir 存放 internal/identity 的 identity.json + icon 文件——admin
 	// 面板可编辑的 server 名称/描述/图标，立即生效、无需重启。
 	IdentityDir string
+	// AdminEnvPath/AdminEnvExamplePath/ServerContainerName 只被 cmd/telesrv-admin
+	// 读取，供 internal/procctl 的 Server Settings 面板（Restart、.env 编辑）使用。
+	// 两个 env 路径是这份部署自己 compose 文件的 .env/.env.example 的 bind mount
+	// （见 deploy/docker/compose.yaml 的 admin service），不是本进程自己产出的文件；
+	// ServerContainerName 是 `docker restart` 的目标，必须与 Compose 实际容器名一致。
+	AdminEnvPath        string
+	AdminEnvExamplePath string
+	ServerContainerName string
 	// DC 是本 server 的 DC ID。
 	DC int
 	// DefaultCountryCode 是 help.getNearestDc 返回的 ISO 3166-1 alpha-2 国家码。
@@ -825,6 +833,9 @@ func Load() (Config, error) {
 		AdvertiseIP:                       advertiseIP,
 		RSAKeyPath:                        envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
 		IdentityDir:                       envOr("TELESRV_IDENTITY_DIR", "data/identity"),
+		AdminEnvPath:                      envOr("TELESRV_ADMIN_ENV_PATH", "deploy/docker/.env"),
+		AdminEnvExamplePath:               envOr("TELESRV_ADMIN_ENV_EXAMPLE_PATH", "deploy/docker/.env.example"),
+		ServerContainerName:               envOr("TELESRV_SERVER_CONTAINER_NAME", "gramsrv-main-server-1"),
 		DC:                                envIntOr("TELESRV_DC", 2),
 		DefaultCountryCode:                countryCode,
 		StrictDCCheck:                     envBoolOr("TELESRV_STRICT_DC_CHECK", false),

@@ -258,6 +258,21 @@ services:
     volumes:
       - server_state:/var/lib/telesrv:ro
       - identity_state:/var/lib/telesrv-identity
+      # internal/procctl's Restart action needs this to run `docker restart`
+      # on the server container from inside admin -- host-root-equivalent
+      # access if the admin panel is ever compromised (bad admin-panel auth
+      # + this socket = full host control), a deliberate, explicitly
+      # confirmed tradeoff for the convenience of a one-click restart
+      # instead of SSHing in. Read-only would not help: `docker restart`
+      # itself needs to create/write, not just query, so :ro on this mount
+      # would just make the feature not work rather than make it safer.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # internal/procctl's env-editing actions read/write these directly --
+      # bind mounts (not a named volume) since they're this same compose
+      # file's own .env/.env.example, already the deployment's source of
+      # truth on the host.
+      - ./.env:/app/deploy/docker/.env
+      - ./.env.example:/app/deploy/docker/.env.example:ro
     network_mode: host
     healthcheck:
       test: ["CMD-SHELL", "nc -z \"$$TELESRV_ADMIN_HEALTH_IP\" \"$$TELESRV_ADMIN_PORT\""]

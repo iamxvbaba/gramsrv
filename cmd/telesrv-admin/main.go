@@ -19,6 +19,7 @@ import (
 	"telesrv/internal/config"
 	"telesrv/internal/hoststats"
 	"telesrv/internal/identity"
+	"telesrv/internal/procctl"
 )
 
 const (
@@ -49,7 +50,8 @@ func run() error {
 	hs := hoststats.NewPoller(cfg.DiskStatsPath)
 	go hs.Run(ctx, hostStatsPollInterval)
 
-	srv, err := newServer(cfg, newReadStore(pool), hs, identity.NewStore(cfg.IdentityDir))
+	serverCtl := procctl.NewManager(cfg.EnvPath, cfg.EnvExamplePath, cfg.ServerContainerName)
+	srv, err := newServer(cfg, newReadStore(pool), hs, identity.NewStore(cfg.IdentityDir), serverCtl)
 	if err != nil {
 		return err
 	}
@@ -92,6 +94,15 @@ type uiConfig struct {
 	// server.go's identity field. Must match cmd/telesrv's own
 	// TELESRV_IDENTITY_DIR (both processes read/write the same directory).
 	IdentityDir string
+	// EnvPath/EnvExamplePath/ServerContainerName back the Server Settings
+	// panel's internal/procctl.Manager -- see server.go's serverCtl field.
+	// The .env paths are bind mounts of this same deployment's own compose
+	// files (see deploy/docker/compose.yaml's admin service), not files
+	// this process owns. ServerContainerName is what `docker restart`
+	// targets -- must match Compose's actual container name.
+	EnvPath             string
+	EnvExamplePath      string
+	ServerContainerName string
 }
 
 // loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
@@ -119,16 +130,19 @@ func loadConfig() (uiConfig, error) {
 	sum := sha256.Sum256([]byte(appCfg.AdminSessionKey))
 
 	return uiConfig{
-		Addr:          appCfg.AdminUIAddr,
-		PostgresDSN:   appCfg.PostgresDSN,
-		AdminAPIURL:   adminAPIURL(adminAPIAddr),
-		AdminAPIToken: appCfg.AdminAPIToken,
-		Password:      appCfg.AdminUIPassword,
-		Token:         appCfg.AdminUIToken,
-		SessionKey:    sum[:],
-		DiskStatsPath: dashboardDiskPath(appCfg),
-		Permissions:   appCfg.AdminUIPermissions,
-		IdentityDir:   appCfg.IdentityDir,
+		Addr:                appCfg.AdminUIAddr,
+		PostgresDSN:         appCfg.PostgresDSN,
+		AdminAPIURL:         adminAPIURL(adminAPIAddr),
+		AdminAPIToken:       appCfg.AdminAPIToken,
+		Password:            appCfg.AdminUIPassword,
+		Token:               appCfg.AdminUIToken,
+		SessionKey:          sum[:],
+		DiskStatsPath:       dashboardDiskPath(appCfg),
+		Permissions:         appCfg.AdminUIPermissions,
+		IdentityDir:         appCfg.IdentityDir,
+		EnvPath:             appCfg.AdminEnvPath,
+		EnvExamplePath:      appCfg.AdminEnvExamplePath,
+		ServerContainerName: appCfg.ServerContainerName,
 	}, nil
 }
 

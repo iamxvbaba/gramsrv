@@ -21,6 +21,7 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/hoststats"
 	"telesrv/internal/identity"
+	"telesrv/internal/procctl"
 )
 
 //go:embed web/dist
@@ -37,9 +38,13 @@ type server struct {
 	// caller has a get-before-use guard, matching internal/identity.Store's
 	// own nil-receiver contract.
 	identity *identity.Store
+	// serverCtl backs the Server Settings panel's Restart action and .env
+	// viewing/editing -- see internal/procctl and serversettings.go. Every
+	// caller has a get-before-use guard, same as identity above.
+	serverCtl *procctl.Manager
 }
 
-func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller, identityStore *identity.Store) (*server, error) {
+func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller, identityStore *identity.Store, serverCtl *procctl.Manager) (*server, error) {
 	web, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, err
@@ -50,6 +55,7 @@ func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller, ident
 		hostStats: hostStats,
 		web:       web,
 		webServer: http.FileServer(http.FS(web)),
+		serverCtl: serverCtl,
 		identity:  identityStore,
 	}, nil
 }
@@ -68,6 +74,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))
 	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
 	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
+	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
+	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
+	mux.Handle("POST /api/actions/restart-server", s.serverManage(s.handleRestartServerAPI))
+	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
 	mux.Handle("GET /api/auto-subscribe-channels", s.requireAuthAPI(http.HandlerFunc(s.handleAutoSubscribeChannelsAPI)))
 	mux.Handle("GET /api/accounts", s.requireAuthAPI(http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
