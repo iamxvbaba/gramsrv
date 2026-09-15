@@ -230,6 +230,21 @@ services:
 
   admin:
     <<: *app
+    # `user: root` alone does NOT grant docker.sock/host-file access here:
+    # the shared x-app anchor sets cap_drop: [ALL] + read_only: true, so
+    # even UID 0 has no CAP_DAC_OVERRIDE and is bound by ordinary Unix
+    # permission bits like anyone else (confirmed live -- root inside this
+    # container still got "permission denied" on both docker.sock and the
+    # bind-mounted .env). Stays on the anchor's uid/gid 10001:10001;
+    # group_add below adds the *host's* docker group GID as a supplementary
+    # group instead, and the host .env file's own group is set to gid 10001
+    # to match (see the operational note where TELESRV_ADMIN_ENV_PATH is
+    # documented) -- the minimal, scoped grant rather than reopening the
+    # whole hardened profile.
+    group_add:
+      - "112" # host docker group GID (`getent group docker`) -- if this ever
+               # differs across hosts, override via a .env-set variable
+               # instead of editing this file per-deployment.
     image: ${TELESRV_IMAGE_PREFIX:-ghcr.io/iamxvbaba/gramsrv}/admin:${TELESRV_IMAGE_TAG:-main}
     build:
       context: ../..
