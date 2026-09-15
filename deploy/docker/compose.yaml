@@ -147,9 +147,11 @@ services:
       # served over /server-info + /server-icon (internal/mtprotoedge).
       # Overridden off the config package's own "data/identity" default,
       # which resolves relative to /app (the image's ephemeral WORKDIR) --
-      # must live on the persistent volume like the telegram-login keys
-      # above, or every container recreate wipes it.
-      TELESRV_IDENTITY_DIR: ${TELESRV_IDENTITY_DIR:-/var/lib/telesrv/identity}
+      # must live on a persistent volume like the telegram-login keys
+      # above, or every container recreate wipes it. Its own dedicated
+      # identity_state volume (not server_state, mounted read-only in the
+      # admin service below) -- cmd/telesrv-admin needs write access here.
+      TELESRV_IDENTITY_DIR: ${TELESRV_IDENTITY_DIR:-/var/lib/telesrv-identity}
       # Product identity shown to clients (internal/branding). Without these,
       # the process falls back to branding.DefaultConfig()'s own "Telesrv"
       # values -- confirmed live as the cause of system messages (account
@@ -207,6 +209,13 @@ services:
         condition: service_healthy
     volumes:
       - server_state:/var/lib/telesrv
+      # Separate from server_state: the admin container mounts that one
+      # read-only (see the admin service below) so it can never touch
+      # RSA keys/auth state/etc, but internal/identity needs admin to
+      # *write* here (name/description/icon edits). A dedicated
+      # read-write-on-both volume keeps that write access scoped to
+      # exactly the one thing that needs it.
+      - identity_state:/var/lib/telesrv-identity
     network_mode: host
     healthcheck:
       test:
@@ -240,11 +249,15 @@ services:
       TELESRV_BLOB_STAGING_DIR: /var/lib/telesrv/blob-staging
       TELESRV_ADMIN_HEALTH_IP: ${TELESRV_ADMIN_HEALTH_IP:-127.0.0.1}
       TELESRV_ADMIN_PORT: ${TELESRV_ADMIN_PORT:-2600}
+      # See the server service's identical TELESRV_IDENTITY_DIR comment --
+      # must match exactly, both processes read/write the same directory.
+      TELESRV_IDENTITY_DIR: ${TELESRV_IDENTITY_DIR:-/var/lib/telesrv-identity}
     depends_on:
       server:
         condition: service_healthy
     volumes:
       - server_state:/var/lib/telesrv:ro
+      - identity_state:/var/lib/telesrv-identity
     network_mode: host
     healthcheck:
       test: ["CMD-SHELL", "nc -z \"$$TELESRV_ADMIN_HEALTH_IP\" \"$$TELESRV_ADMIN_PORT\""]
@@ -266,3 +279,4 @@ volumes:
   postgres_data:
   redis_data:
   server_state:
+  identity_state:
