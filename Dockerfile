@@ -60,6 +60,13 @@ RUN apk add --no-cache ca-certificates tzdata \
 
 COPY --chmod=0555 deploy/docker/docker-entrypoint.sh /usr/local/bin/telesrv-container-entrypoint
 
+# Для Go:
+--mount=type=cache,id=gomod,target=/go/pkg/mod
+
+# Для npm:
+--mount=type=cache,id=npm,target=/root/.np
+m
+
 WORKDIR /app
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/telesrv-container-entrypoint"]
