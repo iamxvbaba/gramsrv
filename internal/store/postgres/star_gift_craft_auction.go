@@ -1155,7 +1155,7 @@ current_round,total_rounds,round_duration,status FROM star_gift_auctions WHERE g
 			Scan(&out.AveragePrice); err != nil {
 			return domain.StarGiftAuction{}, err
 		}
-		if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=$1`, giftID).
+		if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=$1 AND NOT l.suspended`, giftID).
 			Scan(&out.ListedCount); err != nil {
 			return domain.StarGiftAuction{}, err
 		}

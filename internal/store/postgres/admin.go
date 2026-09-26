@@ -240,7 +240,16 @@ WHERE user_id = ANY($1::bigint[]) AND frozen = true`, userIDs)
 func (s *AdminStore) SetAccountFreeze(ctx context.Context, freeze domain.AccountFreeze) (domain.AccountFreeze, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
-		return setAccountFreezeRow(ctx, s.db, freeze)
+		// Non-transactional handles (test doubles) still keep the market in
+		// sync; only the atomicity of the pair is lost.
+		out, err := setAccountFreezeRow(ctx, s.db, freeze)
+		if err != nil {
+			return domain.AccountFreeze{}, err
+		}
+		if err := syncStarGiftListingsForAccountFreeze(ctx, s.db, out.UserID, out.Frozen); err != nil {
+			return domain.AccountFreeze{}, err
+		}
+		return out, nil
 	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
@@ -254,6 +263,14 @@ func (s *AdminStore) SetAccountFreeze(ctx context.Context, freeze domain.Account
 	}()
 	out, err := setAccountFreezeRow(ctx, tx, freeze)
 	if err != nil {
+		return domain.AccountFreeze{}, err
+	}
+	// The star gift market follows the freeze inside the same transaction: while
+	// the account is frozen its listings stay suspended and unbuyable, and
+	// unfreezing restores them at the same price. This runs before the
+	// notification queue is filled so no client can observe a frozen account
+	// with a sellable listing.
+	if err := syncStarGiftListingsForAccountFreeze(ctx, tx, out.UserID, out.Frozen); err != nil {
 		return domain.AccountFreeze{}, err
 	}
 	if err := enqueueAccountFreezeNotifications(ctx, tx, out); err != nil {

@@ -499,7 +499,7 @@ JOIN star_gift_collectible_patterns p ON p.id=u.pattern_attribute_id
 JOIN documents pd ON pd.id=p.document_id
 JOIN star_gift_collectible_backdrops b ON b.id=u.backdrop_attribute_id
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
-LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id
+LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id AND NOT l.suspended
 WHERE %s`, predicate)
 }
 

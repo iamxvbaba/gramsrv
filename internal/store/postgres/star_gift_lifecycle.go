@@ -162,7 +162,9 @@ func (s *StarGiftLifecycleStore) ListResaleStarGifts(ctx context.Context, filter
 		filter.SortByPrice && filter.SortByNum || len(filter.Offset) > domain.MaxStarGiftsOffsetBytes {
 		return domain.StarGiftResalePage{}, domain.ErrStarGiftResaleUnavailable
 	}
-	conditions := []string{"u.gift_id=$1", "NOT u.burned", "u.owner_address=''"}
+	// Замороженный продавец не торгует: его suspended-листинги не показываются в
+	// маркете и не участвуют в счётчике страницы.
+	conditions := []string{"u.gift_id=$1", "NOT u.burned", "u.owner_address=''", "NOT l.suspended"}
 	args := []any{filter.GiftID}
 	nextArg := func(value any) string {
 		args = append(args, value)
@@ -282,10 +284,10 @@ func (s *StarGiftLifecycleStore) UniqueStarGiftValueInfo(ctx context.Context, un
 	err := s.db.QueryRow(ctx, `
 SELECT sg.gift_date, cr.stars, u.value_currency, u.value_amount, u.last_sale_date,
        COALESCE(CASE WHEN u.last_sale_currency='XTR' THEN u.last_sale_amount END,0),
-       COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND l.currency='XTR'
+       COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND l.currency='XTR' AND NOT l.suspended
           AND l.amount <= $2 * (SELECT r.stars FROM star_gift_catalog_revisions r JOIN star_gift_catalog gc ON gc.active_revision_id=r.id WHERE gc.gift_id=lu.gift_id)),0),
        COALESCE((SELECT AVG(sa.amount)::bigint FROM star_gift_sales sa JOIN unique_star_gifts su ON su.id=sa.unique_gift_id WHERE su.gift_id=u.gift_id AND sa.currency='XTR'),0),
-       (SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id)
+       (SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND NOT l.suspended)
 FROM unique_star_gifts u
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
 JOIN star_gift_catalog_revisions cr ON cr.id=sg.catalog_revision_id
@@ -343,6 +345,17 @@ func (s *StarGiftLifecycleStore) SetStarGiftListing(ctx context.Context, req dom
 				return err
 			}
 		} else {
+			// Замороженный аккаунт не выставляет подарки на маркет. FOR SHARE
+			// сериализуется с upsert заморозки (account_restrictions.user_id —
+			// его PK), поэтому пересекающаяся заморозка разрешается до нашего
+			// коммита, а не после него. Снятие с продажи (Amount == nil)
+			// остаётся доступным: удалить свою витрину безопасно, и guard-триггер
+			// DELETE не затрагивает.
+			if saved.Owner.Type == domain.PeerTypeUser {
+				if err := rejectFrozenStarGiftSeller(ctx, tx, saved.Owner.ID); err != nil {
+					return err
+				}
+			}
 			if unique.ResaleTonOnly && req.Amount.Currency != domain.StarGiftCurrencyTON {
 				return domain.ErrStarGiftResaleUnavailable
 			}
@@ -520,16 +533,23 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 		before: func(ctx context.Context, tx pgx.Tx, send *domain.SendPrivateTextRequest) error {
 			var listingCurrency, sellerType string
 			var listingAmount, sellerID, uniqueID int64
-			if err := tx.QueryRow(ctx, `SELECT l.currency,l.amount,l.seller_peer_type,l.seller_peer_id,u.id
+			var sellerFrozen bool
+			// suspended отсекает листинг, снятый с продажи заморозкой
+			// продавца, а frozen в том же SELECT — независимый запрет на
+			// покупку у замороженного продавца (снимок чтения, без
+			// блокировок, поэтому не меняет порядок захвата ликов в этой
+			// транзакции).
+			if err := tx.QueryRow(ctx, `SELECT l.currency,l.amount,l.seller_peer_type,l.seller_peer_id,u.id,
+			 l.seller_peer_type='user' AND EXISTS(SELECT 1 FROM account_restrictions r WHERE r.user_id=l.seller_peer_id AND r.frozen)
 			 FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id
-			 WHERE lower(u.slug)=lower($1) FOR UPDATE OF l,u`, strings.TrimSpace(req.Slug)).Scan(
-				&listingCurrency, &listingAmount, &sellerType, &sellerID, &uniqueID); err != nil {
+			 WHERE lower(u.slug)=lower($1) AND NOT l.suspended FOR UPDATE OF l,u`, strings.TrimSpace(req.Slug)).Scan(
+				&listingCurrency, &listingAmount, &sellerType, &sellerID, &uniqueID, &sellerFrozen); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return domain.ErrStarGiftResaleUnavailable
 				}
 				return err
 			}
-			if sellerType != string(seller.Type) || sellerID != seller.ID ||
+			if sellerFrozen || sellerType != string(seller.Type) || sellerID != seller.ID ||
 				listingCurrency != string(req.Amount.Currency) || listingAmount != req.Amount.Amount {
 				return domain.ErrStarGiftResaleUnavailable
 			}
@@ -1412,10 +1432,14 @@ func savedStarGiftByUniqueID(ctx context.Context, db sqlcgen.DBTX, uniqueID int6
 	return saved, err == nil, err
 }
 
-func updateStarGiftResaleProjection(ctx context.Context, tx pgx.Tx, giftID int64) error {
-	_, err := tx.Exec(ctx, `UPDATE star_gift_catalog c SET
- availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id),
- resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR'
+// updateStarGiftResaleProjection пересчитывает витринные счётчики каталога по
+// листингам, которые реально продаются: suspended (замороженный продавец) в
+// подсчёт не входят. Принимает DBTX, потому что его вызывают и из транзакции
+// жизненного цикла подарка, и из транзакции заморозки аккаунта.
+func updateStarGiftResaleProjection(ctx context.Context, db sqlcgen.DBTX, giftID int64) error {
+	_, err := db.Exec(ctx, `UPDATE star_gift_catalog c SET
+ availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND NOT l.suspended),
+ resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR' AND NOT l.suspended
    AND l.amount <= $2 * (SELECT r.stars FROM star_gift_catalog_revisions r WHERE r.id=c.active_revision_id)),0),
  updated_at=now() WHERE c.gift_id=$1`, giftID, domain.StarGiftResaleFloorMultiple)
 	return err
