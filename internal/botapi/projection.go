@@ -714,35 +714,19 @@ func apiMessageMedia(media *domain.MessageMedia, users map[int64]domain.User, ch
 	}
 }
 
-// apiSticker projects a document snapshot as a Bot API Sticker. The sticker
-// attribute supplies the box and the emoji; everything else comes from the
-// document itself, so a Sticker never has to be re-fetched through getFile.
-// A document without a sticker attribute degrades to its bare document shape
-// rather than inventing a box the server does not know.
-func apiSticker(document domain.Document) map[string]any {
-	base := apiDocument(document)
-	for _, attribute := range document.Attributes {
-		if attribute.Kind != domain.DocAttrSticker {
-			continue
-		}
-		sticker := cloneAPIMap(base)
-		sticker["type"], sticker["width"], sticker["height"] = "regular", attribute.W, attribute.H
-		sticker["is_animated"] = hasDocumentAttribute(document, domain.DocAttrAnimated)
-		sticker["is_video"] = hasDocumentAttribute(document, domain.DocAttrVideo)
-		if attribute.Alt != "" {
-			sticker["emoji"] = attribute.Alt
-		}
-		return sticker
-	}
-	return base
-}
-
 func apiDocumentMedia(document domain.Document) map[string]any {
 	base := apiDocument(document)
 	for _, attribute := range document.Attributes {
 		switch attribute.Kind {
 		case domain.DocAttrSticker:
-			return map[string]any{"sticker": apiSticker(document)}
+			sticker := cloneAPIMap(base)
+			sticker["type"], sticker["width"], sticker["height"] = "regular", attribute.W, attribute.H
+			sticker["is_animated"] = hasDocumentAttribute(document, domain.DocAttrAnimated)
+			sticker["is_video"] = hasDocumentAttribute(document, domain.DocAttrVideo)
+			if attribute.Alt != "" {
+				sticker["emoji"] = attribute.Alt
+			}
+			return map[string]any{"sticker": sticker}
 		case domain.DocAttrAudio:
 			audio := cloneAPIMap(base)
 			audio["duration"] = attribute.AudioDuration

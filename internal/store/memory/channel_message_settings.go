@@ -23,19 +23,6 @@ func (s *ChannelStore) SetPreHistoryHidden(_ context.Context, userID, channelID 
 	prev := channel.PreHistoryHidden
 	channel.PreHistoryHidden = enabled
 	s.channels[channelID] = channel
-	if prev && !enabled {
-		// 与 postgres 同口径:关闭隐藏历史必须归还成员读边界。available_min_id 只增不减
-		// (upsert/batch/clear history 全是 GREATEST),不显式归零则"隐藏历史期间入群"的成员
-		// 永久看到空频道,重新加入也救不回(GREATEST(旧值,0)=旧值)。
-		// 只回收纯 prehistory 来源的边界:带 history_clear_anchor 的边界来自成员自己的
-		// "清空历史",属 owner-local 语义,不被群设置改写。
-		for uid, m := range s.members[channelID] {
-			if m.AvailableMinID > 0 && m.HistoryClearAnchorID == 0 {
-				m.AvailableMinID = 0
-				s.members[channelID][uid] = m
-			}
-		}
-	}
 	if prev != enabled {
 		s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
 			ChannelID: channelID,

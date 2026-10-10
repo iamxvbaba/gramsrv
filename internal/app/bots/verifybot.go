@@ -354,6 +354,9 @@ func (s *Service) OnCallbackQuery(ctx context.Context, query domain.BotCallbackQ
 	if query.UserID <= 0 || query.UserID == query.BotUserID {
 		return domain.BotCallbackAnswer{}, false, nil
 	}
+	if query.BotUserID == gramsrvOperatorBotUserID {
+		return s.onGramsrvOperatorCallback(ctx, query)
+	}
 	if query.BotUserID == domain.VerifierBotUserID {
 		// The built-in third-party verifier owns its own token table and dialog
 		// (verifierbot.go).

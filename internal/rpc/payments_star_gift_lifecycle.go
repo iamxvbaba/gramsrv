@@ -2,9 +2,11 @@ package rpc
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
@@ -445,15 +447,26 @@ func (r *Router) onPaymentsCheckCanSendGift(ctx context.Context, req *tg.Payment
 }
 
 func (r *Router) onPaymentsGetUniqueStarGiftValueInfo(ctx context.Context, req *tg.PaymentsGetUniqueStarGiftValueInfoRequest) (*tg.PaymentsUniqueStarGiftValueInfo, error) {
-	if req == nil || strings.TrimSpace(req.Slug) == "" || r.deps.Gifts == nil {
-		return nil, starGiftInvalidErr()
+	if req == nil || r.deps.Gifts == nil {
+		return nil, starGiftSlugInvalidErr()
 	}
-	unique, found, err := r.deps.Gifts.UniqueBySlug(ctx, req.Slug)
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+	if slug == "" || len(slug) > domain.MaxStarGiftSlugBytes {
+		return nil, starGiftSlugInvalidErr()
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if r.userIsBot(ctx, userID) {
+		return nil, botMethodInvalidErr()
+	}
+	unique, found, err := r.deps.Gifts.UniqueBySlug(ctx, slug)
 	if err != nil {
 		return nil, internalErr()
 	}
 	if !found {
-		return nil, starGiftInvalidErr()
+		return nil, starGiftSlugInvalidErr()
 	}
 	info, err := r.deps.Gifts.ValueInfo(ctx, unique.ID)
 	if err != nil {
@@ -475,7 +488,11 @@ func (r *Router) onPaymentsGetUniqueStarGiftValueInfo(ctx context.Context, req *
 	if info.AveragePrice > 0 {
 		out.SetAveragePrice(info.AveragePrice)
 	}
-	out.SetListedCount(info.ListedCount)
+	if info.ListedCount > 0 {
+		out.SetListedCount(info.ListedCount)
+	}
+	// last_sale_on_fragment 与 fragment_listed_* 只有在本服务确实记录了
+	// Fragment 侧成交/挂牌时才可置位；自托管账本没有该来源，缺省即“未知”。
 	return out, nil
 }
 
@@ -639,21 +656,63 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 }
 
 func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
-	if req == nil || r.deps.Gifts == nil || r.deps.Account == nil {
+	if req == nil || r.deps.Gifts == nil || r.deps.Account == nil || r.deps.Auth == nil {
 		return nil, starGiftInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
 	}
+	if r.userIsBot(ctx, userID) {
+		return nil, botMethodInvalidErr()
+	}
+	// 2FA 先于所有权与礼物状态校验：没有通过密码的调用方连“这个 slug 是否
+	// 可导出”都不该知道，withdrawal 是财务操作，顺序即信息泄露面。
+	passwordState, err := r.deps.Account.RevenueWithdrawalPasswordState(ctx, userID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	// checkSRP 只在“已设密码”时认 SRP，在“未设密码”时只认 inputCheckPasswordEmpty，
+	// 所以这里不单设 PASSWORD_MISSING，保持与 account 域的既有判定一致。
 	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
 		return nil, passwordErr(err)
 	}
+	now := r.clock.Now()
+	if passwordState.HasPassword {
+		if wait := revenueWithdrawalFreshWait(passwordState.PasswordChangedAt, now); wait < 0 {
+			return nil, internalErr()
+		} else if wait > 0 {
+			return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
+		}
+	}
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) {
+		return nil, authKeyUnregisteredErr()
+	}
+	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !found || authorization.AuthKeyID != authKeyID || authorization.UserID != userID || authorization.PasswordPending {
+		return nil, authKeyUnregisteredErr()
+	}
+	if wait := revenueWithdrawalFreshWait(authorization.CreatedAt, now); wait < 0 {
+		return nil, internalErr()
+	} else if wait > 0 {
+		return nil, tgerr.New(400, fmt.Sprintf("SESSION_TOO_FRESH_%d", wait))
+	}
 	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
-	if err != nil || !ok || ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, starGiftInvalidErr()
 	}
-	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(r.clock.Now().Unix())})
+	// Host / 链上托管的收藏品 host 不是 owner，永远拿不到 ownership-only 操作。
+	if ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+		return nil, tgerr.New(400, "STARGIFT_OWNER_INVALID")
+	}
+	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(now.Unix())})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
@@ -769,6 +828,7 @@ func (r *Router) onPaymentsCraftStarGift(ctx context.Context, req *tg.PaymentsCr
 		CommandKey: "rpc:" + strings.Join(commandParts, ","), Date: int(r.clock.Now().Unix()),
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
+		log.Printf("craft star gift failed user_id=%d command_key=rpc:%s: %v", userID, strings.Join(commandParts, ","), err)
 		return nil, starGiftLifecycleErr(err)
 	}
 	r.invalidateRPCProjectionForUser(userID)
@@ -834,6 +894,28 @@ func (r *Router) onPaymentsGetStarGiftAuctionState(ctx context.Context, req *tg.
 		UserState: tgStarGiftAuctionUserState(state.UserState), Timeout: 30, Users: r.auctionUsers(ctx, userID, state), Chats: []tg.ChatClass{}}, nil
 }
 
+// starGiftActiveAuctionsHash is the change-sensitive list version clients echo
+// back as hash: gift identity plus the mutable auction progress fields, so any
+// new round, bid level change or finished flag flips the hash.
+func starGiftActiveAuctionsHash(states []domain.StarGiftAuction) int64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	put := func(v int64) {
+		binary.LittleEndian.PutUint64(buf[:], uint64(v))
+		h.Write(buf[:])
+	}
+	for _, st := range states {
+		put(st.Gift.ID)
+		put(int64(st.Version))
+		put(int64(st.CurrentRound))
+		put(int64(st.GiftsLeft))
+		put(int64(st.EndDate))
+		put(st.AveragePrice)
+		put(int64(st.ListedCount))
+	}
+	return int64(h.Sum64())
+}
+
 func (r *Router) onPaymentsGetStarGiftActiveAuctions(ctx context.Context, req *tg.PaymentsGetStarGiftActiveAuctionsRequest) (tg.PaymentsStarGiftActiveAuctionsClass, error) {
 	if req == nil {
 		return nil, starGiftInvalidErr()
@@ -848,6 +930,9 @@ func (r *Router) onPaymentsGetStarGiftActiveAuctions(ctx context.Context, req *t
 	states, err := r.deps.Gifts.ActiveAuctions(ctx, userID, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
+	}
+	if req.Hash != 0 && req.Hash == starGiftActiveAuctionsHash(states) {
+		return &tg.PaymentsStarGiftActiveAuctionsNotModified{}, nil
 	}
 	out := &tg.PaymentsStarGiftActiveAuctions{Auctions: make([]tg.StarGiftActiveAuctionState, 0, len(states)), Users: []tg.UserClass{}, Chats: []tg.ChatClass{}}
 	userIDs := make([]int64, 0)
@@ -1069,7 +1154,8 @@ func starGiftLifecycleErr(err error) error {
 		return userIDInvalidErr()
 	case errors.Is(err, domain.ErrStarGiftOwnerInvalid):
 		return tgerr.New(400, "STARGIFT_OWNER_INVALID")
-	case errors.Is(err, domain.ErrStarGiftWithdrawalUnavailable):
+	case errors.Is(err, domain.ErrStarGiftWithdrawalUnavailable),
+		errors.Is(err, domain.ErrStarGiftExportCooldown):
 		return tgerr.New(400, "STARGIFT_WITHDRAWAL_UNAVAILABLE")
 	case errors.Is(err, domain.ErrStarGiftCraftUnavailable):
 		return tgerr.New(400, "STARGIFT_CRAFT_UNAVAILABLE")

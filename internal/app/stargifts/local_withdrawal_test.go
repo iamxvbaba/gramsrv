@@ -46,3 +46,13 @@ func TestLocalWithdrawalProviderIsInternalAndBounded(t *testing.T) {
 		t.Fatalf("local revenue withdrawal result = %+v", revenue)
 	}
 }
+
+func TestCustomFragmentWithdrawalProviderName(t *testing.T) {
+	provider, err := NewCustomFragmentWithdrawalProvider("https://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.Name() != "customfragment-ton-mainnet" {
+		t.Fatalf("provider name = %q", provider.Name())
+	}
+}

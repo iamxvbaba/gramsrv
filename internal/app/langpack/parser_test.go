@@ -239,8 +239,13 @@ func TestSeedDirectoryRejectsVersionInvariantViolations(t *testing.T) {
 		t.Fatalf("remove v2: %v", err)
 	}
 	writeLangPackFixture(t, filepath.Join(packDir, "tdesktop_fr_v1.strings"), `"lng_language_name" = "Français";`)
-	if _, err := service.SeedDirectory(ctx, root); err == nil || !strings.Contains(err.Error(), "version rollback") {
-		t.Fatalf("version rollback error = %v", err)
+	// A stale seed file must never regress a pack the server already advanced.
+	if _, err := service.SeedDirectory(ctx, root); err != nil {
+		t.Fatalf("older seed error = %v", err)
+	}
+	pack, err = service.GetLangPack(ctx, "tdesktop", "fr")
+	if err != nil || pack.Version != 2 || stringValue(pack.Strings, "lng_language_name") != "Français" {
+		t.Fatalf("pack regressed after older seed = %+v, err %v", pack, err)
 	}
 }
 

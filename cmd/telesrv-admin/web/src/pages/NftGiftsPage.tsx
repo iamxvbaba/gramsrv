@@ -1,4 +1,4 @@
-import { Gem, RefreshCw, Search } from "lucide-react";
+import { Gem, RefreshCw, Search, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { SectionTabs, nftTabs } from "../components/SectionTabs";
@@ -7,6 +7,7 @@ import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { UniqueStarGiftRow } from "../types";
+import { NftGiftWalletModal } from "./NftGiftWalletModal";
 
 const pageSize = "50";
 
@@ -24,6 +25,8 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
   const [ownerUserID, setOwnerUserID] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [walletRef, setWalletRef] = useState<string | null>(null);
+  const [walletGift, setWalletGift] = useState<UniqueStarGiftRow | null>(null);
 
   async function load(reset: boolean) {
     setBusy(true);
@@ -53,6 +56,7 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
   const craftedCount = rows.filter((row) => row.Crafted).length;
 
   function ownerLabel(row: UniqueStarGiftRow) {
+    if (row.OwnerAddress) return row.WalletName || row.OwnerAddress;
     const handle = displayUsername(row.OwnerUsername);
     if (row.OwnerName && handle) return `${row.OwnerName} (${handle})`;
     if (row.OwnerName) return row.OwnerName;
@@ -60,14 +64,23 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
     return `${row.OwnerPeerType} ${row.OwnerPeerID}`;
   }
 
+  function hostLabel(row: UniqueStarGiftRow) {
+    return row.HostPeerID !== "0" ? `${t("nft.hostedBy")} ${row.HostPeerType}/${row.HostPeerID}` : "";
+  }
+
   return (
     <PageFrame
       title={t("nft.gifts")}
       eyebrow={t("nft.eyebrow")}
       actions={
-        <button className="btn icon-text" type="button" onClick={() => void load(true)} disabled={busy}>
-          <RefreshCw size={15} className={busy ? "spin" : ""} /> {t("common.refresh")}
-        </button>
+        <>
+          <button className="btn icon-text" type="button" onClick={() => { setWalletRef(q.trim()); setWalletGift(null); }}>
+            <Wallet size={15} /> {t("nft.walletOpen")}
+          </button>
+          <button className="btn icon-text" type="button" onClick={() => void load(true)} disabled={busy}>
+            <RefreshCw size={15} className={busy ? "spin" : ""} /> {t("common.refresh")}
+          </button>
+        </>
       }
     >
       <SectionTabs tabs={nftTabs} active="/nft-gifts" navigate={navigate} />
@@ -97,8 +110,10 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
             <th>{t("nft.gift")}</th>
             <th>{t("nft.number")}</th>
             <th>{t("nft.owner")}</th>
+            <th>{t("nft.wallet")}</th>
             <th>{t("nft.status")}</th>
             <th>{t("nft.created")}</th>
+            <th />
           </tr></thead>
           <tbody>
             {rows.map((row) => (
@@ -107,9 +122,19 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
                 <td>
                   <div className="gift-name"><Gem size={14} /> {row.Title || row.Slug}</div>
                   {row.Title && <div className="mono">{row.Slug}</div>}
+                  {row.GiftAddress && <div className="mono">{row.GiftAddress}</div>}
                 </td>
                 <td>#{row.Num}</td>
-                <td>{ownerLabel(row)}</td>
+                <td>
+                  <div>{ownerLabel(row)}</div>
+                  {row.OwnerAddress && <span className="muted">{t("nft.ownerTon")}</span>}
+                  {hostLabel(row) && <div className="muted">{hostLabel(row)}</div>}
+                </td>
+                <td>
+                  {row.OwnerAddress
+                    ? <div className="mono" title={row.OwnerAddress}>{row.OwnerAddress}</div>
+                    : <span className="muted">{t("nft.walletNone")}</span>}
+                </td>
                 <td>
                   {row.Burned
                     ? <Badge tone="danger">{t("nft.burned")}</Badge>
@@ -118,9 +143,20 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
                       : <Badge tone="good">{t("nft.live")}</Badge>}
                 </td>
                 <td>{formatDate(row.CreatedAt)}</td>
+                <td>
+                  <button
+                    className="icon-btn"
+                    type="button"
+                    aria-label={t("nft.walletOpen")}
+                    title={t("nft.walletOpen")}
+                    onClick={() => { setWalletRef(row.Slug); setWalletGift(row); }}
+                  >
+                    <Wallet size={14} />
+                  </button>
+                </td>
               </tr>
             ))}
-            {rows.length === 0 && <EmptyRow colSpan={6} />}
+            {rows.length === 0 && <EmptyRow colSpan={8} />}
           </tbody>
         </table>
       </div>
@@ -128,6 +164,14 @@ export function NftGiftsPage({ navigate }: { navigate: Navigate }) {
         <div className="gift-table-actions">
           <button className="btn" type="button" onClick={() => void load(false)} disabled={busy}>{t("nft.loadMore")}</button>
         </div>
+      )}
+      {walletRef !== null && (
+        <NftGiftWalletModal
+          giftRef={walletRef}
+          gift={walletGift}
+          onClose={() => { setWalletRef(null); setWalletGift(null); }}
+          onApplied={() => void load(true)}
+        />
       )}
     </PageFrame>
   );

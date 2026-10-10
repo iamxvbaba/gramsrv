@@ -507,13 +507,18 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 		}
 		if m.ReplyTo.QuoteText == "" && external.Text != "" {
 			header.SetQuoteText(external.Text)
-			header.SetQuoteEntities(tgMessageEntities(external.Entities))
+			if externalEntities := tgMessageEntities(external.Entities); len(externalEntities) > 0 {
+				header.SetQuoteEntities(externalEntities)
+			}
 		}
 	}
 	if m.ReplyTo.QuoteText != "" {
 		header.SetQuote(true)
 		header.SetQuoteText(m.ReplyTo.QuoteText)
-		header.SetQuoteEntities(tgMessageEntities(m.ReplyTo.QuoteEntities))
+		// WHY: the layer-228 adapter rejects a set quote_entities flag with nil; a plain-text quote has none.
+		if quoteEntities := tgMessageEntities(m.ReplyTo.QuoteEntities); len(quoteEntities) > 0 {
+			header.SetQuoteEntities(quoteEntities)
+		}
 		header.SetQuoteOffset(m.ReplyTo.QuoteOffset)
 	}
 	return header

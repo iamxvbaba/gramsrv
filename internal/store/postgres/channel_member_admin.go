@@ -119,12 +119,6 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.EditChannelAdminResult{}, err
 	}
-	// 被重新激活的成员(此前 left/kicked)同样要归还 prehistory 读边界,否则永久空频道。
-	if membershipActivated {
-		if err := resetPrehistoryBoundaryTx(ctx, tx, channel, member.UserID); err != nil {
-			return domain.EditChannelAdminResult{}, err
-		}
-	}
 	logType := domain.ChannelAdminLogParticipantPromote
 	if member.Role != domain.ChannelRoleAdmin {
 		logType = domain.ChannelAdminLogParticipantDemote

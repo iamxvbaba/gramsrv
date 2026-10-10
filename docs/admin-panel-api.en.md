@@ -382,6 +382,7 @@ Content-Type: application/json
 | `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | — |
 | `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | — |
 | `give-gift` | common fields + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | — |
+| `set-nft-gift-wallet` | common fields + `ref` (string: slug, NFT address or numeric id), `wallet_name` (string, defaults to the typed `wallet_address` value), `wallet_address` (string: a TON mainnet address; a `.ton` name resolved on chain through TON DNS, falling back to the flashfragment username of the same name when DNS has no record; or a Telegram identity — `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo` — resolved only through flashfragment records: username claim, username mint, verified wallet of the collectible username owner, TON Connect. The typed name is never stored as an address, and the record that matched is reported as `wallet_source` in details), `host_user_id` (int64, optional), `clear` (bool, releases the gift back to its Telegram owner instead of binding a wallet) | — |
 
 ## API: collectible username actions
 

@@ -44,6 +44,7 @@ type Service interface {
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	GrantStarsAll(ctx context.Context, req admin.GrantStarsAllRequest) (admin.CommandResult, error)
+	UpdateDonationChain(ctx context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -85,6 +86,7 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
+	SetNftGiftWallet(ctx context.Context, req admin.SetNftGiftWalletRequest) (admin.CommandResult, error)
 	GiveGift(ctx context.Context, req admin.GiveGiftRequest) (admin.CommandResult, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
 	EmojiAnimation(ctx context.Context, documentID int64) ([]byte, bool, error)
@@ -135,6 +137,7 @@ type Service interface {
 	UpsertVerificationIcon(ctx context.Context, req admin.UpsertVerificationIconRequest) (admin.CommandResult, error)
 	SetVerificationIconActive(ctx context.Context, req admin.SetVerificationIconActiveRequest) (admin.CommandResult, error)
 	RevokeCustomVerification(ctx context.Context, req admin.RevokeCustomVerificationRequest) (admin.CommandResult, error)
+	GrantBotVerification(ctx context.Context, req admin.GrantBotVerificationRequest) (admin.CommandResult, error)
 	ApproveBotVerification(ctx context.Context, req admin.ApproveBotVerificationRequest) (admin.CommandResult, error)
 	RejectBotVerification(ctx context.Context, req admin.RejectBotVerificationRequest) (admin.CommandResult, error)
 	RevokeBotVerification(ctx context.Context, req admin.RevokeBotVerificationRequest) (admin.CommandResult, error)
@@ -172,6 +175,15 @@ type starsDebitService interface {
 // do not implement phone lookup keep the rest of their contract intact.
 type userByPhoneResolver interface {
 	ResolveUserByPhone(context.Context, string) (domain.User, bool, error)
+}
+
+// itemPricesService is optional for the same reason: test doubles that predate
+// shop pricing keep working, and the routes answer 503 when it is absent.
+type itemPricesService interface {
+	ItemPrices(ctx context.Context, enabledOnly bool) ([]domain.ItemPrice, error)
+	StarsRate(ctx context.Context) (int64, error)
+	UpdateItemPrice(ctx context.Context, req admin.UpdateItemPriceRequest) (admin.CommandResult, error)
+	SetStarsRate(ctx context.Context, req admin.SetStarsRateRequest) (admin.CommandResult, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -232,6 +244,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/grant-stars-all", s.authenticated(s.handleGrantStarsAll))
 	mux.HandleFunc("POST /v1/accounts/debit-stars", s.authenticated(s.handleDebitStars))
 	mux.HandleFunc("POST /v1/accounts/resolve-by-phone", s.authenticated(s.handleResolveUserByPhone))
+	mux.HandleFunc("POST /v1/donations/chains/update", s.authorized(PermissionDonationsManage, s.handleUpdateDonationChain))
+	mux.HandleFunc("GET /v1/item-prices", s.authorized(PermissionPricesManage, s.handleItemPrices))
+	mux.HandleFunc("POST /v1/item-prices/update", s.authorized(PermissionPricesManage, s.handleUpdateItemPrice))
+	mux.HandleFunc("POST /v1/item-prices/set-rate", s.authorized(PermissionPricesManage, s.handleSetStarsRate))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -275,6 +291,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
 	mux.HandleFunc("POST /v1/gifts/give", s.authenticated(s.handleGiveGift))
+	mux.HandleFunc("POST /v1/gifts/set-nft-wallet", s.authenticated(s.handleSetNftGiftWallet))
 	mux.HandleFunc("GET /v1/gifts/{id}/animation", s.authenticated(s.handleStarGiftAnimation))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/gif-catalog", s.authenticated(s.handleGifCatalog))
@@ -342,6 +359,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/botverification/icons/upsert", s.authorized(PermissionBotVerificationManage, s.handleUpsertVerificationIcon))
 	mux.HandleFunc("POST /v1/botverification/icons/set-active", s.authorized(PermissionBotVerificationManage, s.handleSetVerificationIconActive))
 	mux.HandleFunc("POST /v1/botverification/marks/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeCustomVerification))
+	mux.HandleFunc("POST /v1/botverification/marks/grant", s.authorized(PermissionBotVerificationManage, s.handleGrantBotVerificationMark))
 	return mux
 }
 
@@ -500,6 +518,15 @@ func (s *Server) handleDebitStars(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := svc.DebitStars(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpdateDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpdateDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpdateDonationChain(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
@@ -1107,7 +1134,12 @@ func (s *Server) handlePublishStarGiftCollectibles(w http.ResponseWriter, r *htt
 	}
 	req.GiftID = giftID
 	seen := make(map[string]struct{}, len(req.Models)+len(req.Patterns))
-	if len(req.Models)+len(req.Patterns) > 128 {
+	// Keep the wire guard aligned with the domain pool limit.  A collectible
+	// revision may contain up to MaxStarGiftCollectibleAttributesPerKind
+	// attributes in each kind; the endpoint receives models and patterns in one
+	// multipart request, so the combined guard must not reject a valid pool
+	// merely because it has more than the old 128-file operational cap.
+	if len(req.Models)+len(req.Patterns) > domain.MaxStarGiftCollectibleAttributesPerKind {
 		writeError(w, http.StatusBadRequest, "too many collectible animation files")
 		return
 	}
@@ -1173,6 +1205,15 @@ func (s *Server) handleGiveGift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.GiveGift(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetNftGiftWallet(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetNftGiftWalletRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetNftGiftWallet(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

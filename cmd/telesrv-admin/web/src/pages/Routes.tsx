@@ -19,6 +19,8 @@ import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
 import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { AuctionsPage } from "./AuctionsPage";
+import { DonationsPage } from "./DonationsPage";
+import { PricesPage } from "./PricesPage";
 import { GiftsPage } from "./GiftsPage";
 import { GiveGiftsPage } from "./GiveGiftsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
@@ -42,6 +44,8 @@ import {
   permissionBotVerificationReview,
   permissionMessagesRead,
   permissionPremiumManage,
+  permissionDonationsManage,
+  permissionPricesManage,
   permissionServerManage,
   permissionStarsRead,
   permissionVerificationReview
@@ -104,6 +108,20 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
     return (
       <PermissionGate permission={permissionAuditRead}>
         <AuditLogPage />
+      </PermissionGate>
+    );
+  }
+  if (route.path === "/donations") {
+    return (
+      <PermissionGate permission={permissionDonationsManage}>
+        <DonationsPage />
+      </PermissionGate>
+    );
+  }
+  if (route.path === "/prices") {
+    return (
+      <PermissionGate permission={permissionPricesManage}>
+        <PricesPage />
       </PermissionGate>
     );
   }

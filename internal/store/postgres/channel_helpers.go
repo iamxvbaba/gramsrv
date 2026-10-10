@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
-	"go.uber.org/zap"
 	"sort"
 	"strings"
 	"telesrv/internal/domain"
@@ -920,21 +919,8 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	// inputReplyToMessage.top_msg_id 不是回复有效性的判据。按 TL 构造器定义,它"只在回复
-	// 非 General 的论坛话题消息时携带 topic id;若被回复消息在方法执行前被删除,服务端用
-	// 该值把消息送进正确话题"——即它是话题落点的提示,不是需要与服务端推导值对齐的校验位。
-	// reply_to_msg_id 已经唯一指向一条存在且可见的消息,线程根也由服务端从目标消息推导,
-	// 因此客户端带一个无关的 top_msg_id 不足以拒绝整个回复:官方客户端在非论坛频道发送
-	// 媒体回复时就会带 top_msg_id(实测 TDesktop 7.0.2 layer 228 下发 top_msg_id=1),
-	// 旧实现据此硬失败,使"回复照片"(走 sendMedia,该字段被下发)恒定 400
-	// REPLY_MESSAGE_ID_INVALID,而同一回复走 sendMessage(不带该字段)却能成功。
 	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
-		s.log.Info("channel reply 采纳服务端推导的 top_msg_id,忽略客户端提示值",
-			zap.Int64("channel_id", req.ChannelID),
-			zap.Int("client_top_msg_id", req.ReplyTo.TopMessageID),
-			zap.Int("computed_top_msg_id", reply.TopMessageID),
-			zap.Int("reply_to_msg_id", req.ReplyTo.MessageID),
-		)
+		return nil, domain.ErrReplyMessageIDInvalid
 	}
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, err := s.getForumTopic(ctx, db, req.ChannelID, reply.TopMessageID); err == nil && !topic.Hidden {

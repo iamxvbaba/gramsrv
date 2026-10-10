@@ -1542,43 +1542,6 @@ type fakeBotAPIGateway struct {
 	premiumGiftMessage       domain.PremiumGiftMessage
 	premiumGiftRequestID     string
 	premiumGiftResult        bool
-	availableGifts           []domain.StarGift
-	availableGiftsErr        error
-	starGiftCalled           bool
-	starGiftBotID            int64
-	starGiftID               int64
-	starGiftUserID           int64
-	starGiftChatID           int64
-	starGiftPayForUpgrade    bool
-	starGiftMessage          domain.PremiumGiftMessage
-	starGiftRequestID        string
-	starGiftResult           bool
-	starGiftErr              error
-}
-
-func (f *fakeBotAPIGateway) BotAPIAvailableGifts(context.Context) ([]domain.StarGift, error) {
-	if f.availableGiftsErr != nil {
-		return nil, f.availableGiftsErr
-	}
-	return append([]domain.StarGift(nil), f.availableGifts...), nil
-}
-
-func (f *fakeBotAPIGateway) BotAPISendStarGift(
-	_ context.Context,
-	botID, giftID, userID, chatID int64,
-	payForUpgrade bool,
-	message domain.PremiumGiftMessage,
-	requestID string,
-) (bool, error) {
-	f.starGiftCalled = true
-	f.starGiftBotID = botID
-	f.starGiftID = giftID
-	f.starGiftUserID = userID
-	f.starGiftChatID = chatID
-	f.starGiftPayForUpgrade = payForUpgrade
-	f.starGiftMessage = message
-	f.starGiftRequestID = requestID
-	return f.starGiftResult, f.starGiftErr
 }
 
 func (f *fakeBotAPIGateway) BotAPIGiftPremiumSubscription(

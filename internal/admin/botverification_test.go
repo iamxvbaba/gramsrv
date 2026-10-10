@@ -46,6 +46,10 @@ type fakeBotVerificationService struct {
 	setEnabledValue   bool
 	revokedMarkPeer   domain.Peer
 	revokedMarkBotID  int64
+	grantMarkCalls    int
+	grantedMarkBotID  int64
+	grantedMarkPeer   domain.Peer
+	grantedMarkText   string
 	decidedReason     string
 	decidedNote       string
 	decidedBy         string
@@ -160,6 +164,22 @@ func (f *fakeBotVerificationService) RevokeMark(_ context.Context, verifierBotID
 		return false, f.writeErr
 	}
 	return len(f.marks) > 0, nil
+}
+
+func (f *fakeBotVerificationService) GrantMarkOperator(_ context.Context, verifierBotID int64, peer domain.Peer, customDescription string) (bool, error) {
+	f.grantMarkCalls++
+	if f.writeErr != nil {
+		return false, f.writeErr
+	}
+	f.grantedMarkBotID = verifierBotID
+	f.grantedMarkPeer = peer
+	f.grantedMarkText = customDescription
+	f.marks = append(f.marks, domain.CustomVerification{
+		VerifierBotID: verifierBotID,
+		Peer:          peer,
+		Description:   customDescription,
+	})
+	return true, nil
 }
 
 func (f *fakeBotVerificationService) Requests(context.Context, domain.CustomVerificationRequestFilter) ([]domain.CustomVerificationRequest, error) {

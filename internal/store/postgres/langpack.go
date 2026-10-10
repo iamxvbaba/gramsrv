@@ -245,7 +245,10 @@ func reconcileSeedWith(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, seed 
 			return 0, fmt.Errorf("get existing langpack metadata %s/%s: %w", pack.LangPack, pack.LangCode, metaErr)
 		}
 		if metaFound && pack.Version < int(meta.Version) {
-			return 0, fmt.Errorf("langpack version rollback %s/%s: %d < %d", pack.LangPack, pack.LangCode, pack.Version, meta.Version)
+			// Runtime lang pack updates advance versions past the shipped seed.
+			// Re-seeding the stale file would regress live clients, so the
+			// newer DB state wins and this pack is skipped.
+			continue
 		}
 
 		stateKey := langPackSeedStateKey(pack.LangPack, pack.LangCode)

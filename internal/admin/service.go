@@ -31,6 +31,7 @@ const (
 	ActionGrantPremium            = "account.grant_premium"
 	ActionRefundPremium           = "account.refund_premium"
 	ActionUpsertPremiumPlan       = "premium.plan.upsert"
+	ActionUpdateDonationChain     = "donations.update_chain"
 	ActionGrantStars              = "account.grant_stars"
 	ActionGrantStarsAll           = "account.grant_stars_all"
 	ActionDebitStars              = "account.debit_stars"
@@ -107,9 +108,14 @@ const (
 	ActionUpsertVerificationIcon    = "botverification.upsert_icon"
 	ActionSetVerificationIconActive = "botverification.set_icon_active"
 	ActionRevokeCustomVerification  = "botverification.revoke_mark"
+	ActionGrantBotVerificationMark  = "botverification.grant_mark"
 	ActionApproveBotVerification    = "botverification.approve"
 	ActionRejectBotVerification     = "botverification.reject"
 	ActionRevokeBotVerification     = "botverification.revoke_request"
+	// Shop prices (see itemprices.go): the per-product override rows and the
+	// shop-wide stars rate the bot bills star purchases at.
+	ActionUpdateItemPrice = "prices.update_item"
+	ActionSetStarsRate    = "prices.set_stars_rate"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -319,6 +325,16 @@ type MessagesService interface {
 	DeleteHistory(ctx context.Context, userID int64, req domain.DeleteHistoryRequest) (domain.DeleteMessagesResult, error)
 }
 
+// DonationsService is the operator-facing slice of crypto donations
+// (app/donations.Service satisfies it as-is): the write side of chain
+// config (RPC/WS endpoint, enabled flag, confirmation depth, price feed or
+// manual USD rate). Everything read-only -- wallet status, chain list,
+// deposit history -- is served straight out of Postgres by
+// cmd/telesrv-admin's own readStore, the same split premium plans use.
+type DonationsService interface {
+	UpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error)
+}
+
 type GiftsService interface {
 	CatalogAll(ctx context.Context) ([]domain.StarGift, error)
 	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
@@ -464,6 +480,7 @@ type Dependencies struct {
 	UserLookup             UserLookup
 	Account                AccountService
 	Photos                 AvatarResolver
+	Donations              DonationsService
 	Stars                  StarsService
 	Premium                PremiumService
 	StarsNotifier          StarsNotifier
@@ -489,6 +506,10 @@ type Dependencies struct {
 	// BotVerification is the third-party mechanism, wired separately from
 	// Verification: the two never read each other's state.
 	BotVerification BotVerificationService
+	ItemPrices      ItemPricesStore
+	UniqueGifts     UniqueGiftWalletStore
+	TonDNS          TonDNSResolver
+	UsernameWallets UsernameWalletLookup
 	Now             func() time.Time
 }
 
@@ -501,6 +522,7 @@ type Service struct {
 	userLookup             UserLookup
 	account                AccountService
 	photos                 AvatarResolver
+	donations              DonationsService
 	stars                  StarsService
 	premium                PremiumService
 	starsNotifier          StarsNotifier
@@ -524,6 +546,10 @@ type Service struct {
 	rating                 AccountRatingService
 	verification           VerificationService
 	botVerification        BotVerificationService
+	itemPrices             ItemPricesStore
+	uniqueGifts            UniqueGiftWalletStore
+	tonDNS                 TonDNSResolver
+	usernameWallets        UsernameWalletLookup
 	now                    func() time.Time
 }
 
@@ -556,6 +582,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Photos != nil {
 		s.photos = deps.Photos
+	}
+	if deps.Donations != nil {
+		s.donations = deps.Donations
 	}
 	if deps.Stars != nil {
 		s.stars = deps.Stars
@@ -625,6 +654,18 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.BotVerification != nil {
 		s.botVerification = deps.BotVerification
+	}
+	if deps.ItemPrices != nil {
+		s.itemPrices = deps.ItemPrices
+	}
+	if deps.UniqueGifts != nil {
+		s.uniqueGifts = deps.UniqueGifts
+	}
+	if deps.TonDNS != nil {
+		s.tonDNS = deps.TonDNS
+	}
+	if deps.UsernameWallets != nil {
+		s.usernameWallets = deps.UsernameWallets
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -987,6 +1028,21 @@ type DebitStarsRequest struct {
 	CommandMeta
 	UserID int64 `json:"user_id"`
 	Amount int64 `json:"amount"`
+}
+
+// UpdateDonationChainRequest edits one crypto donation chain's
+// operator-editable settings. The wallet's mnemonic is never exposed or
+// touched here -- this only reaches RPC endpoint, enabled flag,
+// confirmation depth and pricing config.
+type UpdateDonationChainRequest struct {
+	CommandMeta
+	ChainKey              string `json:"chain_key"`
+	RPCURL                string `json:"rpc_url"`
+	WSURL                 string `json:"ws_url"`
+	Enabled               bool   `json:"enabled"`
+	ConfirmationsRequired int    `json:"confirmations_required"`
+	PriceFeedAddress      string `json:"price_feed_address"`
+	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
 }
 
 type SetVerifiedRequest struct {
@@ -1820,6 +1876,31 @@ func (s *Service) GrantStarsAll(ctx context.Context, req GrantStarsAllRequest) (
 		}
 		details["users_credited"] = count
 		return CommandResult{Message: fmt.Sprintf("stars granted to all users: %d", count), Details: details}, nil
+	})
+}
+
+// UpdateDonationChain edits one crypto donation chain's RPC/WS endpoint,
+// enabled flag, confirmation depth and pricing config. Like UpsertPremiumPlan,
+// it never runs as a dry-run preview -- there is no user-facing side effect
+// to simulate, only server config a running watcher goroutine will pick up
+// on its next poll.
+func (s *Service) UpdateDonationChain(ctx context.Context, req UpdateDonationChainRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionUpdateDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		chain, err := s.donations.UpdateChainConfig(ctx, domain.DonationChainConfigUpdate{
+			ChainKey: req.ChainKey, RPCURL: req.RPCURL, WSURL: req.WSURL,
+			ConfirmationsRequired: req.ConfirmationsRequired, PriceFeedAddress: req.PriceFeedAddress,
+			ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation chain config saved", Details: map[string]any{
+			"chain_key": chain.Key, "enabled": chain.Enabled, "rpc_url": chain.RPCURL,
+			"confirmations_required": chain.ConfirmationsRequired, "manual_usd_rate_micros": chain.ManualUSDRateMicros,
+		}}, nil
 	})
 }
 
@@ -4152,7 +4233,13 @@ func (s *Service) PublishStarGiftCollectibles(ctx context.Context, req PublishSt
 	toAttributes := func(kind domain.StarGiftCollectibleAttributeKind, uploads []StarGiftCollectibleAnimationUpload) ([]domain.StarGiftCollectibleAttribute, error) {
 		attributes := make([]domain.StarGiftCollectibleAttribute, len(uploads))
 		for i := range uploads {
-			animation, err := s.gifts.PrepareAnimation(uploads[i].FileName, uploads[i].Data)
+			// Collectible pools are operator-authored, but their TGS files can
+			// legitimately contain Lottie expression fields (Telegram's own
+			// collectible assets use them).  Keep the same structural, dimension,
+			// frame-rate and external-asset validation while using the policy that
+			// preserves expressions; ordinary user/admin base-gift uploads remain on
+			// the stricter PrepareAnimation path.
+			animation, err := s.gifts.PrepareOfficialAnimation(uploads[i].FileName, uploads[i].Data)
 			if err != nil {
 				return nil, fmt.Errorf("prepare %s %q: %w", kind, uploads[i].Name, err)
 			}

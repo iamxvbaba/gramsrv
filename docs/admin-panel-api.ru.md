@@ -396,6 +396,7 @@ Content-Type: application/json
 | `set-gift-enabled` | `gift_id` (int64), `enabled` (bool) | — |
 | `set-gift-sort-order` | `gift_id` (int64), `sort_order` (int) | — |
 | `give-gift` | общие поля + `sender_user_id` (int64), `user_id` (int64), `channel_id` (int64), `gift_id` (int64), `hide_name` (bool), `message` (string), `upgrade` (bool), `model_attribute_id` (int64), `pattern_attribute_id` (int64), `backdrop_attribute_id` (int64) | — |
+| `set-nft-gift-wallet` | общие поля + `ref` (string: slug, адрес NFT или числовой id), `wallet_name` (string, по умолчанию — введённое значение `wallet_address`), `wallet_address` (string: адрес TON mainnet; имя `.ton`, разрешаемое в цепи через TON DNS с запасным вариантом — flashfragment-имя пользователя с тем же именем, если в DNS нет записи; либо telegram-идентичность `rayo`, `@rayo`, `rayo.t.me`, `t.me/rayo`, разрешаемая только через записи flashfragment: claim имени, mint имени, подтверждённый кошелёк владельца коллекционного имени, TON Connect. Введённое имя никогда не сохраняется как адрес, а сработавшая запись попадает в details как `wallet_source`), `host_user_id` (int64, необязательно), `clear` (bool, вместо привязки кошелька возвращает подарок своему Telegram-владельцу) | — |
 
 ## API: действия над коллекционными юзернеймами
 

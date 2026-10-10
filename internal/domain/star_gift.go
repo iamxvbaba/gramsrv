@@ -245,6 +245,59 @@ type UniqueStarGift struct {
 	CreatedAt               time.Time
 }
 
+// StarGiftClaimChallenge binds a short-lived, single-use TON Proof payload to
+// one Gramsrv user and one already exported collectible.
+type StarGiftClaimChallenge struct {
+	Payload   string
+	UserID    int64
+	Unique    UniqueStarGift
+	ExpiresAt int
+}
+
+type StarGiftOnChainClaim struct {
+	Payload      string
+	UserID       int64
+	UniqueGiftID int64
+	// ExpectedPreviousWallet is the last wallet observed by the database before
+	// the TON proof was verified.  CommitClaim uses it as a compare-and-swap
+	// guard so a transfer/reconciliation racing the claim cannot overwrite a
+	// newer owner projection.
+	ExpectedPreviousWallet string
+	WalletAddress          string
+	GiftAddress            string
+	ClaimedAt              int
+}
+
+type StarGiftOnChainClaimResult struct {
+	Gift            UniqueStarGift
+	PreviousWallet  string
+	ProfileUsername string
+}
+
+// StarGiftAdminExport marks a collectible as owned by a wallet purely in the
+// database. It is a test-agent facility: no TON transaction is sent, so the
+// projection is display-only and the ownership sync leaves it untouched.
+type StarGiftAdminExport struct {
+	UniqueGiftID  int64
+	WalletName    string
+	WalletAddress string
+	ExportedBy    int64
+	Date          int
+}
+
+// WHY: the panel addresses a gift by slug, NFT address or id and may host it on
+// a chosen profile, so UniqueGiftID may be zero while Ref carries the lookup and
+// HostPeer* overrides the relayer default the Mini App path relies on.
+type StarGiftWalletBind struct {
+	UniqueGiftID  int64
+	Ref           string
+	WalletName    string
+	WalletAddress string
+	ActorUserID   int64
+	HostPeerType  string
+	HostPeerID    int64
+}
+
 // CollectibleEmojiStatus projects an immutable unique gift into the complete
 // status shape consumed by Telegram clients.  Ownership/lifecycle validation
 // is intentionally performed by the caller because it depends on the actor;
@@ -411,13 +464,8 @@ type StarGiftPurchaseRequest struct {
 	Date             int
 	RecipientBlocked bool
 	RecipientUnsaved bool
-	// BuyerIsBot routes the charge to the bot's own Stars wallet
-	// (bot_stars_balances) instead of the personal stars_balances ledger. A bot's
-	// spendable money is the revenue it earned from settled invoices, and it has no
-	// personal Stars row, so the personal debit would always be refused.
-	BuyerIsBot      bool
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	OriginAuthKeyID  [8]byte
+	OriginSessionID  int64
 }
 
 // StarGiftPurchaseForm is the server-issued, short-lived payment intent that
@@ -683,6 +731,16 @@ type StarGiftCraftRequest struct {
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
+}
+
+// StarGiftCraftSource is loaded by the server from owned collectible gifts.
+type StarGiftCraftSource struct {
+	UniqueID      int64
+	GiftID        int64
+	ModelID       int64
+	ModelName     string
+	AnimationJSON []byte
+	Backdrop      StarGiftCollectibleAttribute
 }
 
 type StarGiftCraftResult struct {
@@ -1102,13 +1160,10 @@ type SavedStarGiftPage struct {
 }
 
 // SavedStarGiftListCursor is the composite keyset cursor for the profile gift
-// order: pinned gifts first by PinnedOrder, then unpinned gifts by
-// (Date, ID) DESC. PinnedOrder == 0 identifies the unpinned segment.
-// Date 必须进游标：礼物实例行在所有权转移时是复用的，资料页按收到时刻
-// （gift_date）倒序，只用 ID 做 keyset 会从翻过的位置错排。
+// order: pinned gifts first by PinnedOrder, then unpinned gifts by ID DESC.
+// PinnedOrder == 0 identifies the unpinned segment.
 type SavedStarGiftListCursor struct {
 	PinnedOrder int
-	Date        int
 	ID          int64
 }
 
@@ -1117,14 +1172,6 @@ type SavedStarGiftListCursor struct {
 // zero means all collections. The current catalog is used only to decide whether
 // a regular gift remains upgradable, while its rendered gift snapshot still comes
 // from RevisionID.
-//
-// ExcludeUpgradable and ExcludeUnupgradable are documented as mutually
-// exclusive filters, but Telegram Desktop sends both to load the own-gift
-// ("my collectibles") list of the gift box. Set together they are read as "do
-// not filter by upgradability at all" — the accompanying ExcludeUnlimited is
-// what selects the collectibles — because any other reading cancels out to an
-// empty list. Used on their own they keep their strict meaning, because the
-// profile gift filter expresses its Upgradeable / Limited categories with them.
 type SavedStarGiftFilter struct {
 	Owner               Peer
 	ExcludeUnsaved      bool
@@ -1133,9 +1180,17 @@ type SavedStarGiftFilter struct {
 	ExcludeUnique       bool
 	ExcludeUpgradable   bool
 	ExcludeUnupgradable bool
-	CollectionID        int
-	Offset              string
-	Limit               int
+	// ExcludeHosted 对应 exclude_hosted：只保留 peer 自己拥有/收到的礼物，
+	// 排除 host 在资料上的链上收藏品。
+	ExcludeHosted bool
+	// SortByValue 对应 sort_by_value：按价格而不是接收时间排序。
+	SortByValue bool
+	// PeerColorAvailable 对应 peer_color_available：只返回调色板可用作
+	// 收藏品消息调色板的收藏品。
+	PeerColorAvailable bool
+	CollectionID       int
+	Offset             string
+	Limit              int
 }
 
 // Star gift 边界常量。
@@ -1191,10 +1246,13 @@ var (
 	ErrStarGiftOfferExpired           = errors.New("stargift: offer expired")
 	// ErrStarGiftRecipientUnavailable 表示收礼人对其它用户呈 deleted 墓碑
 	// （冻结账号），礼物不能再被送出。
-	ErrStarGiftRecipientUnavailable        = errors.New("stargift: recipient account unavailable")
-	ErrStarGiftCraftUnavailable            = errors.New("stargift: craft unavailable")
-	ErrStarGiftAuctionUnavailable          = errors.New("stargift: auction unavailable")
-	ErrStarGiftWithdrawalUnavailable       = errors.New("stargift: withdrawal provider unavailable")
+	ErrStarGiftRecipientUnavailable  = errors.New("stargift: recipient account unavailable")
+	ErrStarGiftCraftUnavailable      = errors.New("stargift: craft unavailable")
+	ErrStarGiftAuctionUnavailable    = errors.New("stargift: auction unavailable")
+	ErrStarGiftWithdrawalUnavailable = errors.New("stargift: withdrawal provider unavailable")
+	// ErrStarGiftExportCooldown 表示 can_export_at 尚未到期：服务端时钟未到
+	// 可导出时刻，客户端无法用任何输入提前触发 withdrawal。
+	ErrStarGiftExportCooldown              = errors.New("stargift: export cooldown active")
 	ErrChannelRevenueWithdrawalInvalid     = errors.New("channel revenue: withdrawal invalid")
 	ErrChannelRevenueWithdrawalExpired     = errors.New("channel revenue: withdrawal expired")
 	ErrChannelRevenueInsufficient          = errors.New("channel revenue: insufficient balance")
@@ -1202,13 +1260,9 @@ var (
 	ErrStarGiftFormExpired                 = errors.New("stargift: payment form expired")
 	ErrStarGiftFormPurposeInvalid          = errors.New("stargift: payment form purpose invalid")
 	ErrStarGiftFormAmountMismatch          = errors.New("stargift: payment form amount mismatch")
-	// ErrStarGiftNotConvertible 表示礼物实例不能转换回 Stars：convert_stars <= 0。
-	// 机器人送出的礼物（以及目录中原就没有转换价的礼物）不参与「Обменять на звёзды」。
-	ErrStarGiftNotConvertible = errors.New("stargift: gift is not convertible to stars")
-	// ErrStarGiftIdempotencyConflict 同一个 command_key 落在另一个礼物请求上（收礼人、
-	// 礼物、升级或文本任一不同）：这种重放必须报错，不能返回别人的成功结果。
-	ErrStarGiftIdempotencyConflict = errors.New("stargift: idempotency key conflict")
 )
+
+var ErrStarGiftListed = errors.New("сначала снимите подарок с продажи")
 
 var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
@@ -1256,9 +1310,9 @@ func ValidateStarGiftCollectibleWrite(write StarGiftCollectibleWrite) error {
 }
 
 // validateStarGiftUpgradePreviewPool protects the official-client animation contract. The
-// preview response includes the target attribute plus the published selectable pool; TDesktop
-// deduplicates models and patterns by document identity and needs a non-target item in every
-// category before its spinner can transition to the finished state.
+// preview response includes the target attribute plus the published selectable pool. A pool may
+// intentionally contain one deterministic model or pattern; when it contains several entries,
+// every entry must still have its own document identity so clients do not deduplicate the pool.
 func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireStoredAsset bool) error {
 	validateAnimated := func(kind StarGiftCollectibleAttributeKind, attributes []StarGiftCollectibleAttribute) error {
 		selectable := 0
@@ -1275,11 +1329,11 @@ func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireS
 				documents[attribute.Document.ID] = struct{}{}
 			}
 		}
-		if selectable < 2 {
-			return fmt.Errorf("%w: %s preview requires at least two selectable attributes", ErrStarGiftCollectibleInvalid, kind)
+		if selectable < 1 {
+			return fmt.Errorf("%w: %s preview requires a selectable attribute", ErrStarGiftCollectibleInvalid, kind)
 		}
-		if requireStoredAsset && len(documents) < 2 {
-			return fmt.Errorf("%w: %s preview requires at least two distinct documents", ErrStarGiftCollectibleInvalid, kind)
+		if requireStoredAsset && len(documents) != selectable {
+			return fmt.Errorf("%w: %s preview attributes require distinct documents", ErrStarGiftCollectibleInvalid, kind)
 		}
 		return nil
 	}
@@ -1435,21 +1489,18 @@ func StarGiftCollectionHash(title string, giftIDs []int64) int64 {
 }
 
 // EncodeSavedStarGiftListCursor encodes the exact profile-order key of the last
-// visible gift (pinned position, received date, instance ID). The version
-// prefix keeps this cursor distinct from other star gift lists that are ordered
-// only by instance ID; v1 (no date) is obsolete once the profile order became
-// date-first and is rejected by the decoder.
-func EncodeSavedStarGiftListCursor(pinnedOrder, date int, id int64) string {
-	if pinnedOrder < 0 || date < 0 || id <= 0 {
+// visible gift. The version prefix keeps this cursor distinct from other star
+// gift lists that are ordered only by instance ID.
+func EncodeSavedStarGiftListCursor(pinnedOrder int, id int64) string {
+	if pinnedOrder < 0 || id <= 0 {
 		return ""
 	}
-	raw := "v2:" + strconv.Itoa(pinnedOrder) + ":" + strconv.Itoa(date) + ":" + strconv.FormatInt(id, 10)
+	raw := "v1:" + strconv.Itoa(pinnedOrder) + ":" + strconv.FormatInt(id, 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
 // DecodeSavedStarGiftListCursor decodes a profile gift list cursor. Invalid or
-// obsolete cursor shapes are rejected instead of being normalized on read
-// (the client then restarts from the first page).
+// obsolete cursor shapes are rejected instead of being normalized on read.
 func DecodeSavedStarGiftListCursor(s string) (SavedStarGiftListCursor, bool) {
 	if s == "" {
 		return SavedStarGiftListCursor{}, false
@@ -1459,22 +1510,52 @@ func DecodeSavedStarGiftListCursor(s string) (SavedStarGiftListCursor, bool) {
 		return SavedStarGiftListCursor{}, false
 	}
 	parts := strings.Split(string(raw), ":")
-	if len(parts) != 4 || parts[0] != "v2" {
+	if len(parts) != 3 || parts[0] != "v1" {
 		return SavedStarGiftListCursor{}, false
 	}
 	order, err := strconv.ParseInt(parts[1], 10, 32)
 	if err != nil || order < 0 {
 		return SavedStarGiftListCursor{}, false
 	}
-	date, err := strconv.ParseInt(parts[2], 10, 32)
-	if err != nil || date < 0 {
-		return SavedStarGiftListCursor{}, false
-	}
-	id, err := strconv.ParseInt(parts[3], 10, 64)
+	id, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || id <= 0 {
 		return SavedStarGiftListCursor{}, false
 	}
-	return SavedStarGiftListCursor{PinnedOrder: int(order), Date: int(date), ID: id}, true
+	return SavedStarGiftListCursor{PinnedOrder: int(order), ID: id}, true
+}
+
+// EncodeSavedStarGiftPriceCursor 编码 sort_by_value 排序的 keyset 游标
+// （价格降序、同价按实例 id 降序）。价格允许为 0，因此只校验 id。
+func EncodeSavedStarGiftPriceCursor(price, id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	raw := "v2:" + strconv.FormatInt(price, 10) + ":" + strconv.FormatInt(id, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeSavedStarGiftPriceCursor 反解价格游标；无法解析（含过期的 v1 游标）返回 ok=false。
+func DecodeSavedStarGiftPriceCursor(s string) (price int64, id int64, ok bool) {
+	if s == "" {
+		return 0, 0, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return 0, 0, false
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 3 || parts[0] != "v2" {
+		return 0, 0, false
+	}
+	price, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	id, err = strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, 0, false
+	}
+	return price, id, true
 }
 
 // EncodeStarGiftCursor / DecodeStarGiftCursor are simple instance-ID cursors

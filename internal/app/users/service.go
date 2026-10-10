@@ -979,9 +979,7 @@ func (s *Service) projectOne(ctx context.Context, viewerUserID int64, user domai
 }
 
 func normalizeUsername(username string) string {
-	username = strings.TrimSpace(username)
-	username = strings.TrimPrefix(username, "@")
-	return strings.TrimSpace(username)
+	return domain.NormalizeUsername(username)
 }
 
 func validUsername(username string) bool {

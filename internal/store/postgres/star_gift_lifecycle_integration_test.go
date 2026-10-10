@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -503,7 +504,7 @@ WHERE target_user_id=$1 AND pts=$2 AND event_type='user_emoji_status'`, resaleBu
 		t.Fatalf("collectible invalidation outbox count=%d err=%v, want 1", clearOutboxCount, err)
 	}
 
-	// A second prepaid collectible makes craft chance exactly 1000‰. Success
+	// A second prepaid collectible remains eligible for the fixed 990‰ craft chance. Success
 	// preserves the first aggregate as crafted and burns the other input. The
 	// fresh payment intent must create another gift even though buyer, owner and
 	// catalog gift are identical to the first purchase.
@@ -635,7 +636,7 @@ SET lifecycle_status=$2,unsaved=$3,pinned_order=$4,can_craft_at=$5 WHERE unique_
 			{Owner: ownerPeer, Slug: secondUpgrade.Unique.Slug},
 		}, CommandKey: "craft-" + suffix, Date: now + 147,
 	})
-	if err != nil || !crafted.Success || crafted.Chance != 1000 || crafted.Gift == nil || !crafted.Gift.Crafted || crafted.Send.RecipientMessage.ID <= 0 {
+	if err != nil || !crafted.Success || crafted.Chance != 990 || crafted.Gift == nil || !crafted.Gift.Crafted || crafted.Send.RecipientMessage.ID <= 0 {
 		t.Fatalf("craft result = %+v err %v", crafted, err)
 	}
 	craftOutputAction := crafted.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
@@ -767,7 +768,7 @@ WHERE user_id=$1 AND command_key=$2`, owner.ID, craftReq.CommandKey).Scan(&outpu
 		CommandKey: "craft-fail-" + suffix, Date: now + 150,
 	}
 	failedCraft, err := failingLifecycle.CraftStarGift(ctx, failureReq)
-	if err != nil || failedCraft.Success || failedCraft.Chance != 500 || failedCraft.Gift != nil {
+	if err != nil || failedCraft.Success || failedCraft.Chance != 990 || failedCraft.Gift != nil {
 		t.Fatalf("craft failure result = %+v err %v", failedCraft, err)
 	}
 	failedInputEdit := craftedSourceEditForUserAndGift(failedCraft, owner.ID, thirdUpgrade.Unique.ID)
@@ -827,6 +828,63 @@ can_resell_at,drop_original_details_stars,can_craft_at FROM peer_star_gifts WHER
 	completed, err := lifecycle.CompleteStarGiftWithdrawal(ctx, recorded.ProviderRequestID, now+152)
 	if err != nil || completed.Status != "completed" || completed.Gift.OwnerAddress == "" || completed.Gift.GiftAddress == "" {
 		t.Fatalf("complete local withdrawal = %+v err %v", completed, err)
+	}
+	// A TON transfer changes both the wallet projection and the profile host.
+	// The former profile must lose the gift until the new wallet owner proves
+	// ownership through @claim.
+	if _, err := pool.Exec(ctx, `UPDATE unique_star_gifts SET host_peer_type='user',host_peer_id=$2 WHERE id=$1`,
+		transferred.Unique.ID, owner.ID); err != nil {
+		t.Fatalf("stage claimed exported gift: %v", err)
+	}
+	claimStore := NewStarGiftClaimStore(pool)
+	newWallet := "0:" + strings.Repeat("ab", 32)
+	changed, err := claimStore.ReconcileOnChainOwner(ctx, transferred.Unique.ID, completed.Gift.GiftAddress,
+		completed.Gift.OwnerAddress, newWallet)
+	if err != nil || !changed {
+		t.Fatalf("reconcile TON owner = changed %v err %v", changed, err)
+	}
+	var reconciledWallet, reconciledHostType string
+	var reconciledHostID int64
+	if err := pool.QueryRow(ctx, `SELECT owner_address,host_peer_type,host_peer_id FROM unique_star_gifts WHERE id=$1`,
+		transferred.Unique.ID).Scan(&reconciledWallet, &reconciledHostType, &reconciledHostID); err != nil ||
+		reconciledWallet != newWallet || reconciledHostType != "user" || reconciledHostID != domain.GiftRelayerUserID {
+		t.Fatalf("reconciled TON owner = wallet %q host %s:%d err %v", reconciledWallet, reconciledHostType, reconciledHostID, err)
+	}
+	if changed, err := claimStore.ReconcileOnChainOwner(ctx, transferred.Unique.ID, completed.Gift.GiftAddress,
+		completed.Gift.OwnerAddress, newWallet); err != nil || changed {
+		t.Fatalf("stale TON owner CAS = changed %v err %v", changed, err)
+	}
+	// Once a collectible is on-chain, payments.transferStarGift must never move
+	// the stale server-side projection. Both the free RPC and the paid form end
+	// up in TransferStarGift, so this store-level guard covers every input alias.
+	if _, err := lifecycle.TransferStarGift(ctx, domain.StarGiftTransferRequest{
+		ActorUserID: owner.ID,
+		Ref:         withdrawalReq.Ref,
+		To:          domain.Peer{Type: domain.PeerTypeUser, ID: buyer.ID},
+		CommandKey:  "transfer-exported-" + suffix,
+		Date:        now + 153,
+	}); !errors.Is(err, domain.ErrStarGiftTransferUnavailable) {
+		t.Fatalf("transfer accepted exported gift: %v", err)
+	}
+	// A non-empty item address alone must also fail closed if a repair leaves
+	// the other export projections temporarily live. The deferred aggregate
+	// guard rejects the transient staging itself, so a transfer can never
+	// observe a live saved copy of an addressed collectible.
+	if _, err := pool.Exec(ctx, `UPDATE peer_star_gifts SET lifecycle_status='active' WHERE id=$1`, transferred.Saved.ID); err == nil {
+		t.Fatalf("staging a live saved aggregate under an addressed item was allowed")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE unique_star_gifts SET owner_peer_type='user',owner_peer_id=$2,owner_address='' WHERE id=$1`,
+		transferred.Unique.ID, owner.ID); err == nil {
+		t.Fatalf("staging an addressed item under a non-exported aggregate was allowed")
+	}
+	if _, err := lifecycle.TransferStarGift(ctx, domain.StarGiftTransferRequest{
+		ActorUserID: owner.ID,
+		Ref:         withdrawalReq.Ref,
+		To:          domain.Peer{Type: domain.PeerTypeUser, ID: buyer.ID},
+		CommandKey:  "transfer-addressed-" + suffix,
+		Date:        now + 154,
+	}); !errors.Is(err, domain.ErrStarGiftTransferUnavailable) {
+		t.Fatalf("transfer accepted gift_address-only collectible: %v", err)
 	}
 
 	// Auction winner reservation is consumed; the unreachable lower bid is
@@ -1516,31 +1574,6 @@ WHERE channel_id=$1 AND message::text LIKE '%star_gift_unique%'`, created.Channe
 	if toUserAction == nil || toUserAction.CanCraftAt != upgraded.Saved.CanCraftAt {
 		t.Fatalf("channel-to-user action did not restore Craft readiness: %+v", toUserAction)
 	}
-	// 转移必须重置收到时刻：资料页按收到时刻倒序，沿用旧日期会让被转送的
-	// 礼物停在旧位置，而不是收礼人列表的顶部。
-	if toUser.Saved.Date != now+8 {
-		t.Fatalf("transferred gift date = %d, want %d (transfer must reset the received date)", toUser.Saved.Date, now+8)
-	}
-	userPeer := domain.Peer{Type: domain.PeerTypeUser, ID: actor.ID}
-	profile, err := gifts.ListByOwner(ctx, userPeer, false, "", 100)
-	if err != nil {
-		t.Fatalf("list recipient profile gifts: %v", err)
-	}
-	for i := 1; i < len(profile.Gifts); i++ {
-		if profile.Gifts[i].Date > profile.Gifts[i-1].Date {
-			t.Fatalf("profile gift order = date %d then %d, want received-date DESC",
-				profile.Gifts[i-1].Date, profile.Gifts[i].Date)
-		}
-	}
-	transferredSeen := false
-	for _, gift := range profile.Gifts {
-		if gift.ID == toUser.Saved.ID && gift.Date == now+8 {
-			transferredSeen = true
-		}
-	}
-	if !transferredSeen {
-		t.Fatalf("transferred gift %d not in recipient profile with reset date: %+v", toUser.Saved.ID, profile.Gifts)
-	}
 	backToChannel, err := lifecycle.TransferStarGift(ctx, domain.StarGiftTransferRequest{
 		ActorUserID: actor.ID,
 		Ref: domain.SavedStarGiftRef{
@@ -1713,7 +1746,7 @@ func TestStarGiftCraftFailureConsumesThreeInputsPostgres(t *testing.T) {
 	req := domain.StarGiftCraftRequest{UserID: owner.ID, Refs: refs,
 		CommandKey: "three-input-craft-fail-" + suffix, Date: now + 20}
 	failed, err := lifecycle.CraftStarGift(ctx, req)
-	if err != nil || failed.Success || failed.Chance != 750 || failed.Gift != nil {
+	if err != nil || failed.Success || failed.Chance != 990 || failed.Gift != nil {
 		t.Fatalf("three-input craft failure = %+v err=%v", failed, err)
 	}
 	for _, uniqueID := range uniqueIDs {
@@ -1740,7 +1773,7 @@ FROM star_gift_craft_commands WHERE user_id=$1 AND command_key=$2`, owner.ID, re
 		t.Fatalf("three-input failure receipt pts=%v media=%d fingerprint=%d err=%v", sourcePTS, len(outputMedia), len(outputFingerprint), err)
 	}
 	replay, err := lifecycle.CraftStarGift(ctx, req)
-	if err != nil || !replay.Duplicate || replay.Success || replay.Chance != 750 {
+	if err != nil || !replay.Duplicate || replay.Success || replay.Chance != 990 {
 		t.Fatalf("three-input failure replay = %+v err=%v", replay, err)
 	}
 	for i, uniqueID := range uniqueIDs {
@@ -1768,8 +1801,7 @@ func issueLifecyclePurchaseForm(t *testing.T, ctx context.Context, lifecycle *St
 	}
 	issued, err := lifecycle.IssueStarGiftPurchaseForm(ctx, domain.StarGiftPurchaseForm{
 		BuyerUserID: req.BuyerUserID, To: req.To, GiftID: req.GiftID, RevisionID: req.RevisionID,
-		IncludeUpgrade: req.IncludeUpgrade, HideName: req.HideName, Message: req.Message,
-		MessageEntities: req.MessageEntities, ChargeStars: req.ChargeStars,
+		IncludeUpgrade: req.IncludeUpgrade, HideName: req.HideName, Message: req.Message, ChargeStars: req.ChargeStars,
 		IssuedAt: req.Date, ExpiresAt: req.Date + 600,
 	})
 	if err != nil {

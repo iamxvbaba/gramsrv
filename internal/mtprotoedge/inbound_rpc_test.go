@@ -14,6 +14,18 @@ func newInboundTestConn(s *inboundRPCScheduler, maxInflight, queueSize int, time
 	return c
 }
 
+func TestInboundRPCTimeoutCraftSpecific(t *testing.T) {
+	if got := inboundRPCTimeout("payments.craftStarGift", 30*time.Second); got != crossCraftRPCTimeout {
+		t.Fatalf("craft timeout = %v", got)
+	}
+	if got := inboundRPCTimeout("payments.getCraftStarGifts", 30*time.Second); got != 30*time.Second {
+		t.Fatalf("other gift timeout = %v", got)
+	}
+	if got := inboundRPCTimeout("payments.craftStarGift", 4*time.Minute); got != 4*time.Minute {
+		t.Fatalf("configured longer timeout = %v", got)
+	}
+}
+
 func TestInboundRPCSchedulerIsLazyPerConnectionAndServer(t *testing.T) {
 	scheduler := newInboundRPCScheduler(4, 16, 1<<20)
 	scheduler.start()

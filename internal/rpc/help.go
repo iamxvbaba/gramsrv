@@ -67,25 +67,13 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return tgCountriesList(list), nil
 	})
 	registerRPC[*tg.HelpGetTimezonesListRequest](d, tlprofile.SemanticMethodHelpGetTimezonesList, func(ctx context.Context, layerRequest *tg.HelpGetTimezonesListRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		return tdesktop.TimezonesList(hash), nil
+		return tdesktop.TimezonesList(layerRequest.Hash), nil
 	})
 	registerRPC[*tg.HelpGetPeerColorsRequest](d, tlprofile.SemanticMethodHelpGetPeerColors, func(ctx context.Context, layerRequest *tg.HelpGetPeerColorsRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		return tdesktop.PeerColors(hash), nil
+		return tdesktop.PeerColors(layerRequest.Hash), nil
 	})
 	registerRPC[*tg.HelpGetPeerProfileColorsRequest](d, tlprofile.SemanticMethodHelpGetPeerProfileColors, func(ctx context.Context, layerRequest *tg.HelpGetPeerProfileColorsRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
-
-		return tdesktop.PeerProfileColors(hash), nil
+		return tdesktop.PeerProfileColors(layerRequest.Hash), nil
 	})
 	registerRPC[*tg.HelpGetPromoDataRequest](d, tlprofile.SemanticMethodHelpGetPromoData, func(ctx context.Context, layerRequest *tg.HelpGetPromoDataRequest) (any, error) {
 		return tdesktop.PromoData(r.clock.Now()), nil

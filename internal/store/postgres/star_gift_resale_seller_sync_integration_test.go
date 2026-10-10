@@ -12,10 +12,10 @@ import (
 // TestStarGiftResaleClearsSellerProfileStatePostgres pins the full seller-side
 // teardown of a resale: a collectible that was worn as an emoji status and
 // pinned to the profile must, the moment somebody buys it, stop being worn, stop
-// being pinned, leave the seller's saved-gift list, and produce the two durable
-// seller-visible updates the clients need to converge on that (user_emoji_status
-// for the cleared status, edit_message for the retired older card). The buyer
-// sends the transferred service message, so the sale is not one of them.
+// being pinned, leave the seller's saved-gift list, and produce the three
+// durable seller-visible updates the clients need to converge on that
+// (user_emoji_status for the cleared status, new_message for the sale card,
+// edit_message for the retired older card).
 //
 // This is the "my sold gift is still on my profile" report: everything below is
 // server state and server push, so a client still showing the gift after this
@@ -237,11 +237,9 @@ func TestStarGiftResaleClearsSellerProfileStatePostgres(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	// The sale itself produces no message for the seller: the buyer is the sender
-	// of the transferred service message, so the seller only sees the cleared
-	// emoji status and his own retired profile card.
 	want := []string{
 		string(domain.UpdateEventUserEmojiStatus),
+		string(domain.UpdateEventNewMessage),
 		string(domain.UpdateEventEditMessage),
 	}
 	if len(kinds) != len(want) {

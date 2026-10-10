@@ -61,6 +61,19 @@ const (
 	// retained Premium storefront in this project.
 	GifBotUserID     int64 = 1250000017
 	GifBotAccessHash int64 = 7233282977235616768
+
+	// GiftRelayerUserID is the stable @relayer profile used to host an exported
+	// collectible until its current TON owner claims it to a Gramsrv profile.
+	GiftRelayerUserID     int64 = 1250000019
+	GiftRelayerAccessHash int64 = 6184953271048627319
+
+	// GiftClaimBotUserID is the stable @claim service bot and Mini App owner.
+	GiftClaimBotUserID     int64 = 1250000021
+	GiftClaimBotAccessHash int64 = 8462917350861429053
+
+	// GiftClaimTestBotUserID is the stable @claimtest service bot and Mini App owner.
+	GiftClaimTestBotUserID     int64 = 1250000022
+	GiftClaimTestBotAccessHash int64 = 3284157906273045387
 )
 
 var configuredPremiumBotUserID atomic.Int64
@@ -264,6 +277,29 @@ func GifBotUser() User {
 	}
 }
 
+func GiftRelayerUser() User {
+	return User{
+		ID: GiftRelayerUserID, AccessHash: GiftRelayerAccessHash,
+		FirstName: "InvGram Gift Relayer", Username: "relayer", Verified: true,
+	}
+}
+
+func GiftClaimBotUser() User {
+	return User{
+		ID: GiftClaimBotUserID, AccessHash: GiftClaimBotAccessHash,
+		FirstName: "InvGram Gift Claim", Username: "claim", Verified: true,
+		Bot: true, BotInfoVersion: 1,
+	}
+}
+
+func GiftClaimTestBotUser() User {
+	return User{
+		ID: GiftClaimTestBotUserID, AccessHash: GiftClaimTestBotAccessHash,
+		FirstName: "InvGram Gift Claim (test)", Username: "claimtest", Verified: true,
+		Bot: true, BotInfoVersion: 1,
+	}
+}
+
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
 // 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
 func SystemUserByID(id int64) (User, bool) {
@@ -285,6 +321,12 @@ func SystemUserByID(id int64) (User, bool) {
 		return VerifierBotUser(), true
 	case GifBotUserID:
 		return GifBotUser(), true
+	case GiftRelayerUserID:
+		return GiftRelayerUser(), true
+	case GiftClaimBotUserID:
+		return GiftClaimBotUser(), true
+	case GiftClaimTestBotUserID:
+		return GiftClaimTestBotUser(), true
 	}
 	return User{}, false
 }
@@ -309,6 +351,9 @@ func SystemUserIDs() []int64 {
 		VerifierBotUserID,
 		PremiumBotConfiguredUserID(),
 		GifBotUserID,
+		GiftRelayerUserID,
+		GiftClaimBotUserID,
+		GiftClaimTestBotUserID,
 	}
 }
 

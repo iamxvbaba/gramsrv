@@ -729,6 +729,10 @@ func (fakeService) GrantStarsAll(_ context.Context, req admin.GrantStarsAllReque
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) UpdateDonationChain(_ context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) SetVerified(_ context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
@@ -890,6 +894,10 @@ func (fakeService) SetStarGiftEnabled(_ context.Context, req admin.SetStarGiftEn
 }
 
 func (fakeService) SetStarGiftSortOrder(_ context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetNftGiftWallet(_ context.Context, req admin.SetNftGiftWalletRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 

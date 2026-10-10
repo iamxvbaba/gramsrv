@@ -582,9 +582,9 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	// 与 postgres ChannelStore 同口径:top_msg_id 只是话题落点提示,不是回复有效性判据,
-	// reply_to_msg_id 已唯一指向存在的消息,线程根由服务端推导。客户端带无关 top_msg_id
-	// (TDesktop 发媒体回复时下发)不再拒绝整个回复。
+	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
+		return nil, domain.ErrReplyMessageIDInvalid
+	}
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, ok := s.topics[req.ChannelID][reply.TopMessageID]; ok && !topic.Hidden {
 			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {

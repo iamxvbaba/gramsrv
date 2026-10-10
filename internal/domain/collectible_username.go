@@ -25,7 +25,7 @@ const (
 	// MaxPeerCollectibleUsernames bounds the collectible rows a single peer can
 	// hold. The TL usernames vector is rendered in full by clients, so the bound
 	// keeps both the projection cost and the rendered list finite.
-	MaxPeerCollectibleUsernames = 20
+	MaxPeerCollectibleUsernames = 100
 	// MaxUsernameSortOrder matches the registry CHECK and bounds reorder input.
 	MaxUsernameSortOrder = 1024
 	// MaxCollectibleUsernameURLLength matches the registry CHECK on url.
@@ -281,9 +281,19 @@ type CollectibleUsernameTransfer struct {
 	CreatedAt     time.Time
 }
 
-// NormalizeUsername trims whitespace and a leading '@'. It is the shared entry
-// normalisation for every username surface: RPC, admin API and store.
+// NormalizeUsername trims whitespace and a leading '@', then folds the link
+// forms the panel and clients paste (t.me/rayo, rayo.t.me, https://…) onto the
+// bare name. It is the shared entry normalisation for every username surface:
+// RPC, admin API and store.
 func NormalizeUsername(username string) string {
+	username = strings.TrimSpace(username)
+	username = strings.TrimPrefix(username, "https://")
+	username = strings.TrimPrefix(username, "http://")
+	if i := strings.Index(username, "t.me/"); i >= 0 {
+		username = username[i+len("t.me/"):]
+	} else if i := strings.Index(username, ".t.me"); i >= 0 && i+len(".t.me") == len(username) {
+		username = username[:i]
+	}
 	username = strings.TrimSpace(username)
 	username = strings.TrimPrefix(username, "@")
 	return strings.TrimSpace(username)

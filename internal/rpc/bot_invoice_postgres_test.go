@@ -78,11 +78,12 @@ func TestBotInvoiceChainPostgres(t *testing.T) {
 	stars := appstars.NewService(postgres.NewStarsStore(pool), appstars.WithStartingGrant(5000))
 	gifts := &pgInvoiceGifts{}
 	r := New(Config{}, Deps{
-		Users:    appusers.NewService(users),
-		Bots:     bots,
-		Messages: messages,
-		Stars:    stars,
-		Gifts:    gifts,
+		Users:         appusers.NewService(users),
+		Bots:          bots,
+		Messages:      messages,
+		Stars:         stars,
+		Gifts:         gifts,
+		BotAPIUpdates: postgres.NewBotAPIUpdateStore(pool),
 	}, zaptest.NewLogger(t), clock.System)
 
 	// Box ids are per user, not per chat. Create allocates in the buyer's box

@@ -499,6 +499,32 @@ func (s *Service) CollectibleAnimationJSON(ctx context.Context, giftID int64, ki
 	if s == nil || s.store == nil {
 		return nil, false, nil
 	}
+	// PostgreSQL keeps the queryable animation projection in JSONB, but JSONB
+	// canonicalization is not a lossless source for every Lottie/TGS document.
+	// Prefer the immutable content-addressed TGS blob and decompress it back to
+	// the original JSON for renderers; the JSONB path remains a compatibility
+	// fallback for memory/test stores and older rows without a blob.
+	if s.blobs != nil {
+		if blobStore, ok := s.store.(interface {
+			CollectibleAnimationBlob(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) (domain.FileBlob, bool, error)
+		}); ok {
+			blob, found, err := blobStore.CollectibleAnimationBlob(ctx, giftID, kind, attributeID)
+			if err != nil {
+				return nil, false, err
+			}
+			if found {
+				data, err := s.blobs.Get(ctx, blob.ObjectKey)
+				if err != nil {
+					return nil, false, fmt.Errorf("get collectible animation blob bytes: %w", err)
+				}
+				raw, err := decompressSingleTGS(data)
+				if err != nil {
+					return nil, false, fmt.Errorf("decompress collectible animation blob: %w", err)
+				}
+				return raw, true, nil
+			}
+		}
+	}
 	return s.store.CollectibleAnimationJSON(ctx, giftID, kind, attributeID)
 }
 
@@ -606,17 +632,6 @@ func (s *Service) IssuePurchaseForm(ctx context.Context, form domain.StarGiftPur
 		return form, nil
 	}
 	return domain.StarGiftPurchaseForm{}, domain.ErrStarGiftUnavailable
-}
-
-// SettledStarGiftPurchase reports an already committed purchase for req.CommandKey.
-// The bounded in-memory branch answers "not found" because it settles nothing: the
-// memory adapter has no command table to replay from, and the caller then takes the
-// normal issue-and-purchase path, which that branch rejects as unavailable anyway.
-func (s *Service) SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error) {
-	if s == nil || s.lifecycle == nil {
-		return domain.StarGiftPurchaseResult{}, false, nil
-	}
-	return s.lifecycle.SettledStarGiftPurchase(ctx, req)
 }
 
 // ValidatePurchaseForm is a read-only preflight used for precise RPC errors.
@@ -809,12 +824,16 @@ func (s *Service) Withdraw(ctx context.Context, req domain.StarGiftWithdrawalReq
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
 	}
 	saved, found, err := s.store.GetByRef(ctx, req.Ref)
-	if err != nil || !found || saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) ||
-		saved.UniqueGiftID == 0 || !saved.LifecycleStatus.Live() || saved.CanExportAt > req.Date {
-		if err != nil {
-			return domain.StarGiftWithdrawal{}, err
-		}
+	if err != nil {
+		return domain.StarGiftWithdrawal{}, err
+	}
+	if !found || saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) ||
+		saved.UniqueGiftID == 0 || !saved.LifecycleStatus.Live() {
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftTransferUnavailable
+	}
+	// can_export_at 只认服务端时钟：前端改时间戳无法提前触发导出。
+	if saved.CanExportAt > req.Date {
+		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftExportCooldown
 	}
 	unique, found, err := s.store.UniqueByID(ctx, saved.UniqueGiftID)
 	if err != nil || !found || unique.Burned || unique.Owner != saved.Owner {
@@ -849,6 +868,22 @@ func (s *Service) CompleteWithdrawal(ctx context.Context, providerRequestID stri
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
 	}
 	return s.lifecycle.CompleteStarGiftWithdrawal(ctx, providerRequestID, date)
+}
+
+// CompleteWithdrawalOnChain is deliberately separate from the legacy local
+// completion path. CustomFragment calls it only after independently reading the
+// NFT owner, index and collection from TON mainnet.
+func (s *Service) CompleteWithdrawalOnChain(ctx context.Context, providerRequestID, ownerAddress, giftAddress string, date int) (domain.StarGiftWithdrawal, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
+	}
+	completer, ok := s.lifecycle.(interface {
+		CompleteStarGiftWithdrawalOnChain(context.Context, string, string, string, int) (domain.StarGiftWithdrawal, error)
+	})
+	if !ok {
+		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
+	}
+	return completer.CompleteStarGiftWithdrawalOnChain(ctx, providerRequestID, ownerAddress, giftAddress, date)
 }
 
 // IssueChannelRevenueWithdrawal creates a short-lived same-origin bearer URL
@@ -1088,6 +1123,20 @@ func (s *Service) ListSavedFiltered(ctx context.Context, filter domain.SavedStar
 		filter.Limit = domain.MaxSavedStarGiftsLimit
 	}
 	return s.store.ListByOwnerFiltered(ctx, filter)
+}
+
+// CrossCraftCapability is projected only to an eligible owner's own saved gifts.
+func (s *Service) CrossCraftCapability(ctx context.Context, userID int64) (bool, int, error) {
+	if s == nil || s.lifecycle == nil {
+		return false, 0, nil
+	}
+	capability, ok := s.lifecycle.(interface {
+		CrossCraftCapability(context.Context, int64) (bool, int, error)
+	})
+	if !ok {
+		return false, 0, nil
+	}
+	return capability.CrossCraftCapability(ctx, userID)
 }
 
 func (s *Service) GetSaved(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error) {

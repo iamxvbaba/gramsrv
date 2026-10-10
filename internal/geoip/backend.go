@@ -3,7 +3,6 @@ package geoip
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -55,6 +54,8 @@ type responseParser func(body []byte) (Location, parseOutcome)
 type backend interface {
 	// Name 是给日志用的短标识(一般是主机名)。
 	Name() string
+	// Endpoint 是完整模板,只在日志里出现。
+	Endpoint() string
 	// Lookup 查询单个已归一、确认公网可达的地址。
 	Lookup(ctx context.Context, addr netip.Addr) (Location, lookupStatus)
 	// Breaker 返回该后端自己的健康状态机。多个后端各有一份,互不影响。
@@ -89,19 +90,19 @@ type httpBackendConfig struct {
 func newHTTPBackend(cfg httpBackendConfig, log *zap.Logger) (backend, error) {
 	endpoint := strings.TrimSpace(cfg.endpoint)
 	if !strings.Contains(endpoint, "{ip}") {
-		return nil, errors.New("endpoint must contain the {ip} placeholder")
+		return nil, errors.New("endpoint must contain the {ip} placeholder, got " + endpoint)
 	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
-		return nil, errors.New("endpoint is not a valid URL")
+		return nil, errors.New("endpoint is not a valid URL: " + err.Error())
 	}
 	switch parsed.Scheme {
 	case "http", "https":
 	default:
-		return nil, errors.New("endpoint must use http or https")
+		return nil, errors.New("endpoint must use http or https, got " + parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return nil, errors.New("endpoint must include a host")
+		return nil, errors.New("endpoint must include a host, got " + endpoint)
 	}
 	parser := parserForHost(parsed.Hostname())
 	return &httpBackend{
@@ -132,27 +133,15 @@ func newGeoIPHTTPClient(timeout time.Duration) *http.Client {
 }
 
 func (b *httpBackend) Name() string      { return b.name }
+func (b *httpBackend) Endpoint() string  { return b.endpoint }
 func (b *httpBackend) Breaker() *breaker { return b.brk }
-
-// EndpointNames is a diagnostics-only projection of an already validated chain.
-// Never return userinfo, path, query or fragments, which may contain credentials.
-func EndpointNames(endpoints []string) []string {
-	names := make([]string, 0, len(endpoints))
-	for _, endpoint := range endpoints {
-		parsed, err := url.Parse(strings.TrimSpace(endpoint))
-		if err == nil && parsed.Hostname() != "" {
-			names = append(names, parsed.Hostname())
-		}
-	}
-	return names
-}
 
 // Lookup 查询单个地址,返回文案与结果分类。
 func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lookupStatus) {
 	ip := addr.String()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.requestURL(ip), nil)
 	if err != nil {
-		b.log.Error("geoip 请求构造失败", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
+		b.log.Error("geoip 请求构造失败", zap.String("ip", ip), zap.Error(err))
 		return Location{}, statusFailed
 	}
 	req.Header.Set("accept", "application/json")
@@ -165,13 +154,13 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 			b.log.Warn("geoip 请求超时",
 				zap.String("ip", ip),
 				zap.Duration("timeout", b.client.Timeout),
-				zap.String("error_type", fmt.Sprintf("%T", err)))
+				zap.Error(err))
 			return Location{}, statusTimeout
 		}
 		b.log.Warn("geoip 请求失败",
 			zap.String("ip", ip),
 			zap.Bool("caller_cancelled", errors.Is(err, context.Canceled)),
-			zap.String("error_type", fmt.Sprintf("%T", err)))
+			zap.Error(err))
 		return Location{}, statusFailed
 	}
 	defer func() {
@@ -181,12 +170,13 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		// 仅记录结构化状态，不记录可能回显 URL 凭证的响应头或正文。
+		// 限流是最主要的失败模式,单独 warn 并把 Retry-After 带出来:对方如果给了冷却
+		// 提示,比我们自己猜一个 5 分钟有用得多。
 		b.log.Warn("geoip 命中上游限流",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
-			zap.Bool("retry_after_present", resp.Header.Get("Retry-After") != ""),
-			zap.String("backend", b.name))
+			zap.String("retry_after", resp.Header.Get("Retry-After")),
+			zap.String("endpoint", b.endpoint))
 		return Location{}, statusRateLimited
 	case resp.StatusCode == http.StatusNotFound:
 		// 明确的"没这条记录",继续问下一个后端。
@@ -194,7 +184,7 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 	case resp.StatusCode == http.StatusOK:
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		if err != nil {
-			b.log.Warn("geoip 响应读取失败", zap.String("ip", ip), zap.String("error_type", fmt.Sprintf("%T", err)))
+			b.log.Warn("geoip 响应读取失败", zap.String("ip", ip), zap.Error(err))
 			return Location{}, statusFailed
 		}
 		return b.parseBody(ip, body)
@@ -204,13 +194,13 @@ func (b *httpBackend) Lookup(ctx context.Context, addr netip.Addr) (Location, lo
 		b.log.Warn("geoip 请求被上游拒绝",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
-			zap.String("backend", b.name))
+			zap.String("endpoint", b.endpoint))
 		return Location{}, statusNotFound
 	default:
 		b.log.Warn("geoip 请求返回非预期状态码",
 			zap.String("ip", ip),
 			zap.Int("status", resp.StatusCode),
-			zap.String("backend", b.name))
+			zap.String("endpoint", b.endpoint))
 		return Location{}, statusFailed
 	}
 }
@@ -228,10 +218,22 @@ func (b *httpBackend) parseBody(ip string, body []byte) (Location, lookupStatus)
 	default:
 		b.log.Warn("geoip 响应解析失败",
 			zap.String("ip", ip),
-			zap.String("backend", b.name),
-			zap.Int("bytes", len(body)))
+			zap.String("endpoint", b.endpoint),
+			zap.Int("bytes", len(body)),
+			zap.String("body", truncateForLog(body)))
 		return Location{}, statusFailed
 	}
+}
+
+// logBodyLimit 是写进日志的响应体上限。后端坏掉时返回的往往是 HTML 错误页,不截断
+// 会把整页刷进日志。
+const logBodyLimit = 256
+
+func truncateForLog(body []byte) string {
+	if len(body) <= logBodyLimit {
+		return string(body)
+	}
+	return string(body[:logBodyLimit]) + "…(truncated)"
 }
 
 // requestURL 把 {ip} 换成归一后的地址。地址经 publicAddr 校验过,一定是合法 IP,

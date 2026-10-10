@@ -523,24 +523,56 @@ func (s *Service) SetCustomVerification(ctx context.Context, req domain.SetCusto
 	if err := s.checkVerifierCaller(ctx, req.VerifierBotID, req.CallerUserID); err != nil {
 		return false, err
 	}
-	if !req.Enabled {
+	return s.applyMark(ctx, st, settings, req.VerifierBotID, req.Peer,
+		req.CustomDescription, req.CallerUserID, req.Enabled)
+}
+
+// GrantMarkOperator grants or refreshes a mark on the operator's behalf — the
+// path a paid shop purchase takes, where the payment was taken by the store
+// instead of the verifier bot and there is therefore no caller to check.
+// Everything else (enabled verifier, resolvable peer, description policy,
+// quota, idempotent re-apply) keeps the RPC path's discipline, and the grant is
+// attributed to the verifier bot exactly as an approved application's is.
+func (s *Service) GrantMarkOperator(ctx context.Context, verifierBotID int64, peer domain.Peer, customDescription string) (bool, error) {
+	if verifierBotID <= 0 || peer.ID <= 0 ||
+		(peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) {
+		return false, domain.ErrCustomVerificationTargetInvalid
+	}
+	st, err := s.writeStore()
+	if err != nil {
+		return false, err
+	}
+	settings, err := s.enabledVerifier(ctx, st, verifierBotID)
+	if err != nil {
+		return false, err
+	}
+	return s.applyMark(ctx, st, settings, verifierBotID, peer,
+		strings.TrimSpace(customDescription), verifierBotID, true)
+}
+
+// applyMark is the mutation shared by the RPC path and the operator path:
+// strip when enabled is false, otherwise resolve, describe, re-apply or grant.
+func (s *Service) applyMark(ctx context.Context, st Store, settings domain.BotVerifierSettings,
+	verifierBotID int64, peer domain.Peer,
+	customDescription string, grantedBy int64, enabled bool) (bool, error) {
+	if !enabled {
 		// Only the peer's shape is checked on the way out (Validate did that): a
 		// verifier must still be able to strip its mark from a peer that has since
 		// been deleted or become unresolvable, which is exactly when stripping it
 		// matters most.
-		removed, err := st.RevokeCustomVerification(ctx, req.VerifierBotID, req.Peer)
+		removed, err := st.RevokeCustomVerification(ctx, verifierBotID, peer)
 		if err != nil {
 			return false, err
 		}
 		if removed {
-			s.notifyPeer(ctx, req.Peer, "revoke")
+			s.notifyPeer(ctx, peer, "revoke")
 		}
 		return removed, nil
 	}
-	if _, err := s.resolvePeer(ctx, req.Peer); err != nil {
+	if _, err := s.resolvePeer(ctx, peer); err != nil {
 		return false, err
 	}
-	description, err := settings.DescriptionFor(req.CustomDescription)
+	description, err := settings.DescriptionFor(customDescription)
 	if err != nil {
 		return false, err
 	}
@@ -548,7 +580,7 @@ func (s *Service) SetCustomVerification(ctx context.Context, req domain.SetCusto
 	// reported as changed=false instead of burning a version and pushing an update
 	// nobody can observe. The per-verifier bound is only spent on a *new* mark: an
 	// existing one must stay re-describable even at the limit.
-	existing, exists, err := s.markState(ctx, st, req.VerifierBotID, req.Peer)
+	existing, exists, err := s.markState(ctx, st, verifierBotID, peer)
 	if err != nil {
 		return false, err
 	}
@@ -556,19 +588,19 @@ func (s *Service) SetCustomVerification(ctx context.Context, req domain.SetCusto
 		if existing.IconDocumentID == settings.IconDocumentID && existing.Description == description {
 			return false, nil
 		}
-	} else if err := s.checkVerifierQuota(ctx, st, req.VerifierBotID); err != nil {
+	} else if err := s.checkVerifierQuota(ctx, st, verifierBotID); err != nil {
 		return false, err
 	}
 	if _, _, err := st.GrantCustomVerification(ctx, domain.CustomVerification{
-		VerifierBotID:   req.VerifierBotID,
-		Peer:            req.Peer,
+		VerifierBotID:   verifierBotID,
+		Peer:            peer,
 		IconDocumentID:  settings.IconDocumentID,
 		Description:     description,
-		GrantedByUserID: req.CallerUserID,
+		GrantedByUserID: grantedBy,
 	}); err != nil {
 		return false, err
 	}
-	s.notifyPeer(ctx, req.Peer, "grant")
+	s.notifyPeer(ctx, peer, "grant")
 	return true, nil
 }
 

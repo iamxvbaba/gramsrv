@@ -136,9 +136,8 @@ func newBackendChain(cfg Config, log *zap.Logger) ([]backend, error) {
 	}
 	seen := make(map[string]struct{}, len(cfg.Endpoints))
 	backends := make([]backend, 0, len(cfg.Endpoints))
-	for index, endpoint := range cfg.Endpoints {
-		endpoint = strings.TrimSpace(endpoint)
-		if endpoint == "" {
+	for _, endpoint := range cfg.Endpoints {
+		if strings.TrimSpace(endpoint) == "" {
 			continue
 		}
 		if _, duplicate := seen[endpoint]; duplicate {
@@ -151,7 +150,7 @@ func newBackendChain(cfg Config, log *zap.Logger) ([]backend, error) {
 			breaker:  breakerCfg,
 		}, log)
 		if err != nil {
-			return nil, fmt.Errorf("geoip endpoint %d: %w", index+1, err)
+			return nil, fmt.Errorf("geoip endpoint %q: %w", endpoint, err)
 		}
 		backends = append(backends, b)
 	}
@@ -209,9 +208,6 @@ func (r *cachedResolver) Resolve(ctx context.Context, ips []string) map[string]L
 // resolvePending 沿后端链依次尝试,结果与负缓存一起落盘。
 func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Addr, hit map[netip.Addr]Location) {
 	for _, b := range r.backends {
-		if ctx.Err() != nil {
-			return
-		}
 		remaining := unresolved(pending, hit)
 		if len(remaining) == 0 {
 			return
@@ -227,10 +223,6 @@ func (r *cachedResolver) resolvePending(ctx context.Context, pending []netip.Add
 			continue
 		}
 		r.resolveWithBackend(ctx, b, remaining, hit)
-	}
-	// 取消不代表后端查无此 IP，未走完的链不能污染负缓存。
-	if ctx.Err() != nil {
-		return
 	}
 	// 所有后端都试过了还没结果才记负缓存:某个后端的缺失不能连带把整条链判死,
 	// 否则免费库的覆盖差异会让一批地址长期显示 Unknown。
@@ -253,11 +245,9 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 		wg      sync.WaitGroup
 		healthy atomic.Bool
 	)
-	// 所有返回路径都必须等待在途任务；调用方随后会读 hit 或切换后端。
-	defer wg.Wait()
 	healthy.Store(true)
 	for _, addr := range addrs {
-		if ctx.Err() != nil || !healthy.Load() {
+		if !healthy.Load() {
 			break
 		}
 		// 信号量在发送方获取而不是在 goroutine 里:这样本循环自己就会阻塞,天然形成
@@ -267,11 +257,6 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 		case <-ctx.Done():
 			return
 		}
-		// 等待信号量期间可能发生取消或硬失败，不再向失效后端发新请求。
-		if ctx.Err() != nil || !healthy.Load() {
-			<-sem
-			return
-		}
 		wg.Add(1)
 		go func(addr netip.Addr) {
 			defer func() {
@@ -279,10 +264,7 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 				wg.Done()
 			}()
 			loc, status := b.Lookup(ctx, addr)
-			// 调用方取消/总预算到期不能被误记为后端故障。
-			if ctx.Err() == nil {
-				b.Breaker().record(status)
-			}
+			b.Breaker().record(status)
 			switch status {
 			case statusOK:
 				mu.Lock()
@@ -299,6 +281,7 @@ func (r *cachedResolver) resolveWithBackend(ctx context.Context, b backend, addr
 			}
 		}(addr)
 	}
+	wg.Wait()
 }
 
 // Close 释放后端资源。HTTP 后端没有长期资源,这里只是不让接口变得不对称。
@@ -335,6 +318,36 @@ func expandByInput(hit map[netip.Addr]Location, ips []string) map[string]Locatio
 		return nil
 	}
 	return out
+}
+
+// publicAddr 归一存储的对端地址,并拒绝没有地理归属的地址。
+//
+// authorizations.ip 存的是 RemoteAddr 的 host 部分,可能是 IPv4、IPv6、也可能是
+// IPv4-mapped IPv6(双栈 listener 上很常见)。不 unmap 的话 ::ffff:203.0.113.7
+// 在后端一定查不到,所以这里必须还原成 IPv4。
+//
+// 回环、私网、链路本地、未指定和组播一律拒绝:前者在地理库和各家免费接口里都没有
+// 记录,后者等于把内部网络拓扑送到第三方。
+func publicAddr(raw string) (netip.Addr, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return netip.Addr{}, false
+	}
+	// IPv6 的 zone(%eth0)对地理归属没有意义,netip.ParseAddr 也会拒绝它。
+	if pct := strings.LastIndexByte(trimmed, '%'); pct > 0 {
+		trimmed = trimmed[:pct]
+	}
+	addr, err := netip.ParseAddr(trimmed)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	addr = addr.Unmap()
+	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() ||
+		addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
+		addr.IsMulticast() {
+		return netip.Addr{}, false
+	}
+	return addr, true
 }
 
 func positiveDuration(value, fallback time.Duration) time.Duration {

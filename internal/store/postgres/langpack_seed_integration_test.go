@@ -95,8 +95,12 @@ func TestLangPackSeedReconciliationPostgres(t *testing.T) {
 	rollback.Packs = append([]domain.LangPackSeedEntry(nil), seedV2.Packs...)
 	rollback.Packs[0].Pack.Version = 1
 	rollback.Packs[0].ContentHash = "rollback"
-	if _, err := store.ReconcileSeed(ctx, rollback); err == nil || !strings.Contains(err.Error(), "version rollback") {
-		t.Fatalf("rollback error = %v", err)
+	if n, err := store.ReconcileSeed(ctx, rollback); err != nil || n != 0 {
+		t.Fatalf("older seed reconcile = %d, %v", n, err)
+	}
+	keptPack, keptErr := store.GetPack(ctx, packName, "fr", 0)
+	if keptErr != nil || keptPack.Version != 2 || len(keptPack.Strings) != 2 {
+		t.Fatalf("pack regressed after older seed = %+v, err %v", keptPack, keptErr)
 	}
 
 	if written, err := store.ReconcileSeed(ctx, domain.LangPackSeed{Catalog: packName}); err != nil || written != 0 {

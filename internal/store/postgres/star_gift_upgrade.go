@@ -72,12 +72,14 @@ func (s *StarGiftUpgradeStore) GrantUniqueStarGift(ctx context.Context, req doma
 		},
 	}}
 	messageReq := domain.SendPrivateTextRequest{
-		SenderUserID:           req.SenderID,
-		RecipientUserID:        req.Recipient.ID,
-		RandomID:               lifecycleCommandRandomID("admin-collectible-grant", req.Recipient.ID, req.CommandKey),
-		Date:                   req.Date,
-		OriginUserID:           req.SenderID,
-		RecipientBlocked:       req.RecipientBlocked,
+		SenderUserID:    req.SenderID,
+		RecipientUserID: req.Recipient.ID,
+		RandomID:        lifecycleCommandRandomID("admin-collectible-grant", req.Recipient.ID, req.CommandKey),
+		Date:            req.Date,
+		OriginUserID:    req.SenderID,
+		// WHY: grant recipients keep the gift even when they blocked the
+		// system; the recipient box must be allocated for the owner message id.
+		RecipientBlocked:       false,
 		IdempotencyFingerprint: fingerprint[:],
 		Media:                  placeholder,
 	}
@@ -1030,6 +1032,8 @@ func resolveCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, r
 	extra := ""
 	if table == "star_gift_collectible_models" {
 		extra = " AND NOT crafted"
+	} else if table == "star_gift_collectible_backdrops" {
+		extra = " AND name NOT LIKE 'Crafted Gradient %'"
 	}
 	var ok bool
 	if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s
@@ -1047,6 +1051,8 @@ func chooseCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, re
 	extra := ""
 	if table == "star_gift_collectible_models" {
 		extra = " AND NOT crafted"
+	} else if table == "star_gift_collectible_backdrops" {
+		extra = " AND name NOT LIKE 'Crafted Gradient %'"
 	}
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id, rarity_permille FROM %s
 WHERE collectible_revision_id=$1 AND rarity_kind='permille' AND rarity_permille > 0%s

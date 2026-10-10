@@ -17,7 +17,6 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 - Booleans accept `1/true/TRUE/True/yes/on` and `0/false/FALSE/False/no/off`. Lists are comma-separated. Durations use Go duration syntax such as `200ms`, `30s`, `5m`, or `168h`.
 - Invalid integer, float, boolean, or duration text falls back to the code default. URL, app-scheme, app-name, and login-email dependency validation fails startup instead.
 - Never commit real passwords, tokens, private DSNs, or TURN secrets. Prefer a secret manager or protected service environment in production.
-- `TELESRV_LOG_LEVEL` is read from the **process environment before the config file is loaded**; default `info`, with standard zap levels such as `debug`, `warn`, and `error`. Successful per-RPC traces are Debug-only, while errors, delivery fences and compatibility traces remain visible at Info or above. Putting this key only in `.env` has no effect.
 
 ## 2. MTProto listener, transport, and resource budgets
 
@@ -32,16 +31,14 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | Enables MTProto-over-WebSocket demultiplexing on the MTProto listener. |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | Browser WebSocket origin allow-list. `*` is for temporary debugging only. |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | Global physical connection admission limit. Negative disables this gate. |
-| `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | Per-source-IP physical connection limit. A single-host/NAT 10,000-session capacity run must explicitly raise it above the expected connection count (the local acceptance profile uses `20000`); negative disables this gate. |
+| `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | Per-source-IP physical connection limit. Negative disables this gate. |
 | `TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES` | int / `256` | Concurrent expensive RSA/DH handshakes. Negative disables this gate. |
 | `TELESRV_MTPROTO_RPC_MAX_INFLIGHT` | int / `32` | Per-connection concurrent RPC budget; non-positive values are normalized by the edge to its safe default. |
 | `TELESRV_MTPROTO_RPC_QUEUE_SIZE` | int / `64` | Per-connection queued RPC budget; non-positive values use the edge default. |
 | `TELESRV_MTPROTO_RPC_TIMEOUT` | duration / `30s` | End-to-end handler timeout for scheduled RPC work. |
 | `TELESRV_MTPROTO_RPC_GLOBAL_WORKERS` | int / `256` | Shared fair-scheduler worker count. |
-| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `32768` | Process-wide reserved/queued/in-flight RPC task and active-owner cap. The default covers a 10,000-session startup ramp while the 512 MiB materialization charge, per-connection/per-auth limits, and deadlines remain independent hard gates. |
+| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `8192` | Process-wide scheduled/in-flight RPC task cap. |
 | `TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES` | int64 charge bytes / `536870912` | Process-wide reserved/queued/in-flight RPC memory charge. Exact admission reserves a conservative typed-materialization charge from wire size and grows it atomically before a nested-gzip-expanded graph is decoded; grow failure rejects the complete candidate batch. This is not an equal amount of concurrently receivable wire bytes. |
-| `TELESRV_MTPROTO_RPC_DELIVERY_HOOK_WORKERS` | int / `32` | Bounded workers for post-physical-delivery correctness transitions such as delivered cursors and first-session readiness; keep this within downstream database concurrency. |
-| `TELESRV_MTPROTO_RPC_DELIVERY_HOOK_MAX_PENDING` | int / `16384` | Per-Server cap across reserved + queued + running delivery hooks; must be at least the worker count. Exhaustion fails closed instead of acknowledging a result and dropping state. |
 | `TELESRV_MTPROTO_RPC_EXECUTION_MAX_ENTRIES` | int / `262144` | Global cap for pending owners and compact unacknowledged execution receipts. Receipts retain request identity, execution outcome, and Layer admission metadata only—never TL bodies. `msgs_ack` removes them immediately; 331 seconds is only the no-ACK safety horizon. |
 | `TELESRV_MTPROTO_RPC_EXECUTION_AUTH_MAX_ENTRIES` | int / `32768` | Per-raw-auth owner/receipt cap; limits satisfy `global >= auth >= session`. |
 | `TELESRV_MTPROTO_RPC_EXECUTION_SESSION_MAX_ENTRIES` | int / `16384` | Per `raw auth key + session_id` owner/receipt cap. |
@@ -49,8 +46,7 @@ This document describes every setting loaded by `internal/config`. Defaults and 
 | `TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Process-wide reservation for transport wire bytes, maximum decrypted plaintext, and every live outer/nested gzip expansion, acquired before the corresponding payload allocation. |
 | `TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE` | int / `128` | Per-connection normal outbound mailbox capacity. |
 | `TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE` | int / `32` | Per-connection control-message mailbox capacity. |
-| `TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Process-wide hard cap for retained ordinary exact bodies, not file-download flow control. Immutable `upload.getFile` frames retain only their descriptor charge after the first write; per-session ACK windows govern logical file bytes. |
-| `TELESRV_MTPROTO_OUTBOUND_CRITICAL_GLOBAL_MAX_BYTES` | int64 bytes / `67108864` | Independent retained reserve for bootstrap/convergence RPC results. File bulk cannot consume it, so `auth.bindTempAuthKey`, `help.getConfig`, `users.getUsers`, and difference/state remain admissible. |
+| `TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Sole global budget for unacknowledged logical-session bodies. Reconnects reuse the same `msg_id/seq_no/body`; ACK, destroy, or six minutes offline releases it, with no second RPC cache/spool copy. |
 | `TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | Global budget for concurrent encrypted wire/codec/obfuscation scratch. |
 
 Nested gzip admission adds no environment setting. Code-enforced ceilings are
@@ -76,7 +72,7 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | `TELESRV_ADMIN_SCOPED_TOKENS` | `name:token:perm1,perm2` entries separated by `;` / empty | Additional Admin API bearer tokens carrying a bounded permission set each, so an integration gets exactly the rights it needs instead of the unrestricted `TELESRV_ADMIN_API_TOKEN`. A token may contain neither `:` nor whitespace, every entry must list at least one permission, names and tokens must be unique, and reusing `TELESRV_ADMIN_API_TOKEN` as a scoped token is refused because it would silently widen it to every permission. Any malformed entry fails startup rather than silently granting or dropping rights. |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
 | `TELESRV_BRAND_PRODUCT_NAME` | string / `Telesrv` | Parent product display name shared by the system account, login notices, invites, WebAuthn, built-in bots, and upstream visible-copy rewriting. Trimmed, non-empty, no control characters, at most 64 Unicode characters. |
-| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | Reserved public username of system account 777000. It is trimmed, loses an optional leading `@`, is normalized to lowercase, and must be a 5–32 character ASCII username starting with a letter. At startup, an ordinary user's editable username is cleared and returned to 777000; bots, other system users, channels, and collectible usernames are not seized automatically. |
+| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | Public username of system account 777000. It is trimmed, loses an optional leading `@`, is normalized to lowercase, and must be a 5–32 character ASCII username starting with a letter. |
 | `TELESRV_BRAND_DESKTOP_APP_NAME` | string / `Telesrv Desktop` | Desktop/Windows name returned by `account.getAuthorizations`; same validation as the product name. |
 | `TELESRV_BRAND_ANDROID_APP_NAME` | string / `Telesrv Android` | Android name shown in authorization lists; same validation as the product name. |
 | `TELESRV_BRAND_IOS_APP_NAME` | string / `Telesrv iOS` | iOS name shown in authorization lists; same validation as the product name. |
@@ -93,7 +89,12 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |
 | `TELESRV_PUBLIC_APP_NAME` | string / `TELESRV_BRAND_PRODUCT_NAME` | Public landing-page product name; trimmed, non-empty, no control characters, maximum 64 Unicode characters. |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / empty | Username/avatar/sticker/emoji/chatlist/collectible-gift landing pages, the hash-only moderation appeal form, and short-lived unique-gift/channel-revenue confirmation pages. Empty disables the listener; moderation `freeze_account` actions, local gift export, and channel revenue withdrawal then fail closed because telesrv cannot issue a reachable confirmation URL. Public landing pages remain read-only; only exact bearer-token POST routes can commit their aggregate. Production should bind loopback behind exact nginx routes with token-route access logs disabled. `.env.example` enables `127.0.0.1:2401` for development. |
-| `TELESRV_ALLOW_DEV_PAYMENTS` | bool / `false` | Serve the local dev/fiat Stars/Premium checkout (`/payments/dev-stars`). Denied by default so production never mints Stars or Premium without a real XTR payment; enable only in dev/test environments. |
+| `TELESRV_MINIAPP_BOTFATHER_TOKEN` | `<93372553>:<35-char-secret>` / empty | Server-only token secret used to sign and verify the local BotFather Mini App. When set, it is written to the built-in BotFather row before RPC/Web services start; it is never rendered in HTML or returned by list APIs. |
+| `TELESRV_MINIAPP_STICKERS_TOKEN` | `<1063110917>:<35-char-secret>` / empty | Server-only token secret used to sign and verify the local Stickers Mini App. A 35-character secret is required for state-changing requests; empty keeps the app unavailable rather than accepting forgeable init data. |
+| `TELESRV_CUSTOM_FRAGMENT_ENABLE` | bool / `false` | Enable the self-hosted TON mainnet gift withdrawal flow and its CustomFragment routes. Requires the public Web listener and a configured collection/signing key. |
+| `TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL` | HTTP(S) URL / `TELESRV_PUBLIC_BASE_URL` | Canonical external root for CustomFragment metadata, PNG posters, raw `.lottie.json`, and withdrawal URLs. Use a dedicated HTTPS host when native clients would otherwise classify the path as an internal app link. |
+| `TELESRV_CUSTOM_FRAGMENT_SIGNING_KEY_FILE` | path / `data/customfragment/mint-authority.key` | Ed25519 mint-authority key; keep it outside version control and stable across restarts. |
+| `TELESRV_CUSTOM_FRAGMENT_GIFT_COLLECTION` | TON basechain address / empty | Mainnet CustomFragment collection address. Required when the feature is enabled. |
 | `TELESRV_TELEGRAM_LOGIN_ENABLE` | bool / `false` | Mount the self-hosted Telegram Login/OIDC provider on `TELESRV_PUBLIC_LINK_WEB_ADDR`. Enabling it requires that listener and all key files below. |
 | `TELESRV_TELEGRAM_LOGIN_ISSUER` | absolute origin URL / `TELESRV_PUBLIC_BASE_URL` | Exact public issuer used in discovery and tokens. HTTPS is required by default; paths, credentials, query, and fragment are rejected. The next setting permits any HTTP host/IP. |
 | `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP` | bool / `false` | When enabled, permits any valid HTTP issuer, BotFather Web origin, redirect URI, and native HTTP callback, without loopback, subnet, or port restrictions. When disabled, those Web URLs still require HTTPS. |
@@ -440,12 +441,11 @@ key rings independently on different instances.
 
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
-| `TELESRV_POSTGRES_DSN` | optional secret DSN | Explicit primary durable business database connection. When empty, local development derives a DSN from `TELESRV_POSTGRES_PASSWORD`; production should set this explicitly with its TLS policy. |
-| `TELESRV_POSTGRES_PASSWORD` | secret string / `telesrv` | Password used by the legacy development Compose Postgres container and by the derived local DSN. Changing it does not change an existing PostgreSQL role; follow the rotation procedure in `docs/local-setup.md`. |
-| `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | Maximum connections for one pgxpool. `<=0` delegates to pgx defaults. New backends are also fenced by server-wide advisory admission on the PostgreSQL instance, so per-process maxima are not additive static budgets. |
-| `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool pre-warmed minimum. The minimum is retained; burst connections above it return their global admission slots after five idle seconds. |
+| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable` | Primary durable business database. Local `main` and `v2` use separate `telesrv_main` / `telesrv_v2` databases because their migration histories differ. Production must replace the development credentials and TLS policy. |
+| `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool maximum connections. `<=0` delegates to pgx defaults, which are usually too small for production outbox/RPC concurrency. |
+| `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool pre-warmed minimum connections. |
 | `TELESRV_REDIS_ADDR` | address / `127.0.0.1:6399` | Redis used for volatile codes, limits, and shared update/cache state. |
-| `TELESRV_REDIS_PASSWORD` | secret string / empty | Redis password, shared with the legacy development Compose container. Empty keeps the existing passwordless development behavior; restart clients after changing it. |
+| `TELESRV_REDIS_PASSWORD` | secret string / empty | Redis password. |
 | `TELESRV_REDIS_DB` | int / `0` | Redis logical database number. |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` language-pack seed directory. |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | Read-only snapshot generated by `cmd/giftfetch`, used for verified explicit imports in the admin UI. |
@@ -513,11 +513,11 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 |---|---|---|
 | `TELESRV_MAPBOX_TOKEN` | secret string / empty | Mapbox Static Images access token for `upload.getWebFile` map previews. Empty uses deterministic placeholders. |
 | `TELESRV_MAPTILE_CACHE_DIR` | path / `data/maptiles` | Disk cache for fetched map thumbnails, preserving byte-stable chunk downloads and limiting quota use. |
-| `TELESRV_GEOIP_ENDPOINTS` | list / empty | Opt-in ordered failover chain resolving session IPs to country/region text for `account.getAuthorizations` and the authorization returned by QR login approval. Every entry must contain `{ip}` and use `http`/`https`. Both the code default and `.env.example` leave this empty: locations stay `Unknown` and no GeoIP request is made. Enabling it discloses session IPs to the selected providers; review their policies or use a self-hosted proxy. Private, CGNAT, documentation, benchmarking, local and reserved addresses are filtered before HTTP, including mapped IPv4. Ready-made values: `https://api.ipapi.is/?q={ip}`, `https://reallyfreegeoip.org/json/{ip}`, `https://hackmyip.com/api/lookup?ip={ip}`, `https://get.geojs.io/v1/ip/geo/{ip}.json`. Unrecognised hosts use the generic JSON parser. |
+| `TELESRV_GEOIP_ENDPOINTS` | list / empty | Optional ordered failover chain of backends resolving session IPs to the country/region text shown by `account.getAuthorizations`. Every entry must contain the `{ip}` placeholder and use `http`/`https`; the first entry is the primary and unresolved addresses fall through to the next one. Empty keeps the feature disabled and the session list returns the `Unknown` placeholder. Only public routable peers are sent; private, loopback and link-local addresses never leave the host. Ready-made values: `https://api.ipapi.is/?q={ip}`, `https://reallyfreegeoip.org/json/{ip}`, `https://hackmyip.com/api/lookup?ip={ip}`, `https://get.geojs.io/v1/ip/geo/{ip}.json`. An unrecognised host uses a permissive generic JSON parser, so a self-hosted MaxMind proxy can be added as-is. |
 | `TELESRV_GEOIP_TIMEOUT` | duration / `2s` | Per-request timeout for each GeoIP backend. Must be positive and at most `10s`. |
 | `TELESRV_GEOIP_CONCURRENCY` | int / `4` | Maximum in-flight requests across all backends per session-list batch. Must be `1..32`. |
 | `TELESRV_GEOIP_CACHE_TTL` | duration / `24h` | Validity of a successfully resolved address, whichever backend resolved it. Must be positive and longer than the negative TTL. |
-| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | Validity of "no backend had an answer" (rate limit, provider timeout, network error, unknown IP). Written only after the whole chain has been tried. Caller cancellation or the total RPC lookup deadline never writes a negative entry or marks a provider down. Must be positive and shorter than `TELESRV_GEOIP_CACHE_TTL`. |
+| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | Validity of "no backend had an answer" (rate limit, timeout, network error, unknown IP). Written only after the whole chain has been tried, so one backend's coverage gap does not freeze the address. Must be positive and shorter than `TELESRV_GEOIP_CACHE_TTL`, otherwise one rate-limit window freezes the address until the next day. |
 | `TELESRV_GEOIP_CACHE_SIZE` | int / `4096` | Upper bound on cached addresses. Must be `1..1000000`. |
 | `TELESRV_GEOIP_RATE_LIMIT_THRESHOLD` | int / `3` | Consecutive HTTP 429 responses from one backend before it is skipped. Must be `1..100`. Counters are per backend, so one exhausted provider never affects the others. |
 | `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN` | duration / `2m` | How long a rate-limited backend receives no request at all. Must be positive and at most `1h`. |
@@ -535,23 +535,6 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 | `TELESRV_UPLOAD_INFLIGHT_MAX_BYTES` | int64 bytes / `4194304000` | Per-user unassembled upload-byte cap; `<=0` means unlimited. |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_PARTS` | int / `8000` | Per-user unassembled upload-part row cap; `<=0` means unlimited. |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_FILES` | int / `64` | Per-user concurrent unassembled `file_id` cap; `<=0` means unlimited. |
-
-GeoIP is display-only: it does not change authorization identity, session flags,
-stored IPs or update counters. The total lookup budget is 3 seconds. Cancellation
-stops new work and failover, joins in-flight workers before reading results, and
-keeps any already completed locations. Missing locations remain `Unknown`.
-IPv6 queries are limited to native global unicast; translation/transition and
-unallocated ranges are not sent. Special-use filtering follows the
-[IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/) and
-[IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/) registries.
-
-`ipapi.is` accepts both the flat anonymous response and the keyed `location`
-object described in its [API documentation](https://ipapi.is/developers.html).
-Add `&key=YOUR_KEY` to its URL template when using a key; unused ownership/threat
-fields do not participate in geolocation parsing. Startup and failure diagnostics
-contain provider hostnames and structured status only, never URL credentials,
-paths, query strings, raw HTTP errors or response bodies. Keep real endpoints and
-credentials in the untracked deployment configuration.
 
 ## 7. AI compose and business automation
 
@@ -593,62 +576,9 @@ The following fallback keys are accepted from the **process environment only**. 
 |---|---|---|
 | `TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES` | int / `262144` | Router temporary→permanent auth-key binding cache capacity. |
 | `TELESRV_TEMP_KEY_CACHE_TTL` | duration / `30m` | Recheck period; exact bind/revoke invalidation handles normal writes, while TTL covers cross-process/exception paths. |
-| `TELESRV_READ_MODEL_VERSION_CACHE_MAX` | int / `1000000` | In-process LRU capacity for durable read-model hashes. NOTIFY updates/invalidates entries; capacity pressure evicts one entry instead of flushing the whole cache. |
-| `TELESRV_READ_MODEL_VERSION_BATCH_MAX_KEYS` | int / `4096` | Maximum exact read-model selectors combined by the synchronous cross-request PostgreSQL loader. |
-| `TELESRV_READ_MODEL_VERSION_BATCH_WAIT` | duration / `250us` | Maximum collection delay for a version cold batch; every caller waits for its exact result. |
-| `TELESRV_READ_MODEL_VERSION_BATCH_QUEUE` | int / `16384` | Bounded version-selector queue; saturation fails explicitly and never starts per-request fallback reads. |
-| `TELESRV_READ_MODEL_VERSION_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one version batch query. |
-| `TELESRV_AUTH_KEY_GET_BATCH_MAX` | int / `256` | Maximum distinct first-frame permanent auth-key lookups/touches combined in one PostgreSQL query. |
-| `TELESRV_AUTH_KEY_GET_BATCH_WAIT` | duration / `250us` | Maximum synchronous collection delay for first-frame auth-key lookups. |
-| `TELESRV_AUTH_KEY_GET_BATCH_QUEUE` | int / `16384` | Bounded first-frame lookup queue; it must not be smaller than the batch maximum. |
-| `TELESRV_AUTH_KEY_GET_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one auth-key lookup batch. Revalidation after authentication remains a separate authoritative read. |
-| `TELESRV_CONTACT_REVERSE_BATCH_MAX_PAIRS` | int / `4096` | Maximum exact `(contact owner, viewer)` relationship pairs combined in one sparse PostgreSQL query. |
-| `TELESRV_CONTACT_REVERSE_BATCH_WAIT` | duration / `2ms` | Maximum synchronous collection delay for sparse reverse-contact pairs. |
-| `TELESRV_CONTACT_REVERSE_BATCH_QUEUE` | int / `16384` | Bounded reverse-contact pair queue; errors and saturation do not fall back to owner-wide scans. |
-| `TELESRV_CONTACT_REVERSE_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one exact reverse-contact batch query. |
-| `TELESRV_CONTACT_SNAPSHOT_CACHE_MAX_VIEWERS` | int / `16384` | Viewer LRU limit independently applied to owner contact-list and personal-photo snapshots; pressure evicts only the oldest item. Must be positive. |
-| `TELESRV_PROFILE_PHOTO_CACHE_MAX` | int / `200000` | Total positive/negative owner profile/fallback-ref LRU entries; pressure evicts one item. Must be positive. |
-| `TELESRV_PROFILE_PHOTO_CACHE_TTL` | duration / `24h` | Safety recheck for missed notifications or manual database edits. Exact-owner `profile_photo` NOTIFY and listener-reconnect flush provide normal freshness. Must be in `(0,168h]`. |
-| `TELESRV_PEER_IDENTITY_CACHE_MAX` | int / `1000000` | Entry bound for the combined viewer-independent username-vector and third-party-verification `peer_identity` LRU. Durable tokens plus NOTIFY invalidate positive and negative values exactly; permissions are never cached here. |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_CACHE_MAX` | int / `10000` | Maximum materialized owner dialog snapshots retained in-process. |
-| `TELESRV_DIALOG_PRIVATE_PEER_CACHE_MAX` | int / `500000` | Maximum private-dialog structural LRU entries; viewer-shaped user projections are excluded. |
-| `TELESRV_DIALOG_PRIVATE_PEER_CACHE_BYTES_MAX` | bytes / `268435456` | Approximate memory-weight limit for the private-dialog structural LRU. |
-| `TELESRV_DIALOG_DRAFT_CACHE_MAX` | int / `1000000` | Maximum positive/negative cloud-draft entries validated by `dialog_light`. |
-| `TELESRV_DIALOG_DRAFT_CACHE_BYTES_MAX` | bytes / `268435456` | Approximate memory-weight limit for the cloud-draft cache. |
-| `TELESRV_USER_PROJECTION_FACT_CACHE_MAX` | int / `1000000` | Per-cache entry bound for the durable freeze and collectible-phone positive/negative user-fact LRUs. |
-| `TELESRV_STORY_ACTIVE_PEER_CACHE_MAX` | int / `1000000` | Maximum viewer-independent active-story positive/negative candidates validated by `story_peer`; positive values self-expire at durable `expire_date`. |
-| `TELESRV_STORY_HIDDEN_LIST_CACHE_MAX` | int / `100000` | Maximum owner entries for sparse per-viewer `story_hidden_list` sets. |
-| `TELESRV_STORY_HIDDEN_LIST_CACHE_BYTES_MAX` | bytes / `67108864` | Approximate aggregate memory-weight limit for all viewer hidden-peer sets. |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_HEADERS_MAX` | int / `1000000` | Aggregate header-equivalent weight budget across materialized owner snapshots; enforced with the entry limit. The variable name is retained for deployment compatibility and does not mean the snapshot is header-only. |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_CACHE_TTL` | duration / `5m` | Safety TTL in addition to NOTIFY/version invalidation; it is not a correctness clock. |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_REDIS_TTL` | duration / `1h` | Redis lifetime for cross-process materialized owner dialog snapshots; durable generations validate correctness, while shared channel rows/top payloads are not duplicated per owner. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_CACHE_MAX` | int / `32768` | In-process LRU entry cap for session-readiness active-channel pages, covering 10,000 owners plus bounded page overlap. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_CACHE_TTL` | duration / `24h` | Missed-notification safety TTL for active-channel L1; durable generations provide normal freshness. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_REDIS_TTL` | duration / `24h` | Lifetime of cross-process, version-addressed active-channel ID pages; old-generation keys expire naturally. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_MAX` | int / `128` | Maximum distinct owner/page selectors combined in one PostgreSQL ordinality query after Redis misses. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_WAIT` | duration / `100ms` | Maximum synchronous cold-selector collection delay; it applies only to Redis misses. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_QUEUE` | int / `16384` | Bounded cold-selector queue; saturation fails explicitly instead of falling back per account. |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one active-channel cold batch query. |
-| `TELESRV_LAYER_ADVANCE_BATCH_MAX` | int / `256` | Maximum distinct raw-session Layer high-water inputs in one PostgreSQL statement; one session appears at most once per batch. |
-| `TELESRV_LAYER_ADVANCE_BATCH_WAIT` | duration / `250us` | Maximum synchronous microbatch collection delay for Layer fast attempts; callers wait for commit/failure. |
-| `TELESRV_LAYER_ADVANCE_BATCH_QUEUE` | int / `8192` | Bounded Layer-advance wait queue; it must not be smaller than the batch maximum. |
-| `TELESRV_LAYER_ADVANCE_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one shared batch SQL; it never enables asynchronous repair or success fallback. |
-| `TELESRV_BOOTSTRAP_READY_BATCH_MAX` | int / `32` | Maximum distinct `(user, auth-key)` baseline-readiness selectors in one PostgreSQL statement; one fence appears at most once per batch. |
-| `TELESRV_BOOTSTRAP_READY_BATCH_WAIT` | duration / `100ms` | Maximum synchronous post-response readiness collection delay; accepted callbacks wait for commit/failure. |
-| `TELESRV_BOOTSTRAP_READY_BATCH_QUEUE` | int / `16384` | Bounded readiness-selector wait queue; capacity pressure never silently drops a durable fence. |
-| `TELESRV_BOOTSTRAP_READY_BATCH_TIMEOUT` | duration / `5s` | Fail-closed timeout for one readiness batch SQL; failures leave the job pending. |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_MAX` | int / `512` | Maximum distinct users in one lifecycle last-seen PostgreSQL batch; duplicate users keep the maximum timestamp. |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_WAIT` | duration / `1s` | Maximum lifecycle last-seen microbatch collection delay; it does not affect live presence authority or wire `WasOnline`. |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_QUEUE` | int / `65536` | Bounded queue for accepted asynchronous lifecycle last-seen updates; saturation is counted and uses an authoritative direct-write safety valve. |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_TIMEOUT` | duration / `5s` | Per-attempt timeout for the batch database write plus exact user-cache invalidation; failures retry with bounded backoff. |
-| `TELESRV_PRESENCE_LAST_SEEN_DRAIN_TIMEOUT` | duration / `10s` | Bounded shutdown drain before persistence dependencies close. |
 | `TELESRV_CHANNEL_ROW_CACHE_MAX` | int / `50000` | Shared channel-row cache capacity. `<=0` disables both cache and its LISTEN/NOTIFY listener. |
-| `TELESRV_CHANNEL_TOP_MESSAGE_CACHE_MAX` | int / `100000` | Shared dialog-top channel-message cache capacity. Viewer read/reaction overlays are excluded; `channel_base` notifications invalidate by channel. `<=0` disables it. |
-| `TELESRV_CHANNEL_MEMBER_CACHE_MAX` | int / `1000000` | Channel member/access read-model capacity. Materialized owner snapshots warm it within the same invalidation epoch to cover active memberships for 10,000 online accounts; `<=0` disables it. |
-| `TELESRV_CHANNEL_DIALOG_CACHE_MAX` | int / `1000000` | Viewer/channel dialog projection cache capacity with channel-indexed invalidation; `<=0` disables it. |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_MAX` | int / `8192` | Maximum shared channel-difference base pages. Viewer access, unread state, and dialog overlays are excluded; `<=0` disables it. |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_BYTES_MAX` | bytes / `268435456` | Approximate aggregate memory bound for shared difference base pages, enforced with the entry limit. |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_TTL` | duration / `5m` | Out-of-band-write safety rail; normal invalidation uses stable-cut keys and read-model notifications. |
+| `TELESRV_CHANNEL_MEMBER_CACHE_MAX` | int / `100000` | Channel member/access read-model cache capacity; `<=0` disables it. |
+| `TELESRV_CHANNEL_DIALOG_CACHE_MAX` | int / `100000` | Viewer/channel dialog projection cache capacity; `<=0` disables it. |
 | `TELESRV_CHANNEL_BOOST_CACHE_MAX` | int / `100000` | Channel boost read-model cache capacity; `<=0` disables it. |
 | `TELESRV_CHANNEL_BOOST_CACHE_TTL` | duration / `10s` | Maximum stale window if a boost invalidation notification is missed. |
 
@@ -657,7 +587,7 @@ The following fallback keys are accepted from the **process environment only**. 
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
 | `TELESRV_OUTBOX_WORKERS` | int / `4` | Concurrent outbox workers. Stable logical sharding preserves per-user pts order. |
-| `TELESRV_OUTBOX_BATCH` | int / `10` | Maximum rows claimed per poll. The default bounds simultaneous user-lane fences during completion and avoids cross-user lock convoys. |
+| `TELESRV_OUTBOX_BATCH` | int / `100` | Maximum rows claimed per poll. Larger batches improve throughput but increase DB/push bursts. |
 | `TELESRV_OUTBOX_INTERVAL` | duration / `200ms` | Delay between outbox claims. |
 | `TELESRV_OUTBOX_LEASE_TIMEOUT` | duration / `30s` | Time before a `dispatching` row can be reclaimed. Must exceed worst-case batch delivery time. |
 | `TELESRV_OUTBOX_POISON_RETENTION` | duration / `1m` | Diagnostic retention for terminal failed delivery heads; durable update events remain recoverable through difference. |
@@ -796,8 +726,6 @@ Third-party verification is the other badge (`botVerification`, projected onto `
 **verifier bot** marks peers with its own icon and description. The operator grants verifier status to a bot; the bot
 then applies its mark through `bots.setCustomVerification`, or through the application queue its own dialog drives. It is
 never a second route to the platform checkmark above, and the two mechanisms never read or write each other's state.
-The client-editable description limit is published as appConfig
-`bot_verification_description_length_limit=128`.
 
 The icon is a custom emoji **document id**, and clients resolve it through `messages.getCustomEmojiDocuments`. An id
 that names no fetchable custom emoji document therefore renders as *nothing at all*: the badge is invisible, the peer
@@ -845,7 +773,7 @@ that cannot do what it says fails startup instead of being silently unreachable.
 | `TELESRV_TURN_RELAY_MIN_PORT` | int / `12500` | Inclusive relay allocation port minimum. |
 | `TELESRV_TURN_RELAY_MAX_PORT` | int / `12999` | Inclusive relay allocation port maximum; must not be below the minimum. Open the whole range in the firewall. |
 | `TELESRV_CALL_TURN_CREDENTIAL_TTL` | duration / `6h` | Per-call TURN credential lifetime. |
-| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | Forces `p2p_allowed=false` to test TURN relay paths. Private-call P2P is contacts-only by default (see TURN section): unless the two parties are reciprocal contacts, `p2p_allowed=false` always, so stranger callers can never learn each other's real IP. |
+| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | Forces `p2p_allowed=false` to test TURN relay paths. |
 | `TELESRV_SFU_ENABLE` | bool / `true` | Enables embedded group-call media forwarding. False leaves signaling-only M0 behavior. |
 | `TELESRV_SFU_UDP_PORT` | int / `12399` | Pion ICE UDPMux port; allow it through the firewall. |
 | `TELESRV_SFU_ADVERTISE_IP` | string / empty | Client-reachable ICE candidate IP. Empty falls back to `TELESRV_ADVERTISE_IP`; loopback silently breaks real-device media. |

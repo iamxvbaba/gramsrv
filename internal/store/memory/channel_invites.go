@@ -61,11 +61,6 @@ func (s *ChannelStore) InviteToChannel(_ context.Context, channelID, inviterUser
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
-		// 批量拉人同样可能包含"重新入群"的成员:归还纯 prehistory 来源的读边界
-		// (available_min_id 只增不减),否则他们永久看到空频道。
-		if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
-			member.AvailableMinID = 0
-		}
 		s.members[channelID][userID] = member
 		members = append(members, member)
 		added = append(added, userID)
@@ -737,10 +732,6 @@ func (s *ChannelStore) approveInviteImporterLocked(channel domain.Channel, invit
 		AvailableMinID:  minID,
 		AvailableMinPts: channelInitialAvailableMinPts(channel),
 		ReadInboxMaxID:  maxInt(minID, preJoinTopID),
-	}
-	// 通过邀请链接重新入群同样要归还 prehistory 读边界(只增不减,不显式归零则永久空频道)。
-	if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
-		member.AvailableMinID = 0
 	}
 	if s.members[channelID] == nil {
 		s.members[channelID] = make(map[int64]domain.ChannelMember)

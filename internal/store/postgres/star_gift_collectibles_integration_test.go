@@ -738,6 +738,70 @@ func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
 	}
 }
 
+func TestAdminUniqueStarGiftGrantDeliversWhenRecipientBlocked(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	recipient := createTestUser(t, ctx, NewUserStore(pool), "+1788"+suffix+"62", "BlockedGiftRecipient", "")
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Blocked Grant " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "blocked-grant-gift.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "blocked-grant-gift"), Animation: collectibleTestAnimation("blocked-grant-gift.tgs"),
+		Actor: "integration", CommandID: "blocked-grant-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create blocked grant catalog gift: %v", err)
+	}
+	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 2, SlugPrefix: "blocked-grant-" + suffix,
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "blocked-model-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "blocked-model-one"), Animation: collectibleTestAnimationPtr("blocked-model-one.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "blocked-pattern-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "blocked-pattern-one"), Animation: collectibleTestAnimationPtr("blocked-pattern-one.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop One", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
+		Actor: "integration", CommandID: "blocked-grant-pool-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("publish blocked grant collectible pool: %v", err)
+	}
+	upgrades := NewStarGiftUpgradeStore(pool, NewMessageStore(pool))
+	req := domain.AdminStarGiftGrant{
+		SenderID: domain.OfficialSystemUserID, Recipient: domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		GiftID: entry.Gift.ID, Upgrade: true, CommandKey: "admin-blocked-" + suffix, Date: now,
+		Message: "blocked collected", RecipientBlocked: true,
+		ModelAttributeID: revision.Models[0].ID, PatternAttributeID: revision.Patterns[0].ID, BackdropAttributeID: revision.Backdrops[0].ID,
+	}
+	granted, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("grant admin unique gift with blocked recipient: %v", err)
+	}
+	if granted.Duplicate || granted.Saved.MsgID <= 0 || granted.Saved.UpgradeMsgID <= 0 ||
+		granted.Unique.Num != 1 || granted.Unique.ID <= 0 {
+		t.Fatalf("blocked-recipient grant result=%+v", granted)
+	}
+	var savedCount, uniqueCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM peer_star_gifts WHERE owner_peer_type='user' AND owner_peer_id=$1 AND gift_id=$2`,
+		recipient.ID, entry.Gift.ID).Scan(&savedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM unique_star_gifts WHERE gift_id=$1`, entry.Gift.ID).Scan(&uniqueCount); err != nil {
+		t.Fatal(err)
+	}
+	if savedCount != 1 || uniqueCount != 1 {
+		t.Fatalf("blocked-recipient grant state: saved=%d unique=%d", savedCount, uniqueCount)
+	}
+}
+
 func collectibleTestAnimation(name string) domain.StarGiftAnimation {
 	return domain.StarGiftAnimation{
 		SourceName: name, SourceFormat: domain.StarGiftAnimationTGS,

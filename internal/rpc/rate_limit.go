@@ -9,6 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/iamxvbaba/td/tg"
+
 	"telesrv/internal/domain"
 )
 
@@ -133,4 +135,122 @@ func (r *Router) checkAuthCodeRateLimitKey(ctx context.Context, key string, limi
 		zap.String("dimension", dimension),
 		zap.Int("retry_after", retryAfter))
 	return floodWaitErr(retryAfter)
+}
+
+const (
+	srpRateLimitKeyPrefix        = "auth:srp:"
+	withdrawalRateLimitKeyPrefix = "payments:withdrawal:"
+	paymentRateLimitKeyPrefix    = "payments:move:"
+	defaultSRPRateWindow         = time.Minute
+	defaultWithdrawalRateWindow  = time.Minute
+	defaultPaymentRateWindow     = time.Minute
+)
+
+type sensitiveRateGroup int
+
+const (
+	rateGroupSRP sensitiveRateGroup = iota + 1
+	rateGroupWithdrawal
+	rateGroupPayment
+)
+
+func (g sensitiveRateGroup) String() string {
+	switch g {
+	case rateGroupSRP:
+		return "srp"
+	case rateGroupWithdrawal:
+		return "withdrawal"
+	default:
+		return "payment"
+	}
+}
+
+// WHY: SRP checks and money-moving RPCs are cheap to request and expensive to
+// serve, so the dispatch gate keeps one wire-id table instead of scattering
+// rate checks through the handlers; every other method misses in O(1).
+var sensitiveRPCRateGroups = map[uint32]sensitiveRateGroup{
+	tg.AuthCheckPasswordRequestTypeID:                    rateGroupSRP,
+	tg.AccountGetPasswordRequestTypeID:                   rateGroupSRP,
+	tg.AccountUpdatePasswordSettingsRequestTypeID:        rateGroupSRP,
+	tg.AccountDeleteAccountRequestTypeID:                 rateGroupSRP,
+	tg.MessagesEditChatCreatorRequestTypeID:              rateGroupSRP,
+	tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID:     rateGroupWithdrawal,
+	tg.PaymentsGetStarsRevenueWithdrawalURLRequestTypeID: rateGroupWithdrawal,
+	tg.PaymentsSendStarsFormRequestTypeID:                rateGroupPayment,
+	tg.PaymentsSendPaymentFormRequestTypeID:              rateGroupPayment,
+	tg.PaymentsUpgradeStarGiftRequestTypeID:              rateGroupPayment,
+	tg.PaymentsTransferStarGiftRequestTypeID:             rateGroupPayment,
+	tg.PaymentsSendStarGiftOfferRequestTypeID:            rateGroupPayment,
+	tg.PaymentsResolveStarGiftOfferRequestTypeID:         rateGroupPayment,
+	tg.PaymentsUpdateStarGiftPriceRequestTypeID:          rateGroupPayment,
+	tg.PaymentsCraftStarGiftRequestTypeID:                rateGroupPayment,
+	tg.PaymentsSaveStarGiftRequestTypeID:                 rateGroupPayment,
+	tg.PaymentsConvertStarGiftRequestTypeID:              rateGroupPayment,
+}
+
+// checkSensitiveRPCRateLimit runs in the dispatch pipeline before any handler
+// state: authorized calls spend a per-user budget, pre-auth calls (login-time
+// password checks) fall back to the physical auth key, and over-budget calls
+// get the same FLOOD_WAIT the other limiter gates return.
+func (r *Router) checkSensitiveRPCRateLimit(ctx context.Context, id uint32) error {
+	if r.deps.Limiter == nil {
+		return nil
+	}
+	group, ok := sensitiveRPCRateGroups[id]
+	if !ok {
+		return nil
+	}
+	var keyPrefix string
+	var limit int
+	var window time.Duration
+	switch group {
+	case rateGroupSRP:
+		keyPrefix, limit, window = srpRateLimitKeyPrefix, r.cfg.SRPRateLimit, r.cfg.SRPRateWindow
+		if window <= 0 {
+			window = defaultSRPRateWindow
+		}
+	case rateGroupWithdrawal:
+		keyPrefix, limit, window = withdrawalRateLimitKeyPrefix, r.cfg.WithdrawalRateLimit, r.cfg.WithdrawalRateWindow
+		if window <= 0 {
+			window = defaultWithdrawalRateWindow
+		}
+	default:
+		keyPrefix, limit, window = paymentRateLimitKeyPrefix, r.cfg.PaymentRateLimit, r.cfg.PaymentRateWindow
+		if window <= 0 {
+			window = defaultPaymentRateWindow
+		}
+	}
+	if limit <= 0 {
+		return nil
+	}
+	subject, ok := rateLimitSubject(ctx)
+	if !ok {
+		return nil
+	}
+	allowed, retryAfter, err := r.deps.Limiter.AllowN(ctx, keyPrefix+subject, 1, limit, window)
+	if err != nil {
+		return internalErr()
+	}
+	if allowed {
+		return nil
+	}
+	if retryAfter <= 0 {
+		retryAfter = 1
+	}
+	r.log.Debug("sensitive rpc rate limited",
+		zap.String("method", tlTypeName(id)),
+		zap.String("group", group.String()),
+		zap.Int("retry_after", retryAfter))
+	return floodWaitErr(retryAfter)
+}
+
+// rateLimitSubject prefers the authorized user; pre-auth password checks fall back to the connection's auth key.
+func rateLimitSubject(ctx context.Context) (string, bool) {
+	if userID, ok := UserIDFrom(ctx); ok && userID != 0 {
+		return "u:" + strconv.FormatInt(userID, 10), true
+	}
+	if rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx); ok && rawAuthKeyID != ([8]byte{}) {
+		return "k:" + hex.EncodeToString(rawAuthKeyID[:]), true
+	}
+	return "", false
 }

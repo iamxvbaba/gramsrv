@@ -159,7 +159,9 @@ func (s *LangPackStore) ReconcileSeed(_ context.Context, seed domain.LangPackSee
 		current, exists := s.m[key]
 		if exists {
 			if entry.Pack.Version < current.Version {
-				return 0, fmt.Errorf("langpack version rollback %s/%s: %d < %d", entry.Pack.LangPack, entry.Pack.LangCode, entry.Pack.Version, current.Version)
+				// Seed files lag a DB the server already advanced via runtime
+				// updates; keep the newer in-memory pack untouched.
+				continue
 			}
 			if oldHash := s.seedHashes[key]; oldHash != "" && entry.Pack.Version == current.Version && oldHash != entry.ContentHash {
 				return 0, fmt.Errorf("langpack %s/%s v%d content changed without version bump", entry.Pack.LangPack, entry.Pack.LangCode, entry.Pack.Version)
@@ -183,6 +185,9 @@ func (s *LangPackStore) ReconcileSeed(_ context.Context, seed domain.LangPackSee
 	written := 0
 	for key, entry := range wanted {
 		current, exists := s.m[key]
+		if exists && entry.Pack.Version < current.Version {
+			continue
+		}
 		if exists && current.Version == entry.Pack.Version && len(current.Strings) == entry.StringsCount && s.seedHashes[key] == entry.ContentHash {
 			continue
 		}

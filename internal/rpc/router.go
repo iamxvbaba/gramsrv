@@ -72,6 +72,18 @@ type Config struct {
 	// 阈值。<=0 关闭（默认行为不变）。
 	CatchupRateLimit  int
 	CatchupRateWindow time.Duration
+	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key while pre-auth); <=0 disables.
+	SRPRateLimit int
+	// SRPRateWindow is the sliding window for SRPRateLimit.
+	SRPRateWindow time.Duration
+	// WithdrawalRateLimit bounds star-gift and Stars revenue withdrawal RPCs per user; <=0 disables.
+	WithdrawalRateLimit int
+	// WithdrawalRateWindow is the sliding window for WithdrawalRateLimit.
+	WithdrawalRateWindow time.Duration
+	// PaymentRateLimit bounds money-moving payments.* RPCs (forms, transfers, offers, bids, upgrades, crafting) per user; <=0 disables.
+	PaymentRateLimit int
+	// PaymentRateWindow is the sliding window for PaymentRateLimit.
+	PaymentRateWindow time.Duration
 	// ChannelNudgeMaxTargets 是一次 fan-out 的 >cap nudge 目标上限（设计 Phase 0b 限速兜底）；
 	// <=0 用内置默认 defaultChannelNudgeMaxTargets。
 	ChannelNudgeMaxTargets int
@@ -821,6 +833,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 			return nil, err
 		}
 		if err := r.checkFrozenRPC(ctx, tlTypeName(id)); err != nil {
+			return nil, err
+		}
+		if err := r.checkSensitiveRPCRateLimit(ctx, id); err != nil {
 			return nil, err
 		}
 		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates

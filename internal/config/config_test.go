@@ -1367,6 +1367,20 @@ func TestLoadRejectsInvalidPublicBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadCustomFragmentPublicBaseURL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PUBLIC_BASE_URL", "https://links.example.test")
+	t.Setenv("TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL", "https://fragment.example.test")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CustomFragmentPublicBaseURL != "https://fragment.example.test" {
+		t.Fatalf("CustomFragmentPublicBaseURL = %q", cfg.CustomFragmentPublicBaseURL)
+	}
+}
+
 func TestLoadRejectsInvalidPublicLinkClientConfig(t *testing.T) {
 	tests := []struct {
 		name  string

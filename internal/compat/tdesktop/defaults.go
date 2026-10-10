@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	appConfigHash     = 19 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 20 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -57,6 +57,9 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "ephemeral_welcome_messages_max", Value: &tg.JSONNumber{Value: float64(domain.MaxWelcomeMessagesPerPeer)}},
 		// dialog_filters_enabled=true：TDesktop 据此(或已有文件夹)才显示 Settings→Folders 入口。
 		{Key: "dialog_filters_enabled", Value: &tg.JSONBool{Value: true}},
+		// settings_display_passkeys=true：按 core.telegram.org/api/passkeys，客户端仅在
+		// 此 key 为 true 时显示 Settings→Privacy→Passkeys 注册入口；缺 key 则无人能注册。
+		{Key: "settings_display_passkeys", Value: &tg.JSONBool{Value: true}},
 		{Key: "chatlist_update_period", Value: &tg.JSONNumber{Value: 3600}},
 		{Key: "chatlist_invites_limit_default", Value: &tg.JSONNumber{Value: 3}},
 		{Key: "chatlist_invites_limit_premium", Value: &tg.JSONNumber{Value: 20}},

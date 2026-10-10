@@ -126,8 +126,6 @@ Markers the gateway can return directly:
 | `USER_PERMISSION_DENIED` | 403 | emoji status without the required user grant |
 | `PREMIUM_ACCOUNT_REQUIRED` | 400 | emoji status without Premium |
 | `PREMIUM_GIFT_SELF_INVALID`, `PREMIUM_GIFT_CODE_INVALID`, `BALANCE_TOO_LOW`, `STAR_COUNT_INVALID`, `MONTH_COUNT_INVALID` | 400 | premium gift problems |
-| `GIFT_ID_INVALID`, `GIFT_NOT_AVAILABLE`, `GIFT_UPGRADE_UNAVAILABLE` | 400 | unsellable gift or upgrade |
-| `STAR_GIFT_UNAVAILABLE` | 500 | gift catalog or journal unreachable |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | conflicting `request_id`/`Idempotency-Key`, or bad charset/length |
 | `PAYMENT_FORM_INVALID` | 400 | payment form rejected |
 | `CHAT_WRITE_FORBIDDEN`, `CHAT_ADMIN_REQUIRED` | 400 | rights missing |
@@ -137,7 +135,7 @@ Markers the gateway can return directly:
 
 ## Method summary
 
-Implemented (39 methods + 1 file route):
+Implemented (37 methods + 1 file route):
 
 | Group | Methods |
 |---|---|
@@ -154,7 +152,6 @@ Implemented (39 methods + 1 file route):
 | Menus & status | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
 | Web apps & inline | `answerWebAppQuery`, `savePreparedInlineMessage` |
 | Payments | `giftPremiumSubscription` |
-| Gifts | `getAvailableGifts`, `sendGift` |
 | Blocked by design | `answerShippingQuery` (HTTP 501) |
 
 ## Updates
@@ -511,121 +508,6 @@ answer produced one.
 
 ## Methods: payments
 
-### `getAvailableGifts`
-
-The gift catalog available to the bot. Takes no parameters.
-
-Returns a `Gifts` object whose `gifts` array holds one `Gift` per entry:
-
-| Field | Type | Present when |
-|---|---|---|
-| `id` | string | always; this is the `gift_id` to pass when sending the gift |
-| `sticker` | `Sticker` | always, when the gift carries a sticker |
-| `star_count` | integer | always; the gift price in Stars |
-| `upgrade_star_count` | integer | only while a collectible upgrade is actually purchasable |
-| `total_count` | integer | limited gifts only |
-| `remaining_count` | integer | limited gifts only |
-
-```json
-{
-  "ok": true,
-  "result": {
-    "gifts": [
-      {
-        "id": "123456789",
-        "sticker": {"file_id": "...", "type": "regular", "width": 512, "height": 512},
-        "star_count": 15,
-        "upgrade_star_count": 10,
-        "total_count": 1000,
-        "remaining_count": 734
-      }
-    ]
-  }
-}
-```
-
-The source is the same enabled catalog MTProto `payments.getStarGifts` serves,
-so an `id` read here is also accepted by the MTProto checkout.
-`upgrade_star_count` is omitted once the unique-gift supply is exhausted: a price
-the server would then refuse is worse than no field at all. `total_count` and
-`remaining_count` are limited-gift inventory and are absent for unlimited gifts.
-
-The list is deliberately not filtered by availability: a sold-out gift and a gift
-that has not been released yet both stay in the result, and `remaining_count` is
-what tells a bot they cannot be bought right now. Availability is enforced in the
-purchase transaction.
-
-The intended flow is to read the id rather than hardcode it:
-
-```
-getAvailableGifts() → gifts[] → pick a gift → gift.id → send the gift
-```
-
-A deployment without a gift catalog answers HTTP `501 METHOD_NOT_FOUND`.
-
-### `sendGift`
-
-Buys a Star Gift out of the bot's Stars balance and sends it to a user or a
-channel. Answers `true`.
-
-| Parameter | Type | Notes |
-|---|---|---|
-| `gift_id` | string | required; an `id` from `getAvailableGifts` |
-| `user_id` | integer | user recipient; mutually exclusive with `chat_id` |
-| `chat_id` | integer | channel recipient (`-100...`); mutually exclusive with `user_id` |
-| `pay_for_upgrade` | bool | also buy the collectible upgrade of the gift |
-| `text` | string | up to 128 characters, shown together with the gift |
-| `text_parse_mode`, `text_entities` | | restricted entity set |
-| `request_id` | string | telesrv extension for idempotency |
-
-Exactly one of `user_id` / `chat_id` is required: neither is
-`CHAT_ID_INVALID`, both is `CHAT_ID_INVALID` too. Sending a gift to the bot
-itself, to another bot, to a frozen or to a system account is
-`USER_ID_INVALID`. In a channel the bot must have access, otherwise
-`CHAT_ID_INVALID`: a channel gift does not pass through the ordinary
-post-permission check, so the gateway performs that check itself.
-
-The transaction is exactly the MTProto `payments.sendStarsForm` one — catalog,
-payment form, Stars debit, collectible rights and the service message to the
-recipient. Hence the error codes:
-
-| Situation | Error |
-|---|---|
-| gift is unknown, sold out, exhausted, unreleased, auction-only or support-only | `GIFT_NOT_AVAILABLE` |
-| no upgrade configured, or the upgrade supply is exhausted | `GIFT_UPGRADE_UNAVAILABLE` |
-| Premium-only gift and the bot has no Premium | `PREMIUM_ACCOUNT_REQUIRED` |
-| not enough Stars | `BALANCE_TOO_LOW` |
-| recipient is frozen | `USER_PRIVACY_RESTRICTED` |
-| same `request_id` with a different request | `IDEMPOTENCY_KEY_INVALID` |
-| catalog or journal unreachable | `STAR_GIFT_UNAVAILABLE` (HTTP 500) |
-
-Availability is checked twice: here against the catalog, and again under a lock
-in the purchase transaction, so two bots racing for the last limited gift cannot
-drive the remaining count negative.
-
-A gift the bot paid for **cannot be exchanged for Stars**: the delivered
-instance always carries `convert_stars = 0`, so the client offers no exchange
-button and `payments.convertStarGift` answers `STARGIFT_INVALID` for such a
-gift — nothing is archived and nothing is credited. The catalog convert price is
-a refund of the *buyer's* Stars, while a bot's Stars live in
-`bot_stars_balances` — crediting them to the recipient would turn any gift into
-a way to pull money out of the bot's wallet. Gifts a bot sent before this rule
-existed are migrated to the same state (`convert_stars = 0`), and the
-sender-identity guard also covers historical rows the migration has not touched
-yet. A gift bought by a regular user keeps the catalog `convert_stars` and
-converts exactly as before.
-
-Idempotency is the same extension as `giftPremiumSubscription`: send an
-`Idempotency-Key` HTTP header (or the local `request_id` field), charset
-`[A-Za-z0-9]` plus `-`, `_`, `.`, `:` up to 128 characters. Replaying the same
-request returns `true` and does **not** charge Stars again; replaying it with a
-different recipient, gift, upgrade flag or text is
-`IDEMPOTENCY_KEY_INVALID`. Without a key every retry buys the gift again.
-
-The Premium requirement is checked against the bot's real status rather than
-assumed, so a bot cannot buy a Premium-only gift. The official way to grant
-Premium to a user is `giftPremiumSubscription`.
-
 ### `giftPremiumSubscription`
 
 Pays for a Premium gift out of the bot's Stars balance, through the same
@@ -743,7 +625,8 @@ commonly reached ones:
   `stopMessageLiveLocation`, `stopPoll`;
 - media groups and the rest of the `send*` surface: `sendMediaGroup`,
   `sendPoll`, `sendDice`, `sendGame`, `sendChatAction`;
-- payments: `createInvoiceLink`, `getStarTransactions`, `getMyStarBalance`;
+- payments: `createInvoiceLink`, `sendInvoice`, `answerPreCheckoutQuery`,
+  `answerShippingQuery`, `getStarTransactions`, `refundStarPayment`;
 - chat administration: `banChatMember`, `unbanChatMember`,
   `restrictChatMember`, `promoteChatMember`, `setChatPermissions`,
   `setChatPhoto`, `deleteChatPhoto`, `pinChatMessage`, `unpinChatMessage`,

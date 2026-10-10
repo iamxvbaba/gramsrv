@@ -24,6 +24,17 @@ const maxInflightRPCBytes = 32 << 20 // 32 MiB
 // rpcCloseWaitTimeout 是连接/Server 关闭时等待在途 RPC 或共享 worker 退出的上限。
 const rpcCloseWaitTimeout = 5 * time.Second
 
+// A cross-collection craft renders and reviews the new animation with an AI
+// provider before committing the gift. Keep this exception scoped to that RPC.
+const crossCraftRPCTimeout = 210 * time.Second
+
+func inboundRPCTimeout(method string, configured time.Duration) time.Duration {
+	if method == "payments.craftStarGift" && configured < crossCraftRPCTimeout {
+		return crossCraftRPCTimeout
+	}
+	return configured
+}
+
 type inboundRPC struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -693,13 +704,6 @@ func (r *inboundRPCBatchReservation) commit(tasks []inboundRPC) (result error) {
 		// and execution latency starts only when the fully admitted batch becomes
 		// runnable, not while it is waiting behind those independent barriers.
 		enqueuedAt := time.Now()
-		deadline := time.Time{}
-		if c.rpcTimeout > 0 {
-			deadline = enqueuedAt.Add(c.rpcTimeout)
-		}
-		if ctxDeadline, ok := r.ctx.Deadline(); ok && (deadline.IsZero() || ctxDeadline.Before(deadline)) {
-			deadline = ctxDeadline
-		}
 		globals = make([]*inboundRPCGlobalReservation, len(r.entries))
 		for i := range r.entries {
 			globals[i] = r.entries[i].global
@@ -719,6 +723,13 @@ func (r *inboundRPCBatchReservation) commit(tasks []inboundRPC) (result error) {
 			for i := range tasks {
 				task := tasks[i]
 				entry := r.entries[i]
+				deadline := time.Time{}
+				if timeout := inboundRPCTimeout(entry.method, c.rpcTimeout); timeout > 0 {
+					deadline = enqueuedAt.Add(timeout)
+				}
+				if ctxDeadline, ok := r.ctx.Deadline(); ok && (deadline.IsZero() || ctxDeadline.Before(deadline)) {
+					deadline = ctxDeadline
+				}
 				if deadline.IsZero() {
 					task.ctx, task.cancel = context.WithCancel(r.ctx)
 				} else {

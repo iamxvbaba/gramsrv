@@ -11,6 +11,7 @@ import {
   Megaphone,
   BadgeDollarSign,
   Star,
+  Wallet,
   ShieldAlert,
   ShieldCheck,
   Trophy,
@@ -20,12 +21,13 @@ import {
   Gift,
   ScrollText,
   Settings,
-  Smile
+  Smile,
+  Tag
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
-import { permissionAuditRead, permissionAdminsManage, permissionBotVerificationReview, permissionMessagesRead, permissionPremiumManage, permissionServerManage, permissionStarsRead, permissionVerificationReview, useCan } from "../permissions";
+import { permissionAuditRead, permissionAdminsManage, permissionBotVerificationReview, permissionDonationsManage, permissionMessagesRead, permissionPremiumManage, permissionPricesManage, permissionServerManage, permissionStarsRead, permissionVerificationReview, useCan } from "../permissions";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
@@ -64,6 +66,7 @@ export function Shell({
   // The verification queue is hidden for a session without verification.review:
   // the entry would only lead to a 403 (and the route itself is gated as well).
   const canReviewVerification = useCan(permissionVerificationReview);
+  const canManageDonations = useCan(permissionDonationsManage);
   // Same reasoning for the third-party queue, which has its own right: the two
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
@@ -76,6 +79,7 @@ export function Shell({
   const canReadAudit = useCan(permissionAuditRead);
   const canManageServer = useCan(permissionServerManage);
   const canReadStars = useCan(permissionStarsRead);
+  const canManagePrices = useCan(permissionPricesManage);
   const canReadMessages = useCan(permissionMessagesRead);
 
   // Server identity (name/icon) is admin-editable per Server Settings ->
@@ -186,6 +190,9 @@ export function Shell({
           {canReadStars && (
             <NavLink icon={<Star size={16} />} href="/stars" route={route} navigate={navigate}>{t("layout.stars")}</NavLink>
           )}
+          {canManagePrices && (
+            <NavLink icon={<Tag size={16} />} href="/prices" route={route} navigate={navigate}>{t("layout.prices")}</NavLink>
+          )}
           <NavLink
             icon={<Gift size={16} />}
             href="/gifts"
@@ -204,6 +211,9 @@ export function Shell({
           >
             {t("layout.grants")}
           </NavLink>
+          {canManageDonations && (
+            <NavLink icon={<Wallet size={16} />} href="/donations" route={route} navigate={navigate}>{t("layout.donations")}</NavLink>
+          )}
           <NavLink
             icon={<AtSign size={16} />}
             href="/collectible-usernames"

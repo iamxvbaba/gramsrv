@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"net/netip"
 	"net/url"
 	"os"
@@ -90,6 +91,9 @@ type Config struct {
 	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
 	// app/store 事实源，不维护独立 bot 状态。
 	BotAPIAddr string
+	// GramsrvBotChatIDs is the exact private-chat allowlist for the built-in
+	// @gramsrv operator bot. Values are numeric user/chat IDs, never usernames.
+	GramsrvBotChatIDs []int64
 	// AdminAPIAddr 是 telesrv 进程内管理写 API 监听地址；为空关闭。
 	AdminAPIAddr string
 	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
@@ -122,6 +126,33 @@ type Config struct {
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
 	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
 	PublicLinkWebAddr string
+	// CustomFragment enables mainnet withdrawal of unique Gramsrv gifts. The
+	// mint authority key is file-backed; the server never exposes it to the Web
+	// App. Username minting is intentionally out of scope.
+	CustomFragmentEnabled bool
+	// CustomFragmentPublicBaseURL may use a host distinct from PublicBaseURL so
+	// native clients open withdrawal capabilities in a browser instead of
+	// interpreting their path as an internal username link.
+	CustomFragmentPublicBaseURL       string
+	CustomFragmentSigningKeyFile      string
+	CustomFragmentGiftCollection      string
+	CustomFragmentCollectionName      string
+	CustomFragmentMintAmountNanoton   int64
+	CustomFragmentSubwalletID         int
+	CustomFragmentAuthorizationTTL    time.Duration
+	CustomFragmentLiteserverConfigURL string
+	// StarGiftClaim exposes the @claim Mini App. Telegram init data binds the
+	// Gramsrv profile; TON Proof plus a lite-server read binds the current wallet
+	// and NFT owner before host_id is updated.
+	StarGiftClaimEnabled           bool
+	StarGiftClaimPublicBaseURL     string
+	StarGiftClaimBotToken          string
+	StarGiftClaimTestEnabled       bool
+	StarGiftClaimTestPublicBaseURL string
+	StarGiftClaimTestBotToken      string
+	StarGiftClaimChallengeTTL      time.Duration
+	StarGiftClaimProofTTL          time.Duration
+	StarGiftClaimInitDataTTL       time.Duration
 	// AllowDevPayments enables the local dev/fiat Stars/Premium checkout
 	// (/payments/dev-stars). Denied by default; enable only in dev/test
 	// environments so production never mints Stars or Premium without a real
@@ -204,17 +235,6 @@ type Config struct {
 
 	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
 	DevAuthCode string
-	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
-	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
-	// internal/identity.Store 设置覆盖时生效（见 domain.ResolveWelcomeMessageTemplate）。
-	// 支持 {{server_name}} 占位符；默认取 domain.DefaultWelcomeMessage{Phone,Email}Template。
-	WelcomeMessagePhoneTemplate string
-	WelcomeMessageEmailTemplate string
-	// LoginCodeMessageTemplate 是 777000 登录码投递消息的回退模板（登录码不分渠道，
-	// 只有一份，见 domain.ResolveLoginCodeMessageTemplate），仅在管理面板未在
-	// internal/identity.Store 设置覆盖时生效。支持 {{server_name}}，且要求 {{code}}
-	// 占位符恰好出现一次；默认取 domain.DefaultLoginCodeMessageTemplate。
-	LoginCodeMessageTemplate string
 	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
 	AuthCodeTTL time.Duration
 	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
@@ -235,6 +255,17 @@ type Config struct {
 	LoginEmailRequireSetup bool
 	// LoginEmailCodeLength 是邮箱验证码长度。
 	LoginEmailCodeLength int
+	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate 是 777000 登录成功后的
+	// 欢迎消息（每次手机号/邮箱登录完成即发送）的回退模板——仅在管理面板未在
+	// internal/identity.Store 设置覆盖时生效（见 domain.ResolveWelcomeMessageTemplate）。
+	// 支持 {{server_name}} 占位符；默认取 domain.DefaultWelcomeMessage{Phone,Email}Template。
+	WelcomeMessagePhoneTemplate string
+	WelcomeMessageEmailTemplate string
+	// LoginCodeMessageTemplate 是 777000 登录码投递消息的回退模板（登录码不分渠道，
+	// 只有一份，见 domain.ResolveLoginCodeMessageTemplate），仅在管理面板未在
+	// internal/identity.Store 设置覆盖时生效。支持 {{server_name}}，且要求 {{code}}
+	// 占位符恰好出现一次；默认取 domain.DefaultLoginCodeMessageTemplate。
+	LoginCodeMessageTemplate string
 	// PhoneCodeDeliveryProvider 选择普通登录/注册与改号验证码的投递方式：
 	// development 保留固定码与 777000 app-code；webhook 使用随机 SMS code。
 	PhoneCodeDeliveryProvider string
@@ -244,6 +275,10 @@ type Config struct {
 	OTPWebhookURL     string
 	OTPWebhookSecret  string
 	OTPWebhookTimeout time.Duration
+	// ASRURL/ASRTimeout 指向本地 ASR HTTP 后端（whisper-server 的 /inference）。
+	// URL 为空则语音转文字不可用，messages.transcribeAudio 显式回 TRANSCRIPTION_FAILED。
+	ASRURL     string
+	ASRTimeout time.Duration
 	// SMTP* 是 email provider=smtp 时使用的出站邮件配置。
 	SMTPHost     string
 	SMTPPort     int
@@ -489,6 +524,26 @@ type Config struct {
 	CatchupRateLimit int
 	// CatchupRateWindow 是 catch-up 限流窗口。
 	CatchupRateWindow time.Duration
+	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key while pre-auth); <=0 disables.
+	SRPRateLimit int
+	// SRPRateWindow is the sliding window for SRPRateLimit.
+	SRPRateWindow time.Duration
+	// WithdrawalRateLimit bounds star-gift and Stars revenue withdrawal RPCs per user; <=0 disables.
+	WithdrawalRateLimit int
+	// WithdrawalRateWindow is the sliding window for WithdrawalRateLimit.
+	WithdrawalRateWindow time.Duration
+	// PaymentRateLimit bounds money-moving payments.* RPCs (forms, transfers, offers, bids, upgrades, crafting) per user; <=0 disables.
+	PaymentRateLimit int
+	// PaymentRateWindow is the sliding window for PaymentRateLimit.
+	PaymentRateWindow time.Duration
+	// ClaimAPIRateLimit bounds the claim Mini App proof/mint/admin API per client IP; <=0 disables.
+	ClaimAPIRateLimit int
+	// ClaimAPIRateWindow is the sliding window for ClaimAPIRateLimit.
+	ClaimAPIRateWindow time.Duration
+	// ClaimWithdrawRateLimit bounds the claim Mini App withdrawal/SRP password API per client IP; <=0 disables.
+	ClaimWithdrawRateLimit int
+	// ClaimWithdrawRateWindow is the sliding window for ClaimWithdrawRateLimit.
+	ClaimWithdrawRateWindow time.Duration
 	// ChannelNudgeMaxTargets 是一次 fan-out >cap nudge 的目标上限；<=0 用内置默认。
 	ChannelNudgeMaxTargets int
 	// UpdateEventRetention 是 durable update log 保留期；只清理已被水位/state 覆盖的事件。
@@ -607,6 +662,20 @@ type Config struct {
 	// RatingActivityCap bounds the activity component so activity alone cannot
 	// outweigh Stars and moderation; 0 leaves it uncapped.
 	RatingActivityCap int64
+	// DonationWalletKeyPath is where the crypto donations AES-256-GCM
+	// encryption key lives on disk -- generated automatically on first run,
+	// same "works out of the box" pattern as RSAKeyPath. The wallet mnemonic
+	// itself is generated automatically too, the first time the server
+	// starts with a store that doesn't have one yet. See docs/donations.md.
+	DonationWalletKeyPath string
+	// DonationWalletKey, if set, overrides DonationWalletKeyPath with a
+	// literal 64-hex-char key instead of reading/generating a local file --
+	// for an operator who wants to supply their own (e.g. from a secrets
+	// manager) rather than let the server manage a key file.
+	DonationWalletKey string
+	// DonationPollInterval is how often each enabled chain's watcher polls
+	// for new blocks.
+	DonationPollInterval time.Duration
 	// VerificationEnabled controls official platform verification: the @verifybot
 	// application flow and the panel's review queue. Disabled refuses every
 	// verification use case explicitly; already-verified peers keep their badge,
@@ -774,6 +843,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_BASE_URL: %w", err)
 	}
+	customFragmentPublicBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL", publicBaseURL))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL: %w", err)
+	}
+	starGiftClaimPublicBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_STAR_GIFT_CLAIM_PUBLIC_BASE_URL", publicBaseURL))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_PUBLIC_BASE_URL: %w", err)
+	}
 	brandConfig := branding.DefaultConfig()
 	brandConfig.ProductName = envOr("TELESRV_BRAND_PRODUCT_NAME", brandConfig.ProductName)
 	brandConfig.ProductUsername = envOr("TELESRV_BRAND_PRODUCT_USERNAME", brandConfig.ProductUsername)
@@ -835,6 +912,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	gramsrvBotChatIDs, err := parsePositiveInt64List(envListOr("TELESRV_GRAMSRV_BOT_CHAT_IDS", nil))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_GRAMSRV_BOT_CHAT_IDS: %w", err)
+	}
 	premiumBotUsername := strings.TrimPrefix(strings.TrimSpace(envOr("TELESRV_PREMIUM_BOT_USERNAME", "premiumbot")), "@")
 	if !domain.ValidBotUsername(premiumBotUsername) {
 		return Config{}, fmt.Errorf("TELESRV_PREMIUM_BOT_USERNAME must be a valid username")
@@ -883,10 +964,10 @@ func Load() (Config, error) {
 		MTProtoOutboundQueueSize:              envIntOr("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", 128),
 		MTProtoOutboundControlQueueSize:       envIntOr("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", 32),
 		MTProtoOutboundTrackedGlobalMaxBytes:  envInt64Or("TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES", 512<<20),
-		MTProtoOutboundCriticalGlobalMaxBytes: envInt64Or("TELESRV_MTPROTO_OUTBOUND_CRITICAL_GLOBAL_MAX_BYTES", 64<<20),
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
 		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		GramsrvBotChatIDs:                     gramsrvBotChatIDs,
 		AdminAPIAddr:                          envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
 		AdminAPIToken:                         envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:                         publicBaseURL,
@@ -899,7 +980,24 @@ func Load() (Config, error) {
 		PublicWebBaseURL:                      publicWebBaseURL,
 		PublicAppName:                         publicAppName,
 		PublicLinkWebAddr:                     envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
-		AllowDevPayments:                      envBoolOr("TELESRV_ALLOW_DEV_PAYMENTS", false),
+		CustomFragmentEnabled:                 envBoolOr("TELESRV_CUSTOM_FRAGMENT_ENABLE", false),
+		CustomFragmentPublicBaseURL:           customFragmentPublicBaseURL,
+		CustomFragmentSigningKeyFile:          envAllowEmptyOr("TELESRV_CUSTOM_FRAGMENT_SIGNING_KEY_FILE", ""),
+		CustomFragmentGiftCollection:          envAllowEmptyOr("TELESRV_CUSTOM_FRAGMENT_GIFT_COLLECTION", ""),
+		CustomFragmentCollectionName:          envOr("TELESRV_CUSTOM_FRAGMENT_COLLECTION_NAME", "InvGram Gifts"),
+		CustomFragmentMintAmountNanoton:       envInt64Or("TELESRV_CUSTOM_FRAGMENT_MINT_AMOUNT_NANOTON", 80_000_000),
+		CustomFragmentSubwalletID:             envIntOr("TELESRV_CUSTOM_FRAGMENT_SUBWALLET_ID", 0x4752414d),
+		CustomFragmentAuthorizationTTL:        envDurationOr("TELESRV_CUSTOM_FRAGMENT_AUTHORIZATION_TTL", 5*time.Minute),
+		CustomFragmentLiteserverConfigURL:     envOr("TELESRV_CUSTOM_FRAGMENT_LITESERVER_CONFIG_URL", "https://ton-blockchain.github.io/global.config.json"),
+		StarGiftClaimEnabled:                  envBoolOr("TELESRV_STAR_GIFT_CLAIM_ENABLE", false),
+		StarGiftClaimPublicBaseURL:            starGiftClaimPublicBaseURL,
+		StarGiftClaimBotToken:                 envAllowEmptyOr("TELESRV_STAR_GIFT_CLAIM_BOT_TOKEN", ""),
+		StarGiftClaimTestEnabled:              envBoolOr("TELESRV_STAR_GIFT_CLAIM_TEST_ENABLE", false),
+		StarGiftClaimTestPublicBaseURL:        envAllowEmptyOr("TELESRV_STAR_GIFT_CLAIM_TEST_PUBLIC_BASE_URL", ""),
+		StarGiftClaimTestBotToken:             envAllowEmptyOr("TELESRV_STAR_GIFT_CLAIM_TEST_BOT_TOKEN", ""),
+		StarGiftClaimChallengeTTL:             envDurationOr("TELESRV_STAR_GIFT_CLAIM_CHALLENGE_TTL", 5*time.Minute),
+		StarGiftClaimProofTTL:                 envDurationOr("TELESRV_STAR_GIFT_CLAIM_PROOF_TTL", 5*time.Minute),
+		StarGiftClaimInitDataTTL:              envDurationOr("TELESRV_STAR_GIFT_CLAIM_INIT_DATA_TTL", 15*time.Minute),
 		TelegramLoginEnabled:                  envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
 		TelegramLoginIssuer:                   strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),
 		TelegramLoginAllowHTTP:                envBoolOr("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", false),
@@ -929,6 +1027,8 @@ func Load() (Config, error) {
 		AdminUIPassword:                       envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:                          envOr("TELESRV_ADMIN_UI_TOKEN", ""),
 		AdminSessionKey:                       envOr("TELESRV_ADMIN_SESSION_KEY", ""),
+		MTProtoOutboundCriticalGlobalMaxBytes: envInt64Or("TELESRV_MTPROTO_OUTBOUND_CRITICAL_GLOBAL_MAX_BYTES", 64<<20),
+		AllowDevPayments:                      envBoolOr("TELESRV_ALLOW_DEV_PAYMENTS", false),
 
 		// 用 127.0.0.1 而非 localhost：localhost 在 Windows 上会先解析到 IPv6 ::1，而 Docker
 		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost
@@ -942,9 +1042,6 @@ func Load() (Config, error) {
 		RedisDB:          envIntOr("TELESRV_REDIS_DB", 0),
 
 		DevAuthCode:                       envOr("TELESRV_DEV_AUTH_CODE", "12345"),
-		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
-		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
-		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),
 		AuthCodeTTL:                       envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
 		PhoneCodeLength:                   envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
 		AuthCodeMaxAttempts:               envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
@@ -954,11 +1051,16 @@ func Load() (Config, error) {
 		LoginEmailEnable:                  envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:            envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		LoginEmailCodeLength:              envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
+		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
+		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),
 		PhoneCodeDeliveryProvider:         strings.ToLower(strings.TrimSpace(envOr("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "development"))),
 		EmailCodeDeliveryProvider:         strings.ToLower(strings.TrimSpace(envOr("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "smtp"))),
 		OTPWebhookURL:                     envOr("TELESRV_OTP_WEBHOOK_URL", ""),
 		OTPWebhookSecret:                  envOr("TELESRV_OTP_WEBHOOK_SECRET", ""),
 		OTPWebhookTimeout:                 envDurationOr("TELESRV_OTP_WEBHOOK_TIMEOUT", 5*time.Second),
+		ASRURL:                            strings.TrimSpace(envOr("TELESRV_ASR_URL", "")),
+		ASRTimeout:                        envDurationOr("TELESRV_ASR_TIMEOUT", 120*time.Second),
 		SMTPHost:                          envOr("TELESRV_SMTP_HOST", ""),
 		SMTPPort:                          envIntOr("TELESRV_SMTP_PORT", 587),
 		SMTPUsername:                      envOr("TELESRV_SMTP_USERNAME", ""),
@@ -1084,6 +1186,18 @@ func Load() (Config, error) {
 		SendRateWindow:         envDurationOr("TELESRV_SEND_RATE_WINDOW", time.Minute),
 		CatchupRateLimit:       envIntOr("TELESRV_CATCHUP_RATE_LIMIT", 0),
 		CatchupRateWindow:      envDurationOr("TELESRV_CATCHUP_RATE_WINDOW", time.Minute),
+		SRPRateLimit:           envIntOr("TELESRV_SRP_RATE_LIMIT", 10),
+		SRPRateWindow:          envDurationOr("TELESRV_SRP_RATE_WINDOW", time.Minute),
+		WithdrawalRateLimit:    envIntOr("TELESRV_WITHDRAWAL_RATE_LIMIT", 5),
+		WithdrawalRateWindow:   envDurationOr("TELESRV_WITHDRAWAL_RATE_WINDOW", time.Minute),
+		PaymentRateLimit:       envIntOr("TELESRV_PAYMENT_RATE_LIMIT", 30),
+		PaymentRateWindow:      envDurationOr("TELESRV_PAYMENT_RATE_WINDOW", time.Minute),
+		ClaimAPIRateLimit:      envIntOr("TELESRV_CLAIM_API_RATE_LIMIT", 60),
+		ClaimAPIRateWindow:     envDurationOr("TELESRV_CLAIM_API_RATE_WINDOW", time.Minute),
+		ClaimWithdrawRateLimit: envIntOr("TELESRV_CLAIM_WITHDRAW_RATE_LIMIT", 10),
+		ClaimWithdrawRateWindow: envDurationOr(
+			"TELESRV_CLAIM_WITHDRAW_RATE_WINDOW", time.Minute,
+		),
 		ChannelNudgeMaxTargets: envIntOr("TELESRV_CHANNEL_NUDGE_MAX_TARGETS", 0),
 		UpdateEventRetention:   envDurationOr("TELESRV_UPDATE_EVENT_RETENTION", 168*time.Hour),
 		BotAPIUpdateRetention:  envDurationOr("TELESRV_BOT_API_UPDATE_RETENTION", 24*time.Hour),
@@ -1126,6 +1240,9 @@ func Load() (Config, error) {
 		StarGiftResellDelay:              envDurationOr("TELESRV_STARGIFT_RESELL_DELAY", 0),
 		StarGiftCraftDelay:               envDurationOr("TELESRV_STARGIFT_CRAFT_DELAY", 0),
 		StarGiftCraftChancePermille:      envIntOr("TELESRV_STARGIFT_CRAFT_CHANCE_PERMILLE", 250),
+		DonationWalletKeyPath:            envOr("TELESRV_DONATION_WALLET_KEY_PATH", "data/donation_wallet.key"),
+		DonationWalletKey:                strings.TrimSpace(envAllowEmptyOr("TELESRV_DONATION_WALLET_KEY", "")),
+		DonationPollInterval:             envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),
 
 		RatingEnabled:           envBoolOr("TELESRV_RATING_ENABLED", true),
 		RatingPendingDelay:      envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
@@ -1202,6 +1319,9 @@ func Load() (Config, error) {
 	if err := validateRPCExecutionConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateASRConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	if cfg.ContactSnapshotCacheMaxViewers <= 0 {
 		return Config{}, fmt.Errorf("TELESRV_CONTACT_SNAPSHOT_CACHE_MAX_VIEWERS must be positive")
 	}
@@ -1227,6 +1347,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if err := validateTelegramLoginConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateCustomFragmentConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateStarGiftClaimConfig(cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateGeoIPConfig(cfg); err != nil {
@@ -1351,6 +1477,78 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+func validateCustomFragmentConfig(cfg Config) error {
+	if !cfg.CustomFragmentEnabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
+		return fmt.Errorf("TELESRV_PUBLIC_LINK_WEB_ADDR is required when CustomFragment is enabled")
+	}
+	fragmentURL, err := url.Parse(strings.TrimSpace(cfg.CustomFragmentPublicBaseURL))
+	if err != nil || fragmentURL.Scheme != "https" || fragmentURL.Host == "" {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL must be an absolute HTTPS URL")
+	}
+	if strings.TrimSpace(cfg.CustomFragmentSigningKeyFile) == "" || strings.TrimSpace(cfg.CustomFragmentGiftCollection) == "" {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_SIGNING_KEY_FILE and TELESRV_CUSTOM_FRAGMENT_GIFT_COLLECTION are required")
+	}
+	if name := strings.TrimSpace(cfg.CustomFragmentCollectionName); name == "" || len(name) > 80 {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_COLLECTION_NAME must be 1..80 bytes")
+	}
+	if cfg.CustomFragmentMintAmountNanoton < 40_000_000 || cfg.CustomFragmentMintAmountNanoton > 2_000_000_000 {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_MINT_AMOUNT_NANOTON must be 40000000..2000000000")
+	}
+	if cfg.CustomFragmentSubwalletID < 0 || uint64(cfg.CustomFragmentSubwalletID) > uint64(math.MaxUint32) {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_SUBWALLET_ID must be uint32")
+	}
+	if cfg.CustomFragmentAuthorizationTTL < time.Minute || cfg.CustomFragmentAuthorizationTTL > 15*time.Minute {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_AUTHORIZATION_TTL must be 1m..15m")
+	}
+	configURL, err := url.Parse(strings.TrimSpace(cfg.CustomFragmentLiteserverConfigURL))
+	if err != nil || configURL.Scheme != "https" || configURL.Host == "" {
+		return fmt.Errorf("TELESRV_CUSTOM_FRAGMENT_LITESERVER_CONFIG_URL must be an absolute HTTPS URL")
+	}
+	return nil
+}
+
+func validateStarGiftClaimConfig(cfg Config) error {
+	if !cfg.StarGiftClaimEnabled {
+		return nil
+	}
+	if !cfg.CustomFragmentEnabled {
+		return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_ENABLE requires CustomFragment")
+	}
+	if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
+		return fmt.Errorf("TELESRV_PUBLIC_LINK_WEB_ADDR is required when gift claim is enabled")
+	}
+	claimURL, err := url.Parse(strings.TrimSpace(cfg.StarGiftClaimPublicBaseURL))
+	if err != nil || claimURL.Scheme != "https" || claimURL.Host == "" || claimURL.User != nil {
+		return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_PUBLIC_BASE_URL must be an absolute HTTPS URL")
+	}
+	botID, _, ok := domain.ParseBotToken(strings.TrimSpace(cfg.StarGiftClaimBotToken))
+	if !ok || botID != domain.GiftClaimBotUserID {
+		return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_BOT_TOKEN must be %d:<secret>", domain.GiftClaimBotUserID)
+	}
+	if cfg.StarGiftClaimChallengeTTL < time.Minute || cfg.StarGiftClaimChallengeTTL > 15*time.Minute ||
+		cfg.StarGiftClaimProofTTL < time.Minute || cfg.StarGiftClaimProofTTL > 15*time.Minute ||
+		cfg.StarGiftClaimInitDataTTL < time.Minute || cfg.StarGiftClaimInitDataTTL > 24*time.Hour {
+		return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_*_TTL is outside the supported range")
+	}
+	if cfg.StarGiftClaimTestEnabled {
+		if !cfg.CustomFragmentEnabled {
+			return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_TEST_ENABLE requires CustomFragment")
+		}
+		testURL, err := url.Parse(strings.TrimSpace(cfg.StarGiftClaimTestPublicBaseURL))
+		if err != nil || testURL.Scheme != "https" || testURL.Host == "" || testURL.User != nil {
+			return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_TEST_PUBLIC_BASE_URL must be an absolute HTTPS URL")
+		}
+		testBotID, _, ok := domain.ParseBotToken(strings.TrimSpace(cfg.StarGiftClaimTestBotToken))
+		if !ok || testBotID != domain.GiftClaimTestBotUserID {
+			return fmt.Errorf("TELESRV_STAR_GIFT_CLAIM_TEST_BOT_TOKEN must be %d:<secret>", domain.GiftClaimTestBotUserID)
+		}
+	}
+	return nil
+}
+
 func validateBlobStorageConfig(cfg Config) error {
 	if cfg.StorageMinFreeBytes < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_MIN_FREE_BYTES must be non-negative")
@@ -1449,23 +1647,23 @@ func normalizeAdvertiseIP(raw string) (string, error) {
 // 会话列表会继续回传 "Unknown" 占位文案,这是未启用时的预期行为,不该让服务起不来。
 func validateGeoIPConfig(cfg Config) error {
 	configured := 0
-	for index, endpoint := range cfg.GeoIPEndpoints {
+	for _, endpoint := range cfg.GeoIPEndpoints {
 		if strings.TrimSpace(endpoint) == "" {
 			continue
 		}
 		configured++
 		if !strings.Contains(endpoint, "{ip}") {
-			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must contain the {ip} placeholder", index+1)
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entries must contain the {ip} placeholder, got %q", endpoint)
 		}
 		parsed, err := url.Parse(strings.TrimSpace(endpoint))
 		if err != nil {
-			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d is not a valid URL", index+1)
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %q is not a valid URL: %w", endpoint, err)
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must use http or https", index+1)
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %q must use http or https", endpoint)
 		}
 		if parsed.Host == "" {
-			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must include a host", index+1)
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %q must include a host", endpoint)
 		}
 	}
 	// 全是空白的列表等同于未启用,不该拖出后面那堆数值校验。
@@ -1851,6 +2049,20 @@ func validateRPCExecutionConfig(cfg Config) error {
 	return nil
 }
 
+func validateASRConfig(cfg Config) error {
+	if cfg.ASRURL == "" {
+		return nil
+	}
+	if cfg.ASRTimeout <= 0 {
+		return fmt.Errorf("TELESRV_ASR_TIMEOUT must be positive")
+	}
+	u, err := url.Parse(cfg.ASRURL)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("TELESRV_ASR_URL must be an absolute http(s) URL without userinfo")
+	}
+	return nil
+}
+
 func validateLoginEmailConfig(cfg Config) error {
 	if cfg.LoginEmailRequireSetup && !cfg.LoginEmailEnable {
 		return fmt.Errorf("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP requires TELESRV_LOGIN_EMAIL_ENABLE=true")
@@ -2205,6 +2417,29 @@ func (e envSource) envInt64Or(key string, def int64) int64 {
 		}
 	}
 	return def
+}
+
+func parsePositiveInt64List(values []string) ([]int64, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make([]int64, 0, len(values))
+	seen := make(map[int64]struct{}, len(values))
+	for _, value := range values {
+		id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil || id <= 0 {
+			if err == nil {
+				err = fmt.Errorf("must be positive")
+			}
+			return nil, fmt.Errorf("%q: %w", value, err)
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func (e envSource) envFloatOr(key string, def float64) float64 {
