@@ -495,7 +495,7 @@ type Dependencies struct {
 	UserLookup              UserLookup
 	Account                 AccountService
 	Photos                  AvatarResolver
-	Donations              DonationsService
+	Donations               DonationsService
 	Stars                   StarsService
 	Premium                 PremiumService
 	StarsNotifier           StarsNotifier
@@ -539,7 +539,7 @@ type Service struct {
 	userLookup              UserLookup
 	account                 AccountService
 	photos                  AvatarResolver
-	donations              DonationsService
+	donations               DonationsService
 	stars                   StarsService
 	premium                 PremiumService
 	starsNotifier           StarsNotifier
@@ -565,10 +565,10 @@ type Service struct {
 	rating                  AccountRatingService
 	verification            VerificationService
 	botVerification         BotVerificationService
-	itemPrices             ItemPricesStore
-	uniqueGifts            UniqueGiftWalletStore
-	tonDNS                 TonDNSResolver
-	usernameWallets        UsernameWalletLookup
+	itemPrices              ItemPricesStore
+	uniqueGifts             UniqueGiftWalletStore
+	tonDNS                  TonDNSResolver
+	usernameWallets         UsernameWalletLookup
 	now                     func() time.Time
 }
 

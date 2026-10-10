@@ -1174,7 +1174,7 @@ type Deps struct {
 	Chatlists                    ChatlistsService
 	Messages                     MessagesService
 	Translation                  TranslationService
-	Transcriptions             TranscriptionService
+	Transcriptions               TranscriptionService
 	Stories                      StoriesService
 	Channels                     ChannelsService
 	Communities                  CommunitiesService

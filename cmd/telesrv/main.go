@@ -1851,7 +1851,7 @@ func run(logger *zap.Logger) error {
 		Chatlists:                    chatlistsService,
 		Messages:                     messagesService,
 		Translation:                  translationService,
-		Transcriptions:             transcriptionService,
+		Transcriptions:               transcriptionService,
 		Channels:                     channelsService,
 		Communities:                  communitiesService,
 		Files:                        filesService,
@@ -1914,7 +1914,7 @@ func run(logger *zap.Logger) error {
 		UserLookup:              userStore,
 		Account:                 accountService,
 		Photos:                  filesService,
-		Donations:              donationsService,
+		Donations:               donationsService,
 		Stars:                   starsService,
 		Premium:                 premiumService,
 		StarsNotifier:           router,
@@ -1939,10 +1939,10 @@ func run(logger *zap.Logger) error {
 		Rating:                  ratingService,
 		Verification:            verificationService,
 		BotVerification:         botVerificationService,
-		ItemPrices:             postgres.NewItemPriceStore(pool),
-		UniqueGifts:            postgres.NewStarGiftClaimStore(pool),
-		TonDNS:                 tondns.New(cfg.CustomFragmentLiteserverConfigURL),
-		UsernameWallets:        postgres.NewStarGiftClaimStore(pool),
+		ItemPrices:              postgres.NewItemPriceStore(pool),
+		UniqueGifts:             postgres.NewStarGiftClaimStore(pool),
+		TonDNS:                  tondns.New(cfg.CustomFragmentLiteserverConfigURL),
+		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
