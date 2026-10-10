@@ -16,6 +16,15 @@ import (
 	"telesrv/internal/store/memory"
 )
 
+// isEmptyUserStatus reports whether the tombstone status is the explicit empty
+// one. A missing status field is not enough: clients keep the cached presence
+// when the flag is absent, which is how a deleted account kept showing
+// "last seen recently" after it had already appeared as deleted.
+func isEmptyUserStatus(status tg.UserStatusClass) bool {
+	_, ok := status.(*tg.UserStatusEmpty)
+	return ok
+}
+
 func TestDeletedUserTLProjectionContainsOnlyTombstoneIdentity(t *testing.T) {
 	u := domain.User{
 		ID: 42, AccessHash: 99, Phone: "secret", FirstName: "Alice", LastName: "Private",
@@ -26,8 +35,13 @@ func TestDeletedUserTLProjectionContainsOnlyTombstoneIdentity(t *testing.T) {
 	if got.ID != u.ID || !got.Deleted {
 		t.Fatalf("deleted user = %+v", got)
 	}
-	if got.AccessHash != 0 || got.Phone != "" || got.FirstName != "" || got.LastName != "" || got.Username != "" || got.Verified || got.Premium || got.Photo != nil || got.Status != nil || len(got.Usernames) != 0 {
+	if got.AccessHash != 0 || got.Phone != "" || got.FirstName != "Deleted Account" || got.LastName != "" || got.Username != "" || got.Verified || got.Premium || !isEmptyUserStatus(got.Status) || len(got.Usernames) != 0 {
 		t.Fatalf("deleted user leaked profile state: %+v", got)
+	}
+	// The ghost avatar is the one field a tombstone still carries: an explicit
+	// userProfilePhotoEmpty, never the account's real photo id.
+	if _, ok := got.Photo.(*tg.UserProfilePhotoEmpty); !ok {
+		t.Fatalf("deleted user photo = %+v, want userProfilePhotoEmpty", got.Photo)
 	}
 	self := tgSelfUser(u)
 	if !self.Deleted || self.Self || self.ID != u.ID {
@@ -149,7 +163,9 @@ func TestGetFullDeletedUserReturnsOnlyTombstone(t *testing.T) {
 		t.Fatalf("users = %+v, want one tombstone", got.Users)
 	}
 	u, ok := got.Users[0].(*tg.User)
-	if !ok || !reflect.DeepEqual(u, &tg.User{ID: deleted.ID, Deleted: true}) {
+	want := &tg.User{ID: deleted.ID, Deleted: true, FirstName: deletedAccountDisplayName,
+		Photo: &tg.UserProfilePhotoEmpty{}, Status: &tg.UserStatusEmpty{}}
+	if !ok || !reflect.DeepEqual(u, want) {
 		t.Fatalf("deleted user envelope = %+v", got.Users[0])
 	}
 	if len(got.Chats) != 0 {

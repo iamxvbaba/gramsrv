@@ -162,3 +162,60 @@ func TestChannelStateRefreshEventBypassesServerProjectionCache(t *testing.T) {
 		t.Fatalf("authoritative channel refresh = calls:%d channels:%+v", channels.freshCalls, events[0].Channels)
 	}
 }
+
+// A deleted peer has to reach the client as Deleted Account, not as an unnamed
+// stranger. updateUser alone only refreshes the photo on several clients, so the
+// tombstone push carries the name through updateUserName as well.
+func TestDeletedAccountPushCarriesDisplayName(t *testing.T) {
+	const (
+		targetID       = int64(4004)
+		onlineViewerID = int64(1001)
+	)
+	users := &deletedAudienceUsers{moderationProjectionUsers{audience: []int64{onlineViewerID}}}
+	sessions := &captureSessions{onlineUserIDs: []int64{onlineViewerID}}
+	r := New(Config{}, Deps{Users: users, Sessions: sessions}, zap.NewNop(), clock.System)
+
+	if err := r.NotifyUserModerationFlagsChanged(context.Background(), domain.User{
+		ID: targetID, Deleted: true, DeletedAt: 1_800_000_000,
+	}); err != nil {
+		t.Fatalf("notify deleted account: %v", err)
+	}
+	updates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok {
+		t.Fatalf("push = %T", sessions.lastUserPush())
+	}
+	var sawRefresh, sawName bool
+	for _, update := range updates.Updates {
+		switch typed := update.(type) {
+		case *tg.UpdateUser:
+			sawRefresh = typed.UserID == targetID
+		case *tg.UpdateUserName:
+			sawName = typed.UserID == targetID && typed.FirstName == deletedAccountDisplayName
+		}
+	}
+	if !sawRefresh {
+		t.Fatalf("tombstone push is missing updateUser: %+v", updates.Updates)
+	}
+	if !sawName {
+		t.Fatalf("tombstone push is missing updateUserName(%q): %+v", deletedAccountDisplayName, updates.Updates)
+	}
+	for _, item := range updates.Users {
+		u, ok := item.(*tg.User)
+		if !ok || u.ID != targetID {
+			continue
+		}
+		if !u.Deleted || u.FirstName != deletedAccountDisplayName {
+			t.Fatalf("pushed tombstone user = %+v", u)
+		}
+		return
+	}
+	t.Fatalf("pushed users carry no tombstone peer: %+v", updates.Users)
+}
+
+type deletedAudienceUsers struct {
+	moderationProjectionUsers
+}
+
+func (s *deletedAudienceUsers) ByIDs(_ context.Context, _ int64, ids []int64) ([]domain.User, error) {
+	return []domain.User{{ID: ids[0], Deleted: true, DeletedAt: 1_800_000_000}}, nil
+}

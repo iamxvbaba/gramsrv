@@ -216,7 +216,10 @@ SELECT COALESCE((SELECT version FROM read_model_versions
 	if err := pool.QueryRow(ctx, `SELECT status FROM channel_members WHERE channel_id = $1 AND user_id = $2`, channelID, deleted.ID).Scan(&memberStatus); err != nil {
 		t.Fatal(err)
 	}
-	if ownerBoxes == 0 || peerBoxes != 1 || settings != 1 || contacts != 1 || notifications != 0 || memberStatus != "active" {
+	if ownerBoxes == 0 || peerBoxes != 1 || settings != 1 || contacts != 1 || notifications != 1 || memberStatus != "active" {
+		// The peer kept both a reverse contact and a dialog row with the deleted
+		// account, so it owns exactly one pending tombstone notification. That row
+		// is the only thing that tells an offline viewer the peer is gone.
 		t.Fatalf("logical-delete retained state ownerBoxes=%d peerBoxes=%d settings=%d contacts=%d notifications=%d memberStatus=%q",
 			ownerBoxes, peerBoxes, settings, contacts, notifications, memberStatus)
 	}

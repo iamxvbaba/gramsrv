@@ -38,6 +38,9 @@ func (r *Router) sendStarGiftTransferForm(ctx context.Context, userID, formID in
 			return nil, starsErr(err)
 		}
 	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, userIDInvalidErr()
+	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
 		return nil, err
@@ -109,6 +112,9 @@ func (r *Router) sendStarGiftResaleForm(ctx context.Context, userID, formID int6
 		if _, err := r.deps.Stars.GetBalance(ctx, userID); err != nil {
 			return nil, starsErr(err)
 		}
+	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, userIDInvalidErr()
 	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
@@ -621,6 +627,9 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	if err != nil {
 		return nil, err
 	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, starGiftInvalidErr()
+	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
 		return nil, err
@@ -1082,4 +1091,20 @@ func starGiftLifecycleErr(err error) error {
 	default:
 		return internalErr()
 	}
+}
+
+// giftRecipientDeleted reports whether an outgoing gift target is an account
+// tombstone. Every gift write resolves its recipient through a peer reference,
+// which never touches the users row, so the deleted bit has to be checked
+// explicitly at this boundary -- otherwise a deleted account can still be handed
+// gifts, offers and marketplace purchases.
+func (r *Router) giftRecipientDeleted(ctx context.Context, actorUserID int64, to domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || to.Type != domain.PeerTypeUser || to.ID <= 0 || to.ID == actorUserID {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, actorUserID, to.ID)
+	if err != nil || !found {
+		return false
+	}
+	return u.Deleted
 }

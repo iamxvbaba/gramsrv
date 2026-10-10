@@ -27,13 +27,23 @@ type Service struct {
 	viewerProjectionComplete bool
 	botResponder             BotResponder
 	sendGate                 SendPermissionChecker
-	business                 *businessAutomationConfig
+	// recipientUsers resolves the private recipient without viewer projection.
+	// It is only a tombstone probe: viewer-scoped fields are irrelevant to
+	// whether the peer still accepts writes.
+	recipientUsers RecipientUserReader
+	business       *businessAutomationConfig
 
 	privateMediaCountCache *privateMediaCountReadModelCache
 }
 
 type SendPermissionChecker interface {
 	CanSendMessages(ctx context.Context, userID int64) error
+}
+
+// RecipientUserReader is the minimal unprojected user lookup the send gate
+// needs. There is no viewer: the answer only depends on the target row.
+type RecipientUserReader interface {
+	ByID(ctx context.Context, userID int64) (domain.User, bool, error)
 }
 
 // BotResponder 响应投递给服务端内置 bot（BotFather）的私聊消息。
@@ -79,6 +89,12 @@ func WithBotResponder(r BotResponder) Option {
 
 func WithSendPermissionChecker(c SendPermissionChecker) Option {
 	return func(s *Service) { s.sendGate = c }
+}
+
+// WithRecipientUserReader wires the tombstone probe that blocks private writes to
+// deleted accounts.
+func WithRecipientUserReader(r RecipientUserReader) Option {
+	return func(s *Service) { s.recipientUsers = r }
 }
 
 // WithReadModelVersions enables durable hash-token guarded media count caching.
@@ -171,6 +187,9 @@ func (s *Service) sendPrivateText(ctx context.Context, userID int64, req domain.
 	if err := s.ensureCanSend(ctx, req.SenderUserID); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
+	if err := s.ensureCanSendRecipient(ctx, req.RecipientUserID); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	automation, automationOK := s.prepareBusinessAutomation(ctx, req)
 	res, err := s.messages.SendPrivateText(ctx, req)
 	if err == nil && !res.Duplicate && automationOK {
@@ -213,6 +232,25 @@ func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {
 }
 
 // SetChatTheme updates the shared private-chat theme and records the timeline service message.
+// ensureCanSendRecipient blocks private writes to a tombstone. A deleted account
+// keeps its rows for history, so the store happily accepts the message; without
+// this gate the sender's dialog would show a delivered message nobody can ever
+// read back. Rejecting with PEER_ID_INVALID is the official shape: the peer is
+// no longer a writable contact.
+func (s *Service) ensureCanSendRecipient(ctx context.Context, recipientUserID int64) error {
+	if s == nil || recipientUserID == 0 || s.recipientUsers == nil {
+		return nil
+	}
+	u, found, err := s.recipientUsers.ByID(ctx, recipientUserID)
+	if err != nil {
+		return err
+	}
+	if !found || u.Deleted {
+		return domain.ErrPeerDeleted
+	}
+	return nil
+}
+
 func (s *Service) SetChatTheme(ctx context.Context, userID int64, req domain.SetPrivateChatThemeRequest) (domain.SetPrivateChatThemeResult, error) {
 	out := domain.SetPrivateChatThemeResult{
 		OwnerUserID: userID,

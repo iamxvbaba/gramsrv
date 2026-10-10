@@ -525,7 +525,9 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	if err != nil {
 		return nil, contactErr(err)
 	}
-	if !found {
+	// A tombstone has no name, phone or avatar to keep in a contact list, so
+	// adding one would only leave an unreachable row behind.
+	if !found || target.Deleted {
 		return nil, contactIDInvalidErr()
 	}
 	rawNote, hasNote := req.GetNote()

@@ -177,8 +177,27 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 		// recipient. Zero leaves flags2.14 unset, which is the pre-feature shape.
 		applyBotVerificationIconToUsers(projected, u.ID, botVerificationIcon)
 		applyUsernamesFromRegistry(projected, nil, usernames)
+		// A tombstone needs the name delivered through its own update as well.
+		// updateUser alone is not enough: clients that only merge the photo out
+		// of it (Android) keep the stale name, so the peer would stay a stranger
+		// with an empty avatar instead of reading as Deleted Account.
+		updates := []tg.UpdateClass{&tg.UpdateUser{UserID: u.ID}}
+		if u.Deleted {
+			updates = append(updates,
+				&tg.UpdateUserName{
+					UserID:    u.ID,
+					FirstName: deletedAccountDisplayName,
+				},
+				// Explicit empty status: a missing field leaves the cached
+				// last-seen in place and the account keeps reading as
+				// recently online next to its own deleted presentation.
+				&tg.UpdateUserStatus{
+					UserID: u.ID,
+					Status: &tg.UserStatusEmpty{},
+				})
+		}
 		r.pushUserUpdates(pushCtx, viewerUserID, &tg.Updates{
-			Updates: []tg.UpdateClass{&tg.UpdateUser{UserID: u.ID}},
+			Updates: updates,
 			Users:   projected,
 			Date:    int(r.clock.Now().Unix()),
 			Seq:     0,

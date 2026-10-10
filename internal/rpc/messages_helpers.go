@@ -596,3 +596,17 @@ func (r *Router) chatsForInputPeer(ctx context.Context, userID int64, peer tg.In
 	}
 	return []tg.ChatClass{tgChannelChatForView(userID, view)}
 }
+
+// peerIsDeletedAccount reports whether a resolved peer points at an account
+// tombstone. Peer references never read the users row, so every write path that
+// accepts an InputPeer has to ask before acting on it.
+func (r *Router) peerIsDeletedAccount(ctx context.Context, peer domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || peer.Type != domain.PeerTypeUser || peer.ID <= 0 {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, 0, peer.ID)
+	if err != nil || !found {
+		return false
+	}
+	return u.Deleted
+}

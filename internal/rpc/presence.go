@@ -262,6 +262,22 @@ func normalizePresenceStatus(status domain.UserStatus, now int) domain.UserStatu
 
 // isFrozenPresenceUser reports whether userID is under an account freeze and
 // must never render/broadcast online. Pure in-process mask check, O(1).
+// isDeletedAccount reports whether the peer is an account tombstone. Deletion
+// keeps every row for history, so this is an authoritative row read rather than
+// an in-process mask like the frozen one.
+func (r *Router) isDeletedAccount(userID int64) bool {
+	if r == nil || userID == 0 || r.deps.Users == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	u, found, err := r.deps.Users.ByID(ctx, userID, userID)
+	if err != nil || !found {
+		return false
+	}
+	return u.Deleted
+}
+
 func (r *Router) isFrozenPresenceUser(userID int64) bool {
 	if r == nil || userID == 0 {
 		return false
@@ -435,6 +451,13 @@ func (r *Router) userPresenceStatusForUser(u domain.User) domain.UserStatus {
 	userID := u.ID
 	if userID == 0 {
 		return domain.UserStatus{Kind: domain.UserStatusRecently}
+	}
+	// A tombstone never has presence. Without this guard a deleted peer that
+	// reaches presence before the projection collapsed its status would fall
+	// through to the tracker/last-seen branches and render "last seen recently"
+	// right next to its own deleted presentation.
+	if u.Deleted {
+		return domain.UserStatus{Kind: domain.UserStatusEmpty}
 	}
 	// The app projector marks a privacy-hidden exact timestamp with a coarse
 	// status and clears LastSeenAt. Never overlay the process presence tracker
@@ -646,6 +669,13 @@ func (r *Router) announceUserOfflineIfStillGone(rawAuthKeyID [8]byte, sessionID,
 	ctx = WithSessionID(WithRawAuthKeyID(ctx, rawAuthKeyID), sessionID)
 	// bot 不广播 offline、不写 last_seen（与 announceSessionOnline 对称）。
 	if bot, known := r.userBotStatus(ctx, userID); !known || bot {
+		return
+	}
+	// Account deletion revokes every session at once, so this disconnect fires
+	// right behind it. Announcing "last seen <now>" here would immediately undo
+	// the empty presence the tombstone just installed -- the account would pop
+	// back as recently offline seconds after appearing deleted.
+	if r.isDeletedAccount(userID) {
 		return
 	}
 	status := domain.UserStatus{Kind: domain.UserStatusOffline, WasOnline: disconnectedAt}

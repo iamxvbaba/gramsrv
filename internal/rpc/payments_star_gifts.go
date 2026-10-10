@@ -1167,6 +1167,12 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 	if r.deps.Gifts == nil {
 		return emptySavedStarGifts(), nil
 	}
+	// A deleted account is a tombstone: its profile exposes no gifts, NFT ones
+	// included. The rows stay attached to the stable user id for the ledger, but
+	// nothing may render them as possessions of a ghost.
+	if r.starGiftOwnerDeleted(ctx, userID, owner) {
+		return emptySavedStarGifts(), nil
+	}
 	// Gifts hidden from the profile (unsaved) are visible only to the owner (or a
 	// channel admin). Never trust the client's exclude_unsaved flag for other
 	// viewers: force-exclude hidden gifts unless the requester manages the owner.
@@ -1227,12 +1233,26 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 		manageCache[owner] = v
 		return v
 	}
+	// Same tombstone rule as the profile listing: a deleted account owns nothing
+	// a client may still fetch by reference.
+	deletedCache := make(map[domain.Peer]bool)
+	ownerDeleted := func(owner domain.Peer) bool {
+		if v, ok := deletedCache[owner]; ok {
+			return v
+		}
+		v := r.starGiftOwnerDeleted(ctx, userID, owner)
+		deletedCache[owner] = v
+		return v
+	}
 	for _, ref := range refs {
 		dref, ok, err := r.starGiftRefFromInput(ctx, userID, ref)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
+			continue
+		}
+		if ownerDeleted(dref.Owner) {
 			continue
 		}
 		g, found, err := r.deps.Gifts.GetSaved(ctx, dref)
@@ -1374,6 +1394,23 @@ func (r *Router) starGiftFromCatalog(ctx context.Context, giftID int64) (domain.
 		return domain.StarGift{}, starGiftInvalidErr()
 	}
 	return gift, nil
+}
+
+// starGiftOwnerDeleted reports whether a gift owner is a deleted tombstone.
+// Channels are never deleted this way, and self always resolves to the caller's
+// own live account, so only the user branch needs a lookup.
+func (r *Router) starGiftOwnerDeleted(ctx context.Context, viewerUserID int64, owner domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || owner.Type != domain.PeerTypeUser || owner.ID <= 0 {
+		return false
+	}
+	if owner.ID == viewerUserID {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, viewerUserID, owner.ID)
+	if err != nil || !found {
+		return err != nil
+	}
+	return u.Deleted
 }
 
 // starGiftOwnerPeer 解析 getSavedStarGifts 的 owner：inputPeerSelf/空 → 自己，否则解析 user/channel peer。

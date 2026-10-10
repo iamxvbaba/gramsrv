@@ -41,6 +41,7 @@ type Config struct {
 
 type Service interface {
 	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
+	DeleteAccount(ctx context.Context, req admin.DeleteAccountRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	GrantStarsAll(ctx context.Context, req admin.GrantStarsAllRequest) (admin.CommandResult, error)
@@ -222,6 +223,7 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
+	mux.HandleFunc("POST /v1/accounts/delete", s.authenticated(s.handleDeleteAccount))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authorized(PermissionPremiumManage, s.handleGrantPremium))
 	mux.HandleFunc("POST /v1/accounts/refund-premium", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
 	mux.HandleFunc("GET /v1/premium/plans", s.authorized(PermissionPremiumManage, s.handlePremiumPlans))
@@ -351,6 +353,15 @@ func (s *Server) handleSetAccountFrozen(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	result, err := s.svc.SetAccountFrozen(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteAccountRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteAccount(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
