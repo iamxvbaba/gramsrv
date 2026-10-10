@@ -40,6 +40,7 @@ import {
   permissionAdminsManage,
   permissionAuditRead,
   permissionBotVerificationReview,
+  permissionDashboardRead,
   permissionMessagesRead,
   permissionPremiumManage,
   permissionServerManage,
@@ -48,6 +49,7 @@ import {
 } from "../permissions";
 import { AdminUsersPage } from "./AdminUsersPage";
 import { AuditLogPage } from "./AuditLogPage";
+import { StatisticsPage } from "./StatisticsPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
@@ -251,6 +253,13 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
           tab={route.path === "/messages/groups" ? "groups" : "private"}
           onTab={(tab) => navigate(tab === "groups" ? "/messages/groups" : "/messages/private")}
         />
+      </PermissionGate>
+    );
+  }
+  if (route.path === "/statistics") {
+    return (
+      <PermissionGate permission={permissionDashboardRead}>
+        <StatisticsPage />
       </PermissionGate>
     );
   }

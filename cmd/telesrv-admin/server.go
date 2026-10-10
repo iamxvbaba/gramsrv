@@ -77,6 +77,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/audit-logs", s.scopedRoute(permissionAuditRead, http.HandlerFunc(s.handleAuditLogsAPI)))
 
 	mux.Handle("GET /api/dashboard", s.scopedRoute(permissionDashboardRead, http.HandlerFunc(s.handleDashboardAPI)))
+	mux.Handle("GET /api/stats", s.scopedRoute(permissionDashboardRead, http.HandlerFunc(s.handleStatsAPI)))
 	mux.Handle("GET /api/accounts", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/shared-devices", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleSharedDeviceGroupsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountDetailAPI)))
@@ -105,6 +106,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/official-gifts/{id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleOfficialStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
+	mux.Handle("GET /api/gifts/{id}/attributes", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleGiftAttributesAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
 	mux.Handle("GET /api/collectible-usernames", s.scopedRoute(permissionUsernamesRead, http.HandlerFunc(s.handleCollectibleUsernamesAPI)))
 	mux.Handle("GET /api/collectible-usernames/{id}", s.scopedRoute(permissionUsernamesRead, http.HandlerFunc(s.handleCollectibleUsernameDetailAPI)))

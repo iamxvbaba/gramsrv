@@ -1216,3 +1216,40 @@ export type ServerStatus = {
   mtproto: ServiceHealth;
   docker: ServerDockerStatus;
 };
+
+export type StatsDailyCountPoint = {
+  date: string;
+  value: number;
+};
+
+export type StatsDailyStarPoint = {
+  date: string;
+  stars: number;
+  gifts: number;
+};
+
+export type StatsResponse = {
+  stars_given_today: number;
+  gifts_sent_today: number;
+  stars_given_total: number;
+  gifts_sent_total: number;
+  star_balance_total: number;
+  users_total: number;
+  online_now: number;
+  days: number;
+  users_chart: StatsDailyCountPoint[];
+  active_chart: StatsDailyCountPoint[];
+  stars_chart: StatsDailyStarPoint[];
+};
+
+export type GiftAttributeRow = { id: number; name: string; rarity: number };
+export type GiftBackdropRow = GiftAttributeRow & { backdrop_id: number };
+
+export type GiftAttributesResponse = {
+  gift_id: number;
+  visual_only: boolean;
+  has_upgrade: boolean;
+  models: GiftAttributeRow[];
+  patterns: GiftAttributeRow[];
+  backdrops: GiftBackdropRow[];
+};

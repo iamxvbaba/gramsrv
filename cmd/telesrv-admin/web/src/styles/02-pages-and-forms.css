@@ -819,3 +819,241 @@ textarea:focus {
 .progress-wide .progress-cell {
   min-width: 0;
 }
+
+.stacked-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.segmented-option {
+  min-width: 40px;
+  padding: 5px 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  background: 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.segmented-option:hover {
+  color: var(--heading);
+}
+
+.segmented-option.active {
+  color: var(--brand);
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-tint-border);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.stats-grid.expanded {
+  grid-template-columns: 1fr;
+}
+
+.stats-grid.expanded .chart-bars {
+  height: 320px;
+}
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.chart-card-titles {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-card-title {
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.chart-card-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-expand-btn {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  background: 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.chart-expand-btn:hover {
+  color: var(--brand);
+  background: var(--brand-tint);
+  border-color: var(--brand-tint-border);
+}
+
+.chart {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chart-bars {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  height: 180px;
+  min-width: 0;
+}
+
+.chart-col {
+  display: grid;
+  flex: 1 1 0;
+  align-items: end;
+  min-width: 0;
+}
+
+.chart-col-track {
+  position: relative;
+  display: grid;
+  align-items: end;
+  width: 100%;
+  height: calc(100% - 16px);
+  background: repeating-linear-gradient(to top, transparent 0, transparent calc(25% - 1px), var(--line) 25%);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.chart-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--brand-2);
+  border-radius: 2px 2px 0 0;
+}
+
+.chart-line-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  max-width: 220px;
+  padding: 5px 8px;
+  color: var(--on-accent, #fff);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transform: translate(-50%, -150%);
+}
+
+.chart.line-view .chart-bars,
+.chart-line-svg {
+  overflow: visible;
+}
+
+.chart-line-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-hit {
+  position: relative;
+  flex: 1 1 0;
+  height: 100%;
+  min-width: 0;
+  cursor: crosshair;
+}
+
+.chart-axis-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend-item .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.swatch-stars {
+  background: var(--brand-2);
+}
+
+.swatch-gifts {
+  width: 10px;
+  height: 10px;
+  background: 0 0;
+  border: 2px solid var(--danger);
+  border-radius: 999px;
+}
