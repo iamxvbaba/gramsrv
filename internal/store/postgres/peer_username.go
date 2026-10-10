@@ -143,6 +143,23 @@ VALUES ($1, $2, $3, $4, true, true, 0, NULL)`, usernameLower, peerType, peerID, 
 	return nil
 }
 
+// retirePeerUsernameTx deactivates the peer's editable slot instead of deleting
+// the registry row. The name therefore stays occupied for uniqueness purposes --
+// CheckUsername and every claim path report it as taken -- while resolution stops
+// matching it: an inactive row never resolves to its holder.
+//
+// This is the account-deletion counterpart of deletePeerUsernameTx. A logical
+// tombstone keeps the row forever, mirroring an upstream delete where the
+// username of a removed account is reserved and can never be registered again.
+func retirePeerUsernameTx(ctx context.Context, tx pgx.Tx, peerType string, peerID int64) error {
+	if _, err := tx.Exec(ctx, `
+UPDATE peer_usernames SET active = false, updated_at = now()
+WHERE peer_type = $1 AND peer_id = $2 AND editable AND active`, peerType, peerID); err != nil {
+		return fmt.Errorf("retire peer username: %w", err)
+	}
+	return nil
+}
+
 // deletePeerUsernameTx clears the peer's editable slot only. Collectible rows are
 // released through the asset lifecycle (revoke/burn) or by the peer-deletion
 // trigger, never by an editable-slot edit.

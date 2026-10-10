@@ -42,6 +42,14 @@ const (
 	maxCollectibleUsernameListLimit     = 200
 )
 
+// Provenance stamped on the collectible usernames an account deletion returns to
+// the vault. The actor is a lifecycle boundary, not an operator, so the row stays
+// distinguishable from an admin revoke in the transfer log.
+const (
+	collectibleUsernameDeletionActor  = "telesrv:account-deletion"
+	collectibleUsernameDeletionReason = "account deletion"
+)
+
 // collectibleUsernameColumns is the asset projection shared by every reader.
 const collectibleUsernameColumns = `id, username, status, owner_peer_type, owner_peer_id,
        purchase_date, currency, amount, crypto_currency, crypto_amount, url,
@@ -653,6 +661,67 @@ type collectibleUsernameTransfer struct {
 	reason        string
 	commandKey    string
 	createdAt     time.Time
+}
+
+// vaultPeerCollectibleUsernamesTx returns every collectible username asset owned
+// by the peer to the vault: the registry row goes away, the asset becomes
+// unowned and a 'revoke' provenance row records why.
+//
+// This is the account-deletion boundary. Unlike an operator revoke it carries no
+// command key -- deletion is not replayed through the admin command path, and the
+// asset rows it touches are already locked -- and unlike a transfer it keeps the
+// name reserved in collectible_usernames, so a deleted account cannot launder an
+// NFT username away while the vault can still re-issue it later.
+func vaultPeerCollectibleUsernamesTx(ctx context.Context, tx pgx.Tx, peerType string, peerID int64, now time.Time) (int, error) {
+	peer := domain.Peer{Type: domain.PeerType(peerType), ID: peerID}
+	rows, err := tx.Query(ctx, `
+SELECT id FROM collectible_usernames
+WHERE status = 'owned' AND owner_peer_type = $1 AND owner_peer_id = $2
+ORDER BY id
+FOR UPDATE`, peerType, peerID)
+	if err != nil {
+		return 0, fmt.Errorf("lock peer collectible usernames: %w", err)
+	}
+	ids := make([]int64, 0, 4)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan peer collectible username: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate peer collectible usernames: %w", err)
+	}
+	rows.Close()
+	for _, id := range ids {
+		if err := deleteCollectiblePeerUsernameTx(ctx, tx, id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE collectible_usernames
+SET status = 'vault',
+    owner_peer_type = '',
+    owner_peer_id = 0,
+    version = version + 1,
+    updated_at = GREATEST($2, created_at)
+WHERE id = $1`, id, now); err != nil {
+			return 0, fmt.Errorf("vault peer collectible username: %w", err)
+		}
+		if err := insertCollectibleUsernameTransferTx(ctx, tx, collectibleUsernameTransfer{
+			collectibleID: id,
+			kind:          domain.CollectibleUsernameKindRevoke,
+			from:          peer,
+			actor:         collectibleUsernameDeletionActor,
+			reason:        collectibleUsernameDeletionReason,
+			createdAt:     now,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(ids), nil
 }
 
 func insertCollectibleUsernameTransferTx(ctx context.Context, tx pgx.Tx, entry collectibleUsernameTransfer) error {

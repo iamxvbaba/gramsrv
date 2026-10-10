@@ -123,6 +123,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/moderation/cases/{id}/decide", s.scopedRoute(permissionModerationReview, http.HandlerFunc(s.handleDecideModerationCaseAPI)))
 	mux.Handle("POST /api/moderation/cases/{id}/appeals/{appeal_id}/review", s.scopedRoute(permissionModerationReview, http.HandlerFunc(s.handleReviewModerationAppealAPI)))
 	mux.Handle("POST /api/actions/set-frozen", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountFrozenAPI)))
+	mux.Handle("POST /api/actions/delete-account", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleDeleteAccountAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.premiumManage(s.handleGrantPremiumAPI))
 	mux.Handle("POST /api/actions/upsert-premium-plan", s.premiumManage(s.handleUpsertPremiumPlanAPI))
 	mux.Handle("POST /api/actions/grant-stars", s.premiumManage(http.HandlerFunc(s.handleGrantStarsAPI)))
@@ -1616,6 +1617,26 @@ func (s *server) handleSetAccountFrozenAPI(w http.ResponseWriter, r *http.Reques
 		AppealURL:   body.AppealURL,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/set-frozen", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteAccountAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+}
+
+func (s *server) handleDeleteAccountAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteAccountAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteAccountRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "account.delete"),
+		UserID:      body.UserID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/delete", req)
 	writeCommandResultAPI(w, result, err)
 }
 

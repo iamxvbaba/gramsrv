@@ -2240,3 +2240,66 @@ func TestSavedStarGiftAnonymousDetailsVisibleOnlyToReceiver(t *testing.T) {
 		t.Fatalf("anonymous sender user leaked to profile viewer: %v", ids)
 	}
 }
+
+// tombstoneUsersService overlays the account lifecycle tombstone on top of a live
+// users service. In-memory stores have no deletion boundary of their own, so this
+// is how the RPC layer is shown a deleted owner.
+type tombstoneUsersService struct {
+	UsersService
+	deletedIDs map[int64]bool
+}
+
+func (s tombstoneUsersService) ByID(ctx context.Context, currentUserID, userID int64) (domain.User, bool, error) {
+	u, found, err := s.UsersService.ByID(ctx, currentUserID, userID)
+	if err != nil || !found || !s.deletedIDs[userID] {
+		return u, found, err
+	}
+	u.Deleted = true
+	u.DeletedAt = time.Now().Unix()
+	return u.DeletedTombstone(), true, nil
+}
+
+// A deleted account is a tombstone everywhere, gifts included: its profile must
+// not expose what it once owned, NFT gifts in particular, or the client keeps
+// rendering a dead account as a collector.
+func TestDeletedAccountProfileHidesGifts(t *testing.T) {
+	r, sender, recipient, gift := starGiftTestRouter(t)
+	ctx := context.Background()
+	viewerCtx := WithUserID(ctx, sender.ID)
+	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID}
+	unique := domain.UniqueStarGift{ID: 9901, GiftID: gift.ID, Title: "Cake", Slug: "cake-1", Num: 1,
+		Owner: ownerPeer, GiftAddress: "0xabc", OwnerAddress: "0xdef"}
+	if _, err := r.deps.Gifts.RecordSavedGift(ctx, domain.SavedStarGift{
+		Owner: ownerPeer, GiftID: gift.ID, RevisionID: gift.RevisionID, MsgID: 91, Date: 1700000091,
+		UniqueGiftID: unique.ID, Unique: &unique,
+	}); err != nil {
+		t.Fatalf("record NFT gift: %v", err)
+	}
+	req := &tg.PaymentsGetSavedStarGiftsRequest{
+		Peer:  &tg.InputPeerUser{UserID: recipient.ID, AccessHash: recipient.AccessHash},
+		Limit: 10,
+	}
+	live, err := r.onPaymentsGetSavedStarGifts(viewerCtx, req)
+	if err != nil {
+		t.Fatalf("live profile gifts: %v", err)
+	}
+	if live.Count != 1 || len(live.Gifts) != 1 {
+		t.Fatalf("live profile gifts = %d/%d, want the NFT gift to be visible before deletion", live.Count, len(live.Gifts))
+	}
+	// The by-reference endpoint resolves an owner before reading, so it shares the
+	// same tombstone rule. A deleted owner must hide the gift there too.
+	r.deps.Users = tombstoneUsersService{UsersService: r.deps.Users, deletedIDs: map[int64]bool{recipient.ID: true}}
+	if !r.starGiftOwnerDeleted(ctx, sender.ID, ownerPeer) {
+		t.Fatal("deleted gift owner was not recognised as a tombstone")
+	}
+	if r.starGiftOwnerDeleted(ctx, sender.ID, domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}) {
+		t.Fatal("the viewer's own account must never be treated as a tombstone")
+	}
+	deleted, err := r.onPaymentsGetSavedStarGifts(viewerCtx, req)
+	if err != nil {
+		t.Fatalf("deleted profile gifts: %v", err)
+	}
+	if deleted.Count != 0 || len(deleted.Gifts) != 0 {
+		t.Fatalf("deleted profile gifts = %d/%d, want an empty tombstone profile", deleted.Count, len(deleted.Gifts))
+	}
+}

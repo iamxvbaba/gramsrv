@@ -244,6 +244,13 @@ WHERE model.collectible_revision_id=u.collectible_revision_id AND model.crafted)
 			return domain.StarGiftResalePage{}, domain.ErrStarGiftResaleUnavailable
 		}
 	}
+	// A deleted account is pulled off the marketplace. The listing rows survive for
+	// history, but a tombstone seller must never appear in the market, in its
+	// counts, or be buyable.
+	conditions = append(conditions, `NOT EXISTS (
+SELECT 1 FROM users seller
+WHERE seller.id = l.seller_peer_id AND seller.deleted_at IS NOT NULL
+  AND l.seller_peer_type = 'user')`)
 	where := strings.Join(conditions, " AND ")
 	var total int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE `+where, args...).Scan(&total); err != nil {
@@ -409,6 +416,27 @@ func (s *StarGiftLifecycleStore) TransferStarGift(ctx context.Context, req domai
 		req.To == req.Ref.Owner || req.ChargeStars < 0 || req.Date <= 0 || strings.TrimSpace(req.CommandKey) == "" {
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftTransferUnavailable
 	}
+	// A tombstone cannot receive anything. Transfer is the one gift write that
+	// resolved its target with no lifecycle check at all, so an NFT gift could be
+	// parked on a deleted account forever. FOR SHARE excludes the concurrent
+	// deletion transaction's FOR UPDATE on the same users row.
+	if req.To.Type == domain.PeerTypeUser {
+		var activeRecipient bool
+		if err := s.db.QueryRow(ctx, `SELECT deleted_at IS NULL FROM users WHERE id=$1 FOR SHARE`, req.To.ID).Scan(&activeRecipient); err != nil {
+			return domain.StarGiftTransferResult{}, err
+		}
+		if !activeRecipient {
+			return domain.StarGiftTransferResult{}, domain.ErrStarGiftTransferUnavailable
+		}
+	}
+	// Идемпотентный ключ привязываем к эпохе владения, иначе повторная передача
+	// того же коллекционного тому же получателю (подарок уже уходил и возвращался)
+	// выглядит как реплей прошлой карточки и молча ничего не делает. Смотрим
+	// текущую строку до отправки: random_id сообщения выводится из ключа, а
+	// пересчитать его уже внутри before слишком поздно для проверки дубликата.
+	if saved, found, err := NewStarGiftStore(s.db).GetByRef(ctx, req.Ref); err == nil && found {
+		req.CommandKey = s.resolveEpochCommandKey(ctx, req.ActorUserID, req.CommandKey, saved)
+	}
 	if req.To.Type != domain.PeerTypeUser {
 		return s.transferStarGiftWithoutPrivateMessage(ctx, req)
 	}
@@ -549,10 +577,22 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 		before: func(ctx context.Context, tx pgx.Tx, send *domain.SendPrivateTextRequest) error {
 			var listingCurrency, sellerType string
 			var listingAmount, sellerID, uniqueID int64
-			if err := tx.QueryRow(ctx, `SELECT l.currency,l.amount,l.seller_peer_type,l.seller_peer_id,u.id
+			var sellerFrozen bool
+			// suspended отсекает листинг, снятый с продажи заморозкой
+			// продавца, а frozen в том же SELECT — независимый запрет на
+			// покупку у замороженного продавца (снимок чтения, без
+			// блокировок, поэтому не меняет порядок захвата ликов в этой
+			// транзакции).
+			// deleted is the deletion-side twin of frozen: a tombstone seller is
+			// pulled off the marketplace exactly like a frozen one, so a listing
+			// that slipped through before the deletion cannot be bought.
+			if err := tx.QueryRow(ctx, `SELECT l.currency,l.amount,l.seller_peer_type,l.seller_peer_id,u.id,
+			 l.seller_peer_type='user' AND EXISTS(SELECT 1 FROM account_restrictions r WHERE r.user_id=l.seller_peer_id AND r.frozen)
 			 FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id
-			 WHERE lower(u.slug)=lower($1) FOR UPDATE OF l,u`, strings.TrimSpace(req.Slug)).Scan(
-				&listingCurrency, &listingAmount, &sellerType, &sellerID, &uniqueID); err != nil {
+			 WHERE lower(u.slug)=lower($1) AND NOT l.suspended
+			 AND NOT EXISTS (SELECT 1 FROM users su WHERE su.id=l.seller_peer_id AND su.deleted_at IS NOT NULL)
+			 FOR UPDATE OF l,u`, strings.TrimSpace(req.Slug)).Scan(
+				&listingCurrency, &listingAmount, &sellerType, &sellerID, &uniqueID, &sellerFrozen); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return domain.ErrStarGiftResaleUnavailable
 				}

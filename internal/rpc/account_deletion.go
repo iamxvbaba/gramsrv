@@ -58,6 +58,23 @@ func (r *Router) onAccountDeleteAccount(ctx context.Context, req *tg.AccountDele
 		}
 		return false, tgerr.New(420, fmt.Sprintf("2FA_CONFIRM_WAIT_%d", wait))
 	}
+	// A tombstone is a peer fact every online viewer must converge on, not a
+	// cache hint for the deleting session. Push the standard updateUser shape
+	// to every account that already knows the peer; offline accounts pick the
+	// tombstone up on their next authoritative read.
+	if r.deps.Users != nil {
+		if tombstone, found, err := r.deps.Users.ByID(ctx, userID, outcome.Deletion.User.ID); err == nil && found {
+			if notifier, ok := r.deps.Users.(interface {
+				NotifyUserModerationFlagsChanged(context.Context, domain.User) error
+			}); ok {
+				_ = notifier.NotifyUserModerationFlagsChanged(ctx, tombstone)
+			}
+		}
+	}
+	// The online fan-out above only reaches whoever is connected right now. The
+	// durable queue holds a row per contact/dialog peer, so the rest converge on
+	// the tombstone once they come back instead of keeping a live composer.
+	r.wakeAccountDeletionNotifications()
 	r.finishDeletedAccountAuthorizations(ctx, userID, outcome.Deletion.RevokedAuthorizations)
 	r.invalidateDeletedUserProjectionFacts(userID)
 	// A tombstone changes this target for every viewer. Flushing once is bounded
@@ -133,6 +150,15 @@ func (r *Router) finishDeletedAccountAuthorizations(ctx context.Context, userID 
 func (r *Router) NotifyModerationAccountDeletion(ctx context.Context, result domain.AccountDeletionResult) {
 	if r == nil || !result.Changed || result.User.ID == 0 {
 		return
+	}
+	if r.deps.Users != nil {
+		if tombstone, found, err := r.deps.Users.ByID(ctx, result.User.ID, result.User.ID); err == nil && found {
+			if notifier, ok := r.deps.Users.(interface {
+				NotifyUserModerationFlagsChanged(context.Context, domain.User) error
+			}); ok {
+				_ = notifier.NotifyUserModerationFlagsChanged(ctx, tombstone)
+			}
+		}
 	}
 	r.finishDeletedAccountAuthorizations(ctx, result.User.ID, result.RevokedAuthorizations)
 	r.invalidateDeletedUserProjectionFacts(result.User.ID)

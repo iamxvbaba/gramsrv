@@ -28,6 +28,7 @@ import (
 
 const (
 	ActionSetAccountFrozen        = "account.set_frozen"
+	ActionDeleteAccount           = "account.delete"
 	ActionGrantPremium            = "account.grant_premium"
 	ActionRefundPremium           = "account.refund_premium"
 	ActionUpsertPremiumPlan       = "premium.plan.upsert"
@@ -303,6 +304,20 @@ type AccountFreezeNotifier interface {
 	NotifyAccountFreezeChanged(ctx context.Context, freeze domain.AccountFreeze) error
 }
 
+// AccountDeletionService is the same account lifecycle boundary the moderation
+// executor drives: one transaction writes the tombstone, retires the username,
+// returns NFT usernames to storage and deactivates the avatar.
+type AccountDeletionService interface {
+	ExecuteAccountDeletion(ctx context.Context, userID int64, source domain.AccountDeletionSource, reason string, now time.Time) (domain.AccountDeletionResult, error)
+}
+
+// AccountDeletionNotifier finishes an operator-driven deletion the same way the
+// moderation path does: revoke the live sessions the tombstone invalidated and
+// drop the projection caches that still describe the old account.
+type AccountDeletionNotifier interface {
+	NotifyModerationAccountDeletion(ctx context.Context, result domain.AccountDeletionResult)
+}
+
 type ChannelsService interface {
 	GetChannelByID(ctx context.Context, channelID int64) (domain.Channel, error)
 	SetVerified(ctx context.Context, channelID int64, verified bool) (domain.Channel, error)
@@ -472,37 +487,39 @@ type GiftGranter interface {
 }
 
 type Dependencies struct {
-	Commands               CommandRepository
-	Restrictions           RestrictionStore
-	Auth                   AuthService
-	Revoker                AuthKeyRevoker
-	Users                  UsersService
-	UserLookup             UserLookup
-	Account                AccountService
-	Photos                 AvatarResolver
+	Commands                CommandRepository
+	Restrictions            RestrictionStore
+	Auth                    AuthService
+	Revoker                 AuthKeyRevoker
+	Users                   UsersService
+	UserLookup              UserLookup
+	Account                 AccountService
+	Photos                  AvatarResolver
 	Donations              DonationsService
-	Stars                  StarsService
-	Premium                PremiumService
-	StarsNotifier          StarsNotifier
-	UserNotifier           UserNotifier
-	UserModerationNotifier UserModerationNotifier
-	FreezeNotifier         AccountFreezeNotifier
-	Channels               ChannelsService
-	ChannelNotifier        ChannelNotifier
-	Messages               MessagesService
-	Gifts                  GiftsService
-	GiftGranter            GiftGranter
-	OfficialGifts          OfficialGiftsSource
-	Bots                   BotService
-	Broadcast              BroadcastService
-	Emoji                  EmojiService
-	StickerSets            StickerSetsService
-	GifCatalog             GifCatalogService
-	Moderation             ModerationService
-	Usernames              CollectibleUsernamesService
-	CollectiblePhones      CollectiblePhonesService
-	Rating                 AccountRatingService
-	Verification           VerificationService
+	Stars                   StarsService
+	Premium                 PremiumService
+	StarsNotifier           StarsNotifier
+	UserNotifier            UserNotifier
+	UserModerationNotifier  UserModerationNotifier
+	FreezeNotifier          AccountFreezeNotifier
+	AccountDeletion         AccountDeletionService
+	AccountDeletionNotifier AccountDeletionNotifier
+	Channels                ChannelsService
+	ChannelNotifier         ChannelNotifier
+	Messages                MessagesService
+	Gifts                   GiftsService
+	GiftGranter             GiftGranter
+	OfficialGifts           OfficialGiftsSource
+	Bots                    BotService
+	Broadcast               BroadcastService
+	Emoji                   EmojiService
+	StickerSets             StickerSetsService
+	GifCatalog              GifCatalogService
+	Moderation              ModerationService
+	Usernames               CollectibleUsernamesService
+	CollectiblePhones       CollectiblePhonesService
+	Rating                  AccountRatingService
+	Verification            VerificationService
 	// BotVerification is the third-party mechanism, wired separately from
 	// Verification: the two never read each other's state.
 	BotVerification BotVerificationService
@@ -514,43 +531,45 @@ type Dependencies struct {
 }
 
 type Service struct {
-	commands               CommandRepository
-	restrictions           RestrictionStore
-	auth                   AuthService
-	revoker                AuthKeyRevoker
-	users                  UsersService
-	userLookup             UserLookup
-	account                AccountService
-	photos                 AvatarResolver
+	commands                CommandRepository
+	restrictions            RestrictionStore
+	auth                    AuthService
+	revoker                 AuthKeyRevoker
+	users                   UsersService
+	userLookup              UserLookup
+	account                 AccountService
+	photos                  AvatarResolver
 	donations              DonationsService
-	stars                  StarsService
-	premium                PremiumService
-	starsNotifier          StarsNotifier
-	userNotifier           UserNotifier
-	userModerationNotifier UserModerationNotifier
-	freezeNotifier         AccountFreezeNotifier
-	channels               ChannelsService
-	channelNotifier        ChannelNotifier
-	messages               MessagesService
-	gifts                  GiftsService
-	giftGranter            GiftGranter
-	officialGifts          OfficialGiftsSource
-	bots                   BotService
-	broadcast              BroadcastService
-	emoji                  EmojiService
-	stickerSets            StickerSetsService
-	gifCatalog             GifCatalogService
-	moderation             ModerationService
-	usernames              CollectibleUsernamesService
-	collectiblePhones      CollectiblePhonesService
-	rating                 AccountRatingService
-	verification           VerificationService
-	botVerification        BotVerificationService
+	stars                   StarsService
+	premium                 PremiumService
+	starsNotifier           StarsNotifier
+	userNotifier            UserNotifier
+	userModerationNotifier  UserModerationNotifier
+	freezeNotifier          AccountFreezeNotifier
+	accountDeletion         AccountDeletionService
+	accountDeletionNotifier AccountDeletionNotifier
+	channels                ChannelsService
+	channelNotifier         ChannelNotifier
+	messages                MessagesService
+	gifts                   GiftsService
+	giftGranter             GiftGranter
+	officialGifts           OfficialGiftsSource
+	bots                    BotService
+	broadcast               BroadcastService
+	emoji                   EmojiService
+	stickerSets             StickerSetsService
+	gifCatalog              GifCatalogService
+	moderation              ModerationService
+	usernames               CollectibleUsernamesService
+	collectiblePhones       CollectiblePhonesService
+	rating                  AccountRatingService
+	verification            VerificationService
+	botVerification         BotVerificationService
 	itemPrices             ItemPricesStore
 	uniqueGifts            UniqueGiftWalletStore
 	tonDNS                 TonDNSResolver
 	usernameWallets        UsernameWalletLookup
-	now                    func() time.Time
+	now                     func() time.Time
 }
 
 func NewService(deps Dependencies) *Service {
@@ -603,6 +622,12 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.FreezeNotifier != nil {
 		s.freezeNotifier = deps.FreezeNotifier
+	}
+	if deps.AccountDeletion != nil {
+		s.accountDeletion = deps.AccountDeletion
+	}
+	if deps.AccountDeletionNotifier != nil {
+		s.accountDeletionNotifier = deps.AccountDeletionNotifier
 	}
 	if deps.Channels != nil {
 		s.channels = deps.Channels
@@ -982,6 +1007,11 @@ type SetAccountFrozenRequest struct {
 	Frozen    bool      `json:"frozen"`
 	Until     time.Time `json:"freeze_until,omitempty"`
 	AppealURL string    `json:"freeze_appeal_url,omitempty"`
+}
+
+type DeleteAccountRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
 }
 
 type GrantPremiumRequest struct {
@@ -1609,6 +1639,52 @@ func (s *Service) SetAccountFrozen(ctx context.Context, req SetAccountFrozenRequ
 			details["notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "account freeze updated", Details: details}, nil
+	})
+}
+
+// DeleteAccount tombstones an account from the operator panel. The durable half
+// and the live-session half are one outcome, exactly like the moderation path:
+// refuse to commit the tombstone when this process cannot run the post-commit
+// half, otherwise an already-bound session keeps its cached user.
+func (s *Service) DeleteAccount(ctx context.Context, req DeleteAccountRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if s == nil || s.accountDeletion == nil || s.accountDeletionNotifier == nil {
+		return CommandResult{}, fmt.Errorf("admin account deletion is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteAccount, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{
+			"previous_deleted": u.Deleted,
+			"username":         u.Username,
+			"would_change":     !u.Deleted,
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: details}, nil
+		}
+		reason := "admin account deletion"
+		if req.Reason != "" {
+			reason = "admin: " + req.Reason
+		}
+		result, err := s.accountDeletion.ExecuteAccountDeletion(
+			ctx, req.UserID, domain.AccountDeletionManual, reason, s.now().UTC())
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details["deleted_at"] = result.User.DeletedAt
+		details["revoked_authorizations"] = len(result.RevokedAuthorizations)
+		details["vaulted_collectible_usernames"] = result.VaultedCollectibleUsernames
+		if result.Changed {
+			s.accountDeletionNotifier.NotifyModerationAccountDeletion(ctx, result)
+		}
+		return CommandResult{Message: "account deleted", Details: details}, nil
 	})
 }
 

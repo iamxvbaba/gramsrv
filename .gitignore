@@ -1,6 +1,12 @@
 # Go build artifacts
 /bin/
 *.exe
+# Root build output from `go build ./...` -- never a repo artifact.
+/telesrv
+/telesrv-admin
+/telesrv-load
+/telesrv-update
+/gramsrv-backup
 *.test
 *.out
 coverage.*

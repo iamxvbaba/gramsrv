@@ -542,6 +542,14 @@ type AccountFreezeNotificationService interface {
 	CompleteAccountFreezeNotification(ctx context.Context, id, version int64, now time.Time) error
 }
 
+// AccountDeletionNotificationService owns the durable tombstone queue. Deletion
+// fans out to every viewer who ever shared a contact or a dialog with the
+// account, so it is a queue rather than a synchronous fan-out.
+type AccountDeletionNotificationService interface {
+	ClaimAccountDeletionNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountDeletionNotification, error)
+	CompleteAccountDeletionNotification(ctx context.Context, id int64, now time.Time) error
+}
+
 // UpdatesService 抽象 update 状态查询。
 type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
@@ -1136,61 +1144,62 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers       store.AuthKeySessionLayerStore
-	ReadModelVersions          store.ReadModelVersionStore
-	UserProjectionFacts        UserProjectionFactInvalidator
-	Account                    AccountService
-	Privacy                    PrivacyService
-	Help                       HelpService
-	AppUpdates                 updatecdn.Resolver
-	AccountFreeze              AccountFreezeService
-	AccountFreezeNotifications AccountFreezeNotificationService
-	AICompose                  AIComposeService
-	Ephemeral                  EphemeralService
-	EphemeralPush              store.EphemeralPushBroker
-	WelcomeMessages            WelcomeMessageService
-	Moderation                 ModerationService
-	Users                      UsersService
-	Usernames                  UsernameRegistryService
-	CollectiblePhones          CollectiblePhoneService
-	AccountRatings             AccountRatingService
-	BotVerifications           BotVerificationService
-	TelegramLogin              TelegramLoginService
-	Updates                    UpdatesService
-	BootstrapUpdates           store.BootstrapUpdateJobStore
-	BotAPIUpdates              store.BotAPIUpdateStore
-	BotCallbacks               store.BotCallbackRegistryStore
-	Contacts                   ContactsService
-	Dialogs                    DialogsService
-	Chatlists                  ChatlistsService
-	Messages                   MessagesService
-	Translation                TranslationService
+	AuthKeySessionLayers         store.AuthKeySessionLayerStore
+	ReadModelVersions            store.ReadModelVersionStore
+	UserProjectionFacts          UserProjectionFactInvalidator
+	Account                      AccountService
+	Privacy                      PrivacyService
+	Help                         HelpService
+	AppUpdates                   updatecdn.Resolver
+	AccountFreeze                AccountFreezeService
+	AccountFreezeNotifications   AccountFreezeNotificationService
+	AccountDeletionNotifications AccountDeletionNotificationService
+	AICompose                    AIComposeService
+	Ephemeral                    EphemeralService
+	EphemeralPush                store.EphemeralPushBroker
+	WelcomeMessages              WelcomeMessageService
+	Moderation                   ModerationService
+	Users                        UsersService
+	Usernames                    UsernameRegistryService
+	CollectiblePhones            CollectiblePhoneService
+	AccountRatings               AccountRatingService
+	BotVerifications             BotVerificationService
+	TelegramLogin                TelegramLoginService
+	Updates                      UpdatesService
+	BootstrapUpdates             store.BootstrapUpdateJobStore
+	BotAPIUpdates                store.BotAPIUpdateStore
+	BotCallbacks                 store.BotCallbackRegistryStore
+	Contacts                     ContactsService
+	Dialogs                      DialogsService
+	Chatlists                    ChatlistsService
+	Messages                     MessagesService
+	Translation                  TranslationService
 	Transcriptions             TranscriptionService
-	Stories                    StoriesService
-	Channels                   ChannelsService
-	Communities                CommunitiesService
-	Files                      FilesService
-	PremiumPromo               PremiumPromoService
-	Premium                    PremiumService
-	Bots                       BotsService
-	ServiceBotCallbacks        ServiceBotCallbacks
-	ServiceBotInlineResults    ServiceBotInlineResults
-	Polls                      PollsService
-	Phone                      PhoneService
-	GroupCalls                 GroupCallsService
-	LiveStreams                LiveStreamsService
-	SFU                        sfu.Service
-	TURN                       turnsrv.Service
-	LangPack                   LangPackService
-	Sessions                   SessionBinder
-	Inline                     store.InlineRegistryStore
-	Limiter                    RateLimiter
-	Metrics                    Metrics
-	SecretChats                SecretChatService
-	Stars                      StarsService
-	Gifts                      GiftsService
-	Passkey                    PasskeyService
-	Themes                     ThemeService
+	Stories                      StoriesService
+	Channels                     ChannelsService
+	Communities                  CommunitiesService
+	Files                        FilesService
+	PremiumPromo                 PremiumPromoService
+	Premium                      PremiumService
+	Bots                         BotsService
+	ServiceBotCallbacks          ServiceBotCallbacks
+	ServiceBotInlineResults      ServiceBotInlineResults
+	Polls                        PollsService
+	Phone                        PhoneService
+	GroupCalls                   GroupCallsService
+	LiveStreams                  LiveStreamsService
+	SFU                          sfu.Service
+	TURN                         turnsrv.Service
+	LangPack                     LangPackService
+	Sessions                     SessionBinder
+	Inline                       store.InlineRegistryStore
+	Limiter                      RateLimiter
+	Metrics                      Metrics
+	SecretChats                  SecretChatService
+	Stars                        StarsService
+	Gifts                        GiftsService
+	Passkey                      PasskeyService
+	Themes                       ThemeService
 	// GeoIP 把会话记录的 IP 解析为 account.getAuthorizations 展示用的国家/地区
 	// 文案。为 nil(未配置地理后端)时列表继续回传占位文案,与启用前一致。
 	GeoIP geoip.Resolver

@@ -57,6 +57,12 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if !ok || toPeer.ID == 0 {
 		return nil, peerIDInvalidErr()
 	}
+	// Forwarding is a private write and resolves its target through a peer
+	// reference, which never reads the users row. Without this a deleted account
+	// keeps collecting forwarded history after it stopped accepting messages.
+	if r.peerIsDeletedAccount(ctx, toPeer) {
+		return nil, peerIDInvalidErr()
+	}
 	idempotencyFingerprints := make([][]byte, len(req.ID))
 	for i := range req.ID {
 		idempotencyFingerprints[i], err = forwardMessagesItemIdempotencyFingerprint(req, req.ID[i], req.RandomID[i])

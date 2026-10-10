@@ -865,3 +865,61 @@ type messageProjectionPhones struct{}
 func (messageProjectionPhones) OwnedCollectiblePhones(context.Context, []int64) (map[int64]domain.CollectiblePhone, error) {
 	return map[int64]domain.CollectiblePhone{}, nil
 }
+
+type deletedRecipientReader struct {
+	deleted bool
+	calls   int
+}
+
+func (r *deletedRecipientReader) ByID(context.Context, int64) (domain.User, bool, error) {
+	r.calls++
+	if r.deleted {
+		return domain.User{ID: 42, Deleted: true}, true, nil
+	}
+	return domain.User{ID: 42, FirstName: "Live"}, true, nil
+}
+
+// A tombstone keeps its rows, so the store would happily accept the message.
+// Without the recipient gate the message lands in a dialog nobody can read back.
+func TestSendPrivateTextRejectsDeletedRecipient(t *testing.T) {
+	ctx := context.Background()
+	const senderID int64 = 2001
+	const recipientID int64 = 42
+
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	live := &deletedRecipientReader{}
+	deleted := &deletedRecipientReader{deleted: true}
+
+	liveSvc := NewService(messages, dialogs, WithRecipientUserReader(live))
+	if _, err := liveSvc.SendPrivateText(ctx, senderID, domain.SendPrivateTextRequest{
+		SenderUserID: senderID, RecipientUserID: recipientID, RandomID: 9101,
+		Message: "to a live account", Date: 1_700_000_000,
+	}); err != nil {
+		t.Fatalf("SendPrivateText to a live recipient: %v", err)
+	}
+	if live.calls != 1 {
+		t.Fatalf("live recipient probes = %d, want one tombstone probe", live.calls)
+	}
+
+	deletedSvc := NewService(messages, dialogs, WithRecipientUserReader(deleted))
+	if _, err := deletedSvc.SendPrivateText(ctx, senderID, domain.SendPrivateTextRequest{
+		SenderUserID: senderID, RecipientUserID: recipientID, RandomID: 9102,
+		Message: "to a deleted account", Date: 1_700_000_000,
+	}); !errors.Is(err, domain.ErrPeerDeleted) {
+		t.Fatalf("SendPrivateText to a deleted recipient err = %v, want ErrPeerDeleted", err)
+	}
+	history, err := messages.ListByUser(ctx, senderID, domain.MessageFilter{
+		HasPeer: true,
+		Peer:    domain.Peer{Type: domain.PeerTypeUser, ID: recipientID},
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	for _, msg := range history.Messages {
+		if msg.Body == "to a deleted account" {
+			t.Fatal("a message was delivered to a deleted account")
+		}
+	}
+}

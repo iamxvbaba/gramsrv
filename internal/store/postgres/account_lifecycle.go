@@ -160,14 +160,33 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	// Human account deletion is deliberately a short logical tombstone boundary.
 	// Relationships, history, memberships, settings and financial rows remain
 	// attached to the stable user id; reads project that id as Deleted Account.
+	// Identities are the exception, because a name outlives its owner: the
+	// username is retired permanently, NFT usernames go back to storage, and the
+	// avatar leaves with the account.
 	// The physical cleanup helpers remain available only to the separate bot-
 	// deletion boundary, whose lifecycle semantics are intentionally different.
 	revoked, err := revokeByUserExceptTx(ctx, tx, userID, 0)
 	if err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("revoke deleted account authorizations: %w", err)
 	}
-	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, "", ""); err != nil {
-		return domain.AccountDeletionResult{}, fmt.Errorf("release deleted account username: %w", err)
+	// The ordinary username leaves the account but the name itself is retired,
+	// not released: the registry row survives the tombstone as an inactive
+	// reservation, so it resolves to nobody and can never be claimed again.
+	// Collectible usernames are assets instead, so they are returned to the vault
+	// -- unowned but still reissuable -- rather than parked on a ghost.
+	// Profile photos are deactivated for the same reason: a deleted account must
+	// have no avatar left to project, the tombstone view draws the ghost instead.
+	if err := retirePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID); err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("retire deleted account username: %w", err)
+	}
+	vaulted, err := vaultPeerCollectibleUsernamesTx(ctx, tx, peerUsernameTypeUser, userID, now)
+	if err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("vault deleted account collectible usernames: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE profile_photos SET active = false
+WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND active`, userID); err != nil {
+		return domain.AccountDeletionResult{}, fmt.Errorf("deactivate deleted account profile photos: %w", err)
 	}
 	reason = strings.TrimSpace(reason)
 	reason = truncateUTF8Bytes(reason, 1024)
@@ -191,6 +210,12 @@ SET state = 'executed', completed_at = $2, updated_at = $2
 WHERE user_id = $1 AND state = 'pending'`, userID, now); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("complete account deletion request: %w", err)
 	}
+	// The tombstone is only useful once viewers learn about it. Committing the
+	// audience in the same transaction is what makes the deletion converge for
+	// offline viewers too, instead of relying on an online-only fan-out.
+	if err := enqueueAccountDeletionNotifications(ctx, tx, userID, now); err != nil {
+		return domain.AccountDeletionResult{}, err
+	}
 	u, found, err = NewUserStore(tx).ByID(ctx, userID)
 	if err != nil || !found {
 		if err == nil {
@@ -201,7 +226,12 @@ WHERE user_id = $1 AND state = 'pending'`, userID, now); err != nil {
 	if err := tx.Commit(ctx); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("commit execute account deletion: %w", err)
 	}
-	return domain.AccountDeletionResult{User: u, Changed: true, RevokedAuthorizations: revoked}, nil
+	return domain.AccountDeletionResult{
+		User:                        u,
+		Changed:                     true,
+		RevokedAuthorizations:       revoked,
+		VaultedCollectibleUsernames: vaulted,
+	}, nil
 }
 
 func (s *AccountLifecycleStore) CancelAccountDeletion(ctx context.Context, userID int64, digest [32]byte, now time.Time) ([]domain.Authorization, error) {

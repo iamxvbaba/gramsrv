@@ -69,6 +69,9 @@ type AccountDeletionResult struct {
 	User                  User
 	Changed               bool
 	RevokedAuthorizations []Authorization
+	// VaultedCollectibleUsernames counts the NFT usernames the deletion returned
+	// to the vault. Observability only: the assets outlive the account.
+	VaultedCollectibleUsernames int
 }
 
 type AccountDeleteKind string

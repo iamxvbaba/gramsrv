@@ -567,6 +567,13 @@ func (r *Router) userIDsFromInputUsers(ctx context.Context, currentUserID int64,
 		if !found || u.ID == 0 {
 			return nil, peerIDInvalidErr()
 		}
+		// Every caller of this helper writes: invites, member adds, admin
+		// grants, bans, premium gift recipients. A tombstone accepts none of
+		// them, and resolving an InputUser never reads the users row, so the
+		// deleted bit has to be checked here rather than per call site.
+		if u.Deleted {
+			return nil, peerIDInvalidErr()
+		}
 		if _, ok := seen[u.ID]; ok {
 			continue
 		}

@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, Minus, Sparkles, Star } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, Minus, Sparkles, Star, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -154,6 +154,14 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                 onDone={load}
               />
             )}
+            <ActionButton
+              label={t("account.deleteAccount")}
+              icon={<Trash2 size={15} />}
+              tone="danger"
+              path="/api/actions/delete-account"
+              payload={() => ({ user_id: account.ID })}
+              onDone={load}
+            />
             <label className="duration-field">
               <span>{t("account.premiumMonths")}</span>
               <input

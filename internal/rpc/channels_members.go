@@ -456,7 +456,9 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	if err != nil {
 		return nil, internalErr()
 	}
-	if !found || target.ID == 0 {
+	// An account tombstone can hold no admin rights: the grant would outlive the
+	// account and keep the peer's row in every participants projection.
+	if !found || target.ID == 0 || target.Deleted {
 		return nil, peerIDInvalidErr()
 	}
 	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {
