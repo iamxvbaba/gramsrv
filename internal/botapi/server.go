@@ -39,6 +39,19 @@ type InvoiceService interface {
 	BotAPIRefundStarPayment(ctx context.Context, botID, userID int64, telegramPaymentChargeID string) (bool, error)
 }
 
+// StarGiftGatewayService exposes the Star Gift catalog and purchase to bots. It is
+// optional so lightweight Bot API gateways retain the smaller core interface; the
+// production RPC router implements it through the same durable Stars payment
+// pipeline as MTProto payments.sendStarsForm.
+type StarGiftGatewayService interface {
+	BotAPIAvailableGifts(ctx context.Context) ([]domain.StarGift, error)
+	// BotAPISendStarGift purchases and sends one gift out of the bot's Stars
+	// balance. userID and chatID are the two mutually exclusive Bot API recipient
+	// selectors; the gateway resolves whichever is non-zero into a peer. requestID
+	// is the telesrv idempotency key (empty means "charge again").
+	BotAPISendStarGift(ctx context.Context, botID, giftID, userID, chatID int64, payForUpgrade bool, message domain.PremiumGiftMessage, requestID string) (bool, error)
+}
+
 type WebAppService interface {
 	AnswerWebAppQueryFromBotAPI(ctx context.Context, botID int64, webAppQueryID string, result domain.BotInlineResult) (inlineMessageID string, err error)
 	SavePreparedInlineMessageFromBotAPI(ctx context.Context, botID, userID int64, result domain.BotInlineResult, peerTypes []string) (id string, expireDate int, err error)

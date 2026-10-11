@@ -320,36 +320,6 @@ func expandByInput(hit map[netip.Addr]Location, ips []string) map[string]Locatio
 	return out
 }
 
-// publicAddr 归一存储的对端地址,并拒绝没有地理归属的地址。
-//
-// authorizations.ip 存的是 RemoteAddr 的 host 部分,可能是 IPv4、IPv6、也可能是
-// IPv4-mapped IPv6(双栈 listener 上很常见)。不 unmap 的话 ::ffff:203.0.113.7
-// 在后端一定查不到,所以这里必须还原成 IPv4。
-//
-// 回环、私网、链路本地、未指定和组播一律拒绝:前者在地理库和各家免费接口里都没有
-// 记录,后者等于把内部网络拓扑送到第三方。
-func publicAddr(raw string) (netip.Addr, bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return netip.Addr{}, false
-	}
-	// IPv6 的 zone(%eth0)对地理归属没有意义,netip.ParseAddr 也会拒绝它。
-	if pct := strings.LastIndexByte(trimmed, '%'); pct > 0 {
-		trimmed = trimmed[:pct]
-	}
-	addr, err := netip.ParseAddr(trimmed)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	addr = addr.Unmap()
-	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() ||
-		addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() ||
-		addr.IsMulticast() {
-		return netip.Addr{}, false
-	}
-	return addr, true
-}
-
 func positiveDuration(value, fallback time.Duration) time.Duration {
 	if value <= 0 {
 		return fallback

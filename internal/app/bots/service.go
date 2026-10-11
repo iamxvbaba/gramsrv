@@ -153,6 +153,8 @@ type Service struct {
 	gramsrvOperators      map[int64]bool
 	gramsrvFreezes        gramsrvAccountFreezeManager
 	donations             donationsSource
+	gramsrvAdmin          gramsrvFreezeAdmin
+	gramsrvAdminChatIDs   map[int64]struct{}
 	// dialogLimiter bounds how often one applicant can drive a service-bot dialog.
 	// The verification service already rate-limits application creation; this is the
 	// separate bound on dialog traffic itself, so a script cannot spin the state

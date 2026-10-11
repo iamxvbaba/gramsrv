@@ -998,6 +998,27 @@ func apiPhotoSizesWithPrefix(sizes []domain.PhotoSize, locationPrefix string) []
 	return out
 }
 
+// apiSticker projects a document snapshot as a Bot API Sticker. The sticker
+// loop marks the concrete document as a regular sticker and upgrades is_animated
+// / is_video from the document attributes.
+func apiSticker(document domain.Document) map[string]any {
+	base := apiDocument(document)
+	for _, attribute := range document.Attributes {
+		if attribute.Kind != domain.DocAttrSticker {
+			continue
+		}
+		sticker := cloneAPIMap(base)
+		sticker["type"], sticker["width"], sticker["height"] = "regular", attribute.W, attribute.H
+		sticker["is_animated"] = hasDocumentAttribute(document, domain.DocAttrAnimated)
+		sticker["is_video"] = hasDocumentAttribute(document, domain.DocAttrVideo)
+		if attribute.Alt != "" {
+			sticker["emoji"] = attribute.Alt
+		}
+		return sticker
+	}
+	return base
+}
+
 func apiDocument(doc domain.Document) map[string]any {
 	fileID := encodeBotAPIFileID("doc:" + strconv.FormatInt(doc.ID, 10))
 	out := map[string]any{

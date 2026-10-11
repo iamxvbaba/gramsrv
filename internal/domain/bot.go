@@ -323,6 +323,10 @@ const BotInvoiceMaxDescription = 255
 // BotInvoiceMaxPayload is the start_param budget Telegram allows.
 const BotInvoiceMaxPayload = 64
 
+// GramsrvBotUserID is the built-in @gramsrv moderation bot account used by
+// WithGramsrvAdmin. Zero means the bot is not provisioned on this server.
+const GramsrvBotUserID = int64(0)
+
 // Valid reports whether the invoice describes a well-formed XTR sale.
 func (i BotInvoice) Valid() bool {
 	return i.BotUserID > 0 && i.ChatID != 0 && i.MessageID > 0 && i.Amount > 0 &&
