@@ -27,7 +27,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { LanguageSwitch, useI18n } from "../i18n";
-import { permissionAuditRead, permissionAdminsManage, permissionBotVerificationReview, permissionDonationsManage, permissionMessagesRead, permissionPremiumManage, permissionPricesManage, permissionServerManage, permissionStarsRead, permissionVerificationReview, useCan } from "../permissions";
+import { permissionAuditRead, permissionAdminsManage, permissionBotVerificationReview, permissionDashboardRead, permissionMessagesRead, permissionPremiumManage, permissionServerManage, permissionStarsRead, permissionVerificationReview, useCan } from "../permissions";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
