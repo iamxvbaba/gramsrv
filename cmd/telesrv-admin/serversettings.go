@@ -19,6 +19,7 @@ import (
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
 	"telesrv/internal/identity"
+	"telesrv/internal/procctl"
 )
 
 // serverManage gates the whole Server Settings surface -- see
@@ -309,6 +310,11 @@ func (s *server) handleServerEnvAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// A missing/ungrouped .env.example yields a nil slice; the panel expects a
+	// JSON array, so never serialize it as null.
+	if groups == nil {
+		groups = []procctl.EnvGroup{}
 	}
 	writeJSON(w, http.StatusOK, groups)
 }

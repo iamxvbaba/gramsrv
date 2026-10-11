@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	stickerSystemKeyMigrationUp   = "migrations/0181_sticker_set_system_key_unique.up.sql"
-	stickerSystemKeyMigrationDown = "migrations/0181_sticker_set_system_key_unique.down.sql"
+	stickerSystemKeyMigrationUp   = "migrations/0183_sticker_set_system_key_unique.up.sql"
+	stickerSystemKeyMigrationDown = "migrations/0183_sticker_set_system_key_unique.down.sql"
 	synthesizedDefaultStatusSetID = int64(7_777_000_000_000_001)
 )
 

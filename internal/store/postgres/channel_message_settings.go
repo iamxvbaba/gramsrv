@@ -29,33 +29,6 @@ func (s *ChannelStore) SetPreHistoryHidden(ctx context.Context, userID, channelI
 			return fmt.Errorf("update channel prehistory: %w", err)
 		}
 		channel.PreHistoryHidden = enabled
-		if prev && !enabled {
-			// 关闭"限制新成员查看历史"必须归还成员侧读边界。available_min_id 的全部写入
-			// (upsert / batch / clear history)都是 GREATEST 单调递增,没有任何写入能降低它;
-			// 不在这里显式归零的话,"隐藏历史期间入群"的成员将永久看到空频道,而且重新加入
-			// 也救不回来(重新加入算出 minID=0,但 upsert 取 GREATEST(旧值,0)=旧值)。
-			// 只回收纯 prehistory 来源的边界:history_clear_anchor_id>0 说明该边界来自成员
-			// 自己的"清空历史",那是 owner-local 语义,不能被群设置改写。
-			if _, err := tx.Exec(ctx, `
-UPDATE channel_members
-SET available_min_id = 0,
-    updated_at = now()
-WHERE channel_id = $1
-  AND available_min_id > 0
-  AND COALESCE(history_clear_anchor_id, 0) = 0`, channelID); err != nil {
-				return fmt.Errorf("release prehistory member boundaries: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `
-UPDATE user_channel_member_index
-SET available_min_id = 0,
-    history_clear_updated_at = extract(epoch from now())::int,
-    updated_at = now()
-WHERE channel_id = $1
-  AND available_min_id > 0
-  AND COALESCE(history_clear_anchor_id, 0) = 0`, channelID); err != nil {
-				return fmt.Errorf("release prehistory member index boundaries: %w", err)
-			}
-		}
 		if prev != enabled {
 			if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 				ChannelID: channelID,

@@ -459,7 +459,7 @@ function EnvSection() {
     setError("");
     try {
       const g = await api.serverEnv();
-      setGroups(g);
+      setGroups(Array.isArray(g) ? g : []);
       const next: Record<string, string> = {};
       for (const group of g) {
         for (const field of group.fields) {

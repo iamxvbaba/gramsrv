@@ -90,15 +90,6 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		if err := upsertChannelMembersBatchTx(ctx, tx, channel, members); err != nil {
 			return domain.CreateChannelResult{}, err
 		}
-		// 批量拉人同样可能包含"重新入群"的成员:逐个归还纯 prehistory 来源的读边界
-		// (upsert 是 GREATEST,不会下调),否则他们永久看到空频道。
-		if !channel.PreHistoryHidden {
-			for _, m := range members {
-				if err := resetPrehistoryBoundaryTx(ctx, tx, channel, m.UserID); err != nil {
-					return domain.CreateChannelResult{}, err
-				}
-			}
-		}
 		if err := insertChannelInviteAdminLogsBatchTx(ctx, tx, channelID, inviterUserID, date, members); err != nil {
 			return domain.CreateChannelResult{}, err
 		}

@@ -25,6 +25,10 @@ import (
 
 func starGiftInvalidErr() error { return tgerr.New(400, "STARGIFT_INVALID") }
 
+// starGiftSlugInvalidErr 对齐官方 payments.getUniqueStarGiftValueInfo 的
+// STARGIFT_SLUG_INVALID：只有“slug 本身无效”用它，其它语义仍走 STARGIFT_INVALID。
+func starGiftSlugInvalidErr() error { return tgerr.New(400, "STARGIFT_SLUG_INVALID") }
+
 func devStarsTopupOptions() []tg.StarsTopupOption {
 	return []tg.StarsTopupOption{
 		{Stars: 1000, Currency: "USD", Amount: 99},
@@ -1189,6 +1193,9 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 		ExcludeUnique:       req.ExcludeUnique,
 		ExcludeUpgradable:   req.ExcludeUpgradable,
 		ExcludeUnupgradable: req.ExcludeUnupgradable,
+		ExcludeHosted:       req.ExcludeHosted,
+		SortByValue:         req.SortByValue,
+		PeerColorAvailable:  req.PeerColorAvailable,
 		CollectionID:        collectionID,
 		Offset:              req.Offset,
 		Limit:               req.Limit,
@@ -1366,12 +1373,10 @@ func (r *Router) onPaymentsConvertStarGift(ctx context.Context, ref tg.InputSave
 		case errors.Is(err, domain.ErrStarGiftNotFound),
 			errors.Is(err, domain.ErrStarGiftAlreadyConverted),
 			errors.Is(err, domain.ErrStarGiftAlreadyUpgraded),
-			errors.Is(err, domain.ErrStarGiftNotConvertible),
 			errors.Is(err, domain.ErrStarGiftOwnerInvalid),
 			errors.Is(err, domain.ErrStarGiftUnavailable):
 			// These are known business conditions (e.g. converting an already
-			// upgraded/unique gift, or a gift that carries no convert value, like
-			// one a bot sent). Surface a clean client error instead of a
+			// upgraded/unique gift). Surface a clean client error instead of a
 			// 500 INTERNAL_SERVER_ERROR.
 			return false, starGiftInvalidErr()
 		default:
@@ -1537,6 +1542,41 @@ func (r *Router) tgSavedStarGiftsResponse(ctx context.Context, viewerUserID int6
 			if unique, ok := uniques[gifts[i].UniqueGiftID]; ok {
 				copy := unique
 				gifts[i].Unique = &copy
+			}
+		}
+	}
+	if capability, ok := r.deps.Gifts.(interface {
+		CrossCraftCapability(context.Context, int64) (bool, int, error)
+	}); ok && len(uniqueIDs) > 0 {
+		allowed, chance, err := capability.CrossCraftCapability(ctx, viewerUserID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			for i := range gifts {
+				gift := &gifts[i]
+				if gift.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) {
+					continue
+				}
+				gift.CanCraftAt = 0
+				if gift.Unique != nil {
+					gift.Unique.CraftChancePermille = 0
+				}
+			}
+		} else {
+			for i := range gifts {
+				gift := &gifts[i]
+				if gift.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) ||
+					!gift.LifecycleStatus.Live() || gift.Unique == nil || gift.Unique.Burned ||
+					gift.Unique.OwnerAddress != "" || gift.Unique.GiftAddress != "" {
+					continue
+				}
+				if gift.CanCraftAt == 0 {
+					gift.CanCraftAt = 1
+				}
+				if gift.Unique.CraftChancePermille == 0 {
+					gift.Unique.CraftChancePermille = chance
+				}
 			}
 		}
 	}
@@ -1908,6 +1948,16 @@ func savedStarGiftUserIDs(viewerUserID int64, gifts []domain.SavedStarGift) []in
 	seen := make(map[int64]struct{}, len(gifts))
 	ids := make([]int64, 0, len(gifts))
 	for _, g := range gifts {
+		if g.Unique != nil {
+			for _, peer := range []domain.Peer{g.Unique.Owner, g.Unique.Host} {
+				if peer.Type == domain.PeerTypeUser && peer.ID > 0 {
+					if _, ok := seen[peer.ID]; !ok {
+						seen[peer.ID] = struct{}{}
+						ids = append(ids, peer.ID)
+					}
+				}
+			}
+		}
 		if g.FromUserID == 0 || !savedStarGiftOriginalDetailsVisible(viewerUserID, g) {
 			continue
 		}

@@ -73,7 +73,7 @@ VALUES($1,9184001,9184002,'stars',1,'completed',1700000900,1700000000,
        1700000010,9184003,9184004,0,1)`, digest); err != nil {
 		t.Fatalf("seed completed withdrawal receipt: %v", err)
 	}
-	downSQL, err := deploy.Migrations.ReadFile("migrations/0179_channel_revenue_withdrawals.down.sql")
+	downSQL, err := deploy.Migrations.ReadFile("migrations/0181_channel_revenue_withdrawals.down.sql")
 	if err != nil {
 		t.Fatalf("read 0179 down: %v", err)
 	}

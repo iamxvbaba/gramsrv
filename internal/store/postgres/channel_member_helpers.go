@@ -240,26 +240,6 @@ ON CONFLICT (channel_id, user_id) DO UPDATE SET
 	return upsertUserChannelMemberIndexTx(ctx, tx, channel, member)
 }
 
-// resetPrehistoryBoundaryTx 在"重新成为成员"时把纯 prehistory 来源的读边界归零。
-// available_min_id 只增不减(upsert/batch/clear history 全是 GREATEST),所以重新入群或被
-// 管理员重新添加时,若频道已关闭隐藏历史,必须显式下调,否则该成员永久看到空频道。
-// 带 history_clear_anchor 的边界来自成员自己的"清空历史",属 owner-local 语义,不回收。
-func resetPrehistoryBoundaryTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, userID int64) error {
-	if channel.PreHistoryHidden || userID == 0 {
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `
-UPDATE channel_members
-SET available_min_id = 0,
-    updated_at = now()
-WHERE channel_id = $1 AND user_id = $2
-  AND available_min_id > 0
-  AND COALESCE(history_clear_anchor_id, 0) = 0`, channel.ID, userID); err != nil {
-		return fmt.Errorf("reset prehistory member boundary: %w", err)
-	}
-	return nil
-}
-
 func upsertUserChannelMemberIndexTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, member domain.ChannelMember) error {
 	if channel.ID == 0 || member.UserID == 0 {
 		return nil

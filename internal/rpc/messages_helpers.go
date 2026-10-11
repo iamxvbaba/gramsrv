@@ -514,6 +514,11 @@ func inputPeerClassNil(peer tg.InputPeerClass) bool {
 	}
 }
 
+func isLegacyInputPeerChat(peer tg.InputPeerClass) bool {
+	typed, ok := peer.(*tg.InputPeerChat)
+	return ok && typed != nil
+}
+
 func inputPeerChannelRef(peer tg.InputPeerClass) (channelInputRef, bool) {
 	switch p := peer.(type) {
 	case *tg.InputPeerChannel:

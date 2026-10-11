@@ -29,9 +29,37 @@ type StarGiftLifecycleStore struct {
 	tonStartingGrant int64
 	market           domain.StarGiftMarketPolicy
 	craftDraw        func(int) (int, error)
+	crossCraft       StarGiftCrossCraftGenerator
+	crossCraftChance int
+	crossCraftBlobs  StarGiftCrossCraftBlobReader
 }
 
 type StarGiftLifecycleOption func(*StarGiftLifecycleStore)
+
+type StarGiftCrossCraftGenerator interface {
+	GenerateCrossCraft(context.Context, []domain.StarGiftCraftSource) (domain.StarGiftCollectibleAttribute, error)
+}
+
+type StarGiftCrossCraftBlobReader interface {
+	Name() string
+	Get(context.Context, string) ([]byte, error)
+}
+
+func WithStarGiftCrossCraftBlobReader(reader StarGiftCrossCraftBlobReader) StarGiftLifecycleOption {
+	return func(s *StarGiftLifecycleStore) { s.crossCraftBlobs = reader }
+}
+
+func WithStarGiftCrossCraftGenerator(generator StarGiftCrossCraftGenerator) StarGiftLifecycleOption {
+	return func(s *StarGiftLifecycleStore) { s.crossCraft = generator }
+}
+
+func WithStarGiftCrossCraftChance(chance int) StarGiftLifecycleOption {
+	return func(s *StarGiftLifecycleStore) {
+		if chance > 0 && chance <= 1000 {
+			s.crossCraftChance = chance
+		}
+	}
+}
 
 func WithStarGiftMarketPolicy(policy domain.StarGiftMarketPolicy) StarGiftLifecycleOption {
 	return func(s *StarGiftLifecycleStore) {
@@ -59,32 +87,11 @@ func NewStarGiftLifecycleStore(db sqlcgen.DBTX, messages *MessageStore, tonStart
 	s := &StarGiftLifecycleStore{db: db, messages: messages, tonStartingGrant: tonStartingGrant,
 		market:    domain.StarGiftMarketPolicy{StarsProceedsPermille: 1000, TONProceedsPermille: 1000},
 		craftDraw: defaultStarGiftCraftDraw}
+	s.crossCraftChance = 250
 	for _, opt := range opts {
 		opt(s)
 	}
 	return s
-}
-
-// ensureStarGiftConvertible 在转换事务内做最终资格判定。convert_stars 是主要证据
-// （0 即不可转换，覆盖目录中无转换价的礼物）；发送人是机器人则无条件拒绝——这是
-// 0217 修复的本质：bot sendGift 的支出来自 bot_stars_balances 钱包，收礼人若能把
-// 它兑换回自己的余额，就等于用钱包给任意用户铸造 Stars。这一道按发送人身份的检查
-// 不依赖迁移顺序：即使某条旧数据尚未被 0217 归零，也拿不到一分钱。
-func ensureStarGiftConvertible(ctx context.Context, tx pgx.Tx, saved domain.SavedStarGift) error {
-	if saved.ConvertStars <= 0 {
-		return domain.ErrStarGiftNotConvertible
-	}
-	if saved.FromUserID > 0 {
-		var isBot bool
-		if err := tx.QueryRow(ctx, `SELECT sender.is_bot FROM users sender WHERE sender.id=$1`,
-			saved.FromUserID).Scan(&isBot); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if isBot {
-			return domain.ErrStarGiftNotConvertible
-		}
-	}
-	return nil
 }
 
 // ConvertStarGift owns the complete conversion aggregate: saved-gift terminal
@@ -116,13 +123,6 @@ func (s *StarGiftLifecycleStore) ConvertStarGift(ctx context.Context, req domain
 		}
 		if !saved.LifecycleStatus.Live() || saved.UniqueGiftID != 0 {
 			return domain.ErrStarGiftAlreadyUpgraded
-		}
-		// convert_stars 是转换资格的单一事实来源：机器人送出的礼物在购买事务里
-		// 被归零，历史遗留礼物由 0217 迁移统一归零，目录中本来就没有转换价的
-		// 礼物也归 0。为 0 即不可转换——拒绝而不是默默归档，旧客户端如果还显示
-		// 按钮，点下去会得到明确错误而不是把礼物白白抹掉。
-		if err := ensureStarGiftConvertible(ctx, tx, saved); err != nil {
-			return err
 		}
 
 		from := domain.Peer{Type: domain.PeerTypeUser, ID: saved.FromUserID}
@@ -191,9 +191,7 @@ func (s *StarGiftLifecycleStore) ListResaleStarGifts(ctx context.Context, filter
 		filter.SortByPrice && filter.SortByNum || len(filter.Offset) > domain.MaxStarGiftsOffsetBytes {
 		return domain.StarGiftResalePage{}, domain.ErrStarGiftResaleUnavailable
 	}
-	// Замороженный продавец не торгует: его suspended-листинги не показываются в
-	// маркете и не участвуют в счётчике страницы.
-	conditions := []string{"u.gift_id=$1", "NOT u.burned", "u.owner_address=''", "NOT l.suspended"}
+	conditions := []string{"u.gift_id=$1", "NOT u.burned", "u.owner_address=''"}
 	args := []any{filter.GiftID}
 	nextArg := func(value any) string {
 		args = append(args, value)
@@ -320,10 +318,10 @@ func (s *StarGiftLifecycleStore) UniqueStarGiftValueInfo(ctx context.Context, un
 	err := s.db.QueryRow(ctx, `
 SELECT sg.gift_date, cr.stars, u.value_currency, u.value_amount, u.last_sale_date,
        COALESCE(CASE WHEN u.last_sale_currency='XTR' THEN u.last_sale_amount END,0),
-       COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND l.currency='XTR' AND NOT l.suspended
+       COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND l.currency='XTR'
           AND l.amount <= $2 * (SELECT r.stars FROM star_gift_catalog_revisions r JOIN star_gift_catalog gc ON gc.active_revision_id=r.id WHERE gc.gift_id=lu.gift_id)),0),
        COALESCE((SELECT AVG(sa.amount)::bigint FROM star_gift_sales sa JOIN unique_star_gifts su ON su.id=sa.unique_gift_id WHERE su.gift_id=u.gift_id AND sa.currency='XTR'),0),
-       (SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id AND NOT l.suspended)
+       (SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts lu ON lu.id=l.unique_gift_id WHERE lu.gift_id=u.gift_id)
 FROM unique_star_gifts u
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
 JOIN star_gift_catalog_revisions cr ON cr.id=sg.catalog_revision_id
@@ -381,17 +379,6 @@ func (s *StarGiftLifecycleStore) SetStarGiftListing(ctx context.Context, req dom
 				return err
 			}
 		} else {
-			// Замороженный аккаунт не выставляет подарки на маркет. FOR SHARE
-			// сериализуется с upsert заморозки (account_restrictions.user_id —
-			// его PK), поэтому пересекающаяся заморозка разрешается до нашего
-			// коммита, а не после него. Снятие с продажи (Amount == nil)
-			// остаётся доступным: удалить свою витрину безопасно, и guard-триггер
-			// DELETE не затрагивает.
-			if saved.Owner.Type == domain.PeerTypeUser {
-				if err := rejectFrozenStarGiftSeller(ctx, tx, saved.Owner.ID); err != nil {
-					return err
-				}
-			}
 			if unique.ResaleTonOnly && req.Amount.Currency != domain.StarGiftCurrencyTON {
 				return domain.ErrStarGiftResaleUnavailable
 			}
@@ -549,14 +536,6 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
 	}
 	seller := unique.Owner
-	// Как и при переводе: ключ покупки привязываем к эпохе владения, иначе
-	// покупка того же коллекционного после круга туда-обратно выглядит как
-	// реплей предыдущей сделки (та же карточка, тот же random_id) и проходит
-	// без перехода владения. Считаем до проверки реплея, чтобы она и запись
-	// команды использовали один и тот же ключ.
-	if current, found, err := savedStarGiftByUniqueID(ctx, s.db, unique.ID); err == nil && found {
-		req.CommandKey = s.resolveEpochCommandKey(ctx, req.BuyerUserID, req.CommandKey, current)
-	}
 	var replayUniqueID, replayFromID, replayToID, replayAmount int64
 	var replayFromType, replayToType, replayCurrency string
 	replayErr := s.db.QueryRow(ctx, `SELECT t.unique_gift_id,t.from_peer_type,t.from_peer_id,t.to_peer_type,t.to_peer_id,
@@ -575,12 +554,10 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 	} else if !validLifecyclePeer(unique.Owner) || unique.Owner == req.To {
 		return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
 	}
-	// Маркет меняет только владельца: подарок «отправляет» покупатель, а не
-	// продавец. Отправляя сервисное сообщение от продавца, получатель видел
-	// «продавец отправил вам подарок» вместо «покупатель отправил вам подарок».
-	// Остальные пути (покупка каталога, перевод, аукцион, оффер) уже отправляют
-	// сообщение от того, кто распоряжался подарком.
-	messageSenderID := req.BuyerUserID
+	messageSenderID := domain.OfficialSystemUserID
+	if seller.Type == domain.PeerTypeUser {
+		messageSenderID = seller.ID
+	}
 	messageRecipientID := req.BuyerUserID
 	if req.To.Type == domain.PeerTypeUser {
 		messageRecipientID = req.To.ID
@@ -621,7 +598,7 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 				}
 				return err
 			}
-			if sellerFrozen || sellerType != string(seller.Type) || sellerID != seller.ID ||
+			if sellerType != string(seller.Type) || sellerID != seller.ID ||
 				listingCurrency != string(req.Amount.Currency) || listingAmount != req.Amount.Amount {
 				return domain.ErrStarGiftResaleUnavailable
 			}
@@ -678,10 +655,6 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			msgID, savedID := sent.RecipientMessage.ID, int64(0)
 			if req.To.Type == domain.PeerTypeChannel {
 				msgID, savedID = 0, result.Saved.ID
-			} else if msgID <= 0 {
-				// Покупка себе: сервисное сообщение лежит только в Saved Messages
-				// покупателя, копии в его же входящем боксе нет.
-				msgID = sent.SenderMessage.ID
 			}
 			if req.To.Type == domain.PeerTypeUser && msgID <= 0 {
 				return domain.ErrStarGiftResaleUnavailable
@@ -699,11 +672,6 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 				}
 			} else {
 				notificationMessageID := sent.RecipientMessage.ID
-				if notificationMessageID <= 0 {
-					// Подарок куплен в канал: уведомление лежит в боксе покупателя,
-					// который совпадает с боксом отправителя.
-					notificationMessageID = sent.SenderMessage.ID
-				}
 				if notificationMessageID <= 0 {
 					return fmt.Errorf("channel resale notification missing buyer box")
 				}
@@ -1513,14 +1481,10 @@ func savedStarGiftByUniqueID(ctx context.Context, db sqlcgen.DBTX, uniqueID int6
 	return saved, err == nil, err
 }
 
-// updateStarGiftResaleProjection пересчитывает витринные счётчики каталога по
-// листингам, которые реально продаются: suspended (замороженный продавец) в
-// подсчёт не входят. Принимает DBTX, потому что его вызывают и из транзакции
-// жизненного цикла подарка, и из транзакции заморозки аккаунта.
-func updateStarGiftResaleProjection(ctx context.Context, db sqlcgen.DBTX, giftID int64) error {
-	_, err := db.Exec(ctx, `UPDATE star_gift_catalog c SET
- availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND NOT l.suspended),
- resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR' AND NOT l.suspended
+func updateStarGiftResaleProjection(ctx context.Context, tx pgx.Tx, giftID int64) error {
+	_, err := tx.Exec(ctx, `UPDATE star_gift_catalog c SET
+ availability_resale=(SELECT COUNT(*) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id),
+ resell_min_stars=COALESCE((SELECT MIN(l.amount) FROM star_gift_listings l JOIN unique_star_gifts u ON u.id=l.unique_gift_id WHERE u.gift_id=c.gift_id AND l.currency='XTR'
    AND l.amount <= $2 * (SELECT r.stars FROM star_gift_catalog_revisions r WHERE r.id=c.active_revision_id)),0),
  updated_at=now() WHERE c.gift_id=$1`, giftID, domain.StarGiftResaleFloorMultiple)
 	return err

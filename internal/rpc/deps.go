@@ -1021,6 +1021,14 @@ type EphemeralService interface {
 	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
 }
 
+// TranscriptionService 把 voice 文档交给本地 ASR 后端转写（app/transcription）：
+// 缓存命中直接回文本，否则登记 pending 任务；完成后经 SetCompletionHandler
+// 注入的回调推 updateTranscribedAudio。nil 或后端未配置时调用方回 TRANSCRIPTION_FAILED。
+type TranscriptionService interface {
+	Transcribe(ctx context.Context, userID int64, peer domain.Peer, msgID int, document domain.Document) (domain.TranscriptionResult, error)
+	SetCompletionHandler(handler func(ctx context.Context, userID int64, peer domain.Peer, msgID int, transcriptionID int64, text string))
+}
+
 // WelcomeMessageService owns the independent durable Layer 229 peer templates.
 // It has no transient device, PTS, difference, push or outbox responsibility.
 type WelcomeMessageService interface {
@@ -1166,6 +1174,7 @@ type Deps struct {
 	Chatlists                    ChatlistsService
 	Messages                     MessagesService
 	Translation                  TranslationService
+	Transcriptions               TranscriptionService
 	Stories                      StoriesService
 	Channels                     ChannelsService
 	Communities                  CommunitiesService
@@ -1273,9 +1282,6 @@ type GiftsService interface {
 	TonTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
 	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
 	ValidatePurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
-	// SettledStarGiftPurchase reports a purchase already committed for
-	// req.CommandKey, so a bot-initiated sendGift retry does not charge twice.
-	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	Purchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error)
 }
 

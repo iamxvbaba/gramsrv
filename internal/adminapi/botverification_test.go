@@ -41,6 +41,10 @@ func (fakeService) RevokeCustomVerification(_ context.Context, req admin.RevokeC
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) GrantBotVerification(_ context.Context, req admin.GrantBotVerificationRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) ApproveBotVerification(_ context.Context, req admin.ApproveBotVerificationRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
@@ -110,6 +114,7 @@ type captureBotVerificationService struct {
 	upsertIcon            admin.UpsertVerificationIconRequest
 	setIconActive         admin.SetVerificationIconActiveRequest
 	revokeMark            admin.RevokeCustomVerificationRequest
+	grantMark             admin.GrantBotVerificationRequest
 	approve               admin.ApproveBotVerificationRequest
 	reject                admin.RejectBotVerificationRequest
 	revokeRequest         admin.RevokeBotVerificationRequest
@@ -196,6 +201,11 @@ func (s *captureBotVerificationService) SetVerificationIconActive(_ context.Cont
 
 func (s *captureBotVerificationService) RevokeCustomVerification(_ context.Context, req admin.RevokeCustomVerificationRequest) (admin.CommandResult, error) {
 	s.revokeMark = req
+	return s.commandResult(req.CommandID, req.DryRun)
+}
+
+func (s *captureBotVerificationService) GrantBotVerification(_ context.Context, req admin.GrantBotVerificationRequest) (admin.CommandResult, error) {
+	s.grantMark = req
 	return s.commandResult(req.CommandID, req.DryRun)
 }
 

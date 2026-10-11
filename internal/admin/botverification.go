@@ -57,6 +57,7 @@ type BotVerificationService interface {
 	// Granted marks.
 	Marks(ctx context.Context, filter domain.CustomVerificationFilter) ([]domain.CustomVerification, error)
 	RevokeMark(ctx context.Context, verifierBotID int64, peer domain.Peer) (bool, error)
+	GrantMarkOperator(ctx context.Context, verifierBotID int64, peer domain.Peer, customDescription string) (bool, error)
 
 	// Application queue.
 	Requests(ctx context.Context, filter domain.CustomVerificationRequestFilter) ([]domain.CustomVerificationRequest, error)
@@ -138,6 +139,20 @@ type RevokeCustomVerificationRequest struct {
 	VerifierBotID int64           `json:"verifier_bot_id"`
 	PeerType      domain.PeerType `json:"peer_type"`
 	PeerID        int64           `json:"peer_id"`
+}
+
+// GrantBotVerificationRequest grants a mark directly, on the operator's behalf,
+// with no application behind it: the shop's paid verification purchases land
+// here, because the payment was already taken by the store and waiting for a
+// review queue would leave a paid customer unverified. Description is the text
+// the peer's profile shows; empty falls back to the verifier's configured
+// default.
+type GrantBotVerificationRequest struct {
+	CommandMeta
+	VerifierBotID int64           `json:"verifier_bot_id"`
+	PeerType      domain.PeerType `json:"peer_type"`
+	PeerID        int64           `json:"peer_id"`
+	Description   string          `json:"description,omitempty"`
 }
 
 // ApproveBotVerificationRequest grants the mark an application asked for. The
@@ -585,6 +600,75 @@ func (s *Service) RevokeCustomVerification(ctx context.Context, req RevokeCustom
 		message := "custom verification revoked"
 		if !removed {
 			message = "custom verification was already absent"
+		}
+		return CommandResult{Message: message, Details: details}, nil
+	})
+}
+
+// GrantBotVerification grants a mark directly, on the operator's behalf.
+//
+// The dry run reports the verifier's state and whether the peer already carries
+// this verifier's mark, and it fails the same way the real command would when
+// the verifier row is missing or switched off — a rehearsal that passed a grant
+// the live run refuses would be worse than useless.
+func (s *Service) GrantBotVerification(ctx context.Context, req GrantBotVerificationRequest) (CommandResult, error) {
+	if s == nil || s.botVerification == nil {
+		return CommandResult{}, errBotVerificationNotConfigured
+	}
+	if req.VerifierBotID <= 0 {
+		return CommandResult{}, botVerificationCoded(domain.ErrVerifierNotFound)
+	}
+	peer := domain.Peer{Type: req.PeerType, ID: req.PeerID}
+	if !markableAdminPeer(peer) {
+		return CommandResult{}, botVerificationCoded(domain.ErrCustomVerificationTargetInvalid)
+	}
+	req.Description = strings.TrimSpace(req.Description)
+	if utf8.RuneCountInString(req.Description) > domain.MaxCustomVerificationDescriptionLength {
+		return CommandResult{}, botVerificationCoded(domain.ErrCustomVerificationRequestInvalid)
+	}
+	targetUserID := int64(0)
+	if peer.Type == domain.PeerTypeUser {
+		targetUserID = peer.ID
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionGrantBotVerificationMark, targetUserID, peer, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"verifier_bot_id": strconv.FormatInt(req.VerifierBotID, 10),
+			"peer_type":       string(peer.Type),
+			"peer_id":         strconv.FormatInt(peer.ID, 10),
+			"correlation_id":  strings.TrimSpace(req.CommandID),
+		}
+		settings, err := s.botVerification.VerifierSettings(ctx, req.VerifierBotID)
+		if err != nil {
+			return CommandResult{Details: details}, botVerificationError(err)
+		}
+		details["enabled"] = settings.Enabled
+		details["icon_document_id"] = strconv.FormatInt(settings.IconDocumentID, 10)
+		if !settings.Enabled {
+			return CommandResult{Details: details}, botVerificationCoded(domain.ErrVerifierForbidden)
+		}
+		present, err := s.CustomVerificationMarkActive(ctx, req.VerifierBotID, peer)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["mark_present"] = present
+		if len(req.Description) > 0 {
+			details["description"] = req.Description
+		}
+		if req.DryRun {
+			message := "custom verification grant validated"
+			if present {
+				message = "custom verification grant validated; the peer already carries this verifier's mark"
+			}
+			return CommandResult{Message: message, Details: details}, nil
+		}
+		changed, err := s.botVerification.GrantMarkOperator(ctx, req.VerifierBotID, peer, req.Description)
+		if err != nil {
+			return CommandResult{Details: details}, botVerificationError(err)
+		}
+		details["changed"] = changed
+		message := "custom verification granted"
+		if !changed {
+			message = "custom verification already present"
 		}
 		return CommandResult{Message: message, Details: details}, nil
 	})

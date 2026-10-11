@@ -5,9 +5,9 @@ const fixed = Object.freeze([
   { kind: KINDS.premium, code: "premium_3m", title: "Premium — 3 months", titleRu: "Premium — 3 месяца", description: "Premium subscription for three months", descriptionRu: "Подписка Premium на три месяца", starsPrice: 40, months: 3 },
   { kind: KINDS.number, code: "num_short", title: "Anonymous +888 8 XXX", titleRu: "Анонимный +888 8 XXX", description: "Short collectible anonymous number", descriptionRu: "Короткий коллекционный анонимный номер", starsPrice: 50, numberFormat: "short" },
   { kind: KINDS.number, code: "num_long", title: "Anonymous +888 0XXX XXXX", titleRu: "Анонимный +888 0XXX XXXX", description: "Anonymous +888 number", descriptionRu: "Анонимный номер +888", starsPrice: 25, numberFormat: "long" },
-  { kind: KINDS.username, code: "uname_10", title: "Collectible username — 10 TON", titleRu: "Коллекционный username — 10 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 10, bid: 10 },
-  { kind: KINDS.username, code: "uname_100", title: "Collectible username — 100 TON", titleRu: "Коллекционный username — 100 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 20, bid: 100 },
-  { kind: KINDS.username, code: "uname_1000", title: "Collectible username — 1000 TON", titleRu: "Коллекционный username — 1000 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 40, bid: 1000 },
+  { kind: KINDS.username, code: "uname_10", title: "Collectible username — 10 TON", titleRu: "Коллекционный username — 10 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 30, bid: 10 },
+  { kind: KINDS.username, code: "uname_100", title: "Collectible username — 100 TON", titleRu: "Коллекционный username — 100 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 30, bid: 100 },
+  { kind: KINDS.username, code: "uname_1000", title: "Collectible username — 1000 TON", titleRu: "Коллекционный username — 1000 TON", description: "Mint a collectible username", descriptionRu: "Выпустить коллекционный username", starsPrice: 30, bid: 1000 },
 ]);
 
 export function catalog(starsRate = 20, prices = {}) {

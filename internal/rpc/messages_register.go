@@ -622,9 +622,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			if err := r.checkFrozenChannelParticipants(ctx, userID, filter.Peer.ID); err != nil {
 				return nil, err
 			}
-			// legacy inputPeerChat 与 inputPeerChannel 指向同一个 channel id,历史读取口径一致;
-			// 旧实现直接返回空列表,导致任何以 legacy chat 寻址的客户端(以及收到 migrated
-			// legacy chat 对象的 TDesktop)打开频道时恒为空。
+			if isLegacyInputPeerChat(req.Peer) {
+				return &tg.MessagesMessages{}, nil
+			}
 			history, err := r.deps.Channels.GetHistory(ctx, userID, domain.ChannelHistoryFilter{
 				ChannelID:                 filter.Peer.ID,
 				OffsetID:                  filter.OffsetID,
@@ -733,7 +733,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			if r.deps.Channels == nil {
 				return messagesNotModifiedOrEmpty(req.Hash), nil
 			}
-			// legacy inputPeerChat 与 inputPeerChannel 同 id,搜索口径一致(见 getHistory 同处注释)。
+			if isLegacyInputPeerChat(req.Peer) {
+				return &tg.MessagesMessages{}, nil
+			}
 			// P2P calls are stored exclusively in private message boxes. Returning
 			// an empty result is important here: falling through to channel history
 			// would make ordinary channel posts appear in the Calls tab.
@@ -897,19 +899,13 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		return r.onMessagesGetSearchResultsPositions(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesSendReactionRequest](d, tlprofile.SemanticMethodMessagesSendReaction, func(ctx context.Context, layerRequest *tg.MessagesSendReactionRequest) (any, error) {
-
-		// 语音转文字无识别后端：注册为显式失败（TRANSCRIPTION_FAILED），premium
-		// 客户端点击转录按钮得到优雅失败提示，而不是 NOT_IMPLEMENTED trace。
 		return r.onMessagesSendReaction(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesComposeMessageWithAIRequest](d, tlprofile.SemanticMethodMessagesComposeMessageWithAI, func(ctx context.Context, layerRequest *tg.MessagesComposeMessageWithAIRequest) (any, error) {
 		return r.onMessagesComposeMessageWithAI(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesTranscribeAudioRequest](d, tlprofile.SemanticMethodMessagesTranscribeAudio, func(ctx context.Context, req *tg.MessagesTranscribeAudioRequest) (any, error) {
-		if _, _, err := r.currentUserID(ctx); err != nil {
-			return nil, internalErr()
-		}
-		return nil, tgerr400("TRANSCRIPTION_FAILED")
+		return r.onMessagesTranscribeAudio(ctx, req)
 	})
 	registerRPC[*tg.MessagesGetMessagesReactionsRequest](d, tlprofile.SemanticMethodMessagesGetMessagesReactions, func(ctx context.Context, layerRequest *tg.MessagesGetMessagesReactionsRequest) (any, error) {
 		return r.onMessagesGetMessagesReactions(ctx, layerRequest)

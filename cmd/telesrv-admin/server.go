@@ -131,6 +131,13 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/grant-stars", s.premiumManage(http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("POST /api/actions/grant-stars-all", s.premiumManage(http.HandlerFunc(s.handleGrantStarsAllAPI)))
 	mux.Handle("POST /api/actions/debit-stars", s.premiumManage(http.HandlerFunc(s.handleDebitStarsAPI)))
+	mux.Handle("GET /api/donations/wallet", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationWalletStatusAPI)))
+	mux.Handle("GET /api/donations/chains", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationChainsAPI)))
+	mux.Handle("GET /api/donations/deposits", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationDepositsAPI)))
+	mux.Handle("POST /api/actions/donation-chain-update", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleUpdateDonationChainAPI)))
+	mux.Handle("GET /api/item-prices", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleItemPricesAPI)))
+	mux.Handle("POST /api/actions/item-price-update", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleUpdateItemPriceAPI)))
+	mux.Handle("POST /api/actions/item-price-set-rate", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleSetStarsRateAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.scopedRoute(permissionVerificationReview, http.HandlerFunc(s.handleSetVerifiedAPI)))
 	mux.Handle("POST /api/actions/set-account-flags", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserFlagsAPI)))
 	mux.Handle("POST /api/actions/set-channel-flags", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleSetChannelFlagsAPI)))
@@ -174,6 +181,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-gift-enabled", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
 	mux.Handle("POST /api/actions/give-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleGiveGiftAPI)))
+	mux.Handle("POST /api/actions/set-nft-gift-wallet", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetNftGiftWalletAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-username", s.scopedRoute(permissionUsernamesManage, http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-phone", s.scopedRoute(permissionPhonesManage, http.HandlerFunc(s.handleMintCollectiblePhoneAPI)))
 	mux.Handle("POST /api/actions/update-collectible-phone-price", s.scopedRoute(permissionPhonesManage, http.HandlerFunc(s.handleUpdateCollectiblePhonePriceAPI)))
@@ -2440,7 +2448,9 @@ func (s *server) handlePublishStarGiftCollectiblesAPI(w http.ResponseWriter, r *
 		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
 		return
 	}
-	if len(body.Models)+len(body.Patterns) > 128 {
+	// Match the admin API/domain limit so large, valid collectible pools (for
+	// example a 164-model catalog) can be uploaded through the web panel too.
+	if len(body.Models)+len(body.Patterns) > domain.MaxStarGiftCollectibleAttributesPerKind {
 		writeAPIError(w, http.StatusBadRequest, "too many collectible animation files")
 		return
 	}
@@ -2565,6 +2575,34 @@ func (s *server) handleGiveGiftAPI(w http.ResponseWriter, r *http.Request) {
 		BackdropAttributeID: body.BackdropAttributeID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/give", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setNftGiftWalletAPIRequest struct {
+	CommandID     string    `json:"command_id"`
+	Reason        string    `json:"reason"`
+	Confirm       bool      `json:"confirm"`
+	Ref           string    `json:"ref"`
+	Clear         bool      `json:"clear"`
+	WalletName    string    `json:"wallet_name"`
+	WalletAddress string    `json:"wallet_address"`
+	HostUserID    flexInt64 `json:"host_user_id"`
+}
+
+func (s *server) handleSetNftGiftWalletAPI(w http.ResponseWriter, r *http.Request) {
+	var body setNftGiftWalletAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetNftGiftWalletRequest{
+		CommandMeta:   s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "nft-wallet"),
+		Ref:           body.Ref,
+		Clear:         body.Clear,
+		WalletName:    body.WalletName,
+		WalletAddress: body.WalletAddress,
+		HostUserID:    body.HostUserID.Int64(),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-nft-wallet", req)
 	writeCommandResultAPI(w, result, err)
 }
 

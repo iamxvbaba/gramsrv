@@ -171,13 +171,6 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	if s.members[channelID] == nil {
 		s.members[channelID] = make(map[int64]domain.ChannelMember)
 	}
-	// 与 postgres 同口径:重新入群时归还纯 prehistory 来源的读边界。available_min_id 只增
-	// 不减,不显式归零的话,"隐藏历史期间入群"的成员即使频道后来关闭隐藏历史也永远看不到
-	// 旧消息,重新加入也救不回。带 history_clear_anchor 的边界来自成员自己的"清空历史",
-	// 属 owner-local 语义,不回收。
-	if !channel.PreHistoryHidden && member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
-		member.AvailableMinID = 0
-	}
 	s.members[channelID][userID] = member
 	s.channels[channelID] = channel
 	s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
@@ -368,11 +361,6 @@ func (s *ChannelStore) EditChannelAdmin(_ context.Context, req domain.EditChanne
 		member.Rank = ""
 	} else {
 		member.Role = domain.ChannelRoleAdmin
-	}
-	// 被重新激活的成员(此前 left/kicked)同样要归还 prehistory 读边界,否则永久空频道。
-	if previous.Status != domain.ChannelMemberActive && !channel.PreHistoryHidden &&
-		member.AvailableMinID > 0 && member.HistoryClearAnchorID == 0 {
-		member.AvailableMinID = 0
 	}
 	s.members[req.ChannelID][req.MemberID] = member
 	logType := domain.ChannelAdminLogParticipantPromote

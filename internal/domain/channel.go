@@ -1206,10 +1206,6 @@ type ChannelView struct {
 	// Forbidden 表示当前 viewer 被踢/被禁止查看：查询响应必须呈现
 	// channelForbidden 形态而不是省略，客户端靠它感知自己已离开会话。
 	Forbidden bool
-	// LinkedChatUsable 表示 Channel.LinkedChatID 指向一个真实存在、未删除且为
-	// megagroup 的讨论频道。为 false 时转换层不得下发 linked_chat_id:客户端拿到
-	// 悬空 id 会渲染"讨论"入口,点进去却是一个空频道。
-	LinkedChatUsable bool
 }
 
 // ChannelParticipantList is a paged participant response.

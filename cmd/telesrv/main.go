@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 	communitiesapp "telesrv/internal/app/communities"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
+	donationsapp "telesrv/internal/app/donations"
 	ephemeralapp "telesrv/internal/app/ephemeral"
 	filesapp "telesrv/internal/app/files"
 	"telesrv/internal/app/files/botavatars"
@@ -61,6 +63,7 @@ import (
 	"telesrv/internal/app/systemidentity"
 	telegramloginapp "telesrv/internal/app/telegramlogin"
 	themesapp "telesrv/internal/app/themes"
+	transcriptionapp "telesrv/internal/app/transcription"
 	translationapp "telesrv/internal/app/translation"
 	"telesrv/internal/app/updates"
 	usernamesapp "telesrv/internal/app/usernames"
@@ -71,8 +74,10 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/branding"
 	"telesrv/internal/config"
+	"telesrv/internal/customfragment"
 	"telesrv/internal/domain"
 	"telesrv/internal/geoip"
+	"telesrv/internal/giftclaim"
 	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
 	obsmetrics "telesrv/internal/observability/metrics"
@@ -89,6 +94,7 @@ import (
 	"telesrv/internal/store/postgres"
 	"telesrv/internal/store/redisstore"
 	"telesrv/internal/telegramloginhttp"
+	"telesrv/internal/tondns"
 	"telesrv/internal/turnsrv"
 	"telesrv/internal/updatecdn"
 	"telesrv/internal/web"
@@ -204,6 +210,27 @@ func newAIComposeOptions(cfg config.Config, limiter aiapp.RateLimiter, premium a
 		opts = append(opts, aiapp.WithProviders(providers...))
 	}
 	return opts
+}
+
+func newCrossCraftGenerator(cfg config.Config, blobs stargifts.BlobBackend, logger *zap.Logger) postgres.StarGiftCrossCraftGenerator {
+	if !cfg.AIEnabled {
+		return nil
+	}
+	for _, pc := range cfg.AIProviders {
+		if aiapp.ProviderKind(pc.Kind) != aiapp.ProviderKindOpenAIChat || pc.APIKey == "" {
+			continue
+		}
+		generator := stargifts.NewCrossCraftGenerator(aiapp.ProviderConfig{
+			Name: pc.Name, Kind: aiapp.ProviderKind(pc.Kind), BaseURL: pc.BaseURL, APIKey: pc.APIKey,
+			Model: pc.Model, Timeout: max(cfg.AITimeout, 45*time.Second),
+		}, blobs, cfg.DC)
+		if generator != nil {
+			logger.Info("cross collection craft AI configured", zap.String("provider", pc.Name))
+			return generator
+		}
+	}
+	logger.Warn("cross collection craft AI unavailable")
+	return nil
 }
 
 func newTranslationOptions(cfg config.Config, limiter translationapp.RateLimiter, logger *zap.Logger) []translationapp.Option {
@@ -827,6 +854,7 @@ func run(logger *zap.Logger) error {
 	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	welcomeMessageStore := postgres.NewWelcomeMessageStore(pool)
+	messageTranscriptionStore := postgres.NewMessageTranscriptionStore(pool)
 	moderationReportStore := postgres.NewModerationReportStore(pool)
 	authDeliveryReportStore := postgres.NewAuthDeliveryReportStore(pool)
 	clientTelemetryStore := postgres.NewClientTelemetryStore(pool)
@@ -1169,6 +1197,7 @@ func run(logger *zap.Logger) error {
 		botsapp.WithGifCatalog(filesService),
 		botsapp.WithUserStickerSets(accountService),
 		botsapp.WithTelegramLogin(telegramLoginService),
+		botsapp.WithGramsrvOperatorBot(cfg.GramsrvBotChatIDs, adminService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
 		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	// The built-in ChatBot and StickersBot are seeded with the default product
@@ -1338,8 +1367,19 @@ func run(logger *zap.Logger) error {
 		postgres.WithStarGiftMarketPolicy(domain.StarGiftMarketPolicy{
 			StarsProceedsPermille: cfg.StarGiftStarsProceedsPermille,
 			TONProceedsPermille:   cfg.StarGiftTONProceedsPermille,
-		}))
-	starGiftWithdrawalOption, err := localStarGiftWithdrawalOption(cfg.PublicBaseURL, cfg.PublicLinkWebAddr)
+		}), postgres.WithStarGiftCrossCraftGenerator(newCrossCraftGenerator(cfg, blobBackend, logger)),
+		postgres.WithStarGiftCrossCraftChance(cfg.StarGiftCraftChancePermille),
+		postgres.WithStarGiftCrossCraftBlobReader(blobBackend))
+	var starGiftWithdrawalOption stargifts.Option
+	if cfg.CustomFragmentEnabled {
+		starGiftWithdrawalProvider, providerErr := stargifts.NewCustomFragmentWithdrawalProvider(cfg.CustomFragmentPublicBaseURL)
+		if providerErr != nil {
+			return fmt.Errorf("init CustomFragment star gift withdrawal provider: %w", providerErr)
+		}
+		starGiftWithdrawalOption = stargifts.WithWithdrawalProvider(starGiftWithdrawalProvider)
+	} else {
+		starGiftWithdrawalOption, err = localStarGiftWithdrawalOption(cfg.PublicBaseURL, cfg.PublicLinkWebAddr)
+	}
 	if err != nil {
 		return fmt.Errorf("init local star gift withdrawal provider: %w", err)
 	}
@@ -1351,6 +1391,138 @@ func run(logger *zap.Logger) error {
 		starGiftOptions = append(starGiftOptions, starGiftWithdrawalOption)
 	}
 	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC, starGiftOptions...)
+	var customFragmentService *customfragment.Service
+	if cfg.CustomFragmentEnabled {
+		customFragmentService, err = customfragment.New(customfragment.Config{
+			PublicBaseURL: cfg.CustomFragmentPublicBaseURL, AppName: cfg.PublicAppName,
+			SigningKeyFile:      cfg.CustomFragmentSigningKeyFile,
+			GiftCollection:      cfg.CustomFragmentGiftCollection,
+			CollectionName:      cfg.CustomFragmentCollectionName,
+			MintAmountNanoton:   cfg.CustomFragmentMintAmountNanoton,
+			SubwalletID:         uint32(cfg.CustomFragmentSubwalletID),
+			AuthorizationTTL:    cfg.CustomFragmentAuthorizationTTL,
+			LiteserverConfigURL: cfg.CustomFragmentLiteserverConfigURL,
+			Limiter:             rateLimiter,
+			APIRateLimit:        cfg.ClaimAPIRateLimit,
+			APIRateWindow:       cfg.ClaimAPIRateWindow,
+		}, giftsService, nil, logger.Named("custom-fragment"))
+		if err != nil {
+			return fmt.Errorf("init CustomFragment: %w", err)
+		}
+		defer customFragmentService.Close()
+		logger.Info("CustomFragment TON mainnet gift withdrawal enabled",
+			zap.String("collection", cfg.CustomFragmentGiftCollection),
+			zap.String("signing_public_key", customFragmentService.PublicKeyHex()))
+	}
+	var giftClaimService *giftclaim.Service
+	var giftClaimTestService *giftclaim.Service
+	claimAPIRateLimit, claimAPIRateWindow := cfg.ClaimAPIRateLimit, cfg.ClaimAPIRateWindow
+	claimWithdrawRateLimit, claimWithdrawRateWindow := cfg.ClaimWithdrawRateLimit, cfg.ClaimWithdrawRateWindow
+	wireGiftClaim := func(cfg giftClaimInstanceConfig) (*giftclaim.Service, error) {
+		if !cfg.Enabled {
+			return nil, nil
+		}
+		_, botSecret, _ := domain.ParseBotToken(cfg.BotToken)
+		if err := postgres.EnsureSystemUser(ctx, pool, cfg.SystemUser); err != nil {
+			return nil, fmt.Errorf("materialize %s identity: %w", cfg.BotHandle, err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO bots (bot_user_id, owner_user_id, token_secret) VALUES ($1, $1, $2) ON CONFLICT (bot_user_id) DO UPDATE SET token_secret=EXCLUDED.token_secret, updated_at=now()`, cfg.BotUserID, botSecret); err != nil {
+			return nil, fmt.Errorf("configure %s token: %w", cfg.BotHandle, err)
+		}
+		if _, err := botsService.SetBotMenuButton(ctx, cfg.BotUserID, domain.BotMenuButton{
+			Type: domain.BotMenuButtonWebView, Text: "Claim NFT", URL: strings.TrimRight(cfg.PublicBaseURL, "/") + cfg.BasePath,
+		}); err != nil {
+			menuErr := fmt.Errorf("configure %s Mini App: %w", cfg.BotHandle, err)
+			if !cfg.MenuButtonRequired {
+				logger.Warn("claim 测试实例跳过菜单按钮设置", zap.Error(menuErr))
+			} else {
+				return nil, menuErr
+			}
+		}
+		claimVerifier := customfragment.NewMainnetVerifier(cfg.LiteserverConfigURL)
+		svc, err := giftclaim.New(giftclaim.Config{
+			PublicBaseURL: cfg.PublicBaseURL, BotToken: cfg.BotToken, BotUserID: cfg.BotUserID, BasePath: cfg.BasePath,
+			Collection: cfg.Collection, AppName: cfg.AppName,
+			ChallengeTTL: cfg.ChallengeTTL, ProofTTL: cfg.ProofTTL, InitDataTTL: cfg.InitDataTTL,
+			Minter:       cfg.Minter,
+			Withdrawer:   cfg.Withdrawer,
+			Password:     cfg.Password,
+			Limiter:      rateLimiter,
+			APIRateLimit: claimAPIRateLimit, APIRateWindow: claimAPIRateWindow,
+			WithdrawRateLimit: claimWithdrawRateLimit, WithdrawRateWindow: claimWithdrawRateWindow,
+		}, postgres.NewStarGiftClaimStore(pool), claimVerifier, logger.Named("gift-claim"))
+		if err != nil {
+			claimVerifier.Close()
+			return nil, fmt.Errorf("init %s gift claim Mini App: %w", cfg.BotHandle, err)
+		}
+		go svc.RunOwnershipSync(ctx)
+		return svc, nil
+	}
+	if cfg.StarGiftClaimEnabled || cfg.StarGiftClaimTestEnabled {
+		giftClaimService, err = wireGiftClaim(giftClaimInstanceConfig{
+			Enabled: cfg.StarGiftClaimEnabled, BotUserID: domain.GiftClaimBotUserID,
+			SystemUser: domain.GiftClaimBotUser(), BotHandle: "@claim", BotToken: cfg.StarGiftClaimBotToken,
+			PublicBaseURL: cfg.StarGiftClaimPublicBaseURL, BasePath: "/claim",
+			Collection: cfg.CustomFragmentGiftCollection, AppName: cfg.CustomFragmentCollectionName,
+			LiteserverConfigURL: cfg.CustomFragmentLiteserverConfigURL,
+			ChallengeTTL:        cfg.StarGiftClaimChallengeTTL, ProofTTL: cfg.StarGiftClaimProofTTL, InitDataTTL: cfg.StarGiftClaimInitDataTTL,
+			Minter:             newGiftClaimMinter(customFragmentService),
+			Withdrawer:         giftsService,
+			Password:           accountService,
+			MenuButtonRequired: true,
+		})
+		if err != nil {
+			logger.Error("wire @claim gift claim failed", zap.Error(err))
+			return err
+		}
+		if giftClaimService != nil {
+			defer giftClaimService.Close()
+			logger.Info("TON Proof gift claim enabled", zap.String("url", cfg.StarGiftClaimPublicBaseURL), zap.String("bot", "@claim"))
+		}
+		giftClaimTestService, err = wireGiftClaim(giftClaimInstanceConfig{
+			Enabled: cfg.StarGiftClaimTestEnabled, BotUserID: domain.GiftClaimTestBotUserID,
+			SystemUser: domain.GiftClaimTestBotUser(), BotHandle: "@claimtest", BotToken: cfg.StarGiftClaimTestBotToken,
+			PublicBaseURL: cfg.StarGiftClaimTestPublicBaseURL, BasePath: "/claimtest",
+			Collection: cfg.CustomFragmentGiftCollection, AppName: cfg.CustomFragmentCollectionName,
+			LiteserverConfigURL: cfg.CustomFragmentLiteserverConfigURL,
+			ChallengeTTL:        cfg.StarGiftClaimChallengeTTL, ProofTTL: cfg.StarGiftClaimProofTTL, InitDataTTL: cfg.StarGiftClaimInitDataTTL,
+			Minter:             newGiftClaimMinter(customFragmentService),
+			Withdrawer:         giftsService,
+			Password:           accountService,
+			MenuButtonRequired: false,
+		})
+		if err != nil {
+			logger.Error("wire @claimtest gift claim failed", zap.Error(err))
+			return err
+		}
+		if giftClaimTestService != nil {
+			defer giftClaimTestService.Close()
+			logger.Info("TON Proof gift claim (test) enabled", zap.String("url", cfg.StarGiftClaimTestPublicBaseURL), zap.String("bot", "@claimtest"))
+		}
+	}
+	// Crypto donations (deposit -> Stars): works out of the box, no manual
+	// setup step. The encryption key is a local file, generated the first
+	// time the server ever runs (same pattern as the RSA key below) unless
+	// TELESRV_DONATION_WALLET_KEY overrides it with a literal key; the
+	// wallet mnemonic itself is generated and stored, encrypted, the first
+	// time the server finds none in the database. See docs/donations.md.
+	donationWalletKey, err := donationsWalletKey(cfg)
+	if err != nil {
+		return fmt.Errorf("init donations wallet key: %w", err)
+	}
+	donationStore := postgres.NewDonationStore(pool)
+	donationsService, err := donationsapp.NewService(ctx, donationStore, donationWalletKey)
+	if err != nil {
+		return fmt.Errorf("init donations service: %w", err)
+	}
+	if !donationsService.Ready() {
+		if _, err := donationsService.EnsureWallet(ctx); err != nil {
+			return fmt.Errorf("provision donations wallet: %w", err)
+		}
+		logger.Warn("generated a new crypto donations wallet -- recovery phrase stored encrypted, back up data/donation_wallet.key")
+	}
+	botsService.SetDonationsSource(donationsService)
+	donationsService.SetNotifier(botsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -1410,6 +1582,13 @@ func run(logger *zap.Logger) error {
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	welcomeMessageService := welcomemessagesapp.NewService(welcomeMessageStore, channelsService)
+	transcriptionService := transcriptionapp.NewService(
+		messageTranscriptionStore,
+		filesService,
+		cfg.ASRURL,
+		cfg.ASRTimeout,
+		logger.Named("transcription"),
+	)
 	storiesService := storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService))
 	chatlistsService := chatlistsapp.NewService(
 		chatlistStore,
@@ -1589,7 +1768,7 @@ func run(logger *zap.Logger) error {
 		// failover 链是有序的,启动时打出来,排查"为什么这条会话显示 Unknown"时能直接
 		// 看出当时主力是哪个。
 		logger.Info("会话地理归属已启用",
-			zap.Strings("backends", geoip.EndpointNames(cfg.GeoIPEndpoints)))
+			zap.Strings("backends", cfg.GeoIPEndpoints))
 	} else {
 		logger.Info("会话地理归属未启用：account.getAuthorizations 继续回传 Unknown 占位文案")
 	}
@@ -1606,6 +1785,12 @@ func run(logger *zap.Logger) error {
 		AuthCodeRateWindow:       cfg.AuthCodeRateWindow,
 		CatchupRateLimit:         cfg.CatchupRateLimit,
 		CatchupRateWindow:        cfg.CatchupRateWindow,
+		SRPRateLimit:             cfg.SRPRateLimit,
+		SRPRateWindow:            cfg.SRPRateWindow,
+		WithdrawalRateLimit:      cfg.WithdrawalRateLimit,
+		WithdrawalRateWindow:     cfg.WithdrawalRateWindow,
+		PaymentRateLimit:         cfg.PaymentRateLimit,
+		PaymentRateWindow:        cfg.PaymentRateWindow,
 		ChannelNudgeMaxTargets:   cfg.ChannelNudgeMaxTargets,
 		CallSignalingMaxBytes:    cfg.CallSignalingMaxBytes,
 		CallForceRelay:           cfg.CallForceRelay,
@@ -1666,6 +1851,7 @@ func run(logger *zap.Logger) error {
 		Chatlists:                    chatlistsService,
 		Messages:                     messagesService,
 		Translation:                  translationService,
+		Transcriptions:               transcriptionService,
 		Channels:                     channelsService,
 		Communities:                  communitiesService,
 		Files:                        filesService,
@@ -1728,6 +1914,7 @@ func run(logger *zap.Logger) error {
 		UserLookup:              userStore,
 		Account:                 accountService,
 		Photos:                  filesService,
+		Donations:               donationsService,
 		Stars:                   starsService,
 		Premium:                 premiumService,
 		StarsNotifier:           router,
@@ -1752,6 +1939,10 @@ func run(logger *zap.Logger) error {
 		Rating:                  ratingService,
 		Verification:            verificationService,
 		BotVerification:         botVerificationService,
+		ItemPrices:              postgres.NewItemPriceStore(pool),
+		UniqueGifts:             postgres.NewStarGiftClaimStore(pool),
+		TonDNS:                  tondns.New(cfg.CustomFragmentLiteserverConfigURL),
+		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
@@ -1840,6 +2031,7 @@ func run(logger *zap.Logger) error {
 	// router 创建后注入。
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
+	transcriptionService.SetCompletionHandler(router.PushTranscribedAudioUpdate)
 	go rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, activeSessions, logger.Named("rpc").Named("outbox"),
 		rpc.WithOutboxWorkers(cfg.OutboxWorkers),
 		rpc.WithOutboxBatch(cfg.OutboxBatch),
@@ -1896,6 +2088,23 @@ func run(logger *zap.Logger) error {
 	go router.RunInlineBotPushSubscriber(ctx)
 	go router.RunBotCallbackAnswerSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
+	if donationsService.Ready() {
+		donationChains, err := donationsService.EnabledChains(ctx)
+		if err != nil {
+			logger.Warn("list enabled donation chains failed; no donation watchers started", zap.Error(err))
+		}
+		for _, chain := range donationChains {
+			if !chain.Watchable() {
+				continue // enabled but not yet configured (e.g. rpc_url still empty) -- an operator will fill it in
+			}
+			chainLog := logger.Named("donations").Named(chain.Key)
+			go func(chainKey string, log *zap.Logger) {
+				if err := donationsService.WatchChain(ctx, chainKey, cfg.DonationPollInterval, log); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("donation watcher stopped", zap.Error(err))
+				}
+			}(chain.Key, chainLog)
+		}
+	}
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}
@@ -1932,8 +2141,21 @@ func run(logger *zap.Logger) error {
 		UniqueGifts:        giftsService,
 		GiftWithdrawals:    giftsService,
 		RevenueWithdrawals: giftsService,
-		ModerationAppeals:  moderationService,
-		TelegramLogin:      telegramLoginHTTPHandler,
+		CustomFragment:     customFragmentService,
+		GiftClaim:          giftClaimService,
+		GiftClaimTest:      giftClaimTestService,
+		MiniApps: web.NewConfiguredMiniAppsHandler(web.MiniAppsConfig{
+			AppName:  cfg.PublicAppName,
+			Bots:     botsService,
+			Stickers: filesService,
+			Tokens:   botStore,
+			// Telegram signs Mini App initData with the launching bot token.
+			// Keep these secrets server-side; the HTML/JS never receives them.
+			BotFatherToken: os.Getenv("TELESRV_MINIAPP_BOTFATHER_TOKEN"),
+			StickersToken:  os.Getenv("TELESRV_MINIAPP_STICKERS_TOKEN"),
+		}),
+		ModerationAppeals: moderationService,
+		TelegramLogin:     telegramLoginHTTPHandler,
 	}, logger.Named("public-web")); err != nil {
 		return fmt.Errorf("start public Web: %w", err)
 	}
@@ -2001,6 +2223,17 @@ func telegramLoginRPCDependency(service *telegramloginapp.Service) rpc.TelegramL
 	return service
 }
 
+// donationsWalletKey resolves the crypto donations encryption key: an
+// explicit TELESRV_DONATION_WALLET_KEY wins if set, otherwise it's the
+// local key file at cfg.DonationWalletKeyPath, generated automatically the
+// first time this server ever runs (see donationsapp.LoadOrGenerateEncryptionKey).
+func donationsWalletKey(cfg config.Config) (donationsapp.EncryptionKey, error) {
+	if key := strings.TrimSpace(cfg.DonationWalletKey); key != "" {
+		return donationsapp.ParseEncryptionKey(key)
+	}
+	return donationsapp.LoadOrGenerateEncryptionKey(cfg.DonationWalletKeyPath)
+}
+
 func runTelegramLoginRetention(ctx context.Context, service *telegramloginapp.Service, retention, interval time.Duration, batch int, logger *zap.Logger) {
 	run := func() {
 		var total int64
@@ -2034,4 +2267,24 @@ func runTelegramLoginRetention(ctx context.Context, service *telegramloginapp.Se
 			run()
 		}
 	}
+}
+
+type giftClaimInstanceConfig struct {
+	Enabled             bool
+	BotUserID           int64
+	SystemUser          domain.User
+	BotHandle           string
+	BotToken            string
+	PublicBaseURL       string
+	BasePath            string
+	Collection          string
+	AppName             string
+	LiteserverConfigURL string
+	ChallengeTTL        time.Duration
+	ProofTTL            time.Duration
+	InitDataTTL         time.Duration
+	Minter              giftclaim.Minter
+	Withdrawer          giftclaim.Withdrawer
+	Password            giftclaim.AccountPassword
+	MenuButtonRequired  bool
 }

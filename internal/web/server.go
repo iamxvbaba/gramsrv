@@ -36,6 +36,10 @@ type Config struct {
 	UniqueGifts        UniqueStarGiftResolver
 	GiftWithdrawals    StarGiftWithdrawalResolver
 	RevenueWithdrawals ChannelRevenueWithdrawalResolver
+	CustomFragment     CustomFragmentHandler
+	GiftClaim          http.Handler
+	GiftClaimTest      http.Handler
+	MiniApps           http.Handler
 	ModerationAppeals  ModerationAppealResolver
 	// AllowDevPayments registers the local dev/fiat Stars/Premium checkout
 	// (/payments/dev-stars). Denied by default; enable only in dev/test. The
@@ -78,6 +82,11 @@ type UniqueStarGiftResolver interface {
 type StarGiftWithdrawalResolver interface {
 	ResolveWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error)
 	CompleteWithdrawal(ctx context.Context, providerRequestID string, date int) (domain.StarGiftWithdrawal, error)
+}
+
+type CustomFragmentHandler interface {
+	http.Handler
+	ServeWithdrawalPage(w http.ResponseWriter, r *http.Request, requestID string)
 }
 
 type ChannelRevenueWithdrawalResolver interface {
@@ -180,6 +189,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		uniqueGifts:        cfg.UniqueGifts,
 		giftWithdrawals:    cfg.GiftWithdrawals,
 		revenueWithdrawals: cfg.RevenueWithdrawals,
+		customFragment:     cfg.CustomFragment,
 		appeals:            cfg.ModerationAppeals,
 		publicBaseURL:      cfg.PublicBaseURL,
 		appLinks:           appLinks,
@@ -203,6 +213,64 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	registerBearerCapabilityRoute(mux, "POST", publicRoutePrefix+"/gift-withdrawal/{requestID}", h.completeStarGiftWithdrawal)
 	registerBearerCapabilityRoute(mux, "GET", publicRoutePrefix+"/revenue-withdrawal/{requestID}", h.channelRevenueWithdrawal)
 	registerBearerCapabilityRoute(mux, "POST", publicRoutePrefix+"/revenue-withdrawal/{requestID}", h.completeChannelRevenueWithdrawal)
+	if cfg.CustomFragment != nil {
+		mux.Handle("GET /custom-fragment", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/{$}", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/tonconnect-manifest.json", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/collection.json", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/icon.svg", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/metadata/gift/{slug}", cfg.CustomFragment)
+		mux.Handle("GET /custom-fragment/media/gift/{slug}", cfg.CustomFragment)
+		mux.Handle("POST /custom-fragment/api/gifts/{requestID}/{action}", cfg.CustomFragment)
+	}
+	if cfg.GiftClaim != nil {
+		mux.Handle("GET /claim", cfg.GiftClaim)
+		mux.Handle("GET /claim/{$}", cfg.GiftClaim)
+		mux.Handle("GET /claim/tonconnect-manifest.json", cfg.GiftClaim)
+		mux.Handle("GET /claim/icon.svg", cfg.GiftClaim)
+		mux.Handle("GET /claim/admin", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/challenge", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/verify", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/mint", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/confirm", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/admin/status", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/admin/export", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/wallet/send", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/wallet/release", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/wallet/password", cfg.GiftClaim)
+		mux.Handle("POST /claim/api/wallet/withdraw", cfg.GiftClaim)
+	}
+	if cfg.GiftClaimTest != nil {
+		mux.Handle("GET /claimtest", cfg.GiftClaimTest)
+		mux.Handle("GET /claimtest/{$}", cfg.GiftClaimTest)
+		mux.Handle("GET /claimtest/tonconnect-manifest.json", cfg.GiftClaimTest)
+		mux.Handle("GET /claimtest/icon.svg", cfg.GiftClaimTest)
+		mux.Handle("GET /claimtest/admin", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/challenge", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/verify", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/mint", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/confirm", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/admin/status", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/admin/export", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/wallet/send", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/wallet/release", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/wallet/password", cfg.GiftClaimTest)
+		mux.Handle("POST /claimtest/api/wallet/withdraw", cfg.GiftClaimTest)
+	}
+	if cfg.MiniApps != nil {
+		mux.Handle("GET /botfather", cfg.MiniApps)
+		mux.Handle("GET /botfather/{$}", cfg.MiniApps)
+		mux.Handle("GET /stickers", cfg.MiniApps)
+		mux.Handle("GET /stickers/{$}", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/botfather/status", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/botfather/validate", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/botfather/bots", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/botfather/bots", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers/mine", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/stickers", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers/{shortName}", cfg.MiniApps)
+	}
 	if cfg.ModerationAppeals != nil {
 		mux.HandleFunc("GET /appeal/{token}", h.moderationAppeal)
 		mux.HandleFunc("POST /appeal/{token}", h.moderationAppeal)
@@ -267,6 +335,7 @@ type handler struct {
 	uniqueGifts        UniqueStarGiftResolver
 	giftWithdrawals    StarGiftWithdrawalResolver
 	revenueWithdrawals ChannelRevenueWithdrawalResolver
+	customFragment     CustomFragmentHandler
 	appeals            ModerationAppealResolver
 	publicBaseURL      string
 	appLinks           links.AppLinkBuilder
@@ -434,10 +503,18 @@ body{font:16px/1.5 system-ui,sans-serif;background:#f4f6f8;color:#17212b;margin:
 </main></body></html>`))
 
 func (h *handler) starGiftWithdrawal(w http.ResponseWriter, r *http.Request) {
+	if h.customFragment != nil {
+		h.customFragment.ServeWithdrawalPage(w, r, r.PathValue("requestID"))
+		return
+	}
 	h.renderStarGiftWithdrawal(w, r, false)
 }
 
 func (h *handler) completeStarGiftWithdrawal(w http.ResponseWriter, r *http.Request) {
+	if h.customFragment != nil {
+		http.Error(w, "use the CustomFragment TON Connect flow", http.StatusMethodNotAllowed)
+		return
+	}
 	h.renderStarGiftWithdrawal(w, r, true)
 }
 
@@ -1194,7 +1271,16 @@ func publicWebAppURL(webBaseURL, legacyURL string) string {
 
 func publicSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		miniAppPath := strings.HasPrefix(r.URL.Path, "/botfather") || strings.HasPrefix(r.URL.Path, "/stickers") || strings.HasPrefix(r.URL.Path, "/api/miniapps/")
+		if miniAppPath {
+			// These pages are intentionally self-contained: no Telegram or CDN
+			// origin is allowed to become an accidental dependency.
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		} else if strings.HasPrefix(r.URL.Path, "/custom-fragment") || strings.HasPrefix(r.URL.Path, "/gift-withdrawal/") || strings.HasPrefix(r.URL.Path, "/claim") {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://unpkg.com https://telegram.org; connect-src 'self' https: wss:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		} else {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		}
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")

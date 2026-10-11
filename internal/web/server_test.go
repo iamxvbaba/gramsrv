@@ -21,6 +21,103 @@ func newTestHandler(t *testing.T, resolver StickerSetResolver, publicBaseURL str
 	return h
 }
 
+type customFragmentStub struct{}
+
+func (customFragmentStub) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (customFragmentStub) ServeWithdrawalPage(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func TestCustomFragmentRoutesDoNotConflictWithUsernameLinks(t *testing.T) {
+	h, err := NewHandler(Config{
+		StickerSets:    fakeResolver{},
+		PublicBaseURL:  "https://links.example.test",
+		CustomFragment: customFragmentStub{},
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	for _, target := range []string{
+		"/custom-fragment",
+		"/custom-fragment/",
+		"/custom-fragment/tonconnect-manifest.json",
+		"/custom-fragment/metadata/gift/Gift-1.json",
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("GET %s status = %d, want %d", target, rr.Code, http.StatusNoContent)
+		}
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/custom-fragment/api/gifts/request-1/intent", strings.NewReader(`{}`)))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("POST CustomFragment status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+}
+
+func TestLocalMiniAppsUseGramsrvRoutes(t *testing.T) {
+	miniSets := miniAppsStickerStub{sets: []domain.StickerSet{{ID: 1, ShortName: "flashgram", Title: "Flashgram", Count: 3, Kind: domain.StickerSetKindStickers}}}
+	h, err := NewHandler(Config{
+		StickerSets:   fakeResolver{},
+		PublicBaseURL: "https://links.example.test",
+		MiniApps:      NewConfiguredMiniAppsHandler(MiniAppsConfig{AppName: "Flashgram", Stickers: miniSets}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/botfather", "/stickers"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Gramsrv mini app") || strings.Contains(rr.Body.String(), "telegram.org") ||
+			strings.Contains(rr.Header().Get("Content-Security-Policy"), "https://telegram.org") {
+			t.Fatalf("GET %s status=%d body=%q", target, rr.Code, rr.Body.String())
+		}
+	}
+	validate := httptest.NewRecorder()
+	h.ServeHTTP(validate, httptest.NewRequest(http.MethodPost, "/api/miniapps/botfather/validate", strings.NewReader(`{"token":"123456:AAAAAAAAAAAAAAAAAAAA"}`)))
+	if validate.Code != http.StatusOK || !strings.Contains(validate.Body.String(), `"valid":true`) {
+		t.Fatalf("validate status=%d body=%q", validate.Code, validate.Body.String())
+	}
+	sets := httptest.NewRecorder()
+	h.ServeHTTP(sets, httptest.NewRequest(http.MethodGet, "/api/miniapps/stickers", nil))
+	if sets.Code != http.StatusOK || !strings.Contains(sets.Body.String(), "flashgram") {
+		t.Fatalf("sets status=%d body=%q", sets.Code, sets.Body.String())
+	}
+}
+
+type miniAppsStickerStub struct{ sets []domain.StickerSet }
+
+func (s miniAppsStickerStub) ListStickerSets(_ context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
+	out := make([]domain.StickerSet, 0, len(s.sets))
+	for _, set := range s.sets {
+		if set.Kind == kind {
+			out = append(out, set)
+		}
+	}
+	return out, nil
+}
+
+func (s miniAppsStickerStub) ResolveStickerSet(_ context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
+	for _, set := range s.sets {
+		if ref.Kind == domain.StickerSetRefByShortName && set.ShortName == ref.ShortName {
+			return set, nil, true, nil
+		}
+	}
+	return domain.StickerSet{}, nil, false, nil
+}
+
+func (s miniAppsStickerStub) ListCreatedStickerSets(context.Context, int64, int64, int) ([]domain.StickerSet, int, error) {
+	return nil, 0, nil
+}
+
+func (s miniAppsStickerStub) CreateStickerSet(context.Context, domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
+	return domain.StickerSet{}, nil, nil
+}
+
 func newTestHandlerWithPublicPeers(
 	t *testing.T,
 	resolver StickerSetResolver,

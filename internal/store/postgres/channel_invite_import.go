@@ -125,10 +125,6 @@ func (s *ChannelStore) approveInviteImporterTx(ctx context.Context, tx pgx.Tx, c
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 通过邀请链接重新入群同样要归还 prehistory 读边界(upsert 是 GREATEST,不会下调)。
-	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
-		return domain.CreateChannelResult{}, err
-	}
 	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 		ChannelID: channelID,
 		UserID:    userID,

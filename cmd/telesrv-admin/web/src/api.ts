@@ -1,6 +1,9 @@
 import type {
   AccountDetail,
   AccountListResponse,
+  DonationChainsResponse,
+  DonationDepositListResponse,
+  DonationWalletStatus,
   AccountRatingDetail,
   AccountRatingListResponse,
   AdminConsoleUserList,
@@ -36,7 +39,9 @@ import type {
   ModerationCaseDetail,
   ModerationCaseRow,
   ModerationReport,
+  NftGiftWalletPayload,
   OfficialStarGiftListResponse,
+  ItemPricesResponse,
   PremiumPlansResponse,
   StarGiftAuctionListResponse,
   StarGiftCollectiblePreview,
@@ -198,6 +203,10 @@ export const api = {
   starsLedger: (userID: string, params: URLSearchParams) =>
     request<StarsLedgerResponse>(`/api/stars/ledger/${encodeURIComponent(userID)}?${params.toString()}`),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
+  donationWalletStatus: () => request<DonationWalletStatus>("/api/donations/wallet"),
+  donationChains: () => request<DonationChainsResponse>("/api/donations/chains"),
+  donationDeposits: (params: URLSearchParams) => request<DonationDepositListResponse>(`/api/donations/deposits?${params.toString()}`),
+  itemPrices: () => request<ItemPricesResponse>("/api/item-prices"),
   storageStats: () => request<StorageStatsResponse>("/api/storage/stats"),
   stats: (days?: number) => {
     const params = days && days > 0 ? `?days=${days}` : "";
@@ -271,6 +280,8 @@ export const api = {
 	importGiftPack: (form: FormData) => request<CommandResult>("/api/actions/import-gift-pack", { method: "POST", body: form }),
 	importOfficialGift: (payload: Record<string, unknown>) => request<CommandResult>("/api/actions/import-official-gift", { method: "POST", body: JSON.stringify(payload) }),
 	publishGiftCollectibles: (giftID: string, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${encodeURIComponent(giftID)}`, { method: "POST", body: form }),
+	setNftGiftWallet: (payload: NftGiftWalletPayload) =>
+		request<CommandResult>("/api/actions/set-nft-gift-wallet", { method: "POST", body: JSON.stringify(payload) }),
 	gifCatalog: () => request<GifCatalogListResponse>("/api/gif-catalog"),
 	stickerSets: (kind: "stickers" | "emoji") => request<StickerSetListResponse>(`/api/stickers?kind=${encodeURIComponent(kind)}`),
 	stickerSetDocuments: (setID: string) => request<{ document_ids: string[] }>(`/api/stickers/${encodeURIComponent(setID)}/documents`),

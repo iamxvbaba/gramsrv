@@ -1122,7 +1122,7 @@ func tgTonTransactions(in []domain.TonTransaction) []tg.StarsTransaction {
 // 真实 peer 走 starsTransactionPeer，其余兜底 Unsupported（Peer 字段必填，不可为 nil）。
 func tgStarsTransactionPeer(t domain.StarsTransaction) tg.StarsTransactionPeerClass {
 	switch t.Reason {
-	case domain.StarsReasonGrant, domain.StarsReasonTopup:
+	case domain.StarsReasonGrant, domain.StarsReasonTopup, domain.StarsReasonDonationDeposit:
 		return &tg.StarsTransactionPeerFragment{}
 	case domain.StarsReasonPremium:
 		return &tg.StarsTransactionPeerPremiumBot{}

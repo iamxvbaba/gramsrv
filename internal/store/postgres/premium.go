@@ -752,46 +752,22 @@ SELECT disallow_premium_gifts FROM account_settings WHERE user_id=$1
 			domain.PremiumSubscriptionActiveError{Until: int(premiumUntil.Unix())}
 	}
 
-	// 机器人买家从自己的 Stars 钱包（bot_stars_balances）付款：结算发票的收入记在那里，
-	// 而机器人这个用户身份在 stars_balances 里没有行。走下面的个人账本会让余额不足，
-	// 哪怕钱包是满的。真人买家保持个人账本。
-	var buyerIsBot bool
-	if err := tx.QueryRow(ctx, `SELECT is_bot FROM users WHERE id=$1`, form.BuyerUserID).Scan(&buyerIsBot); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, domain.ErrStarsInsufficient
-		}
-		return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, fmt.Errorf("load premium buyer: %w", err)
-	}
-
 	var balance int64
 	var granted bool
-	if buyerIsBot {
-		if !form.EffectiveDebitStars() {
-			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, domain.ErrStarsInsufficient
-		}
-		var walletErr error
-		balance, walletErr = debitBotStarsWallet(ctx, tx, form.BuyerUserID, form.AmountStars,
-			domain.StarsReasonBotSpend, domain.Peer{Type: domain.PeerTypeUser, ID: form.RecipientUserID}, req.Date)
-		if walletErr != nil {
-			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, walletErr
-		}
-		// 钱包消费没有 stars_transactions 行，所以权益不记 transaction id：钱包流水就是凭证。
-	} else {
-		lockSuffix := ""
-		if form.EffectiveDebitStars() {
-			lockSuffix = " FOR UPDATE"
-		}
-		err = tx.QueryRow(ctx, `SELECT balance,granted FROM stars_balances WHERE user_id=$1`+lockSuffix,
-			form.BuyerUserID).Scan(&balance, &granted)
-		if errors.Is(err, pgx.ErrNoRows) || form.EffectiveDebitStars() && err == nil && balance < form.AmountStars {
-			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, domain.ErrStarsInsufficient
-		}
-		if err != nil {
-			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, fmt.Errorf("load premium buyer balance: %w", err)
-		}
+	lockSuffix := ""
+	if form.EffectiveDebitStars() {
+		lockSuffix = " FOR UPDATE"
+	}
+	err = tx.QueryRow(ctx, `SELECT balance,granted FROM stars_balances WHERE user_id=$1`+lockSuffix,
+		form.BuyerUserID).Scan(&balance, &granted)
+	if errors.Is(err, pgx.ErrNoRows) || form.EffectiveDebitStars() && err == nil && balance < form.AmountStars {
+		return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, domain.ErrStarsInsufficient
+	}
+	if err != nil {
+		return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, fmt.Errorf("load premium buyer balance: %w", err)
 	}
 	var starsTransactionID int64
-	if form.EffectiveDebitStars() && !buyerIsBot {
+	if form.EffectiveDebitStars() {
 		if err := tx.QueryRow(ctx, `UPDATE stars_balances SET balance=balance-$2,updated_at=now()
 WHERE user_id=$1 RETURNING balance`, form.BuyerUserID, form.AmountStars).Scan(&balance); err != nil {
 			return domain.PremiumPaymentForm{}, domain.PremiumEntitlement{}, domain.User{}, domain.StarsBalance{}, fmt.Errorf("debit premium stars: %w", err)

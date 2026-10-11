@@ -122,37 +122,13 @@ func (s *ChannelStore) GetChannel(_ context.Context, viewerUserID, channelID int
 			exportedInvite = &invite
 		}
 	}
-	view := domain.ChannelView{
+	return domain.ChannelView{
 		Channel:           cloneChannel(channel),
 		Self:              member,
 		Dialog:            dialog,
 		SelfBoostsApplied: s.selfBoostsAppliedLocked(viewerUserID, channelID, int(time.Now().Unix())),
 		ExportedInvite:    exportedInvite,
-	}
-	// 与 postgres 同口径:linked_chat_id 只在讨论频道真实可用时才下发,避免悬空 id
-	// 让客户端渲染"讨论"入口却打开空频道。
-	view.LinkedChatUsable = s.linkedChatUsable(channel)
-	return view, nil
-}
-
-// linkedChatUsable 校验 Channel.LinkedChatID 指向的对端真实可用。linked_chat_id 双向下发:
-// broadcast 指向讨论组(须为 megagroup),megagroup 指向母频道(须为 broadcast)。任一方向
-// 悬空都会让客户端渲染"讨论"入口,点进去却是空频道。
-func (s *ChannelStore) linkedChatUsable(ch domain.Channel) bool {
-	if ch.LinkedChatID == 0 {
-		return false
-	}
-	linked, ok := s.channels[ch.LinkedChatID]
-	if !ok || linked.Deleted {
-		return false
-	}
-	switch {
-	case ch.Broadcast:
-		return linked.Megagroup && !linked.Broadcast
-	case ch.Megagroup:
-		return linked.Broadcast && !linked.Megagroup
-	}
-	return false
+	}, nil
 }
 
 // GetLinkedDiscussionChannel returns the discussion peer through an active

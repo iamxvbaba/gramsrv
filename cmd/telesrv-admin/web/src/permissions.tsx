@@ -8,6 +8,10 @@ import { useI18n } from "./i18n";
 // a full-access session.
 export const permissionAll = "*";
 export const permissionPremiumManage = "premium.manage";
+export const permissionDonationsManage = "donations.manage";
+// Shop pricing: effective product prices, product kill switches and the stars
+// rate. Separate from premium.manage — this is what a customer is charged.
+export const permissionPricesManage = "prices.manage";
 export const permissionBotTokenRead = "bots.token.read";
 export const permissionVerificationReview = "verification.review";
 export const permissionVerificationRevoke = "verification.revoke";
@@ -155,6 +159,7 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "storage.manage": { title: "Purge storage", hint: "Manually delete stored media" },
   "dashboard.read": { title: "View the dashboard", hint: "See the overview counters and server health" },
   "premium.manage": { title: "Manage Premium", hint: "Grant, revoke and refund Premium" },
+  "prices.manage": { title: "Manage shop prices", hint: "Edit product prices, hide products and set the Stars rate" },
   "verification.review": { title: "Verify accounts", hint: "Work the verification queue and grant badges" },
   "verification.revoke": { title: "Remove verification", hint: "Take a granted badge away (needs the right above too)" },
   "botverification.review": { title: "Handle third-party marks", hint: "Work the third-party verification queue" },
@@ -217,8 +222,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "Billing",
-    hint: "Premium grants, refunds and the Stars ledger",
-    permissions: ["premium.manage", "stars.read"]
+    hint: "Premium grants, refunds, the Stars ledger and shop pricing",
+    permissions: ["premium.manage", "stars.read", "prices.manage"]
   },
   {
     title: "The console itself",

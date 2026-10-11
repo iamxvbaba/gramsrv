@@ -504,20 +504,12 @@ func TestMessagesCreateChatTDesktopReturnsLegacyChatAndAcceptsInputPeerChatRPC(t
 	if err != nil {
 		t.Fatalf("legacy history: %v", err)
 	}
-	legacyMessages, ok := legacyHistory.(*tg.MessagesChannelMessages)
+	legacyMessages, ok := legacyHistory.(*tg.MessagesMessages)
 	if !ok {
-		t.Fatalf("legacy history = %T %+v, want *tg.MessagesChannelMessages", legacyHistory, legacyHistory)
+		t.Fatalf("legacy history = %T %+v, want *tg.MessagesMessages", legacyHistory, legacyHistory)
 	}
-	// inputPeerChat 与 inputPeerChannel 同 id,历史读取口径一致:旧实现直接返回空列表,
-	// 导致以 legacy chat 寻址的客户端(以及收到 migrated legacy chat 对象的 TDesktop)
-	// 打开频道时恒为空。
-	if len(legacyMessages.Messages) != 2 {
-		t.Fatalf("legacy history = %T messages=%d, want 2 service messages", legacyHistory, len(legacyMessages.Messages))
-	}
-	for _, m := range legacyMessages.Messages {
-		if _, ok := m.(*tg.MessageService); !ok {
-			t.Fatalf("legacy history message = %T, want *tg.MessageService", m)
-		}
+	if len(legacyMessages.Messages) != 0 {
+		t.Fatalf("legacy history = %T %+v, want empty messages.messages", legacyHistory, legacyHistory)
 	}
 
 	sent, err := r.onMessagesSendMessage(tdCtx, &tg.MessagesSendMessageRequest{

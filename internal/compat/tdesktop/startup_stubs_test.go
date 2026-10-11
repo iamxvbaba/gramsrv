@@ -87,6 +87,9 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 		!boolSeen["giveaway_gifts_purchase_available"] || !bools["giveaway_gifts_purchase_available"] {
 		t.Fatalf("AppConfig purchase flags = stars_blocked:%v giveaway_available:%v", bools["stars_purchase_blocked"], bools["giveaway_gifts_purchase_available"])
 	}
+	if !boolSeen["settings_display_passkeys"] || !bools["settings_display_passkeys"] {
+		t.Fatalf("AppConfig[settings_display_passkeys] = %v seen=%v, want true (passkey 注册入口 gate)", bools["settings_display_passkeys"], boolSeen["settings_display_passkeys"])
+	}
 	fragmentPrefixes := arrays["fragment_prefixes"]
 	if fragmentPrefixes == nil || len(fragmentPrefixes.Value) != 1 {
 		t.Fatalf("AppConfig[fragment_prefixes] = %#v, want one-element array", fragmentPrefixes)

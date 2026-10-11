@@ -258,29 +258,7 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 	if err := g.Wait(); err != nil {
 		return domain.ChannelView{}, err
 	}
-	view := domain.ChannelView{Channel: channel, Self: member, Dialog: dialog, SelfBoostsApplied: selfBoosts, ExportedInvite: exportedInvite}
-	view.LinkedChatUsable = s.linkedChatUsable(ctx, channel)
-	return view, nil
-}
-
-// linkedChatUsable 校验 Channel.LinkedChatID 指向的对端真实可用。linked_chat_id 是双向的:
-// broadcast 指向讨论组(须为 megagroup),megagroup 指向母频道(须为 broadcast)。任一方向
-// 悬空(对端不存在/已删除/类型不符)都会让客户端渲染"讨论"入口,点进去却是空频道。
-func (s *ChannelStore) linkedChatUsable(ctx context.Context, ch domain.Channel) bool {
-	if ch.LinkedChatID == 0 {
-		return false
-	}
-	linked, err := s.channelByID(ctx, s.db, ch.LinkedChatID)
-	if err != nil || linked.Deleted {
-		return false
-	}
-	switch {
-	case ch.Broadcast:
-		return linked.Megagroup && !linked.Broadcast
-	case ch.Megagroup:
-		return linked.Broadcast && !linked.Megagroup
-	}
-	return false
+	return domain.ChannelView{Channel: channel, Self: member, Dialog: dialog, SelfBoostsApplied: selfBoosts, ExportedInvite: exportedInvite}, nil
 }
 
 // GetLinkedDiscussionChannel projects a private discussion peer through the

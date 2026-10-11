@@ -98,6 +98,79 @@ export type AuditLogRow = {
   CreatedAt: string;
 };
 
+export type DonationChain = {
+  Key: string;
+  Name: string;
+  ChainID: number;
+  RPCURL: string;
+  WSURL: string;
+  NativeSymbol: string;
+  NativeDecimals: number;
+  ConfirmationsRequired: number;
+  PriceFeedAddress: string;
+  ManualUSDRateMicros: number;
+  Enabled: boolean;
+};
+
+export type DonationToken = {
+  ChainKey: string;
+  Symbol: string;
+  ContractAddress: string;
+  Decimals: number;
+};
+
+export type DonationChainsResponse = {
+  chains: DonationChain[];
+  tokens: DonationToken[];
+};
+
+export type DonationWalletStatus = {
+  HasWallet: boolean;
+  AddressCount: number;
+};
+
+export type ItemPrice = {
+  product_code: string;
+  title?: string;
+  stars_price: number;
+  bid: number;
+  enabled: boolean;
+  updated_by?: string;
+  updated_at?: number;
+};
+
+export type ItemPricesResponse = {
+  rows: ItemPrice[];
+  stars_rate: number;
+};
+
+export type DonationDepositStatus = "pending" | "confirmed" | "credited" | "orphaned";
+
+export type DonationDepositRow = {
+  ID: number;
+  UserID: number;
+  ChainKey: string;
+  TokenSymbol: string;
+  TxHash: string;
+  LogIndex: number;
+  BlockNumber: number;
+  AmountRaw: string;
+  USDValueMicros: number;
+  StarsCredited: number;
+  Status: DonationDepositStatus;
+  Confirmations: number;
+  DetectedAt: string;
+  CreditedAt: string;
+  UserPhone: string;
+  UserFirstName: string;
+};
+
+export type DonationDepositListResponse = {
+  rows: DonationDepositRow[];
+  has_more: boolean;
+  next_before_id: string;
+};
+
 export type AccountDetail = {
   Account: AccountRow;
   About: string;
@@ -550,6 +623,11 @@ export type UniqueStarGiftRow = {
   OwnerPeerID: string;
   OwnerUsername: string;
   OwnerName: string;
+  OwnerAddress: string;
+  WalletName: string;
+  GiftAddress: string;
+  HostPeerType: string;
+  HostPeerID: string;
   Burned: boolean;
   Crafted: boolean;
   KeepOriginalDetails: boolean;
@@ -561,6 +639,19 @@ export type UniqueStarGiftListResponse = {
   rows: UniqueStarGiftRow[] | null;
   has_more: boolean;
   next_before_id: string;
+};
+
+// Payload of the NFT Gifts "TON wallet" command: ref addresses the gift by
+// slug, NFT address or id, clear releases it back to its Telegram owner.
+export type NftGiftWalletPayload = {
+  command_id: string;
+  reason: string;
+  confirm: boolean;
+  ref: string;
+  clear?: boolean;
+  wallet_name?: string;
+  wallet_address?: string;
+  host_user_id?: string;
 };
 
 export type CollectiblePhoneTier = "standard" | "exclusive";

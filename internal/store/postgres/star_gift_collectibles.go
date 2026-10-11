@@ -338,12 +338,13 @@ ORDER BY a.sort_order, a.id`, prefix, craftedExpression, animationJSONExpression
 func listCollectibleBackdrops(ctx context.Context, db sqlcgen.DBTX, revisionID int64, options collectibleRevisionReadOptions) ([]domain.StarGiftCollectibleAttribute, error) {
 	prefix := ""
 	from := "star_gift_collectible_backdrops a"
-	where := "WHERE a.collectible_revision_id=$1"
+	where := "WHERE a.collectible_revision_id=$1 AND a.name NOT LIKE 'Crafted Gradient %'"
 	args := []any{revisionID}
 	if options.samplePerKind > 0 {
 		prefix = `WITH picked AS MATERIALIZED (
     SELECT id FROM star_gift_collectible_backdrops
     WHERE collectible_revision_id=$1 AND rarity_kind='permille' AND rarity_permille > 0
+      AND name NOT LIKE 'Crafted Gradient %'
     ORDER BY random()
     LIMIT $2
 )`
@@ -394,6 +395,36 @@ WHERE c.gift_id=$1 AND a.id=$2`, table), giftID, attributeID).Scan(&raw)
 		return nil, false, fmt.Errorf("get collectible animation: %w", err)
 	}
 	return raw, true, nil
+}
+
+// CollectibleAnimationBlob returns the original immutable TGS blob for an
+// attribute.  The animation_json column is JSONB for catalog/query purposes;
+// JSONB canonicalization can reorder/drop JSON details that rlottie relies on,
+// so renderers must use the content-addressed source blob when available.
+func (s *StarGiftStore) CollectibleAnimationBlob(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) (domain.FileBlob, bool, error) {
+	table := "star_gift_collectible_models"
+	if kind == domain.StarGiftCollectiblePattern {
+		table = "star_gift_collectible_patterns"
+	} else if kind != domain.StarGiftCollectibleModel {
+		return domain.FileBlob{}, false, nil
+	}
+	var blob domain.FileBlob
+	var backend string
+	err := s.db.QueryRow(ctx, fmt.Sprintf(`
+SELECT b.location_key, b.backend, b.object_key, b.size, b.sha256, b.mime_type
+FROM %s a
+JOIN star_gift_catalog c ON c.collectible_revision_id=a.collectible_revision_id
+JOIN file_blobs b ON b.location_key='doc:' || a.document_id::text
+WHERE c.gift_id=$1 AND a.id=$2`, table), giftID, attributeID).Scan(
+		&blob.LocationKey, &backend, &blob.ObjectKey, &blob.Size, &blob.SHA256, &blob.MimeType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.FileBlob{}, false, nil
+	}
+	if err != nil {
+		return domain.FileBlob{}, false, fmt.Errorf("get collectible animation blob: %w", err)
+	}
+	blob.Backend = domain.MediaBackend(backend)
+	return blob, true, nil
 }
 
 func (s *StarGiftStore) UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error) {
@@ -499,7 +530,7 @@ JOIN star_gift_collectible_patterns p ON p.id=u.pattern_attribute_id
 JOIN documents pd ON pd.id=p.document_id
 JOIN star_gift_collectible_backdrops b ON b.id=u.backdrop_attribute_id
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
-LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id AND NOT l.suspended
+LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id
 WHERE %s`, predicate)
 }
 

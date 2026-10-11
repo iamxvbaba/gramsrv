@@ -625,9 +625,7 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 	if view.Dialog.ViewForumAsMessages {
 		full.SetViewForumAsMessages(true)
 	}
-	// linked_chat_id 只在讨论频道真实可用(存在、未删除、为 megagroup)时下发。悬空 id 会让
-	// 客户端渲染"讨论"入口,点进去却是一个空频道;校验结果由 store 在 ChannelView 上给出。
-	if ch.LinkedChatID != 0 && view.LinkedChatUsable {
+	if ch.LinkedChatID != 0 {
 		full.SetLinkedChatID(ch.LinkedChatID)
 	}
 	if defaultSendAs := validDefaultSendAsPeer(view); defaultSendAs != nil {

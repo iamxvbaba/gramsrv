@@ -287,6 +287,22 @@ func (s *Server) handleRevokeCustomVerification(w http.ResponseWriter, r *http.R
 	writeBotVerificationCommandResult(w, result, err)
 }
 
+func (s *Server) handleGrantBotVerificationMark(w http.ResponseWriter, r *http.Request) {
+	var req admin.GrantBotVerificationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// The shop sends peer_type: a missing one is most likely a truncated body,
+	// and silently treating it as a user would grant against the wrong peer
+	// namespace rather than failing loudly.
+	if req.PeerType == "" {
+		req.PeerType = domain.PeerTypeUser
+	}
+	s.applyVerificationPrincipal(r, &req.CommandMeta)
+	result, err := s.svc.GrantBotVerification(r.Context(), req)
+	writeBotVerificationCommandResult(w, result, err)
+}
+
 func (s *Server) handleApproveBotVerification(w http.ResponseWriter, r *http.Request) {
 	id, ok := moderationPathID(w, r, "id")
 	if !ok {

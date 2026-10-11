@@ -125,8 +125,6 @@ credential, ровно как на официальном шлюзе.
 | `USER_PERMISSION_DENIED` | 403 | emoji status без нужного разрешения пользователя |
 | `PREMIUM_ACCOUNT_REQUIRED` | 400 | emoji status без Premium |
 | `PREMIUM_GIFT_SELF_INVALID`, `PREMIUM_GIFT_CODE_INVALID`, `BALANCE_TOO_LOW`, `STAR_COUNT_INVALID`, `MONTH_COUNT_INVALID` | 400 | проблемы подарка Premium |
-| `GIFT_ID_INVALID`, `GIFT_NOT_AVAILABLE`, `GIFT_UPGRADE_UNAVAILABLE` | 400 | непригодный подарок или апгрейд |
-| `STAR_GIFT_UNAVAILABLE` | 500 | каталог или журнал подарков недоступны |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | конфликт `request_id`/`Idempotency-Key` либо плохой charset/длина |
 | `PAYMENT_FORM_INVALID` | 400 | платёжная форма отклонена |
 | `CHAT_WRITE_FORBIDDEN`, `CHAT_ADMIN_REQUIRED` | 400 | не хватает прав |
@@ -136,7 +134,7 @@ credential, ровно как на официальном шлюзе.
 
 ## Сводка методов
 
-Реализовано (39 методов + 1 файловый маршрут):
+Реализовано (37 методов + 1 файловый маршрут):
 
 | Группа | Методы |
 |---|---|
@@ -153,7 +151,6 @@ credential, ровно как на официальном шлюзе.
 | Меню и статус | `setChatMenuButton`, `getChatMenuButton`, `setUserEmojiStatus` |
 | Web apps и inline | `answerWebAppQuery`, `savePreparedInlineMessage` |
 | Платежи | `giftPremiumSubscription` |
-| Подарки | `getAvailableGifts`, `sendGift` |
 | Заблокировано по design | `answerShippingQuery` (HTTP 501) |
 
 ## Обновления
@@ -511,121 +508,6 @@ inline). Другие типы результатов — `RESULT_TYPE_INVALID`.
 
 ## Методы: платежи
 
-### `getAvailableGifts`
-
-Каталог подарков, доступных боту. Параметров нет.
-
-Возвращает объект `Gifts` с массивом `gifts`. Каждый элемент — объект `Gift`:
-
-| Поле | Тип | Когда присутствует |
-|---|---|---|
-| `id` | строка | всегда; этот `id` передаётся в `gift_id` при отправке подарка |
-| `sticker` | `Sticker` | всегда, если у подарка есть стикер |
-| `star_count` | целое | всегда; цена подарка в Stars |
-| `upgrade_star_count` | целое | только пока апгрейд до collectible реально доступен |
-| `total_count` | целое | только для limited-подарков |
-| `remaining_count` | целое | только для limited-подарков |
-
-```json
-{
-  "ok": true,
-  "result": {
-    "gifts": [
-      {
-        "id": "123456789",
-        "sticker": {"file_id": "...", "type": "regular", "width": 512, "height": 512},
-        "star_count": 15,
-        "upgrade_star_count": 10,
-        "total_count": 1000,
-        "remaining_count": 734
-      }
-    ]
-  }
-}
-```
-
-Источник данных — тот же включённый каталог, что отдаёт MTProto
-`payments.getStarGifts`, поэтому `id` отсюда принимает и MTProto-чекаут.
-`upgrade_star_count` опускается, когда supply уникальных подарков исчерпан:
-цена, которую сервер потом отвергнет, хуже отсутствующего поля.
-`total_count` и `remaining_count` — инвентарь limited-подарка; у unlimited их
-нет.
-
-Список намеренно не фильтруется по доступности: распроданный подарок и подарок,
-который ещё не вышел, остаются в выдаче, и именно `remaining_count` говорит
-боту, что покупать сейчас нельзя. Проверка доступности живёт в транзакции
-покупки подарка.
-
-Нормальная схема работы — не хардкодить `id`, а читать его отсюда:
-
-```
-getAvailableGifts() → gifts[] → выбрать gift → gift.id → отправить подарок
-```
-
-Если каталог не подключён, метод отвечает HTTP `501 METHOD_NOT_FOUND`.
-
-### `sendGift`
-
-Покупает звездный подарок из Stars-баланса бота и отправляет его пользователю или
-каналу. Отвечает `true`.
-
-| Параметр | Тип | Комментарий |
-|---|---|---|
-| `gift_id` | строка | обязателен; `id` из `getAvailableGifts` |
-| `user_id` | целое | получатель-пользователь; взаимно исключён с `chat_id` |
-| `chat_id` | целое | получатель-канал (`-100...`); взаимно исключён с `user_id` |
-| `pay_for_upgrade` | bool | докупить апгрейд подарка до collectible |
-| `text` | строка | до 128 символов, показывается вместе с подарком |
-| `text_parse_mode`, `text_entities` | | ограниченный набор entity |
-| `request_id` | строка | расширение telesrv для идемпотентности |
-
-Ровно один из `user_id` / `chat_id` обязателен: оба пусты — `CHAT_ID_INVALID`,
-оба заданы — тоже `CHAT_ID_INVALID`. Подарок боту самому себе, другому боту,
-замороженному или системному аккаунту — `USER_ID_INVALID`. В канале бот должен
-иметь доступ, иначе `CHAT_ID_INVALID`: подарок в канале не проходит через обычную
-проверку прав отправки сообщений, поэтому её делает сам шлюз.
-
-Транзакция ровно та же, что у MTProto `payments.sendStarsForm`: каталог подарка,
-форма оплаты, списание Stars, права на collectible и сервисное сообщение
-получателю. Отсюда и коды ошибок:
-
-| Ситуация | Ошибка |
-|---|---|
-| подарка нет в каталоге, он распродан, исчерпан, ещё не вышел, аукционный или support-only | `GIFT_NOT_AVAILABLE` |
-| апгрейд не настроен или supply исчерпан | `GIFT_UPGRADE_UNAVAILABLE` |
-| подарок только для Premium, а у бота нет Premium | `PREMIUM_ACCOUNT_REQUIRED` |
-| не хватает Stars | `BALANCE_TOO_LOW` |
-| получатель заморожен | `USER_PRIVACY_RESTRICTED` |
-| тот же `request_id` с другим запросом | `IDEMPOTENCY_KEY_INVALID` |
-| каталог или журнал недоступны | `STAR_GIFT_UNAVAILABLE` (HTTP 500) |
-
-Доступность подарка проверяется дважды: здесь по каталогу и ещё раз под
-блокировкой в транзакции покупки, поэтому два бота, одновременно купившие
-последний limited-подарок, не создадут отрицательный остаток.
-
-Подарок, оплаченный ботом, **нельзя обменять на звёзды**: `convert_stars`
-полученного экземпляра всегда 0, клиент не показывает кнопку обмена, а
-`payments.convertStarGift` для такого подарка отвечает `STARGIFT_INVALID` —
-подарок не архивируется и ничего не начисляется. Каталожная цена конвертации —
-это возврат Stars именно покупателя, а Stars бота лежат в `bot_stars_balances`,
-поэтому начисление их получателю превратило бы любой подарок в способ вывести
-деньги из кошелька бота. Подарки, отправленные ботом до появления этого правила,
-миграция приводит к тому же состоянию (`convert_stars = 0`), а защита по
-личности отправителя работает и для необработанных исторических строк. Подарок,
-купленный обычным пользователем, сохраняет каталоговый `convert_stars` и
-конвертируется как раньше.
-
-Идемпотентность — то же расширение, что у `giftPremiumSubscription`: передавайте
-HTTP-заголовок `Idempotency-Key` (или локальное поле `request_id`), charset
-`[A-Za-z0-9]` плюс `-`, `_`, `.`, `:`, до 128 символов. Повтор с тем же запросом
-возвращает `true` и **не списывает Stars второй раз**; повтор с другим
-получателем, подарком, флагом апгрейда или текстом — `IDEMPOTENCY_KEY_INVALID`.
-Без ключа каждый ретрай покупает подарок заново.
-
-Требуемый Premium проверяется по реальному статусу бота, а не подставляется:
-бот не может купить Premium-only подарок, даже если это очень хочется. Официальный
-способ выдать Premium пользователю — `giftPremiumSubscription`.
-
 ### `giftPremiumSubscription`
 
 Оплачивает подарок Premium из Stars-баланса бота через тот же надёжный
@@ -741,7 +623,8 @@ Message entities (для `entities` / `caption_entities`, а также entity
   `stopMessageLiveLocation`, `stopPoll`;
 - медиагруппы и остальной `send*`-набор: `sendMediaGroup`, `sendPoll`,
   `sendDice`, `sendGame`, `sendChatAction`;
-- платежи: `createInvoiceLink`, `getStarTransactions`, `getMyStarBalance`;
+- платежи: `createInvoiceLink`, `sendInvoice`, `answerPreCheckoutQuery`,
+  `answerShippingQuery`, `getStarTransactions`, `refundStarPayment`;
 - администрирование чатов: `banChatMember`, `unbanChatMember`,
   `restrictChatMember`, `promoteChatMember`, `setChatPermissions`,
   `setChatPhoto`, `deleteChatPhoto`, `pinChatMessage`, `unpinChatMessage`,

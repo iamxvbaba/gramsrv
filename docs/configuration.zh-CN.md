@@ -17,7 +17,6 @@
 - bool 接受 `1/true/TRUE/True/yes/on` 和 `0/false/FALSE/False/no/off`；列表使用逗号分隔；时长使用 Go 格式，例如 `200ms`、`30s`、`5m`、`168h`。
 - int、float、bool、duration 的非法文本会回退代码默认值；URL、app scheme、app name 以及登录邮箱依赖关系校验失败会阻止启动。
 - 不要提交真实密码、token、私有 DSN 或 TURN secret。生产环境应使用受保护的 service environment 或密钥管理系统。
-- `TELESRV_LOG_LEVEL` 在配置文件加载前从**进程环境变量**读取；默认 `info`，支持 `debug`、`warn`、`error` 等 zap level。成功 RPC 的逐请求轨迹只在 Debug 输出，错误、delivery fence 与 compatibility trace 在 Info 或更高等级保留。只把该键写进 `.env` 不生效。
 
 ## 2. MTProto 监听、传输与资源预算
 
@@ -32,16 +31,14 @@
 | `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | 在 MTProto 监听端口启用 MTProto-over-WebSocket 分流。 |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | 浏览器 WebSocket origin 白名单；`*` 只用于临时调试。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | 全局物理连接 admission 上限；负数关闭该门禁。 |
-| `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | 单来源 IP 物理连接上限。单机或同一 NAT 的 10,000-session 容量轮必须显式提高到预期连接数以上（本地验收 profile 使用 `20000`）；负数关闭该门禁。 |
+| `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | 单来源 IP 物理连接上限；负数关闭该门禁。 |
 | `TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES` | int / `256` | 高成本 RSA/DH 握手并发上限；负数关闭该门禁。 |
 | `TELESRV_MTPROTO_RPC_MAX_INFLIGHT` | int / `32` | 单连接同时执行的 RPC 上限；非正值由 edge 归一为安全默认值。 |
 | `TELESRV_MTPROTO_RPC_QUEUE_SIZE` | int / `64` | 单连接 RPC 排队容量；非正值使用 edge 默认值。 |
 | `TELESRV_MTPROTO_RPC_TIMEOUT` | duration / `30s` | 调度后 RPC handler 的端到端超时。 |
 | `TELESRV_MTPROTO_RPC_GLOBAL_WORKERS` | int / `256` | 共享公平调度器 worker 数。 |
-| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `32768` | 进程级已预留、排队与执行中的 RPC task/active owner 上限；默认覆盖 10,000-session 启动爬升，仍同时受 512MiB 请求 materialization charge、单连接/单 auth 和 deadline 门禁约束。 |
+| `TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS` | int / `8192` | 进程级排队与执行中的 RPC task 上限。 |
 | `TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES` | int64 charge bytes / `536870912` | 进程级已预留/排队/执行中 RPC 内存 charge 预算；legacy 等于 copied body，exact 是 typed decode 前按 wire 与生成对象放大计算的保守 materialization charge。nested gzip 展开后会在 decoder 分配 typed graph 前原子增长该 charge，grow 失败原子拒绝整批候选 RPC；该值不代表可并发接收同等大小的 wire body。 |
-| `TELESRV_MTPROTO_RPC_DELIVERY_HOOK_WORKERS` | int / `32` | 物理回包后 delivered cursor、session readiness 等可靠状态迁移的有界 worker 数；不应超过下游数据库并发能力。 |
-| `TELESRV_MTPROTO_RPC_DELIVERY_HOOK_MAX_PENDING` | int / `16384` | 每个 Server 的 reserved + queued + running delivery hook 总上限；必须不小于 worker 数。耗尽时 fail-closed，不先回成功再丢状态。 |
 | `TELESRV_MTPROTO_RPC_EXECUTION_MAX_ENTRIES` | int / `262144` | pending owner 与未 ACK execution receipt 的全局上限。receipt 只存请求身份、执行结果和 Layer admission 元数据，不存 TL body；收到 `msgs_ack` 立即删除，331 秒仅是无 ACK 时的安全上限。 |
 | `TELESRV_MTPROTO_RPC_EXECUTION_AUTH_MAX_ENTRIES` | int / `32768` | 单 raw auth key 的 owner/receipt 条目上限；必须满足 `global >= auth >= session`。 |
 | `TELESRV_MTPROTO_RPC_EXECUTION_SESSION_MAX_ENTRIES` | int / `16384` | 单 `raw auth key + session_id` 的 owner/receipt 条目上限。 |
@@ -49,8 +46,7 @@
 | `TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | transport wire、最大解密明文以及每个 live outer/nested gzip 输出的进程级在途预算，均在对应 payload 分配前预留。 |
 | `TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE` | int / `128` | 单连接普通 outbound mailbox 容量。 |
 | `TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE` | int / `32` | 单连接控制消息 mailbox 容量。 |
-| `TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | ordinary exact body 的进程级 hard cap，不是文件下载流控器。不可变 `upload.getFile` 首写后只按 descriptor 实际 retained charge 计入；文件 logical bytes 由单 session ACK window 控制。 |
-| `TELESRV_MTPROTO_OUTBOUND_CRITICAL_GLOBAL_MAX_BYTES` | int64 bytes / `67108864` | bootstrap/convergence RPC result 的独立 retained reserve；文件 bulk 不能借用，避免 `auth.bindTempAuthKey`、`help.getConfig`、`users.getUsers` 和 difference/state 被下载积压阻断。 |
+| `TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | 所有逻辑 session 未 ACK 出站 body 的唯一全局预算。物理连接重连复用同一份 `msg_id/seq_no/body`；ACK、destroy 或离线 6 分钟回收时释放，不再另建 RPC cache/spool 副本。 |
 | `TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES` | int64 bytes / `536870912` | 并发加密 wire/codec/obfuscation scratch 的全局预算。 |
 
 nested gzip admission 不新增环境变量。代码硬限制为：每个
@@ -75,7 +71,7 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_ADMIN_SCOPED_TOKENS` | 用 `;` 分隔的 `name:token:perm1,perm2` 条目 / 空 | 额外的 Admin API bearer token，每个 token 只携带指定权限，供集成服务按最小权限访问，避免使用无限制的 `TELESRV_ADMIN_API_TOKEN`。token 不能包含 `:` 或空白字符，每个条目必须至少列出一个权限，name/token 必须唯一，且禁止复用 `TELESRV_ADMIN_API_TOKEN`，否则会把受限 token 静默放大成全权限。任何格式错误都会让启动失败。 |
 | `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | 客户端可见的公开链接根地址；允许 path，禁止 credentials、query、fragment。本地例：`http://127.0.0.1:2401`。 |
 | `TELESRV_BRAND_PRODUCT_NAME` | string / `Telesrv` | 母品牌显示名；系统账号、登录通知、邀请、WebAuthn、内置 bot 与上游可见文案替换共用。trim 后非空、无控制字符、最多 64 个 Unicode 字符。 |
-| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | 777000 系统账号的保留公开 username；trim、去掉可选 `@` 后规范成小写，必须为 5–32 位 ASCII username 且首字符为字母。启动时若被普通用户占用，该用户的可编辑 username 会被清空并交还给 777000；不会自动抢占 Bot、其他系统账号、频道或 collectible username。 |
+| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | 777000 系统账号的公开 username；trim、去掉可选 `@` 后规范成小写，必须为 5–32 位 ASCII username 且首字符为字母。 |
 | `TELESRV_BRAND_DESKTOP_APP_NAME` | string / `Telesrv Desktop` | `account.getAuthorizations` 返回的 Desktop/Windows 显示名；校验规则同产品名。 |
 | `TELESRV_BRAND_ANDROID_APP_NAME` | string / `Telesrv Android` | 授权列表中的 Android 显示名；校验规则同产品名。 |
 | `TELESRV_BRAND_IOS_APP_NAME` | string / `Telesrv iOS` | 授权列表中的 iOS 显示名；校验规则同产品名。 |
@@ -92,7 +88,12 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 | `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | username 页面 Web 客户端入口，校验规则同 `TELESRV_PUBLIC_BASE_URL`。 |
 | `TELESRV_PUBLIC_APP_NAME` | string / `TELESRV_BRAND_PRODUCT_NAME` | 公开落地页产品名；trim 后非空、无控制字符、最多 64 个 Unicode 字符。 |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / 空 | username/avatar/sticker/emoji/chatlist/collectible gift 落地页、hash-only 申诉，以及 unique gift / channel revenue 短期令牌确认页监听；空值关闭，并使 moderation `freeze_account` 申诉、本地 gift export 与频道收益领取 fail-closed。公开落地页保持只读，只有精确 token POST 可提交对应 aggregate。生产应 loopback + nginx 精确反代并关闭 token 路径 access log；`.env.example` 为开发启用 `127.0.0.1:2401`。 |
-| `TELESRV_ALLOW_DEV_PAYMENTS` | bool / `false` | 提供服务本地 dev/fiat 的 Stars/Premium 结算页（`/payments/dev-stars`）。默认拒绝，生产环境不会在没有真实 XTR 支付的情况下凭空铸造 Stars/Premium；仅限 dev/test 环境开启。 |
+| `TELESRV_MINIAPP_BOTFATHER_TOKEN` | `<93372553>:<35字符secret>` / 空 | 本地 BotFather Mini App 使用的仅服务端 token；启动 RPC/Web 前写入内置 BotFather 行，用于签名/校验 `initData`，绝不渲染到 HTML 或列表 API。 |
+| `TELESRV_MINIAPP_STICKERS_TOKEN` | `<1063110917>:<35字符secret>` / 空 | 本地 Stickers Mini App 使用的仅服务端 token；必须有 35 字符 secret 才允许写操作，空值会保持功能不可用，不接受可伪造的 `initData`。 |
+| `TELESRV_CUSTOM_FRAGMENT_ENABLE` | bool / `false` | 启用自托管 TON 主网礼物提取与 CustomFragment 路由；需要 public Web listener、collection 和签名密钥。 |
+| `TELESRV_CUSTOM_FRAGMENT_PUBLIC_BASE_URL` | HTTP(S) URL / `TELESRV_PUBLIC_BASE_URL` | CustomFragment metadata、PNG 海报、原始 `.lottie.json` 和提取链接使用的公开根地址。若原生客户端会把路径识别成内部 app link，生产应使用独立 HTTPS 域名。 |
+| `TELESRV_CUSTOM_FRAGMENT_SIGNING_KEY_FILE` | path / `data/customfragment/mint-authority.key` | Ed25519 mint authority 密钥；禁止入库，重启间保持稳定。 |
+| `TELESRV_CUSTOM_FRAGMENT_GIFT_COLLECTION` | TON basechain address / 空 | CustomFragment 主网 collection 地址；启用功能时必填。 |
 | `TELESRV_TELEGRAM_LOGIN_ENABLE` | bool / `false` | 在 `TELESRV_PUBLIC_LINK_WEB_ADDR` 上挂载自建 Telegram Login/OIDC Provider；启用时必须同时配置该 listener 与下列全部密钥文件。 |
 | `TELESRV_TELEGRAM_LOGIN_ISSUER` | 绝对 origin URL / `TELESRV_PUBLIC_BASE_URL` | discovery 与 token 使用的精确公开 issuer；默认必须 HTTPS，禁止 path、credentials、query、fragment。开启下一项后可直接配置任意 HTTP 域名/IP。 |
 | `TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP` | bool / `false` | 开启后允许任意合法 HTTP issuer、BotFather Web origin、redirect URI 和 native HTTP callback，不限制为 loopback，也不限制 IP 网段或端口。关闭时这些 Web URL 仍必须 HTTPS。 |
@@ -422,12 +423,11 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
-| `TELESRV_POSTGRES_DSN` | 可选密钥 DSN | 显式指定主业务持久库连接；为空时本地开发根据 `TELESRV_POSTGRES_PASSWORD` 生成 DSN，生产应显式设置并配置 TLS 策略。 |
-| `TELESRV_POSTGRES_PASSWORD` | 密钥字符串 / `telesrv` | 旧版开发 Compose 的 PostgreSQL 容器密码，以及本地默认 DSN 的密码来源。修改后不会自动修改已有 PostgreSQL 角色，请按 `docs/local-setup.md` 的轮换步骤操作。 |
-| `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | 单个 pgxpool 最大连接数；`<=0` 使用 pgx 默认值。实际新建 backend 还受同一 PostgreSQL 实例的 server-wide advisory admission 限制，不是各进程可相加的静态预算。 |
-| `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool 预热最小连接数；minimum 保留，超过 minimum 的 burst connection 在 5 秒 idle 后弹性归还全局 admission slot。 |
+| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable` | 主业务持久库；本地 `main` / `v2` 因迁移历史不同，分别使用 `telesrv_main` / `telesrv_v2`；生产必须替换开发凭证与 TLS 策略。 |
+| `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool 最大连接数；`<=0` 使用 pgx 默认值，该默认通常不足以覆盖生产 outbox/RPC 并发。 |
+| `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool 预热最小连接数。 |
 | `TELESRV_REDIS_ADDR` | address / `127.0.0.1:6399` | 验证码、限流、共享更新/缓存易失态使用的 Redis。 |
-| `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码，与旧版开发 Compose 容器共用。为空时保留原有开发环境免密行为；修改后需重启客户端进程。 |
+| `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。 |
 | `TELESRV_REDIS_DB` | int / `0` | Redis 逻辑库编号。 |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` 语言包 seed 目录。 |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | `cmd/giftfetch` 生成的只读官方礼物快照；供管理后台选择、验哈希并显式导入。 |
@@ -493,11 +493,11 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 |---|---|---|
 | `TELESRV_MAPBOX_TOKEN` | secret string / 空 | `upload.getWebFile` 地图缩略图使用的 Mapbox Static Images token；空值使用确定性占位图。 |
 | `TELESRV_MAPTILE_CACHE_DIR` | path / `data/maptiles` | 地图缩略图磁盘缓存，保证分片下载字节稳定并控制上游配额。 |
-| `TELESRV_GEOIP_ENDPOINTS` | list / 空 | 部署者主动启用的地理后端有序 failover 链，用于 `account.getAuthorizations` 和扫码登录确认所返回授权的国家/地区文案。每项必须含 `{ip}` 且使用 `http`/`https`。代码默认值和 `.env.example` 均为空：位置继续为 `Unknown`，不发 GeoIP 请求。启用会将会话 IP 发送给所选供应商，应先审查其隐私政策或使用自建代理。HTTP 前过滤私网、CGNAT、文档、基准测试、本地与保留地址，包含 IPv4-mapped 形式。可选地址：`https://api.ipapi.is/?q={ip}`、`https://reallyfreegeoip.org/json/{ip}`、`https://hackmyip.com/api/lookup?ip={ip}`、`https://get.geojs.io/v1/ip/geo/{ip}.json`。未识别的主机走通用 JSON 解析。 |
+| `TELESRV_GEOIP_ENDPOINTS` | list / 空 | 可选的地理后端有序 failover 链，把会话 IP 解析成 `account.getAuthorizations` 展示用的国家/地区文案。每项必须含 `{ip}` 占位符且使用 `http`/`https`；第一项是主力，未能解析的地址自动落到下一项。空值表示未启用，会话列表继续回传 `Unknown` 占位文案。只发送公网可路由地址；私网、回环、链路本地地址一律不出本机。可直接使用：`https://api.ipapi.is/?q={ip}`、`https://reallyfreegeoip.org/json/{ip}`、`https://hackmyip.com/api/lookup?ip={ip}`、`https://get.geojs.io/v1/ip/geo/{ip}.json`。未识别的主机走通用 JSON 解析，因此自建 MaxMind 代理可以原样填入。 |
 | `TELESRV_GEOIP_TIMEOUT` | duration / `2s` | 单个地理后端的单次请求超时；必须为正数且不超过 `10s`。 |
 | `TELESRV_GEOIP_CONCURRENCY` | int / `4` | 单批会话列表解析在所有后端上的在途请求总数上限；必须为 `1..32`。 |
 | `TELESRV_GEOIP_CACHE_TTL` | duration / `24h` | 解析成功地址的缓存有效期（不论由哪个后端解析）；必须为正数且长于负缓存 TTL。 |
-| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | “整条链都没给出结果”（限流、后端请求超时、网络错误、查无此 IP）的负缓存期。只有整条链都试过才写入；调用方取消或 RPC 地理查询总预算到期不写负缓存，也不把后端标为故障。必须为正数且短于 `TELESRV_GEOIP_CACHE_TTL`。 |
+| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | “整条链都没给出结果”（限流、超时、网络错误、查无此 IP）的负缓存期。只有整条链都试过才写入，因此单个后端的覆盖缺失不会把地址冻住。必须为正数且短于 `TELESRV_GEOIP_CACHE_TTL`，否则一次限流会把该地址冻到第二天。 |
 | `TELESRV_GEOIP_CACHE_SIZE` | int / `4096` | 缓存地址条目上限；必须为 `1..1000000`。 |
 | `TELESRV_GEOIP_RATE_LIMIT_THRESHOLD` | int / `3` | 单个后端连续收到多少次 HTTP 429 后被整批跳过；必须为 `1..100`。计数按后端独立，一个供应商配额用尽不会影响其他后端。 |
 | `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN` | duration / `2m` | 被限流后端完全不出网请求的冷却时长；必须为正数且不超过 `1h`。 |
@@ -515,19 +515,6 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_UPLOAD_INFLIGHT_MAX_BYTES` | int64 bytes / `4194304000` | 单用户未组装上传字节上限；`<=0` 表示不限。 |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_PARTS` | int / `8000` | 单用户未组装分片行数上限；`<=0` 表示不限。 |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_FILES` | int / `64` | 单用户并发未组装 `file_id` 上限；`<=0` 表示不限。 |
-
-GeoIP 只增强展示，不改变授权身份、session flags、存储的 IP 或 update 计数。
-地理查询总预算为 3 秒。取消后停止新增任务和后端切换，等待在途任务结束再读取
-结果；已经完成的结果保留，缺失位置仍显示 `Unknown`。IPv6 仅查询原生 global
-unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
-[IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/) 与
-[IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/) 登记册。
-
-`ipapi.is` 同时支持匿名的平面响应和携带 key 时的 `location` 对象，格式依据其
-[API 文档](https://ipapi.is/developers.html)。使用 key 时在 URL 模板追加
-`&key=YOUR_KEY`；地理解析不依赖 ownership/threat 等无关字段。启动和失败日志只
-记录供应商主机名与结构化状态，不记录 URL 凭证、路径、查询参数、原始 HTTP
-错误或响应正文。真实端点和凭证应仅保存在不受版本跟踪的部署配置中。
 
 ## 7. AI compose 与 Business automation
 
@@ -569,62 +556,9 @@ unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
 |---|---|---|
 | `TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES` | int / `262144` | Router temp→perm auth-key binding 缓存容量。 |
 | `TELESRV_TEMP_KEY_CACHE_TTL` | duration / `30m` | 复核周期；正常写入由 bind/revoke 精确失效，TTL 兜底跨进程/异常路径。 |
-| `TELESRV_READ_MODEL_VERSION_CACHE_MAX` | int / `1000000` | durable read-model hash 的进程内 LRU 容量；NOTIFY 实时更新/失效，满载时只逐项驱逐，不再整表清空。 |
-| `TELESRV_READ_MODEL_VERSION_BATCH_MAX_KEYS` | int / `4096` | 同步跨请求 PostgreSQL loader 单批最多合并的 exact read-model selector 数。 |
-| `TELESRV_READ_MODEL_VERSION_BATCH_WAIT` | duration / `250us` | version cold batch 最大收集等待；每个调用者都等待自己的 exact result。 |
-| `TELESRV_READ_MODEL_VERSION_BATCH_QUEUE` | int / `16384` | version selector 有界队列；饱和显式失败，不启动逐请求 fallback read。 |
-| `TELESRV_READ_MODEL_VERSION_BATCH_TIMEOUT` | duration / `5s` | 单个 version batch 查询的 fail-closed 超时。 |
-| `TELESRV_AUTH_KEY_GET_BATCH_MAX` | int / `256` | 一条 PostgreSQL 查询最多合并的不同 first-frame permanent auth-key lookup/touch。 |
-| `TELESRV_AUTH_KEY_GET_BATCH_WAIT` | duration / `250us` | first-frame auth-key lookup 的最大同步微批等待。 |
-| `TELESRV_AUTH_KEY_GET_BATCH_QUEUE` | int / `16384` | first-frame lookup 有界队列；不得小于 batch max。 |
-| `TELESRV_AUTH_KEY_GET_BATCH_TIMEOUT` | duration / `5s` | 单个 auth-key lookup batch 的 fail-closed 超时；认证后的 revalidation 仍是独立权威读取。 |
-| `TELESRV_CONTACT_REVERSE_BATCH_MAX_PAIRS` | int / `4096` | 一条稀疏 PostgreSQL 查询最多合并的 exact `(contact owner, viewer)` relationship pair。 |
-| `TELESRV_CONTACT_REVERSE_BATCH_WAIT` | duration / `2ms` | sparse reverse-contact pair 的最大同步收集等待。 |
-| `TELESRV_CONTACT_REVERSE_BATCH_QUEUE` | int / `16384` | reverse-contact pair 有界队列；错误或饱和不回退 owner-wide scan。 |
-| `TELESRV_CONTACT_REVERSE_BATCH_TIMEOUT` | duration / `5s` | 单个 exact reverse-contact batch 查询的 fail-closed 超时。 |
-| `TELESRV_CONTACT_SNAPSHOT_CACHE_MAX_VIEWERS` | int / `16384` | owner contact-list 与 personal-photo snapshot 各自的 viewer LRU 上限；达限只驱逐最旧单项，必须为正数。 |
-| `TELESRV_PROFILE_PHOTO_CACHE_MAX` | int / `200000` | owner profile/fallback ref 正/负 LRU 的总条目上限；达限逐项驱逐，必须为正数。 |
-| `TELESRV_PROFILE_PHOTO_CACHE_TTL` | duration / `24h` | 漏通知/手工改库的安全复核周期；正常新鲜度由 `profile_photo` exact-owner NOTIFY 和 listener reconnect flush 保证，必须在 `(0,168h]`。 |
-| `TELESRV_PEER_IDENTITY_CACHE_MAX` | int / `1000000` | 合并后的 username vector + 第三方 verification viewer-independent `peer_identity` LRU 条目上限；durable token + NOTIFY 保证正/负值精确失效，不缓存权限。 |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_CACHE_MAX` | int / `10000` | 进程内 materialized owner dialog snapshot 最大 owner 条目数。 |
-| `TELESRV_DIALOG_PRIVATE_PEER_CACHE_MAX` | int / `500000` | 私聊 dialog 结构事实 LRU 最大条目数；不缓存 viewer-shaped 用户投影。 |
-| `TELESRV_DIALOG_PRIVATE_PEER_CACHE_BYTES_MAX` | bytes / `268435456` | 私聊 dialog 结构事实 LRU 估算内存权重上限。 |
-| `TELESRV_DIALOG_DRAFT_CACHE_MAX` | int / `1000000` | 以 `dialog_light` 校验的 cloud-draft 正/负缓存最大条目数。 |
-| `TELESRV_DIALOG_DRAFT_CACHE_BYTES_MAX` | bytes / `268435456` | cloud-draft 正/负缓存估算内存权重上限。 |
-| `TELESRV_USER_PROJECTION_FACT_CACHE_MAX` | int / `1000000` | freeze 与 collectible-phone 两个 durable user fact 正/负 LRU 各自的条目上限。 |
-| `TELESRV_STORY_ACTIVE_PEER_CACHE_MAX` | int / `1000000` | 由 `story_peer` token 校验的 viewer-independent active-story 正/负 candidate 最大条目数；正值按 durable `expire_date` 自行到期。 |
-| `TELESRV_STORY_HIDDEN_LIST_CACHE_MAX` | int / `100000` | `story_hidden_list` 每 viewer 稀疏 hidden-peer 集合的最大 owner 条目数。 |
-| `TELESRV_STORY_HIDDEN_LIST_CACHE_BYTES_MAX` | bytes / `67108864` | 所有 viewer hidden-peer 稀疏集合的估算内存权重上限。 |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_HEADERS_MAX` | int / `1000000` | 所有 materialized owner snapshot 可驻留的 header-equivalent 总权重；与条目上限同时生效。变量名为兼容既有部署保留，不表示快照仍是 header-only。 |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_CACHE_TTL` | duration / `5m` | NOTIFY/版本失效之外的兜底 TTL；不是正确性时钟。 |
-| `TELESRV_DIALOG_LIST_SNAPSHOT_REDIS_TTL` | duration / `1h` | 跨进程 materialized owner dialog 快照的 Redis 保留时间；正确性由 durable read-model 版本校验保证。共享 channel row/top payload 不按 owner 重复存储。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_CACHE_MAX` | int / `32768` | session readiness active-channel page 的进程内 LRU 条目上限，覆盖 10,000 owner 与有界分页重叠。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_CACHE_TTL` | duration / `24h` | active-channel L1 的漏通知安全 TTL；正常新鲜度由 durable generation 保证。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_REDIS_TTL` | duration / `24h` | 跨进程、版本寻址的 active-channel ID page 保留时间；旧 generation key 自然过期。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_MAX` | int / `128` | Redis cold miss 的一条 PostgreSQL ordinality 查询最多合并的不同 owner/page selector。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_WAIT` | duration / `100ms` | cold selector 同步微批最大收集时间；只作用于 Redis miss。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_QUEUE` | int / `16384` | cold selector 有界等待队列；容量耗尽显式失败，不逐账号 fallback。 |
-| `TELESRV_ACTIVE_CHANNEL_IDS_BATCH_TIMEOUT` | duration / `5s` | 单个 active-channel cold batch 查询的 fail-closed 超时。 |
-| `TELESRV_LAYER_ADVANCE_BATCH_MAX` | int / `256` | 一条 PostgreSQL statement 最多包含的不同 raw-session Layer high-water 输入；同一 session 每批最多一次。 |
-| `TELESRV_LAYER_ADVANCE_BATCH_WAIT` | duration / `250us` | 收集同步 Layer fast attempt 的最大微批等待；调用必须等事务提交/失败后才返回。 |
-| `TELESRV_LAYER_ADVANCE_BATCH_QUEUE` | int / `8192` | Layer advance 有界等待队列；不得小于 batch max。 |
-| `TELESRV_LAYER_ADVANCE_BATCH_TIMEOUT` | duration / `5s` | 单个共享 batch SQL 的 fail-closed 超时；不触发异步补写或成功降级。 |
-| `TELESRV_BOOTSTRAP_READY_BATCH_MAX` | int / `32` | 一条 PostgreSQL statement 最多包含的不同 `(user,auth-key)` baseline readiness selector；同一 fence 每批最多一次。 |
-| `TELESRV_BOOTSTRAP_READY_BATCH_WAIT` | duration / `100ms` | post-response readiness 同步微批的最大收集等待；已接纳 callback 等待提交/失败。 |
-| `TELESRV_BOOTSTRAP_READY_BATCH_QUEUE` | int / `16384` | readiness selector 有界等待队列；不得小于 batch max，容量压力不会静默丢弃 durable fence。 |
-| `TELESRV_BOOTSTRAP_READY_BATCH_TIMEOUT` | duration / `5s` | 单个 readiness batch SQL 的 fail-closed 超时；失败时 job 保持 pending。 |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_MAX` | int / `512` | 一次 lifecycle last-seen PostgreSQL 批写的最大不同用户数；同用户取最大时间戳。 |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_WAIT` | duration / `1s` | lifecycle last-seen 微批最大收集时间；不影响内存在线判定或 wire `WasOnline`。 |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_QUEUE` | int / `65536` | 已接纳异步 lifecycle last-seen 的有界队列；满载会显式计数并执行权威直写安全阀。 |
-| `TELESRV_PRESENCE_LAST_SEEN_BATCH_TIMEOUT` | duration / `5s` | 单批数据库写与精确用户缓存失效的尝试超时；失败按有界退避重试。 |
-| `TELESRV_PRESENCE_LAST_SEEN_DRAIN_TIMEOUT` | duration / `10s` | 进程停止接纳后、持久化依赖关闭前的有界 drain 时间。 |
 | `TELESRV_CHANNEL_ROW_CACHE_MAX` | int / `50000` | 共享 channel row 缓存容量；`<=0` 同时关闭缓存及 LISTEN/NOTIFY listener。 |
-| `TELESRV_CHANNEL_TOP_MESSAGE_CACHE_MAX` | int / `100000` | dialog 顶部频道消息共享缓存容量；不缓存 viewer 未读/reaction overlay，由 `channel_base` 通知按频道失效。`<=0` 禁用。 |
-| `TELESRV_CHANNEL_MEMBER_CACHE_MAX` | int / `1000000` | channel member/access read-model 缓存容量；materialized owner snapshot 会在同一失效 epoch 内暖写，覆盖 10,000 在线账号的活跃 membership；`<=0` 关闭。 |
-| `TELESRV_CHANNEL_DIALOG_CACHE_MAX` | int / `1000000` | viewer/channel dialog 投影缓存容量；按频道倒排精准失效，`<=0` 关闭。 |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_MAX` | int / `8192` | 共享 channel difference 基础页最大条目数；不含 viewer 权限/未读/dialog overlay，`<=0` 关闭。 |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_BYTES_MAX` | bytes / `268435456` | 共享 difference 基础页估算总内存上限，与条目数同时约束。 |
-| `TELESRV_CHANNEL_DIFFERENCE_CACHE_TTL` | duration / `5m` | 带外写安全兜底；正常失效依赖 `channel_base`/`channel_difference_base` 通知与稳定切面。 |
+| `TELESRV_CHANNEL_MEMBER_CACHE_MAX` | int / `100000` | channel member/access read-model 缓存容量；`<=0` 关闭。 |
+| `TELESRV_CHANNEL_DIALOG_CACHE_MAX` | int / `100000` | viewer/channel dialog 投影缓存容量；`<=0` 关闭。 |
 | `TELESRV_CHANNEL_BOOST_CACHE_MAX` | int / `100000` | channel boost read-model 缓存容量；`<=0` 关闭。 |
 | `TELESRV_CHANNEL_BOOST_CACHE_TTL` | duration / `10s` | boost 失效通知遗漏时允许的最大陈旧窗口。 |
 
@@ -633,7 +567,7 @@ unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
 | `TELESRV_OUTBOX_WORKERS` | int / `4` | 并发 outbox worker 数；稳定逻辑分片保持单用户 pts 顺序。 |
-| `TELESRV_OUTBOX_BATCH` | int / `10` | 每次 poll 最大 claim 行数；默认限制 completion 同时持有的用户 lane fence 数，避免大批次跨用户锁车队。 |
+| `TELESRV_OUTBOX_BATCH` | int / `100` | 每次 poll 最大 claim 行数；增大提高吞吐，也增加 DB/推送突发。 |
 | `TELESRV_OUTBOX_INTERVAL` | duration / `200ms` | 两次 outbox claim 之间的等待。 |
 | `TELESRV_OUTBOX_LEASE_TIMEOUT` | duration / `30s` | `dispatching` 行可被重新 claim 的超时；必须大于最坏单批投递耗时。 |
 | `TELESRV_OUTBOX_POISON_RETENTION` | duration / `1m` | terminal failed 投递头的排障保留窗口；durable update 仍可经 difference 恢复。 |
@@ -722,7 +656,7 @@ unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
 
 ### 第三方 bot 认证
 
-第三方认证对应 `botVerification`，由管理员授权的 verifier bot 使用自己的 custom emoji document 与描述标记 user/channel，不会授予官方 checkmark。Icon 必须是客户端可通过 `messages.getCustomEmojiDocuments` 读取的真实 document。每个 peer 只保留一个 wire-visible mark；新的 verifier 替换旧 mark，禁止旧 badge 在撤销或 kill switch 后意外复活。客户端自定义描述上限通过 appConfig `bot_verification_description_length_limit=128` 发布。
+第三方认证对应 `botVerification`，由管理员授权的 verifier bot 使用自己的 custom emoji document 与描述标记 user/channel，不会授予官方 checkmark。Icon 必须是客户端可通过 `messages.getCustomEmojiDocuments` 读取的真实 document。每个 peer 只保留一个 wire-visible mark；新的 verifier 替换旧 mark，禁止旧 badge 在撤销或 kill switch 后意外复活。客户端自定义描述上限通过 appConfig `bot_verification_description_length_limit=70` 发布。
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
@@ -752,7 +686,7 @@ unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
 | `TELESRV_TURN_RELAY_MIN_PORT` | int / `12500` | relay 分配端口范围下界（含）。 |
 | `TELESRV_TURN_RELAY_MAX_PORT` | int / `12999` | relay 分配端口范围上界（含），不得小于下界，防火墙需放行整个范围。 |
 | `TELESRV_CALL_TURN_CREDENTIAL_TTL` | duration / `6h` | 按通话签发的 TURN credential 有效期。 |
-| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | 强制 `p2p_allowed=false`，用于验证 TURN relay 路径。私聊通话 P2P 默认仅限互为联系人：除非双方互存联系人，否则恒为 `p2p_allowed=false`，陌生人之间永远无法获知对方真实 IP。 |
+| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | 强制 `p2p_allowed=false`，用于验证 TURN relay 路径。 |
 | `TELESRV_SFU_ENABLE` | bool / `true` | 启用内嵌群通话媒体转发；false 保留仅信令 M0 模式。 |
 | `TELESRV_SFU_UDP_PORT` | int / `12399` | Pion ICE UDPMux 端口，必须放行防火墙。 |
 | `TELESRV_SFU_ADVERTISE_IP` | string / 空 | 下发给客户端的 ICE candidate IP；空值回退 `TELESRV_ADVERTISE_IP`，loopback 会静默破坏真机媒体。 |

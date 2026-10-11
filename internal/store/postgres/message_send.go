@@ -53,6 +53,14 @@ func (s *MessageStore) ensureOfficialSystemUser(ctx context.Context, msg domain.
 	return ensureOfficialSystemUserWithDB(ctx, s.db, msg)
 }
 
+// EnsureSystemUser materializes a system account row with its username slot.
+func EnsureSystemUser(ctx context.Context, db sqlcgen.DBTX, u domain.User) error {
+	return ensureOfficialSystemUserWithDB(ctx, db, domain.Message{
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: u.ID},
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: u.ID},
+	})
+}
+
 func ensureOfficialSystemUserWithDB(ctx context.Context, db sqlcgen.DBTX, msg domain.Message) error {
 	if msg.Peer.Type != domain.PeerTypeUser && msg.From.Type != domain.PeerTypeUser {
 		return nil

@@ -62,6 +62,18 @@ const (
 	// PermissionPremiumManage guards grants, revocations and refunds. It is kept
 	// separate from Stars grants because a Premium refund mutates both ledgers.
 	PermissionPremiumManage = "premium.manage"
+	// PermissionDonationsManage guards the crypto donations admin surface:
+	// viewing wallet status/deposit history and editing a chain's RPC/WS
+	// endpoint, enabled flag, confirmation depth and pricing config. It
+	// never exposes the wallet mnemonic or private keys -- those exist only
+	// in server memory and the encrypted-at-rest seed row, reachable by no
+	// admin API route at all.
+	PermissionDonationsManage = "donations.manage"
+	// PermissionPricesManage guards the shop pricing surface: reading the
+	// effective product prices and stars rate, and changing either. It is
+	// separate from premium.manage because a shop price decides what a
+	// customer is charged, not what a grant costs the operator.
+	PermissionPricesManage = "prices.manage"
 	// PermissionBotTokenRead is intentionally narrower than unrestricted admin
 	// access because it reveals a live credential.
 	PermissionBotTokenRead = "bots.token.read"

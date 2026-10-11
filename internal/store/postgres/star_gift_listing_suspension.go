@@ -61,12 +61,14 @@ RETURNING u.gift_id`, userID, frozen)
 	}
 	rows.Close()
 	sort.Slice(giftIDs, func(i, j int) bool { return giftIDs[i] < giftIDs[j] })
-	for _, giftID := range giftIDs {
-		if err := updateStarGiftResaleProjection(ctx, db, giftID); err != nil {
-			return fmt.Errorf("refresh resale projection for gift %d: %w", giftID, err)
+	return withTx(ctx, db, "refresh resale projection after listing suspension", func(tx pgx.Tx) error {
+		for _, giftID := range giftIDs {
+			if err := updateStarGiftResaleProjection(ctx, tx, giftID); err != nil {
+				return fmt.Errorf("refresh resale projection for gift %d: %w", giftID, err)
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // rejectFrozenStarGiftSeller закрывает выставление подарка на маркет, пока

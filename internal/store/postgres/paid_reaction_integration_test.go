@@ -19,11 +19,11 @@ func postgresPaidReactionRandomID(date int, low uint32) int64 {
 func TestPaidReactionAtomicLedgerMigrationCreditsLegacyAggregatesPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	downSQL, err := deploy.Migrations.ReadFile("migrations/0178_paid_reaction_atomic_ledger.down.sql")
+	downSQL, err := deploy.Migrations.ReadFile("migrations/0180_paid_reaction_atomic_ledger.down.sql")
 	if err != nil {
 		t.Fatalf("read 0178 down: %v", err)
 	}
-	upSQL, err := deploy.Migrations.ReadFile("migrations/0178_paid_reaction_atomic_ledger.up.sql")
+	upSQL, err := deploy.Migrations.ReadFile("migrations/0180_paid_reaction_atomic_ledger.up.sql")
 	if err != nil {
 		t.Fatalf("read 0178 up: %v", err)
 	}
@@ -109,7 +109,7 @@ RETURNING id`).Scan(&transactionID); err != nil {
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM channel_stars_transactions WHERE id=$1`, transactionID)
 	})
-	downSQL, err := deploy.Migrations.ReadFile("migrations/0178_paid_reaction_atomic_ledger.down.sql")
+	downSQL, err := deploy.Migrations.ReadFile("migrations/0180_paid_reaction_atomic_ledger.down.sql")
 	if err != nil {
 		t.Fatalf("read 0178 down: %v", err)
 	}

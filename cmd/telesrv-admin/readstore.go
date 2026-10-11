@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
@@ -1821,6 +1822,11 @@ type UniqueStarGiftRow struct {
 	OwnerPeerID         int64 `json:"OwnerPeerID,string"`
 	OwnerUsername       string
 	OwnerName           string
+	OwnerAddress        string
+	WalletName          string
+	GiftAddress         string
+	HostPeerType        string
+	HostPeerID          int64 `json:"HostPeerID,string"`
 	Burned              bool
 	Crafted             bool
 	KeepOriginalDetails bool
@@ -1830,9 +1836,11 @@ type UniqueStarGiftRow struct {
 
 const uniqueStarGiftSelectColumns = `u.id, u.gift_id,
 	COALESCE(NULLIF(u.title, ''), NULLIF(r.title, ''), '') AS title,
-	u.slug, u.num, u.owner_peer_type, u.owner_peer_id,
+	u.slug, u.num, COALESCE(u.owner_peer_type, ''), COALESCE(u.owner_peer_id, 0),
 	COALESCE(NULLIF(ou.username, ''), NULLIF(oc.username, ''), '') AS owner_username,
 	COALESCE(NULLIF(ou.first_name, ''), NULLIF(oc.title, ''), '') AS owner_name,
+	COALESCE(u.owner_address, ''), COALESCE(NULLIF(u.owner_name, ''), ''), COALESCE(u.gift_address, ''),
+	COALESCE(u.host_peer_type, ''), COALESCE(u.host_peer_id, 0),
 	u.burned, u.crafted, u.keep_original_details, u.created_at, u.updated_at`
 
 const uniqueStarGiftJoins = `
@@ -1846,13 +1854,15 @@ func uniqueStarGiftScanDest(item *UniqueStarGiftRow) []any {
 	return []any{
 		&item.ID, &item.GiftID, &item.Title, &item.Slug, &item.Num,
 		&item.OwnerPeerType, &item.OwnerPeerID, &item.OwnerUsername, &item.OwnerName,
+		&item.OwnerAddress, &item.WalletName, &item.GiftAddress, &item.HostPeerType, &item.HostPeerID,
 		&item.Burned, &item.Crafted, &item.KeepOriginalDetails, &item.CreatedAt, &item.UpdatedAt,
 	}
 }
 
 // ListUniqueStarGifts pages over minted gift instances newest first, keyset by
 // descending id. giftID/ownerUserID/q are optional filters; q matches a slug
-// prefix or a title substring, which is how an operator looks a gift up.
+// prefix, a title substring or the NFT address, which is how an operator looks a
+// gift up.
 func (s *readStore) ListUniqueStarGifts(ctx context.Context, giftID, ownerUserID, beforeID int64, q string, limit int) ([]UniqueStarGiftRow, bool, error) {
 	if limit <= 0 {
 		limit = collectibleListDefaultLimit
@@ -1865,7 +1875,7 @@ func (s *readStore) ListUniqueStarGifts(ctx context.Context, giftID, ownerUserID
 SELECT `+uniqueStarGiftSelectColumns+uniqueStarGiftJoins+`
 WHERE ($1::bigint = 0 OR u.gift_id = $1)
 	AND ($2::bigint = 0 OR (u.owner_peer_type = 'user' AND u.owner_peer_id = $2))
-	AND ($3 = '' OR lower(u.slug) LIKE $3 || '%' OR lower(COALESCE(NULLIF(u.title, ''), r.title, '')) LIKE '%' || $3 || '%')
+	AND ($3 = '' OR lower(u.slug) LIKE $3 || '%' OR lower(COALESCE(NULLIF(u.title, ''), r.title, '')) LIKE '%' || $3 || '%' OR lower(COALESCE(u.gift_address, '')) LIKE '%' || $3 || '%' OR lower(COALESCE(u.owner_name, '')) LIKE '%' || $3 || '%')
 	AND ($4::bigint = 0 OR u.id < $4)
 ORDER BY u.id DESC
 LIMIT $5`, giftID, ownerUserID, query, beforeID, limit+1)
@@ -3177,4 +3187,167 @@ func clampBotVerificationLimit(limit int) int {
 		return botVerificationListMaxLimit
 	}
 	return limit
+}
+
+// DonationWalletStatusRow is the operator's one-glance view of the crypto
+// donations custodial wallet: whether one has ever been generated (it's
+// auto-provisioned at server startup if missing, never by an admin action --
+// see docs/donations.md) and how many users have been assigned a deposit
+// address. It never carries the mnemonic or a private key -- those live only
+// in server memory and the encrypted-at-rest seed row, out of reach of every
+// admin API route.
+type DonationWalletStatusRow struct {
+	HasWallet    bool
+	AddressCount int64
+}
+
+// donationWalletStatus reports whether a wallet exists and how many
+// addresses have been handed out, for the donations admin page's header.
+func (s *readStore) donationWalletStatus(ctx context.Context) (DonationWalletStatusRow, error) {
+	var out DonationWalletStatusRow
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM donation_wallet WHERE id = 1)`).Scan(&out.HasWallet); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("check donation wallet status: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM donation_addresses`).Scan(&out.AddressCount); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("count donation addresses: %w", err)
+	}
+	return out, nil
+}
+
+// donationChains lists every configured chain, enabled or not, for the
+// config editor -- writes go through admin.Service.UpdateDonationChain (for
+// the audit trail), this is a plain read.
+func (s *readStore) donationChains(ctx context.Context) ([]domain.DonationChain, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+confirmations_required, price_feed_address, manual_usd_rate_micros, enabled
+FROM donation_chains ORDER BY chain_key`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation chains: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationChain, 0)
+	for rows.Next() {
+		var c domain.DonationChain
+		if err := rows.Scan(&c.Key, &c.Name, &c.ChainID, &c.RPCURL, &c.WSURL, &c.NativeSymbol, &c.NativeDecimals,
+			&c.ConfirmationsRequired, &c.PriceFeedAddress, &c.ManualUSDRateMicros, &c.Enabled); err != nil {
+			return nil, fmt.Errorf("scan donation chain: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// donationTokens lists every configured stablecoin row across every chain,
+// including ones with an empty contract address the operator hasn't filled
+// in yet -- shown next to donationChains so the operator can see at a
+// glance which chains are actually watchable (see domain.DonationChain.Watchable
+// and domain.DonationToken.Watchable).
+func (s *readStore) donationTokens(ctx context.Context) ([]domain.DonationToken, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, symbol, contract_address, decimals
+FROM donation_tokens ORDER BY chain_key, symbol`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation tokens: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationToken, 0)
+	for rows.Next() {
+		var t domain.DonationToken
+		if err := rows.Scan(&t.ChainKey, &t.Symbol, &t.ContractAddress, &t.Decimals); err != nil {
+			return nil, fmt.Errorf("scan donation token: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DonationDepositRow is one deposit with the donor resolved for display.
+type DonationDepositRow struct {
+	domain.DonationDeposit
+	UserPhone     string
+	UserFirstName string
+}
+
+// donationDeposits lists every deposit across every user, newest first, for
+// the transactions/donations history table. beforeID is an exclusive
+// keyset cursor (0 for the first page).
+func (s *readStore) donationDeposits(ctx context.Context, beforeID int64, limit int) ([]DonationDepositRow, bool, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id, d.user_id, d.chain_key, d.token_symbol, d.tx_hash, d.log_index, d.block_number,
+	d.amount_raw::text, d.usd_value_micros, d.stars_credited, d.status, d.confirmations,
+	d.detected_at, d.credited_at, COALESCE(u.phone, ''), COALESCE(u.first_name, '')
+FROM donation_deposits d
+LEFT JOIN users u ON u.id = d.user_id
+WHERE $1::bigint = 0 OR d.id < $1
+ORDER BY d.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list donation deposits: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DonationDepositRow, 0, limit+1)
+	for rows.Next() {
+		var d DonationDepositRow
+		var status string
+		var creditedAt pgtype.Timestamptz
+		if err := rows.Scan(&d.ID, &d.UserID, &d.ChainKey, &d.TokenSymbol, &d.TxHash, &d.LogIndex, &d.BlockNumber,
+			&d.AmountRaw, &d.USDValueMicros, &d.StarsCredited, &status, &d.Confirmations,
+			&d.DetectedAt, &creditedAt, &d.UserPhone, &d.UserFirstName); err != nil {
+			return nil, false, fmt.Errorf("scan donation deposit: %w", err)
+		}
+		d.Status = domain.DonationDepositStatus(status)
+		if creditedAt.Valid {
+			d.CreditedAt = creditedAt.Time
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate donation deposits: %w", err)
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// itemPrices returns the stored per-product price overrides (no merge —
+// domain.MergeItemPrices applies the defaults on top); writes go through
+// admin.Service.UpdateItemPrice for the audit trail.
+func (s *readStore) itemPrices(ctx context.Context) ([]domain.ItemPrice, error) {
+	rows, err := s.pool.Query(ctx, `SELECT product_code, stars_price, bid, enabled, updated_by,
+extract(epoch FROM updated_at)::bigint AS updated_at
+FROM item_prices ORDER BY product_code`)
+	if err != nil {
+		return nil, fmt.Errorf("list item prices: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.ItemPrice, 0)
+	for rows.Next() {
+		var p domain.ItemPrice
+		if err := rows.Scan(&p.ProductCode, &p.StarsPrice, &p.Bid, &p.Enabled,
+			&p.UpdatedBy, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan item price: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// starsRate reads the configured FG Stars rate; 0 means never set, which the
+// panel renders as an empty field rather than a number nobody chose.
+func (s *readStore) starsRate(ctx context.Context) (int64, error) {
+	var value int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT value FROM shop_settings WHERE key = $1`, domain.ShopSettingStarsRate,
+	).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read stars rate: %w", err)
+	}
+	return value, nil
 }

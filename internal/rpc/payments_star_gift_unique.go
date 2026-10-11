@@ -333,7 +333,11 @@ func tgStarGiftAttribute(attribute domain.StarGiftCollectibleAttribute) tg.StarG
 		if attribute.Document != nil {
 			document = tgDocument(*attribute.Document)
 		}
-		return &tg.StarGiftAttributeModel{Name: attribute.Name, Document: document, Rarity: rarity, Crafted: attribute.Crafted}
+		name := attribute.Name
+		if attribute.Crafted {
+			name = craftedAttributeDisplayName(name)
+		}
+		return &tg.StarGiftAttributeModel{Name: name, Document: document, Rarity: rarity, Crafted: attribute.Crafted}
 	case domain.StarGiftCollectiblePattern:
 		document := tg.DocumentClass(&tg.DocumentEmpty{})
 		if attribute.Document != nil {
@@ -342,13 +346,38 @@ func tgStarGiftAttribute(attribute domain.StarGiftCollectibleAttribute) tg.StarG
 		return &tg.StarGiftAttributePattern{Name: attribute.Name, Document: document, Rarity: rarity}
 	case domain.StarGiftCollectibleBackdrop:
 		return &tg.StarGiftAttributeBackdrop{
-			Name: attribute.Name, BackdropID: attribute.BackdropID,
+			Name: craftedAttributeDisplayName(attribute.Name), BackdropID: attribute.BackdropID,
 			CenterColor: attribute.CenterColor, EdgeColor: attribute.EdgeColor,
 			PatternColor: attribute.PatternColor, TextColor: attribute.TextColor, Rarity: rarity,
 		}
 	default:
 		return &tg.StarGiftAttributeBackdrop{Name: attribute.Name, Rarity: rarity}
 	}
+}
+
+func craftedAttributeDisplayName(name string) string {
+	if suffix, ok := strings.CutPrefix(name, "Crafted Gradient "); ok && suffix != "" {
+		allDigits := true
+		for _, char := range suffix {
+			if char < '0' || char > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return "Crafted Gradient"
+		}
+	}
+	index := strings.LastIndex(name, " #")
+	if index < 0 || index+2 == len(name) {
+		return name
+	}
+	for _, char := range name[index+2:] {
+		if char < '0' || char > '9' {
+			return name
+		}
+	}
+	return name[:index]
 }
 
 func tgStarGiftAttributeRarity(attribute domain.StarGiftCollectibleAttribute) tg.StarGiftAttributeRarityClass {
@@ -393,6 +422,15 @@ func tgUniqueStarGift(unique domain.UniqueStarGift) *tg.StarGiftUnique {
 	}
 	if unique.OwnerAddress != "" {
 		out.SetOwnerAddress(unique.OwnerAddress)
+		// Telegram's TL flags are independent: keep the Gramsrv profile in
+		// owner_id and add the wallet display name for admin-exported items
+		// (hosted by @relayer) so the client shows the wallet name too.
+		if host := tgPeer(unique.Host); host != nil {
+			out.SetOwnerID(host)
+		}
+		if unique.OwnerName != "" && unique.Host.Type == domain.PeerTypeUser && unique.Host.ID == domain.GiftRelayerUserID {
+			out.SetOwnerName(unique.OwnerName)
+		}
 	} else if owner := tgPeer(unique.Owner); owner != nil {
 		out.SetOwnerID(owner)
 	} else if unique.OwnerName != "" {

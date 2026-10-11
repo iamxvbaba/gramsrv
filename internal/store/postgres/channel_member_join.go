@@ -77,11 +77,6 @@ func (s *ChannelStore) JoinChannel(ctx context.Context, channelID, userID int64,
 	if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
-	// 重新入群(含首次)时归还纯 prehistory 来源的读边界:upsert 是 GREATEST,不显式下调的
-	// 话,"隐藏历史期间入群"的成员即使频道后来关闭了隐藏历史也永远看不到旧消息。
-	if err := resetPrehistoryBoundaryTx(ctx, tx, channel, userID); err != nil {
-		return domain.CreateChannelResult{}, err
-	}
 	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 		ChannelID: channelID,
 		UserID:    userID,
