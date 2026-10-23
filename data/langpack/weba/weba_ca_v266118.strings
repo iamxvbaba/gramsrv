@@ -769,14 +769,14 @@
 "CocoonFeature1Text" = "Cap tercer pot accedir a cap dada, com ara traduccions, a dins del **{username}**.";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "El Cocoon ha permès a Telegram reduir els costs de traducció per 6.";
 "CocoonFeature2Title" = "Eficient";
 "CocoonFeature3Link" = "https://cocoon.org/";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Qualsevol desenvolupador pot utilitzar el Cocoon per a funcions amb IA. Més informació en **{link}**.";
 "CocoonFeature3Title" = "Per a tothom";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "directament a @cocoon";
 "CocoonFooterText" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1043,7 +1043,7 @@
 "EmptyChatAppearanceSystem" = "Sistema";
 "EmptyGroupInfoLine1" = "• Fins a {count} membres";
 "EmptyGroupInfoLine2" = "• Historial persistent";
-"EmptyGroupInfoLine3" = "• Enllaços públics, com t.me/títol";
+"EmptyGroupInfoLine3" = "• Enllaços públics, com sgq.me/títol";
 "EmptyGroupInfoLine4" = "Administradors amb rols diferents";
 "EmptyGroupInfoSubtitle" = "Els grups poden tenir:";
 "EmptyGroupInfoTitle" = "Heu creat un grup";
@@ -2258,7 +2258,7 @@
 "ProfileTabVoice" = "Veu";
 "ProfileViewChannel" = "Mostra el canal";
 "PublicLink" = "Enllaç públic";
-"PublicLinksLimitSubtitle" = "Reserveu fins a {count} enllaços t.me/nom";
+"PublicLinksLimitSubtitle" = "Reserveu fins a {count} enllaços sgq.me/nom";
 "PublicLinksLimitTitle" = "Enllaços públics";
 "PublicPoll" = "Enquesta";
 "PublicPosts" = "Publicacions";

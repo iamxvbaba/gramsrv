@@ -50,7 +50,7 @@ func TestGramsrvOperatorBotChecksIDAndButton(t *testing.T) {
 	}
 	freezes := &testGramsrvFreeze{}
 	service := NewService(users, memory.NewBotStore(users), memory.NewMessageStore(memory.NewDialogStore()),
-		WithGramsrvOperatorBot([]int64{operator.ID}, freezes), WithPublicBaseURL("https://telesrv.net"))
+		WithGramsrvOperatorBot([]int64{operator.ID}, freezes), WithPublicBaseURL("https://sgq.me"))
 	if !service.HandlesBot(gramsrvOperatorBotUserID) || service.gramsrvOperators[outsider.ID] {
 		t.Fatal("operator bot access list is wrong")
 	}

@@ -890,9 +890,9 @@
 "Business.Links.LinksSectionHeader" = "TAUTAN OBROLAN";
 "Business.Links.PreviewText" = "Tambahkan pesan yang akan dimasukkan ke dalam kolom pesan bagi siapa saja yang memulai obrolan melalui tautan:";
 "Business.Links.PreviewTitle" = "Tautan Obrolan";
-"Business.Links.SimpleLinkInfoPhone" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [t.me/\u2060+\u2060%@](telepon).";
-"Business.Links.SimpleLinkInfoUsername" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [t.me/%@/(username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [t.me/%1$@](username) atau [t.me/\u2060+\u2060%2$@](telepon).";
+"Business.Links.SimpleLinkInfoPhone" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [sgq.me/\u2060+\u2060%@](telepon).";
+"Business.Links.SimpleLinkInfoUsername" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [sgq.me/%@/(username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Anda juga dapat menggunakan tautan sederhana untuk percakapan biasa — [sgq.me/%1$@](username) atau [sgq.me/\u2060+\u2060%2$@](telepon).";
 "Business.Links.Text" = "Berikan pelanggan tautan pendek yang akan langsung memulai percakapan dengan Anda dan menyarankan pesan template untuk dikirimkan.";
 "Business.LinksInfo" = "Buat tautan yang memulai percakapan dengan Anda, menyarankan pesan template untuk dikirimkan.";
 "Business.Location" = "Lokasi";
@@ -1751,7 +1751,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Nama channel tidak dapat dimulai dengan garis bawah.";
 "Channel.Username.InvalidTaken" = "Maaf, tautan ini telah digunakan.";
 "Channel.Username.InvalidTooShort" = "Tautan publik harus memiliki setidaknya 5 karakter.";
-"Channel.Username.LinkHint" = "Tautan ini membuka channel Anda di Telegram:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Tautan ini membuka channel Anda di Telegram:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Anda dapat mencabut tautan dari salah satu grup atau channel lama Anda, atau membuat channel pribadi sebagai gantinya.";
 "Channel.Username.Title" = "Tautan";
 "Channel.Username.UsernameIsAvailable" = "%@ masih tersedia";
@@ -3180,7 +3180,7 @@
 "CocoonInfo.Efficient.Title" = "Efisien";
 "CocoonInfo.ForEveryone.Text" = "Pengembang dapat menggunakan [Cocoon](telegram) untuk fitur AI. Selengkapnya di [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Untuk Semua Orang";
-"CocoonInfo.IntergrateInfo" = "Ingin integrasikan Cocoon ke dalam proyek Anda?\nHubungi kami di [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Ingin integrasikan Cocoon ke dalam proyek Anda?\nHubungi kami di [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Tidak ada pihak ketiga yang dapat mengakses data apa pun itu, seperti terjemahan, di dalam Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -3945,7 +3945,7 @@
 "CreateBot.UsernameStatus.Checking" = "Memeriksa...";
 "CreateBot.UsernameStatus.Invalid" = "Anda hanya dapat gunakan **a-z**, **0-9**, dan garis bawah.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Tidak dapat membuat lebih dari %d bot.";
-"CreateBot.UsernameStatus.Link" = "Tautan: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Tautan: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Username tidak dapat diawali dengan angka.";
 "CreateBot.UsernameStatus.Short" = "Username minimal 5 karakter.";
 "CreateBot.UsernameStatus.Taken" = "Username sudah digunakan.";
@@ -4316,7 +4316,7 @@
 "EmojiStickerSettings.Info" = "Seniman dipersilakan untuk menambahkan paket emoji mereka sendiri melalui bot @stickers kami.\n\nTekan dan tahan pesan untuk melihat dan menambahkan seluruh isi paket.";
 "EmptyGroupInfo.Line1" = "Hingga 200.000 anggota";
 "EmptyGroupInfo.Line2" = "Riwayat obrolan persisten";
-"EmptyGroupInfo.Line3" = "Tautan publik seperti t.me/title";
+"EmptyGroupInfo.Line3" = "Tautan publik seperti sgq.me/title";
 "EmptyGroupInfo.Line4" = "Admin dengan hak lain";
 "EmptyGroupInfo.Subtitle" = "Grup dapat memiliki: ";
 "EmptyGroupInfo.Title" = "Anda membuat grup";
@@ -8288,7 +8288,7 @@
 "Premium.Limits.PinnedChats" = "Obrolan yang Disematkan";
 "Premium.Limits.PinnedChatsInfo" = "Sematkan hingga 10 obrolan di daftar obrolan utama Anda.";
 "Premium.Limits.PublicLinks" = "Tautan Publik";
-"Premium.Limits.PublicLinksInfo" = "Miliki hingga 20 tautan [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "Miliki hingga 20 tautan [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Channel Serupa";
 "Premium.Limits.RecommendedChannelsInfo" = "Lihat hingga 100 channel serupa";
 "Premium.Limits.SavedGifs" = "GIF Tersimpan";
@@ -8628,7 +8628,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "SIAPA YANG DAPAT LIHAT WAKTU TERLIHAT SAYA";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Pengguna yang menambahkan nomor Anda ke kontak mereka akan melihatnya di Telegram hanya jika mereka adalah kontak Anda.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Pengguna yang telah menyimpan nomor Anda di kontak mereka akan dapat melihat di Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Pengguna yang menyimpan nomor Anda di kontak akan dapat melihat di Telegram.\n\nTautan publik ini akan membuka obrolan ke Anda:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Pengguna yang menyimpan nomor Anda di kontak akan dapat melihat di Telegram.\n\nTautan publik ini akan membuka obrolan ke Anda:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "YANG DAPAT MENCARI SAYA VIA NOMOR ";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "SIAPA YANG DAPAT MELIHAT NOMOR TELEPON SAYA";
 "PrivacyPolicy.Accept" = "Setuju & Lanjut";
@@ -9441,8 +9441,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "tidak tersedia";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TIPE";
-"SocksProxySetup.QrCode.TMeLink" = "tautan t.me";
-"SocksProxySetup.QrCode.TgLink" = "tautan tg://";
+"SocksProxySetup.QrCode.TMeLink" = "tautan sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "tautan sg://";
 "SocksProxySetup.RequiredCredentials" = "INSTRUKSI";
 "SocksProxySetup.SaveProxy" = "Simpan Proxy";
 "SocksProxySetup.SavedProxies" = "PROXY TERSIMPAN";
@@ -10987,7 +10987,7 @@
 "Username.InvalidTooShort" = "Username harus minimal 5 karakter.";
 "Username.InvalidValue" = "Maaf, username ini tidak valid.";
 "Username.LinkCopied" = "Tautan disalin ke papan klip.";
-"Username.LinkHint" = "Tautan ini membuka obrolan dengan Anda di Telegram:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Tautan ini membuka obrolan dengan Anda di Telegram:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "URUTAN USERNAME";
 "Username.LinksOrderInfo" = "Seret dan lepas tautan untuk mengubah urutan tampilannya di halaman info Anda.";
 "Username.Placeholder" = "Username Anda";

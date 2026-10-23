@@ -791,14 +791,14 @@
 "CocoonFeature1Text" = "Terții nu pot accesa niciun fel de date, precum traducerile, în **{username}**.";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon a permis Telegram să reducă costul traducerilor de 6x.";
 "CocoonFeature2Title" = "Eficient";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Orice dezvoltator poate folosi Cocoon pentru funcționalități AI. Mai multe pe **{link}**.";
 "CocoonFeature3Title" = "Pentru Toată lumea";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "direct la @cocoon";
 "CocoonFooterText" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1075,7 +1075,7 @@
 "EmptyChatAppearanceSystem" = "Sistem";
 "EmptyGroupInfoLine1" = "• Până la {count} de membri";
 "EmptyGroupInfoLine2" = "• Istoric persistent";
-"EmptyGroupInfoLine3" = "• Linkuri publice ca t.me/titlu";
+"EmptyGroupInfoLine3" = "• Linkuri publice ca sgq.me/titlu";
 "EmptyGroupInfoLine4" = "• Admini cu drepturi diferite";
 "EmptyGroupInfoSubtitle" = "Grupurile pot avea:";
 "EmptyGroupInfoTitle" = "Ai creat un grup";
@@ -2383,7 +2383,7 @@
 "ProfileTabVoice" = "Vocale";
 "ProfileViewChannel" = "Vezi Canal";
 "PublicLink" = "Link public";
-"PublicLinksLimitSubtitle" = "Rezervă până la {count} de linkuri t.me/username";
+"PublicLinksLimitSubtitle" = "Rezervă până la {count} de linkuri sgq.me/username";
 "PublicLinksLimitTitle" = "Linkuri Publice";
 "PublicPoll" = "Sondaj";
 "PublicPosts" = "Postări Publice";
@@ -2685,7 +2685,7 @@
 "SettingsTimeFormat" = "Format timp";
 "SettingsTimeFormat12" = "12 ore";
 "SettingsTimeFormat24" = "24 de ore";
-"SettingsTipsUsername" = "https://t.me/TelegramTips";
+"SettingsTipsUsername" = "https://sgq.me/TelegramTips";
 "SettingsTray" = "Afișează Iconița în Bara Meniu";
 "Share" = "Partajează";
 "ShareWith" = "Partajează cu";

@@ -17,8 +17,11 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	if hasScheduleRepeatPeriod && !hasScheduleDate {
 		return nil, scheduleDateInvalidErr()
 	}
-	if _, ok := req.GetQuickReplyShortcutID(); ok {
-		return nil, messageIDInvalidErr()
+	if shortcutID, ok := req.GetQuickReplyShortcutID(); ok {
+		if shortcutID <= 0 {
+			return nil, messageIDInvalidErr()
+		}
+		return r.onMessagesEditQuickReplyMessage(ctx, req, shortcutID)
 	}
 	message, hasMessage := req.GetMessage()
 	if hasMessage && utf8.RuneCountInString(message) > maxSendMessageTextLength {

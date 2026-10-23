@@ -1193,7 +1193,7 @@
 "EditAdminRights" = "تعديل صلاحيات المشرف";
 "EditAdminSendAnonymously" = "البقاء متخفيًا";
 "EditAdminWhatCanDo" = "ما صلاحيات هذا المشرف؟";
-"EditBot.Buttons.Caption" = "يُرجى استخدام [@BotFather](https://t.me/botfather) لإدارة هذا البوت.";
+"EditBot.Buttons.Caption" = "يُرجى استخدام [@BotFather](https://sgq.me/botfather) لإدارة هذا البوت.";
 "EditBot.Buttons.Commands" = "تحرير الأوامر";
 "EditBot.Buttons.Intro" = "تحرير المقدمة";
 "EditBot.Buttons.Settings" = "تغيير إعدادات البوت";
@@ -1512,7 +1512,7 @@
 "GroupChecklist" = "قائمة المهام الجماعية";
 "GroupDescription1" = "ما يصل إلى ٢٠٠,٠٠٠ عضو";
 "GroupDescription2" = "تمتلكَ سجل محادثة موحدًا";
-"GroupDescription3" = "تمتلك روابط عامة مثل t.me/title";
+"GroupDescription3" = "تمتلك روابط عامة مثل sgq.me/title";
 "GroupDescription4" = "يديرَها مشرفون بصلاحيات مختلفة";
 "GroupEmptyTitle1" = "لقد أنشأت **مجموعة**.";
 "GroupEmptyTitle2" = "يمكن للمجموعات أن:";
@@ -2640,7 +2640,7 @@
 "Profile.Info.User" = "معلومات المستخدم";
 "ProfileStories" = "المنشورات";
 "ProfileStoriesArchiveHint" = "أنت فقط من يمكنه مشاهدة القصص المؤرشفة إلا إذا اخترت نشرها في ملفك الشخصي.";
-"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068%d\u2069 رابط t.me/username";
+"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068%d\u2069 رابط sgq.me/username";
 "PublicLinksLimitTitle" = "الروابط العامة";
 "PublicShares" = "التحويل في العام";
 "PublicSharesCount#zero" = "التحويلات في العام \u2068%1$s\u2069";
@@ -3268,7 +3268,7 @@
 "Telegram.LanguageViewController" = "اللغة";
 "Telegram.NotificationSettingsViewController" = "الإشعارات";
 "TelegramFeatures" = "ميزات تيليجرام";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsAR/128";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsAR/128";
 "TelegramPremiumPeerSubtitle" = "يتمتع مالكو حسابات **تيليجرام المميز** بوصول حصري إلى العديد من الميزات الإضافية.";
 "TelegramPremiumPeerTitle" = "\u2068%s\u2069 هو مشترك في **تيليجرام المميز**";
 "TelegramPremiumSubscribedSubtitle" = "شكرا لك على الاشتراك في **تيليجرام المُميّز**.\nهذا ما أصبح متاحًا لك الآن:";

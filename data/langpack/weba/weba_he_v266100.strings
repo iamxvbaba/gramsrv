@@ -839,14 +839,14 @@
 "CocoonFeature1Text" = "אף גורם צד שלישי לא יכול לגשת למידע, כגון תרגומים, בתוך **\u2068{username}\u2069**.";
 "CocoonFeature1Title" = "פרטי";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon אפשר לטלגרם לצמצם בעלויות תרגום פי 6.";
 "CocoonFeature2Title" = "יעיל";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "כל המפתחים יכולים להשתמש בCocoon לתכונות AI. למד עוד ב**\u2068{link}\u2069**.";
 "CocoonFeature3Title" = "לכולם";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "ישירות ל@cocoon";
 "CocoonFooterText" = "רוצה להתממשק עם Cocoon בפרויקטים שלך?\nעבור אל **\u2068{link}\u2069**";
 "CocoonTitle" = "Cocoon";
@@ -1137,7 +1137,7 @@
 "EmptyChatAppearanceSystem" = "צבעי המערכת";
 "EmptyGroupInfoLine1" = "• עד ל\u2068{count}\u2069 חברים";
 "EmptyGroupInfoLine2" = "• היסטוריית צ'אט קבועה";
-"EmptyGroupInfoLine3" = "• קישורים פומביים כגון t.me/title";
+"EmptyGroupInfoLine3" = "• קישורים פומביים כגון sgq.me/title";
 "EmptyGroupInfoLine4" = "• מנהלים עם הרשאות שונות";
 "EmptyGroupInfoSubtitle" = "קבוצות יכולות להכיל:";
 "EmptyGroupInfoTitle" = "יצרת קבוצה";
@@ -2540,7 +2540,7 @@
 "ProfileTabVoice" = "שמע";
 "ProfileViewChannel" = "הצג ערוץ";
 "PublicLink" = "קישור ציבורי";
-"PublicLinksLimitSubtitle" = "שמור עד ל\u2068{count}\u2069 קישורי t.me/username";
+"PublicLinksLimitSubtitle" = "שמור עד ל\u2068{count}\u2069 קישורי sgq.me/username";
 "PublicLinksLimitTitle" = "קישורים ציבוריים";
 "PublicPoll" = "סקר";
 "PublicPosts" = "פוסטים ציבוריים";

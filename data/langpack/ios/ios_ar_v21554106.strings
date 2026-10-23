@@ -1118,9 +1118,9 @@
 "Business.Links.LinksSectionHeader" = "روابط للمحادثة";
 "Business.Links.PreviewText" = "إضافة رسالة يتم إدخالها في حقل الإرسال لأي شخص يبدأ محادثة معك باستخدام الرابط:";
 "Business.Links.PreviewTitle" = "رابط للمحادثة";
-"Business.Links.SimpleLinkInfoPhone" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك: [t.me/\u2060+\u2060\u2068%@\u2069](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك: [t.me/\u2068%@\u2069](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك:\n[t.me/\u2068%1$@\u2069](username) أو [t.me/\u2060+\u2060\u2068%2$@\u2069](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك: [sgq.me/\u2060+\u2060\u2068%@\u2069](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك: [sgq.me/\u2068%@\u2069](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "يمكنك أيضًا استخدام رابط بسيط للمحادثة معك:\n[sgq.me/\u2068%1$@\u2069](username) أو [sgq.me/\u2060+\u2060\u2068%2$@\u2069](phone).";
 "Business.Links.Text" = "منح عملائك روابط قصيرة لبدء محادثة معك واقتراح نص لرسائلهم الأولى إليك.";
 "Business.LinksInfo" = "إنشاء روابط لبدء محادثة معك مع اقتراح نص للرسالة الأولى.";
 "Business.Location" = "الموقع";
@@ -2026,7 +2026,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "لا يمكن لأسماء القنوات أن تبدأ بشَرطة سفليّة.";
 "Channel.Username.InvalidTaken" = "عذرًا، هذا الرابط محجوز.";
 "Channel.Username.InvalidTooShort" = "الروابط العامة يجب أن لا تقل عن 5 خانات.";
-"Channel.Username.LinkHint" = "يقوم هذا الرابط بفتح قناتك:[\n\u2068%@\u2069/https://t.me]";
+"Channel.Username.LinkHint" = "يقوم هذا الرابط بفتح قناتك:[\n\u2068%@\u2069/https://sgq.me]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "يمكنك تعطيل بعض روابط مجموعاتك وقنواتك القديمة، أو قم بإنشاء قناة خاصة عوضًا عن ذلك.";
 "Channel.Username.Title" = "الرابط";
 "Channel.Username.UsernameIsAvailable" = "\u2068%@\u2069 متاح.";
@@ -3887,7 +3887,7 @@
 "CocoonInfo.Efficient.Title" = "فعال";
 "CocoonInfo.ForEveryone.Text" = "يمكن لأي مطور استخدام [كوكون](telegram) لميزات الذكاء الاصطناعي. اعرف المزيد على [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "للجميع";
-"CocoonInfo.IntergrateInfo" = "هل ترغب في دمج \"كوكون\" في مشاريعك؟\nتواصل معنا على [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "هل ترغب في دمج \"كوكون\" في مشاريعك؟\nتواصل معنا على [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "لا يمكن لأي طرف ثالث الوصول إلى أية بيانات -مثل الترجمات- داخل كوكون.";
 "CocoonInfo.Private.Title" = "خاص";
 "CocoonInfo.Title" = "كوكون";
@@ -4847,7 +4847,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#few" = "لا يمكنك إنشاء أكثر من \u2068%d\u2069 بوتات.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "لا يمكنك إنشاء أكثر من \u2068%d\u2069 بوتًا.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "لا يمكنك إنشاء أكثر من \u2068%d\u2069 بوت.";
-"CreateBot.UsernameStatus.Link" = "الرابط: t.me/\u2068%@\u2069";
+"CreateBot.UsernameStatus.Link" = "الرابط: sgq.me/\u2068%@\u2069";
 "CreateBot.UsernameStatus.Number" = "لا يمكن أن يبدأ اسم المستخدم برقم.";
 "CreateBot.UsernameStatus.Short" = "يجب أن يكون اسم المستخدم من ٥ أحرف على الأقل.";
 "CreateBot.UsernameStatus.Taken" = "اسم المستخدم هذا مأخوذ مسبقًا.";
@@ -5265,7 +5265,7 @@
 "EmojiStickerSettings.Info" = "نرحب بالرسامين لإضافة حُزم رموز تعبيرية خاصة بهم باستخدام بوت @stickers\n\nيرجى الضغط مطولًا على أي رسالة لعرض وإضافة الحزمة.";
 "EmptyGroupInfo.Line1" = "ما يصل إلى ٢٠٠,٠٠٠ عضو";
 "EmptyGroupInfo.Line2" = "تمتلكَ سجل محادثة موحدًا";
-"EmptyGroupInfo.Line3" = "تمتلك روابط عامة مثل t.me/title";
+"EmptyGroupInfo.Line3" = "تمتلك روابط عامة مثل sgq.me/title";
 "EmptyGroupInfo.Line4" = "يديرَها مشرفون بصلاحيات مختلفة";
 "EmptyGroupInfo.Subtitle" = "يمكن للمجموعات أن:";
 "EmptyGroupInfo.Title" = "لقد أنشأت مجموعة.";
@@ -10606,7 +10606,7 @@
 "Premium.Limits.PinnedChats" = "المحادثات المثبتة";
 "Premium.Limits.PinnedChatsInfo" = "تثبيت ما يصل إلى ١٠ محادثات في قائمة محادثاتك الرئيسية";
 "Premium.Limits.PublicLinks" = "الروابط العامة";
-"Premium.Limits.PublicLinksInfo" = "حجز ما يصل إلى 20 رابط [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "حجز ما يصل إلى 20 رابط [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "قنوات مشابهة";
 "Premium.Limits.RecommendedChannelsInfo" = "عرض ما يصل إلى ١٠٠ قناة مشابهة";
 "Premium.Limits.SavedGifs" = "الصور المتحركة المحفوظة";
@@ -10987,7 +10987,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "من يمكنهم رؤية آخر ظهور لي";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "المستخدمون الذين يحتفظون برقمك في جهات اتصالهم سيرون رقمك في تيليجرام إذا كانوا هم من جهات اتصالك.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "المستخدمون الذين يملكون رقمك محفوظًا في دليل عناوينهم سيتمكنون من رؤيته في تيليجرام أيضًا.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "المستخدمون الذين لديهم رقمك محفوظًا في جهات اتصالهم سيظهر لهم أيضًا على تيليجرام.\n\nهذا الرابط العام يفتح محادثة معك:\n[https://t.me/\u2068%@\u2069]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "المستخدمون الذين لديهم رقمك محفوظًا في جهات اتصالهم سيظهر لهم أيضًا على تيليجرام.\n\nهذا الرابط العام يفتح محادثة معك:\n[https://sgq.me/\u2068%@\u2069]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "من يمكنهم إيجادي برقم هاتفي؟";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "من يمكنهم رؤية رقم هاتفي";
 "PrivacyPolicy.Accept" = "الموافقة والاستمرار";
@@ -12070,8 +12070,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "غير متاح";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "النوع";
-"SocksProxySetup.QrCode.TMeLink" = "t.me";
-"SocksProxySetup.QrCode.TgLink" = "tg://";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "sg://";
 "SocksProxySetup.RequiredCredentials" = "الشهادات";
 "SocksProxySetup.SaveProxy" = "حفظ البروكسي";
 "SocksProxySetup.SavedProxies" = "البروكسيات المحفوظة";
@@ -14121,7 +14121,7 @@
 "Username.InvalidTooShort" = "يجب ألا يقل اسم المستخدم عن 5 حروف.";
 "Username.InvalidValue" = "عذرًا، اسم المستخدم هذا غير صالح.";
 "Username.LinkCopied" = "تم نسخ الرابط إلى الحافظة.";
-"Username.LinkHint" = "هذا\u00a0الرابط\u00a0يفتح\u00a0محادثة\u00a0معك:[\nhttps://t.me/\u2068%@\u2069]";
+"Username.LinkHint" = "هذا\u00a0الرابط\u00a0يفتح\u00a0محادثة\u00a0معك:[\nhttps://sgq.me/\u2068%@\u2069]";
 "Username.LinksOrder" = "ترتيب اسم المستخدم";
 "Username.LinksOrderInfo" = "يمكنك سحب وإفلات الروابط لتغيير الترتيب الذي ستُعرض به على صفحة معلوماتك.";
 "Username.Placeholder" = "اسم المستخدم الخاص بك";

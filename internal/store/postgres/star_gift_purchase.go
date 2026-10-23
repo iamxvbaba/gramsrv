@@ -353,11 +353,36 @@ func (s *StarGiftLifecycleStore) prepareStarGiftPurchase(ctx context.Context, tx
 	if gift.Stars+upgradePrice != req.ChargeStars {
 		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftFormAmountMismatch
 	}
+	// Anti-scalping: the lifetime per-buyer cap ($3/$4) and the sliding-window
+	// rate limit ($6 seconds / $7 purchases) are checked and advanced in one
+	// atomic upsert. Either check failing updates no row and lands in the same
+	// ErrNoRows branch as before. An expired (or never opened) window restarts
+	// at this purchase.
+	var rateLimitCount, rateLimitWindow int
+	if err := tx.QueryRow(ctx, `SELECT rate_limit_count,rate_limit_window_seconds FROM star_gift_catalog_revisions WHERE id=$1`,
+		gift.RevisionID).Scan(&rateLimitCount, &rateLimitWindow); err != nil {
+		return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, fmt.Errorf("read star gift rate limit: %w", err)
+	}
 	var purchased int
-	if err := tx.QueryRow(ctx, `INSERT INTO star_gift_user_purchases(user_id,gift_id,purchased_count) VALUES($1,$2,1)
-ON CONFLICT(user_id,gift_id) DO UPDATE SET purchased_count=star_gift_user_purchases.purchased_count+1,updated_at=now()
-WHERE NOT $3 OR star_gift_user_purchases.purchased_count<$4 RETURNING purchased_count`, req.BuyerUserID, gift.ID,
-		gift.LimitedPerUser, gift.PerUserTotal).Scan(&purchased); err != nil {
+	if err := tx.QueryRow(ctx, `INSERT INTO star_gift_user_purchases(user_id,gift_id,purchased_count,window_started_at,window_count)
+VALUES($1,$2,1,CASE WHEN $6::int>0 THEN $5::int ELSE 0 END,CASE WHEN $6::int>0 THEN 1 ELSE 0 END)
+ON CONFLICT(user_id,gift_id) DO UPDATE SET
+  purchased_count=star_gift_user_purchases.purchased_count+1,
+  window_started_at=CASE
+    WHEN $6::int<=0 THEN star_gift_user_purchases.window_started_at
+    WHEN star_gift_user_purchases.window_started_at=0 OR $5::int-star_gift_user_purchases.window_started_at>=$6::int
+    THEN $5::int ELSE star_gift_user_purchases.window_started_at END,
+  window_count=CASE
+    WHEN $6::int<=0 THEN star_gift_user_purchases.window_count
+    WHEN star_gift_user_purchases.window_started_at=0 OR $5::int-star_gift_user_purchases.window_started_at>=$6::int
+    THEN 1 ELSE star_gift_user_purchases.window_count+1 END,
+  updated_at=now()
+WHERE (NOT $3 OR star_gift_user_purchases.purchased_count<$4)
+  AND ($6::int<=0 OR star_gift_user_purchases.window_started_at=0
+       OR $5::int-star_gift_user_purchases.window_started_at>=$6::int
+       OR star_gift_user_purchases.window_count<$7::int)
+RETURNING purchased_count`, req.BuyerUserID, gift.ID,
+		gift.LimitedPerUser, gift.PerUserTotal, req.Date, rateLimitWindow, rateLimitCount).Scan(&purchased); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.StarGift{}, domain.SavedStarGift{}, domain.StarsBalance{}, domain.ErrStarGiftUnavailable
 		}

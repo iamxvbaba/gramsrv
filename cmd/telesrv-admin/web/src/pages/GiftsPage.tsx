@@ -1,4 +1,4 @@
-import { CheckCircle2, FileJson2, Gem, Layers, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { CheckCircle2, FileJson2, Gem, Layers, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, Settings2, ShieldCheck, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -10,7 +10,9 @@ import { useI18n } from "../i18n";
 import { formatDate, localInputValue, titleFromFilename, toUnixSeconds } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
+import { GiftQuickSettingsModal } from "./GiftQuickSettingsModal";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
+import { slugFromTitle } from "../lib/slug";
 import { GiftAttributesModal } from "./GiftAttributesModal";
 import { GiftPackModal } from "./GiftPackModal";
 
@@ -97,6 +99,7 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   const [importOpen, setImportOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
+  const [quickSettingsGift, setQuickSettingsGift] = useState<StarGiftRow | null>(null);
   const [poolsGift, setPoolsGift] = useState<StarGiftRow | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [importSource, setImportSource] = useState<"official" | "file">("official");
@@ -108,11 +111,14 @@ export function GiftsPage({ navigate }: { navigate: Navigate }) {
   const [upgradeStars, setUpgradeStars] = useState("0");
   const [supplyTotal, setSupplyTotal] = useState("0");
   const [slugPrefix, setSlugPrefix] = useState("");
+  // datetime-local; empty opens the collectible pool together with the gift.
+  const [collectiblePublishAt, setCollectiblePublishAt] = useState("");
 	const [giftID, setGiftID] = useState("0");
   const [title, setTitle] = useState("");
   const [stars, setStars] = useState("50");
   const [convertStars, setConvertStars] = useState("50");
-  const [sortOrder, setSortOrder] = useState("0");
+  // Empty = automatic: a new gift goes to the end of the list.
+  const [sortOrder, setSortOrder] = useState("");
   const [lifecycleMode, setLifecycleMode] = useState<LifecycleMode>("regular");
   const [auctionSlug, setAuctionSlug] = useState("");
   const [auctionSupply, setAuctionSupply] = useState("10");
@@ -269,8 +275,9 @@ return {
 		per_user_total: Number(perUserLimit),
 		sort_order: Number(sortOrder),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
-		supply_total: includeCollectible ? Number(supplyTotal) : 0, slug_prefix: slugPrefix.trim().toLowerCase(),
-		locked_until_date: lockedUntil
+		supply_total: includeCollectible ? Number(supplyTotal) : 0, slug_prefix: slugPrefix.trim(),
+		locked_until_date: lockedUntil,
+		collectible_publish_at: includeCollectible && collectiblePublishAt ? toUnixSeconds(collectiblePublishAt) : 0
 	};
   }
 
@@ -283,7 +290,7 @@ return {
     setIncludeCollectible(gift.can_upgrade);
 		setUpgradeStars(gift.upgrade_stars);
     setSupplyTotal(String(gift.can_upgrade ? (gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)) : 0));
-    setSlugPrefix(`official-${gift.source_gift_id}`);
+    setSlugPrefix(slugFromTitle(gift.title ?? ""));
     setPreview(null);
   }
 
@@ -311,7 +318,7 @@ return {
   }
 
   function startImport() {
-	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
+	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("");
     setEnabled(true); setSupportOnly(false); setPremium(false); setBirthday(false); setLimit("0"); setReleasedBy(""); setPerUserLimit("0"); setReason(""); setFile(null); setPreview(null); setImportError("");
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
   }
@@ -358,7 +365,7 @@ return {
                 <td>{gift.ReceivedCount}</td>
                 <td><Badge tone={gift.Enabled ? "good" : "neutral"}>{gift.Enabled ? t("common.enabled") : t("common.disabled")}</Badge></td>
                 <td>{formatDate(gift.UpdatedAt)}</td>
-                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => setPoolsGift(gift)}><Layers size={13} />{t("gifts.pools")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
+                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => setPoolsGift(gift)}><Layers size={13} />{t("gifts.pools")}</button><button className="btn compact-btn" type="button" onClick={() => setQuickSettingsGift(gift)}><Settings2 size={13} />{t("gifts.quickSettings.eyebrow")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
             {visibleGifts.length === 0 && <EmptyRow colSpan={9} />}
@@ -427,7 +434,8 @@ return {
                   {includeCollectible && <div className="gift-fields-grid">
                     <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
+                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} placeholder={t("collectibles.slugAutoHint")} onChange={(e) => { setSlugPrefix(e.target.value); setPreview(null); }} /></label>
+                    <label className="collectible-publish-at"><span>{t("collectibles.publishAt")}</span><input type="datetime-local" value={collectiblePublishAt} onChange={(e) => { setCollectiblePublishAt(e.target.value); setPreview(null); }} /><em>{t("collectibles.publishAtHint")}</em></label>
                   </div>}
                   {includeCollectible && <div className="gift-import-note"><span>{t("gifts.officialSupplyHint")}</span></div>}
                 </>}
@@ -446,10 +454,10 @@ return {
                 </label>
               </>}
               <div className="gift-fields-grid">
-                <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { setTitle(e.target.value); setPreview(null); }} /></label>
+                <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { const next = e.target.value; if (slugPrefix === "" || slugPrefix === slugFromTitle(title)) setSlugPrefix(slugFromTitle(next)); setTitle(next); setPreview(null); }} /></label>
                 <label><span>{t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => { setStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
-                <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
+                <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} placeholder={t("gifts.sortOrderAuto")} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.limit")}</span><input type="number" min="0" value={limit} onChange={(e) => { setLimit(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.releasedBy")}</span><input value={releasedBy} placeholder="@durov" maxLength={128} onChange={(e) => { setReleasedBy(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.perUserLimit")}</span><input type="number" min="0" value={perUserLimit} onChange={(e) => { setPerUserLimit(e.target.value); setPreview(null); }} /></label>
@@ -506,6 +514,7 @@ return {
         </div>,
         document.body
       )}
+      {quickSettingsGift && <GiftQuickSettingsModal gift={quickSettingsGift} onClose={() => setQuickSettingsGift(null)} onChanged={() => void load()} />}
       {collectibleGift && <GiftCollectiblesModal gift={collectibleGift} onClose={() => setCollectibleGift(null)} onPublished={() => void load()} />}
       {poolsGift && <GiftAttributesModal giftID={poolsGift.GiftID} title={poolsGift.Title || `Gift #${poolsGift.GiftID}`} onClose={() => setPoolsGift(null)} />}
       {packOpen && <GiftPackModal onClose={() => setPackOpen(false)} onImported={() => void load()} />}

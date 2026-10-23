@@ -201,13 +201,23 @@ func (r *Router) onMessagesSendQuickReplyMessages(ctx context.Context, req *tg.M
 	sessionID, _ := SessionIDFrom(ctx)
 	res := domain.ForwardPrivateMessagesResult{OwnerUserID: userID}
 	now := int(r.clock.Now().Unix())
+	albums := map[int64]int64{}
 	for i, template := range list.Messages {
+		var groupedID int64
+		if template.GroupedID != 0 {
+			if albums[template.GroupedID] == 0 {
+				albums[template.GroupedID] = randomIDs[i] ^ template.GroupedID | 1
+			}
+			groupedID = albums[template.GroupedID]
+		}
 		sent, err := r.deps.Messages.SendPrivateText(ctx, userID, domain.SendPrivateTextRequest{
 			SenderUserID:     userID,
 			RecipientUserID:  peer.ID,
 			RandomID:         randomIDs[i],
 			Message:          template.Message,
 			Entities:         append([]domain.MessageEntity(nil), template.Entities...),
+			Media:            template.Media,
+			GroupedID:        groupedID,
 			Date:             now,
 			OriginAuthKeyID:  rawAuthKeyIDForOrigin(ctx),
 			OriginSessionID:  sessionID,
@@ -395,4 +405,177 @@ func quickReplyEventFromMutation(userID int64, mutation domain.QuickReplyMutatio
 		event.Date = mutation.Date
 	}
 	return event
+}
+
+// saveQuickReplyMessage stores one message (text and/or media) into a quick
+// reply shortcut, the path of messages.sendMedia / sendMultiMedia /
+// forwardMessages with quick_reply_shortcut set.
+func (r *Router) saveQuickReplyMessage(ctx context.Context, userID int64, input tg.InputQuickReplyShortcutClass, peerInput tg.InputPeerClass, msg domain.QuickReplyMessage) (domain.QuickReplyMutation, error) {
+	shortcut, err := quickReplyShortcutName(input)
+	if err != nil {
+		return domain.QuickReplyMutation{}, err
+	}
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, peerInput)
+	if err != nil {
+		return domain.QuickReplyMutation{}, err
+	}
+	if peer.Type != domain.PeerTypeUser || peer.ID != userID {
+		return domain.QuickReplyMutation{}, shortcutInvalidErr()
+	}
+	svc, ok := r.accountBusinessAutomation()
+	if !ok {
+		return domain.QuickReplyMutation{}, premiumAccountRequiredErr()
+	}
+	if msg.Date == 0 {
+		msg.Date = int(r.clock.Now().Unix())
+	}
+	mutation, err := svc.SaveQuickReplyText(ctx, userID, shortcut, msg)
+	if err != nil {
+		return domain.QuickReplyMutation{}, businessAutomationErr(err)
+	}
+	return mutation, nil
+}
+
+func (r *Router) onMessagesSaveQuickReplyMedia(ctx context.Context, req *tg.MessagesSendMediaRequest) (tg.UpdatesClass, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	media, err := r.resolveInputMedia(ctx, userID, req.Media)
+	if err != nil {
+		return nil, err
+	}
+	if media != nil && req.InvertMedia {
+		media.InvertMedia = true
+	}
+	mutation, err := r.saveQuickReplyMessage(ctx, userID, req.QuickReplyShortcut, req.Peer, domain.QuickReplyMessage{
+		RandomID: req.RandomID,
+		Message:  req.Message,
+		Entities: domainMessageEntitiesForViewer(userID, r.augmentAutoEntities(req.Message, req.Entities)),
+		Media:    media,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.quickReplyMutationUpdates(ctx, userID, mutation, []tg.UpdateClass{
+		&tg.UpdateMessageID{ID: mutation.Message.ID, RandomID: req.RandomID},
+	})
+}
+
+func (r *Router) onMessagesSaveQuickReplyAlbum(ctx context.Context, req *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if len(req.MultiMedia) == 0 || len(req.MultiMedia) > 10 {
+		return nil, mediaInvalidErr()
+	}
+	groupedID := r.quickReplyRandomIDs(1)[0] | 1
+	out := &tg.Updates{Updates: []tg.UpdateClass{}, Users: []tg.UserClass{}, Chats: []tg.ChatClass{}, Date: int(r.clock.Now().Unix())}
+	for _, item := range req.MultiMedia {
+		media, err := r.resolveInputMedia(ctx, userID, item.Media)
+		if err != nil {
+			return nil, err
+		}
+		mutation, err := r.saveQuickReplyMessage(ctx, userID, req.QuickReplyShortcut, req.Peer, domain.QuickReplyMessage{
+			RandomID:  item.RandomID,
+			Message:   item.Message,
+			Entities:  domainMessageEntitiesForViewer(userID, r.augmentAutoEntities(item.Message, item.Entities)),
+			Media:     media,
+			GroupedID: groupedID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		updates, err := r.quickReplyMutationUpdates(ctx, userID, mutation, []tg.UpdateClass{
+			&tg.UpdateMessageID{ID: mutation.Message.ID, RandomID: item.RandomID},
+		})
+		if err != nil {
+			return nil, err
+		}
+		out.Updates = append(out.Updates, updates.Updates...)
+		out.Users = updates.Users
+		out.Date = updates.Date
+	}
+	return out, nil
+}
+
+// onMessagesForwardToQuickReply copies messages into a quick reply shortcut.
+func (r *Router) onMessagesForwardToQuickReply(ctx context.Context, req *tg.MessagesForwardMessagesRequest) (tg.UpdatesClass, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if _, ok := r.accountBusinessAutomation(); !ok {
+		return nil, shortcutInvalidErr()
+	}
+	if len(req.ID) == 0 || len(req.ID) != len(req.RandomID) || len(req.ID) > domain.MaxQuickReplyMessages {
+		return nil, messageIDInvalidErr()
+	}
+	fromPeer, preloaded, err := r.forwardFromPeerAndSources(ctx, userID, req.FromPeer, req.ID, req.RandomID)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := r.forwardSourcesForRequest(ctx, userID, fromPeer, req.ID, preloaded)
+	if err != nil {
+		return nil, messageForwardErr(err)
+	}
+	out := &tg.Updates{Updates: []tg.UpdateClass{}, Users: []tg.UserClass{}, Chats: []tg.ChatClass{}, Date: int(r.clock.Now().Unix())}
+	for i, source := range sources {
+		mutation, err := r.saveQuickReplyMessage(ctx, userID, req.QuickReplyShortcut, req.ToPeer, domain.QuickReplyMessage{
+			RandomID: req.RandomID[i],
+			Message:  source.body,
+			Entities: source.entities,
+			Media:    source.media,
+		})
+		if err != nil {
+			return nil, err
+		}
+		updates, err := r.quickReplyMutationUpdates(ctx, userID, mutation, []tg.UpdateClass{
+			&tg.UpdateMessageID{ID: mutation.Message.ID, RandomID: req.RandomID[i]},
+		})
+		if err != nil {
+			return nil, err
+		}
+		out.Updates = append(out.Updates, updates.Updates...)
+		out.Users = updates.Users
+		out.Date = updates.Date
+	}
+	return out, nil
+}
+
+// onMessagesEditQuickReplyMessage is messages.editMessage with
+// quick_reply_shortcut_id: it edits a saved quick reply message.
+func (r *Router) onMessagesEditQuickReplyMessage(ctx context.Context, req *tg.MessagesEditMessageRequest, shortcutID int) (tg.UpdatesClass, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	svc, ok := r.accountBusinessAutomation()
+	if !ok {
+		return nil, messageIDInvalidErr()
+	}
+	current, err := svc.GetQuickReplyMessages(ctx, userID, shortcutID, []int{req.ID})
+	if err != nil || len(current.Messages) != 1 {
+		return nil, messageIDInvalidErr()
+	}
+	edit := domain.QuickReplyEdit{ShortcutID: shortcutID, ID: req.ID, Message: current.Messages[0].Message,
+		Entities: current.Messages[0].Entities, EditDate: int(r.clock.Now().Unix())}
+	if message, ok := req.GetMessage(); ok {
+		entities, _ := req.GetEntities()
+		edit.Message = message
+		edit.Entities = domainMessageEntitiesForViewer(userID, r.augmentAutoEntities(message, entities))
+	}
+	if input, ok := req.GetMedia(); ok {
+		media, err := r.resolveInputMedia(ctx, userID, input)
+		if err != nil {
+			return nil, err
+		}
+		edit.Media = media
+	}
+	mutation, err := svc.EditQuickReplyMessage(ctx, userID, edit)
+	if err != nil {
+		return nil, businessAutomationErr(err)
+	}
+	return r.quickReplyMutationUpdates(ctx, userID, mutation, nil)
 }

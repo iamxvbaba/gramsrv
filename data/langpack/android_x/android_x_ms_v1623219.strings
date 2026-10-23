@@ -146,7 +146,7 @@
 "ApproveNewMembers" = "Lulus Ahli Baru";
 "ApproveNewMembersInfo" = "ON ini jika anda ingin ahli baru sertai hanya selepas diluluskan oleh pentadbir.";
 "Archive" = "Arkib";
-"ArchiveAppearanceHint" = "Papar arkib sebagai folder tempatan. Anda boleh tukar posisinya di [tetapan](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Papar arkib sebagai folder tempatan. Anda boleh tukar posisinya di [tetapan](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Penampilan";
 "ArchiveAppearanceToggle" = "Papar sebagai folder";
 "ArchiveAsFolder" = "Arkib sebagai Folder";
@@ -1106,9 +1106,9 @@
 "EditPrivacyPhoneNumber" = "Nombor Fon";
 "EditPrivacyPhoto" = "Foto Profil";
 "EditPrivacyReadDate" = "Lihat Tarikh Saya Baca";
-"EditPrivacyReadDateAllowHint" = "Benarkan %1$s untuk **Terakhir Dilihat & Di Talian** anda untuk dayakan aturan ini.\n\nUntuk maklumat lanjut, lihat **[Privasi dan Sekuriti](tg://settings/privacy)** – **Terakhir Dilihat & Di Talian** – **Sorok Waktu Dibaca**.";
-"EditPrivacyReadDateRestrictHint" = "Hadkan %1$s dari lihat **Terakhir Dilihat & Di Talian** untuk dayakan aturan ini.\n\nUntuk maklumat lanjut. **[Privasi dan Sekuriti](tg://settings/privacy)** – **Terakhir Dilihat & Di -Talian** – **Sorok Waktu Dibaca**.";
-"EditPrivacyReadDateToggleHint" = "Anda boleh sorok **Tarikh Baca** anda hanya dari semua orang yang tak boleh lihat **Terakhir Dilihat & Di Talian** anda.\n\nLihat **[Privasi dan Sekuriti](tg://settings/privacy)** – **Terakhir Dilihat & Di Talian** – **Sorok Waktu Dibaca**.";
+"EditPrivacyReadDateAllowHint" = "Benarkan %1$s untuk **Terakhir Dilihat & Di Talian** anda untuk dayakan aturan ini.\n\nUntuk maklumat lanjut, lihat **[Privasi dan Sekuriti](sg://settings/privacy)** – **Terakhir Dilihat & Di Talian** – **Sorok Waktu Dibaca**.";
+"EditPrivacyReadDateRestrictHint" = "Hadkan %1$s dari lihat **Terakhir Dilihat & Di Talian** untuk dayakan aturan ini.\n\nUntuk maklumat lanjut. **[Privasi dan Sekuriti](sg://settings/privacy)** – **Terakhir Dilihat & Di -Talian** – **Sorok Waktu Dibaca**.";
+"EditPrivacyReadDateToggleHint" = "Anda boleh sorok **Tarikh Baca** anda hanya dari semua orang yang tak boleh lihat **Terakhir Dilihat & Di Talian** anda.\n\nLihat **[Privasi dan Sekuriti](sg://settings/privacy)** – **Terakhir Dilihat & Di Talian** – **Sorok Waktu Dibaca**.";
 "EditPrivacyStatus" = "Dilihat & Di Talian";
 "EditPrivacyVoice" = "Kirim Saya Mesej Suara";
 "EditUserRestrictions" = "Sunting Had Pengguna";
@@ -1433,7 +1433,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Guna tetapan ini untuk banding kelakuan tanpa mod tepi-ke-tepi pada Android 11-14.";
 "Experiment_PeerIds" = "Tunjuk ID Rakan Setara di Profil";
 "Experiment_PeerIdsInfo" = "Tunjuk penanda API pengguna dan bual dalam profil mereka";
-"ExperimentalBuildInfo" = "Versi **Telegram X** ini bukan direka untuk penggunaan jangka masa panjang. \n\nIa mungkin tidak lagi berfungsi dan anda tak boleh ON notifikasi.\n\nJika anda sedang mencari fail APK Telegram X, lihat https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Versi **Telegram X** ini bukan direka untuk penggunaan jangka masa panjang. \n\nIa mungkin tidak lagi berfungsi dan anda tak boleh ON notifikasi.\n\nJika anda sedang mencari fail APK Telegram X, lihat https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Awas: binaan percubaan";
 "ExperimentalSettings" = "Aturan percubaan";
 "ExperimentalSettingsUnavailable" = "Tiada percubaan tersedia. Kembali ke sini nanti.";
@@ -1807,7 +1807,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X tak dapat dilancarkan sebelum ini kerana storan peranti yang penuh.\n\nPastikan ruang storan yang mencukupi dan tekan  **Lancar Aplikasi** untuk cuba semula. \n\nRuang yang masih ada: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X tak dapat dilancar sebelum ini kerana keralatan peranti.\n\nTekan **Lancar Aplikasi** untuk cuba semula. Jika aplikasi masih lagi kandas, ikut cara berikut:\n\n• Tentukan anda mempunyai ruang disk yang cukup.  **%1$s**.\n• Patikan tiada isu storan yang lain seperti kad SD  ditendang keluar atau tidak dikenali.\n• Buka semula peranti anda.\n\nJika di atas tidak membantu, anda boleh lihat isu yang sama di [laman GitHub di TDLib](https://github.com/tdlib/td/issues) untuk mencari solusi sedia ada, atau karang yang baru, termasuk ralat pada mesej dan malumat peranti.";
 "LaunchAppGuideFatalError" = "Telegram X tutup secara tak sengaja kali terakhir anda menggunanya.\n\nTekan **Lancar Aplikasi** untuk cuba lagi.";
-"LaunchAppGuideTdlibIssue" = "Telegram X tak dapat dilancar sebelum ini kerana ralat maut TDLib.\n\nTekan **Lancar Aplikasi** untuk cuba semula. Jika aplikasi masih lagi gagal, ikut langkah di bawah:\n\n• [Pastikan](%2$s) versi Tekegram X anda yang terkini dipasang.\n• Buka semula peranti anda.\n\n**Jika langkah di atas tidak membantu**\n\n1. Kongsi maklumat ralat dengan pembanguncara  TDLib dengan menggunakan salah satu dari kaedah berikut: \n— Secara peribadi melalui [@tdlib_bot](https://t.me/tdlib_bot) dengan mengguna peranti yang lain atau [Telegram Web](https://web.telegram.org/).\n— Secara umum melalui [laman GitHub (https://github.com/tdlib/td/issues). **Jangan** kongsi **tdlib_log.txt** kepada umum.\n2. Sila tunggu respon.\n3. Tukar aturan log di bawah seperti diminta oleh pembanguncara TDLib.\n4. Tekan **Lancar Aplikasi** untuk hentikan aplikasi sekali lagi.\n5. Kongsi **tdlib_log.txt** dengan pembanguncara TDLib dan tunggu hingga isu diatasi.\n6. Apabila telah dikemaskini anda akan dapat lancarkan aplikasi seperti biasa.\n\n**Opsyen alternatif**\n\n• Cari isu yang sama di [GitHub](https://github.com/tdlib/td/issues) untuk meneliti kalau ada solusi yang sedia ada.\n• Pasang semula aplikasi. Bual Rahsia akan terhapus. Jika anda guna nombor fon yang sama dengan nombor untuk log masuk, semua bual dan data akan dimuat semula dari awan Telegram.";
+"LaunchAppGuideTdlibIssue" = "Telegram X tak dapat dilancar sebelum ini kerana ralat maut TDLib.\n\nTekan **Lancar Aplikasi** untuk cuba semula. Jika aplikasi masih lagi gagal, ikut langkah di bawah:\n\n• [Pastikan](%2$s) versi Tekegram X anda yang terkini dipasang.\n• Buka semula peranti anda.\n\n**Jika langkah di atas tidak membantu**\n\n1. Kongsi maklumat ralat dengan pembanguncara  TDLib dengan menggunakan salah satu dari kaedah berikut: \n— Secara peribadi melalui [@tdlib_bot](https://sgq.me/tdlib_bot) dengan mengguna peranti yang lain atau [Telegram Web](https://web.telegram.org/).\n— Secara umum melalui [laman GitHub (https://github.com/tdlib/td/issues). **Jangan** kongsi **tdlib_log.txt** kepada umum.\n2. Sila tunggu respon.\n3. Tukar aturan log di bawah seperti diminta oleh pembanguncara TDLib.\n4. Tekan **Lancar Aplikasi** untuk hentikan aplikasi sekali lagi.\n5. Kongsi **tdlib_log.txt** dengan pembanguncara TDLib dan tunggu hingga isu diatasi.\n6. Apabila telah dikemaskini anda akan dapat lancarkan aplikasi seperti biasa.\n\n**Opsyen alternatif**\n\n• Cari isu yang sama di [GitHub](https://github.com/tdlib/td/issues) untuk meneliti kalau ada solusi yang sedia ada.\n• Pasang semula aplikasi. Bual Rahsia akan terhapus. Jika anda guna nombor fon yang sama dengan nombor untuk log masuk, semua bual dan data akan dimuat semula dari awan Telegram.";
 "LaunchAppShareError" = "Kongsi ralat terperinci";
 "LaunchAppUserSubtitle" = "tak di talian";
 "LaunchAppViewError" = "Lihat perincian ralat";
@@ -1858,7 +1858,7 @@
 "LinkChannel" = "Link saluran";
 "LinkChannelHelp" = "Anda boleh sediakan link awam di **Telegram**. Jika anda buat link, pengguna akan dapat mencari dan sertai saluran anda dengan link ini.\n\nAnda boleh guna **a–z**, **0–9** dan baris bawah.\nPanjang minima ialah **5** aksara.";
 "LinkChecking" = "Memeriksa kebolehdapatan link…";
-"LinkCurrent" = "t.me/%1$s adalah link awam anda.";
+"LinkCurrent" = "sgq.me/%1$s adalah link awam anda.";
 "LinkDeleteOther" = "%1$s hapus link jemputan %2$s  %3$s";
 "LinkDeleteOtherYou" = "Anda hapus link jemputan %1$s  %2$s ";
 "LinkDeletePrimary" = "%1$s hapus link jemputan utama %2$s";
@@ -3771,7 +3771,7 @@
 "TranslationFailed" = "Terjemahan kandas";
 "TranslationMoreCreate" = "Cipta";
 "TranslationMoreDone" = "Ngerti";
-"TranslationMoreText" = "Senarai bahasa yang wujud diuruskan oleh [Platfom Terjemahan](https://translations.telegram.org).\n\nTelegram akan menawar anda untuk tukar ke bahasa anda setelah terjemahan diwujudkan secara rasmi. \n\nSementara menunggu anda boleh pasang fail lokalizasi, sertai [proses terjemahan](https://translations.telegram.org/en/android_x/), atau cipta [anda punya](https://t.me/tgx_android_translate/) fail lokalizasi.";
+"TranslationMoreText" = "Senarai bahasa yang wujud diuruskan oleh [Platfom Terjemahan](https://translations.telegram.org).\n\nTelegram akan menawar anda untuk tukar ke bahasa anda setelah terjemahan diwujudkan secara rasmi. \n\nSementara menunggu anda boleh pasang fail lokalizasi, sertai [proses terjemahan](https://translations.telegram.org/en/android_x/), atau cipta [anda punya](https://sgq.me/tgx_android_translate/) fail lokalizasi.";
 "TranslationMoreTitle" = "Tak jumpa bahasa anda?";
 "TranslationPaste" = "Tampal terjemahan";
 "TranslationsMissing#other" = "%1$s belum diterjemah";

@@ -40,11 +40,11 @@ func TestCatalogVerifiesSelectedDocument(t *testing.T) {
 	}
 	catalog := New(root)
 	items, err := catalog.List(context.Background())
-	if err != nil || len(items) != 1 || items[0].ID != 1 || items[0].Title != "Telesrv Pin" {
+	if err != nil || len(items) != 1 || items[0].ID != 1 || items[0].Title != "ShuzaGram Pin" {
 		t.Fatalf("items=%+v err=%v", items, err)
 	}
 	bundle, err := catalog.Bundle(context.Background(), 1, false)
-	if err != nil || string(bundle.BaseDocument.Data) != string(data) || bundle.Gift.Title != "Telesrv Pin" {
+	if err != nil || string(bundle.BaseDocument.Data) != string(data) || bundle.Gift.Title != "ShuzaGram Pin" {
 		t.Fatalf("bundle=%+v err=%v", bundle, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "documents", "10.tgs"), []byte("tampered---"), 0o644); err != nil {

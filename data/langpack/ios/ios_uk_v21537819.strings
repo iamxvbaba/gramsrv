@@ -1068,9 +1068,9 @@
 "Business.Links.LinksSectionHeader" = "ПОСИЛАННЯ НА ЧАТ";
 "Business.Links.PreviewText" = "Додайте текст, який зʼявиться в полі для вводу у всіх, хто почне чат за цим посиланням:";
 "Business.Links.PreviewTitle" = "Посилання на чат";
-"Business.Links.SimpleLinkInfoPhone" = "Також можна використовувати звичайне посилання — [t.me/+%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Також можна використовувати звичайне посилання — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Також можна використовувати звичайне посилання — [t.me/%1$@](username) або [t.me/+%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Також можна використовувати звичайне посилання — [sgq.me/+%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Також можна використовувати звичайне посилання — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Також можна використовувати звичайне посилання — [sgq.me/%1$@](username) або [sgq.me/+%2$@](phone).";
 "Business.Links.Text" = "Давайте своїм клієнтам короткі посилання, що починають чат з вами й пропонують заготовлене перше повідомлення.";
 "Business.LinksInfo" = "Посилання, які відкривають чат з вами та пропонують повідомлення.";
 "Business.Location" = "Адреса";
@@ -1959,7 +1959,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Публічне посилання каналу не може закінчуватися підкресленням.";
 "Channel.Username.InvalidTaken" = "Це посилання вже зайняте.";
 "Channel.Username.InvalidTooShort" = "Публічне посилання повинне містити щонайменше 5 символів.";
-"Channel.Username.LinkHint" = "Це посилання відкриває ваш канал у Telegram:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Це посилання відкриває ваш канал у Telegram:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Звільніть одне з уже зайнятих вами посилань або створіть приватний канал.";
 "Channel.Username.Title" = "Посилання";
 "Channel.Username.UsernameIsAvailable" = "%@ доступне.";
@@ -3699,7 +3699,7 @@
 "CocoonInfo.Efficient.Title" = "Ефективність";
 "CocoonInfo.ForEveryone.Text" = "Будь-який розробник може використати [Cocoon](telegram) для задач ШІ. Деталі: [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Доступність";
-"CocoonInfo.IntergrateInfo" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Треті сторони не мають доступу до жодних даних всередині Cocoon, включно з перекладами.";
 "CocoonInfo.Private.Title" = "Приватність";
 "CocoonInfo.Title" = "COCOON";
@@ -4670,7 +4670,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Не можна створити більше %d ботів.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "Не можна створити більше %d ботів.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Не можна створити більше %d ботів.";
-"CreateBot.UsernameStatus.Link" = "Посилання: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Посилання: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Імʼя користувача не може починатися з цифри.";
 "CreateBot.UsernameStatus.Short" = "Імʼя користувача повинне містити щонайменше 5 символів.";
 "CreateBot.UsernameStatus.Taken" = "Це імʼя користувача вже зайняте.";
@@ -5077,7 +5077,7 @@
 "EmojiStickerSettings.Info" = "Ви можете додавати власні набори емоджі за допомогою нашого бота @stickers.\n\nНатисніть на повідомлення, щоб переглянути й додати набір.";
 "EmptyGroupInfo.Line1" = "До 200 тисяч учасників";
 "EmptyGroupInfo.Line2" = "Спільну історію листування";
-"EmptyGroupInfo.Line3" = "Публічні посилання вигляду t.me";
+"EmptyGroupInfo.Line3" = "Публічні посилання вигляду sgq.me";
 "EmptyGroupInfo.Line4" = "Адміністраторів із різними правами";
 "EmptyGroupInfo.Subtitle" = "Групи можуть мати:";
 "EmptyGroupInfo.Title" = "Ви створили групу";
@@ -9980,7 +9980,7 @@
 "Premium.Limits.PinnedChats" = "Прикріплені чати";
 "Premium.Limits.PinnedChatsInfo" = "Прикріплення до 10 чатів в основному списку";
 "Premium.Limits.PublicLinks" = "Публічні посилання";
-"Premium.Limits.PublicLinksInfo" = "До 20 зайнятих посилань виду [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "До 20 зайнятих посилань виду [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Схожі канали";
 "Premium.Limits.RecommendedChannelsInfo" = "Переглядайте до 100 схожих каналів";
 "Premium.Limits.SavedGifs" = "Збережені GIF";
@@ -10350,7 +10350,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "ХТО МОЖЕ БАЧИТИ ЧАС МОЄЇ АКТИВНОСТІ";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Користувачі, які додали ваш номер, бачать вас у Telegram, лише якщо ви додали їх до своїх контактів.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Ваш номер також бачать користувачі, які мають його у своєму списку контактів.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Ваш номер бачитимуть у Telegram також ті, у кого він записаний у контактах.\n\nЦе посилання відкриває чат з вами:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Ваш номер бачитимуть у Telegram також ті, у кого він записаний у контактах.\n\nЦе посилання відкриває чат з вами:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "ХТО МОЖЕ ЗНАЙТИ МЕНЕ ЗА НОМЕРОМ";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "ХТО МОЖЕ БАЧИТИ МІЙ НОМЕР ТЕЛЕФОНУ";
 "PrivacyPolicy.Accept" = "Погодитися та продовжити";
@@ -11369,8 +11369,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "недоступно";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "ТИП";
-"SocksProxySetup.QrCode.TMeLink" = "як t.me";
-"SocksProxySetup.QrCode.TgLink" = "як tg://";
+"SocksProxySetup.QrCode.TMeLink" = "як sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "як sg://";
 "SocksProxySetup.RequiredCredentials" = "ОБЛІКОВІ ДАНІ";
 "SocksProxySetup.SaveProxy" = "Зберегти проксі";
 "SocksProxySetup.SavedProxies" = "ЗБЕРЕЖЕНІ ПРОКСІ";
@@ -13274,7 +13274,7 @@
 "Username.InvalidTooShort" = "Імʼя користувача повинне містити щонайменше 5 символів.";
 "Username.InvalidValue" = "Це імʼя користувача недопустиме.";
 "Username.LinkCopied" = "Посилання скопійовано.";
-"Username.LinkHint" = "Це посилання відкриває чат із вами в Telegram:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Це посилання відкриває чат із вами в Telegram:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ПОРЯДОК ІМЕН КОРИСТУВАЧА";
 "Username.LinksOrderInfo" = "Перетягуйте посилання, щоб змінити порядок, у якому вони показуватимуться у вашому профілі.";
 "Username.Placeholder" = "Ваше імʼя користувача";

@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "Links naar een chat met jou";
 "Business.Links.PreviewText" = "Stel een berichtvoorstel op voor iedereen die via deze link een chat met je opent:";
 "Business.Links.PreviewTitle" = "Link naar een chat met jou";
-"Business.Links.SimpleLinkInfoPhone" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [t.me/%1$@](username) of [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Je kunt ook een eenvoudige link naar een chat met jou delen — [sgq.me/%1$@](username) of [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Geef je klanten korte links om met je te chatten — met door jou opgestelde voorbeeldberichten.";
 "Business.LinksInfo" = "Maak links naar een chat met jou aan met een berichtvoorbeeld.";
 "Business.Location" = "Locatie";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Namen van kanalen kunnen niet met een underscore begninen.";
 "Channel.Username.InvalidTaken" = "Sorry, deze link is al bezet.";
 "Channel.Username.InvalidTooShort" = "De minimumlengte voor openbare links is 5 tekens.";
-"Channel.Username.LinkHint" = "Deze link opent je kanaal:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Deze link opent je kanaal:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Je kunt een link intrekken van 1 van je oudere groepen of kanalen, of in plaats daarvan een privékanaal maken.";
 "Channel.Username.Title" = "Link";
 "Channel.Username.UsernameIsAvailable" = "%@ is beschikbaar.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Efficiënt";
 "CocoonInfo.ForEveryone.Text" = "Alle ontwikkelaars kunnen [Cocoon](telegram) gebruiken voor AI-toepassingen. Lees meer op [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Voor iedereen";
-"CocoonInfo.IntergrateInfo" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Geen enkele derde partij heeft toegang tot data, zoals vertalingen, binnen Cocoon.";
 "CocoonInfo.Private.Title" = "Privé";
 "CocoonInfo.Title" = "COCOON";
@@ -4286,7 +4286,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Je kunt alleen **a-z**, **0-9** en lage streepjes gebruiken.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Je kunt maximaal %d bot aanmaken.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Je kunt maximaal %d bots aanmaken.";
-"CreateBot.UsernameStatus.Link" = "Link: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Link: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Een gebruikersnaam mag niet met een cijfer beginnen.";
 "CreateBot.UsernameStatus.Short" = "De minimumlengte voor een gebruikersnaam is 5 tekens.";
 "CreateBot.UsernameStatus.Taken" = "Deze gebruikersnaam is reeds bezet.";
@@ -4669,7 +4669,7 @@
 "EmojiStickerSettings.Info" = "Artiesten kunnen hun eigen emojibundels toevoegen met onze @stickers-bot.\n\nHoud een bericht ingedrukt om de volledige bundel te bekijken en toe te voegen.";
 "EmptyGroupInfo.Line1" = "Tot 200.000 leden";
 "EmptyGroupInfo.Line2" = "Blijvende chatgeschiedenis";
-"EmptyGroupInfo.Line3" = "Openbare links zoals t.me/titel";
+"EmptyGroupInfo.Line3" = "Openbare links zoals sgq.me/titel";
 "EmptyGroupInfo.Line4" = "Beheerders met aangepaste rechten";
 "EmptyGroupInfo.Subtitle" = "Groepen ondersteunen het volgende:";
 "EmptyGroupInfo.Title" = "Je hebt een groep aangemaakt";
@@ -8969,7 +8969,7 @@
 "Premium.Limits.PinnedChats" = "Vastgezette chats";
 "Premium.Limits.PinnedChatsInfo" = "Zet maximaal 10 chats vast in je hoofdchatlijst";
 "Premium.Limits.PublicLinks" = "Openbare links";
-"Premium.Limits.PublicLinksInfo" = "Reserveer maximaal 20 [t.me/gebruikersnaam]()-links";
+"Premium.Limits.PublicLinksInfo" = "Reserveer maximaal 20 [sgq.me/gebruikersnaam]()-links";
 "Premium.Limits.RecommendedChannels" = "Soortgelijke kanalen";
 "Premium.Limits.RecommendedChannelsInfo" = "Bekijk maximaal 100 soortgelijke kanalen";
 "Premium.Limits.SavedGifs" = "Opgeslagen GIF's";
@@ -9321,7 +9321,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "Wie kan mijn 'laatst gezien'-tijd bekijken?";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Gebruikers die je telefoonnummer aan hun contacten toevoegen, zullen het alleen op Telegram zien als ze ook in jouw contacten staan.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Gebruikers die je nummer al hebben opgeslagen in hun contacten zien het ook op Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Gebruikers die je nummer in hun contacten hebben opgeslagen, zullen het ook op Telegram zien.\n\nVia deze openbare link wordt er een chat met jou geopend:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Gebruikers die je nummer in hun contacten hebben opgeslagen, zullen het ook op Telegram zien.\n\nVia deze openbare link wordt er een chat met jou geopend:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "Wie kan me vinden via mijn nummer?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "WIE KAN MIJN TELEFOONNUMMER ZIEN";
 "PrivacyPolicy.Accept" = "Akkoord & Doorgaan";
@@ -10224,8 +10224,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "niet beschikbaar";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYPE";
-"SocksProxySetup.QrCode.TMeLink" = "t.me link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "Aanmeldgegevens";
 "SocksProxySetup.SaveProxy" = "Proxy Opslaan";
 "SocksProxySetup.SavedProxies" = "OPGESLAGEN PROXIES";
@@ -11893,7 +11893,7 @@
 "Username.InvalidTooShort" = "De minimumlengte voor gebruikersnamen is 5 tekens.";
 "Username.InvalidValue" = "Sorry, deze gebruikersnaam is ongeldig.";
 "Username.LinkCopied" = "Link gekopieerd naar klembord.";
-"Username.LinkHint" = "Deze link opent een chat met je:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Deze link opent een chat met je:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "Volgorde van gebruikersnamen";
 "Username.LinksOrderInfo" = "Sleep met links om de volgorde waarin ze op je infopagina worden weergegeven, te wijzigen.";
 "Username.Placeholder" = "Kies een naam";

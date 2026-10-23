@@ -83,7 +83,7 @@ func (s *Service) respondAsGramsrvOperator(userID int64, body string) {
 }
 
 func gramsrvOperatorHelp() string {
-	return "Управление заморозкой аккаунтов Gramsrv.\n/account @username — статус и кнопка действия\n/freeze @username — открыть действие\n/unfreeze @username — открыть действие"
+	return "Управление заморозкой аккаунтов ShuzaGram.\n/account @username — статус и кнопка действия\n/freeze @username — открыть действие\n/unfreeze @username — открыть действие"
 }
 
 func (s *Service) gramsrvOperatorTarget(ctx context.Context, input string) (domain.User, bool, error) {
@@ -176,7 +176,7 @@ func (s *Service) onGramsrvOperatorCallback(ctx context.Context, query domain.Bo
 		request.Until = time.Unix(math.MaxInt32, 0).UTC()
 		request.AppealURL = strings.TrimRight(s.publicBaseURL, "/") + "/"
 		if request.AppealURL == "/" {
-			request.AppealURL = "https://telesrv.net/"
+			request.AppealURL = "https://sgq.me/"
 		}
 	}
 	result, err := s.gramsrvFreezes.SetAccountFrozen(ctx, request)

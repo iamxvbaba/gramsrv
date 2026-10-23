@@ -63,7 +63,7 @@ const (
 	GifBotAccessHash int64 = 7233282977235616768
 
 	// GiftRelayerUserID is the stable @relayer profile used to host an exported
-	// collectible until its current TON owner claims it to a Gramsrv profile.
+	// collectible until its current TON owner claims it to a ShuzaGram profile.
 	GiftRelayerUserID     int64 = 1250000019
 	GiftRelayerAccessHash int64 = 6184953271048627319
 

@@ -14,7 +14,7 @@
 "About.Description" = "Hız ve güvenlik için MTProto'ya dayalı ücretsiz macOS mesajlaşma uygulaması.";
 "AboutCocoon.Feature.Efficient.Description" = "Cocoon, Telegram'ın çeviri maliyetlerini 6 kat azaltmasına olanak sağladı.";
 "AboutCocoon.Feature.ForEveryone.Title" = "Herkes İçin";
-"AboutCocoon.Footer" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\nBizimle [t.me/cocoon](t.me/cocoon) adresinden iletişime geçin.";
+"AboutCocoon.Footer" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\nBizimle [sgq.me/cocoon](sgq.me/cocoon) adresinden iletişime geçin.";
 "AboutFeature.DisableSharing.NoForwardingDesc" = "Diğer sohbetlere mesaj iletmeyi devre dışı bırakın.";
 "AboutFeature.DisableSharing.NoSavingDesc" = "Metin kopyalamayı ve fotoğraf veya video kaydetmeyi devre dışı bırakın.";
 "AboutFeature.DisableSharing.NoScreenshotsDesc" = "Bu sohbette ekran görüntüsü ve ekran kaydı özelliğini devre dışı bırak.";
@@ -2197,7 +2197,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistem\n%@";
 "EmptyGroupInfo.Line1" = "• %@ kadar üye";
 "EmptyGroupInfo.Line2" = "• Kalıcı sohbet geçmişi";
-"EmptyGroupInfo.Line3" = "• t.me/title gibi herkese açık bağlantılar";
+"EmptyGroupInfo.Line3" = "• sgq.me/title gibi herkese açık bağlantılar";
 "EmptyGroupInfo.Line4" = "• Farklı yetkilere sahip yöneticiler";
 "EmptyGroupInfo.Subtitle" = "Gruplarda şunlar mevcuttur:";
 "EmptyGroupInfo.Title" = "Bir grup oluşturdunuz";
@@ -3662,7 +3662,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Sabitlenmiş Sohbetler";
 "Premium.Boarding.Double.PinnedChats.Info" = "Ana sohbet listenize %@ kadar sohbeti sabitleyin";
 "Premium.Boarding.Double.PublicLinks" = "Genel Bağlantılar";
-"Premium.Boarding.Double.PublicLinks.Info" = "%@ adede kadar t.me/username bağlantısı ayırın";
+"Premium.Boarding.Double.PublicLinks.Info" = "%@ adede kadar sgq.me/username bağlantısı ayırın";
 "Premium.Boarding.Double.SavedGifs" = "Kaydedilen GIF'ler";
 "Premium.Boarding.Double.SavedGifs.Info" = "Favori GIF'lerinize %@ kadar GIF'i kaydedin";
 "Premium.Boarding.Double.Title" = "İki Katı Sınırlar";
@@ -3944,7 +3944,7 @@
 "ProxySettings.CredentialsHeader" = "KİMLİK BİLGİLERİ (İSTEĞE BAĞLI)";
 "ProxySettings.Disabled" = "Kapalı";
 "ProxySettings.Enable" = "Vekil Sunucu";
-"ProxySettings.ExportDescription" = "Panonuz socks5 bağlantısı (**t.me/socks?server=127.0.0.1&port=80**) içeriyorsa hemen uygulanacaktır";
+"ProxySettings.ExportDescription" = "Panonuz socks5 bağlantısı (**sgq.me/socks?server=127.0.0.1&port=80**) içeriyorsa hemen uygulanacaktır";
 "ProxySettings.ExportLink" = "Bağlantıyı panodan dışarı aktar";
 "ProxySettings.IncorrectSecret" = "Yanlış kod. Lütfen tekrar deneyin.";
 "ProxySettings.Item.Available" = "müsait (ping: %@ ms)";

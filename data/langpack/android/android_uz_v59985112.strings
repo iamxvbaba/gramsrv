@@ -2721,11 +2721,11 @@
 "CloseTopic" = "Mavzuni yopish";
 "CloseTopics" = "Mavzularni yopish";
 "CloseTranslation" = "Tarjimani yopish";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Maxfiy";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Barcha uchun";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredByLink" = "**Bu qanday ishlaydi?**";
 "Code" = "Kod";
 "CodeCopied" = "Koddan vaqtinchalik xotiraga nusxa olindi";
@@ -4771,7 +4771,7 @@
 "GroupDeletedUndo" = "Guruh oʻchirib tashlandi";
 "GroupDescription1" = "200 000 tagacha aʼzolar";
 "GroupDescription2" = "Umumiy yozishmalar tarixi";
-"GroupDescription3" = "t.me/title kabi ommaviy havolalar";
+"GroupDescription3" = "sgq.me/title kabi ommaviy havolalar";
 "GroupDescription4" = "Turli xil huquqlarga ega adminlar";
 "GroupEmoji" = "Guruh emojisi";
 "GroupEmojiPack" = "Guruh emojilar toʻplami";
@@ -7489,7 +7489,7 @@
 "PsaType_psa" = "Eʼlon";
 "PublicChannelsTooMuch" = "Kechirasiz, ushbu foydalanuvchida ommaviy guruh yoki kanallar soni maksimalga yetgan. Unga dastlab biror guruh yoki kanalini shaxsiy qilishni taklif qiling.";
 "PublicLink" = "Ommaviy havola";
-"PublicLinksLimitSubtitle" = "%d tagacha t.me/username shaklidagi havoladan foydalaning";
+"PublicLinksLimitSubtitle" = "%d tagacha sgq.me/username shaklidagi havoladan foydalaning";
 "PublicLinksLimitTitle" = "Ommaviy havolalar";
 "PublicPhoto" = "ommaviy rasm";
 "PublicPoll" = "Soʻrovnoma";
@@ -9593,7 +9593,7 @@
 "TelegramFaq" = "Telegram haqida savollar";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram funksiyalari";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "PAROL YARATISH";
 "TelegramPassportCreatePasswordInfo" = "Shaxsiy maʼlumotlaringizni boshidan oxirigacha shifrlash bilan himoyalash uchun parol yarating.\n\nBu parol yangi qurilmada Telegram hisobingizga kirganingizda ham talab qilinadi.";

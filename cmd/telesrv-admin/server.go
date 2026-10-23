@@ -94,6 +94,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/accounts/{id}", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountDetailAPI)))
 	mux.Handle("GET /api/accounts/{id}/avatar", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountAvatarAPI)))
 	mux.Handle("GET /api/channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelsAPI)))
+	mux.Handle("GET /api/auto-subscribe-channels", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleAutoSubscribeChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/channels/{id}/avatar", s.scopedRoute(permissionChannelsRead, http.HandlerFunc(s.handleChannelAvatarAPI)))
 	mux.Handle("GET /api/bots", s.scopedRoute(permissionBotsRead, http.HandlerFunc(s.handleBotsAPI)))
@@ -116,6 +117,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/official-gifts", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleOfficialStarGiftsAPI)))
 	mux.Handle("GET /api/official-gifts/{id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleOfficialStarGiftAnimationAPI)))
 	mux.Handle("GET /api/gifts/{id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftAnimationAPI)))
+	mux.Handle("GET /api/gifts/{id}/collectibles/pending", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handlePendingStarGiftCollectibleAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftCollectiblesAPI)))
 	mux.Handle("GET /api/gifts/{id}/attributes", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleGiftAttributesAPI)))
 	mux.Handle("GET /api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.scopedRoute(permissionGiftsRead, http.HandlerFunc(s.handleStarGiftCollectibleAnimationAPI)))
@@ -147,6 +149,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/donations/deposits", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationDepositsAPI)))
 	mux.Handle("POST /api/actions/donation-chain-update", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleUpdateDonationChainAPI)))
 	mux.Handle("GET /api/item-prices", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleItemPricesAPI)))
+	mux.Handle("GET /api/bot-shop", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleBotShopAPI)))
+	mux.Handle("POST /api/actions/bot-shop", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleSaveBotShopAPI)))
 	mux.Handle("POST /api/actions/item-price-update", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleUpdateItemPriceAPI)))
 	mux.Handle("POST /api/actions/item-price-set-rate", s.scopedRoute(permissionPricesManage, http.HandlerFunc(s.handleSetStarsRateAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.scopedRoute(permissionVerificationReview, http.HandlerFunc(s.handleSetVerifiedAPI)))
@@ -188,8 +192,14 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/import-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportStarGiftAPI)))
 	mux.Handle("POST /api/actions/import-gift-pack", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportGiftPackAPI)))
 	mux.Handle("POST /api/actions/import-official-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleImportOfficialStarGiftAPI)))
+	mux.Handle("POST /api/actions/set-gift-supply", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftSupplyAPI)))
+	mux.Handle("POST /api/actions/set-gift-drop-protection", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftDropProtectionAPI)))
+	mux.Handle("POST /api/actions/delete-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleDeleteStarGiftAPI)))
+	mux.Handle("POST /api/actions/release-collectible-pool", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleReleaseCollectiblePoolAPI)))
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
+	mux.Handle("POST /api/actions/add-auto-subscribe-channel", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleAddAutoSubscribeChannelAPI)))
+	mux.Handle("POST /api/actions/remove-auto-subscribe-channel", s.scopedRoute(permissionChannelsManage, http.HandlerFunc(s.handleRemoveAutoSubscribeChannelAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
 	mux.Handle("POST /api/actions/give-gift", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleGiveGiftAPI)))
 	mux.Handle("POST /api/actions/set-nft-gift-wallet", s.scopedRoute(permissionGiftsManage, http.HandlerFunc(s.handleSetNftGiftWalletAPI)))
@@ -2395,6 +2405,8 @@ type importOfficialStarGiftAPIRequest struct {
 	SlugPrefix         string `json:"slug_prefix"`
 	ReleasedBy         string `json:"released_by_peer"`
 	PerUserTotal       int    `json:"per_user_total"`
+	// Unix seconds at which the collectible pool opens; zero opens it now.
+	CollectiblePublishAt int64 `json:"collectible_publish_at"`
 	// Unix seconds at which the imported gift becomes purchasable. Zero keeps the
 	// snapshot's own release time.
 	LockedUntilDate int `json:"locked_until_date"`
@@ -2417,9 +2429,10 @@ func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.
 		SupportOnly:        body.SupportOnly,
 		IncludeCollectible: body.IncludeCollectible, UpgradeStars: body.UpgradeStars,
 		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
-		ReleasedBy:      body.ReleasedBy,
-		PerUserTotal:    body.PerUserTotal,
-		LockedUntilDate: body.LockedUntilDate,
+		CollectiblePublishAt: body.CollectiblePublishAt,
+		ReleasedBy:           body.ReleasedBy,
+		PerUserTotal:         body.PerUserTotal,
+		LockedUntilDate:      body.LockedUntilDate,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
 	writeCommandResultAPI(w, result, err)
@@ -2435,6 +2448,7 @@ type publishStarGiftCollectiblesAPIRequest struct {
 	Models       []admin.StarGiftCollectibleAnimationUpload `json:"models"`
 	Patterns     []admin.StarGiftCollectibleAnimationUpload `json:"patterns"`
 	Backdrops    []admin.StarGiftCollectibleBackdropInput   `json:"backdrops"`
+	PublishAt    int64                                      `json:"publish_at"`
 }
 
 func (s *server) handlePublishStarGiftCollectiblesAPI(w http.ResponseWriter, r *http.Request) {
@@ -2504,6 +2518,7 @@ func (s *server) handlePublishStarGiftCollectiblesAPI(w http.ResponseWriter, r *
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "publish-gift-collectibles"),
 		GiftID:      giftID, UpgradeStars: body.UpgradeStars, SupplyTotal: body.SupplyTotal,
 		SlugPrefix: body.SlugPrefix, Models: body.Models, Patterns: body.Patterns, Backdrops: body.Backdrops,
+		PublishAt: body.PublishAt,
 	}
 	result, err := s.callAdminCollectibleMultipart(r.Context(), fmt.Sprintf("/v1/gifts/%d/collectibles/publish", giftID), req)
 	writeCommandResultAPI(w, result, err)

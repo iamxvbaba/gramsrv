@@ -242,7 +242,7 @@ func (m *MiniApps) createBot(w http.ResponseWriter, r *http.Request) {
 	if input.About != "" {
 		info, ok := m.bots.(miniAppBotInfoManager)
 		if !ok {
-			warnings = append(warnings, "Bot was created, but about text is not supported by this Gramsrv configuration.")
+			warnings = append(warnings, "Bot was created, but about text is not supported by this ShuzaGram configuration.")
 		} else if _, err := info.SetBotInfo(r.Context(), bot.ID, domain.BotInfoUpdate{SetAbout: true, About: input.About}); err != nil {
 			// Creation has already committed and the token cannot safely be hidden
 			// from the caller. Return it once together with an actionable warning.

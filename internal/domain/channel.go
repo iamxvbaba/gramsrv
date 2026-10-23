@@ -1649,6 +1649,10 @@ type SendChannelMessageRequest struct {
 	Action      *ChannelMessageAction
 	Date        int
 	TTLPeriod   int
+	// AllowPaidStars is the most the sender agreed to pay for this message in
+	// a supergroup that charges for messages. Only the current price is
+	// charged. Not part of the idempotency fingerprint.
+	AllowPaidStars int64
 }
 
 // SendMonoforumMessageRequest 向频道私信(monoforum)发送一条消息。MonoforumID 是 monoforum

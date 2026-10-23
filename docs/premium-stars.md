@@ -13,7 +13,7 @@ existing users, messages, updates, and Stars ledger.
   the current server catalog and an invoice. A fallback command has the form
   `/gift <user_id> <months> [greeting]`.
   Menu and plan buttons are callback buttons handled by the local server; they
-  do not navigate to the public `t.me` service.
+  do not navigate to the public `sgq.me` service.
   Every incoming message and callback also carries the physical auth-key,
   session id, `lang_code`, `system_lang_code`, and `lang_pack` from the exact
   `initConnection` request. The copy is Russian for `ru`, English for all other

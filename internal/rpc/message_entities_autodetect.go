@@ -72,7 +72,7 @@ func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLi
 	}
 
 	// URL 跨度始终计算并加入排除区(occupied),使 @mention/#hashtag 等不会落进 URL 路径内部
-	// (如 https://t.me/@scam 的 @scam,既不符官方语义也是钓鱼风险)。逐跨度补缺可覆盖
+	// (如 https://sgq.me/@scam 的 @scam,既不符官方语义也是钓鱼风险)。逐跨度补缺可覆盖
 	// “客户端带 HTTP entity、但不认识 telesrv://”的混合消息，同时仍避免重复实体。
 	for _, u := range detectURLEntities(message, appLinks) {
 		ln := u.GetLength()

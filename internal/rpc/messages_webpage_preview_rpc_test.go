@@ -89,7 +89,7 @@ func TestAIComposeStyleWebPagePreview(t *testing.T) {
 		t.Fatalf("CreateTone: %v", err)
 	}
 	r := New(Config{}, Deps{AICompose: aiSvc}, zaptest.NewLogger(t), clock.System)
-	link := "https://t.me/addstyle/" + tone.Slug
+	link := "https://sgq.me/addstyle/" + tone.Slug
 
 	media := r.webPagePreviewMedia(ctx, "try "+link, nil)
 	wrap, ok := media.(*tg.MessageMediaWebPage)
@@ -115,7 +115,7 @@ func TestAIComposeStyleWebPagePreview(t *testing.T) {
 		t.Fatalf("attribute = %#v, want ai compose tone emoji", attrs[0])
 	}
 
-	got := r.webPageForURL(ctx, "https://t.me/addstyle?slug="+tone.Slug, 0)
+	got := r.webPageForURL(ctx, "https://sgq.me/addstyle?slug="+tone.Slug, 0)
 	if page, ok := got.Webpage.(*tg.WebPage); !ok {
 		t.Fatalf("getWebPage webpage = %T, want *tg.WebPage", got.Webpage)
 	} else if typ, ok := page.GetType(); !ok || typ != "telegram_aicomposetone" {

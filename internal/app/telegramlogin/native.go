@@ -58,7 +58,7 @@ func NormalizeNativeCallbackURI(raw string, allowHTTP bool) (string, error) {
 		return normalized, err
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if !validAppScheme(scheme) || scheme == "tg" || scheme == "javascript" || scheme == "data" || scheme == "file" || u.Port() != "" {
+	if !validAppScheme(scheme) || scheme == "sg" || scheme == "javascript" || scheme == "data" || scheme == "file" || u.Port() != "" {
 		return "", domain.ErrTelegramLoginURLInvalid
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))

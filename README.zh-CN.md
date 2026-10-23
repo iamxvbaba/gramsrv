@@ -1,12 +1,12 @@
-# gramsrv
+# ShuzaGram
 
 **掌控服务器，使用 MTProto，连接真正的 Telegram 客户端。**
 
-`gramsrv` 是一个用 Go 编写的开源 Telegram 兼容服务器和 MTProto 后端，
+ShuzaGram 是一个用 Go 编写的开源 Telegram 兼容服务器和 MTProto 后端，
 面向自主部署网络、协议研究，以及需要真实客户端兼容能力的社区聊天系统——
 它不只是一个相似的聊天界面。
 
-[English README](README.md) · [官网](https://telesrv.net) · [OwpenGram 客户端](https://owpengram.org/) · [讨论群](https://t.me/telesrv_chat) · [频道](https://t.me/telesrv)
+[English README](README.md) · [官网](https://shuzagram.com) · [OwpenGram 客户端](https://owpengram.org/) · [讨论群](https://sgq.me/telesrv_chat) · [频道](https://sgq.me/telesrv)
 
 ## telesrv-flutter：我们自己的客户端
 
@@ -26,7 +26,7 @@ Windows 实际运行界面。**telesrv-flutter 暂未开放下载。**
 Flutter 构建产品界面与交互，自有 TDLib fork 承接协议与本地状态，telesrv 提供服务端能力。
 我们有能力从头构建客户端，也有能力与服务端一起演进，围绕业务场景定制整套 IM 产品。
 
-[查看客户端介绍](https://telesrv.net/#flutter) · [咨询客户端与 IM 定制](https://t.me/telesrv_net)
+[查看客户端介绍](https://shuzagram.com/#flutter) · [咨询客户端与 IM 定制](https://sgq.me/telesrv_net)
 
 <details>
 <summary>Telegram Desktop 与 Android 兼容客户端截图</summary>
@@ -81,13 +81,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 
 官方 Telegram 客户端需要修改服务器 endpoint 和 RSA key 才能连接；请从
-[项目官网](https://telesrv.net)获取兼容客户端。`main` 默认让包含 SFU/TURN 的单体服务
+[项目官网](https://shuzagram.com)获取兼容客户端。`main` 默认让包含 SFU/TURN 的单体服务
 使用宿主网络；宿主不支持时传入 `-BridgeNetwork`。拆分拓扑、端口与防火墙、备份、升级
 和远程访问说明见 [`v2` Docker 部署手册](../../blob/v2/docs/docker-deployment.md)。
 
 ## 为什么选择 gramsrv
 
-大多数 Telegram clone 复刻的是界面；`gramsrv` 实现的是服务器协议，让兼容
+大多数 Telegram clone 复刻的是界面；ShuzaGram 实现的是服务器协议，让兼容
 客户端能够通过你掌控的基础设施进行通信。
 
 - 完整的 MTProto transport、认证、加密 session、RPC 调度、updates 和多端同步。
@@ -154,11 +154,11 @@ Telegram Desktop 是第一兼容目标，Android、iOS 和 Web 路径也在持�
 ## 客户端
 
 官方 Telegram 客户端信任 Telegram 生产环境的 DC 列表和 RSA keys，因此不能
-直接连接私有服务器。你可以使用[项目官网](https://telesrv.net)提供的兼容客户端，
+直接连接私有服务器。你可以使用[项目官网](https://shuzagram.com)提供的兼容客户端，
 也可以自行构建只修改 endpoint 和 key 的客户端。
 
 [OwpenGram](https://owpengram.org/) 是一个支持多服务器的 Telegram 风格客户端，
-内置 `gramsrv` 支持，可以在官方网络、私有部署和社区节点之间切换。
+内置 ShuzaGram 支持，可以在官方网络、私有部署和社区节点之间切换。
 
 ## 一起建设
 
@@ -169,5 +169,5 @@ Telegram Desktop 是第一兼容目标，Android、iOS 和 Web 路径也在持�
 
 ## 授权与独立性
 
-`gramsrv` 使用 [Apache License 2.0](LICENSE) 发布。本项目是独立的非官方项目，
+ShuzaGram 使用 [Apache License 2.0](LICENSE) 发布。本项目是独立的非官方项目，
 与 Telegram 官方及其团队没有关联，也未获得其背书或赞助。

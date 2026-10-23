@@ -3112,15 +3112,15 @@
 "CloseTopics" = "Închide rubrici";
 "CloseTranslation" = "Închide Traducerea";
 "CocoonFeature1Text" = "Terții nu pot accesa niciun fel de date, precum traducerile, în **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature2Text" = "Cocoon a permis Telegram să reducă costul traducerilor de 6x.";
 "CocoonFeature2Title" = "Eficient";
 "CocoonFeature3Text" = "Orice dezvoltator poate folosi Cocoon pentru funcționalități AI. Mai multe pe **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Pentru Toată lumea";
-"CocoonFooter" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Traducerile sunt bazate pe\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Cum funcționează?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\ngestionează sarcinile AI **sigur** și **efficient**.";
@@ -5752,7 +5752,7 @@
 "GroupDeletedUndo" = "Grup șters";
 "GroupDescription1" = "Până la 200.000 de membri";
 "GroupDescription2" = "Istoric persistent";
-"GroupDescription3" = "Linkuri publice ca t.me/titlu";
+"GroupDescription3" = "Linkuri publice ca sgq.me/titlu";
 "GroupDescription4" = "Admini cu drepturi diferite";
 "GroupEmoji" = "Emoji de Grup";
 "GroupEmojiPack" = "Pachet Emoji de Grup";
@@ -8763,7 +8763,7 @@
 "PsaType_psa" = "Anunț";
 "PublicChannelsTooMuch" = "Ne pare rău, utilizatorul țintă are prea multe grupuri sau canale publice deja. Roagă-l să facă unul dintre grupurile sau canalele existente privat mai întâi.";
 "PublicLink" = "Link public";
-"PublicLinksLimitSubtitle" = "Rezervă până la %d de linkuri t.me/username";
+"PublicLinksLimitSubtitle" = "Rezervă până la %d de linkuri sgq.me/username";
 "PublicLinksLimitTitle" = "Linkuri Publice";
 "PublicPhoto" = "poză publică";
 "PublicPoll" = "Sondaj";
@@ -11175,7 +11175,7 @@
 "TelegramFaq" = "Întrebări Frecvente";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Funcționalități Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Pașaport Telegram";
 "TelegramPassportCreatePassword" = "CREEAZĂ O PAROLĂ";
 "TelegramPassportCreatePasswordInfo" = "Creează o parolă pentru a îți securiza datele personale cu criptare end-to-end.\n\nAceasta va fi necesară și atunci când te conectezi la Telegram de pe un nou dispozitiv.";

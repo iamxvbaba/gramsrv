@@ -927,16 +927,16 @@ func (s *Service) deepLinkToken(rawURL string) (string, error) {
 	switch {
 	case s.appLinks.MatchesRoute(u, "oauth"):
 		token, _ = singleQueryValue(query, "token")
-	case strings.EqualFold(u.Scheme, "tg") && strings.EqualFold(u.Host, "oauth") && u.Path == "":
+	case strings.EqualFold(u.Scheme, "sg") && strings.EqualFold(u.Host, "oauth") && u.Path == "":
 		token, _ = singleQueryValue(query, "token")
 	case (s.appLinks.MatchesLegacyRoute(u, "resolve") ||
-		(strings.EqualFold(u.Scheme, "tg") && strings.EqualFold(u.Host, "resolve") && u.Path == "")):
+		(strings.EqualFold(u.Scheme, "sg") && strings.EqualFold(u.Host, "resolve") && u.Path == "")):
 		domainValue, domainOK := singleQueryValue(query, "domain")
 		startApp, startAppOK := singleQueryValue(query, "startapp")
 		if domainOK && startAppOK && strings.EqualFold(domainValue, "oauth") {
 			token = startApp
 		}
-	case strings.EqualFold(u.Scheme, "https") && (strings.EqualFold(u.Hostname(), "t.me") || strings.EqualFold(u.Hostname(), "telegram.me")) && strings.Trim(u.Path, "/") == "oauth":
+	case strings.EqualFold(u.Scheme, "https") && strings.EqualFold(u.Hostname(), "sgq.me") && strings.Trim(u.Path, "/") == "oauth":
 		token, _ = singleQueryValue(query, "startapp")
 	default:
 		return "", domain.ErrTelegramLoginURLInvalid

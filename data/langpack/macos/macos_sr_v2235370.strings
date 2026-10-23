@@ -36,7 +36,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Доступно свима";
 "AboutCocoon.Feature.Private.Description" = "Трећа лица не могу приступити вашим подацима, укључујући преводе, у оквиру Cocoon-а.";
 "AboutCocoon.Feature.Private.Title" = "Поверљиво";
-"AboutCocoon.Footer" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Онемогући дељење";
 "AboutFeature.DisableSharing.NoForwarding" = "Без прослеђивања";
@@ -486,7 +486,7 @@
 "Bot.AllowSendMessages" = "Дозволи да ми **%@** шаље поруке.";
 "Bot.Grossing.Disclaimer" = "Које апликације су овде приказане? [Сазнај >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Најбоље мини-апликације";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Овај каталог рангира мини-апликације на основу њиховог дневног прихода израженог у звездицама. Да би била на овом списку, програмери морају подесити своју главну мини-апликацију у [@botfather](https://t.me/botfather) (као што је описано [овде](https://core.telegram.org/api/bots/webapps)), да има преко **1.000** корисника дневно и да остварује дневни приход већи од **1.000** звездица на основу недељног просека.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Овај каталог рангира мини-апликације на основу њиховог дневног прихода израженог у звездицама. Да би била на овом списку, програмери морају подесити своју главну мини-апликацију у [@botfather](https://sgq.me/botfather) (као што је описано [овде](https://core.telegram.org/api/bots/webapps)), да има преко **1.000** корисника дневно и да остварује дневни приход већи од **1.000** звездица на основу недељног просека.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "У реду";
 "Bot.InlineAuth.Header" = "Отварање везе";
 "Bot.InlineAuth.Open" = "Отвори";
@@ -3616,7 +3616,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Систем\n%@";
 "EmptyGroupInfo.Line1" = "• До %@ чланова";
 "EmptyGroupInfo.Line2" = "• Трајну историју ћаскања";
-"EmptyGroupInfo.Line3" = "• Јавне везе као t.me/naziv";
+"EmptyGroupInfo.Line3" = "• Јавне везе као sgq.me/naziv";
 "EmptyGroupInfo.Line4" = "• Админе с различитим правима";
 "EmptyGroupInfo.Subtitle" = "Групе могу имати:";
 "EmptyGroupInfo.Title" = "Направили сте групу";
@@ -5797,7 +5797,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Закачена ћаскања";
 "Premium.Boarding.Double.PinnedChats.Info" = "Закачите до %@ ћаскања на главном списку ћаскања";
 "Premium.Boarding.Double.PublicLinks" = "Јавне везе";
-"Premium.Boarding.Double.PublicLinks.Info" = "Резервишите до %@ веза t.me/korisnickoime";
+"Premium.Boarding.Double.PublicLinks.Info" = "Резервишите до %@ веза sgq.me/korisnickoime";
 "Premium.Boarding.Double.SavedGifs" = "Сачувани GIF-ови";
 "Premium.Boarding.Double.SavedGifs.Info" = "Сачувајте до %@ омиљених GIF-ова";
 "Premium.Boarding.Double.Title" = "Удвостручена ограничења";
@@ -6231,7 +6231,7 @@
 "ProxySettings.CredentialsHeader" = "ПОДАЦИ ЗА ПРИСТУП (НЕОБАВЕЗНО)";
 "ProxySettings.Disabled" = "Онемогућено";
 "ProxySettings.Enable" = "Прокси";
-"ProxySettings.ExportDescription" = "Ако ваша привремена остава садржи socks5-везу(**t.me/socks?server=127.0.0.1&port=80**) примениће се одмах";
+"ProxySettings.ExportDescription" = "Ако ваша привремена остава садржи socks5-везу(**sgq.me/socks?server=127.0.0.1&port=80**) примениће се одмах";
 "ProxySettings.ExportLink" = "Извези везу из привремене оставе";
 "ProxySettings.IncorrectSecret" = "Погрешан тајни кључ. Покушајте поново.";
 "ProxySettings.Item.Available" = "доступно (пинг: %@ мс)";
@@ -8463,7 +8463,7 @@
 "TranslateModal.PromptPlaceholder" = "Опишите како преобликовати текст…";
 "TranslateModal.PromptStyle" = "Упит";
 "TranslateModal.ShareStyle" = "Подели стил";
-"TranslateModal.StyleByAuthor" = "Творац стила [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Творац стила [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Прескочи";
 "TwoStepAuth.AnError" = "Дошло је до грешке. Покушајте поново касније.";
 "TwoStepAuth.CancelReset" = "Откажи ресетовање";

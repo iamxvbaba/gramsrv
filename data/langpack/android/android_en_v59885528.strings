@@ -2847,15 +2847,15 @@
 "CloseTopics" = "Close topics";
 "CloseTranslation" = "Close Translation";
 "CocoonFeature1Text" = "No third party can access any data, such as translations, inside **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Private";
 "CocoonFeature2Text" = "Cocoon has allowed Telegram to reduce translation cost by 6x.";
 "CocoonFeature2Title" = "Efficient";
 "CocoonFeature3Text" = "Any developer can use Cocoon for AI features. Learn more at **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "For Everyone";
-"CocoonFooter" = "Want to integrate Cocoon into your projects?\nReach out at **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Want to integrate Cocoon into your projects?\nReach out at **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Translations are powered by\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**How does it work?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nhandles AI tasks safely and efficiently.";
@@ -5182,7 +5182,7 @@
 "GroupDeletedUndo" = "Group deleted";
 "GroupDescription1" = "Up to 200,000 members";
 "GroupDescription2" = "Persistent chat history";
-"GroupDescription3" = "Public links such as t.me/title";
+"GroupDescription3" = "Public links such as sgq.me/title";
 "GroupDescription4" = "Admins with different rights";
 "GroupEmoji" = "Group Emoji";
 "GroupEmojiPack" = "Group Emoji Pack";
@@ -8038,7 +8038,7 @@
 "PsaType_psa" = "Announcement";
 "PublicChannelsTooMuch" = "Sorry, the target user has too many public groups or channels already. Please ask them to make one of their existing groups or channels private first.";
 "PublicLink" = "Public link";
-"PublicLinksLimitSubtitle" = "Reserve up to %d t.me/username links";
+"PublicLinksLimitSubtitle" = "Reserve up to %d sgq.me/username links";
 "PublicLinksLimitTitle" = "Public Links";
 "PublicPhoto" = "public photo";
 "PublicPoll" = "Poll";
@@ -10310,7 +10310,7 @@
 "TelegramFaq" = "Telegram FAQ";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram Features";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "CREATE A PASSWORD";
 "TelegramPassportCreatePasswordInfo" = "Please create a password to secure your personal data with end-to-end encryption.\n\nThis password will also be required whenever you log in to Telegram on a new device.";

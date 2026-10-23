@@ -2918,15 +2918,15 @@
 "CloseTopics" = "Тақырыпты жабу";
 "CloseTranslation" = "Аударманы жабу";
 "CocoonFeature1Text" = "**@Cocoon** ішінде орындалатын деректерге, соның ішінде аудармаларға, ешбір үшінші тарап қол жеткізе алмайды.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Жабық";
 "CocoonFeature2Text" = "Cocoon Telegram-ға аударма шығындарын 6 есе азайтуға мүмкіндік берді.";
 "CocoonFeature2Title" = "Тиімді";
 "CocoonFeature3Text" = "Кез келген әзірлеуші Cocoon-ды ЖИ мүмкіндіктері үшін қолдана алады. Толығырақ: **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Баршаға қолжетімді";
-"CocoonFooter" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n**t.me/cocoon?direct** арқылы хабарласыңыз.";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n**sgq.me/cocoon?direct** арқылы хабарласыңыз.";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Аударма **🥚 Cocoon** арқылы\nжасалады.";
 "CocoonPoweredByLink" = "**Бұл қалай істейді?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nЖИ тапсырмаларын қауіпсіз әрі тиімді түрде орындайды.";
@@ -5387,7 +5387,7 @@
 "GroupDeletedUndo" = "Топ жойылды";
 "GroupDescription1" = "200 000 мүше бола алады";
 "GroupDescription2" = "Чат тарихы сақтаулы тұрады";
-"GroupDescription3" = "t.me/silteme секілді сілтеме жасай аласыз";
+"GroupDescription3" = "sgq.me/silteme секілді сілтеме жасай аласыз";
 "GroupDescription4" = "Әкімшіге басқару құқын бере аласыз";
 "GroupEmoji" = "Топ эмоджиі";
 "GroupEmojiPack" = "Топтың эмоджи жинағы";
@@ -8255,7 +8255,7 @@
 "PsaType_psa" = "Хабарландыру";
 "PublicChannelsTooMuch" = "Таңдалған қолданушы өте көп жария топ пен арна құрған екен. Әуелі солардың бірін жабық етсін деп айтыңызшы.";
 "PublicLink" = "Жария сілтеме";
-"PublicLinksLimitSubtitle" = "%d t.me/username сілтеме жасай алыңыз";
+"PublicLinksLimitSubtitle" = "%d sgq.me/username сілтеме жасай алыңыз";
 "PublicLinksLimitTitle" = "Жария сілтеме";
 "PublicPhoto" = "жария сурет";
 "PublicPoll" = "Сауалнама";
@@ -10531,7 +10531,7 @@
 "TelegramFaq" = "Telegram ЖҚС";
 "TelegramFaqUrl" = "https://telegram.org/faq/kk";
 "TelegramFeatures" = "Telegram кеңесшісі";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram төлқұжат";
 "TelegramPassportCreatePassword" = "ҚҰПИЯСӨЗДІ ҚҰРУ";
 "TelegramPassportCreatePasswordInfo" = "Жеке мәліметтеріңізді end-to-end арқылы шифрлау үшін құпиясөз құрыңыз.\n\nБұл құпиясөз, сондай-ақ, жаңа құрылғыда Telegram-ға кірген сайын талап етіледі.";

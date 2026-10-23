@@ -424,7 +424,7 @@
 "CocoonDescription" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork) выконвае задачы AI бяспечна і эфектыўна.";
 "CocoonFeature1Text" = "Ніводная старонняя асоба не можа атрымаць доступ да якіх-небудзь даных, у тым ліку да перакладаў, унутры **{username}**.";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon дазволіў Telegram знізіць кошт перакладу ў 6 разоў.";
 "CocoonFeature2Title" = "Эфектыўнасць";
 "CocoonFeature3LinkText" = "cocoon.org";
@@ -609,7 +609,7 @@
 "EmptyChatAppearanceLight" = "Светлая";
 "EmptyChatAppearanceSystem" = "Сістэмная";
 "EmptyGroupInfoLine2" = "• Захаваную гісторыю чата";
-"EmptyGroupInfoLine3" = "• Публічныя спасылкі, такія як t.me/title";
+"EmptyGroupInfoLine3" = "• Публічныя спасылкі, такія як sgq.me/title";
 "EmptyGroupInfoLine4" = "• Кіраўнікі з рознымі правамі";
 "EmptyGroupInfoSubtitle" = "Суполкі могуць мець:";
 "EmptyGroupInfoTitle" = "Вы стварылі суполку";
@@ -1400,7 +1400,7 @@
 "ProfileTabStoriesArchive" = "Архіў гісторый";
 "ProfileViewChannel" = "Адкрыць канал";
 "PublicLink" = "Публічная спасылка";
-"PublicLinksLimitSubtitle" = "Рэзервуйце t.me/username спасылкі да {count} штук";
+"PublicLinksLimitSubtitle" = "Рэзервуйце sgq.me/username спасылкі да {count} штук";
 "PublicLinksLimitTitle" = "Публічныя спасылкі";
 "PublicPoll" = "Апытанне";
 "PublicPostsLimitReached" = "Дасягнуты ліміт";

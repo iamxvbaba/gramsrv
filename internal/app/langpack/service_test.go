@@ -215,7 +215,7 @@ func TestServiceRebrandsEveryLanguagePackProjection(t *testing.T) {
 			t.Fatalf("%s projection: %v", name, err)
 		}
 		appName := findLangPackString(pack.Strings, "AppName")
-		if appName == nil || appName.Value != "Telesrv" || appName.ZeroValue != "No Telesrv accounts" || appName.OneValue != "One Telesrv account" || appName.TwoValue != "Two Telesrv accounts" || appName.FewValue != "Few Telesrv accounts" || appName.ManyValue != "Many Telesrv accounts" || appName.OtherValue != "Other Telesrv accounts" {
+		if appName == nil || appName.Value != "ShuzaGram" || appName.ZeroValue != "No ShuzaGram accounts" || appName.OneValue != "One ShuzaGram account" || appName.TwoValue != "Two ShuzaGram accounts" || appName.FewValue != "Few ShuzaGram accounts" || appName.ManyValue != "Many ShuzaGram accounts" || appName.OtherValue != "Other ShuzaGram accounts" {
 			t.Fatalf("%s AppName = %+v, want all value forms rebranded", name, appName)
 		}
 		if got := stringValue(pack.Strings, "TranslationLink"); got != "https://chat.example/root/en" {
@@ -230,7 +230,7 @@ func TestServiceRebrandsEveryLanguagePackProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list languages: %v", err)
 	}
-	if len(languages) != 1 || languages[0].Name != "Telesrv English" || languages[0].NativeName != "Telesrv English" || languages[0].TranslationsURL != "https://chat.example/root/en" {
+	if len(languages) != 1 || languages[0].Name != "ShuzaGram English" || languages[0].NativeName != "ShuzaGram English" || languages[0].TranslationsURL != "https://chat.example/root/en" {
 		t.Fatalf("languages = %+v, want branded metadata", languages)
 	}
 }

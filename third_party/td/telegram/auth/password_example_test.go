@@ -1,0 +1,104 @@
+package auth_test
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/go-faster/errors"
+
+	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/auth"
+)
+
+func ExampleClient_UpdatePassword() {
+	ctx := context.Background()
+	client := telegram.NewClient(telegram.TestAppID, telegram.TestAppHash, telegram.Options{})
+	if err := client.Run(ctx, func(ctx context.Context) error {
+		// Updating password.
+		if err := client.Auth().UpdatePassword(ctx, "new_password", auth.UpdatePasswordOptions{
+			// Hint sets new password hint.
+			Hint: "new password hint",
+			// Password will be called if old password is requested by Telegram.
+			//
+			// If password was requested and Password is nil, auth.ErrPasswordNotProvided error will be returned.
+			Password: func(ctx context.Context) (string, error) {
+				return "old_password", nil
+			},
+		}); err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+}
+
+func ExampleClient_RecoverPassword() {
+	ctx := context.Background()
+	client := telegram.NewClient(telegram.TestAppID, telegram.TestAppHash, telegram.Options{})
+	if err := client.Run(ctx, func(ctx context.Context) error {
+		// Request a recovery code to be sent to the recovery email.
+		recovery, err := client.Auth().RequestPasswordRecovery(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Recovery code was sent to %s.\n", recovery.EmailPattern)
+
+		// Code received via the recovery email.
+		code := "123456"
+
+		// Optionally check the code before resetting the password.
+		ok, err := client.Auth().CheckRecoveryPassword(ctx, code)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Println("Invalid recovery code.")
+			return nil
+		}
+
+		// Reset the 2FA password using the recovery code and set a new one.
+		//
+		// Leave NewPassword empty to remove the 2FA password instead.
+		if _, err := client.Auth().RecoverPassword(ctx, auth.RecoverPasswordOptions{
+			Code:        code,
+			NewPassword: "new_password",
+			Hint:        "new password hint",
+		}); err != nil {
+			return err
+		}
+
+		fmt.Println("Password was recovered.")
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+}
+
+func ExampleClient_ResetPassword() {
+	ctx := context.Background()
+	client := telegram.NewClient(telegram.TestAppID, telegram.TestAppHash, telegram.Options{})
+	if err := client.Run(ctx, func(ctx context.Context) error {
+		wait, err := client.Auth().ResetPassword(ctx)
+		var waitErr *auth.ResetFailedWaitError
+		switch {
+		case errors.As(err, &waitErr):
+			// Telegram requested wait until making new reset request.
+			fmt.Printf("Wait until %s to reset password.\n", wait.String())
+		case err != nil:
+			return err
+		}
+
+		// If returned time is zero, password was successfully reset.
+		if wait.IsZero() {
+			fmt.Println("Password was reset.")
+			return nil
+		}
+
+		fmt.Printf("Password will be reset on %s.\n", wait.String())
+		return nil
+	}); err != nil {
+		panic(err)
+	}
+}

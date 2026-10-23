@@ -1,13 +1,13 @@
-# gramsrv
+# ShuzaGram
 
 **Own the server. Speak MTProto. Use real Telegram clients.**
 
-`gramsrv` is an open-source Telegram-compatible server and MTProto backend
+ShuzaGram is an open-source Telegram-compatible server and MTProto backend
 written in Go. It is built for self-hosted networks, protocol research, and
 community-driven chat systems that need real client compatibility—not just a
 Telegram-like interface.
 
-[Website](https://telesrv.net) · [OwpenGram client](https://owpengram.org/) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
+[Website](https://shuzagram.com) · [OwpenGram client](https://owpengram.org/) · [Discussion group](https://sgq.me/telesrv_chat) · [Channel](https://sgq.me/telesrv) · [中文 README](README.zh-CN.md)
 
 ## telesrv-flutter: our own client
 
@@ -28,17 +28,17 @@ Actual Windows application. **telesrv-flutter downloads are not yet available.**
   side, with layouts, themes, and window interactions we can continue to develop.
 
 Flutter powers the product interface. Our maintained TDLib fork handles
-protocol and local state, with telesrv providing the server. We can build the
+protocol and local state, with ShuzaGram providing the server. We can build the
 client and evolve it alongside the server to tailor an IM product to your needs.
 
-[Client showcase](https://telesrv.net/#flutter) · [Discuss client and IM customization](https://t.me/telesrv_net)
+[Client showcase](https://shuzagram.com/#flutter) · [Discuss client and IM customization](https://sgq.me/telesrv_net)
 
 <details>
 <summary>Telegram Desktop and Android compatibility screenshots</summary>
 
 <p align="center">
-  <img src="docs/assets/gramsrv-telegram-desktop.png" width="68%" alt="gramsrv running with Telegram Desktop">
-  <img src="docs/assets/gramsrv-android.png" width="23%" alt="gramsrv running on Android">
+  <img src="docs/assets/gramsrv-telegram-desktop.png" width="68%" alt="ShuzaGram running with Telegram Desktop">
+  <img src="docs/assets/gramsrv-android.png" width="23%" alt="ShuzaGram running on Android">
 </p>
 
 </details>
@@ -94,7 +94,7 @@ host's LAN address:
 ```
 
 Stock Telegram clients require an endpoint and RSA-key patch. Use a compatible
-client from the [project website](https://telesrv.net). On `main`, the monolith
+client from the [project website](https://shuzagram.com). On `main`, the monolith
 uses host networking by default for SFU/TURN; pass `-BridgeNetwork` only when
 host networking is unavailable. The [`v2` Docker deployment runbook](../../blob/v2/docs/docker-deployment.en.md)
 covers the split topology, firewall, backup, upgrade, and remote access.
@@ -112,9 +112,9 @@ the configuration as a single verifiable bundle, and restores it on another host
 
 See [docs/backup-restore.md](docs/backup-restore.md) for the migration runbook.
 
-## Why gramsrv
+## Why ShuzaGram
 
-Most Telegram clones reproduce the interface. `gramsrv` implements the server
+Most Telegram clones reproduce the interface. ShuzaGram implements the server
 side of the protocol so compatible clients can communicate through
 infrastructure you control.
 
@@ -217,11 +217,11 @@ repository.
 
 Stock Telegram clients trust Telegram's production data centers and RSA keys,
 so they do not connect to private servers without a small endpoint and key
-patch. Use a compatible client from the [project website](https://telesrv.net)
+patch. Use a compatible client from the [project website](https://shuzagram.com)
 or build your own patched client.
 
 [OwpenGram](https://owpengram.org/) is a multi-server Telegram-style client
-with built-in support for `gramsrv`, private deployments, community nodes, and
+with built-in support for ShuzaGram, private deployments, community nodes, and
 the official network from one client experience.
 
 ## Build it with us
@@ -235,6 +235,6 @@ language pack.
 
 ## License and independence
 
-`gramsrv` is released under the [Apache License 2.0](LICENSE). It is independent
+ShuzaGram is released under the [Apache License 2.0](LICENSE). It is independent
 and unofficial, and is not affiliated with, endorsed by, or sponsored by
 Telegram or its official team.

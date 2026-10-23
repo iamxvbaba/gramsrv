@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "人人都可以用";
 "AboutCocoon.Feature.Private.Description" = "任何第三方都无法访问 Cocoon 内的任何数据，包括翻译。";
 "AboutCocoon.Feature.Private.Title" = "隐私";
-"AboutCocoon.Footer" = "想在您的项目中集成 Cocoon 吗？\n请通过\u00a0 [t.me/cocoon](t.me/cocoon)\u00a0联系我们。";
+"AboutCocoon.Footer" = "想在您的项目中集成 Cocoon 吗？\n请通过\u00a0 [sgq.me/cocoon](sgq.me/cocoon)\u00a0联系我们。";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "禁用分享";
 "AboutFeature.DisableSharing.NoForwarding" = "禁止转发";
@@ -3149,7 +3149,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "系统\n%@";
 "EmptyGroupInfo.Line1" = "• 最多 %@ 位成员";
 "EmptyGroupInfo.Line2" = "• 永久聊天记录";
-"EmptyGroupInfo.Line3" = "• 公开链接，例如：t.me/title";
+"EmptyGroupInfo.Line3" = "• 公开链接，例如：sgq.me/title";
 "EmptyGroupInfo.Line4" = "• 具备不同权限的管理员";
 "EmptyGroupInfo.Subtitle" = "群组可以拥有：";
 "EmptyGroupInfo.Title" = "您已创建一个群组";
@@ -5165,7 +5165,7 @@
 "Premium.Boarding.Double.PinnedChats" = "已置顶聊天";
 "Premium.Boarding.Double.PinnedChats.Info" = "在主聊天列表中置顶高达 %@ 个聊天";
 "Premium.Boarding.Double.PublicLinks" = "公共链接";
-"Premium.Boarding.Double.PublicLinks.Info" = "最多保留 %@ 个t.me/name 链接";
+"Premium.Boarding.Double.PublicLinks.Info" = "最多保留 %@ 个sgq.me/name 链接";
 "Premium.Boarding.Double.SavedGifs" = "保存的 GIF";
 "Premium.Boarding.Double.SavedGifs.Info" = "在 GIF 动态图收藏中存储高达 %@ 张 GIF 动态图";
 "Premium.Boarding.Double.Title" = "双倍上限";
@@ -5577,7 +5577,7 @@
 "ProxySettings.CredentialsHeader" = "认证信息（可选）";
 "ProxySettings.Disabled" = "已停用";
 "ProxySettings.Enable" = "代理";
-"ProxySettings.ExportDescription" = "如果你的剪贴板内含有 socks5-link (**t.me/socks?server=127.0.0.1&port=80**) ，它将立即显示";
+"ProxySettings.ExportDescription" = "如果你的剪贴板内含有 socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) ，它将立即显示";
 "ProxySettings.ExportLink" = "从剪贴板导出链接";
 "ProxySettings.IncorrectSecret" = "密码不正确，请重试。";
 "ProxySettings.Item.Available" = "可用（ping：%@ 毫秒）";
@@ -7527,7 +7527,7 @@
 "TranslateModal.DeleteStyleHeader" = "删除风格";
 "TranslateModal.EditStyle" = "编辑风格";
 "TranslateModal.ShareStyle" = "分享风格";
-"TranslateModal.StyleByAuthor" = "风格作者：[@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "风格作者：[@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "跳过";
 "TwoStepAuth.AnError" = "发生错误，请稍后再试。";
 "TwoStepAuth.CancelReset" = "取消重置";

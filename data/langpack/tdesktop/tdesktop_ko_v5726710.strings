@@ -2954,7 +2954,7 @@
 "lng_factcheck_add_done" = "팩트체크가 추가되었습니다.";
 "lng_factcheck_bottom" = "이 해명은 텔레그램에 의해 제공되었습니다.";
 "lng_factcheck_edit_done" = "팩트체크가 수정되었습니다.";
-"lng_factcheck_links" = "**t.me/** 링크만 허용됩니다.";
+"lng_factcheck_links" = "**sgq.me/** 링크만 허용됩니다.";
 "lng_factcheck_placeholder" = "사실 또는 문맥 추가";
 "lng_factcheck_remove_done" = "팩트 체크가 제거되었습니다.";
 "lng_factcheck_title" = "팩트체크";
@@ -3788,7 +3788,7 @@
 "lng_greeting_title" = "인사 메시지";
 "lng_group_about1" = "200,000명까지 참가할 수 있습니다";
 "lng_group_about2" = "대화 내용이 보존됩니다";
-"lng_group_about3" = "공개 링크를 t.me/제목으로 둘 수 있습니다";
+"lng_group_about3" = "공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "lng_group_about4" = "여러 권한의 관리자를 세울 수 있습니다";
 "lng_group_about_header" = "그룹을 만들었습니다.";
 "lng_group_about_text" = "그룹은";
@@ -5473,7 +5473,7 @@
 "lng_premium_double_limits_about_folder_chats#other" = "폴더마다 최대 {count}개의 대화방을 추가할 수 있어요";
 "lng_premium_double_limits_about_folders#other" = "대화방을 {count}개의 폴더로 정리할 수 있어요";
 "lng_premium_double_limits_about_gifs#other" = "즐겨찾는 GIF에 최대 {count}개의 GIF를 저장할 수 있어요";
-"lng_premium_double_limits_about_links#other" = "최대 {count}개의 t.me/username 링크를 마련할 수 있어요";
+"lng_premium_double_limits_about_links#other" = "최대 {count}개의 sgq.me/username 링크를 마련할 수 있어요";
 "lng_premium_double_limits_about_pins#other" = "메인 대화 목록에 최대 {count}개의 대화방을 고정할 수 있어요";
 "lng_premium_double_limits_about_similar_channels#other" = "비슷한 채널을 최대 {count}개까지 볼 수 있어요";
 "lng_premium_double_limits_about_stickers#other" = "즐겨찾는 스티커에 최대 {count}개의 스티커를 저장할 수 있어요";
@@ -7786,7 +7786,7 @@
 "lng_tag_info_title_owner" = "소유자 태그";
 "lng_tag_info_title_user" = "멤버 태그";
 "lng_tagged_view_saved" = "보기";
-"lng_telegram_features_url" = "https://t.me/TelegramTipsKo";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTipsKo";
 "lng_terms_age#other" = "나는 {count}세 이상임을 확인합니다.";
 "lng_terms_agree" = "동의하고 계속";
 "lng_terms_agree_to_proceed" = "동의하여 {bot}(으)로 진행해 주세요.";
@@ -7896,7 +7896,7 @@
 "lng_translate_cocoon_private_title" = "비공개";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text})은 AI 작업을 **안전하고** **효율적으로** 처리합니다.";
 "lng_translate_cocoon_text" = "프로젝트에 Cocoon을 통합하고 싶으신가요?\n{link}로 문의하세요";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "COCOON";
 "lng_translate_dont_added" = "{name}이(가) 번역하지 않음 목록에 추가되었습니다.";
 "lng_translate_hidden_channel" = "이제 채널에서 번역 바가 숨겨졌습니다.";

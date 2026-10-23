@@ -981,9 +981,9 @@
 "Business.Links.LinksSectionHeader" = "لینک\u200cهای گفتگو";
 "Business.Links.PreviewText" = "پیامی را اضافه کنید که در قسمت نوشتن پیام برای هر کسی که با استفاده از لینک زیر گفتگویی را با شما شروع می\u200cکند، نمایش داده شود:";
 "Business.Links.PreviewTitle" = "لینک گفتگو";
-"Business.Links.SimpleLinkInfoPhone" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [t.me/\u2060+\u2060\u2068%@\u2069](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [t.me/\u2068%@\u2069](username)";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [t.me/\u2068%1$@\u2069](username) یا [t.me/\u2060+\u2060\u2068%2$@\u2069](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [sgq.me/\u2060+\u2060\u2068%@\u2069](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [sgq.me/\u2068%@\u2069](username)";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "شما همچنین می\u200cتوانید از لینک ساده\u200cای برای گفتگو با خود استفاده کنید؛ [sgq.me/\u2068%1$@\u2069](username) یا [sgq.me/\u2060+\u2060\u2068%2$@\u2069](phone).";
 "Business.Links.Text" = "به مشتریان خود لینک\u200cهای کوتاهی برای شروع گفتگو با خودتان بدهید و اولین پیام آن\u200cها به خودتان را پیشنهاد دهید.";
 "Business.LinksInfo" = "لینک\u200cهایی را برای شروع گفتگو با خود ایجاد کنید و اولین پیام را پیشنهاد دهید.";
 "Business.Location" = "موقعیت مکانی";
@@ -1843,7 +1843,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "نام کانال\u200cها نمی\u200cتوانند با _ شروع شود.";
 "Channel.Username.InvalidTaken" = "متأسفانه این لینک قبلاً انتخاب شده است.";
 "Channel.Username.InvalidTooShort" = "لینک\u200cهای عمومی باید حداقل 5 کاراکتر داشته باشند.";
-"Channel.Username.LinkHint" = "این لینک کانال شما را باز می\u200cکند:[\nhttps://t.me/\u2068%@\u2069]";
+"Channel.Username.LinkHint" = "این لینک کانال شما را باز می\u200cکند:[\nhttps://sgq.me/\u2068%@\u2069]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "شما می\u200cتوانید لینک یکی از گروه\u200cها یا کانال\u200cهای قدیمی\u200cتر خود را باطل کرده، یا در عوض یک لینک خصوصی ایجاد کنید.";
 "Channel.Username.Title" = "لینک";
 "Channel.Username.UsernameIsAvailable" = "\u2068%@\u2069 در دسترس است.";
@@ -3357,7 +3357,7 @@
 "CocoonInfo.Efficient.Title" = "کارآمد";
 "CocoonInfo.ForEveryone.Text" = "هر توسعه\u200cدهنده\u200cای می\u200cتواند از [Cocoon](telegram) برای قابلیت\u200cهای هوش مصنوعی استفاده کند. برای اطلاعات بیشتر به [cocoon.org](web) مراجعه کنید.";
 "CocoonInfo.ForEveryone.Title" = "برای همه";
-"CocoonInfo.IntergrateInfo" = "می\u200cخواهید Cocoon را در پروژه\u200cهای خود همگام\u200cسازی کنید؟\nبا ما در [t.me/cocoon?direct]() تماس بگیرید";
+"CocoonInfo.IntergrateInfo" = "می\u200cخواهید Cocoon را در پروژه\u200cهای خود همگام\u200cسازی کنید؟\nبا ما در [sgq.me/cocoon?direct]() تماس بگیرید";
 "CocoonInfo.Private.Text" = "هیچ شخص ثالثی نمی\u200cتواند به هیچ داده\u200cای، از جمله ترجمه\u200cها، در cocoon دسترسی داشته باشد.";
 "CocoonInfo.Private.Title" = "خصوصی";
 "CocoonInfo.Title" = "COCOON";
@@ -4152,7 +4152,7 @@
 "CreateBot.UsernameStatus.Invalid" = "فقط می\u200cتوانید از کاراکترهای **9-0**، **a-z** و زیرخط استفاده کنید.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "نمی\u200cتوانید بیش از \u2068%d\u2069 ربات ایجاد کنید.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "نمی\u200cتوانید بیش از \u2068%d\u2069 ربات ایجاد کنید.";
-"CreateBot.UsernameStatus.Link" = "لینک: t.me/\u2068%@\u2069";
+"CreateBot.UsernameStatus.Link" = "لینک: sgq.me/\u2068%@\u2069";
 "CreateBot.UsernameStatus.Number" = "نام کاربری نمی\u200cتواند با شماره آغاز شود.";
 "CreateBot.UsernameStatus.Short" = "نام کاربری باید حداقل 5 کاراکتر داشته باشد.";
 "CreateBot.UsernameStatus.Taken" = "این نام کاربری در حال حاضر انتخاب شده است.";
@@ -4527,7 +4527,7 @@
 "EmojiStickerSettings.Info" = "هنرمندان می\u200cتوانند با استفاده از ربات [@stickers]() ما، بسته\u200cهای اموجی خودشان را اضافه کنند.\n\nبر روی یک پیام بزنید و نگه دارید تا کل بسته را مشاهده نموده و آن را به بسته\u200cهای  خود اضافه کنید.";
 "EmptyGroupInfo.Line1" = "تا سقف 200,000 عضو";
 "EmptyGroupInfo.Line2" = "تاریخچه گفتگوی دائم";
-"EmptyGroupInfo.Line3" = "لینک\u200cهای عمومی مانند t.me/title";
+"EmptyGroupInfo.Line3" = "لینک\u200cهای عمومی مانند sgq.me/title";
 "EmptyGroupInfo.Line4" = "مدیرانی با اختیارات متفاوت";
 "EmptyGroupInfo.Subtitle" = "گروه\u200cها می\u200cتوانند دارای موارد زیر باشند:";
 "EmptyGroupInfo.Title" = "شما یک گروه ایجاد کردید";
@@ -8779,7 +8779,7 @@
 "Premium.Limits.PinnedChats" = "گفتگوهای سنجاق شده";
 "Premium.Limits.PinnedChatsInfo" = "تا 10 گفتگو را در لیست اصلی گفتگوهای خود سنجاق کنید";
 "Premium.Limits.PublicLinks" = "لینک\u200cهای عمومی";
-"Premium.Limits.PublicLinksInfo" = "تا 20 لینک [t.me/username]() را رزرو کنید";
+"Premium.Limits.PublicLinksInfo" = "تا 20 لینک [sgq.me/username]() را رزرو کنید";
 "Premium.Limits.RecommendedChannels" = "کانال\u200cهای مشابه";
 "Premium.Limits.RecommendedChannelsInfo" = "تا سقف 100 کانال مشابه را مشاهده کنید";
 "Premium.Limits.SavedGifs" = "گیف\u200cهای ذخیره شده";
@@ -9123,7 +9123,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "چه کسانی می\u200cتوانند آخرین بازدید مرا مشاهده کنند";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "کاربرانی که شماره شما را به مخاطبین خود اضافه کنند، فقط در صورتی آن را در تلگرام می\u200cبینند که در مخاطبین شما باشند.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "کاربرانی که شماره شما را در مخاطبین خود ذخیره کرده باشند، آن را در تلگرام خواهند دید.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "کاربرانی که شماره شما را در مخاطبین خود ذخیره کرده باشند، آن را در تلگرام نیز مشاهده خواهند کرد.\n\nاین لینک گفتگویی را با خودتان باز می\u200cکند:\n[https://t.me/\u2068%@\u2069]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "کاربرانی که شماره شما را در مخاطبین خود ذخیره کرده باشند، آن را در تلگرام نیز مشاهده خواهند کرد.\n\nاین لینک گفتگویی را با خودتان باز می\u200cکند:\n[https://sgq.me/\u2068%@\u2069]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "چه کسانی می\u200cتوانند مرا از طریق شماره\u200cام پیدا کنند";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "چه کسانی می\u200cتوانند شماره تلفن مرا مشاهده کنند";
 "PrivacyPolicy.Accept" = "موافقت و ادامه";
@@ -11561,7 +11561,7 @@
 "Username.InvalidTooShort" = "نام\u200cهای کاربری باید حداقل دارای 5 کاراکتر باشند.";
 "Username.InvalidValue" = "متأسفانه این نام کاربری نامعتبر است.";
 "Username.LinkCopied" = "لینک در حافظه کپی شد.";
-"Username.LinkHint" = "این لینک گفتگویی را با خودتان باز می\u200cکند:[\nhttps://t.me/\u2068%@\u2069]";
+"Username.LinkHint" = "این لینک گفتگویی را با خودتان باز می\u200cکند:[\nhttps://sgq.me/\u2068%@\u2069]";
 "Username.LinksOrder" = "ترتیب نام\u200cهای کاربری";
 "Username.LinksOrderInfo" = "برای تغییر ترتیب نمایش لینک\u200cها در صفحه اطلاعات خود، آن\u200cها را حرکت دهید و رها کنید.";
 "Username.Placeholder" = "نام کاربری شما";

@@ -144,7 +144,9 @@ type Config struct {
 // 与注册见 help.go / auth.go / users.go / updates.go。Router 本身只负责协议外壳：
 // 剥离 invokeWithLayer / initConnection / invokeWithoutUpdates / invokeAfter*，并兜底未注册 RPC。
 type Router struct {
-	cfg               Config
+	cfg Config
+	// tmpPasswords 签发与校验 account.getTmpPassword 的无状态令牌。
+	tmpPasswords      tmpPasswordSigner
 	appLinks          links.AppLinkBuilder
 	log               *zap.Logger
 	clock             clock.Clock
@@ -346,6 +348,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.registerFolders(d)
 	r.registerChatlists(d)
 	r.registerContacts(d)
+	r.registerStarGiftLayer232(d)
 	r.registerLangpack(d)
 	r.registerStories(d)
 	r.registerPhone(d)
@@ -354,6 +357,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.registerStats(d)
 	r.registerPremium(d)
 	r.registerAiCompose(d)
+	r.registerPaidMessages(d)
 	r.registerBots(d)
 	r.registerFragment(d)
 	r.registerEphemeral(d)

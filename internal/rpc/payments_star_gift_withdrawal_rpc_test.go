@@ -7,6 +7,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
+	"github.com/iamxvbaba/td/tlprofile"
 
 	"telesrv/internal/domain"
 )
@@ -95,6 +96,8 @@ func starGiftWithdrawalRouter(t *testing.T) (
 	return r, sender.ID, gifts, account, auth, authKeyID
 }
 
+// withdrawalRequest builds the canonical request a Layer 225–231 client
+// produces: tlprofile packs its inline SRP proof into tmp_password.
 func withdrawalRequest(
 	slug string,
 	password tg.InputCheckPasswordSRPClass) *tg.PaymentsGetStarGiftWithdrawalURLRequest {
@@ -102,7 +105,11 @@ func withdrawalRequest(
 		Stargift: &tg.InputSavedStarGiftSlug{Slug: slug},
 	}
 	if password != nil {
-		req.Password = password
+		packed, err := tlprofile.EncodeLegacySRPTmpPassword(password)
+		if err != nil {
+			panic(err)
+		}
+		req.TmpPassword = packed
 	}
 	return req
 }

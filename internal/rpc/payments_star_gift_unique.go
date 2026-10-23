@@ -422,7 +422,7 @@ func tgUniqueStarGift(unique domain.UniqueStarGift) *tg.StarGiftUnique {
 	}
 	if unique.OwnerAddress != "" {
 		out.SetOwnerAddress(unique.OwnerAddress)
-		// Telegram's TL flags are independent: keep the Gramsrv profile in
+		// Telegram's TL flags are independent: keep the ShuzaGram profile in
 		// owner_id and add the wallet display name for admin-exported items
 		// (hosted by @relayer) so the client shows the wallet name too.
 		if host := tgPeer(unique.Host); host != nil {

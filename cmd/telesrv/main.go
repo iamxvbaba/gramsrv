@@ -14,6 +14,7 @@ import (
 	runtimemetrics "runtime/metrics"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	aiapp "telesrv/internal/app/ai"
 	"telesrv/internal/app/auth"
 	authdiagnosticsapp "telesrv/internal/app/authdiagnostics"
+	autosubscribeapp "telesrv/internal/app/autosubscribe"
 	botsapp "telesrv/internal/app/bots"
 	botverificationapp "telesrv/internal/app/botverification"
 	broadcastapp "telesrv/internal/app/broadcast"
@@ -895,6 +897,8 @@ func run(logger *zap.Logger) error {
 	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	welcomeMessageStore := postgres.NewWelcomeMessageStore(pool)
+	noPaidMessagesTokenStore := postgres.NewNoPaidMessagesTokenStore(pool)
+	shareThemeStore := postgres.NewShareThemeStore(pool)
 	messageTranscriptionStore := postgres.NewMessageTranscriptionStore(pool)
 	moderationReportStore := postgres.NewModerationReportStore(pool)
 	authDeliveryReportStore := postgres.NewAuthDeliveryReportStore(pool)
@@ -1639,6 +1643,11 @@ func run(logger *zap.Logger) error {
 		),
 		channelapp.WithSendPermissionChecker(adminService),
 	)
+	autoSubscribeService := autosubscribeapp.NewService(
+		autosubscribeapp.WithStore(postgres.NewAutoSubscribeStore(pool)),
+		autosubscribeapp.WithChannels(channelsService),
+		autosubscribeapp.WithLogger(logger.Named("app").Named("autosubscribe")),
+	)
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	welcomeMessageService := welcomemessagesapp.NewService(welcomeMessageStore, channelsService)
@@ -1656,7 +1665,10 @@ func run(logger *zap.Logger) error {
 		chatlistsapp.WithChannels(channelsService),
 		chatlistsapp.WithPremiumChecker(usersService.PremiumActive),
 	)
-	businessAutomationOptions := newBusinessAutomationOptions(cfg, activeSessions, aiComposeService, logger)
+	// Away messages "only when offline" follow the visible online status,
+	// which the RPC router tracks; it is plugged in once the router exists.
+	businessOnline := &lateOnlineChecker{}
+	businessAutomationOptions := newBusinessAutomationOptions(cfg, businessOnline, aiComposeService, logger)
 	messagesService := messageapp.NewService(messageStore, dialogStore,
 		messageapp.WithContactStore(contactStore),
 		messageapp.WithPhotoProvider(cachedPhotos),
@@ -1707,6 +1719,7 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		auth.WithCollectiblePhoneLogin(collectiblePhoneStore),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
@@ -1932,6 +1945,9 @@ func run(logger *zap.Logger) error {
 		Ephemeral:                    ephemeralService,
 		EphemeralPush:                ephemeralStore,
 		WelcomeMessages:              welcomeMessageService,
+		NoPaidMessagesTokens:         noPaidMessagesTokenStore,
+		PaidMessages:                 postgres.NewPaidMessagesStore(pool),
+		ShareThemes:                  shareThemeStore,
 		Moderation:                   moderationService,
 		Users:                        usersService,
 		Usernames:                    usernamesService,
@@ -1966,6 +1982,7 @@ func run(logger *zap.Logger) error {
 		Wallet:                       walletService,
 		Passkey:                      passkeyService,
 		Themes:                       themeService,
+		AutoSubscribe:                autoSubscribeService,
 		GeoIP:                        geoIPResolver,
 		GroupCalls:                   groupCallsService,
 		LiveStreams:                  liveStreamDep(liveStreamService),
@@ -2023,6 +2040,7 @@ func run(logger *zap.Logger) error {
 		AccountDeletionNotifier: router,
 		Channels:                channelsService,
 		ChannelNotifier:         router,
+		AutoSubscribe:           autoSubscribeService,
 		Messages:                messagesService,
 		Gifts:                   giftsService,
 		GiftGranter:             router,
@@ -2042,6 +2060,7 @@ func run(logger *zap.Logger) error {
 		TonDNS:                  tondns.New(cfg.CustomFragmentLiteserverConfigURL),
 		UsernameWallets:         postgres.NewStarGiftClaimStore(pool),
 	})
+	businessOnline.set(router.IsUserOnline)
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
 	// visible to online viewers immediately.
@@ -2141,6 +2160,7 @@ func run(logger *zap.Logger) error {
 	go rpc.NewBootstrapUpdateDispatcher(router, logger.Named("rpc").Named("bootstrap")).Run(ctx)
 	go rpc.NewWelcomeDeliveryDispatcher(router, welcomeMessageStore, logger.Named("rpc").Named("welcome-delivery")).Run(ctx)
 	go rpc.NewScheduledDispatcher(router, logger.Named("rpc").Named("scheduled")).Run(ctx)
+	go rpc.NewCollectibleDropDispatcher(giftsService, logger.Named("rpc").Named("collectible-drop"), 0).Run(ctx)
 	go rpc.NewSuggestedPostDispatcher(router, logger.Named("rpc").Named("suggested-post")).Run(ctx)
 	go rpc.NewExpiryDispatcher(router, logger.Named("rpc").Named("expiry")).Run(ctx)
 	go rpc.NewPhoneExpiryDispatcher(router, logger.Named("rpc").Named("phone-expiry"), cfg.CallExpiryInterval).Run(ctx)
@@ -2238,6 +2258,7 @@ func run(logger *zap.Logger) error {
 		Addr:         cfg.AdminAPIAddr,
 		Token:        cfg.AdminAPIToken,
 		ScopedTokens: adminScopedTokens,
+		BotShop:      postgres.NewBotShopStore(pool),
 	}, adminService, logger.Named("adminapi")); err != nil {
 		return fmt.Errorf("start admin api: %w", err)
 	}
@@ -2249,6 +2270,8 @@ func run(logger *zap.Logger) error {
 		WebBaseURL:         cfg.PublicWebBaseURL,
 		AppName:            cfg.PublicAppName,
 		AllowDevPayments:   cfg.AllowDevPayments,
+		AndroidAppPackage:  cfg.AndroidAppPackage,
+		AndroidCertSHA256:  cfg.AndroidCertSHA256,
 		StickerSets:        filesService,
 		Users:              userStore,
 		Channels:           channelStore,
@@ -2403,4 +2426,18 @@ type giftClaimInstanceConfig struct {
 	Withdrawer          giftclaim.Withdrawer
 	Password            giftclaim.AccountPassword
 	MenuButtonRequired  bool
+}
+
+// lateOnlineChecker forwards to an online check installed after start-up.
+type lateOnlineChecker struct {
+	fn atomic.Pointer[func(int64) bool]
+}
+
+func (c *lateOnlineChecker) set(fn func(int64) bool) { c.fn.Store(&fn) }
+
+func (c *lateOnlineChecker) IsUserOnline(userID int64) bool {
+	if fn := c.fn.Load(); fn != nil {
+		return (*fn)(userID)
+	}
+	return false
 }

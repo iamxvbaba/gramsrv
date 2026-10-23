@@ -164,7 +164,7 @@ function fixture() {
     referralBonus: 100,
     dailyBonus: 10,
     notificationTTLDays: 30,
-    productName: "Telesrv",
+    productName: "ShuzaGram",
     publicUsername: "test_bot",
     gramsrvAPI: "http://localhost:9999",
     gramsrvToken: "test",
@@ -243,7 +243,7 @@ test("real mode rejects random number generation", async () => {
   const config = {
     botToken: "999:TEST", defaultLanguage: "ru", defaultNumberCountry: "RU", botMode: "real",
     ownerIDs: new Set(), requiredChannel: "", requiredChannelURL: "", referralBonus: 100,
-    dailyBonus: 10, notificationTTLDays: 30, productName: "Telesrv", publicUsername: "test_bot",
+    dailyBonus: 10, notificationTTLDays: 30, productName: "ShuzaGram", publicUsername: "test_bot",
     gramsrvAPI: "http://localhost:9999", gramsrvToken: "test", gramsrvActor: "test",
     publicBaseURL: "https://example.com", codeHost: "127.0.0.1", codePort: 0,
     codeWebhookSecret: "test-secret-12345678901234",
@@ -957,13 +957,13 @@ test("admin grant and moderation refuse a target without a linked gramsrv accoun
   await bot.handleUpdate(textUpdate({ fromID: 777, chatID: 777, text: "10 abcd" }));
   assert.equal(mints, 0, "no mint happens without a linked gramsrv account");
   const grantReply = calls.filter((call) => call.method === "sendMessage").at(-1);
-  assert.match(grantReply.payload.text, /нет привязанного аккаунта Gramsrv|no linked Gramsrv account/i);
+  assert.match(grantReply.payload.text, /нет привязанного аккаунта ShuzaGram|no linked ShuzaGram account/i);
 
   await bot.handleUpdate(accountCallbackUpdate({ fromID: 777, chatID: 777, data: "admin:verified" }));
   await bot.handleUpdate(textUpdate({ fromID: 777, chatID: 777, text: "10" }));
   assert.equal(verifies, 0, "no moderation command runs without a linked gramsrv account");
   const modReply = calls.filter((call) => call.method === "sendMessage").at(-1);
-  assert.match(modReply.payload.text, /нет привязанного аккаунта Gramsrv|no linked Gramsrv account/i);
+  assert.match(modReply.payload.text, /нет привязанного аккаунта ShuzaGram|no linked ShuzaGram account/i);
 });
 
 test("admin TELEGRAM_ID operations accept an @telegram-username", async () => {

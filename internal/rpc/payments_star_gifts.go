@@ -367,6 +367,7 @@ func (r *Router) onPaymentsGetStarGifts(ctx context.Context, hash int) (tg.Payme
 	// 会保留 catalog hash 但丢失礼物缓存——一旦命中 hash 返回 NotModified，送礼选择器就永远空。
 	// 始终回完整目录（带宽可忽略），保证客户端无论缓存状态都能渲染礼物网格。
 	_ = catalogHash
+	catalog = r.applyPendingCollectibleBadges(ctx, catalog)
 	return &tg.PaymentsStarGifts{
 		Hash:  catalogHash,
 		Gifts: tgStarGifts(catalog, r.clock.Now().Unix()),
@@ -1992,4 +1993,54 @@ func clampGiftMessage(s string) string {
 		return string(runes[:domain.MaxStarGiftMessageRunes])
 	}
 	return s
+}
+
+// pendingCollectibleAvailability is implemented by the gifts service when it
+// supports scheduled collectible pools.
+type pendingCollectibleAvailability interface {
+	PendingCollectibleAvailability(ctx context.Context, giftIDs []int64) (map[int64]domain.StarGiftCollectibleAvailability, error)
+}
+
+// applyPendingCollectibleBadges shows a plain gift whose collectible pool is
+// scheduled but not open yet as a limited ("rare") gift, the same way
+// Telegram announces an upcoming drop: Limited plus availability_total and
+// availability_remains, both set to the future pool's supply. It is a
+// projection only. The purchase path reads Limited from the catalog revision
+// in its own transaction, so buying the plain gift never counts against the
+// badge. Gifts that are already limited, sold out or auctions keep their own
+// values. The catalog is copied before it is changed, because it may be the
+// service's shared cache.
+func (r *Router) applyPendingCollectibleBadges(ctx context.Context, catalog []domain.StarGift) []domain.StarGift {
+	pendingSource, ok := r.deps.Gifts.(pendingCollectibleAvailability)
+	if !ok || len(catalog) == 0 {
+		return catalog
+	}
+	candidates := make([]int64, 0, len(catalog))
+	for _, g := range catalog {
+		if !g.Limited && !g.Auction && !g.SoldOut {
+			candidates = append(candidates, g.ID)
+		}
+	}
+	if len(candidates) == 0 {
+		return catalog
+	}
+	pending, err := pendingSource.PendingCollectibleAvailability(ctx, candidates)
+	if err != nil {
+		r.log.Warn("pending collectible availability lookup failed", zap.Error(err))
+		return catalog
+	}
+	if len(pending) == 0 {
+		return catalog
+	}
+	out := append([]domain.StarGift(nil), catalog...)
+	for i := range out {
+		avail, ok := pending[out[i].ID]
+		if !ok || avail.SupplyTotal <= 0 || out[i].Limited || out[i].Auction || out[i].SoldOut {
+			continue
+		}
+		out[i].Limited = true
+		out[i].AvailabilityTotal = avail.SupplyTotal
+		out[i].AvailabilityRemains = avail.SupplyTotal
+	}
+	return out
 }

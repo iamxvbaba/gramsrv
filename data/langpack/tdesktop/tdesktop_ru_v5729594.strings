@@ -3578,7 +3578,7 @@
 "lng_factcheck_add_done" = "Разъяснение добавлено.";
 "lng_factcheck_bottom" = "Это разъяснение было предоставлено Telegram.";
 "lng_factcheck_edit_done" = "Разъяснение изменено.";
-"lng_factcheck_links" = "Разрешены только ссылки **t.me/**";
+"lng_factcheck_links" = "Разрешены только ссылки **sgq.me/**";
 "lng_factcheck_placeholder" = "Факты или контекст";
 "lng_factcheck_remove_done" = "Разъяснение удалено.";
 "lng_factcheck_title" = "Проверка фактов";
@@ -4694,7 +4694,7 @@
 "lng_greeting_title" = "Приветствие";
 "lng_group_about1" = "До 200 000 участников";
 "lng_group_about2" = "Общая история переписки";
-"lng_group_about3" = "Публичные ссылки вида t.me/title";
+"lng_group_about3" = "Публичные ссылки вида sgq.me/title";
 "lng_group_about4" = "Разный уровень прав";
 "lng_group_about_header" = "Вы создали группу";
 "lng_group_about_text" = "Возможности групп:";
@@ -6778,10 +6778,10 @@
 "lng_premium_double_limits_about_gifs#few" = "Сохранение в избранных до {count} GIF";
 "lng_premium_double_limits_about_gifs#many" = "Сохранение в избранных до {count} GIF";
 "lng_premium_double_limits_about_gifs#other" = "Сохранение в избранных до {count} GIF";
-"lng_premium_double_limits_about_links#one" = "Использование до {count} ссылки вида t.me/username";
-"lng_premium_double_limits_about_links#few" = "Использование до {count} ссылок вида t.me/username";
-"lng_premium_double_limits_about_links#many" = "Использование до {count} ссылок вида t.me/username";
-"lng_premium_double_limits_about_links#other" = "Использование до {count} ссылки вида t.me/username";
+"lng_premium_double_limits_about_links#one" = "Использование до {count} ссылки вида sgq.me/username";
+"lng_premium_double_limits_about_links#few" = "Использование до {count} ссылок вида sgq.me/username";
+"lng_premium_double_limits_about_links#many" = "Использование до {count} ссылок вида sgq.me/username";
+"lng_premium_double_limits_about_links#other" = "Использование до {count} ссылки вида sgq.me/username";
 "lng_premium_double_limits_about_pins#one" = "Закрепление до {count} чата в основном списке";
 "lng_premium_double_limits_about_pins#few" = "Закрепление до {count} чатов в основном списке";
 "lng_premium_double_limits_about_pins#many" = "Закрепление до {count} чатов в основном списке";
@@ -9585,7 +9585,7 @@
 "lng_tag_info_title_owner" = "Теги владельца";
 "lng_tag_info_title_user" = "Теги участников";
 "lng_tagged_view_saved" = "Посмотреть";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Я подтверждаю, что мне {count} год или более";
 "lng_terms_age#few" = "Я подтверждаю, что мне {count} года или более";
 "lng_terms_age#many" = "Я подтверждаю, что мне {count} лет или более";
@@ -9710,7 +9710,7 @@
 "lng_translate_cocoon_private_title" = "Конфиденциальность";
 "lng_translate_cocoon_subtitle" = "Платформа **Cocoon** ({text}) **безопасно** и **эффективно** выполняет задачи ИИ.";
 "lng_translate_cocoon_text" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "В списке «Не переводить»: {name}.";
 "lng_translate_hidden_channel" = "Панель перевода скрыта для этого канала.";

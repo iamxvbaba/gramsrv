@@ -404,8 +404,6 @@ func messageReadDateErr(err error) error {
 
 func forwardMessagesUnsupportedOptionErr(req *tg.MessagesForwardMessagesRequest) error {
 	switch {
-	case req.QuickReplyShortcut != nil:
-		return shortcutInvalidErr()
 	case req.Effect != 0:
 		return effectIDInvalidErr()
 	case req.VideoTimestamp != 0:

@@ -98,7 +98,10 @@ export const navSections: NavSection[] = [
     id: "channels",
     labelKey: "layout.channels",
     icon: ShieldCheck,
-    tabs: [{ path: "/channels", labelKey: "layout.channels", permission: permissionChannelsRead }]
+    tabs: [
+      { path: "/channels", labelKey: "layout.channels", permission: permissionChannelsRead },
+      { path: "/auto-subscribe-channels", labelKey: "layout.autoSubscribeChannels", permission: permissionChannelsRead }
+    ]
   },
   {
     id: "bots",
@@ -140,6 +143,7 @@ export const navSections: NavSection[] = [
         aliases: ["/star-issue"]
       },
       { path: "/prices", labelKey: "layout.prices", permission: permissionPricesManage },
+      { path: "/bot-shop", labelKey: "layout.botShop", permission: permissionPricesManage },
       { path: "/stars", labelKey: "layout.stars", permission: permissionStarsRead }
     ]
   },
@@ -253,12 +257,14 @@ const routePermissions: { prefix: string; permission: string }[] = [
   { prefix: "/audit-log", permission: permissionAuditRead },
   { prefix: "/donations", permission: permissionDonationsManage },
   { prefix: "/prices", permission: permissionPricesManage },
+  { prefix: "/bot-shop", permission: permissionPricesManage },
   { prefix: "/server-settings", permission: permissionServerManage },
   { prefix: "/stars", permission: permissionStarsRead },
   { prefix: "/storage", permission: permissionStorageRead },
   { prefix: "/account-ratings", permission: permissionRatingsRead },
   { prefix: "/accounts", permission: permissionAccountsRead },
   { prefix: "/channels", permission: permissionChannelsRead },
+  { prefix: "/auto-subscribe-channels", permission: permissionChannelsRead },
   { prefix: "/bots", permission: permissionBotsRead },
   { prefix: "/broadcasts", permission: permissionBroadcastsRead },
   { prefix: "/monetization", permission: permissionPremiumManage },

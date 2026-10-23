@@ -3574,7 +3574,7 @@
 "lng_factcheck_add_done" = "Розʼяснення додано.";
 "lng_factcheck_bottom" = "Це розʼяснення було надано Telegram.";
 "lng_factcheck_edit_done" = "Розʼяснення змінено.";
-"lng_factcheck_links" = "Дозволено лише посилання вигляду **t.me/**";
+"lng_factcheck_links" = "Дозволено лише посилання вигляду **sgq.me/**";
 "lng_factcheck_placeholder" = "Факт або контекст";
 "lng_factcheck_remove_done" = "Розʼяснення видалено.";
 "lng_factcheck_title" = "Перевірка фактів";
@@ -4690,7 +4690,7 @@
 "lng_greeting_title" = "Вітання";
 "lng_group_about1" = "До 200 тис. учасників";
 "lng_group_about2" = "Спільну історію листування";
-"lng_group_about3" = "Публічні посилання вигляду t.me";
+"lng_group_about3" = "Публічні посилання вигляду sgq.me";
 "lng_group_about4" = "Адміністраторів із різними правами";
 "lng_group_about_header" = "Ви створили групу";
 "lng_group_about_text" = "Групи можуть мати:";
@@ -6768,10 +6768,10 @@
 "lng_premium_double_limits_about_gifs#few" = "До {count} GIF у «Збережених GIF»";
 "lng_premium_double_limits_about_gifs#many" = "До {count} GIF у «Збережених GIF»";
 "lng_premium_double_limits_about_gifs#other" = "До {count} GIF у «Збережених GIF»";
-"lng_premium_double_limits_about_links#one" = "До {count} зайнятого посилання виду t.me/username";
-"lng_premium_double_limits_about_links#few" = "До {count} зайнятих посилань виду t.me/username";
-"lng_premium_double_limits_about_links#many" = "До {count} зайнятих посилань виду t.me/username";
-"lng_premium_double_limits_about_links#other" = "До {count} зайнятих посилань виду t.me/username";
+"lng_premium_double_limits_about_links#one" = "До {count} зайнятого посилання виду sgq.me/username";
+"lng_premium_double_limits_about_links#few" = "До {count} зайнятих посилань виду sgq.me/username";
+"lng_premium_double_limits_about_links#many" = "До {count} зайнятих посилань виду sgq.me/username";
+"lng_premium_double_limits_about_links#other" = "До {count} зайнятих посилань виду sgq.me/username";
 "lng_premium_double_limits_about_pins#one" = "Прикріплення до {count} чату в основному списку";
 "lng_premium_double_limits_about_pins#few" = "Прикріплення до {count} чатів в основному списку";
 "lng_premium_double_limits_about_pins#many" = "Прикріплення до {count} чатів в основному списку";
@@ -9576,7 +9576,7 @@
 "lng_tag_info_title_owner" = "Теги власників";
 "lng_tag_info_title_user" = "Теги учасників";
 "lng_tagged_view_saved" = "Переглянути";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Я підтверджую, що мені виповнився {count} рік";
 "lng_terms_age#few" = "Я підтверджую, що мені виповнилося {count} роки";
 "lng_terms_age#many" = "Я підтверджую, що мені виповнилося {count} років";
@@ -9701,7 +9701,7 @@
 "lng_translate_cocoon_private_title" = "Приватність";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text})\n**безпечно** та **ефективно** виконує задачі ШІ.";
 "lng_translate_cocoon_text" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "Мову {name} додано до списку «Не перекладати».";
 "lng_translate_hidden_channel" = "Панель перекладу для цього каналу приховано.";

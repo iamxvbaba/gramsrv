@@ -3161,7 +3161,7 @@
 "lng_factcheck_add_done" = "Oikaisu lisättiin.";
 "lng_factcheck_bottom" = "Telegram lisäsi tämän tarkennuksen.";
 "lng_factcheck_edit_done" = "Oikaisua muokattiin.";
-"lng_factcheck_links" = "Vain **t.me/**-linkit sallittuja";
+"lng_factcheck_links" = "Vain **sgq.me/**-linkit sallittuja";
 "lng_factcheck_placeholder" = "Lisää oikaisu tai asiayhteys";
 "lng_factcheck_remove_done" = "Oikaisu poistettiin.";
 "lng_factcheck_title" = "Oikaisu";
@@ -4089,7 +4089,7 @@
 "lng_greeting_title" = "Tervehdysviesti";
 "lng_group_about1" = "Peräti 200\u00a0000 jäsentä";
 "lng_group_about2" = "Pysyvä viestihistoria";
-"lng_group_about3" = "Julkiset linkit, kuten t.me/nimi";
+"lng_group_about3" = "Julkiset linkit, kuten sgq.me/nimi";
 "lng_group_about4" = "Valvojia eri oikeuksilla";
 "lng_group_about_header" = "Loit ryhmän";
 "lng_group_about_text" = "Ryhmillä voi olla:";
@@ -5907,8 +5907,8 @@
 "lng_premium_double_limits_about_folders#other" = "Järjestele keskustelusi {count} kansioon";
 "lng_premium_double_limits_about_gifs#one" = "Tallenna jopa {count} GIF suosikkeihisi";
 "lng_premium_double_limits_about_gifs#other" = "Tallenna jopa {count} GIFiä suosikkeihisi";
-"lng_premium_double_limits_about_links#one" = "Varaa jopa {count} t.me/nimimerkki-linkki";
-"lng_premium_double_limits_about_links#other" = "Varaa jopa {count} t.me/nimimerkki-linkkiä";
+"lng_premium_double_limits_about_links#one" = "Varaa jopa {count} sgq.me/nimimerkki-linkki";
+"lng_premium_double_limits_about_links#other" = "Varaa jopa {count} sgq.me/nimimerkki-linkkiä";
 "lng_premium_double_limits_about_pins#one" = "Kiinnitä jopa {count} keskustelu päälistaan";
 "lng_premium_double_limits_about_pins#other" = "Kiinnitä jopa {count} keskustelua päälistaan";
 "lng_premium_double_limits_about_similar_channels#one" = "Näytä peräti {count} samanlainen kanava";
@@ -8385,7 +8385,7 @@
 "lng_tag_info_title_owner" = "Omistajatunnisteet";
 "lng_tag_info_title_user" = "Jäsentunnisteet";
 "lng_tagged_view_saved" = "Näytä";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Vahvistan olevani vähintään {count}-vuotias";
 "lng_terms_age#other" = "Vahvistan olevani vähintään {count}-vuotias";
 "lng_terms_agree" = "Hyväksy ja jatka";
@@ -8500,7 +8500,7 @@
 "lng_translate_cocoon_private_title" = "Yksityinen";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) suorittaa tekoälyä **turvallisesti** ja **tehokkaasti**.";
 "lng_translate_cocoon_text" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "Kieltä {name} ei enää käännetä.";
 "lng_translate_hidden_channel" = "Käännöspalkki piilotettiin tältä kanavalta.";

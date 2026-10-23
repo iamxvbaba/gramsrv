@@ -2955,7 +2955,7 @@
 "lng_factcheck_add_done" = "Factcheck toegevoegd.";
 "lng_factcheck_bottom" = "Deze toelichting is verstrekt door Telegram.";
 "lng_factcheck_edit_done" = "Factcheck bewerkt.";
-"lng_factcheck_links" = "Alleen **t.me/**-links zijn toegestaan.";
+"lng_factcheck_links" = "Alleen **sgq.me/**-links zijn toegestaan.";
 "lng_factcheck_placeholder" = "Feiten of context toevoegen";
 "lng_factcheck_remove_done" = "Factcheck verwijderd.";
 "lng_factcheck_title" = "Factcheck";
@@ -3876,7 +3876,7 @@
 "lng_greeting_title" = "Welkomstbericht";
 "lng_group_about1" = "Tot 200.000 leden";
 "lng_group_about2" = "Blijvende chatgeschiedenis";
-"lng_group_about3" = "Openbare links zoals t.me/titel";
+"lng_group_about3" = "Openbare links zoals sgq.me/titel";
 "lng_group_about4" = "Beheerders met aangepaste rechten";
 "lng_group_about_header" = "Je hebt een groep aangemaakt";
 "lng_group_about_text" = "Groepen ondersteunen het volgende:";
@@ -5675,8 +5675,8 @@
 "lng_premium_double_limits_about_folders#other" = "Orden je chats in {count} mappen";
 "lng_premium_double_limits_about_gifs#one" = "Sla maximaal {count} GIF op in je favoriete GIF's";
 "lng_premium_double_limits_about_gifs#other" = "Sla maximaal {count} GIF's op in je favoriete GIF's";
-"lng_premium_double_limits_about_links#one" = "Reserveer maximaal {count} t.me/gebruikersnaam-link";
-"lng_premium_double_limits_about_links#other" = "Reserveer maximaal {count} t.me/gebruikersnaam-links";
+"lng_premium_double_limits_about_links#one" = "Reserveer maximaal {count} sgq.me/gebruikersnaam-link";
+"lng_premium_double_limits_about_links#other" = "Reserveer maximaal {count} sgq.me/gebruikersnaam-links";
 "lng_premium_double_limits_about_pins#one" = "Zet maximaal {count} chat vast in je hoofdchatlijst";
 "lng_premium_double_limits_about_pins#other" = "Zet maximaal {count} chats vast in je hoofdchatlijst";
 "lng_premium_double_limits_about_similar_channels#one" = "Bekijk maximaal {count} soortgelijk kanaal";
@@ -8138,7 +8138,7 @@
 "lng_tag_info_title_owner" = "Tags van eigenaar";
 "lng_tag_info_title_user" = "Tags voor leden";
 "lng_tagged_view_saved" = "Bekijken";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Ik bevestig dat ik {count} of ouder ben";
 "lng_terms_age#other" = "Ik bevestig dat ik {count} of ouder ben";
 "lng_terms_agree" = "Akkoord en doorgaan";
@@ -8253,7 +8253,7 @@
 "lng_translate_cocoon_private_title" = "Privé";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) voert AI-taken **veilig** en **efficiënt** uit.";
 "lng_translate_cocoon_text" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} is toegevoegd aan je 'niet vertalen'-lijst.";
 "lng_translate_hidden_channel" = "De vertaalbalk is nu verborgen voor dit kanaal.";

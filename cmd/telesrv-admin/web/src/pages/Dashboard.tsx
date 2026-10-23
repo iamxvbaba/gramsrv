@@ -24,6 +24,7 @@ import { formatBytes, formatQuantity } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { DashboardResponse, StorageStatsResponse } from "../types";
 import { StatsCharts, StatsEconomy, useStats } from "./StatisticsPanel";
+import { withBase } from "../lib/base";
 
 // The overview is the one page an operator is guaranteed to be able to open, so
 // it answers everything at a glance and nothing that needs a click: the queues
@@ -260,7 +261,7 @@ function StatTile({
     return (
       <a
         className={`${boxClass} clickable${toneClass}`}
-        href={href}
+        href={withBase(href)}
         onClick={(event) => {
           event.preventDefault();
           navigate(href);

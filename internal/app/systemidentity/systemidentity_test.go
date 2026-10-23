@@ -60,8 +60,8 @@ func TestApplyFallsBackToBrandNameWithoutIdentity(t *testing.T) {
 	if _, err := Apply(context.Background(), store, nil, 0); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if got := domain.OfficialSystemUser().FirstName; got != "Telesrv" {
-		t.Fatalf("official system user FirstName = %q, want branded default Telesrv", got)
+	if got := domain.OfficialSystemUser().FirstName; got != "ShuzaGram" {
+		t.Fatalf("official system user FirstName = %q, want branded default ShuzaGram", got)
 	}
 }
 

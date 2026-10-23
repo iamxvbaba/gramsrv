@@ -736,14 +736,14 @@
 "CocoonFeature1Text" = "هیچ شخص ثالثی نمی\u200cتواند به هیچ داده\u200cای، از جمله ترجمه\u200cها، در **\u2068{username}\u2069** دسترسی داشته باشد.";
 "CocoonFeature1Title" = "خصوصی";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon به تلگرام اجازه داده تا هزینه ترجمه\u200cها را تا 6 برابر کاهش دهد.";
 "CocoonFeature2Title" = "کارآمد";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "هر توسعه\u200cدهنده\u200cای می\u200cتواند از Cocoon برای قابلیت\u200cهای هوش مصنوعی استفاده کند. برای اطلاعات بیشتر به **\u2068{link}\u2069** مراجعه کنید.";
 "CocoonFeature3Title" = "برای همه";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "مستقیماً به @cocoon";
 "CocoonFooterText" = "می\u200cخواهید Cocoon را در پروژه\u200cهای خود همگام\u200cسازی کنید؟\nبا ما در **\u2068{link}\u2069** تماس بگیرید";
 "CocoonTitle" = "Cocoon";
@@ -1003,7 +1003,7 @@
 "EmptyChatAppearanceSystem" = "سیستم";
 "EmptyGroupInfoLine1" = "• تا \u2068{count}\u2069 عضو";
 "EmptyGroupInfoLine2" = "• تاریخچه گفتگوی دائم";
-"EmptyGroupInfoLine3" = "• لینک\u200cهای عمومی مانند t.me/title";
+"EmptyGroupInfoLine3" = "• لینک\u200cهای عمومی مانند sgq.me/title";
 "EmptyGroupInfoLine4" = "• مدیرانی با اختیارات متفاوت";
 "EmptyGroupInfoSubtitle" = "گروه\u200cها می\u200cتوانند دارای موارد زیر باشند:";
 "EmptyGroupInfoTitle" = "شما یک گروه ایجاد کردید";
@@ -2146,7 +2146,7 @@
 "ProfileTabVoice" = "صداها";
 "ProfileViewChannel" = "مشاهده کانال";
 "PublicLink" = "لینک عمومی";
-"PublicLinksLimitSubtitle" = "تا \u2068{count}\u2069 لینک t.me/username را رزرو کنید";
+"PublicLinksLimitSubtitle" = "تا \u2068{count}\u2069 لینک sgq.me/username را رزرو کنید";
 "PublicLinksLimitTitle" = "لینک\u200cهای عمومی";
 "PublicPoll" = "نظرسنجی";
 "PublicPosts" = "پست\u200cهای عمومی";

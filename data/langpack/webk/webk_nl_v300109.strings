@@ -1491,7 +1491,7 @@
 "EditAdminRights" = "Beheerdersrechten aanpassen";
 "EditAdminSendAnonymously" = "Anoniem blijven";
 "EditAdminWhatCanDo" = "Wat mag deze beheerder?";
-"EditBot.Buttons.Caption" = "Gebruik [@BotFather](https://t.me/botfather) om deze bot te beheren.";
+"EditBot.Buttons.Caption" = "Gebruik [@BotFather](https://sgq.me/botfather) om deze bot te beheren.";
 "EditBot.Buttons.Commands" = "Commando's bewerken";
 "EditBot.Buttons.Intro" = "Intro bewerken";
 "EditBot.Buttons.Settings" = "Botinstellingen wijzigen";
@@ -1835,7 +1835,7 @@
 "GroupChecklist" = "Checklist voor de groep";
 "GroupDescription1" = "Tot 200.000 leden";
 "GroupDescription2" = "Blijvende chatgeschiedenis";
-"GroupDescription3" = "Openbare links zoals t.me/titel";
+"GroupDescription3" = "Openbare links zoals sgq.me/titel";
 "GroupDescription4" = "Beheerders met aangepaste rechten";
 "GroupEmptyTitle1" = "Je hebt een **groep** aangemaakt.";
 "GroupEmptyTitle2" = "Groepen ondersteunen het volgende:";
@@ -3043,7 +3043,7 @@
 "ProfileStoriesArchiveGroupHint" = "Alleen beheerders van de groep kunnen gearchiveerde verhalen zien, tenzij ze op de pagina van de groep worden geplaatst.";
 "ProfileStoriesArchiveHint" = "Alleen jij kan gearchiveerde verhalen zien, tenzij je ze op je profiel plaatst.";
 "ProfileUnofficialSecurityRisk" = "%1$s gebruikt een onofficiële Telegram-applicatie — berichten naar deze gebruiker zijn mogelijk minder goed beveiligd.";
-"PublicLinksLimitSubtitle" = "Reserveer maximaal %d t.me/gebruikersnaam-links";
+"PublicLinksLimitSubtitle" = "Reserveer maximaal %d sgq.me/gebruikersnaam-links";
 "PublicLinksLimitTitle" = "Openbare links";
 "PublicShares" = "Openbaar gedeeld";
 "PublicSharesCount#one" = "%1$s keer publiekelijk gedeeld";
@@ -4017,7 +4017,7 @@
 "Telegram.LanguageViewController" = "Taal";
 "Telegram.NotificationSettingsViewController" = "Berichtgeving";
 "TelegramFeatures" = "Telegram-functies";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "**Telegram Premium**-gebruikers hebben exclusieve toegang tot tal van extra functies.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Emojistatussen zijn een premium-functie. Andere functies die bij **Telegram Premium** zijn inbegrepen:";
 "TelegramPremiumPeerTitle" = "%s is een **Telegram\u00a0Premium**-abonnee";

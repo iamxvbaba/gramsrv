@@ -35,16 +35,16 @@ type Config struct {
 
 var (
 	defaultConfig = Config{
-		ProductName:     "Telesrv",
-		ProductUsername: "telesrv",
-		DesktopAppName:  "Telesrv Desktop",
-		AndroidAppName:  "Telesrv Android",
-		IOSAppName:      "Telesrv iOS",
-		MacOSAppName:    "Telesrv macOS",
-		WebAAppName:     "Telesrv Web A",
-		WebKAppName:     "Telesrv Web K",
-		PremiumName:     "Telesrv Premium",
-		StarsName:       "Telesrv Stars",
+		ProductName:     "ShuzaGram",
+		ProductUsername: "shuzagram",
+		DesktopAppName:  "ShuzaGram Desktop",
+		AndroidAppName:  "ShuzaGram Android",
+		IOSAppName:      "ShuzaGram iOS",
+		MacOSAppName:    "ShuzaGram macOS",
+		WebAAppName:     "ShuzaGram Web A",
+		WebKAppName:     "ShuzaGram Web K",
+		PremiumName:     "ShuzaGram Premium",
+		StarsName:       "ShuzaGram Stars",
 		PublicBaseURL:   links.DefaultPublicBaseURL,
 	}
 	configured atomic.Pointer[Config]
@@ -146,8 +146,8 @@ func UserVisibleClientPlatform(platform string) string {
 }
 
 var (
-	officialHTTPHostRE = regexp.MustCompile(`(?i)https?://(?:[a-z0-9-]+\.)*(?:telegram\.(?:org|me|com|dog)|t\.me)([^a-z0-9]|$)`)
-	officialBareHostRE = regexp.MustCompile(`(?i)(?:(?:[a-z0-9-]+\.)*telegram\.(?:org|me|com|dog)|\bt\.me)([^a-z0-9]|$)`)
+	officialHTTPHostRE = regexp.MustCompile(`(?i)https?://(?:[a-z0-9-]+\.)*telegram\.(?:org|com)([^a-z0-9]|$)`)
+	officialBareHostRE = regexp.MustCompile(`(?i)(?:[a-z0-9-]+\.)*telegram\.(?:org|com)([^a-z0-9]|$)`)
 	officialBrandRE    = regexp.MustCompile(`(?i)telegram|телеграм[\p{L}]*|تيليجرام|تلگرام|텔레그램|טלגרם`)
 	technicalIDRE      = regexp.MustCompile(`^[A-Za-z0-9-]+(?:[._][A-Za-z0-9-]+)+$`)
 )

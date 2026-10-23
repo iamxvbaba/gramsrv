@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "For Everyone";
 "AboutCocoon.Feature.Private.Description" = "No third party can access any data, such as translations, inside Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Private";
-"AboutCocoon.Footer" = "Want to integrate Cocoon into your projects?\nReach out at [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Want to integrate Cocoon into your projects?\nReach out at [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Disable Sharing";
 "AboutFeature.DisableSharing.NoForwarding" = "No Forwarding";
@@ -470,7 +470,7 @@
 "Bot.AllowSendMessages" = "Allow **%@** to send me messages.";
 "Bot.Grossing.Disclaimer" = "Which apps are included here? [Learn >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Top Mini Apps";
-"Bot.Grossing.Disclaimer.Alert.Text" = "This catalogue ranks mini apps based on their daily revenue, measured in Stars. To be listed, developers must set their main mini app in [@botfather](https://t.me/botfather) (as described [here](https://core.telegram.org/api/bots/webapps)), have over **1,000** daily users, and earn a daily revenue above **1,000** Stars, based on the weekly average.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "This catalogue ranks mini apps based on their daily revenue, measured in Stars. To be listed, developers must set their main mini app in [@botfather](https://sgq.me/botfather) (as described [here](https://core.telegram.org/api/bots/webapps)), have over **1,000** daily users, and earn a daily revenue above **1,000** Stars, based on the weekly average.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Understood";
 "Bot.InlineAuth.Header" = "Open Link";
 "Bot.InlineAuth.Open" = "Open";
@@ -3278,7 +3278,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "System\n%@";
 "EmptyGroupInfo.Line1" = "• Up to %@ members";
 "EmptyGroupInfo.Line2" = "• Persistent chat history";
-"EmptyGroupInfo.Line3" = "• Public links such as t.me/title";
+"EmptyGroupInfo.Line3" = "• Public links such as sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Admins with different rights";
 "EmptyGroupInfo.Subtitle" = "Groups can have:";
 "EmptyGroupInfo.Title" = "You created a group";
@@ -5364,7 +5364,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Pinned Chats";
 "Premium.Boarding.Double.PinnedChats.Info" = "Pin up to %@ chats in your main chat list";
 "Premium.Boarding.Double.PublicLinks" = "Public Links";
-"Premium.Boarding.Double.PublicLinks.Info" = "Reserve up to %@ t.me/username links";
+"Premium.Boarding.Double.PublicLinks.Info" = "Reserve up to %@ sgq.me/username links";
 "Premium.Boarding.Double.SavedGifs" = "Saved GIFs";
 "Premium.Boarding.Double.SavedGifs.Info" = "Save up to %@ GIFs in your Favorite GIFs";
 "Premium.Boarding.Double.Title" = "Doubled Limits";
@@ -5786,7 +5786,7 @@
 "ProxySettings.CredentialsHeader" = "CREDENTIALS (OPTIONAL)";
 "ProxySettings.Disabled" = "Disabled";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "If your clipboard contains socks5-link (**t.me/socks?server=127.0.0.1&port=80**) it will apply immediately";
+"ProxySettings.ExportDescription" = "If your clipboard contains socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) it will apply immediately";
 "ProxySettings.ExportLink" = "Export link from clipboard";
 "ProxySettings.IncorrectSecret" = "Incorrect secret. Please try again.";
 "ProxySettings.Item.Available" = "available (ping: %@ ms)";
@@ -7829,7 +7829,7 @@
 "TranslateModal.DeleteStyleHeader" = "Delete Style";
 "TranslateModal.EditStyle" = "Edit Style";
 "TranslateModal.ShareStyle" = "Share Style";
-"TranslateModal.StyleByAuthor" = "Style by [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Style by [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Skip";
 "TwoStepAuth.AnError" = "An error occurred. Please try again later.";
 "TwoStepAuth.CancelReset" = "Cancel Reset";

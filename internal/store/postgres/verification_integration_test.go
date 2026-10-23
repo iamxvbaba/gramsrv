@@ -57,7 +57,7 @@ func verificationTestDraft() domain.VerificationDraftInput {
 		Category:        "media",
 		Description:     strings.Repeat("independent newsroom covering the region ", 2),
 		OfficialWebsite: "https://example.com",
-		SocialLinks:     []string{"https://t.me/example"},
+		SocialLinks:     []string{"https://sgq.me/example"},
 		PressLinks: []string{
 			"https://press.example.com/story",
 			"https://press.example.org/profile",
@@ -161,7 +161,7 @@ func TestVerificationDraftLifecyclePostgres(t *testing.T) {
 		t.Fatalf("save draft: %v", err)
 	}
 	if saved.Version != app.Version+1 || len(saved.PressLinks) != 2 ||
-		saved.SocialLinks[0] != "https://t.me/example" {
+		saved.SocialLinks[0] != "https://sgq.me/example" {
 		t.Fatalf("saved draft = v%d social=%v press=%v", saved.Version, saved.SocialLinks, saved.PressLinks)
 	}
 	if !saved.UpdatedAt.Equal(saved.UpdatedAt.UTC()) || saved.UpdatedAt.Before(saved.CreatedAt) {

@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Voor iedereen";
 "AboutCocoon.Feature.Private.Description" = "Geen enkele derde partij heeft toegang tot data, zoals vertalingen, binnen Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privé";
-"AboutCocoon.Footer" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Deeloptie uitschakelen";
 "AboutFeature.DisableSharing.NoForwarding" = "Niet doorsturen";
@@ -470,7 +470,7 @@
 "Bot.AllowSendMessages" = "**%@** mag mij berichten sturen.";
 "Bot.Grossing.Disclaimer" = "Welke apps komen hier voor? [Info >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Top mini-apps";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Deze catalogus rangschikt mini-apps op basis van hun dagelijkse omzet in sterren. Om op de lijst te komen, moeten ontwikkelaars hun primaire mini-app instellen via [@botfather](https://t.me/botfather) (volgens de stappen [hier](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)). Daarnaast moeten ze meer dan **1000** dagelijkse gebruikers en een dagomzet boven de **1000** sterren hebben, op basis van het wekelijks gemiddelde.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Deze catalogus rangschikt mini-apps op basis van hun dagelijkse omzet in sterren. Om op de lijst te komen, moeten ontwikkelaars hun primaire mini-app instellen via [@botfather](https://sgq.me/botfather) (volgens de stappen [hier](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)). Daarnaast moeten ze meer dan **1000** dagelijkse gebruikers en een dagomzet boven de **1000** sterren hebben, op basis van het wekelijks gemiddelde.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Begrepen";
 "Bot.InlineAuth.Header" = "Link openen";
 "Bot.InlineAuth.Open" = "Openen";
@@ -3281,7 +3281,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Systeem\n%@";
 "EmptyGroupInfo.Line1" = "Tot %@ leden";
 "EmptyGroupInfo.Line2" = "Blijvende chatgeschiedenis";
-"EmptyGroupInfo.Line3" = "• Openbare links zoals t.me/titel";
+"EmptyGroupInfo.Line3" = "• Openbare links zoals sgq.me/titel";
 "EmptyGroupInfo.Line4" = "Beheerders met aangepaste rechten";
 "EmptyGroupInfo.Subtitle" = "Groepen ondersteunen het volgende:";
 "EmptyGroupInfo.Title" = "Je hebt een groep aangemaakt";
@@ -5367,7 +5367,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Vastgezette chats";
 "Premium.Boarding.Double.PinnedChats.Info" = "Zet maximaal %@ chats vast in je hoofdchatlijst";
 "Premium.Boarding.Double.PublicLinks" = "Openbare links";
-"Premium.Boarding.Double.PublicLinks.Info" = "Reserveer maximaal %@ t.me/gebruikersnaam-links";
+"Premium.Boarding.Double.PublicLinks.Info" = "Reserveer maximaal %@ sgq.me/gebruikersnaam-links";
 "Premium.Boarding.Double.SavedGifs" = "Opgeslagen GIF's";
 "Premium.Boarding.Double.SavedGifs.Info" = "Sla maximaal %@ GIF's op in je favoriete GIF's";
 "Premium.Boarding.Double.Title" = "Verdubbelde limieten";
@@ -5790,7 +5790,7 @@
 "ProxySettings.CredentialsHeader" = "REFERENTIES (OPTIIONEEL)";
 "ProxySettings.Disabled" = "Uitgeschakeld";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Als je klembord een SOCKS5-link bevat (**t.me/socks?server=127.0.0.1&port=80**) kan deze direct worden toegepast.";
+"ProxySettings.ExportDescription" = "Als je klembord een SOCKS5-link bevat (**sgq.me/socks?server=127.0.0.1&port=80**) kan deze direct worden toegepast.";
 "ProxySettings.ExportLink" = "Link vanuit klembord exporteren";
 "ProxySettings.IncorrectSecret" = "Foutief geheim, probeer het opnieuw.";
 "ProxySettings.Item.Available" = "beschikbaar (ping: %@ ms)";
@@ -7833,7 +7833,7 @@
 "TranslateModal.DeleteStyleHeader" = "Stijl verwijderen";
 "TranslateModal.EditStyle" = "Stijl bewerken";
 "TranslateModal.ShareStyle" = "Stijl delen";
-"TranslateModal.StyleByAuthor" = "Stijl door [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stijl door [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Overslaan";
 "TwoStepAuth.AnError" = "Er is een fout opgetreden. Probeer het later opnieuw.";
 "TwoStepAuth.CancelReset" = "Reset annuleren";

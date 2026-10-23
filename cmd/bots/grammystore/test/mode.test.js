@@ -99,7 +99,7 @@ function createBotWithMode(mode) {
   const config = {
     botToken: "999:TEST", defaultLanguage: "ru", defaultNumberCountry: "RU", botMode: mode,
     ownerIDs: new Set(), requiredChannel: "", requiredChannelURL: "", referralBonus: 100,
-    dailyBonus: 10, notificationTTLDays: 30, productName: "Telesrv", publicUsername: "test_bot",
+    dailyBonus: 10, notificationTTLDays: 30, productName: "ShuzaGram", publicUsername: "test_bot",
     gramsrvAPI: "http://localhost:9999", gramsrvToken: "test", gramsrvActor: "test",
     publicBaseURL: "https://example.com", codeHost: "127.0.0.1", codePort: 0,
     codeWebhookSecret: "test-secret-12345678901234",

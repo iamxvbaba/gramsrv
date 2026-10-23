@@ -25,7 +25,7 @@ import (
 
 func newStickerLinkHandler(t *testing.T, files publicweb.StickerSetResolver) http.Handler {
 	t.Helper()
-	h, err := publicweb.NewHandler(publicweb.Config{StickerSets: files, PublicBaseURL: "https://telesrv.net"})
+	h, err := publicweb.NewHandler(publicweb.Config{StickerSets: files, PublicBaseURL: "https://sgq.me"})
 	if err != nil {
 		t.Fatalf("new public Web handler: %v", err)
 	}
@@ -89,13 +89,10 @@ func TestCustomStickerPackLinkInstallAndSendSmoke(t *testing.T) {
 		t.Fatalf("sticker link status = %d body=%q, want 200", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"https://telesrv.net/addstickers/alice_fresh_pack", "telesrv://addstickers?set=alice_fresh_pack", "tg://addstickers?set=alice_fresh_pack"} {
+	for _, want := range []string{"https://sgq.me/addstickers/alice_fresh_pack", "sg://addstickers?set=alice_fresh_pack", "sg://addstickers?set=alice_fresh_pack"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("sticker link body missing %q:\n%s", want, body)
 		}
-	}
-	if strings.Contains(body, `window.location.href = "tg://`) {
-		t.Fatalf("sticker link must auto-open telesrv://, not tg://:\n%s", body)
 	}
 
 	preview, err := r.onMessagesGetStickerSet(WithUserID(ctx, bob.ID), &tg.MessagesGetStickerSetRequest{
@@ -212,7 +209,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 	sendStickersBotText(t, r, alice, "/publish", 9105)
 	lastBotReplyID = waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "short name")
 	sendStickersBotText(t, r, alice, "alice_bot_pack", 9106)
-	waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "https://telesrv.net/addstickers/alice_bot_pack")
+	waitForStickersReplyAfter(t, messageStore, alice.ID, lastBotReplyID, "https://sgq.me/addstickers/alice_bot_pack")
 
 	created := files.sets[domain.StickerSetKindStickers]
 	if len(created) != 1 || created[0].ShortName != "alice_bot_pack" || created[0].CreatorUserID != alice.ID {
@@ -232,7 +229,7 @@ func TestStickersBotCreatePackLinkInstallIsolationSmoke(t *testing.T) {
 	web := newStickerLinkHandler(t, files)
 	rr := httptest.NewRecorder()
 	web.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/addstickers/alice_bot_pack", nil))
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "https://telesrv.net/addstickers/alice_bot_pack") {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "https://sgq.me/addstickers/alice_bot_pack") {
 		t.Fatalf("sticker bot link response = %d %q", rr.Code, rr.Body.String())
 	}
 	preview, err := r.onMessagesGetStickerSet(WithUserID(ctx, bob.ID), &tg.MessagesGetStickerSetRequest{

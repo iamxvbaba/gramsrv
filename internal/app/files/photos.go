@@ -320,6 +320,7 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	// 上传前会做这步；DrKLO 发 story 视频不转码导致 moov 在末尾，TDesktop 流式播放路径
 	// 无法解复用（av_read_frame Invalid data）。不转码、保留原编码（含 HEVC）。
 	body = s.maybeFaststartVideoBlob(ctx, spec.MimeType, body)
+	spec = s.normalizeUploadedTGS(ctx, body, spec)
 	docID := randomID()
 	if err := s.media.PutFileBlob(ctx, domain.FileBlob{
 		LocationKey: fmt.Sprintf("doc:%d", docID),

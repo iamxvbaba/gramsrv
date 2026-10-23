@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "ENLLAÇOS AL XAT";
 "Business.Links.PreviewText" = "Afegiu un missatge que s'introduirà al camp de text de qualsevol que iniciï el xat amb aquest enllaç:";
 "Business.Links.PreviewTitle" = "Enllaç al xat";
-"Business.Links.SimpleLinkInfoPhone" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [t.me/%1$@](username) o [t.me/+%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "També podeu usar un enllaç simple perquè obrin el vostre xat: [sgq.me/%1$@](username) o [sgq.me/+%2$@](phone).";
 "Business.Links.Text" = "Doneu als clients enllaços curts que inicien un xat amb la vostra empresa i els suggereixen un missatge inicial.";
 "Business.LinksInfo" = "Creeu enllaços que inicien un xat amb la vostra empresa, suggerint-los un missatge inicial.";
 "Business.Location" = "Ubicació";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "El nom d'un canal no pot començar per guió baix.";
 "Channel.Username.InvalidTaken" = "Aquest enllaç ja es troba en ús.";
 "Channel.Username.InvalidTooShort" = "Els enllaços públics han de tenir 5 caràcters o més.";
-"Channel.Username.LinkHint" = "Aquest enllaç obre el vostre canal al Telegram:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Aquest enllaç obre el vostre canal al Telegram:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Podeu revocar l'enllaç d'un dels vostres grups o canals antics, o crear un canal privat.";
 "Channel.Username.Title" = "Enllaç";
 "Channel.Username.UsernameIsAvailable" = "%@ està disponible.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Eficient";
 "CocoonInfo.ForEveryone.Text" = "Qualsevol desenvolupador pot utilitzar el [Cocoon](telegram) per a funcions amb IA. Més informació en [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Per a tothom";
-"CocoonInfo.IntergrateInfo" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Cap tercer pot accedir a cap dada, com ara traduccions, a dins del Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4286,7 +4286,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Només podeu usar **a-z**, **0-9** i guions baixos. ";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Només podeu crear com a màxim %d bot.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Només podeu crear com a màxim %d bots.";
-"CreateBot.UsernameStatus.Link" = "Enllaç: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Enllaç: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "El nom d'usuari no pot començar amb un nombre.";
 "CreateBot.UsernameStatus.Short" = "El nom d'usuari ha de tenir almenys 5 caràcters.";
 "CreateBot.UsernameStatus.Taken" = "El nom d'usuari ja es troba en ús.";
@@ -4669,7 +4669,7 @@
 "EmojiStickerSettings.Info" = "Animem els artistes a afegir els seus propis paquets usant el bot @stickers.\n\nManteniu premut un missatge per a veure tot el paquet i afegir-lo.";
 "EmptyGroupInfo.Line1" = "Fins a 200.000 membres";
 "EmptyGroupInfo.Line2" = "Historial persistent";
-"EmptyGroupInfo.Line3" = "Enllaços públics, com t.me/títol";
+"EmptyGroupInfo.Line3" = "Enllaços públics, com sgq.me/títol";
 "EmptyGroupInfo.Line4" = "Administradors amb rols diferents";
 "EmptyGroupInfo.Subtitle" = "Els grups poden tenir:";
 "EmptyGroupInfo.Title" = "Heu creat un grup";
@@ -8970,7 +8970,7 @@
 "Premium.Limits.PinnedChats" = "Xats fixats";
 "Premium.Limits.PinnedChatsInfo" = "Fixeu fins a 10 xats a la llista de xats";
 "Premium.Limits.PublicLinks" = "Enllaços públics";
-"Premium.Limits.PublicLinksInfo" = "Reserveu fins a 20 enllaços [t.me/nom]()";
+"Premium.Limits.PublicLinksInfo" = "Reserveu fins a 20 enllaços [sgq.me/nom]()";
 "Premium.Limits.RecommendedChannels" = "Canals similars";
 "Premium.Limits.RecommendedChannelsInfo" = "Vegeu fins a 100 canals similars";
 "Premium.Limits.SavedGifs" = "GIF desats";
@@ -9322,7 +9322,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "QUI POT VEURE LA MEVA ÚLTIMA CONNEXIÓ";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Els usuaris només veuran el vostre número al Telegram si també teniu el seu als vostres contactes.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Els usuaris que tinguin el vostre número als contactes també el veuran al Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Els usuaris que tinguin el vostre número als contactes també el veuran al Telegram.\n\nAquest enllaç públic obre el vostre xat:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Els usuaris que tinguin el vostre número als contactes també el veuran al Telegram.\n\nAquest enllaç públic obre el vostre xat:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "QUI EM POT TROBAR PEL MEU NÚMERO";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "QUI POT VEURE EL MEU NÚMERO";
 "PrivacyPolicy.Accept" = "Accepta i continua";
@@ -10225,8 +10225,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "no disponible";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TIPUS";
-"SocksProxySetup.QrCode.TMeLink" = "enllaç t.me";
-"SocksProxySetup.QrCode.TgLink" = "enllaç tg://";
+"SocksProxySetup.QrCode.TMeLink" = "enllaç sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "enllaç sg://";
 "SocksProxySetup.RequiredCredentials" = "CREDENCIALS";
 "SocksProxySetup.SaveProxy" = "Desa el servidor";
 "SocksProxySetup.SavedProxies" = "SERVIDORS DESATS";
@@ -11894,7 +11894,7 @@
 "Username.InvalidTooShort" = "Els noms d'usuari han de tenir mínim 5 caràcters.";
 "Username.InvalidValue" = "El nom d'usuari no és vàlid.";
 "Username.LinkCopied" = "S'ha copiat al porta-retalls.";
-"Username.LinkHint" = "Aquest enllaç obre el vostre xat:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Aquest enllaç obre el vostre xat:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ORDRE DELS NOMS D'USUARI";
 "Username.LinksOrderInfo" = "Arrossegueu i amolleu els enllaços per a canviar l'ordre en el qual es mostraran a la pàgina d'informació.";
 "Username.Placeholder" = "El vostre nom d'usuari";

@@ -121,7 +121,7 @@ func newTelegramLoginHTTPFixtureWithAppLinkBase(t *testing.T, appLinkBase string
 		t.Fatal(err)
 	}
 	handler, err := NewHandler(Config{
-		Service: service, Tokens: tokens, AppName: "Telesrv", AllowHTTP: true,
+		Service: service, Tokens: tokens, AppName: "ShuzaGram", AllowHTTP: true,
 		BotUsernames: telegramLoginHTTPBotUsernames{
 			"botname": {ID: 9001, Username: "BotName", Bot: true, BotInfoVersion: 1},
 			"alice":   {ID: 42, Username: "alice"},

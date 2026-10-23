@@ -172,7 +172,7 @@
 "ApproveNewMembers" = "Aprobă membrii noi";
 "ApproveNewMembersInfo" = "Pornește dacă vrei ca membrii noi să se poată alătura doar după ce au fost aprobați de un admin.";
 "Archive" = "Arhivează";
-"ArchiveAppearanceHint" = "Afișează arhiva ca dosar local. Îi poți schimba poziționarea în [setări](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Afișează arhiva ca dosar local. Îi poți schimba poziționarea în [setări](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Aspect";
 "ArchiveAppearanceToggle" = "Afișează ca dosar";
 "ArchiveAsFolder" = "Arhivează ca Dosar";
@@ -1301,9 +1301,9 @@
 "EditPrivacyPhoneNumber" = "Număr de telefon ";
 "EditPrivacyPhoto" = "Poze de Profil";
 "EditPrivacyReadDate" = "Vede Timpul Meu de Citire";
-"EditPrivacyReadDateAllowHint" = "Permite lui %1$s să îți vadă **Activitatea Online** pentru a afecta această setare.\n\nPentru mai multe informații, vezi **[Confidențialitate și Securitate](tg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
-"EditPrivacyReadDateRestrictHint" = "Restricționează pe %1$s să îți vadă **Activitatea Online** pentru a afecta această setare.\n\nPentru mai multe informații, vezi **[Confidențialitate și Securitate](tg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
-"EditPrivacyReadDateToggleHint" = "Poți ascunde **Timpul de Citire** doar pentru toată lumea care nu îți poate vedea **Activitatea Online**.\n\nVezi **[Confidențialitate și Securitate](tg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
+"EditPrivacyReadDateAllowHint" = "Permite lui %1$s să îți vadă **Activitatea Online** pentru a afecta această setare.\n\nPentru mai multe informații, vezi **[Confidențialitate și Securitate](sg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
+"EditPrivacyReadDateRestrictHint" = "Restricționează pe %1$s să îți vadă **Activitatea Online** pentru a afecta această setare.\n\nPentru mai multe informații, vezi **[Confidențialitate și Securitate](sg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
+"EditPrivacyReadDateToggleHint" = "Poți ascunde **Timpul de Citire** doar pentru toată lumea care nu îți poate vedea **Activitatea Online**.\n\nVezi **[Confidențialitate și Securitate](sg://settings/privacy)** – **Activitate Online** – **Ascunde Timp Citire**.";
 "EditPrivacyStatus" = "Activitate Online";
 "EditPrivacyVoice" = "Îmi Trimit Mesaje Vocale";
 "EditUserRestrictions" = "Editează restricțiile utilizatorului";
@@ -1642,7 +1642,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Folosește această setare pentru a compara comportamentul fără modul edge-to-edge pe Android 11–14.";
 "Experiment_PeerIds" = "Arată ID-urile Peer la Profiluri";
 "Experiment_PeerIdsInfo" = "Arată identificatoarele API ale utilizatorilor și conversațiilor la profilurile lor";
-"ExperimentalBuildInfo" = "Această versiune de **Telegram X** nu a fost proiectată pentru utilizare pe termen lung.\n\nAr putea să nu mai funcționeze după un timp și nu poți porni notificările.\n\nDacă cauți fișierul APK Telegram X corect, vezi https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Această versiune de **Telegram X** nu a fost proiectată pentru utilizare pe termen lung.\n\nAr putea să nu mai funcționeze după un timp și nu poți porni notificările.\n\nDacă cauți fișierul APK Telegram X corect, vezi https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Atenție: build experimental";
 "ExperimentalSettings" = "Setări experimentale";
 "ExperimentalSettingsUnavailable" = "Niciun experiment disponibil. Revino mai târziu.";
@@ -2064,7 +2064,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X nu s-a putut deschide pentru că spațiul de stocare este plin.\n\nAsigură-te că există suficient spațiu de stocare și atinge **Lansează aplicația** pentru a reîncerca.\n\nDisponibil: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X nu s-a putut deschide din cauza unei erori a dispozitivului.\n\nAtinge **Lansează aplicația** pentru a reîncerca. Dacă tot nu reușești, urmează acești pași:\n\n• Verifică dacă ai suficient spațiu: **%1$s**.\n• Asigură-te că nu există probleme cu stocarea, card SD scos sau nerecunoscut.\n• Restartează dispozitivul.\n\nDacă nimic nu ajută, poate ai vrea să cauți problema pe [pagina de GitHub TDLib](https://github.com/tdlib/td/issues) pentru posibile rezolvări, sau posteaz-o tu, incluzând mesajele de eroare și detaliile dispozitivului.";
 "LaunchAppGuideFatalError" = "Telegram X s-a închis neașteptat ultima dată când l-ai folosit.\n\nApasă **Lansează Aplicația** pt. a reîncerca.";
-"LaunchAppGuideTdlibIssue" = "Telegram X nu s-a putut deschide din cauza unei erori TDLib.\n\nApasă **Deschide aplicația** pentru a reîncerca. Dacă tot nu reușești, urmează acești pași:\n\n• [Verifică](%2$s) dacă ai ultima versiune Telegram X instalată.\n• Repornește-ți dispozitivul.\n\n**Dacă pașii de mai sus nu ajută**\n\n1. Partajează detaliile erorii TDLib cu dezvoltatorii printr-una dintre metodele:\n— În privat via [@tdlib_bot](https://t.me/tdlib_bot) folosind alt dispozitiv sau [Telegram Web](https://web.telegram.org/).\n— Public pe [pagina de GitHub](https://github.com/tdlib/td/issues). **Să nu** publici fișierul **tdlib_log.txt**.\n2. Așteaptă pentru un răspuns.\n3. Schimbă setările TDLib de mai jos așa cum ți-au spus dezvoltatorii.\n4. Apasă **Deschide aplicația** pentru a forța aplicația să se închidă.\n5. Partajează fișierul **tdlib_log.txt** cu dezvoltatorii TDLib și așteaptă ca problema să fie rezolvată.\n6. Odată actualizată, vei putea lansa aplicația normal.\n\n**Opțiuni alternative**\n\n• Caută probleme similare pe [GitHub](https://github.com/tdlib/td/issues) pentru a vedea dacă găsești vreo soluție.\n• Reinstalează aplicația. Conversațiile secrete vor fi pierdute. Dacă folosești același număr de telefon de pe care ai fost conectat, toate conversațiile și conținutul vor fi restabilite de pe serverele Telegram.";
+"LaunchAppGuideTdlibIssue" = "Telegram X nu s-a putut deschide din cauza unei erori TDLib.\n\nApasă **Deschide aplicația** pentru a reîncerca. Dacă tot nu reușești, urmează acești pași:\n\n• [Verifică](%2$s) dacă ai ultima versiune Telegram X instalată.\n• Repornește-ți dispozitivul.\n\n**Dacă pașii de mai sus nu ajută**\n\n1. Partajează detaliile erorii TDLib cu dezvoltatorii printr-una dintre metodele:\n— În privat via [@tdlib_bot](https://sgq.me/tdlib_bot) folosind alt dispozitiv sau [Telegram Web](https://web.telegram.org/).\n— Public pe [pagina de GitHub](https://github.com/tdlib/td/issues). **Să nu** publici fișierul **tdlib_log.txt**.\n2. Așteaptă pentru un răspuns.\n3. Schimbă setările TDLib de mai jos așa cum ți-au spus dezvoltatorii.\n4. Apasă **Deschide aplicația** pentru a forța aplicația să se închidă.\n5. Partajează fișierul **tdlib_log.txt** cu dezvoltatorii TDLib și așteaptă ca problema să fie rezolvată.\n6. Odată actualizată, vei putea lansa aplicația normal.\n\n**Opțiuni alternative**\n\n• Caută probleme similare pe [GitHub](https://github.com/tdlib/td/issues) pentru a vedea dacă găsești vreo soluție.\n• Reinstalează aplicația. Conversațiile secrete vor fi pierdute. Dacă folosești același număr de telefon de pe care ai fost conectat, toate conversațiile și conținutul vor fi restabilite de pe serverele Telegram.";
 "LaunchAppShareError" = "Partajează detaliile erorii";
 "LaunchAppUserSubtitle" = "offline";
 "LaunchAppViewError" = "Vezi detaliile erorii";
@@ -2129,7 +2129,7 @@
 "LinkChannel" = "Atașează un canal";
 "LinkChannelHelp" = "Poți seta un link public pe **Telegram**. Dacă o faci, alți oameni vor putea să găsească și să se alăture canalului cu acest link.\n\nPoți folosi **a–z**, **0–9** și underline. \nMărimea minimă este de **5** caractere.";
 "LinkChecking" = "Verificare disponibilitate…";
-"LinkCurrent" = "t.me/%1$s este linkul tău public curent.";
+"LinkCurrent" = "sgq.me/%1$s este linkul tău public curent.";
 "LinkDeleteOther" = "%1$s a șters linkul lui %2$s de invitație %3$s";
 "LinkDeleteOtherYou" = "Ai șters linkul lui %1$s de invitație %2$s";
 "LinkDeletePrimary" = "%1$s a șters linkul principal de invitație %2$s";
@@ -4275,7 +4275,7 @@
 "TranslationFailed" = "Traducere eșuată";
 "TranslationMoreCreate" = "Creează";
 "TranslationMoreDone" = "Bine";
-"TranslationMoreText" = "Lista limbilor disponibile este gestionată de [Platforma de traducere](https://translations.telegram.org).\n\nTelegram îți va oferi posibilitatea de a trece la limba ta atunci când traducerea devine disponibilă oficial.\n\nCât timp aștepți, poți instala traduceri personalizate; alătură-te [procesului de traducere](https://translations.telegram.org/en/android_x/), sau [fă-ți tu o](https://t.me/tgx_android_translate/) traducere.";
+"TranslationMoreText" = "Lista limbilor disponibile este gestionată de [Platforma de traducere](https://translations.telegram.org).\n\nTelegram îți va oferi posibilitatea de a trece la limba ta atunci când traducerea devine disponibilă oficial.\n\nCât timp aștepți, poți instala traduceri personalizate; alătură-te [procesului de traducere](https://translations.telegram.org/en/android_x/), sau [fă-ți tu o](https://sgq.me/tgx_android_translate/) traducere.";
 "TranslationMoreTitle" = "Nu îți poți găsi limba?";
 "TranslationPaste" = "Lipește traducere";
 "TranslationsMissing#one" = "%1$s netraduse";

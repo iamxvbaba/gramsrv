@@ -357,6 +357,10 @@ export type StarGiftRow = {
   Limited: boolean;
   AvailabilityTotal: number;
   AvailabilityRemains: number;
+  LimitedPerUser: boolean;
+  PerUserTotal: number;
+  RateLimitCount: number;
+  RateLimitWindowSeconds: number;
   CreatedBy: string;
   UpdatedAt: string;
 };
@@ -1347,4 +1351,58 @@ export type GiftAttributesResponse = {
   models: GiftAttributeRow[];
   patterns: GiftAttributeRow[];
   backdrops: GiftBackdropRow[];
+};
+
+// Admin panel "auto-subscribe channel" list -- see
+// deploy/migrations/20261017010007_channel_auto_subscribe.up.sql.
+export type AutoSubscribeChannelRow = {
+  channel_id: string;
+  title: string;
+  added_by: string;
+  added_at: string;
+};
+
+export type AutoSubscribeChannelListResponse = {
+  channels: AutoSubscribeChannelRow[] | null;
+};
+
+// A collectible pool scheduled to open later (GET /api/gifts/{id}/collectibles/pending).
+export type StarGiftPendingCollectible = {
+  found: boolean;
+  gift_id: string;
+  revision?: number;
+  upgrade_stars?: string;
+  supply_total?: number;
+  slug_prefix?: string;
+  scheduled_publish_at?: number;
+  models?: number;
+  patterns?: number;
+  backdrops?: number;
+};
+
+export type BotShopConfig = {
+  enabled: boolean;
+  star_packs: number[];
+  custom_enabled: boolean;
+  custom_min: number;
+  custom_max: number;
+  rate_base: number;
+  sg_stars_per_tg_star: number;
+  usd_per_base: number;
+  uah_per_base: number;
+  premium_enabled: boolean;
+  premium_months: number[];
+  premium_tg_stars_per_month: number;
+  premium_usd_per_month: number;
+  premium_uah_per_month: number;
+  pay_tg_stars: boolean;
+  pay_usdt: boolean;
+  pay_ton: boolean;
+  ton_address: string;
+  ton_usd_rate: number;
+  pay_card: boolean;
+  card_number: string;
+  card_holder: string;
+  card_kop_max: number;
+  shop_message: string;
 };

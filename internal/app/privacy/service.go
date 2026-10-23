@@ -120,6 +120,34 @@ func (s *Service) AddAllowUser(ctx context.Context, ownerUserID int64, key domai
 	return next, true, err
 }
 
+// RemoveAllowUser drops targetUserID from every allow-users rule of key.
+func (s *Service) RemoveAllowUser(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, targetUserID int64) (domain.PrivacyRules, bool, error) {
+	if targetUserID == 0 {
+		return domain.PrivacyRules{}, false, domain.ErrPrivacyRuleInvalid
+	}
+	rules, err := s.GetRules(ctx, ownerUserID, key)
+	if err != nil {
+		return domain.PrivacyRules{}, false, err
+	}
+	changed := false
+	next := make([]domain.PrivacyRule, 0, len(rules.Rules))
+	for _, rule := range rules.Rules {
+		if rule.Kind == domain.PrivacyRuleAllowUsers && slices.Contains(rule.UserIDs, targetUserID) {
+			rule.UserIDs = slices.DeleteFunc(slices.Clone(rule.UserIDs), func(id int64) bool { return id == targetUserID })
+			changed = true
+			if len(rule.UserIDs) == 0 {
+				continue
+			}
+		}
+		next = append(next, rule)
+	}
+	if !changed {
+		return rules, false, nil
+	}
+	out, err := s.SetRules(ctx, ownerUserID, key, next)
+	return out, true, err
+}
+
 func (s *Service) CanSee(ctx context.Context, ownerUserID, viewerUserID int64, key domain.PrivacyKey) (bool, error) {
 	if ownerUserID == 0 || viewerUserID == 0 {
 		return false, nil

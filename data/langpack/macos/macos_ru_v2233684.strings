@@ -38,7 +38,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Доступность";
 "AboutCocoon.Feature.Private.Description" = "У третьих лиц нет доступа к данным внутри Cocoon, включая переводы.";
 "AboutCocoon.Feature.Private.Title" = "Конфиденциальность";
-"AboutCocoon.Footer" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Запретить копирование";
 "AboutFeature.DisableSharing.NoForwarding" = "Без пересылки";
@@ -495,7 +495,7 @@
 "Bot.AllowSendMessages" = "Разрешить **%@** писать мне сообщения";
 "Bot.Grossing.Disclaimer" = "Что это за приложения? [Подробнее >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Кассовые приложения";
-"Bot.Grossing.Disclaimer.Alert.Text" = "В этом каталоге представлены мини-приложения, собирающие наибольшее количество звёзд в среднем за день. Чтобы приложение заняло место в рейтинге, его разработчикам необходимо настроить в боте основное мини-приложение с помощью [@botfather](https://t.me/botfather) (по [инструкции](https://core.telegram.org/api/bots/webapps)), у него должно быть более **1000** пользователей в день, а его дневная выручка должна составлять более **1000** звёзд (учитывается среднее значение за неделю).";
+"Bot.Grossing.Disclaimer.Alert.Text" = "В этом каталоге представлены мини-приложения, собирающие наибольшее количество звёзд в среднем за день. Чтобы приложение заняло место в рейтинге, его разработчикам необходимо настроить в боте основное мини-приложение с помощью [@botfather](https://sgq.me/botfather) (по [инструкции](https://core.telegram.org/api/bots/webapps)), у него должно быть более **1000** пользователей в день, а его дневная выручка должна составлять более **1000** звёзд (учитывается среднее значение за неделю).";
 "Bot.Grossing.Disclaimer.Alert.ok" = "OK";
 "Bot.InlineAuth.Header" = "Открыть ссылку";
 "Bot.InlineAuth.Open" = "Открыть";
@@ -3768,7 +3768,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Система\n%@";
 "EmptyGroupInfo.Line1" = "• До %@ участников";
 "EmptyGroupInfo.Line2" = "• Общая история переписки";
-"EmptyGroupInfo.Line3" = "• Публичные ссылки вида t.me/title";
+"EmptyGroupInfo.Line3" = "• Публичные ссылки вида sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Разный уровень прав";
 "EmptyGroupInfo.Subtitle" = "Возможности групп:";
 "EmptyGroupInfo.Title" = "Вы создали группу";
@@ -6029,7 +6029,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Закреплённые чаты";
 "Premium.Boarding.Double.PinnedChats.Info" = "Закрепление до %@ чатов в основном списке";
 "Premium.Boarding.Double.PublicLinks" = "Публичные ссылки";
-"Premium.Boarding.Double.PublicLinks.Info" = "Использование до %@ ссылок вида t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Использование до %@ ссылок вида sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "Сохранённые GIF";
 "Premium.Boarding.Double.SavedGifs.Info" = "Сохранение в избранных до %@ GIF";
 "Premium.Boarding.Double.Title" = "Удвоенные лимиты";
@@ -6473,7 +6473,7 @@
 "ProxySettings.CredentialsHeader" = "АУТЕНТИФИКАЦИЯ (НЕОБЯЗАТЕЛЬНО)";
 "ProxySettings.Disabled" = "Отключено";
 "ProxySettings.Enable" = "Прокси";
-"ProxySettings.ExportDescription" = "Если в буфере обмена есть ссылка на socks5 (**t.me/socks?server=127.0.0.1&port=80**), то прокси будет применён автоматически";
+"ProxySettings.ExportDescription" = "Если в буфере обмена есть ссылка на socks5 (**sgq.me/socks?server=127.0.0.1&port=80**), то прокси будет применён автоматически";
 "ProxySettings.ExportLink" = "Вставить ссылку из буфера обмена";
 "ProxySettings.IncorrectSecret" = "Неверный ключ. Пожалуйста, попробуйте снова.";
 "ProxySettings.Item.Available" = "доступен (пинг: %@мс)";
@@ -8799,7 +8799,7 @@
 "TranslateModal.PromptPlaceholder" = "Инструкция для ИИ…";
 "TranslateModal.PromptStyle" = "Инструкции";
 "TranslateModal.ShareStyle" = "Поделиться стилем";
-"TranslateModal.StyleByAuthor" = "Стиль от [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Стиль от [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Пропустить";
 "TwoStepAuth.AnError" = "Произошла ошибка. Пожалуйста, попробуйте позже.";
 "TwoStepAuth.CancelReset" = "Отменить сброс";

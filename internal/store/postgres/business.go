@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"telesrv/internal/domain"
 )
@@ -291,10 +292,14 @@ func (s *PasswordStore) SaveQuickReplyText(ctx context.Context, ownerUserID int6
 		if err != nil {
 			return err
 		}
+		media, err := encodeMessageMedia(msg.Media)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
-INSERT INTO quick_reply_messages (owner_user_id, shortcut_id, message_id, random_id, message_date, body, entities, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,now(),now())`,
-			ownerUserID, shortcutID, messageID, msg.RandomID, msg.Date, msg.Message, string(entities)); err != nil {
+INSERT INTO quick_reply_messages (owner_user_id, shortcut_id, message_id, random_id, message_date, body, entities, media, grouped_id, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,now(),now())`,
+			ownerUserID, shortcutID, messageID, msg.RandomID, msg.Date, msg.Message, string(entities), string(media), msg.GroupedID); err != nil {
 			return fmt.Errorf("insert quick reply message: %w", err)
 		}
 		replies, err := listQuickRepliesTx(ctx, tx, ownerUserID)
@@ -309,6 +314,8 @@ VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,now(),now())`,
 			Date:        msg.Date,
 			Message:     msg.Message,
 			Entities:    append([]domain.MessageEntity(nil), msg.Entities...),
+			Media:       msg.Media,
+			GroupedID:   msg.GroupedID,
 		}
 		reply := quickReplyByID(replies, shortcutID)
 		kind := domain.QuickReplyMutationMessage
@@ -345,7 +352,8 @@ func (s *PasswordStore) GetQuickReplyMessages(ctx context.Context, ownerUserID i
 		args = append(args, ids32)
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT message_id, random_id, message_date, body, COALESCE(entities::text, '[]')::text
+SELECT message_id, random_id, message_date, body, COALESCE(entities::text, '[]')::text,
+       media::text, grouped_id, edit_date
 FROM quick_reply_messages
 WHERE owner_user_id = $1
   AND shortcut_id = $2`+filter+`
@@ -751,12 +759,17 @@ func scanQuickReplyMessage(ownerUserID int64, shortcutID int, row interface {
 	Scan(dest ...any) error
 }) (domain.QuickReplyMessage, error) {
 	var msg domain.QuickReplyMessage
-	var entitiesJSON string
+	var entitiesJSON, mediaJSON string
 	msg.OwnerUserID = ownerUserID
 	msg.ShortcutID = shortcutID
-	if err := row.Scan(&msg.ID, &msg.RandomID, &msg.Date, &msg.Message, &entitiesJSON); err != nil {
+	if err := row.Scan(&msg.ID, &msg.RandomID, &msg.Date, &msg.Message, &entitiesJSON, &mediaJSON, &msg.GroupedID, &msg.EditDate); err != nil {
 		return domain.QuickReplyMessage{}, fmt.Errorf("scan quick reply message: %w", err)
 	}
+	media, err := decodeMessageMedia(mediaJSON)
+	if err != nil {
+		return domain.QuickReplyMessage{}, fmt.Errorf("decode quick reply media: %w", err)
+	}
+	msg.Media = media
 	entities, err := decodeMessageEntities(entitiesJSON)
 	if err != nil {
 		return domain.QuickReplyMessage{}, fmt.Errorf("decode quick reply entities: %w", err)
@@ -867,4 +880,62 @@ func quickReplyPGErr(err error) error {
 		return domain.ErrShortcutOccupied
 	}
 	return err
+}
+
+// EditQuickReplyMessage changes one quick reply message in place.
+func (s *PasswordStore) EditQuickReplyMessage(ctx context.Context, ownerUserID int64, edit domain.QuickReplyEdit) (domain.QuickReplyMutation, error) {
+	entities, err := encodeMessageEntities(edit.Entities)
+	if err != nil {
+		return domain.QuickReplyMutation{}, err
+	}
+	var mutation domain.QuickReplyMutation
+	err = withTx(ctx, s.db, "edit quick reply message", func(tx pgx.Tx) error {
+		var tag pgconn.CommandTag
+		if edit.Media != nil {
+			media, err := encodeMessageMedia(edit.Media)
+			if err != nil {
+				return err
+			}
+			tag, err = tx.Exec(ctx, `
+UPDATE quick_reply_messages SET body = $4, entities = $5::jsonb, media = $6::jsonb, edit_date = $7, updated_at = now()
+WHERE owner_user_id = $1 AND shortcut_id = $2 AND message_id = $3`,
+				ownerUserID, edit.ShortcutID, edit.ID, edit.Message, string(entities), string(media), edit.EditDate)
+			if err != nil {
+				return fmt.Errorf("edit quick reply message: %w", err)
+			}
+		} else {
+			tag, err = tx.Exec(ctx, `
+UPDATE quick_reply_messages SET body = $4, entities = $5::jsonb, edit_date = $6, updated_at = now()
+WHERE owner_user_id = $1 AND shortcut_id = $2 AND message_id = $3`,
+				ownerUserID, edit.ShortcutID, edit.ID, edit.Message, string(entities), edit.EditDate)
+			if err != nil {
+				return fmt.Errorf("edit quick reply message: %w", err)
+			}
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrShortcutInvalid
+		}
+		msg, err := scanQuickReplyMessage(ownerUserID, edit.ShortcutID, tx.QueryRow(ctx, `
+SELECT message_id, random_id, message_date, body, COALESCE(entities::text, '[]')::text, media::text, grouped_id, edit_date
+FROM quick_reply_messages WHERE owner_user_id = $1 AND shortcut_id = $2 AND message_id = $3`, ownerUserID, edit.ShortcutID, edit.ID))
+		if err != nil {
+			return err
+		}
+		replies, err := listQuickRepliesTx(ctx, tx, ownerUserID)
+		if err != nil {
+			return err
+		}
+		mutation = domain.QuickReplyMutation{
+			Kind:       domain.QuickReplyMutationMessage,
+			List:       domain.QuickReplyList{OwnerUserID: ownerUserID, QuickReplies: replies, Messages: []domain.QuickReplyMessage{msg}, Hash: postgresQuickReplyListHash(replies)},
+			QuickReply: quickReplyByID(replies, edit.ShortcutID),
+			ShortcutID: edit.ShortcutID,
+			Message:    msg,
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.QuickReplyMutation{}, err
+	}
+	return mutation, nil
 }

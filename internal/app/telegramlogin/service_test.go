@@ -148,9 +148,9 @@ func TestServiceAcceptsOfficialClientCanonicalOAuthDeepLinks(t *testing.T) {
 		created.DeepLink,
 		"telesrv://oauth?token=" + url.QueryEscape(token),
 		"telesrv://resolve?domain=oauth&startapp=" + url.QueryEscape(token),
-		"tg://oauth?token=" + url.QueryEscape(token),
-		"tg://resolve?domain=oauth&startapp=" + url.QueryEscape(token),
-		"https://t.me/oauth?startapp=" + url.QueryEscape(token),
+		"sg://oauth?token=" + url.QueryEscape(token),
+		"sg://resolve?domain=oauth&startapp=" + url.QueryEscape(token),
+		"https://sgq.me/oauth?startapp=" + url.QueryEscape(token),
 	}
 	for _, deepLink := range valid {
 		request, err := service.RequestByDeepLink(ctx, deepLink)
@@ -163,11 +163,11 @@ func TestServiceAcceptsOfficialClientCanonicalOAuthDeepLinks(t *testing.T) {
 		"owpg://other.example.test/oauth?token=" + url.QueryEscape(token),
 		"owpg://tenant.example.test/resolve?domain=oauth&startapp=" + url.QueryEscape(token),
 		"owpg://tenant.example.test/oauth/extra?token=" + url.QueryEscape(token),
-		"tg://oauth/path?token=" + url.QueryEscape(token),
-		"tg://oauth?token=" + url.QueryEscape(token) + "&token=other",
-		"tg://resolve?domain=oauth&domain=other&startapp=" + url.QueryEscape(token),
-		"tg://resolve?domain=oauth&startapp=" + url.QueryEscape(token) + "&startapp=other",
-		"tg://oauth?token=" + url.QueryEscape(token) + "#fragment",
+		"sg://oauth/path?token=" + url.QueryEscape(token),
+		"sg://oauth?token=" + url.QueryEscape(token) + "&token=other",
+		"sg://resolve?domain=oauth&domain=other&startapp=" + url.QueryEscape(token),
+		"sg://resolve?domain=oauth&startapp=" + url.QueryEscape(token) + "&startapp=other",
+		"sg://oauth?token=" + url.QueryEscape(token) + "#fragment",
 	}
 	for _, deepLink := range invalid {
 		if _, err := service.RequestByDeepLink(ctx, deepLink); !errors.Is(err, domain.ErrTelegramLoginURLInvalid) {

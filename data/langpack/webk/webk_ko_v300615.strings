@@ -1407,7 +1407,7 @@
 "EditAdminRights" = "관리자 권한 수정";
 "EditAdminSendAnonymously" = "익명으로 남기";
 "EditAdminWhatCanDo" = "이 관리자가 할 수 있는 일";
-"EditBot.Buttons.Caption" = "이 봇을 관리하려면 [@BotFather](https://t.me/botfather)를 사용하세요.";
+"EditBot.Buttons.Caption" = "이 봇을 관리하려면 [@BotFather](https://sgq.me/botfather)를 사용하세요.";
 "EditBot.Buttons.Commands" = "명령어 수정";
 "EditBot.Buttons.Intro" = "소개 수정";
 "EditBot.Buttons.Settings" = "봇 설정 변경";
@@ -1713,7 +1713,7 @@
 "GroupChecklist" = "그룹 체크리스트";
 "GroupDescription1" = "200,000명까지 참가할 수 있습니다";
 "GroupDescription2" = "대화 내용이 보존됩니다";
-"GroupDescription3" = "공개 링크를 t.me/제목으로 둘 수 있습니다";
+"GroupDescription3" = "공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "GroupDescription4" = "여러 권한의 관리자를 세울 수 있습니다";
 "GroupEmptyTitle1" = "**그룹**을 만들었습니다.";
 "GroupEmptyTitle2" = "그룹은";
@@ -2863,7 +2863,7 @@
 "ProfileStoriesArchiveGroupHint" = "그룹 페이지에 게시되지 않은 보관된 스토리는 그룹 관리자만 볼 수 있습니다.";
 "ProfileStoriesArchiveHint" = "내 프로필에 게시하지 않는 이상 보관된 스토리는 나만 볼 수 있습니다.";
 "ProfileUnofficialSecurityRisk" = "%1$s님은 비공식 텔레그램 클라이언트를 사용 중입니다. 이 사용자에게 보내는 메시지는 보안이 약할 수 있습니다.";
-"PublicLinksLimitSubtitle" = "최대 %d개의 t.me/username 링크를 마련할 수 있어요";
+"PublicLinksLimitSubtitle" = "최대 %d개의 sgq.me/username 링크를 마련할 수 있어요";
 "PublicLinksLimitTitle" = "공개 링크";
 "PublicShares" = "공개 공유";
 "PublicSharesCount#other" = "%1$s 공개 공유";
@@ -3783,7 +3783,7 @@
 "Telegram.LanguageViewController" = "언어";
 "Telegram.NotificationSettingsViewController" = "알림";
 "TelegramFeatures" = "텔레그램 기능 소개";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsKo";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsKo";
 "TelegramPremiumPeerSubtitle" = "**텔레그램 프리미엄** 계정 소유자는 수많은 부가 기능들에 대해 독점적으로 접근 할 수 있습니다.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "이모지 상태는 프리미엄 기능입니다. 다양한 기능이 포함된 **텔레그램 프리미엄**에 대해 살펴보세요.";
 "TelegramPremiumPeerTitle" = "%s는 **텔레그램 프리미엄** 가입자입니다.";

@@ -80,6 +80,7 @@ func systemLoginPhoneForbidden(phone string) bool {
 // 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
 type Service struct {
 	users                  store.UserStore
+	collectiblePhones      collectiblePhoneLookup
 	auths                  store.AuthorizationStore
 	codes                  store.CodeStore
 	authKeys               store.AuthKeyStore
@@ -221,6 +222,19 @@ func WithBotLogin(bots store.BotStore) Option {
 
 // WithPremiumGrant 让新注册账号默认获得 months 个月会员（0 = 关闭赠送）。
 // 存量账号的同等赠送由迁移 0094 一次性 backfill。
+// collectiblePhoneLookup resolves a collectible (NFT) number.
+type collectiblePhoneLookup interface {
+	CollectiblePhone(ctx context.Context, phone string) (domain.CollectiblePhone, error)
+}
+
+// WithCollectiblePhoneLogin lets an owned collectible number sign in to its
+// owner's account.
+func WithCollectiblePhoneLogin(phones collectiblePhoneLookup) Option {
+	return func(s *Service) {
+		s.collectiblePhones = phones
+	}
+}
+
 func WithPremiumGrant(months int) Option {
 	return func(s *Service) {
 		s.premiumGrantMonths = months
@@ -459,7 +473,36 @@ func (s *Service) currentPhoneOwner(ctx context.Context, phone string) (domain.U
 	if s == nil || s.users == nil {
 		return domain.User{}, false, fmt.Errorf("user store is not configured")
 	}
-	return s.users.ByPhone(ctx, phone)
+	u, found, err := s.users.ByPhone(ctx, phone)
+	if err != nil || found {
+		return u, found, err
+	}
+	return s.collectiblePhoneOwner(ctx, phone)
+}
+
+// collectiblePhoneOwner treats an owned collectible (NFT) number as its
+// owner's login number, the way a Fragment +888 number signs in to the
+// account it belongs to. A number in the vault, burned, or whose owner is
+// gone is not a login number, so it falls through to a normal sign-up.
+func (s *Service) collectiblePhoneOwner(ctx context.Context, phone string) (domain.User, bool, error) {
+	if s.collectiblePhones == nil {
+		return domain.User{}, false, nil
+	}
+	cp, err := s.collectiblePhones.CollectiblePhone(ctx, phone)
+	if errors.Is(err, domain.ErrCollectiblePhoneNotFound) || errors.Is(err, domain.ErrCollectiblePhoneInvalid) {
+		return domain.User{}, false, nil
+	}
+	if err != nil {
+		return domain.User{}, false, fmt.Errorf("resolve collectible phone: %w", err)
+	}
+	if !cp.Owned() || cp.OwnerUserID <= 0 {
+		return domain.User{}, false, nil
+	}
+	owner, found, err := s.users.ByID(ctx, cp.OwnerUserID)
+	if err != nil || !found || owner.Deleted || owner.Bot {
+		return domain.User{}, false, err
+	}
+	return owner, true, nil
 }
 
 func (s *Service) issuedOwnerMatches(ctx context.Context, phone string, issuedUserID int64) (bool, error) {

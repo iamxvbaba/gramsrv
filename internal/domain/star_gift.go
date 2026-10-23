@@ -104,6 +104,9 @@ const (
 	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
 	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
 	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
+	// StarGiftLifecycleDeleted is the terminal state of an ordinary gift removed
+	// by payments.deleteStarGift (Layer 232).
+	StarGiftLifecycleDeleted StarGiftLifecycleStatus = "deleted"
 )
 
 func (s StarGiftLifecycleStatus) Live() bool {
@@ -183,6 +186,9 @@ type StarGiftCollectibleRevision struct {
 	PublishedAt          time.Time
 	OfficialGiftID       int64
 	SourceManifestSHA256 []byte
+	// ScheduledPublishAt (Unix seconds) records when the operator asked a
+	// deferred pool to open. Zero means it was published immediately.
+	ScheduledPublishAt int64
 }
 
 // StarGiftCollectibleWrite 是后台创建/发布属性池的协议无关输入。
@@ -198,6 +204,11 @@ type StarGiftCollectibleWrite struct {
 	CommandID            string
 	OfficialGiftID       int64
 	SourceManifestSHA256 []byte
+	// PublishAt is Unix seconds. Zero, or an instant that has already passed,
+	// opens the pool immediately. A future instant stores it as a draft that
+	// the collectible drop dispatcher activates once due (or an operator
+	// releases early).
+	PublishAt int64
 }
 
 // UniqueStarGift 是一份已经发行的唯一礼物。属性、编号与 slug 一经创建永久不变。
@@ -247,7 +258,7 @@ type UniqueStarGift struct {
 }
 
 // StarGiftClaimChallenge binds a short-lived, single-use TON Proof payload to
-// one Gramsrv user and one already exported collectible.
+// one ShuzaGram user and one already exported collectible.
 type StarGiftClaimChallenge struct {
 	Payload   string
 	UserID    int64
@@ -1269,12 +1280,31 @@ var (
 
 var ErrStarGiftListed = errors.New("сначала снимите подарок с продажи")
 
-var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+// Collectible slugs keep their case, like Telegram's "PlushPepe-123"; lookups
+// compare them case-insensitively.
+var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,47}$`)
+
+// StarGiftSlugPrefixFromTitle derives a Telegram-style slug prefix from a gift
+// title: "Plush Pepe" -> "PlushPepe", "Durov's Cap" -> "DurovsCap". Only ASCII
+// letters and digits are kept; the result is empty when nothing remains (a
+// title in another script), and the caller then picks its own fallback.
+func StarGiftSlugPrefixFromTitle(title string) string {
+	var b strings.Builder
+	for _, r := range title {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			if b.Len() == 40 {
+				break
+			}
+		}
+	}
+	return b.String()
+}
 
 // ValidateStarGiftCollectibleDraft validates the operator-authored definition before animation
 // blobs/documents are allocated. This is the validation boundary used by admin dry-runs.
 func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
-	write.SlugPrefix = strings.TrimSpace(strings.ToLower(write.SlugPrefix))
+	write.SlugPrefix = strings.TrimSpace(write.SlugPrefix)
 	if write.GiftID <= 0 || write.UpgradeStars <= 0 || write.SupplyTotal <= 0 ||
 		!starGiftCollectibleSlugPrefix.MatchString(write.SlugPrefix) || strings.TrimSpace(write.CommandID) == "" {
 		return ErrStarGiftCollectibleInvalid
@@ -1282,6 +1312,9 @@ func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
 	if write.OfficialGiftID < 0 ||
 		(write.OfficialGiftID == 0 && len(write.SourceManifestSHA256) != 0) ||
 		(write.OfficialGiftID > 0 && len(write.SourceManifestSHA256) != 32) {
+		return ErrStarGiftCollectibleInvalid
+	}
+	if write.PublishAt < 0 {
 		return ErrStarGiftCollectibleInvalid
 	}
 	if err := validateStarGiftAttributes(write.Models, StarGiftCollectibleModel, false); err != nil {

@@ -3345,15 +3345,15 @@
 "CloseTopics" = "Закрити гілки";
 "CloseTranslation" = "Закрити переклад";
 "CocoonFeature1Text" = "Треті сторони не мають доступу до жодних даних у **@cocoon**, включно з перекладами.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Приватність";
 "CocoonFeature2Text" = "Cocoon дав змогу Telegram зменшити витрати на переклади у 6 разів.";
 "CocoonFeature2Title" = "Ефективність";
 "CocoonFeature3Text" = "Будь-який розробник може використати Cocoon для задач ШІ. Деталі: **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Доступність";
-"CocoonFooter" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Переклад здійснюється за допомогою **🥚 Cocoon**.";
 "CocoonPoweredByLink" = "\n**Як це працює?**";
 "CocoonSubtitle" = "**Cocoon** (**Co**nfidential **Co**mpute **O**pen **N**etwork)\n**безпечно** та **ефективно** виконує задачі ШІ.";
@@ -6156,7 +6156,7 @@
 "GroupDeletedUndo" = "Групу видалено";
 "GroupDescription1" = "До 200 тис. учасників";
 "GroupDescription2" = "Спільну історію листування";
-"GroupDescription3" = "Публічні посилання вигляду t.me";
+"GroupDescription3" = "Публічні посилання вигляду sgq.me";
 "GroupDescription4" = "Адміністраторів із різними правами";
 "GroupEmoji" = "Емоджі групи";
 "GroupEmojiPack" = "Набір емоджі групи";
@@ -9329,7 +9329,7 @@
 "PsaType_psa" = "Оголошення";
 "PublicChannelsTooMuch" = "Цей користувач володіє максимальною кількістю публічних груп і каналів. Спершу запропонуйте йому зробити приватною одну з його груп або каналів.";
 "PublicLink" = "Публічне посилання";
-"PublicLinksLimitSubtitle" = "До %d зайнятих посилань виду t.me/username";
+"PublicLinksLimitSubtitle" = "До %d зайнятих посилань виду sgq.me/username";
 "PublicLinksLimitTitle" = "Публічні посилання";
 "PublicPhoto" = "публічне фото";
 "PublicPoll" = "Опитування";
@@ -11891,7 +11891,7 @@
 "TelegramFaq" = "Часті питання про Telegram";
 "TelegramFaqUrl" = "https://telegram.org/faq/uk";
 "TelegramFeatures" = "Можливості Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "СТВОРИТИ ПАРОЛЬ";
 "TelegramPassportCreatePasswordInfo" = "Для захисту ваших особистих даних наскрізним шифруванням потрібно створити пароль.\n\nЦей пароль також буде запитуватись при вході в Telegram з нового пристрою.";

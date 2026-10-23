@@ -681,10 +681,15 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 	if err != nil {
 		return nil, internalErr()
 	}
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) {
+		return nil, authKeyUnregisteredErr()
+	}
+	// Layer 232 传 tmp_password；旧 Layer 的 SRP 证明被协议层打包后在此按原逻辑校验。
 	// checkSRP 只在“已设密码”时认 SRP，在“未设密码”时只认 inputCheckPasswordEmpty，
 	// 所以这里不单设 PASSWORD_MISSING，保持与 account 域的既有判定一致。
-	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
-		return nil, passwordErr(err)
+	if err := r.checkStarGiftWithdrawalPassword(ctx, userID, authKeyID, req.TmpPassword, passwordState.PasswordChangedAt); err != nil {
+		return nil, err
 	}
 	now := r.clock.Now()
 	if passwordState.HasPassword {
@@ -693,10 +698,6 @@ func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg
 		} else if wait > 0 {
 			return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
 		}
-	}
-	authKeyID, ok := AuthKeyIDFrom(ctx)
-	if !ok || authKeyID == ([8]byte{}) {
-		return nil, authKeyUnregisteredErr()
 	}
 	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
 	if err != nil {

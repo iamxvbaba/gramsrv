@@ -80,7 +80,7 @@ func TestBotFatherNewBotFlow(t *testing.T) {
 	if match == nil {
 		t.Fatalf("done reply = %q, want token", reply)
 	}
-	if !strings.Contains(reply, "telesrv.net/my_test_bot") {
+	if !strings.Contains(reply, "sgq.me/my_test_bot") {
 		t.Fatalf("done reply = %q, want deep link", reply)
 	}
 
@@ -237,7 +237,7 @@ func TestBotFatherUsernameTaken(t *testing.T) {
 		t.Fatalf("taken username reply = %q", reply)
 	}
 	// 状态保留：可继续尝试新 username。
-	if reply := sendToBotFather(t, svc, messages, owner, "second_bot"); !strings.Contains(reply, "telesrv.net/second_bot") {
+	if reply := sendToBotFather(t, svc, messages, owner, "second_bot"); !strings.Contains(reply, "sgq.me/second_bot") {
 		t.Fatalf("retry username reply = %q", reply)
 	}
 }

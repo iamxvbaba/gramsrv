@@ -139,7 +139,7 @@
 "ApproveNewMembers" = "Schvaľovať nových členov";
 "ApproveNewMembersInfo" = "Zapnite túto možnosť, ak chcete, aby sa používatelia pripájali až po schválení správcom.";
 "Archive" = "Archivovať";
-"ArchiveAppearanceHint" = "Zobrazí archív ako lokálny priečinok. Jeho umiestnenie môžete zmeniť v [nastaveniach](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Zobrazí archív ako lokálny priečinok. Jeho umiestnenie môžete zmeniť v [nastaveniach](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Vzhľad";
 "ArchiveAppearanceToggle" = "Zobraziť ako priečinok";
 "ArchiveAsFolder" = "Archív ako priečinok";
@@ -1244,9 +1244,9 @@
 "EditPrivacyPhoneNumber" = "Telefónne číslo";
 "EditPrivacyPhoto" = "Profilové fotky";
 "EditPrivacyReadDate" = "Vidieť môj čas prečítania";
-"EditPrivacyReadDateAllowHint" = "Ak chcete zmeniť toto nastavenie, povoľte pre %1$s vidieť váš stav **Naposledy videný a online**.\n\nPre viac informácií pozrite **[Súkromie a zabezpečenie](tg://settings/privacy)** – **Naposledy videný a online** – **Skryť čas prečítania**.";
-"EditPrivacyReadDateRestrictHint" = "Ak chcete zmeniť toto nastavenie, obmedzte, aby %1$s videl váš stav **Naposledy videný a online**.\n\nPre viac informácií pozrite **[Súkromie a zabezpečenie](tg://settings/privacy)** - **Naposledy videný a online** - **Skryť čas prečítania**.";
-"EditPrivacyReadDateToggleHint" = "Svoj **Dátum prečítania** môžete skryť len pred každým, kto nevidí váš stav **Naposledy videný a online**.\n\nPozrite **[Súkromie a zabezpečenie](tg://settings/privacy)** - **Naposledy videný a online** - **Skryť čas prečítania**.";
+"EditPrivacyReadDateAllowHint" = "Ak chcete zmeniť toto nastavenie, povoľte pre %1$s vidieť váš stav **Naposledy videný a online**.\n\nPre viac informácií pozrite **[Súkromie a zabezpečenie](sg://settings/privacy)** – **Naposledy videný a online** – **Skryť čas prečítania**.";
+"EditPrivacyReadDateRestrictHint" = "Ak chcete zmeniť toto nastavenie, obmedzte, aby %1$s videl váš stav **Naposledy videný a online**.\n\nPre viac informácií pozrite **[Súkromie a zabezpečenie](sg://settings/privacy)** - **Naposledy videný a online** - **Skryť čas prečítania**.";
+"EditPrivacyReadDateToggleHint" = "Svoj **Dátum prečítania** môžete skryť len pred každým, kto nevidí váš stav **Naposledy videný a online**.\n\nPozrite **[Súkromie a zabezpečenie](sg://settings/privacy)** - **Naposledy videný a online** - **Skryť čas prečítania**.";
 "EditPrivacyStatus" = "Naposledy videný a online";
 "EditPrivacyVoice" = "Poslať mi hlasové správy";
 "EditUserRestrictions" = "Upraviť obmedzenia pre používateľa";
@@ -1518,7 +1518,7 @@
 "ExcludeChatsInfo#other" = "Môžete si vybrať až %1$s cloudových konverzácií a rovnaký počet tajných konverzácií.";
 "Experiment_PeerIds" = "Zobraziť ID partnerov v profiloch";
 "Experiment_PeerIdsInfo" = "Zobraziť identifikátory API používateľov a konverzácií v ich profiloch";
-"ExperimentalBuildInfo" = "Táto verzia **Telegramu X** nie je určená na dlhodobé používanie.\n\nMôže sa stať, že po určitom čase úplne prestane fungovať a nebude možné zapnúť upozornenia.\n\nAk hľadáte správny  APK súbor Telegram X, pozrite si stránku https://t.me/tgx_log.";
+"ExperimentalBuildInfo" = "Táto verzia **Telegramu X** nie je určená na dlhodobé používanie.\n\nMôže sa stať, že po určitom čase úplne prestane fungovať a nebude možné zapnúť upozornenia.\n\nAk hľadáte správny  APK súbor Telegram X, pozrite si stránku https://sgq.me/tgx_log.";
 "ExperimentalBuildTitle" = "Pozor: experimentálne zostavená aplikácia";
 "ExperimentalSettings" = "Experimentálne nastavenia";
 "ExperimentalSettingsWarning" = "**Upozornenie:** ide o experimentálne nastavenia. Niektoré nemusia fungovať. Iné môžu aplikáciu poškodiť. Ktorékoľvek z nich môže zmiznúť bez stopy.\n\nPoužívajte ich na vlastné riziko.";
@@ -1871,7 +1871,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X sa naposledy nepodarilo spustiť, pretože úložisko zariadenia bolo plné.\n\nUistite sa, že máte k dispozícii dostatok miesta na disku a stlačením **Spustiť aplikáciu** to skúste znova.\n\nMomentálne je k dispozícii: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X sa naposledy nepodarilo spustiť z dôvodu chyby zariadenia.\n\nStlačte **Spustiť aplikáciu** a skúste to znova. Ak aplikácia naďalej zlyháva, postupujte nasledovne:\n\n• Skontrolujte, či máte k dispozícii dostatok miesta na disku: **%1$s**.\n• Uistite sa, že neexistujú žiadne ďalšie problémy s ukladaním, napríklad vysunutie alebo nerozpoznanie karty SD.\n• Reštartujte zariadenie.\n\nAk to nepomôže, možno budete chcieť vyhľadať podobné problémy na [stránke TDLib GitHub] (https://github.com/tdlib/td/issues), kde nájdete možné riešenia, alebo si vytvorte nové, vrátane chybovej správy a detailov zariadenia.";
 "LaunchAppGuideFatalError" = "Telegram X sa pri poslednom používaní neočakávane zatvoril.\n\nStlačte tlačidlo **Spustiť aplikáciu** a skúste to znova.";
-"LaunchAppGuideTdlibIssue" = "Telegram X sa naposledy nepodarilo spustiť z dôvodu fatálnej chyby TDLib.\n\nStlačte **Spustiť aplikáciu** a skúste to znova. Ak aplikácia naďalej zlyháva, postupujte nasledovne:\n\n• [Skontrolovať] (%2$s), či máte nainštalovanú najnovšiu verziu Telegram X.\n• Reštartujte zariadenie.\n\n**Ak vyššie uvedené kroky nepomáhajú**\n\n1. Zdieľajte podrobnosti o chybách s vývojármi TDLib jedným z nasledujúcich spôsobov:\n- Súkromne prostredníctvom [@tdlib_bot] (https://t.me/tdlib_bot) pomocou iného zariadenia alebo [Telegram Web] (https://web.telegram.org/).\n- Verejne prostredníctvom [stránky GitHub] (https://github.com/tdlib/td/issues). **Nezdieľajte verejne** tdlib_log.txt.\n2. Počkajte na odpoveď.\n3. Zmeňte nastavenia protokolu nižšie podľa požiadaviek vývojárov TDLib.\n4. Stlačením tlačidla **Spustiť aplikáciu** vynútene ukončite aplikáciu.\n5. Zdieľajte **tdlib_log.txt** s vývojármi TDLib a počkajte, kým sa problém nevyrieši.\n6. Po aktualizácii budete môcť aplikáciu normálne spúšťať.\n\n**Alternatívne možnosti**\n\n• Vyhľadajte podobné problémy v službe [GitHub] (https://github.com/tdlib/td/issues) a zistite, či existujú bežné riešenia.\n• Preinštalujte aplikáciu. Tajné konverzácie sa stratia. Ak použijete rovnaké telefónne číslo, v akom ste boli prihlásení, všetky ostatné rozhovory a údaje sa obnovia z Telegram cloudu.";
+"LaunchAppGuideTdlibIssue" = "Telegram X sa naposledy nepodarilo spustiť z dôvodu fatálnej chyby TDLib.\n\nStlačte **Spustiť aplikáciu** a skúste to znova. Ak aplikácia naďalej zlyháva, postupujte nasledovne:\n\n• [Skontrolovať] (%2$s), či máte nainštalovanú najnovšiu verziu Telegram X.\n• Reštartujte zariadenie.\n\n**Ak vyššie uvedené kroky nepomáhajú**\n\n1. Zdieľajte podrobnosti o chybách s vývojármi TDLib jedným z nasledujúcich spôsobov:\n- Súkromne prostredníctvom [@tdlib_bot] (https://sgq.me/tdlib_bot) pomocou iného zariadenia alebo [Telegram Web] (https://web.telegram.org/).\n- Verejne prostredníctvom [stránky GitHub] (https://github.com/tdlib/td/issues). **Nezdieľajte verejne** tdlib_log.txt.\n2. Počkajte na odpoveď.\n3. Zmeňte nastavenia protokolu nižšie podľa požiadaviek vývojárov TDLib.\n4. Stlačením tlačidla **Spustiť aplikáciu** vynútene ukončite aplikáciu.\n5. Zdieľajte **tdlib_log.txt** s vývojármi TDLib a počkajte, kým sa problém nevyrieši.\n6. Po aktualizácii budete môcť aplikáciu normálne spúšťať.\n\n**Alternatívne možnosti**\n\n• Vyhľadajte podobné problémy v službe [GitHub] (https://github.com/tdlib/td/issues) a zistite, či existujú bežné riešenia.\n• Preinštalujte aplikáciu. Tajné konverzácie sa stratia. Ak použijete rovnaké telefónne číslo, v akom ste boli prihlásení, všetky ostatné rozhovory a údaje sa obnovia z Telegram cloudu.";
 "LaunchAppShareError" = "Zdieľať detaily chyby";
 "LaunchAppUserSubtitle" = "offline";
 "LaunchAppViewError" = "Zobraziť detaily chyby";
@@ -1930,7 +1930,7 @@
 "LinkChannel" = "Prepojiť kanál";
 "LinkChannelHelp" = "Na **Telegrame** si môžete zvoliť verejný odkaz. V prípade že tak spravíte, ostatný ľudia môžu pomocou neho nájsť váš kanál.\n\nPoužiť môžete znaky **a–z**, **0–9** a podčiarkovníky. Dĺžka odkazu musí byť aspoň **5** znakov.";
 "LinkChecking" = "Overovanie dostupnosti odkazu…";
-"LinkCurrent" = "t.me/%1$s je váš aktuálny verejný odkaz.";
+"LinkCurrent" = "sgq.me/%1$s je váš aktuálny verejný odkaz.";
 "LinkDeleteOther" = "%1$s odstránil pozvánku %3$s od %2$s";
 "LinkDeleteOtherYou" = "Vymazali ste pozvánku %2$s na %1$s";
 "LinkDeletePrimary" = "%1$s odstránil primárnu pozvánku %2$s";
@@ -3985,7 +3985,7 @@
 "TranslationFailed" = "Preklad zlyhal";
 "TranslationMoreCreate" = "Vytvoriť";
 "TranslationMoreDone" = "Rozumiem";
-"TranslationMoreText" = "Zoznam dostupných jazykov je spravovaný na [prekladateľskej platforme](https://translations.telegram.org).\n\nTelegram vám ponúkne možnosť prepnutia na váš jazyk ihneď, ako bude oficiálne zodpovedajúca verzia prekladu k dispozícií.\n\nZatiaľ počas čakania na vydanie oficiálneho prekladu, si môžete nainštalovať ľubovoľný súbor dostupných prekladov, pripojiť sa k [procesu prekladania](https://translations.telegram.org/en/android_x/), alebo si vytvoriť [svoje vlastné](https://t.me/tgx_android_translate/) súbory prekladu.";
+"TranslationMoreText" = "Zoznam dostupných jazykov je spravovaný na [prekladateľskej platforme](https://translations.telegram.org).\n\nTelegram vám ponúkne možnosť prepnutia na váš jazyk ihneď, ako bude oficiálne zodpovedajúca verzia prekladu k dispozícií.\n\nZatiaľ počas čakania na vydanie oficiálneho prekladu, si môžete nainštalovať ľubovoľný súbor dostupných prekladov, pripojiť sa k [procesu prekladania](https://translations.telegram.org/en/android_x/), alebo si vytvoriť [svoje vlastné](https://sgq.me/tgx_android_translate/) súbory prekladu.";
 "TranslationMoreTitle" = "Nemôžete nájsť váš jazyk?";
 "TranslationPaste" = "Vložiť preklad";
 "TranslationsMissing#one" = "%1$s nepreložený";

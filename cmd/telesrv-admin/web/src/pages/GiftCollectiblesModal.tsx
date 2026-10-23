@@ -3,10 +3,12 @@ import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
+import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge } from "../components/ui";
 import { useI18n } from "../i18n";
-import type { CommandResult, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview, StarGiftRow } from "../types";
+import type { CommandResult, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview, StarGiftPendingCollectible, StarGiftRow } from "../types";
 import { titleFromFilename } from "../lib/format";
+import { slugFromTitle } from "../lib/slug";
 
 type AnimationData = Record<string, unknown>;
 type AnimatedDraft = {
@@ -105,32 +107,46 @@ async function parseAnimationFile(file: File): Promise<AnimationData> {
 }
 
 const colorNumber = (value: string) => Number.parseInt(value.replace("#", ""), 16);
+// Telegram-style slug prefix: "Plush Pepe" -> "PlushPepe" (same rule as the server).
 const rarityLabel = (attribute: StarGiftCollectibleAttributeRow) => attribute.rarity_kind === "permille" ? `${attribute.rarity_permille}‰` : attribute.rarity_kind;
 
 export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: StarGiftRow; onClose: () => void; onPublished: () => void }) {
   const { t } = useI18n();
   const [active, setActive] = useState<StarGiftCollectiblePreview | null>(null);
+  const [pending, setPending] = useState<StarGiftPendingCollectible | null>(null);
+  // datetime-local value; empty opens the pool as soon as it is confirmed.
+  const [publishAt, setPublishAt] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<CommandResult | null>(null);
   const [upgradeStars, setUpgradeStars] = useState("100");
   const [supplyTotal, setSupplyTotal] = useState("1000");
-  const [slugPrefix, setSlugPrefix] = useState(`gift-${gift.GiftID}`);
+  const [slugPrefix, setSlugPrefix] = useState(() => slugFromTitle(gift.Title) || `gift-${gift.GiftID}`);
   const [reason, setReason] = useState("");
   const [models, setModels] = useState<AnimatedDraft[]>(() => initialAnimated("model"));
   const [patterns, setPatterns] = useState<AnimatedDraft[]>(() => initialAnimated("pattern"));
   const [backdrops, setBackdrops] = useState<BackdropDraft[]>(initialBackdrops);
 
+  const loadPending = (cancelled?: () => boolean) => {
+    // The scheduled-pool banner is a convenience; a failure here must not block the modal.
+    api.pendingGiftCollectible(gift.GiftID).then((value) => { if (!cancelled?.()) setPending(value); }).catch(() => undefined);
+  };
+  const loadActive = (cancelled?: () => boolean) => api.giftCollectibles(gift.GiftID).then((value) => {
+    if (cancelled?.()) return;
+    setActive(value);
+  }).catch((err) => setError(errorMessage(err)));
+
   useEffect(() => {
     let cancelled = false;
+    loadPending(() => cancelled);
     api.giftCollectibles(gift.GiftID).then((value) => {
       if (cancelled) return;
       setActive(value);
       if (value.found) {
         setUpgradeStars(String(value.upgrade_stars ?? 100));
         setSupplyTotal(String(value.supply_total ?? 1000));
-        setSlugPrefix(value.slug_prefix ?? `gift-${gift.GiftID}`);
+        setSlugPrefix(value.slug_prefix ?? (slugFromTitle(gift.Title) || `gift-${gift.GiftID}`));
       }
     }).catch((err) => setError(errorMessage(err))).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -143,6 +159,11 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
   }), [models, patterns, backdrops]);
 
   const invalidate = () => setPreview(null);
+  const handleReleased = () => {
+    void loadActive();
+    loadPending();
+    onPublished();
+  };
   const updateAnimated = (kind: "models" | "patterns", key: string, patch: Partial<AnimatedDraft>) => {
     const setter = kind === "models" ? setModels : setPatterns;
     setter((rows) => rows.map((row) => row.key === key ? { ...row, ...patch } : row));
@@ -166,12 +187,19 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
     const backdropIDs = backdrops.map((row) => Number(row.backdropID));
     if (new Set(backdropIDs).size !== backdropIDs.length) throw new Error(t("collectibles.duplicateBackdropID"));
     for (const row of [...models, ...patterns]) if (!row.file) throw new Error(t("collectibles.fileRequired"));
+    let publishAtUnix = 0;
+    if (publishAt.trim()) {
+      const parsed = new Date(publishAt);
+      if (Number.isNaN(parsed.getTime())) throw new Error(t("collectibles.publishAt"));
+      publishAtUnix = Math.floor(parsed.getTime() / 1000);
+    }
     const form = new FormData();
     const animatedMetadata = (rows: AnimatedDraft[]) => rows.map((row) => ({ name: row.name.trim(), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder), file_key: row.key }));
     form.set("metadata", JSON.stringify({
       command_id: commandID, reason: reason.trim(), confirm,
-		upgrade_stars: upgradeStars, supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
+		upgrade_stars: upgradeStars, supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim(),
       models: animatedMetadata(models), patterns: animatedMetadata(patterns),
+      publish_at: publishAtUnix,
       backdrops: backdrops.map((row) => ({
         name: row.name.trim(), backdrop_id: Number(row.backdropID), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder),
         center_color: colorNumber(row.center), edge_color: colorNumber(row.edge), pattern_color: colorNumber(row.pattern), text_color: colorNumber(row.text)
@@ -234,13 +262,30 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
           </div>
         </section> : <div className="collectible-empty"><Gem size={22} /><div><strong>{t("collectibles.noPool")}</strong><span>{t("collectibles.noPoolHint")}</span></div></div>}
 
+        {pending?.found && <div className="collectible-active-head collectible-scheduled">
+          <div><Gem size={18} /><div><strong>{t("collectibles.scheduled")}</strong>
+            <span>{t("collectibles.scheduledHint", {
+              supply: pending.supply_total ?? 0, stars: pending.upgrade_stars ?? "0",
+              when: pending.scheduled_publish_at ? new Date(pending.scheduled_publish_at * 1000).toLocaleString() : "?"
+            })}</span>
+          </div></div>
+          <div className="collectible-scheduled-actions">
+            <Badge>{t("collectibles.scheduled")}</Badge>
+            <ActionButton label={t("collectibles.releaseNow")} icon={<Sparkles size={15} />} tone="warn" compact
+              path="/api/actions/release-collectible-pool"
+              payload={() => ({ gift_id: gift.GiftID })}
+              onDone={handleReleased} />
+          </div>
+        </div>}
+
         <section className="collectible-definition">
           <div className="collectible-definition-head"><div><strong>{t("collectibles.publishNew")}</strong><span>{t("collectibles.immutableHint")}</span></div><div className="gift-format-chips"><span>TGS</span><span>Lottie JSON</span></div></div>
           <div className="gift-fields-grid collectible-main-fields">
             <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); invalidate(); }} /></label>
             <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); invalidate(); }} /></label>
-            <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); invalidate(); }} /></label>
+            <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value); invalidate(); }} /></label>
             <label><span>{t("gifts.reason")}</span><input value={reason} maxLength={1000} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
+            <label className="collectible-publish-at"><span>{t("collectibles.publishAt")}</span><input type="datetime-local" value={publishAt} onChange={(e) => { setPublishAt(e.target.value); invalidate(); }} /><em>{t("collectibles.publishAtHint")}</em></label>
           </div>
           {renderAnimatedRows("models", models, setModels)}
           {renderAnimatedRows("patterns", patterns, setPatterns)}

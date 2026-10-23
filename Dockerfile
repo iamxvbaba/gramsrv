@@ -12,6 +12,8 @@ RUN apk add --no-cache ca-certificates git
 WORKDIR /src
 
 COPY go.mod go.sum ./
+# Layer 232 protocol library (replace in go.mod); must precede go mod download.
+COPY third_party/ ./third_party/
 RUN go mod download
 
 COPY cmd/ ./cmd/

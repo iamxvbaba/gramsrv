@@ -1397,7 +1397,7 @@
 "GroupChecklist" = "Групавы спіс спраў";
 "GroupDescription1" = "Да 200,000 удзельнікаў";
 "GroupDescription2" = "Захаваную гісторыю чата";
-"GroupDescription3" = "Публічныя спасылкі, такія як t.me/title";
+"GroupDescription3" = "Публічныя спасылкі, такія як sgq.me/title";
 "GroupDescription4" = "Кіраўнікі з рознымі правамі";
 "GroupEmptyTitle1" = "Вы стварылі **суполку**.";
 "GroupEmptyTitle2" = "Суполкі могуць мець:";
@@ -2213,7 +2213,7 @@
 "Profile.Info.User" = "Звесткі";
 "ProfileStories" = "Допісы";
 "ProfileStoriesArchiveHint" = "Толькі вы можаце бачыць гісторыі ў архіве, калі не вырашыце захаваць іх у свой профіль.";
-"PublicLinksLimitSubtitle" = "Рэзервуйце да %d спасылак фармату t.me/username";
+"PublicLinksLimitSubtitle" = "Рэзервуйце да %d спасылак фармату sgq.me/username";
 "PublicLinksLimitTitle" = "Публічныя спасылкі";
 "PublicShares" = "Публічныя абагульванні";
 "PublicSharesCount#one" = "%1$s публічнае абагульванне";
@@ -2937,7 +2937,7 @@
 "Telegram.LanguageViewController" = "Мова";
 "Telegram.NotificationSettingsViewController" = "Апавяшчэнні";
 "TelegramFeatures" = "Магчымасці Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerTitleEmojiStatus" = "%s задаў(-ла) гэты эмодзі з набору [%s]() як свой бягучы статус.";
 "TelegramPremiumSubscribedSubtitle" = "Дзякуй, што падпісаліся на **Telegram Premium**. Вось што цяпер даступнае.";
 "TelegramPremiumSubscribedTitle" = "Усё гатова!";

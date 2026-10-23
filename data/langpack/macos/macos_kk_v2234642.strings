@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Баршаға қолжетімді";
 "AboutCocoon.Feature.Private.Description" = "Cocoon ішінде орындалатын деректерге, соның ішінде аудармаларға, ешбір үшінші тарап қол жеткізе алмайды.";
 "AboutCocoon.Feature.Private.Title" = "Жабық";
-"AboutCocoon.Footer" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n[t.me/cocoon](t.me/cocoon) арқылы хабарласыңыз.";
+"AboutCocoon.Footer" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n[sgq.me/cocoon](sgq.me/cocoon) арқылы хабарласыңыз.";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Жөнелтуді өшіру";
 "AboutFeature.DisableSharing.NoForwarding" = "Жөнелтусіз";
@@ -3441,7 +3441,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Жүйе\n%@";
 "EmptyGroupInfo.Line1" = "• %@ мүше бола алады";
 "EmptyGroupInfo.Line2" = "• Чат тарихы сақтаулы тұрады";
-"EmptyGroupInfo.Line3" = "• t.me/silteme секілді сілтеме жасай аласыз";
+"EmptyGroupInfo.Line3" = "• sgq.me/silteme секілді сілтеме жасай аласыз";
 "EmptyGroupInfo.Line4" = "• Әкімшіге басқару құқын бере аласыз";
 "EmptyGroupInfo.Subtitle" = "Топта:";
 "EmptyGroupInfo.Title" = "Топ құрдыңыз";
@@ -5532,7 +5532,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Чат бекіту";
 "Premium.Boarding.Double.PinnedChats.Info" = "Негізгі тізімде %@ чатқа дейін бекітіңіз";
 "Premium.Boarding.Double.PublicLinks" = "Жария сілтеме";
-"Premium.Boarding.Double.PublicLinks.Info" = "%@ t.me/username сілтеме жасай алыңыз";
+"Premium.Boarding.Double.PublicLinks.Info" = "%@ sgq.me/username сілтеме жасай алыңыз";
 "Premium.Boarding.Double.SavedGifs" = "GIF сақтау";
 "Premium.Boarding.Double.SavedGifs.Info" = "Таңдаулыға %@ GIF-ке дейін сақтаңыз";
 "Premium.Boarding.Double.Title" = "Екі есе артық";
@@ -5956,7 +5956,7 @@
 "ProxySettings.CredentialsHeader" = "РАСТАУШЫ (МІНДЕТТІ ЕМЕС)";
 "ProxySettings.Disabled" = "Өшірулі";
 "ProxySettings.Enable" = "Прокси";
-"ProxySettings.ExportDescription" = "Socks5 сілтеме табылса (**t.me/socks?server=127.0.0.1&port=80**), ол бірден қолданылатын болады.";
+"ProxySettings.ExportDescription" = "Socks5 сілтеме табылса (**sgq.me/socks?server=127.0.0.1&port=80**), ол бірден қолданылатын болады.";
 "ProxySettings.ExportLink" = "Көшірілген сілтемені қою";
 "ProxySettings.IncorrectSecret" = "Кілт жарамсыз. Қайтадан қайталаңызшы.";
 "ProxySettings.Item.Available" = "қолжетімді (пинг: %@ мс)";
@@ -8093,7 +8093,7 @@
 "TranslateModal.PromptPlaceholder" = "Мәтінді қалай қайта жазу керегін сипаттаңыз...";
 "TranslateModal.PromptStyle" = "Генерация";
 "TranslateModal.ShareStyle" = "Бөлісу";
-"TranslateModal.StyleByAuthor" = "Стиль авторы: [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Стиль авторы: [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Өткізу";
 "TwoStepAuth.AnError" = "Қате болды, кейін тағы қайталап көріңіз.";
 "TwoStepAuth.CancelReset" = "Жаңартуды қайтару";

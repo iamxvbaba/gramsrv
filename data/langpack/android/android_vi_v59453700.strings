@@ -2622,15 +2622,15 @@
 "CloseTopics" = "Đóng chủ đề";
 "CloseTranslation" = "Đóng bản dịch";
 "CocoonFeature1Text" = "Các bên thứ ba không thể truy cập dữ liệu, gồm các bản dịch, tại **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Riêng tư";
 "CocoonFeature2Text" = "Cocoon giúp Telegram giảm chi phí dịch thuật xuống 6 lần.";
 "CocoonFeature2Title" = "Hiệu quả";
 "CocoonFeature3Text" = "Nhà phát triển có thể dùng tính năng AI của Cocoon. Tìm hiểu **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Cho mọi người";
-"CocoonFooter" = "Muốn tích hợp Cocoon vào dự án của bạn?\nLiên lạc ngay tại **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Muốn tích hợp Cocoon vào dự án của bạn?\nLiên lạc ngay tại **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Văn bản được dịch bởi\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Hoạt động thế nào?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nxử lý các tác vụ AI an toàn và hiệu quả.";
@@ -4766,7 +4766,7 @@
 "GroupDeletedUndo" = "Đã xóa nhóm";
 "GroupDescription1" = "Tối đa 200.000 người";
 "GroupDescription2" = "Lịch sử tin vĩnh viễn";
-"GroupDescription3" = "Link công khai, ví dụ: t.me/tên";
+"GroupDescription3" = "Link công khai, ví dụ: sgq.me/tên";
 "GroupDescription4" = "Admin với các quyền khác";
 "GroupEmoji" = "Emoji nhóm";
 "GroupEmojiPack" = "Gói emoji cho nhóm";
@@ -7456,7 +7456,7 @@
 "PsaType_psa" = "Thông báo";
 "PublicChannelsTooMuch" = "Rất tiếc, người này là thành viên của quá nhiều nhóm và kênh công khai. Hãy hỏi họ đặt một số nhóm và kênh đó thành riêng tư trước đã.";
 "PublicLink" = "Link công khai";
-"PublicLinksLimitSubtitle" = "Sở hữu đến %d link t.me/username";
+"PublicLinksLimitSubtitle" = "Sở hữu đến %d link sgq.me/username";
 "PublicLinksLimitTitle" = "Link công khai";
 "PublicPhoto" = "ảnh công khai";
 "PublicPoll" = "Bình chọn";
@@ -9590,7 +9590,7 @@
 "TelegramFaq" = "Telegram Hỏi & Đáp";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Tính năng Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Hộ chiếu Telegram";
 "TelegramPassportCreatePassword" = "TẠO MỘT MẬT KHẨU";
 "TelegramPassportCreatePasswordInfo" = "Vui lòng tạo một mật khẩu để bảo vệ dữ liệu cá nhân với mã hóa đầu cuối.\n\nMật khẩu này sẽ được yêu cầu khi bạn đăng nhập Telegram trên thiết bị mới.";

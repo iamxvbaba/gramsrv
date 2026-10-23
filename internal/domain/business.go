@@ -203,6 +203,22 @@ type QuickReplyMessage struct {
 	Date        int
 	Message     string
 	Entities    []MessageEntity
+	// Media is optional: a quick reply message may be a photo, video, file…
+	Media *MessageMedia
+	// GroupedID keeps the items of an album together.
+	GroupedID int64
+	EditDate  int
+}
+
+// QuickReplyEdit changes the text (and, when Media is set, the media) of one
+// quick reply message.
+type QuickReplyEdit struct {
+	ShortcutID int
+	ID         int
+	Message    string
+	Entities   []MessageEntity
+	Media      *MessageMedia
+	EditDate   int
 }
 
 type QuickReplyList struct {
@@ -245,7 +261,9 @@ type QuickReplyMutation struct {
 func NormalizeBusinessChatLinkInput(in BusinessChatLinkInput) (BusinessChatLinkInput, error) {
 	in.Message = strings.TrimSpace(in.Message)
 	in.Title = strings.TrimSpace(in.Title)
-	if in.Message == "" || utf8.RuneCountInString(in.Message) > MaxBusinessChatLinkMessage {
+	// An empty message is valid: official clients create a link with no
+	// text first and fill it in with account.editBusinessChatLink.
+	if utf8.RuneCountInString(in.Message) > MaxBusinessChatLinkMessage {
 		return BusinessChatLinkInput{}, ErrBusinessChatLinkInvalid
 	}
 	if utf8.RuneCountInString(in.Title) > MaxBusinessChatLinkTitle {

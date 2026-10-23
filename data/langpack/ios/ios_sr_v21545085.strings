@@ -1026,9 +1026,9 @@
 "Business.Links.LinksSectionHeader" = "ВЕЗЕ ЗА ЋАСКАЊЕ";
 "Business.Links.PreviewText" = "Додајте поруку која ће бити унета у поље за поруку за свакога ко започне ћаскање са вама користећи везу:";
 "Business.Links.PreviewTitle" = "Веза за ћаскање";
-"Business.Links.SimpleLinkInfoPhone" = "Можете користити и једноставну везу за ћаскање с вама — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Можете користити и једноставну везу за ћаскање с вама — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Можете користити и једноставну везу за ћаскање с вама — [t.me/%1$@](username) или [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Можете користити и једноставну везу за ћаскање с вама — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Можете користити и једноставну везу за ћаскање с вама — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Можете користити и једноставну везу за ћаскање с вама — [sgq.me/%1$@](username) или [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Поделите са клијентима кратке везе помоћу којих започињу ћаскање с вама користећи предложену прву поруку.";
 "Business.LinksInfo" = "Направите везе које започињу ћаскање с вама, предлажући прву поруку.";
 "Business.Location" = "Локација";
@@ -1907,7 +1907,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Називи канала не могу почињати доњом цртом.";
 "Channel.Username.InvalidTaken" = "Ова веза је већ заузета.";
 "Channel.Username.InvalidTooShort" = "Јавна веза мора имати најмање 5 знакова.";
-"Channel.Username.LinkHint" = "Ова веза отвара ваш канал:\n[https://t.me/%@]";
+"Channel.Username.LinkHint" = "Ова веза отвара ваш канал:\n[https://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Можете опозвати везу једне од својих старијих група или канала или направите приватни канал.";
 "Channel.Username.Title" = "Веза";
 "Channel.Username.UsernameIsAvailable" = "%@ је доступно.";
@@ -3545,7 +3545,7 @@
 "CocoonInfo.Efficient.Title" = "Ефикасно";
 "CocoonInfo.ForEveryone.Text" = "Сваки програмер може користити [Cocoon](telegram) за ВИ функције. Сазнајте више на [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Доступно свима";
-"CocoonInfo.IntergrateInfo" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Трећа лица не могу приступити вашим подацима, укључујући преводе, у оквиру Cocoon-а.";
 "CocoonInfo.Private.Title" = "Поверљиво";
 "CocoonInfo.Title" = "COCOON";
@@ -4478,7 +4478,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Не можете направити више од %d бота.";
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Не можете направити више од %d бота.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Не можете направити више од %d ботова.";
-"CreateBot.UsernameStatus.Link" = "Веза: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Веза: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Корисничко име не може почињати бројем.";
 "CreateBot.UsernameStatus.Short" = "Корисничко име мора имати најмање 5 знакова.";
 "CreateBot.UsernameStatus.Taken" = "Ово корисничко име је већ заузето.";
@@ -4873,7 +4873,7 @@
 "EmojiStickerSettings.Info" = "Дизајнери могу додати своје пакете емоџија помоћу нашег бота @stickers.\n\nДодирните поруку да бисте прегледали и додали цео пакет.";
 "EmptyGroupInfo.Line1" = "До 200 000 чланова";
 "EmptyGroupInfo.Line2" = "Трајну историју ћаскања";
-"EmptyGroupInfo.Line3" = "Јавне везе као t.me/naziv";
+"EmptyGroupInfo.Line3" = "Јавне везе као sgq.me/naziv";
 "EmptyGroupInfo.Line4" = "Админе с различитим правима";
 "EmptyGroupInfo.Subtitle" = "Групе могу имати:";
 "EmptyGroupInfo.Title" = "Направили сте групу";
@@ -9480,7 +9480,7 @@
 "Premium.Limits.PinnedChats" = "Закачена ћаскања";
 "Premium.Limits.PinnedChatsInfo" = "Закачите до 10 ћаскања на главном списку ћаскања";
 "Premium.Limits.PublicLinks" = "Јавне везе";
-"Premium.Limits.PublicLinksInfo" = "Резервишите до 20 веза [t.me/korisnickoime]()";
+"Premium.Limits.PublicLinksInfo" = "Резервишите до 20 веза [sgq.me/korisnickoime]()";
 "Premium.Limits.RecommendedChannels" = "Слични канали";
 "Premium.Limits.RecommendedChannelsInfo" = "Погледајте до 100 сличних канала";
 "Premium.Limits.SavedGifs" = "Сачувани GIF-ови";
@@ -9841,7 +9841,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "КО МОЖЕ ВИДЕТИ МОЈУ ПОСЛЕДЊУ АКТИВНОСТ?";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Корисници који додају ваш број у своје контакте видеће га на Telegram-у само ако су то ваши контакти.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Корисници који су ваш број сачували у својим контактима видеће га и на Telegram-у.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Корисници који имају сачуван ваш број у својим контактима видеће га и на Telegram-у.\n\nОва јавна веза отвара ћаскање с вама:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Корисници који имају сачуван ваш број у својим контактима видеће га и на Telegram-у.\n\nОва јавна веза отвара ћаскање с вама:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "КО МЕ МОЖЕ НАЋИ ПО МОМ БРОЈУ?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "КО МОЖЕ ВИДЕТИ МОЈ БРОЈ ТЕЛЕФОНА?";
 "PrivacyPolicy.Accept" = "Прихвати и настави";
@@ -10802,8 +10802,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "недоступно";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "ВРСТА";
-"SocksProxySetup.QrCode.TMeLink" = "t.me веза";
-"SocksProxySetup.QrCode.TgLink" = "tg:// веза";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me веза";
+"SocksProxySetup.QrCode.TgLink" = "sg:// веза";
 "SocksProxySetup.RequiredCredentials" = "ПОДАЦИ ЗА ПРИСТУП";
 "SocksProxySetup.SaveProxy" = "Сачувај прокси";
 "SocksProxySetup.SavedProxies" = "САЧУВАНИ ПРОКСИЈИ";
@@ -12589,7 +12589,7 @@
 "Username.InvalidTooShort" = "Корисничко име мора имати најмање 5 знакова.";
 "Username.InvalidValue" = "Ово корисничко име није важеће.";
 "Username.LinkCopied" = "Веза копирана.";
-"Username.LinkHint" = "Ова веза отвара ћаскање с вама:\n[https://t.me/%@]";
+"Username.LinkHint" = "Ова веза отвара ћаскање с вама:\n[https://sgq.me/%@]";
 "Username.LinksOrder" = "РЕДОСЛЕД КОРИСНИЧКИХ ИМЕНА";
 "Username.LinksOrderInfo" = "Превуците и пустите везе да бисте променили њихов редослед на свом профилу.";
 "Username.Placeholder" = "Ваше корисничко име";

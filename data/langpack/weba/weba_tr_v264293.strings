@@ -444,7 +444,7 @@
 "EmptyChatAppearanceSystem" = "Sistem";
 "EmptyGroupInfoLine1" = "• {count} kadar üye";
 "EmptyGroupInfoLine2" = "• Kalıcı sohbet geçmişi";
-"EmptyGroupInfoLine3" = "• t.me/title gibi herkese açık bağlantılar";
+"EmptyGroupInfoLine3" = "• sgq.me/title gibi herkese açık bağlantılar";
 "EmptyGroupInfoLine4" = "• Farklı yetkilere sahip yöneticiler";
 "EmptyGroupInfoSubtitle" = "Gruplarda şunlar mevcuttur:";
 "EmptyGroupInfoTitle" = "Grup oluşturdunuz";
@@ -992,7 +992,7 @@
 "ProfileOpenAppTerms" = "Mini Uygulamalar için Hizmet Şartları";
 "ProfileViewChannel" = "Kanalı Görüntüle";
 "PublicLink" = "Genel bağlantı";
-"PublicLinksLimitSubtitle" = "{count} adede kadar t.me/username bağlantısı ayırın";
+"PublicLinksLimitSubtitle" = "{count} adede kadar sgq.me/username bağlantısı ayırın";
 "PublicLinksLimitTitle" = "Genel Bağlantılar";
 "PublicPoll" = "Anket";
 "PublicPostsLimitReached" = "Sınıra Ulaşıldı";

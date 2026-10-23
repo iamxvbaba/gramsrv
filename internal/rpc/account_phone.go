@@ -21,6 +21,9 @@ func (r *Router) onAccountSendChangePhoneCode(ctx context.Context, req *tg.Accou
 	sessionID, _ := SessionIDFrom(ctx)
 	hash, delivery, err := r.deps.Account.SendChangePhoneCode(ctx, userID, authKeyID, sessionID, req.PhoneNumber)
 	if err != nil {
+		if otpRecipientRejected(err) {
+			return nil, phoneNumberInvalidErr()
+		}
 		return nil, phoneChangeErr(err)
 	}
 	return tgSMSSentCode(hash, delivery.Length), nil

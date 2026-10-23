@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "LÄNKAR TILL CHATT";
 "Business.Links.PreviewText" = "Lägg till ett meddelande som kommer vara inskrivet i meddelandefältet för alla som startar en chatt med denna länk:";
 "Business.Links.PreviewTitle" = "Länk till chatt";
-"Business.Links.SimpleLinkInfoPhone" = "Du kan även använda en vanlig länk för att chatta med dig - [t.me/+%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Du kan även använda en vanlig länk för att chatta med dig — [t.me/+%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kan också använda en vanlig länk för att chatta med dig - [t.me/%1$@](username) eller [t.me/+%2$@](phone)";
+"Business.Links.SimpleLinkInfoPhone" = "Du kan även använda en vanlig länk för att chatta med dig - [sgq.me/+%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Du kan även använda en vanlig länk för att chatta med dig — [sgq.me/+%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kan också använda en vanlig länk för att chatta med dig - [sgq.me/%1$@](username) eller [sgq.me/+%2$@](phone)";
 "Business.Links.Text" = "Ge dina kunder länkar som påbörjar en chatt med dig - och föreslår det första meddelandet från dem till dig.";
 "Business.LinksInfo" = "Skapa länkar som påbörjar en chatt med dig och föreslår det första meddelandet";
 "Business.Location" = "Plats";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanalnamn kan inte inledas med ett understreck.";
 "Channel.Username.InvalidTaken" = "Beklagar, länken är redan tagen.";
 "Channel.Username.InvalidTooShort" = "Publika länkar måste innehålla minst 5 tecken.";
-"Channel.Username.LinkHint" = "Länken öppnar din kanal :[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Länken öppnar din kanal :[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Du kan återkalla länken från nån av dina äldre grupper eller kanaler alt. skapa en privat kanal.";
 "Channel.Username.Title" = "Länk";
 "Channel.Username.UsernameIsAvailable" = "%@ är tillgänglig.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Effektiv";
 "CocoonInfo.ForEveryone.Text" = "Alla utvecklare kan använda [Cocoon](telegram) för AI funktioner. Läs mer på [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "För alla";
-"CocoonInfo.IntergrateInfo" = "Vill du integrera Cocoon i ditt projekt?\nKontakta dem på [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Vill du integrera Cocoon i ditt projekt?\nKontakta dem på [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Ingen tredjepart har åtkomst till data, så som översättningar, inuti Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4280,7 +4280,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Du får endast använda **a–z**, **0–9** och understreck.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Du kan inte skapa fler än en bot.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Du kan inte skapa fler än %d bottar.";
-"CreateBot.UsernameStatus.Link" = "Länk: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Länk: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Ett användarnamn kan inte börja med en siffra.";
 "CreateBot.UsernameStatus.Short" = "Ett användarnamn måste bestå av minst 5 tecken.";
 "CreateBot.UsernameStatus.Taken" = "Det här användarnamnet är redan upptaget.";
@@ -4663,7 +4663,7 @@
 "EmojiStickerSettings.Info" = "Kreatörer kan lägga till sina egna emoji-set via vår @stickers bot.\u00a0\n\nTryck och håll in ett meddelande för att se och lägga till hela setet";
 "EmptyGroupInfo.Line1" = "Upp till 200.000 medlemmar";
 "EmptyGroupInfo.Line2" = "Beständig chatthistorik";
-"EmptyGroupInfo.Line3" = "Publika länkar som ex. t.me/title";
+"EmptyGroupInfo.Line3" = "Publika länkar som ex. sgq.me/title";
 "EmptyGroupInfo.Line4" = "Administratörer med olika behörigheter";
 "EmptyGroupInfo.Subtitle" = "Grupper kan ha:";
 "EmptyGroupInfo.Title" = "Du skapade en grupp";
@@ -8962,7 +8962,7 @@
 "Premium.Limits.PinnedChats" = "Fastnålade chattar";
 "Premium.Limits.PinnedChatsInfo" = "Fäst upp till 10 chattar i din huvudchattlista";
 "Premium.Limits.PublicLinks" = "Publika länkar";
-"Premium.Limits.PublicLinksInfo" = "Reservera upp till 20 [t.me/användarnamn]()-länkar";
+"Premium.Limits.PublicLinksInfo" = "Reservera upp till 20 [sgq.me/användarnamn]()-länkar";
 "Premium.Limits.RecommendedChannels" = "Liknande kanaler";
 "Premium.Limits.RecommendedChannelsInfo" = "Visa upp till 100 liknande kanaler";
 "Premium.Limits.SavedGifs" = "Sparade GIF:ar";
@@ -9314,7 +9314,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "VEM KAN SE NÄR DU SÅGS SENAST";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Användare som lägger till ditt nummer, till sina kontakter, kommer att se det på Telegram om de finns bland dina egna kontakter.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Användare som redan har ditt nummer sparat i sina kontakter ser det också på Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Användare som har ditt telefonnummer i sin kontaktbok kommer också att se det på Telegram.\n\nDen här publika länken öppnar en chatt med dig:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Användare som har ditt telefonnummer i sin kontaktbok kommer också att se det på Telegram.\n\nDen här publika länken öppnar en chatt med dig:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "VEM KAN HITTA MIG MED MITT NUMMER";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "VEM KAN SE MITT TELEFONNUMMER?";
 "PrivacyPolicy.Accept" = "Acceptera & fortsätt";
@@ -10217,8 +10217,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "ej tillgänglig";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYP";
-"SocksProxySetup.QrCode.TMeLink" = "t.me länk";
-"SocksProxySetup.QrCode.TgLink" = "tg:// länk";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me länk";
+"SocksProxySetup.QrCode.TgLink" = "sg:// länk";
 "SocksProxySetup.RequiredCredentials" = "REFERENSER";
 "SocksProxySetup.SaveProxy" = "Spara proxy";
 "SocksProxySetup.SavedProxies" = "SPARADE PROXYS";
@@ -11886,7 +11886,7 @@
 "Username.InvalidTooShort" = "Användarnamn måste ha minst 5 tecken.";
 "Username.InvalidValue" = "Detta användarnamn är ogiltigt";
 "Username.LinkCopied" = "Länk kopierad till Urklipp.";
-"Username.LinkHint" = "Denna länk öppnar en chatt med dig:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Denna länk öppnar en chatt med dig:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ANVÄNDARNAMNORDNING";
 "Username.LinksOrderInfo" = "Dra och släpp länkarna för att ändra ordningen de visas i på din infosida.";
 "Username.Placeholder" = "Ditt användarnamn";

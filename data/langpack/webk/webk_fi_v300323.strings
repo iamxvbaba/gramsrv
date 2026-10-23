@@ -1491,7 +1491,7 @@
 "EditAdminRights" = "Muokkaa valvojan oikeuksia";
 "EditAdminSendAnonymously" = "Jäädä nimettömäksi";
 "EditAdminWhatCanDo" = "Mitä tämä valvoja voi tehdä?";
-"EditBot.Buttons.Caption" = "Hallinnoi bottia [@BotFather](https://t.me/botfather)-botilla.";
+"EditBot.Buttons.Caption" = "Hallinnoi bottia [@BotFather](https://sgq.me/botfather)-botilla.";
 "EditBot.Buttons.Commands" = "Muokkaa komentoja";
 "EditBot.Buttons.Intro" = "Muokkaa esittelyä";
 "EditBot.Buttons.Settings" = "Vaihda botin asetuksia";
@@ -1835,7 +1835,7 @@
 "GroupChecklist" = "Ryhmän tehtävälista";
 "GroupDescription1" = "Peräti 200\u00a0000 jäsentä";
 "GroupDescription2" = "Pysyvä viestihistoria";
-"GroupDescription3" = "Julkiset linkit, kuten t.me/nimi";
+"GroupDescription3" = "Julkiset linkit, kuten sgq.me/nimi";
 "GroupDescription4" = "Valvojia eri oikeuksilla";
 "GroupEmptyTitle1" = "Olet luonut **ryhmän**.";
 "GroupEmptyTitle2" = "Ryhmillä voi olla:";
@@ -3042,7 +3042,7 @@
 "ProfileStoriesArchiveGroupHint" = "Arkistoidut tarinat näkyvät vain ryhmän jäsenille ellei niitä julkaista ryhmän profiilissa.";
 "ProfileStoriesArchiveHint" = "Arkistoitu tarina näkyy vain sinulle, paitsi jos laitat sen profiiliisi.";
 "ProfileUnofficialSecurityRisk" = "%1$s käyttää epävirallista Telegram-sovellusta, mikä voi heikentää viestien tietoturvaa.";
-"PublicLinksLimitSubtitle" = "Varaa jopa %d t.me/nimimerkki-linkkiä";
+"PublicLinksLimitSubtitle" = "Varaa jopa %d sgq.me/nimimerkki-linkkiä";
 "PublicLinksLimitTitle" = "Julkiset linkit";
 "PublicShares" = "Julkiset jaot";
 "PublicSharesCount#one" = "%1$s julkinen jako";
@@ -4017,7 +4017,7 @@
 "Telegram.LanguageViewController" = "Kieli";
 "Telegram.NotificationSettingsViewController" = "Ilmoitukset";
 "TelegramFeatures" = "Telegram-vinkkejä";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "**Telegram Premium** -tilaajilla on yksinoikeus moniin lisätoiminnallisuuksiin.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Emojitila on **Telegram Premiumin** tarjoama lisäetu, kuten nämäkin:";
 "TelegramPremiumPeerTitle" = "%s on **Telegram\u00a0Premium** -tilaaja";

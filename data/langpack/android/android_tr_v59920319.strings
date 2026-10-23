@@ -2918,15 +2918,15 @@
 "CloseTopics" = "Konuları kapat";
 "CloseTranslation" = "Çeviriyi Kapat";
 "CocoonFeature1Text" = "**@cocoon* içerisinde çeviriler gibi hiçbir veriye üçüncü şahıslar erişemez.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Özel";
 "CocoonFeature2Text" = "Cocoon, Telegram'ın çeviri maliyetlerini 6 kat azaltmasına olanak sağladı.";
 "CocoonFeature2Title" = "Verimli";
 "CocoonFeature3Text" = "Herhangi bir geliştirici, yapay zeka özellikleri için Cocoon'u kullanabilir. Daha fazla bilgi için **cocoon.org** adresini ziyaret edin.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Herkes İçin";
-"CocoonFooter" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\nBize **t.me/cocoon?direct** adresinden ulaşabilirsiniz.";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\nBize **sgq.me/cocoon?direct** adresinden ulaşabilirsiniz.";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Çeviriler **🥚 Cocoon** desteklidir.";
 "CocoonPoweredByLink" = "**Nasıl çalışır?**";
 "CocoonSubtitle" = "**Cocoon** (**Gizli Hesaplama Açık Ağı**), yapay zeka görevlerini **güvenli** ve **verimli** bir şekilde yürütür.";
@@ -5387,7 +5387,7 @@
 "GroupDeletedUndo" = "Grup silindi";
 "GroupDescription1" = "200.000'e kadar üye";
 "GroupDescription2" = "Kalıcı sohbet geçmişi";
-"GroupDescription3" = "t.me/baslik gibi herkese açık bağlantılar";
+"GroupDescription3" = "sgq.me/baslik gibi herkese açık bağlantılar";
 "GroupDescription4" = "Farklı yetkilere sahip yöneticiler";
 "GroupEmoji" = "Grup İfadesi";
 "GroupEmojiPack" = "Grup İfade Paketi";
@@ -8251,7 +8251,7 @@
 "PsaType_psa" = "Duyuru";
 "PublicChannelsTooMuch" = "Üzgünüz, hedef kullanıcı birden çok herkese açık grup ve kanala sahip. Lütfen öncelikle var olan grup ve kanallardan birini gizli yapmasını isteyin.";
 "PublicLink" = "Genel bağlantı";
-"PublicLinksLimitSubtitle" = "%d adede kadar t.me/username bağlantısı ayırın";
+"PublicLinksLimitSubtitle" = "%d adede kadar sgq.me/username bağlantısı ayırın";
 "PublicLinksLimitTitle" = "Genel Bağlantılar";
 "PublicPhoto" = "genel fotoğraf";
 "PublicPoll" = "Anket";
@@ -10526,7 +10526,7 @@
 "TelegramFaq" = "Telegram SSS";
 "TelegramFaqUrl" = "https://telegram.org/faq/tr";
 "TelegramFeatures" = "Telegram Özellikleri";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsTR";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsTR";
 "TelegramPassport" = "Telegram Pasaportu";
 "TelegramPassportCreatePassword" = "PAROLA OLUŞTUR";
 "TelegramPassportCreatePasswordInfo" = "Kişisel verilerinizi uçtan uca şifreleme ile güvence altına almak için lütfen bir parola oluşturun.\n\nYeni bir cihazdan Telegram'da her oturum açtığınızda bu parola gerekecektir.";

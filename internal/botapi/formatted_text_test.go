@@ -12,7 +12,7 @@ import (
 )
 
 func TestParseBotAPIHTMLNestedUTF16LinksAndDate(t *testing.T) {
-	plain, entities, err := parseBotAPIHTML(`<b>A <i>😀</i></b> <a href="tg://user?id=42">Alice</a> <tg-time unix="1700000000" format="wdT">now</tg-time>`)
+	plain, entities, err := parseBotAPIHTML(`<b>A <i>😀</i></b> <a href="sg://user?id=42">Alice</a> <tg-time unix="1700000000" format="wdT">now</tg-time>`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestParseBotAPIMarkdownV2NestedLinksAndExpandableQuote(t *testing.T) {
 }
 
 func TestParseBotAPIMarkdownV2FormattedDate(t *testing.T) {
-	plain, entities, err := parseBotAPIMarkdownV2(`![when](tg://time?unix=1700000000&format=wdT)`)
+	plain, entities, err := parseBotAPIMarkdownV2(`![when](sg://time?unix=1700000000&format=wdT)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestBotAPIFormattedTextIsUsedByAllMessageEntryPoints(t *testing.T) {
 }
 
 func FuzzBotAPIFormattedTextParsersNeverPanic(f *testing.F) {
-	for _, seed := range []string{"", "plain", "<b>x</b>", "<", "&broken", "*x*", "_", ">quote\n>hidden||", "![x](tg://emoji?id=1)", "😀"} {
+	for _, seed := range []string{"", "plain", "<b>x</b>", "<", "&broken", "*x*", "_", ">quote\n>hidden||", "![x](sg://emoji?id=1)", "😀"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, input string) {

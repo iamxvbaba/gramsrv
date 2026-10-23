@@ -1,0 +1,115 @@
+{{ define "tlprofile_metadata" }}
+{{ template "header" . }}
+
+// Profile is one exact generated API schema. Unknown values are never
+// clamped, guessed or treated as canonical.
+type Profile int
+
+const (
+{{- range $layer := .LayerMetadata.Profiles }}
+    Profile{{ $layer }} Profile = {{ $layer }}
+{{- end }}
+    ProfileCanonical Profile = {{ .LayerMetadata.CanonicalLayer }}
+)
+
+// ResolveProfile accepts only exact generated profiles.
+func ResolveProfile(layer int) (Profile, bool) {
+    switch Profile(layer) {
+{{- range $layer := .LayerMetadata.Profiles }}
+    case Profile{{ $layer }}:
+        return Profile{{ $layer }}, true
+{{- end }}
+    default:
+        return 0, false
+    }
+}
+
+// SemanticID is a deterministic category-qualified TL identity. It is stable
+// across appended profiles but is not an external protocol value.
+type SemanticID uint64
+
+const (
+    SemanticInvalid SemanticID = 0
+{{- range $family := .LayerMetadata.Families }}
+    {{ trimPrefix $family.Constant "Layer" }} SemanticID = 0x{{ printf "%016x" $family.ID }}
+{{- end }}
+)
+
+// Generated stable identities for request fields that may be inspected by a
+// bounded admission policy before typed materialization.
+const (
+{{- range .LayerRPC.AdmissionFields }}
+    {{ trimPrefix .Constant "LayerRPC" }} FieldID = 0x{{ printf "%016x" .ID }}
+{{- end }}
+)
+
+// SemanticName reports the TL category and qualified name.
+func SemanticName(id SemanticID) (category, qname string, ok bool) {
+    switch id {
+{{- range $family := .LayerMetadata.Families }}
+    case {{ trimPrefix $family.Constant "Layer" }}:
+        return "{{ $family.Category }}", "{{ $family.QName }}", true
+{{- end }}
+    default:
+        return "", "", false
+    }
+}
+
+func canonicalWireID(id SemanticID) (uint32, bool) {
+    switch id {
+{{- range $family := .LayerMetadata.Families }}{{ if $family.Canonical }}
+    case {{ trimPrefix $family.Constant "Layer" }}:
+        return 0x{{ printf "%08x" $family.CanonicalWireID }}, true
+{{- end }}{{- end }}
+    default:
+        return 0, false
+    }
+}
+
+// WireID resolves a semantic constructor or method in an exact profile.
+func WireID(profile Profile, semantic SemanticID) (uint32, bool) {
+    switch profile {
+{{- range $profile := .LayerMetadata.Overrides }}
+    case Profile{{ $profile.Layer }}:
+        switch semantic {
+{{- range $entry := $profile.Entries }}
+        case {{ trimPrefix $entry.Constant "Layer" }}:
+{{- if $entry.Present }}
+            return 0x{{ printf "%08x" $entry.WireID }}, true
+{{- else }}
+            return 0, false
+{{- end }}
+{{- end }}
+        }
+{{- end }}
+    case ProfileCanonical:
+    default:
+        return 0, false
+    }
+    return canonicalWireID(semantic)
+}
+
+func semanticByWireID(id uint32) (SemanticID, bool) {
+    switch id {
+{{- range $wire := .LayerMetadata.Wires }}
+    case 0x{{ printf "%08x" $wire.WireID }}:
+        return {{ trimPrefix $wire.Constant "Layer" }}, true
+{{- end }}
+    default:
+        return SemanticInvalid, false
+    }
+}
+
+// SemanticForWireID resolves an ID only when it belongs to profile.
+func SemanticForWireID(profile Profile, id uint32) (SemanticID, bool) {
+    semantic, ok := semanticByWireID(id)
+    if !ok {
+        return SemanticInvalid, false
+    }
+    expected, ok := WireID(profile, semantic)
+    if !ok || expected != id {
+        return SemanticInvalid, false
+    }
+    return semantic, true
+}
+{{ end }}

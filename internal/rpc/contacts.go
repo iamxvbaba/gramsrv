@@ -32,6 +32,12 @@ const (
 
 // registerContacts 注册 contacts.* RPC handler。
 func (r *Router) registerContacts(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.ContactsExportNoPaidMessagesTokenRequest](d, tlprofile.SemanticMethodContactsExportNoPaidMessagesToken, func(ctx context.Context, req *tg.ContactsExportNoPaidMessagesTokenRequest) (any, error) {
+		return r.onContactsExportNoPaidMessagesToken(ctx, req)
+	})
+	registerRPC[*tg.ContactsImportNoPaidMessagesTokenRequest](d, tlprofile.SemanticMethodContactsImportNoPaidMessagesToken, func(ctx context.Context, req *tg.ContactsImportNoPaidMessagesTokenRequest) (any, error) {
+		return r.onContactsImportNoPaidMessagesToken(ctx, req)
+	})
 	registerRPC[*tg.ContactsGetContactsRequest](d, tlprofile.SemanticMethodContactsGetContacts, func(ctx context.Context, layerRequest *tg.ContactsGetContactsRequest) (any, error) {
 		return r.onContactsGetContacts(ctx, layerRequest.
 			Hash)

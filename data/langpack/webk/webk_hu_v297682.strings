@@ -1145,7 +1145,7 @@
 "EditAdminRights" = "Admin jogok szerkesztése";
 "EditAdminSendAnonymously" = "Névtelen marad";
 "EditAdminWhatCanDo" = "Mit csinálhat ez az admin?";
-"EditBot.Buttons.Caption" = "Használd [@BotFather](https://t.me/botfather)-t a bot menedzseléséhez.";
+"EditBot.Buttons.Caption" = "Használd [@BotFather](https://sgq.me/botfather)-t a bot menedzseléséhez.";
 "EditBot.Buttons.Commands" = "Parancsok szerkesztése";
 "EditBot.Buttons.Intro" = "Bevezető szerkesztése";
 "EditBot.Buttons.Settings" = "Bot beállításainak módosítása";
@@ -1422,7 +1422,7 @@
 "GroupChecklist" = "Csoportos feladatlista";
 "GroupDescription1" = "Akár 200.000 tag";
 "GroupDescription2" = "Megmaradó csevegési előzmények";
-"GroupDescription3" = "Nyilvános hivatkozások, például: t.me/cím";
+"GroupDescription3" = "Nyilvános hivatkozások, például: sgq.me/cím";
 "GroupDescription4" = "Különböző jogokkal rendelkező adminisztrátorok";
 "GroupEmptyTitle1" = "Létrehoztál egy **csoportot**.";
 "GroupEmptyTitle2" = "A csoportokban lehet:";
@@ -2411,7 +2411,7 @@
 "Profile.Info.User" = "Felhasználói profil";
 "ProfileStories" = "Bejegyzések";
 "ProfileStoriesArchiveHint" = "Csak te láthatod az archivált történeteket, kivéve, ha úgy döntesz, hogy felteszed őket a profilodra.";
-"PublicLinksLimitSubtitle" = "Foglalj le akár %d t.me/felhasználónevet";
+"PublicLinksLimitSubtitle" = "Foglalj le akár %d sgq.me/felhasználónevet";
 "PublicLinksLimitTitle" = "Nyilvános hivatkozások";
 "PublicShares" = "Nyilvános megosztások";
 "PublicSharesCount#one" = "%1$s nyilvános megosztás";
@@ -3108,7 +3108,7 @@
 "Telegram.LanguageViewController" = "Nyelv";
 "Telegram.NotificationSettingsViewController" = "Értesítések";
 "TelegramFeatures" = "Telegram képességei";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumSubscribedSubtitle" = "Köszönjük, hogy előfizettél a **Telegram Prémium**ra. Mutatjuk mit oldottál fel ezzel.";
 "TelegramPremiumSubscribedTitle" = "Kész is vagy!";
 "TelegramPremiumUserGiftedPremiumDialogSubtitle" = "Mostantól további funkciókhoz is hozzáférsz.";

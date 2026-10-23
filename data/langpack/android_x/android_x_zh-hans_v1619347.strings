@@ -143,7 +143,7 @@
 "ApproveNewMembers" = "新成员审核";
 "ApproveNewMembersInfo" = "启用此选项后，新成员加入前需得到管理员的批准。";
 "Archive" = "归档";
-"ArchiveAppearanceHint" = "将保存的内容显示为本机文件夹。您可以在 [设置](tg://settings/folders) 中更改其位置。";
+"ArchiveAppearanceHint" = "将保存的内容显示为本机文件夹。您可以在 [设置](sg://settings/folders) 中更改其位置。";
 "ArchiveAppearanceTitle" = "外观";
 "ArchiveAppearanceToggle" = "显示为文件夹";
 "ArchiveAsFolder" = "保存为文件夹";
@@ -1084,9 +1084,9 @@
 "EditPrivacyPhoneNumber" = "手机号码";
 "EditPrivacyPhoto" = "头像";
 "EditPrivacyReadDate" = "显示我的已读时间";
-"EditPrivacyReadDateAllowHint" = "允许 %1$s 查看您的 **最后上线时间和在线** 状态会影响此设置。 \n\n有关更多信息，请查看 **[隐私和安全](tg://settings/privacy)** – **最后上线时间和在线** – **隐藏已读时间**。";
-"EditPrivacyReadDateRestrictHint" = "限制 %1$s 查看您的 **最后上線时间和在线** 状态会影响此设置。 \n\n有关更多信息，请参阅 **[隐私和安全](tg://settings/privacy)** – **最后上线时间和在线上** – **隐藏已读时间**。";
-"EditPrivacyReadDateToggleHint" = "您只能对所有看不见您的 **最后上线和在线上** 状态的人隐藏您的**已读时间**。 \n\n请参阅 **[隐私和安全](tg://settings/privacy)** – **最后上线和在线上** – **隐藏已读时间**。";
+"EditPrivacyReadDateAllowHint" = "允许 %1$s 查看您的 **最后上线时间和在线** 状态会影响此设置。 \n\n有关更多信息，请查看 **[隐私和安全](sg://settings/privacy)** – **最后上线时间和在线** – **隐藏已读时间**。";
+"EditPrivacyReadDateRestrictHint" = "限制 %1$s 查看您的 **最后上線时间和在线** 状态会影响此设置。 \n\n有关更多信息，请参阅 **[隐私和安全](sg://settings/privacy)** – **最后上线时间和在线上** – **隐藏已读时间**。";
+"EditPrivacyReadDateToggleHint" = "您只能对所有看不见您的 **最后上线和在线上** 状态的人隐藏您的**已读时间**。 \n\n请参阅 **[隐私和安全](sg://settings/privacy)** – **最后上线和在线上** – **隐藏已读时间**。";
 "EditPrivacyStatus" = "最近上线";
 "EditPrivacyVoice" = "向我发送语音消息";
 "EditUserRestrictions" = "编辑用户限制";
@@ -1376,7 +1376,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "请使用此设置来比较 Android 11–14 系统的无边框屏幕模式下的行为表现。";
 "Experiment_PeerIds" = "在个人资料页显示 Peer ID";
 "Experiment_PeerIdsInfo" = "在其个人资料页中显示用户和聊天的 API 识别符";
-"ExperimentalBuildInfo" = "此版本的 **Telegram X** 并非作为长期使用的版本。\n\n一段时间内它可能会完全停止工作，且不能重新开启通知。\n\n如果您正在查找合适的 Telegram X APK 文件，请访问 https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "此版本的 **Telegram X** 并非作为长期使用的版本。\n\n一段时间内它可能会完全停止工作，且不能重新开启通知。\n\n如果您正在查找合适的 Telegram X APK 文件，请访问 https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "警告：实验性构建";
 "ExperimentalSettings" = "实验性功能设置";
 "ExperimentalSettingsUnavailable" = "没有可用的实验。稍后回来。";
@@ -1749,7 +1749,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X启动失败是因为设备空间已满。\n\n确保有足够的可用存储空间，然后按**启动应用程序**再试一次。\n\n目前可用空间： %1$s";
 "LaunchAppGuideExternalError" = "Telegram X 之前因为设备出错未能启动。\n\n点按 **启动 App** 再试一次。如果依旧失败，请尝试以下几个步骤：\n\n• 确保储存空间可用： **%1$s**。\n• 确保没有其他储存问题，例如 SD 卡弹出或无法识别。\n• 重启您的设备。\n\n如果这没有帮助，您可能希望在 [TDLib's GitHub page](https://github.com/tdlib/td/issues) 上查找类似的问题以获取可能的解决方案，或者创建一个新问题，包括错误消息和设备细节。";
 "LaunchAppGuideFatalError" = "Telegram X 在您上次使用时意外关闭。\n\n按下**启动应用程序**再试一次。";
-"LaunchAppGuideTdlibIssue" = "Telegram X 之前因为 TDLib 致命错误未能启动。可能由于设备存储故障出现这种情况。\n\n点按 **启动 App** 再试一次。如果依旧失败，请尝试以下几个步骤：\n\n• [确保](%2$s) 你安装了最新版本的 Telegram X version。\n• 重启您的设备。\n\n**如果以上步骤没有帮助**\n\n1. 使用下面其中一个方式向 TDLib 开发者分享错误细节：\n— 在其他设备或者 [Telegram Web](https://web.telegram.org/)私信[@tdlib_bot](https://t.me/tdlib_bot)。\n— 在 [GitHub page](https://github.com/tdlib/td/issues)公开分享。 **不要** 公开分享 **tdlib_log.txt** 文件。\n2. 耐心等待响应。\n3. 根据TDLib开发人员的要求更改以下日志设置。\n4. 点按 **启动 APP** 使 APP 再次强制停止。\n5. 向TDLib开发人员分享 **tdlib_log.txt** 文件，并等待问题解决。\n6. 更新后，你将能够正常启动应用。\n\n**替代选项**\n\n• 在[TDLib's GitHub page](https://github.com/tdlib/td/issues) 上查找类似的问题以获取可能的解决方案。\n• 重新安装 APP。私密聊天将丢失。如果您使用的是同一个电话号码，则会从 Telegram 云服务器中恢复所有其他对话和数据。";
+"LaunchAppGuideTdlibIssue" = "Telegram X 之前因为 TDLib 致命错误未能启动。可能由于设备存储故障出现这种情况。\n\n点按 **启动 App** 再试一次。如果依旧失败，请尝试以下几个步骤：\n\n• [确保](%2$s) 你安装了最新版本的 Telegram X version。\n• 重启您的设备。\n\n**如果以上步骤没有帮助**\n\n1. 使用下面其中一个方式向 TDLib 开发者分享错误细节：\n— 在其他设备或者 [Telegram Web](https://web.telegram.org/)私信[@tdlib_bot](https://sgq.me/tdlib_bot)。\n— 在 [GitHub page](https://github.com/tdlib/td/issues)公开分享。 **不要** 公开分享 **tdlib_log.txt** 文件。\n2. 耐心等待响应。\n3. 根据TDLib开发人员的要求更改以下日志设置。\n4. 点按 **启动 APP** 使 APP 再次强制停止。\n5. 向TDLib开发人员分享 **tdlib_log.txt** 文件，并等待问题解决。\n6. 更新后，你将能够正常启动应用。\n\n**替代选项**\n\n• 在[TDLib's GitHub page](https://github.com/tdlib/td/issues) 上查找类似的问题以获取可能的解决方案。\n• 重新安装 APP。私密聊天将丢失。如果您使用的是同一个电话号码，则会从 Telegram 云服务器中恢复所有其他对话和数据。";
 "LaunchAppShareError" = "分享错误的详细信息";
 "LaunchAppUserSubtitle" = "离线";
 "LaunchAppViewError" = "查看错误详情";
@@ -1800,7 +1800,7 @@
 "LinkChannel" = "关联频道";
 "LinkChannelHelp" = "您可以在 **Telegram** 上为频道设置一个公开链接。设置后，别人将能够通过此链接找到并关注您的频道。\n\n您可以使用 **a-z**、**0-9** 和下划线。\n最小长度为 **5** 个字符。";
 "LinkChecking" = "正在检查名称…";
-"LinkCurrent" = "t.me/%1$s 已是您当前的公开链接。";
+"LinkCurrent" = "sgq.me/%1$s 已是您当前的公开链接。";
 "LinkDeletePrimary" = "%1$s 删除了主要邀请链接 %2$s";
 "LinkExpiresFuture" = "%1$s %2$s";
 "LinkExpiresNever" = "永久有效";
@@ -3628,7 +3628,7 @@
 "TranslationFailed" = "翻译失败";
 "TranslationMoreCreate" = "创建";
 "TranslationMoreDone" = "明白了";
-"TranslationMoreText" = "下列可用语言由[翻译平台](https://translations.telegram.org)管理。\n\nTelegram 将会在相应语言的翻译被官方采纳时将其提供给您。\n\n在此期间，您可以安装自定义的本地化文件。该文件可通过关注[翻译进度](https://translations.telegram.org/en/android_x/)获得，也可由您[自行](https://t.me/tgx_android_translate/)创建。";
+"TranslationMoreText" = "下列可用语言由[翻译平台](https://translations.telegram.org)管理。\n\nTelegram 将会在相应语言的翻译被官方采纳时将其提供给您。\n\n在此期间，您可以安装自定义的本地化文件。该文件可通过关注[翻译进度](https://translations.telegram.org/en/android_x/)获得，也可由您[自行](https://sgq.me/tgx_android_translate/)创建。";
 "TranslationMoreTitle" = "找不到您使用的语言？";
 "TranslationPaste" = "粘贴译文";
 "TranslationsMissing#other" = "%1$s 个未翻译";

@@ -141,7 +141,7 @@ func (s *PasswordStore) SaveQuickReplyText(_ context.Context, ownerUserID int64,
 	if err != nil {
 		return domain.QuickReplyMutation{}, err
 	}
-	if msg.Message == "" || len(msg.Entities) > domain.MaxMessageEntityCount {
+	if (msg.Message == "" && msg.Media.IsZero()) || len(msg.Entities) > domain.MaxMessageEntityCount {
 		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
 	}
 	s.mu.Lock()
@@ -598,4 +598,28 @@ func cloneConnectedBusinessBot(in domain.ConnectedBusinessBot) domain.ConnectedB
 	out.Recipients.Users = append([]int64(nil), in.Recipients.Users...)
 	out.Recipients.ExcludeUsers = append([]int64(nil), in.Recipients.ExcludeUsers...)
 	return out
+}
+
+func (s *PasswordStore) EditQuickReplyMessage(_ context.Context, ownerUserID int64, edit domain.QuickReplyEdit) (domain.QuickReplyMutation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	msgs := s.quickReplyMessages[ownerUserID][edit.ShortcutID]
+	msg, ok := msgs[edit.ID]
+	if !ok {
+		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
+	}
+	msg.Message = edit.Message
+	msg.Entities = append([]domain.MessageEntity(nil), edit.Entities...)
+	if edit.Media != nil {
+		msg.Media = edit.Media
+	}
+	msg.EditDate = edit.EditDate
+	msgs[edit.ID] = msg
+	return domain.QuickReplyMutation{
+		Kind:       domain.QuickReplyMutationMessage,
+		List:       s.quickReplyListLocked(ownerUserID, true),
+		QuickReply: cloneQuickReply(s.quickReplies[ownerUserID][edit.ShortcutID]),
+		ShortcutID: edit.ShortcutID,
+		Message:    cloneQuickReplyMessage(msg),
+	}, nil
 }

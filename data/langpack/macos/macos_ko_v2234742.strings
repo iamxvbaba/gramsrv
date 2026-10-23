@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "모두에게";
 "AboutCocoon.Feature.Private.Description" = "Cocoon 내부의 번역 등 어떤 데이터에도 제3자는 접근할 수 없습니다.";
 "AboutCocoon.Feature.Private.Title" = "비공개";
-"AboutCocoon.Footer" = "프로젝트에 Cocoon을 통합하고 싶나요?\n[t.me/cocoon](t.me/cocoon)으로 문의하세요";
+"AboutCocoon.Footer" = "프로젝트에 Cocoon을 통합하고 싶나요?\n[sgq.me/cocoon](sgq.me/cocoon)으로 문의하세요";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "공유 비활성화";
 "AboutFeature.DisableSharing.NoForwarding" = "전달 금지";
@@ -468,7 +468,7 @@
 "Bot.AllowSendMessages" = "**%@**님이 나에게 메시지를 보내도록 허용합니다.";
 "Bot.Grossing.Disclaimer" = "여기에는 어떤 앱이 포함되나요? [알아보기 >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "상위 미니 앱";
-"Bot.Grossing.Disclaimer.Alert.Text" = "이 카탈로그는 스타로 측정한 일일 수익을 기준으로 미니 앱의 순위를 매깁니다. 목록에 표시되려면 개발자가 [@botfather](https://t.me/botfather)에서 기본 미니 앱을 설정해야 하며([여기](https://core.telegram.org/api/bots/webapps)에 설명된 대로), 일일 사용자가 **1,000**명을 넘고 주간 평균 기준 일일 수익이 **1,000** 스타를 초과해야 합니다.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "이 카탈로그는 스타로 측정한 일일 수익을 기준으로 미니 앱의 순위를 매깁니다. 목록에 표시되려면 개발자가 [@botfather](https://sgq.me/botfather)에서 기본 미니 앱을 설정해야 하며([여기](https://core.telegram.org/api/bots/webapps)에 설명된 대로), 일일 사용자가 **1,000**명을 넘고 주간 평균 기준 일일 수익이 **1,000** 스타를 초과해야 합니다.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "확인";
 "Bot.InlineAuth.Header" = "링크 열기";
 "Bot.InlineAuth.Open" = "열기";
@@ -3312,7 +3312,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "시스템\n%@";
 "EmptyGroupInfo.Line1" = "• %@명까지 참가할 수 있습니다";
 "EmptyGroupInfo.Line2" = "• 대화 내용이 보존됩니다";
-"EmptyGroupInfo.Line3" = "• 공개 링크를 t.me/제목으로 둘 수 있습니다";
+"EmptyGroupInfo.Line3" = "• 공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "EmptyGroupInfo.Line4" = "• 여러 권한의 관리자를 세울 수 있습니다";
 "EmptyGroupInfo.Subtitle" = "그룹은";
 "EmptyGroupInfo.Title" = "그룹을 만들었습니다";
@@ -5333,7 +5333,7 @@
 "Premium.Boarding.Double.PinnedChats" = "고정된 대화방";
 "Premium.Boarding.Double.PinnedChats.Info" = "메인 대화 목록에 최대 %@개의 대화방을 고정할 수 있어요";
 "Premium.Boarding.Double.PublicLinks" = "공개 링크";
-"Premium.Boarding.Double.PublicLinks.Info" = "최대 %@개의 t.me/username 링크를 마련할 수 있어요";
+"Premium.Boarding.Double.PublicLinks.Info" = "최대 %@개의 sgq.me/username 링크를 마련할 수 있어요";
 "Premium.Boarding.Double.SavedGifs" = "GIF 저장";
 "Premium.Boarding.Double.SavedGifs.Info" = "즐겨찾는 GIF에 최대 %@개의 GIF를 저장할 수 있어요";
 "Premium.Boarding.Double.Title" = "두 배의 한도";
@@ -5747,7 +5747,7 @@
 "ProxySettings.CredentialsHeader" = "자격 증명 (선택)";
 "ProxySettings.Disabled" = "끔";
 "ProxySettings.Enable" = "프록시";
-"ProxySettings.ExportDescription" = "클립보드가 socks5 링크를 포함하고 있다면 (예: **t.me/socks?server=127.0.0.1&port=80**) 바로 적용됩니다.";
+"ProxySettings.ExportDescription" = "클립보드가 socks5 링크를 포함하고 있다면 (예: **sgq.me/socks?server=127.0.0.1&port=80**) 바로 적용됩니다.";
 "ProxySettings.ExportLink" = "클립보드에서 가져오기";
 "ProxySettings.IncorrectSecret" = "잘못된 비밀 키입니다. 다시 시도해주세요.";
 "ProxySettings.Item.Available" = "사용 가능 (응답속도: %@ ms)";
@@ -7791,7 +7791,7 @@
 "TranslateModal.PromptPlaceholder" = "텍스트를 어떻게 다시 작성할지 설명하세요…";
 "TranslateModal.PromptStyle" = "프롬프트";
 "TranslateModal.ShareStyle" = "스타일 공유";
-"TranslateModal.StyleByAuthor" = "[@%1$@](https://t.me/%1$@)님의 스타일";
+"TranslateModal.StyleByAuthor" = "[@%1$@](https://sgq.me/%1$@)님의 스타일";
 "TwoStep.AuthEmailSkip" = "건너뛰기";
 "TwoStepAuth.AnError" = "오류가 발생했습니다. 나중에 다시 시도해주세요.";
 "TwoStepAuth.CancelReset" = "재설정 취소";

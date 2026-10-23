@@ -942,9 +942,9 @@
 "Business.Links.LinksSectionHeader" = "LINK KE BUAL";
 "Business.Links.PreviewText" = "Tambah mesej yang akan dimasukkan ke medan mesej untuk sesiapa yang mula bual dengan anda mengguna link:";
 "Business.Links.PreviewTitle" = "Link ke Bual";
-"Business.Links.SimpleLinkInfoPhone" = "Anda juga boleh guna link mudah untuk bual dengan anda  — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Anda juga boleh guna link mudah untuk bual dengan anda — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Anda juga boleh guna link mudah untuk bual dengan anda — [t.me/%1$@](username) atau [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Anda juga boleh guna link mudah untuk bual dengan anda  — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Anda juga boleh guna link mudah untuk bual dengan anda — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Anda juga boleh guna link mudah untuk bual dengan anda — [sgq.me/%1$@](username) atau [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Beri pelanggan anda link pendek yang mula bual dengan anda — dan cadang mesej pertama mereka ke anda.";
 "Business.LinksInfo" = "Cipta link yang mula bual dengan anda, yang akan mencadang mesej pertama.";
 "Business.Location" = "Lokasi";
@@ -1803,7 +1803,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Nama saluran tak boleh mula dengan baris bawah.";
 "Channel.Username.InvalidTaken" = "Maaf, link ini sudah diguna.";
 "Channel.Username.InvalidTooShort" = "Link awam mestilah sekurang-kurangnya 5 aksara. ";
-"Channel.Username.LinkHint" = "Link ini akan buka saluran anda:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Link ini akan buka saluran anda:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Anda boleh batal link melalui salah satu daripada grup atau saluran lama anda, atau cipta sahaja saluran privat.";
 "Channel.Username.Title" = "Link";
 "Channel.Username.UsernameIsAvailable" = "%@ masih ada.";
@@ -3237,7 +3237,7 @@
 "CocoonInfo.Efficient.Title" = "Cekap";
 "CocoonInfo.ForEveryone.Text" = "Mana2 juruprogram boleh guna [@cocoon](telegram) untuk ciri AI. Pelajari lagi di [cocoon.org](web)";
 "CocoonInfo.ForEveryone.Title" = "Untuk Semua";
-"CocoonInfo.IntergrateInfo" = "Ingin integrasi Cacoon dengan projek anda?\nHubungi di [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Ingin integrasi Cacoon dengan projek anda?\nHubungi di [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Tiada pihak ketiga boleh akses mana2 data, seperti terjemahan, dalam Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4094,7 +4094,7 @@
 "CreateBot.UsernameStatus.Checking" = "Memeriksa...";
 "CreateBot.UsernameStatus.Invalid" = "Anda hanya boleh guna **a-z**, **0-9** dan garis bawah.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Anda tak boleh cipta lebih dari %d bot.";
-"CreateBot.UsernameStatus.Link" = "Link: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Link: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Nama samaran tak boleh mula dengan nombor.";
 "CreateBot.UsernameStatus.Short" = "Nama samaran mesti punyai minimum 5 aksara.";
 "CreateBot.UsernameStatus.Taken" = "Nama samaran ini telah diguna.";
@@ -4465,7 +4465,7 @@
 "EmojiStickerSettings.Info" = "Artis disilakan untuk tambah pek emoji mereka dengan mengguna bot @stickers kami.\n\nTekan lama pada mesej untuk lihat dan tambah semua pek.";
 "EmptyGroupInfo.Line1" = "Sehingga 200,000 ahli";
 "EmptyGroupInfo.Line2" = "Sejarah bual persisten";
-"EmptyGroupInfo.Line3" = "Link awam seperti t.me/tajuk";
+"EmptyGroupInfo.Line3" = "Link awam seperti sgq.me/tajuk";
 "EmptyGroupInfo.Line4" = "Pentadbir dengan kuasa berlainan";
 "EmptyGroupInfo.Subtitle" = "Grup boleh punyai:";
 "EmptyGroupInfo.Title" = "Anda cipta grup.";
@@ -8460,7 +8460,7 @@
 "Premium.Limits.PinnedChats" = "Bual Disemat";
 "Premium.Limits.PinnedChatsInfo" = "Semat sehingga 10 bual di senarai bual utama anda";
 "Premium.Limits.PublicLinks" = "Link Awam";
-"Premium.Limits.PublicLinksInfo" = "Tersedia hingga 20 link [t.me/namasamaran]()";
+"Premium.Limits.PublicLinksInfo" = "Tersedia hingga 20 link [sgq.me/namasamaran]()";
 "Premium.Limits.RecommendedChannels" = "Saluran Serupa";
 "Premium.Limits.RecommendedChannelsInfo" = "Lihat sehingga 100 saluran serupa.";
 "Premium.Limits.SavedGifs" = "GIF Disimpan";
@@ -8803,7 +8803,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "SIAPA BOLEH NAMPAK SAYA DLIHAT";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Pengguna yang tambah nombor anda ke kenalan mereka akan nampaknya di Telegram hanya kalau mereka adalah kenalan anda.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Pengguna yang ada nombor anda yang disimpan di kenalan anda akan dapat melihatnya di Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Pengguna yang ada nombor anda tersimpan dalam kenalan mereka juga akan kelihatan di Telegram.\n\nLink awam ini membuka bual dengan anda:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Pengguna yang ada nombor anda tersimpan dalam kenalan mereka juga akan kelihatan di Telegram.\n\nLink awam ini membuka bual dengan anda:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "SIAPA BOLEH CARI SAYA DENGAN NOMBOR SAYA";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "SIAPA BOLEH LIHAT NOMBOR FON SAYA";
 "PrivacyPolicy.Accept" = "Terima & Teruskan";
@@ -9648,8 +9648,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "tak boleh didapati";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "JENIS";
-"SocksProxySetup.QrCode.TMeLink" = "t.me link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "KELAYAKAN";
 "SocksProxySetup.SaveProxy" = "Simpan Proksi";
 "SocksProxySetup.SavedProxies" = "PROKSI DISIMPAN";
@@ -11199,7 +11199,7 @@
 "Username.InvalidTooShort" = "Nama samaran mestilah tak kurang dari 5 abjad.";
 "Username.InvalidValue" = "Maaf, nama samaran ini tak sah.";
 "Username.LinkCopied" = "Link disalin ke papan klip.";
-"Username.LinkHint" = "Link ini membuka bual dengan anda:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Link ini membuka bual dengan anda:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "SUSUNAN NAMA SAMARAN";
 "Username.LinksOrderInfo" = "Tarik dan letak link untuk tukar susunan paparan di halaman info anda.";
 "Username.Placeholder" = "Nama Samaran anda";

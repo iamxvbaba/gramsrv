@@ -8,13 +8,14 @@ import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../ro
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
 import { AppBackground } from "./AppBackground";
+import { withBase } from "../lib/base";
 
 export function BootScreen() {
   const { t } = useI18n();
   return (
     <div className="boot-screen">
       <div className="brand compact brand-elevated">
-        <span className="brand-mark"><img src="/logo.png" alt="" /></span>
+        <span className="brand-mark"><img src={withBase("/logo.png")} alt="" /></span>
         <span>
           <strong>telesrv</strong>
           <small>{t("app.adminConsole")}</small>
@@ -62,8 +63,8 @@ export function Shell({
     return () => window.removeEventListener("telesrv:identity-changed", load);
   }, [can]);
   const [brandIconFailed, setBrandIconFailed] = useState(false);
-  const brandName = identity?.name?.trim() || "telesrv";
-  const brandIconSrc = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+  const brandName = identity?.name?.trim() || "ShuzaGram";
+  const brandIconSrc = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : withBase("/logo.png");
 
   // The browser tab (title + favicon) follows the same custom-identity
   // override as the sidebar brand above, so a re-labeled server actually
@@ -79,7 +80,7 @@ export function Shell({
       document.head.appendChild(link);
     }
     const linkEl = link;
-    const src = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+    const src = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : withBase("/logo.png");
     // Browsers render the favicon file as-is -- they don't apply the sidebar's
     // border-radius to it -- so a square upload used to show square in the tab
     // strip while the sidebar showed the same file as a circle. Bake the same

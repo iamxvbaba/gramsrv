@@ -2920,15 +2920,15 @@
 "CloseTopics" = "Lukk emner";
 "CloseTranslation" = "Lukk oversettelse";
 "CocoonFeature1Text" = "Ingen tredjepart kan få tilgang til noen data, som oversettelser, i **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature2Text" = "Cocoon har gjort det mulig for Telegram å redusere kostnadene for oversettelser med 6 ganger.";
 "CocoonFeature2Title" = "Effektivt";
 "CocoonFeature3Text" = "Hvilken som helst utvikler kan benytte Cocoon for AI funksjoner. Les mer på **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "For alle";
-"CocoonFooter" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Oversettelser drives av\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Hvordan fungerer det?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nhåndterer AI oppgaver trygt og effektivt.";
@@ -5389,7 +5389,7 @@
 "GroupDeletedUndo" = "Gruppe slettet";
 "GroupDescription1" = "Inntil 200 000 medlemmer";
 "GroupDescription2" = "Vedvarende samtalehistorikk";
-"GroupDescription3" = "Offentlige lenker som t.me/title";
+"GroupDescription3" = "Offentlige lenker som sgq.me/title";
 "GroupDescription4" = "Admins med forskjellige rettigheter";
 "GroupEmoji" = "Gruppeemoji";
 "GroupEmojiPack" = "Gruppens emojipakke";
@@ -8257,7 +8257,7 @@
 "PsaType_psa" = "Kunngjøring";
 "PublicChannelsTooMuch" = "Beklager, denne brukeren har allerede for mange offentlige grupper eller kanaler. Vennligst spør vedkommende om å gjøre en kanal eller gruppe privat først.";
 "PublicLink" = "Offentlig lenke";
-"PublicLinksLimitSubtitle" = "Reserver inntil %d t.me/brukernavn lenker";
+"PublicLinksLimitSubtitle" = "Reserver inntil %d sgq.me/brukernavn lenker";
 "PublicLinksLimitTitle" = "Offentlige lenker";
 "PublicPhoto" = "offentlig bilde";
 "PublicPoll" = "Avstemning";
@@ -10534,7 +10534,7 @@
 "TelegramFaq" = "Ofte stilte spørsmål";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Funksjoner i Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "OPPRETT PASSORD";
 "TelegramPassportCreatePasswordInfo" = "Vennligst opprett et passord for å sikre dine personlige data med ende-til-ende kryptering.\n\nDette passordet vil også være nødvendig når du vil bruke Telegram på en ny enhet.";

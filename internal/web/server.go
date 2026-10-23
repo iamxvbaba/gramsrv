@@ -49,6 +49,11 @@ type Config struct {
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
 	TelegramLogin http.Handler
+	// AndroidAppPackage and AndroidCertSHA256 publish /.well-known/assetlinks.json
+	// so Android opens public links directly in the ShuzaGram app. No
+	// fingerprints means the file is not served.
+	AndroidAppPackage string
+	AndroidCertSHA256 []string
 }
 
 type StickerSetResolver interface {
@@ -177,6 +182,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if cfg.AppName, err = links.ValidateAppName(cfg.AppName); err != nil {
 		return nil, fmt.Errorf("app name: %w", err)
 	}
+	if cfg.AndroidAppPackage, cfg.AndroidCertSHA256, err = ValidateAndroidAppLinks(cfg.AndroidAppPackage, cfg.AndroidCertSHA256); err != nil {
+		return nil, fmt.Errorf("Android app links: %w", err)
+	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -200,6 +208,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
+	if len(cfg.AndroidCertSHA256) > 0 {
+		mux.HandleFunc("GET /.well-known/assetlinks.json", assetLinksHandler(cfg.AndroidAppPackage, cfg.AndroidCertSHA256))
+	}
 	if cfg.AllowDevPayments {
 		mux.HandleFunc("GET /payments/dev-stars", h.devStarsCheckout)
 	}
@@ -665,7 +676,6 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 		Description:  "This page opens the app so you can preview and add this shared folder.",
 		CanonicalURL: h.publicURL("addlist", slug),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL("addlist", "slug", slug)),
 	}
 	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -722,7 +732,6 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 		Description:  "This collectible was created from a gift on " + h.appName + ". Open it in the app to view its current details.",
 		CanonicalURL: h.publicURL("nft", canonicalSlug),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL("nft", "slug", canonicalSlug)),
 	}
 	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -755,7 +764,7 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 	}
 	app := h.appLinks.BuildUsername(peer.username, params)
 	params.Set("domain", peer.username)
-	legacy := schemeURLValues("tg", "resolve", params)
+	legacy := schemeURLValues("sg", "resolve", params)
 	description := peer.about
 	if description == "" {
 		description = peer.fallbackDescription(h.appName)
@@ -771,7 +780,6 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 		CanonicalURL: h.publicUsernameURL(peer.username),
 		HomeURL:      h.publicBaseURL + "/",
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacy),
 		WebURL:       template.URL(publicWebAppURL(h.webBaseURL, legacy)),
 		ButtonLabel:  peer.buttonLabel(),
 		Initials:     peer.initials(),
@@ -893,7 +901,6 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 		Description:  "This page opens the app so you can preview and install the set. Files are still fetched by the app through MTProto.",
 		CanonicalURL: h.publicURL(canonicalKind, set.ShortName),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL(canonicalKind, "set", set.ShortName)),
 	}
 	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1373,14 +1380,6 @@ func (h *handler) appURL(kind, key, value string) string {
 	return h.appLinks.Build(kind, url.Values{key: []string{value}})
 }
 
-func legacyTgURL(kind, key, value string) string {
-	return schemeURL("tg", kind, key, value)
-}
-
-func schemeURL(scheme, kind, key, value string) string {
-	return scheme + "://" + kind + "?" + key + "=" + url.QueryEscape(value)
-}
-
 type pageData struct {
 	AppName      string
 	Title        string
@@ -1389,7 +1388,6 @@ type pageData struct {
 	Description  string
 	CanonicalURL string
 	AppURL       template.URL
-	LegacyTgURL  template.URL
 	AppURLJS     template.JS
 }
 
@@ -1407,7 +1405,6 @@ type usernamePageData struct {
 	Initials     string
 	ButtonLabel  string
 	AppURL       template.URL
-	LegacyTgURL  template.URL
 	WebURL       template.URL
 	AppURLJS     template.JS
 }
@@ -1504,7 +1501,6 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
           <a class="button primary" href="{{.AppURL}}">{{.ButtonLabel}}</a>
           <a class="button secondary" href="{{.WebURL}}">Open in Web</a>
         </div>
-        <p class="legacy">Old test clients only: <a href="{{.LegacyTgURL}}">open with tg://</a></p>
       </article>
     </main>
     <footer>If you have {{.AppName}}, this page can open the chat directly.</footer>
@@ -1556,7 +1552,6 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
     <p class="meta">{{.Subtitle}}</p>
     <p><a class="button" href="{{.AppURL}}">Open in {{.AppName}}</a></p>
     <p>{{.Description}}</p>
-    <p class="meta">Old test clients only: <a class="raw" href="{{.LegacyTgURL}}">open with tg://</a></p>
     <p class="meta"><a class="raw" href="{{.CanonicalURL}}">{{.CanonicalURL}}</a></p>
   </main>
   <script>

@@ -56,6 +56,12 @@ func (r *Router) registerChannels(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesEditChatParticipantRankRequest](d, tlprofile.SemanticMethodMessagesEditChatParticipantRank, func(ctx context.Context, layerRequest *tg.MessagesEditChatParticipantRankRequest) (any, error) {
 		return r.onMessagesEditChatParticipantRank(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesSetShareThemeRequest](d, tlprofile.SemanticMethodMessagesSetShareTheme, func(ctx context.Context, req *tg.MessagesSetShareThemeRequest) (any, error) {
+		return r.onMessagesSetShareTheme(ctx, req)
+	})
+	registerRPC[*tg.MessagesGetShareThemeBackdropsRequest](d, tlprofile.SemanticMethodMessagesGetShareThemeBackdrops, func(ctx context.Context, req *tg.MessagesGetShareThemeBackdropsRequest) (any, error) {
+		return r.onMessagesGetShareThemeBackdrops(ctx, req)
+	})
 	registerRPC[*tg.MessagesSetChatThemeRequest](d, tlprofile.SemanticMethodMessagesSetChatTheme, func(ctx context.Context, layerRequest *tg.MessagesSetChatThemeRequest) (any, error) {
 		return r.onMessagesSetChatTheme(ctx, layerRequest)
 	})

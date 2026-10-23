@@ -3140,15 +3140,15 @@
 "CloseTopics" = "Zatvori teme";
 "CloseTranslation" = "Zatvori prijevod";
 "CocoonFeature1Text" = "Unutar **@cocoon** sustava nijedna treća strana ne može pristupiti podacima, čak ni prijevodima.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privatno";
 "CocoonFeature2Text" = "Cocoon je Telegramu omogućio smanjenje troškova prevođenja za šest puta.";
 "CocoonFeature2Title" = "Učinkovito";
 "CocoonFeature3Text" = "Svi programeri mogu koristiti Cocoon za AI značajke. Saznajte više na **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Dostupno svima";
-"CocoonFooter" = "Želite li integrirati Cocoon u svoje projekte?\nKontaktirajte nas preko **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Želite li integrirati Cocoon u svoje projekte?\nKontaktirajte nas preko **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Prijevode pokreće **🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Kako to radi?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nsigurno i učinkovito obrađuje AI zadatke.";
@@ -5781,7 +5781,7 @@
 "GroupDeletedUndo" = "Grupa je izbrisana.";
 "GroupDescription1" = "Do 200 000 članova";
 "GroupDescription2" = "Trajnu povijest razgovora";
-"GroupDescription3" = "Javne linkove kao t.me/naziv";
+"GroupDescription3" = "Javne linkove kao sgq.me/naziv";
 "GroupDescription4" = "Admine s raznim ovlastima";
 "GroupEmoji" = "Emoji paket grupe";
 "GroupEmojiPack" = "Emoji paket grupe";
@@ -8804,7 +8804,7 @@
 "PsaType_psa" = "Priopćenje";
 "PublicChannelsTooMuch" = "Nažalost, odabrani korisnik je vlasnik previše javnih grupa i kanala. Zamolite ga da pretvori neke javne grupe ili kanale u privatne.";
 "PublicLink" = "Javni link";
-"PublicLinksLimitSubtitle" = "Rezervirajte do %d t.me/korisničkoime linkova";
+"PublicLinksLimitSubtitle" = "Rezervirajte do %d sgq.me/korisničkoime linkova";
 "PublicLinksLimitTitle" = "Javni linkovi";
 "PublicPhoto" = "javna slika";
 "PublicPoll" = "Anketa";
@@ -11228,7 +11228,7 @@
 "TelegramFaq" = "Česta pitanja o Telegramu";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Značajke Telegrama";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram putovnica";
 "TelegramPassportCreatePassword" = "POSTAVI LOZINKU";
 "TelegramPassportCreatePasswordInfo" = "Molimo vas da postavite lozinku kako biste zaštitili svoje podatke end-to-end enkripcijom.\n\nLozinka će biti potrebna svaki put kad se prijavite u Telegram na novom uređaju.";

@@ -472,7 +472,7 @@
 "EmptyChatAppearanceSystem" = "跟随系统";
 "EmptyGroupInfoLine1" = "成员上限为 {count} 人";
 "EmptyGroupInfoLine2" = "• 永久聊天记录";
-"EmptyGroupInfoLine3" = "• 公开链接，例如：t.me/title";
+"EmptyGroupInfoLine3" = "• 公开链接，例如：sgq.me/title";
 "EmptyGroupInfoLine4" = "• 具备不同权限的管理员";
 "EmptyGroupInfoSubtitle" = "群组可以拥有：";
 "EmptyGroupInfoTitle" = "您已创建了一个群组";
@@ -1016,7 +1016,7 @@
 "ProfileTabVoice" = "声音";
 "ProfileViewChannel" = "查看频道";
 "PublicLink" = "公开链接";
-"PublicLinksLimitSubtitle" = "保留高达 {count} 个 t.me/username 链接";
+"PublicLinksLimitSubtitle" = "保留高达 {count} 个 sgq.me/username 链接";
 "PublicLinksLimitTitle" = "公共链接";
 "PublicPoll" = "投票";
 "QuizPoll" = "问答";

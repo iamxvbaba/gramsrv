@@ -1670,7 +1670,7 @@
 "EditAdminRights" = "Змінити права";
 "EditAdminSendAnonymously" = "Залишатися анонімним";
 "EditAdminWhatCanDo" = "Цей адміністратор може:";
-"EditBot.Buttons.Caption" = "Керування ботом доступне в [@BotFather](https://t.me/botfather).";
+"EditBot.Buttons.Caption" = "Керування ботом доступне в [@BotFather](https://sgq.me/botfather).";
 "EditBot.Buttons.Commands" = "Змінити команди";
 "EditBot.Buttons.Intro" = "Змінити вступ";
 "EditBot.Buttons.Settings" = "Змінити налаштування бота";
@@ -2099,7 +2099,7 @@
 "GroupChecklist" = "Список задач групи";
 "GroupDescription1" = "До 200 тис. учасників";
 "GroupDescription2" = "Спільну історію листування";
-"GroupDescription3" = "Публічні посилання вигляду t.me";
+"GroupDescription3" = "Публічні посилання вигляду sgq.me";
 "GroupDescription4" = "Адміністраторів із різними правами";
 "GroupEmptyTitle1" = "Ви створили **групу**.";
 "GroupEmptyTitle2" = "Групи можуть мати:";
@@ -3435,7 +3435,7 @@
 "ProfileStoriesArchiveGroupHint" = "Історії в архіві доступні тільки адміністраторам, якщо вони не опубліковані в профілі групи.";
 "ProfileStoriesArchiveHint" = "Історії в архіві доступні лише вам, якщо ви не вирішите опублікувати їх у профілі.";
 "ProfileUnofficialSecurityRisk" = "%1$s використовує неофіційний застосунок Telegram,\u00a0що може знизити безпеку цього чату.";
-"PublicLinksLimitSubtitle" = "До %d зайнятих посилань виду t.me/username";
+"PublicLinksLimitSubtitle" = "До %d зайнятих посилань виду sgq.me/username";
 "PublicLinksLimitTitle" = "Публічні посилання";
 "PublicShares" = "Поширили\nпублічно";
 "PublicSharesCount#one" = "%1$s поширив публічно";
@@ -4529,7 +4529,7 @@
 "Telegram.LanguageViewController" = "Мова";
 "Telegram.NotificationSettingsViewController" = "Сповіщення";
 "TelegramFeatures" = "Можливості Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Власники **Telegram Premium** отримують доступ до ексклюзивних можливостей.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Емоджі-статуси — це ексклюзивна можливість для підписників **Telegram Premium**.\nІнші переваги підписки:";
 "TelegramPremiumPeerTitle" = "%s — підписник\n**Telegram\u00a0Premium**";

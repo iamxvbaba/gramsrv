@@ -1068,9 +1068,9 @@
 "Business.Links.LinksSectionHeader" = "ODKAZY NA KONVERZACI";
 "Business.Links.PreviewText" = "Přidejte zprávu, která bude zadána do pole pro zadání zprávy pro každého, kdo s vámi zahájí konverzaci pomocí tohoto odkazu:";
 "Business.Links.PreviewTitle" = "Odkaz na konverzaci";
-"Business.Links.SimpleLinkInfoPhone" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [t.me/%1$@](username) nebo [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Můžete také použít jednoduchý odkaz pro konverzaci s vámi — [sgq.me/%1$@](username) nebo [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Poskytněte svým zákazníkům krátké odkazy, které s vámi zahájí konverzaci — a navrhněte první zprávu od nich pro vás.";
 "Business.LinksInfo" = "Vytvářejte odkazy, které s vámi zahájí konverzaci a navrhnou první zprávu.";
 "Business.Location" = "Poloha";
@@ -1959,7 +1959,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Jména kanálů nemohou začínat podtržítkem.";
 "Channel.Username.InvalidTaken" = "Litujeme, tento odkaz je již používán.";
 "Channel.Username.InvalidTooShort" = "Veřejné odkazy musí mít nejméně 5 znaků.";
-"Channel.Username.LinkHint" = "Tento odkaz otevře váš kanál:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Tento odkaz otevře váš kanál:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Můžete odvolat odkaz jedné z vašich starších skupin nebo kanálů, nebo místo toho vytvořit kanál soukromý.";
 "Channel.Username.Title" = "Odkaz";
 "Channel.Username.UsernameIsAvailable" = "Jméno %@ je dostupné.";
@@ -3699,7 +3699,7 @@
 "CocoonInfo.Efficient.Title" = "Efektivní";
 "CocoonInfo.ForEveryone.Text" = "Každý vývojář může pro funkce AI použít [Cocoon](telegram). Více informací najdete na [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Pro každého";
-"CocoonInfo.IntergrateInfo" = "Chcete Cocoon integrovat do svých projektů?\nKontaktujte nás na [t.me/cocoon?direct]().";
+"CocoonInfo.IntergrateInfo" = "Chcete Cocoon integrovat do svých projektů?\nKontaktujte nás na [sgq.me/cocoon?direct]().";
 "CocoonInfo.Private.Text" = "Žádná třetí strana nemá přístup k žádným datům, jako jsou překlady uvnitř Cocoon.";
 "CocoonInfo.Private.Title" = "Soukromý";
 "CocoonInfo.Title" = "COCOON";
@@ -4662,7 +4662,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Nemůžete vytvořit více než %d boty.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "Nemůžete vytvořit více než %d botů.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Nemůžete vytvořit více než %d botů.";
-"CreateBot.UsernameStatus.Link" = "Odkaz: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Odkaz: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Uživ. jméno nesmí začínat číslicí.";
 "CreateBot.UsernameStatus.Short" = "Uživatelské jméno musí mít alespoň 5 znaků.";
 "CreateBot.UsernameStatus.Taken" = "Toto uživatelské jméno je již obsazeno.";
@@ -5069,7 +5069,7 @@
 "EmojiStickerSettings.Info" = "Umělci mohou přidávat své vlastní balíčky emoji pomocí našeho bota @stickers.\n\nStisknutím a podržením zprávy zobrazíte a přidáte celý balíček.";
 "EmptyGroupInfo.Line1" = "Až 200 000 členů";
 "EmptyGroupInfo.Line2" = "Trvalá historie konverzace";
-"EmptyGroupInfo.Line3" = "Veřejné odkazy jako t.me/text";
+"EmptyGroupInfo.Line3" = "Veřejné odkazy jako sgq.me/text";
 "EmptyGroupInfo.Line4" = "Správci s různými oprávněními";
 "EmptyGroupInfo.Subtitle" = "Skupiny mohou mít:";
 "EmptyGroupInfo.Title" = "Skupina byla vytvořena";
@@ -9981,7 +9981,7 @@
 "Premium.Limits.PinnedChats" = "Připnuté konverzace";
 "Premium.Limits.PinnedChatsInfo" = "Připněte až 10 konverzací v hlavním seznamu";
 "Premium.Limits.PublicLinks" = "Veřejné odkazy";
-"Premium.Limits.PublicLinksInfo" = "Zarezervujte si až 20 odkazů [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "Zarezervujte si až 20 odkazů [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Podobné kanály";
 "Premium.Limits.RecommendedChannelsInfo" = "Zobrazte až 100 podobných kanálů";
 "Premium.Limits.SavedGifs" = "Uložené GIFy";
@@ -10351,7 +10351,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "KDO MŮŽE VIDĚT ČAS POSLEDNÍ AKTIVITY";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Uživatelé, kteří mají vaše číslo v Kontaktech jej v Telegramu uvidí pouze, pokud je máte v kontaktech.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Uživatelé, kteří již mají vaše číslo uložené ve svých kontaktech, jej uvidí také v Telegramu.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Uživatelé, mající vaše telefonní číslo uložené u sebe v Kontaktech, ho také uvidí v Telegramu.\n\nTento veřejný odkaz otevře konverzaci s vámi:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Uživatelé, mající vaše telefonní číslo uložené u sebe v Kontaktech, ho také uvidí v Telegramu.\n\nTento veřejný odkaz otevře konverzaci s vámi:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "KDO MĚ MŮŽE NAJÍT POMOCÍ ČÍSLA";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "KDO MŮŽE VIDĚT MÉ TELEFONNÍ ČÍSLO";
 "PrivacyPolicy.Accept" = "Přijmout a pokračovat";
@@ -11370,8 +11370,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "nedostupná";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYP";
-"SocksProxySetup.QrCode.TMeLink" = "odkaz t.me";
-"SocksProxySetup.QrCode.TgLink" = "odkaz tg://";
+"SocksProxySetup.QrCode.TMeLink" = "odkaz sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "odkaz sg://";
 "SocksProxySetup.RequiredCredentials" = "PŘIHLÁŠENÍ";
 "SocksProxySetup.SaveProxy" = "Uložit proxy";
 "SocksProxySetup.SavedProxies" = "ULOŽENÉ PROXY";
@@ -13275,7 +13275,7 @@
 "Username.InvalidTooShort" = "Uživatelské jména musí mít minimálně 5 znaků.";
 "Username.InvalidValue" = "Je nám líto, toto uživatelské jméno je neplatné.";
 "Username.LinkCopied" = "Odkaz zkopírován do schránky.";
-"Username.LinkHint" = "Tento odkaz otevře konverzaci s vámi:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Tento odkaz otevře konverzaci s vámi:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "POŘADÍ UŽIVATELSKÝCH JMEN";
 "Username.LinksOrderInfo" = "Přetáhněte odkazy pro změnu jejich pořadí na informační stránce.";
 "Username.Placeholder" = "Vaše uživatelské jméno";

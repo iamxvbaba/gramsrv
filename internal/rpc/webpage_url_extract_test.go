@@ -10,7 +10,7 @@ import (
 )
 
 var testDefaultAppLinks = func() links.AppLinkBuilder {
-	appLinks, err := links.NewAppLinkBuilder("telesrv", "")
+	appLinks, err := links.NewAppLinkBuilder("sg", "")
 	if err != nil {
 		panic(err)
 	}
@@ -107,7 +107,7 @@ func TestFirstPreviewableURL(t *testing.T) {
 	})
 
 	t.Run("custom-scheme-entity-does-not-preview", func(t *testing.T) {
-		message := "telesrv://resolve?domain=Alice"
+		message := "sg://resolve?domain=Alice"
 		entities := testAugmentAutoEntities(message, nil)
 		if len(entities) != 1 {
 			t.Fatalf("entities = %d, want 1", len(entities))
@@ -118,7 +118,7 @@ func TestFirstPreviewableURL(t *testing.T) {
 	})
 
 	t.Run("custom-scheme-before-http-still-previews-http", func(t *testing.T) {
-		message := "telesrv://resolve?domain=Alice then https://example.com/x"
+		message := "sg://resolve?domain=Alice then https://example.com/x"
 		entities := testAugmentAutoEntities(message, nil)
 		got, ok := firstPreviewableURL(message, entities)
 		if !ok || got != "https://example.com/x" {
@@ -237,37 +237,37 @@ func TestAugmentAutoEntitiesURL(t *testing.T) {
 		}
 	})
 	t.Run("configured-custom-scheme", func(t *testing.T) {
-		message := "👍 TELESRV://resolve?domain=Alice。"
+		message := "👍 SG://resolve?domain=Alice。"
 		got := testAugmentAutoEntities(message, nil)
 		if len(got) != 1 {
 			t.Fatalf("entities = %d, want 1", len(got))
 		}
 		e := urlEntity(t, got[0])
-		wantURL := "TELESRV://resolve?domain=Alice"
+		wantURL := "SG://resolve?domain=Alice"
 		if e.Offset != 3 || e.Length != utf16CodeUnitLen(wantURL) {
 			t.Fatalf("offset/length = %d/%d, want 3/%d", e.Offset, e.Length, utf16CodeUnitLen(wantURL))
 		}
 	})
 	t.Run("mixed-client-http-and-missing-custom-scheme", func(t *testing.T) {
-		message := "https://x telesrv://resolve?domain=Alice"
+		message := "https://x sg://resolve?domain=Alice"
 		client := []tg.MessageEntityClass{&tg.MessageEntityURL{Offset: 0, Length: utf16CodeUnitLen("https://x")}}
 		got := testAugmentAutoEntities(message, client)
 		if len(got) != 2 {
 			t.Fatalf("entities = %d, want client HTTP plus server app-link", len(got))
 		}
 		e := urlEntity(t, got[1])
-		if e.Offset != utf16CodeUnitLen("https://x ") || e.Length != utf16CodeUnitLen("telesrv://resolve?domain=Alice") {
+		if e.Offset != utf16CodeUnitLen("https://x ") || e.Length != utf16CodeUnitLen("sg://resolve?domain=Alice") {
 			t.Fatalf("custom entity offset/length = %d/%d", e.Offset, e.Length)
 		}
 	})
 	t.Run("unconfigured-scheme-rejected", func(t *testing.T) {
-		if got := testAugmentAutoEntities("foo://resolve telesrv://resolve", nil); len(got) != 1 {
-			t.Fatalf("entities = %d, want only configured telesrv link", len(got))
+		if got := testAugmentAutoEntities("foo://resolve sg://resolve", nil); len(got) != 1 {
+			t.Fatalf("entities = %d, want only configured sg link", len(got))
 		}
 	})
 	t.Run("host-base-is-exact", func(t *testing.T) {
-		message := "owpg://links.example.test/Alice owpg://other.example.test/Bob telesrv://resolve?domain=Carol"
-		got := testAugmentAutoEntitiesWithAppLinks(t, message, nil, "telesrv", "owpg://links.example.test")
+		message := "owpg://links.example.test/Alice owpg://other.example.test/Bob sg://resolve?domain=Carol"
+		got := testAugmentAutoEntitiesWithAppLinks(t, message, nil, "sg", "owpg://links.example.test")
 		if len(got) != 2 {
 			t.Fatalf("entities = %d, want configured host-base and legacy link", len(got))
 		}
@@ -361,7 +361,7 @@ func TestAugmentAutoEntitiesMention(t *testing.T) {
 	t.Run("no-mention-inside-raw-url-with-client-url-entity", func(t *testing.T) {
 		// 防回归:客户端带了某个 textUrl 实体（hasClientURL=true）但未包裹另一条裸 URL；
 		// 裸 URL 路径里的 @scam / #frag 不得被误标成 mention/hashtag（钓鱼风险）。
-		msg := "Docs see https://t.me/@scam and #promo"
+		msg := "Docs see https://sgq.me/@scam and #promo"
 		ents := []tg.MessageEntityClass{&tg.MessageEntityTextURL{Offset: 0, Length: 4, URL: "https://x"}}
 		got := testAugmentAutoEntities(msg, ents)
 		for _, e := range got {

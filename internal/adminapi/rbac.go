@@ -77,6 +77,11 @@ const (
 	// PermissionBotTokenRead is intentionally narrower than unrestricted admin
 	// access because it reveals a live credential.
 	PermissionBotTokenRead = "bots.token.read"
+	// PermissionStarsGrant credits Stars to one account. It lets a service
+	// such as the numbers bot pay out a bonus without full admin access.
+	PermissionStarsGrant = "stars.grant"
+	// PermissionAccountsLookup resolves a phone number to an account id.
+	PermissionAccountsLookup = "accounts.lookup"
 )
 
 // CodeForbidden is the stable code for a permission failure, so the panel can

@@ -1,0 +1,23 @@
+ignore:
+  # Ignore generated files.
+  - "**/rsagen_*.go"
+  - "**/*_gen.go"
+  - "**/*.gen.go"
+  - "**/bindata.go"
+  # Ignore commands (examples or internal utilities).
+  - "cmd/*/*.go"
+  # Ignore examples
+  - "examples/**"
+  # Ignore ruleguard rules
+  - "gorules/**"
+  # Ignore testing utilities
+  - "telegram/internal/*test/*"
+  # Ignore some helper generators
+  - "telegram/message/internal/mk*/*"
+
+coverage:
+  status:
+    patch: off
+    project:
+      default:
+        threshold: 1%

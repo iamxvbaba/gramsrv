@@ -750,8 +750,8 @@ func normalizeStickersBotShortName(raw string) string {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "telesrv://addstickers?set=")
 	raw = strings.TrimPrefix(raw, "telesrv://addemoji?set=")
-	raw = strings.TrimPrefix(raw, "tg://addstickers?set=")
-	raw = strings.TrimPrefix(raw, "tg://addemoji?set=")
+	raw = strings.TrimPrefix(raw, "sg://addstickers?set=")
+	raw = strings.TrimPrefix(raw, "sg://addemoji?set=")
 	if strings.Contains(raw, "://") {
 		if parsed, err := url.Parse(raw); err == nil {
 			query := parsed.Query()

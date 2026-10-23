@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "LINKEK A CSEVEGÉSHEZ";
 "Business.Links.PreviewText" = "Adj hozzá egy üzenetet, amely az üzenetmezőbe kerül be azok számára, akik a linken keresztül csevegést kezdenek veled:";
 "Business.Links.PreviewTitle" = "Link a csevegéshez";
-"Business.Links.SimpleLinkInfoPhone" = "Egyszerű linket is használhatsz a veled való csevegéshez - [t.me/+%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Egy egyszerű linket is használhatsz a veled való csevegéshez — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Használhatsz egyszerű linket is a veled történő csevegéshez — [t.me/%1$@](username) or [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Egyszerű linket is használhatsz a veled való csevegéshez - [sgq.me/+%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Egy egyszerű linket is használhatsz a veled való csevegéshez — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Használhatsz egyszerű linket is a veled történő csevegéshez — [sgq.me/%1$@](username) or [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Adj ügyfeleidnek rövid linkeket, amelyekkel csevegést indíthatnak veled – és javasold nekik az első üzenet szövegét.";
 "Business.LinksInfo" = "Hozz létre linkeket, amelyek az első üzenetet sugallva csevegést indítanak veled.";
 "Business.Location" = "Helyszín";
@@ -1853,7 +1853,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "A csatornanevek nem kezdődhetnek aláhúzással.";
 "Channel.Username.InvalidTaken" = "Sajnáljuk, ez a hivatkozás már foglalt.";
 "Channel.Username.InvalidTooShort" = "A nyilvános link nem lehet rövidebb, mint 5 karakter.";
-"Channel.Username.LinkHint" = "Ez a hivatkozás megnyitja a csatornádat:\nhttp://t.me/%@";
+"Channel.Username.LinkHint" = "Ez a hivatkozás megnyitja a csatornádat:\nhttp://sgq.me/%@";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Visszavonhatsz egy hivatkozást egy régebbi csoportodtól vagy csatornádtól, vagy létrehozhatsz egy privát csatornát.";
 "Channel.Username.Title" = "Hivatkozás";
 "Channel.Username.UsernameIsAvailable" = "%@ elérhető.";
@@ -3384,7 +3384,7 @@
 "CocoonInfo.Efficient.Title" = "Hatékony";
 "CocoonInfo.ForEveryone.Text" = "Bármely fejlesztő használhatja a [Coccon](telegram)-t mesterséges intelligencia funkciókhoz. További információk: [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Mindenki számára";
-"CocoonInfo.IntergrateInfo" = "Szeretnéd integrálni a Cocoon-t a projektjeidbe?\nKeress minket a [t.me/cocoon?direct]() címen!";
+"CocoonInfo.IntergrateInfo" = "Szeretnéd integrálni a Cocoon-t a projektjeidbe?\nKeress minket a [sgq.me/cocoon?direct]() címen!";
 "CocoonInfo.Private.Text" = "Harmadik fél nem férhet hozzá az Coccon-ban található adatokhoz, például fordításokhoz.";
 "CocoonInfo.Private.Title" = "Privát";
 "CocoonInfo.Title" = "COCOON";
@@ -4273,7 +4273,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Csak **a–z**, **0–9** és aláhúzásjeleket használhatsz.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Nem hozhatsz létre több, mint %d botot.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Nem hozhatsz létre több, mint %d botot.";
-"CreateBot.UsernameStatus.Link" = "Link: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Link: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "A felhasználónév nem kezdődhet számmal.";
 "CreateBot.UsernameStatus.Short" = "A felhasználónévnek legalább 5 karakterből kell állnia.";
 "CreateBot.UsernameStatus.Taken" = "Ez a felhasználónév már foglalt.";
@@ -4656,7 +4656,7 @@
 "EmojiStickerSettings.Info" = "Szívesen fogadjuk a művészek egyedi emoji készleteit a @sticker bot segítségével.\n\nÉrintsd meg és tartsd nyomva, hogy megtekintsd a teljes csomagot.";
 "EmptyGroupInfo.Line1" = "Akár 200.000 tag";
 "EmptyGroupInfo.Line2" = "Megmaradó csevegési előzmények";
-"EmptyGroupInfo.Line3" = "Nyilvános hivatkozások, mint: t.me/title";
+"EmptyGroupInfo.Line3" = "Nyilvános hivatkozások, mint: sgq.me/title";
 "EmptyGroupInfo.Line4" = "Különböző jogokkal rendelkező adminisztrátorok";
 "EmptyGroupInfo.Subtitle" = "A csoportokban lehet:";
 "EmptyGroupInfo.Title" = "Létrehoztál egy csoportot";
@@ -8929,7 +8929,7 @@
 "Premium.Limits.PinnedChats" = "Rögzített csevegések";
 "Premium.Limits.PinnedChatsInfo" = "Tűzz ki akár 10 csevegést a csevegőlistára";
 "Premium.Limits.PublicLinks" = "Nyilvános hivatkozások";
-"Premium.Limits.PublicLinksInfo" = "Foglalj le akár 20 [t.me/felhasználónevet]()";
+"Premium.Limits.PublicLinksInfo" = "Foglalj le akár 20 [sgq.me/felhasználónevet]()";
 "Premium.Limits.RecommendedChannels" = "Hasonló csatornák";
 "Premium.Limits.RecommendedChannelsInfo" = "Akár 100 hasonló csatorna megjelenítése";
 "Premium.Limits.SavedGifs" = "Mentett GIF-ek";
@@ -9276,7 +9276,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "Ki láthatja, hogy mikor voltál utoljára elérhető?";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "A kölcsönösen egymás kapcsolatai közt szereplő felhasználók látják egymást a Telegramban is.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Azok a felhasználók, akiknek a névjegyei közt szerepel a telefonszámod, láthatják azt a Telegramon.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Azok a felhasználók, akik elmentették a számodat a névjegyeik közé, a Telegramban is látni fogják.\n\nEz a nyilvános link megnyit egy csevegést veled:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Azok a felhasználók, akik elmentették a számodat a névjegyeik közé, a Telegramban is látni fogják.\n\nEz a nyilvános link megnyit egy csevegést veled:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "KI TALÁLHAT MEG TELEFONSZÁM ALAPJÁN?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "KI LÁTHATJA A TELEFONSZÁMOMAT";
 "PrivacyPolicy.Accept" = "Elfogadás és folytatás";
@@ -10178,8 +10178,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "nem elérhető";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TÍPUS";
-"SocksProxySetup.QrCode.TMeLink" = "t.me link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "HITELESÍTÉS";
 "SocksProxySetup.SaveProxy" = "Proxy mentése";
 "SocksProxySetup.SavedProxies" = "MENTETT PROXYK";
@@ -11840,7 +11840,7 @@
 "Username.InvalidTooShort" = "A felhasználónévnek legalább 5 karakterből kell állnia.";
 "Username.InvalidValue" = "Sajnáljuk, ez a felhasználónév érvénytelen.";
 "Username.LinkCopied" = "A hivatkozás a vágólapra másolva.";
-"Username.LinkHint" = "Ezen a hivatkozáson keresztül lehet csevegést kezdeményezni veled Telegramon::[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Ezen a hivatkozáson keresztül lehet csevegést kezdeményezni veled Telegramon::[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "FELHASZNÁLÓNÉV SORREND";
 "Username.LinksOrderInfo" = "Fogd és húzd módszerrel rendezheted át a sorrendet, amelyben a felhasználónevek megjelennek a profilodon.";
 "Username.Placeholder" = "Felhasználóneved";

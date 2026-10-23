@@ -2738,15 +2738,15 @@
 "CloseTopics" = "주제 닫기";
 "CloseTranslation" = "번역 닫기";
 "CocoonFeature1Text" = "**@cocoon** 내부의 번역 등 어떤 데이터에도 제3자가 접근할 수 없습니다.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "비공개";
 "CocoonFeature2Text" = "Cocoon을 통해 텔레그램은 번역 비용을 6배 줄일 수 있었습니다.";
 "CocoonFeature2Title" = "효율적";
 "CocoonFeature3Text" = "모든 개발자는 AI 기능에 Cocoon을 사용할 수 있습니다. **cocoon.org**에서 자세히 알아보세요.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "모두에게";
-"CocoonFooter" = "Cocoon을 프로젝트에 통합하고 싶으신가요?\n**t.me/cocoon?direct**로 문의하세요";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Cocoon을 프로젝트에 통합하고 싶으신가요?\n**sgq.me/cocoon?direct**로 문의하세요";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "번역 제공:\n**🥚 Cocoon**";
 "CocoonPoweredByLink" = "**어떻게 작동하나요?**";
 "CocoonSubtitle" = "Cocoon(**Co**nfidential **Co**mpute **O**pen **N**etwork)은\nAI 작업을 안전하고 효율적으로 처리합니다.";
@@ -5057,7 +5057,7 @@
 "GroupDeletedUndo" = "그룹 삭제됨";
 "GroupDescription1" = "200,000명까지 참가할 수 있습니다";
 "GroupDescription2" = "대화 내용이 보존됩니다";
-"GroupDescription3" = "공개 링크를 t.me/제목으로 둘 수 있습니다";
+"GroupDescription3" = "공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "GroupDescription4" = "여러 권한의 관리자를 세울 수 있습니다";
 "GroupEmoji" = "그룹 이모지";
 "GroupEmojiPack" = "그룹 이모지 묶음";
@@ -7781,7 +7781,7 @@
 "PsaType_psa" = "공지사항";
 "PublicChannelsTooMuch" = "죄송합니다. 해당 사용자에게 너무 많은 공개 그룹과 채널이 있습니다. 먼저 기존 그룹이나 채널을 비공개로 돌리도록 요청해 주세요.";
 "PublicLink" = "공개 링크";
-"PublicLinksLimitSubtitle" = "최대 %d개의 t.me/username 링크를 마련할 수 있어요";
+"PublicLinksLimitSubtitle" = "최대 %d개의 sgq.me/username 링크를 마련할 수 있어요";
 "PublicLinksLimitTitle" = "공개 링크";
 "PublicPhoto" = "공개 사진";
 "PublicPoll" = "설문";
@@ -9929,7 +9929,7 @@
 "TelegramFaq" = "자주 묻는 질문";
 "TelegramFaqUrl" = "https://telegram.org/faq/ko";
 "TelegramFeatures" = "텔레그램 기능 소개";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "텔레그램 패스포트";
 "TelegramPassportCreatePassword" = "비밀번호 만들기";
 "TelegramPassportCreatePasswordInfo" = "단대단 암호화로 개인 데이터를 보호하려면 비밀번호를 만드셔야 합니다.\n\n이 비밀번호는 새로운 기기로 텔레그램에 로그인하실 때마다 요청됩니다.";

@@ -2927,15 +2927,15 @@
 "CloseTopics" = "Témák lezárása";
 "CloseTranslation" = "A fordítás bezárása";
 "CocoonFeature1Text" = "Harmadik fél nem férhet hozzá az **@cocoon**-ban található adatokhoz, például fordításokhoz.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privát";
 "CocoonFeature2Text" = "A Cocoon segítségével a Telegram a hatodára csökkentette fordítási költségeit.";
 "CocoonFeature2Title" = "Hatékony";
 "CocoonFeature3Text" = "Bármely fejlesztő használhatja a Cocoon-t mesterséges intelligencia funkciókhoz. További információk: **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Mindenki számára";
-"CocoonFooter" = "Szeretnéd integrálni a Cocoon-t a projektjeidbe?\nKeress minket a **t.me/cocoon?direct** címen!";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Szeretnéd integrálni a Cocoon-t a projektjeidbe?\nKeress minket a **sgq.me/cocoon?direct** címen!";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "A fordításokat a\n**🥚 Cocoon** biztosítja.";
 "CocoonPoweredByLink" = "**Hogyan működik?**";
 "CocoonSubtitle" = "A Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nbiztonságosan és hatékonyan kezeli az AI feladatokat.";
@@ -5387,7 +5387,7 @@
 "GroupDeletedUndo" = "Csoport törölve";
 "GroupDescription1" = "Akár 200.000 tag";
 "GroupDescription2" = "Megmaradó csevegési előzmények";
-"GroupDescription3" = "Nyilvános hivatkozások, például: t.me/cím";
+"GroupDescription3" = "Nyilvános hivatkozások, például: sgq.me/cím";
 "GroupDescription4" = "Különböző jogokkal rendelkező adminisztrátorok";
 "GroupEmoji" = "Csoport emoji";
 "GroupEmojiPack" = "Csoport emoji csomag";
@@ -8254,7 +8254,7 @@
 "PsaType_psa" = "Közlemény";
 "PublicChannelsTooMuch" = "Sajnáljuk, a célfelhasználónak már túl sok hely alapú csoportja vagy csatornája van. Kérd meg, hogy töröljön egy korábbi helyi csoportot először.";
 "PublicLink" = "Nyilvános link";
-"PublicLinksLimitSubtitle" = "Foglalj le akár %d t.me/felhasználónevet";
+"PublicLinksLimitSubtitle" = "Foglalj le akár %d sgq.me/felhasználónevet";
 "PublicLinksLimitTitle" = "Nyilvános hivatkozások";
 "PublicPhoto" = "Nyilvános fotó";
 "PublicPoll" = "Szavazás";
@@ -10531,7 +10531,7 @@
 "TelegramFaq" = "Telegram GYIK";
 "TelegramFaqUrl" = "https://telegram.org/faq/hu";
 "TelegramFeatures" = "A Telegram funkciói";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "JELSZÓ LÉTREHOZÁSA";
 "TelegramPassportCreatePasswordInfo" = "Kérjük, hozz létre egy jelszót, az adataid végponttól végpontig történő titkosításához.\n\nEzt a jelszót akkor is meg kell adnod, amikor bejelentkezel Telegramra egy új eszközön.";

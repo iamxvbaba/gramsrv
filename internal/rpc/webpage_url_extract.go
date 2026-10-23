@@ -254,7 +254,7 @@ func sliceUTF16(units []uint16, offset, length int) string {
 //
 // 未启用预览或 URL 不可规范化返回 nil（发送降级为无预览，不报错）。
 func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string, invertMedia, forceLarge, forceSmall bool) *domain.MessageMedia {
-	if page, ok := r.resolveAIComposeStyleWebPage(ctx, rawURL); ok {
+	if page, ok := r.resolveInternalWebPage(ctx, rawURL); ok {
 		page.ForceLargeMedia = forceLarge
 		page.ForceSmallMedia = forceSmall
 		return &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, InvertMedia: invertMedia, WebPage: &page}

@@ -982,9 +982,9 @@
 "Business.Links.LinksSectionHeader" = "LENKER TIL SAMTALER";
 "Business.Links.PreviewText" = "Legg til en melding som vil bli skrevet inn i meldingsfeltet for alle som starter en samtale med deg ved å benytte lenken:";
 "Business.Links.PreviewTitle" = "Lenke til samtale";
-"Business.Links.SimpleLinkInfoPhone" = "Du kan også benytte en enkel lenke for en samtale med deg — [t.me/%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Du kan også bruke en enkel lenke for en samtale med deg — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kan også bruke en enkel lenke for en samtale med deg — [t.me/%1$@](username) eller [t.me/+%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Du kan også benytte en enkel lenke for en samtale med deg — [sgq.me/%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Du kan også bruke en enkel lenke for en samtale med deg — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kan også bruke en enkel lenke for en samtale med deg — [sgq.me/%1$@](username) eller [sgq.me/+%2$@](phone).";
 "Business.Links.Text" = "Gi kundene dine kortlenker som starter en samtale med deg — og foreslå den første meldingen de kan sende deg.";
 "Business.LinksInfo" = "Opprett lenker som starter en samtale med deg og foreslår den første meldingen.";
 "Business.Location" = "Adresse";
@@ -1853,7 +1853,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanalnavn kan ikke starte med en understrek.";
 "Channel.Username.InvalidTaken" = "Beklager, denne lenken er allerede opptatt.";
 "Channel.Username.InvalidTooShort" = "Offentlige lenker må ha minst 5 tegn.";
-"Channel.Username.LinkHint" = "Denne lenken åpner kanalen:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Denne lenken åpner kanalen:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Du kan annullere en lenke fra en av dine eldre grupper eller kanaler, eller opprette en privat kanal i stedet.";
 "Channel.Username.Title" = "Lenke";
 "Channel.Username.UsernameIsAvailable" = "%@ er tilgjengelig.";
@@ -3384,7 +3384,7 @@
 "CocoonInfo.Efficient.Title" = "Effektivt";
 "CocoonInfo.ForEveryone.Text" = "Hvilken som helst utvikler kan benytte [Cocoon](telegram) for AI funksjoner. Les mer på cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "For alle";
-"CocoonInfo.IntergrateInfo" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Ingen tredjepart kan få tilgang til noen data, som oversettelser, i Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4183,7 +4183,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Du kan bare bruke **a-z**, **0-9** og understreker.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Du kan ikke opprette mer enn %d robot.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Du kan ikke opprette mer enn %d roboter.";
-"CreateBot.UsernameStatus.Link" = "Lenke: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Lenke: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Et brukernavn kan ikke starte med et siffer.";
 "CreateBot.UsernameStatus.Short" = "Et brukernavn må ha minst 5 tegn.";
 "CreateBot.UsernameStatus.Taken" = "Dette brukernavnet er opptatt.";
@@ -4566,7 +4566,7 @@
 "EmojiStickerSettings.Info" = "Kunstnere er hjertelig velkomne til å legge til egne emojipakker ved å bruke @stickers roboten vår.\n\nTrykk og hold en melding for å se og legge til hele pakken.";
 "EmptyGroupInfo.Line1" = "Inntil 200 000 medlemmer";
 "EmptyGroupInfo.Line2" = "Vedvarende samtalehistorikk";
-"EmptyGroupInfo.Line3" = "Offentlige lenker som t.me/title";
+"EmptyGroupInfo.Line3" = "Offentlige lenker som sgq.me/title";
 "EmptyGroupInfo.Line4" = "Administratorer med forskjellige rettigheter";
 "EmptyGroupInfo.Subtitle" = "Grupper kan ha:";
 "EmptyGroupInfo.Title" = "Du opprettet en gruppe";
@@ -8843,7 +8843,7 @@
 "Premium.Limits.PinnedChats" = "Festede samtaler";
 "Premium.Limits.PinnedChatsInfo" = "Fest inntil 10 samtaler i samtalelisten din";
 "Premium.Limits.PublicLinks" = "Offentlige lenker";
-"Premium.Limits.PublicLinksInfo" = "Reserver inntil 20 [t.me/brukernavn]() lenker";
+"Premium.Limits.PublicLinksInfo" = "Reserver inntil 20 [sgq.me/brukernavn]() lenker";
 "Premium.Limits.RecommendedChannels" = "Lignende kanaler";
 "Premium.Limits.RecommendedChannelsInfo" = "Se inntil 100 lignende kanaler";
 "Premium.Limits.SavedGifs" = "Lagrede GIF'er";
@@ -9192,7 +9192,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "HVEM SOM KAN SE MIN SIST SETT";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Brukere som legger nummeret ditt til i kontaktlisten sin vil bare kunne se det på Telegram hvis de også er dine kontakter.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Brukere som allerede har telefonnummeret ditt lagret i sine kontakter vil også se det på Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Brukere som allerede har telefonnummeret ditt lagret i sine kontakter vil også se det på Telegram.\n\nDenne offentlige lenken åpner en samtale med deg:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Brukere som allerede har telefonnummeret ditt lagret i sine kontakter vil også se det på Telegram.\n\nDenne offentlige lenken åpner en samtale med deg:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "HVEM KAN FINNE MEG MED NUMMERET MITT";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "HVEM SOM KAN SE TELEFONNUMMERET MITT";
 "PrivacyPolicy.Accept" = "Godta og fortsett";
@@ -10063,8 +10063,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "utilgjengelig";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYPE";
-"SocksProxySetup.QrCode.TMeLink" = "t.me lenke";
-"SocksProxySetup.QrCode.TgLink" = "tg:// lenke";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me lenke";
+"SocksProxySetup.QrCode.TgLink" = "sg:// lenke";
 "SocksProxySetup.RequiredCredentials" = "LEGITIMASJON";
 "SocksProxySetup.SaveProxy" = "Lagre proxy";
 "SocksProxySetup.SavedProxies" = "LAGREDE PROXY'er";
@@ -11728,7 +11728,7 @@
 "Username.InvalidTooShort" = "Brukernavn må bestå av minst 5 tegn.";
 "Username.InvalidValue" = "Beklager, dette brukernavnet er ugyldig";
 "Username.LinkCopied" = "Lenke kopiert til utklippstavle.";
-"Username.LinkHint" = "Denne lenken åpner en samtale med deg:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Denne lenken åpner en samtale med deg:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "SORTER BRUKERNAVN";
 "Username.LinksOrderInfo" = "Dra og slipp lenker for å endre rekkefølgen de vises i på infosiden din.";
 "Username.Placeholder" = "Ditt brukernavn";

@@ -38,7 +38,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Pro každého";
 "AboutCocoon.Feature.Private.Description" = "Žádná třetí strana nemá přístup k žádným datům, jako jsou překlady uvnitř Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Soukromý";
-"AboutCocoon.Footer" = "Chcete Cocoon integrovat do svých projektů?\nKontaktujte nás na [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Chcete Cocoon integrovat do svých projektů?\nKontaktujte nás na [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Zakázat sdílení";
 "AboutFeature.DisableSharing.NoForwarding" = "Žádné přeposílání";
@@ -3559,7 +3559,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Systém\n%@";
 "EmptyGroupInfo.Line1" = "• až %@ členů";
 "EmptyGroupInfo.Line2" = "• Trvalá historie konverzace";
-"EmptyGroupInfo.Line3" = "• Veřejné odkazy jako t.me/text";
+"EmptyGroupInfo.Line3" = "• Veřejné odkazy jako sgq.me/text";
 "EmptyGroupInfo.Line4" = "• Správci s různými oprávněními";
 "EmptyGroupInfo.Subtitle" = "Skupiny mohou mít:";
 "EmptyGroupInfo.Title" = "Skupina byla vytvořena";
@@ -5815,7 +5815,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Připnuté konverzace";
 "Premium.Boarding.Double.PinnedChats.Info" = "Připněte až %@ konverzací v hlavním seznamu";
 "Premium.Boarding.Double.PublicLinks" = "Veřejné odkazy";
-"Premium.Boarding.Double.PublicLinks.Info" = "Zarezervujte si až %@ odkazů t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Zarezervujte si až %@ odkazů sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "Uložené GIFy";
 "Premium.Boarding.Double.SavedGifs.Info" = "Uložte si až %@ GIFů do oblíbených";
 "Premium.Boarding.Double.Title" = "Dvojnásobné limity";
@@ -6257,7 +6257,7 @@
 "ProxySettings.CredentialsHeader" = "PŘIHLÁŠENÍ (VOLITELNÉ)";
 "ProxySettings.Disabled" = "Vypnuto";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Pokud vaše schránka obsahuje socks5-odkaz (**t.me/socks?server=127.0.0.1&port=80**) bude aplikován ihned";
+"ProxySettings.ExportDescription" = "Pokud vaše schránka obsahuje socks5-odkaz (**sgq.me/socks?server=127.0.0.1&port=80**) bude aplikován ihned";
 "ProxySettings.ExportLink" = "Exportovat odkaz ze schránky";
 "ProxySettings.IncorrectSecret" = "Nesprávné heslo. Zkuste to prosím znovu.";
 "ProxySettings.Item.Available" = "k dispozici (ping: %@ ms)";
@@ -8489,7 +8489,7 @@
 "TranslateModal.DeleteStyleHeader" = "Smazat styl";
 "TranslateModal.EditStyle" = "Upravit styl";
 "TranslateModal.ShareStyle" = "Sdílet styl";
-"TranslateModal.StyleByAuthor" = "Styl od [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Styl od [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Přeskočit";
 "TwoStepAuth.AnError" = "Vyskytla se chyba. Zkuste to prosím znovu později.";
 "TwoStepAuth.CancelReset" = "Zrušit resetování";

@@ -1583,7 +1583,7 @@
 "EditAdminRights" = "Уреди права админа";
 "EditAdminSendAnonymously" = "Анонимно слање";
 "EditAdminWhatCanDo" = "Које дозволе има овај администратор?";
-"EditBot.Buttons.Caption" = "Користите [@BotFather](https://t.me/botfather) за управљање овим ботом.";
+"EditBot.Buttons.Caption" = "Користите [@BotFather](https://sgq.me/botfather) за управљање овим ботом.";
 "EditBot.Buttons.Commands" = "Уреди команде";
 "EditBot.Buttons.Intro" = "Уреди увод";
 "EditBot.Buttons.Settings" = "Промени подешавања бота";
@@ -1971,7 +1971,7 @@
 "GroupChecklist" = "Групна листа задатака";
 "GroupDescription1" = "До 200 000 чланова";
 "GroupDescription2" = "Трајну историју ћаскања";
-"GroupDescription3" = "Јавне везе као t.me/naziv";
+"GroupDescription3" = "Јавне везе као sgq.me/naziv";
 "GroupDescription4" = "Админе с различитим правима";
 "GroupEmptyTitle1" = "Направили сте **групу**.";
 "GroupEmptyTitle2" = "Групе могу имати:";
@@ -3247,7 +3247,7 @@
 "ProfileStoriesArchiveGroupHint" = "Само администратори групе могу видети архивиране приче осим ако нису објављене на профилу групе.";
 "ProfileStoriesArchiveHint" = "Само ви можете видети архивиране приче, осим ако одлучите да их објавите на свом профилу.";
 "ProfileUnofficialSecurityRisk" = "%1$s користи незваничну Telegram апликацију – поруке овом кориснику можда нису потпуно безбедне.";
-"PublicLinksLimitSubtitle" = "Резервишите до %d веза t.me/korisnickoime";
+"PublicLinksLimitSubtitle" = "Резервишите до %d веза sgq.me/korisnickoime";
 "PublicLinksLimitTitle" = "Јавне везе";
 "PublicShares" = "Јавна дељења";
 "PublicSharesCount#one" = "%1$s јавно дељење";
@@ -4283,7 +4283,7 @@
 "Telegram.LanguageViewController" = "Језик";
 "Telegram.NotificationSettingsViewController" = "Обавештења";
 "TelegramFeatures" = "Telegram функције";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Власници **Telegram Premium** налога имају ексклузивни приступ многим додатним функцијама.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Емоџи-статуси су доступни претплатницима на **Telegram Premium**. Остале предности:";
 "TelegramPremiumPeerTitle" = "%s је претплатник на **Telegram\u00a0Premium**";

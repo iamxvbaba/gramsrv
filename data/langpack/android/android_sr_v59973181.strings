@@ -3143,15 +3143,15 @@
 "CloseTopics" = "Затвори теме";
 "CloseTranslation" = "Затвори превод";
 "CocoonFeature1Text" = "Трећа лица не могу приступити вашим подацима, укључујући преводе, у оквиру **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Поверљиво";
 "CocoonFeature2Text" = "Cocoon је омогућио Telegram-у да шестоструко смањи трошкове превода.";
 "CocoonFeature2Title" = "Ефикасно";
 "CocoonFeature3Text" = "Сваки програмер може користити Cocoon за ВИ функције. Сазнајте више на **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Доступно свима";
-"CocoonFooter" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Превод омогућио **🥚\u00a0Cocoon**.";
 "CocoonPoweredByLink" = "**Како ово ради?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nбезбедно и ефикасно обавља ВИ задатке.";
@@ -5784,7 +5784,7 @@
 "GroupDeletedUndo" = "Група избрисана";
 "GroupDescription1" = "До 200 000 чланова";
 "GroupDescription2" = "Трајну историју ћаскања";
-"GroupDescription3" = "Јавне везе као t.me/naziv";
+"GroupDescription3" = "Јавне везе као sgq.me/naziv";
 "GroupDescription4" = "Админе с различитим правима";
 "GroupEmoji" = "Емоџији групе";
 "GroupEmojiPack" = "Пакет емоџија групе";
@@ -8807,7 +8807,7 @@
 "PsaType_psa" = "Саопштење";
 "PublicChannelsTooMuch" = "Овај корисник већ има превише јавних група или канала. Замолите га да прво неке од својих постојећих група или канала учини приватним.";
 "PublicLink" = "Јавна веза";
-"PublicLinksLimitSubtitle" = "Резервишите до %d веза t.me/korisnickoime";
+"PublicLinksLimitSubtitle" = "Резервишите до %d веза sgq.me/korisnickoime";
 "PublicLinksLimitTitle" = "Јавне везе";
 "PublicPhoto" = "јавна слика";
 "PublicPoll" = "Анкета";
@@ -11231,7 +11231,7 @@
 "TelegramFaq" = "Често постављана питања";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram функције";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram пасош";
 "TelegramPassportCreatePassword" = "НАПРАВИ ЛОЗИНКУ";
 "TelegramPassportCreatePasswordInfo" = "Направите лозинку да бисте своје личне податке осигурали шифровањем с краја на крај.\n\nОва лозинка ће вам бити потребна сваки пут када се пријавите на Telegram на новом уређају.";

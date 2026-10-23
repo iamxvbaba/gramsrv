@@ -18,7 +18,7 @@ type MessageEntitySpan struct {
 // bot commands. Offsets and lengths use Telegram's UTF-16 code-unit indexing.
 //
 // occupied ranges win over derived entities. URL-like tokens are also treated
-// as occupied for lexical triggers, so strings such as https://t.me/@name do
+// as occupied for lexical triggers, so strings such as https://sgq.me/@name do
 // not become misleading mention entities even when URL projection is handled
 // by a different boundary.
 func DetectAutomaticMessageEntities(message string, occupied []MessageEntitySpan) []MessageEntity {

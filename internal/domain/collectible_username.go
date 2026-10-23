@@ -282,16 +282,16 @@ type CollectibleUsernameTransfer struct {
 }
 
 // NormalizeUsername trims whitespace and a leading '@', then folds the link
-// forms the panel and clients paste (t.me/rayo, rayo.t.me, https://…) onto the
+// forms the panel and clients paste (sgq.me/rayo, rayo.sgq.me, https://…) onto the
 // bare name. It is the shared entry normalisation for every username surface:
 // RPC, admin API and store.
 func NormalizeUsername(username string) string {
 	username = strings.TrimSpace(username)
 	username = strings.TrimPrefix(username, "https://")
 	username = strings.TrimPrefix(username, "http://")
-	if i := strings.Index(username, "t.me/"); i >= 0 {
-		username = username[i+len("t.me/"):]
-	} else if i := strings.Index(username, ".t.me"); i >= 0 && i+len(".t.me") == len(username) {
+	if i := strings.Index(username, "sgq.me/"); i >= 0 {
+		username = username[i+len("sgq.me/"):]
+	} else if i := strings.Index(username, ".sgq.me"); i >= 0 && i+len(".sgq.me") == len(username) {
 		username = username[:i]
 	}
 	username = strings.TrimSpace(username)

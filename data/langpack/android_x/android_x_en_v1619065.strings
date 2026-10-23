@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Approve New Members";
 "ApproveNewMembersInfo" = "Turn this on if you want new members to join only after they are approved by an admin.";
 "Archive" = "Archive";
-"ArchiveAppearanceHint" = "Display archive as a local folder. You can change its position in [settings](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Display archive as a local folder. You can change its position in [settings](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Appearance";
 "ArchiveAppearanceToggle" = "Show as folder";
 "ArchiveAsFolder" = "Archive as Folder";
@@ -1201,9 +1201,9 @@
 "EditPrivacyPhoneNumber" = "Phone Number";
 "EditPrivacyPhoto" = "Profile Photos";
 "EditPrivacyReadDate" = "See My Read Date";
-"EditPrivacyReadDateAllowHint" = "Allow %1$s to see your **Last Seen & Online** to affect this setting.\n\nFor more information, see **[Privacy and Security](tg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
-"EditPrivacyReadDateRestrictHint" = "Restrict %1$s from seeing your **Last Seen & Online** to affect this setting.\n\nFor more information, see **[Privacy and Security](tg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
-"EditPrivacyReadDateToggleHint" = "You can hide your **Read Date** only from everyone who can't see your **Last Seen & Online**.\n\nSee **[Privacy and Security](tg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
+"EditPrivacyReadDateAllowHint" = "Allow %1$s to see your **Last Seen & Online** to affect this setting.\n\nFor more information, see **[Privacy and Security](sg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
+"EditPrivacyReadDateRestrictHint" = "Restrict %1$s from seeing your **Last Seen & Online** to affect this setting.\n\nFor more information, see **[Privacy and Security](sg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
+"EditPrivacyReadDateToggleHint" = "You can hide your **Read Date** only from everyone who can't see your **Last Seen & Online**.\n\nSee **[Privacy and Security](sg://settings/privacy)** – **Last Seen & Online** – **Hide Read Time**.";
 "EditPrivacyStatus" = "Last Seen & Online";
 "EditPrivacyVoice" = "Send Me Voice Messages";
 "EditUserRestrictions" = "Edit User Restrictions";
@@ -1534,7 +1534,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Use this setting to compare behavior without edge-to-edge mode on Android 11–14.";
 "Experiment_PeerIds" = "Show Peer IDs in Profiles";
 "Experiment_PeerIdsInfo" = "Show API identifiers of users and chats in their profiles";
-"ExperimentalBuildInfo" = "This version of **Telegram X** is not designed for long-term use.\n\nIt may completely stop working over a time and you cannot turn notifications on.\n\nIf you are looking for the proper Telegram X APK file, see https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "This version of **Telegram X** is not designed for long-term use.\n\nIt may completely stop working over a time and you cannot turn notifications on.\n\nIf you are looking for the proper Telegram X APK file, see https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Caution: experimental build";
 "ExperimentalSettings" = "Experimental settings";
 "ExperimentalSettingsUnavailable" = "No experiments available. Come back later.";
@@ -1932,7 +1932,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X has previously failed to launch because the device storage was full.\n\nMake sure there's enough storage space available and press **Launch App** to try again.\n\nCurrently available: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X has previously failed to launch because of device error.\n\nPress **Launch App** to try again. If application keeps failing, follow these steps:\n\n• Check you have enough disk space available: **%1$s**.\n• Ensure there are no other storage issues, such as SD-card being ejected or unrecognized.\n• Restart your device.\n\nIf this does not help, you may want to look for similar issues on [TDLib's GitHub page](https://github.com/tdlib/td/issues) for possible resolutions, or create a new one, including error message and device details.";
 "LaunchAppGuideFatalError" = "Telegram X has closed unexpectedly the last time you were using it.\n\nPress **Launch App** to try again.";
-"LaunchAppGuideTdlibIssue" = "Telegram X has previously failed to launch because of TDLib fatal error.\n\nPress **Launch App** to try again. If application continues to fail, follow these steps:\n\n• [Verify](%2$s) you have the latest Telegram X version installed.\n• Restart your device.\n\n**If the steps above do not help**\n\n1. Share error details with TDLib developers using one of the following ways:\n— Privately via [@tdlib_bot](https://t.me/tdlib_bot) by using another device or [Telegram Web](https://web.telegram.org/).\n— Publicly via [GitHub page](https://github.com/tdlib/td/issues). **Do not** share **tdlib_log.txt** publicly.\n2. Kindly wait for the response.\n3. Change log settings below as requested by TDLib developers.\n4. Press **Launch App** to make app force stop again.\n5. Share **tdlib_log.txt** with TDLib developers and wait for the problem to be resolved.\n6. Once updated, you'll be able to launch app normally.\n\n**Alternative options**\n\n• Search for similar issues on [GitHub](https://github.com/tdlib/td/issues) to see if there are common solutions.\n• Reinstall the app. Secret chats will be lost. If you use same phone number you were logged in, all other chats and data will be restored from the Telegram cloud.";
+"LaunchAppGuideTdlibIssue" = "Telegram X has previously failed to launch because of TDLib fatal error.\n\nPress **Launch App** to try again. If application continues to fail, follow these steps:\n\n• [Verify](%2$s) you have the latest Telegram X version installed.\n• Restart your device.\n\n**If the steps above do not help**\n\n1. Share error details with TDLib developers using one of the following ways:\n— Privately via [@tdlib_bot](https://sgq.me/tdlib_bot) by using another device or [Telegram Web](https://web.telegram.org/).\n— Publicly via [GitHub page](https://github.com/tdlib/td/issues). **Do not** share **tdlib_log.txt** publicly.\n2. Kindly wait for the response.\n3. Change log settings below as requested by TDLib developers.\n4. Press **Launch App** to make app force stop again.\n5. Share **tdlib_log.txt** with TDLib developers and wait for the problem to be resolved.\n6. Once updated, you'll be able to launch app normally.\n\n**Alternative options**\n\n• Search for similar issues on [GitHub](https://github.com/tdlib/td/issues) to see if there are common solutions.\n• Reinstall the app. Secret chats will be lost. If you use same phone number you were logged in, all other chats and data will be restored from the Telegram cloud.";
 "LaunchAppShareError" = "Share error details";
 "LaunchAppUserSubtitle" = "offline";
 "LaunchAppViewError" = "View error details";
@@ -1990,7 +1990,7 @@
 "LinkChannel" = "Link a channel";
 "LinkChannelHelp" = "You can set a public link on **Telegram**. If you do, other people will be able to find and follow your channel by this link.\n\nYou can use **a–z**, **0–9** and underscores.\nMinimum length is **5** characters.";
 "LinkChecking" = "Checking link availability…";
-"LinkCurrent" = "t.me/%1$s is your current public link.";
+"LinkCurrent" = "sgq.me/%1$s is your current public link.";
 "LinkDeleteOther" = "%1$s deleted %2$s's invite link %3$s";
 "LinkDeleteOtherYou" = "You deleted %1$s's invite link %2$s";
 "LinkDeletePrimary" = "%1$s deleted the primary invite link %2$s";
@@ -3986,7 +3986,7 @@
 "TranslationFailed" = "Translation failed";
 "TranslationMoreCreate" = "Create";
 "TranslationMoreDone" = "Got it";
-"TranslationMoreText" = "The list of available languages is managed by the [Translation Platform](https://translations.telegram.org).\n\nTelegram will offer you to switch to your language when a corresponding translation becomes officially available.\n\nWhile you're waiting, you can install custom localization files, join the [translation process](https://translations.telegram.org/en/android_x/), or create [your own](https://t.me/tgx_android_translate/) localization files.";
+"TranslationMoreText" = "The list of available languages is managed by the [Translation Platform](https://translations.telegram.org).\n\nTelegram will offer you to switch to your language when a corresponding translation becomes officially available.\n\nWhile you're waiting, you can install custom localization files, join the [translation process](https://translations.telegram.org/en/android_x/), or create [your own](https://sgq.me/tgx_android_translate/) localization files.";
 "TranslationMoreTitle" = "Can't find your language?";
 "TranslationPaste" = "Paste translation";
 "TranslationsMissing#one" = "%1$s untranslated";

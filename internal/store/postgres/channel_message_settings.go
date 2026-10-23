@@ -193,6 +193,18 @@ func (s *ChannelStore) SetPaidMessagesPrice(ctx context.Context, userID, channel
 			channel.Pts = parentEvent.Pts
 			services = append(services, domain.SendChannelMessageResult{Channel: channel, Message: parentMsg, Event: parentEvent})
 		}
+		// A supergroup shows "Messages now cost N Stars" / "Messages are free"
+		// in its own history whenever the price changes.
+		if channel.Megagroup && !channel.Monoforum && prevStars != stars {
+			action := domain.ChannelMessageAction{Type: domain.ChannelActionPaidMessagesPrice, Stars: stars}
+			msg, event, err := s.insertServiceMessage(ctx, tx, channel, userID, nowUnix(), action)
+			if err != nil {
+				return fmt.Errorf("append supergroup paid messages price service: %w", err)
+			}
+			channel.TopMessageID = msg.ID
+			channel.Pts = event.Pts
+			services = append(services, domain.SendChannelMessageResult{Channel: channel, Message: msg, Event: event})
+		}
 		return nil
 	}); err != nil {
 		return domain.ChannelPaidMessagesPriceResult{}, err

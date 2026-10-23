@@ -3569,15 +3569,15 @@
 "CloseTopics" = "إغلاق الموضوعات";
 "CloseTranslation" = "إغلاق الترجمة";
 "CocoonFeature1Text" = "لا يمكن لأي طرف ثالث الوصول إلى أية بيانات -مثل الترجمات- داخل **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "خاص";
 "CocoonFeature2Text" = "لقد مكّنت تقنية \"كوكون\" من خفض تكلفة الترجمة بمقدار ٦ أضعاف.";
 "CocoonFeature2Title" = "فعال";
 "CocoonFeature3Text" = "يمكن لأي مطور استخدام \"كوكون\" لميزات الذكاء الاصطناعي. اعرف المزيد على **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "للجميع";
-"CocoonFooter" = "هل ترغب في دمج \"كوكون\" في مشاريعك؟\nتواصل معنا على **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "هل ترغب في دمج \"كوكون\" في مشاريعك؟\nتواصل معنا على **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "الترجمات مقدمة من قبل\n**🥚 كوكون**.";
 "CocoonPoweredByLink" = "**كيف تعمل؟**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\n**كوكون** (الشبكة المفتوحة للحوسبة السرية)\nيتعامل مع مهام الذكاء الاصطناعي بأمان وكفاءة.";
@@ -6621,7 +6621,7 @@
 "GroupDeletedUndo" = "تم حذف المجموعة";
 "GroupDescription1" = "ما يصل إلى ٢٠٠,٠٠٠ عضو";
 "GroupDescription2" = "تمتلكَ سجل محادثة موحدًا";
-"GroupDescription3" = "تمتلك روابط عامة مثل t.me/title";
+"GroupDescription3" = "تمتلك روابط عامة مثل sgq.me/title";
 "GroupDescription4" = "يديرَها مشرفون بصلاحيات مختلفة";
 "GroupEmoji" = "رموز المجموعة";
 "GroupEmojiPack" = "حزمة الرموز التعبيرية للمجموعة";
@@ -9998,7 +9998,7 @@
 "PsaType_psa" = "إعلان";
 "PublicChannelsTooMuch" = "عذرًا، هذا المستخدم يملك الكثير من القنوات أو المجموعات العامة. ينبغي عليهم أولًا تحويل إحدى قنواتهم أو مجموعاتهم العامة إلى خاصة.";
 "PublicLink" = "الرابط العام";
-"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068%d\u2069 رابط t.me/username";
+"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068%d\u2069 رابط sgq.me/username";
 "PublicLinksLimitTitle" = "الروابط العامة";
 "PublicPhoto" = "صورة عامة";
 "PublicPoll" = "استفتاء";
@@ -12727,7 +12727,7 @@
 "TelegramFaq" = "الأسئلة الشائعة";
 "TelegramFaqUrl" = "https://telegram.org/faq/ar";
 "TelegramFeatures" = "ميزات تيليجرام";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsAR/128";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsAR/128";
 "TelegramPassport" = "جواز تيليجرام";
 "TelegramPassportCreatePassword" = "إنشاء كلمة مرور";
 "TelegramPassportCreatePasswordInfo" = "يرجى إنشاء كلمة مرور لحماية بياناتك الشخصية بالتشفير من الطرف إلى الطرف.\n\nستُطلب كلمة المرور هذه في كل مرة تقومون فيها بتسجيل الدخول إلى تيليجرام على جهازٍ جديد. ";

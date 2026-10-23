@@ -250,7 +250,7 @@ func (s *StarGiftStore) publishCollectibleRevisionLocked(write domain.StarGiftCo
 	revision := domain.StarGiftCollectibleRevision{
 		ID: previous.ID + 1, GiftID: write.GiftID, Revision: previous.Revision + 1,
 		UpgradeStars: write.UpgradeStars, SupplyTotal: write.SupplyTotal,
-		SlugPrefix: strings.ToLower(strings.TrimSpace(write.SlugPrefix)), Published: true,
+		SlugPrefix: strings.TrimSpace(write.SlugPrefix), Published: true,
 		CreatedBy:      write.Actor,
 		OfficialGiftID: write.OfficialGiftID, SourceManifestSHA256: append([]byte(nil), write.SourceManifestSHA256...),
 	}
@@ -599,7 +599,7 @@ func (s *StarGiftStore) GetByRef(_ context.Context, ref domain.SavedStarGiftRef)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, g := range s.gifts {
-		if s.savedStarGiftMatchesRef(g, ref) {
+		if s.savedStarGiftMatchesRef(g, ref) && g.LifecycleStatus != domain.StarGiftLifecycleDeleted {
 			return g, true, nil
 		}
 	}
@@ -1024,4 +1024,37 @@ func (s *StarGiftStore) savedStarGiftMatchesRef(g domain.SavedStarGift, ref doma
 
 func atOrBeforeProfileCursor(cursor domain.SavedStarGiftListCursor, g domain.SavedStarGift) bool {
 	return g.Date > cursor.Date || (g.Date == cursor.Date && g.ID >= cursor.ID)
+}
+
+// DeleteSaved mirrors the PostgreSQL payments.deleteStarGift transition.
+func (s *StarGiftStore) DeleteSaved(_ context.Context, ref domain.SavedStarGiftRef) error {
+	if !ref.Valid() {
+		return domain.ErrStarGiftNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.gifts {
+		if !s.savedStarGiftMatchesRef(s.gifts[i], ref) || s.gifts[i].LifecycleStatus == domain.StarGiftLifecycleDeleted {
+			continue
+		}
+		if !s.gifts[i].LifecycleStatus.Live() || s.gifts[i].UniqueGiftID != 0 || s.gifts[i].Converted {
+			return domain.ErrStarGiftUnavailable
+		}
+		s.gifts[i].LifecycleStatus = domain.StarGiftLifecycleDeleted
+		s.gifts[i].PinnedOrder = 0
+		for collectionIndex := range s.collections[ref.Owner] {
+			collection := &s.collections[ref.Owner][collectionIndex]
+			next := collection.GiftIDs[:0]
+			for _, giftID := range collection.GiftIDs {
+				if giftID != s.gifts[i].ID {
+					next = append(next, giftID)
+				}
+			}
+			collection.GiftIDs = next
+			collection.Hash = domain.StarGiftCollectionHash(collection.Title, collection.GiftIDs)
+		}
+		s.refreshCollectionMembershipsLocked(ref.Owner)
+		return nil
+	}
+	return domain.ErrStarGiftNotFound
 }

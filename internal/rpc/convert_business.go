@@ -429,6 +429,18 @@ func tgQuickReplyMessage(in domain.QuickReplyMessage) tg.MessageClass {
 		Entities: tgMessageEntities(in.Entities),
 	}
 	out.SetQuickReplyShortcutID(in.ShortcutID)
+	if !in.Media.IsZero() {
+		out.SetMedia(tgMessageMedia(in.Media))
+		if in.Media.InvertMedia {
+			out.SetInvertMedia(true)
+		}
+	}
+	if in.GroupedID != 0 {
+		out.SetGroupedID(in.GroupedID)
+	}
+	if in.EditDate != 0 {
+		out.SetEditDate(in.EditDate)
+	}
 	return out
 }
 

@@ -3348,15 +3348,15 @@
 "CloseTopics" = "Закрыть темы";
 "CloseTranslation" = "Закрыть перевод";
 "CocoonFeature1Text" = "У третьих лиц нет доступа к данным внутри **@cocoon**, включая переводы.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Конфиденциальность";
 "CocoonFeature2Text" = "Благодаря Cocoon стоимость встроенного перевода в Telegram снизилась в 6 раз.";
 "CocoonFeature2Title" = "Эффективность";
 "CocoonFeature3Text" = "Любой разработчик может использовать Cocoon\u00a0для решения задач ИИ. Подробнее на **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Доступность";
-"CocoonFooter" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Перевод выполняется с помощью\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Как это работает?**";
 "CocoonSubtitle" = "Платформа Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork) безопасно и эффективно выполняет задачи ИИ.";
@@ -6176,7 +6176,7 @@
 "GroupDeletedUndo" = "Группа удалена";
 "GroupDescription1" = "До 200 000 участников";
 "GroupDescription2" = "Общая история переписки";
-"GroupDescription3" = "Публичные ссылки вида t.me/title";
+"GroupDescription3" = "Публичные ссылки вида sgq.me/title";
 "GroupDescription4" = "Разный уровень прав";
 "GroupEmoji" = "Эмодзи группы";
 "GroupEmojiPack" = "Набор эмодзи группы";
@@ -9350,7 +9350,7 @@
 "PsaType_psa" = "Объявление";
 "PublicChannelsTooMuch" = "У этого пользователя максимальное число публичных групп и каналов. Пожалуйста, предложите ему сперва удалить одну из публичных ссылок на его группу или канал.";
 "PublicLink" = "Публичная ссылка";
-"PublicLinksLimitSubtitle" = "Использование до %d ссылок вида t.me/username";
+"PublicLinksLimitSubtitle" = "Использование до %d ссылок вида sgq.me/username";
 "PublicLinksLimitTitle" = "Публичные ссылки";
 "PublicPhoto" = "публичная фотография";
 "PublicPoll" = "Опрос";
@@ -11008,7 +11008,7 @@
 "StarsReactionSend" = "Отправить ⭐%s";
 "StarsReactionShowMeInTopSenders" = "Показывать меня среди лидеров";
 "StarsReactionTerms" = "Отправляя звёзды, Вы принимаете **условия** их покупки и использования.";
-"StarsReactionTermsLink" = "https://t.me/tos/stars/ru";
+"StarsReactionTermsLink" = "https://sgq.me/tos/stars/ru";
 "StarsReactionText" = "Выберите количество звёзд для отправки **%s** в поддержку этой публикации.";
 "StarsReactionTextSent#one" = "Вы поддержали публикацию **%1$d** звездой.";
 "StarsReactionTextSent#few" = "Вы поддержали публикацию **%1$d** звёздами.";
@@ -11912,7 +11912,7 @@
 "TelegramFaq" = "Вопросы о Telegram";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Возможности Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "ЗАДАТЬ ПАРОЛЬ";
 "TelegramPassportCreatePasswordInfo" = "Чтобы защитить свои данные оконечным шифрованием, пожалуйста, задайте пароль.\n\nЭтот пароль также будет запрашиваться при входе в Telegram с нового устройства.";

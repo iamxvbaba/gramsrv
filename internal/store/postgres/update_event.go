@@ -468,6 +468,9 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 		}
 		out = append(out, event)
 	}
+	if err := enrichPaidMessageEvents(ctx, s.db, out); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -668,6 +671,9 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 			return nil, err
 		}
 		out = append(out, event)
+	}
+	if err := enrichPaidMessageEvents(ctx, s.db, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -1079,4 +1085,27 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// enrichPaidMessageEvents restores paid_message_stars on new-message events
+// replayed by getDifference.
+func enrichPaidMessageEvents(ctx context.Context, db sqlcgen.DBTX, events []domain.UpdateEvent) error {
+	idx := make([]int, 0, len(events))
+	msgs := make([]domain.Message, 0, len(events))
+	for i := range events {
+		if events[i].Message.UID != 0 {
+			idx = append(idx, i)
+			msgs = append(msgs, events[i].Message)
+		}
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	if err := enrichPrivatePaidMessageStars(ctx, db, msgs); err != nil {
+		return err
+	}
+	for j, i := range idx {
+		events[i].Message.PaidMessageStars = msgs[j].PaidMessageStars
+	}
+	return nil
 }

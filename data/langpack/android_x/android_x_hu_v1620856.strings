@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Új tagok jóváhagyása";
 "ApproveNewMembersInfo" = "Kapcsold be, ha azt szeretnéd, hogy az új tagok csak akkor csatlakozhassanak, ha egy admin jóváhagyta őket.";
 "Archive" = "Archiválás";
-"ArchiveAppearanceHint" = "Az archívum megjelenítése helyi mappaként. A pozícióját a [beállításokban](tg://settings/folders) tudod megváltoztatni.";
+"ArchiveAppearanceHint" = "Az archívum megjelenítése helyi mappaként. A pozícióját a [beállításokban](sg://settings/folders) tudod megváltoztatni.";
 "ArchiveAppearanceTitle" = "Megjelenés";
 "ArchiveAppearanceToggle" = "Megjelenítés mappaként";
 "ArchiveAsFolder" = "Archiválás mappaként";
@@ -1196,9 +1196,9 @@
 "EditPrivacyPhoneNumber" = "Telefonszám";
 "EditPrivacyPhoto" = "Profilképek";
 "EditPrivacyReadDate" = "Lássa az olvasási időpontom";
-"EditPrivacyReadDateAllowHint" = "Engedélyezd %1$s számára a **Legutóbbi aktivitás**hoz való hozzáférést, hogy befolyásold ezt a beállítást.\n\nTovábbi információért nézd meg az **[Adatvédelmi beállításokat](tg://settings/privacy)** - **Legutóbbi Aktivitás** - **Olvasási időpont elrejtése** menüpontot.";
-"EditPrivacyReadDateRestrictHint" = "Korlátozd %1$s számára a **Legutóbbi aktivitás**hoz való hozzáférést, hogy befolyásold ezt a beállítást.\n\nTovábbi információért nézd meg az **[Adatvédelmi beállításokat](tg://settings/privacy)** - **Legutóbbi Aktivitás** - **Olvasási időpont elrejtése** menüpontot.";
-"EditPrivacyReadDateToggleHint" = "Az **olvasási dátumot** csak azok elől rejtheted el, akik nem láthatják a **legutóbbi aktivitásodat**.\n\nLásd **[Adatvédelem és biztonság](tg://beállítások/privacy)** – **Legutóbbi aktivitás** – **Az olvasási idő elrejtése**.";
+"EditPrivacyReadDateAllowHint" = "Engedélyezd %1$s számára a **Legutóbbi aktivitás**hoz való hozzáférést, hogy befolyásold ezt a beállítást.\n\nTovábbi információért nézd meg az **[Adatvédelmi beállításokat](sg://settings/privacy)** - **Legutóbbi Aktivitás** - **Olvasási időpont elrejtése** menüpontot.";
+"EditPrivacyReadDateRestrictHint" = "Korlátozd %1$s számára a **Legutóbbi aktivitás**hoz való hozzáférést, hogy befolyásold ezt a beállítást.\n\nTovábbi információért nézd meg az **[Adatvédelmi beállításokat](sg://settings/privacy)** - **Legutóbbi Aktivitás** - **Olvasási időpont elrejtése** menüpontot.";
+"EditPrivacyReadDateToggleHint" = "Az **olvasási dátumot** csak azok elől rejtheted el, akik nem láthatják a **legutóbbi aktivitásodat**.\n\nLásd **[Adatvédelem és biztonság](sg://beállítások/privacy)** – **Legutóbbi aktivitás** – **Az olvasási idő elrejtése**.";
 "EditPrivacyStatus" = "Legutóbb aktív & elérhető";
 "EditPrivacyVoice" = "Ki küldhet hangüzenetet";
 "EditUserRestrictions" = "Felhasználó tiltásainak szerkesztése";
@@ -1527,7 +1527,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Ezzel a beállítással összehasonlíthatod a viselkedést az Android 11–14 rendszeren az edge-to-edge mód nélkül.";
 "Experiment_PeerIds" = "Peer ID megjelenítése a profilokban";
 "Experiment_PeerIdsInfo" = "Felhasználók és csevegések API azonosítóinak megjelenítése a profiljukban";
-"ExperimentalBuildInfo" = "A **Telegram X** ezen verziója nem ajánlott hosszútávú használatra.\n\nElőfordulhat, hogy idővel teljesen működésképtelen lesz és nem tudod majd bekapcsolni az értesítéseket.\n\nHa a Telegram X stabil verziójának APK fájlját keresed, kattints ide: http://t.me/tgx_log";
+"ExperimentalBuildInfo" = "A **Telegram X** ezen verziója nem ajánlott hosszútávú használatra.\n\nElőfordulhat, hogy idővel teljesen működésképtelen lesz és nem tudod majd bekapcsolni az értesítéseket.\n\nHa a Telegram X stabil verziójának APK fájlját keresed, kattints ide: http://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Figyelem: kísérleti verzió";
 "ExperimentalSettings" = "Kísérleti beállítások";
 "ExperimentalSettingsUnavailable" = "Nem állnak rendelkezésre kísérletek. Nézz vissza később.";
@@ -1925,7 +1925,7 @@
 "LaunchAppGuideDiskFull" = "A Telegram X előzőleg nem tudott elindulni, mert a háttértár tele volt.\n\nGyőződj meg róla, hogy elegendő tárhely áll rendelkezésre, és nyomd meg az **Alkalmazás Indítása** gombot az újrapróbálkozáshoz.\n\nJelenleg szabad: %1$s";
 "LaunchAppGuideExternalError" = "A Telegram X előzőleg eszközhiba miatt nem indult el.\n\nAz újraindításhoz nyomd meg az **Alkalmazás indítása** gombot. Ha az alkalmazás továbbra sem működik, végezd el az alábbi lépéseket:\n\n• Ellenőrizd, hogy van-e elég szabad lemezterület: %1$s.\n• Győződj meg róla, hogy nincsenek más tárolási problémák, például az SD-kártya illesztése vagy felismerése.\n• Indítsd újra a készüléket.\n\nHa ez nem segít, érdemes hasonló problémákat keresni a [TDLib GitHub oldalán](https://github.com/tdlib/td/issues) a lehetséges megoldásokért, vagy hozz létre ott egy újat, beleírva a hibaüzenetet és a készülék adatait.";
 "LaunchAppGuideFatalError" = "A Telegram X váratlanul bezárult, amikor legutóbb használtad.\n\nNyomd meg a **Az alkalmazás indítása** gombot az újbóli próbálkozáshoz.";
-"LaunchAppGuideTdlibIssue" = "A Telegram X előzőleg nem indult el a TDLib végzetes hibája miatt.\n\nAz újraindításhoz nyomd meg az **Alkalmazás indítása** gombot. Ha az indítás továbbra is sikertelen, kövesd az alábbi lépéseket:\n\n• [Ellenőrizd](%2$s), hogy a legújabb Telegram X verzió van telepítve.\n• Indítsd újra a készüléket.\n\n**Ha a fenti lépések nem segítenek**\n\n1. Oszd meg a hiba részleteit a TDLib fejlesztőkkel az alábbi módok egyikével:\n- Privát módon a [@tdlib_bot](https://t.me/tdlib_bot) segítségével egy másik eszközről vagy a [Telegram Web](https://web.telegram.org/) használatával.\n- Nyilvánosan a [GitHub oldalon](https://github.com/tdlib/td/issues). De **ne** oszd meg a **tdlib_log.txt** fájlt nyilvánosan!\n2. Kérjük, várj a válaszra.\n3. Módosítsd a naplóbeállításokat a TDLib fejlesztők által kért módon.\n4. Nyomd meg az **Alkalmazás indítása** gombot, hogy az alkalmazás ismét leálljon.\n5. A **tdlib_log.txt** megosztása a TDLib fejlesztőkkel privát módon és várj, amíg a probléma megoldódik.\n6. A frissítés után rendesen elindíthatod az alkalmazást.\n\n**Alternatív lehetőségek**\n\n• Keress hasonló problémákat a [GitHub](https://github.com/tdlib/td/issues) címen, hogy kiderüljön van-e rá megoldás.\n• Telepítsd újra az alkalmazást. A titkos csevegések elvesznek. Ha ugyanazt a telefonszámot használod, akkor az összes többi csevegést és adatot visszaállítja a Telegram a felhőből.";
+"LaunchAppGuideTdlibIssue" = "A Telegram X előzőleg nem indult el a TDLib végzetes hibája miatt.\n\nAz újraindításhoz nyomd meg az **Alkalmazás indítása** gombot. Ha az indítás továbbra is sikertelen, kövesd az alábbi lépéseket:\n\n• [Ellenőrizd](%2$s), hogy a legújabb Telegram X verzió van telepítve.\n• Indítsd újra a készüléket.\n\n**Ha a fenti lépések nem segítenek**\n\n1. Oszd meg a hiba részleteit a TDLib fejlesztőkkel az alábbi módok egyikével:\n- Privát módon a [@tdlib_bot](https://sgq.me/tdlib_bot) segítségével egy másik eszközről vagy a [Telegram Web](https://web.telegram.org/) használatával.\n- Nyilvánosan a [GitHub oldalon](https://github.com/tdlib/td/issues). De **ne** oszd meg a **tdlib_log.txt** fájlt nyilvánosan!\n2. Kérjük, várj a válaszra.\n3. Módosítsd a naplóbeállításokat a TDLib fejlesztők által kért módon.\n4. Nyomd meg az **Alkalmazás indítása** gombot, hogy az alkalmazás ismét leálljon.\n5. A **tdlib_log.txt** megosztása a TDLib fejlesztőkkel privát módon és várj, amíg a probléma megoldódik.\n6. A frissítés után rendesen elindíthatod az alkalmazást.\n\n**Alternatív lehetőségek**\n\n• Keress hasonló problémákat a [GitHub](https://github.com/tdlib/td/issues) címen, hogy kiderüljön van-e rá megoldás.\n• Telepítsd újra az alkalmazást. A titkos csevegések elvesznek. Ha ugyanazt a telefonszámot használod, akkor az összes többi csevegést és adatot visszaállítja a Telegram a felhőből.";
 "LaunchAppShareError" = "Hiba részleteinek megosztása";
 "LaunchAppUserSubtitle" = "nem elérhető";
 "LaunchAppViewError" = "Hiba részleteinek megtekintése";
@@ -1983,7 +1983,7 @@
 "LinkChannel" = "Csatorna csatlakoztatása";
 "LinkChannelHelp" = "Beállíthatsz nyilvános hivatkozást a **Telegramon**. Ha így teszel, mások megtalálhatják a csatornádat és csatlakozhatnak hozzá a hivatkozás segítségével.\n\nHasználható karakterek: **a-z**, **0-9** és aláhúzás karakterek.\nMinimális hosszúság: **5** karakter.";
 "LinkChecking" = "Hivatkozás elérhetőségének ellenőrzése…";
-"LinkCurrent" = "t.me/%1$s a jelenlegi nyilvános hivatkozásod";
+"LinkCurrent" = "sgq.me/%1$s a jelenlegi nyilvános hivatkozásod";
 "LinkDeleteOther" = "%1$s törölte %2$s %3$s meghívó linkjét.";
 "LinkDeleteOtherYou" = "Törölted %1$s meghívó linkjét: %2$s";
 "LinkDeletePrimary" = "%2$s törölte %1$s elsődleges meghívó linket.";
@@ -3979,7 +3979,7 @@
 "TranslationFailed" = "Fordítás sikertelen";
 "TranslationMoreCreate" = "Létrehozás";
 "TranslationMoreDone" = "Értettem";
-"TranslationMoreText" = "Az elérhető nyelvek listáját a [Translation Platform](https://translations.telegram.org) kezeli.\n\nA Telegram X automatikusan felajánlja, hogy válts át a saját nyelvedre, amint az elérhetővé válik. \n\nAmíg várakozol, egyedi nyelvi fájlokat telepíthetsz, csatlakozhatsz  [a fordításhoz](https://translations.telegram.org/en/android_x/), vagy létrehozhatod [a saját nyelvi projekted](https://t.me/tgx_android_translate/).";
+"TranslationMoreText" = "Az elérhető nyelvek listáját a [Translation Platform](https://translations.telegram.org) kezeli.\n\nA Telegram X automatikusan felajánlja, hogy válts át a saját nyelvedre, amint az elérhetővé válik. \n\nAmíg várakozol, egyedi nyelvi fájlokat telepíthetsz, csatlakozhatsz  [a fordításhoz](https://translations.telegram.org/en/android_x/), vagy létrehozhatod [a saját nyelvi projekted](https://sgq.me/tgx_android_translate/).";
 "TranslationMoreTitle" = "Nem találod a saját nyelved?";
 "TranslationPaste" = "Fordítás beillesztése";
 "TranslationsMissing#one" = "%1$s lefordítatlan";

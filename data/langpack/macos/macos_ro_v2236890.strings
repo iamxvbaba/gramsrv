@@ -36,7 +36,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Pentru toată lumea";
 "AboutCocoon.Feature.Private.Description" = "Terții nu pot accesa niciun fel de date, precum traducerile, în Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privat";
-"AboutCocoon.Footer" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Dezactivează partajarea";
 "AboutFeature.DisableSharing.NoForwarding" = "Fără redirecționare";
@@ -486,7 +486,7 @@
 "Bot.AllowSendMessages" = "Permite **%@** să-mi trimită mesaje.";
 "Bot.Grossing.Disclaimer" = "Ce apps sunt incluse aici? [Vezi >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Top Mini Apps";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Acest catalog clasează mini apps în baza veniturilor lor zilnice, măsurate în Stele. Pentru a fi listată, dezvoltatorii trebuie să își configureze mini app principală în [@botfather](https://t.me/botfather) (așa cum este descris [aici](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), să aibă peste **1,000** de utilizatori zilnic, și un venit zilnic de peste **1,000** de Stele, bazat pe media săptămânală.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Acest catalog clasează mini apps în baza veniturilor lor zilnice, măsurate în Stele. Pentru a fi listată, dezvoltatorii trebuie să își configureze mini app principală în [@botfather](https://sgq.me/botfather) (așa cum este descris [aici](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), să aibă peste **1,000** de utilizatori zilnic, și un venit zilnic de peste **1,000** de Stele, bazat pe media săptămânală.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Am înțeles";
 "Bot.InlineAuth.Header" = "Deschide link";
 "Bot.InlineAuth.Open" = "Deschide";
@@ -3613,7 +3613,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistem\n%@";
 "EmptyGroupInfo.Line1" = "• Până la %@ de membri";
 "EmptyGroupInfo.Line2" = "• Istoric persistent";
-"EmptyGroupInfo.Line3" = "• Linkuri publice ca t.me/titlu";
+"EmptyGroupInfo.Line3" = "• Linkuri publice ca sgq.me/titlu";
 "EmptyGroupInfo.Line4" = "• Admini cu drepturi diferite";
 "EmptyGroupInfo.Subtitle" = "Grupurile pot avea:";
 "EmptyGroupInfo.Title" = "Ai creat un grup";
@@ -5794,7 +5794,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Conversații fixate";
 "Premium.Boarding.Double.PinnedChats.Info" = "Fixează până la %@ conv. în lista principală";
 "Premium.Boarding.Double.PublicLinks" = "Linkuri publice";
-"Premium.Boarding.Double.PublicLinks.Info" = "Rezervă până la %@ de linkuri t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Rezervă până la %@ de linkuri sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "GIF-uri salvate";
 "Premium.Boarding.Double.SavedGifs.Info" = "Salvează până la %@ de GIF-uri la Favorite";
 "Premium.Boarding.Double.Title" = "Limite dublate";
@@ -6228,7 +6228,7 @@
 "ProxySettings.CredentialsHeader" = "CREDENȚIALE (OPȚIONAL)";
 "ProxySettings.Disabled" = "Dezactivat";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Dacă ai în clipboard un link socks5 (**t.me/socks?server=127.0.0.1&port=80**) va fi aplicat automat";
+"ProxySettings.ExportDescription" = "Dacă ai în clipboard un link socks5 (**sgq.me/socks?server=127.0.0.1&port=80**) va fi aplicat automat";
 "ProxySettings.ExportLink" = "Exportă link din clipboard";
 "ProxySettings.IncorrectSecret" = "Secret incorect. Încearcă din nou.";
 "ProxySettings.Item.Available" = "disponibil (ping: %@ ms)";
@@ -8458,7 +8458,7 @@
 "TranslateModal.PromptPlaceholder" = "Descrie cum va fi scris textul…";
 "TranslateModal.PromptStyle" = "Prompt";
 "TranslateModal.ShareStyle" = "Partajează stil";
-"TranslateModal.StyleByAuthor" = "Stil de [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stil de [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Omite";
 "TwoStepAuth.AnError" = "A apărut o eroare. Încearcă mai târziu.";
 "TwoStepAuth.CancelReset" = "Anulează resetarea";

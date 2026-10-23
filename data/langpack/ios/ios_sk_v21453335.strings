@@ -1034,7 +1034,7 @@
 "Business.Links.LinksSectionHeader" = "ODKAZY NA KONVERZÁCIU";
 "Business.Links.PreviewText" = "Pridajte správu, ktorá sa vloží do poľa správy pre každého, kto s vami začne konverzovať cez tento odkaz:";
 "Business.Links.PreviewTitle" = "Odkaz na konverzáciu";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Môžete tiež použiť jednoduchý odkaz na konverzáciu s vami – [t.me/%1$@](používateľské meno) alebo [t.me/+%2$@](telefón).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Môžete tiež použiť jednoduchý odkaz na konverzáciu s vami – [sgq.me/%1$@](používateľské meno) alebo [sgq.me/+%2$@](telefón).";
 "Business.Links.Text" = "Poskytnite vašim zákazníkom krátke odkazy, ktoré spustia konverzáciu s vami – a navrhnite prvú správu od nich pre vás.";
 "Business.LinksInfo" = "Vytvárajte odkazy, ktoré s vami začnú konverzáciu a navrhnite prvú správu.";
 "Business.Location" = "Poloha";
@@ -1910,7 +1910,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Názvy kanálov nemôžu začínať podčiarkovníkom.";
 "Channel.Username.InvalidTaken" = "Prepáčte, tento odkaz už je obsadený.";
 "Channel.Username.InvalidTooShort" = "Verejné odkazy musia mať aspoň 5 znakov.";
-"Channel.Username.LinkHint" = "Tento odkaz otvorí váš kanál:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Tento odkaz otvorí váš kanál:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Môžete zrušiť odkaz z jednej zo svojich starších skupín alebo kanálov, alebo namiesto toho vytvoriť súkromný kanál.";
 "Channel.Username.Title" = "Odkaz";
 "Channel.Username.UsernameIsAvailable" = "%@ je dostupný.";
@@ -3540,7 +3540,7 @@
 "CocoonInfo.Efficient.Title" = "Efektívny";
 "CocoonInfo.ForEveryone.Text" = "Každý vývojár môže používať [Cocoon](telegram) pre funkcie umelej inteligencie. Viac informácií nájdete na [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Pre každého";
-"CocoonInfo.IntergrateInfo" = "Chcete integrovať Cocoon do svojich projektov?\nKontaktujte nás na [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Chcete integrovať Cocoon do svojich projektov?\nKontaktujte nás na [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Žiadna tretia strana nemá prístup k žiadnym údajom, ako sú napríklad preklady, v rámci Cocoonu.";
 "CocoonInfo.Private.Title" = "Súkromný";
 "CocoonInfo.Title" = "COCOON";
@@ -4384,7 +4384,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Nemôžete vytvoriť viac ako %d robotov.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "Nemôžete vytvoriť viac ako %d robotov.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Nemôžete vytvoriť viac ako %d robotov.";
-"CreateBot.UsernameStatus.Link" = "Odkaz: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Odkaz: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Používateľské meno nemôže začínať číslom.";
 "CreateBot.UsernameStatus.Short" = "Používateľské meno musí mať aspoň 5 znakov.";
 "CreateBot.UsernameStatus.Taken" = "Toto používateľské meno je už obsadené.";
@@ -4788,7 +4788,7 @@
 "EmojiStickerSettings.Info" = "Umelci môžu pridávať svoje vlastné balíčky emoji cez nášho bota @stickers.\n\nStlačením a podržaním správy zobrazíte a pridáte celý balík.";
 "EmptyGroupInfo.Line1" = "Až do 200,000 členov";
 "EmptyGroupInfo.Line2" = "Trvalú históriu konverzácií";
-"EmptyGroupInfo.Line3" = "Verejné adresy ako napr. t.me/názov";
+"EmptyGroupInfo.Line3" = "Verejné adresy ako napr. sgq.me/názov";
 "EmptyGroupInfo.Line4" = "Správcov s rôznymi oprávneniami";
 "EmptyGroupInfo.Subtitle" = "Skupiny môžu mať:";
 "EmptyGroupInfo.Title" = "Vytvorili ste skupinu.";
@@ -9258,7 +9258,7 @@
 "Premium.Limits.PinnedChats" = "Pripnuté konverzácie";
 "Premium.Limits.PinnedChatsInfo" = "Pripnete si až 10 konverzácii vo vašom hlavnom zozname konverzácii.";
 "Premium.Limits.PublicLinks" = "Verejné odkazy";
-"Premium.Limits.PublicLinksInfo" = "Rezervujte si až 20 odkazov [t.me/názov]()";
+"Premium.Limits.PublicLinksInfo" = "Rezervujte si až 20 odkazov [sgq.me/názov]()";
 "Premium.Limits.RecommendedChannels" = "Podobné kanály";
 "Premium.Limits.RecommendedChannelsInfo" = "Pozrite si až 100 podobných kanálov";
 "Premium.Limits.SavedGifs" = "Uložené GIF obrázky";
@@ -9591,7 +9591,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "KTO MÔŽE VIDIEŤ KEDY SOM BOL PRIPOJENÝ";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Používatelia, ktorí si pridajú vaše číslo do svojich kontaktov, ho uvidia na Telegrame, iba ak sú medzi vašimi kontaktami.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Používatelia, ktorí majú vaše telefónne číslo uložené vo svojich kontaktoch, ho taktiež uvidia aj v Telegrame.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Používatelia, ktorí majú vaše číslo uložené vo svojich kontaktoch, ho uvidia aj v Telegrame.\n\nTento verejný odkaz otvorí konverzáciu s vami:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Používatelia, ktorí majú vaše číslo uložené vo svojich kontaktoch, ho uvidia aj v Telegrame.\n\nTento verejný odkaz otvorí konverzáciu s vami:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "KTO MA MÔŽE NÁJSŤ PODĽA ČÍSLA";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "KTO MÔŽE VIDIEŤ MOJE TELEFÓNNE ČÍSLO?";
 "PrivacyPolicy.Accept" = "Prijať a pokračovať";
@@ -10502,8 +10502,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "nedostupné";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYP";
-"SocksProxySetup.QrCode.TMeLink" = "t.me link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "PRIHLASOVACIE ÚDAJE";
 "SocksProxySetup.SaveProxy" = "Uložiť proxy";
 "SocksProxySetup.SavedProxies" = "ULOŽENÉ PROXY";

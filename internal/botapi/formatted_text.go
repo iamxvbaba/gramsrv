@@ -794,7 +794,7 @@ func parseBotAPIMarkdownV2(input string) (string, []domain.MessageEntity, error)
 				}
 				link, i = parsedURL, next
 			} else if frame.typ == domain.MessageEntityCustomEmoji {
-				return "", nil, parseEntityError("custom emoji entity must contain a tg://emoji or tg://time URL")
+				return "", nil, parseEntityError("custom emoji entity must contain a sg://emoji or sg://time URL")
 			}
 			if length > 0 {
 				if frame.typ == domain.MessageEntityTextURL {
@@ -896,7 +896,7 @@ func botAPITextLinkEntity(raw string, offset, length int) (domain.MessageEntity,
 	if userID, ok := botAPITGUserID(raw); ok {
 		return domain.MessageEntity{Type: domain.MessageEntityMentionName, Offset: offset, Length: length, UserID: userID}, true
 	}
-	if parsed, err := url.Parse(raw); err == nil && strings.EqualFold(parsed.Scheme, "tg") && strings.EqualFold(parsed.Host, "user") {
+	if parsed, err := url.Parse(raw); err == nil && strings.EqualFold(parsed.Scheme, "sg") && strings.EqualFold(parsed.Host, "user") {
 		return domain.MessageEntity{}, false
 	}
 	if !validBotAPITextURL(raw) {
@@ -907,7 +907,7 @@ func botAPITextLinkEntity(raw string, offset, length int) (domain.MessageEntity,
 
 func botAPITGUserID(raw string) (int64, bool) {
 	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "tg") || !strings.EqualFold(parsed.Host, "user") {
+	if err != nil || !strings.EqualFold(parsed.Scheme, "sg") || !strings.EqualFold(parsed.Host, "user") {
 		return 0, false
 	}
 	id, err := strconv.ParseInt(parsed.Query().Get("id"), 10, 64)
@@ -925,7 +925,7 @@ func validBotAPITextURL(raw string) bool {
 	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
 		return parsed.Host != ""
-	case "tg":
+	case "sg":
 		return parsed.Host != ""
 	case "mailto", "tel":
 		return parsed.Opaque != "" || parsed.Path != ""
@@ -938,8 +938,8 @@ func validBotAPITextURL(raw string) bool {
 
 func botAPICustomLinkEntity(raw string, offset, length int) (domain.MessageEntity, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "tg") {
-		return domain.MessageEntity{}, parseEntityError("invalid tg://emoji or tg://time URL")
+	if err != nil || !strings.EqualFold(parsed.Scheme, "sg") {
+		return domain.MessageEntity{}, parseEntityError("invalid sg://emoji or sg://time URL")
 	}
 	switch strings.ToLower(parsed.Host) {
 	case "emoji":
@@ -960,7 +960,7 @@ func botAPICustomLinkEntity(raw string, offset, length int) (domain.MessageEntit
 		entity.Offset, entity.Length = offset, length
 		return entity, nil
 	default:
-		return domain.MessageEntity{}, parseEntityError("invalid tg://emoji or tg://time URL")
+		return domain.MessageEntity{}, parseEntityError("invalid sg://emoji or sg://time URL")
 	}
 }
 

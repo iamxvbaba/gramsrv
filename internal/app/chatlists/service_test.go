@@ -43,7 +43,7 @@ func TestSharedFolderInviteJoinUpdatesAndLeave(t *testing.T) {
 		t.Fatalf("persisted folder = %+v found %v err %v, want exported chatlist", persisted, found, err)
 	}
 
-	preview, err := svc.CheckInvite(ctx, viewerID, "https://t.me/addlist/slug-one")
+	preview, err := svc.CheckInvite(ctx, viewerID, "https://sgq.me/addlist/slug-one")
 	if err != nil {
 		t.Fatalf("CheckInvite before join: %v", err)
 	}

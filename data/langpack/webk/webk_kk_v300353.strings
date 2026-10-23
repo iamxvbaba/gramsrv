@@ -1493,7 +1493,7 @@
 "EditAdminRights" = "Әкімші құқықтарын өңдеу";
 "EditAdminSendAnonymously" = "Аноним боп жіберу";
 "EditAdminWhatCanDo" = "Бұл әкімші не істей алады?";
-"EditBot.Buttons.Caption" = "[@BotFather](https://t.me/botfather) арқылы ботты басқара аласыз.";
+"EditBot.Buttons.Caption" = "[@BotFather](https://sgq.me/botfather) арқылы ботты басқара аласыз.";
 "EditBot.Buttons.Commands" = "Пәрменді өңдеу";
 "EditBot.Buttons.Intro" = "Кіріспені өңдеу";
 "EditBot.Buttons.Settings" = "Ботты баптау";
@@ -1838,7 +1838,7 @@
 "GroupChecklist" = "Топтық тапсырма тізімі";
 "GroupDescription1" = "200 000 мүше бола алады";
 "GroupDescription2" = "Чат тарихы сақтаулы тұрады";
-"GroupDescription3" = "t.me/silteme секілді сілтеме жасай аласыз";
+"GroupDescription3" = "sgq.me/silteme секілді сілтеме жасай аласыз";
 "GroupDescription4" = "Әкімшіге басқару құқын бере аласыз";
 "GroupEmptyTitle1" = "Сіз **топ** құрдыңыз.";
 "GroupEmptyTitle2" = "Топта:";
@@ -3046,7 +3046,7 @@
 "ProfileStoriesArchiveGroupHint" = "Мұрағатталған хикаяны топ бейініне жарияламайынша тек топ әкімшілері көре алады.";
 "ProfileStoriesArchiveHint" = "Мұрағаттағы хикая тек сіз үшін қолжетімді.";
 "ProfileUnofficialSecurityRisk" = "%1$s бейресми Telegram клиентін қолданады, бұл қолданушыға жіберілген хаттар қауіпсіздігі төменірек болуы мүмкін.";
-"PublicLinksLimitSubtitle" = "%d t.me/username сілтеме жасай алыңыз";
+"PublicLinksLimitSubtitle" = "%d sgq.me/username сілтеме жасай алыңыз";
 "PublicLinksLimitTitle" = "Жария сілтеме";
 "PublicShares" = "Жария бөлісу";
 "PublicSharesCount#one" = "%1$s жария бөлісу";
@@ -4020,7 +4020,7 @@
 "Telegram.LanguageViewController" = "Тіл";
 "Telegram.NotificationSettingsViewController" = "Мәлімдеме";
 "TelegramFeatures" = "Telegram кеңесшісі";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "**Telegram Premium**-ге жазылғандар көптеген айрықша мүмкіндіктерге ие болады.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Эмоджи статус премиум мүмкіндікке жатады. **Telegram Premium** басқа мүмкіндіктері:";
 "TelegramPremiumPeerTitle" = "%s **Telegram Premium** қолданады";

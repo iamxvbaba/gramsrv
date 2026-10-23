@@ -61,7 +61,7 @@ VALUES ($1, true, 'legacy freeze', 'ops', 'legacy-freeze', $2)`, frozenUserID, l
 		t.Fatalf("GetAccountFreeze migrated = %+v found=%v err=%v", migrated, found, err)
 	}
 	if !migrated.Frozen || !migrated.Since.Equal(legacyUpdatedAt) ||
-		!migrated.Until.Equal(legacyUpdatedAt.Add(7*24*time.Hour)) || migrated.AppealURL != "https://t.me/SpamBot" || migrated.Version != 1 {
+		!migrated.Until.Equal(legacyUpdatedAt.Add(7*24*time.Hour)) || migrated.AppealURL != "https://sgq.me/SpamBot" || migrated.Version != 1 {
 		t.Fatalf("migrated freeze = %+v", migrated)
 	}
 

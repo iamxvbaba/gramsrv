@@ -64,7 +64,7 @@ func (s *Service) respondAsGramsrv(userID int64, body string) {
 
 	var reply botReply
 	if !s.gramsrvChatAllowed(userID) {
-		reply = botReply{Text: "Нет доступа: этот chat_id не входит в allowlist Gramsrv."}
+		reply = botReply{Text: "Нет доступа: этот chat_id не входит в allowlist ShuzaGram."}
 	} else {
 		reply = s.handleGramsrvCommand(ctx, userID, body)
 	}
@@ -278,7 +278,7 @@ func (s *Service) onGramsrvCallback(ctx context.Context, query domain.BotCallbac
 	}
 	if desired {
 		request.Until = time.Unix(gramsrvFreezeUntilUnix, 0).UTC()
-		request.AppealURL = "https://t.me/SpamBot"
+		request.AppealURL = "https://sgq.me/SpamBot"
 	}
 	if _, err := s.gramsrvAdmin.SetAccountFrozen(ctx, request); err != nil {
 		return domain.BotCallbackAnswer{Message: "Изменение не применено.", Alert: true}, true, err

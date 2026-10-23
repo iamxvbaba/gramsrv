@@ -2623,15 +2623,15 @@
 "CloseTopics" = "Zatvoriť témy";
 "CloseTranslation" = "Zatvoriť preklad";
 "CocoonFeature1Text" = "Žiadna tretia strana nemá prístup k žiadnym údajom, napríklad k prekladom, v rámci **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Súkromný";
 "CocoonFeature2Text" = "Cocoon umožnil Telegramu znížiť náklady na preklad šesťnásobne.";
 "CocoonFeature2Title" = "Efektívny";
 "CocoonFeature3Text" = "Každý vývojár môže používať na funkcie umelej inteligencie. Viac informácií na **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org";
 "CocoonFeature3Title" = "Pre každého";
-"CocoonFooter" = "Chcete integrovať Cocoon do svojich projektov?\nKontaktujte nás na **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Chcete integrovať Cocoon do svojich projektov?\nKontaktujte nás na **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Preklady zabezpečuje **🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Ako to funguje?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nbezpečne a efektívne spracováva úlohy umelej inteligencie.";
@@ -4799,7 +4799,7 @@
 "GroupDeletedUndo" = "Skupina odstránená";
 "GroupDescription1" = "Až do 200,000 členov";
 "GroupDescription2" = "Trvalú históriu konverzácií";
-"GroupDescription3" = "Verejné adresy ako napr. t.me/názov";
+"GroupDescription3" = "Verejné adresy ako napr. sgq.me/názov";
 "GroupDescription4" = "Správcov s rôznymi oprávneniami";
 "GroupEmoji" = "Emoji skupiny";
 "GroupEmojiPack" = "Balíček emoji skupiny";
@@ -7573,7 +7573,7 @@
 "PsaType_psa" = "Oznámenie";
 "PublicChannelsTooMuch" = "Prepáčte, cieľový používateľ má príliš mnoho verejných skupín alebo kanálov. Požiadajte ho, prosím, aby jednu z jeho skupín alebo kanálov spravil súkromnými.";
 "PublicLink" = "Verejná pozvánka";
-"PublicLinksLimitSubtitle" = "Rezervujte si až do %d odkazov t.me/pozivatelskemeno";
+"PublicLinksLimitSubtitle" = "Rezervujte si až do %d odkazov sgq.me/pozivatelskemeno";
 "PublicLinksLimitTitle" = "Verejné odkazy";
 "PublicPhoto" = "verejná fotka";
 "PublicPoll" = "Hlasovanie";
@@ -9682,7 +9682,7 @@
 "TelegramFaq" = "Najčastejšie otázky o Telegrame";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Funkcie Telegramu";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram pas";
 "TelegramPassportCreatePassword" = "Vytvoriť heslo";
 "TelegramPassportCreatePasswordInfo" = "Prosím, vytvorte heslo pre zabezpečenie vašich osobných údajov s end-to-end šifrovaním.\n\nToto heslo sa bude vyžadovať aj pri každom prihlásení do Telegramu na novom zariadení.";

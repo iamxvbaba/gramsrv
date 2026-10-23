@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	DefaultPublicBaseURL = "https://telesrv.net"
-	DefaultWebBaseURL    = "https://weba.telesrv.net"
-	DefaultAppScheme     = "telesrv"
+	DefaultPublicBaseURL = "https://sgq.me"
+	DefaultWebBaseURL    = "https://weba.shuzagram.com"
+	DefaultAppScheme     = "sg"
 )
 const MaxChatlistSlugBytes = 128
 
@@ -25,9 +25,8 @@ type AppLinkBuilder struct {
 }
 
 // ValidateAppScheme normalizes the client-visible custom URL scheme used by
-// public landing pages. Standard Web schemes and Telegram's official tg scheme
-// are deliberately rejected: the latter remains a manual compatibility link
-// and must never become the automatic open target.
+// public landing pages. Standard Web schemes are rejected; the ShuzaGram client
+// registers the default sg scheme.
 func ValidateAppScheme(raw string) (string, error) {
 	scheme := strings.ToLower(strings.TrimSpace(raw))
 	if scheme == "" {
@@ -40,7 +39,7 @@ func ValidateAppScheme(raw string) (string, error) {
 		return "", fmt.Errorf("must match [a-z][a-z0-9+.-]*")
 	}
 	switch scheme {
-	case "http", "https", "tg":
+	case "http", "https":
 		return "", fmt.Errorf("reserved scheme %q is not allowed", scheme)
 	}
 	return scheme, nil
@@ -256,7 +255,7 @@ func Build(baseURL, path string, query url.Values) string {
 func Host(baseURL string) string {
 	baseURL, err := ValidateBaseURL(baseURL)
 	if err != nil {
-		return "telesrv.net"
+		return "sgq.me"
 	}
 	parsed, _ := url.Parse(baseURL)
 	if host := parsed.Hostname(); host != "" {

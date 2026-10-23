@@ -41,7 +41,7 @@ func (reactionCatalogErrorFiles) ListAvailableReactions(context.Context) ([]doma
 
 func TestHelpGetConfigReturnsDefaultAndAccountReaction(t *testing.T) {
 	account := &reactionSettingsAccountStub{settings: domain.DefaultAccountReactionSettings()}
-	r := New(Config{DC: 2, PublicBaseURL: "https://telesrv.net"}, Deps{Account: account}, zaptest.NewLogger(t), clock.System)
+	r := New(Config{DC: 2, PublicBaseURL: "https://sgq.me"}, Deps{Account: account}, zaptest.NewLogger(t), clock.System)
 
 	preAuth, err := r.onHelpGetConfig(context.Background())
 	if err != nil {

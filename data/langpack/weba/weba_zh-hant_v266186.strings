@@ -725,14 +725,14 @@
 "CocoonFeature1Text" = "任何第三方均無法存取 **{username}** 內的任何資料，例如翻譯內容。";
 "CocoonFeature1Title" = "私人";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon 讓 Telegram 的翻譯成本降低了 6 倍。";
 "CocoonFeature2Title" = "高效";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "任何開發者都可以使用 Cocoon 來實現 AI 功能。了解更多信息，請訪問 **{link}**。";
 "CocoonFeature3Title" = "對所有人開放";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "私訊 @cocoon";
 "CocoonFooterText" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -987,7 +987,7 @@
 "EmptyChatAppearanceSystem" = "系統";
 "EmptyGroupInfoLine1" = "• 最多 {count} 位成員";
 "EmptyGroupInfoLine2" = "• 永久的聊天紀錄";
-"EmptyGroupInfoLine3" = "• 公開連結，例如：t.me/title";
+"EmptyGroupInfoLine3" = "• 公開連結，例如：sgq.me/title";
 "EmptyGroupInfoLine4" = "• 具有不同權限的管理員";
 "EmptyGroupInfoSubtitle" = "群組可以有：";
 "EmptyGroupInfoTitle" = "您建立了一個群組";
@@ -2108,7 +2108,7 @@
 "ProfileTabVoice" = "語音";
 "ProfileViewChannel" = "查看頻道";
 "PublicLink" = "公開連結";
-"PublicLinksLimitSubtitle" = "最多可擁有 {count} 個 t.me/username 連結";
+"PublicLinksLimitSubtitle" = "最多可擁有 {count} 個 sgq.me/username 連結";
 "PublicLinksLimitTitle" = "公開連結";
 "PublicPoll" = "記名投票";
 "PublicPosts" = "公開貼文";

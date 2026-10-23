@@ -107,6 +107,9 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountResetAuthorization(ctx, layerRequest.
 			Hash)
 	})
+	registerRPC[*tg.AccountGetTmpPasswordRequest](d, tlprofile.SemanticMethodAccountGetTmpPassword, func(ctx context.Context, layerRequest *tg.AccountGetTmpPasswordRequest) (any, error) {
+		return r.onAccountGetTmpPassword(ctx, layerRequest)
+	})
 	registerRPC[*tg.AccountGetPasswordSettingsRequest](d, tlprofile.SemanticMethodAccountGetPasswordSettings, func(ctx context.Context, layerRequest *tg.AccountGetPasswordSettingsRequest) (any, error) {
 		return r.onAccountGetPasswordSettings(ctx, layerRequest.
 			Password)

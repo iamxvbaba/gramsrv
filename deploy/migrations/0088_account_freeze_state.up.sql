@@ -13,7 +13,7 @@ ALTER TABLE account_restrictions
 UPDATE account_restrictions
 SET frozen_since = updated_at,
 	frozen_until = updated_at + interval '7 days',
-	appeal_url = 'https://t.me/SpamBot'
+	appeal_url = 'https://sgq.me/SpamBot'
 WHERE frozen;
 
 UPDATE account_restrictions

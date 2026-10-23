@@ -82,23 +82,25 @@ Retained typed graphs remain charged to the RPC scheduler budget above.
 | `TELESRV_ADMIN_SESSION_KEY` | secret string / empty | Encrypts/signs Admin UI session cookies. Production should use at least 32 random bytes; changing it invalidates sessions. |
 | `TELESRV_ADMIN_UI_PERMISSIONS` | comma-separated list / `*` | Permissions granted to an Admin UI session authenticated with `TELESRV_ADMIN_UI_PASSWORD` / `_TOKEN`. `*` grants every permission and is the default. Reading a managed bot token requires the explicit `bots.token.read` permission; the token is returned only by the command response and is not persisted in the audit result. Names use letters, digits and `._:-`, at most 64 characters, and may end in `namespace.*` to grant a whole namespace. An empty list or an unparsable name fails startup. |
 | `TELESRV_ADMIN_SCOPED_TOKENS` | `name:token:perm1,perm2` entries separated by `;` / empty | Additional Admin API bearer tokens carrying a bounded permission set each, so an integration gets exactly the rights it needs instead of the unrestricted `TELESRV_ADMIN_API_TOKEN`. A token may contain neither `:` nor whitespace, every entry must list at least one permission, names and tokens must be unique, and reusing `TELESRV_ADMIN_API_TOKEN` as a scoped token is refused because it would silently widen it to every permission. Any malformed entry fails startup rather than silently granting or dropping rights. |
-| `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://telesrv.net` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
-| `TELESRV_BRAND_PRODUCT_NAME` | string / `Telesrv` | Parent product display name shared by the system account, login notices, invites, WebAuthn, built-in bots, and upstream visible-copy rewriting. Trimmed, non-empty, no control characters, at most 64 Unicode characters. |
-| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `telesrv` | Public username of system account 777000. It is trimmed, loses an optional leading `@`, is normalized to lowercase, and must be a 5–32 character ASCII username starting with a letter. |
-| `TELESRV_BRAND_DESKTOP_APP_NAME` | string / `Telesrv Desktop` | Desktop/Windows name returned by `account.getAuthorizations`; same validation as the product name. |
-| `TELESRV_BRAND_ANDROID_APP_NAME` | string / `Telesrv Android` | Android name shown in authorization lists; same validation as the product name. |
-| `TELESRV_BRAND_IOS_APP_NAME` | string / `Telesrv iOS` | iOS name shown in authorization lists; same validation as the product name. |
-| `TELESRV_BRAND_MACOS_APP_NAME` | string / `Telesrv macOS` | macOS name shown in authorization lists; same validation as the product name. |
-| `TELESRV_BRAND_WEB_A_APP_NAME` | string / `Telesrv Web A` | Authorization-list name for `telegram-tt` / `weba`; durable detection tokens remain unchanged. |
-| `TELESRV_BRAND_WEB_K_APP_NAME` | string / `Telesrv Web K` | Authorization-list name for `tweb` / `webk`; durable detection tokens remain unchanged. |
-| `TELESRV_BRAND_PREMIUM_NAME` | string / `Telesrv Premium` | Product name used by Premium status and related client-visible copy; same validation as the product name. |
-| `TELESRV_BRAND_STARS_NAME` | string / `Telesrv Stars` | Product name used by Stars payment labels and related client-visible copy; same validation as the product name. |
+| `TELESRV_PUBLIC_BASE_URL` | HTTP(S) URL / `https://sgq.me` | Client-visible canonical public-link root. Paths are allowed; credentials, query, and fragment are rejected. Local example: `http://127.0.0.1:2401`. |
+| `TELESRV_BRAND_PRODUCT_NAME` | string / `ShuzaGram` | Parent product display name shared by the system account, login notices, invites, WebAuthn, built-in bots, and upstream visible-copy rewriting. Trimmed, non-empty, no control characters, at most 64 Unicode characters. |
+| `TELESRV_BRAND_PRODUCT_USERNAME` | username / `shuzagram` | Public username of system account 777000. It is trimmed, loses an optional leading `@`, is normalized to lowercase, and must be a 5–32 character ASCII username starting with a letter. |
+| `TELESRV_BRAND_DESKTOP_APP_NAME` | string / `ShuzaGram Desktop` | Desktop/Windows name returned by `account.getAuthorizations`; same validation as the product name. |
+| `TELESRV_BRAND_ANDROID_APP_NAME` | string / `ShuzaGram Android` | Android name shown in authorization lists; same validation as the product name. |
+| `TELESRV_BRAND_IOS_APP_NAME` | string / `ShuzaGram iOS` | iOS name shown in authorization lists; same validation as the product name. |
+| `TELESRV_BRAND_MACOS_APP_NAME` | string / `ShuzaGram macOS` | macOS name shown in authorization lists; same validation as the product name. |
+| `TELESRV_BRAND_WEB_A_APP_NAME` | string / `ShuzaGram Web A` | Authorization-list name for `telegram-tt` / `weba`; durable detection tokens remain unchanged. |
+| `TELESRV_BRAND_WEB_K_APP_NAME` | string / `ShuzaGram Web K` | Authorization-list name for `tweb` / `webk`; durable detection tokens remain unchanged. |
+| `TELESRV_BRAND_PREMIUM_NAME` | string / `ShuzaGram Premium` | Product name used by Premium status and related client-visible copy; same validation as the product name. |
+| `TELESRV_BRAND_STARS_NAME` | string / `ShuzaGram Stars` | Product name used by Stars payment labels and related client-visible copy; same validation as the product name. |
 | `TELESRV_UPDATE_PUBLIC_URL` | nullable HTTP(S) URL / empty | Client-visible root of `cmd/telesrv-update`; advertised through `help.getConfig.autoupdate_url_prefix`. Empty disables native desktop updates. See `docs/update-service.md`. |
 | `TELESRV_UPDATE_SERVICE_URL` | nullable HTTP(S) URL / `TELESRV_UPDATE_PUBLIC_URL` | Internal update resolver used for `help.getAppUpdate`. It may be a loopback/private route; empty falls back to the public update URL. |
 | `TELESRV_UPDATE_REQUEST_TIMEOUT` | duration / `2s` | Deadline for an application-update resolve call; must be greater than zero and at most `30s`. Resolver failure returns `help.noAppUpdate`, not an RPC 500. |
-| `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `telesrv` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
+| `TELESRV_PUBLIC_APP_SCHEME` | URL scheme / `sg` | Automatic app-open scheme on landing pages. Must match patched client registration. `tg`, `http`, and `https` are rejected. |
+| `TELESRV_ANDROID_APP_PACKAGE` | applicationId / `com.shuzagram.messenger` | Android package published in `/.well-known/assetlinks.json` on the public-link host. |
+| `TELESRV_ANDROID_CERT_SHA256` | comma-separated SHA-256 fingerprints / empty | APK signing-certificate fingerprints (`AA:BB:â¦` or plain hex). When set, the public-link listener serves `/.well-known/assetlinks.json` so Android App Links open `sgq.me` URLs directly in the app; empty disables the file. |
 | `TELESRV_PUBLIC_APP_LINK_BASE` | nullable custom URL base / empty | Optional host-based root for multi-server clients, for example `owpg://example.com`. When set, links use `owpg://example.com/oauth`, `owpg://example.com/<username>`, and equivalent route paths. Only exact `<custom-scheme>://<host>` values are accepted; ports, paths, queries, and fragments are rejected. `TELESRV_PUBLIC_APP_SCHEME` remains an accepted legacy input. |
-| `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.telesrv.net` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |
+| `TELESRV_PUBLIC_WEB_BASE_URL` | HTTP(S) URL / `https://weba.shuzagram.com` | Web-client root used by public username pages. Same URL validation as `TELESRV_PUBLIC_BASE_URL`. |
 | `TELESRV_PUBLIC_APP_NAME` | string / `TELESRV_BRAND_PRODUCT_NAME` | Public landing-page product name; trimmed, non-empty, no control characters, maximum 64 Unicode characters. |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | nullable address / empty | Username/avatar/sticker/emoji/chatlist/collectible-gift landing pages, the hash-only moderation appeal form, and short-lived unique-gift/channel-revenue confirmation pages. Empty disables the listener; moderation `freeze_account` actions, local gift export, and channel revenue withdrawal then fail closed because telesrv cannot issue a reachable confirmation URL. Public landing pages remain read-only; only exact bearer-token POST routes can commit their aggregate. Production should bind loopback behind exact nginx routes with token-route access logs disabled. `.env.example` enables `127.0.0.1:2401` for development. |
 | `TELESRV_MINIAPP_BOTFATHER_TOKEN` | `<93372553>:<35-char-secret>` / empty | Server-only token secret used to sign and verify the local BotFather Mini App. When set, it is written to the built-in BotFather row before RPC/Web services start; it is never rendered in HTML or returned by list APIs. |
@@ -280,7 +282,7 @@ that clients can actually reach. Bind `0.0.0.0:2401` for direct LAN/public acces
 ```env
 TELESRV_PUBLIC_BASE_URL=http://192.0.2.25:2401
 TELESRV_PUBLIC_LINK_WEB_ADDR=0.0.0.0:2401
-TELESRV_PUBLIC_APP_SCHEME=telesrv
+TELESRV_PUBLIC_APP_SCHEME=sg
 # Optional for multi-server clients: TELESRV_PUBLIC_APP_LINK_BASE=owpg://example.com
 
 TELESRV_TELEGRAM_LOGIN_ENABLE=true
@@ -516,7 +518,7 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 | `TELESRV_SMTP_FROM_NAME` | string / `TELESRV_BRAND_PRODUCT_NAME` | Display name for login-email messages; when unset, it inherits the parent product display name. |
 | `TELESRV_SMTP_TLS` | enum / `starttls` | `starttls`, `tls`, or `none`; any other value fails startup. |
 | `TELESRV_SMTP_TIMEOUT` | duration / `10s` | SMTP operation timeout; must be positive when the SMTP provider is used. |
-| `TELESRV_PASSKEY_RP_ID` | hostname / `telesrv.net` | WebAuthn relying-party ID used for `rpIdHash`. Android Credential Manager requires alignment with hosted `assetlinks.json`. |
+| `TELESRV_PASSKEY_RP_ID` | hostname / `shuzagram.com` | WebAuthn relying-party ID used for `rpIdHash`. Android Credential Manager requires alignment with hosted `assetlinks.json`. |
 | `TELESRV_PASSKEY_ALLOWED_ORIGINS` | list / empty | Allowed WebAuthn origins. Empty disables explicit origin enforcement because Android APK-key-hash origins may not be known in advance. |
 
 ## 6. Maps, external media, previews, and uploads

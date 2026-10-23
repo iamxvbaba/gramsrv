@@ -1,0 +1,172 @@
+{
+  "canonical_layer": 232,
+  "repository": "https://github.com/telegramdesktop/tdesktop.git",
+  "source_path": "Telegram/SourceFiles/mtproto/scheme/api.tl",
+  "overlays": [
+    {
+      "file": "../legacy.tl",
+      "repository": "https://github.com/gotd/td.git",
+      "commit": "9c00b8f0d0f240f1c2d12b4e6f792317d26cae95",
+      "blob": "9a0f554e828a43dfe425ed9db4998fcaca289785",
+      "path": "_schema/legacy.tl",
+      "sha256": "1c0324774dc34ca887011c0113e5500e55388b5f39357229379964b6b4e1d142"
+    }
+  ],
+  "client_rpc_overlays": [
+    {
+      "name": "drklo_android",
+      "file": "client-drklo-android.tl",
+      "sha256": "d7c75f46038c8b5114d30be868d831834b9bce25820052c5f4528146554ee4f7",
+      "repository": "https://github.com/DrKLO/Telegram.git",
+      "commit": "86d42543312a867b3fc64b85a93963c5b3c09ce4",
+      "sources": [
+        {
+          "path": "TMessagesProj/src/main/java/org/telegram/tgnet/TLRPC.java",
+          "blob": "016037196afe374586e46db7dbbc48d72cbd020d"
+        },
+        {
+          "path": "TMessagesProj/src/main/java/org/telegram/tgnet/tl/TL_bots.java",
+          "blob": "aff78c05df9a5e299dc5e2f51f0888882f1d2755"
+        },
+        {
+          "path": "TMessagesProj/jni/tgnet/ApiScheme.h",
+          "blob": "8f8388202c811430bfd3e41d83e1cd0c1cce7c26"
+        },
+        {
+          "path": "TMessagesProj/jni/tgnet/ApiScheme.cpp",
+          "blob": "483f8c2475e40e6960f3fe951121bf38a050bb15"
+        }
+      ],
+      "methods": {
+        "account.registerDevice": {},
+        "auth.signUp": {},
+        "bots.exportBotToken": {
+          "renames": {
+            "bot": "bot_id"
+          },
+          "converters": {
+            "bot": "long_to_input_user"
+          }
+        },
+        "channels.getMessages": {
+          "converters": {
+            "id": "vector_int_to_input_message_id"
+          }
+        },
+        "channels.inviteToChannel": {},
+        "channels.joinChannel": {},
+        "contacts.search": {},
+        "langpack.getLangPack": {},
+        "langpack.getLanguages": {},
+        "langpack.getStrings": {},
+        "messages.createChat": {},
+        "messages.editChatCreator": {
+          "renames": {
+            "peer": "channel"
+          },
+          "converters": {
+            "peer": "input_channel_to_input_peer"
+          }
+        },
+        "messages.forwardMessages": {},
+        "messages.getMessages": {
+          "converters": {
+            "id": "vector_int_to_input_message_id"
+          }
+        },
+        "messages.importChatInvite": {},
+        "messages.uploadMedia": {},
+        "updates.getDifference": {}
+      }
+    },
+    {
+      "name": "drklo_android_theme",
+      "file": "client-drklo-android-theme.tl",
+      "sha256": "f485c76bc33f2b62d099923882e9d128ac501ca404af8ca00a975e55f093acbb",
+      "repository": "https://github.com/DrKLO/Telegram.git",
+      "commit": "86d42543312a867b3fc64b85a93963c5b3c09ce4",
+      "sources": [
+        {
+          "path": "TMessagesProj/src/main/java/org/telegram/tgnet/tl/TL_account.java",
+          "blob": "268e2bdfc065e635c06983fc833f0464d3152c76"
+        }
+      ],
+      "methods": {
+        "account.createTheme": {
+          "converters": {
+            "settings": "input_theme_settings_to_vector"
+          }
+        },
+        "account.getTheme": {
+          "drops": [
+            "document_id"
+          ]
+        },
+        "account.installTheme": {},
+        "account.updateTheme": {
+          "converters": {
+            "settings": "input_theme_settings_to_vector"
+          }
+        }
+      }
+    }
+  ],
+  "layers": [
+    {
+      "layer": 225,
+      "file": "layer-225.tl",
+      "commit": "bff17504bc96df235559211d97ea616506f22889",
+      "blob": "24720c3660b5e611d3a736f4020ec9eaa4303be9",
+      "sha256": "aa21644954119b6b8be10c839c24cbbeff389d7158f65a5a0419887014f89a93"
+    },
+    {
+      "layer": 226,
+      "file": "layer-226.tl",
+      "commit": "5c5bacaf419ecf16c57d20517bd2231d17f8f8af",
+      "blob": "f2f907c7f07ffaa7f512654d44dc74c560eef826",
+      "sha256": "fe4fa42d4011e8a82404e37da40a3ce55dda3eec260b651ed0420378286785ec"
+    },
+    {
+      "layer": 227,
+      "file": "layer-227.tl",
+      "commit": "8165c7c6c065c8abc94ec5076f75bee0a29b82e1",
+      "blob": "2784293c112f7e854b883290c123675cfae1d3d1",
+      "sha256": "f8fe06d2279657cc36f7d5280a28fa00a176ca6c99b5208038850b40e9aa5518"
+    },
+    {
+      "layer": 228,
+      "file": "layer-228.tl",
+      "commit": "138b937f01a275000fb2e06b3d5b864f5b78cc81",
+      "blob": "8dcf6a708eb7475052a9c4d3de97176a8107c3c3",
+      "sha256": "bbddd9c4c3f5ff16fd4abbf39f2a864fdac7553e9f05b6bf9ead2aeb9c8eb566"
+    },
+    {
+      "layer": 229,
+      "file": "layer-229.tl",
+      "commit": "db41bb8c753bf43b452a7b01c47f079ceb3dce09",
+      "blob": "a43ff6ddcfc87316d72ff98fb38ba22c766f309a",
+      "sha256": "0b5cc39d9b9202ab280949ffc5bed7eaadbadadabb6ee3ea9481f1a494999acb"
+    },
+    {
+      "layer": 230,
+      "file": "layer-230.tl",
+      "commit": "d36272b193057a114ef3a9fe7f15a8f8b587c489",
+      "blob": "57e72169e6e8fc8d36af957a96ca20f40b5d8a07",
+      "sha256": "3bc699f8b5d31262609720c0a6e88291d953ae12bb5132484db57207c72c25fd"
+    },
+    {
+      "layer": 231,
+      "file": "layer-231.tl",
+      "commit": "91ed9dbf2004ed5531a94ecc4fe5751e008dc8ed",
+      "blob": "01e31d552dd496e592f262989c8452f7a3ce411a",
+      "sha256": "0921a7bba8be9ad7e615d1d4f8e068126a421e3cba18f499a16765f1ab6129bf"
+    },
+    {
+      "layer": 232,
+      "file": "layer-232.tl",
+      "commit": "850fb90eb6db96c124b6da1349060f9ed00f4fe4",
+      "blob": "8319b7df634d145390c299404129fd161a5dbd2a",
+      "sha256": "76922ce265441d3f2f5188f56b69b41e1cb11354657ea547707507f8c3b93826"
+    }
+  ]
+}

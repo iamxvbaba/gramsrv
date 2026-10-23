@@ -3341,15 +3341,15 @@
 "CloseTopics" = "סגור נושאים";
 "CloseTranslation" = "סגור את התרגום";
 "CocoonFeature1Text" = "אף גורם צד שלישי לא יכול לגשת למידע, כגון תרגומים, בתוך **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "פרטי";
 "CocoonFeature2Text" = "Cocoon איפשר לטלגרם לצמצם בעלויות תרגום פי 6.";
 "CocoonFeature2Title" = "יעיל";
 "CocoonFeature3Text" = "כל המפתחים יכולים להשתמש בCocoon לתכונות AI. קראו עוד ב**cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "לכולם";
-"CocoonFooter" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "התרגומים מופעלים על ידי\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**איך זה עובד?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nמטפל במשימות AI ביעילות ובבטחה.";
@@ -6150,7 +6150,7 @@
 "GroupDeletedUndo" = "הקבוצה נמחקה";
 "GroupDescription1" = "עד 200,000 חברים";
 "GroupDescription2" = "היסטוריית צ'אט מתמשכת";
-"GroupDescription3" = "קישורים פומביים כגון t.me/title";
+"GroupDescription3" = "קישורים פומביים כגון sgq.me/title";
 "GroupDescription4" = "מנהלים עם הרשאות שונות";
 "GroupEmoji" = "אימוג'י הקבוצה";
 "GroupEmojiPack" = "ערכת האימוג'ים של הקבוצה";
@@ -9322,7 +9322,7 @@
 "PsaType_psa" = "הכרזה";
 "PublicChannelsTooMuch" = "מצטערים, למשתמש היעד יש כבר יותר מדי קבוצות ציבוריות או ערוצים. בקש ממנו להפוך את אחת הקבוצות או הערוצים הקיימים שלו לפרטיים.";
 "PublicLink" = "קישור ציבורי";
-"PublicLinksLimitSubtitle" = "שמור עד ל\u2068%d\u2069 קישורי t.me/username";
+"PublicLinksLimitSubtitle" = "שמור עד ל\u2068%d\u2069 קישורי sgq.me/username";
 "PublicLinksLimitTitle" = "קישורים ציבוריים";
 "PublicPhoto" = "תמונה ציבורית";
 "PublicPoll" = "סקר";
@@ -11883,7 +11883,7 @@
 "TelegramFaq" = "שו\"ת טלגרם";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "תכונות טלגרם";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "דרכון טלגרם";
 "TelegramPassportCreatePassword" = "צור סיסמה";
 "TelegramPassportCreatePasswordInfo" = "נא לבחור סיסמה בכדי לאבטח ולהצפין את הפרטים האישיים שלך בהצפנה מקצה לקצה.\n\nהסיסמה הזו תידרש בכל פעם שתיכנס לטלגרם באמצעות מכשיר חדש.";

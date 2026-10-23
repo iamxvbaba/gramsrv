@@ -91,6 +91,7 @@ type BusinessAutomationStore interface {
 	ListQuickReplies(ctx context.Context, ownerUserID int64, includeTopMessages bool) (domain.QuickReplyList, error)
 	CheckQuickReplyShortcut(ctx context.Context, ownerUserID int64, shortcut string) (bool, error)
 	SaveQuickReplyText(ctx context.Context, ownerUserID int64, shortcut string, msg domain.QuickReplyMessage) (domain.QuickReplyMutation, error)
+	EditQuickReplyMessage(ctx context.Context, ownerUserID int64, edit domain.QuickReplyEdit) (domain.QuickReplyMutation, error)
 	GetQuickReplyMessages(ctx context.Context, ownerUserID int64, shortcutID int, ids []int) (domain.QuickReplyMessages, error)
 	RenameQuickReplyShortcut(ctx context.Context, ownerUserID int64, shortcutID int, shortcut string) (domain.QuickReplyMutation, error)
 	ReorderQuickReplies(ctx context.Context, ownerUserID int64, order []int) (domain.QuickReplyMutation, error)

@@ -34,7 +34,7 @@ box:
 - **The token rotates roughly every 30 seconds and the code re-renders each
   time.** Just leave it running; it will not expire out from under you.
 - **The login URL has to be rendered, not clicked.** Telegram hands it over as
-  a `tg://login` deep link carrying the token as a query parameter, and no
+  a `sg://login` deep link carrying the token as a query parameter, and no
   client opens that as a link — it is QR payload only. `giftfetch` draws it
   twice for you: as half-block terminal art (`▀ ▄ █`), and as a PNG at
   `<SESSION>.qr.png` for when the terminal is too small to scan. Override the
@@ -92,6 +92,12 @@ every time.
 `SOCKS5_PROXY` (`[user:pass@]host:port`) is parsed once and shared by the login
 and the fetch path — a QR login from a blocked network needs it just as much as
 a catalog fetch does.
+
+### API credentials
+
+The built-in api_id is public, and Telegram can refuse it with
+`API_ID_PUBLISHED_FLOOD`. Set `TG_API_ID` and `TG_API_HASH` to your own pair
+from my.telegram.org (API development tools) to use it instead.
 
 ### Timeouts
 

@@ -2919,15 +2919,15 @@
 "CloseTopics" = "Sulje ketjut";
 "CloseTranslation" = "Sulje käännös";
 "CocoonFeature1Text" = "**@cocoon**:n kanssa käytettäviä tietoja, kuten käännöksiä, ei voi nähdä kukaan ulkopuolinen.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Yksityinen";
 "CocoonFeature2Text" = "Cocoonin avulla Telegram on laskenut käännöskustannuksia kuusinkertaisesti.";
 "CocoonFeature2Title" = "Tehokas";
 "CocoonFeature3Text" = "Cocoon on palvelu, jolla kuka tahansa kehittäjä voi toteuttaa tekoälytoiminnallisuuksia. Lue lisää: **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Kaikille";
-"CocoonFooter" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Käännökset tarjoaa\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Kuinka se toimii?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nsuorittaa tekoälyä turvallisesti ja tehokkaasti.";
@@ -5388,7 +5388,7 @@
 "GroupDeletedUndo" = "Ryhmä poistettiin";
 "GroupDescription1" = "Peräti 200\u00a0000 jäsentä";
 "GroupDescription2" = "Pysyvä viestihistoria";
-"GroupDescription3" = "Julkiset linkit, kuten t.me/nimi";
+"GroupDescription3" = "Julkiset linkit, kuten sgq.me/nimi";
 "GroupDescription4" = "Valvojia eri oikeuksilla";
 "GroupEmoji" = "Ryhmäemoji";
 "GroupEmojiPack" = "Ryhmän emojikokoelma";
@@ -8252,7 +8252,7 @@
 "PsaType_psa" = "Tiedotus";
 "PublicChannelsTooMuch" = "Valitettavasti tällä käyttäjällä on jo julkisia ryhmiä tai kanavia. Pyydä häntä poistamaan yksi niistä tai tekemään sellaisesta yksityinen.";
 "PublicLink" = "Julkinen linkki";
-"PublicLinksLimitSubtitle" = "Varaa jopa %d t.me/nimimerkki-linkkiä";
+"PublicLinksLimitSubtitle" = "Varaa jopa %d sgq.me/nimimerkki-linkkiä";
 "PublicLinksLimitTitle" = "Julkiset linkit";
 "PublicPhoto" = "julkinen kuva";
 "PublicPoll" = "Kysely";
@@ -10528,7 +10528,7 @@
 "TelegramFaq" = "Usein kysyttyä";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram-vinkkejä";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram-passi";
 "TelegramPassportCreatePassword" = "Luo salasana";
 "TelegramPassportCreatePasswordInfo" = "Luo salasana, jota käytetään henkilötietosi päästä päähän -salaukseen.\n\nTämä salasana vaaditaan myös, kun kirjaudut Telegramiin uudelta laitteelta.";

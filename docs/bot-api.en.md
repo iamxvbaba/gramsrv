@@ -285,7 +285,7 @@ implemented.
 
 ### `sendRichMessage`
 
-Telesrv extension, Layer 228 rich text. Sends `InputRichMessage` instead of a
+ShuzaGram extension, Layer 228 rich text. Sends `InputRichMessage` instead of a
 plain formatted string, so tables, headings, dividers, details blocks and
 footers reach the client as real rich blocks.
 

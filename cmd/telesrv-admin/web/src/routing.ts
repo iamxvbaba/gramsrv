@@ -1,4 +1,5 @@
 import type { TFunction } from "./i18n";
+import { stripBase } from "./lib/base";
 
 export type Navigate = (href: string) => void;
 
@@ -10,8 +11,8 @@ export type RouteState = {
 
 export function currentRoute(): RouteState {
   return {
-    href: `${window.location.pathname}${window.location.search}`,
-    path: window.location.pathname,
+    href: `${stripBase(window.location.pathname)}${window.location.search}`,
+    path: stripBase(window.location.pathname),
     search: new URLSearchParams(window.location.search)
   };
 }
@@ -33,6 +34,7 @@ export function routeTitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/accounts")) return t("route.accounts");
   if (pathname.startsWith("/channels")) return t("route.channels");
   if (pathname.startsWith("/bots")) return t("route.bots");
+  if (pathname.startsWith("/auto-subscribe-channels")) return t("autoSubscribe.pageTitle");
   if (pathname.startsWith("/broadcasts")) return t("route.broadcasts");
   if (pathname.startsWith("/monetization") || pathname.startsWith("/premium") || pathname.startsWith("/star-issue")) return t("route.premium");
   if (pathname.startsWith("/moderation")) return t("route.moderation");
@@ -44,6 +46,7 @@ export function routeTitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/gifts")) return t("route.gifts");
   if (pathname.startsWith("/auctions")) return t("route.auctions");
   if (pathname.startsWith("/donations")) return t("route.donations");
+  if (pathname.startsWith("/bot-shop")) return t("botShop.title");
   if (pathname.startsWith("/prices")) return t("route.prices");
   // "/statistics" and "/" both render the overview: the statistics charts were
   // folded into the dashboard rather than left as a page of their own, and the
@@ -66,6 +69,7 @@ export function routeSubtitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/accounts")) return t("route.accountsSubtitle");
   if (pathname.startsWith("/channels")) return t("route.channelsSubtitle");
   if (pathname.startsWith("/bots")) return t("route.botsSubtitle");
+  if (pathname.startsWith("/auto-subscribe-channels")) return t("autoSubscribe.eyebrow");
   if (pathname.startsWith("/broadcasts")) return t("route.broadcastsSubtitle");
   if (pathname.startsWith("/monetization") || pathname.startsWith("/premium") || pathname.startsWith("/star-issue")) return t("route.premiumSubtitle");
   if (pathname.startsWith("/moderation")) return t("route.moderationSubtitle");
@@ -77,6 +81,7 @@ export function routeSubtitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/gifts")) return t("route.giftsSubtitle");
   if (pathname.startsWith("/auctions")) return t("route.auctionsSubtitle");
   if (pathname.startsWith("/donations")) return t("route.donationsSubtitle");
+  if (pathname.startsWith("/bot-shop")) return t("botShop.eyebrow");
   if (pathname.startsWith("/prices")) return t("route.pricesSubtitle");
   return t("route.dashboardSubtitle");
 }

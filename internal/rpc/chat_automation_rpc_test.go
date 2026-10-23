@@ -149,9 +149,9 @@ func TestBusinessChatLinkRPCs(t *testing.T) {
 	if created.Link == "" || created.Message != "Prefilled message" {
 		t.Fatalf("created link = %+v", created)
 	}
-	slug := strings.TrimPrefix(created.Link, "https://telesrv.net/m/")
+	slug := strings.TrimPrefix(created.Link, "https://sgq.me/m/")
 	if slug == created.Link || slug == "" {
-		t.Fatalf("created link URL = %q, want telesrv.net/m slug", created.Link)
+		t.Fatalf("created link URL = %q, want sgq.me/m slug", created.Link)
 	}
 	list, err := r.onAccountGetBusinessChatLinks(ctx)
 	if err != nil || len(list.Links) != 1 {

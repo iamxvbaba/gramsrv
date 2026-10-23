@@ -2925,7 +2925,7 @@
 "lng_factcheck_add_done" = "Doğruluk kontrolü eklendi.";
 "lng_factcheck_bottom" = "Bu açıklama Telegram tarafından sağlandı.";
 "lng_factcheck_edit_done" = "Doğruluk kontrolü düzenlendi.";
-"lng_factcheck_links" = "Yalnızca **t.me/** bağlantılarına izin verilir.";
+"lng_factcheck_links" = "Yalnızca **sgq.me/** bağlantılarına izin verilir.";
 "lng_factcheck_placeholder" = "Gerçek veya Bağlam Ekleyin";
 "lng_factcheck_remove_done" = "Doğruluk kontrolü kaldırıldı.";
 "lng_factcheck_title" = "Doğruluk Kontrolü";
@@ -3846,7 +3846,7 @@
 "lng_greeting_title" = "Karşılama Mesajı";
 "lng_group_about1" = "200.000'e kadar üye";
 "lng_group_about2" = "Kalıcı sohbet geçmişi";
-"lng_group_about3" = "t.me/title gibi herkese açık bağlantılar";
+"lng_group_about3" = "sgq.me/title gibi herkese açık bağlantılar";
 "lng_group_about4" = "Farklı yetkilere sahip yöneticiler";
 "lng_group_about_header" = "Bir grup oluşturdunuz";
 "lng_group_about_text" = "Gruplarda şunlar mevcuttur:";
@@ -5637,8 +5637,8 @@
 "lng_premium_double_limits_about_folders#other" = "Sohbetlerinizi {count} klasörde düzenleyin";
 "lng_premium_double_limits_about_gifs#one" = "Favori GIF'lerinize {count} adede kadar GIF kaydedin";
 "lng_premium_double_limits_about_gifs#other" = "Favori GIF'lerinize {count} adede kadar GIF kaydedin";
-"lng_premium_double_limits_about_links#one" = "{count} kadar t.me/username bağlantısını rezerve edin";
-"lng_premium_double_limits_about_links#other" = "{count} kadar t.me/username bağlantısını rezerve edin";
+"lng_premium_double_limits_about_links#one" = "{count} kadar sgq.me/username bağlantısını rezerve edin";
+"lng_premium_double_limits_about_links#other" = "{count} kadar sgq.me/username bağlantısını rezerve edin";
 "lng_premium_double_limits_about_pins#one" = "Ana sohbet listenize en fazla {count} sohbeti sabitleyin";
 "lng_premium_double_limits_about_pins#other" = "Ana sohbet listenize en fazla {count} sohbeti sabitleyin";
 "lng_premium_double_limits_about_similar_channels#one" = "{count} benzer kanalı görüntüle";
@@ -8099,7 +8099,7 @@
 "lng_tag_info_title_owner" = "Sahip Etiketleri";
 "lng_tag_info_title_user" = "Üye Etiketleri";
 "lng_tagged_view_saved" = "Görüntüle";
-"lng_telegram_features_url" = "https://t.me/TelegramTipsTR";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTipsTR";
 "lng_terms_age#one" = "{count} yaşın üstünde olduğumu onaylıyorum";
 "lng_terms_age#other" = "{count} yaşın üstünde olduğumu onaylıyorum";
 "lng_terms_agree" = "Kabul Et ve Devam Et";
@@ -8214,7 +8214,7 @@
 "lng_translate_cocoon_private_title" = "Özel";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) yapay zeka görevlerini **güvenli** ve **verimli** bir şekilde yürütür.";
 "lng_translate_cocoon_text" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\nLütfen {link} adresinden iletişime geçin.";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} dili Çeviri Yapma listenize eklendi.";
 "lng_translate_hidden_channel" = "Çeviri çubuğu bu kanal için gizlendi.";

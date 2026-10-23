@@ -636,6 +636,8 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 	}
 	if ch.SendPaidMessagesStars > 0 || ch.BroadcastMessagesAllowed {
 		full.SetPaidMessagesAvailable(true)
+		// The real price, also for admins: their settings screen shows it, and
+		// clients never ask admins to pay (the server does not charge them).
 		full.SetSendPaidMessagesStars(ch.SendPaidMessagesStars)
 	}
 	if view.Dialog.ViewForumAsMessages {

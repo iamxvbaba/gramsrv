@@ -1,0 +1,357 @@
+{{ define "layer_codec" }}
+{{ template "header" . }}
+{{ template "layer_codec_runtime" . }}
+{{ template "layer_codec_wires" . }}
+{{ template "layer_codec_dispatch" . }}
+{{ end }}
+
+{{ define "layer_codec_runtime_file" }}
+{{ template "header" . }}
+{{ template "layer_codec_runtime" . }}
+{{ end }}
+
+{{ define "layer_codec_wires_file" }}
+{{ template "header" . }}
+{{ template "layer_codec_wires" . }}
+{{ end }}
+
+{{ define "layer_codec_dispatch_file" }}
+{{ template "header" . }}
+{{ template "layer_codec_dispatch" . }}
+{{ end }}
+
+{{ define "layer_codec_families_file" }}
+{{ template "header" . }}
+{{ with .LayerCodec }}{{ range .FamilyDeclarations }}{{ . }}
+{{ end }}{{ end }}
+{{ end }}
+
+{{ define "layer_codec_classes_file" }}
+{{ template "header" . }}
+{{ with .LayerCodec }}{{ range .ClassDeclarations }}{{ . }}
+{{ end }}{{ end }}
+{{ end }}
+
+{{ define "layer_codec_dynamic_file" }}
+{{ template "header" . }}
+{{ with .LayerCodec }}{{ range .DynamicDeclarations }}{{ . }}
+{{ end }}{{ end }}
+{{ end }}
+
+{{ define "layer_codec_runtime" }}{{ with .LayerCodec }}
+const (
+    layerCodecMaxWireBytes = {{ .MaxWireBytes }}
+    layerCodecMaxAggregateElements = {{ .MaxAggregateElements }}
+    layerCodecDefaultWireBytes = {{ .DefaultWireBytes }}
+    layerCodecDefaultDepth = {{ .DefaultDepth }}
+    layerCodecDefaultVectorElements = {{ .DefaultVectorSize }}
+    layerCodecDefaultAggregateElements = {{ .DefaultAggregateElements }}
+)
+
+// layerCodecDecodeLimits is the private bridge used by generated public API
+// entry points. A zero field selects the bounded default; positive values are
+// capped by the generated hard limit, and negative values are rejected.
+type layerCodecDecodeLimits struct {
+    maxWireBytes int
+    maxVectorElements int
+    maxAggregateElements int
+    maxDepth int
+}
+
+// layerCodecDecodeBudget is deliberately referenced by pointer from
+// layerCodecState. Descending a static wire/type plan copies generic bindings
+// and depth, but every copy consumes the same aggregate element allowance.
+type layerCodecDecodeBudget struct {
+    maxVectorElements int
+    remainingElements int
+    maxDepth int
+}
+
+func layerCodecDecodeLimit(value, fallback, hard int) (int, error) {
+    if value < 0 {
+        return 0, fmt.Errorf("negative decode limit %d", value)
+    }
+    if value == 0 { value = fallback }
+    if value > hard { value = hard }
+    return value, nil
+}
+
+func newLayerCodecDecodeState(profile LayerProfile, wireBytes int, limits layerCodecDecodeLimits) (*layerCodecState, error) {
+    if wireBytes < 0 {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: fmt.Sprintf("negative wire byte length %d", wireBytes)}
+    }
+    maxWireBytes, err := layerCodecDecodeLimit(limits.maxWireBytes, layerCodecDefaultWireBytes, layerCodecMaxWireBytes)
+    if err != nil {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: "invalid wire byte limit", Cause: err}
+    }
+    maxVectorElements, err := layerCodecDecodeLimit(limits.maxVectorElements, layerCodecDefaultVectorElements, layerCodecMaxVectorElements)
+    if err != nil {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: "invalid per-vector element limit", Cause: err}
+    }
+    maxAggregateElements, err := layerCodecDecodeLimit(limits.maxAggregateElements, layerCodecDefaultAggregateElements, layerCodecMaxAggregateElements)
+    if err != nil {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: "invalid aggregate element limit", Cause: err}
+    }
+    maxDepth, err := layerCodecDecodeLimit(limits.maxDepth, layerCodecDefaultDepth, layerCodecMaxDepth)
+    if err != nil {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: "invalid decode depth limit", Cause: err}
+    }
+    if wireBytes > maxWireBytes {
+        return nil, &LayerCodecError{Operation: "initialize decode", Profile: profile, Reason: fmt.Sprintf("wire byte length %d exceeds limit %d", wireBytes, maxWireBytes)}
+    }
+    return &layerCodecState{decodeBudget: &layerCodecDecodeBudget{
+        maxVectorElements: maxVectorElements,
+        remainingElements: maxAggregateElements,
+        maxDepth: maxDepth,
+    }}, nil
+}
+
+func (s *layerCodecState) ensureDecodeBudget(profile LayerProfile, ref *LayerTypeRef, operation string) (*layerCodecDecodeBudget, error) {
+    if s == nil {
+        return nil, &LayerCodecError{Operation: operation, Profile: profile, Type: ref, Reason: "nil codec state"}
+    }
+    if s.decodeBudget == nil {
+        s.decodeBudget = &layerCodecDecodeBudget{
+            maxVectorElements: layerCodecDefaultVectorElements,
+            remainingElements: layerCodecDefaultAggregateElements,
+            maxDepth: layerCodecDefaultDepth,
+        }
+    }
+    return s.decodeBudget, nil
+}
+
+// checkDecodeDepth is also used by generated transparent-wrapper admission,
+// whose recursion is tracked separately from typed constructor recursion.
+func (s *layerCodecState) checkDecodeDepth(profile LayerProfile, ref *LayerTypeRef, operation string, depth int) error {
+    budget, err := s.ensureDecodeBudget(profile, ref, operation)
+    if err != nil { return err }
+    if depth < 0 {
+        return &LayerCodecError{Operation: operation, Profile: profile, Type: ref, Reason: fmt.Sprintf("negative decode depth %d", depth)}
+    }
+    if depth >= budget.maxDepth {
+        return &LayerCodecError{Operation: operation, Profile: profile, Type: ref, Reason: fmt.Sprintf("maximum decode depth %d exceeded", budget.maxDepth)}
+    }
+    return nil
+}
+
+func layerCodecDescend(profile LayerProfile, operation string, state *layerCodecState) (layerCodecState, error) {
+    if state == nil {
+        return layerCodecState{}, &LayerCodecError{Operation: operation, Profile: profile, Reason: "nil codec state"}
+    }
+    if operation == "decode" {
+        if err := state.checkDecodeDepth(profile, nil, operation, int(state.depth)); err != nil {
+            return layerCodecState{}, err
+        }
+    } else if int(state.depth) >= layerCodecMaxDepth {
+        return layerCodecState{}, &LayerCodecError{Operation: operation, Profile: profile, Reason: "maximum generated codec depth exceeded"}
+    }
+    child := *state
+    child.depth++
+    return child, nil
+}
+
+func (s *layerCodecState) consumeDecodeVector(profile LayerProfile, ref *LayerTypeRef, length int) error {
+    budget, err := s.ensureDecodeBudget(profile, ref, "decode vector")
+    if err != nil { return err }
+    if length < 0 {
+        return &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: fmt.Sprintf("negative vector length %d", length)}
+    }
+    if length > layerCodecMaxVectorElements {
+        return &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: fmt.Sprintf("vector length %d exceeds hard limit %d", length, layerCodecMaxVectorElements)}
+    }
+    if length > budget.maxVectorElements {
+        return &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: fmt.Sprintf("vector length %d exceeds configured limit %d", length, budget.maxVectorElements)}
+    }
+    if length > budget.remainingElements {
+        return &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: fmt.Sprintf("vector length %d exceeds remaining aggregate element budget %d", length, budget.remainingElements)}
+    }
+    if s.probeConsumeElements != nil {
+        if err := s.probeConsumeElements(length); err != nil { return err }
+    }
+    budget.remainingElements -= length
+    return nil
+}
+
+func layerDecodeVectorLength(profile LayerProfile, ref *LayerTypeRef, b *bin.Buffer, boxed bool, state *layerCodecState) (int, error) {
+    if b == nil {
+        return 0, &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: "nil buffer"}
+    }
+    if state == nil {
+        return 0, &LayerCodecError{Operation: "decode vector", Profile: profile, Type: ref, Reason: "nil codec state"}
+    }
+    if boxed {
+        if err := b.ConsumeID(bin.TypeVector); err != nil { return 0, err }
+    }
+    length, err := b.Int()
+    if err != nil { return 0, err }
+    if err := state.consumeDecodeVector(profile, ref, length); err != nil { return 0, err }
+    return length, nil
+}
+
+// layerCodecEncodeAtomic makes every public encoding entry transactional with
+// respect to the caller's buffer. Static bodies can encode in one pass; a
+// rejected projection or adapter failure restores the exact starting length.
+func layerCodecEncodeAtomic(profile LayerProfile, b *bin.Buffer, encode func() error) (err error) {
+    if b == nil {
+        return &LayerCodecError{Operation: "encode", Profile: profile, Reason: "nil buffer"}
+    }
+    start := len(b.Buf)
+    defer func() {
+        if err != nil {
+            b.Buf = b.Buf[:start]
+        }
+    }()
+    return encode()
+}
+
+{{ range .Hooks -}}
+// Static policy contract for {{ .Name }}. Missing hooks and signature drift
+// intentionally fail compilation. Production encoding invokes each hook once
+// inside one transactional pass; hooks must not mutate their input value.
+var _ {{ .Signature }} = {{ .Name }}
+{{ end }}
+{{ end }}{{ end }}
+
+{{ define "layer_codec_wires" }}{{ with .LayerCodec }}{{ $codec := . }}
+{{ range .Wires }}{{ $wire := . }}
+{{ if .SparseDirect }}
+{{/* The scanner validates the transitive graph. Only entries referenced by
+the sparse typed closure are emitted; the other wrappers duplicate canonical
+methods and are intentionally absent. */}}
+// Canonical-direct exact wire; the scanner has validated its transitive graph.
+{{ if .SparseEncode -}}
+func {{ .EncodeBareName }}(profile LayerProfile, value *{{ .CanonicalType }}, b *bin.Buffer, state *layerCodecState) error {
+    if value == nil { return &LayerCodecError{Operation: "encode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "nil canonical value"} }
+    return value.EncodeBare(b)
+}
+func {{ .EncodeBareName }}Body(profile LayerProfile, value *{{ .CanonicalType }}, b *bin.Buffer, state *layerCodecState) error {
+    return {{ .EncodeBareName }}(profile, value, b, state)
+}
+{{ end -}}
+{{ if .SparseDecode -}}
+func {{ .DecodeName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) (*{{ .CanonicalType }}, error) {
+    value := new({{ .CanonicalType }})
+    if err := value.Decode(b); err != nil { return nil, err }
+    return value, nil
+}
+{{ end }}
+{{ else if .ProfileOnly }}
+// {{ .EncodeName }} is an admission-only stub for historical-only wire ID
+// 0x{{ .Hex }}. RPC admission rejects or statically aliases/adapts it before
+// object codec dispatch; this stub cannot pretend to return a canonical value.
+func {{ .EncodeName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) error {
+    return &LayerCodecError{Operation: "encode", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "profile-only method must be rejected or adapted at RPC admission"}
+}
+
+func {{ .EncodeBareName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) error {
+    return &LayerCodecError{Operation: "encode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "profile-only method must be rejected or adapted at RPC admission"}
+}
+
+{{ if not $codec.Sparse }}func {{ .PreflightName }}(profile LayerProfile, state *layerCodecState) (int, error) {
+    return 0, &LayerCodecError{Operation: "preflight", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "profile-only method must be handled at RPC admission"}
+}{{ end }}
+
+func {{ .DecodeName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) error {
+    return &LayerCodecError{Operation: "decode", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "profile-only method must be handled at RPC admission"}
+}
+
+func {{ .DecodeBareName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) error {
+    return &LayerCodecError{Operation: "decode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "profile-only method must be handled at RPC admission"}
+}
+{{ else }}
+{{ if not $codec.Sparse }}
+{{/* Sparse family/class entry points already own the transactional boundary
+and call the typed bare body directly. Retaining these boxed/bare wrappers in
+the sparse sidecar would leave two dead functions for every dirty wire. */}}
+func {{ .EncodeName }}(profile LayerProfile, value *{{ .CanonicalType }}, b *bin.Buffer, state *layerCodecState) error {
+    if value == nil {
+        return &LayerCodecError{Operation: "encode", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "nil canonical value"}
+    }
+    return layerCodecEncodeAtomic(profile, b, func() error {
+        switch profile {
+        {{ range .EncodeChecks }}case {{ range $index, $layer := .Layers }}{{ if $index }}, {{ end }}LayerProfile{{ $layer }}{{ end }}:
+            {{ if .EncodeReject }}return &LayerCodecError{Operation: "encode", Profile: profile, Semantic: {{ $wire.Semantic }}, WireID: 0x{{ $wire.Hex }}, Reason: {{ printf "%q" .EncodeReject }}}{{ else }}{{/* accepted before any bytes */}}{{ end }}
+        {{ end }}default:
+            return &LayerCodecError{Operation: "encode", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "wire ID is unavailable in exact profile"}
+        }
+        {{ if .Encodable }}
+        b.PutID(0x{{ .Hex }})
+        return {{ .EncodeBareName }}Body(profile, value, b, state)
+        {{ end }}
+    })
+}
+
+func {{ .EncodeBareName }}(profile LayerProfile, value *{{ .CanonicalType }}, b *bin.Buffer, state *layerCodecState) error {
+    if value == nil {
+        return &LayerCodecError{Operation: "encode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "nil canonical value"}
+    }
+    return layerCodecEncodeAtomic(profile, b, func() error {
+        return {{ .EncodeBareName }}Body(profile, value, b, state)
+    })
+}
+{{ end }}
+
+{{ if not $codec.Sparse }}func {{ .PreflightName }}(profile LayerProfile, value *{{ .CanonicalType }}, state *layerCodecState) (int, error) {
+    if value == nil {
+        return 0, &LayerCodecError{Operation: "preflight", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "nil canonical value"}
+    }
+    child, err := layerCodecDescend(profile, "preflight", state)
+    if err != nil { return 0, err }
+    state = &child
+    switch profile {
+    {{ range .PreflightGroups }}case {{ range $index, $layer := .Layers }}{{ if $index }}, {{ end }}LayerProfile{{ $layer }}{{ end }}: {
+        {{ if .EncodeReject }}return 0, &LayerCodecError{Operation: "preflight", Profile: profile, Semantic: {{ $wire.Semantic }}, WireID: 0x{{ $wire.Hex }}, Reason: {{ printf "%q" .EncodeReject }}}{{ else }}{{ .Preflight }}{{ end }}
+    }
+    {{ end }}default:
+        return 0, &LayerCodecError{Operation: "preflight", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "wire ID is unavailable in exact profile"}
+    }
+}{{ end }}
+
+func {{ .EncodeBareName }}Body(profile LayerProfile, value *{{ .CanonicalType }}, b *bin.Buffer, state *layerCodecState) error {
+    child, err := layerCodecDescend(profile, "encode", state)
+    if err != nil { return err }
+    state = &child
+    switch profile {
+    {{ range .EncodeGroups }}case {{ range $index, $layer := .Layers }}{{ if $index }}, {{ end }}LayerProfile{{ $layer }}{{ end }}: {
+        {{ if .EncodeReject }}return &LayerCodecError{Operation: "encode-bare", Profile: profile, Semantic: {{ $wire.Semantic }}, WireID: 0x{{ $wire.Hex }}, Reason: {{ printf "%q" .EncodeReject }}}{{ else }}{{ .Encode }}{{ end }}
+    }
+    {{ end }}default:
+        return &LayerCodecError{Operation: "encode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "wire ID is unavailable in exact profile"}
+    }
+}
+
+func {{ .DecodeName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) (*{{ .CanonicalType }}, error) {
+    switch profile {
+    {{ range .DecodeChecks }}case {{ range $index, $layer := .Layers }}{{ if $index }}, {{ end }}LayerProfile{{ $layer }}{{ end }}:
+        {{ if .DecodeReject }}return nil, &LayerCodecError{Operation: "decode", Profile: profile, Semantic: {{ $wire.Semantic }}, WireID: 0x{{ $wire.Hex }}, Reason: {{ printf "%q" .DecodeReject }}}{{ end }}
+    {{ end }}default:
+        return nil, &LayerCodecError{Operation: "decode", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "wire ID is unavailable in exact profile"}
+    }
+    {{ if .Decodable }}
+    if err := b.ConsumeID(0x{{ .Hex }}); err != nil {
+        return nil, fmt.Errorf("consume layer wire 0x{{ .Hex }}: %w", err)
+    }
+    return {{ .DecodeBareName }}(profile, b, state)
+    {{ end }}
+}
+
+func {{ .DecodeBareName }}(profile LayerProfile, b *bin.Buffer, state *layerCodecState) (*{{ .CanonicalType }}, error) {
+    child, err := layerCodecDescend(profile, "decode", state)
+    if err != nil { return nil, err }
+    state = &child
+    value := new({{ .CanonicalType }})
+    _ = value
+    switch profile {
+    {{ range .DecodeGroups }}case {{ range $index, $layer := .Layers }}{{ if $index }}, {{ end }}LayerProfile{{ $layer }}{{ end }}: {
+        {{ if .DecodeReject }}return nil, &LayerCodecError{Operation: "decode-bare", Profile: profile, Semantic: {{ $wire.Semantic }}, WireID: 0x{{ $wire.Hex }}, Reason: {{ printf "%q" .DecodeReject }}}{{ else }}{{ .Decode }}{{ end }}
+    }
+    {{ end }}default:
+        return nil, &LayerCodecError{Operation: "decode-bare", Profile: profile, Semantic: {{ .Semantic }}, WireID: 0x{{ .Hex }}, Reason: "wire ID is unavailable in exact profile"}
+    }
+}
+{{ end }}
+{{ end }}{{ end }}{{ end }}
+
+{{ define "layer_codec_dispatch" }}{{ with .LayerCodec }}
+{{ range .Declarations }}{{ . }}
+{{ end }}{{ end }}{{ end }}

@@ -62,7 +62,7 @@ func TestMessagesEditMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 		Peer: &tg.InputPeerUser{UserID: peerID, AccessHash: 22},
 		ID:   3,
 	}
-	req.SetMessage("edited telesrv://resolve?domain=Alice")
+	req.SetMessage("edited sg://resolve?domain=Alice")
 	req.SetEntities([]tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 0, Length: 6}})
 	var in bin.Buffer
 	if err := req.Encode(&in); err != nil {
@@ -85,7 +85,7 @@ func TestMessagesEditMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 		t.Fatalf("edit update = %#v, want pts=7 count=1", got.Updates[0])
 	}
 	msg, ok := edit.Message.(*tg.Message)
-	if !ok || msg.ID != 3 || msg.Message != "edited telesrv://resolve?domain=Alice" {
+	if !ok || msg.ID != 3 || msg.Message != "edited sg://resolve?domain=Alice" {
 		t.Fatalf("edited message = %#v, want id=3 text with app-link", edit.Message)
 	}
 	if messages.editReq.OwnerUserID != userID || messages.editReq.Peer.ID != peerID || messages.editReq.ID != 3 || messages.editReq.OriginAuthKeyID != authKeyID || messages.editReq.OriginSessionID != 77 {
@@ -93,7 +93,7 @@ func TestMessagesEditMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	}
 	if len(messages.editReq.Entities) != 2 || messages.editReq.Entities[0].Type != domain.MessageEntityBold ||
 		messages.editReq.Entities[1].Type != domain.MessageEntityURL || messages.editReq.Entities[1].Offset != 7 ||
-		messages.editReq.Entities[1].Length != utf16CodeUnitLen("telesrv://resolve?domain=Alice") {
+		messages.editReq.Entities[1].Length != utf16CodeUnitLen("sg://resolve?domain=Alice") {
 		t.Fatalf("edit entities = %+v, want bold plus configured app-link", messages.editReq.Entities)
 	}
 }

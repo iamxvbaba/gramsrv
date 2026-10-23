@@ -151,6 +151,9 @@ type Message struct {
 	// （🎉/👍 等），发送方与接收方双盒持同一非零值并各自播放一次；非特效消息恒 0。
 	// 转发不携带特效（新消息恒 0）。仅私聊；群/频道不渲染。
 	Effect int64
+	// PaidMessageStars is what the sender paid for this message
+	// (message.paid_message_stars); the same value on both sides, 0 if free.
+	PaidMessageStars int64
 	// ReplyMarkup 是 bot 消息携带的 reply/inline keyboard 快照。仅 bot 出站消息可
 	// 非空；普通用户消息恒 nil（发送侧 is_bot 闸门）。双盒持同一快照（无 per-viewer 差异）。
 	ReplyMarkup *MessageReplyMarkup
@@ -356,6 +359,15 @@ type SendPrivateTextRequest struct {
 	GroupedID int64
 	// Effect 消息特效 id（私聊专属，0 表无特效；调用方已对 catalog 校验过合法性）。
 	Effect int64
+	// PaidMessageStars is the price of this one message in a paid private
+	// chat, already checked against the sender's allow_paid_stars. The store
+	// debits it in the send transaction. Not part of the idempotency
+	// fingerprint: it is derived from the recipient's current price.
+	PaidMessageStars int64
+	// PaidMessageCredited and PaidMessageSenderBalance are filled by the store
+	// while sending: the recipient's share and the sender's new balance.
+	PaidMessageCredited      int64
+	PaidMessageSenderBalance int64
 	// BusinessAutomationKind is internal app-layer metadata used to suppress
 	// recursive greeting/away automation for server-generated replies.
 	BusinessAutomationKind BusinessAutomationKind
@@ -393,6 +405,19 @@ type SendPrivateTextResult struct {
 	// follow the first-send snapshot in an exact random_id replay. It never
 	// represents a newly allocated event.
 	ReplayDeleteEvent *UpdateEvent
+	// PaidMessageSenderBalance is the sender's Stars balance after paying
+	// for this message; set only when PaidMessageCharged.
+	PaidMessageCharged       bool
+	PaidMessageSenderBalance int64
+}
+
+// PaidMessagesRefund is the result of refunding everything one user paid
+// another for private messages.
+type PaidMessagesRefund struct {
+	Count            int
+	Stars            int64
+	PayerBalance     int64
+	RecipientBalance int64
 }
 
 // SetPrivateChatThemeRequest changes the shared theme token for a private dialog.

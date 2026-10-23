@@ -2952,7 +2952,7 @@
 "lng_factcheck_add_done" = "Semakan fakta ditambah.";
 "lng_factcheck_bottom" = "Klarifikasi ini disediakan oleh Telegram.";
 "lng_factcheck_edit_done" = "Semakan fakta disunting.";
-"lng_factcheck_links" = "Hanya link **t.me/** dibenarkan.";
+"lng_factcheck_links" = "Hanya link **sgq.me/** dibenarkan.";
 "lng_factcheck_placeholder" = "Tambah Fakta atau Konteks";
 "lng_factcheck_remove_done" = "Semakan fakta dikeluarkan.";
 "lng_factcheck_title" = "Semakan Fakta";
@@ -3786,7 +3786,7 @@
 "lng_greeting_title" = "Mesej Ucapan";
 "lng_group_about1" = "Sehingga 200,000 ahli";
 "lng_group_about2" = "Sejarah bual persisten";
-"lng_group_about3" = "Link awam seperti t.me/tajuk";
+"lng_group_about3" = "Link awam seperti sgq.me/tajuk";
 "lng_group_about4" = "Pentadbir dengan kuasa berlainan";
 "lng_group_about_header" = "Anda cipta grup.";
 "lng_group_about_text" = "Grup boleh punyai:";
@@ -5471,7 +5471,7 @@
 "lng_premium_double_limits_about_folder_chats#other" = "Tambah hingga {count} bual di setiap folder";
 "lng_premium_double_limits_about_folders#other" = "Susun bual anda ke dalam {count} folder";
 "lng_premium_double_limits_about_gifs#other" = "Simpan sehingga {count} GIF di GIF Kegemaran anda";
-"lng_premium_double_limits_about_links#other" = "Tersedia hingga {count} link t.me/namasamaran";
+"lng_premium_double_limits_about_links#other" = "Tersedia hingga {count} link sgq.me/namasamaran";
 "lng_premium_double_limits_about_pins#other" = "Semat sehingga {count} bual di senarai bual utama anda";
 "lng_premium_double_limits_about_similar_channels#other" = "Lihat sehingga {count} saluran serupa";
 "lng_premium_double_limits_about_stickers#other" = "Simpan hingga {count} stiker di Stiker Kegemaran anda";
@@ -7784,7 +7784,7 @@
 "lng_tag_info_title_owner" = "Tag Pemilik";
 "lng_tag_info_title_user" = "Tag Ahli";
 "lng_tagged_view_saved" = "Lihat";
-"lng_telegram_features_url" = "https://t.me/TelegramTipsMS";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTipsMS";
 "lng_terms_age#other" = "Saya sahkan yang saya adalah  {count} tahun atau lebih";
 "lng_terms_agree" = "Setuju & Teruskan";
 "lng_terms_agree_to_proceed" = "Setuju dan teruskan ke {bot}.";
@@ -7894,7 +7894,7 @@
 "lng_translate_cocoon_private_title" = "Privat";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) kendali tugasan AI dengan selamat dan **cekap**.";
 "lng_translate_cocoon_text" = "Ingin mengintegrasikan Cocoon ke dalam projek anda?\nHubungi kami di {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} ditambah ke senarai Jangan Terjemah.";
 "lng_translate_hidden_channel" = "Bar terjemahan kini tersembunyi untuk saluran ini.";

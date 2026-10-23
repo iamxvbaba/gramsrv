@@ -104,7 +104,7 @@ SELECT COALESCE((SELECT version FROM read_model_versions
 	digestOne := sha256.Sum256([]byte("confirm-one"))
 	pending, created, err := lifecycle.ScheduleAccountDeletion(ctx, domain.ScheduleAccountDeletion{
 		UserID: deleted.ID, RequesterAuthKeyID: authOne, Reason: "Forgot password",
-		ConfirmHashDigest: digestOne, ServiceMessage: "tg://confirmphone?phone=hidden&hash=confirm-one",
+		ConfirmHashDigest: digestOne, ServiceMessage: "sg://confirmphone?phone=hidden&hash=confirm-one",
 		RequestedAt: now, ExecuteAt: now.Add(7 * 24 * time.Hour),
 	})
 	if err != nil || !created || pending.UserID != deleted.ID {
@@ -126,7 +126,7 @@ SELECT COALESCE((SELECT version FROM read_model_versions
 	digestTwo := sha256.Sum256([]byte("confirm-two"))
 	pendingBeforeDelete, created, err := lifecycle.ScheduleAccountDeletion(ctx, domain.ScheduleAccountDeletion{
 		UserID: deleted.ID, RequesterAuthKeyID: authTwo, Reason: "Delete account",
-		ConfirmHashDigest: digestTwo, ServiceMessage: "tg://confirmphone?phone=hidden&hash=confirm-two",
+		ConfirmHashDigest: digestTwo, ServiceMessage: "sg://confirmphone?phone=hidden&hash=confirm-two",
 		RequestedAt: now.Add(time.Minute), ExecuteAt: now.Add(7 * 24 * time.Hour),
 	})
 	if err != nil || !created {

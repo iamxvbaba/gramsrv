@@ -2924,7 +2924,7 @@
 "lng_factcheck_add_done" = "Faktasjekk lagt til.";
 "lng_factcheck_bottom" = "Denne presiseringen ble gitt av Telegram.";
 "lng_factcheck_edit_done" = "Faktasjekk endret.";
-"lng_factcheck_links" = "Kun **t.me/** lenker er tillatt.";
+"lng_factcheck_links" = "Kun **sgq.me/** lenker er tillatt.";
 "lng_factcheck_placeholder" = "Legg til fakta eller kontekst";
 "lng_factcheck_remove_done" = "Faktasjekk fjernet.";
 "lng_factcheck_title" = "Faktasjekk";
@@ -3844,7 +3844,7 @@
 "lng_greeting_title" = "Velkomstmelding";
 "lng_group_about1" = "Inntil 200 000 medlemmer";
 "lng_group_about2" = "Vedvarende samtalehistorikk";
-"lng_group_about3" = "Offentlige lenker som t.me/title";
+"lng_group_about3" = "Offentlige lenker som sgq.me/title";
 "lng_group_about4" = "Admins med forskjellige rettigheter";
 "lng_group_about_header" = "Du opprettet en gruppe";
 "lng_group_about_text" = "Grupper kan ha:";
@@ -5635,8 +5635,8 @@
 "lng_premium_double_limits_about_folders#other" = "Organiser samtalene dine i {count} mapper";
 "lng_premium_double_limits_about_gifs#one" = "Lagre inntil {count} GIF i dine favoritter";
 "lng_premium_double_limits_about_gifs#other" = "Lagre inntil {count} GIF'er i dine favoritter";
-"lng_premium_double_limits_about_links#one" = "Reserver inntil {count} t.me/brukernavn lenke";
-"lng_premium_double_limits_about_links#other" = "Reserver inntil {count} t.me/brukernavn lenker";
+"lng_premium_double_limits_about_links#one" = "Reserver inntil {count} sgq.me/brukernavn lenke";
+"lng_premium_double_limits_about_links#other" = "Reserver inntil {count} sgq.me/brukernavn lenker";
 "lng_premium_double_limits_about_pins#one" = "Fest inntil {count} samtale i samtalelisten din";
 "lng_premium_double_limits_about_pins#other" = "Fest inntil {count} samtaler i samtalelisten din";
 "lng_premium_double_limits_about_similar_channels#one" = "Se inntil {count} lignende kanal";
@@ -8094,7 +8094,7 @@
 "lng_tag_info_title_owner" = "Eiertagger";
 "lng_tag_info_title_user" = "Medlemstagger";
 "lng_tagged_view_saved" = "Se";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Jeg bekrefter at jeg er {count} eller eldre";
 "lng_terms_age#other" = "Jeg bekrefter at jeg er {count} eller eldre";
 "lng_terms_agree" = "Godta og fortsett";
@@ -8209,7 +8209,7 @@
 "lng_translate_cocoon_private_title" = "Privat";
 "lng_translate_cocoon_subtitle" = "Cocoon ({text}) håndterer AI oppgaver **trygt** og **effektivt**.";
 "lng_translate_cocoon_text" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} lagt til i listen din over språk som ikke skal oversettes.";
 "lng_translate_hidden_channel" = "Oversettelseslinjen skjules i denne kanalen.";

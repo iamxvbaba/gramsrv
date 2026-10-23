@@ -506,6 +506,7 @@ type Dependencies struct {
 	AccountDeletionNotifier AccountDeletionNotifier
 	Channels                ChannelsService
 	ChannelNotifier         ChannelNotifier
+	AutoSubscribe           AutoSubscribeService
 	Messages                MessagesService
 	Gifts                   GiftsService
 	GiftGranter             GiftGranter
@@ -549,6 +550,7 @@ type Service struct {
 	accountDeletion         AccountDeletionService
 	accountDeletionNotifier AccountDeletionNotifier
 	channels                ChannelsService
+	autoSubscribe           AutoSubscribeService
 	channelNotifier         ChannelNotifier
 	messages                MessagesService
 	gifts                   GiftsService
@@ -631,6 +633,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Channels != nil {
 		s.channels = deps.Channels
+	}
+	if deps.AutoSubscribe != nil {
+		s.autoSubscribe = deps.AutoSubscribe
 	}
 	if deps.ChannelNotifier != nil {
 		s.channelNotifier = deps.ChannelNotifier
@@ -926,6 +931,10 @@ type ImportOfficialStarGiftRequest struct {
 	UpgradeStars       int64  `json:"upgrade_stars,omitempty"`
 	SupplyTotal        int    `json:"supply_total,omitempty"`
 	SlugPrefix         string `json:"slug_prefix,omitempty"`
+	// CollectiblePublishAt (Unix seconds) defers only the imported gift's
+	// collectible pool; the plain gift goes live as usual. Zero opens the
+	// pool immediately. Ignored unless IncludeCollectible.
+	CollectiblePublishAt int64 `json:"collectible_publish_at,omitempty"`
 	// ReleasedBy names the peer that originally released the imported gift,
 	// authored as "@username" or a numeric user ID.
 	ReleasedBy string `json:"released_by_peer,omitempty"`
@@ -999,6 +1008,9 @@ type PublishStarGiftCollectiblesRequest struct {
 	Models       []StarGiftCollectibleAnimationUpload `json:"models"`
 	Patterns     []StarGiftCollectibleAnimationUpload `json:"patterns"`
 	Backdrops    []StarGiftCollectibleBackdropInput   `json:"backdrops"`
+	// PublishAt is Unix seconds. Zero or a past instant opens the pool now;
+	// a future instant schedules it (see stargifts.ReleaseCollectiblePoolNow).
+	PublishAt int64 `json:"publish_at,omitempty"`
 }
 
 type SetAccountFrozenRequest struct {
@@ -1723,6 +1735,7 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
 		}
 		var updated domain.User
+		durationDays, planStars := req.Months*30, int64(0)
 		if s.premium != nil {
 			actorID := premiumAdminActorID(req.Actor)
 			if req.Months == 0 {
@@ -1731,9 +1744,8 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 					Reason: req.Reason, CommandKey: strings.TrimSpace(req.CommandID), EntitlementID: req.EntitlementID,
 				})
 			} else {
-				durationDays := req.Months * 30
 				if plan, planErr := s.premium.Plan(ctx, req.Months); planErr == nil {
-					durationDays = plan.DurationDays
+					durationDays, planStars = plan.DurationDays, plan.AmountStars
 				} else if !errors.Is(planErr, domain.ErrPremiumPlanUnavailable) {
 					return CommandResult{}, planErr
 				}
@@ -1757,6 +1769,11 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 		details["updated_premium_active"] = updated.PremiumActiveAt(s.now().Unix())
 		if err := s.notifyUserChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
+		}
+		if req.Months > 0 {
+			if err := s.sendPremiumGiftPack(ctx, req.UserID, durationDays, planStars, req.CommandID); err != nil {
+				details["pack_notify_error"] = err.Error()
+			}
 		}
 		msg := "premium updated"
 		if req.Months == 0 {
@@ -1922,6 +1939,9 @@ func (s *Service) GrantStars(ctx context.Context, req GrantStarsRequest) (Comman
 		details["starting_grant_applied"] = balance.Granted
 		if err := s.notifyStarsBalanceChanged(ctx, balance); err != nil {
 			details["notify_error"] = err.Error()
+		}
+		if err := s.sendStarsGiftPack(ctx, req.UserID, req.Amount, req.CommandID, balance.Balance); err != nil {
+			details["pack_notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "stars granted", Details: details}, nil
 	})
@@ -4066,8 +4086,13 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 			req.SupplyTotal = bundle.Gift.UpgradeVariants
 		}
 	}
-	if req.SlugPrefix = strings.ToLower(strings.TrimSpace(req.SlugPrefix)); req.SlugPrefix == "" {
-		req.SlugPrefix = "official-" + req.SourceGiftID
+	if req.SlugPrefix = strings.TrimSpace(req.SlugPrefix); req.SlugPrefix == "" {
+		// Telegram-style "PlushPepe-123": the title without spaces or
+		// punctuation. A title with no Latin letters falls back to the id.
+		req.SlugPrefix = domain.StarGiftSlugPrefixFromTitle(req.Title)
+		if req.SlugPrefix == "" {
+			req.SlugPrefix = "official-" + req.SourceGiftID
+		}
 	}
 
 	// Scheduled release ("отложенный дроп") for a snapshot gift. The snapshot's own
@@ -4174,7 +4199,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		}
 		collectible = &domain.StarGiftCollectibleWrite{GiftID: req.GiftID, UpgradeStars: req.UpgradeStars,
 			SupplyTotal: req.SupplyTotal, SlugPrefix: req.SlugPrefix, Models: models, Patterns: patterns, Backdrops: backdrops,
-			Actor: req.Actor, CommandID: req.CommandID, OfficialGiftID: sourceID,
+			Actor: req.Actor, CommandID: req.CommandID, OfficialGiftID: sourceID, PublishAt: req.CollectiblePublishAt,
 			SourceManifestSHA256: append([]byte(nil), bundle.ManifestSHA256...)}
 		validation := *collectible
 		if validation.GiftID == 0 {
@@ -4347,8 +4372,8 @@ func (s *Service) PublishStarGiftCollectibles(ctx context.Context, req PublishSt
 	}
 	write := domain.StarGiftCollectibleWrite{
 		GiftID: req.GiftID, UpgradeStars: req.UpgradeStars, SupplyTotal: req.SupplyTotal,
-		SlugPrefix: strings.ToLower(strings.TrimSpace(req.SlugPrefix)), Models: models, Patterns: patterns, Backdrops: backdrops,
-		Actor: req.Actor, CommandID: req.CommandID,
+		SlugPrefix: strings.TrimSpace(req.SlugPrefix), Models: models, Patterns: patterns, Backdrops: backdrops,
+		Actor: req.Actor, CommandID: req.CommandID, PublishAt: req.PublishAt,
 	}
 	if err := domain.ValidateStarGiftCollectibleDraft(write); err != nil {
 		return CommandResult{}, err
@@ -4367,6 +4392,7 @@ func (s *Service) PublishStarGiftCollectibles(ctx context.Context, req PublishSt
 			"supply_total": req.SupplyTotal,
 			"slug_prefix":  write.SlugPrefix, "models": collectibleUploadDetails(req.Models),
 			"patterns": collectibleUploadDetails(req.Patterns), "backdrops": len(req.Backdrops),
+			"publish_at": req.PublishAt,
 		}
 		if req.DryRun {
 			return CommandResult{Message: "star gift collectible pool validated", Details: details}, nil
@@ -4378,7 +4404,11 @@ func (s *Service) PublishStarGiftCollectibles(ctx context.Context, req PublishSt
 		details["revision_id"] = strconv.FormatInt(revision.ID, 10)
 		details["revision"] = revision.Revision
 		details["published"] = revision.Published
-		return CommandResult{Message: "star gift collectible pool published", Details: details}, nil
+		message := "star gift collectible pool published"
+		if !revision.Published {
+			message = "star gift collectible pool scheduled"
+		}
+		return CommandResult{Message: message, Details: details}, nil
 	})
 }
 

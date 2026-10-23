@@ -111,7 +111,7 @@ func testService(t *testing.T, now time.Time) (*Service, *fakeLedger, *fakeVerif
 	}}
 	verifier := &fakeVerifier{item: item.StringRaw()}
 	service, err := New(Config{
-		PublicBaseURL: "https://grams.example", AppName: "Gramsrv", SigningKey: privateKey,
+		PublicBaseURL: "https://grams.example", AppName: "ShuzaGram", SigningKey: privateKey,
 		GiftCollection: collection.String(), MintAmountNanoton: 80_000_000,
 		SubwalletID: defaultSubwalletID, AuthorizationTTL: 5 * time.Minute,
 		ModelRenderer: func(_ []byte, width, height int, position float64) (*image.NRGBA, error) {

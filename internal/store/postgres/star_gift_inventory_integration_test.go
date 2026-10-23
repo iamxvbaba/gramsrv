@@ -80,12 +80,22 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 	giftService := stargiftapp.NewService(NewStarGiftStore(pool), inventoryBlob{}, 2)
 	svc := admin.NewService(admin.Dependencies{Commands: NewAdminStore(pool), Gifts: giftService, OfficialGifts: source})
 	lifecycle := NewStarGiftLifecycleStore(pool, NewMessageStore(pool), 10000)
+	// Each local gift needs its own slug prefix: NFT slugs are
+	// "<prefix>-<number>" with numbers counted per gift.
+	slugPrefixes := map[int64]string{}
+	slugPrefixFor := func(command string, giftID int64) string {
+		if prefix, ok := slugPrefixes[giftID]; ok && giftID != 0 {
+			return prefix
+		}
+		return "probe-" + command + "-" + suffix
+	}
 	importGift := func(command string, giftID int64, supply int, include bool, limited ...bool) int64 {
 		t.Helper()
+		prefix := slugPrefixFor(command, giftID)
 		req := admin.ImportOfficialStarGiftRequest{
 			CommandMeta:  admin.CommandMeta{CommandID: command + "-" + suffix, Actor: "review", Reason: "inventory regression"},
 			SourceGiftID: "72", GiftID: giftID, Enabled: true, IncludeCollectible: include, SupplyTotal: supply,
-			UpgradeStars: 100, SlugPrefix: "probe-" + suffix,
+			UpgradeStars: 100, SlugPrefix: prefix,
 		}
 		if len(limited) > 0 {
 			req.Limited = limited[0]
@@ -97,6 +107,9 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 		id, err := strconv.ParseInt(result.Details["gift_id"].(string), 10, 64)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if _, ok := slugPrefixes[id]; !ok {
+			slugPrefixes[id] = prefix
 		}
 		return id
 	}
@@ -182,7 +195,7 @@ func TestOfficialStarGiftInventoryPostgres(t *testing.T) {
 			}
 			_, err := svc.ImportOfficialStarGift(ctx, admin.ImportOfficialStarGiftRequest{
 				CommandMeta:  admin.CommandMeta{CommandID: fmt.Sprintf("change-%d-%s", supply, suffix), Actor: "review", Reason: "supply bounds"},
-				SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: supply, UpgradeStars: 100, SlugPrefix: "probe-" + suffix, Limited: true,
+				SourceGiftID: "72", GiftID: id, Enabled: true, IncludeCollectible: true, SupplyTotal: supply, UpgradeStars: 100, SlugPrefix: slugPrefixFor("", id), Limited: true,
 			})
 			if !errors.Is(err, domain.ErrStarGiftLifecycleInvalid) {
 				t.Fatalf("changed supply=%d err=%v", supply, err)

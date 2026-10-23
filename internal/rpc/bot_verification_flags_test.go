@@ -122,10 +122,10 @@ func TestBotVerificationConstructorIDs(t *testing.T) {
 		t.Fatalf("botVerifierSettings constructor id = %#x, want 0xa12aefff", tg.BotVerifierSettingsTypeID)
 	}
 	// The carriers, so a layer bump that reshuffles them is caught here too.
-	if tg.UserTypeID != 0xb1b8cc83 || tg.ChannelTypeID != 0xd49f34c6 {
+	if tg.UserTypeID != 0xb1b8cc83 || tg.ChannelTypeID != 0x7ad15240 {
 		t.Fatalf("peer constructor ids = user %#x / channel %#x", tg.UserTypeID, tg.ChannelTypeID)
 	}
-	if tg.UserFullTypeID != 0x6cbe645 || tg.ChannelFullTypeID != 0xa04e8d3a {
+	if tg.UserFullTypeID != 0xb90c2afd || tg.ChannelFullTypeID != 0xc4c4dd40 {
 		t.Fatalf("full constructor ids = userFull %#x / channelFull %#x", tg.UserFullTypeID, tg.ChannelFullTypeID)
 	}
 	if tg.ChatInviteTypeID != 0x5c9d3702 || tg.BotInfoTypeID != 0x4d8a0299 {

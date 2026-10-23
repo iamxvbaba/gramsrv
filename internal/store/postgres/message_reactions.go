@@ -246,6 +246,9 @@ func (s *MessageStore) enrichPrivateMessageReactions(ctx context.Context, db sql
 	if err := s.enrichSavedMessageTags(ctx, db, messages); err != nil {
 		return err
 	}
+	if err := enrichPrivatePaidMessageStars(ctx, db, messages); err != nil {
+		return err
+	}
 	keySet := make(map[privateMessageReactionKey]struct{}, len(messages))
 	senderIDs := make([]int64, 0, len(messages))
 	privateIDs := make([]int64, 0, len(messages))

@@ -38,7 +38,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Dla każdego";
 "AboutCocoon.Feature.Private.Description" = "Żadna strona trzecia nie ma dostępu do żadnych danych, takich jak tłumaczenia, znajdujących się w Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Prywatny";
-"AboutCocoon.Footer" = "Chcesz zintegrować Cocoon ze swoimi projektami?\nSkontaktuj się z nami: [t.me/cocoon?direct](t.me/cocoon?direct)";
+"AboutCocoon.Footer" = "Chcesz zintegrować Cocoon ze swoimi projektami?\nSkontaktuj się z nami: [sgq.me/cocoon?direct](sgq.me/cocoon?direct)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Wyłącz udostępnianie";
 "AboutFeature.DisableSharing.NoForwarding" = "Brak przekazywania";
@@ -490,7 +490,7 @@
 "Bot.AllowSendMessages" = "Zezwól **%@** na wysyłanie mi wiadomości";
 "Bot.Grossing.Disclaimer" = "Jakie aplikacje są tutaj zawarte? [Czytaj więcej »](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Najlepsze miniaplikacje";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Ten katalog klasyfikuje miniaplikacje na podstawie ich dziennego przychodu, mierzonego w Gwiazdkach. Aby zostać uwzględnionym, deweloperzy muszą ustawić swoje główne miniaplikacje w [@botfather](https://t.me/botfather) (jak opisano [tutaj](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), mieć ponad **1000** użytkowników dziennie i zarabiać dziennie ponad **1000** Gwiazdek, na podstawie średniej tygodniowej.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Ten katalog klasyfikuje miniaplikacje na podstawie ich dziennego przychodu, mierzonego w Gwiazdkach. Aby zostać uwzględnionym, deweloperzy muszą ustawić swoje główne miniaplikacje w [@botfather](https://sgq.me/botfather) (jak opisano [tutaj](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), mieć ponad **1000** użytkowników dziennie i zarabiać dziennie ponad **1000** Gwiazdek, na podstawie średniej tygodniowej.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Rozumiem";
 "Bot.InlineAuth.Header" = "Otwórz link";
 "Bot.InlineAuth.Open" = "Otwórz";
@@ -3561,7 +3561,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "System\n%@";
 "EmptyGroupInfo.Line1" = "Maksymalnie %@ członków";
 "EmptyGroupInfo.Line2" = "Jednolitą historię czatu";
-"EmptyGroupInfo.Line3" = "Linki publiczne, takie jak t.me/title";
+"EmptyGroupInfo.Line3" = "Linki publiczne, takie jak sgq.me/title";
 "EmptyGroupInfo.Line4" = "Administratorów z różnymi uprawnieniami";
 "EmptyGroupInfo.Subtitle" = "Grupy mogą mieć:";
 "EmptyGroupInfo.Title" = "Utworzono grupę";
@@ -5811,7 +5811,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Przypięte czaty";
 "Premium.Boarding.Double.PinnedChats.Info" = "Przypnij do %@ czatów na głównej liście czatów";
 "Premium.Boarding.Double.PublicLinks" = "Publiczne linki";
-"Premium.Boarding.Double.PublicLinks.Info" = "Zarezerwuj do %@ linków t.me/nazwa_uzytkownika";
+"Premium.Boarding.Double.PublicLinks.Info" = "Zarezerwuj do %@ linków sgq.me/nazwa_uzytkownika";
 "Premium.Boarding.Double.SavedGifs" = "Zapisane GIFy";
 "Premium.Boarding.Double.SavedGifs.Info" = "Zapisz do %@ GIFów w swoich ulubionych GIFach";
 "Premium.Boarding.Double.Title" = "Podwojone limity";
@@ -6253,7 +6253,7 @@
 "ProxySettings.CredentialsHeader" = "DANE UWIERZYTELNIAJĄCE (OPCJONALNIE)";
 "ProxySettings.Disabled" = "Wyłączony";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Jeśli w schowku znajduje się link socks5 (**t.me/socks?server=127.0.0.1&port=80**) będzie on natychmiast zastosowany";
+"ProxySettings.ExportDescription" = "Jeśli w schowku znajduje się link socks5 (**sgq.me/socks?server=127.0.0.1&port=80**) będzie on natychmiast zastosowany";
 "ProxySettings.ExportLink" = "Eksportuj link ze schowka";
 "ProxySettings.IncorrectSecret" = "Nieprawidłowy sekret. Spróbuj ponownie.";
 "ProxySettings.Item.Available" = "dostępny (ping; %@ ms)";
@@ -8485,7 +8485,7 @@
 "TranslateModal.DeleteStyleHeader" = "Usuń styl";
 "TranslateModal.EditStyle" = "Edytuj styl";
 "TranslateModal.ShareStyle" = "Udostępnij styl";
-"TranslateModal.StyleByAuthor" = "Styl od [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Styl od [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Pomiń";
 "TwoStepAuth.AnError" = "Wystąpił błąd. Spróbuj ponownie później.";
 "TwoStepAuth.CancelReset" = "Anuluj resetowanie";

@@ -88,7 +88,7 @@ func (v *MainnetVerifier) VerifyMint(ctx context.Context, collectionRaw string, 
 // CurrentNFTOwner resolves the current owner of one NFT from the configured
 // collection. The boolean is false when itemRaw belongs to another collection
 // generation. That distinction lets the ownership watcher ignore immutable
-// NFTs minted by an older deployment without mutating their Gramsrv records.
+// NFTs minted by an older deployment without mutating their ShuzaGram records.
 func (v *MainnetVerifier) CurrentNFTOwner(ctx context.Context, collectionRaw string, itemIndex *big.Int, itemRaw string) (string, bool, error) {
 	if itemIndex == nil || itemIndex.Sign() < 0 {
 		return "", false, fmt.Errorf("invalid item index")

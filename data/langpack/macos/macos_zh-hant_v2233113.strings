@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "對所有人開放";
 "AboutCocoon.Feature.Private.Description" = "任何第三方均無法存取 Cocoon 內的任何資料，例如翻譯內容。";
 "AboutCocoon.Feature.Private.Title" = "私人";
-"AboutCocoon.Footer" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "停用分享功能";
 "AboutFeature.DisableSharing.NoForwarding" = "禁止轉傳";
@@ -468,7 +468,7 @@
 "Bot.AllowSendMessages" = "允許 **%@** 向我傳送訊息。";
 "Bot.Grossing.Disclaimer" = "這裡包括哪些應用程式？ [了解 >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "熱門迷你程式";
-"Bot.Grossing.Disclaimer.Alert.Text" = "此目錄根據迷你程式的每日收入（以星星數量衡量）對它們進行排名。若想要列入清單，開發人員必須在 [@botfather](https://t.me/botfather) 中設定主要迷你程式（如[此處](https://core.telegram.org/api/bots/webapps)所述） ，該程式應擁有超過 **1,000** 名每日用戶，且每日收入超過 **1,000** 顆星星（基於每周平均值）。";
+"Bot.Grossing.Disclaimer.Alert.Text" = "此目錄根據迷你程式的每日收入（以星星數量衡量）對它們進行排名。若想要列入清單，開發人員必須在 [@botfather](https://sgq.me/botfather) 中設定主要迷你程式（如[此處](https://core.telegram.org/api/bots/webapps)所述） ，該程式應擁有超過 **1,000** 名每日用戶，且每日收入超過 **1,000** 顆星星（基於每周平均值）。";
 "Bot.Grossing.Disclaimer.Alert.ok" = "我已了解";
 "Bot.InlineAuth.Header" = "開啟連結";
 "Bot.InlineAuth.Open" = "開啟";
@@ -3312,7 +3312,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "系統\n%@";
 "EmptyGroupInfo.Line1" = "• 最多 %@ 個成員";
 "EmptyGroupInfo.Line2" = "• 永久的聊天紀錄";
-"EmptyGroupInfo.Line3" = "• 公開連結，例如：t.me/title";
+"EmptyGroupInfo.Line3" = "• 公開連結，例如：sgq.me/title";
 "EmptyGroupInfo.Line4" = "• 具有不同權限的管理員";
 "EmptyGroupInfo.Subtitle" = "群組可以有：";
 "EmptyGroupInfo.Title" = "您建立了一個群組";
@@ -5333,7 +5333,7 @@
 "Premium.Boarding.Double.PinnedChats" = "置頂聊天";
 "Premium.Boarding.Double.PinnedChats.Info" = "在您的主聊天列表中置頂最多 %@ 個聊天";
 "Premium.Boarding.Double.PublicLinks" = "公開連結";
-"Premium.Boarding.Double.PublicLinks.Info" = "最多可擁有 %@ 個 t.me/username 連結";
+"Premium.Boarding.Double.PublicLinks.Info" = "最多可擁有 %@ 個 sgq.me/username 連結";
 "Premium.Boarding.Double.SavedGifs" = "可儲存的 GIF 數量";
 "Premium.Boarding.Double.SavedGifs.Info" = "在您收藏的 GIF 中最多儲存 %@ 張";
 "Premium.Boarding.Double.Title" = "上限翻倍";
@@ -5747,7 +5747,7 @@
 "ProxySettings.CredentialsHeader" = "證明 (選填)";
 "ProxySettings.Disabled" = "已停用";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "如果您的剪貼簿包含 socks5-連結 (**t.me/socks?server=127.0.0.1&port=80**) 它將立即被應用";
+"ProxySettings.ExportDescription" = "如果您的剪貼簿包含 socks5-連結 (**sgq.me/socks?server=127.0.0.1&port=80**) 它將立即被應用";
 "ProxySettings.ExportLink" = "從剪貼簿匯出連結";
 "ProxySettings.IncorrectSecret" = "不正確的金鑰。請再試一次。";
 "ProxySettings.Item.Available" = "可用（%@ 毫秒網路延遲）";

@@ -104,8 +104,8 @@ func TestTgMessageMediaWebPageAiComposeToneAttribute(t *testing.T) {
 		WebPage: &domain.MessageWebPage{
 			State:              domain.MessageWebPageStateDone,
 			ID:                 123,
-			URL:                "https://t.me/addstyle/ai-test",
-			DisplayURL:         "t.me/addstyle/ai-test",
+			URL:                "https://sgq.me/addstyle/ai-test",
+			DisplayURL:         "sgq.me/addstyle/ai-test",
 			Hash:               7,
 			Type:               "telegram_aicomposetone",
 			Title:              "Sharp",

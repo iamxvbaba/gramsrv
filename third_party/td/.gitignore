@@ -1,0 +1,7 @@
+.idea
+_bin/*
+
+*-fuzz.zip
+/cmd/gotdecho/gotdecho
+
+*.out

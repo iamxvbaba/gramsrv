@@ -27,10 +27,10 @@ func TestTONDNSNameAcceptsTonNames(t *testing.T) {
 
 func TestTONDNSNameRejectsTelegramIdentities(t *testing.T) {
 	for _, raw := range []string{
-		"rayo.t.me",
-		"@rayo.t.me",
-		"t.me/rayo",
-		"https://rayo.t.me",
+		"rayo.sgq.me",
+		"@rayo.sgq.me",
+		"sgq.me/rayo",
+		"https://rayo.sgq.me",
 		"",
 		"rayo..ton",
 		"-rayo.ton",
@@ -43,7 +43,7 @@ func TestTONDNSNameRejectsTelegramIdentities(t *testing.T) {
 }
 
 func TestCanonicalTONAddressRejectsUsernameForms(t *testing.T) {
-	for _, raw := range []string{"rayo", "@rayo", "rayo.t.me", "t.me/rayo", "rayo.ton"} {
+	for _, raw := range []string{"rayo", "@rayo", "rayo.sgq.me", "sgq.me/rayo", "rayo.ton"} {
 		if got, err := CanonicalTONAddress(raw); err == nil {
 			t.Errorf("CanonicalTONAddress(%q) = %q,nil, want error", raw, got)
 		}
@@ -67,12 +67,12 @@ func TestNormalizeUsernameLinkForms(t *testing.T) {
 	}{
 		{"rayo", "rayo"},
 		{"@rayo", "rayo"},
-		{"t.me/rayo", "rayo"},
-		{"https://t.me/rayo", "rayo"},
-		{"https://t.me/@rayo", "rayo"},
-		{"rayo.t.me", "rayo"},
-		{"https://rayo.t.me", "rayo"},
-		{"@rayo.t.me", "rayo"},
+		{"sgq.me/rayo", "rayo"},
+		{"https://sgq.me/rayo", "rayo"},
+		{"https://sgq.me/@rayo", "rayo"},
+		{"rayo.sgq.me", "rayo"},
+		{"https://rayo.sgq.me", "rayo"},
+		{"@rayo.sgq.me", "rayo"},
 		{"  @Rayo  ", "Rayo"},
 	} {
 		if got := NormalizeUsername(tc.raw); got != tc.want {

@@ -942,9 +942,9 @@
 "Business.Links.LinksSectionHeader" = "聊天連結";
 "Business.Links.PreviewText" = "加入一則訊息，所有透過以下連結與您開始聊天的人都將在訊息輸入欄位顯示此訊息：";
 "Business.Links.PreviewTitle" = "聊天連結";
-"Business.Links.SimpleLinkInfoPhone" = "您也可以使用一條簡單的連結開始與您的聊天 - [t.me/\u2060+\u2060%@](電話)。";
-"Business.Links.SimpleLinkInfoUsername" = "您還可以使用一條簡單的連結開啟與您的聊天 - [t.me/%@](用戶名稱)。";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "您也可以使用簡單的連結開始與您的聊天 - [t.me/%1$@](用戶名) 或 [t.me/\u2060+\u2060%2$@](電話)。";
+"Business.Links.SimpleLinkInfoPhone" = "您也可以使用一條簡單的連結開始與您的聊天 - [sgq.me/\u2060+\u2060%@](電話)。";
+"Business.Links.SimpleLinkInfoUsername" = "您還可以使用一條簡單的連結開啟與您的聊天 - [sgq.me/%@](用戶名稱)。";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "您也可以使用簡單的連結開始與您的聊天 - [sgq.me/%1$@](用戶名) 或 [sgq.me/\u2060+\u2060%2$@](電話)。";
 "Business.Links.Text" = "為您的客戶提供開始與您聊天的簡短連結，並為他們建議發起話題的問候語。";
 "Business.LinksInfo" = "建立與您開始聊天的連結，並預設第一則訊息。";
 "Business.Location" = "位置";
@@ -1803,7 +1803,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "抱歉，頻道連結不能以底線開頭";
 "Channel.Username.InvalidTaken" = "抱歉，此連結已被佔用。";
 "Channel.Username.InvalidTooShort" = "公開連結至少要有 5 個字元。";
-"Channel.Username.LinkHint" = "此連結開啟您在 Telegram 中的頻道：[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "此連結開啟您在 Telegram 中的頻道：[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "您可以撤銷舊群組或頻道的連結，或改為建立私人頻道。";
 "Channel.Username.Title" = "連結";
 "Channel.Username.UsernameIsAvailable" = "%@ 是可用的。";
@@ -3237,7 +3237,7 @@
 "CocoonInfo.Efficient.Title" = "高效";
 "CocoonInfo.ForEveryone.Text" = "任何開發者都可以使用 [Cocoon](telegram) 來實現 AI 功能。了解更多信息，請訪問  [cocoon.org](web)。";
 "CocoonInfo.ForEveryone.Title" = "對所有人開放";
-"CocoonInfo.IntergrateInfo" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "任何第三方均無法存取 cocoon 內的任何資料，例如翻譯內容。";
 "CocoonInfo.Private.Title" = "私人";
 "CocoonInfo.Title" = "COCOON";
@@ -4094,7 +4094,7 @@
 "CreateBot.UsernameStatus.Checking" = "檢查中…";
 "CreateBot.UsernameStatus.Invalid" = "您只能使用 a-z、0-9 及底線。";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "您最多只能建立 %d 個機器人。";
-"CreateBot.UsernameStatus.Link" = "連結：t.me/%@";
+"CreateBot.UsernameStatus.Link" = "連結：sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "用戶名稱不能以數字開頭。";
 "CreateBot.UsernameStatus.Short" = "用戶名稱必須至少有 5 個字元。";
 "CreateBot.UsernameStatus.Taken" = "此用戶名稱已被佔用。";
@@ -4465,7 +4465,7 @@
 "EmojiStickerSettings.Info" = "歡迎畫家使用我們的 @stickers 機器人來上傳他們所擁有的表情包。\n\n按住表情訊息以查看和新增整個表情包。";
 "EmptyGroupInfo.Line1" = "最多 200,000 位成員";
 "EmptyGroupInfo.Line2" = "永久的聊天紀錄";
-"EmptyGroupInfo.Line3" = "公開連結，例如：t.me/title";
+"EmptyGroupInfo.Line3" = "公開連結，例如：sgq.me/title";
 "EmptyGroupInfo.Line4" = "具有不同權限的管理員";
 "EmptyGroupInfo.Subtitle" = "群組可以有：";
 "EmptyGroupInfo.Title" = "您建立了一個群組";
@@ -8460,7 +8460,7 @@
 "Premium.Limits.PinnedChats" = "置頂聊天";
 "Premium.Limits.PinnedChatsInfo" = "在您的主聊天列表中置頂最多 10 個聊天";
 "Premium.Limits.PublicLinks" = "公開連結";
-"Premium.Limits.PublicLinksInfo" = "最多可擁有 20 個 [t.me/username]() 連結";
+"Premium.Limits.PublicLinksInfo" = "最多可擁有 20 個 [sgq.me/username]() 連結";
 "Premium.Limits.RecommendedChannels" = "相似頻道";
 "Premium.Limits.RecommendedChannelsInfo" = "查看最多 100 個相似頻道";
 "Premium.Limits.SavedGifs" = "可儲存的 GIF 數量";
@@ -8803,7 +8803,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "誰可以看見我的最後上線時間？";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "將您的號碼加入到手機聯絡資訊的用戶只有在他們是您的聯絡人時，才會在 Telegram 上看到它。";
 "PrivacyPhoneNumberSettings.CustomHelp" = "將您的號碼加入到手機聯絡資訊的用戶也將在 Telegram 上看到它。";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "將您的號碼加入到手機聯絡資訊的用戶也將在 Telegram 上看到它。\n\n這條公開連結開啟與您的聊天：\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "將您的號碼加入到手機聯絡資訊的用戶也將在 Telegram 上看到它。\n\n這條公開連結開啟與您的聊天：\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = " 誰可以透過我的電話號碼找到我？";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "誰可以看見我的電話號碼？";
 "PrivacyPolicy.Accept" = "接受並繼續";
@@ -9648,8 +9648,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "無法使用";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "類型";
-"SocksProxySetup.QrCode.TMeLink" = "t.me 連結";
-"SocksProxySetup.QrCode.TgLink" = "tg:// 連結";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me 連結";
+"SocksProxySetup.QrCode.TgLink" = "sg:// 連結";
 "SocksProxySetup.RequiredCredentials" = "認證";
 "SocksProxySetup.SaveProxy" = "儲存代理伺服器";
 "SocksProxySetup.SavedProxies" = "已儲存的代理";
@@ -11199,7 +11199,7 @@
 "Username.InvalidTooShort" = "用戶名稱必須至少有 5 個字元。";
 "Username.InvalidValue" = "抱歉，此用戶名無效。";
 "Username.LinkCopied" = "連結已拷貝到剪貼簿。";
-"Username.LinkHint" = "此連結開啟與您的聊天：\n[https://t.me/%@]";
+"Username.LinkHint" = "此連結開啟與您的聊天：\n[https://sgq.me/%@]";
 "Username.LinksOrder" = "用戶名稱排序";
 "Username.LinksOrderInfo" = "拖放連結以變更它们在您個人資料頁上的顯示順序。";
 "Username.Placeholder" = "您的用戶名稱";

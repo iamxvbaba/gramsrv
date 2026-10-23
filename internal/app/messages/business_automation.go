@@ -266,12 +266,19 @@ func (s *Service) deliverBusinessAutomation(ctx context.Context, profile domain.
 		return err
 	}
 	for i, msg := range msgs {
+		var groupedID int64
+		if msg.GroupedID != 0 {
+			// A fresh album id per delivery, stable for retries of the same trigger.
+			groupedID = businessAutomationRandomID(kind, profile.UserID, customerUserID, trigger.ID, int(msg.GroupedID&0x7fffffff), -1)
+		}
 		_, err := s.SendPrivateText(ctx, profile.UserID, domain.SendPrivateTextRequest{
 			SenderUserID:           profile.UserID,
 			RecipientUserID:        customerUserID,
 			RandomID:               businessAutomationRandomID(kind, profile.UserID, customerUserID, trigger.ID, msg.ID, i),
 			Message:                msg.Message,
 			Entities:               append([]domain.MessageEntity(nil), msg.Entities...),
+			Media:                  msg.Media,
+			GroupedID:              groupedID,
 			Date:                   now,
 			BusinessAutomationKind: kind,
 		})
@@ -310,7 +317,7 @@ func (s *Service) businessAutomationMessages(ctx context.Context, profile domain
 	}
 	out := make([]domain.QuickReplyMessage, 0, len(msgs))
 	for _, msg := range msgs {
-		if msg.Message == "" || utf8.RuneCountInString(msg.Message) > domain.MaxMessageTextLength || len(msg.Entities) > domain.MaxMessageEntityCount {
+		if (msg.Message == "" && msg.Media.IsZero()) || utf8.RuneCountInString(msg.Message) > domain.MaxMessageTextLength || len(msg.Entities) > domain.MaxMessageEntityCount {
 			continue
 		}
 		out = append(out, msg)

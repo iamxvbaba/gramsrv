@@ -996,7 +996,7 @@
 "GroupChecklist" = "Grup Kontrol Listesi";
 "GroupDescription1" = "200.000'e kadar üye";
 "GroupDescription2" = "Kalıcı sohbet geçmişi";
-"GroupDescription3" = "t.me/baslik gibi herkese açık bağlantılar";
+"GroupDescription3" = "sgq.me/baslik gibi herkese açık bağlantılar";
 "GroupDescription4" = "Farklı yetkilere sahip yöneticiler";
 "GroupEmptyTitle1" = "Bir **grup** oluşturdunuz.";
 "GroupEmptyTitle2" = "Gruplarda şunlar mevcuttur:";
@@ -1604,7 +1604,7 @@
 "Profile" = "Profil";
 "ProfileStories" = "Yayınlar";
 "ProfileStoriesArchiveHint" = "Profilinizde yayınlamayı seçmediğiniz sürece arşivlenmiş hikayeleri yalnızca siz görebilirsiniz.";
-"PublicLinksLimitSubtitle" = "%d adede kadar t.me/username bağlantısı ayırın";
+"PublicLinksLimitSubtitle" = "%d adede kadar sgq.me/username bağlantısı ayırın";
 "PublicLinksLimitTitle" = "Genel Bağlantılar";
 "PublicShares" = "Genel Paylaşımlar";
 "PublicSharesCount#one" = "%1$s genel paylaşım";
@@ -1990,7 +1990,7 @@
 "Telegram.LanguageViewController" = "Dil";
 "Telegram.NotificationSettingsViewController" = "Bildirimler";
 "TelegramFeatures" = "Telegram Özellikleri";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsTR";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsTR";
 "TelegramPremiumSubscribedSubtitle" = "**Telegram Premium**'a abone olduğunuz için teşekkür ederiz. \nArtık tüm kilitler açıldı.";
 "TelegramPremiumSubscribedTitle" = "Her şey tamam!";
 "TelegramPremiumUserGiftedPremiumDialogSubtitle" = "Artık ek özelliklere erişiminiz var.";

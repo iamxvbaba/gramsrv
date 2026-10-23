@@ -28,7 +28,7 @@ func TestDetectAutomaticMessageEntitiesCoversLexicalTypes(t *testing.T) {
 }
 
 func TestDetectAutomaticMessageEntitiesSkipsEmailURLsAndOccupiedRanges(t *testing.T) {
-	message := "mail bob@example.com https://t.me/@scam github.com/@other @real"
+	message := "mail bob@example.com https://sgq.me/@scam github.com/@other @real"
 	got := DetectAutomaticMessageEntities(message, []MessageEntitySpan{{Offset: 58, Length: 5}})
 	if len(got) != 0 {
 		t.Fatalf("entities = %+v, want no email, URL-path or occupied mention", got)

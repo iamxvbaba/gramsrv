@@ -3828,7 +3828,7 @@
 "lng_greeting_title" = "Вітальнае паведамленне";
 "lng_group_about1" = "Да 200,000 удзельнікаў";
 "lng_group_about2" = "Захаваную гісторыю чата";
-"lng_group_about3" = "Публічныя спасылкі, такія як t.me/title";
+"lng_group_about3" = "Публічныя спасылкі, такія як sgq.me/title";
 "lng_group_about4" = "Кіраўнікі з рознымі правамі";
 "lng_group_about_header" = "Вы стварылі суполку.";
 "lng_group_about_text" = "Суполкі могуць мець:";
@@ -5619,10 +5619,10 @@
 "lng_premium_double_limits_about_gifs#few" = "Захоўвайце ў вашы абраныя анімацыі да {count} штук";
 "lng_premium_double_limits_about_gifs#many" = "Захоўвайце ў вашы абраныя анімацыі да {count} штук";
 "lng_premium_double_limits_about_gifs#other" = "Захоўвайце ў вашы абраныя анімацыі да {count} штукі";
-"lng_premium_double_limits_about_links#one" = "Рэзервуйце да {count} спасылкі t.me/username";
-"lng_premium_double_limits_about_links#few" = "Рэзервуйце да {count} спасылак t.me/username";
-"lng_premium_double_limits_about_links#many" = "Рэзервуйце да {count} спасылак t.me/username";
-"lng_premium_double_limits_about_links#other" = "Рэзервуйце да {count} спасылкі t.me/username";
+"lng_premium_double_limits_about_links#one" = "Рэзервуйце да {count} спасылкі sgq.me/username";
+"lng_premium_double_limits_about_links#few" = "Рэзервуйце да {count} спасылак sgq.me/username";
+"lng_premium_double_limits_about_links#many" = "Рэзервуйце да {count} спасылак sgq.me/username";
+"lng_premium_double_limits_about_links#other" = "Рэзервуйце да {count} спасылкі sgq.me/username";
 "lng_premium_double_limits_about_pins#one" = "Замацоўвайце да {count} чата ў вашым галоўным спісе чатаў.";
 "lng_premium_double_limits_about_pins#few" = "Замацоўвайце да {count} чатаў у вашым галоўным спісе чатаў.";
 "lng_premium_double_limits_about_pins#many" = "Замацоўвайце да {count} чатаў у вашым галоўным спісе чатаў.";
@@ -7793,7 +7793,7 @@
 "lng_tag_info_text_user" = "Гэты шэры тэг {emoji} з'яўляецца тэгам {author}\n—  удзельніка {group}.";
 "lng_tag_info_title_admin" = "Тэгі кіраўніка";
 "lng_tag_info_title_owner" = "Тэгі уладальніка";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Я пацвярджаю, што мне {count} год або больш";
 "lng_terms_age#few" = "Я пацвярджаю, што мне {count} гады або больш";
 "lng_terms_age#many" = "Я пацвярджаю, што мне {count} гадоў або больш";

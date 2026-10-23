@@ -592,7 +592,7 @@
 "EmptyChatAppearanceSystem" = "Tizim";
 "EmptyGroupInfoLine1" = "• {count} tagacha aʼzo";
 "EmptyGroupInfoLine2" = "• Umumiy yozishmalar tarixi";
-"EmptyGroupInfoLine3" = "• t.me/title kabi ommaviy havolalar";
+"EmptyGroupInfoLine3" = "• sgq.me/title kabi ommaviy havolalar";
 "EmptyGroupInfoLine4" = "• Turli xil huquqlarga ega adminlar";
 "EmptyGroupInfoSubtitle" = "Guruh imkoniyatlari:";
 "EmptyGroupInfoTitle" = "Siz guruh yaratdingiz";
@@ -1286,7 +1286,7 @@
 "ProfileOpenAppAbout" = "Bu mini ilovani ishga tushirish orqali {terms}ga rozilik bildirasiz.";
 "ProfileViewChannel" = "Kanalni koʻrish";
 "PublicLink" = "Ommaviy havola";
-"PublicLinksLimitSubtitle" = "{count} tagacha t.me/username shaklidagi havoladan foydalaning";
+"PublicLinksLimitSubtitle" = "{count} tagacha sgq.me/username shaklidagi havoladan foydalaning";
 "PublicLinksLimitTitle" = "Ommaviy havolalar";
 "PublicPoll" = "Soʻrovnoma";
 "PublicPostsLimitReached" = "Limitga yetgan";

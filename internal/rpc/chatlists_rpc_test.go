@@ -62,7 +62,7 @@ func TestChatlistsExportInvitePublicBaseURLIsRouterScoped(t *testing.T) {
 		},
 	}
 	local := New(Config{PublicBaseURL: "http://127.0.0.1:2401"}, Deps{Chatlists: fake}, zap.NewNop(), clock.System)
-	_ = New(Config{PublicBaseURL: "https://telesrv.net"}, Deps{Chatlists: fake}, zap.NewNop(), clock.System)
+	_ = New(Config{PublicBaseURL: "https://sgq.me"}, Deps{Chatlists: fake}, zap.NewNop(), clock.System)
 	got, err := local.onChatlistsExportChatlistInvite(WithUserID(context.Background(), 1001), &tg.ChatlistsExportChatlistInviteRequest{
 		Chatlist: tg.InputChatlistDialogFilter{FilterID: 2},
 		Title:    "Main link",
@@ -228,7 +228,7 @@ func TestChatlistsEditInviteRevokedFlagRoundTrips(t *testing.T) {
 			Revoked:     true,
 		},
 	}
-	r := New(Config{PublicBaseURL: "https://telesrv.net"}, Deps{Chatlists: fake}, zap.NewNop(), clock.System)
+	r := New(Config{PublicBaseURL: "https://sgq.me"}, Deps{Chatlists: fake}, zap.NewNop(), clock.System)
 	var flags bin.Fields
 	flags.Set(0)
 	got, err := r.onChatlistsEditExportedInvite(WithUserID(context.Background(), 1001), &tg.ChatlistsEditExportedInviteRequest{

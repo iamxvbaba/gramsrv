@@ -115,6 +115,9 @@ func (p stubPrivacy) SetRules(context.Context, int64, domain.PrivacyKey, []domai
 func (p stubPrivacy) AddAllowUser(context.Context, int64, domain.PrivacyKey, int64) (domain.PrivacyRules, bool, error) {
 	return domain.PrivacyRules{}, false, nil
 }
+func (p stubPrivacy) RemoveAllowUser(context.Context, int64, domain.PrivacyKey, int64) (domain.PrivacyRules, bool, error) {
+	return domain.PrivacyRules{}, false, nil
+}
 
 func (p stubPrivacy) CanSee(_ context.Context, _, _ int64, key domain.PrivacyKey) (bool, error) {
 	return !p.deny[key], nil
@@ -238,6 +241,9 @@ func (legacyPrivacy) SetRules(context.Context, int64, domain.PrivacyKey, []domai
 }
 
 func (legacyPrivacy) AddAllowUser(context.Context, int64, domain.PrivacyKey, int64) (domain.PrivacyRules, bool, error) {
+	return domain.PrivacyRules{}, false, nil
+}
+func (legacyPrivacy) RemoveAllowUser(context.Context, int64, domain.PrivacyKey, int64) (domain.PrivacyRules, bool, error) {
 	return domain.PrivacyRules{}, false, nil
 }
 

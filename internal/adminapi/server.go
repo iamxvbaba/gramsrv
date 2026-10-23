@@ -37,6 +37,8 @@ type Config struct {
 	//		})
 	//	}
 	ScopedTokens []ScopedToken
+	// BotShop stores the numbers bot shop price list; nil disables it.
+	BotShop BotShopStore
 }
 
 type Service interface {
@@ -87,6 +89,14 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
+	ListAutoSubscribeChannels(ctx context.Context) ([]domain.AutoSubscribeChannel, error)
+	PendingGiftCollectible(ctx context.Context, giftID int64) (domain.StarGiftCollectibleRevision, bool, error)
+	ReleaseCollectiblePool(ctx context.Context, req admin.ReleaseCollectiblePoolRequest) (admin.CommandResult, error)
+	SetStarGiftSupply(ctx context.Context, req admin.SetStarGiftSupplyRequest) (admin.CommandResult, error)
+	SetStarGiftDropProtection(ctx context.Context, req admin.SetStarGiftDropProtectionRequest) (admin.CommandResult, error)
+	DeleteStarGift(ctx context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error)
+	AddAutoSubscribeChannel(ctx context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error)
+	RemoveAutoSubscribeChannel(ctx context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error)
 	SetNftGiftWallet(ctx context.Context, req admin.SetNftGiftWalletRequest) (admin.CommandResult, error)
 	GiveGift(ctx context.Context, req admin.GiveGiftRequest) (admin.CommandResult, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
@@ -201,7 +211,7 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 	if log == nil {
 		log = zap.NewNop()
 	}
-	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log}
+	server := &Server{token: cfg.Token, scoped: cfg.ScopedTokens, svc: svc, log: log, botShop: cfg.BotShop}
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.routes(),
@@ -223,10 +233,11 @@ func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http
 }
 
 type Server struct {
-	token  string
-	scoped []ScopedToken
-	svc    Service
-	log    *zap.Logger
+	token   string
+	scoped  []ScopedToken
+	svc     Service
+	log     *zap.Logger
+	botShop BotShopStore
 }
 
 func (s *Server) routes() http.Handler {
@@ -242,12 +253,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/premium/plans/upsert", s.authorized(PermissionPremiumManage, s.handleUpsertPremiumPlan))
 	mux.HandleFunc("GET /v1/premium/users/{id}/entitlements", s.authorized(PermissionPremiumManage, s.handlePremiumEntitlements))
 	mux.HandleFunc("GET /v1/premium/payments/{id}", s.authorized(PermissionPremiumManage, s.handlePremiumPayment))
-	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
+	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authorized(PermissionStarsGrant, s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/grant-stars-all", s.authenticated(s.handleGrantStarsAll))
 	mux.HandleFunc("POST /v1/accounts/debit-stars", s.authenticated(s.handleDebitStars))
-	mux.HandleFunc("POST /v1/accounts/resolve-by-phone", s.authenticated(s.handleResolveUserByPhone))
+	mux.HandleFunc("POST /v1/accounts/resolve-by-phone", s.authorized(PermissionAccountsLookup, s.handleResolveUserByPhone))
 	mux.HandleFunc("POST /v1/donations/chains/update", s.authorized(PermissionDonationsManage, s.handleUpdateDonationChain))
 	mux.HandleFunc("GET /v1/item-prices", s.authorized(PermissionPricesManage, s.handleItemPrices))
+	mux.HandleFunc("GET /v1/bot-shop", s.authorized(PermissionBotShopRead, s.handleGetBotShop))
+	mux.HandleFunc("POST /v1/bot-shop", s.authorized(PermissionPricesManage, s.handleSetBotShop))
 	mux.HandleFunc("POST /v1/item-prices/update", s.authorized(PermissionPricesManage, s.handleUpdateItemPrice))
 	mux.HandleFunc("POST /v1/item-prices/set-rate", s.authorized(PermissionPricesManage, s.handleSetStarsRate))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
@@ -262,6 +275,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
 	mux.HandleFunc("POST /v1/accounts/set-emoji-status", s.authenticated(s.handleSetUserEmojiStatus))
 	mux.HandleFunc("POST /v1/accounts/revoke-sessions", s.authenticated(s.handleRevokeSessions))
+	mux.HandleFunc("GET /v1/channels/auto-subscribe", s.authenticated(s.handleListAutoSubscribeChannels))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/add", s.authenticated(s.handleAddAutoSubscribeChannel))
+	mux.HandleFunc("POST /v1/channels/auto-subscribe/remove", s.authenticated(s.handleRemoveAutoSubscribeChannel))
 	mux.HandleFunc("POST /v1/channels/set-verified", s.authenticated(s.handleSetChannelVerified))
 	mux.HandleFunc("POST /v1/channels/set-flags", s.authenticated(s.handleSetChannelFlags))
 	mux.HandleFunc("POST /v1/channels/set-settings", s.authenticated(s.handleSetChannelSettings))
@@ -290,6 +306,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/official-gifts/{id}/animation", s.authenticated(s.handleOfficialStarGiftAnimation))
 	mux.HandleFunc("POST /v1/official-gifts/import", s.authenticated(s.handleImportOfficialStarGift))
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
+	mux.HandleFunc("POST /v1/gifts/release-collectible-pool", s.authenticated(s.handleReleaseCollectiblePool))
+	mux.HandleFunc("POST /v1/gifts/set-supply", s.authenticated(s.handleSetStarGiftSupply))
+	mux.HandleFunc("POST /v1/gifts/set-drop-protection", s.authenticated(s.handleSetStarGiftDropProtection))
+	mux.HandleFunc("POST /v1/gifts/delete", s.authenticated(s.handleDeleteStarGift))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
 	mux.HandleFunc("POST /v1/gifts/give", s.authenticated(s.handleGiveGift))
@@ -303,6 +323,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gif-catalog/set-sort-order", s.authenticated(s.handleSetGifCatalogSortOrder))
 	mux.HandleFunc("POST /v1/gif-catalog/set-category", s.authenticated(s.handleSetGifCatalogCategory))
 	mux.HandleFunc("POST /v1/gif-catalog/delete", s.authenticated(s.handleDeleteGifCatalogEntry))
+	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/pending", s.authenticated(s.handlePendingStarGiftCollectible))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
 	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
@@ -2340,4 +2361,40 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s *Server) handleListAutoSubscribeChannels(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ListAutoSubscribeChannels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	channels := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		channels = append(channels, map[string]any{
+			"channel_id": strconv.FormatInt(item.ChannelID, 10),
+			"title":      item.Title,
+			"added_by":   item.AddedBy,
+			"added_at":   item.AddedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
+}
+
+func (s *Server) handleAddAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.AddAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.AddAutoSubscribeChannel(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRemoveAutoSubscribeChannel(w http.ResponseWriter, r *http.Request) {
+	var req admin.RemoveAutoSubscribeChannelRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RemoveAutoSubscribeChannel(r.Context(), req)
+	writeCommandResult(w, result, err)
 }

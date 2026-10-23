@@ -142,6 +142,10 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 			return domain.SendChannelMessageResult{}, err
 		}
 	}
+	paidMessageStars, senderStarsBalance, err := chargeSupergroupPaidMessageTx(ctx, tx, channel, member, req)
+	if err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	msgID, err := s.msgIDs.NextChannelMessageID(ctx, req.ChannelID)
 	if err != nil {
 		return domain.SendChannelMessageResult{}, fmt.Errorf("allocate channel message id: %w", err)
@@ -238,6 +242,7 @@ func (s *ChannelStore) sendChannelMessageOnce(ctx context.Context, req domain.Se
 		ViaBotID:          req.ViaBotID,
 		GroupedID:         req.GroupedID,
 		ReplyMarkup:       req.ReplyMarkup,
+		PaidMessageStars:  paidMessageStars,
 		TTLPeriod:         ttlPeriod,
 		ExpiresAt:         expiresAt,
 		ReplyTo:           replyTo,
@@ -352,6 +357,7 @@ WHERE channel_id = $1 AND user_id = $2 AND unread_mark`, req.ChannelID, req.User
 		Channel: channel, Message: msg, Event: event, Discussion: discussion,
 		MentionUserIDs:      append([]int64(nil), req.MentionUserIDs...),
 		SkipDeliveryUserIDs: append([]int64(nil), req.SkipDeliveryUserIDs...),
+		SenderStarsBalance:  senderStarsBalance,
 	}
 	if hooks.after != nil {
 		if err := hooks.after(ctx, tx, txResult); err != nil {

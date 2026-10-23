@@ -434,7 +434,7 @@
 "EmptyChatAppearanceSystem" = "Sistem";
 "EmptyGroupInfoLine1" = "• Hingga {count} anggota";
 "EmptyGroupInfoLine2" = "Riwayat obrolan persisten";
-"EmptyGroupInfoLine3" = "Tautan publik seperti t.me/title";
+"EmptyGroupInfoLine3" = "Tautan publik seperti sgq.me/title";
 "EmptyGroupInfoLine4" = "Admin dengan hak lain";
 "EmptyGroupInfoSubtitle" = "Grup dapat memiliki: ";
 "EmptyGroupInfoTitle" = "Anda membuat grup";
@@ -936,7 +936,7 @@
 "ProfileJoinGroup" = "Gabung Grup";
 "ProfileViewChannel" = "Lihat Channel";
 "PublicLink" = "Tautan publik";
-"PublicLinksLimitSubtitle" = "Miliki hingga {count} tautan t.me/username";
+"PublicLinksLimitSubtitle" = "Miliki hingga {count} tautan sgq.me/username";
 "PublicLinksLimitTitle" = "Tautan Publik";
 "PublicPoll" = "Pol";
 "QuizPoll" = "Kuis";

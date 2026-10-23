@@ -7,7 +7,7 @@ import (
 )
 
 func TestServiceBotReplyEntitiesCommandsAndURLsUseUTF16Offsets(t *testing.T) {
-	text := "🙂 Send /cancel or https://telesrv.net/addstickers/fun_pack."
+	text := "🙂 Send /cancel or https://sgq.me/addstickers/fun_pack."
 	entities := serviceBotReplyEntities(text, nil)
 
 	assertEntity := func(typ domain.MessageEntityType, offset, length int) {
@@ -21,11 +21,11 @@ func TestServiceBotReplyEntitiesCommandsAndURLsUseUTF16Offsets(t *testing.T) {
 	}
 
 	assertEntity(domain.MessageEntityBotCommand, 8, len("/cancel"))
-	assertEntity(domain.MessageEntityURL, 19, len("https://telesrv.net/addstickers/fun_pack"))
+	assertEntity(domain.MessageEntityURL, 19, len("https://sgq.me/addstickers/fun_pack"))
 }
 
 func TestServiceBotReplyEntitiesSkipCommandsInsideURLsAndExplicitEntities(t *testing.T) {
-	text := "Token: abc/def\nhttps://telesrv.net/addstickers/fun_pack\nUse /help"
+	text := "Token: abc/def\nhttps://sgq.me/addstickers/fun_pack\nUse /help"
 	entities := serviceBotReplyEntities(text, []domain.MessageEntity{{
 		Type:   domain.MessageEntityCode,
 		Offset: len("Token: "),
@@ -37,7 +37,7 @@ func TestServiceBotReplyEntitiesSkipCommandsInsideURLsAndExplicitEntities(t *tes
 		if entity.Type == domain.MessageEntityBotCommand {
 			commandCount++
 		}
-		if entity.Type == domain.MessageEntityBotCommand && entity.Offset < len("Token: abc/def\nhttps://telesrv.net/") {
+		if entity.Type == domain.MessageEntityBotCommand && entity.Offset < len("Token: abc/def\nhttps://sgq.me/") {
 			t.Fatalf("unexpected command entity inside code/url: %+v in %+v", entity, entities)
 		}
 	}

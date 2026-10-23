@@ -6,6 +6,7 @@ import { AppBackground } from "../components/AppBackground";
 import { LanguageSwitch, useI18n } from "../i18n";
 import { ThemeSwitch } from "../theme";
 import type { AdminSession } from "../types";
+import { withBase } from "../lib/base";
 
 export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => void }) {
   const { t } = useI18n();
@@ -17,7 +18,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
   // shows the same mark the sidebar does instead of the bundled reference
   // logo. A 404 (nothing configured) is the expected case, not an error worth
   // showing anyone, so it just leaves the fallback in place.
-  const [brandIcon, setBrandIcon] = useState("/logo.png");
+  const [brandIcon, setBrandIcon] = useState(withBase("/logo.png"));
 
   useEffect(() => {
     const probe = new Image();

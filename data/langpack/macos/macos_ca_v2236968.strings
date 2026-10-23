@@ -33,7 +33,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Per a tothom";
 "AboutCocoon.Feature.Private.Description" = "Cap tercer pot accedir a cap dada, com ara traduccions, a dins del Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privat";
-"AboutCocoon.Footer" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Desactiva compartir";
 "AboutFeature.DisableSharing.NoForwarding" = "Sense reenviaments";
@@ -473,7 +473,7 @@
 "Bot.AllowSendMessages" = "Permet a **%@** enviar-me missatges.";
 "Bot.Grossing.Disclaimer" = "Quines aplicacions s'hi inclouen? [Més informació >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Millors Miniaplicacions";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Aquest catàleg puntua les miniaplicacions segons el seu benefici diari, mesurat en estrelles. Per a ser llistada, cal que els desenvolupadors estableixin la seva miniaplicació principal al [@botfather](https://t.me/botfather) (com es descriu [aquí](https://core.telegram.org/api/bots/webapps)), tenir més de **1.000** usuaris diaris, i tenir un benefici de més de **1.000** estrelles diàries, de mitjana setmanal.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Aquest catàleg puntua les miniaplicacions segons el seu benefici diari, mesurat en estrelles. Per a ser llistada, cal que els desenvolupadors estableixin la seva miniaplicació principal al [@botfather](https://sgq.me/botfather) (com es descriu [aquí](https://core.telegram.org/api/bots/webapps)), tenir més de **1.000** usuaris diaris, i tenir un benefici de més de **1.000** estrelles diàries, de mitjana setmanal.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Entesos";
 "Bot.InlineAuth.Header" = "Obre l'enllaç";
 "Bot.InlineAuth.Open" = "Obre";
@@ -3382,7 +3382,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistema\n%@";
 "EmptyGroupInfo.Line1" = "Fins a %@ membres";
 "EmptyGroupInfo.Line2" = "• Historial persistent";
-"EmptyGroupInfo.Line3" = "• Enllaços públics, com t.me/títol";
+"EmptyGroupInfo.Line3" = "• Enllaços públics, com sgq.me/títol";
 "EmptyGroupInfo.Line4" = "Administradors amb rols diferents";
 "EmptyGroupInfo.Subtitle" = "Els grups poden tenir:";
 "EmptyGroupInfo.Title" = "Heu creat un grup";
@@ -5481,7 +5481,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Xats fixats";
 "Premium.Boarding.Double.PinnedChats.Info" = "Fixeu fins a %@ xats a la llista de xats";
 "Premium.Boarding.Double.PublicLinks" = "Enllaços públics";
-"Premium.Boarding.Double.PublicLinks.Info" = "Reserveu fins a %@ enllaços t.me/nom";
+"Premium.Boarding.Double.PublicLinks.Info" = "Reserveu fins a %@ enllaços sgq.me/nom";
 "Premium.Boarding.Double.SavedGifs" = "GIF desats";
 "Premium.Boarding.Double.SavedGifs.Info" = "Deseu fins a %@ GIF als preferits";
 "Premium.Boarding.Double.Title" = "Límits duplicats";
@@ -5905,7 +5905,7 @@
 "ProxySettings.CredentialsHeader" = "CREDENCIALS (OPCIONAL)";
 "ProxySettings.Disabled" = "Desactivat";
 "ProxySettings.Enable" = "Servidor intermediari";
-"ProxySettings.ExportDescription" = "Si el porta-retalls conté un enllaç tipus socks5 (**t.me/socks?server=127.0.0.1&port=80**), s'aplicarà immediatament";
+"ProxySettings.ExportDescription" = "Si el porta-retalls conté un enllaç tipus socks5 (**sgq.me/socks?server=127.0.0.1&port=80**), s'aplicarà immediatament";
 "ProxySettings.ExportLink" = "Exporta l'enllaç del porta-retalls";
 "ProxySettings.IncorrectSecret" = "El secret no és correcte, torneu a provar-ho.";
 "ProxySettings.Item.Available" = "disponible (ping: %@ ms)";
@@ -7992,7 +7992,7 @@
 "TranslateModal.EditStyle" = "Edita l'estil";
 "TranslateModal.PromptStyle" = "Indicació";
 "TranslateModal.ShareStyle" = "Comparteix l'estil";
-"TranslateModal.StyleByAuthor" = "Estil per [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Estil per [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Omet";
 "TwoStepAuth.AnError" = "Hi ha hagut un error. Torneu a provar-ho més tard.";
 "TwoStepAuth.CancelReset" = "Cancel·la-ho";

@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/iamxvbaba/td/telegram/dcs"
 	"github.com/iamxvbaba/td/telegram/downloader"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"golang.org/x/net/proxy"
 	"golang.org/x/sync/errgroup"
 	"rsc.io/qr"
@@ -211,6 +213,19 @@ func main() {
 	outDir := flag.String("out", "", "output directory")
 	maxDocBytes := flag.Int64("max-document-bytes", defaultMaxDocBytes, "maximum bytes accepted for one document or thumbnail")
 	skipThumbs := flag.Bool("skip-thumbs", false, "download main documents only")
+	flag.Func("skip-documents", "comma-separated document ids to treat as unavailable without trying them (implies -skip-unavailable-collectibles)", func(raw string) error {
+		for _, part := range strings.Split(raw, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if err != nil || id <= 0 {
+				return fmt.Errorf("invalid document id %q", part)
+			}
+			skipDocuments[id] = true
+		}
+		skipUnavailableCollectibles = true
+		return nil
+	})
+	flag.BoolVar(&skipUnavailableCollectibles, "skip-unavailable-collectibles", false,
+		"when Telegram keeps refusing a model/pattern file (repeated FLOOD_WAIT), leave that gift's collectible set out of the manifest instead of failing; the gift itself stays")
 	workers := flag.Int("workers", defaultWorkers, "concurrent document downloads")
 	reuseMetadata := flag.Bool("reuse-metadata", false, "reuse and strictly decode catalog.tl plus upgrade-attributes/*.tl instead of refetching metadata")
 	allowedMissingThumbsRaw := flag.String("allow-missing-thumb", "", "comma-separated document_id:photo|video:type entries that may be recorded as explicitly missing after a failed download")
@@ -278,13 +293,26 @@ func run(timeout time.Duration, opts telegram.Options, fn func(context.Context, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client := telegram.NewClient(apiID, apiHash, opts)
+	id, hash := apiCredentials()
+	client := telegram.NewClient(id, hash, opts)
 	if err := client.Run(ctx, func(ctx context.Context) error {
 		return fn(ctx, client)
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
+}
+
+// apiCredentials returns TG_API_ID / TG_API_HASH when both are set. The
+// built-in pair is public and Telegram may answer API_ID_PUBLISHED_FLOOD for
+// it; your own pair from my.telegram.org avoids that.
+func apiCredentials() (int, string) {
+	id, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TG_API_ID")))
+	hash := strings.TrimSpace(os.Getenv("TG_API_HASH"))
+	if err != nil || id <= 0 || hash == "" {
+		return apiID, apiHash
+	}
+	return id, hash
 }
 
 // loginQRToken 用 QR 登录换取授权用户会话并落盘到 SESSION。
@@ -326,7 +354,7 @@ func qrPNGPath(session, override string) string {
 
 // showLoginQR 把登录链接渲染成可扫的二维码。
 //
-// 官方客户端只把 tg://login?token= 当作二维码内容，没有任何客户端支持把它当链接打开，
+// 官方客户端只把 sg://login?token= 当作二维码内容，没有任何客户端支持把它当链接打开，
 // 所以必须画出来：终端用半块字符直接打印，同时落一份 PNG 供放大后扫描。
 func showLoginQR(url, pngPath string) error {
 	// H 级纠错（65% 冗余）模块更多但容错高，终端缩放和手机拍照都更稳。
@@ -557,21 +585,39 @@ func fetchCatalog(ctx context.Context, api *tg.Client, outDir string, maxDocByte
 	group, downloadCtx := errgroup.WithContext(ctx)
 	group.SetLimit(workers)
 	var completed atomic.Int64
+	var deferredMu sync.Mutex
+	var deferred []int
+	newDownloader := func(id int64, ctx context.Context) *downloader.Downloader {
+		return downloader.NewDownloader().WithRetryHandler(func(event downloader.RetryEvent) {
+			fmt.Printf("[download retry] document=%d operation=%s attempt=%d error=%v\n", id, event.Operation, event.Attempt, event.Err)
+			if strings.Contains(event.Err.Error(), "FLOOD_WAIT") {
+				timer := time.NewTimer(floodWaitMargin)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+				case <-timer.C:
+				}
+			}
+		})
+	}
+	firstPassCtx := context.WithValue(downloadCtx, floodBudgetKey{}, firstPassFloodBudget)
+	unavailable := map[int64]bool{}
 	for index, id := range ids {
 		index, id := index, id
+		if skipDocuments[id] {
+			fmt.Printf("[document unavailable] document=%d (skipped by -skip-documents)\n", id)
+			unavailable[id] = true
+			continue
+		}
 		group.Go(func() error {
-			dl := downloader.NewDownloader().WithRetryHandler(func(event downloader.RetryEvent) {
-				fmt.Printf("[download retry] document=%d operation=%s attempt=%d error=%v\n", id, event.Operation, event.Attempt, event.Err)
-				if strings.Contains(event.Err.Error(), "FLOOD_WAIT") {
-					timer := time.NewTimer(floodWaitMargin)
-					defer timer.Stop()
-					select {
-					case <-downloadCtx.Done():
-					case <-timer.C:
-					}
-				}
-			})
-			dm, err := fetchDocument(downloadCtx, api, dl, outDir, documents[id], maxDocBytes, skipThumbs, allowedMissingThumbs)
+			dm, err := fetchDocument(firstPassCtx, api, newDownloader(id, downloadCtx), outDir, documents[id], maxDocBytes, skipThumbs, allowedMissingThumbs)
+			if errors.Is(err, errFloodDeferred) {
+				fmt.Printf("[document deferred] document=%d (Telegram keeps asking to wait; retrying at the end)\n", id)
+				deferredMu.Lock()
+				deferred = append(deferred, index)
+				deferredMu.Unlock()
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -586,7 +632,45 @@ func fetchCatalog(ctx context.Context, api *tg.Client, outDir string, maxDocByte
 	if err := group.Wait(); err != nil {
 		return err
 	}
-	for _, dm := range documentResults {
+	sort.Ints(deferred)
+	for n, index := range deferred {
+		id := ids[index]
+		if n > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(deferredPause):
+			}
+		}
+		fmt.Printf("[deferred %d/%d] document=%d\n", n+1, len(deferred), id)
+		deferredCtx := ctx
+		if skipUnavailableCollectibles {
+			deferredCtx = context.WithValue(ctx, floodBudgetKey{}, deferredFloodBudget)
+		}
+		dm, err := fetchDocument(deferredCtx, api, newDownloader(id, ctx), outDir, documents[id], maxDocBytes, skipThumbs, allowedMissingThumbs)
+		if errors.Is(err, errFloodDeferred) && skipUnavailableCollectibles {
+			fmt.Printf("[document unavailable] document=%d\n", id)
+			unavailable[id] = true
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		documentResults[index] = dm
+		completed.Add(1)
+	}
+	if len(deferred) > 0 {
+		fmt.Printf("[documents downloaded] completed=%d total=%d\n", completed.Load(), len(ids))
+	}
+	if len(unavailable) > 0 {
+		if err := dropUnavailableCollectibleSets(&manifest, unavailable); err != nil {
+			return err
+		}
+	}
+	for index, dm := range documentResults {
+		if unavailable[ids[index]] {
+			continue
+		}
 		manifest.TotalBytes += dm.File.Size
 		for _, thumb := range dm.Thumbs {
 			manifest.TotalBytes += thumb.Size
@@ -603,6 +687,39 @@ func fetchCatalog(ctx context.Context, api *tg.Client, outDir string, maxDocByte
 		return err
 	}
 	fmt.Printf("[complete] gifts=%d attribute_sets=%d attributes=%d documents=%d missing_thumbs=%d bytes=%d manifest=%s\n", len(manifest.Gifts), len(manifest.UpgradeAttributeSets), manifest.UpgradeAttributeCount, len(manifest.Documents), manifest.MissingThumbCount, manifest.TotalBytes, filepath.Join(outDir, "manifest.json"))
+	return nil
+}
+
+// dropUnavailableCollectibleSets removes the collectible sets that reference a
+// file Telegram would not hand out. Their gifts stay in the manifest as plain
+// gifts. A gift whose own base animation is missing cannot be kept.
+func dropUnavailableCollectibleSets(manifest *catalogManifest, unavailable map[int64]bool) error {
+	for _, gift := range manifest.Gifts {
+		for _, id := range gift.DocumentIDs {
+			if unavailable[id] {
+				return fmt.Errorf("gift %d base document %d is unavailable", gift.ID, id)
+			}
+		}
+	}
+	kept := manifest.UpgradeAttributeSets[:0]
+	for _, set := range manifest.UpgradeAttributeSets {
+		drop := false
+		for _, id := range set.DocumentIDs {
+			drop = drop || unavailable[id]
+		}
+		if !drop {
+			kept = append(kept, set)
+			continue
+		}
+		fmt.Printf("[collectible set dropped] gift=%d (a model or pattern file is unavailable)\n", set.GiftID)
+		manifest.UpgradeableGiftCount--
+		manifest.UpgradeAttributeSetCount--
+		manifest.UpgradeAttributeCount -= set.AttributeCount
+		manifest.UpgradeModelCount -= len(set.Models)
+		manifest.UpgradePatternCount -= len(set.Patterns)
+		manifest.UpgradeBackdropCount -= len(set.Backdrops)
+	}
+	manifest.UpgradeAttributeSets = kept
 	return nil
 }
 
@@ -1018,9 +1135,63 @@ func isRetryable(err error) bool {
 		strings.Contains(msg, "connection reset by peer")
 }
 
+// floodWaitDuration extracts the wait Telegram asked for. The error can reach
+// us re-wrapped by the downloader pool, so fall back to the message text.
+func floodWaitDuration(err error) (time.Duration, bool) {
+	if wait, ok := tgerr.AsFloodWait(err); ok {
+		return wait, true
+	}
+	msg := err.Error()
+	i := strings.Index(msg, "FLOOD_WAIT (")
+	if i < 0 {
+		return 0, false
+	}
+	rest := msg[i+len("FLOOD_WAIT ("):]
+	j := strings.IndexByte(rest, ')')
+	if j <= 0 {
+		return 0, false
+	}
+	seconds, convErr := strconv.Atoi(rest[:j])
+	if convErr != nil || seconds < 0 {
+		return 0, false
+	}
+	return time.Duration(seconds) * time.Second, true
+}
+
+// skipUnavailableCollectibles is set by -skip-unavailable-collectibles.
+var skipUnavailableCollectibles bool
+
+// skipDocuments are treated as unavailable without being requested.
+var skipDocuments = map[int64]bool{}
+
+// deferredFloodBudget bounds how long a deferred file is retried when
+// -skip-unavailable-collectibles may drop it instead.
+const deferredFloodBudget = 20
+
+// floodBudgetKey carries how many FLOOD_WAITs one file may absorb before it
+// is put aside (errFloodDeferred) so the other workers keep going.
+type floodBudgetKey struct{}
+
+var errFloodDeferred = errors.New("deferred after repeated FLOOD_WAIT")
+
+const (
+	// A file that keeps hitting FLOOD_WAIT is retried at the end of the run.
+	firstPassFloodBudget = 8
+	// Deferred files are fetched one at a time, with a pause between them.
+	deferredPause = 30 * time.Second
+)
+
 func retryOnTimeout(ctx context.Context, desc string, op func() ([]byte, error)) ([]byte, error) {
-	const maxRetries = 6
+	const (
+		maxRetries    = 6
+		maxFloodWaits = 1000
+	)
 	var lastErr error
+	floodWaits := 0
+	floodBudget := maxFloodWaits
+	if budget, ok := ctx.Value(floodBudgetKey{}).(int); ok && budget > 0 {
+		floodBudget = budget
+	}
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		data, err := op()
 		if err == nil {
@@ -1031,6 +1202,16 @@ func retryOnTimeout(ctx context.Context, desc string, op func() ([]byte, error))
 			return nil, err
 		}
 		backoff := time.Duration(attempt*2) * time.Second
+		// FLOOD_WAIT is Telegram asking us to slow down, not a failure: wait as
+		// long as it says (plus a margin) and do not spend a retry on it.
+		if wait, ok := floodWaitDuration(err); ok {
+			if floodWaits >= floodBudget {
+				return nil, fmt.Errorf("%w: %v", errFloodDeferred, err)
+			}
+			floodWaits++
+			attempt--
+			backoff = wait + floodWaitMargin
+		}
 		fmt.Printf("[retry %d/%d] %s: %v (waiting %v)\n", attempt, maxRetries, desc, err, backoff)
 		select {
 		case <-ctx.Done():

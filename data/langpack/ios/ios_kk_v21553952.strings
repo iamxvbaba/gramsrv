@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "ЧАТ СІЛТЕМЕСІ";
 "Business.Links.PreviewText" = "Осы сілтеме арқылы өтіп, сізбен сөйлесуді бастаған кез келген қолданушы үшін хат енгізу өрісінде көрсетілетін мәтін қосыңыз:";
 "Business.Links.PreviewTitle" = "Чат сілтемесі";
-"Business.Links.SimpleLinkInfoPhone" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [t.me/%1$@](username) не [t.me/\u2060+\u2060%2$@](phone)";
+"Business.Links.SimpleLinkInfoPhone" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Чатыңыздың қарапайым сілтемесін қолдана аласыз — [sgq.me/%1$@](username) не [sgq.me/\u2060+\u2060%2$@](phone)";
 "Business.Links.Text" = "Тұтынушыларға сізбен сөйлесуді бастайтын қысқа сілтемелер беріңіз және оларға бірінші болып хат ұсыныңыз.";
 "Business.LinksInfo" = "Дайын хатты ұсынып, сізбен сөйлесуді бастайтын сілтеме жасаңыз.";
 "Business.Location" = "Мекенжай";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Арна атауы сызықпен басталмайды.";
 "Channel.Username.InvalidTaken" = "Бұл атау бос емес.";
 "Channel.Username.InvalidTooShort" = "Жария сілтеме кемі 5 таңбадан тұруға тиіс.";
-"Channel.Username.LinkHint" = "Арнаңыздың сілтемесі:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Арнаңыздың сілтемесі:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Сіздегі арна не топтың сілтемесін қайтарып алыңыз не жабық арна ашыңыз.";
 "Channel.Username.Title" = "Сілтеме";
 "Channel.Username.UsernameIsAvailable" = "%@ қолжетімді.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Тиімді";
 "CocoonInfo.ForEveryone.Text" = "Кез келген әзірлеуші [Cocoon](telegram)-ды ЖИ мүмкіндіктері үшін қолдана алады. Толығырақ: [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Баршаға қолжетімді";
-"CocoonInfo.IntergrateInfo" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n[t.me/cocoon?direct]() арқылы хабарласыңыз.";
+"CocoonInfo.IntergrateInfo" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n[sgq.me/cocoon?direct]() арқылы хабарласыңыз.";
 "CocoonInfo.Private.Text" = "Cocoon ішінде орындалатын деректерге, соның ішінде аудармаларға, ешбір үшінші тарап қол жеткізе алмайды.";
 "CocoonInfo.Private.Title" = "Жабық";
 "CocoonInfo.Title" = "COCOON";
@@ -4286,7 +4286,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Тек a-z, 0-9 және астыңғы сызықша қолдана аласыз.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Шектеу: %d бот.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Шектеу: %d бот.";
-"CreateBot.UsernameStatus.Link" = "Сілтеме: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Сілтеме: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Қолданушы атын саннан бастауға болмайды.";
 "CreateBot.UsernameStatus.Short" = "Қолданушы аты кемі 5 таңбадан тұру тиіс.";
 "CreateBot.UsernameStatus.Taken" = "Бұл қолданушы аты бос емес.";
@@ -4669,7 +4669,7 @@
 "EmojiStickerSettings.Info" = "Суретші @stickers ботымен өз эмоджи жинағын жасай алады.\n\nБарлық жинақты көру және қосу үшін хаттағы эмоджиді басыңыз.";
 "EmptyGroupInfo.Line1" = "200 000 мүше бола алады";
 "EmptyGroupInfo.Line2" = "Чат тарихы сақтаулы тұрады";
-"EmptyGroupInfo.Line3" = "t.me/silteme секілді сілтеме жасай аласыз";
+"EmptyGroupInfo.Line3" = "sgq.me/silteme секілді сілтеме жасай аласыз";
 "EmptyGroupInfo.Line4" = "Әкімшіге басқару құқын бере аласыз";
 "EmptyGroupInfo.Subtitle" = "Топта:";
 "EmptyGroupInfo.Title" = "Топ құрдыңыз";
@@ -8970,7 +8970,7 @@
 "Premium.Limits.PinnedChats" = "Чат бекіту";
 "Premium.Limits.PinnedChatsInfo" = "Негізгі тізімде 10 чатқа дейін бекітіңіз";
 "Premium.Limits.PublicLinks" = "Жария сілтеме";
-"Premium.Limits.PublicLinksInfo" = "20 [t.me/username]() секілді сілтеме жасай алыңыз.";
+"Premium.Limits.PublicLinksInfo" = "20 [sgq.me/username]() секілді сілтеме жасай алыңыз.";
 "Premium.Limits.RecommendedChannels" = "Ұқсас арналар";
 "Premium.Limits.RecommendedChannelsInfo" = "100 ұқсас арнаға дейін көріңіз";
 "Premium.Limits.SavedGifs" = "GIF сақтау";
@@ -9322,7 +9322,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "КІРГЕН УАҚЫТЫМДЫ КІМ КӨРЕ АЛАДЫ";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Қолданушыда нөміріңіз болғанымен, сізде оның нөмірі сақталмаса, ол сізді Telegram-да таба алмайды.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Нөміріңізді сақтаған адам оны Telegram-нан да көре алады.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Нөміріңізді сақтаған адам оны Telegram-нан да көре алады.\n\nTelegram-дағы сілтемеңіз:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Нөміріңізді сақтаған адам оны Telegram-нан да көре алады.\n\nTelegram-дағы сілтемеңіз:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "КІМ МЕНІ НӨМІРІМ АРҚЫЛЫ ТАБА АЛАДЫ?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "ТЕЛЕФОН НӨМІРІМДІ КІМ КӨРЕ АЛАДЫ";
 "PrivacyPolicy.Accept" = "Келісіп, жалғастырам";
@@ -10225,8 +10225,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "қолжетімсіз";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "ПРОКСИ ТҮРІ";
-"SocksProxySetup.QrCode.TMeLink" = "t.me сілтеме";
-"SocksProxySetup.QrCode.TgLink" = "tg:// сілтеме";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me сілтеме";
+"SocksProxySetup.QrCode.TgLink" = "sg:// сілтеме";
 "SocksProxySetup.RequiredCredentials" = "РАСТАУШЫ";
 "SocksProxySetup.SaveProxy" = "Проксиді сақтау";
 "SocksProxySetup.SavedProxies" = "САҚТАЛҒАН ПРОКСИ";
@@ -11894,7 +11894,7 @@
 "Username.InvalidTooShort" = "Қолданушы аты кемі 5 таңбадан тұру тиіс.";
 "Username.InvalidValue" = "Бұл қолданушы аты жарамсыз.";
 "Username.LinkCopied" = "Сілтеме көшірілді";
-"Username.LinkHint" = "Telegram-дағы сілтемеңіз:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Telegram-дағы сілтемеңіз:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ҚОЛДАНУШЫ АТЫ РЕТІ";
 "Username.LinksOrderInfo" = "Сілтемені жылжытып бейініңізде қандай ретте көрінетінін өзгерте аласыз.";
 "Username.Placeholder" = "Қолданушы атыңыз";

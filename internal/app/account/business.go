@@ -254,10 +254,31 @@ func (s *Service) SaveQuickReplyText(ctx context.Context, userID int64, shortcut
 	if s == nil || s.business == nil || userID == 0 {
 		return domain.QuickReplyMutation{}, domain.ErrPremiumRequired
 	}
-	if msg.Message == "" || utf8.RuneCountInString(msg.Message) > domain.MaxMessageTextLength || len(msg.Entities) > domain.MaxMessageEntityCount {
+	if (msg.Message == "" && msg.Media.IsZero()) || utf8.RuneCountInString(msg.Message) > domain.MaxMessageTextLength || len(msg.Entities) > domain.MaxMessageEntityCount {
 		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
 	}
 	return s.business.SaveQuickReplyText(ctx, userID, shortcut, msg)
+}
+
+// EditQuickReplyMessage edits the text or media of a saved quick reply message.
+func (s *Service) EditQuickReplyMessage(ctx context.Context, userID int64, edit domain.QuickReplyEdit) (domain.QuickReplyMutation, error) {
+	if s == nil || s.business == nil || userID == 0 {
+		return domain.QuickReplyMutation{}, domain.ErrPremiumRequired
+	}
+	if edit.ShortcutID <= 0 || edit.ID <= 0 || utf8.RuneCountInString(edit.Message) > domain.MaxMessageTextLength || len(edit.Entities) > domain.MaxMessageEntityCount {
+		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
+	}
+	current, err := s.business.GetQuickReplyMessages(ctx, userID, edit.ShortcutID, []int{edit.ID})
+	if err != nil {
+		return domain.QuickReplyMutation{}, err
+	}
+	if len(current.Messages) != 1 {
+		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
+	}
+	if edit.Message == "" && edit.Media.IsZero() && current.Messages[0].Media.IsZero() {
+		return domain.QuickReplyMutation{}, domain.ErrShortcutInvalid
+	}
+	return s.business.EditQuickReplyMessage(ctx, userID, edit)
 }
 
 func (s *Service) GetQuickReplyMessages(ctx context.Context, userID int64, shortcutID int, ids []int) (domain.QuickReplyMessages, error) {
@@ -431,8 +452,10 @@ func normalizeBusinessRecipients(in domain.BusinessRecipients) (domain.BusinessR
 		users = append(users, id)
 	}
 	out.Users = users
-	if !out.ExistingChats && !out.NewChats && !out.Contacts && !out.NonContacts && len(out.Users) == 0 {
-		return domain.BusinessRecipients{}, domain.ErrBusinessProfileInvalid
+	// exclude_selected with nothing selected means "everyone", which is how
+	// clients save "All 1-to-1 chats except…" with no exceptions.
+	if !out.ExcludeSelected && !out.ExistingChats && !out.NewChats && !out.Contacts && !out.NonContacts && len(out.Users) == 0 {
+		return domain.BusinessRecipients{}, domain.ErrBusinessRecipientsEmpty
 	}
 	return out, nil
 }

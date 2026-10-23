@@ -1402,3 +1402,35 @@ func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.Ac
 func (fakeService) ListRecentAdminCommands(context.Context, int, string) ([]domain.AdminCommand, error) {
 	return nil, nil
 }
+
+func (fakeService) ListAutoSubscribeChannels(context.Context) ([]domain.AutoSubscribeChannel, error) {
+	return nil, nil
+}
+
+func (fakeService) AddAutoSubscribeChannel(_ context.Context, req admin.AddAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{Message: "ok"}, nil
+}
+
+func (fakeService) RemoveAutoSubscribeChannel(_ context.Context, req admin.RemoveAutoSubscribeChannelRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{Message: "ok"}, nil
+}
+
+func (fakeService) PendingGiftCollectible(context.Context, int64) (domain.StarGiftCollectibleRevision, bool, error) {
+	return domain.StarGiftCollectibleRevision{}, false, nil
+}
+
+func (fakeService) ReleaseCollectiblePool(_ context.Context, req admin.ReleaseCollectiblePoolRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetStarGiftSupply(_ context.Context, req admin.SetStarGiftSupplyRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetStarGiftDropProtection(_ context.Context, req admin.SetStarGiftDropProtectionRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DeleteStarGift(_ context.Context, req admin.DeleteStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}

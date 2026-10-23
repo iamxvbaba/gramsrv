@@ -2950,7 +2950,7 @@
 "lng_factcheck_add_done" = "已加入事實查核。";
 "lng_factcheck_bottom" = "此澄清由 Telegram 提供。";
 "lng_factcheck_edit_done" = "已編輯事實查核。";
-"lng_factcheck_links" = "僅允許 **t.me/** 連結。";
+"lng_factcheck_links" = "僅允許 **sgq.me/** 連結。";
 "lng_factcheck_placeholder" = "加入事實或上下文";
 "lng_factcheck_remove_done" = "已移除事實查核。";
 "lng_factcheck_title" = "事實查核";
@@ -3784,7 +3784,7 @@
 "lng_greeting_title" = "問候語";
 "lng_group_about1" = "最多 200,000 位成員";
 "lng_group_about2" = "永久的聊天紀錄";
-"lng_group_about3" = "公開連結，例如：t.me/title";
+"lng_group_about3" = "公開連結，例如：sgq.me/title";
 "lng_group_about4" = "具有不同權限的管理員";
 "lng_group_about_header" = "您建立了一個群組";
 "lng_group_about_text" = "群組可以有：";
@@ -5468,7 +5468,7 @@
 "lng_premium_double_limits_about_folder_chats#other" = "在您的每個資料夾中最多加入 {count} 個聊天";
 "lng_premium_double_limits_about_folders#other" = "將您的聊天整理到 {count} 個資料夾中";
 "lng_premium_double_limits_about_gifs#other" = "在您收藏的 GIF 中最多儲存 {count} 張";
-"lng_premium_double_limits_about_links#other" = "最多可擁有 {count} 個 t.me/username 連結";
+"lng_premium_double_limits_about_links#other" = "最多可擁有 {count} 個 sgq.me/username 連結";
 "lng_premium_double_limits_about_pins#other" = "在您的主聊天列表中置頂最多 {count} 個聊天";
 "lng_premium_double_limits_about_similar_channels#other" = "查看最多 {count} 個相似頻道";
 "lng_premium_double_limits_about_stickers#other" = "在您**最愛的貼圖**中最多可儲存 {count} 張貼圖";
@@ -7780,7 +7780,7 @@
 "lng_tag_info_title_owner" = "擁有者標籤";
 "lng_tag_info_title_user" = "成員標籤";
 "lng_tagged_view_saved" = "查看";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#other" = "我確定我已滿 {count} 歲";
 "lng_terms_agree" = "同意並繼續";
 "lng_terms_agree_to_proceed" = "同意並繼續 {bot}。";
@@ -7890,7 +7890,7 @@
 "lng_translate_cocoon_private_title" = "私人";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) 能**安全**且**高效**地處理AI任務。";
 "lng_translate_cocoon_text" = "想將 Cocoon 整合到您的專案中？ \n請聯絡 {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} 已加入到「不翻譯」清單中。";
 "lng_translate_hidden_channel" = "此頻道的翻譯工具列已隱藏。";

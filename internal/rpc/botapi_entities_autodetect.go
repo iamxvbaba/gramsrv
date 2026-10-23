@@ -21,7 +21,7 @@ import (
 // augmentBotAPIAutoEntities 在 Bot API 已解析实体基础上补充服务端检测的自动实体。
 // bot 显式实体优先保留并排在前面；补充项与任何已有区间相交时丢弃，避免把
 // mention/hashtag/command 打进 code/pre/text_url 内部。URL 跨度同样计入排除区，
-// 使 https://t.me/@name 里的 @name 不会变成 mention 实体。
+// 使 https://sgq.me/@name 里的 @name 不会变成 mention 实体。
 func (r *Router) augmentBotAPIAutoEntities(message string, entities []domain.MessageEntity) []domain.MessageEntity {
 	if message == "" || len(entities) >= domain.MaxMessageEntityCount {
 		return entities

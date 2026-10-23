@@ -1338,7 +1338,7 @@
 "EditAdminRights" = "ویرایش اختیارات مدیر";
 "EditAdminSendAnonymously" = "ناشناس ماندن";
 "EditAdminWhatCanDo" = "این مدیر چه کارهایی می\u200cتواند انجام دهد؟";
-"EditBot.Buttons.Caption" = "برای مدیریت این ربات، از [@BotFather](https://t.me/botfather) استفاده کنید.";
+"EditBot.Buttons.Caption" = "برای مدیریت این ربات، از [@BotFather](https://sgq.me/botfather) استفاده کنید.";
 "EditBot.Buttons.Commands" = "ویرایش دستورات";
 "EditBot.Buttons.Intro" = "ویرایش مقدمه";
 "EditBot.Buttons.Settings" = "تغییر تنظیمات ربات";
@@ -1669,7 +1669,7 @@
 "GroupChecklist" = "چک\u200cلیست گروه";
 "GroupDescription1" = "تا سقف 200,000 عضو";
 "GroupDescription2" = "تاریخچه گفتگوی دائم";
-"GroupDescription3" = "لینک\u200cهای عمومی مانند t.me/title";
+"GroupDescription3" = "لینک\u200cهای عمومی مانند sgq.me/title";
 "GroupDescription4" = "مدیرانی با اختیارات متفاوت";
 "GroupEmptyTitle1" = "شما یک **گروه** ایجاد کرده\u200cاید.";
 "GroupEmptyTitle2" = "گروه\u200cها می\u200cتوانند دارای موارد زیر باشند:";
@@ -2757,7 +2757,7 @@
 "ProfileStoriesArchiveChannelHint" = "فقط مدیران می\u200cتوانند استوری\u200cهای بایگانی شده را مشاهده کنند، مگر اینکه بخواهید آن\u200cها را در پروفایل کانال پست کنید.";
 "ProfileStoriesArchiveGroupHint" = "فقط مدیران گروه می\u200cتوانند استوری\u200cهای بایگانی شده را مشاهده کنند، مگر اینکه استوری\u200cها در صفحه گروه پست شده باشند.";
 "ProfileStoriesArchiveHint" = "فقط شما می\u200cتوانید استوری\u200cهای بایگانی شده را مشاهده کنید، مگر اینکه بخواهید آن\u200cها را در پروفایل خود پست کنید.";
-"PublicLinksLimitSubtitle" = "تا \u2068%d\u2069 لینک t.me/username را رزرو کنید";
+"PublicLinksLimitSubtitle" = "تا \u2068%d\u2069 لینک sgq.me/username را رزرو کنید";
 "PublicLinksLimitTitle" = "لینک\u200cهای عمومی";
 "PublicShares" = "به اشتراک گذاری عمومی";
 "PublicSharesCount#one" = "\u2068%1$s\u2069 به اشتراک گذاری عمومی";
@@ -3708,7 +3708,7 @@
 "Telegram.LanguageViewController" = "زبان";
 "Telegram.NotificationSettingsViewController" = "اعلان\u200cها";
 "TelegramFeatures" = "قابلیت\u200cهای تلگرام";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsFA";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsFA";
 "TelegramPremiumPeerSubtitle" = "دارندگان حساب کاربری **تلگرام پرمیوم**، به چندین قابلیت دیگر دسترسی انحصاری دارند.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "اموجی\u200cهای وضعیت یک قابلیت پرمیوم هستند. سایر قابلیت\u200cهای **تلگرام پرمیوم** عبارت\u200cاند از:";
 "TelegramPremiumPeerTitle" = "\u2068%s\u2069 مشترک **تلگرام پرمیوم** است";

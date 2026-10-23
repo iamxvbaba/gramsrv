@@ -38,7 +38,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "לכולם";
 "AboutCocoon.Feature.Private.Description" = "אף גורם צד שלישי לא יכול לגשת למידע, כגון תרגומים, בתוך cocoon.";
 "AboutCocoon.Feature.Private.Title" = "פרטי";
-"AboutCocoon.Footer" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "השבת שיתוף";
 "AboutFeature.DisableSharing.NoForwarding" = "ללא העברה";
@@ -495,7 +495,7 @@
 "Bot.AllowSendMessages" = "התר ל**\u2068%@\u2069** לשלוח לי הודעות.";
 "Bot.Grossing.Disclaimer" = "אילו אפליקציות נכללות כאן? [למד עוד >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "מיני אפליקציות מובילות";
-"Bot.Grossing.Disclaimer.Alert.Text" = "קטלוג זה מדרג מיני אפליקציות על סמך ההכנסות היומיות שלהן, הנמדדות בכוכבים.  כדי להופיע ברשימה, מפתחים חייבים להגדיר את האפליקציות המיני העיקריות שלהם ב[@botfather](https://t.me/botfather) (כמתואר [כאן](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), להחזיק יותר מ**1,000** משתמשים יומיים ולהרוויח הכנסה יומית של מעל **1,000** כוכבים, בהתבסס על הממוצע השבועי.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "קטלוג זה מדרג מיני אפליקציות על סמך ההכנסות היומיות שלהן, הנמדדות בכוכבים.  כדי להופיע ברשימה, מפתחים חייבים להגדיר את האפליקציות המיני העיקריות שלהם ב[@botfather](https://sgq.me/botfather) (כמתואר [כאן](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), להחזיק יותר מ**1,000** משתמשים יומיים ולהרוויח הכנסה יומית של מעל **1,000** כוכבים, בהתבסס על הממוצע השבועי.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "הבנתי";
 "Bot.InlineAuth.Header" = "פתח קישור";
 "Bot.InlineAuth.Open" = "פתח";
@@ -3768,7 +3768,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "מערכת\n\u2068%@\u2069";
 "EmptyGroupInfo.Line1" = "• עד \u2068%@\u2069 חברים";
 "EmptyGroupInfo.Line2" = "• היסטוריית צ'אט קבועה";
-"EmptyGroupInfo.Line3" = "• קישורים פומביים כגון t.me/title";
+"EmptyGroupInfo.Line3" = "• קישורים פומביים כגון sgq.me/title";
 "EmptyGroupInfo.Line4" = "• מנהלים עם הרשאות שונות";
 "EmptyGroupInfo.Subtitle" = "קבוצות יכולות להכיל:";
 "EmptyGroupInfo.Title" = "יצרת קבוצה";
@@ -6029,7 +6029,7 @@
 "Premium.Boarding.Double.PinnedChats" = "צ'אטים נעוצים";
 "Premium.Boarding.Double.PinnedChats.Info" = "נעץ עד ל\u2068%@\u2069 צ'אטים ברשימת הצ'אטים הראשית.";
 "Premium.Boarding.Double.PublicLinks" = "קישורים ציבוריים";
-"Premium.Boarding.Double.PublicLinks.Info" = "שמור עד ל\u2068%@\u2069 קישורי t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "שמור עד ל\u2068%@\u2069 קישורי sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "קובצי GIF שמורים";
 "Premium.Boarding.Double.SavedGifs.Info" = "שמור עד ל\u2068%@\u2069 קובצי GIF ברשימת הGIF המועדפים";
 "Premium.Boarding.Double.Title" = "מגבלות מוכפלות";
@@ -6473,7 +6473,7 @@
 "ProxySettings.CredentialsHeader" = "אישורי אבטחה (רשות)";
 "ProxySettings.Disabled" = "מושבת";
 "ProxySettings.Enable" = "פרוקסי";
-"ProxySettings.ExportDescription" = "אם לוח העריכה שלך מכיל קישור socks5 (**t.me/socks?server=127.0.0.1&port=80**) הוא יופיע מיד";
+"ProxySettings.ExportDescription" = "אם לוח העריכה שלך מכיל קישור socks5 (**sgq.me/socks?server=127.0.0.1&port=80**) הוא יופיע מיד";
 "ProxySettings.ExportLink" = "ייצא קישור מלוח העריכה";
 "ProxySettings.IncorrectSecret" = "סיסמה שגויה. נא לנסות שנית.";
 "ProxySettings.Item.Available" = "זמין (פינג: \u2068%@\u2069 מ\"ש)";
@@ -8799,7 +8799,7 @@
 "TranslateModal.PromptPlaceholder" = "תאר איך לכתוב מחדש את הטקסט...";
 "TranslateModal.PromptStyle" = "פרומפט";
 "TranslateModal.ShareStyle" = "שתף סגנון";
-"TranslateModal.StyleByAuthor" = "סגנון על ידי [@\u2068%1$@\u2069](https://t.me/\u2068%1$@\u2069)";
+"TranslateModal.StyleByAuthor" = "סגנון על ידי [@\u2068%1$@\u2069](https://sgq.me/\u2068%1$@\u2069)";
 "TwoStep.AuthEmailSkip" = "דלג";
 "TwoStepAuth.AnError" = "קרתה תקלה. נא לנסות שוב מאוחר יותר.";
 "TwoStepAuth.CancelReset" = "בטל איפוס";

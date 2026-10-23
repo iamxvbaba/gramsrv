@@ -734,14 +734,14 @@
 "CocoonFeature1Text" = "Tiada pihak ketiga boleh akses mana2 data, seperti terjemahan, dalam **{username}**";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon membolehkan Telegram kurangkan kos terjemahan 6 kali ganda.";
 "CocoonFeature2Title" = "Cekap";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Mana2 juruprogram boleh guna Cocoon untuk ciri AI. Pelajari lagi di **{link}**";
 "CocoonFeature3Title" = "Untuk Semua";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "terus ke @cocoon";
 "CocoonFooterText" = "Ingin mengintegrasikan Cocoon ke dalam projek anda?\nHubungi kami di **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -996,7 +996,7 @@
 "EmptyChatAppearanceSystem" = "Sistem";
 "EmptyGroupInfoLine1" = "Sehingga {count} ahli";
 "EmptyGroupInfoLine2" = "Sejarah bual persisten";
-"EmptyGroupInfoLine3" = "Link awam seperti t.me/tajuk";
+"EmptyGroupInfoLine3" = "Link awam seperti sgq.me/tajuk";
 "EmptyGroupInfoLine4" = "Pentadbir dengan kuasa berlainan";
 "EmptyGroupInfoSubtitle" = "Grup boleh punyai:";
 "EmptyGroupInfoTitle" = "Anda cipta grup.";
@@ -2117,7 +2117,7 @@
 "ProfileTabVoice" = "Suara";
 "ProfileViewChannel" = "Lihat Saluran";
 "PublicLink" = "Link awam";
-"PublicLinksLimitSubtitle" = "Tersedia hingga {count} link t.me/namasamaran";
+"PublicLinksLimitSubtitle" = "Tersedia hingga {count} link sgq.me/namasamaran";
 "PublicLinksLimitTitle" = "Link Awam";
 "PublicPoll" = "Undian";
 "PublicPosts" = "Pos Publik";

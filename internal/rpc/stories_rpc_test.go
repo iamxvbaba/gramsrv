@@ -5959,7 +5959,7 @@ func TestStoriesLongtailCompatHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export story link: %v", err)
 	}
-	if link.Link != "https://telesrv.net/story/user/9311/1" {
+	if link.Link != "https://sgq.me/story/user/9311/1" {
 		t.Fatalf("export story link = %q, want deterministic telesrv link", link.Link)
 	}
 	if _, err := r.onStoriesExportStoryLink(reqCtx, &tg.StoriesExportStoryLinkRequest{

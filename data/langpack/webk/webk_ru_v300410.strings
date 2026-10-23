@@ -1671,7 +1671,7 @@
 "EditAdminRights" = "Изменить права админа";
 "EditAdminSendAnonymously" = "Анонимность";
 "EditAdminWhatCanDo" = "Возможности администратора:";
-"EditBot.Buttons.Caption" = "Управлять ботом можно с помощью [@BotFather](https://t.me/botfather).";
+"EditBot.Buttons.Caption" = "Управлять ботом можно с помощью [@BotFather](https://sgq.me/botfather).";
 "EditBot.Buttons.Commands" = "Изменить команды";
 "EditBot.Buttons.Intro" = "Изменить приветствие";
 "EditBot.Buttons.Settings" = "Изменить настройки бота";
@@ -2100,7 +2100,7 @@
 "GroupChecklist" = "Совместный список задач";
 "GroupDescription1" = "До 200 000 участников";
 "GroupDescription2" = "Общая история переписки";
-"GroupDescription3" = "Публичные ссылки вида t.me/title";
+"GroupDescription3" = "Публичные ссылки вида sgq.me/title";
 "GroupDescription4" = "Разный уровень прав";
 "GroupEmptyTitle1" = "Вы создали **группу**.";
 "GroupEmptyTitle2" = "Возможности групп:";
@@ -3438,7 +3438,7 @@
 "ProfileStoriesArchiveGroupHint" = "Истории из архива видны только администраторам группы, если не опубликовать их в профиле группы.";
 "ProfileStoriesArchiveHint" = "Истории из архива будут видны только Вам, если Вы не опубликуете их в своём профиле.";
 "ProfileUnofficialSecurityRisk" = "%1$s использует неофициальный клиент Telegram. Это может снизить защищённость переписки с пользователем.";
-"PublicLinksLimitSubtitle" = "Использование до %d ссылок вида t.me/username";
+"PublicLinksLimitSubtitle" = "Использование до %d ссылок вида sgq.me/username";
 "PublicLinksLimitTitle" = "Публичные ссылки";
 "PublicShares" = "Поделились публично";
 "PublicSharesCount#one" = "%1$s поделился публично";
@@ -4532,7 +4532,7 @@
 "Telegram.LanguageViewController" = "Язык";
 "Telegram.NotificationSettingsViewController" = "Уведомления";
 "TelegramFeatures" = "Возможности Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Подписчики **Telegram Premium** имеют эксклюзивный доступ к множеству дополнительных функций.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Эмодзи-статусы доступны только c подпиской **Telegram Premium**. Другие преимущества подписки:";
 "TelegramPremiumPeerTitle" = "%s является обладателем подписки **Telegram\u00a0Premium**";

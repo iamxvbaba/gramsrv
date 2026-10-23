@@ -113,9 +113,9 @@ func TestTelegramLoginRPCsAcrossExactLayerProfiles(t *testing.T) {
 			f := newTelegramLoginRPCFixture(t)
 
 			approve := f.authorization(t, true)
-			// TDesktop normalizes the configured telesrv:// launcher to the
-			// official internal tg://oauth form before invoking MTProto.
-			canonicalURL := strings.Replace(approve.DeepLink, "telesrv://", "tg://", 1)
+			// TDesktop normalizes the configured sg:// launcher to the
+			// official internal sg://oauth form before invoking MTProto.
+			canonicalURL := strings.Replace(approve.DeepLink, "sg://", "sg://", 1)
 			request := &tg.MessagesRequestURLAuthRequest{}
 			request.SetURL(canonicalURL)
 			result, method := dispatchExactLayerRPCTest(t, f.router, f.ctx, profile, request)

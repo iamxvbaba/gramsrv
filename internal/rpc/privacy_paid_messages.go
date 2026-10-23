@@ -75,6 +75,16 @@ func (r *Router) privateContactRestrictionFor(
 	}
 	global := settings.GlobalPrivacy
 	if global.NoncontactPeersPaidStars > 0 {
+		// Whoever the recipient wrote to first may answer for free.
+		if r.deps.PaidMessages != nil {
+			first, err := r.deps.PaidMessages.RecipientMessagedFirst(ctx, recipientUserID, senderUserID)
+			if err != nil {
+				return privateContactRequirement{}, internalErr()
+			}
+			if first {
+				return privateContactRequirement{}, nil
+			}
+		}
 		return privateContactRequirement{paidStars: global.NoncontactPeersPaidStars}, nil
 	}
 	return privateContactRequirement{requirePremium: global.NewNoncontactPeersRequirePremium}, nil
@@ -98,40 +108,41 @@ func (r *Router) viewerIsPremiumForPrivacy(ctx context.Context, viewerUserID int
 	return premium, nil
 }
 
+// ensurePrivateContactAllowed checks that the sender may write to the
+// recipient and returns the price of one message (0 when free). For paid
+// chats allow_paid_stars must cover messageCount messages; only the actual
+// price is charged, by the private-send transaction.
 func (r *Router) ensurePrivateContactAllowed(
 	ctx context.Context,
 	senderUserID, recipientUserID, allowPaidStars int64,
 	messageCount int,
-) error {
+) (int64, error) {
 	if allowPaidStars < 0 || messageCount < 1 {
-		return starsAmountInvalidErr()
+		return 0, starsAmountInvalidErr()
 	}
 	requirement, err := r.privateContactRestrictionFor(ctx, senderUserID, recipientUserID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if requirement.requirePremium {
 		premium, err := r.viewerIsPremiumForPrivacy(ctx, senderUserID)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if !premium {
-			return premiumAccountRequiredErr()
+			return 0, premiumAccountRequiredErr()
 		}
-		return nil
+		return 0, nil
 	}
 	if requirement.paidStars <= 0 {
-		return nil
+		return 0, nil
 	}
 	if requirement.paidStars > math.MaxInt64/int64(messageCount) {
-		return starsAmountInvalidErr()
+		return 0, starsAmountInvalidErr()
 	}
 	required := requirement.paidStars * int64(messageCount)
 	if allowPaidStars < required {
-		return allowPaymentRequiredErr(required)
+		return 0, allowPaymentRequiredErr(required)
 	}
-	// The privacy gate and no-paid exception are complete here. The separate
-	// private paid-message ledger is not part of the current message store yet;
-	// never accept an authorization without an atomic debit.
-	return paymentUnsupportedErr()
+	return requirement.paidStars, nil
 }

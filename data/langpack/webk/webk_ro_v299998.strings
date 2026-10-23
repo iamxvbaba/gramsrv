@@ -1577,7 +1577,7 @@
 "EditAdminRights" = "Editează drepturi admin";
 "EditAdminSendAnonymously" = "Rămâne Anonim";
 "EditAdminWhatCanDo" = "Ce poate face acest administrator?";
-"EditBot.Buttons.Caption" = "Folosește [@BotFather](https://t.me/botfather) pentru a gestiona acest robot.";
+"EditBot.Buttons.Caption" = "Folosește [@BotFather](https://sgq.me/botfather) pentru a gestiona acest robot.";
 "EditBot.Buttons.Commands" = "Editează Comenzi";
 "EditBot.Buttons.Intro" = "Editează Introducere";
 "EditBot.Buttons.Settings" = "Schimbă Setările Robotului";
@@ -1965,7 +1965,7 @@
 "GroupChecklist" = "Listă de Sarcini de Grup";
 "GroupDescription1" = "Până la 200.000 de membri";
 "GroupDescription2" = "Istoric conversație durabil";
-"GroupDescription3" = "Link-uri publice ca t.me/titlu";
+"GroupDescription3" = "Link-uri publice ca sgq.me/titlu";
 "GroupDescription4" = "Administratori cu privilegii";
 "GroupEmptyTitle1" = "Ai creat un **grup**.";
 "GroupEmptyTitle2" = "Grupurile pot avea:";
@@ -3235,7 +3235,7 @@
 "ProfileStoriesArchiveGroupHint" = "Doar adminii grupului pot vedea poveștile arhivate dacă nu sunt postate pe pagina grupului.";
 "ProfileStoriesArchiveHint" = "Doar tu poți vedea poveștile arhivate dacă nu alegi să le postezi la profil.";
 "ProfileUnofficialSecurityRisk" = "%1$s folosește o aplicație neoficială Telegram — mesajele către acest utilizator pot fi mai puțin sigure.";
-"PublicLinksLimitSubtitle" = "Rezervă până la %d linkuri t.me/username";
+"PublicLinksLimitSubtitle" = "Rezervă până la %d linkuri sgq.me/username";
 "PublicLinksLimitTitle" = "Linkuri publice";
 "PublicShares" = "Partajări Publice";
 "PublicSharesCount#one" = "%1$s partajare publică";
@@ -4271,7 +4271,7 @@
 "Telegram.LanguageViewController" = "Limbă";
 "Telegram.NotificationSettingsViewController" = "Notificări";
 "TelegramFeatures" = "Funcționalități Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Deținătorii de conturi cu **Telegram Premium** au acces exclusiv la multiple funcționalități adiționale.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Emojiurile de stare sunt o funcționalitate premium. Altele incluse în **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s este abonat **Telegram\u00a0Premium**";

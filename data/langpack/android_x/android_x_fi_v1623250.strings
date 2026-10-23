@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Vaadi valvojan hyväksyntä";
 "ApproveNewMembersInfo" = "Jos tämä on päällä, valvojan tulee erikseen hyväksyä käyttäjän liittyminen.";
 "Archive" = "Arkistoi";
-"ArchiveAppearanceHint" = "Näyttää arkiston kansiona. Voit vaihtaa sen paikkaa [asetuksista](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Näyttää arkiston kansiona. Voit vaihtaa sen paikkaa [asetuksista](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Ulkoasu";
 "ArchiveAppearanceToggle" = "Näytä kansiona";
 "ArchiveAsFolder" = "Arkisto kansiona";
@@ -1204,9 +1204,9 @@
 "EditPrivacyPhoneNumber" = "Puhelinnumero";
 "EditPrivacyPhoto" = "Profiilikuvat";
 "EditPrivacyReadDate" = "Näe lukuaikani";
-"EditPrivacyReadDateAllowHint" = "Anna käyttäjän %1$s nähdä **nähty-tiaasi ja viimeisin paikallaoloaikasi** muuttaaksesi tätä asetusta.\n\nLisätietoja löytyy kohdasta **[Yksityisyys ja tietoturva](tg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
-"EditPrivacyReadDateRestrictHint" = "Rajoita käyttäjää %1$s näkemästä **nähty-tilaasi ja viimeisintä paikallaoloaikaasi** muuttaaksesi tätä asetusta.\n\nLisätietoja löytyy kohdasta **[Yksityisyys ja tietoturva](tg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
-"EditPrivacyReadDateToggleHint" = "Voit piilottaa **lukuajan** vain heiltä, jotka eivät saa nähdä **nähty-tilaasi tai viimeisintä paikallaoloaikaasi**.\n\nLue kohta **[Yksityisyys ja tietoturva](tg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
+"EditPrivacyReadDateAllowHint" = "Anna käyttäjän %1$s nähdä **nähty-tiaasi ja viimeisin paikallaoloaikasi** muuttaaksesi tätä asetusta.\n\nLisätietoja löytyy kohdasta **[Yksityisyys ja tietoturva](sg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
+"EditPrivacyReadDateRestrictHint" = "Rajoita käyttäjää %1$s näkemästä **nähty-tilaasi ja viimeisintä paikallaoloaikaasi** muuttaaksesi tätä asetusta.\n\nLisätietoja löytyy kohdasta **[Yksityisyys ja tietoturva](sg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
+"EditPrivacyReadDateToggleHint" = "Voit piilottaa **lukuajan** vain heiltä, jotka eivät saa nähdä **nähty-tilaasi tai viimeisintä paikallaoloaikaasi**.\n\nLue kohta **[Yksityisyys ja tietoturva](sg://settings/privacy)** – **Nähty-tila & paikallaolo** – **Piilota lukuaika**.";
 "EditPrivacyStatus" = "Nähty-tila & paikallaolo";
 "EditPrivacyVoice" = "Lähettää minulle ääniviestejä";
 "EditUserRestrictions" = "Muokkaa käyttäjän rajoituksia";
@@ -1538,7 +1538,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Tällä asetuksella voi vertailla toimivuutta ilman reunasta reunaan -tilan tukea Androidin versioilla 11–14.";
 "Experiment_PeerIds" = "Näytä ID:t profiileissa";
 "Experiment_PeerIdsInfo" = "Näyttää ohjelmistorajapinnan tunnisteet käyttäjille ja keskusteluille";
-"ExperimentalBuildInfo" = "Tätä **Telegram X** -versiota ei ole suunniteltu pidempään käyttöön.\n\nSovellus ja ilmoitukset saattavat lakata toimimasta.\n\nJos etsit Telegram X:n varsinaista APK-versiota, kokeile etsiä sitä kanavalta https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Tätä **Telegram X** -versiota ei ole suunniteltu pidempään käyttöön.\n\nSovellus ja ilmoitukset saattavat lakata toimimasta.\n\nJos etsit Telegram X:n varsinaista APK-versiota, kokeile etsiä sitä kanavalta https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Varoitus: kokeellinen versio";
 "ExperimentalSettings" = "Kokeelliset asetukset";
 "ExperimentalSettingsUnavailable" = "Kokeellisia asetuksia ei tällä hetkellä ole. Yritä myöhemmin uudelleen.";
@@ -1936,7 +1936,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X ei onnistunut käynnistymään, koska laitteen tallennustila on täynnä.\n\nVarmista, että tallennustilaa on riittävästi saatavilla ja napauta **Käynnistä** yrittääksesi uudelleen.\n\nTilaa saatavilla: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X ei onnistunut käynnistymään laitevirheen johdosta.\n\nNapauta **Käynnistä** yrittääksesi uudelleen. Jos sovellus ei toimi, kokeile seuraavia:\n\n• Varmista, että laitteesi on tarpeeksi tallennustilaa saatavilla: **%1$s**.\n• Varmista, ettei tallennustilan kanssa ole muita ongelmia, kuten SD-kortin kanssa.\n• Käynnistä laitteesi uudelleen.\n\nJos mikään näistä ei auta, voit katsoa, onko muilla sama ongelma [TDLib:n GitHub-sivuilla](https://github.com/tdlib/td/issues) etsiäksesi ratkaisua, tai voit luoda uuden, johon kannattaa sisällyttää virheviesti ja laitteen tiedot.";
 "LaunchAppGuideFatalError" = "Telegram X sulkeutui viime kerralla odottamattoman virheen takia.\n\nNapauta **Käynnistä**-painiketta yrittääksesi uudelleen.";
-"LaunchAppGuideTdlibIssue" = "Telegram X ei onnistunut käynnistymään TDLib-virheen johdosta.\n\nNapauta **Käynnistä** yrittääksesi uudelleen. Jos sovellus ei toimi, kokeile seuraavia:\n\n• [Varmista](%2$s) että käytössäsi on uusin versio Telegram X :stä.\n• Käynnistä laitteesi uudelleen.\n\n**Jos yllä olevat vaiheet eivät auttaneet**\n\n1. Jaa virheen tiedot TDLib-kehittäjien kanssa yhdellä seuraavista tavoista:\n— Yksityisesti [@tdlib_bot](https://t.me/tdlib_bot)-botilla käyttäen toista laitetta tai [Telegramin verkkoversiota](https://web.telegram.org/).\n— Julkisesti [GitHub-sivuilla](https://github.com/tdlib/td/issues). **Älä** jaa **tdlib_log.txt**-tiedostoa julkisesti.\n2. Odota kärsivällisesti vastausta.\n3. Vaihda lokiasetuksia TDLib:n kehittäjien pyynnön mukaisesti.\n4. Paina **Käynnistä** kaataaksesi sovelluksen.\n5. Jaa **tdlib_log.txt** TDLib:n kehittäjien kanssa ja odota, että ongelma korjataan.\n6. Kun sovellus on päivitetty, voit taas käynnistää sen normaalisti.\n\n**Vaihtoehdot**\n\n• Katso, onko muilla samanlaisia ongelmia [GitHub-suvilla](https://github.com/tdlib/td/issues); siellä saattaa olla ratkaisu.\n• Asenna sovellus uudelleen. Salaiset keskustelut menetetään. Jos käytät samaa puhelinnumeroa, kaikki muut keskustelut ja tiedot palautetaan Telegram-pilvestä.";
+"LaunchAppGuideTdlibIssue" = "Telegram X ei onnistunut käynnistymään TDLib-virheen johdosta.\n\nNapauta **Käynnistä** yrittääksesi uudelleen. Jos sovellus ei toimi, kokeile seuraavia:\n\n• [Varmista](%2$s) että käytössäsi on uusin versio Telegram X :stä.\n• Käynnistä laitteesi uudelleen.\n\n**Jos yllä olevat vaiheet eivät auttaneet**\n\n1. Jaa virheen tiedot TDLib-kehittäjien kanssa yhdellä seuraavista tavoista:\n— Yksityisesti [@tdlib_bot](https://sgq.me/tdlib_bot)-botilla käyttäen toista laitetta tai [Telegramin verkkoversiota](https://web.telegram.org/).\n— Julkisesti [GitHub-sivuilla](https://github.com/tdlib/td/issues). **Älä** jaa **tdlib_log.txt**-tiedostoa julkisesti.\n2. Odota kärsivällisesti vastausta.\n3. Vaihda lokiasetuksia TDLib:n kehittäjien pyynnön mukaisesti.\n4. Paina **Käynnistä** kaataaksesi sovelluksen.\n5. Jaa **tdlib_log.txt** TDLib:n kehittäjien kanssa ja odota, että ongelma korjataan.\n6. Kun sovellus on päivitetty, voit taas käynnistää sen normaalisti.\n\n**Vaihtoehdot**\n\n• Katso, onko muilla samanlaisia ongelmia [GitHub-suvilla](https://github.com/tdlib/td/issues); siellä saattaa olla ratkaisu.\n• Asenna sovellus uudelleen. Salaiset keskustelut menetetään. Jos käytät samaa puhelinnumeroa, kaikki muut keskustelut ja tiedot palautetaan Telegram-pilvestä.";
 "LaunchAppShareError" = "Jaa virheen tiedot";
 "LaunchAppUserSubtitle" = "ei paikalla";
 "LaunchAppViewError" = "Katso virheen tiedot";
@@ -1994,7 +1994,7 @@
 "LinkChannel" = "Yhdistä kanava";
 "LinkChannelHelp" = "Voit asettaa julkisen linkin **Telegramissa**. Jos teet näin, muut voivat löytää kanavan linkin kautta ja seurata sitä.\n\nVoit käyttää merkkejä **a–z**, **0–9** ja alaviivoja. Nimen tulee olla vähintään **5** merkkiä pitkä.";
 "LinkChecking" = "Tarkistetaan linkin saatavuutta…";
-"LinkCurrent" = "t.me/%1$s on nykyinen julkinen linkki.";
+"LinkCurrent" = "sgq.me/%1$s on nykyinen julkinen linkki.";
 "LinkDeleteOther" = "%1$s poisti käyttäjän %2$s kutsulinkin %3$s";
 "LinkDeleteOtherYou" = "Poistit käyttäjän %1$s kutsulinkin %2$s";
 "LinkDeletePrimary" = "%1$s poisti pääkutsulinkin %2$s";
@@ -4024,7 +4024,7 @@
 "TranslationFailed" = "Kääntäminen epäonnistui";
 "TranslationMoreCreate" = "LUO";
 "TranslationMoreDone" = "Selvä";
-"TranslationMoreText" = "[Käännösalustamme](https://translations.telegram.org) hallinnoi kieliluetteloa.\n\nTelegram tarjoaa sinulle vaihtoehdon vaihtaa kielellesi, kun sitä vastaava käännös tulee virallisesti saataville.\n\nOdotellessa voit luoda mukautettuja käännöstiedostoja, liittyä [käännösprosessiin](https://translations.telegram.org/en/android_x/), tai jopa [luoda omia](https://t.me/tgx_android_translate/) käännöstiedostojasi.";
+"TranslationMoreText" = "[Käännösalustamme](https://translations.telegram.org) hallinnoi kieliluetteloa.\n\nTelegram tarjoaa sinulle vaihtoehdon vaihtaa kielellesi, kun sitä vastaava käännös tulee virallisesti saataville.\n\nOdotellessa voit luoda mukautettuja käännöstiedostoja, liittyä [käännösprosessiin](https://translations.telegram.org/en/android_x/), tai jopa [luoda omia](https://sgq.me/tgx_android_translate/) käännöstiedostojasi.";
 "TranslationMoreTitle" = "Etkö löydä kieltäsi?";
 "TranslationPaste" = "Liitä käännös";
 "TranslationsMissing#one" = "%1$s kääntämätön";

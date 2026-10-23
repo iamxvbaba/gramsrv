@@ -1491,7 +1491,7 @@
 "EditAdminRights" = "Edit admin rights";
 "EditAdminSendAnonymously" = "Remain Anonymous";
 "EditAdminWhatCanDo" = "What can this admin do?";
-"EditBot.Buttons.Caption" = "Use [@BotFather](https://t.me/botfather) to manage this bot.";
+"EditBot.Buttons.Caption" = "Use [@BotFather](https://sgq.me/botfather) to manage this bot.";
 "EditBot.Buttons.Commands" = "Edit Commands";
 "EditBot.Buttons.Intro" = "Edit Intro";
 "EditBot.Buttons.Settings" = "Change Bot Settings";
@@ -1835,7 +1835,7 @@
 "GroupChecklist" = "Group Checklist";
 "GroupDescription1" = "Up to 200,000 members";
 "GroupDescription2" = "Persistent chat history";
-"GroupDescription3" = "Public links such as t.me/title";
+"GroupDescription3" = "Public links such as sgq.me/title";
 "GroupDescription4" = "Admins with different rights";
 "GroupEmptyTitle1" = "You created a **group**.";
 "GroupEmptyTitle2" = "Groups can have:";
@@ -3042,7 +3042,7 @@
 "ProfileStoriesArchiveGroupHint" = "Only admins of the group can see archived stories unless they are posted to the group page.";
 "ProfileStoriesArchiveHint" = "Only you can see archived stories unless you choose to post them to your profile.";
 "ProfileUnofficialSecurityRisk" = "%1$s uses an unofficial Telegram client — messages to this user may be less secure.";
-"PublicLinksLimitSubtitle" = "Reserve up to %d t.me/username links";
+"PublicLinksLimitSubtitle" = "Reserve up to %d sgq.me/username links";
 "PublicLinksLimitTitle" = "Public Links";
 "PublicShares" = "Public Shares";
 "PublicSharesCount#one" = "%1$s public share";
@@ -4016,7 +4016,7 @@
 "Telegram.LanguageViewController" = "Language";
 "Telegram.NotificationSettingsViewController" = "Notifications";
 "TelegramFeatures" = "Telegram Features";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Owners of **Telegram Premium** accounts have exclusive access to multiple additional features.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Emoji statuses are a premium feature. Other features included in **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s is a subscriber of **Telegram\u00a0Premium**";

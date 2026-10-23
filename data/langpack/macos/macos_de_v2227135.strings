@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Für jeden";
 "AboutCocoon.Feature.Private.Description" = "Kein Dritter kann auf Daten wie Übersetzungen in Cocoon zugreifen.";
 "AboutCocoon.Feature.Private.Title" = "Privat";
-"AboutCocoon.Footer" = "Möchtest du Cocoon in deine Projekte integrieren?\nMelde dich unter [t.me/cocoon?direct](t.me/cocoon)";
+"AboutCocoon.Footer" = "Möchtest du Cocoon in deine Projekte integrieren?\nMelde dich unter [sgq.me/cocoon?direct](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Teilen abschalten";
 "AboutFeature.DisableSharing.NoForwarding" = "Keine Weiterleitung";
@@ -2558,7 +2558,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "System\n%@";
 "EmptyGroupInfo.Line1" = "• Platz für bis zu %@ Mitglieder";
 "EmptyGroupInfo.Line2" = "• Dauerhaften Chat-Verlauf";
-"EmptyGroupInfo.Line3" = "• Öffentliche Links, wie t.me/title";
+"EmptyGroupInfo.Line3" = "• Öffentliche Links, wie sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Admins mit unterschiedlichen Rechten";
 "EmptyGroupInfo.Subtitle" = "Gruppen bieten:";
 "EmptyGroupInfo.Title" = "Du hast eine Gruppe erstellt";
@@ -4163,7 +4163,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Chats anheften";
 "Premium.Boarding.Double.PinnedChats.Info" = "Bis zu %@ Chats deiner Chatliste anheften";
 "Premium.Boarding.Double.PublicLinks" = "Öffentliche Links";
-"Premium.Boarding.Double.PublicLinks.Info" = "Bis zu %@ t.me/username Links";
+"Premium.Boarding.Double.PublicLinks.Info" = "Bis zu %@ sgq.me/username Links";
 "Premium.Boarding.Double.SavedGifs" = "GIFs speichern";
 "Premium.Boarding.Double.SavedGifs.Info" = "Bis zu %@ deiner Lieblings-GIFs speichern";
 "Premium.Boarding.Double.Title" = "Limits verdoppelt";
@@ -4496,7 +4496,7 @@
 "ProxySettings.CredentialsHeader" = "ZUGANGSDATEN (OPTIONAL)";
 "ProxySettings.Disabled" = "Deaktiviert";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Wenn deine Zwischenablage einen SOCKS5-Link beinhaltet (**t.me/socks?server=127.0.0.1&port=80**), wird der Proxy automatisch ausgewählt";
+"ProxySettings.ExportDescription" = "Wenn deine Zwischenablage einen SOCKS5-Link beinhaltet (**sgq.me/socks?server=127.0.0.1&port=80**), wird der Proxy automatisch ausgewählt";
 "ProxySettings.ExportLink" = "Link aus Zwischenablage exportieren";
 "ProxySettings.IncorrectSecret" = "Falsche Zugangsdaten, bitte erneut versuchen.";
 "ProxySettings.Item.Available" = "verfügbar (Ping: %@ ms)";
@@ -6058,7 +6058,7 @@
 "TranslateModal.DeleteStyleHeader" = "Stil löschen";
 "TranslateModal.EditStyle" = "Stil ändern";
 "TranslateModal.ShareStyle" = "Stil teilen";
-"TranslateModal.StyleByAuthor" = "Stil von [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stil von [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Überspringen";
 "TwoStepAuth.AnError" = "Ein Fehler ist aufgetreten. Später erneut versuchen.";
 "TwoStepAuth.CancelReset" = "Zurücksetzung abbrechen";

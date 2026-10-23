@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "SOHBET BAĞLANTILARI";
 "Business.Links.PreviewText" = "Bu bağlantıyı kullanarak sizinle sohbet başlatan herkes için mesaj giriş alanına girilecek bir mesaj ekleyin:";
 "Business.Links.PreviewTitle" = "Sohbet Bağlantısı";
-"Business.Links.SimpleLinkInfoPhone" = "Sizinle sohbet edilmesi için basit bir bağlantı da kullanabilirsiniz: [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Sizinle sohbet edilmesi için basit bir bağlantı da kullanabilirsiniz: [t.me/\u2060+\u2060%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Sizinle sohbet etmek için basit bir bağlantı da kullanabilirsiniz: [t.me/%1$@](username) veya [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Sizinle sohbet edilmesi için basit bir bağlantı da kullanabilirsiniz: [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Sizinle sohbet edilmesi için basit bir bağlantı da kullanabilirsiniz: [sgq.me/\u2060+\u2060%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Sizinle sohbet etmek için basit bir bağlantı da kullanabilirsiniz: [sgq.me/%1$@](username) veya [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Müşterilerinize sizinle sohbet başlatan kısa bağlantılar sağlayın ve onlara size gönderecekleri ilk mesajı önerin.";
 "Business.LinksInfo" = "İlk mesajı önererek sizinle sohbet başlatan bağlantılar oluşturun.";
 "Business.Location" = "Konum";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanal adları alt çizgi ile başlayamaz.";
 "Channel.Username.InvalidTaken" = "Üzgünüz, bu bağlantı zaten alınmış.";
 "Channel.Username.InvalidTooShort" = "Genel bağlantılar en az 5 karakterden oluşmalıdır.";
-"Channel.Username.LinkHint" = "Bu bağlantı kanalınızı açar:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Bu bağlantı kanalınızı açar:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Bağlantıyı eski gruplarınızdan veya kanallarınızdan iptal edebilir veya bunun yerine özel bir kanal oluşturabilirsiniz.";
 "Channel.Username.Title" = "Bağlantı";
 "Channel.Username.UsernameIsAvailable" = "%@ kullanılabilir.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Verimli";
 "CocoonInfo.ForEveryone.Text" = "Herhangi bir geliştirici, yapay zeka özellikleri için [Cocoon](telegram) kullanabilir. Daha fazla bilgi için [cocoon.org](web) adresini ziyaret edin.";
 "CocoonInfo.ForEveryone.Title" = "Herkes İçin";
-"CocoonInfo.IntergrateInfo" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\n[t.me/cocoon?direct]() adresinden bize ulaşın.";
+"CocoonInfo.IntergrateInfo" = "Cocoon'u projelerinize entegre etmek mi istiyorsunuz?\n[sgq.me/cocoon?direct]() adresinden bize ulaşın.";
 "CocoonInfo.Private.Text" = "Cocoon içerisinde çeviriler gibi hiçbir veriye üçüncü şahıslar erişemez.";
 "CocoonInfo.Private.Title" = "Özel";
 "CocoonInfo.Title" = "COCOON";
@@ -4280,7 +4280,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Yalnızca **a-z**, **0-9** ve alt çizgi karakterlerini kullanabilirsiniz.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "En fazla %d bot oluşturabilirsiniz.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "En fazla %d bot oluşturabilirsiniz.";
-"CreateBot.UsernameStatus.Link" = "Bağlantı: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Bağlantı: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Kullanıcı adı rakamla başlayamaz.";
 "CreateBot.UsernameStatus.Short" = "Kullanıcı adı en az 5 karakterden oluşmalıdır.";
 "CreateBot.UsernameStatus.Taken" = "Bu kullanıcı adı zaten alınmış.";
@@ -4663,7 +4663,7 @@
 "EmojiStickerSettings.Info" = "Sanatçılar, @stickers botumuzla kendi ifade paketlerini ekleyebilirler.\n\nTüm paketi görüntülemek ve eklemek için bir mesaja basılı tutun.";
 "EmptyGroupInfo.Line1" = "200.000'e kadar üye";
 "EmptyGroupInfo.Line2" = "Kalıcı sohbet geçmişi";
-"EmptyGroupInfo.Line3" = "t.me/title gibi herkese açık bağlantılar";
+"EmptyGroupInfo.Line3" = "sgq.me/title gibi herkese açık bağlantılar";
 "EmptyGroupInfo.Line4" = "Farklı yetkilere sahip yöneticiler";
 "EmptyGroupInfo.Subtitle" = "Gruplarda şunlar mevcuttur:";
 "EmptyGroupInfo.Title" = "Bir grup oluşturdunuz";
@@ -8962,7 +8962,7 @@
 "Premium.Limits.PinnedChats" = "Sabitlenmiş Sohbetler";
 "Premium.Limits.PinnedChatsInfo" = "Ana sohbet listenize 10 kadar sohbeti sabitleyin";
 "Premium.Limits.PublicLinks" = "Genel Bağlantılar";
-"Premium.Limits.PublicLinksInfo" = "20 adede kadar [t.me/username]() bağlantısı ayırın";
+"Premium.Limits.PublicLinksInfo" = "20 adede kadar [sgq.me/username]() bağlantısı ayırın";
 "Premium.Limits.RecommendedChannels" = "Benzer Kanallar";
 "Premium.Limits.RecommendedChannelsInfo" = "100'e kadar benzer kanalı görüntüleyin";
 "Premium.Limits.SavedGifs" = "Kaydedilen GIF'ler";
@@ -9314,7 +9314,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "SON GÖRÜLMEMİ KİMLER GÖREBİLİR?";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Numaranızı rehberine ekleyen kişiler, sizin de rehberinizde ise Telegram'da göreceklerdir.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Rehberlerinde numaranızın kayıtlı olduğu kişiler, numaranızı Telegram'da da görecektir.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Numaranızı kişilerine kaydeden kullanıcılar sizi Telegram'da da görür.\n\nBu genel bağlantı sizinle bir sohbet açar:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Numaranızı kişilerine kaydeden kullanıcılar sizi Telegram'da da görür.\n\nBu genel bağlantı sizinle bir sohbet açar:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "BENİ NUMARAM İLE KİM BULABİLİR?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "TELEFON NUMARAMI KİMLER GÖREBİLİR?";
 "PrivacyPolicy.Accept" = "Kabul Et ve Devam Et";
@@ -10217,8 +10217,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "kullanım dışı";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TÜR";
-"SocksProxySetup.QrCode.TMeLink" = "t.me link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "KİMLİK BİLGİLERİ";
 "SocksProxySetup.SaveProxy" = "Vekil Sunucuyu Kaydet";
 "SocksProxySetup.SavedProxies" = "KAYITLI VEKİL SUNUCULAR";
@@ -11886,7 +11886,7 @@
 "Username.InvalidTooShort" = "Kullanıcı adları en az 5 karakterden oluşmalıdır.";
 "Username.InvalidValue" = "Üzgünüz, bu kullanıcı adı geçersiz.";
 "Username.LinkCopied" = "Bağlantı panoya kopyalandı.";
-"Username.LinkHint" = "Bu bağlantı sizinle bir sohbet açar:\n[https://t.me/%@]";
+"Username.LinkHint" = "Bu bağlantı sizinle bir sohbet açar:\n[https://sgq.me/%@]";
 "Username.LinksOrder" = "KULLANICI ADI SIRASI";
 "Username.LinksOrderInfo" = "Bilgi sayfanızda görüntülenecekleri sırayı değiştirmek için bağlantıları sürükleyip bırakın.";
 "Username.Placeholder" = "Kullanıcı Adınız";

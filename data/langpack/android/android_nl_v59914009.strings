@@ -2921,15 +2921,15 @@
 "CloseTopics" = "Onderwerpen sluiten";
 "CloseTranslation" = "Vertaling sluiten";
 "CocoonFeature1Text" = "Geen enkele derde partij heeft toegang tot data, zoals vertalingen, binnen **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privé";
 "CocoonFeature2Text" = "Dankzij Cocoon zijn de vertaalkosten van Telegram met een factor 6 gedaald.";
 "CocoonFeature2Title" = "Efficiënt";
 "CocoonFeature3Text" = "Alle ontwikkelaars kunnen Cocoon gebruiken voor AI-toepassingen. Lees meer op **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Voor iedereen";
-"CocoonFooter" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Vertalingen worden aangedreven door\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Hoe werkt het?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nvoert AI-taken veilig en efficiënt uit.";
@@ -5408,7 +5408,7 @@
 "GroupDeletedUndo" = "Groep verwijderd";
 "GroupDescription1" = "Tot 200.000 leden";
 "GroupDescription2" = "Blijvende chatgeschiedenis";
-"GroupDescription3" = "Openbare links zoals t.me/titel";
+"GroupDescription3" = "Openbare links zoals sgq.me/titel";
 "GroupDescription4" = "Beheerders met aangepaste rechten";
 "GroupEmoji" = "Emoji van groep";
 "GroupEmojiPack" = "Emojibundel van groep";
@@ -8274,7 +8274,7 @@
 "PsaType_psa" = "Aankondiging";
 "PublicChannelsTooMuch" = "Sorry, deze gebruiker heeft al te veel openbare groepen of kanalen. Vraag hem/haar eerst om één van zijn/haar bestaande groepen of kanalen privé te maken.";
 "PublicLink" = "Openbare link";
-"PublicLinksLimitSubtitle" = "Reserveer maximaal %d t.me/gebruikersnaam-links";
+"PublicLinksLimitSubtitle" = "Reserveer maximaal %d sgq.me/gebruikersnaam-links";
 "PublicLinksLimitTitle" = "Openbare links";
 "PublicPhoto" = "openbare foto";
 "PublicPoll" = "Peiling";
@@ -10549,7 +10549,7 @@
 "TelegramFaq" = "Veelgestelde vragen";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram-functies";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "Stel een wachtwoord in";
 "TelegramPassportCreatePasswordInfo" = "Stel een wachtwoord in om je persoonsgegevens te beveiligen met end-to-end-versleuteling.\n\nDit wachtwoord heb je ook nodig wanneer je inlogt op Telegram vanaf een nieuw apparaat.";

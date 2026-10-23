@@ -2676,15 +2676,15 @@
 "CloseTopics" = "锁定话题";
 "CloseTranslation" = "关闭翻译";
 "CocoonFeature1Text" = "任何第三方都无法访问 **@cocoon** 内的任何数据，包括翻译。";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "隐私";
 "CocoonFeature2Text" = "Cocoon 帮助 Telegram 将翻译成本降低了 5/6。";
 "CocoonFeature2Title" = "高效";
 "CocoonFeature3Text" = "任何开发者都能使用 Cocoon 实现 AI 功能。了解更多，请访问\u00a0**cocoon.org**。\n";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "人人都可以用";
-"CocoonFooter" = "想在您的项目中集成 Cocoon 吗？\n请通过\u00a0**t.me/cocoon?direct**\u00a0联系我们。";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "想在您的项目中集成 Cocoon 吗？\n请通过\u00a0**sgq.me/cocoon?direct**\u00a0联系我们。";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "翻译由 **🥚 Cocoon** 提供技术支持。";
 "CocoonPoweredByLink" = "**这是如何运作的?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork) 能安全且高效地处理 AI 任务。";
@@ -4848,7 +4848,7 @@
 "GroupDeletedUndo" = "群组已删除";
 "GroupDescription1" = "成员上限为 20 万人";
 "GroupDescription2" = "永久聊天记录";
-"GroupDescription3" = "公开链接，例如：t.me/title";
+"GroupDescription3" = "公开链接，例如：sgq.me/title";
 "GroupDescription4" = "具备不同权限的管理员";
 "GroupEmoji" = "群组表情符号";
 "GroupEmojiPack" = "群组表情包";
@@ -7566,7 +7566,7 @@
 "PsaType_psa" = "公告";
 "PublicChannelsTooMuch" = "抱歉，目标用户已经有太多的公开群组或频道。 请让他们先将他们现有的一个群组或频道设为私有。";
 "PublicLink" = "公开链接";
-"PublicLinksLimitSubtitle" = "保留高达 %d 个 t.me/username 链接";
+"PublicLinksLimitSubtitle" = "保留高达 %d 个 sgq.me/username 链接";
 "PublicLinksLimitTitle" = "公共链接";
 "PublicPhoto" = "公开图片";
 "PublicPoll" = "投票";
@@ -9711,7 +9711,7 @@
 "TelegramFaq" = "Telegram 常见问题";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram 功能";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram 通行证";
 "TelegramPassportCreatePassword" = "创建密码";
 "TelegramPassportCreatePasswordInfo" = "请创建一个密码使用端到端加密保护个人数据。\n\n每次您在新的设备登录到 Telegram 时也将需要输入这个密码。";

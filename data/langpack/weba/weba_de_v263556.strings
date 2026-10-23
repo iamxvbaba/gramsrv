@@ -504,7 +504,7 @@
 "EmptyChatAppearanceSystem" = "System";
 "EmptyGroupInfoLine1" = "• Bis zu {count} Mitglieder";
 "EmptyGroupInfoLine2" = "• Dauerhaften Chat-Verlauf";
-"EmptyGroupInfoLine3" = "• Öffentliche Links, wie t.me/title";
+"EmptyGroupInfoLine3" = "• Öffentliche Links, wie sgq.me/title";
 "EmptyGroupInfoLine4" = "• Admins mit unterschiedlichen Rechten";
 "EmptyGroupInfoSubtitle" = "Gruppen bieten:";
 "EmptyGroupInfoTitle" = "Du hast eine Gruppe erstellt";
@@ -1144,7 +1144,7 @@
 "ProfileJoinGroup" = "Gruppe beitreten";
 "ProfileViewChannel" = "Kanal anzeigen";
 "PublicLink" = "Öffentlicher Link";
-"PublicLinksLimitSubtitle" = "Bis zu {count} t.me/name Links reservieren";
+"PublicLinksLimitSubtitle" = "Bis zu {count} sgq.me/name Links reservieren";
 "PublicLinksLimitTitle" = "Öffentliche Links";
 "PublicPoll" = "Umfrage";
 "PublicPostsLimitReached" = "Limit erreicht";

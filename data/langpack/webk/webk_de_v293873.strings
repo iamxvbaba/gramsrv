@@ -904,7 +904,7 @@
 "EditAdminRights" = "Adminrechte bearbeiten";
 "EditAdminSendAnonymously" = "Anonym bleiben";
 "EditAdminWhatCanDo" = "Was kann dieser Admin machen?";
-"EditBot.Buttons.Caption" = "Mit [@BotFather](https://t.me/botfather) kannst du deinen Bot verwalten.";
+"EditBot.Buttons.Caption" = "Mit [@BotFather](https://sgq.me/botfather) kannst du deinen Bot verwalten.";
 "EditBot.Buttons.Commands" = "Befehle bearbeiten";
 "EditBot.Buttons.Intro" = "Einleitung bearbeiten";
 "EditBot.Buttons.Settings" = "Bot-Einstellungen ändern";
@@ -1107,7 +1107,7 @@
 "GroupChecklist" = "Gruppen-Aufgabenliste";
 "GroupDescription1" = "Platz für bis zu 200.000 Mitglieder";
 "GroupDescription2" = "Dauerhaften Chat-Verlauf";
-"GroupDescription3" = "Öffentliche Links, wie t.me/title";
+"GroupDescription3" = "Öffentliche Links, wie sgq.me/title";
 "GroupDescription4" = "Admins mit unterschiedlichen Rechten";
 "GroupEmptyTitle1" = "Du hast eine **Gruppe** erstellt";
 "GroupEmptyTitle2" = "Gruppen bieten:";
@@ -1766,7 +1766,7 @@
 "Profile" = "Profil";
 "ProfileStories" = "Beiträge";
 "ProfileStoriesArchiveHint" = "Nur du kannst archivierte Stories sehen, es sei denn, du hast sie in deinem Profil veröffentlicht.";
-"PublicLinksLimitSubtitle" = "Bis zu %d t.me/username Links";
+"PublicLinksLimitSubtitle" = "Bis zu %d sgq.me/username Links";
 "PublicLinksLimitTitle" = "Öffentliche Links";
 "PublicShares" = "Öffentlich geteilt";
 "PublicSharesCount#one" = "%1$sx öffentlich geteilt";
@@ -2267,7 +2267,7 @@
 "Telegram.LanguageViewController" = "Sprache";
 "Telegram.NotificationSettingsViewController" = "Mitteilungen";
 "TelegramFeatures" = "Telegram Funktionen";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsDE";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsDE";
 "TelegramPremiumSubscribedSubtitle" = "Danke, dass du **Telegram Premium** abonniert hast. \nDas hast du jetzt freigeschaltet:";
 "TelegramPremiumSubscribedTitle" = "Du bist startklar!";
 "TelegramPremiumUserGiftedPremiumDialogSubtitle" = "Du hast jetzt Zugang zu weiteren Funktionen.";

@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "LINKIT KESKUSTELUUN";
 "Business.Links.PreviewText" = "Lisää viesti, joka lisätään viestin tekstikenttään, kun joku avaa keskustelun kanssasi tällä linkillä:";
 "Business.Links.PreviewTitle" = "Linkki keskusteluun";
-"Business.Links.SimpleLinkInfoPhone" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [t.me/+%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [t.me/%1$@](username) tai [t.me/+%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [sgq.me/+%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Voit myös käyttää linkkiä keskusteluun kanssasi — [sgq.me/%1$@](username) tai [sgq.me/+%2$@](phone).";
 "Business.Links.Text" = "Anna asiakkaillesi lyhyitä linkkejä keskusteluun kanssasi — ja ehdota heille aloitusviestiä.";
 "Business.LinksInfo" = "Luo linkkejä keskusteluun kanssasi ja ehdota ensimmäistä viestiä.";
 "Business.Location" = "Sijainti";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanavan nimi ei voi alkaa alaviivalla.";
 "Channel.Username.InvalidTaken" = "Valitettavasti tämä linkki on jo varattu.";
 "Channel.Username.InvalidTooShort" = "Julkisessa linkissä on oltava vähintään 5 merkkiä.";
-"Channel.Username.LinkHint" = "Kanavalle pääsee tällä linkillä:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Kanavalle pääsee tällä linkillä:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Voit mitätöidä vanhemman ryhmän tai kanavan linkin, tai tehdä tästä kanavasta yksityisen.";
 "Channel.Username.Title" = "Linkki";
 "Channel.Username.UsernameIsAvailable" = "%@ on saatavilla.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Tehokas";
 "CocoonInfo.ForEveryone.Text" = "[Cocoon](telegram) on palvelu, jolla kuka tahansa kehittäjä voi toteuttaa tekoälytoiminnallisuuksia. Lue lisää: [cocoon.org](web):";
 "CocoonInfo.ForEveryone.Title" = "Kaikille";
-"CocoonInfo.IntergrateInfo" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Cocoonin kanssa käytettäviä tietoja, kuten käännöksiä, ei voi nähdä kukaan ulkopuolinen.";
 "CocoonInfo.Private.Title" = "Yksityinen";
 "CocoonInfo.Title" = "COCOON";
@@ -4286,7 +4286,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Voit käyttää vain merkkejä **a-z**, **0-9** ja alaviivoja.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Voit luoda enintään %d botin.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Voit luoda enintään %d bottia.";
-"CreateBot.UsernameStatus.Link" = "Linkki: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Linkki: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Käyttäjänimi ei voi alkaa numerolla.";
 "CreateBot.UsernameStatus.Short" = "Käyttäjänimessä on oltava ainakin 5 merkkiä.";
 "CreateBot.UsernameStatus.Taken" = "Tämä käyttäjänimi on varattu.";
@@ -4669,7 +4669,7 @@
 "EmojiStickerSettings.Info" = "Taiteilijat voivat lisätä omia emojeitaan @stickers -botin avulla.\n\nPaina viestiä pitkään nähdäksesi koko kokoelman tai lisätäksesi sen.";
 "EmptyGroupInfo.Line1" = "Peräti 200 000 jäsentä";
 "EmptyGroupInfo.Line2" = "Pysyvä viestihistoria";
-"EmptyGroupInfo.Line3" = "Julkiset linkit, kuten t.me/nimi";
+"EmptyGroupInfo.Line3" = "Julkiset linkit, kuten sgq.me/nimi";
 "EmptyGroupInfo.Line4" = "Valvojia eri oikeuksilla";
 "EmptyGroupInfo.Subtitle" = "Ryhmillä voi olla:";
 "EmptyGroupInfo.Title" = "Loit ryhmän";
@@ -8970,7 +8970,7 @@
 "Premium.Limits.PinnedChats" = "Kiinnitykset";
 "Premium.Limits.PinnedChatsInfo" = "Kiinnitä jopa 10 keskustelua päälistaan";
 "Premium.Limits.PublicLinks" = "Julkiset linkit";
-"Premium.Limits.PublicLinksInfo" = "Varaa jopa 20 [t.me/nimimerkki]()-linkkiä";
+"Premium.Limits.PublicLinksInfo" = "Varaa jopa 20 [sgq.me/nimimerkki]()-linkkiä";
 "Premium.Limits.RecommendedChannels" = "Samanlaiset kanavat";
 "Premium.Limits.RecommendedChannelsInfo" = "Näe peräti 100 samanlaista kanavaa";
 "Premium.Limits.SavedGifs" = "GIFit";
@@ -9322,7 +9322,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "KETKÄ NÄKEVÄT NÄHTY-TILANI";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Käyttäjät jotka lisäävät puhelinnumerosi yhteystietoihin näkevät sen Telegramissa vain, jos he ovat yhteystiedoissasi.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Käyttäjät, joilla on numerosi yhteystiedoissaan, näkevät sen myös Telegramissa.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Käyttäjät, joilla on numerosi yhteystiedoissaan, näkevät sen myös Telegramissa.\n\nTämä julkinen linkki avaa keskustelun kanssasi Telegramissa:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Käyttäjät, joilla on numerosi yhteystiedoissaan, näkevät sen myös Telegramissa.\n\nTämä julkinen linkki avaa keskustelun kanssasi Telegramissa:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "KETKÄ LÖYTÄVÄT MINUT NUMEROLLANI";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "KETKÄ NÄKEVÄT PUHELINNUMERONI";
 "PrivacyPolicy.Accept" = "Hyväksy ja jatka";
@@ -10225,8 +10225,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "ei saatavilla";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TYYPPI";
-"SocksProxySetup.QrCode.TMeLink" = "t.me-linkki";
-"SocksProxySetup.QrCode.TgLink" = "tg://-linkki";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me-linkki";
+"SocksProxySetup.QrCode.TgLink" = "sg://-linkki";
 "SocksProxySetup.RequiredCredentials" = "PÄÄSYTIEDOT";
 "SocksProxySetup.SaveProxy" = "Tallenna välityspalvelin";
 "SocksProxySetup.SavedProxies" = "TALLENNETUT VÄLITYSPALVELIMET";
@@ -11894,7 +11894,7 @@
 "Username.InvalidTooShort" = "Käyttäjänimessä on oltava vähintään viisi merkkiä.";
 "Username.InvalidValue" = "Valitettavasti tämä käyttäjänimi ei kelpaa.";
 "Username.LinkCopied" = "Linkki kopioitiin leikepöydälle.";
-"Username.LinkHint" = "Tämä linkki avaa keskustelun kanssasi Telegramissa:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Tämä linkki avaa keskustelun kanssasi Telegramissa:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "KÄYTTÄJÄNIMIEN JÄRJESTYS";
 "Username.LinksOrderInfo" = "Raahaa linkkejä muuttaaksesi niiden järjestystä profiilisivullasi.";
 "Username.Placeholder" = "Käyttäjänimesi";

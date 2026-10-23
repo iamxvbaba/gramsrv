@@ -3370,7 +3370,7 @@
 "lng_factcheck_add_done" = "Провера чињеница додата.";
 "lng_factcheck_bottom" = "Ово појашњење је дао Telegram.";
 "lng_factcheck_edit_done" = "Провера чињеница је уређена.";
-"lng_factcheck_links" = "Дозвољене су само везе **t.me/**.";
+"lng_factcheck_links" = "Дозвољене су само везе **sgq.me/**.";
 "lng_factcheck_placeholder" = "Додајте чињенице или контекст";
 "lng_factcheck_remove_done" = "Провера чињеница уклоњена.";
 "lng_factcheck_title" = "Провера чињеница";
@@ -4392,7 +4392,7 @@
 "lng_greeting_title" = "Поздравна порука";
 "lng_group_about1" = "До 200 000 чланова";
 "lng_group_about2" = "Трајну историју ћаскања";
-"lng_group_about3" = "Јавне везе као t.me/naziv";
+"lng_group_about3" = "Јавне везе као sgq.me/naziv";
 "lng_group_about4" = "Админе с различитим правима";
 "lng_group_about_header" = "Направили сте групу";
 "lng_group_about_text" = "Групе могу имати:";
@@ -6343,9 +6343,9 @@
 "lng_premium_double_limits_about_gifs#one" = "Сачувајте до {count} омиљени GIF";
 "lng_premium_double_limits_about_gifs#few" = "Сачувајте до {count} омиљена GIF-а";
 "lng_premium_double_limits_about_gifs#other" = "Сачувајте до {count} омиљених GIF-ова";
-"lng_premium_double_limits_about_links#one" = "Резервишите до {count} везу t.me/korisnickoime";
-"lng_premium_double_limits_about_links#few" = "Резервишите до {count} везе t.me/korisnickoime";
-"lng_premium_double_limits_about_links#other" = "Резервишите до {count} веза t.me/korisnickoime";
+"lng_premium_double_limits_about_links#one" = "Резервишите до {count} везу sgq.me/korisnickoime";
+"lng_premium_double_limits_about_links#few" = "Резервишите до {count} везе sgq.me/korisnickoime";
+"lng_premium_double_limits_about_links#other" = "Резервишите до {count} веза sgq.me/korisnickoime";
 "lng_premium_double_limits_about_pins#one" = "Закачите до {count} ћаскањe на главном списку ћаскања";
 "lng_premium_double_limits_about_pins#few" = "Закачите до {count} ћаскања на главном списку ћаскања";
 "lng_premium_double_limits_about_pins#other" = "Закачите до {count} ћаскања на главном списку ћаскања";
@@ -8986,7 +8986,7 @@
 "lng_tag_info_title_owner" = "Ознаке власника";
 "lng_tag_info_title_user" = "Ознаке чланова";
 "lng_tagged_view_saved" = "Погледај";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Потврђујем да имам {count} или више година";
 "lng_terms_age#few" = "Потврђујем да имам {count} или више година";
 "lng_terms_age#other" = "Потврђујем да имам {count} или више година";
@@ -9106,7 +9106,7 @@
 "lng_translate_cocoon_private_title" = "Поверљиво";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) **безбедно** и **ефикасно** обавља ВИ задатке.";
 "lng_translate_cocoon_text" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам на {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "На списак „Не преводи” додат {name}.";
 "lng_translate_hidden_channel" = "Трака за превођење је сакривена за овај канал.";

@@ -146,7 +146,7 @@
 "ApproveNewMembers" = "새로운 참가자 승인";
 "ApproveNewMembersInfo" = "새 멤버가 관리자의 승인을 받은 뒤에만 참여하도록 하려면 이 옵션을 켜세요.";
 "Archive" = "보관";
-"ArchiveAppearanceHint" = "보관함을 로컬 폴더로 표시합니다. 위치는 [설정](tg://settings/folders)에서 변경할 수 있습니다.";
+"ArchiveAppearanceHint" = "보관함을 로컬 폴더로 표시합니다. 위치는 [설정](sg://settings/folders)에서 변경할 수 있습니다.";
 "ArchiveAppearanceTitle" = "외관";
 "ArchiveAppearanceToggle" = "폴더로 표시";
 "ArchiveAsFolder" = "보관함을 폴더로 사용";
@@ -1106,9 +1106,9 @@
 "EditPrivacyPhoneNumber" = "전화번호";
 "EditPrivacyPhoto" = "프로필 사진";
 "EditPrivacyReadDate" = "내 읽은 날짜 보기";
-"EditPrivacyReadDateAllowHint" = "이 설정에 영향을 주려면 %1$s님이 회원님의 **마지막 접속 및 온라인**을 볼 수 있도록 허용하세요.\n\n자세한 내용은 **[개인정보 및 보안](tg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
-"EditPrivacyReadDateRestrictHint" = "이 설정에 영향을 주려면 %1$s님이 회원님의 **마지막 접속 및 온라인**을 보지 못하도록 제한하세요.\n\n자세한 내용은 **[개인정보 및 보안](tg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
-"EditPrivacyReadDateToggleHint" = "**마지막 접속 및 온라인**을 볼 수 없는 모든 사람에게서만 **읽은 날짜**를 숨길 수 있습니다.\n\n**[개인정보 및 보안](tg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
+"EditPrivacyReadDateAllowHint" = "이 설정에 영향을 주려면 %1$s님이 회원님의 **마지막 접속 및 온라인**을 볼 수 있도록 허용하세요.\n\n자세한 내용은 **[개인정보 및 보안](sg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
+"EditPrivacyReadDateRestrictHint" = "이 설정에 영향을 주려면 %1$s님이 회원님의 **마지막 접속 및 온라인**을 보지 못하도록 제한하세요.\n\n자세한 내용은 **[개인정보 및 보안](sg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
+"EditPrivacyReadDateToggleHint" = "**마지막 접속 및 온라인**을 볼 수 없는 모든 사람에게서만 **읽은 날짜**를 숨길 수 있습니다.\n\n**[개인정보 및 보안](sg://settings/privacy)** – **마지막 접속 및 온라인** – **읽은 시간 숨기기**를 확인하세요.";
 "EditPrivacyStatus" = "마지막 접속 및 온라인";
 "EditPrivacyVoice" = "내게 음성 메시지 보내기";
 "EditUserRestrictions" = "사용자 제한 수정";
@@ -1433,7 +1433,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "이 설정을 사용하면 Android 11–14에서 전체 화면 확장 모드 없이 동작을 비교할 수 있습니다.";
 "Experiment_PeerIds" = "프로필에 피어 ID 표시";
 "Experiment_PeerIdsInfo" = "사용자 및 대화 프로필에 API 식별자 표시";
-"ExperimentalBuildInfo" = "이 버전의 **텔레그램 X**는 장기 사용을 위해 설계되지 않았습니다.\n\n시간이 지나면 완전히 작동을 멈출 수 있으며 알림을 켤 수 없습니다.\n\n정상적인 텔레그램 X APK 파일을 찾고 있다면 https://t.me/tgx_log 를 확인하세요.";
+"ExperimentalBuildInfo" = "이 버전의 **텔레그램 X**는 장기 사용을 위해 설계되지 않았습니다.\n\n시간이 지나면 완전히 작동을 멈출 수 있으며 알림을 켤 수 없습니다.\n\n정상적인 텔레그램 X APK 파일을 찾고 있다면 https://sgq.me/tgx_log 를 확인하세요.";
 "ExperimentalBuildTitle" = "주의: 실험용 빌드";
 "ExperimentalSettings" = "실험적인 설정들";
 "ExperimentalSettingsUnavailable" = "사용 가능한 실험이 없습니다. 나중에 다시 오세요.";
@@ -1807,7 +1807,7 @@
 "LaunchAppGuideDiskFull" = "기기 저장 공간이 가득 차서 이전에 텔레그램 X를 실행하지 못했습니다.\n\n충분한 저장 공간이 있는지 확인한 후 **앱 실행**을 눌러 다시 시도하세요.\n\n현재 사용 가능: %1$s";
 "LaunchAppGuideExternalError" = "텔레그램 X가 이전에 기기 오류로 실행에 실패했습니다.\n\n다시 시도하려면 **앱 실행**을 누르세요. 애플리케이션이 계속 실패하면 다음 단계를 따르세요:\n\n• 사용 가능한 디스크 공간이 충분한지 확인하세요: **%1$s**.\n• SD 카드가 분리되었거나 인식되지 않는 등 다른 저장소 문제가 없는지 확인하세요.\n• 기기를 다시 시작하세요.\n\n해결되지 않으면 [TDLib의 GitHub 페이지](https://github.com/tdlib/td/issues)에서 비슷한 문제와 해결 방법을 찾아보거나, 오류 메시지와 기기 세부 정보를 포함하여 새 이슈를 만들 수 있습니다.";
 "LaunchAppGuideFatalError" = "지난번 사용 중 텔레그램 X가 예기치 않게 종료되었습니다.\n\n다시 시도하려면 **앱 실행**을 누르세요.";
-"LaunchAppGuideTdlibIssue" = "텔레그램 X가 이전에 TDLib 치명적 오류로 실행에 실패했습니다.\n\n다시 시도하려면 **앱 실행**을 누르세요. 애플리케이션이 계속 실패하면 다음 단계를 따르세요:\n\n• 최신 텔레그램 X 버전이 설치되어 있는지 [확인](%2$s)하세요.\n• 기기를 다시 시작하세요.\n\n**위 단계로 해결되지 않는 경우**\n\n1. 다음 방법 중 하나로 오류 세부 정보를 TDLib 개발자에게 공유하세요:\n— 다른 기기나 [텔레그램 웹](https://web.telegram.org/)을 사용하여 [@tdlib_bot](https://t.me/tdlib_bot)으로 비공개 공유.\n— [GitHub 페이지](https://github.com/tdlib/td/issues)를 통해 공개 공유. **tdlib_log.txt**는 공개적으로 공유하지 **마세요**.\n2. 답변을 기다리세요.\n3. TDLib 개발자의 요청에 따라 아래 로그 설정을 변경하세요.\n4. **앱 실행**을 눌러 앱을 다시 강제 종료시키세요.\n5. **tdlib_log.txt**를 TDLib 개발자와 공유하고 문제가 해결될 때까지 기다리세요.\n6. 업데이트가 완료되면 앱을 정상적으로 실행할 수 있습니다.\n\n**대안**\n\n• 공통 해결 방법이 있는지 [GitHub](https://github.com/tdlib/td/issues)에서 비슷한 문제를 검색하세요.\n• 앱을 다시 설치하세요. 비밀 대화는 사라집니다. 로그인했던 것과 같은 전화번호를 사용하면 다른 모든 대화와 데이터는 텔레그램 클라우드에서 복원됩니다.";
+"LaunchAppGuideTdlibIssue" = "텔레그램 X가 이전에 TDLib 치명적 오류로 실행에 실패했습니다.\n\n다시 시도하려면 **앱 실행**을 누르세요. 애플리케이션이 계속 실패하면 다음 단계를 따르세요:\n\n• 최신 텔레그램 X 버전이 설치되어 있는지 [확인](%2$s)하세요.\n• 기기를 다시 시작하세요.\n\n**위 단계로 해결되지 않는 경우**\n\n1. 다음 방법 중 하나로 오류 세부 정보를 TDLib 개발자에게 공유하세요:\n— 다른 기기나 [텔레그램 웹](https://web.telegram.org/)을 사용하여 [@tdlib_bot](https://sgq.me/tdlib_bot)으로 비공개 공유.\n— [GitHub 페이지](https://github.com/tdlib/td/issues)를 통해 공개 공유. **tdlib_log.txt**는 공개적으로 공유하지 **마세요**.\n2. 답변을 기다리세요.\n3. TDLib 개발자의 요청에 따라 아래 로그 설정을 변경하세요.\n4. **앱 실행**을 눌러 앱을 다시 강제 종료시키세요.\n5. **tdlib_log.txt**를 TDLib 개발자와 공유하고 문제가 해결될 때까지 기다리세요.\n6. 업데이트가 완료되면 앱을 정상적으로 실행할 수 있습니다.\n\n**대안**\n\n• 공통 해결 방법이 있는지 [GitHub](https://github.com/tdlib/td/issues)에서 비슷한 문제를 검색하세요.\n• 앱을 다시 설치하세요. 비밀 대화는 사라집니다. 로그인했던 것과 같은 전화번호를 사용하면 다른 모든 대화와 데이터는 텔레그램 클라우드에서 복원됩니다.";
 "LaunchAppShareError" = "오류 세부 정보 공유";
 "LaunchAppUserSubtitle" = "오프라인";
 "LaunchAppViewError" = "오류 세부 정보 보기";
@@ -1858,7 +1858,7 @@
 "LinkChannel" = "채널 연결";
 "LinkChannelHelp" = "**텔레그램** 공개 링크를 설정하실 수 있습니다. 다른 사람이 이 링크로 회원님의 채널을 찾고 구독할 수 있습니다.\n\n**a부터 z 사이 글자**, **0부터 9 사이 숫자**와 밑줄을 사용하실 수 있습니다. 최소 길이는 **다섯 자**입니다.";
 "LinkChecking" = "링크를 사용할 수 있는지 확인 중...";
-"LinkCurrent" = "t.me/%1$s은(는) 현재 공개 링크입니다.";
+"LinkCurrent" = "sgq.me/%1$s은(는) 현재 공개 링크입니다.";
 "LinkDeleteOther" = "%1$s님이 %2$s님의 초대 링크 %3$s을 삭제했습니다";
 "LinkDeleteOtherYou" = "%1$s님의 초대 링크 %2$s을 삭제했습니다";
 "LinkDeletePrimary" = "%1$s님이 기본 초대 링크 %2$s을 삭제했습니다";
@@ -3771,7 +3771,7 @@
 "TranslationFailed" = "번역 실패";
 "TranslationMoreCreate" = "만들기";
 "TranslationMoreDone" = "확인";
-"TranslationMoreText" = "사용 가능한 언어 목록은 [번역 플랫폼](https://translations.telegram.org)에서 관리됩니다.\n\n해당 번역이 공식적으로 제공되면 텔레그램에서 내 언어로 전환하도록 제안합니다.\n\n기다리는 동안 사용자 지정 현지화 파일을 설치하거나, [번역 과정](https://translations.telegram.org/ko/android_x/)에 참여하거나, [직접](https://t.me/tgx_android_translate/) 현지화 파일을 만들 수 있습니다.";
+"TranslationMoreText" = "사용 가능한 언어 목록은 [번역 플랫폼](https://translations.telegram.org)에서 관리됩니다.\n\n해당 번역이 공식적으로 제공되면 텔레그램에서 내 언어로 전환하도록 제안합니다.\n\n기다리는 동안 사용자 지정 현지화 파일을 설치하거나, [번역 과정](https://translations.telegram.org/ko/android_x/)에 참여하거나, [직접](https://sgq.me/tgx_android_translate/) 현지화 파일을 만들 수 있습니다.";
 "TranslationMoreTitle" = "원하는 언어를 찾을 수 없나요?";
 "TranslationPaste" = "번역 붙여넣기";
 "TranslationsMissing#other" = "번역되지 않음 %1$s개";

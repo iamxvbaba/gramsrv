@@ -146,7 +146,7 @@
 "ApproveNewMembers" = "Thành viên mới đã được chấp nhận";
 "ApproveNewMembersInfo" = "Bật lên nếu bạn muốn người dùng chỉ tham gia sau khi được admin chấp nhận.";
 "Archive" = "Lưu trữ";
-"ArchiveAppearanceHint" = "Hiện lưu trữ là một thư mục riêng. Bạn có thể thay đổi vị trí nó ở [cài đặt](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Hiện lưu trữ là một thư mục riêng. Bạn có thể thay đổi vị trí nó ở [cài đặt](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Giao diện";
 "ArchiveAppearanceToggle" = "Hiện thành thư mục";
 "ArchiveAsFolder" = "Thư mục lưu trữ";
@@ -1099,9 +1099,9 @@
 "EditPrivacyPhoneNumber" = "Số điện thoại";
 "EditPrivacyPhoto" = "Ảnh đại diện";
 "EditPrivacyReadDate" = "Hiện giờ đọc tin nhắn";
-"EditPrivacyReadDateAllowHint" = "Cho phép %1$s thấy **Trạng thái hoạt động** của bạn để áp dụng cài đặt này.\n\nThông tin thêm ở **[Riêng tư và Bảo mật](tg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
-"EditPrivacyReadDateRestrictHint" = "Hạn chế %1$s thấy **Trạng thái hoạt động** của bạn để áp dụng cài đặt này.\n\nThông tin thêm ở **[Riêng tư và Bảo mật](tg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
-"EditPrivacyReadDateToggleHint" = "Có thể chỉ **ẩn giờ đọc tin** khỏi những người mà không thấy **Trạng thái hoạt động** của bạn.\n\nXem **[Riêng tư và Bảo mật](tg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
+"EditPrivacyReadDateAllowHint" = "Cho phép %1$s thấy **Trạng thái hoạt động** của bạn để áp dụng cài đặt này.\n\nThông tin thêm ở **[Riêng tư và Bảo mật](sg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
+"EditPrivacyReadDateRestrictHint" = "Hạn chế %1$s thấy **Trạng thái hoạt động** của bạn để áp dụng cài đặt này.\n\nThông tin thêm ở **[Riêng tư và Bảo mật](sg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
+"EditPrivacyReadDateToggleHint" = "Có thể chỉ **ẩn giờ đọc tin** khỏi những người mà không thấy **Trạng thái hoạt động** của bạn.\n\nXem **[Riêng tư và Bảo mật](sg://settings/privacy)** – **Trạng thái hoạt động** – **Ẩn giờ đọc tin**.";
 "EditPrivacyStatus" = "Trạng thái hoạt động";
 "EditPrivacyVoice" = "Gửi tôi tin nhắn thoại";
 "EditUserRestrictions" = "Sửa giới hạn người dùng";
@@ -1421,7 +1421,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Edge to Edge hỗ trợ trên Android 11–14 chưa được kiểm tra, \u200b\u200bsẽ dễ có sự cố. Dùng cài đặt này để so sánh hành vi khi không có edge-to-edge.";
 "Experiment_PeerIds" = "Hiện Peer ID ở trang cá nhân";
 "Experiment_PeerIdsInfo" = "Hiện định danh API của người dùng và chat ở trang cá nhân";
-"ExperimentalBuildInfo" = "Phiên bản **Telegram X** này không được thiết kế để hỗ trợ lâu dài.\n\nNó có thể ngừng hoạt động hoàn toàn qua thời gian và không thể bật thông báo.\n\nNếu bạn tìm file APK Telegram X ổn định, xem https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Phiên bản **Telegram X** này không được thiết kế để hỗ trợ lâu dài.\n\nNó có thể ngừng hoạt động hoàn toàn qua thời gian và không thể bật thông báo.\n\nNếu bạn tìm file APK Telegram X ổn định, xem https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Chú ý: Phiên bản thử nghiệm";
 "ExperimentalSettings" = "Tính năng thử nghiệm";
 "ExperimentalSettingsUnavailable" = "Chưa có bản thử nghiệm. Quay lại sau.";
@@ -1795,7 +1795,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X không khởi động được do bộ nhớ thiết bị đã đầy.\n\nChắc chắn rằng có đủ dung lượng trống và nhấn **Khởi động ứng dụng** để thử lại.\n\nBộ nhớ hiện còn: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X không khởi động được do lỗi thiết bị.\n\nNhấn **Khởi động ứng dụng ** để thử lại. Nếu ứng dụng không khởi động được, làm theo các bước dưới đây:\n\n• Kiểm tra xem bạn còn đủ dung lượng trống hay không: **%1$s**.\n• Chắc chắn rằng không có vấn đề gì về bộ nhớ, ví dụ như thẻ SD bị tháo hoặc không nhận.\n• Khởi động lại thiết bị.\n\nNếu các bước trên không giải quyết được vấn đề, bạn có thể tìm các vấn đề tương tự trên [GitHub của TDLib](https://github.com/tdlib/td/issues) để xem cách giải quyết, hoặc tạo một vấn đề mới có bao gồm tin nhắn lỗi và thông tin thiết bị.";
 "LaunchAppGuideFatalError" = "Telegram X đã dừng đột ngột vào lần cuối bạn sử dụng.\n\nNhấn **Chạy ứng dụng** để thử lại.";
-"LaunchAppGuideTdlibIssue" = "Telegram X không khởi động được do lỗi nghiêm trọng TDLib.\n\nNhấn **Khởi động ứng dụng** để thử lại. Nếu ứng dụng không khởi động được, làm theo các bước dưới đây:\n\n• [Xác minh](%2$s) bạn đã cài đặt phiên bản Telegram X mới nhất.\n• Khởi động lại thiết bị.\n\n**Nếu các bước trên không giải quyết được vấn đề**\n\n1. Chia sẻ chỉ tiết lỗi với nhà phát triển TDLib bằng một trong các cách sau:\n— Chia sẻ riêng qua [@tdlib_bot](https://t.me/tdlib_bot) bằng một thiết bị khác hoặc [Telegram Web](https://web.telegram.org/).\n— Chia sẻ công khai qua [GitHub](https://github.com/tdlib/td/issues). **Không** chia sẻ **tdlib_log.txt** công khai.\n2. Vui lòng chờ phản hồi.\n3. Thay đổi cài đặt log dưới đây theo yêu cầu của nhà phát triển TDLib.\n4. Nhấn **Khởi động ứng dụng** để dừng ứng dụng.\n5. Chia sẻ **tdlib_log.txt** với nhà phát triển TDLib và chờ vấn đề được giải quyết.\n6. Sau khi cập nhật, bạn sẽ có thể chạy ứng dụng bình thường.\n\n**Các tuỳ chọn khác**\n\n• Tìm vấn đề tương tự trên [GitHub](https://github.com/tdlib/td/issues) để xem có cách giải quyết nào không.\n• Cài đặt lại ứng dụng. Chat bí mật sẽ mất. Nếu bạn sử dụng cùng số điện thoại đã đăng nhập, các cuộc chat và dữ liệu sẽ được khôi phục từ đám mây Telegram.";
+"LaunchAppGuideTdlibIssue" = "Telegram X không khởi động được do lỗi nghiêm trọng TDLib.\n\nNhấn **Khởi động ứng dụng** để thử lại. Nếu ứng dụng không khởi động được, làm theo các bước dưới đây:\n\n• [Xác minh](%2$s) bạn đã cài đặt phiên bản Telegram X mới nhất.\n• Khởi động lại thiết bị.\n\n**Nếu các bước trên không giải quyết được vấn đề**\n\n1. Chia sẻ chỉ tiết lỗi với nhà phát triển TDLib bằng một trong các cách sau:\n— Chia sẻ riêng qua [@tdlib_bot](https://sgq.me/tdlib_bot) bằng một thiết bị khác hoặc [Telegram Web](https://web.telegram.org/).\n— Chia sẻ công khai qua [GitHub](https://github.com/tdlib/td/issues). **Không** chia sẻ **tdlib_log.txt** công khai.\n2. Vui lòng chờ phản hồi.\n3. Thay đổi cài đặt log dưới đây theo yêu cầu của nhà phát triển TDLib.\n4. Nhấn **Khởi động ứng dụng** để dừng ứng dụng.\n5. Chia sẻ **tdlib_log.txt** với nhà phát triển TDLib và chờ vấn đề được giải quyết.\n6. Sau khi cập nhật, bạn sẽ có thể chạy ứng dụng bình thường.\n\n**Các tuỳ chọn khác**\n\n• Tìm vấn đề tương tự trên [GitHub](https://github.com/tdlib/td/issues) để xem có cách giải quyết nào không.\n• Cài đặt lại ứng dụng. Chat bí mật sẽ mất. Nếu bạn sử dụng cùng số điện thoại đã đăng nhập, các cuộc chat và dữ liệu sẽ được khôi phục từ đám mây Telegram.";
 "LaunchAppShareError" = "Chia sẻ chi tiết lỗi";
 "LaunchAppUserSubtitle" = "ngoại tuyến";
 "LaunchAppViewError" = "Xem chi tiết lỗi";
@@ -1846,7 +1846,7 @@
 "LinkChannel" = "Liên kết kênh";
 "LinkChannelHelp" = "Bạn có thể đặt link công khai, người khác sẽ có thể tìm và tham gia kênh của bạn bằng link này.\n\nBạn được dùng **a-z**, **0-9** và gạch dưới. Độ dài tối thiểu là **5** ký tự.";
 "LinkChecking" = "Đang kiểm tra có sẵn…";
-"LinkCurrent" = "t.me/%1$s là link công khai hiện tại.";
+"LinkCurrent" = "sgq.me/%1$s là link công khai hiện tại.";
 "LinkDeleteOther" = "%1$s đã xóa link mời %3$s của %2$s";
 "LinkDeleteOtherYou" = "Bạn đã xóa link mời %2$s của %1$s";
 "LinkDeletePrimary" = "%1$s đã xóa link mời chính %2$s";
@@ -3721,7 +3721,7 @@
 "TranslationFailed" = "Dịch thất bại";
 "TranslationMoreCreate" = "Tạo";
 "TranslationMoreDone" = "Đã hiểu";
-"TranslationMoreText" = "Danh sách ngôn ngữ được quản lý tại [Translation Platform](https://https://translations.telegram.org).\n\nTelegram sẽ có tuỳ chọn đổi ngôn ngữ khi bản dịch tương ứng được có sẵn chính thức.\n\nTrong khi chờ đợi, bạn có thể cài đặt file ngôn ngữ, tham gia [dịch ngôn ngữ](https://translations.telegram.org/en/android_x/), hoặc tự tạo file ngôn ngữ [của bạn](https://t.me/tgx_android_translate/).";
+"TranslationMoreText" = "Danh sách ngôn ngữ được quản lý tại [Translation Platform](https://https://translations.telegram.org).\n\nTelegram sẽ có tuỳ chọn đổi ngôn ngữ khi bản dịch tương ứng được có sẵn chính thức.\n\nTrong khi chờ đợi, bạn có thể cài đặt file ngôn ngữ, tham gia [dịch ngôn ngữ](https://translations.telegram.org/en/android_x/), hoặc tự tạo file ngôn ngữ [của bạn](https://sgq.me/tgx_android_translate/).";
 "TranslationMoreTitle" = "Không tìm thấy ngôn ngữ?";
 "TranslationPaste" = "Dán bản dịch";
 "TranslationsMissing#other" = "%1$s chưa dịch";

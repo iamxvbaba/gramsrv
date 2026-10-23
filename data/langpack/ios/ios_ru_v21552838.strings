@@ -1068,9 +1068,9 @@
 "Business.Links.LinksSectionHeader" = "ССЫЛКИ НА ЧАТ";
 "Business.Links.PreviewText" = "Добавьте текст, который появится в строке ввода у пользователя, начавшего чат с Вами по ссылке:";
 "Business.Links.PreviewTitle" = "Ссылка на чат";
-"Business.Links.SimpleLinkInfoPhone" = "Также можно использовать обычную ссылку на чат с Вами — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Также можно использовать обычную ссылку на чат с Вами — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Также можно использовать обычную ссылку на чат с Вами: [t.me/%1$@](username) или [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Также можно использовать обычную ссылку на чат с Вами — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Также можно использовать обычную ссылку на чат с Вами — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Также можно использовать обычную ссылку на чат с Вами: [sgq.me/%1$@](username) или [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Делитесь с клиентами короткими ссылками, при переходе по которым можно начать переписку с Вами с предложенной фразы.";
 "Business.LinksInfo" = "Ссылки для открытия чата с Вами — с подстановкой текста.";
 "Business.Location" = "Адрес";
@@ -1959,7 +1959,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Адреса каналов не могут начинаться с символа подчёркивания.";
 "Channel.Username.InvalidTaken" = "Эта ссылка уже занята.";
 "Channel.Username.InvalidTooShort" = "Публичная ссылка не может быть короче 5 символов.";
-"Channel.Username.LinkHint" = "Эта ссылка откроет Ваш канал в Telegram:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Эта ссылка откроет Ваш канал в Telegram:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Вы можете создать частный канал или сбросить одну из уже занятых ссылок на свои группы или каналы.";
 "Channel.Username.Title" = "Ссылка";
 "Channel.Username.UsernameIsAvailable" = "Имя %@ свободно.";
@@ -3699,7 +3699,7 @@
 "CocoonInfo.Efficient.Title" = "Эффективность";
 "CocoonInfo.ForEveryone.Text" = "Любой разработчик может использовать [Cocoon](telegram) для решения задач ИИ. Подробнее на [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Доступность";
-"CocoonInfo.IntergrateInfo" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите в [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "У третьих лиц нет доступа к данным внутри **@cocoon**, включая переводы.";
 "CocoonInfo.Private.Title" = "Конфиденциальность";
 "CocoonInfo.Title" = "COCOON";
@@ -4670,7 +4670,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Вы можете создать не больше %d ботов.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "Вы можете создать не больше %d ботов.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Вы можете создать не больше %d ботов.";
-"CreateBot.UsernameStatus.Link" = "Ссылка: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Ссылка: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Имя пользователя не может начинаться с цифры.";
 "CreateBot.UsernameStatus.Short" = "Имя пользователя должно содержать не меньше 5 символов.";
 "CreateBot.UsernameStatus.Taken" = "Это имя пользователя уже занято.";
@@ -5077,7 +5077,7 @@
 "EmojiStickerSettings.Info" = "Художники могут создавать собственные наборы с помощью бота @stickers.\n\nНажмите на сообщение и удерживайте, чтобы просмотреть и добавить весь набор.";
 "EmptyGroupInfo.Line1" = "До 200,000 участников";
 "EmptyGroupInfo.Line2" = "Общая история переписки";
-"EmptyGroupInfo.Line3" = "Публичные ссылки вида t.me/title";
+"EmptyGroupInfo.Line3" = "Публичные ссылки вида sgq.me/title";
 "EmptyGroupInfo.Line4" = "Разный уровень прав";
 "EmptyGroupInfo.Subtitle" = "Возможности групп:";
 "EmptyGroupInfo.Title" = "Вы создали группу";
@@ -9983,7 +9983,7 @@
 "Premium.Limits.PinnedChats" = "Закреплённые чаты";
 "Premium.Limits.PinnedChatsInfo" = "Закрепление до 10 чатов в основном списке";
 "Premium.Limits.PublicLinks" = "Публичные ссылки";
-"Premium.Limits.PublicLinksInfo" = "Использование до 20 ссылок вида [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "Использование до 20 ссылок вида [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Похожие каналы";
 "Premium.Limits.RecommendedChannelsInfo" = "Просмотр до 100 похожих каналов";
 "Premium.Limits.SavedGifs" = "Сохранённые GIF";
@@ -10353,7 +10353,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "КТО ВИДИТ, КОГДА Я В СЕТИ";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Пользователи, которые сохранили Ваш номер в телефонную книгу, будут видеть его в Telegram, только если Вы добавили их в контакты.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Пользователи, которые сохранили Ваш номер в телефонную книгу, будут видеть его и в Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Пользователи, которые сохранили Ваш номер в телефонную книгу, будут видеть его и в Telegram.\n\nПубличная ссылка на чат с Вами:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Пользователи, которые сохранили Ваш номер в телефонную книгу, будут видеть его и в Telegram.\n\nПубличная ссылка на чат с Вами:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "КТО МОЖЕТ НАЙТИ МЕНЯ ПО НОМЕРУ";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "КТО ВИДИТ МОЙ НОМЕР ТЕЛЕФОНА";
 "PrivacyPolicy.Accept" = "Принять и продолжить";
@@ -11372,8 +11372,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "недоступен";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "ТИП";
-"SocksProxySetup.QrCode.TMeLink" = "Cсылка t.me";
-"SocksProxySetup.QrCode.TgLink" = "Ссылка tg://";
+"SocksProxySetup.QrCode.TMeLink" = "Cсылка sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "Ссылка sg://";
 "SocksProxySetup.RequiredCredentials" = "УЧЕТНЫЕ ДАННЫЕ";
 "SocksProxySetup.SaveProxy" = "Сохранить прокси";
 "SocksProxySetup.SavedProxies" = "СОХРАНЕННЫЕ ПРОКСИ";
@@ -13277,7 +13277,7 @@
 "Username.InvalidTooShort" = "Имя пользователя должно содержать не меньше 5 символов.";
 "Username.InvalidValue" = "Некорректное имя.";
 "Username.LinkCopied" = "Ссылка скопирована.";
-"Username.LinkHint" = "По этой ссылке откроется диалог с Вами в Telegram:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "По этой ссылке откроется диалог с Вами в Telegram:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ПОРЯДОК ИМЁН ПОЛЬЗОВАТЕЛЯ";
 "Username.LinksOrderInfo" = "Перетаскивайте ссылки, чтобы изменить порядок их отображения в Вашем профиле.";
 "Username.Placeholder" = "Ваше имя";

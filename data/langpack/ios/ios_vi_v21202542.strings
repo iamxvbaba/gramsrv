@@ -930,9 +930,9 @@
 "Business.Links.LinksSectionHeader" = "LINK ĐỂ CHAT";
 "Business.Links.PreviewText" = "Soạn tin nhắn mà sẽ tự động điền vào ô chat mỗi khi có người bắt đầu chat với bạn bằng đường link sau:";
 "Business.Links.PreviewTitle" = "Link để chat";
-"Business.Links.SimpleLinkInfoPhone" = "Bạn cũng có thể dùng link đơn giản để bắt đầu chat — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Bạn cũng có thể dùng link đơn giản để bắt đầu chat — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Bạn có thể dùng link đơn giản để bắt đầu chat — [t.me/%1$@](username) hoặc [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Bạn cũng có thể dùng link đơn giản để bắt đầu chat — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Bạn cũng có thể dùng link đơn giản để bắt đầu chat — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Bạn có thể dùng link đơn giản để bắt đầu chat — [sgq.me/%1$@](username) hoặc [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Gửi đường link ngắn để khách hàng bắt đầu chat với bạn – và đề xuất tin nhắn đầu tiên từ họ cho bạn.";
 "Business.LinksInfo" = "Tạo liên kết để bắt đầu chat với bạn, gợi ý tin nhắn đầu tiên.";
 "Business.Location" = "Địa điểm";
@@ -1779,7 +1779,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Tên kênh không thể bắt đầu bằng gạch dưới.";
 "Channel.Username.InvalidTaken" = "Rất tiếc, link này đã được dùng.";
 "Channel.Username.InvalidTooShort" = "Link công khai phải có ít nhất 5 ký tự.";
-"Channel.Username.LinkHint" = "Link này dẫn tới kênh của bạn:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Link này dẫn tới kênh của bạn:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Bạn có thể thu hồi link từ một trong các nhóm hoặc kênh trước đây, hoặc tạo một kênh riêng tư.";
 "Channel.Username.Title" = "Link";
 "Channel.Username.UsernameIsAvailable" = "%@ dùng được.";
@@ -3175,7 +3175,7 @@
 "CocoonInfo.Efficient.Title" = "Hiệu quả";
 "CocoonInfo.ForEveryone.Text" = "Nhà phát triển có thể dùng tính năng AI của [Cocoon](telegram). Tìm hiểu [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Cho mọi người";
-"CocoonInfo.IntergrateInfo" = "Muốn tích hợp Cocoon vào dự án của bạn?\nLiên lạc ngay tại [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Muốn tích hợp Cocoon vào dự án của bạn?\nLiên lạc ngay tại [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Các bên thứ ba không thể truy cập dữ liệu, gồm các bản dịch, tại Cocoon.";
 "CocoonInfo.Private.Title" = "Riêng tư";
 "CocoonInfo.Title" = "COCOON";
@@ -4279,7 +4279,7 @@
 "EmojiStickerSettings.Info" = "Mọi họa sĩ đều được chào đón gửi các gói emoji qua bot @stickers.\n\nNhấn và giữ một tin nhắn để xem và thêm cả gói emoji.";
 "EmptyGroupInfo.Line1" = "Tối đa 200.000 người";
 "EmptyGroupInfo.Line2" = "Lịch sử tin vĩnh viễn";
-"EmptyGroupInfo.Line3" = "Link công khai, ví dụ: t.me/tên";
+"EmptyGroupInfo.Line3" = "Link công khai, ví dụ: sgq.me/tên";
 "EmptyGroupInfo.Line4" = "Admin với các quyền khác";
 "EmptyGroupInfo.Subtitle" = "Nhóm có thể có:";
 "EmptyGroupInfo.Title" = "Bạn đã tạo một nhóm";
@@ -8200,7 +8200,7 @@
 "Premium.Limits.PinnedChats" = "Ghim chat";
 "Premium.Limits.PinnedChatsInfo" = "Ghim đến 10 chat trong danh sách chính";
 "Premium.Limits.PublicLinks" = "Link công khai";
-"Premium.Limits.PublicLinksInfo" = "Sở hữu đến 20 link [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "Sở hữu đến 20 link [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Kênh tương tự";
 "Premium.Limits.RecommendedChannelsInfo" = "Xem được tới 100 kênh tương tự";
 "Premium.Limits.SavedGifs" = "Lưu GIF";
@@ -8536,7 +8536,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "AI THẤY TRẠNG THÁI HOẠT ĐỘNG";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Những người thêm số của bạn vào danh bạ sẽ thấy nó trên Telegram nếu họ có trong danh bạ của bạn.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Những người đã có số của bạn trong danh bạ sẽ thấy số đó trên Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Người có lưu số của bạn trong danh bạ của họ cũng sẽ thấy bạn trên Telegram.\n\nLink công khai để người khác chat với bạn: [https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Người có lưu số của bạn trong danh bạ của họ cũng sẽ thấy bạn trên Telegram.\n\nLink công khai để người khác chat với bạn: [https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "AI CÓ THỂ TÌM THẤY TÔI BẰNG SỐ ĐIỆN THOẠI";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "AI CÓ THỂ THẤY SỐ ĐIỆN THOẠI CỦA TÔI";
 "PrivacyPolicy.Accept" = "Đồng ý & tiếp tục";
@@ -10789,7 +10789,7 @@
 "Username.InvalidTooShort" = "Tên người dùng phải có ít nhất 5 ký tự.";
 "Username.InvalidValue" = "Rất tiếc, tên người dùng không hợp lệ.";
 "Username.LinkCopied" = "Đã sao chép link.";
-"Username.LinkHint" = "Link này mở cuộc chat với bạn:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Link này mở cuộc chat với bạn:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "THỨ TỰ TÊN NGƯỜI DÙNG";
 "Username.LinksOrderInfo" = "Kéo và thả link để thay đổi thứ tự xuất hiện của chúng ở trang cá nhân.";
 "Username.Placeholder" = "Tên của bạn";

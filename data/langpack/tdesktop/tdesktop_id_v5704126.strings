@@ -2832,7 +2832,7 @@
 "lng_greeting_title" = "Pesan Salam";
 "lng_group_about1" = "Hingga 200.000 anggota";
 "lng_group_about2" = "Riwayat obrolan persisten";
-"lng_group_about3" = "Tautan publik seperti t.me/judul";
+"lng_group_about3" = "Tautan publik seperti sgq.me/judul";
 "lng_group_about4" = "Admin dengan hak lain";
 "lng_group_about_header" = "Anda membuat grup";
 "lng_group_about_text" = "Grup ini memiliki:";
@@ -4267,7 +4267,7 @@
 "lng_premium_double_limits_about_folder_chats#other" = "Tambahkan hingga {count} obrolan ke dalam setiap folder";
 "lng_premium_double_limits_about_folders#other" = "Kelola obrolan Anda ke dalam {count} folder";
 "lng_premium_double_limits_about_gifs#other" = "Simpan hingga {count} GIF dalam GIF Favorit Anda";
-"lng_premium_double_limits_about_links#other" = "Miliki hingga {count} tautan t.me/username";
+"lng_premium_double_limits_about_links#other" = "Miliki hingga {count} tautan sgq.me/username";
 "lng_premium_double_limits_about_pins#other" = "Sematkan hingga {count} obrolan di daftar obrolan utama Anda";
 "lng_premium_double_limits_about_stickers#other" = "Simpan hingga {count} stiker dalam Stiker Favorit Anda";
 "lng_premium_double_limits_subtitle_accounts" = "Akun Terhubung";
@@ -5989,7 +5989,7 @@
 "lng_tag_info_admins_only" = "Hanya admin dapat berikan peran anggota dalam grup ini.";
 "lng_tag_info_preview_member" = "Peran Anggota";
 "lng_tag_info_text_user" = "Peran abu-abu {emoji} merupakan peran anggota {author} dalam {group}.";
-"lng_telegram_features_url" = "https://t.me/TelegramTipsID";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTipsID";
 "lng_terms_age#other" = "Saya mengkonfirmasi bahwa saya {count} atau lebih";
 "lng_terms_agree" = "Setuju & Lanjut";
 "lng_terms_agree_to_proceed" = "Setujui dan lanjutkan {bot}.";

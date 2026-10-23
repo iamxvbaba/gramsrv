@@ -30,7 +30,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Даступнасць";
 "AboutCocoon.Feature.Private.Description" = "Ніводная старонняя асоба не можа атрымаць доступ да якіх-небудзь даных, у тым ліку да перакладаў, унутры Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Прыватнасць";
-"AboutCocoon.Footer" = "Хочаце інтэграваць Cocoon у свае праекты?\nЗвяжыцеся з намі па адрасе [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Хочаце інтэграваць Cocoon у свае праекты?\nЗвяжыцеся з намі па адрасе [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutFeature.DisableSharing.DisableButton" = "Адключыць абагуленне";
 "AboutFeature.DisableSharing.NoForwarding" = "Не перасылаць";
 "AboutFeature.DisableSharing.NoForwardingDesc" = "Адключыць перасылку паведамленняў у іншыя чаты.";
@@ -2893,7 +2893,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Сістэма\n%@";
 "EmptyGroupInfo.Line1" = "• Да %@ удзельнікаў";
 "EmptyGroupInfo.Line2" = "• Захаваную гісторыю чата";
-"EmptyGroupInfo.Line3" = "• Публічныя спасылкі, такія як t.me/title";
+"EmptyGroupInfo.Line3" = "• Публічныя спасылкі, такія як sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Кіраўнікі з рознымі правамі";
 "EmptyGroupInfo.Subtitle" = "Суполкі могуць мець:";
 "EmptyGroupInfo.Title" = "Вы стварылі суполку";
@@ -4795,7 +4795,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Замацаваныя чаты";
 "Premium.Boarding.Double.PinnedChats.Info" = "Замацоўвайце да %@ чатаў у вашым галоўным спісе";
 "Premium.Boarding.Double.PublicLinks" = "Публічныя спасылкі";
-"Premium.Boarding.Double.PublicLinks.Info" = "Рэзервуйце да %@ спасылак t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Рэзервуйце да %@ спасылак sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "Захаваныя анімацыі";
 "Premium.Boarding.Double.SavedGifs.Info" = "Захоўвайце да %@ анімацый у вашых абраных";
 "Premium.Boarding.Double.Title" = "Падвоеныя ліміты";
@@ -5177,7 +5177,7 @@
 "ProxySettings.CredentialsHeader" = "УЛІКОВЫЯ ДАНЫЯ (НЕАБАВЯЗКОВА)";
 "ProxySettings.Disabled" = "Адключана";
 "ProxySettings.Enable" = "Проксі";
-"ProxySettings.ExportDescription" = "Калі буфер абмену ўтрымлівае socks5-link (**t.me/socks?server=127.0.0.1&port=80**) яно прымяняецца неадкладна";
+"ProxySettings.ExportDescription" = "Калі буфер абмену ўтрымлівае socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) яно прымяняецца неадкладна";
 "ProxySettings.ExportLink" = "Экспарт спасылкі ў буфер абмену";
 "ProxySettings.IncorrectSecret" = "Няправільны сакрэт. Паспрабуйце яшчэ раз.";
 "ProxySettings.Item.Available" = "даступны (пінг: %@ мс)";

@@ -796,7 +796,7 @@
 "EmptyChatAppearanceSystem" = "النظام";
 "EmptyGroupInfoLine1" = "•ما يصل إلى \u2068{count}\u2069 عضو";
 "EmptyGroupInfoLine2" = "• تمتلكَ سجل محادثة موحدًا";
-"EmptyGroupInfoLine3" = "• تمتلك روابط عامة مثل t.me/title";
+"EmptyGroupInfoLine3" = "• تمتلك روابط عامة مثل sgq.me/title";
 "EmptyGroupInfoLine4" = "• يديرَها مشرفون بصلاحيات مختلفة";
 "EmptyGroupInfoSubtitle" = "يمكن للمجموعات أن:";
 "EmptyGroupInfoTitle" = "لقد أنشأت مجموعة.";
@@ -1693,7 +1693,7 @@
 "ProfileTabVoice" = "صوت ";
 "ProfileViewChannel" = "عرض القناة";
 "PublicLink" = "الرابط العام";
-"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068{count}\u2069 رابط t.me/username";
+"PublicLinksLimitSubtitle" = "حجز ما يصل إلى \u2068{count}\u2069 رابط sgq.me/username";
 "PublicLinksLimitTitle" = "الروابط العامة";
 "PublicPoll" = "استفتاء";
 "QuickPreview" = "معاينة سريعة";

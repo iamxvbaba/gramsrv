@@ -1,0 +1,56 @@
+package peers
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/iamxvbaba/td/tg"
+)
+
+func TestManager_applyChats(t *testing.T) {
+	ctx := context.Background()
+	a := require.New(t)
+	_, m := testManager(t)
+
+	chats := []tg.ChatClass{
+		&tg.ChatEmpty{ID: 1},
+		&tg.Chat{ID: 2},
+		&tg.ChatForbidden{ID: 3},
+		&tg.Channel{ID: 4, AccessHash: 14},
+		&tg.Channel{ID: 4, Min: true, AccessHash: 16},
+		&tg.ChannelForbidden{ID: 5, AccessHash: 15},
+		&tg.Channel{ID: 6, Min: true, AccessHash: 16},
+	}
+
+	// Ensure nil safety.
+	a.NoError(m.applyChats(ctx, nil, nil, nil))
+	a.NoError(m.applyChats(ctx, chats...))
+
+	_, ok, err := m.storage.Find(ctx, Key{ID: 2, Prefix: chatsPrefix})
+	a.NoError(err)
+	a.True(ok)
+
+	_, ok, err = m.storage.Find(ctx, Key{ID: 3, Prefix: chatsPrefix})
+	a.NoError(err)
+	a.True(ok)
+
+	v, ok, err := m.storage.Find(ctx, Key{ID: 4, Prefix: channelPrefix})
+	a.NoError(err)
+	a.True(ok)
+	a.Equal(int64(14), v.AccessHash)
+
+	v, ok, err = m.storage.Find(ctx, Key{ID: 5, Prefix: channelPrefix})
+	a.NoError(err)
+	a.True(ok)
+	a.Equal(int64(15), v.AccessHash)
+
+	// A channel observed ONLY as min must never be persisted: a min access hash
+	// is valid solely for inputPeerPhotoFileLocation and later fails normal RPCs
+	// such as channels.getFullChannel. (ID 4 above covers the overwrite case
+	// where a full hash already exists; this covers first observation.)
+	_, ok, err = m.storage.Find(ctx, Key{ID: 6, Prefix: channelPrefix})
+	a.NoError(err)
+	a.False(ok)
+}

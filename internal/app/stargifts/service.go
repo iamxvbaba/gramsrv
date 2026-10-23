@@ -279,7 +279,7 @@ func (s *Service) CreateCatalogBundle(ctx context.Context, write domain.StarGift
 		return domain.StarGiftCatalogBundleResult{}, domain.ErrStarGiftInvalid
 	}
 	if write.Collectible != nil {
-		write.Collectible.SlugPrefix = strings.ToLower(strings.TrimSpace(write.Collectible.SlugPrefix))
+		write.Collectible.SlugPrefix = strings.TrimSpace(write.Collectible.SlugPrefix)
 		brandCollectibleAttributes(write.Collectible.Models)
 		brandCollectibleAttributes(write.Collectible.Patterns)
 		brandCollectibleAttributes(write.Collectible.Backdrops)
@@ -357,7 +357,7 @@ func (s *Service) CreateCollectibleRevision(ctx context.Context, write domain.St
 	if s == nil || s.store == nil || s.blobs == nil {
 		return domain.StarGiftCollectibleRevision{}, fmt.Errorf("star gift collectible importer is not configured")
 	}
-	write.SlugPrefix = strings.ToLower(strings.TrimSpace(write.SlugPrefix))
+	write.SlugPrefix = strings.TrimSpace(write.SlugPrefix)
 	brandCollectibleAttributes(write.Models)
 	brandCollectibleAttributes(write.Patterns)
 	brandCollectibleAttributes(write.Backdrops)
@@ -1187,4 +1187,16 @@ func randomPositiveInt64() (int64, error) {
 		id = 1
 	}
 	return id, nil
+}
+
+// DeleteSaved removes an ordinary saved gift (payments.deleteStarGift, Layer
+// 232). Stores without the transition report ErrStarGiftUnavailable.
+func (s *Service) DeleteSaved(ctx context.Context, ref domain.SavedStarGiftRef) error {
+	deleter, ok := s.store.(interface {
+		DeleteSaved(context.Context, domain.SavedStarGiftRef) error
+	})
+	if !ok {
+		return domain.ErrStarGiftUnavailable
+	}
+	return deleter.DeleteSaved(ctx, ref)
 }

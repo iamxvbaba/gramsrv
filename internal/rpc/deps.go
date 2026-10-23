@@ -499,6 +499,7 @@ type AccountBusinessAutomationService interface {
 	ListQuickReplies(ctx context.Context, userID int64) (domain.QuickReplyList, error)
 	CheckQuickReplyShortcut(ctx context.Context, userID int64, shortcut string) (bool, error)
 	SaveQuickReplyText(ctx context.Context, userID int64, shortcut string, msg domain.QuickReplyMessage) (domain.QuickReplyMutation, error)
+	EditQuickReplyMessage(ctx context.Context, userID int64, edit domain.QuickReplyEdit) (domain.QuickReplyMutation, error)
 	GetQuickReplyMessages(ctx context.Context, userID int64, shortcutID int, ids []int) (domain.QuickReplyMessages, error)
 	RenameQuickReplyShortcut(ctx context.Context, userID int64, shortcutID int, shortcut string) (domain.QuickReplyMutation, error)
 	ReorderQuickReplies(ctx context.Context, userID int64, order []int) (domain.QuickReplyMutation, error)
@@ -512,11 +513,19 @@ type AccountBusinessAutomationService interface {
 	GetConnectedBusinessBotPeerState(ctx context.Context, ownerUserID, peerUserID int64) (domain.ConnectedBusinessBotPeerState, bool, error)
 }
 
+// PaidMessagesStore is the ledger of paid private messages.
+type PaidMessagesStore interface {
+	PaidMessagesRevenue(ctx context.Context, recipientUserID, payerUserID int64) (int64, error)
+	RefundPaidMessages(ctx context.Context, recipientUserID, payerUserID int64, date int) (domain.PaidMessagesRefund, error)
+	RecipientMessagedFirst(ctx context.Context, recipientUserID, senderUserID int64) (bool, error)
+}
+
 // PrivacyService owns account privacy rule storage/evaluation.
 type PrivacyService interface {
 	GetRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey) (domain.PrivacyRules, error)
 	SetRules(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, rules []domain.PrivacyRule) (domain.PrivacyRules, error)
 	AddAllowUser(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, targetUserID int64) (domain.PrivacyRules, bool, error)
+	RemoveAllowUser(ctx context.Context, ownerUserID int64, key domain.PrivacyKey, targetUserID int64) (domain.PrivacyRules, bool, error)
 	CanSee(ctx context.Context, ownerUserID, viewerUserID int64, key domain.PrivacyKey) (bool, error)
 }
 
@@ -1161,53 +1170,69 @@ type Deps struct {
 	Ephemeral                    EphemeralService
 	EphemeralPush                store.EphemeralPushBroker
 	WelcomeMessages              WelcomeMessageService
-	Moderation                   ModerationService
-	Users                        UsersService
-	Usernames                    UsernameRegistryService
-	CollectiblePhones            CollectiblePhoneService
-	AccountRatings               AccountRatingService
-	BotVerifications             BotVerificationService
-	TelegramLogin                TelegramLoginService
-	Updates                      UpdatesService
-	BootstrapUpdates             store.BootstrapUpdateJobStore
-	BotAPIUpdates                store.BotAPIUpdateStore
-	BotCallbacks                 store.BotCallbackRegistryStore
-	Contacts                     ContactsService
-	Dialogs                      DialogsService
-	Chatlists                    ChatlistsService
-	Messages                     MessagesService
-	Translation                  TranslationService
-	Transcriptions               TranscriptionService
-	Stories                      StoriesService
-	Channels                     ChannelsService
-	Communities                  CommunitiesService
-	Files                        FilesService
-	PremiumPromo                 PremiumPromoService
-	Premium                      PremiumService
-	Bots                         BotsService
-	ServiceBotCallbacks          ServiceBotCallbacks
-	ServiceBotInlineResults      ServiceBotInlineResults
-	Polls                        PollsService
-	Phone                        PhoneService
-	GroupCalls                   GroupCallsService
-	LiveStreams                  LiveStreamsService
-	SFU                          sfu.Service
-	TURN                         turnsrv.Service
-	LangPack                     LangPackService
-	Sessions                     SessionBinder
-	Inline                       store.InlineRegistryStore
-	Limiter                      RateLimiter
-	Metrics                      Metrics
-	SecretChats                  SecretChatService
-	Stars                        StarsService
-	Gifts                        GiftsService
+	// NoPaidMessagesTokens stores Layer 232 free-messages links; nil disables them.
+	NoPaidMessagesTokens store.NoPaidMessagesTokenStore
+	// PaidMessages keeps paid private messages: revenue, refunds and the
+	// "they wrote to you first" exemption. Nil disables those parts.
+	PaidMessages PaidMessagesStore
+	// ShareThemes stores Layer 232 share themes; nil disables them.
+	ShareThemes             store.ShareThemeStore
+	Moderation              ModerationService
+	Users                   UsersService
+	Usernames               UsernameRegistryService
+	CollectiblePhones       CollectiblePhoneService
+	AccountRatings          AccountRatingService
+	BotVerifications        BotVerificationService
+	TelegramLogin           TelegramLoginService
+	Updates                 UpdatesService
+	BootstrapUpdates        store.BootstrapUpdateJobStore
+	BotAPIUpdates           store.BotAPIUpdateStore
+	BotCallbacks            store.BotCallbackRegistryStore
+	Contacts                ContactsService
+	Dialogs                 DialogsService
+	Chatlists               ChatlistsService
+	Messages                MessagesService
+	Translation             TranslationService
+	Transcriptions          TranscriptionService
+	Stories                 StoriesService
+	Channels                ChannelsService
+	Communities             CommunitiesService
+	Files                   FilesService
+	PremiumPromo            PremiumPromoService
+	Premium                 PremiumService
+	Bots                    BotsService
+	ServiceBotCallbacks     ServiceBotCallbacks
+	ServiceBotInlineResults ServiceBotInlineResults
+	Polls                   PollsService
+	Phone                   PhoneService
+	GroupCalls              GroupCallsService
+	LiveStreams             LiveStreamsService
+	SFU                     sfu.Service
+	TURN                    turnsrv.Service
+	LangPack                LangPackService
+	Sessions                SessionBinder
+	Inline                  store.InlineRegistryStore
+	Limiter                 RateLimiter
+	Metrics                 Metrics
+	SecretChats             SecretChatService
+	Stars                   StarsService
+	Gifts                   GiftsService
 	// Wallet 是 Layer 230 应用内 TON 钱包；为 nil 时 wallet.* 回 WALLET_UNAVAILABLE。
 	Wallet  WalletService
 	Passkey PasskeyService
 	Themes  ThemeService
+	// AutoSubscribe joins a freshly signed-up account to the admin's
+	// auto-subscribe channels; nil disables it.
+	AutoSubscribe AutoSubscribeJoiner
 	// GeoIP 把会话记录的 IP 解析为 account.getAuthorizations 展示用的国家/地区
 	// 文案。为 nil(未配置地理后端)时列表继续回传占位文案,与启用前一致。
 	GeoIP geoip.Resolver
+}
+
+// AutoSubscribeJoiner is the one autosubscribe.Service method onAuthSignUp
+// needs. See internal/app/autosubscribe for the "join everyone" semantics.
+type AutoSubscribeJoiner interface {
+	JoinNewUser(ctx context.Context, userID int64)
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。

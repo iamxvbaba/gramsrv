@@ -63,7 +63,7 @@ func TestTGChannelFullIncludesExportedInvite(t *testing.T) {
 	if !ok {
 		t.Fatalf("channelFull.exported_invite = %T, want *tg.ChatInviteExported", rawInvite)
 	}
-	if !invite.Permanent || invite.Revoked || invite.AdminID != 10 || invite.Link != "https://telesrv.net/+abc123" {
+	if !invite.Permanent || invite.Revoked || invite.AdminID != 10 || invite.Link != "https://sgq.me/+abc123" {
 		t.Fatalf("channelFull.exported_invite = %#v, want active permanent invite", invite)
 	}
 }

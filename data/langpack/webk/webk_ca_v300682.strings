@@ -1369,7 +1369,7 @@
 "EditAdminRights" = "Edita els seus drets";
 "EditAdminSendAnonymously" = "Enviar anònimament";
 "EditAdminWhatCanDo" = "Què pot fer aquest administrador?";
-"EditBot.Buttons.Caption" = "Useu [@BotFather](https://t.me/botfather) per a gestionar el bot.";
+"EditBot.Buttons.Caption" = "Useu [@BotFather](https://sgq.me/botfather) per a gestionar el bot.";
 "EditBot.Buttons.Commands" = "Edita les ordres";
 "EditBot.Buttons.Intro" = "Edita la introducció";
 "EditBot.Buttons.Settings" = "Configuració del bot";
@@ -1711,7 +1711,7 @@
 "GroupChecklist" = "Llista de comprovació del grup";
 "GroupDescription1" = "Fins a 200.000 membres";
 "GroupDescription2" = "Historial persistent";
-"GroupDescription3" = "Enllaços públics, com t.me/títol";
+"GroupDescription3" = "Enllaços públics, com sgq.me/títol";
 "GroupDescription4" = "Administradors amb rols diferents";
 "GroupEmptyTitle1" = "Heu creat un **grup**.";
 "GroupEmptyTitle2" = "Els grups poden tenir:";
@@ -2902,7 +2902,7 @@
 "ProfileStoriesArchiveGroupHint" = "Només els administradors poden veure les històries arxivades, tret que es publiquin al perfil del grup.";
 "ProfileStoriesArchiveHint" = "Ningú pot veure les històries arxivades tret que decidiu publicar-les al perfil.";
 "ProfileUnofficialSecurityRisk" = "%1$s usa un client de Telegram no oficial. Els missatges amb aquest usuari podrien ser menys segurs.";
-"PublicLinksLimitSubtitle" = "Reserveu fins a %d enllaços t.me/nom";
+"PublicLinksLimitSubtitle" = "Reserveu fins a %d enllaços sgq.me/nom";
 "PublicLinksLimitTitle" = "Enllaços públics";
 "PublicShares" = "Compart. públiques";
 "PublicSharesCount#one" = "%1$s compartició pública";
@@ -3835,7 +3835,7 @@
 "Telegram.LanguageViewController" = "Llengua";
 "Telegram.NotificationSettingsViewController" = "Notificacions";
 "TelegramFeatures" = "Funcions del Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Els propietaris de comptes amb **Telegram Premium** tenen accés exclusiu a característiques addicionals.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Els estats d'emoji són una característica prèmium. Altres característiques que inclou el **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s és subscriptor del **Telegram\u00a0Premium**";

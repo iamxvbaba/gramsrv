@@ -136,7 +136,36 @@ WHERE (peer_usernames.username_lower, peer_usernames.username)
 }
 
 func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (res domain.SendPrivateTextResult, err error) {
-	return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{})
+	// A message that is not delivered (the recipient blocked the sender) or
+	// goes to Saved Messages is never charged.
+	if req.PaidMessageStars <= 0 || req.RecipientBlocked || req.SenderUserID == req.RecipientUserID {
+		req.PaidMessageStars = 0
+		return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{})
+	}
+	var charged domain.SendPrivateTextRequest
+	res, err = s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{
+		before: func(ctx context.Context, tx pgx.Tx, r *domain.SendPrivateTextRequest) error {
+			if err := debitPrivatePaidMessageTx(ctx, tx, r); err != nil {
+				return err
+			}
+			charged = *r
+			return nil
+		},
+		after: func(ctx context.Context, tx pgx.Tx, result domain.SendPrivateTextResult) error {
+			return recordPrivatePaidMessageTx(ctx, tx, charged, result.SenderMessage.UID)
+		},
+	})
+	if err != nil || res.Duplicate {
+		return res, err
+	}
+	stars := charged.PaidMessageStars
+	res.SenderMessage.PaidMessageStars = stars
+	res.RecipientMessage.PaidMessageStars = stars
+	res.SenderEvent.Message.PaidMessageStars = stars
+	res.RecipientEvent.Message.PaidMessageStars = stars
+	res.PaidMessageCharged = stars > 0
+	res.PaidMessageSenderBalance = charged.PaidMessageSenderBalance
+	return res, nil
 }
 
 type privateSendTxHooks struct {

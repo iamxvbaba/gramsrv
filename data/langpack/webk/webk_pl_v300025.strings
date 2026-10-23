@@ -1669,7 +1669,7 @@
 "EditAdminRights" = "Edytuj uprawnienia admina";
 "EditAdminSendAnonymously" = "Zachować anonimowość";
 "EditAdminWhatCanDo" = "Co może robić ten administrator?";
-"EditBot.Buttons.Caption" = "Użyj [@BotFather](https://t.me/botfather), aby zarządzać tym botem.";
+"EditBot.Buttons.Caption" = "Użyj [@BotFather](https://sgq.me/botfather), aby zarządzać tym botem.";
 "EditBot.Buttons.Commands" = "Edytuj polecenia";
 "EditBot.Buttons.Intro" = "Edytuj wprowadzenie";
 "EditBot.Buttons.Settings" = "Zmień ustawienia bota";
@@ -2091,7 +2091,7 @@
 "GroupChecklist" = "Lista zadań grupy";
 "GroupDescription1" = "Maksymalnie 200 000 członków";
 "GroupDescription2" = "Jednolitą historię czatu";
-"GroupDescription3" = "Linki publiczne, takie jak t.me/title";
+"GroupDescription3" = "Linki publiczne, takie jak sgq.me/title";
 "GroupDescription4" = "Administratorów z różnymi uprawnieniami";
 "GroupEmptyTitle1" = "Utworzono **grupę**.";
 "GroupEmptyTitle2" = "Grupy mogą mieć:";
@@ -3430,7 +3430,7 @@
 "ProfileStoriesArchiveGroupHint" = "Tylko administratorzy grupy mogą zobaczyć zarchiwizowane relacje, chyba że zdecydujesz się opublikować je na stronie grupy.";
 "ProfileStoriesArchiveHint" = "Tylko ty możesz zobaczyć zarchiwizowane relacje, chyba że zdecydujesz się opublikować je na swoim profilu.";
 "ProfileUnofficialSecurityRisk" = "%1$s używa nieoficjalnego klienta Telegrama — wiadomości do tego użytkownika mogą być mniej bezpieczne.";
-"PublicLinksLimitSubtitle" = "Zarezerwuj do %d linków t.me/nazwa_uzytkownika";
+"PublicLinksLimitSubtitle" = "Zarezerwuj do %d linków sgq.me/nazwa_uzytkownika";
 "PublicLinksLimitTitle" = "Publiczne linki";
 "PublicShares" = "Publicz. udostęp.";
 "PublicSharesCount#one" = "%1$s publiczne udostępnienie";
@@ -4524,7 +4524,7 @@
 "Telegram.LanguageViewController" = "Język";
 "Telegram.NotificationSettingsViewController" = "Powiadomienia";
 "TelegramFeatures" = "Funkcje Telegrama";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsPL";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsPL";
 "TelegramPremiumPeerSubtitle" = "Właściciele kont **Telegram Premium** mają wyłączny dostęp do wielu dodatkowych funkcji.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Status emoji to funkcja premium. **Telegram Premium** zawiera także:";
 "TelegramPremiumPeerTitle" = "%s jest subskrybentem **Telegram\u00a0Premium**";

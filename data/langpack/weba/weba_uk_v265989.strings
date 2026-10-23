@@ -839,14 +839,14 @@
 "CocoonFeature1Text" = "Треті сторони не мають доступу до жодних даних у **{username}**, включно з перекладами.";
 "CocoonFeature1Title" = "Приватність";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon дав змогу Telegram зменшити витрати на переклади у 6 разів.";
 "CocoonFeature2Title" = "Ефективність";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Будь-який розробник може використати Cocoon для задач ШІ. Деталі: **{link}**.";
 "CocoonFeature3Title" = "Доступність";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "@cocoon";
 "CocoonFooterText" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1135,7 +1135,7 @@
 "EmptyChatAppearanceSystem" = "Системна";
 "EmptyGroupInfoLine1" = "• До {count} учасників";
 "EmptyGroupInfoLine2" = "• Спільну історію листування";
-"EmptyGroupInfoLine3" = "• Публічні посилання вигляду t.me";
+"EmptyGroupInfoLine3" = "• Публічні посилання вигляду sgq.me";
 "EmptyGroupInfoLine4" = "• Адміністраторів із різними правами";
 "EmptyGroupInfoSubtitle" = "Групи можуть мати:";
 "EmptyGroupInfoTitle" = "Ви створили групу";
@@ -2538,7 +2538,7 @@
 "ProfileTabVoice" = "Голосові";
 "ProfileViewChannel" = "Переглянути канал";
 "PublicLink" = "Публічне посилання";
-"PublicLinksLimitSubtitle" = "До {count} зайнятих посилань виду t.me/username";
+"PublicLinksLimitSubtitle" = "До {count} зайнятих посилань виду sgq.me/username";
 "PublicLinksLimitTitle" = "Публічні посилання";
 "PublicPoll" = "Опитування";
 "PublicPosts" = "Публічні дописи";

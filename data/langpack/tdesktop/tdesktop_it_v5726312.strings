@@ -3163,7 +3163,7 @@
 "lng_factcheck_add_done" = "Verifica fatti aggiunta.";
 "lng_factcheck_bottom" = "Questo chiarimento è stato fornito da Telegram.";
 "lng_factcheck_edit_done" = "Verifica fatti modificata.";
-"lng_factcheck_links" = "Sono ammessi solo i link **t.me/**.";
+"lng_factcheck_links" = "Sono ammessi solo i link **sgq.me/**.";
 "lng_factcheck_placeholder" = "Aggiungi fatti o contesto";
 "lng_factcheck_remove_done" = "Verifica fatti rimossa.";
 "lng_factcheck_title" = "Verifica fatti";
@@ -4091,7 +4091,7 @@
 "lng_greeting_title" = "Messaggio di benvenuto";
 "lng_group_about1" = "Fino a 200.000 membri";
 "lng_group_about2" = "Cronologia chat permanente";
-"lng_group_about3" = "Link pubblici come t.me/title";
+"lng_group_about3" = "Link pubblici come sgq.me/title";
 "lng_group_about4" = "Amministratori con diritti diversi";
 "lng_group_about_header" = "Hai creato un gruppo.";
 "lng_group_about_text" = "I gruppi possono avere:";
@@ -5909,8 +5909,8 @@
 "lng_premium_double_limits_about_folders#other" = "Organizza le tue chat in {count} cartelle";
 "lng_premium_double_limits_about_gifs#one" = "Salva fino a {count} GIF tra le GIF preferite";
 "lng_premium_double_limits_about_gifs#other" = "Salva fino a {count} GIF tra le GIF preferite";
-"lng_premium_double_limits_about_links#one" = "Riserva fino a {count} link t.me/username";
-"lng_premium_double_limits_about_links#other" = "Riserva fino a {count} link t.me/username";
+"lng_premium_double_limits_about_links#one" = "Riserva fino a {count} link sgq.me/username";
+"lng_premium_double_limits_about_links#other" = "Riserva fino a {count} link sgq.me/username";
 "lng_premium_double_limits_about_pins#one" = "Fissa fino a {count} chat nella tua lista chat principale";
 "lng_premium_double_limits_about_pins#other" = "Fissa fino a {count} chat nella tua lista chat principale";
 "lng_premium_double_limits_about_similar_channels#one" = "Vedi fino a {count} canale simile";
@@ -8387,7 +8387,7 @@
 "lng_tag_info_title_owner" = "Tag proprietario";
 "lng_tag_info_title_user" = "Tag membro";
 "lng_tagged_view_saved" = "Apri";
-"lng_telegram_features_url" = "https://t.me/TelegramTipsIT";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTipsIT";
 "lng_terms_age#one" = "Confermo di avere almeno {count} anno";
 "lng_terms_age#other" = "Confermo di avere almeno {count} anni";
 "lng_terms_agree" = "Accetta e continua";
@@ -8502,7 +8502,7 @@
 "lng_translate_cocoon_private_title" = "Privato";
 "lng_translate_cocoon_subtitle" = "**Cocoon** ({text}) gestisce le attività di IA in modo **sicuro** ed **efficiente**.";
 "lng_translate_cocoon_text" = "Vuoi integrare Cocoon nei tuoi progetti?\nContattaci su {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} aggiunto alla lista Non tradurre.";
 "lng_translate_hidden_channel" = "La barra di traduzione ora è nascosta per questo canale.";

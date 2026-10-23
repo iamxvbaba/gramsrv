@@ -2806,15 +2806,15 @@
 "CloseTopics" = "بستن موضوع\u200cها";
 "CloseTranslation" = "بستن ترجمه";
 "CocoonFeature1Text" = "هیچ شخص ثالثی نمی\u200cتواند به هیچ داده\u200cای، از جمله ترجمه\u200cها، در **@cocoon** دسترسی داشته باشد.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "خصوصی";
 "CocoonFeature2Text" = "Cocoon به تلگرام اجازه داده تا هزینه ترجمه\u200cها را تا 6 برابر کاهش دهد.";
 "CocoonFeature2Title" = "کارآمد";
 "CocoonFeature3Text" = "هر توسعه\u200cدهنده\u200cای می\u200cتواند از Cocoon برای قابلیت\u200cهای هوش مصنوعی استفاده کند. برای اطلاعات بیشتر به **cocoon.org** مراجعه کنید.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "برای همه";
-"CocoonFooter" = "می\u200cخواهید Cocoon را در پروژه\u200cهای خود همگام\u200cسازی کنید؟\nبا ما در **t.me/cocoon?direct** تماس بگیرید";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "می\u200cخواهید Cocoon را در پروژه\u200cهای خود همگام\u200cسازی کنید؟\nبا ما در **sgq.me/cocoon?direct** تماس بگیرید";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "ترجمه\u200cها توسط **🥚 Cocoon**\nارائه می\u200cشوند.";
 "CocoonPoweredByLink" = "**چگونه کار می\u200cکند؟**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork — شبکه باز محاسبات محرمانه)\nوظایف هوش مصنوعی را به صورت امن و کارآمد انجام می\u200cدهد.";
@@ -5116,7 +5116,7 @@
 "GroupDeletedUndo" = "گروه حذف شد";
 "GroupDescription1" = "تا سقف 200,000 عضو";
 "GroupDescription2" = "تاریخچه گفتگوی دائم";
-"GroupDescription3" = "لینک\u200cهای عمومی مانند t.me/title";
+"GroupDescription3" = "لینک\u200cهای عمومی مانند sgq.me/title";
 "GroupDescription4" = "مدیرانی با اختیارات متفاوت";
 "GroupEmoji" = "اموجی گروه";
 "GroupEmojiPack" = "بسته اموجی گروه";
@@ -7953,7 +7953,7 @@
 "PsaType_psa" = "اطلاعیه";
 "PublicChannelsTooMuch" = "متأسفانه کاربر موردنظر در حال حاضر دارای تعداد زیادی گروه یا کانال عمومی است. لطفاً ابتدا از او بخواهید تا یکی از گروه\u200cها یا کانال\u200cهای فعلی خود را خصوصی کند.";
 "PublicLink" = "لینک عمومی";
-"PublicLinksLimitSubtitle" = "تا \u2068%d\u2069 لینک t.me/username را رزرو کنید";
+"PublicLinksLimitSubtitle" = "تا \u2068%d\u2069 لینک sgq.me/username را رزرو کنید";
 "PublicLinksLimitTitle" = "لینک\u200cهای عمومی";
 "PublicPhoto" = "عکس عمومی";
 "PublicPoll" = "نظرسنجی";
@@ -10216,7 +10216,7 @@
 "TelegramFaq" = "پرسش\u200cهای متداول تلگرام";
 "TelegramFaqUrl" = "https://telegram.org/faq/fa";
 "TelegramFeatures" = "قابلیت\u200cهای تلگرام";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsFA";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsFA";
 "TelegramPassport" = "پاسپورت تلگرام";
 "TelegramPassportCreatePassword" = "ایجاد گذرواژه";
 "TelegramPassportCreatePasswordInfo" = "لطفاً جهت محافظت از داده\u200cهای شخصی خود با رمزگذاری سرتاسر گذرواژه\u200cای ایجاد کنید.\n\nاین گذرواژه همچنین هنگامی که شما از یک دستگاه جدید وارد حساب کاربری تلگرام خود می\u200cشوید از شما خواسته می\u200cشود.";

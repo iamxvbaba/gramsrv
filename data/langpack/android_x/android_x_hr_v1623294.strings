@@ -150,7 +150,7 @@
 "ApproveNewMembers" = "Odobrenje za nove članove";
 "ApproveNewMembersInfo" = "Uključite ako želite da se korisnici pridruže tek nakon što ih odobri administrator.";
 "Archive" = "Arhiviraj";
-"ArchiveAppearanceHint" = "Prikaži arhivu kao lokalnu mapu. Položaj možete promijeniti u [postavkama](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Prikaži arhivu kao lokalnu mapu. Položaj možete promijeniti u [postavkama](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Izgled";
 "ArchiveAppearanceToggle" = "Prikaži kao mapu";
 "ArchiveAsFolder" = "Arhiva kao mapa";
@@ -1253,9 +1253,9 @@
 "EditPrivacyPhoneNumber" = "Broj telefona";
 "EditPrivacyPhoto" = "Slike profila";
 "EditPrivacyReadDate" = "Vidjeti moje vrijeme čitanja";
-"EditPrivacyReadDateAllowHint" = "Dopustite da %1$s vidi vaš **zadnji posjet i kada ste bili na mreži** kako biste utjecali na ovu postavku.\n\nZa više informacija pogledajte **[Privatnost i sigurnost](tg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.";
-"EditPrivacyReadDateRestrictHint" = "Ograničite da %1$s ne može vidjeti vaš **zadnji posjet i kada ste bili na mreži** kako biste utjecali na ovu postavku.\n\nZa više informacija pogledajte **[Privatnost i sigurnost](tg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.\n251/251";
-"EditPrivacyReadDateToggleHint" = "Možete sakriti svoje **vrijeme čitanjaa** samo od svih koji ne mogu vidjeti vaš **zadnji posjet i kada ste bili na mreži**.\n\nPogledajte **[Privatnost i sigurnost](tg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.";
+"EditPrivacyReadDateAllowHint" = "Dopustite da %1$s vidi vaš **zadnji posjet i kada ste bili na mreži** kako biste utjecali na ovu postavku.\n\nZa više informacija pogledajte **[Privatnost i sigurnost](sg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.";
+"EditPrivacyReadDateRestrictHint" = "Ograničite da %1$s ne može vidjeti vaš **zadnji posjet i kada ste bili na mreži** kako biste utjecali na ovu postavku.\n\nZa više informacija pogledajte **[Privatnost i sigurnost](sg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.\n251/251";
+"EditPrivacyReadDateToggleHint" = "Možete sakriti svoje **vrijeme čitanjaa** samo od svih koji ne mogu vidjeti vaš **zadnji posjet i kada ste bili na mreži**.\n\nPogledajte **[Privatnost i sigurnost](sg://settings/privacy)** – **Zadnji posjet i na mreži** – **Sakrij vrijeme čitanja**.";
 "EditPrivacyStatus" = "Zadnji posjet";
 "EditPrivacyVoice" = "Slati mi glasovne poruke";
 "EditUserRestrictions" = "Uredi ograničenja korisnika";
@@ -1583,7 +1583,7 @@
 "ExcludeChatsInfo#other" = "Možete odabrati samo %1$s razgovora u oblaku i isto toliko tajnih razgovora.";
 "Experiment_PeerIds" = "Prikaži ID profila";
 "Experiment_PeerIdsInfo" = "Prikazat će se API identifikatori korisnika i razgovora u profilima";
-"ExperimentalBuildInfo" = "Ova **Telegram X** verzija nije predviđena za dugotrajnu upotrebu.\n\nUskoro može potpuno prestati raditi i ne možete uključiti obavijesti.\n\nAko tražite odgovarajuću Telegram X .apk datoteku, pogledajte https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Ova **Telegram X** verzija nije predviđena za dugotrajnu upotrebu.\n\nUskoro može potpuno prestati raditi i ne možete uključiti obavijesti.\n\nAko tražite odgovarajuću Telegram X .apk datoteku, pogledajte https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Upozorenje: eksperimentalna verzija";
 "ExperimentalSettings" = "Eksperimentalne postavke";
 "ExperimentalSettingsUnavailable" = "Nema dostupnih eksperimenata. Vratite se kasnije.";
@@ -1998,7 +1998,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X se prošli put nije uspio uspješno pokrenuti jer je pohrana uređaja puna.\n\nUvjerite se da ima dovoljno prostora i odaberite **Pokreni aplikaciju** pa pokušajte ponovno.\n\nTrenutno je dostupno: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X se prošli put nije uspio uspješno pokrenuti zbog pogreške uređaja.\n\nOdaberite **Pokreni aplikaciju** pa pokušajte ponovno. Ako se aplikacija i dalje ne može ispravno pokrenuti probajte sljedeće:\n\n• Provjerite imate li dovoljno slobodnog prostora: **%1$s**.\n• Uvjerite se da nema nekih drugih problema s pohranom kao što je neočekivano izbacivanje SD kartice\n• Ponovno pokrenite svoj uređaj\n\nAko to ne pomogne, probajte pronaći slične probleme na [TDLib's GitHub stranici](https://github.com/tdlib/td/issues), za moguća rješenja ili prijavite problem, uključujući poruku o pogrešci i detalje o uređaju.";
 "LaunchAppGuideFatalError" = "Telegram X se neočekivano zatvorio zadnji put kad ste ga koristili.\n\nPritisnite **Pokreni aplikaciju** i pokušajte ponovno.";
-"LaunchAppGuideTdlibIssue" = "Telegram X se nije uspio pokrenuti zbog TDLib pogreške.\n\nDodirnite **Pokreni aplikaciju** da biste pokušali ponovo. Ako aplikacija padne, slijedite ove korake:\n\n• [Pogledajte] (%2$s) da li imate instaliranu najnoviju Telegram X verziju.\n• Ponovno pokrenite uređaj.\n\n**Ako ovo iznad ne pomogne**\n\n1. Podijelite log datoteku s pogreškama TDLib programerima koristeći jedan od ovih načina:\n— Privatno putem [@tdlib_bot] (https://t.me/tdlib_bot) koristeći drugi uređaj ili [Telegram Web] (https://web.telegram.org/).\n— Javno putem [GitHub stranice] (https://github.com/tdlib/td/issues). **Nikako** ne dijelite **tdlib_log.txt** javno.\n2. Pričekajte strpljivo odgovor.\n3. Promijenite postavke log datoteka kao što su zatražili TDLib programeri.\n4. Dodirnite **Pokreni aplikaciju** da bi se aplikacija ponovo zaustavila.\n5. Podijelite **tdlib_log.txt** sa TDLib programerima i pričekajte da problem bude riješen.\n6. Kada se ažurira, moći ćete normalno pokrenuti aplikaciju.\n\n**Alternativne opcije**\n\n• Potražite slične probleme na [GitHub] (https://github.com/tdlib/td/issues) da biste vidjeli da li postoje zajednička rešenja.\n• Reinstalirajte aplikaciju. Tajni razgovori će biti izgubljeni. Ako koristite isti broj telefona sa kojim ste prijavljeni, svi razgovori i podaci bit će vraćeni iz Telegram oblaka.";
+"LaunchAppGuideTdlibIssue" = "Telegram X se nije uspio pokrenuti zbog TDLib pogreške.\n\nDodirnite **Pokreni aplikaciju** da biste pokušali ponovo. Ako aplikacija padne, slijedite ove korake:\n\n• [Pogledajte] (%2$s) da li imate instaliranu najnoviju Telegram X verziju.\n• Ponovno pokrenite uređaj.\n\n**Ako ovo iznad ne pomogne**\n\n1. Podijelite log datoteku s pogreškama TDLib programerima koristeći jedan od ovih načina:\n— Privatno putem [@tdlib_bot] (https://sgq.me/tdlib_bot) koristeći drugi uređaj ili [Telegram Web] (https://web.telegram.org/).\n— Javno putem [GitHub stranice] (https://github.com/tdlib/td/issues). **Nikako** ne dijelite **tdlib_log.txt** javno.\n2. Pričekajte strpljivo odgovor.\n3. Promijenite postavke log datoteka kao što su zatražili TDLib programeri.\n4. Dodirnite **Pokreni aplikaciju** da bi se aplikacija ponovo zaustavila.\n5. Podijelite **tdlib_log.txt** sa TDLib programerima i pričekajte da problem bude riješen.\n6. Kada se ažurira, moći ćete normalno pokrenuti aplikaciju.\n\n**Alternativne opcije**\n\n• Potražite slične probleme na [GitHub] (https://github.com/tdlib/td/issues) da biste vidjeli da li postoje zajednička rešenja.\n• Reinstalirajte aplikaciju. Tajni razgovori će biti izgubljeni. Ako koristite isti broj telefona sa kojim ste prijavljeni, svi razgovori i podaci bit će vraćeni iz Telegram oblaka.";
 "LaunchAppShareError" = "Podijeli detalje pogreške";
 "LaunchAppUserSubtitle" = "izvan mreže";
 "LaunchAppViewError" = "Prikaži detalje pogreške";
@@ -2063,7 +2063,7 @@
 "LinkChannel" = "Poveži kanal";
 "LinkChannelHelp" = "Možete postaviti javni link na **Telegramu**. Na taj način drugi će moći pronaći vaš kanal i pretplatiti se preko tog linka.\n\nMožete koristiti **a–z**, **0–9** i podvlaku.\nMora imati najmanje **5** znakova.";
 "LinkChecking" = "Provjeravanje dostupnosti linka…";
-"LinkCurrent" = "t.me/%1$s je vaš javni link.";
+"LinkCurrent" = "sgq.me/%1$s je vaš javni link.";
 "LinkDeleteOther" = "%1$s uklanja pozivnicu %3$s od korisnika %2$s";
 "LinkDeleteOtherYou" = "Izbrisali ste pozivnicu %2$s od korisnika %1$s";
 "LinkDeletePrimary" = "%1$s uklanja glavnu pozivnicu %2$s";
@@ -4098,7 +4098,7 @@
 "TranslationFailed" = "Prijevod nije uspio";
 "TranslationMoreCreate" = "Napravi";
 "TranslationMoreDone" = "U redu";
-"TranslationMoreText" = "Lista dostupnih jezika je prikazana na [platformi za prevođenje](https://translations.telegram.org).\n\nTelegram će vam preporučiti da promijenite jezik aplikacije na vaš jezik uređaja kad taj jezik postane dostupan.\n\nDok to čekate možete se uključiti u [proces prevođenja](https://translations.telegram.org/hr/android_x/), ili napraviti [svoj vlastiti](https://t.me/tgx_android_translate/) jezik.";
+"TranslationMoreText" = "Lista dostupnih jezika je prikazana na [platformi za prevođenje](https://translations.telegram.org).\n\nTelegram će vam preporučiti da promijenite jezik aplikacije na vaš jezik uređaja kad taj jezik postane dostupan.\n\nDok to čekate možete se uključiti u [proces prevođenja](https://translations.telegram.org/hr/android_x/), ili napraviti [svoj vlastiti](https://sgq.me/tgx_android_translate/) jezik.";
 "TranslationMoreTitle" = "Ne možete pronaći svoj jezik?";
 "TranslationPaste" = "Zalijepi prijevod";
 "TranslationsMissing#one" = "%1$s neprevedeni";

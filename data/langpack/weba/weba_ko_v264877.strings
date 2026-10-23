@@ -723,14 +723,14 @@
 "CocoonFeature1Text" = "제3자는 **{username}** 내부의 번역과 같은 데이터에 접근할 수 없습니다.";
 "CocoonFeature1Title" = "비공개";
 "CocoonFeature1Username" = "@고치";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon을 통해 텔레그램은 번역 비용을 6배 줄일 수 있었습니다.";
 "CocoonFeature2Title" = "효율적";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "모든 개발자는 AI 기능에 Cocoon을 사용할 수 있습니다. **{link}**에서 자세히 알아보세요.";
 "CocoonFeature3Title" = "모두에게";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "@cocoon에게 직접";
 "CocoonFooterText" = "Cocoon을 프로젝트에 통합하고 싶으십니까?\n**{link}**에게 연락하세요";
 "CocoonTitle" = "Cocoon";
@@ -985,7 +985,7 @@
 "EmptyChatAppearanceSystem" = "시스템";
 "EmptyGroupInfoLine1" = "• 참가자 {count}명까지";
 "EmptyGroupInfoLine2" = "• 대화 내용이 보존됩니다";
-"EmptyGroupInfoLine3" = "• 공개 링크를 t.me/제목으로 둘 수 있습니다";
+"EmptyGroupInfoLine3" = "• 공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "EmptyGroupInfoLine4" = "• 여러 권한의 관리자를 세울 수 있습니다";
 "EmptyGroupInfoSubtitle" = "그룹은";
 "EmptyGroupInfoTitle" = "그룹을 만들었습니다.";
@@ -2105,7 +2105,7 @@
 "ProfileTabVoice" = "음성";
 "ProfileViewChannel" = "채널 보기";
 "PublicLink" = "공개 링크";
-"PublicLinksLimitSubtitle" = "최대 {count}개의 t.me/username 링크를 마련할 수 있어요";
+"PublicLinksLimitSubtitle" = "최대 {count}개의 sgq.me/username 링크를 마련할 수 있어요";
 "PublicLinksLimitTitle" = "공개 링크";
 "PublicPoll" = "설문";
 "PublicPosts" = "공개 게시물";

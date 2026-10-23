@@ -34,11 +34,11 @@
 "AboutCocoon.Description" = "**Cocoon** (**Co**nfidential **Co**mpute **O**pen **N**etwork)\n**безпечно** та **ефективно** виконує задачі ШІ.";
 "AboutCocoon.Feature.Efficient.Description" = "Cocoon дав змогу Telegram зменшити витрати на переклади у 6 разів.";
 "AboutCocoon.Feature.Efficient.Title" = "Ефективність";
-"AboutCocoon.Feature.ForEveryone.Description" = "Будь-який розробник може використати [Cocoon](t.me/cocoon) для задач ШІ. Деталі: [cocoon.org](cocoon.org).";
+"AboutCocoon.Feature.ForEveryone.Description" = "Будь-який розробник може використати [Cocoon](sgq.me/cocoon) для задач ШІ. Деталі: [cocoon.org](cocoon.org).";
 "AboutCocoon.Feature.ForEveryone.Title" = "Доступність";
 "AboutCocoon.Feature.Private.Description" = "Треті сторони не мають доступу до жодних даних у Cocoon, включно з перекладами.";
 "AboutCocoon.Feature.Private.Title" = "Приватність";
-"AboutCocoon.Footer" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у [t.me/cocoon?direct](t.me/cocoon?direct)";
+"AboutCocoon.Footer" = "Хочете інтегрувати Cocoon у свої проєкти?\nНапишіть у [sgq.me/cocoon?direct](sgq.me/cocoon?direct)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Заборонити копіювання";
 "AboutFeature.DisableSharing.NoForwarding" = "Без пересилання";
@@ -495,7 +495,7 @@
 "Bot.AllowSendMessages" = "Дозволити **%@** надсилати мені повідомлення.";
 "Bot.Grossing.Disclaimer" = "Які мінізастосунки сюди входять? [Дізнатися >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Найкасовіщі мінізастосунки";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Цей каталог оцінює мінізастосунки на основі їхнього щоденного доходу, що вимірюється у зірках. Щоб потрапити до списку, розробники повинні вказати свої основні мінізастосунки в [@botfather](https://t.me/botfather) (як описано [тут](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), мати понад **1,000** щоденних користувачів і щоденний дохід понад **1,000** зірок, виходячи з середньотижневого показника.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Цей каталог оцінює мінізастосунки на основі їхнього щоденного доходу, що вимірюється у зірках. Щоб потрапити до списку, розробники повинні вказати свої основні мінізастосунки в [@botfather](https://sgq.me/botfather) (як описано [тут](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), мати понад **1,000** щоденних користувачів і щоденний дохід понад **1,000** зірок, виходячи з середньотижневого показника.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Зрозуміло";
 "Bot.InlineAuth.Header" = "Відкрити посилання";
 "Bot.InlineAuth.Open" = "Відкрити";
@@ -3764,7 +3764,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Система\n%@";
 "EmptyGroupInfo.Line1" = "• До %@ учасників";
 "EmptyGroupInfo.Line2" = "• Спільну історію листування";
-"EmptyGroupInfo.Line3" = "• Публічні посилання вигляду t.me";
+"EmptyGroupInfo.Line3" = "• Публічні посилання вигляду sgq.me";
 "EmptyGroupInfo.Line4" = "• Адміністраторів із різними правами";
 "EmptyGroupInfo.Subtitle" = "Групи можуть мати:";
 "EmptyGroupInfo.Title" = "Ви створили групу";
@@ -6013,7 +6013,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Прикріплені чати";
 "Premium.Boarding.Double.PinnedChats.Info" = "Прикріплення до %@ чатів в основному списку";
 "Premium.Boarding.Double.PublicLinks" = "Публічні посилання";
-"Premium.Boarding.Double.PublicLinks.Info" = "До %@ зайнятих посилань виду t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "До %@ зайнятих посилань виду sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "Збережені GIF";
 "Premium.Boarding.Double.SavedGifs.Info" = "До %@ GIF у «Збережених GIF»";
 "Premium.Boarding.Double.Title" = "Подвоєння лімітів";
@@ -6457,7 +6457,7 @@
 "ProxySettings.CredentialsHeader" = "ОБЛІКОВІ ДАНІ (НЕОБОВʼЯЗКОВО)";
 "ProxySettings.Disabled" = "Вимкнено";
 "ProxySettings.Enable" = "Проксі";
-"ProxySettings.ExportDescription" = "Автоматично застосувати проксі з посиланням на socks5 (**t.me/socks?server=127.0.0.1&port=80**), яке є у буфері обміну";
+"ProxySettings.ExportDescription" = "Автоматично застосувати проксі з посиланням на socks5 (**sgq.me/socks?server=127.0.0.1&port=80**), яке є у буфері обміну";
 "ProxySettings.ExportLink" = "Вставити посилання з буфера обміну";
 "ProxySettings.IncorrectSecret" = "Неправильний секрет. Спробуйте ще раз.";
 "ProxySettings.Item.Available" = "доступно (пінг: %@ мс)";
@@ -8780,7 +8780,7 @@
 "TranslateModal.PromptPlaceholder" = "Опишіть, як переписати цей текст...";
 "TranslateModal.PromptStyle" = "Інструкції";
 "TranslateModal.ShareStyle" = "Поділитися стилем";
-"TranslateModal.StyleByAuthor" = "Стиль від [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Стиль від [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Пропустити";
 "TwoStepAuth.AnError" = "Виникла помилка. Спробуйте пізніше.";
 "TwoStepAuth.CancelReset" = "Скасувати скидання";

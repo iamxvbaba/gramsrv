@@ -213,6 +213,13 @@ func (s *StarGiftStore) CreateCatalogRevision(ctx context.Context, write domain.
 			if err := tx.QueryRow(ctx, `SELECT nextval('star_gift_catalog_gift_id_seq')`).Scan(&giftID); err != nil {
 				return fmt.Errorf("allocate star gift id: %w", err)
 			}
+			// Sort order 0 means "not chosen": the new gift goes to the end of
+			// the list (1, 2, 3, ...). The catalog lock above serializes this.
+			if write.SortOrder == 0 {
+				if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(sort_order), 0) + 1 FROM star_gift_catalog WHERE deleted_at IS NULL`).Scan(&write.SortOrder); err != nil {
+					return fmt.Errorf("allocate star gift sort order: %w", err)
+				}
+			}
 			if _, err := tx.Exec(ctx, `
 INSERT INTO star_gift_catalog (
     gift_id, active_revision_id, enabled, sort_order, availability_remains,
@@ -286,7 +293,7 @@ INSERT INTO star_gift_catalog_revisions (
 		if write.GiftID != 0 {
 			if _, err := tx.Exec(ctx, `
 UPDATE star_gift_catalog
-SET active_revision_id=$2, enabled=$3, sort_order=$4, availability_remains=$5,
+SET active_revision_id=$2, enabled=$3, sort_order=CASE WHEN $4::int=0 THEN sort_order ELSE $4::int END, availability_remains=$5,
     availability_resale=$6, resell_min_stars=$7, first_sale_date=$8, last_sale_date=$9, updated_at=now()
 WHERE gift_id=$1`, giftID, revisionID, write.Enabled, write.SortOrder, write.AvailabilityRemains,
 				write.AvailabilityResale, write.ResellMinStars, write.FirstSaleDate, write.LastSaleDate); err != nil {
@@ -755,13 +762,13 @@ func (s *StarGiftStore) ResolveSavedIDs(ctx context.Context, owner domain.Peer, 
 		keys = append(keys, resolveKey{value: value})
 		values = append(values, value)
 	}
-	query := `SELECT p.saved_id::bigint, COALESCE(u.slug, ''), p.id
+	query := `SELECT p.saved_id::bigint, COALESCE(lower(u.slug), ''), p.id
 FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
-  AND (p.saved_id::bigint=ANY($3::bigint[]) OR u.slug=ANY($4::text[]))`
+  AND (p.saved_id::bigint=ANY($3::bigint[]) OR lower(u.slug)=ANY($4::text[]))`
 	if owner.Type == domain.PeerTypeUser {
-		query = `SELECT ref.msg_id, COALESCE(u.slug, ''), p.id
+		query = `SELECT ref.msg_id, COALESCE(lower(u.slug), ''), p.id
 FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 CROSS JOIN LATERAL (
@@ -772,7 +779,7 @@ CROSS JOIN LATERAL (
 ) ref
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
 	  AND (ref.msg_id=ANY($3::bigint[])
-	   OR u.slug=ANY($4::text[]))`
+	   OR lower(u.slug)=ANY($4::text[]))`
 	}
 	rows, err := s.db.Query(ctx, query, string(owner.Type), owner.ID, values, slugs)
 	if err != nil {
@@ -836,7 +843,7 @@ SELECT p.id, p.owner_peer_type, p.owner_peer_id, p.from_user_id, p.gift_id, p.ca
                  JOIN star_gift_collections c ON c.collection_id=i.collection_id
                  WHERE i.saved_gift_id=p.id), ARRAY[]::integer[])
 FROM peer_star_gifts p
-WHERE `+where, args...)
+WHERE p.lifecycle_status<>'deleted' AND `+where, args...)
 	g, err := scanSavedStarGift(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1040,7 +1047,7 @@ func savedStarGiftRefWhere(ref domain.SavedStarGiftRef) (string, []any) {
 	args := []any{string(ref.Owner.Type), ref.Owner.ID}
 	if ref.Slug != "" {
 		args = append(args, strings.ToLower(strings.TrimSpace(ref.Slug)))
-		return "owner_peer_type = $1 AND owner_peer_id = $2 AND unique_gift_id = (SELECT id FROM unique_star_gifts WHERE slug = $3)", args
+		return "owner_peer_type = $1 AND owner_peer_id = $2 AND unique_gift_id = (SELECT id FROM unique_star_gifts WHERE lower(slug) = $3)", args
 	}
 	switch ref.Owner.Type {
 	case domain.PeerTypeChannel:
@@ -1075,4 +1082,60 @@ func validSavedStarGift(g domain.SavedStarGift) bool {
 
 func validStarGiftOwner(owner domain.Peer) bool {
 	return owner.ID != 0 && (owner.Type == domain.PeerTypeUser || owner.Type == domain.PeerTypeChannel)
+}
+
+// DeleteSaved moves an active ordinary (non-unique) saved gift to the terminal
+// 'deleted' state for payments.deleteStarGift (Layer 232). It unpins the gift
+// and removes it from the owner's collections. Unique, converted, exported or
+// already deleted gifts return ErrStarGiftUnavailable / ErrStarGiftNotFound.
+func (s *StarGiftStore) DeleteSaved(ctx context.Context, ref domain.SavedStarGiftRef) error {
+	if !ref.Valid() {
+		return domain.ErrStarGiftNotFound
+	}
+	err := withTx(ctx, s.db, "delete star gift", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, starGiftCollectionLockKey(ref.Owner)); err != nil {
+			return err
+		}
+		where, args := savedStarGiftRefWhere(ref)
+		var savedID int64
+		var pinnedOrder int
+		var uniqueID *int64
+		var status string
+		err := tx.QueryRow(ctx, `SELECT id,pinned_order,unique_gift_id,lifecycle_status FROM peer_star_gifts WHERE `+where+` FOR UPDATE`, args...).
+			Scan(&savedID, &pinnedOrder, &uniqueID, &status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrStarGiftNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if status == string(domain.StarGiftLifecycleDeleted) {
+			return domain.ErrStarGiftNotFound
+		}
+		if status != string(domain.StarGiftLifecycleActive) || uniqueID != nil {
+			return domain.ErrStarGiftUnavailable
+		}
+		if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET lifecycle_status='deleted',pinned_order=0 WHERE id=$1`, savedID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM star_gift_collection_items WHERE saved_gift_id=$1`, savedID); err != nil {
+			return err
+		}
+		if pinnedOrder > 0 {
+			for order := pinnedOrder + 1; order <= domain.MaxPinnedStarGifts; order++ {
+				if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts SET pinned_order=$4
+WHERE owner_peer_type=$1 AND owner_peer_id=$2 AND pinned_order=$3`, string(ref.Owner.Type), ref.Owner.ID, order, order-1); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrStarGiftNotFound) || errors.Is(err, domain.ErrStarGiftUnavailable) {
+			return err
+		}
+		return fmt.Errorf("delete star gift: %w", err)
+	}
+	return nil
 }

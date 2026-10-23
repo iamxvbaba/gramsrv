@@ -1137,3 +1137,15 @@ func (r *Router) presenceFanoutCandidates(ctx context.Context, userID int64) []i
 	}
 	return candidates
 }
+
+// IsUserOnline reports the user's visible status ("online" as set through
+// account.updateStatus), not merely an open connection: a phone keeps its
+// connection in the background, which must still count as "away" for
+// business away messages sent only while offline.
+func (r *Router) IsUserOnline(userID int64) bool {
+	if r == nil || r.presence == nil {
+		return false
+	}
+	status, ok := r.presence.statusFor(userID, int(r.clock.Now().Unix()))
+	return ok && status.Kind == domain.UserStatusOnline
+}

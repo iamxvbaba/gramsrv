@@ -2665,15 +2665,15 @@
 "CloseTopics" = "Tutup topik";
 "CloseTranslation" = "Tutup Terjemahan";
 "CocoonFeature1Text" = "Tidak ada pihak ketiga yang dapat mengakses data apa pun itu, seperti terjemahan, di dalam **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature2Text" = "Cocoon mengurangi biaya penerjemahan Telegram hingga 6x lipat.";
 "CocoonFeature2Title" = "Efisien";
 "CocoonFeature3Text" = "Pengembang dapat menggunakan Cocoon untuk fitur AI. Selengkapnya di **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Untuk Semua Orang";
-"CocoonFooter" = "Ingin integrasikan Cocoon ke dalam proyek Anda?\nHubungi kami di **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Ingin integrasikan Cocoon ke dalam proyek Anda?\nHubungi kami di **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Terjemahan ditenagai oleh\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Bagaimana cara kerjanya?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nmenangani tugas AI dengan aman dan efisien.";
@@ -4822,7 +4822,7 @@
 "GroupDeletedUndo" = "Grup dihapus";
 "GroupDescription1" = "Hingga 200.000 anggota";
 "GroupDescription2" = "Riwayat obrolan persisten";
-"GroupDescription3" = "Tautan publik seperti t.me/title";
+"GroupDescription3" = "Tautan publik seperti sgq.me/title";
 "GroupDescription4" = "Admin dengan hak lain";
 "GroupEmoji" = "Emoji Grup";
 "GroupEmojiPack" = "Paket Emoji Grup";
@@ -7539,7 +7539,7 @@
 "PsaType_psa" = "Pengumuman";
 "PublicChannelsTooMuch" = "Maaf, pengguna yang Anda pilih sudah memiliki terlalu banyak grup atau channel. Mohon minta mereka menghapus salah satunya dahulu. ";
 "PublicLink" = "Tautan publik";
-"PublicLinksLimitSubtitle" = "Miliki hingga %d tautan t.me/username";
+"PublicLinksLimitSubtitle" = "Miliki hingga %d tautan sgq.me/username";
 "PublicLinksLimitTitle" = "Tautan Publik";
 "PublicPhoto" = "foto publik";
 "PublicPoll" = "Pol";
@@ -9684,7 +9684,7 @@
 "TelegramFaq" = "Pertanyaan Umum";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Fitur Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsID";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsID";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "Buat kata sandi";
 "TelegramPassportCreatePasswordInfo" = "Harap memasang kata sandi untuk mengamankan data pribadi Anda dengan enkripsi end-to-end.\n\nKata sandi ini juga akan diperlukan setiap kali Anda masuk ke Telegram pada perangkat baru.";

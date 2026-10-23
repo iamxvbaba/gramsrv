@@ -837,8 +837,8 @@
 "Business.Links.LinksSectionHeader" = "CHATGA HAVOLALAR";
 "Business.Links.PreviewText" = "Siz bilan havola orqali chat boshlaydigan har qanday kishi uchun xabar maydoniga kiritiladigan xabarni qoʻshing:";
 "Business.Links.PreviewTitle" = "Chatga havola";
-"Business.Links.SimpleLinkInfoUsername" = "Siz bilan chat uchun oddiy havoladan ham foydalanishingiz ham mumkin — [t.me/%@](foydalanuvchi nomi).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Siz bilan chat uchun oddiy havoladan ham foydalanishingiz mumkin – [t.me/%1$@](username) yoki [t.me/\u2060+\u2060%2$@](phone)";
+"Business.Links.SimpleLinkInfoUsername" = "Siz bilan chat uchun oddiy havoladan ham foydalanishingiz ham mumkin — [sgq.me/%@](foydalanuvchi nomi).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Siz bilan chat uchun oddiy havoladan ham foydalanishingiz mumkin – [sgq.me/%1$@](username) yoki [sgq.me/\u2060+\u2060%2$@](phone)";
 "Business.Links.Text" = "Mijozlaringizga siz bilan chatni boshlaydigan qisqa havolalar bering va ulardan sizga birinchi xabarni taklif qiling.";
 "Business.LinksInfo" = "Birinchi xabarni taklif qiluvchi siz bilan chatni boshlaydigan havolalar yarating.";
 "Business.Location" = "Joylashuv";
@@ -1674,7 +1674,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanal nomlari pastki chiziq bilan boshlanishi mumkin emas.";
 "Channel.Username.InvalidTaken" = "Kechirasiz, bu havola band.";
 "Channel.Username.InvalidTooShort" = "Ommaviy havolalarda kamida 5 ta belgi boʻlishi kerak.";
-"Channel.Username.LinkHint" = "Bu havola kanalingizni ochadi:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Bu havola kanalingizni ochadi:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Siz eskiroq guruhlaringizdan biridan havolani bekor qilishingiz yoki shaxsiy kanal yaratishingiz mumkin.";
 "Channel.Username.Title" = "Havola";
 "Channel.Username.UsernameIsAvailable" = "%@ boʻsh.";
@@ -3808,7 +3808,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Faqat **a–z**, **0–9** va tagchiziqlardan foydalanishingiz mumkin.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Siz %d tadan ortiq bot yarata olmaysiz.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Siz %d tadan ortiq bot yarata olmaysiz.";
-"CreateBot.UsernameStatus.Link" = "Havola: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Havola: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Foydalanuvchi nomi raqam bilan boshlanmasligi kerak.";
 "CreateBot.UsernameStatus.Short" = "Foydalanuvchi nomi kamida 5 ta belgidan iborat boʻlishi kerak.";
 "CreateBot.UsernameStatus.Taken" = "Bu foydalanuvchi nomi band.";
@@ -4158,7 +4158,7 @@
 "EmojiStickerSettings.Info" = "Rassomlar oʻz emojilar toʻplamlarini @stickers boti yordamida qoʻshishi mumkin.\n\nButun toʻplamni koʻrish va qoʻshish uchun xabarni bosib turing.";
 "EmptyGroupInfo.Line1" = "200 000 tagacha aʼzolar";
 "EmptyGroupInfo.Line2" = "Umumiy yozishmalar tarixi";
-"EmptyGroupInfo.Line3" = "t.me/title kabi ommaviy havolalar";
+"EmptyGroupInfo.Line3" = "sgq.me/title kabi ommaviy havolalar";
 "EmptyGroupInfo.Line4" = "Turli xil huquqlarga ega adminlar";
 "EmptyGroupInfo.Subtitle" = "Guruh imkoniyatlari:";
 "EmptyGroupInfo.Title" = "Siz guruh yaratdingiz";
@@ -7933,7 +7933,7 @@
 "Premium.Limits.PinnedChats" = "Qadalgan chatlar";
 "Premium.Limits.PinnedChatsInfo" = "Asosiy chatlar roʻyxatida 10 tagacha chatni qadang";
 "Premium.Limits.PublicLinks" = "Ommaviy havolalar";
-"Premium.Limits.PublicLinksInfo" = "20 tagacha [t.me/username]() shaklidagi havoladan foydalaning";
+"Premium.Limits.PublicLinksInfo" = "20 tagacha [sgq.me/username]() shaklidagi havoladan foydalaning";
 "Premium.Limits.RecommendedChannels" = "Oʻxshash kanallar";
 "Premium.Limits.RecommendedChannelsInfo" = "100 tagacha oʻxshash kanallarni koʻring.";
 "Premium.Limits.SavedGifs" = "Saqlangan GIFlar";
@@ -8260,7 +8260,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "OXIRGI FAOLLIK VAQTIMNI KIMLAR KOʻRA OLADI";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Sizni kontaktlariga qoʻshgan foydalanuvchilar kontaktlaringizda boʻlsagina telefon raqamingizni Telegramda koʻradi.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Raqamingizni kontaktlarida saqlagan foydalanuvchilar uni Telegramda ham koʻradilar.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Kontaktlarida raqamingizni saqlagan kontaktlar uni Telegramda ham koʻradi.\n\nBu ommaviy havola siz bilan chatni ochadi:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Kontaktlarida raqamingizni saqlagan kontaktlar uni Telegramda ham koʻradi.\n\nBu ommaviy havola siz bilan chatni ochadi:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "Telefon raqamim orqali meni kimlar topishi mumkin?";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "TELEFON RAQAMIMNI KIMLAR KOʻRISHI MUMKIN";
 "PrivacyPolicy.Accept" = "Qabul qilish va davom ettirish";
@@ -10550,7 +10550,7 @@
 "Username.InvalidTooShort" = "Foydalanuvchi nomida kamida 5 ta belgi boʻlishi kerak.";
 "Username.InvalidValue" = "Kechirasiz, bu foydalanuvchi nomi yaroqsiz.";
 "Username.LinkCopied" = "Havoladan vaqtincha xotiraga nusxa olindi.";
-"Username.LinkHint" = "Bu havola orqali siz bilan chat ochiladi:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Bu havola orqali siz bilan chat ochiladi:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "FOYDALANUVCHI NOMLARI TARTIBI";
 "Username.LinksOrderInfo" = "Havolalarning profilingizda aks ettirilish tartibini oʻzgartirish uchun ularni ushlab torting.";
 "Username.Placeholder" = "Foydalanuvchi nomingiz";

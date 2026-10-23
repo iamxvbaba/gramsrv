@@ -296,7 +296,7 @@ func TestSendMessageHighlightsConfiguredAppLink(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
 	r.deps.Files.(*fakeFiles).webPagePreviewOn = true
-	message := "👍 telesrv://resolve?domain=Alice"
+	message := "👍 sg://resolve?domain=Alice"
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
@@ -311,7 +311,7 @@ func TestSendMessageHighlightsConfiguredAppLink(t *testing.T) {
 		t.Fatalf("custom app-link media = %T, want nil", msg.Media)
 	}
 	for _, entity := range msg.Entities {
-		if url, ok := entity.(*tg.MessageEntityURL); ok && url.Offset == 3 && url.Length == utf16CodeUnitLen("telesrv://resolve?domain=Alice") {
+		if url, ok := entity.(*tg.MessageEntityURL); ok && url.Offset == 3 && url.Length == utf16CodeUnitLen("sg://resolve?domain=Alice") {
 			return
 		}
 	}
@@ -323,7 +323,7 @@ func TestSendMessageHighlightsConfiguredAppLink(t *testing.T) {
 func TestSendMessageFillsCustomLinkBesideClientHTTPEntity(t *testing.T) {
 	ctx := context.Background()
 	r, owner, friend := newMediaTestRouter(t)
-	message := "https://x telesrv://resolve?domain=Alice"
+	message := "https://x sg://resolve?domain=Alice"
 
 	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
 		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
@@ -339,7 +339,7 @@ func TestSendMessageFillsCustomLinkBesideClientHTTPEntity(t *testing.T) {
 		t.Fatalf("message entities = %+v, want client HTTP plus server app-link", msg.Entities)
 	}
 	custom, ok := msg.Entities[1].(*tg.MessageEntityURL)
-	if !ok || custom.Offset != utf16CodeUnitLen("https://x ") || custom.Length != utf16CodeUnitLen("telesrv://resolve?domain=Alice") {
+	if !ok || custom.Offset != utf16CodeUnitLen("https://x ") || custom.Length != utf16CodeUnitLen("sg://resolve?domain=Alice") {
 		t.Fatalf("custom entity = %#v", msg.Entities[1])
 	}
 }
@@ -350,7 +350,7 @@ func TestAutoEntityDerivationDoesNotMutateSendRequests(t *testing.T) {
 		r, owner, friend := newMediaTestRouter(t)
 		req := &tg.MessagesSendMessageRequest{
 			Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
-			Message:  "telesrv://resolve?domain=Alice",
+			Message:  "sg://resolve?domain=Alice",
 			RandomID: 5304,
 		}
 		first, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), req)
@@ -374,7 +374,7 @@ func TestAutoEntityDerivationDoesNotMutateSendRequests(t *testing.T) {
 		req := &tg.MessagesSendMediaRequest{
 			Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
 			Media:    &tg.InputMediaContact{PhoneNumber: "+15550005305", FirstName: "Alice"},
-			Message:  "telesrv://resolve?domain=Alice",
+			Message:  "sg://resolve?domain=Alice",
 			RandomID: 5305,
 		}
 		first, err := r.onMessagesSendMedia(WithUserID(ctx, owner.ID), req)

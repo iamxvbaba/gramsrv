@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Para todos";
 "AboutCocoon.Feature.Private.Description" = "Ningún tercero puede acceder a datos, como traducciones, dentro de Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privado";
-"AboutCocoon.Footer" = "¿Quieres integrar Cocoon en tus proyectos?\nComunícate en [t.me/cocoon?direct](t.me/cocoon?direct)";
+"AboutCocoon.Footer" = "¿Quieres integrar Cocoon en tus proyectos?\nComunícate en [sgq.me/cocoon?direct](sgq.me/cocoon?direct)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Desactivar compartir";
 "AboutFeature.DisableSharing.NoForwarding" = "Sin reenvíos";
@@ -475,7 +475,7 @@
 "Bot.AllowSendMessages" = "Permitir que **%@** me envíe mensajes.";
 "Bot.Grossing.Disclaimer" = "¿Qué apps están incluídas aquí? [Saber más >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Miniapps populares";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Este catálogo clasifica las miniapps en función de sus ingresos diarios, medidos en estrellas. Para aparecer en la lista, los desarrolladores deben establecer su miniapp principal en [@botfather](https://t.me/botfather) (como se describe [aquí](https://core.telegram.org/api/bots/webapps)), tener más de **1000** usuarios diarios y obtener unos ingresos diarios superiores a **1000** estrellas, basándose en la media semanal.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Este catálogo clasifica las miniapps en función de sus ingresos diarios, medidos en estrellas. Para aparecer en la lista, los desarrolladores deben establecer su miniapp principal en [@botfather](https://sgq.me/botfather) (como se describe [aquí](https://core.telegram.org/api/bots/webapps)), tener más de **1000** usuarios diarios y obtener unos ingresos diarios superiores a **1000** estrellas, basándose en la media semanal.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Entendido";
 "Bot.InlineAuth.Header" = "Abrir enlace";
 "Bot.InlineAuth.Open" = "Abrir";
@@ -3440,7 +3440,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistema\n%@";
 "EmptyGroupInfo.Line1" = "• Hasta %@ miembros";
 "EmptyGroupInfo.Line2" = "• Historial de chat persistente";
-"EmptyGroupInfo.Line3" = "• Enlaces públicos como t.me/title";
+"EmptyGroupInfo.Line3" = "• Enlaces públicos como sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Admins. con diferentes privilegios";
 "EmptyGroupInfo.Subtitle" = "Los grupos pueden tener:";
 "EmptyGroupInfo.Title" = "Creaste un grupo";
@@ -5531,7 +5531,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Chats fijados";
 "Premium.Boarding.Double.PinnedChats.Info" = "Fija hasta %@ chats en tu lista principal de chats";
 "Premium.Boarding.Double.PublicLinks" = "Enlaces públicos";
-"Premium.Boarding.Double.PublicLinks.Info" = "Reserva hasta %@ enlaces t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Reserva hasta %@ enlaces sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "GIF guardados";
 "Premium.Boarding.Double.SavedGifs.Info" = "Guarda hasta %@ GIF como favoritos";
 "Premium.Boarding.Double.Title" = "Límites duplicados";
@@ -5955,7 +5955,7 @@
 "ProxySettings.CredentialsHeader" = "CREDENCIALES (OPCIONAL)";
 "ProxySettings.Disabled" = "Desactivado";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Si tu portapapeles contiene un enlace socks5 (**t.me/socks?server=127.0.0.1&port=80**), se aplicará inmediatamente.";
+"ProxySettings.ExportDescription" = "Si tu portapapeles contiene un enlace socks5 (**sgq.me/socks?server=127.0.0.1&port=80**), se aplicará inmediatamente.";
 "ProxySettings.ExportLink" = "Exportar enlace desde el portapapeles";
 "ProxySettings.IncorrectSecret" = "Clave incorrecta. Por favor, reinténtalo.";
 "ProxySettings.Item.Available" = "disponible (ping: %@ ms)";
@@ -8092,7 +8092,7 @@
 "TranslateModal.PromptPlaceholder" = "Describe cómo reescribir el texto…";
 "TranslateModal.PromptStyle" = "Prompt";
 "TranslateModal.ShareStyle" = "Compartir estilo";
-"TranslateModal.StyleByAuthor" = "Estilo de [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Estilo de [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Omitir";
 "TwoStepAuth.AnError" = "Ocurrió un error. Por favor, reinténtalo más tarde.";
 "TwoStepAuth.CancelReset" = "Cancelar restablecimiento";

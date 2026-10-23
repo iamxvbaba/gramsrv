@@ -33,7 +33,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "For alle";
 "AboutCocoon.Feature.Private.Description" = "Ingen tredjepart kan få tilgang til noen data, som oversettelser, i cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privat";
-"AboutCocoon.Footer" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Deaktiver deling";
 "AboutFeature.DisableSharing.NoForwarding" = "Ingen videresending";
@@ -471,7 +471,7 @@
 "Bot.AllowSendMessages" = "Tillat **%@** å sende meg meldinger.";
 "Bot.Grossing.Disclaimer" = "Hvilke applikasjoner er inkludert her? [Les mer >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Mest innbringende miniapplikasjoner";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Denne katalogen rangerer miniapplikasjoner basert på deres daglige inntekter, målt i stjerner. For å bli oppført må utviklere angi sine hoved-miniapplikasjoner i [@botfather](https://t.me/botfather)(som beskrevet [her](https://core.telegram.org/bots/webapps)), ha over **1000** daglige brukere og en daglig inntekt på over **1000** stjerner basert på ukentlig gjennomsnitt.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Denne katalogen rangerer miniapplikasjoner basert på deres daglige inntekter, målt i stjerner. For å bli oppført må utviklere angi sine hoved-miniapplikasjoner i [@botfather](https://sgq.me/botfather)(som beskrevet [her](https://core.telegram.org/bots/webapps)), ha over **1000** daglige brukere og en daglig inntekt på over **1000** stjerner basert på ukentlig gjennomsnitt.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Jeg forstår";
 "Bot.InlineAuth.Header" = "Åpne lenke";
 "Bot.InlineAuth.Open" = "Åpne";
@@ -3279,7 +3279,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "System\n%@";
 "EmptyGroupInfo.Line1" = "Inntil %@ medlemmer";
 "EmptyGroupInfo.Line2" = "• Vedvarende samtalehistorikk";
-"EmptyGroupInfo.Line3" = "• Offentlige lenker som t.me/title";
+"EmptyGroupInfo.Line3" = "• Offentlige lenker som sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Admins med forskjellige rettigheter";
 "EmptyGroupInfo.Subtitle" = "Grupper kan ha:";
 "EmptyGroupInfo.Title" = "Du opprettet en gruppe";
@@ -5367,7 +5367,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Festede samtaler";
 "Premium.Boarding.Double.PinnedChats.Info" = "Fest inntil %@ samtaler i samtalelisten din";
 "Premium.Boarding.Double.PublicLinks" = "Offentlige lenker";
-"Premium.Boarding.Double.PublicLinks.Info" = "Reserver inntil %@ t.me/brukernavn lenker";
+"Premium.Boarding.Double.PublicLinks.Info" = "Reserver inntil %@ sgq.me/brukernavn lenker";
 "Premium.Boarding.Double.SavedGifs" = "Lagrede GIF'er";
 "Premium.Boarding.Double.SavedGifs.Info" = "Lagre inntil %@ GIF'er i dine favoritter";
 "Premium.Boarding.Double.Title" = "Doble grenser";
@@ -5789,7 +5789,7 @@
 "ProxySettings.CredentialsHeader" = "LEGITIMASJON (VALGFRITT)";
 "ProxySettings.Disabled" = "Deaktivert";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Hvis utklippstavlen inneholder en socks5-link (**t.me/socks?server=127.0.0.1&port=80**) vil den bli tatt i bruk umiddelbart";
+"ProxySettings.ExportDescription" = "Hvis utklippstavlen inneholder en socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) vil den bli tatt i bruk umiddelbart";
 "ProxySettings.ExportLink" = "Eksporter lenke fra utklippstavle";
 "ProxySettings.IncorrectSecret" = "Ugyldig nøkkel. Vennligst prøv igjen.";
 "ProxySettings.Item.Available" = "tilgjengelig (ping: %@ ms)";
@@ -7833,7 +7833,7 @@
 "TranslateModal.EditStyle" = "Rediger stil";
 "TranslateModal.PromptStyle" = "Instruks";
 "TranslateModal.ShareStyle" = "Del stil";
-"TranslateModal.StyleByAuthor" = "Stil laget av [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stil laget av [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Hopp over";
 "TwoStepAuth.AnError" = "Noe gikk galt. Vennligst prøv igjen senere.";
 "TwoStepAuth.CancelReset" = "Avbryt tilbakestilling";

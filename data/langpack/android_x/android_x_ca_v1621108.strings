@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Aprova els membres nous";
 "ApproveNewMembersInfo" = "Activeu-ho si voleu que els membres nous s'uneixin només quan l'administració ho aprovi.";
 "Archive" = "Arxiva";
-"ArchiveAppearanceHint" = "Mostra l'arxiu com una carpeta local. Podeu canviar la seva posició a la [Configuració](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Mostra l'arxiu com una carpeta local. Podeu canviar la seva posició a la [Configuració](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Aparença";
 "ArchiveAppearanceToggle" = "Mostra com a carpeta";
 "ArchiveAsFolder" = "Arxiu com a carpeta";
@@ -1204,9 +1204,9 @@
 "EditPrivacyPhoneNumber" = "Número de telèfon";
 "EditPrivacyPhoto" = "Fotos de perfil";
 "EditPrivacyReadDate" = "Veure les meves lectures";
-"EditPrivacyReadDateAllowHint" = "Permeteu a %1$s veure la vostra **última connexió i en línia** per a canviar aquest paràmetre.\n\nMés informació a **[Privadesa i seguretat](tg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
-"EditPrivacyReadDateRestrictHint" = "Impediu que %1$s vegi la vostra **Última connexió i en línia** per a canviar aquest paràmetre.\n\nMés informació a **[Privadesa i seguretat](tg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
-"EditPrivacyReadDateToggleHint" = "Podeu amagar el **Temps de lectura** només de qui no pot veure la vostra **Última connexió i en línia**.\n\nAneu a **[Privadesa i seguretat](tg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
+"EditPrivacyReadDateAllowHint" = "Permeteu a %1$s veure la vostra **última connexió i en línia** per a canviar aquest paràmetre.\n\nMés informació a **[Privadesa i seguretat](sg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
+"EditPrivacyReadDateRestrictHint" = "Impediu que %1$s vegi la vostra **Última connexió i en línia** per a canviar aquest paràmetre.\n\nMés informació a **[Privadesa i seguretat](sg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
+"EditPrivacyReadDateToggleHint" = "Podeu amagar el **Temps de lectura** només de qui no pot veure la vostra **Última connexió i en línia**.\n\nAneu a **[Privadesa i seguretat](sg://settings/privacy)** – **Última connexió i en línia** – **Amaga el temps de lectura**.";
 "EditPrivacyStatus" = "Última connexió i en línia";
 "EditPrivacyVoice" = "Enviar-me missatges de veu";
 "EditUserRestrictions" = "Edita les restriccions d'usuari";
@@ -1538,7 +1538,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Useu aquest paràmetre per a comparar el comportament sense el mode «Vora a vora» en Android 11–14.";
 "Experiment_PeerIds" = "Mostra els ID dels contactes";
 "Experiment_PeerIdsInfo" = "Mostra els identificadors API dels usuaris i xats als seus perfils";
-"ExperimentalBuildInfo" = "Aquesta versió del **Telegram X** no s'ha dissenyat per a un ús intensiu.\n\nPodria deixar de funcionar completament i de rebre notificacions.\n\nSi voleu trobar el fitxer APK de l'aplicació real del Telegram X, aneu a https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Aquesta versió del **Telegram X** no s'ha dissenyat per a un ús intensiu.\n\nPodria deixar de funcionar completament i de rebre notificacions.\n\nSi voleu trobar el fitxer APK de l'aplicació real del Telegram X, aneu a https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Atenció: compilació experimental";
 "ExperimentalSettings" = "Opcions experimentals";
 "ExperimentalSettingsUnavailable" = "No hi ha experiments disponibles. Torneu més tard.";
@@ -1936,7 +1936,7 @@
 "LaunchAppGuideDiskFull" = "El Telegram X no s'ha pogut iniciar perquè no hi havia prou espai d'emmagatzematge al dispositiu.\n\nComproveu que n'hi ha prou disponible i premeu **Llança l'aplicació** per a tornar a provar-ho.\n\nActualment disponible: %1$s";
 "LaunchAppGuideExternalError" = "El Telegram X no s'ha pogut iniciar a causa d'un error del dispositiu.\n\nPremeu **Llança l'aplicació** per a tornar a provar-ho. Si continua fallant, seguiu els passos següents: \n\n• Comproveu que teniu prou espai disponible: **%1$s**.\n• Comproveu que no hi ha cap altre error de l'estil (p. ex. la targeta SD s'expulsa o no es reconeix).\n• Reinicieu el dispositiu.\n\nSi res d'això no ajuda, potser voleu mirar errors similars a la [pàgina del TDLib al GitHub](https://github.com/tdlib/td/issues), o crear-ne de nous, incloent-hi el missatge d'error i els detalls del dispositiu.";
 "LaunchAppGuideFatalError" = "El Telegram X es va tancar inesperadament l'última vegada.\n\nPremeu **Llança l'aplicació** per a tornar a provar-ho.";
-"LaunchAppGuideTdlibIssue" = "El Telegram X no s'ha pogut iniciar a causa d'un error fatal del TDLib.\n\nPremeu **Llança l'aplicació** per a tornar a provar-ho. Si continua fallant, seguiu els passos següents:\n\n• [Verifiqueu](%2$s) que teniu l'última versió del Telegram X.\n• Reinicieu el dispositiu.\n\n**Si els passos de dalt no ajuden**\n\n1. Compartiu els detalls de l'error amb els desenvolupadors del TDLib:\n— De manera privada via el [@tdlib_bot](https://t.me/tdlib_bot) amb altre dispositiu o amb el [Telegram Web](https://web.telegram.org/).\n— De manera pública via la [pàgina del GitHub](https://github.com/tdlib/td/issues). **No** feu públic el **tdlib_log.txt**.\n2. Espereu la resposta.\n3. Canvieu la configuració del registre de sota, segons ho indiquin els desenvolupadors.\n4. Premeu **Llança l'aplicació** per a forçar que es torni a aturar.\n5. Compartiu el **tdlib_log.txt** amb els desenvolupadors del TDLib i espereu que el problema es resolgui.\n6. Una vegada actualitzat, podeu llançar l'aplicació amb normalitat.\n\n**Opcions alternatives**\n\n• Cerqueu errors similars al [GitHub](https://github.com/tdlib/td/issues) per a veure si hi ha solucions generals.\n• Reinstal·leu l'aplicació. Perdreu els xats secrets. Si useu el mateix número de telèfon, tots els altres xats i dades es restauraran des del núvol del Telegram.";
+"LaunchAppGuideTdlibIssue" = "El Telegram X no s'ha pogut iniciar a causa d'un error fatal del TDLib.\n\nPremeu **Llança l'aplicació** per a tornar a provar-ho. Si continua fallant, seguiu els passos següents:\n\n• [Verifiqueu](%2$s) que teniu l'última versió del Telegram X.\n• Reinicieu el dispositiu.\n\n**Si els passos de dalt no ajuden**\n\n1. Compartiu els detalls de l'error amb els desenvolupadors del TDLib:\n— De manera privada via el [@tdlib_bot](https://sgq.me/tdlib_bot) amb altre dispositiu o amb el [Telegram Web](https://web.telegram.org/).\n— De manera pública via la [pàgina del GitHub](https://github.com/tdlib/td/issues). **No** feu públic el **tdlib_log.txt**.\n2. Espereu la resposta.\n3. Canvieu la configuració del registre de sota, segons ho indiquin els desenvolupadors.\n4. Premeu **Llança l'aplicació** per a forçar que es torni a aturar.\n5. Compartiu el **tdlib_log.txt** amb els desenvolupadors del TDLib i espereu que el problema es resolgui.\n6. Una vegada actualitzat, podeu llançar l'aplicació amb normalitat.\n\n**Opcions alternatives**\n\n• Cerqueu errors similars al [GitHub](https://github.com/tdlib/td/issues) per a veure si hi ha solucions generals.\n• Reinstal·leu l'aplicació. Perdreu els xats secrets. Si useu el mateix número de telèfon, tots els altres xats i dades es restauraran des del núvol del Telegram.";
 "LaunchAppShareError" = "Comparteix els detalls de l'error";
 "LaunchAppUserSubtitle" = "fora de línia";
 "LaunchAppViewError" = "Mostra els detalls de l'error";
@@ -1994,7 +1994,7 @@
 "LinkChannel" = "Enllaça un canal";
 "LinkChannelHelp" = "Podeu definir un enllaç públic a **Telegram**. Si ho feu, altres usuaris podran trobar i afegir-se al vostre canal amb aquest enllaç.\n\nPodeu usar **a–z**, **0–9** i guions baixos.\nLongitud mínima: **5** caràcters.";
 "LinkChecking" = "Se n'està comprovant la disponibilitat…";
-"LinkCurrent" = "t.me/%1$s és el vostre enllaç públic actual.";
+"LinkCurrent" = "sgq.me/%1$s és el vostre enllaç públic actual.";
 "LinkDeleteOther" = "%1$s ha eliminat l'enllaç de %2$s %3$s";
 "LinkDeleteOtherYou" = "Heu eliminat l'enllaç de %1$s %2$s";
 "LinkDeletePrimary" = "%1$s ha eliminat l'enllaç d'invitació principal %2$s";
@@ -4024,7 +4024,7 @@
 "TranslationFailed" = "La traducció ha fallat";
 "TranslationMoreCreate" = "Crea";
 "TranslationMoreDone" = "Entesos";
-"TranslationMoreText" = "La llista de llengües disponibles es gestiona a la [Plataforma de Traducció](https://translations.telegram.org).\n\nTelegram us oferirà de canviar a la vostra llengua quan la traducció corresponent estigui disponible.\n\nMentre espereu, podeu instal·lar paquets de traduccions personalitzades, unir-vos al [procés de traducció](https://translations.telegram.org/ca/android_x/), o crear [el vostre propi](https://t.me/tgx_android_translate/) paquet de traducció.";
+"TranslationMoreText" = "La llista de llengües disponibles es gestiona a la [Plataforma de Traducció](https://translations.telegram.org).\n\nTelegram us oferirà de canviar a la vostra llengua quan la traducció corresponent estigui disponible.\n\nMentre espereu, podeu instal·lar paquets de traduccions personalitzades, unir-vos al [procés de traducció](https://translations.telegram.org/ca/android_x/), o crear [el vostre propi](https://sgq.me/tgx_android_translate/) paquet de traducció.";
 "TranslationMoreTitle" = "No trobeu la vostra llengua?";
 "TranslationPaste" = "Enganxa la traducció";
 "TranslationsMissing#one" = "%1$s no traduït";

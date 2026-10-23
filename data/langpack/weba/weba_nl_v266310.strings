@@ -769,14 +769,14 @@
 "CocoonFeature1Text" = "Geen enkele derde partij heeft toegang tot data, zoals vertalingen, binnen **{username}**.";
 "CocoonFeature1Title" = "Privé";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Dankzij Cocoon zijn de vertaalkosten van Telegram met een factor 6 gedaald.";
 "CocoonFeature2Title" = "Efficiënt";
 "CocoonFeature3Link" = "https://cocoon.org/";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Alle ontwikkelaars kunnen Cocoon gebruiken voor AI-toepassingen. Lees meer op **{link}**.";
 "CocoonFeature3Title" = "Voor iedereen";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "rechtstreeks naar @cocoon";
 "CocoonFooterText" = "Wil je Cocoon in je projecten integreren?\nNeem contact op via **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1043,7 +1043,7 @@
 "EmptyChatAppearanceSystem" = "Systeem";
 "EmptyGroupInfoLine1" = "• Tot {count} leden";
 "EmptyGroupInfoLine2" = "Blijvende chatgeschiedenis";
-"EmptyGroupInfoLine3" = "• Openbare links zoals t.me/titel";
+"EmptyGroupInfoLine3" = "• Openbare links zoals sgq.me/titel";
 "EmptyGroupInfoLine4" = "Beheerders met aangepaste rechten";
 "EmptyGroupInfoSubtitle" = "Groepen ondersteunen het volgende:";
 "EmptyGroupInfoTitle" = "Je hebt een groep aangemaakt";
@@ -2258,7 +2258,7 @@
 "ProfileTabVoice" = "Spraak";
 "ProfileViewChannel" = "Naar kanaal";
 "PublicLink" = "Openbare link";
-"PublicLinksLimitSubtitle" = "Reserveer maximaal {count} t.me/gebruikersnaam-links";
+"PublicLinksLimitSubtitle" = "Reserveer maximaal {count} sgq.me/gebruikersnaam-links";
 "PublicLinksLimitTitle" = "Openbare links";
 "PublicPoll" = "Peiling";
 "PublicPosts" = "Openbare berichten";

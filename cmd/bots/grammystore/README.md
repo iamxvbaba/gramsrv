@@ -1,6 +1,6 @@
 # grammystore
 
-grammY-based Telegram authentication and store bot for Telesrv. Runs
+grammY-based Telegram authentication and store bot for ShuzaGram. Runs
 independently from the main MTProto server; a bot outage cannot stop MTProto.
 
 ## Functionality

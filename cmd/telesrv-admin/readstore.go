@@ -481,8 +481,13 @@ type StarGiftRow struct {
 	Limited             bool
 	AvailabilityTotal   int
 	AvailabilityRemains int
-	CreatedBy           string
-	UpdatedAt           time.Time
+	// Anti-scalping limits, edited from the gift's quick settings.
+	LimitedPerUser         bool
+	PerUserTotal           int
+	RateLimitCount         int
+	RateLimitWindowSeconds int
+	CreatedBy              string
+	UpdatedAt              time.Time
 }
 
 func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
@@ -492,10 +497,12 @@ SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
        encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
        (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
        r.limited, r.availability_total, c.availability_remains,
+       r.limited_per_user, r.per_user_total, r.rate_limit_count, r.rate_limit_window_seconds,
        r.created_by, c.updated_at
 FROM star_gift_catalog c
 JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 JOIN documents d ON d.id = r.document_id
+WHERE c.deleted_at IS NULL
 ORDER BY c.sort_order, c.gift_id
 LIMIT $1`, domain.MaxStarGiftCatalogSize)
 	if err != nil {
@@ -510,6 +517,7 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize)
 			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
 			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
 			&row.ReceivedCount, &row.Limited, &row.AvailabilityTotal, &row.AvailabilityRemains,
+			&row.LimitedPerUser, &row.PerUserTotal, &row.RateLimitCount, &row.RateLimitWindowSeconds,
 			&row.CreatedBy, &row.UpdatedAt,
 		); err != nil {
 			return nil, err

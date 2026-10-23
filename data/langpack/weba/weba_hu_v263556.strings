@@ -680,7 +680,7 @@
 "EmptyChatAppearanceSystem" = "Rendszer";
 "EmptyGroupInfoLine1" = "• Akár {count} tag";
 "EmptyGroupInfoLine2" = "• Megmaradó csevegési előzmények";
-"EmptyGroupInfoLine3" = "•  Nyilvános hivatkozások, mint: t.me/title";
+"EmptyGroupInfoLine3" = "•  Nyilvános hivatkozások, mint: sgq.me/title";
 "EmptyGroupInfoLine4" = "• Különböző jogokkal rendelkező adminisztrátorok";
 "EmptyGroupInfoSubtitle" = "A csoportokban lehet:";
 "EmptyGroupInfoTitle" = "Létrehoztál egy csoportot";
@@ -1485,7 +1485,7 @@
 "ProfileTabVoice" = "Hang";
 "ProfileViewChannel" = "Csatorna megtekintése";
 "PublicLink" = "Nyilvános link";
-"PublicLinksLimitSubtitle" = "Akár {count} t.me/felhasználónév lefoglalása";
+"PublicLinksLimitSubtitle" = "Akár {count} sgq.me/felhasználónév lefoglalása";
 "PublicLinksLimitTitle" = "Nyilvános hivatkozások";
 "PublicPoll" = "Szavazás";
 "QuizPoll" = "Vetélkedő";

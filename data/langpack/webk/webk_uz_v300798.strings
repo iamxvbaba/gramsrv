@@ -968,7 +968,7 @@
 "EditAdminRights" = "Admin huquqlarini oʻzgartirish";
 "EditAdminSendAnonymously" = "Anonimlik";
 "EditAdminWhatCanDo" = "Bu admin nimalar qila oladi?";
-"EditBot.Buttons.Caption" = "Bu botni boshqarish uchun [@BotFather](https://t.me/botfather) botidan foydalaning.";
+"EditBot.Buttons.Caption" = "Bu botni boshqarish uchun [@BotFather](https://sgq.me/botfather) botidan foydalaning.";
 "EditBot.Buttons.Commands" = "Buyruqlarni tahrirlash";
 "EditBot.Buttons.Intro" = "Tavsifni tahrirlash";
 "EditBot.Buttons.Settings" = "Bot sozlamalarini oʻzgartirish";
@@ -1175,7 +1175,7 @@
 "GroupChecklist" = "Guruh vazifalar roʻyxati";
 "GroupDescription1" = "200 000 tagacha aʼzolar";
 "GroupDescription2" = "Umumiy yozishmalar tarixi";
-"GroupDescription3" = "t.me/title kabi ommaviy havolalar";
+"GroupDescription3" = "sgq.me/title kabi ommaviy havolalar";
 "GroupDescription4" = "Turli xil huquqlarga ega adminlar";
 "GroupEmptyTitle1" = "Siz **guruh** yaratdingiz.";
 "GroupEmptyTitle2" = "Guruh imkoniyatlari:";
@@ -1933,7 +1933,7 @@
 "Profile.Info.Group" = "Guruh haqida";
 "ProfileStories" = "Postlar";
 "ProfileStoriesArchiveHint" = "Agar arxivlangan hikoyalarni profilga joylamasangiz, ularni faqat siz koʻra olasiz.";
-"PublicLinksLimitSubtitle" = "%d tagacha t.me/username shaklidagi havoladan foydalaning";
+"PublicLinksLimitSubtitle" = "%d tagacha sgq.me/username shaklidagi havoladan foydalaning";
 "PublicLinksLimitTitle" = "Ommaviy havolalar";
 "PublicShares" = "Ommaviy ulashishlar";
 "PublicSharesCount#one" = "%1$s ta ommaviy ulashish";
@@ -2475,7 +2475,7 @@
 "Telegram.LanguageViewController" = "Til";
 "Telegram.NotificationSettingsViewController" = "Bildirishnomalar";
 "TelegramFeatures" = "Telegram funksiyalari";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumSubscribedSubtitle" = "**Telegram Premium**ga obuna boʻlganingiz uchun rahmat.\nQuyida ochilgan imkoniyatlar bilan tanishing.";
 "TelegramPremiumSubscribedTitle" = "Hammasi tayyor!";
 "TelegramPremiumUserGiftedPremiumDialogSubtitle" = "Endi qoʻshimcha funksiyalardan foydalanish ruxsatiga egasiz.";

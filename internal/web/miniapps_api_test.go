@@ -84,11 +84,11 @@ func TestMiniAppCreateUsesSignedIdentity(t *testing.T) {
 		StickersToken:  "1063110917:sticker-secret",
 	})
 	initData := miniAppInitDataForTest(t, "93372553:bot-secret", 42)
-	req := httptest.NewRequest(http.MethodPost, "/api/miniapps/botfather/bots", strings.NewReader(`{"name":"My Bot","about":"Local Gramsrv bot","username":"my_bot"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/miniapps/botfather/bots", strings.NewReader(`{"name":"My Bot","about":"Local ShuzaGram bot","username":"my_bot"}`))
 	req.Header.Set("X-Telegram-Init-Data", initData)
 	res := httptest.NewRecorder()
 	h.ServeHTTP(res, req)
-	if res.Code != http.StatusCreated || bots.owner != 42 || bots.created != 1 || bots.about != "Local Gramsrv bot" {
+	if res.Code != http.StatusCreated || bots.owner != 42 || bots.created != 1 || bots.about != "Local ShuzaGram bot" {
 		t.Fatalf("create bot status=%d owner=%d calls=%d about=%q body=%s", res.Code, bots.owner, bots.created, bots.about, res.Body.String())
 	}
 	var body map[string]any

@@ -105,7 +105,7 @@ type Config struct {
 	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
 	AdminAPIToken string
 	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
-	// 生产默认 https://telesrv.net；本地可设为 http://127.0.0.1:2401。
+	// 生产默认 https://shuzagram.com；本地可设为 http://127.0.0.1:2401。
 	PublicBaseURL string
 	// Branding 是所有客户端可见产品名称的进程级只读快照；协议标识、
 	// 客户端检测 token 与兼容 header 不属于品牌配置。
@@ -128,11 +128,15 @@ type Config struct {
 	PublicWebBaseURL string
 	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
 	PublicAppName string
+	// AndroidAppPackage / AndroidCertSHA256 发布 /.well-known/assetlinks.json，
+	// 让 Android 直接用 ShuzaGram 客户端打开公开链接；指纹为空则不发布。
+	AndroidAppPackage string
+	AndroidCertSHA256 []string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
 	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
 	PublicLinkWebAddr string
-	// CustomFragment enables mainnet withdrawal of unique Gramsrv gifts. The
+	// CustomFragment enables mainnet withdrawal of unique ShuzaGram gifts. The
 	// mint authority key is file-backed; the server never exposes it to the Web
 	// App. Username minting is intentionally out of scope.
 	CustomFragmentEnabled bool
@@ -148,7 +152,7 @@ type Config struct {
 	CustomFragmentAuthorizationTTL    time.Duration
 	CustomFragmentLiteserverConfigURL string
 	// StarGiftClaim exposes the @claim Mini App. Telegram init data binds the
-	// Gramsrv profile; TON Proof plus a lite-server read binds the current wallet
+	// ShuzaGram profile; TON Proof plus a lite-server read binds the current wallet
 	// and NFT owner before host_id is updated.
 	StarGiftClaimEnabled           bool
 	StarGiftClaimPublicBaseURL     string
@@ -1019,6 +1023,8 @@ func Load() (Config, error) {
 		PublicAppLinkBase:                     publicAppLinkBase,
 		PublicWebBaseURL:                      publicWebBaseURL,
 		PublicAppName:                         publicAppName,
+		AndroidAppPackage:                     envOr("TELESRV_ANDROID_APP_PACKAGE", "com.shuzagram.messenger"),
+		AndroidCertSHA256:                     strings.Split(envOr("TELESRV_ANDROID_CERT_SHA256", ""), ","),
 		PublicLinkWebAddr:                     envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		CustomFragmentEnabled:                 envBoolOr("TELESRV_CUSTOM_FRAGMENT_ENABLE", false),
 		CustomFragmentPublicBaseURL:           customFragmentPublicBaseURL,
@@ -1266,7 +1272,7 @@ func Load() (Config, error) {
 		PremiumBotUsername:               premiumBotUsername,
 		PremiumBotUserID:                 premiumBotUserID,
 		PremiumPlans:                     premiumPlans,
-		PasskeyRPID:                      envOr("TELESRV_PASSKEY_RP_ID", "telesrv.net"),
+		PasskeyRPID:                      envOr("TELESRV_PASSKEY_RP_ID", "shuzagram.com"),
 		PasskeyAllowedOrigins:            envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
 		StarsStartingGrant:               int64(envIntOr("TELESRV_STARS_STARTING_GRANT", 1000)),
 		PremiumSweepInterval:             envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),

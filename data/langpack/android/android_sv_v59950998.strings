@@ -2918,15 +2918,15 @@
 "CloseTopics" = "Avsluta ämnen";
 "CloseTranslation" = "Stäng översättning";
 "CocoonFeature1Text" = "Ingen tredjepart har åtkomst till data, så som översättningar, inuti **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature2Text" = "Cocoon har minskat Telegrams kostnader för översättningar med 6x. ";
 "CocoonFeature2Title" = "Effektiv";
 "CocoonFeature3Text" = "Alla utvecklare kan använda Cocoon för AI funktioner. Läs mer på **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "För alla";
-"CocoonFooter" = "Vill du integrera Cocoon i ditt projekt?\nKontakta dem på **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Vill du integrera Cocoon i ditt projekt?\nKontakta dem på **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Översättningar drivs av\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Hur fungerar det?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nhanterar AI uppgifter säkert och effektivt.";
@@ -5368,7 +5368,7 @@
 "GroupDeletedUndo" = "Grupp borttagen";
 "GroupDescription1" = "Upp till 200.000 medlemmar";
 "GroupDescription2" = "Beständig chatthistorik";
-"GroupDescription3" = "Publika länkar som ex. t.me/title";
+"GroupDescription3" = "Publika länkar som ex. sgq.me/title";
 "GroupDescription4" = "Administratör med andra behörigheter";
 "GroupEmoji" = "Gruppemojies";
 "GroupEmojiPack" = "Grupp emojiset";
@@ -8233,7 +8233,7 @@
 "PsaType_psa" = "Meddelande";
 "PublicChannelsTooMuch" = "Beklagar men användaren har för många publika grupper eller kanaler. Be denne att att först göra en grupp eller kanal privat.";
 "PublicLink" = "Publik länk";
-"PublicLinksLimitSubtitle" = "Reservera upp till %d t.me/användarnamn länkar";
+"PublicLinksLimitSubtitle" = "Reservera upp till %d sgq.me/användarnamn länkar";
 "PublicLinksLimitTitle" = "Publika länkar";
 "PublicPhoto" = "publik bild";
 "PublicPoll" = "Omröstning";
@@ -10508,7 +10508,7 @@
 "TelegramFaq" = "Frågor och svar";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Telegram-funktioner";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "SKAPA ETT LÖSENORD ";
 "TelegramPassportCreatePasswordInfo" = "Vänligen skapa ett lösenord för att skydda dina personuppgifter med End-to-End-kryptering.\n\nLösenordet krävs varje gång du loggar in på Telegram från en ny enhet.";

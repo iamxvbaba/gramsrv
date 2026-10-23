@@ -1025,9 +1025,9 @@
 "Business.Links.LinksSectionHeader" = "LINKURI CĂTRE CONVERSAȚIE";
 "Business.Links.PreviewText" = "Adaugă un mesaj care va fi introdus în câmpul de mesaje pentru oricine începe o conversație cu tine folosind acest link:";
 "Business.Links.PreviewTitle" = "Link către conversație";
-"Business.Links.SimpleLinkInfoPhone" = "Poți folosi și un simplu link pentru o conversație cu tine — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Poți folosi și un simplu link pentru o conversație cu tine — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Poți folosi și un simplu link pentru o conversație cu tine — [t.me/%1$@](username) sau [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Poți folosi și un simplu link pentru o conversație cu tine — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Poți folosi și un simplu link pentru o conversație cu tine — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Poți folosi și un simplu link pentru o conversație cu tine — [sgq.me/%1$@](username) sau [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "Oferă-le clienților tăi linkuri scurte care încep o conversație cu tine — și sugerează primul mesaj de la ei către tine.";
 "Business.LinksInfo" = "Creează linkuri care încep o conversație cu tine, sugerând primul mesaj.";
 "Business.Location" = "Locație";
@@ -1906,7 +1906,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Numele canalelor nu pot începe cu underscore.";
 "Channel.Username.InvalidTaken" = "Ne pare rău, acest link este deja luat.";
 "Channel.Username.InvalidTooShort" = "Linkurile publice trebuie să aibă cel puțin 5 caractere.";
-"Channel.Username.LinkHint" = "Acest link deschide canalul tău:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Acest link deschide canalul tău:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Poți revoca linkul unuia dintre grupurile sau canalele mai vechi, ori poți crea un canal privat în loc.";
 "Channel.Username.Title" = "Link";
 "Channel.Username.UsernameIsAvailable" = "%@ e disponibil.";
@@ -3544,7 +3544,7 @@
 "CocoonInfo.Efficient.Title" = "Eficient";
 "CocoonInfo.ForEveryone.Text" = "Orice dezvoltator poate folosi [Cocoon](telegram) pentru funcționalități AI. Mai multe pe [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Pentru toată lumea";
-"CocoonInfo.IntergrateInfo" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Terții nu pot accesa niciun fel de date, precum traducerile, în Cocoon.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4477,7 +4477,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Nu poți crea mai mult de %d robot.";
 "CreateBot.UsernameStatus.LimitExceeded#few" = "Nu poți crea mai mult de %d roboți.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Nu poți crea mai mult de %d de roboți.";
-"CreateBot.UsernameStatus.Link" = "Link: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Link: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Un nume de utilizator nu poate începe cu un număr.";
 "CreateBot.UsernameStatus.Short" = "Un nume trebuie să aibă cel puțin 5 caractere.";
 "CreateBot.UsernameStatus.Taken" = "Numele de utilizator este deja luat.";
@@ -4872,7 +4872,7 @@
 "EmojiStickerSettings.Info" = "Artiștii sunt bineveniți să își adauge pachetele de emojiuri proprii folosind robotul nostru @stickers.\n\nȚine apăsat un mesaj pentru a vizualiza și adăuga tot pachetul.";
 "EmptyGroupInfo.Line1" = "Până la 200.000 de membri";
 "EmptyGroupInfo.Line2" = "Istoric persistent";
-"EmptyGroupInfo.Line3" = "Linkuri publice ca t.me/titlu";
+"EmptyGroupInfo.Line3" = "Linkuri publice ca sgq.me/titlu";
 "EmptyGroupInfo.Line4" = "Admini cu drepturi diferite";
 "EmptyGroupInfo.Subtitle" = "Grupurile pot avea:";
 "EmptyGroupInfo.Title" = "Ai creat un grup";
@@ -9479,7 +9479,7 @@
 "Premium.Limits.PinnedChats" = "Conversații fixate";
 "Premium.Limits.PinnedChatsInfo" = "Fixează până la 10 conv. în lista principală";
 "Premium.Limits.PublicLinks" = "Linkuri publice";
-"Premium.Limits.PublicLinksInfo" = "Rezervă până la 20 de linkuri [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "Rezervă până la 20 de linkuri [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "Canale similare";
 "Premium.Limits.RecommendedChannelsInfo" = "Vezi până la 100 de canale similare";
 "Premium.Limits.SavedGifs" = "GIF-uri salvate";
@@ -9840,7 +9840,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "CINE ÎMI POATE VEDEA ULTIMA ACCESARE";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Utilizatorii care adaugă numărul tău la contactele lor îl vor vedea pe Telegram doar dacă și tu îi ai pe ei la contacte.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Utilizatorii care au numărul tău salvat la contacte îl vor vedea și pe Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Utilizatorii care au numărul tău salvat la contacte îl vor vedea și pe Telegram.\n\nAcest link public deschide o conversație cu tine:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Utilizatorii care au numărul tău salvat la contacte îl vor vedea și pe Telegram.\n\nAcest link public deschide o conversație cu tine:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "CINE MĂ POATE GĂSI DUPĂ NUMĂRUL MEU";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "CINE POATE VEDEA NUMĂRUL MEU DE TEL.";
 "PrivacyPolicy.Accept" = "Acceptă și continuă";
@@ -10799,8 +10799,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "indisponibil";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "TIP";
-"SocksProxySetup.QrCode.TMeLink" = "link t.me";
-"SocksProxySetup.QrCode.TgLink" = "link tg://";
+"SocksProxySetup.QrCode.TMeLink" = "link sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "link sg://";
 "SocksProxySetup.RequiredCredentials" = "CREDENȚIALE";
 "SocksProxySetup.SaveProxy" = "Salvează Proxy";
 "SocksProxySetup.SavedProxies" = "SERVERE PROXY SALVATE";
@@ -12586,7 +12586,7 @@
 "Username.InvalidTooShort" = "Numele trebuie să aibă cel puțin 5 caractere.";
 "Username.InvalidValue" = "Numele de utilizator nu este valid.";
 "Username.LinkCopied" = "Link copiat în clipboard.";
-"Username.LinkHint" = "Linkul începe o conversație cu tine:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Linkul începe o conversație cu tine:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "ORDINE NUME DE UTILIZATOR";
 "Username.LinksOrderInfo" = "Trage și plasează linkuri pentru a schimba ordinea în care vor fi afișate pe pagina ta de informații.";
 "Username.Placeholder" = "Numele tău";

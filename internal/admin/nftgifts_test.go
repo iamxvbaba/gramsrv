@@ -107,7 +107,7 @@ func TestSetNftGiftWalletReasons(t *testing.T) {
 				CommandMeta:   nftWalletMeta("dry-nft-wallet-tme", true),
 				Ref:           "gift-42",
 				WalletName:    "Alice",
-				WalletAddress: "rayo.t.me",
+				WalletAddress: "rayo.sgq.me",
 			},
 			want: "must be a TON mainnet address, a .ton name or a Telegram username",
 		},
@@ -399,7 +399,7 @@ func TestSetNftGiftWalletUsernameLinkFormUsesMintRecord(t *testing.T) {
 	res, err := svc.SetNftGiftWallet(context.Background(), SetNftGiftWalletRequest{
 		CommandMeta:   nftWalletMeta("dry-nft-wallet-username-link", true),
 		Ref:           "gift-42",
-		WalletAddress: "t.me/rayo",
+		WalletAddress: "sgq.me/rayo",
 	})
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -407,10 +407,10 @@ func TestSetNftGiftWalletUsernameLinkFormUsesMintRecord(t *testing.T) {
 	if res.Details["wallet_source"] != "collectible username mint" {
 		t.Fatalf("details=%v", res.Details)
 	}
-	if res.Details["wallet_alias"] != "t.me/rayo" {
+	if res.Details["wallet_alias"] != "sgq.me/rayo" {
 		t.Fatalf("details=%v", res.Details)
 	}
-	if res.Details["owner_name"] != "t.me/rayo" {
+	if res.Details["owner_name"] != "sgq.me/rayo" {
 		t.Fatalf("details=%v", res.Details)
 	}
 }

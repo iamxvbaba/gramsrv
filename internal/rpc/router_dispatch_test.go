@@ -1536,7 +1536,7 @@ func TestMessagesSearchGlobalCommunityFieldIsAbsentFromLayer227Wire(t *testing.T
 }
 
 // TestHelpGetDeepLinkInfoReturnsEmpty 回归：help.getDeepLinkInfo 此前未注册 handler，
-// 落 fallback 返回 500 NOT_IMPLEMENTED。客户端遇到无法识别的 tg:// 深链就会发该请求
+// 落 fallback 返回 500 NOT_IMPLEMENTED。客户端遇到无法识别的 sg:// 深链就会发该请求
 // （DrKLO LaunchActivity unsupportedUrl 分支），应返回规范的 deepLinkInfoEmpty 而非报错。
 func TestHelpGetDeepLinkInfoReturnsEmpty(t *testing.T) {
 	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)

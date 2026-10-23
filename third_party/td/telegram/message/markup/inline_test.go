@@ -1,0 +1,36 @@
+package markup
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/iamxvbaba/td/tg"
+)
+
+func TestInlineRow(t *testing.T) {
+	a := require.New(t)
+
+	buttons := []tg.KeyboardInlineButton{
+		URL("Google!", "https://google.com?q=gotd"),
+		Callback("callback", []byte("payload")),
+		SwitchInline("inline", "query", true),
+		Game("game"),
+		Buy("buy"),
+		InputURLAuth(false, "text", "fwdText", "url", &tg.InputUserSelf{}),
+		URLAuth("text", "url", 1, "fwdText"),
+		InputUserProfile("me", &tg.InputUserSelf{}),
+		UserProfile("BotFather", 93372553),
+		WebView("demo", "https://webappcontent.telegram.org/demo"),
+	}
+
+	v, ok := InlineRow(buttons...).(*tg.ReplyInlineMarkup)
+	a.True(ok)
+	a.Len(v.Rows, 1)
+	row := v.Rows[0]
+
+	a.Len(row.Buttons, len(buttons))
+	for i, b := range buttons {
+		a.Equal(b, row.Buttons[i])
+	}
+}

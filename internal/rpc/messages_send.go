@@ -642,6 +642,14 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 		}
 	}
 	quoteText, _ := reply.GetQuoteText()
+	// Layer 232 clients quote rich messages only through quote_rich and leave
+	// the flat fields empty. Rich quotes are not stored, so keep the quote as
+	// its plain text instead of silently dropping it.
+	if quoteText == "" {
+		if rich, ok := reply.GetQuoteRich(); ok {
+			quoteText = flattenRichQuote(rich)
+		}
+	}
 	if utf8.RuneCountInString(quoteText) > maxReplyQuoteLength {
 		return nil, limitInvalidErr()
 	}
@@ -1202,4 +1210,14 @@ func (r *Router) mentionUserIDsFromDomain(ctx context.Context, currentUserID int
 		}
 	}
 	return out
+}
+
+// flattenRichQuote turns a Layer 232 quote_rich fragment list into the plain
+// quote text stored for the reply.
+func flattenRichQuote(fragments []tg.RichTextClass) string {
+	var out strings.Builder
+	for _, fragment := range fragments {
+		out.WriteString(botAPIRichPlainText(fragment))
+	}
+	return out.String()
 }

@@ -180,7 +180,7 @@ func New(cfg Config, ledger GiftLedger, verifier Verifier, logger *zap.Logger) (
 	}
 	appName := strings.TrimSpace(cfg.AppName)
 	if appName == "" {
-		appName = "Gramsrv"
+		appName = "ShuzaGram"
 	}
 	collectionName := strings.TrimSpace(cfg.CollectionName)
 	if collectionName == "" {

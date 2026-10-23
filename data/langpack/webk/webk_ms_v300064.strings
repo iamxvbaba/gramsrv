@@ -1407,7 +1407,7 @@
 "EditAdminRights" = "Sunting kuasa pentadbir";
 "EditAdminSendAnonymously" = "Tanpa Pengenalan";
 "EditAdminWhatCanDo" = "Apa pentadbir ini boleh buat?";
-"EditBot.Buttons.Caption" = "Guna [@BotFather](https://t.me/botfather) untuk urus bot ini.";
+"EditBot.Buttons.Caption" = "Guna [@BotFather](https://sgq.me/botfather) untuk urus bot ini.";
 "EditBot.Buttons.Commands" = "Sunting Koman";
 "EditBot.Buttons.Intro" = "Sunting Pengenalan";
 "EditBot.Buttons.Settings" = "Tukar Aturan Bot";
@@ -1713,7 +1713,7 @@
 "GroupChecklist" = "Senaraisemak Grup";
 "GroupDescription1" = "Sehingga 200,000 ahli";
 "GroupDescription2" = "Sejarah bual persisten";
-"GroupDescription3" = "Link awam seperti t.me/tajuk";
+"GroupDescription3" = "Link awam seperti sgq.me/tajuk";
 "GroupDescription4" = "Pentadbir dengan kuasa berlainan";
 "GroupEmptyTitle1" = "Anda cipta **grup**.";
 "GroupEmptyTitle2" = "Grup boleh punyai:";
@@ -2863,7 +2863,7 @@
 "ProfileStoriesArchiveGroupHint" = "Hanya pentadbir grup boleh lihat stori diarkib kecuali  mereka dipos ke laman grup.";
 "ProfileStoriesArchiveHint" = "Hanya anda boleh lihat stori diarkib kecuali anda pilih untuk pos mereka ke profil anda.";
 "ProfileUnofficialSecurityRisk" = "%1$s guna klien Telegram tak rasmi  — mesej ke pengguna ini mungkin kurang selamat.";
-"PublicLinksLimitSubtitle" = "Tersedia hingga %d link t.me/namasamaran";
+"PublicLinksLimitSubtitle" = "Tersedia hingga %d link sgq.me/namasamaran";
 "PublicLinksLimitTitle" = "Link Awam";
 "PublicShares" = "Kongsian Awam";
 "PublicSharesCount#other" = "%1$s kongsian awam";
@@ -3783,7 +3783,7 @@
 "Telegram.LanguageViewController" = "Bahasa";
 "Telegram.NotificationSettingsViewController" = "Notifikasi";
 "TelegramFeatures" = "Ciri Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsMS";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsMS";
 "TelegramPremiumPeerSubtitle" = "Pemilik akaun **Telegram Premium** punyai akses eksklusif ke beberapa ciri tambahan.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Status emoji adalah ciri premium. Ciri lain termasuk dalam **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s adalah pelanggan **Telegram\u00a0Premium**";

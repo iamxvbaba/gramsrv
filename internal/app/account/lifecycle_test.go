@@ -42,7 +42,7 @@ func TestDeleteAccountTwoFADelayDecisionMatrix(t *testing.T) {
 				t.Fatalf("kind = %q, want %q", outcome.Kind, test.wantKind)
 			}
 			if test.wantKind == domain.AccountDeleteDelayed {
-				if lifecycle.scheduled == nil || !strings.Contains(lifecycle.scheduled.ServiceMessage, "tg://confirmphone?") || outcome.WaitSeconds != int(accountDeletionDelay.Seconds()) {
+				if lifecycle.scheduled == nil || !strings.Contains(lifecycle.scheduled.ServiceMessage, "sg://confirmphone?") || outcome.WaitSeconds != int(accountDeletionDelay.Seconds()) {
 					t.Fatalf("delayed outcome=%+v scheduled=%+v", outcome, lifecycle.scheduled)
 				}
 			} else if lifecycle.executedSource == "" {

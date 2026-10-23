@@ -1064,9 +1064,9 @@
 "Business.Links.LinksSectionHeader" = "קישורים לצ'אט";
 "Business.Links.PreviewText" = "הוסף הודעה שתוזן בשדה ההודעה לכל מי שמתחיל איתך צ'אט באמצעות הקישור:";
 "Business.Links.PreviewTitle" = "קישור לצ'אט";
-"Business.Links.SimpleLinkInfoPhone" = "באפשרותך להשתמש בקישור פשוט לצ'אט איתך - [t.me/\u2060+\u2060\u2068%@\u2069](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "באפשרותך גם להשתמש בקישור פשוט לצ'אט איתך - [t.me/\u2068%@\u2069](username)";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "באפשרותך גם להשתמש בקישור פשוט לצ'אט איתך - [t.me/\u2068%1$@\u2069](username) או [t.me/+\u2068%2$@\u2069](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "באפשרותך להשתמש בקישור פשוט לצ'אט איתך - [sgq.me/\u2060+\u2060\u2068%@\u2069](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "באפשרותך גם להשתמש בקישור פשוט לצ'אט איתך - [sgq.me/\u2068%@\u2069](username)";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "באפשרותך גם להשתמש בקישור פשוט לצ'אט איתך - [sgq.me/\u2068%1$@\u2069](username) או [sgq.me/+\u2068%2$@\u2069](phone).";
 "Business.Links.Text" = "תן ללקוחות שלך קישורים קצרים שמתחילים איתך צ'אט - והצע את ההודעה הראשונה מהם אליך.";
 "Business.LinksInfo" = "צור קישורים שמתחילים איתך צ'אט, ומציעים את ההודעה הראשונה.";
 "Business.Location" = "מיקום";
@@ -1955,7 +1955,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "שמות ערוצים לא יכולים להתחיל בקו תחתון.";
 "Channel.Username.InvalidTaken" = "מצטערים, קישור זה כבר תפוס.";
 "Channel.Username.InvalidTooShort" = "קישורים ציבוריים חייבים להכיל לפחות 5 תווים.";
-"Channel.Username.LinkHint" = "קישור זה פותח את הערוץ שלך: [\nhttps://t.me/\u2068%@\u2069]";
+"Channel.Username.LinkHint" = "קישור זה פותח את הערוץ שלך: [\nhttps://sgq.me/\u2068%@\u2069]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "ניתן לבטל את הקישור מאחד מהקבוצות או הערוצים הישנים יותר, או ליצור ערוץ פרטי במקום זאת.";
 "Channel.Username.Title" = "קישור";
 "Channel.Username.UsernameIsAvailable" = "\u2068%@\u2069 פנוי.";
@@ -3695,7 +3695,7 @@
 "CocoonInfo.Efficient.Title" = "יעיל";
 "CocoonInfo.ForEveryone.Text" = "כל המפתחים יכולים להשתמש ב[Cocoon](telegram) לתכונות AI. קראו עוד ב[cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "לכולם";
-"CocoonInfo.IntergrateInfo" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "רוצה להתממשק עם Cocoon בפרוייקטים שלך?\nגש אל [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "אף גורם צד שלישי לא יכול לגשת למידע, כגון תרגומים, בתוך Cocoon.";
 "CocoonInfo.Private.Title" = "פרטי";
 "CocoonInfo.Title" = "COCOON";
@@ -4666,7 +4666,7 @@
 "CreateBot.UsernameStatus.LimitExceeded#two" = "לא ניתן ליצור יותר מ\u2068%d\u2069 בוטים.";
 "CreateBot.UsernameStatus.LimitExceeded#many" = "לא ניתן ליצור יותר מ\u2068%d\u2069 בוטים.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "לא ניתן ליצור יותר מ\u2068%d\u2069 בוטים.";
-"CreateBot.UsernameStatus.Link" = "קישור: t.me/\u2068%@\u2069";
+"CreateBot.UsernameStatus.Link" = "קישור: sgq.me/\u2068%@\u2069";
 "CreateBot.UsernameStatus.Number" = "שם משתמש לא יכול להתחיל במספר.";
 "CreateBot.UsernameStatus.Short" = "על שם משתמש להכיל לפחות 5 תווים.";
 "CreateBot.UsernameStatus.Taken" = "שם משתמש זה כבר תפוס.";
@@ -5073,7 +5073,7 @@
 "EmojiStickerSettings.Info" = "אמנים מוזמנים להוסיף את ערכות האימוג'ים שלהם עם הבוט שלנו @stickers.\n\nלחץ והחזק על הודעה כדי להציג ולהוסיף את כל הערכה.";
 "EmptyGroupInfo.Line1" = "עד 200,000 חברים";
 "EmptyGroupInfo.Line2" = "היסטוריית צ'אט מתמשכת";
-"EmptyGroupInfo.Line3" = "קישורים פומביים כגון t.me/title";
+"EmptyGroupInfo.Line3" = "קישורים פומביים כגון sgq.me/title";
 "EmptyGroupInfo.Line4" = "מנהלים עם הרשאות שונות";
 "EmptyGroupInfo.Subtitle" = "קבוצות יכולות להכיל:";
 "EmptyGroupInfo.Title" = "יצרת קבוצה";
@@ -9976,7 +9976,7 @@
 "Premium.Limits.PinnedChats" = "צ'אטים נעוצים";
 "Premium.Limits.PinnedChatsInfo" = "נעץ עד ל10 צ'אטים ברשימת הצ'אטים הראשית.";
 "Premium.Limits.PublicLinks" = "קישורים ציבוריים";
-"Premium.Limits.PublicLinksInfo" = "שמור עד ל20 קישורי [t.me/username]()";
+"Premium.Limits.PublicLinksInfo" = "שמור עד ל20 קישורי [sgq.me/username]()";
 "Premium.Limits.RecommendedChannels" = "ערוצים דומים";
 "Premium.Limits.RecommendedChannelsInfo" = "הצג עד 100 ערוצים דומים";
 "Premium.Limits.SavedGifs" = "קובצי GIF שמורים";
@@ -10346,7 +10346,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "מי יכול לראות את הנראה לאחרונה שלי";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "משתמשים שהוסיפו את המספר שלך לרשימת אנשי הקשר שלהם יראו אותך בטלגרם רק אם הם אנשי הקשר שלך.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "משתמשים שכבר שמרו את המספר שלך ברשימת אנשי הקשר שלהם יראו אותו גם בטלגרם.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "משתמשים ששמרו את מספר הטלפון שלך ברשימת אנשי הקשר שלהם יראו אותו גם בטלגרם.\n\nקישור זה יפתח צ'אט איתך:\n[https://t.me/\u2068%@\u2069]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "משתמשים ששמרו את מספר הטלפון שלך ברשימת אנשי הקשר שלהם יראו אותו גם בטלגרם.\n\nקישור זה יפתח צ'אט איתך:\n[https://sgq.me/\u2068%@\u2069]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "מי יכול למצוא אותי באמצעות המספר שלי";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "מי יכול לראות את מספר הטלפון שלי";
 "PrivacyPolicy.Accept" = "אשר והמשך";
@@ -11365,8 +11365,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "לא זמין";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "סוג";
-"SocksProxySetup.QrCode.TMeLink" = "קישור t.me";
-"SocksProxySetup.QrCode.TgLink" = "tg:// link";
+"SocksProxySetup.QrCode.TMeLink" = "קישור sgq.me";
+"SocksProxySetup.QrCode.TgLink" = "sg:// link";
 "SocksProxySetup.RequiredCredentials" = "אישורים";
 "SocksProxySetup.SaveProxy" = "שמור פרוקסי";
 "SocksProxySetup.SavedProxies" = "פרוקסי שמורים";
@@ -13270,7 +13270,7 @@
 "Username.InvalidTooShort" = "שם המשתמש חייב לכלול לפחות 5 תווים.";
 "Username.InvalidValue" = "מצטערים, שם המשתמש אינו תקין.";
 "Username.LinkCopied" = "הקישור הועתק ללוח העריכה.";
-"Username.LinkHint" = "קישור זה יפתח צ'אט איתך: [\nhttps://t.me/\u2068%@\u2069]";
+"Username.LinkHint" = "קישור זה יפתח צ'אט איתך: [\nhttps://sgq.me/\u2068%@\u2069]";
 "Username.LinksOrder" = "סדר שמות המשתמש";
 "Username.LinksOrderInfo" = "גרור ושחרר קישורים כדי לשנות את הסדר בו הם מופיעים בעמוד הפרטים שלך.";
 "Username.Placeholder" = "שם המשתמש שלך";

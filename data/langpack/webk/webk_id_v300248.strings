@@ -939,7 +939,7 @@
 "GroupAddMembers" = "Tambah Anggota";
 "GroupDescription1" = "Hingga 200.000 anggota";
 "GroupDescription2" = "Riwayat obrolan persisten";
-"GroupDescription3" = "Tautan publik seperti t.me/title";
+"GroupDescription3" = "Tautan publik seperti sgq.me/title";
 "GroupDescription4" = "Admin dengan hak lain";
 "GroupEmptyTitle1" = "Anda membuat **grup**.";
 "GroupEmptyTitle2" = "Grup dapat memiliki: ";
@@ -1502,7 +1502,7 @@
 "Profile.Info.User" = "Info Pengguna";
 "ProfileStories" = "Postingan";
 "ProfileStoriesArchiveHint" = "Hanya Anda yang dapat melihat cerita yang diarsipkan kecuali jika diposting di profil Anda.";
-"PublicLinksLimitSubtitle" = "Miliki hingga %d tautan t.me/username";
+"PublicLinksLimitSubtitle" = "Miliki hingga %d tautan sgq.me/username";
 "PublicLinksLimitTitle" = "Tautan Publik";
 "PublicShares" = "Dibagikan Publik";
 "PublicSharesCount#other" = "%1$s dibagikan publik";
@@ -1812,7 +1812,7 @@
 "Telegram.LanguageViewController" = "Bahasa";
 "Telegram.NotificationSettingsViewController" = "Notifikasi";
 "TelegramFeatures" = "Fitur Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsID";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsID";
 "TelegramPremiumSubscribedSubtitle" = "Terima kasih telah berlangganan **Telegram Premium**. Berikut yang sekarang terbuka.";
 "TelegramPremiumSubscribedTitle" = "Anda sudah siap!";
 "TelegramPremiumUserGiftedPremiumDialogSubtitle" = "Anda sekarang memiliki akses ke fitur tambahan.";

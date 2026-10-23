@@ -2922,15 +2922,15 @@
 "CloseTopics" = "Tanca temes";
 "CloseTranslation" = "Tanca la traducció";
 "CocoonFeature1Text" = "Cap tercer pot accedir a cap dada, com ara traduccions, a dins del **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature2Text" = "El Cocoon ha permès a Telegram reduir els costs de traducció per 6.";
 "CocoonFeature2Title" = "Eficient";
 "CocoonFeature3Text" = "Qualsevol desenvolupador pot utilitzar el Cocoon per a funcions amb IA. Més informació en **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Per a tothom";
-"CocoonFooter" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Voleu integrar el Cocoon en els vostres projectes?\nContacteu a **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Traduccions proporcionades pel\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Com funciona?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork, xarxa oberta de computació confidencial) gestiona tasques d'IA de manera segura i eficient.";
@@ -5392,7 +5392,7 @@
 "GroupDeletedUndo" = "S'ha eliminat el grup";
 "GroupDescription1" = "Fins a 200.000 membres";
 "GroupDescription2" = "Historial persistent";
-"GroupDescription3" = "Enllaços públics, com t.me/títol";
+"GroupDescription3" = "Enllaços públics, com sgq.me/títol";
 "GroupDescription4" = "Administradors amb rols diferents";
 "GroupEmoji" = "Emojis del grup";
 "GroupEmojiPack" = "Paquet d'emojis del grup";
@@ -8261,7 +8261,7 @@
 "PsaType_psa" = "Comunicat";
 "PublicChannelsTooMuch" = "L'usuari ja té massa grups o canals públics. Demaneu-li que primer en faci algun privat.";
 "PublicLink" = "Enllaç públic";
-"PublicLinksLimitSubtitle" = "Reserveu fins a %d enllaços t.me/nom";
+"PublicLinksLimitSubtitle" = "Reserveu fins a %d enllaços sgq.me/nom";
 "PublicLinksLimitTitle" = "Enllaços públics";
 "PublicPhoto" = "foto pública";
 "PublicPoll" = "Enquesta";
@@ -10544,7 +10544,7 @@
 "TelegramFaq" = "PMF del Telegram";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Funcions del Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "CREA UNA CONTRASENYA";
 "TelegramPassportCreatePasswordInfo" = "Creeu una contrasenya per a assegurar les vostres dades personals amb xifratge d'extrem a extrem.\n\nAquesta contrasenya també se us demanarà cada vegada que inicieu sessió a Telegram des d'un dispositiu nou.";

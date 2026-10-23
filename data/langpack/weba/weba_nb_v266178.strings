@@ -757,14 +757,14 @@
 "CocoonFeature1Text" = "Ingen tredjepart kan få tilgang til noen data, som oversettelser, i *{username}**.";
 "CocoonFeature1Title" = "Privat";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon har gjort det mulig for Telegram å redusere kostnadene for oversettelser med 6 ganger.";
 "CocoonFeature2Title" = "Effektivt";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Hvilken som helst utvikler kan benytte Cocoon for AI funksjoner. Les mer på **{link}**.";
 "CocoonFeature3Title" = "For alle";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "direkte til @cocoon";
 "CocoonFooterText" = "Vil du integrere Cocoon i prosjektene dine?\nKontakt oss på **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1031,7 +1031,7 @@
 "EmptyChatAppearanceSystem" = "System";
 "EmptyGroupInfoLine1" = "• Inntil {count} medlemmer";
 "EmptyGroupInfoLine2" = "• Vedvarende samtalehistorikk";
-"EmptyGroupInfoLine3" = "• Offentlige lenker som t.me/title";
+"EmptyGroupInfoLine3" = "• Offentlige lenker som sgq.me/title";
 "EmptyGroupInfoLine4" = "• Administratorer med forskjellige rettigheter";
 "EmptyGroupInfoSubtitle" = "Grupper kan ha:";
 "EmptyGroupInfoTitle" = "Du opprettet en gruppe";
@@ -2244,7 +2244,7 @@
 "ProfileTabVoice" = "Tale";
 "ProfileViewChannel" = "Se kanal";
 "PublicLink" = "Offentlig lenke";
-"PublicLinksLimitSubtitle" = "Reserver inntil {count} t.me/brukernavn lenker";
+"PublicLinksLimitSubtitle" = "Reserver inntil {count} sgq.me/brukernavn lenker";
 "PublicLinksLimitTitle" = "Offentlige lenker";
 "PublicPoll" = "Avstemning";
 "PublicPosts" = "Offentlige innlegg";

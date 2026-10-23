@@ -1671,7 +1671,7 @@
 "EditAdminRights" = "Upravit oprávnění správce";
 "EditAdminSendAnonymously" = "Zůstat v anonymitě";
 "EditAdminWhatCanDo" = "Co může tento správce dělat?";
-"EditBot.Buttons.Caption" = "Pro správu tohoto bota použijte [@BotFather](https://t.me/botfather)";
+"EditBot.Buttons.Caption" = "Pro správu tohoto bota použijte [@BotFather](https://sgq.me/botfather)";
 "EditBot.Buttons.Commands" = "Upravit příkazy";
 "EditBot.Buttons.Intro" = "Upravit úvod";
 "EditBot.Buttons.Settings" = "Změnit nastavení bota";
@@ -2100,7 +2100,7 @@
 "GroupChecklist" = "Kontrolní seznam skupiny";
 "GroupDescription1" = "Až 200 000 členů";
 "GroupDescription2" = "Trvalá historie konverzace";
-"GroupDescription3" = "Veřejné odkazy jako t.me/text";
+"GroupDescription3" = "Veřejné odkazy jako sgq.me/text";
 "GroupDescription4" = "Správci s různými oprávněními";
 "GroupEmptyTitle1" = "**Skupina** byla vytvořena";
 "GroupEmptyTitle2" = "Skupiny mohou mít:";
@@ -3439,7 +3439,7 @@
 "ProfileStoriesArchiveGroupHint" = "Archivované příběhy mohou vidět pouze správci skupiny, pokud nejsou zveřejněny na stránce skupiny.";
 "ProfileStoriesArchiveHint" = "Archivované příběhy můžete vidět pouze vy, pokud se je nerozhodnete uložit do svého profilu.";
 "ProfileUnofficialSecurityRisk" = "%1$s používá neoficiálního klienta Telegram – konverzace s tímto uživatelem nemusí být zcela bezpečné.";
-"PublicLinksLimitSubtitle" = "Zarezervujte si až %d odkazů t.me/username";
+"PublicLinksLimitSubtitle" = "Zarezervujte si až %d odkazů sgq.me/username";
 "PublicLinksLimitTitle" = "Veřejné odkazy";
 "PublicShares" = "Veřejná sdílení";
 "PublicSharesCount#one" = "%1$s veřejné sdílení";
@@ -4533,7 +4533,7 @@
 "Telegram.LanguageViewController" = "Jazyk";
 "Telegram.NotificationSettingsViewController" = "Oznámení";
 "TelegramFeatures" = "Funkce Telegramu";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Majitelé účtů **Telegram Premium** mají exkluzivní přístup k mnoha dalším funkcím.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Stavy s emoji jsou prémiovou funkcí. Další funkce obsažené v **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s je předplatitelem **Telegram\u00a0Premium**";

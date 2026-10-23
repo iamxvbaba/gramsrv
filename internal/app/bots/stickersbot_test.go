@@ -196,11 +196,11 @@ func TestStickersBotPublishStickerPack(t *testing.T) {
 	sendTextToStickers(t, svc, messages, owner, "/publish")
 	reply := sendTextToStickers(t, svc, messages, owner, "fresh_pack")
 
-	if !strings.Contains(reply, "https://telesrv.net/addstickers/fresh_pack") {
+	if !strings.Contains(reply, "https://sgq.me/addstickers/fresh_pack") {
 		t.Fatalf("publish reply = %q, want addstickers link", reply)
 	}
 	publishReply := latestStickersReply(t, messages, owner.ID)
-	assertReplyEntityText(t, publishReply, domain.MessageEntityURL, "https://telesrv.net/addstickers/fresh_pack")
+	assertReplyEntityText(t, publishReply, domain.MessageEntityURL, "https://sgq.me/addstickers/fresh_pack")
 	if len(creator.created) != 1 {
 		t.Fatalf("created requests = %d, want 1", len(creator.created))
 	}
@@ -236,7 +236,7 @@ func TestStickersBotPublishUploadedTGS(t *testing.T) {
 	sendTextToStickers(t, svc, messages, owner, "/publish")
 	reply = sendTextToStickers(t, svc, messages, owner, "local_emoji")
 
-	if !strings.Contains(reply, "https://telesrv.net/addemoji/local_emoji") {
+	if !strings.Contains(reply, "https://sgq.me/addemoji/local_emoji") {
 		t.Fatalf("publish uploaded tgs reply = %q, want addemoji link", reply)
 	}
 	if len(creator.created) != 1 {
@@ -265,7 +265,7 @@ func TestStickersBotPublishUploadedLottieJSON(t *testing.T) {
 	sendTextToStickers(t, svc, messages, owner, "/publish")
 	reply = sendTextToStickers(t, svc, messages, owner, "lottie_pack")
 
-	if !strings.Contains(reply, "https://telesrv.net/addstickers/lottie_pack") {
+	if !strings.Contains(reply, "https://sgq.me/addstickers/lottie_pack") {
 		t.Fatalf("publish uploaded lottie reply = %q, want addstickers link", reply)
 	}
 	if len(creator.created) != 1 {
@@ -291,7 +291,7 @@ func TestStickersBotPublishCustomEmojiPack(t *testing.T) {
 	sendTextToStickers(t, svc, messages, owner, "/publish")
 	reply := sendTextToStickers(t, svc, messages, owner, "emoji_pack")
 
-	if !strings.Contains(reply, "https://telesrv.net/addemoji/emoji_pack") {
+	if !strings.Contains(reply, "https://sgq.me/addemoji/emoji_pack") {
 		t.Fatalf("publish emoji reply = %q, want addemoji link", reply)
 	}
 	if len(creator.created) != 1 || creator.created[0].Kind != domain.StickerSetKindEmoji {
@@ -322,14 +322,14 @@ func TestStickersBotAddStickerToExistingPack(t *testing.T) {
 	if reply := sendTextToStickers(t, svc, messages, owner, "/addsticker"); !strings.Contains(reply, "short name") {
 		t.Fatalf("/addsticker reply = %q, want short name prompt", reply)
 	}
-	if reply := sendTextToStickers(t, svc, messages, owner, "https://telesrv.net/addstickers/fresh_pack"); !strings.Contains(reply, "Selected Fresh Pack") {
+	if reply := sendTextToStickers(t, svc, messages, owner, "https://sgq.me/addstickers/fresh_pack"); !strings.Contains(reply, "Selected Fresh Pack") {
 		t.Fatalf("select pack reply = %q, want selected pack", reply)
 	}
 	if reply := sendDocumentToStickers(t, svc, messages, owner, stickerBotUploadDocument(502, 5502, "application/json", "new.json")); !strings.Contains(reply, "emoji") {
 		t.Fatalf("add document reply = %q, want emoji prompt", reply)
 	}
 	reply := sendTextToStickers(t, svc, messages, owner, "😄")
-	if !strings.Contains(reply, "Done. Added to Fresh Pack") || !strings.Contains(reply, "https://telesrv.net/addstickers/fresh_pack") {
+	if !strings.Contains(reply, "Done. Added to Fresh Pack") || !strings.Contains(reply, "https://sgq.me/addstickers/fresh_pack") {
 		t.Fatalf("add final reply = %q, want done link", reply)
 	}
 	if len(manager.adds) != 1 {
@@ -401,7 +401,7 @@ func TestStickersBotDeleteStickerFromExistingPack(t *testing.T) {
 	}
 	doc := stickerBotSetDocument(601, 6601, 7200, 8200)
 	reply := sendDocumentToStickers(t, svc, messages, owner, doc)
-	if !strings.Contains(reply, "Done. Removed from Old Pack") || !strings.Contains(reply, "https://telesrv.net/addstickers/old_pack") {
+	if !strings.Contains(reply, "Done. Removed from Old Pack") || !strings.Contains(reply, "https://sgq.me/addstickers/old_pack") {
 		t.Fatalf("delete final reply = %q, want done link", reply)
 	}
 	if len(manager.removes) != 1 || manager.removes[0].documentID != 601 || manager.removes[0].accessHash != 6601 {
@@ -445,7 +445,7 @@ func TestStickersBotDeleteCustomEmojiEntityFromExistingPack(t *testing.T) {
 		}},
 	})
 
-	if !strings.Contains(reply, "Done. Removed from Emoji Pack") || !strings.Contains(reply, "https://telesrv.net/addemoji/emoji_pack") {
+	if !strings.Contains(reply, "Done. Removed from Emoji Pack") || !strings.Contains(reply, "https://sgq.me/addemoji/emoji_pack") {
 		t.Fatalf("delete custom emoji reply = %q, want done emoji link", reply)
 	}
 	if len(manager.removes) != 1 || manager.removes[0].documentID != 701 || manager.removes[0].accessHash != 7701 {
@@ -658,7 +658,7 @@ func TestNormalizeStickersBotShortNameAcceptsHostBasedAppLinks(t *testing.T) {
 		{raw: "telesrv://addstickers?set=Legacy_Pack", want: "legacy_pack"},
 		{raw: "owpg://tenant.example.test/addstickers?set=Hosted_Pack", want: "hosted_pack"},
 		{raw: "owpg://tenant.example.test/addemoji?set=Emoji_Pack", want: "emoji_pack"},
-		{raw: "https://telesrv.net/addstickers/Web_Pack", want: "web_pack"},
+		{raw: "https://sgq.me/addstickers/Web_Pack", want: "web_pack"},
 	} {
 		if got := normalizeStickersBotShortName(tc.raw); got != tc.want {
 			t.Fatalf("normalizeStickersBotShortName(%q) = %q, want %q", tc.raw, got, tc.want)

@@ -29,3 +29,29 @@ func TestHumanTTLRoundsNetworkSkew(t *testing.T) {
 		t.Fatalf("humanTTL = %q", got)
 	}
 }
+
+func TestRenderEmailIsBrandedAndBilingual(t *testing.T) {
+	for _, purpose := range []otpdelivery.Purpose{otpdelivery.PurposeLoginEmail, otpdelivery.PurposeLoginEmailSetup, otpdelivery.PurposePasswordRecovery} {
+		content := renderEmail(otpdelivery.Request{Purpose: purpose, Code: "48213"}, 5*time.Minute)
+		for _, part := range []string{content.Subject, content.Text, content.HTML} {
+			if strings.Contains(strings.ToLower(part), "telesrv") || strings.Contains(part, "Telegram") {
+				t.Fatalf("%s: unbranded text: %q", purpose, part)
+			}
+		}
+		if !strings.Contains(content.Subject, "48213") || !strings.Contains(content.Text, "48213") || !strings.Contains(content.HTML, "48213") {
+			t.Fatalf("%s: code missing", purpose)
+		}
+		if !strings.Contains(content.Text, "5 минут") || !strings.Contains(content.Text, "5 minutes") {
+			t.Fatalf("%s: bilingual expiry missing: %q", purpose, content.Text)
+		}
+	}
+	msg := string(buildMessage("ShuzaGram <a@b.com>", "a@b.com", "c@d.com", emailContent{Subject: "s", Text: "t", HTML: "<p>h</p>"}, time.Unix(0, 0)))
+	for _, want := range []string{"multipart/alternative", "text/plain", "text/html", "Message-ID: <", "@b.com>", "Date: "} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message missing %q:\n%s", want, msg)
+		}
+	}
+	if ttlRU(time.Minute) != "1 минуту" || ttlRU(3*time.Minute) != "3 минуты" || ttlRU(11*time.Minute) != "11 минут" {
+		t.Fatal("russian plural forms")
+	}
+}

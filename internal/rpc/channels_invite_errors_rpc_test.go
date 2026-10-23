@@ -45,7 +45,7 @@ func TestImportChatInviteErrorsRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export request-needed invite: %v", err)
 	}
-	requestHash := strings.TrimPrefix(requestInvite.(*tg.ChatInviteExported).Link, "https://telesrv.net/+")
+	requestHash := strings.TrimPrefix(requestInvite.(*tg.ChatInviteExported).Link, "https://sgq.me/+")
 	if _, err := r.onMessagesImportChatInvite(WithUserID(ctx, first.ID), requestHash); err == nil || !strings.Contains(err.Error(), "INVITE_REQUEST_SENT") {
 		t.Fatalf("import request-needed err = %v, want INVITE_REQUEST_SENT", err)
 	}
@@ -92,7 +92,7 @@ func TestImportChatInviteErrorsRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export limited invite: %v", err)
 	}
-	limitedHash := strings.TrimPrefix(limitedInvite.(*tg.ChatInviteExported).Link, "https://telesrv.net/+")
+	limitedHash := strings.TrimPrefix(limitedInvite.(*tg.ChatInviteExported).Link, "https://sgq.me/+")
 	if _, err := r.onMessagesImportChatInvite(WithUserID(ctx, first.ID), limitedHash); err != nil {
 		t.Fatalf("first import limited invite: %v", err)
 	}

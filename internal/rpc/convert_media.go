@@ -236,10 +236,28 @@ func tgWebPage(w domain.MessageWebPage) tg.WebPageClass {
 				}
 			}
 		}
+		var attrs []tg.WebPageAttributeClass
 		if w.ComposeToneEmojiID != 0 {
-			page.SetAttributes([]tg.WebPageAttributeClass{
-				&tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID},
+			attrs = append(attrs, &tg.WebPageAttributeAiComposeTone{EmojiID: w.ComposeToneEmojiID})
+		}
+		if w.UniqueGift != nil {
+			attrs = append(attrs, &tg.WebPageAttributeUniqueStarGift{Gift: tgUniqueStarGift(*w.UniqueGift)})
+		}
+		if len(w.CollectionIcons) > 0 {
+			icons := make([]tg.DocumentClass, 0, len(w.CollectionIcons))
+			for _, d := range w.CollectionIcons {
+				icons = append(icons, tgDocument(d))
+			}
+			attrs = append(attrs, &tg.WebPageAttributeStarGiftCollection{Icons: icons})
+		}
+		if w.AuctionGift != nil {
+			attrs = append(attrs, &tg.WebPageAttributeStarGiftAuction{
+				Gift:    tgStarGift(*w.AuctionGift, int64(w.Date)),
+				EndDate: w.AuctionEndDate,
 			})
+		}
+		if len(attrs) > 0 {
+			page.SetAttributes(attrs)
 		}
 		return page
 	case domain.MessageWebPageStateEmpty:
@@ -331,10 +349,26 @@ func tgDocument(d domain.Document) tg.DocumentClass {
 		Date:          d.Date,
 		MimeType:      d.MimeType,
 		Size:          d.Size,
-		Thumbs:        tgDocumentThumbs(d.Thumbs),
+		Thumbs:        withAnimatedStickerPlaceholder(d.MimeType, tgDocumentThumbs(d.Thumbs)),
 		DCID:          d.DCID,
 		Attributes:    tgDocumentAttributes(d.MimeType, d.Attributes),
 	}
+}
+
+// emptyStickerPathThumb is an outline thumbnail of a single point: it draws
+// nothing. The bytes decode to the SVG path "M0,0z".
+var emptyStickerPathThumb = []byte{0x00, 0x80}
+
+// withAnimatedStickerPlaceholder gives a .tgs document without thumbnails an
+// invisible outline thumbnail. Telegram clients play a .tgs as an animated
+// sticker only when it has at least one thumbnail and show it as a file
+// otherwise; every Telegram sticker carries one, but stickers imported or
+// uploaded here often do not.
+func withAnimatedStickerPlaceholder(mimeType string, thumbs []tg.PhotoSizeClass) []tg.PhotoSizeClass {
+	if len(thumbs) > 0 || mimeType != mimeApplicationXTGSticker {
+		return thumbs
+	}
+	return []tg.PhotoSizeClass{&tg.PhotoPathSize{Type: "j", Bytes: append([]byte(nil), emptyStickerPathThumb...)}}
 }
 
 func tgDocuments(docs []domain.Document) []tg.DocumentClass {

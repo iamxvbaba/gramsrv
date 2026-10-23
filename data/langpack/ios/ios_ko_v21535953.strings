@@ -942,9 +942,9 @@
 "Business.Links.LinksSectionHeader" = "대화 링크";
 "Business.Links.PreviewText" = "이 링크로 회원님과 대화를 시작하는 사람의 메시지 입력란에 자동으로 입력될 메시지를 추가하세요:";
 "Business.Links.PreviewTitle" = "대화 링크";
-"Business.Links.SimpleLinkInfoPhone" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [t.me/%@](username).";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [t.me/%1$@](username) 또는 [t.me/\u2060+\u2060%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [sgq.me/%@](username).";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "회원님과의 대화에는 간단한 링크도 사용할 수 있습니다 — [sgq.me/%1$@](username) 또는 [sgq.me/\u2060+\u2060%2$@](phone).";
 "Business.Links.Text" = "고객이 회원님과의 대화를 시작할 수 있는 짧은 링크를 만들고, 고객이 회원님에게 보낼 첫 메시지도 제안하세요.";
 "Business.LinksInfo" = "나와 대화를 시작하면서 첫 메시지를 제안하는 링크를 만드세요.";
 "Business.Location" = "위치";
@@ -1803,7 +1803,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "채널 이름이 밑줄로 시작할 수 없습니다.";
 "Channel.Username.InvalidTaken" = "죄송합니다. 이미 사용되고 있는 링크입니다.";
 "Channel.Username.InvalidTooShort" = "공개 링크는 5자 이상이어야 합니다.";
-"Channel.Username.LinkHint" = "아래 링크로 채널이 열립니다:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "아래 링크로 채널이 열립니다:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "오래 전에 만드신 그룹이나 채널의 링크를 폐기하거나, 대신 비공개 그룹을 만드실 수 있습니다.";
 "Channel.Username.Title" = "링크";
 "Channel.Username.UsernameIsAvailable" = "%@: 사용하실 수 있습니다.";
@@ -3237,7 +3237,7 @@
 "CocoonInfo.Efficient.Title" = "효율적";
 "CocoonInfo.ForEveryone.Text" = "모든 개발자가 AI 기능에 [Cocoon](telegram)을 사용할 수 있습니다. 자세한 내용은 [cocoon.org](web)에서 확인하세요.";
 "CocoonInfo.ForEveryone.Title" = "모두에게";
-"CocoonInfo.IntergrateInfo" = "프로젝트에 Cocoon을 통합하고 싶나요?\n[t.me/cocoon?direct]()로 문의하세요.";
+"CocoonInfo.IntergrateInfo" = "프로젝트에 Cocoon을 통합하고 싶나요?\n[sgq.me/cocoon?direct]()로 문의하세요.";
 "CocoonInfo.Private.Text" = "Cocoon 내부의 번역 등 어떤 데이터에도 제3자는 접근할 수 없습니다.";
 "CocoonInfo.Private.Title" = "비공개";
 "CocoonInfo.Title" = "COCOON";
@@ -4094,7 +4094,7 @@
 "CreateBot.UsernameStatus.Checking" = "확인 중...";
 "CreateBot.UsernameStatus.Invalid" = "**a-z**, **0-9** 및 밑줄만 사용할 수 있습니다.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "봇은 최대 %d개까지 만들 수 있습니다.";
-"CreateBot.UsernameStatus.Link" = "링크: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "링크: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "사용자명은 숫자로 시작할 수 없습니다.";
 "CreateBot.UsernameStatus.Short" = "사용자명은 최소 5자여야 합니다.";
 "CreateBot.UsernameStatus.Taken" = "이미 사용되고 있는 사용자명입니다.";
@@ -4465,7 +4465,7 @@
 "EmojiStickerSettings.Info" = "아티스트에게는 @stickers 봇을 이용하여 자신만의 이모지 묶음을 추가할 수 있는 기회가 언제나 열려 있습니다.\n\n전체 묶음을 보고 추가하려면 메시지를 길게 누르세요.";
 "EmptyGroupInfo.Line1" = "200,000명까지 참가할 수 있습니다";
 "EmptyGroupInfo.Line2" = "대화 내용이 보존됩니다";
-"EmptyGroupInfo.Line3" = "공개 링크를 t.me/제목으로 둘 수 있습니다";
+"EmptyGroupInfo.Line3" = "공개 링크를 sgq.me/제목으로 둘 수 있습니다";
 "EmptyGroupInfo.Line4" = "여러 권한의 관리자를 세울 수 있습니다";
 "EmptyGroupInfo.Subtitle" = "그룹은";
 "EmptyGroupInfo.Title" = "그룹을 만들었습니다.";
@@ -8460,7 +8460,7 @@
 "Premium.Limits.PinnedChats" = "고정된 대화방";
 "Premium.Limits.PinnedChatsInfo" = "메인 대화 목록에 최대 10개의 대화방을 고정할 수 있어요";
 "Premium.Limits.PublicLinks" = "공개 링크";
-"Premium.Limits.PublicLinksInfo" = "최대 20개의 [t.me/username]() 링크를 마련할 수 있어요";
+"Premium.Limits.PublicLinksInfo" = "최대 20개의 [sgq.me/username]() 링크를 마련할 수 있어요";
 "Premium.Limits.RecommendedChannels" = "비슷한 채널";
 "Premium.Limits.RecommendedChannelsInfo" = "비슷한 채널 100개까지 보기.";
 "Premium.Limits.SavedGifs" = "GIF 저장";
@@ -8803,7 +8803,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "내 접속 시간을 볼 수 있는 사람";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "연락처에 회원님의 번호를 저장한 사용자라도 자신이 회원님의 연락처에 있어야만 회원님의 번호를 볼 수 있습니다.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "연락처에 회원님의 번호를 저장한 사용자는 텔레그램에서도 회원님의 번호를 볼 수 있습니다.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "회원님의 전화번호를 저장한 상대방도 텔레그램에서 볼 수 있게 됩니다.\n\n회원님과의 대화 공개 링크:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "회원님의 전화번호를 저장한 상대방도 텔레그램에서 볼 수 있게 됩니다.\n\n회원님과의 대화 공개 링크:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "내 번호로 나를 찾을 수 있는 사람";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "내 전화번호를 볼 수 있는 사람";
 "PrivacyPolicy.Accept" = "수락 및 계속";
@@ -9648,8 +9648,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "이용 불가능";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "유형";
-"SocksProxySetup.QrCode.TMeLink" = "t.me 링크";
-"SocksProxySetup.QrCode.TgLink" = "tg:// 링크";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me 링크";
+"SocksProxySetup.QrCode.TgLink" = "sg:// 링크";
 "SocksProxySetup.RequiredCredentials" = "자격 인증서";
 "SocksProxySetup.SaveProxy" = "프록시 저장";
 "SocksProxySetup.SavedProxies" = "저장한 프록시";
@@ -11199,7 +11199,7 @@
 "Username.InvalidTooShort" = "사용자명은 5자 이상이어야 합니다.";
 "Username.InvalidValue" = "죄송합니다. 잘못된 사용자명입니다.";
 "Username.LinkCopied" = "링크가 클립보드에 복사되었습니다.";
-"Username.LinkHint" = "아래 링크로 회원님과의 대화방이 열립니다:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "아래 링크로 회원님과의 대화방이 열립니다:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "사용자명 정렬";
 "Username.LinksOrderInfo" = "내 정보 페이지에 보여지는 순서를 링크를 끌어 변경할 수 있습니다.";
 "Username.Placeholder" = "사용자명";

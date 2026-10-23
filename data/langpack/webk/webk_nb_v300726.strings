@@ -1491,7 +1491,7 @@
 "EditAdminRights" = "Rediger administratorrettigheter";
 "EditAdminSendAnonymously" = "Forbli anonym";
 "EditAdminWhatCanDo" = "Hva kan denne administratoren gjøre?";
-"EditBot.Buttons.Caption" = "Bruk [@BotFather](https://t.me/botfather) for å administrere denne roboten.";
+"EditBot.Buttons.Caption" = "Bruk [@BotFather](https://sgq.me/botfather) for å administrere denne roboten.";
 "EditBot.Buttons.Commands" = "Rediger kommandoer";
 "EditBot.Buttons.Intro" = "Rediger introduksjon";
 "EditBot.Buttons.Settings" = "Endre robotinnstillinger";
@@ -1837,7 +1837,7 @@
 "GroupChecklist" = "Gruppesjekkliste";
 "GroupDescription1" = "Inntil 200 000 medlemmer";
 "GroupDescription2" = "Vedvarende samtalehistorikk";
-"GroupDescription3" = "Offentlige lenker som t.me/title";
+"GroupDescription3" = "Offentlige lenker som sgq.me/title";
 "GroupDescription4" = "Admins med forskjellige rettigheter";
 "GroupEmptyTitle1" = "Du opprettet en **gruppe**.";
 "GroupEmptyTitle2" = "Grupper kan ha:";
@@ -3046,7 +3046,7 @@
 "ProfileStoriesArchiveGroupHint" = "Kun administratorene i gruppen kan se arkiverte historier med mindre de legges ut på gruppesiden.";
 "ProfileStoriesArchiveHint" = "Bare du kan se arkiverte historier med mindre du velger å legge de ut på profilen din.";
 "ProfileUnofficialSecurityRisk" = "%1$s bruker en uoffisiell Telegram klient. Meldinger til denne brukeren kan være mindre sikre.";
-"PublicLinksLimitSubtitle" = "Reserver inntil %d t.me/brukernavn lenker";
+"PublicLinksLimitSubtitle" = "Reserver inntil %d sgq.me/brukernavn lenker";
 "PublicLinksLimitTitle" = "Offentlige lenker";
 "PublicShares" = "Offentlige delinger";
 "PublicSharesCount#one" = "%1$s offentlig deling";
@@ -4020,7 +4020,7 @@
 "Telegram.LanguageViewController" = "Språk";
 "Telegram.NotificationSettingsViewController" = "Varsler";
 "TelegramFeatures" = "Funksjoner i Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Eiere av **Telegram Premium** kontoer har eksklusiv tilgang til flere ekstrafunksjoner.";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "Emojistatus er en premium funksjon. Andre funksjoner inkludert i **Telegram Premium**:";
 "TelegramPremiumPeerTitle" = "%s abonnerer på **Telegram\u00a0Premium**";

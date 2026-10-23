@@ -1,0 +1,47 @@
+package message
+
+import (
+	"context"
+
+	"github.com/go-faster/errors"
+
+	"github.com/iamxvbaba/td/telegram/message/inline"
+	"github.com/iamxvbaba/td/tg"
+)
+
+// InlineResult is a user method to send bot inline query result message.
+func (b *Builder) InlineResult(ctx context.Context, id string, queryID int64, hideVia bool) (tg.UpdatesClass, error) {
+	p, err := b.peer(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "peer")
+	}
+
+	req := &tg.MessagesSendInlineBotResultRequest{
+		Silent:       b.silent,
+		Background:   b.background,
+		ClearDraft:   b.clearDraft,
+		HideVia:      hideVia,
+		Peer:         p,
+		QueryID:      queryID,
+		ID:           id,
+		RandomID:     b.randomID,
+		ScheduleDate: b.scheduleDate,
+	}
+	b.applyCommonOptions(req)
+	upd, err := b.sender.sendInlineBotResult(ctx, req)
+	if err != nil {
+		return nil, errors.Wrap(err, "send inline bot result")
+	}
+
+	return upd, nil
+}
+
+// InlineUpdate is an abstraction for
+type InlineUpdate interface {
+	GetQueryID() int64
+}
+
+// Inline creates new inline.ResultBuilder using given update.
+func (s *Sender) Inline(upd InlineUpdate) *inline.ResultBuilder {
+	return inline.New(s.raw, s.rand, upd.GetQueryID())
+}

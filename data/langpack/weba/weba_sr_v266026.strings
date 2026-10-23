@@ -804,14 +804,14 @@
 "CocoonFeature1Text" = "Трећа лица не могу приступити вашим подацима, укључујући преводе, у оквиру **{username}**.";
 "CocoonFeature1Title" = "Поверљиво";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon је омогућио Telegram-у да шестоструко смањи трошкове превода.";
 "CocoonFeature2Title" = "Ефикасно";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Сваки програмер може користити Cocoon за ВИ функције. Сазнајте више на **{link}**.";
 "CocoonFeature3Title" = "Доступно свима";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "директно на @cocoon";
 "CocoonFooterText" = "Желите да интегришете Cocoon у своје пројекте?\nПишите нам **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1090,7 +1090,7 @@
 "EmptyChatAppearanceSystem" = "Системска";
 "EmptyGroupInfoLine1" = "• До {count} чланова";
 "EmptyGroupInfoLine2" = "• Трајну историју ћаскања";
-"EmptyGroupInfoLine3" = "• Јавне везе као t.me/naziv";
+"EmptyGroupInfoLine3" = "• Јавне везе као sgq.me/naziv";
 "EmptyGroupInfoLine4" = "• Админе с различитим правима";
 "EmptyGroupInfoSubtitle" = "Групе могу имати:";
 "EmptyGroupInfoTitle" = "Направили сте групу";
@@ -2399,7 +2399,7 @@
 "ProfileTabVoice" = "Гласовне";
 "ProfileViewChannel" = "Погледај канал";
 "PublicLink" = "Јавна веза";
-"PublicLinksLimitSubtitle" = "Резервишите до {count} веза t.me/korisnickoime";
+"PublicLinksLimitSubtitle" = "Резервишите до {count} веза sgq.me/korisnickoime";
 "PublicLinksLimitTitle" = "Јавне везе";
 "PublicPoll" = "Анкета";
 "PublicPosts" = "Јавне објаве";

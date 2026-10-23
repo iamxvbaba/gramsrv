@@ -3322,15 +3322,15 @@
 "CloseTopics" = "Закрыць тэмы";
 "CloseTranslation" = "Закрыць пераклад";
 "CocoonFeature1Text" = "Ніводная старонняя асоба не можа атрымаць доступ да якіх-небудзь даных, у тым ліку да перакладаў, унутры **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Прыватнасць";
 "CocoonFeature2Text" = "Cocoon дазволіў Telegram знізіць кошт перакладу ў 6 разоў.";
 "CocoonFeature2Title" = "Эфектыўнасць";
 "CocoonFeature3Text" = "Любы распрацоўшчык можа выкарыстоўваць Cocoon для рашэння заданняў AI. Даведайцеся больш на **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Даступнасць";
-"CocoonFooter" = "Хочаце інтэграваць Cocoon у свае праекты?\nЗвяжыцеся з намі па адрасе **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Хочаце інтэграваць Cocoon у свае праекты?\nЗвяжыцеся з намі па адрасе **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Пераклад выконваецца з дапамогай\n**🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Як гэта працуе?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork) выконвае задачы AI **бяспечна** і **эфектыўна**.";
@@ -6115,7 +6115,7 @@
 "GroupDeletedUndo" = "Суполка выдалена";
 "GroupDescription1" = "Да 200,000 удзельнікаў";
 "GroupDescription2" = "Захаваную гісторыю чата";
-"GroupDescription3" = "Публічныя спасылкі, такія як t.me/title";
+"GroupDescription3" = "Публічныя спасылкі, такія як sgq.me/title";
 "GroupDescription4" = "Кіраўнікі з рознымі правамі";
 "GroupEmoji" = "Эмодзі суполкі";
 "GroupEmojiPack" = "Набор эмодзі суполкі";
@@ -9288,7 +9288,7 @@
 "PsaType_psa" = "Аб’ява";
 "PublicChannelsTooMuch" = "На жаль, у гэтага карыстальніка ўжо занадта шмат публічных суполак або каналаў. Спачатку папрасіце яго зрабіць адну са сваіх існуючых суполак або каналаў прыватнай.";
 "PublicLink" = "Публічная спасылка";
-"PublicLinksLimitSubtitle" = "Рэзервуйце да %d спасылак фармату t.me/username";
+"PublicLinksLimitSubtitle" = "Рэзервуйце да %d спасылак фармату sgq.me/username";
 "PublicLinksLimitTitle" = "Публічныя спасылкі";
 "PublicPhoto" = "публічнае фота";
 "PublicPoll" = "Апытанне";
@@ -11814,7 +11814,7 @@
 "TelegramFaq" = "Частыя пытанні";
 "TelegramFaqUrl" = "https://telegram.org/faq";
 "TelegramFeatures" = "Магчымасці Telegram";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPassport" = "Telegram Passport";
 "TelegramPassportCreatePassword" = "СТВАРЫЦЬ ПАРОЛЬ";
 "TelegramPassportCreatePasswordInfo" = "Прызначце пароль, каб абараніць вашы даныя скразным шыфраваннем.\n\nГэты пароль будзе запытаны кожны раз, калі вы будзеце ўваходзіць у Telegram з новай прылады.";

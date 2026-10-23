@@ -99,8 +99,12 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			RichMessage:            p.richMessage,
 			SendAs:                 sendAs,
 			Date:                   int(r.clock.Now().Unix()),
+			AllowPaidStars:         p.allowPaidStars,
 		})
 		if err != nil {
+			if paid := paidChannelMessageErr(err); paid != nil {
+				return nil, false, paid
+			}
 			return nil, false, channelInvalidErr(err)
 		}
 		// 发送者 echo 走 rpc_result（同步，用独立 cache）；其余成员的 fan-out 异步化，
@@ -111,6 +115,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		// worker goroutine，共享会数据竞态。
 		echoCache := newViewerPeerCache(r)
 		updates := r.channelMessageUpdatesWithPeerCache(ctx, userID, res, p.randomID, echoCache)
+		if res.SenderStarsBalance != nil && updates != nil {
+			updates.Updates = append(updates.Updates, &tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: res.SenderStarsBalance.Balance}})
+		}
 		if !res.Duplicate {
 			r.enqueueChannelMessageFanout(ctx, userID, res, nil)
 			r.pushChannelDiscussionUpdate(ctx, userID, res.Discussion)
@@ -128,7 +135,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	if r.deps.Messages == nil {
 		return nil, false, peerIDInvalidErr()
 	}
-	if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, p.allowPaidStars, 1); err != nil {
+	paidMessageStars, err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, p.allowPaidStars, 1)
+	if err != nil {
 		return nil, false, err
 	}
 	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, p.media != nil && p.media.HasUnreadPayload()); err != nil {
@@ -190,6 +198,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		ViaBotID:               p.viaBotID,
 		GroupedID:              p.groupedID,
 		Effect:                 p.effect,
+		PaidMessageStars:       paidMessageStars,
 	})
 	if err != nil {
 		fields := append(r.contextLogFields(ctx),
@@ -221,7 +230,11 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	}
-	return tgPrivateSendResultUpdates(res, p.randomID, true, users, chats), res.Duplicate, nil
+	updates := tgPrivateSendResultUpdates(res, p.randomID, true, users, chats)
+	if res.PaidMessageCharged {
+		updates = r.afterPrivatePaidMessages(ctx, userID, peer.ID, res.PaidMessageSenderBalance, updates)
+	}
+	return updates, res.Duplicate, nil
 }
 
 // onMessagesUploadMedia 解析 InputMedia（上传或引用），返回可复用的 tg.MessageMedia。
@@ -275,6 +288,9 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	switch req.Media.(type) {
 	case *tg.InputMediaEmpty, *tg.InputMediaWebPage:
 		return r.onMessagesSendMessage(ctx, sendMessageRequestFromSendMedia(req))
+	}
+	if req.QuickReplyShortcut != nil {
+		return r.onMessagesSaveQuickReplyMedia(ctx, req)
 	}
 	// 指纹是幂等校验元数据，不能让一个本应由 media resolver 映射成
 	// MEDIA_INVALID 的畸形 input 因 Encode 失败提前变成 INTERNAL。合法请求会得到
@@ -462,6 +478,9 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 
 // onMessagesSendMultiMedia 发送相册（多条媒体），并在解析媒体前持久预留 grouped_id。
 func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesSendMultiMediaRequest) (tg.UpdatesClass, error) {
+	if req.QuickReplyShortcut != nil {
+		return r.onMessagesSaveQuickReplyAlbum(ctx, req)
+	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
@@ -541,9 +560,18 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 		if req.AllowPaidFloodskip {
 			return nil, paymentUnsupportedErr()
 		}
-		if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, req.AllowPaidStars, absentCount); err != nil {
+		if _, err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, req.AllowPaidStars, absentCount); err != nil {
 			return nil, err
 		}
+	}
+	itemAllowPaidStars := req.AllowPaidStars
+	if peer.Type == domain.PeerTypeChannel {
+		// The whole album must be covered; each item then pays one price.
+		price, err := r.ensureSupergroupPaidAllowed(ctx, userID, peer.ID, req.AllowPaidStars, absentCount)
+		if err != nil {
+			return nil, err
+		}
+		itemAllowPaidStars = price
 	}
 	pendingMedia := make([]tg.InputMediaClass, 0, absentCount)
 	for i, item := range req.MultiMedia {
@@ -605,7 +633,7 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			sendAsInput:            req.SendAs,
 			clearDraft:             clearDraftPending,
 			groupedID:              groupedID,
-			allowPaidStars:         req.AllowPaidStars,
+			allowPaidStars:         itemAllowPaidStars,
 		}
 		var result tg.UpdatesClass
 		duplicate := false

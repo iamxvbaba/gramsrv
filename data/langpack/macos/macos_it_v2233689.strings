@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Per tutti";
 "AboutCocoon.Feature.Private.Description" = "Nessuna terza parte può accedere ai dati, come le traduzioni, dentro **@cocoon**.";
 "AboutCocoon.Feature.Private.Title" = "Privato";
-"AboutCocoon.Footer" = "Vuoi integrare Cocoon nei tuoi progetti?\nContattaci su [t.me/cocoon?direct](t.me/cocoon)";
+"AboutCocoon.Footer" = "Vuoi integrare Cocoon nei tuoi progetti?\nContattaci su [sgq.me/cocoon?direct](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Disattiva condivisione";
 "AboutFeature.DisableSharing.NoForwarding" = "Niente inoltro";
@@ -3454,7 +3454,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistema\n%@";
 "EmptyGroupInfo.Line1" = "• Fino a %@ membri";
 "EmptyGroupInfo.Line2" = "• Cronologia chat permanente";
-"EmptyGroupInfo.Line3" = "• Link pubblici come t.me/title";
+"EmptyGroupInfo.Line3" = "• Link pubblici come sgq.me/title";
 "EmptyGroupInfo.Line4" = "• Amministratori con diritti diversi";
 "EmptyGroupInfo.Subtitle" = "I gruppi possono avere:";
 "EmptyGroupInfo.Title" = "Hai creato un gruppo";
@@ -5545,7 +5545,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Chat fissate";
 "Premium.Boarding.Double.PinnedChats.Info" = "Fissa fino a %@ chat nella tua lista chat principale";
 "Premium.Boarding.Double.PublicLinks" = "Link pubblici";
-"Premium.Boarding.Double.PublicLinks.Info" = "Riserva fino a %@ link t.me/username";
+"Premium.Boarding.Double.PublicLinks.Info" = "Riserva fino a %@ link sgq.me/username";
 "Premium.Boarding.Double.SavedGifs" = "GIF salvate";
 "Premium.Boarding.Double.SavedGifs.Info" = "Salva fino a %@ GIF tra le GIF preferite";
 "Premium.Boarding.Double.Title" = "Limiti raddoppiati";
@@ -5969,7 +5969,7 @@
 "ProxySettings.CredentialsHeader" = "CREDENZIALI (OPZIONALI)";
 "ProxySettings.Disabled" = "Disattivato";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Se i tuoi appunti contengono un link socks5 (**t.me/socks?server=127.0.0.1&port=80**)\u00a0sarà applicato immediatamente";
+"ProxySettings.ExportDescription" = "Se i tuoi appunti contengono un link socks5 (**sgq.me/socks?server=127.0.0.1&port=80**)\u00a0sarà applicato immediatamente";
 "ProxySettings.ExportLink" = "Esporta link dagli appunti";
 "ProxySettings.IncorrectSecret" = "Segreto non corretto. Per favore riprova.";
 "ProxySettings.Item.Available" = "disponibile (ping: %@ ms)";
@@ -8106,7 +8106,7 @@
 "TranslateModal.PromptPlaceholder" = "Descrivi come riscrivere il testo…";
 "TranslateModal.PromptStyle" = "Prompt";
 "TranslateModal.ShareStyle" = "Condividi stile";
-"TranslateModal.StyleByAuthor" = "Stile da [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stile da [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Salta";
 "TwoStepAuth.AnError" = "Si è verificato un errore. Per favore riprova più tardi.";
 "TwoStepAuth.CancelReset" = "Annulla ripristino";

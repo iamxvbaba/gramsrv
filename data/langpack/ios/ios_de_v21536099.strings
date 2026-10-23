@@ -984,9 +984,9 @@
 "Business.Links.LinksSectionHeader" = "LINKS ZUM CHAT";
 "Business.Links.PreviewText" = "Füge eine Nachricht hinzu, die im Nachrichtenfeld für jeden angezeigt wird, der über den Link einen Chat mit dir beginnt:";
 "Business.Links.PreviewTitle" = "Link zum Chat";
-"Business.Links.SimpleLinkInfoPhone" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [t.me/\u2060+\u2060%@](phone).";
-"Business.Links.SimpleLinkInfoUsername" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [t.me/%@](username)";
-"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [t.me/%1$@](username) oder [t.me/+%2$@](phone).";
+"Business.Links.SimpleLinkInfoPhone" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [sgq.me/\u2060+\u2060%@](phone).";
+"Business.Links.SimpleLinkInfoUsername" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [sgq.me/%@](username)";
+"Business.Links.SimpleLinkInfoUsernamePhone" = "Du kannst auch einen einfachen Link für einen Chat mit dir verwenden: [sgq.me/%1$@](username) oder [sgq.me/+%2$@](phone).";
 "Business.Links.Text" = "Gib deinen Kunden kurze Links, die einen Chat mit dir starten und schlage die erste Nachricht von ihnen an dich vor.";
 "Business.LinksInfo" = "Erstelle Links, die einen Chat mit dir beginnen und die erste Nachricht vorschlagen.";
 "Business.Location" = "Standort";
@@ -1855,7 +1855,7 @@
 "Channel.Username.InvalidStartsWithUnderscore" = "Kanalnamen dürfen nicht mit Unterstrich starten.";
 "Channel.Username.InvalidTaken" = "Leider ist der Link schon belegt.";
 "Channel.Username.InvalidTooShort" = "Öffentliche Links benötigen mindestens 5 Zeichen.";
-"Channel.Username.LinkHint" = "Dieser Link öffnet deinen Kanal:[\nhttps://t.me/%@]";
+"Channel.Username.LinkHint" = "Dieser Link öffnet deinen Kanal:[\nhttps://sgq.me/%@]";
 "Channel.Username.RevokeExistingUsernamesInfo" = "Du kannst jederzeit den Link einer älteren Gruppe oder eines Kanals entfernen.Oder erstelle stattdessen einen privaten Kanal.";
 "Channel.Username.Title" = "Link";
 "Channel.Username.UsernameIsAvailable" = "%@ ist verfügbar.";
@@ -3391,7 +3391,7 @@
 "CocoonInfo.Efficient.Title" = "Effizient";
 "CocoonInfo.ForEveryone.Text" = "Jeder Entwickler kann [Cocoon](telegram) für KI-Funktionen nutzen. Mehr unter [cocoon.org](web).";
 "CocoonInfo.ForEveryone.Title" = "Für jeden";
-"CocoonInfo.IntergrateInfo" = "Möchtest du Cocoon in deine Projekte integrieren?\nMelde dich unter [t.me/cocoon?direct]()";
+"CocoonInfo.IntergrateInfo" = "Möchtest du Cocoon in deine Projekte integrieren?\nMelde dich unter [sgq.me/cocoon?direct]()";
 "CocoonInfo.Private.Text" = "Kein Dritter kann auf Daten wie Übersetzungen in Cocoon zugreifen.";
 "CocoonInfo.Private.Title" = "Privat";
 "CocoonInfo.Title" = "COCOON";
@@ -4286,7 +4286,7 @@
 "CreateBot.UsernameStatus.Invalid" = "Nur **a-z**, **0-9** und _ erlaubt.";
 "CreateBot.UsernameStatus.LimitExceeded#one" = "Du kannst höchstens %d Bot erstellen.";
 "CreateBot.UsernameStatus.LimitExceeded#other" = "Du kannst höchstens %d Bots erstellen.";
-"CreateBot.UsernameStatus.Link" = "Link: t.me/%@";
+"CreateBot.UsernameStatus.Link" = "Link: sgq.me/%@";
 "CreateBot.UsernameStatus.Number" = "Darf nicht mit Zahl beginnen.";
 "CreateBot.UsernameStatus.Short" = "Mindestens 5 Zeichen erforderlich.";
 "CreateBot.UsernameStatus.Taken" = "Der Benutzername ist schon vergeben.";
@@ -4669,7 +4669,7 @@
 "EmojiStickerSettings.Info" = "Künstler können ihre eigenen Pakete über den @stickers Bot einstellen. \n\nTippe auf eine Nachricht um sie anzuzeigen und das ganze Paket hinzuzufügen.";
 "EmptyGroupInfo.Line1" = "Platz für bis zu 200.000 Mitglieder";
 "EmptyGroupInfo.Line2" = "Dauerhaften Chat-Verlauf";
-"EmptyGroupInfo.Line3" = "Öffentliche Links, wie t.me/title";
+"EmptyGroupInfo.Line3" = "Öffentliche Links, wie sgq.me/title";
 "EmptyGroupInfo.Line4" = "Admins mit unterschiedlichen Rechten";
 "EmptyGroupInfo.Subtitle" = "Gruppen bieten:";
 "EmptyGroupInfo.Title" = "Du hast eine Gruppe erstellt";
@@ -8969,7 +8969,7 @@
 "Premium.Limits.PinnedChats" = "Chats anheften";
 "Premium.Limits.PinnedChatsInfo" = "Bis zu 10 Chats deiner Chatliste anheften";
 "Premium.Limits.PublicLinks" = "Öffentliche Links";
-"Premium.Limits.PublicLinksInfo" = "Bis zu 20 [t.me/username]() Links";
+"Premium.Limits.PublicLinksInfo" = "Bis zu 20 [sgq.me/username]() Links";
 "Premium.Limits.RecommendedChannels" = "Ähnliche Kanäle";
 "Premium.Limits.RecommendedChannelsInfo" = "Betrachte bis zu 100 ähnliche Kanäle.";
 "Premium.Limits.SavedGifs" = "GIFs speichern";
@@ -9321,7 +9321,7 @@
 "PrivacyLastSeenSettings.WhoCanSeeMyTimestamp" = "WER SIEHT MEINEN ZEITSTEMPEL";
 "PrivacyPhoneNumberSettings.CustomDisabledHelp" = "Nutzer, die deine Nummer als Kontakt hinzufügen, sehen sie bei Telegram nur, wenn sie in deinen Kontakten gespeichert sind.";
 "PrivacyPhoneNumberSettings.CustomHelp" = "Nutzer, die deine Nummer in ihren Kontakten gespeichert haben, sehen sie auch bei Telegram.";
-"PrivacyPhoneNumberSettings.CustomPublicLink" = "Nutzer, die deine Nummer bei sich als Kontakt gespeichert haben, sehen sie auch bei Telegram.\n\nDieser öffentliche Link öffnet einen Chat mit dir:\n[https://t.me/%@]()";
+"PrivacyPhoneNumberSettings.CustomPublicLink" = "Nutzer, die deine Nummer bei sich als Kontakt gespeichert haben, sehen sie auch bei Telegram.\n\nDieser öffentliche Link öffnet einen Chat mit dir:\n[https://sgq.me/%@]()";
 "PrivacyPhoneNumberSettings.DiscoveryHeader" = "WER MICH UNTER MEINER NUMMER FINDEN KANN";
 "PrivacyPhoneNumberSettings.WhoCanSeeMyPhoneNumber" = "WER DARF MEINE NUMMER SEHEN";
 "PrivacyPolicy.Accept" = "Akzeptieren & Weiter";
@@ -10224,8 +10224,8 @@
 "SocksProxySetup.ProxyStatusUnavailable" = "nicht verfügbar";
 "SocksProxySetup.ProxyTelegram" = "MTProto";
 "SocksProxySetup.ProxyType" = "ART";
-"SocksProxySetup.QrCode.TMeLink" = "t.me-Link";
-"SocksProxySetup.QrCode.TgLink" = "tg:// Link";
+"SocksProxySetup.QrCode.TMeLink" = "sgq.me-Link";
+"SocksProxySetup.QrCode.TgLink" = "sg:// Link";
 "SocksProxySetup.RequiredCredentials" = "ZUGANGSDATEN";
 "SocksProxySetup.SaveProxy" = "Proxy speichern";
 "SocksProxySetup.SavedProxies" = "Gespeicherte Pro\u00adxy\u00adser\u00adver";
@@ -11893,7 +11893,7 @@
 "Username.InvalidTooShort" = "Ein Benutzername benötigt mindestens 5 Zeichen.";
 "Username.InvalidValue" = "Dieser Benutzername ist ungültig.";
 "Username.LinkCopied" = "Link in Zwischenablage kopiert.";
-"Username.LinkHint" = "Dieser Link öffnet einen Chat mit dir:[\nhttps://t.me/%@]";
+"Username.LinkHint" = "Dieser Link öffnet einen Chat mit dir:[\nhttps://sgq.me/%@]";
 "Username.LinksOrder" = "BENUTZERNAMEN-REIHENFOLGE";
 "Username.LinksOrderInfo" = "Links per Drag & Drop ziehen, um die Reihenfolge zu ändern, in der sie auf deiner Profilseite angezeigt werden.";
 "Username.Placeholder" = "Dein Benutzername";

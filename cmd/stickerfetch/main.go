@@ -12,7 +12,16 @@
 //	premium_gifts                inputStickerSetPremiumGifts
 //	ton_gifts                    inputStickerSetTonGifts
 //
+//	featured                     every set in Telegram's featured ("trending")
+//	                             sticker list, paged through
+//	                             messages.getOldFeaturedStickers; sets already
+//	                             fetched are skipped, so a rerun resumes
+//	featured_emoji               every featured custom emoji set
+//
 // 需登录会话(复用 appearancefetch 的 /tmp/appearance.session,SESSION env 可覆盖)。
+// TG_API_ID/TG_API_HASH override the built-in public api_id, which Telegram
+// may refuse with API_ID_PUBLISHED_FLOOD. STICKERFETCH_TIMEOUT (a Go
+// duration) overrides the run timeout.
 //
 // 用法: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]
 package main
@@ -59,6 +68,15 @@ func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 		return &tg.InputStickerSetPremiumGifts{}, "PremiumGifts", nil
 	case spec == "ton_gifts":
 		return &tg.InputStickerSetTonGifts{}, "TonGifts", nil
+	case spec == "animated_emoji":
+		return &tg.InputStickerSetAnimatedEmoji{}, "AnimatedEmoji", nil
+	case spec == "animated_emoji_animations":
+		return &tg.InputStickerSetAnimatedEmojiAnimations{}, "AnimatedEmojiAnimations", nil
+	case spec == "emoji_generic_animations":
+		return &tg.InputStickerSetEmojiGenericAnimations{}, "EmojiGenericAnimations", nil
+	case strings.HasPrefix(spec, "dice:"):
+		emoticon := strings.TrimPrefix(spec, "dice:")
+		return &tg.InputStickerSetDice{Emoticon: emoticon}, "Dice", nil
 	default:
 		return nil, "", fmt.Errorf("unknown spec %q", spec)
 	}
@@ -161,16 +179,28 @@ func mapAttrs(in []tg.DocumentAttributeClass) []attrJSON {
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]\n  spec: short:<name> | emoji_default_statuses | emoji_channel_default_statuses | emoji_default_topic_icons | premium_gifts | ton_gifts | effects")
+		fmt.Fprintln(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]\n  spec: featured | featured_emoji | short:<name> | emoji_default_statuses | emoji_channel_default_statuses | emoji_default_topic_icons | premium_gifts | ton_gifts | effects")
 		os.Exit(2)
 	}
 	out := os.Args[1]
 	specs := os.Args[2:]
 
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	timeout := 12 * time.Minute
+	for _, spec := range specs {
+		if spec == "featured" || spec == "featured_emoji" {
+			timeout = 8 * time.Hour
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("STICKERFETCH_TIMEOUT")); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			timeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client := telegram.NewClient(tdesktopAPIID, tdesktopAPIHash, telegram.Options{
+	apiID, apiHash := apiCredentials()
+	client := telegram.NewClient(apiID, apiHash, telegram.Options{
 		SessionStorage: &telegram.FileSessionStorage{Path: sessionPath()},
 	})
 	if err := client.Run(ctx, func(ctx context.Context) error {
@@ -181,9 +211,16 @@ func main() {
 		dl := downloader.NewDownloader()
 		for _, spec := range specs {
 			var err error
-			if spec == "effects" {
+			switch spec {
+			case "effects":
 				err = fetchEffects(ctx, api, dl, out)
-			} else {
+			case "featured":
+				err = fetchFeatured(ctx, api, dl, out)
+			case "featured_emoji":
+				err = fetchFeaturedEmoji(ctx, api, dl, out)
+			case "system":
+				err = fetchSystem(ctx, api, dl, out)
+			default:
 				err = fetchSet(ctx, api, dl, out, spec)
 			}
 			if err != nil {
@@ -198,11 +235,20 @@ func main() {
 }
 
 func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot, spec string) error {
+	return fetchSetInto(ctx, api, dl, outRoot, spec, "")
+}
+
+// fetchSetInto downloads one set. An empty dirName stores it as
+// <short_name>_<id>; system sets use the fixed DefaultSet_* names the server
+// seed maps to system keys.
+func fetchSetInto(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot, spec, dirName string) error {
 	input, label, err := specToInput(spec)
 	if err != nil {
 		return err
 	}
-	res, err := api.MessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{Stickerset: input, Hash: 0})
+	res, err := withFloodWait(ctx, func() (tg.MessagesStickerSetClass, error) {
+		return api.MessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{Stickerset: input, Hash: 0})
+	})
 	if err != nil {
 		return fmt.Errorf("getStickerSet: %w", err)
 	}
@@ -215,6 +261,9 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 		setName = label
 	}
 	setDir := filepath.Join(outRoot, fmt.Sprintf("%s_%d", setName, full.Set.ID))
+	if dirName != "" {
+		setDir = filepath.Join(outRoot, dirName)
+	}
 	stickersDir := filepath.Join(setDir, "stickers")
 	if err := os.MkdirAll(stickersDir, 0o755); err != nil {
 		return err
@@ -312,7 +361,16 @@ func downloadToFile(ctx context.Context, dl *downloader.Downloader, api *tg.Clie
 	defer func() {
 		_ = os.Remove(tmpPath)
 	}()
-	if _, err := dl.Download(api, loc).Stream(ctx, tmp); err != nil {
+	if _, err := withFloodWait(ctx, func() (struct{}, error) {
+		if _, err := tmp.Seek(0, 0); err != nil {
+			return struct{}{}, err
+		}
+		if err := tmp.Truncate(0); err != nil {
+			return struct{}{}, err
+		}
+		_, err := dl.Download(api, loc).Stream(ctx, tmp)
+		return struct{}{}, err
+	}); err != nil {
 		_ = tmp.Close()
 		return err
 	}

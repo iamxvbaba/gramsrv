@@ -21,23 +21,23 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.AdvertiseIP != "127.0.0.1" {
 		t.Fatalf("AdvertiseIP = %q, want loopback default", cfg.AdvertiseIP)
 	}
-	if cfg.PublicBaseURL != "https://telesrv.net" {
-		t.Fatalf("PublicBaseURL = %q, want https://telesrv.net", cfg.PublicBaseURL)
+	if cfg.PublicBaseURL != "https://sgq.me" {
+		t.Fatalf("PublicBaseURL = %q, want https://sgq.me", cfg.PublicBaseURL)
 	}
-	if cfg.PublicAppScheme != "telesrv" {
-		t.Fatalf("PublicAppScheme = %q, want telesrv", cfg.PublicAppScheme)
+	if cfg.PublicAppScheme != "sg" {
+		t.Fatalf("PublicAppScheme = %q, want sg", cfg.PublicAppScheme)
 	}
 	if cfg.PublicAppLinkBase != "" {
 		t.Fatalf("PublicAppLinkBase = %q, want disabled", cfg.PublicAppLinkBase)
 	}
-	if cfg.PublicWebBaseURL != "https://weba.telesrv.net" {
-		t.Fatalf("PublicWebBaseURL = %q, want https://weba.telesrv.net", cfg.PublicWebBaseURL)
+	if cfg.PublicWebBaseURL != "https://weba.shuzagram.com" {
+		t.Fatalf("PublicWebBaseURL = %q, want https://weba.shuzagram.com", cfg.PublicWebBaseURL)
 	}
-	if cfg.PublicAppName != "Telesrv" {
-		t.Fatalf("PublicAppName = %q, want Telesrv", cfg.PublicAppName)
+	if cfg.PublicAppName != "ShuzaGram" {
+		t.Fatalf("PublicAppName = %q, want ShuzaGram", cfg.PublicAppName)
 	}
-	if cfg.Branding.ProductName != "Telesrv" || cfg.Branding.ProductUsername != "telesrv" ||
-		cfg.Branding.DesktopAppName != "Telesrv Desktop" || cfg.Branding.StarsName != "Telesrv Stars" ||
+	if cfg.Branding.ProductName != "ShuzaGram" || cfg.Branding.ProductUsername != "shuzagram" ||
+		cfg.Branding.DesktopAppName != "ShuzaGram Desktop" || cfg.Branding.StarsName != "ShuzaGram Stars" ||
 		cfg.Branding.PublicBaseURL != cfg.PublicBaseURL {
 		t.Fatalf("Branding = %+v", cfg.Branding)
 	}
@@ -1387,9 +1387,7 @@ func TestLoadRejectsInvalidPublicLinkClientConfig(t *testing.T) {
 		key   string
 		value string
 	}{
-		{name: "official scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "tg"},
 		{name: "malformed scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "bad scheme"},
-		{name: "app link base official scheme", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "tg://links.example.test"},
 		{name: "app link base missing host", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://"},
 		{name: "app link base path", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test/root"},
 		{name: "app link base query", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test?tenant=one"},
@@ -1929,4 +1927,17 @@ func writeConfigFile(t *testing.T, path, body string) {
 func disableDefaultConfigFile(t *testing.T) {
 	t.Helper()
 	t.Setenv("TELESRV_CONFIG", "")
+}
+
+func TestLoadAndroidAppLinksFromConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	writeConfigFile(t, path, "TELESRV_ANDROID_APP_PACKAGE=com.example.chat\nTELESRV_ANDROID_CERT_SHA256=AA:BB,CC:DD\n")
+	t.Setenv("TELESRV_CONFIG", path)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AndroidAppPackage != "com.example.chat" || len(cfg.AndroidCertSHA256) != 2 || cfg.AndroidCertSHA256[1] != "CC:DD" {
+		t.Fatalf("android app links = %q %q", cfg.AndroidAppPackage, cfg.AndroidCertSHA256)
+	}
 }

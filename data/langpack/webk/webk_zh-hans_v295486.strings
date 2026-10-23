@@ -997,7 +997,7 @@
 "EditAdminRights" = "修改管理员权限";
 "EditAdminSendAnonymously" = "保持匿名";
 "EditAdminWhatCanDo" = "这位管理员可以做什么？";
-"EditBot.Buttons.Caption" = "使用 [@BotFather](https://t.me/botfather) 管理此机器人。";
+"EditBot.Buttons.Caption" = "使用 [@BotFather](https://sgq.me/botfather) 管理此机器人。";
 "EditBot.Buttons.Commands" = "修改命令";
 "EditBot.Buttons.Intro" = "修改简介";
 "EditBot.Buttons.Settings" = "更改机器人设置";
@@ -1207,7 +1207,7 @@
 "GroupAddMembers" = "添加成员";
 "GroupDescription1" = "成员上限为 20 万人";
 "GroupDescription2" = "永久聊天记录";
-"GroupDescription3" = "公开链接，例如：t.me/title";
+"GroupDescription3" = "公开链接，例如：sgq.me/title";
 "GroupDescription4" = "具备不同权限的管理员";
 "GroupEmptyTitle1" = "您已创建了一个群组。";
 "GroupEmptyTitle2" = "群组可以拥有：";
@@ -1947,7 +1947,7 @@
 "Profile.Info.User" = "用户信息";
 "ProfileStories" = "动态";
 "ProfileStoriesArchiveHint" = "除非将其发布至个人资料页，否则只有您能查看已归档的动态。";
-"PublicLinksLimitSubtitle" = "保留高达 %d 个 t.me/username 链接";
+"PublicLinksLimitSubtitle" = "保留高达 %d 个 sgq.me/username 链接";
 "PublicLinksLimitTitle" = "公共链接";
 "PublicShares" = "公开分享";
 "PublicSharesCount#other" = "%1$s 公共分享";
@@ -2413,7 +2413,7 @@
 "Telegram.LanguageViewController" = "语言";
 "Telegram.NotificationSettingsViewController" = "通知";
 "TelegramFeatures" = "Telegram功能";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "**Telegram 高级版** 账号的拥有者可以独家访问更多附加功能。";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "表情符号状态是 Premium 功能。 **Telegram 高级版** 还享有以下功能：";
 "TelegramPremiumPeerTitleEmojiStatusNoPack" = "%s 将此表情符号设为其目前的状态。";

@@ -55,7 +55,7 @@ const adminErrorCodes = Object.freeze({ USERNAME_OCCUPIED: "errorUsernameOccupie
 
 // Surface gramsrv failures with their reason (a stable code or raw 400 text)
 // instead of a generic crash. Unmapped codes still carry the visible reason.
-// Gramsrv errors always carry a code; route those by code so the message-text
+// ShuzaGram errors always carry a code; route those by code so the message-text
 // fallback table (which keys on words like "username") cannot misread a route.
 function adminErrorMessage(language, error) {
   const code = error?.code;
@@ -646,7 +646,7 @@ export function createBot({ config, db, gramsrv }) {
     }
     if (page === "referrals") {
       const username = config.publicUsername || bot.botInfo?.username || "bot";
-      const link = `https://t.me/${username}?start=ref_${ctx.from.id}`;
+      const link = `${config.botLinkBase || "https://sgq.me"}/${username}?start=ref_${ctx.from.id}`;
       return editOrReply(ctx, `${tr(ctx.from.id, "referralsTitle")}\n\n${tr(ctx.from.id, "invited", { count: user.referral_count })}\n${tr(ctx.from.id, "referralBonus", { amount: config.referralBonus })}\n\n<code>${link}</code>`, backKeyboard(language));
     }
     if (page === "support") {

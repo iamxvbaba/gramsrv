@@ -112,7 +112,7 @@ func SnapshotLoginCodeMessageTemplate(template string) string {
 	if ValidateLoginCodeMessageTemplate(rendered) != nil {
 		rendered = RenderWelcomeMessageTemplate(DefaultLoginCodeMessageTemplate)
 		if ValidateLoginCodeMessageTemplate(rendered) != nil {
-			return strings.ReplaceAll(DefaultLoginCodeMessageTemplate, "{{server_name}}", "Telesrv")
+			return strings.ReplaceAll(DefaultLoginCodeMessageTemplate, "{{server_name}}", "ShuzaGram")
 		}
 	}
 	return rendered

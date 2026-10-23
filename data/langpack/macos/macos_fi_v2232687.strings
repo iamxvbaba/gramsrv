@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Kaikille";
 "AboutCocoon.Feature.Private.Description" = "Cocoonin kanssa käytettäviä tietoja, kuten käännöksiä, ei voi nähdä kukaan ulkopuolinen.";
 "AboutCocoon.Feature.Private.Title" = "Yksityinen";
-"AboutCocoon.Footer" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä: [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Estä jakaminen";
 "AboutFeature.DisableSharing.NoForwarding" = "Ei välittämistä";
@@ -475,7 +475,7 @@
 "Bot.AllowSendMessages" = "Anna botin **%@** lähettää minulle viestejä.";
 "Bot.Grossing.Disclaimer" = "Mitä sovelluksia täällä näkyy? [Lue >](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Suositut pienoissovellukset";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Tässä luettelossa on pienoissovelluksia, jotka on järjestetty päivittäisen liikevaihdon tähdissä mukaan. Sovellus näkyy täällä vain, jos kehittäjä on asettanut pääasiallisen pienoissovelluksen [@botfather](https://t.me/botfather) -botilla (kuten [täällä](https://core.telegram.org/bots/webapps#launching-the-main-mini-app) opastetaan), jos sillä on yli **1000** päivittäistä käyttäjää, ja sen päivittäinen liikevaihto on vähintään **1000** tähteä viikon pituisella keskiarvolla mitattuna.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Tässä luettelossa on pienoissovelluksia, jotka on järjestetty päivittäisen liikevaihdon tähdissä mukaan. Sovellus näkyy täällä vain, jos kehittäjä on asettanut pääasiallisen pienoissovelluksen [@botfather](https://sgq.me/botfather) -botilla (kuten [täällä](https://core.telegram.org/bots/webapps#launching-the-main-mini-app) opastetaan), jos sillä on yli **1000** päivittäistä käyttäjää, ja sen päivittäinen liikevaihto on vähintään **1000** tähteä viikon pituisella keskiarvolla mitattuna.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Ymmärrän";
 "Bot.InlineAuth.Header" = "Avaa linkki";
 "Bot.InlineAuth.Open" = "Avaa";
@@ -3440,7 +3440,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Järjestelmä\n%@";
 "EmptyGroupInfo.Line1" = "• Peräti %@ jäsentä";
 "EmptyGroupInfo.Line2" = "• Pysyvä viestihistoria";
-"EmptyGroupInfo.Line3" = "• Julkiset linkit, kuten t.me/nimi";
+"EmptyGroupInfo.Line3" = "• Julkiset linkit, kuten sgq.me/nimi";
 "EmptyGroupInfo.Line4" = "• Valvojia eri oikeuksilla";
 "EmptyGroupInfo.Subtitle" = "Ryhmillä voi olla:";
 "EmptyGroupInfo.Title" = "Loit ryhmän";
@@ -5531,7 +5531,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Kiinnitykset";
 "Premium.Boarding.Double.PinnedChats.Info" = "Kiinnitä jopa %@ keskustelua päälistaan";
 "Premium.Boarding.Double.PublicLinks" = "Julkiset linkit";
-"Premium.Boarding.Double.PublicLinks.Info" = "Varaa jopa %@ t.me/nimimerkki-linkkiä";
+"Premium.Boarding.Double.PublicLinks.Info" = "Varaa jopa %@ sgq.me/nimimerkki-linkkiä";
 "Premium.Boarding.Double.SavedGifs" = "GIFit";
 "Premium.Boarding.Double.SavedGifs.Info" = "Tallenna jopa %@ GIFiä suosikkeihisi";
 "Premium.Boarding.Double.Title" = "Korotetut rajat";
@@ -5955,7 +5955,7 @@
 "ProxySettings.CredentialsHeader" = "PÄÄSYTIEDOT (VALINNAINEN)";
 "ProxySettings.Disabled" = "Pois";
 "ProxySettings.Enable" = "Välityspalvelin";
-"ProxySettings.ExportDescription" = "Jos leikepöydällä on SOCKS5-linkki (**t.me/socks?server=127.0.0.1&port=80**), se otetaan heti käyttöön";
+"ProxySettings.ExportDescription" = "Jos leikepöydällä on SOCKS5-linkki (**sgq.me/socks?server=127.0.0.1&port=80**), se otetaan heti käyttöön";
 "ProxySettings.ExportLink" = "Vie linkki leikepöydältä";
 "ProxySettings.IncorrectSecret" = "Salausavain on väärä. Yritä uudelleen.";
 "ProxySettings.Item.Available" = "saatavilla (viive: %@ ms)";
@@ -8092,7 +8092,7 @@
 "TranslateModal.PromptPlaceholder" = "Kuvaile kuinka teksti kirjoitetaan uusiksi…";
 "TranslateModal.PromptStyle" = "Kehote";
 "TranslateModal.ShareStyle" = "Jaa tyyli";
-"TranslateModal.StyleByAuthor" = "Tyylin luonut [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Tyylin luonut [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Ohita";
 "TwoStepAuth.AnError" = "Tapahtui virhe. Yritä myöhemmin uudelleen.";
 "TwoStepAuth.CancelReset" = "Peru nollaus";

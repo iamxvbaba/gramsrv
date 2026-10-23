@@ -1111,7 +1111,7 @@
 "EventScheduledMessageDesc" = "Erhalte eine Benachrichtigung, wenn eine deiner geplanten Nachrichten an einen Chat mit aktivierten Benachrichtigungen verschickt wurde.";
 "Everybody" = "Jeder";
 "ExcludeChats" = "Chats ausschließen";
-"ExperimentalBuildInfo" = "Diese Version von **Telegram X** ist nicht für eine langfristige Nutzung ausgelegt.\n\nEs kann sein, dass es nach einiger Zeit nicht mehr funktioniert und du keine Benachrichtigungen einschalten kannst.\n\nWenn du nach der richtigen Telegram X APK-Datei suchst, schau bei https://t.me/tgx_log vorbei.";
+"ExperimentalBuildInfo" = "Diese Version von **Telegram X** ist nicht für eine langfristige Nutzung ausgelegt.\n\nEs kann sein, dass es nach einiger Zeit nicht mehr funktioniert und du keine Benachrichtigungen einschalten kannst.\n\nWenn du nach der richtigen Telegram X APK-Datei suchst, schau bei https://sgq.me/tgx_log vorbei.";
 "ExperimentalBuildTitle" = "Warnung: Experimentelle Version";
 "Exposure" = "Belichtung";
 "Fade" = "Verblassen";
@@ -1399,7 +1399,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X konnte zuletzt nicht gestartet werden, da du keinen Speicher mehr auf dem Gerät frei hattest. Bitte stelle sicher, dass immer ausreichend Speicherplatz auf deinem Gerät zur Verfügung steht und drücke auf **App starten**, um es erneut zu versuchen.\n\nDerzeit verfügbar: %1$s";
 "LaunchAppGuideExternalError" = "Aufgrund eines Fehlers konnte Telegram X zuvor nicht gestartet werden.\n\nTippe auf **App starten**, um es erneut zu versuchen. Wenn es weiterhin Probleme gibt, prüfe folgende Schritte:\n\n• Ist ausreichend Gerätespeicher vorhanden? **%1$s**.\n• Gibt es allgemeine Speicherprobleme (z.B. Fehler der SD-Karte)?\n• Hast du dein Gerät testweise neu gestartet?\n\nWenn das nicht helfen sollte, besuche die [TDLibs GitHub Seite](https://github.com/tdlib/td/issues), um mögliche Lösungen zu finden oder reiche auf der Seite ein neues Problem ein. Fehlermeldung und Geräte-Details nicht vergessen.";
 "LaunchAppGuideFatalError" = "Telegram X wurde unerwartet geschlossen, als du es das letzte Mal benutzt hast.\n\nDrücke **App starten**, um es erneut zu versuchen.";
-"LaunchAppGuideTdlibIssue" = "Telegram X konnte zuvor aufgrund eines TDLib-Fehlers nicht gestartet werden.\n\nTippe auf **App starten**, um es erneut zu versuchen. Wenn es weiterhin nicht klappt, probiere folgende Schritte:\n\n• [Prüfe](%2$s), ob du die aktuellste Version von Telegram X installiert hast.\n• Starte dein Gerät neu.\n\n**Wenn das nicht hilft…**\n\n1. Teile die Fehlerinfo mit den Entwicklern von TDLib:\n— Per Bot [@tdlib_bot](https://t.me/tdlib_bot) von der Webversion [Telegram Web](https://web.telegram.org/).\n— Öffentlich via [GitHub](https://github.com/tdlib/td/issues). **Auf keinen Fall** die Datei **tdlib_log.txt** öffentlich teilen..\n2. Warte auf eine Rückmeldung.\n3. Ändere die Protokollierungseinstellungen, sofern du von den TDLib-Entwicklern gebeten wirst.\n4. Tippe auf **App starten**, damit die App erneut startet und abstürzt .\n5. Teile **tdlib_log.txt** mit den TDLib Entwicklern und warte darauf, dass diese das Problem beheben.\n6. Sobald es aktualisiert wurde, starte die App erneut. \n\n**Alternativen**\n\n• Suche nach ähnlichen Problemen bei [GitHub](https://github.com/tdlib/td/issues).\n• Installiere die App neu. Geheime Chat werden dadurch verloren gehen, wenn du dich mit der gleichen Nummer wieder bei Telegram anmeldest, erhältst du deine Cloud Chats wieder. ";
+"LaunchAppGuideTdlibIssue" = "Telegram X konnte zuvor aufgrund eines TDLib-Fehlers nicht gestartet werden.\n\nTippe auf **App starten**, um es erneut zu versuchen. Wenn es weiterhin nicht klappt, probiere folgende Schritte:\n\n• [Prüfe](%2$s), ob du die aktuellste Version von Telegram X installiert hast.\n• Starte dein Gerät neu.\n\n**Wenn das nicht hilft…**\n\n1. Teile die Fehlerinfo mit den Entwicklern von TDLib:\n— Per Bot [@tdlib_bot](https://sgq.me/tdlib_bot) von der Webversion [Telegram Web](https://web.telegram.org/).\n— Öffentlich via [GitHub](https://github.com/tdlib/td/issues). **Auf keinen Fall** die Datei **tdlib_log.txt** öffentlich teilen..\n2. Warte auf eine Rückmeldung.\n3. Ändere die Protokollierungseinstellungen, sofern du von den TDLib-Entwicklern gebeten wirst.\n4. Tippe auf **App starten**, damit die App erneut startet und abstürzt .\n5. Teile **tdlib_log.txt** mit den TDLib Entwicklern und warte darauf, dass diese das Problem beheben.\n6. Sobald es aktualisiert wurde, starte die App erneut. \n\n**Alternativen**\n\n• Suche nach ähnlichen Problemen bei [GitHub](https://github.com/tdlib/td/issues).\n• Installiere die App neu. Geheime Chat werden dadurch verloren gehen, wenn du dich mit der gleichen Nummer wieder bei Telegram anmeldest, erhältst du deine Cloud Chats wieder. ";
 "LaunchAppShareError" = "Fehlerdetails teilen";
 "LaunchAppUserSubtitle" = "Offline";
 "LaunchAppViewError" = "Fehlerdetails anzeigen";
@@ -1449,7 +1449,7 @@
 "LinkChannel" = "Einen Kanal verknüpfen";
 "LinkChannelHelp" = "Du kannst einen öffentlichen Link erstellen, wenn andere deinen Kanal finden und folgen sollen.\n\nErlaubt sind **a–z**, **0–9** und Unterstriche.\nDie Mindestlänge beträgt **5** Zeichen.";
 "LinkChecking" = "Verfügbarkeit wird geprüft…";
-"LinkCurrent" = "t.me/%1$s ist dein öffentlicher Link.";
+"LinkCurrent" = "sgq.me/%1$s ist dein öffentlicher Link.";
 "LinkExpiresFuture" = "%1$s um %2$s";
 "LinkExpiresNever" = "niemals";
 "LinkExpiresToday" = "heute um %1$s";
@@ -3044,7 +3044,7 @@
 "Translation" = "Übersetzung";
 "TranslationMoreCreate" = "Erstellen";
 "TranslationMoreDone" = "Verstanden";
-"TranslationMoreText" = "Die Liste aller verfügbaren Sprachen wird von der [Übersetzungsplattform](https://translations.telegram.org) verwaltet.\n\nSobald mehr offizielle Sprachen verfügbar sind, wird Telegram dir diese hier anbieten.\n\nWenn du magst, kannst du gerne bei den [Übersetzungen mithelfen](https://translations.telegram.org/de/android_x/) oder für dich [eigene](https://t.me/tgx_android_translate/) Übersetzungsdateien erstellen.";
+"TranslationMoreText" = "Die Liste aller verfügbaren Sprachen wird von der [Übersetzungsplattform](https://translations.telegram.org) verwaltet.\n\nSobald mehr offizielle Sprachen verfügbar sind, wird Telegram dir diese hier anbieten.\n\nWenn du magst, kannst du gerne bei den [Übersetzungen mithelfen](https://translations.telegram.org/de/android_x/) oder für dich [eigene](https://sgq.me/tgx_android_translate/) Übersetzungsdateien erstellen.";
 "TranslationMoreTitle" = "Deine Sprache ist nicht dabei?";
 "TranslationsMissing#one" = "%1$s nicht übersetzt";
 "TranslationsMissing#other" = "%1$s nicht übersetzt";

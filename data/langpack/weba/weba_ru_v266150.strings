@@ -839,14 +839,14 @@
 "CocoonFeature1Text" = "У третьих лиц нет доступа к данным внутри **{username}**, включая переводы.";
 "CocoonFeature1Title" = "Конфиденциальность";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Благодаря Cocoon стоимость встроенного перевода в Telegram снизилась в 6 раз.";
 "CocoonFeature2Title" = "Эффективность";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Любой разработчик может использовать Cocoon для решения задач ИИ. Подробнее на **{link}**.";
 "CocoonFeature3Title" = "Доступность";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "администраторам @cocoon";
 "CocoonFooterText" = "Хотите интегрировать Cocoon в свои проекты?\nНапишите **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1137,7 +1137,7 @@
 "EmptyChatAppearanceSystem" = "Авто";
 "EmptyGroupInfoLine1" = "• До {count} участников";
 "EmptyGroupInfoLine2" = "• Общая история переписки";
-"EmptyGroupInfoLine3" = "• Публичные ссылки вида t.me/title";
+"EmptyGroupInfoLine3" = "• Публичные ссылки вида sgq.me/title";
 "EmptyGroupInfoLine4" = "• Разный уровень прав";
 "EmptyGroupInfoSubtitle" = "Возможности групп:";
 "EmptyGroupInfoTitle" = "Вы создали группу";
@@ -2540,7 +2540,7 @@
 "ProfileTabVoice" = "Голос";
 "ProfileViewChannel" = "Открыть канал";
 "PublicLink" = "Публичная ссылка";
-"PublicLinksLimitSubtitle" = "Использование до {count} ссылок вида t.me/username";
+"PublicLinksLimitSubtitle" = "Использование до {count} ссылок вида sgq.me/username";
 "PublicLinksLimitTitle" = "Публичные ссылки";
 "PublicPoll" = "Опрос";
 "PublicPosts" = "Публичные посты";

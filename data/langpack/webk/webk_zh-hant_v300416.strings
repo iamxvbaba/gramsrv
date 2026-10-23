@@ -1407,7 +1407,7 @@
 "EditAdminRights" = "編輯管理員權限";
 "EditAdminSendAnonymously" = "保持匿名";
 "EditAdminWhatCanDo" = "這個管理員可以做什麼？";
-"EditBot.Buttons.Caption" = "使用 [@BotFather](https://t.me/botfather) 來管理此機器人。";
+"EditBot.Buttons.Caption" = "使用 [@BotFather](https://sgq.me/botfather) 來管理此機器人。";
 "EditBot.Buttons.Commands" = "編輯命令";
 "EditBot.Buttons.Intro" = "編輯簡介";
 "EditBot.Buttons.Settings" = "變更機器人設定";
@@ -1713,7 +1713,7 @@
 "GroupChecklist" = "群組核對清單";
 "GroupDescription1" = "最多 200,000 位成員";
 "GroupDescription2" = "永久的聊天紀錄";
-"GroupDescription3" = "公開連結，例如：t.me/title";
+"GroupDescription3" = "公開連結，例如：sgq.me/title";
 "GroupDescription4" = "具有不同權限的管理員";
 "GroupEmptyTitle1" = "您建立了一個**群組**。";
 "GroupEmptyTitle2" = "群組可以有：";
@@ -2860,7 +2860,7 @@
 "ProfileStoriesArchiveGroupHint" = "只有群組管理員才能查看已封存的動態，除非它們已發布到群組資料頁。";
 "ProfileStoriesArchiveHint" = "只有您自己可以查看已封存的動態，除非您選擇將它們發表到您的資料頁中。";
 "ProfileUnofficialSecurityRisk" = "%1$s 正在使用非官方的 Telegram 客戶端——傳送給此用戶的訊息安全性可能較低。";
-"PublicLinksLimitSubtitle" = "最多可擁有 %d 個 t.me/username 連結";
+"PublicLinksLimitSubtitle" = "最多可擁有 %d 個 sgq.me/username 連結";
 "PublicLinksLimitTitle" = "公開連結";
 "PublicShares" = "公開分享";
 "PublicSharesCount#other" = "%1$s 次公開分享";
@@ -3780,7 +3780,7 @@
 "Telegram.LanguageViewController" = "語言";
 "Telegram.NotificationSettingsViewController" = "通知";
 "TelegramFeatures" = "功能特色";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTips";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTips";
 "TelegramPremiumPeerSubtitle" = "Telegram Premium 訂閱用戶可獨享多項額外功能。";
 "TelegramPremiumPeerSubtitleEmojiStatus" = "表情符號狀態是 Premium 功能。 **Telegram Premium** 還享有以下功能：";
 "TelegramPremiumPeerTitle" = "%s 是 Telegram Premium 的訂閱用戶";

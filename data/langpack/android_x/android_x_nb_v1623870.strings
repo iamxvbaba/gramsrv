@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Godkjenn nye medlemmer";
 "ApproveNewMembersInfo" = "Aktiver dette hvis du ønsker at brukere må godkjennes av en administrator for å få bli med.";
 "Archive" = "Arkiver";
-"ArchiveAppearanceHint" = "Vis arkivet som en lokal mappe. Du kan endre plasseringen i [innstillingene](tg://settings/folders).";
+"ArchiveAppearanceHint" = "Vis arkivet som en lokal mappe. Du kan endre plasseringen i [innstillingene](sg://settings/folders).";
 "ArchiveAppearanceTitle" = "Utseende";
 "ArchiveAppearanceToggle" = "Vis som mappe";
 "ArchiveAsFolder" = "Arkiver som mappe";
@@ -1204,9 +1204,9 @@
 "EditPrivacyPhoneNumber" = "Telefonnummer";
 "EditPrivacyPhoto" = "Profilbilder";
 "EditPrivacyReadDate" = "Se min lest dato";
-"EditPrivacyReadDateAllowHint" = "Tillat %1$s å se din **Sist sett & På nett** for å endre denne innstillingen.\n\nFor mer informasjon, se **[Personvern og sikkerhet](tg://settings/privacy)** – **Sist sett & På nett** – **Skjul lest-tidspunkt**.";
-"EditPrivacyReadDateRestrictHint" = "Begrens %1$s fra å se din **Sist sett & På nett** for å endre denne innstillingen.\n\nFor mer informasjon, se **[Personvern og sikkerhet](tg://settings/privacy)** – **Sist sett & På nett** – **Skjul lest-tidspunkt**.";
-"EditPrivacyReadDateToggleHint" = "Du kan skjule din **lest dato** kun fra de som ikke kan se din **Sist sett og På nett** status.\n\nSe **[Personvern og sikkerhet](tg://settings/privacy)** — **Sist sett & På nett** — **Skjul lest-tidspunkt**.";
+"EditPrivacyReadDateAllowHint" = "Tillat %1$s å se din **Sist sett & På nett** for å endre denne innstillingen.\n\nFor mer informasjon, se **[Personvern og sikkerhet](sg://settings/privacy)** – **Sist sett & På nett** – **Skjul lest-tidspunkt**.";
+"EditPrivacyReadDateRestrictHint" = "Begrens %1$s fra å se din **Sist sett & På nett** for å endre denne innstillingen.\n\nFor mer informasjon, se **[Personvern og sikkerhet](sg://settings/privacy)** – **Sist sett & På nett** – **Skjul lest-tidspunkt**.";
+"EditPrivacyReadDateToggleHint" = "Du kan skjule din **lest dato** kun fra de som ikke kan se din **Sist sett og På nett** status.\n\nSe **[Personvern og sikkerhet](sg://settings/privacy)** — **Sist sett & På nett** — **Skjul lest-tidspunkt**.";
 "EditPrivacyStatus" = "Sist sett og På nett";
 "EditPrivacyVoice" = "Sende meg talemeldinger";
 "EditUserRestrictions" = "Endre brukerrestriksjoner";
@@ -1538,7 +1538,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Bruk denne innstillingen for å sammenligne oppførsel uten kant-til-kant modus på Android 11-14.";
 "Experiment_PeerIds" = "Vis likemanns-IDer i profiler";
 "Experiment_PeerIdsInfo" = "Vis API-identifikatorer for brukere og samtaler i profilene deres";
-"ExperimentalBuildInfo" = "Denne versjonen av **Telegram X** er ikke designet for bruk over lang tid.\n\nDen kan slutte å virke helt over tid og du kan ikke skru på varsler.\n\nHvis du ser etter Telegram X APK-filen, besøk https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Denne versjonen av **Telegram X** er ikke designet for bruk over lang tid.\n\nDen kan slutte å virke helt over tid og du kan ikke skru på varsler.\n\nHvis du ser etter Telegram X APK-filen, besøk https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Merk: eksperimentell versjon";
 "ExperimentalSettings" = "Eksperimentelle innstillinger";
 "ExperimentalSettingsUnavailable" = "Ingen eksperimenter tilgjengelig. Kom tilbake senere.";
@@ -1936,7 +1936,7 @@
 "LaunchAppGuideDiskFull" = "Telegram X har tidligere hatt problemer med oppstart fordi lagringsplassen på enheten var full. \n\nForsikre deg om at det er nok plass tilgjengelig og trykk på **Start app** for å prøve igjen.\n\nTilgjengelig for øyeblikket: %1$s";
 "LaunchAppGuideExternalError" = "Telegram X har tidligere ikke klart å starte på grunn av en enhetsfeil.\n\nTrykk **Start app** for å prøve igjen. Hvis appen fortsetter å feile, prøv disse stegene:\n\n• Sjekk at du har nok lagringsplass tilgjengelig: **%1$s**.\n• Forsikre deg om at du ikke har problemer med lagringsplassen din, som for eksempel SD-kort som blir løst ut eller ikke gjenkjennes.\n• Start enheten på nytt.\n\nHvis dette ikke hjelper, kan du se etter liknende feilmeldinger på [ GitHub siden til TDLib](https://github.com/tdlib/td/issues) for mulige løsninger, eller opprette en ny feilmelding og inkludere detaljene rundt feilen.";
 "LaunchAppGuideFatalError" = "Telegram X ble lukket uventet den siste gangen du brukte den.\n\nTrykk **Start app** for å prøve igjen.";
-"LaunchAppGuideTdlibIssue" = "Telegram X kunne ikke starte opp på grunn av et kritisk problem i TDLib.\n\nTrykk på **Start app** for å prøve igjen. Hvis appen feiler igjen kan du prøve følgende skritt:\n\n• [Forsikre deg om](%2$s) at du har den nyeste versjonen av Telegram X installert.\n• Start enheten din på nytt.\n\n**Hvis skrittene ovenfor ikke fungerer**\n\n1. Del feildetaljer med TDLib-utviklerne på en av følgende måter:\n— Privat via [@tdlib_bot](https://t.me/tdlib_bot) ved å bruke en annen enhet eller [Telegram Web](https://web.telegram.org/).\n— Offentlig via [GitHub page](https://github.com/tdlib/td/issues). **IKKE** del **tdlib_log.txt** offentlig.\n2. Vennligst vent på tilbakemelding.\n3. Endre logginnstillinger nedenfor som forespurt av TDLib-utviklerne.\n4. Trykk på **Start app** for tvinge appen til å stoppe igjen.\n5. Del **tdlib_log.txt** med TDLib-utviklerne og vent på at problemet skal bli løst.\n6. Så snart appen er oppdatert, kan du starte appen på vanlig måte.\n\n**Alternativt kan du:**\n\n• Søke etter liknende problemer på [GitHub](https://github.com/tdlib/td/issues) for å se om det kan finnes felles løsninger.\n• Installer appen på nytt. Hemmelige samtaler vil gå tapt. Hvis du bruker det samme telefonnummeret når du logger inn, vil alle andre samtaler og data bli gjenopprettet fra Telegram-skyen.";
+"LaunchAppGuideTdlibIssue" = "Telegram X kunne ikke starte opp på grunn av et kritisk problem i TDLib.\n\nTrykk på **Start app** for å prøve igjen. Hvis appen feiler igjen kan du prøve følgende skritt:\n\n• [Forsikre deg om](%2$s) at du har den nyeste versjonen av Telegram X installert.\n• Start enheten din på nytt.\n\n**Hvis skrittene ovenfor ikke fungerer**\n\n1. Del feildetaljer med TDLib-utviklerne på en av følgende måter:\n— Privat via [@tdlib_bot](https://sgq.me/tdlib_bot) ved å bruke en annen enhet eller [Telegram Web](https://web.telegram.org/).\n— Offentlig via [GitHub page](https://github.com/tdlib/td/issues). **IKKE** del **tdlib_log.txt** offentlig.\n2. Vennligst vent på tilbakemelding.\n3. Endre logginnstillinger nedenfor som forespurt av TDLib-utviklerne.\n4. Trykk på **Start app** for tvinge appen til å stoppe igjen.\n5. Del **tdlib_log.txt** med TDLib-utviklerne og vent på at problemet skal bli løst.\n6. Så snart appen er oppdatert, kan du starte appen på vanlig måte.\n\n**Alternativt kan du:**\n\n• Søke etter liknende problemer på [GitHub](https://github.com/tdlib/td/issues) for å se om det kan finnes felles løsninger.\n• Installer appen på nytt. Hemmelige samtaler vil gå tapt. Hvis du bruker det samme telefonnummeret når du logger inn, vil alle andre samtaler og data bli gjenopprettet fra Telegram-skyen.";
 "LaunchAppShareError" = "Del feildetaljer";
 "LaunchAppUserSubtitle" = "ikke på nett";
 "LaunchAppViewError" = "Se feilmeldingsdetaljer";
@@ -1994,7 +1994,7 @@
 "LinkChannel" = "Koble til en kanal";
 "LinkChannelHelp" = "Du kan opprette en offentlig lenke på **Telegram**. Hvis du gjør det, kan andre finne og følge kanalen din ved å bruke denne lenken.\n\nDu kan bruke **a–z**, **0–9** og understrek.\nMinimum lengde er **5** tegn.";
 "LinkChecking" = "Kontrollerer lenkens tilgjengelighet…";
-"LinkCurrent" = "t.me/%1$s er din nåværende offentlige lenke.";
+"LinkCurrent" = "sgq.me/%1$s er din nåværende offentlige lenke.";
 "LinkDeleteOther" = "%1$s slettet %2$s sin invitasjonslenke %3$s";
 "LinkDeleteOtherYou" = "Du slettet %1$s sin invitasjonslenke %2$s";
 "LinkDeletePrimary" = "%1$s slettet den primære invitasjonslenken %2$s";
@@ -4024,7 +4024,7 @@
 "TranslationFailed" = "Oversettelse mislyktes";
 "TranslationMoreCreate" = "Opprett";
 "TranslationMoreDone" = "Jeg skjønner";
-"TranslationMoreText" = "Listen over tilgjengelige språk blir håndtert av [Oversettelsesplattformen](https://translations.telegram.org).\n\nTelegram vil tilby deg å bytte til ditt språk når oversettelsen er offisielt tilgjengelig.\n\nMens du venter, kan du installere egendefinerte språkpakker, bli med i [oversettelsesprosessen](https://translations.telegram.org/en/android_x/), eller lage [dine egne](https://t.me/tgx_android_translate/) språkpakker.";
+"TranslationMoreText" = "Listen over tilgjengelige språk blir håndtert av [Oversettelsesplattformen](https://translations.telegram.org).\n\nTelegram vil tilby deg å bytte til ditt språk når oversettelsen er offisielt tilgjengelig.\n\nMens du venter, kan du installere egendefinerte språkpakker, bli med i [oversettelsesprosessen](https://translations.telegram.org/en/android_x/), eller lage [dine egne](https://sgq.me/tgx_android_translate/) språkpakker.";
 "TranslationMoreTitle" = "Kan du ikke finne ditt språk?";
 "TranslationPaste" = "Lim inn oversettelse";
 "TranslationsMissing#one" = "%1$s gjenstår";

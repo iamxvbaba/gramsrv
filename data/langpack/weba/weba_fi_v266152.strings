@@ -769,14 +769,14 @@
 "CocoonFeature1Text" = "**{username}**:n kanssa käytettäviä tietoja, kuten käännöksiä, ei voi nähdä kukaan ulkopuolinen.";
 "CocoonFeature1Title" = "Yksityinen";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoonin avulla Telegram on laskenut käännöskustannuksia kuusinkertaisesti.";
 "CocoonFeature2Title" = "Tehokas";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Cocoon on palvelu, jolla kuka tahansa kehittäjä voi toteuttaa tekoälytoiminnallisuuksia. Lue lisää: **{link}**.";
 "CocoonFeature3Title" = "Kaikille";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "@cocoon";
 "CocoonFooterText" = "Haluatko käyttää Cocoonia omassa projektissasi?\nOta yhteyttä suoraan: **{link}**";
 "CocoonTitle" = "Cocoon";
@@ -1043,7 +1043,7 @@
 "EmptyChatAppearanceSystem" = "Järjestelmä";
 "EmptyGroupInfoLine1" = "• Peräti {count} jäsentä";
 "EmptyGroupInfoLine2" = "• Pysyvä viestihistoria";
-"EmptyGroupInfoLine3" = "• Julkiset linkit, kuten t.me/nimi";
+"EmptyGroupInfoLine3" = "• Julkiset linkit, kuten sgq.me/nimi";
 "EmptyGroupInfoLine4" = "• Valvojia eri oikeuksilla";
 "EmptyGroupInfoSubtitle" = "Ryhmillä voi olla:";
 "EmptyGroupInfoTitle" = "Loit ryhmän";
@@ -2258,7 +2258,7 @@
 "ProfileTabVoice" = "Ääni";
 "ProfileViewChannel" = "Näytä kanava";
 "PublicLink" = "Julkinen linkki";
-"PublicLinksLimitSubtitle" = "Varaa jopa {count} t.me/nimimerkki-linkkiä";
+"PublicLinksLimitSubtitle" = "Varaa jopa {count} sgq.me/nimimerkki-linkkiä";
 "PublicLinksLimitTitle" = "Julkiset linkit";
 "PublicPoll" = "Kysely";
 "PublicPosts" = "Julkiset julkaisut";

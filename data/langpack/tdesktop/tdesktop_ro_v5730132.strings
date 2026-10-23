@@ -3121,7 +3121,7 @@
 "lng_factcheck_add_done" = "Verificare fapte adăugată.";
 "lng_factcheck_bottom" = "Această clarificare a fost oferită de Telegram.";
 "lng_factcheck_edit_done" = "Verificare fapte editată.";
-"lng_factcheck_links" = "Doar linkurile **t.me/** sunt permise.";
+"lng_factcheck_links" = "Doar linkurile **sgq.me/** sunt permise.";
 "lng_factcheck_placeholder" = "Adaugă Fapte sau Context";
 "lng_factcheck_remove_done" = "Verificare fapte eliminată.";
 "lng_factcheck_title" = "Verificare Fapte";
@@ -4132,7 +4132,7 @@
 "lng_greeting_title" = "Mesaj de Întâmpinare";
 "lng_group_about1" = "Până la 200.000 de membri";
 "lng_group_about2" = "Istoric persistent";
-"lng_group_about3" = "Linkuri publice ca t.me/titlu";
+"lng_group_about3" = "Linkuri publice ca sgq.me/titlu";
 "lng_group_about4" = "Admini cu drepturi diferite";
 "lng_group_about_header" = "Ai creat un grup";
 "lng_group_about_text" = "Grupurile pot avea:";
@@ -6054,9 +6054,9 @@
 "lng_premium_double_limits_about_gifs#one" = "Salvează până la {count} GIF la Favorite";
 "lng_premium_double_limits_about_gifs#few" = "Salvează până la {count} GIF-uri la Favorite";
 "lng_premium_double_limits_about_gifs#other" = "Salvează până la {count} de GIF-uri la Favorite";
-"lng_premium_double_limits_about_links#one" = "Rezervă până la {count} link t.me/username";
-"lng_premium_double_limits_about_links#few" = "Rezervă până la {count} linkuri t.me/username";
-"lng_premium_double_limits_about_links#other" = "Rezervă până la {count} de linkuri t.me/username";
+"lng_premium_double_limits_about_links#one" = "Rezervă până la {count} link sgq.me/username";
+"lng_premium_double_limits_about_links#few" = "Rezervă până la {count} linkuri sgq.me/username";
+"lng_premium_double_limits_about_links#other" = "Rezervă până la {count} de linkuri sgq.me/username";
 "lng_premium_double_limits_about_pins#one" = "Fixează până la {count} conv. în lista principală";
 "lng_premium_double_limits_about_pins#few" = "Fixează până la {count} conv. în lista principală";
 "lng_premium_double_limits_about_pins#other" = "Fixează până la {count} de conv. în lista principală";
@@ -8650,7 +8650,7 @@
 "lng_tag_info_title_owner" = "Taguri Proprietari";
 "lng_tag_info_title_user" = "Taguri Membri";
 "lng_tagged_view_saved" = "Vezi";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Confirm că am cel puțin {count} an";
 "lng_terms_age#few" = "Confirm că am cel puțin {count} ani";
 "lng_terms_age#other" = "Confirm că am cel puțin {count} de ani";
@@ -8769,7 +8769,7 @@
 "lng_translate_cocoon_private_title" = "Privat";
 "lng_translate_cocoon_subtitle" = "Cocoon ({text}) gestionează sarcinile AI **sigur** și **efficient**.";
 "lng_translate_cocoon_text" = "Vrei să integrezi Cocoon în proiectele tale?\nContactează-ne la {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "{name} a fost adăugată în lista Nu tradu.";
 "lng_translate_hidden_channel" = "Bara de traducere este ascunsă acum pentru acest canal.";

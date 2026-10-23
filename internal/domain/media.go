@@ -563,6 +563,14 @@ type MessageWebPage struct {
 	// ComposeToneEmojiID 映射 webPageAttributeAiComposeTone，用于 TDesktop 渲染
 	// addstyle tone 分享卡片；0 表示普通网页。
 	ComposeToneEmojiID int64 `json:"compose_tone_emoji_id,omitempty"`
+	// UniqueGift maps webPageAttributeUniqueStarGift (type telegram_nft).
+	UniqueGift *UniqueStarGift `json:"unique_gift,omitempty"`
+	// CollectionIcons maps webPageAttributeStarGiftCollection (telegram_collection).
+	CollectionIcons []Document `json:"collection_icons,omitempty"`
+	// AuctionGift and AuctionEndDate map webPageAttributeStarGiftAuction
+	// (telegram_auction).
+	AuctionGift    *StarGift `json:"auction_gift,omitempty"`
+	AuctionEndDate int       `json:"auction_end_date,omitempty"`
 
 	ForceLargeMedia bool `json:"force_large_media,omitempty"`
 	ForceSmallMedia bool `json:"force_small_media,omitempty"`
@@ -622,6 +630,13 @@ const (
 	// MessageServiceActionPayment is messageActionPaymentSentMe: a payer settled
 	// an invoice of ours.
 	MessageServiceActionPayment MessageServiceActionKind = "payment_sent_me"
+	// MessageServiceActionNoPaidMessagesTokenUsed maps
+	// messageActionNoPaidMessagesTokenUsed (Layer 232): the sender redeemed the
+	// recipient's free-messages link and may now write without paying Stars.
+	MessageServiceActionNoPaidMessagesTokenUsed MessageServiceActionKind = "no_paid_messages_token_used"
+	// MessageServiceActionPaidMessagesRefunded maps
+	// messageActionPaidMessagesRefunded: count messages, stars refunded.
+	MessageServiceActionPaidMessagesRefunded MessageServiceActionKind = "paid_messages_refunded"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
@@ -711,6 +726,14 @@ type MessageServiceAction struct {
 	StarGiftOfferDeclined *MessageStarGiftOfferDeclinedAction `json:"star_gift_offer_declined,omitempty"`
 	GiftPremium           *MessageGiftPremiumAction           `json:"gift_premium,omitempty"`
 	Payment               *MessagePaymentAction               `json:"payment,omitempty"`
+	PaidMessagesRefunded  *MessagePaidMessagesRefundedAction  `json:"paid_messages_refunded,omitempty"`
+}
+
+// MessagePaidMessagesRefundedAction is projected as
+// messageActionPaidMessagesRefunded.
+type MessagePaidMessagesRefundedAction struct {
+	Count int   `json:"count"`
+	Stars int64 `json:"stars"`
 }
 
 // MessagePaymentAction is projected as messageActionPaymentSentMe, which is what

@@ -1,3 +1,4 @@
+import { AutoSubscribeChannelsPage } from "./AutoSubscribeChannelsPage";
 import { routePermission } from "../nav";
 import { PermissionDenied, usePermissions } from "../permissions";
 import { type Navigate, type RouteState } from "../routing";
@@ -32,6 +33,7 @@ import { ModerationCasesPage } from "./ModerationCasesPage";
 import { NftGiftsPage } from "./NftGiftsPage";
 import { PremiumPlansPage } from "./PremiumPlansPage";
 import { PricesPage } from "./PricesPage";
+import { BotShopPage } from "./BotShopPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { SharedDevicesPage } from "./SharedDevicesPage";
 import { StarsDetailPage } from "./StarsDetailPage";
@@ -90,6 +92,9 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   }
   if (route.path === "/donations") {
     return <DonationsPage navigate={navigate} />;
+  }
+  if (route.path === "/bot-shop") {
+    return <BotShopPage navigate={navigate} />;
   }
   if (route.path === "/prices") {
     return <PricesPage navigate={navigate} />;
@@ -154,6 +159,9 @@ function RouteView({ route, navigate }: { route: RouteState; navigate: Navigate 
   }
   if (route.path === "/bots") {
     return <BotsPage navigate={navigate} />;
+  }
+  if (route.path === "/auto-subscribe-channels") {
+    return <AutoSubscribeChannelsPage />;
   }
   if (route.path === "/broadcasts") {
     return <BroadcastsPage />;

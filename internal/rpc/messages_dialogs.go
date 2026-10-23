@@ -567,8 +567,15 @@ func (r *Router) onMessagesGetPeerSettings(ctx context.Context, input tg.InputPe
 	// projection path: a full User without bot_verification_icon is authoritative
 	// to TDesktop/Android/TWeb and would clear a badge learned from another RPC.
 	r.applyPeerReadModels(ctx, userID, users, nil)
+	out := tgPeerSettings(settings)
+	// charge_paid_message_stars: the price this user pays per message here.
+	if peer.Type == domain.PeerTypeUser && peer.ID != userID {
+		if restriction, err := r.privateContactRestrictionFor(ctx, userID, peer.ID); err == nil && restriction.paidStars > 0 {
+			out.SetChargePaidMessageStars(restriction.paidStars)
+		}
+	}
 	return &tg.MessagesPeerSettings{
-		Settings: tgPeerSettings(settings),
+		Settings: out,
 		Users:    users,
 	}, nil
 }

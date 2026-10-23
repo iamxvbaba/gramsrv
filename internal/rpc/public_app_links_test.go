@@ -9,7 +9,7 @@ import (
 
 func TestRouterPublicAppLinkUsesConfiguredBaseAndLegacyDefault(t *testing.T) {
 	legacy := New(Config{}, Deps{}, zap.NewNop(), clock.System)
-	if got, want := legacy.publicAppLink("business-bot"), "telesrv://business-bot"; got != want {
+	if got, want := legacy.publicAppLink("business-bot"), "sg://business-bot"; got != want {
 		t.Fatalf("legacy business bot link = %q, want %q", got, want)
 	}
 

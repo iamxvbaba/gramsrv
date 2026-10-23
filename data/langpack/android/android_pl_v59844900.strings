@@ -3270,15 +3270,15 @@
 "CloseTopics" = "Zamknij temat";
 "CloseTranslation" = "Zamknij tłumaczenie";
 "CocoonFeature1Text" = "Żadna strona trzecia nie ma dostępu do żadnych danych, takich jak tłumaczenia, znajdujących się w **@cocoon**.";
-"CocoonFeature1TextLink" = "https://t.me/cocoon";
+"CocoonFeature1TextLink" = "https://sgq.me/cocoon";
 "CocoonFeature1Title" = "Prywatny";
 "CocoonFeature2Text" = "Dzięki Cocoon Telegramowi udało się obniżyć 6x koszty tłumaczeń.";
 "CocoonFeature2Title" = "Wydajny";
 "CocoonFeature3Text" = "Każdy programista może używać Cocoon do obsługi funkcji AI. Dowiedz się więcej na **cocoon.org**.";
 "CocoonFeature3TextLink" = "https://cocoon.org/";
 "CocoonFeature3Title" = "Dla każdego";
-"CocoonFooter" = "Chcesz zintegrować Cocoon ze swoimi projektami?\nSkontaktuj się z nami: **t.me/cocoon?direct**";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooter" = "Chcesz zintegrować Cocoon ze swoimi projektami?\nSkontaktuj się z nami: **sgq.me/cocoon?direct**";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonPoweredBy" = "Tłumaczenia są realizowane przez  **🥚 Cocoon**.";
 "CocoonPoweredByLink" = "**Jak to działa?**";
 "CocoonSubtitle" = "Cocoon (**Co**nfidential **Co**mpute **O**pen **N**etwork)\nbezpiecznie i wydajnie wykonuje zadania związane ze sztuczną inteligencją.";
@@ -5906,7 +5906,7 @@
 "GroupDeletedUndo" = "Grupa zostanie usunięta";
 "GroupDescription1" = "Maksymalnie 200 000 członków";
 "GroupDescription2" = "Jednolitą historię czatu";
-"GroupDescription3" = "Linki publiczne, takie jak t.me/title";
+"GroupDescription3" = "Linki publiczne, takie jak sgq.me/title";
 "GroupDescription4" = "Administratorów z różnymi uprawnieniami";
 "GroupEmoji" = "Emoji grupy";
 "GroupEmojiPack" = "Pakiet emoji grupy";
@@ -9073,7 +9073,7 @@
 "PsaType_psa" = "Komunikat";
 "PublicChannelsTooMuch" = "Użytkownik docelowy ma już zbyt wiele grup publicznych lub kanałów. Poproś go, aby najpierw jedną z istniejących grup lub kanałów zmienił na „Prywatny”.";
 "PublicLink" = "Link publiczny";
-"PublicLinksLimitSubtitle" = "Zarezerwuj do %d linków t.me/nazwa_uzytkownika";
+"PublicLinksLimitSubtitle" = "Zarezerwuj do %d linków sgq.me/nazwa_uzytkownika";
 "PublicLinksLimitTitle" = "Publiczne linki";
 "PublicPhoto" = "publiczne zdjęcie";
 "PublicPoll" = "Ankieta";
@@ -11629,7 +11629,7 @@
 "TelegramFaq" = "Telegram FAQ";
 "TelegramFaqUrl" = "https://telegram.org/faq/pl";
 "TelegramFeatures" = "Funkcje Telegrama";
-"TelegramFeaturesUrl" = "https://t.me/TelegramTipsPL";
+"TelegramFeaturesUrl" = "https://sgq.me/TelegramTipsPL";
 "TelegramPassport" = "Paszport Telegrama";
 "TelegramPassportCreatePassword" = "UTWÓRZ HASŁO";
 "TelegramPassportCreatePasswordInfo" = "Utwórz hasło, aby zabezpieczyć swoje dane osobowe za pomocą pełnego szyfrowania metodą end-to-end.\n\nTo hasło będzie również wymagane przy każdym logowaniu do Telegrama na nowym urządzeniu.";

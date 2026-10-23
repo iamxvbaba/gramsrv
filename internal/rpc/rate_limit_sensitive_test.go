@@ -60,6 +60,7 @@ func TestSensitiveRPCRateLimitGroupTable(t *testing.T) {
 		tg.AuthCheckPasswordRequestTypeID:                    rateGroupSRP,
 		tg.AccountGetPasswordRequestTypeID:                   rateGroupSRP,
 		tg.AccountUpdatePasswordSettingsRequestTypeID:        rateGroupSRP,
+		tg.AccountGetTmpPasswordRequestTypeID:                rateGroupSRP,
 		tg.AccountDeleteAccountRequestTypeID:                 rateGroupSRP,
 		tg.MessagesEditChatCreatorRequestTypeID:              rateGroupSRP,
 		tg.PaymentsGetStarGiftWithdrawalURLRequestTypeID:     rateGroupWithdrawal,

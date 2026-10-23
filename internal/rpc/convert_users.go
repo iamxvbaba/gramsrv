@@ -89,7 +89,7 @@ func applyFrozenUserMark(out *tg.User, u domain.User) {
 
 // officialSystemUserPresentation keeps the durable reserved identity stable
 // while projecting the deployment brand from configuration. Older databases
-// may still contain "Telesrv" in users.first_name; without this boundary
+// may still contain "ShuzaGram" in users.first_name; without this boundary
 // normalization clients alternate between the database row and the synthetic
 // system-user snapshot as caches are refreshed.
 func officialSystemUserPresentation(u domain.User) domain.User {

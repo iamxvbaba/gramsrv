@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
@@ -211,7 +212,7 @@ func TestQRPNGPath(t *testing.T) {
 }
 
 func TestRenderTerminalQR(t *testing.T) {
-	code, err := qr.Encode("tg://login?token=AQKRKtNqRuP9uXfzvZO1aM0B1y11TJTdRix55tK-CQVEGw==", qr.H)
+	code, err := qr.Encode("sg://login?token=AQKRKtNqRuP9uXfzvZO1aM0B1y11TJTdRix55tK-CQVEGw==", qr.H)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,5 +383,37 @@ func testGiftDocument(id int64) *tg.Document {
 		Attributes: []tg.DocumentAttributeClass{
 			&tg.DocumentAttributeCustomEmoji{Alt: "gift"},
 		},
+	}
+}
+
+func TestFloodWaitDurationFromWrappedText(t *testing.T) {
+	err := errors.New("invoke pool: rpcDoRequest: rpc error code 420: FLOOD_WAIT (8)")
+	wait, ok := floodWaitDuration(err)
+	if !ok || wait != 8*time.Second {
+		t.Fatalf("wait = %v, %v", wait, ok)
+	}
+	if _, ok := floodWaitDuration(errors.New("connection reset by peer")); ok {
+		t.Fatal("non flood error detected as flood wait")
+	}
+}
+
+func TestDropUnavailableCollectibleSetsKeepsGift(t *testing.T) {
+	m := catalogManifest{
+		Gifts: []giftManifest{{ID: 1, DocumentIDs: []int64{10}}, {ID: 2, DocumentIDs: []int64{20}}},
+		UpgradeAttributeSets: []upgradeAttributeSetManifest{
+			{GiftID: 1, AttributeCount: 3, Models: []upgradeModelManifest{{DocumentID: 11}}, Patterns: []upgradePatternManifest{{}}, Backdrops: []upgradeBackdropManifest{{}}, DocumentIDs: []int64{11, 12}},
+			{GiftID: 2, AttributeCount: 3, Models: []upgradeModelManifest{{DocumentID: 21}}, Patterns: []upgradePatternManifest{{}}, Backdrops: []upgradeBackdropManifest{{}}, DocumentIDs: []int64{21, 22}},
+		},
+		UpgradeableGiftCount: 2, UpgradeAttributeSetCount: 2, UpgradeAttributeCount: 6, UpgradeModelCount: 2, UpgradePatternCount: 2, UpgradeBackdropCount: 2,
+	}
+	if err := dropUnavailableCollectibleSets(&m, map[int64]bool{21: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Gifts) != 2 || len(m.UpgradeAttributeSets) != 1 || m.UpgradeAttributeSets[0].GiftID != 1 ||
+		m.UpgradeableGiftCount != 1 || m.UpgradeAttributeSetCount != 1 || m.UpgradeAttributeCount != 3 {
+		t.Fatalf("manifest after drop = %+v", m)
+	}
+	if err := dropUnavailableCollectibleSets(&m, map[int64]bool{10: true}); err == nil {
+		t.Fatal("missing base animation accepted")
 	}
 }

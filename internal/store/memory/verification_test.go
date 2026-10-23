@@ -18,7 +18,7 @@ func verificationTestDraft() domain.VerificationDraftInput {
 		Category:        "media",
 		Description:     strings.Repeat("independent newsroom covering the region ", 2),
 		OfficialWebsite: "https://example.com",
-		SocialLinks:     []string{"https://t.me/example"},
+		SocialLinks:     []string{"https://sgq.me/example"},
 		PressLinks: []string{
 			"https://press.example.com/story",
 			"https://press.example.org/profile",

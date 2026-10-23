@@ -32,7 +32,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Untuk Semua";
 "AboutCocoon.Feature.Private.Description" = "Tiada pihak ketiga boleh akses mana2 data, seperti terjemahan, dalam Cocoon.";
 "AboutCocoon.Feature.Private.Title" = "Privat";
-"AboutCocoon.Footer" = "Ingin mengintegrasikan Cocoon ke dalam projek anda?\nHubungi kami di [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Ingin mengintegrasikan Cocoon ke dalam projek anda?\nHubungi kami di [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Nyahdaya Berkongsi";
 "AboutFeature.DisableSharing.NoForwarding" = "Dilarang Memaju";
@@ -468,7 +468,7 @@
 "Bot.AllowSendMessages" = "Benarkan **%@** kirim saya mesej.";
 "Bot.Grossing.Disclaimer" = "Apl mana dirangkumi di sini? [Pelajari \\>](grossing)";
 "Bot.Grossing.Disclaimer.Alert.Header" = "Apl Mini Teratas";
-"Bot.Grossing.Disclaimer.Alert.Text" = "Katalog ini nilai apl mini berdasarkan pada hasil harian, dikira dalam Star. Untuk disenaraikan, juruprogram mesti set apl mini utama mereka dalam [@botfather] (https://t.me/botfather) (seperti yang dinyatakan [di sini](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), mempunyai lebih **1,000** pengguna harian, dan nikmati hasil harian lebih dari **1,000** Star, berdasarkan pada purata mingguan.";
+"Bot.Grossing.Disclaimer.Alert.Text" = "Katalog ini nilai apl mini berdasarkan pada hasil harian, dikira dalam Star. Untuk disenaraikan, juruprogram mesti set apl mini utama mereka dalam [@botfather] (https://sgq.me/botfather) (seperti yang dinyatakan [di sini](https://core.telegram.org/bots/webapps#launching-the-main-mini-app)), mempunyai lebih **1,000** pengguna harian, dan nikmati hasil harian lebih dari **1,000** Star, berdasarkan pada purata mingguan.";
 "Bot.Grossing.Disclaimer.Alert.ok" = "Faham";
 "Bot.InlineAuth.Header" = "Buka Link";
 "Bot.InlineAuth.Open" = "Buka";
@@ -3312,7 +3312,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sistem\n%@";
 "EmptyGroupInfo.Line1" = "Sehingga %@ ahli";
 "EmptyGroupInfo.Line2" = "Sejarah bual persisten";
-"EmptyGroupInfo.Line3" = "Link awam seperti t.me/tajuk";
+"EmptyGroupInfo.Line3" = "Link awam seperti sgq.me/tajuk";
 "EmptyGroupInfo.Line4" = "Pentadbir dengan kuasa berlainan";
 "EmptyGroupInfo.Subtitle" = "Grup boleh punyai:";
 "EmptyGroupInfo.Title" = "Anda telah cipta grup";
@@ -5333,7 +5333,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Bual Disemat";
 "Premium.Boarding.Double.PinnedChats.Info" = "Semat sehingga %@ bual di senarai bual utama anda";
 "Premium.Boarding.Double.PublicLinks" = "Link Awam";
-"Premium.Boarding.Double.PublicLinks.Info" = "Tersedia hingga %@ link t.me/namasamaran";
+"Premium.Boarding.Double.PublicLinks.Info" = "Tersedia hingga %@ link sgq.me/namasamaran";
 "Premium.Boarding.Double.SavedGifs" = "GIF Disimpan";
 "Premium.Boarding.Double.SavedGifs.Info" = "Simpan sehingga %@ GIF di GIF Kegemaran anda";
 "Premium.Boarding.Double.Title" = "Had Dua Kali Ganda";
@@ -5747,7 +5747,7 @@
 "ProxySettings.CredentialsHeader" = "KELAYAKAN (OPSYEN)";
 "ProxySettings.Disabled" = "Nyahdaya";
 "ProxySettings.Enable" = "Proksi";
-"ProxySettings.ExportDescription" = "Jika papan klip anda mengandungi socks5-link (**t.me/socks?server=127.0.0.1&port=80**) ia akan dilaksana segera";
+"ProxySettings.ExportDescription" = "Jika papan klip anda mengandungi socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) ia akan dilaksana segera";
 "ProxySettings.ExportLink" = "Eksport link dari papan klip";
 "ProxySettings.IncorrectSecret" = "Rahsia salah. Sila cuba lagi";
 "ProxySettings.Item.Available" = "ada (ping: %@ ms)";
@@ -7791,7 +7791,7 @@
 "TranslateModal.PromptPlaceholder" = "Huraikan bagaimana untuk tulis semula teks…";
 "TranslateModal.PromptStyle" = "Gesa";
 "TranslateModal.ShareStyle" = "Kongsi Gaya";
-"TranslateModal.StyleByAuthor" = "gaya oleh [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "gaya oleh [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Langkau";
 "TwoStepAuth.AnError" = "Kesilapan berlaku. Sila cuba lagi nanti.";
 "TwoStepAuth.CancelReset" = "Batal Set Semula";

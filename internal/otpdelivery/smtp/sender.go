@@ -3,12 +3,16 @@ package smtp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"mime"
 	"net"
 	stdmail "net/mail"
 	stdsmtp "net/smtp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,16 +55,14 @@ func (s *Sender) Deliver(ctx context.Context, req otpdelivery.Request) (otpdeliv
 	if req.Channel != otpdelivery.ChannelEmail {
 		return otpdelivery.Result{}, fmt.Errorf("smtp cannot deliver channel %q", req.Channel)
 	}
-	ttl := time.Until(req.ExpiresAt)
-	subject := "Your telesrv login code"
-	body := fmt.Sprintf("Your telesrv login code is %s.\n\nThis code expires in %s. If you did not request it, ignore this email.\n", req.Code, humanTTL(ttl))
-	if err := s.send(ctx, req.Recipient, subject, body); err != nil {
+	content := renderEmail(req, time.Until(req.ExpiresAt))
+	if err := s.send(ctx, req.Recipient, content); err != nil {
 		return otpdelivery.Result{}, err
 	}
 	return otpdelivery.Result{}, nil
 }
 
-func (s *Sender) send(ctx context.Context, to, subject, body string) error {
+func (s *Sender) send(ctx context.Context, to string, content emailContent) error {
 	if strings.TrimSpace(s.cfg.Host) == "" {
 		return fmt.Errorf("smtp host is empty")
 	}
@@ -123,7 +125,7 @@ func (s *Sender) send(ctx context.Context, to, subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("smtp data: %w", err)
 	}
-	msg := buildMessage(fromAddr, to, subject, body)
+	msg := buildMessage(fromAddr, from, to, content, time.Now())
 	if _, err := w.Write(msg); err != nil {
 		_ = w.Close()
 		return fmt.Errorf("smtp write: %w", err)
@@ -134,17 +136,48 @@ func (s *Sender) send(ctx context.Context, to, subject, body string) error {
 	return c.Quit()
 }
 
-func buildMessage(from, to, subject, body string) []byte {
+// buildMessage renders a multipart/alternative email (plain text + HTML),
+// both parts base64-encoded so long HTML lines survive SMTP. Date and
+// Message-ID are set because Gmail and other providers penalize mail
+// without them.
+func buildMessage(from, fromAddress, to string, content emailContent, now time.Time) []byte {
+	boundary := "sg-" + randomToken(12)
+	domain := "localhost"
+	if at := strings.LastIndex(fromAddress, "@"); at >= 0 && at+1 < len(fromAddress) {
+		domain = fromAddress[at+1:]
+	}
 	var b bytes.Buffer
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", content.Subject) + "\r\n")
+	b.WriteString("Date: " + now.UTC().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: <" + randomToken(16) + "@" + domain + ">\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(body)
+	writePart := func(contentType, body string) {
+		b.WriteString("--" + boundary + "\r\n")
+		b.WriteString("Content-Type: " + contentType + "; charset=utf-8\r\n")
+		b.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
+		encoded := base64.StdEncoding.EncodeToString([]byte(body))
+		for len(encoded) > 76 {
+			b.WriteString(encoded[:76] + "\r\n")
+			encoded = encoded[76:]
+		}
+		b.WriteString(encoded + "\r\n")
+	}
+	writePart("text/plain", content.Text)
+	writePart("text/html", content.HTML)
+	b.WriteString("--" + boundary + "--\r\n")
 	return b.Bytes()
+}
+
+func randomToken(n int) string {
+	raw := make([]byte, n)
+	if _, err := rand.Read(raw); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(raw)
 }
 
 func humanTTL(ttl time.Duration) string {

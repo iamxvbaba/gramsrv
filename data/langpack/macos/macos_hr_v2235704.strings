@@ -36,7 +36,7 @@
 "AboutCocoon.Feature.ForEveryone.Title" = "Dostupno svima";
 "AboutCocoon.Feature.Private.Description" = "Unutar Cocoon sustava nijedna treća strana ne može pristupiti podacima, čak ni prijevodima.";
 "AboutCocoon.Feature.Private.Title" = "Privatno";
-"AboutCocoon.Footer" = "Želite li integrirati Cocoon u svoje projekte?\nKontaktirajte nas preko [t.me/cocoon](t.me/cocoon)";
+"AboutCocoon.Footer" = "Želite li integrirati Cocoon u svoje projekte?\nKontaktirajte nas preko [sgq.me/cocoon](sgq.me/cocoon)";
 "AboutCocoon.Title" = "COCOON";
 "AboutFeature.DisableSharing.DisableButton" = "Zabrani kopiranje";
 "AboutFeature.DisableSharing.NoForwarding" = "Bez prosljeđivanja";
@@ -3528,7 +3528,7 @@
 "EmptyChat.StorageUsage.Tooltip.System" = "Sustav\n%@";
 "EmptyGroupInfo.Line1" = "• Do %@ članova";
 "EmptyGroupInfo.Line2" = "• Trajnu povijest razgovora";
-"EmptyGroupInfo.Line3" = "• Javne linkove kao t.me/naziv";
+"EmptyGroupInfo.Line3" = "• Javne linkove kao sgq.me/naziv";
 "EmptyGroupInfo.Line4" = "• Admine s raznim ovlastima";
 "EmptyGroupInfo.Subtitle" = "Grupe mogu imati:";
 "EmptyGroupInfo.Title" = "Napravili ste grupu";
@@ -5708,7 +5708,7 @@
 "Premium.Boarding.Double.PinnedChats" = "Prikvačeni razgovori";
 "Premium.Boarding.Double.PinnedChats.Info" = "Prikvačite do %@ razgovora na vašoj glavnoj listi razgovora";
 "Premium.Boarding.Double.PublicLinks" = "Javni linkovi";
-"Premium.Boarding.Double.PublicLinks.Info" = "Rezervirajte do %@ t.me/korisničkoime linkova";
+"Premium.Boarding.Double.PublicLinks.Info" = "Rezervirajte do %@ sgq.me/korisničkoime linkova";
 "Premium.Boarding.Double.SavedGifs" = "Spremljeni GIF-ovi";
 "Premium.Boarding.Double.SavedGifs.Info" = "Spremite do %@GIF-ova u svoje omiljene GIF-ove";
 "Premium.Boarding.Double.Title" = "Duplo veći limiti";
@@ -6142,7 +6142,7 @@
 "ProxySettings.CredentialsHeader" = "OVLAŠTENJE (NEOBAVEZNO)";
 "ProxySettings.Disabled" = "Onemogućeno";
 "ProxySettings.Enable" = "Proxy";
-"ProxySettings.ExportDescription" = "Ako vaš međuspremnik sadrži socks5-link (**t.me/socks?server=127.0.0.1&port=80**) on će se automatski primijeniti";
+"ProxySettings.ExportDescription" = "Ako vaš međuspremnik sadrži socks5-link (**sgq.me/socks?server=127.0.0.1&port=80**) on će se automatski primijeniti";
 "ProxySettings.ExportLink" = "Izvezi link iz međuspremnika";
 "ProxySettings.IncorrectSecret" = "Neispravan secret. Pokušajte ponovno";
 "ProxySettings.Item.Available" = "dostupan (ping: %@ ms)";
@@ -8313,7 +8313,7 @@
 "TranslateModal.PromptPlaceholder" = "Upišite uputa za preoblikovanje teksta…";
 "TranslateModal.PromptStyle" = "Upute";
 "TranslateModal.ShareStyle" = "Podijeli stil";
-"TranslateModal.StyleByAuthor" = "Stil od [@%1$@](https://t.me/%1$@)";
+"TranslateModal.StyleByAuthor" = "Stil od [@%1$@](https://sgq.me/%1$@)";
 "TwoStep.AuthEmailSkip" = "Preskoči";
 "TwoStepAuth.AnError" = "Došlo je do pogreške. Pokušajte ponovno kasnije.";
 "TwoStepAuth.CancelReset" = "Otkaži resetiranje";

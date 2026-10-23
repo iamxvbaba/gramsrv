@@ -26,7 +26,7 @@ func CanonicalTONAddress(raw string) (string, error) {
 }
 
 // TelegramWalletInput recognizes what an operator typed as a Telegram identity
-// instead of an address: rayo, @rayo, rayo.t.me, t.me/rayo. It returns the bare
+// instead of an address: rayo, @rayo, rayo.sgq.me, sgq.me/rayo. It returns the bare
 // username; the wallet itself always comes from a verified record, never from
 // the name.
 func TelegramWalletInput(raw string) (string, bool) {
@@ -51,7 +51,7 @@ func TelegramWalletInput(raw string) (string, bool) {
 // TONDNSName recognizes what an operator typed instead of an address: a .ton
 // name, optionally written as a bare collectible username or with a leading @.
 // The result is the normalized name whose wallet record must be looked up.
-// WHY: a t.me link is a Telegram identity, never a wallet, so only names that
+// WHY: a sgq.me link is a Telegram identity, never a wallet, so only names that
 // end in the official .ton zone are accepted here and the address still comes
 // from the on-chain wallet record, never from the name itself.
 func TONDNSName(raw string) (string, bool) {

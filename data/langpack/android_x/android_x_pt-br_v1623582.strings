@@ -159,7 +159,7 @@
 "ApproveNewMembers" = "Aprovar Novos Membros";
 "ApproveNewMembersInfo" = "Ative se quiser que novos membros participem somente após serem aprovados por um admin.";
 "Archive" = "Arquivar";
-"ArchiveAppearanceHint" = "Mostra o arquivo como pasta local. Você pode mudar a posição em [Configurações](tg://setting/folders).";
+"ArchiveAppearanceHint" = "Mostra o arquivo como pasta local. Você pode mudar a posição em [Configurações](sg://setting/folders).";
 "ArchiveAppearanceTitle" = "Aparência";
 "ArchiveAppearanceToggle" = "Mostrar como pasta";
 "ArchiveAsFolder" = "Arquivar como Pasta";
@@ -1204,9 +1204,9 @@
 "EditPrivacyPhoneNumber" = "Número de Telefone";
 "EditPrivacyPhoto" = "Fotos de Perfil";
 "EditPrivacyReadDate" = "Ver Minha Data de Leitura";
-"EditPrivacyReadDateAllowHint" = "Permita que %1$s veja seu **Visto por Último e Online** para afetar essa configuração.\n\nPara obter mais informações, acesse **[Privacidade e Segurança](tg://settings/privacy)** > **Visto por Último e Online** e confira **Ocultar Horário de Leitura**.";
-"EditPrivacyReadDateRestrictHint" = "Restrinja %1$s de ver seu **Visto por Último e Online** para afetar essa configuração.\n\nPara obter mais informações, acesse **[Privacidade e Segurança](tg://settings/privacy)** > **Visto por Último e Online** e confira **Ocultar Horário de Leitura**.";
-"EditPrivacyReadDateToggleHint" = "Você pode ocultar sua **Data de Leitura** apenas de todos que não podem ver seu **Visto por Último e Online**.\n\nConsulte **[Privacidade e Segurança](tg://settings/privacy)** – ** Visto por Último e Online** – **Ocultar Horário de Leitura**.";
+"EditPrivacyReadDateAllowHint" = "Permita que %1$s veja seu **Visto por Último e Online** para afetar essa configuração.\n\nPara obter mais informações, acesse **[Privacidade e Segurança](sg://settings/privacy)** > **Visto por Último e Online** e confira **Ocultar Horário de Leitura**.";
+"EditPrivacyReadDateRestrictHint" = "Restrinja %1$s de ver seu **Visto por Último e Online** para afetar essa configuração.\n\nPara obter mais informações, acesse **[Privacidade e Segurança](sg://settings/privacy)** > **Visto por Último e Online** e confira **Ocultar Horário de Leitura**.";
+"EditPrivacyReadDateToggleHint" = "Você pode ocultar sua **Data de Leitura** apenas de todos que não podem ver seu **Visto por Último e Online**.\n\nConsulte **[Privacidade e Segurança](sg://settings/privacy)** – ** Visto por Último e Online** – **Ocultar Horário de Leitura**.";
 "EditPrivacyStatus" = "Visto por Último & Online";
 "EditPrivacyVoice" = "Enviar Mensagens de Voz";
 "EditUserRestrictions" = "Editar Restrições de Usuário";
@@ -1538,7 +1538,7 @@
 "Experiment_NoEdgeToEdgeInfo" = "Use esta configuração para comparar o comportamento sem o modo edge-to-edge no Android 11–14.";
 "Experiment_PeerIds" = "Mostrar IDs de Chats nos Perfis";
 "Experiment_PeerIdsInfo" = "Mostra identificadores de API dos usuários e chats nos perfis";
-"ExperimentalBuildInfo" = "Esta versão do **Telegram X** não foi projetada para uso a longo prazo.\n\nEla pode parar completamente de funcionar ao longo do tempo e você não pode ativar as notificações.\n\nSe você estiver procurando o arquivo APK apropriado do Telegram X, consulte https://t.me/tgx_log";
+"ExperimentalBuildInfo" = "Esta versão do **Telegram X** não foi projetada para uso a longo prazo.\n\nEla pode parar completamente de funcionar ao longo do tempo e você não pode ativar as notificações.\n\nSe você estiver procurando o arquivo APK apropriado do Telegram X, consulte https://sgq.me/tgx_log";
 "ExperimentalBuildTitle" = "Atenção: versão experimental";
 "ExperimentalSettings" = "Configurações experimentais";
 "ExperimentalSettingsUnavailable" = "Nenhum experimento disponível. Volte depois.";
@@ -1936,7 +1936,7 @@
 "LaunchAppGuideDiskFull" = "O Telegram X falhou ao abrir anteriormente porque o armazenamento do dispositivo estava cheio.\n\nVerifique se há espaço de armazenamento suficiente disponível e pressione **Abrir App** para tentar novamente.\n\nDisponível agora: %1$s";
 "LaunchAppGuideExternalError" = "O Telegram X falhou ao abrir anteriormente por causa de um erro no dispositivo.\n\nPressione **Abrir App** para tentar novamente. Se o aplicativo continuar a falhar, siga estes passos:\n\n• Verifique se há espaço em disco suficiente disponível: **%1$s**.\n• Verifique se não há outros problemas de armazenamento, como cartões SD sendo ejetados ou não reconhecidos.\n• Reinicie seu dispositivo.\n\nSe isso não ajudar, você pode procurar por problemas semelhantes na [página do GitHub do TDLib](https://github.com/tdlib/td/issues) para possíveis resoluções ou criar um novo, incluindo detalhes da mensagem de erro e dispositivo.";
 "LaunchAppGuideFatalError" = "O Telegram X fechou inesperadamente na última vez que você o usou.\n\nToque em **Iniciar Aplicativo** para tentar novamente.";
-"LaunchAppGuideTdlibIssue" = "O Telegram X falhou ao abrir anteriormente por causa de um erro fatal da TDLib.\n\nPressione **Abrir App** para tentar novamente. Se o aplicativo continuar a falhar, siga estes passos:\n\n• [Verifique](%2$s) se você tem a versão mais recente do Telegram X instalada.\n• Reinicie seu dispositivo.\n\n**Se as etapas acima não ajudarem**:\n\n1. Compartilhe detalhes do erro com os desenvolvedores da TDLib usando uma das seguintes maneiras:\n- De modo particular via [@tdlib_bot](https://t.me/tdlib_bot) usando outro dispositivo ou o [Telegram Web](https://web.telegram.org/).\n- Publicamente via [página do GitHub](https://github.com/tdlib/td/issues). **Não** compartilhe o **tdlib_log.txt** publicamente.\n2. Por favor, aguarde a resposta.\n3. Altere as configurações de log abaixo conforme solicitado pelos desenvolvedores da TDLib.\n4. Pressione **Abrir App** para fazer com que o aplicativo feche forçadamente de novo.\n5. Compartilhe **tdlib_log.txt** com os desenvolvedores da TDLib e espere que o problema seja resolvido.\n6. Depois de atualizado, você poderá iniciar o aplicativo normalmente.\n\n**Opções alternativas**:\n\n• Procure por problemas semelhantes no [GitHub](https://github.com/tdlib/td/issues) para ver se há soluções comuns.\n• Reinstale o aplicativo. Os chats secretos serão perdidos. Se você usar o mesmo número de telefone em que estava conectado, todos os outros chats e dados serão restaurados a partir da nuvem do Telegram.";
+"LaunchAppGuideTdlibIssue" = "O Telegram X falhou ao abrir anteriormente por causa de um erro fatal da TDLib.\n\nPressione **Abrir App** para tentar novamente. Se o aplicativo continuar a falhar, siga estes passos:\n\n• [Verifique](%2$s) se você tem a versão mais recente do Telegram X instalada.\n• Reinicie seu dispositivo.\n\n**Se as etapas acima não ajudarem**:\n\n1. Compartilhe detalhes do erro com os desenvolvedores da TDLib usando uma das seguintes maneiras:\n- De modo particular via [@tdlib_bot](https://sgq.me/tdlib_bot) usando outro dispositivo ou o [Telegram Web](https://web.telegram.org/).\n- Publicamente via [página do GitHub](https://github.com/tdlib/td/issues). **Não** compartilhe o **tdlib_log.txt** publicamente.\n2. Por favor, aguarde a resposta.\n3. Altere as configurações de log abaixo conforme solicitado pelos desenvolvedores da TDLib.\n4. Pressione **Abrir App** para fazer com que o aplicativo feche forçadamente de novo.\n5. Compartilhe **tdlib_log.txt** com os desenvolvedores da TDLib e espere que o problema seja resolvido.\n6. Depois de atualizado, você poderá iniciar o aplicativo normalmente.\n\n**Opções alternativas**:\n\n• Procure por problemas semelhantes no [GitHub](https://github.com/tdlib/td/issues) para ver se há soluções comuns.\n• Reinstale o aplicativo. Os chats secretos serão perdidos. Se você usar o mesmo número de telefone em que estava conectado, todos os outros chats e dados serão restaurados a partir da nuvem do Telegram.";
 "LaunchAppShareError" = "Compartilhar detalhes do erro";
 "LaunchAppUserSubtitle" = "offline";
 "LaunchAppViewError" = "Ver detalhes do erro";
@@ -1994,7 +1994,7 @@
 "LinkChannel" = "Vincular um canal";
 "LinkChannelHelp" = "Você pode configurar um link público no **Telegram**. Se o fizer, outras pessoas poderão encontrar e seguir seu canal por este link.\n\nVocê pode usar **a–z**, **0–9** e underlines.\nO comprimento mínimo é de **5** caracteres.";
 "LinkChecking" = "Verificando disponibilidade do link…";
-"LinkCurrent" = "t.me/%1$s é o seu link público atual.";
+"LinkCurrent" = "sgq.me/%1$s é o seu link público atual.";
 "LinkDeleteOther" = "%1$s apagou o link de convite %3$s de %2$s";
 "LinkDeleteOtherYou" = "Você apagou o link de convite %2$s de %1$s";
 "LinkDeletePrimary" = "%1$s apagou o link de convite primário %2$s";
@@ -4024,7 +4024,7 @@
 "TranslationFailed" = "Falha ao traduzir";
 "TranslationMoreCreate" = "Criar";
 "TranslationMoreDone" = "Entendi";
-"TranslationMoreText" = "A lista de idiomas disponíveis é gerenciada pela [Plataforma de Tradução](https://translations.telegram.org).\n\nO Telegram irá oferecer que você mude para o seu idioma assim que uma tradução correspondente estiver disponível.\n\nEnquanto espera, você pode instalar arquivos de tradução próprios, participar do [processo de tradução](https://translations.telegram.org/pt-br/android_x/), ou criar [o seu próprio arquivo](https://t.me/tgx_android_translate/).";
+"TranslationMoreText" = "A lista de idiomas disponíveis é gerenciada pela [Plataforma de Tradução](https://translations.telegram.org).\n\nO Telegram irá oferecer que você mude para o seu idioma assim que uma tradução correspondente estiver disponível.\n\nEnquanto espera, você pode instalar arquivos de tradução próprios, participar do [processo de tradução](https://translations.telegram.org/pt-br/android_x/), ou criar [o seu próprio arquivo](https://sgq.me/tgx_android_translate/).";
 "TranslationMoreTitle" = "Não encontrou seu idioma?";
 "TranslationPaste" = "Colar tradução";
 "TranslationsMissing#one" = "%1$s não traduzido";

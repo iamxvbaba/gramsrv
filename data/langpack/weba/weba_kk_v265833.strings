@@ -769,14 +769,14 @@
 "CocoonFeature1Text" = "**{username}** ішінде орындалатын деректерге, соның ішінде аудармаларға, ешбір үшінші тарап қол жеткізе алмайды.";
 "CocoonFeature1Title" = "Жабық";
 "CocoonFeature1Username" = "@cocoon";
-"CocoonFeature1UsernameLink" = "https://t.me/cocoon";
+"CocoonFeature1UsernameLink" = "https://sgq.me/cocoon";
 "CocoonFeature2Text" = "Cocoon Telegram-ға аударма шығындарын 6 есе азайтуға мүмкіндік берді.";
 "CocoonFeature2Title" = "Тиімді";
 "CocoonFeature3Link" = "https://cocoon.org";
 "CocoonFeature3LinkText" = "cocoon.org";
 "CocoonFeature3Text" = "Кез келген әзірлеуші Cocoon-ды ЖИ мүмкіндіктері үшін қолдана алады. Толығырақ: **{link}**.";
 "CocoonFeature3Title" = "Баршаға қолжетімді";
-"CocoonFooterLink" = "https://t.me/cocoon?direct";
+"CocoonFooterLink" = "https://sgq.me/cocoon?direct";
 "CocoonFooterLinkText" = "тікелей @cocoon";
 "CocoonFooterText" = "Cocoon-ды өз жобаңызға енгізгіңіз келе ме?\n**{link}** арқылы хабарласыңыз.";
 "CocoonTitle" = "Cocoon";
@@ -1043,7 +1043,7 @@
 "EmptyChatAppearanceSystem" = "Жүйе";
 "EmptyGroupInfoLine1" = "• {count} мүше бола алады";
 "EmptyGroupInfoLine2" = "• Чат тарихы сақтаулы тұрады";
-"EmptyGroupInfoLine3" = "• t.me/silteme секілді сілтеме жасай аласыз";
+"EmptyGroupInfoLine3" = "• sgq.me/silteme секілді сілтеме жасай аласыз";
 "EmptyGroupInfoLine4" = "• Әкімшіге басқару құқын бере аласыз";
 "EmptyGroupInfoSubtitle" = "Топта:";
 "EmptyGroupInfoTitle" = "Топ құрдыңыз";
@@ -2258,7 +2258,7 @@
 "ProfileTabVoice" = "Дауысхат";
 "ProfileViewChannel" = "Арнаны көру";
 "PublicLink" = "Жария сілтеме";
-"PublicLinksLimitSubtitle" = "{count} t.me/username секілді сілтеме жасай алыңыз.";
+"PublicLinksLimitSubtitle" = "{count} sgq.me/username секілді сілтеме жасай алыңыз.";
 "PublicLinksLimitTitle" = "Жария сілтеме";
 "PublicPoll" = "Сауалнама";
 "PublicPosts" = "Жария жазба";

@@ -3320,7 +3320,7 @@
 "lng_factcheck_add_done" = "Provjera činjenica je dodana.";
 "lng_factcheck_bottom" = "Ovo pojašnjenje dao je Telegram.";
 "lng_factcheck_edit_done" = "Provjera činjenica je uređena.";
-"lng_factcheck_links" = "Dopušteni su samo **t.me/** linkovi.";
+"lng_factcheck_links" = "Dopušteni su samo **sgq.me/** linkovi.";
 "lng_factcheck_placeholder" = "Dodajte činjenicu ili kontekst";
 "lng_factcheck_remove_done" = "Provjera činjenica je uklonjena.";
 "lng_factcheck_title" = "Provjera činjenica";
@@ -4342,7 +4342,7 @@
 "lng_greeting_title" = "Poruka pozdrava";
 "lng_group_about1" = "Do 200 000 članova";
 "lng_group_about2" = "Trajnu povijest razgovora";
-"lng_group_about3" = "Javne linkove kao t.me/naziv";
+"lng_group_about3" = "Javne linkove kao sgq.me/naziv";
 "lng_group_about4" = "Admine s raznim ovlastima";
 "lng_group_about_header" = "Napravili ste grupu";
 "lng_group_about_text" = "Grupe mogu imati:";
@@ -6285,9 +6285,9 @@
 "lng_premium_double_limits_about_gifs#one" = "Spremite do {count} GIF u svoje omiljene GIF-ove";
 "lng_premium_double_limits_about_gifs#few" = "Spremite do {count} GIF-a u svoje omiljene GIF-ove";
 "lng_premium_double_limits_about_gifs#other" = "Spremite do {count} GIF-ova u svoje omiljene GIF-ove";
-"lng_premium_double_limits_about_links#one" = "Rezervirajte do {count} t.me/korisničkoimelink";
-"lng_premium_double_limits_about_links#few" = "Rezervirajte do {count} t.me/korisničkoime linka";
-"lng_premium_double_limits_about_links#other" = "Rezervirajte do {count} t.me/korisničkoime linkova";
+"lng_premium_double_limits_about_links#one" = "Rezervirajte do {count} sgq.me/korisničkoimelink";
+"lng_premium_double_limits_about_links#few" = "Rezervirajte do {count} sgq.me/korisničkoime linka";
+"lng_premium_double_limits_about_links#other" = "Rezervirajte do {count} sgq.me/korisničkoime linkova";
 "lng_premium_double_limits_about_pins#one" = "Prikvačite do {count} razgovor na vašoj glavnoj listi razgovora";
 "lng_premium_double_limits_about_pins#few" = "Prikvačite do {count} razgovora na vašoj glavnoj listi razgovora";
 "lng_premium_double_limits_about_pins#other" = "Prikvačite do {count} razgovora na vašoj glavnoj listi razgovora";
@@ -8927,7 +8927,7 @@
 "lng_tag_info_title_owner" = "Oznake vlasnika";
 "lng_tag_info_title_user" = "Oznake članova";
 "lng_tagged_view_saved" = "Pogledaj";
-"lng_telegram_features_url" = "https://t.me/TelegramTips";
+"lng_telegram_features_url" = "https://sgq.me/TelegramTips";
 "lng_terms_age#one" = "Potvrđujem da imam najmanje {count} godinu";
 "lng_terms_age#few" = "Potvrđujem da imam najmanje {count} godine";
 "lng_terms_age#other" = "Potvrđujem da imam najmanje {count} godina";
@@ -9047,7 +9047,7 @@
 "lng_translate_cocoon_private_title" = "Privatno";
 "lng_translate_cocoon_subtitle" = "Cocoon ({text}) **sigurno** i **učinkovito** obrađuje AI zadatke.";
 "lng_translate_cocoon_text" = "Želite li integrirati Cocoon u svoje projekte?\nKontaktirajte nas preko {link}";
-"lng_translate_cocoon_text_link" = "t.me/cocoon?direct";
+"lng_translate_cocoon_text_link" = "sgq.me/cocoon?direct";
 "lng_translate_cocoon_title" = "Cocoon";
 "lng_translate_dont_added" = "Jezik {name} je dodan na listu jezika koji se neće prevoditi.";
 "lng_translate_hidden_channel" = "Traka za prijevod je skrivena u ovom kanalu.";

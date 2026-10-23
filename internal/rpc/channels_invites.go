@@ -440,7 +440,7 @@ func channelInviteHashFromLink(link string) (string, error) {
 		return "", err
 	}
 	link = strings.TrimSpace(link)
-	link = strings.TrimPrefix(link, "tg://join?invite=")
+	link = strings.TrimPrefix(link, "sg://join?invite=")
 	if strings.Contains(link, "://") {
 		if idx := strings.LastIndex(link, "/+"); idx >= 0 {
 			link = link[idx+2:]

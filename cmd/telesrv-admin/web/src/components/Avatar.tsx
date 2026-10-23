@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { withBase } from "../lib/base";
 
 const GRADIENTS: [string, string][] = [
   ["#FF885E", "#FF516A"], ["#FFCD6A", "#FFA85C"], ["#82B1FF", "#665FFF"],
@@ -29,5 +30,5 @@ export function Avatar({ id, kind = "user", label, size = 34, refreshKey }: {
   }
   const path = kind === "channel" ? `/api/channels/${id}/avatar` : `/api/accounts/${id}/avatar`;
   const suffix = refreshKey === undefined ? "" : `?v=${encodeURIComponent(String(refreshKey))}`;
-  return <img className="avatar-photo-img" src={`${path}${suffix}`} alt="" loading="lazy" style={{ width: size, height: size }} onError={() => setFailed(true)} />;
+  return <img className="avatar-photo-img" src={withBase(`${path}${suffix}`)} alt="" loading="lazy" style={{ width: size, height: size }} onError={() => setFailed(true)} />;
 }
