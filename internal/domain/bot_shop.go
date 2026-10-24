@@ -57,7 +57,7 @@ func DefaultBotShopConfig() BotShopConfig {
 		CustomMin:          200,
 		CustomMax:          1000000,
 		RateBase:           200,
-		SGStarsPerTGStar:   1000,
+		SGStarsPerTGStar:   200,
 		USDPerBase:         0.002,
 		UAHPerBase:         0.7,
 		PremiumEnabled:     true,
