@@ -140,8 +140,9 @@ func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPriva
 }
 
 type privateSendTxHooks struct {
-	before       func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
-	projectMedia func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) (privateSendMediaProjection, error)
+	userLanesHeld bool
+	before        func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
+	projectMedia  func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) (privateSendMediaProjection, error)
 	// afterAllocate runs after the immutable logical message and both box IDs
 	// exist, but before either box, update event or replay snapshot is written.
 	// It may finalize req.Media using those IDs; all of its writes remain in the
@@ -226,9 +227,12 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if plainHotPath && processPlainPrivateSendBatcher.Eligible(s) {
 		return processPlainPrivateSendBatcher.Submit(ctx, s, req, requestFingerprint)
 	}
-	releaseLanes, err := s.privateSendLanes.acquire(ctx, req.SenderUserID, req.RecipientUserID)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, fmt.Errorf("wait private send actor lanes: %w", err)
+	releaseLanes := func() {}
+	if !hooks.userLanesHeld {
+		releaseLanes, err = s.privateSendLanes.acquire(ctx, req.SenderUserID, req.RecipientUserID)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("wait private send actor lanes: %w", err)
+		}
 	}
 	defer releaseLanes()
 	beginner, ok := s.db.(txBeginner)

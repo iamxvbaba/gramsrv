@@ -1188,3 +1188,10 @@ func randomPositiveInt64() (int64, error) {
 	}
 	return id, nil
 }
+
+func (s *Service) TransferWalletGram(ctx context.Context, req domain.WalletGramTransferRequest) (domain.WalletGramTransferResult, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.WalletGramTransferResult{}, domain.ErrStarGiftOwnerInvalid
+	}
+	return s.lifecycle.TransferWalletGram(ctx, req)
+}

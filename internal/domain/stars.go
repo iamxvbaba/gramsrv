@@ -161,6 +161,8 @@ type StarsGiveawayInfo struct {
 // StarsTransactionReason 标记一条流水的语义（投影到 tg.StarsTransaction 的标志位/标题）。
 type StarsTransactionReason string
 
+const StarsReasonTransfer StarsTransactionReason = "transfer"
+
 const (
 	StarsReasonGrant           StarsTransactionReason = "grant"        // 起始余额自动授予
 	StarsReasonTopup           StarsTransactionReason = "topup"        // 充值（本地铸造）
@@ -269,6 +271,7 @@ const TonUSDRate = 1.3448279670684584
 // the Telegram TON-denominated gift UI without contacting a wallet, Fragment,
 // a TON node, or any blockchain service.
 type TonTransaction struct {
+	Comment     string
 	ID          int64
 	UserID      int64
 	Peer        Peer
@@ -346,4 +349,51 @@ func DecodeStarsCursor(s string) (int64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// WalletGramTransferRequest describes one gram transfer between two accounts.
+//
+// The request is the whole movement: who sends, who receives, how much, and
+// what the note says. The address is the recipient's wallet address, which
+// the caller knows from the wallet and the ledger does not.
+type WalletGramTransferRequest struct {
+	// FromUserID is the account the money leaves.
+	FromUserID int64
+	// ToUserID is the account the money arrives at.
+	ToUserID int64
+	// AmountNanoton is the amount, in nanoton.
+	AmountNanoton int64
+	// Reason is the ledger reason of the movement.
+	Reason StarsTransactionReason
+	// PeerAddress is the recipient's wallet address, shown in the service
+	// message. It is empty when the caller does not know it.
+	PeerAddress string
+	// Comment is the note the sender wrote on the transfer.
+	Comment string
+	// Date is when the movement happened.
+	Date int
+	// Title describes the movement in the ledger.
+	Title string
+	// CommandKey makes the movement idempotent. An empty key means no
+	// idempotency.
+	CommandKey string
+	// OriginAuthKeyID and OriginSessionID carry the origin of the request, so
+	// a server-generated service message is delivered like the client's own.
+	OriginAuthKeyID [8]byte
+	OriginSessionID int64
+	// OriginUserID is the authenticated initiator when the message is
+	// authored by another user, as an operator transfer is.
+	OriginUserID int64
+}
+
+// WalletGramTransferResult is the result of one gram transfer.
+type WalletGramTransferResult struct {
+	// Balance is the receiver's balance after the transfer.
+	Balance int64
+	// TransactionID is the receiver's ledger row. The service message and the
+	// history entry are the same movement, and the client correlates them by
+	// this id.
+	TransactionID int64
+	// Send is the service message that told the chat about the transfer.
+	Send SendPrivateTextResult
 }

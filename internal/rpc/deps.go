@@ -1240,6 +1240,7 @@ type PasskeyService interface {
 // GiftsService 抽象 Star 礼物（app/stargifts）：目录 + peer 收到的礼物实例 CRUD。
 // 扣费/退款/服务消息投递由 rpc 层经 Stars 账本 + Messages.SendPrivateText 编排。
 type GiftsService interface {
+	TransferWalletGram(ctx context.Context, req domain.WalletGramTransferRequest) (domain.WalletGramTransferResult, error)
 	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
 	CatalogHash(ctx context.Context) (int, error)

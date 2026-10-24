@@ -1765,7 +1765,7 @@ func (s *StarGiftLifecycleStore) TonTransactions(ctx context.Context, userID int
 	}
 	where, order, args := starsTransactionQueryParts("user_id", "amount_nanoton", userID, query)
 	rows, err := s.db.Query(ctx, `SELECT id,user_id,COALESCE(peer_type,''),COALESCE(peer_id,0),COALESCE(gift_id,0),
-amount_nanoton,date,reason FROM ton_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, args...)
+amount_nanoton,date,reason,comment FROM ton_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, args...)
 	if err != nil {
 		return domain.TonTransactionPage{}, err
 	}
@@ -1774,7 +1774,7 @@ amount_nanoton,date,reason FROM ton_transactions WHERE `+where+` ORDER BY id `+o
 	for rows.Next() {
 		var item domain.TonTransaction
 		var peerType string
-		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.GiftID, &item.Amount, &item.Date, &item.Reason); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.GiftID, &item.Amount, &item.Date, &item.Reason, &item.Comment); err != nil {
 			return domain.TonTransactionPage{}, err
 		}
 		item.Peer.Type = domain.PeerType(peerType)
@@ -2003,4 +2003,156 @@ func ensureStarGiftConvertible(ctx context.Context, tx pgx.Tx, saved domain.Save
 		}
 	}
 	return nil
+}
+
+func (s *StarGiftLifecycleStore) TransferWalletGram(ctx context.Context, req domain.WalletGramTransferRequest) (domain.WalletGramTransferResult, error) {
+	fromUserID, toUserID, amountNanoton := req.FromUserID, req.ToUserID, req.AmountNanoton
+	if fromUserID <= 0 || toUserID <= 0 || fromUserID == toUserID || amountNanoton <= 0 || req.Date <= 0 {
+		return domain.WalletGramTransferResult{}, domain.ErrStarGiftOwnerInvalid
+	}
+	commandKey := strings.TrimSpace(req.CommandKey)
+	var result domain.WalletGramTransferResult
+	if s.messages != nil {
+		releaseLanes, err := s.messages.privateSendLanes.acquire(ctx, fromUserID, toUserID)
+		if err != nil {
+			return domain.WalletGramTransferResult{}, err
+		}
+		defer releaseLanes()
+	}
+	err := withTx(ctx, s.db, "transfer wallet gram", func(tx pgx.Tx) error {
+		if err := lockUsersForUpdate(ctx, tx, fromUserID, toUserID); err != nil {
+			return err
+		}
+		if commandKey != "" {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, commandKey); err != nil {
+				return err
+			}
+			var storedFrom, storedTo, storedAmount int64
+			var stored int64
+			var storedTxn int64
+			err := tx.QueryRow(ctx, `
+SELECT balance_after, transaction_id, from_user_id, to_user_id, amount_nanoton FROM wallet_gram_commands WHERE command_key=$1`, commandKey).
+				Scan(&stored, &storedTxn, &storedFrom, &storedTo, &storedAmount)
+			if err == nil {
+				if storedFrom != fromUserID || storedTo != toUserID || storedAmount != amountNanoton {
+					return domain.ErrStarGiftOwnerInvalid
+				}
+				// The replay answers with the first attempt's result, so the
+				// caller sees the same balance and the same ledger row.
+				result.Balance = stored
+				result.TransactionID = storedTxn
+				return nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		// Lock both balances in a fixed order. FOR UPDATE on the balance rows
+		// serialises concurrent transfers between the same accounts.
+		first, second := fromUserID, toUserID
+		if second < first {
+			first, second = second, first
+		}
+		for _, userID := range []int64{first, second} {
+			if _, err := tx.Exec(ctx, `
+SELECT balance_nanoton FROM ton_balances WHERE user_id=$1 FOR UPDATE`, userID); err != nil {
+				return err
+			}
+		}
+		var fromBalance int64
+		if err := tx.QueryRow(ctx, `
+UPDATE ton_balances SET balance_nanoton=balance_nanoton-$2,updated_at=now()
+ WHERE user_id=$1 AND balance_nanoton>=$2 RETURNING balance_nanoton`, fromUserID, amountNanoton).Scan(&fromBalance); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domain.ErrStarsInsufficient
+			}
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+INSERT INTO ton_balances(user_id,balance_nanoton,granted,updated_at)
+VALUES($1,$2,false,now())
+ON CONFLICT (user_id) DO UPDATE
+SET balance_nanoton=ton_balances.balance_nanoton+EXCLUDED.balance_nanoton,updated_at=now()
+RETURNING balance_nanoton`, toUserID, amountNanoton).Scan(&result.Balance); err != nil {
+			return err
+		}
+		comment := strings.TrimSpace(req.Comment)
+		if err := tx.QueryRow(ctx, `
+INSERT INTO ton_transactions(user_id,amount_nanoton,reason,peer_type,peer_id,date,comment)
+VALUES($1,$2,$3,'user',$4,$5,$6) RETURNING id`,
+			toUserID, amountNanoton, string(req.Reason), fromUserID, req.Date, comment).Scan(&result.TransactionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO ton_transactions(user_id,amount_nanoton,reason,peer_type,peer_id,date,comment)
+VALUES($1,$2,$3,'user',$4,$5,$6)`,
+			fromUserID, -amountNanoton, string(req.Reason), toUserID, req.Date, comment); err != nil {
+			return err
+		}
+		// The service message joins this transaction, so the chat and the
+		// ledger cannot disagree.
+		if s.messages != nil {
+			sent, err := s.sendGramTransferMessage(ctx, tx, req, result.TransactionID, comment)
+			if err != nil {
+				return err
+			}
+			result.Send = sent
+		}
+		if commandKey == "" {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO wallet_gram_commands(command_key,kind,from_user_id,to_user_id,amount_nanoton,balance_after,transaction_id,created_at)
+VALUES($1,'transfer',$2,$3,$4,$5,$6,now())`, commandKey, fromUserID, toUserID, amountNanoton, result.Balance, result.TransactionID); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.WalletGramTransferResult{}, err
+	}
+	return result, nil
+}
+
+func (s *StarGiftLifecycleStore) sendGramTransferMessage(ctx context.Context, tx pgx.Tx, req domain.WalletGramTransferRequest, transactionID int64, comment string) (domain.SendPrivateTextResult, error) {
+	title := req.Title
+	if title == "" {
+		title = "Gram transfer"
+	}
+	media := &domain.MessageMedia{
+		Kind: domain.MessageMediaKindService,
+		ServiceAction: &domain.MessageServiceAction{
+			Kind: domain.MessageServiceActionGramTransfer,
+			GramTransfer: &domain.MessageGramTransferAction{
+				Amount:      req.AmountNanoton,
+				PeerAddress: strings.TrimSpace(req.PeerAddress),
+				// The transaction id is what the client matches the bubble
+				// against the wallet history with.
+				TransactionID: strconv.FormatInt(transactionID, 10),
+				Comment:       comment,
+			},
+		},
+	}
+	// The message store runs its own statements; pointing it at the caller's
+	// transaction makes it a savepoint of it.
+	messages := *s.messages
+	messages.db = tx
+	messages.q = sqlcgen.New(tx)
+	if _, ok := messages.boxIDs.(pgBoxIDAllocator); ok {
+		messages.boxIDs = pgBoxIDAllocator{s: &messages}
+	}
+	return messages.sendPrivateTextWithHooks(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    req.FromUserID,
+		RecipientUserID: req.ToUserID,
+		// The random id is derived from the transfer itself, so a retry of
+		// the same movement reuses the same id and the message is delivered
+		// once.
+		RandomID:        lifecycleCommandRandomID("gram-transfer-message", req.FromUserID, req.ToUserID, req.AmountNanoton, req.CommandKey, req.Date),
+		Media:           media,
+		Silent:          false,
+		Date:            req.Date,
+		OriginAuthKeyID: req.OriginAuthKeyID,
+		OriginSessionID: req.OriginSessionID,
+		OriginUserID:    req.OriginUserID,
+	}, privateSendTxHooks{userLanesHeld: true})
 }

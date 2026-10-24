@@ -3190,6 +3190,7 @@ type TonTransaction struct {
 	PeerID        *int64
 	GiftID        *int64
 	Date          int32
+	Comment       string
 }
 
 type UniqueStarGift struct {
@@ -3503,6 +3504,18 @@ type WalletGiftTransfer struct {
 	PreviousHostPeerID    int64
 	ActorUserID           int64
 	CreatedAt             pgtype.Timestamptz
+}
+
+type WalletGramCommand struct {
+	ID            int64
+	CommandKey    string
+	Kind          string
+	FromUserID    int64
+	ToUserID      int64
+	AmountNanoton int64
+	BalanceAfter  int64
+	TransactionID int64
+	CreatedAt     pgtype.Timestamptz
 }
 
 type WebAuthorization struct {

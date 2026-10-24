@@ -574,6 +574,8 @@ type MessageWebPage struct {
 // MessageServiceActionKind 标识私聊服务消息动作。
 type MessageServiceActionKind string
 
+const MessageServiceActionGramTransfer MessageServiceActionKind = "gram_transfer"
+
 const (
 	MessageServiceActionSuggestProfilePhoto MessageServiceActionKind = "suggest_profile_photo"
 	// MessageServiceActionHistoryClear 映射 messageActionHistoryClear。私聊
@@ -695,6 +697,7 @@ type MessageNoForwardsAction struct {
 
 // MessageServiceAction 是私聊服务消息动作的协议中立表示。
 type MessageServiceAction struct {
+	GramTransfer          *MessageGramTransferAction          `json:"gram_transfer,omitempty"`
 	Kind                  MessageServiceActionKind            `json:"kind"`
 	Photo                 *Photo                              `json:"photo,omitempty"`
 	Call                  *MessagePhoneCallAction             `json:"call,omitempty"`
@@ -1112,4 +1115,17 @@ func dedupNonZeroIDs(ids ...int64) []int64 {
 		out = append(out, id)
 	}
 	return out
+}
+
+type MessageGramTransferAction struct {
+	Amount int64 `json:"amount"`
+	// PeerAddress is the recipient's wallet address.
+	PeerAddress string `json:"peer_address,omitempty"`
+	// TransactionID is the ledger transaction id.
+	TransactionID string `json:"transaction_id,omitempty"`
+	// Comment is the note the sender wrote on the transfer.
+	Comment string `json:"comment,omitempty"`
+	// CommentEncrypted reports that the sender's note is encrypted: the client
+	// holds the key, the server does not, and the note stays empty.
+	CommentEncrypted bool `json:"comment_encrypted,omitempty"`
 }

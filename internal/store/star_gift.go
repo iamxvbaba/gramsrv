@@ -84,6 +84,7 @@ type StarGiftUpgradeStore interface {
 // balances and service-message updates. Implementations must serialize on the saved/unique
 // aggregate and return exact replays for command-key/random-id retries.
 type StarGiftLifecycleStore interface {
+	TransferWalletGram(ctx context.Context, req domain.WalletGramTransferRequest) (domain.WalletGramTransferResult, error)
 	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	IssueStarGiftPurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
 	ValidateStarGiftPurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
