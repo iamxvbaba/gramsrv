@@ -15,6 +15,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"telesrv/internal/admin"
@@ -31,6 +32,9 @@ type server struct {
 	cfg       uiConfig
 	read      *readStore
 	hostStats *hoststats.Poller
+	totpMu    sync.Mutex
+	totpUsers map[int64]*totpVerifier
+	totp      *totpVerifier
 	web       fs.FS
 	webServer http.Handler
 	identity  *identity.Store
@@ -42,10 +46,19 @@ func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*ser
 	if err != nil {
 		return nil, err
 	}
+	var totp *totpVerifier
+	if strings.TrimSpace(cfg.TOTPSecret) != "" {
+		totp, err = newTOTPVerifier(cfg.TOTPSecret)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &server{
 		cfg:       cfg,
 		read:      read,
 		hostStats: hostStats,
+		totp:      totp,
+		totpUsers: make(map[int64]*totpVerifier),
 		web:       web,
 		webServer: http.FileServer(http.FS(web)),
 		identity:  identity.NewStore(cfg.IdentityDir),
@@ -66,6 +79,7 @@ func (s *server) routes() http.Handler {
 	// nothing that was not on screen. It answers 404 when no icon is
 	// configured and the client falls back to the static /logo.png.
 	mux.HandleFunc("GET /api/public/icon", s.handlePublicServerIconAPI)
+	mux.HandleFunc("GET /api/totp-qr", s.handleTOTPSetupQR)
 	mux.HandleFunc("POST /api/login", s.handleAPILogin)
 	// Logout goes through the same gate as every other mutating route: a forced
 	// logout is a state change, and an invalid session is cleared by the gate
@@ -77,6 +91,10 @@ func (s *server) routes() http.Handler {
 	// right that can hand out every other right -- so they are registered
 	// together rather than scattered among the domain routes.
 	mux.Handle("GET /api/admin-users", s.requireAdminsManage(http.HandlerFunc(s.handleListAdminUsersAPI)))
+	mux.Handle("GET /api/panel-invites", s.requireAdminsManage(http.HandlerFunc(s.handleListPanelInvitesAPI)))
+	mux.Handle("GET /api/panel-invites/{id}/qr", s.requireAdminsManage(http.HandlerFunc(s.handlePanelInviteQRAPI)))
+	mux.Handle("POST /api/actions/create-panel-invite", s.requireAdminsManage(http.HandlerFunc(s.handleCreatePanelInviteAPI)))
+	mux.Handle("POST /api/actions/revoke-panel-invite", s.requireAdminsManage(http.HandlerFunc(s.handleRevokePanelInviteAPI)))
 	// Mutations live under /api/actions/* like every other command in the
 	// panel, so they get the same reason + dry-run + confirm flow.
 	mux.Handle("POST /api/actions/create-admin-operator", s.requireAdminsManage(http.HandlerFunc(s.handleCreateAdminUserAPI)))
@@ -346,6 +364,7 @@ type loginRequest struct {
 	// is locked out.
 	Username string `json:"username"`
 	Secret   string `json:"secret"`
+	TOTP     string `json:"totp"`
 }
 
 // sessionTTL bounds a signed panel session and the CSRF cookie that goes with it,
@@ -373,8 +392,13 @@ func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "invalid credential")
 		return
 	}
+	if !s.verifyLoginTOTP(identity, req.TOTP, time.Now()) {
+		writeAPIError(w, http.StatusUnauthorized, "invalid credential")
+		return
+	}
 	if identity.userID > 0 && s.read != nil {
 		s.read.touchAdminConsoleLogin(r.Context(), identity.userID)
+		_, _ = s.read.ConsumePanelInvite(r.Context(), identity.userID)
 	}
 	csrfToken, err := newCSRFToken()
 	if err != nil {

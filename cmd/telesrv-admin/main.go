@@ -55,6 +55,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	go srv.sweepExpiredInvites(ctx)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.routes(),
@@ -81,6 +82,7 @@ type uiConfig struct {
 	Password      string
 	Token         string
 	SessionKey    []byte
+	TOTPSecret    string
 	// DiskStatsPath points the dashboard host-disk sampler at the local path
 	// that matters for the selected blob backend: permanent localfs storage or
 	// the S3 upload spool.
@@ -153,6 +155,12 @@ func loadConfig() (uiConfig, error) {
 		return uiConfig{}, fmt.Errorf("TELESRV_ADMIN_SESSION_KEY is required")
 	}
 	sum := sha256.Sum256([]byte(appCfg.AdminSessionKey))
+	totpSecret := strings.TrimSpace(os.Getenv("TELESRV_ADMIN_UI_TOTP_SECRET"))
+	if totpSecret != "" {
+		if _, err := newTOTPVerifier(totpSecret); err != nil {
+			return uiConfig{}, fmt.Errorf("TELESRV_ADMIN_UI_TOTP_SECRET: %w", err)
+		}
+	}
 
 	repoRoot, err := os.Getwd()
 	if err != nil {
@@ -171,6 +179,7 @@ func loadConfig() (uiConfig, error) {
 		Password:                   appCfg.AdminUIPassword,
 		Token:                      appCfg.AdminUIToken,
 		SessionKey:                 sum[:],
+		TOTPSecret:                 totpSecret,
 		DiskStatsPath:              dashboardDiskPath(appCfg),
 		Permissions:                appCfg.AdminUIPermissions,
 		IdentityDir:                appCfg.IdentityDir,
