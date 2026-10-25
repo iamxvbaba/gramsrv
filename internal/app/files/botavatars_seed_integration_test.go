@@ -30,6 +30,18 @@ func (c *countingThumbnailer) Extract(_ context.Context, _ []byte, _ string) ([]
 	return buf.Bytes(), nil
 }
 
+// txBlindAssembler stands in for the remote FileData assembler in a v2 Core:
+// it reads upload parts through its own connection, so rows written inside the
+// seed transaction are invisible to it and it reports ErrFilePartsInvalid.
+type txBlindAssembler struct {
+	calls int
+}
+
+func (a *txBlindAssembler) AssembleUploadBlob(context.Context, int64, int64, int) (AssembledUploadBlob, error) {
+	a.calls++
+	return AssembledUploadBlob{}, domain.ErrFilePartsInvalid
+}
+
 // seedSelfDelivery builds the single absolute self delivery the RPC router
 // commits for a seeded built-in account avatar, and records post-commit
 // projection invalidations.
@@ -55,9 +67,10 @@ func (d *seedSelfDelivery) ProfilePhotoCommitted(userID int64) {
 // TestBotAvatarsSeedViaRealService 集成测试：通过真实 files.Service、真实
 // permanent-blob 后端与真实、分开的 upload-staging 后端调用 botavatars.Seed。
 // Seed 内部经 SeedTx 构造事务化服务——这里确保 uploadParts / thumbs 等字段在
-// 事务服务上完整保留，且 upload parts 被写入单独的 staging backend（而非主
-// blob 后端）。否则 premiumbot.mp4 的 CreateAvatarVideoFromBytes 会因 upload
-// part backend 未配置而失败，或视频静态帧回落成生成占位图。
+// 事务服务上完整保留。premiumbot.mp4 的 CreateAvatarVideoFromBytes 必须直接写
+// permanent blob，不经 upload parts：v2 Core 的 remote FileData assembler 用自己的
+// 连接读 part，看不到 SeedTx 里未提交的 part 行，曾让 Docker 中 Core 启动失败
+// （"file parts invalid"）。视频静态帧不得回落成生成占位图。
 func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	ctx := context.Background()
 
@@ -70,7 +83,8 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 	staging := &countingUploadPartBackend{LocalFS: mustLocalFS(t, "staging backend")}
 	// Фейковый thumbnailer фиксирует, что SeedTx сохранил thumbs для видео-статика.
 	thumb := &countingThumbnailer{}
-	svc := NewService(media, blobs, 2, WithUploadPartBackend(staging), WithVideoThumbnailer(thumb))
+	blind := &txBlindAssembler{}
+	svc := NewService(media, blobs, 2, WithUploadPartBackend(staging), WithVideoThumbnailer(thumb), WithUploadBlobAssembler(blind))
 
 	delivery := &seedSelfDelivery{}
 	if err := botavatars.Seed(ctx, svc, delivery, 1750000000); err != nil {
@@ -92,10 +106,10 @@ func TestBotAvatarsSeedViaRealService(t *testing.T) {
 		}
 	}
 
-	// premiumbot.mp4 走 CreateAvatarVideoFromBytes -> SaveFilePart -> PutUploadPart。
-	// uploadParts 必须被 SeedTx 保留，且确实落到了独立的 staging backend。
-	if staging.putUploadPartCalls == 0 {
-		t.Fatalf("staging backend was never used: uploadParts not carried into SeedTx")
+	// premiumbot.mp4 is embedded bytes: it must reach the permanent blob
+	// backend directly, never through upload staging or the remote assembler.
+	if staging.putUploadPartCalls != 0 || blind.calls != 0 {
+		t.Fatalf("embedded video avatar went through upload parts: staging=%d assembler=%d", staging.putUploadPartCalls, blind.calls)
 	}
 	// 视频静态帧必须从真实 thumbnailer 抽取，而不是回落成生成占位图——这证明
 	// SeedTx 保留了 thumbs。

@@ -145,12 +145,15 @@ func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, v
 	if len(data) == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
-	fileID := randomID()
-	if _, err := s.SaveFilePart(ctx, 0, fileID, 0, data); err != nil {
+	// Write the bytes straight to the blob backend, like CreateAvatarFromBytes.
+	// Going through upload parts would leave the part row inside the caller's
+	// seed transaction while a remote FileData assembler reads parts through
+	// its own connection, so it never saw them ("file parts invalid").
+	objectKey, size, sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
+	if err != nil {
 		return domain.Photo{}, err
 	}
-	ref := domain.UploadedFileRef{OwnerUserID: 0, FileID: fileID, Parts: 1, Big: true}
-	return s.createAvatarVideoFromUpload(ctx, ref, videoStartTs, nil)
+	return s.createAvatarVideoFromBlob(ctx, AssembledUploadBlob{ObjectKey: objectKey, Size: size, SHA256: sum}, videoStartTs, nil)
 }
 
 // CreateAvatarFromUpload 把已上传文件组装成头像 Photo（'s'/'a'/'c' 尺寸，'a'/'c' 匹配
@@ -184,6 +187,23 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 	if err != nil {
 		return domain.Photo{}, err
 	}
+	photo, err := s.createAvatarVideoFromBlob(ctx, body, videoStartTs, extraSizes)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
+		s.log.Warn("cleanup assembled avatar video upload parts failed",
+			zap.Int64("owner_user_id", file.OwnerUserID),
+			zap.Int64("file_id", file.FileID),
+			zap.Int64("photo_id", photo.ID),
+			zap.Error(err))
+	}
+	return photo, nil
+}
+
+// createAvatarVideoFromBlob records an already stored MP4 blob as a profile
+// photo with a 'u' video size and static still sizes.
+func (s *Service) createAvatarVideoFromBlob(ctx context.Context, body AssembledUploadBlob, videoStartTs float64, extraSizes []domain.PhotoSize) (domain.Photo, error) {
 	if body.Size == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
@@ -224,13 +244,6 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 	}
 	if err := s.media.PutPhoto(ctx, photo); err != nil {
 		return domain.Photo{}, err
-	}
-	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
-		s.log.Warn("cleanup assembled avatar video upload parts failed",
-			zap.Int64("owner_user_id", file.OwnerUserID),
-			zap.Int64("file_id", file.FileID),
-			zap.Int64("photo_id", photoID),
-			zap.Error(err))
 	}
 	return photo, nil
 }
