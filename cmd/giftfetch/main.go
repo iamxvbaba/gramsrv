@@ -6,6 +6,12 @@
 // Usage:
 //
 //	SESSION=/path/to/session giftfetch -out <directory>
+//	SESSION=/path/to/session giftfetch -login-qr
+//
+// payments.getStarGifts only answers for an authorized *user* session, so API
+// credentials alone are never enough. -login-qr obtains that session through a
+// QR login, which needs neither a phone number nor an SMS code, and writes it to
+// the SESSION path for every later fetch to reuse.
 package main
 
 import (
@@ -29,11 +35,13 @@ import (
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/telegram"
+	"github.com/iamxvbaba/td/telegram/auth/qrlogin"
 	"github.com/iamxvbaba/td/telegram/dcs"
 	"github.com/iamxvbaba/td/telegram/downloader"
 	"github.com/iamxvbaba/td/tg"
 	"golang.org/x/net/proxy"
 	"golang.org/x/sync/errgroup"
+	"rsc.io/qr"
 
 	"telesrv/internal/app/stargifts"
 )
@@ -48,6 +56,10 @@ const (
 	maxDocuments       = 50000
 	maxWorkers         = 128
 	floodWaitMargin    = 5 * time.Second
+	// defaultFetchTimeout 覆盖整个抓取过程：全量文档下载可能很久。
+	defaultFetchTimeout = 4 * time.Hour
+	// defaultLoginTimeout 只需覆盖一次扫码：二维码约 30 秒过期，Auth 会自动换发。
+	defaultLoginTimeout = 15 * time.Minute
 )
 
 type catalogManifest struct {
@@ -202,14 +214,36 @@ func main() {
 	workers := flag.Int("workers", defaultWorkers, "concurrent document downloads")
 	reuseMetadata := flag.Bool("reuse-metadata", false, "reuse and strictly decode catalog.tl plus upgrade-attributes/*.tl instead of refetching metadata")
 	allowedMissingThumbsRaw := flag.String("allow-missing-thumb", "", "comma-separated document_id:photo|video:type entries that may be recorded as explicitly missing after a failed download")
+	loginQR := flag.Bool("login-qr", false, "authorize the SESSION file through a QR login and exit without fetching (Telegram -> Settings -> Devices -> Link Desktop Device)")
+	qrPNG := flag.String("qr-png", "", "also write each rotated QR login token as a PNG to this path (default: <session>.qr.png)")
 	flag.Parse()
-	if strings.TrimSpace(*outDir) == "" {
-		fmt.Fprintln(os.Stderr, "usage: SESSION=/path/to/session giftfetch -out <directory>")
-		os.Exit(2)
-	}
+
 	session := strings.TrimSpace(os.Getenv("SESSION"))
 	if session == "" {
 		fmt.Fprintln(os.Stderr, "ERROR: SESSION is required")
+		os.Exit(2)
+	}
+
+	// SOCKS5 出口被 QR 登录与目录抓取共用，只解析一次。
+	opts, err := clientOptions(session)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		os.Exit(2)
+	}
+
+	if *loginQR {
+		// 登录只需要 update 通道接收 loginToken：不抓目录，也不需要 -out。
+		dispatcher := tg.NewUpdateDispatcher()
+		opts.UpdateHandler = dispatcher
+		run(defaultLoginTimeout, opts, func(ctx context.Context, client *telegram.Client) error {
+			return loginQRToken(ctx, client, dispatcher, qrPNGPath(session, *qrPNG))
+		})
+		return
+	}
+
+	if strings.TrimSpace(*outDir) == "" {
+		fmt.Fprintln(os.Stderr, "usage: SESSION=/path/to/session giftfetch -out <directory>")
+		fmt.Fprintln(os.Stderr, "       SESSION=/path/to/session giftfetch -login-qr")
 		os.Exit(2)
 	}
 	if *maxDocBytes <= 0 || *maxDocBytes > 256<<20 {
@@ -226,46 +260,146 @@ func main() {
 		os.Exit(2)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
-	defer cancel()
-
-	opts := telegram.Options{
-		SessionStorage: &telegram.FileSessionStorage{Path: session},
-	}
-	if socksProxy := strings.TrimSpace(os.Getenv("SOCKS5_PROXY")); socksProxy != "" {
-		proxyConfig, err := parseSOCKS5Proxy(socksProxy)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: invalid SOCKS5_PROXY: %v\n", err)
-			os.Exit(2)
-		}
-		dialer, err := proxy.SOCKS5("tcp", proxyConfig.Address, proxyConfig.Auth, proxy.Direct)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: invalid SOCKS5_PROXY: %v\n", err)
-			os.Exit(2)
-		}
-		opts.Resolver = dcs.Plain(dcs.PlainOptions{
-			Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
-			},
-		})
-	}
-
-	client := telegram.NewClient(apiID, apiHash, opts)
-
-	if err := client.Run(ctx, func(ctx context.Context) error {
+	run(defaultFetchTimeout, opts, func(ctx context.Context, client *telegram.Client) error {
 		status, err := client.Auth().Status(ctx)
 		if err != nil {
 			return fmt.Errorf("auth status: %w", err)
 		}
 		if !status.Authorized {
-			return errors.New("SESSION is not authorized")
+			return errors.New("SESSION is not authorized (run giftfetch -login-qr first)")
 		}
 		fmt.Println("[session authorized]")
 		return fetchCatalog(ctx, client.API(), *outDir, *maxDocBytes, *skipThumbs, *workers, *reuseMetadata, allowedMissingThumbs)
+	})
+}
+
+// run 连接官方 Telegram，并在连接就绪后执行 fn。任一环节失败都以退出码 1 结束。
+func run(timeout time.Duration, opts telegram.Options, fn func(context.Context, *telegram.Client) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	client := telegram.NewClient(apiID, apiHash, opts)
+	if err := client.Run(ctx, func(ctx context.Context) error {
+		return fn(ctx, client)
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}
+}
+
+// loginQRToken 用 QR 登录换取授权用户会话并落盘到 SESSION。
+// 不需要手机号和短信码：把 show 打印的二维码在已登录的 Telegram 里扫出来即可。
+func loginQRToken(ctx context.Context, client *telegram.Client, dispatcher tg.UpdateDispatcher, pngPath string) error {
+	status, err := client.Auth().Status(ctx)
+	if err != nil {
+		return fmt.Errorf("auth status: %w", err)
+	}
+	if status.Authorized {
+		fmt.Println("[session already authorized]")
+		return nil
+	}
+
+	// OnLoginToken 依赖 dispatcher 的 handlers map；map 是引用类型，与 opts.UpdateHandler
+	// 持有的是同一份，因此这里传值副本即可收到 loginToken 更新。
+	authorization, err := client.QR().Auth(ctx, qrlogin.OnLoginToken(dispatcher), func(_ context.Context, token qrlogin.Token) error {
+		fmt.Println("[qr] scan in Telegram -> Settings -> Devices -> Link Desktop Device")
+		return showLoginQR(token.URL(), pngPath)
+	})
+	if err != nil {
+		return fmt.Errorf("qr login: %w", err)
+	}
+	user, ok := authorization.User.AsNotEmpty()
+	if !ok {
+		return fmt.Errorf("unexpected user constructor %T", authorization.User)
+	}
+	fmt.Printf("[authorized] id=%d username=%s bot=%v\n", user.ID, user.Username, user.Bot)
+	return nil
+}
+
+// qrPNGPath 决定二维码 PNG 的落盘位置：默认与 SESSION 同名加后缀。
+func qrPNGPath(session, override string) string {
+	if override = strings.TrimSpace(override); override != "" {
+		return override
+	}
+	return session + ".qr.png"
+}
+
+// showLoginQR 把登录链接渲染成可扫的二维码。
+//
+// 官方客户端只把 tg://login?token= 当作二维码内容，没有任何客户端支持把它当链接打开，
+// 所以必须画出来：终端用半块字符直接打印，同时落一份 PNG 供放大后扫描。
+func showLoginQR(url, pngPath string) error {
+	// H 级纠错（65% 冗余）模块更多但容错高，终端缩放和手机拍照都更稳。
+	code, err := qr.Encode(url, qr.H)
+	if err != nil {
+		return fmt.Errorf("encode login qr: %w", err)
+	}
+	if pngPath != "" {
+		if err := os.WriteFile(pngPath, code.PNG(), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "[qr] write %s: %v\n", pngPath, err)
+		} else {
+			fmt.Printf("[qr] png %s\n", pngPath)
+		}
+	}
+	fmt.Print(renderTerminalQR(code))
+	return nil
+}
+
+// renderTerminalQR 用半块字符把二维码画进终端，每个字符承载两行模块。
+func renderTerminalQR(code *qr.Code) string {
+	const (
+		quiet = 2 // 静区：至少两个模块的白边，否则手机扫码识别率骤降
+		upper = "▀"
+		lower = "▄"
+		full  = "█"
+		blank = " "
+	)
+	size := code.Size
+	dim := size + 2*quiet
+	var out strings.Builder
+	for y := 0; y < dim; y += 2 {
+		for x := 0; x < dim; x++ {
+			top := y >= quiet && y-quiet < size && x >= quiet && x-quiet < size && code.Black(x-quiet, y-quiet)
+			bottom := y+1 >= quiet && y+1-quiet < size && x >= quiet && x-quiet < size && code.Black(x-quiet, y+1-quiet)
+			switch {
+			case top && bottom:
+				out.WriteString(full)
+			case top:
+				out.WriteString(upper)
+			case bottom:
+				out.WriteString(lower)
+			default:
+				out.WriteString(blank)
+			}
+		}
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+// clientOptions 组装官方客户端的公共选项：会话文件存储，以及可选的 SOCKS5 出口。
+func clientOptions(session string) (telegram.Options, error) {
+	opts := telegram.Options{
+		SessionStorage: &telegram.FileSessionStorage{Path: session},
+	}
+	socksProxy := strings.TrimSpace(os.Getenv("SOCKS5_PROXY"))
+	if socksProxy == "" {
+		return opts, nil
+	}
+	proxyConfig, err := parseSOCKS5Proxy(socksProxy)
+	if err != nil {
+		return telegram.Options{}, fmt.Errorf("invalid SOCKS5_PROXY: %w", err)
+	}
+	dialer, err := proxy.SOCKS5("tcp", proxyConfig.Address, proxyConfig.Auth, proxy.Direct)
+	if err != nil {
+		return telegram.Options{}, fmt.Errorf("invalid SOCKS5_PROXY: %w", err)
+	}
+	opts.Resolver = dcs.Plain(dcs.PlainOptions{
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		},
+	})
+	return opts, nil
 }
 
 func parseSOCKS5Proxy(raw string) (socks5ProxyConfig, error) {

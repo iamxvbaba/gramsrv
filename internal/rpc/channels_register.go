@@ -31,6 +31,10 @@ func (r *Router) registerChannels(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesDeleteChatUserRequest](d, tlprofile.SemanticMethodMessagesDeleteChatUser, func(ctx context.Context, layerRequest *tg.MessagesDeleteChatUserRequest) (any, error) {
 		return r.onMessagesDeleteChatUser(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesDeleteChatRequest](d, tlprofile.SemanticMethodMessagesDeleteChat, func(ctx context.Context, layerRequest *tg.MessagesDeleteChatRequest) (any, error) {
+		return r.onMessagesDeleteChat(ctx, layerRequest.
+			ChatID)
+	})
 	registerRPC[*tg.MessagesEditChatTitleRequest](d, tlprofile.SemanticMethodMessagesEditChatTitle, func(ctx context.Context, layerRequest *tg.MessagesEditChatTitleRequest) (any, error) {
 		return r.onMessagesEditChatTitle(ctx, layerRequest)
 	})

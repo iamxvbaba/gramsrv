@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -55,6 +56,20 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 	if msg.Deleted || msg.Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
 	}
+	if req.ReplaceMedia {
+		if err := domain.ValidateMessageMediaReplacement(msg.Media, req.Media, msg.GroupedID, msg.Forward != nil); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
+	if req.PreserveText {
+		req.Message = msg.Body
+		req.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+		entities, err = encodeMessageEntities(req.Entities)
+		if err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
+
 	finalMedia := msg.Media
 	if req.Media != nil {
 		finalMedia = req.Media
@@ -64,7 +79,7 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 		finalRich = req.RichMessage
 	}
 	if strings.TrimSpace(req.Message) == "" && finalMedia.IsZero() && finalRich.IsZero() {
-		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
+		return domain.EditChannelMessageResult{}, domain.ErrMessageEmpty
 	}
 	if req.WebPageResolve {
 		// 频道链接预览就地替换：只换 media（不碰 body/entities/edit_date）+ reserve 频道 pts +
@@ -125,7 +140,7 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON, pts); err 
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	if (req.Media == nil || reflect.DeepEqual(req.Media, msg.Media)) && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	ptsCount := 1

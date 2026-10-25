@@ -41,8 +41,10 @@ type Config struct {
 
 type Service interface {
 	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
+	DeleteAccount(ctx context.Context, req admin.DeleteAccountRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
+	UpdateDonationChain(ctx context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -77,6 +79,7 @@ type Service interface {
 	RemoveStickerFromSet(ctx context.Context, req admin.RemoveStickerFromSetRequest) (admin.CommandResult, error)
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	ImportStarGift(ctx context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error)
+	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
 	ImportOfficialStarGift(ctx context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error)
 	OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSummary, error)
 	OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error)
@@ -91,6 +94,7 @@ type Service interface {
 	CreateGifCatalogEntry(ctx context.Context, req admin.CreateGifCatalogEntryRequest) (admin.CommandResult, error)
 	SetGifCatalogEnabled(ctx context.Context, req admin.SetGifCatalogEnabledRequest) (admin.CommandResult, error)
 	SetGifCatalogSortOrder(ctx context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error)
+	SetGifCatalogCategory(ctx context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error)
 	DeleteGifCatalogEntry(ctx context.Context, req admin.DeleteGifCatalogEntryRequest) (admin.CommandResult, error)
 	GifCatalogDocumentPreview(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
@@ -115,6 +119,7 @@ type Service interface {
 	AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error)
 	AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
 	AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
+	ListRecentAdminCommands(ctx context.Context, limit int, actor string) ([]domain.AdminCommand, error)
 	ClaimVerification(ctx context.Context, req admin.ClaimVerificationRequest) (admin.CommandResult, error)
 	ApproveVerification(ctx context.Context, req admin.ApproveVerificationRequest) (admin.CommandResult, error)
 	RejectVerification(ctx context.Context, req admin.RejectVerificationRequest) (admin.CommandResult, error)
@@ -133,6 +138,7 @@ type Service interface {
 	UpsertVerificationIcon(ctx context.Context, req admin.UpsertVerificationIconRequest) (admin.CommandResult, error)
 	SetVerificationIconActive(ctx context.Context, req admin.SetVerificationIconActiveRequest) (admin.CommandResult, error)
 	RevokeCustomVerification(ctx context.Context, req admin.RevokeCustomVerificationRequest) (admin.CommandResult, error)
+	GrantBotVerification(ctx context.Context, req admin.GrantBotVerificationRequest) (admin.CommandResult, error)
 	ApproveBotVerification(ctx context.Context, req admin.ApproveBotVerificationRequest) (admin.CommandResult, error)
 	RejectBotVerification(ctx context.Context, req admin.RejectBotVerificationRequest) (admin.CommandResult, error)
 	RevokeBotVerification(ctx context.Context, req admin.RevokeBotVerificationRequest) (admin.CommandResult, error)
@@ -164,6 +170,21 @@ type collectiblePhoneService interface {
 // provides it.
 type starsDebitService interface {
 	DebitStars(context.Context, admin.DebitStarsRequest) (admin.CommandResult, error)
+}
+
+// userByPhoneResolver is optional so lightweight admin API test doubles that
+// do not implement phone lookup keep the rest of their contract intact.
+type userByPhoneResolver interface {
+	ResolveUserByPhone(context.Context, string) (domain.User, bool, error)
+}
+
+// itemPricesService is optional for the same reason: test doubles that predate
+// shop pricing keep working, and the routes answer 503 when it is absent.
+type itemPricesService interface {
+	ItemPrices(ctx context.Context, enabledOnly bool) ([]domain.ItemPrice, error)
+	StarsRate(ctx context.Context) (int64, error)
+	UpdateItemPrice(ctx context.Context, req admin.UpdateItemPriceRequest) (admin.CommandResult, error)
+	SetStarsRate(ctx context.Context, req admin.SetStarsRateRequest) (admin.CommandResult, error)
 }
 
 func Start(ctx context.Context, cfg Config, svc Service, log *zap.Logger) (*http.Server, error) {
@@ -214,6 +235,7 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
+	mux.HandleFunc("POST /v1/accounts/delete", s.authenticated(s.handleDeleteAccount))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authorized(PermissionPremiumManage, s.handleGrantPremium))
 	mux.HandleFunc("POST /v1/accounts/refund-premium", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
 	mux.HandleFunc("GET /v1/premium/plans", s.authorized(PermissionPremiumManage, s.handlePremiumPlans))
@@ -222,6 +244,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/premium/payments/{id}", s.authorized(PermissionPremiumManage, s.handlePremiumPayment))
 	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/debit-stars", s.authenticated(s.handleDebitStars))
+	mux.HandleFunc("POST /v1/accounts/resolve-by-phone", s.authenticated(s.handleResolveUserByPhone))
+	mux.HandleFunc("POST /v1/donations/chains/update", s.authorized(PermissionDonationsManage, s.handleUpdateDonationChain))
+	mux.HandleFunc("GET /v1/item-prices", s.authorized(PermissionPricesManage, s.handleItemPrices))
+	mux.HandleFunc("POST /v1/item-prices/update", s.authorized(PermissionPricesManage, s.handleUpdateItemPrice))
+	mux.HandleFunc("POST /v1/item-prices/set-rate", s.authorized(PermissionPricesManage, s.handleSetStarsRate))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -257,6 +284,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/stickers/remove", s.authenticated(s.handleRemoveStickerFromSet))
 	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("POST /v1/gifts/import", s.authenticated(s.handleImportStarGift))
+	mux.HandleFunc("POST /v1/gifts/import-pack", s.authenticated(s.handleImportGiftPack))
 	mux.HandleFunc("GET /v1/official-gifts", s.authenticated(s.handleOfficialStarGifts))
 	mux.HandleFunc("GET /v1/official-gifts/{id}/animation", s.authenticated(s.handleOfficialStarGiftAnimation))
 	mux.HandleFunc("POST /v1/official-gifts/import", s.authenticated(s.handleImportOfficialStarGift))
@@ -272,6 +300,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gif-catalog/create", s.authenticated(s.handleCreateGifCatalogEntry))
 	mux.HandleFunc("POST /v1/gif-catalog/set-enabled", s.authenticated(s.handleSetGifCatalogEnabled))
 	mux.HandleFunc("POST /v1/gif-catalog/set-sort-order", s.authenticated(s.handleSetGifCatalogSortOrder))
+	mux.HandleFunc("POST /v1/gif-catalog/set-category", s.authenticated(s.handleSetGifCatalogCategory))
 	mux.HandleFunc("POST /v1/gif-catalog/delete", s.authenticated(s.handleDeleteGifCatalogEntry))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
@@ -296,6 +325,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/collectible-phones/delete", s.authenticated(s.handleDeleteCollectiblePhone))
 	mux.HandleFunc("GET /v1/collectible-phones", s.authenticated(s.handleCollectiblePhones))
 	mux.HandleFunc("GET /v1/collectible-phones/{id}", s.authenticated(s.handleCollectiblePhone))
+	mux.HandleFunc("GET /v1/admin-commands", s.authenticated(s.handleAdminCommands))
 	mux.HandleFunc("POST /v1/account-ratings/recompute", s.authenticated(s.handleRecomputeAccountRating))
 	mux.HandleFunc("POST /v1/account-ratings/adjust", s.authenticated(s.handleAdjustAccountRating))
 	mux.HandleFunc("GET /v1/account-ratings", s.authenticated(s.handleAccountRatings))
@@ -331,6 +361,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/botverification/icons/upsert", s.authorized(PermissionBotVerificationManage, s.handleUpsertVerificationIcon))
 	mux.HandleFunc("POST /v1/botverification/icons/set-active", s.authorized(PermissionBotVerificationManage, s.handleSetVerificationIconActive))
 	mux.HandleFunc("POST /v1/botverification/marks/revoke", s.authorized(PermissionBotVerificationManage, s.handleRevokeCustomVerification))
+	mux.HandleFunc("POST /v1/botverification/marks/grant", s.authorized(PermissionBotVerificationManage, s.handleGrantBotVerificationMark))
 	return mux
 }
 
@@ -340,6 +371,15 @@ func (s *Server) handleSetAccountFrozen(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	result, err := s.svc.SetAccountFrozen(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteAccountRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteAccount(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
@@ -483,6 +523,15 @@ func (s *Server) handleDebitStars(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleUpdateDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpdateDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpdateDonationChain(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleSetVerified(w http.ResponseWriter, r *http.Request) {
 	var req admin.SetVerifiedRequest
 	if !decodeJSON(w, r, &req) {
@@ -575,6 +624,24 @@ func (s *Server) handleSetPhone(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.svc.SetPhone(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleResolveUserByPhone(w http.ResponseWriter, r *http.Request) {
+	var req admin.ResolveUserByPhoneRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	svc, ok := s.svc.(userByPhoneResolver)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "user lookup is not configured")
+		return
+	}
+	user, found, err := svc.ResolveUserByPhone(r.Context(), req.Phone)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"found": found, "user_id": user.ID})
 }
 
 func (s *Server) handleSetLoginEmail(w http.ResponseWriter, r *http.Request) {
@@ -957,6 +1024,39 @@ func (s *Server) handleImportStarGift(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 33<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var req admin.ImportGiftPackRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "gift pack zip is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (32<<20)+1))
+	if err != nil || len(data) == 0 || len(data) > 32<<20 {
+		writeError(w, http.StatusBadRequest, "gift pack zip is empty or too large")
+		return
+	}
+	req.FileName, req.Data = header.Filename, data
+	result, err := s.svc.ImportGiftPack(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleOfficialStarGifts(w http.ResponseWriter, r *http.Request) {
 	items, err := s.svc.OfficialStarGifts(r.Context())
 	if err != nil {
@@ -1036,7 +1136,12 @@ func (s *Server) handlePublishStarGiftCollectibles(w http.ResponseWriter, r *htt
 	}
 	req.GiftID = giftID
 	seen := make(map[string]struct{}, len(req.Models)+len(req.Patterns))
-	if len(req.Models)+len(req.Patterns) > 128 {
+	// Keep the wire guard aligned with the domain pool limit.  A collectible
+	// revision may contain up to MaxStarGiftCollectibleAttributesPerKind
+	// attributes in each kind; the endpoint receives models and patterns in one
+	// multipart request, so the combined guard must not reject a valid pool
+	// merely because it has more than the old 128-file operational cap.
+	if len(req.Models)+len(req.Patterns) > domain.MaxStarGiftCollectibleAttributesPerKind {
 		writeError(w, http.StatusBadRequest, "too many collectible animation files")
 		return
 	}
@@ -1234,6 +1339,15 @@ func (s *Server) handleSetGifCatalogSortOrder(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := s.svc.SetGifCatalogSortOrder(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetGifCatalogCategory(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetGifCatalogCategoryRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetGifCatalogCategory(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
@@ -1965,6 +2079,50 @@ func (s *Server) handleAccountRating(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleAdminCommands(w http.ResponseWriter, r *http.Request) {
+	limit, ok := optionalQueryInt(w, r.URL.Query(), "limit")
+	if !ok {
+		return
+	}
+	actor := strings.TrimSpace(r.URL.Query().Get("actor"))
+	items, err := s.svc.ListRecentAdminCommands(r.Context(), limit, actor)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	commands := make([]map[string]any, 0, len(items))
+	for _, cmd := range items {
+		commands = append(commands, adminCommandResponse(cmd))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commands": commands})
+}
+
+func adminCommandResponse(cmd domain.AdminCommand) map[string]any {
+	out := map[string]any{
+		"command_id": cmd.CommandID,
+		"actor":      cmd.Actor,
+		"action":     cmd.Action,
+		"dry_run":    cmd.DryRun,
+		"status":     string(cmd.Status),
+	}
+	if cmd.TargetUserID != 0 {
+		out["target_user_id"] = cmd.TargetUserID
+	}
+	if cmd.Reason != "" {
+		out["reason"] = cmd.Reason
+	}
+	if cmd.Error != "" {
+		out["error"] = cmd.Error
+	}
+	if !cmd.CreatedAt.IsZero() {
+		out["created_at"] = cmd.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	if cmd.CompletedAt != nil {
+		out["completed_at"] = cmd.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
 // collectibleOwnerFilter reads the optional owner filter. At most one of the two
 // identifiers may be present, mirroring the mint/transfer request shape.
 func collectibleOwnerFilter(w http.ResponseWriter, query url.Values) (domain.Peer, bool) {
@@ -2168,7 +2326,7 @@ func writeCommandResult(w http.ResponseWriter, result admin.CommandResult, err e
 	if err != nil {
 		status = http.StatusBadRequest
 		if result.CommandID == "" {
-			result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error()}
+			result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error(), Code: admin.ErrorCode(err)}
 		}
 	}
 	writeJSON(w, status, result)

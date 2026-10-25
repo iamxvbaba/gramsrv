@@ -133,7 +133,13 @@ func (r *Router) communityUpdates(view domain.CommunityView) *tg.Updates {
 }
 
 func (r *Router) communityUpdatesAt(view domain.CommunityView, date int) *tg.Updates {
-	return &tg.Updates{Updates: []tg.UpdateClass{}, Users: tgUsers(view.Users), Chats: tgCommunityHydratedChats(view.Self.UserID, view), Date: date}
+	// updateChannel makes clients refetch the community (e.g. a new shared
+	// avatar); it rides both the RPC result and the durable fanout.
+	updates := []tg.UpdateClass{}
+	if view.Community.ID != 0 {
+		updates = append(updates, &tg.UpdateChannel{ChannelID: view.Community.ID})
+	}
+	return &tg.Updates{Updates: updates, Users: tgUsers(view.Users), Chats: tgCommunityHydratedChats(view.Self.UserID, view), Date: date}
 }
 
 func (r *Router) communityDeliveryEffects(ctx context.Context, requestUserID int64, date int) store.DeliveryEffectsBuilder[store.CommunityDeliverySnapshot] {

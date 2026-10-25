@@ -16,6 +16,9 @@ Options used only when deploy/docker/.env does not exist:
 
 Other options:
   --build    Build local role images instead of pulling published images.
+  --no-pull  Never contact the registry: start the role images already present
+             locally (for example a stack built earlier with --build). With
+             --build, base images are not refreshed.
   --help
 EOF
 }
@@ -34,6 +37,7 @@ admin_bind_ip=
 sfu_network_mode=
 allow_insecure=false
 build=false
+pull=true
 initialization_options=false
 
 while [[ $# -gt 0 ]]; do
@@ -81,6 +85,10 @@ while [[ $# -gt 0 ]]; do
       build=true
       shift
       ;;
+    --no-pull)
+      pull=false
+      shift
+      ;;
     --help|-h)
       usage
       exit 0
@@ -109,20 +117,36 @@ case "$configured_sfu_host_network" in
   true|false) ;;
   *) printf 'start-docker: TELESRV_SFU_HOST_NETWORK must be true or false\n' >&2; exit 1 ;;
 esac
+configured_bot_api_addr=$(awk -F= '$1 == "TELESRV_BOT_API_ADDR" { print substr($0, length($1) + 2); exit }' "$env_path")
+case "$configured_bot_api_addr" in
+  ''|0.0.0.0:8088|:8088|'[::]:8088') ;;
+  *) printf 'start-docker: TELESRV_BOT_API_ADDR must be empty or listen on container port 8088 on all interfaces (0.0.0.0:8088); publish another host port with TELESRV_BOT_API_PORT\n' >&2; exit 1 ;;
+esac
 compose=(docker compose --project-directory "$docker_dir" --env-file "$env_path" --file "$compose_path")
 if [[ "$configured_sfu_host_network" = false ]]; then
   compose+=(--file "$docker_dir/compose.sfu-bridge-network.yaml")
 fi
+if [[ -n "$configured_bot_api_addr" ]]; then
+  compose+=(--file "$docker_dir/compose.bot-api.yaml")
+fi
 "${compose[@]}" version >/dev/null
 "${compose[@]}" config --quiet
 
-if [[ "$build" = true ]]; then
+up_args=(up --detach --no-build --wait --wait-timeout 600)
+if [[ "$build" = true && "$pull" = true ]]; then
   "${compose[@]}" build --pull
-else
+elif [[ "$build" = true ]]; then
+  "${compose[@]}" build
+elif [[ "$pull" = true ]]; then
   "${compose[@]}" pull
 fi
+# Without a pull, a missing image must fail here instead of being fetched
+# silently and replacing a locally built tag (gramsrv#136).
+if [[ "$pull" = false ]]; then
+  up_args+=(--pull never)
+fi
 
-if ! "${compose[@]}" up --detach --no-build --wait --wait-timeout 600; then
+if ! "${compose[@]}" "${up_args[@]}"; then
   "${compose[@]}" logs --no-color --tail 120 || true
   exit 1
 fi

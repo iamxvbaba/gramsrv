@@ -27,6 +27,7 @@ func TestChannelsReadHistoryAdvancesForumGeneralReadRPC(t *testing.T) {
 	deliveryOutbox := memory.NewDeliveryOutboxStore()
 	channelStore.AttachDeliveryOutbox(deliveryOutbox)
 	r := New(Config{}, Deps{
+		Account:        newForumNotifyTestAccount(),
 		Users:          appusers.NewService(userStore),
 		Channels:       appchannels.NewService(channelStore),
 		DeliveryOutbox: deliveryOutbox,

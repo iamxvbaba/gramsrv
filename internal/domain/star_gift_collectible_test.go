@@ -117,14 +117,26 @@ func storedCollectibleWrite() StarGiftCollectibleWrite {
 	return write
 }
 
+func TestValidateStarGiftCollectibleDraftAllowsDeterministicAnimatedAttributes(t *testing.T) {
+	for _, kind := range []StarGiftCollectibleAttributeKind{StarGiftCollectibleModel, StarGiftCollectiblePattern} {
+		t.Run(string(kind), func(t *testing.T) {
+			write := validCollectibleDraft()
+			if kind == StarGiftCollectibleModel {
+				write.Models = write.Models[:1]
+			} else {
+				write.Patterns = write.Patterns[:1]
+			}
+			if err := ValidateStarGiftCollectibleDraft(write); err != nil {
+				t.Fatalf("singleton %s: %v", kind, err)
+			}
+		})
+	}
+}
+
 func TestValidateStarGiftCollectibleDraftRequiresClientSafePreviewPool(t *testing.T) {
 	tests := map[string]func(*StarGiftCollectibleWrite){
-		"one selectable model": func(write *StarGiftCollectibleWrite) {
-			write.Models = append(write.Models[:1], write.Models[2:]...)
-		},
-		"one selectable pattern": func(write *StarGiftCollectibleWrite) {
-			write.Patterns = write.Patterns[:1]
-		},
+		"no selectable model":   func(write *StarGiftCollectibleWrite) { write.Models = nil },
+		"no selectable pattern": func(write *StarGiftCollectibleWrite) { write.Patterns = nil },
 		"one selectable backdrop": func(write *StarGiftCollectibleWrite) {
 			write.Backdrops = write.Backdrops[:1]
 		},

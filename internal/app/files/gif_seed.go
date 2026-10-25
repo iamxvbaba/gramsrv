@@ -96,7 +96,7 @@ func (s *Service) SeedGifs(ctx context.Context, root string) (GifSeedStats, erro
 		if err != nil {
 			return stats, fmt.Errorf("import %s: %w", candidate.name, err)
 		}
-		if _, err := s.createGifCatalogEntry(ctx, candidate.title, doc.ID, candidate.name, candidate.digest); err != nil {
+		if _, err := s.createGifCatalogEntry(ctx, candidate.title, doc.ID, candidate.name, candidate.name, candidate.digest); err != nil {
 			return stats, fmt.Errorf("catalog %s: %w", candidate.name, err)
 		}
 		stats.Imported++

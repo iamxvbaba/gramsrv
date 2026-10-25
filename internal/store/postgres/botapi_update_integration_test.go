@@ -473,3 +473,97 @@ func TestBotAPIEphemeralEnvelopeRoundTrip(t *testing.T) {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
 }
+
+// The pre_checkout_query payload has to survive a real round trip. It has no peer,
+// message or pts, so nothing about the generic message columns can carry it, and a
+// store that silently drops it breaks every payment: the bot is never asked, the
+// 10 second gate closes, and the payer gets PAYMENT_FAILED.
+func TestBotAPIUpdatePreCheckoutRoundTrip(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	botUser, err := users.Create(ctx, domain.User{
+		AccessHash: 941, Phone: "+1941" + suffix + "01", FirstName: "PreCheckoutBot",
+	})
+	if err != nil {
+		t.Fatalf("create bot user: %v", err)
+	}
+	payerUser, err := users.Create(ctx, domain.User{
+		AccessHash: 942, Phone: "+1942" + suffix + "01", FirstName: "PreCheckoutPayer",
+	})
+	if err != nil {
+		t.Fatalf("create payer: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO bots (bot_user_id, owner_user_id, token_secret)
+VALUES ($1, $1, 'precheckout-test-secret')
+ON CONFLICT (bot_user_id) DO NOTHING`, botUser.ID); err != nil {
+		t.Fatalf("seed bot: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM bot_api_updates WHERE bot_user_id = $1", botUser.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM bots WHERE bot_user_id = $1", botUser.ID)
+	})
+
+	store := NewBotAPIUpdateStore(pool)
+	now := int(time.Now().Unix())
+	first := &domain.BotPreCheckoutQuery{
+		ID: 9001, BotUserID: botUser.ID, UserID: payerUser.ID,
+		Currency: "XTR", TotalAmount: 100, Payload: "pre-" + suffix,
+	}
+	_, created, err := store.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: botUser.ID, Kind: domain.BotAPIUpdatePreCheckoutQuery, Date: now, PreCheckout: first,
+	})
+	if err != nil || !created {
+		t.Fatalf("enqueue = created %v, err %v, want created", created, err)
+	}
+
+	list, err := store.ListBotAPIUpdates(ctx, botUser.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("queued updates = %d, want 1", len(list))
+	}
+	if list[0].PreCheckout == nil {
+		t.Fatal("the pre-checkout payload did not survive the round trip")
+	}
+	got := *list[0].PreCheckout
+	if got.ID != first.ID || got.BotUserID != botUser.ID || got.UserID != payerUser.ID ||
+		got.Currency != "XTR" || got.TotalAmount != 100 || got.Payload != first.Payload {
+		t.Fatalf("payload = %+v, want %+v", got, *first)
+	}
+
+	// Two questions for the same bot must stay two updates: with no peer, message
+	// or pts to tell them apart, the deduplication key collapses them otherwise.
+	second := &domain.BotPreCheckoutQuery{
+		ID: 9002, BotUserID: botUser.ID, UserID: payerUser.ID,
+		Currency: "XTR", TotalAmount: 250, Payload: "pre2-" + suffix,
+	}
+	_, created, err = store.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: botUser.ID, Kind: domain.BotAPIUpdatePreCheckoutQuery, Date: now, PreCheckout: second,
+	})
+	if err != nil || !created {
+		t.Fatalf("second enqueue = created %v, err %v, want created", created, err)
+	}
+	list, err = store.ListBotAPIUpdates(ctx, botUser.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("list again: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("queued updates = %d, want 2 distinct questions", len(list))
+	}
+
+	// A replay of the same query must not duplicate it.
+	_, created, err = store.EnqueueBotAPIUpdate(ctx, domain.EnqueueBotAPIUpdateRequest{
+		BotUserID: botUser.ID, Kind: domain.BotAPIUpdatePreCheckoutQuery, Date: now, PreCheckout: second,
+	})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if created {
+		t.Fatal("replaying the same pre-checkout query created a duplicate")
+	}
+}

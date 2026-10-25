@@ -112,7 +112,8 @@ func TestPaidReactionPrivacyAndDeliveryEffectRollbackTogetherMemory(t *testing.T
 	settings := domain.DefaultAccountReactionSettings()
 	settings.PaidPrivacy = domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyAnonymous}
 	projectionErr := errors.New("paid privacy projection failed")
-	if err := passwords.SaveReactionSettings(ctx, userID, settings, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+	patch := domain.AccountReactionSettingsPatch{PaidPrivacy: &settings.PaidPrivacy}
+	if _, err := passwords.UpdateReactionSettings(ctx, userID, patch, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
 		return nil, projectionErr
 	}); !errors.Is(err, projectionErr) {
 		t.Fatalf("failed paid privacy err = %v, want projection error", err)
@@ -123,7 +124,7 @@ func TestPaidReactionPrivacyAndDeliveryEffectRollbackTogetherMemory(t *testing.T
 	if len(outbox.items) != 0 {
 		t.Fatalf("failed paid privacy outbox items = %d, want 0", len(outbox.items))
 	}
-	if err := passwords.SaveReactionSettings(ctx, userID, settings, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+	if _, err := passwords.UpdateReactionSettings(ctx, userID, patch, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
 		return []store.DeliveryEffect{store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
 			TargetUserID: userID, Payload: []byte{1}, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
 		})}, nil

@@ -86,9 +86,10 @@ func tgGroupCallParticipant(p domain.GroupCallParticipant, viewerUserID int64) t
 		peer = &tg.PeerChannel{ChannelID: p.JoinAsChannelID}
 	}
 	out := tg.GroupCallParticipant{
-		Muted:         p.Muted,
-		Left:          p.Left,
-		CanSelfUnmute: !p.MutedByAdmin,
+		Muted: p.Muted,
+		Left:  p.Left,
+		// TDLib interprets this flag as currently muted by themselves.
+		CanSelfUnmute: p.Muted && !p.MutedByAdmin,
 		Self:          p.UserID == viewerUserID,
 		Peer:          peer,
 		Date:          p.JoinDate,

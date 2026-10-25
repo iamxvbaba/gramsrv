@@ -114,15 +114,18 @@ ready。局域网临时体验可以一条命令初始化；把示例地址替换
 .\scripts\start-docker.ps1 -AdvertiseIP 192.168.1.20 -PublicBaseURL http://192.168.1.20:2401 -PublicWebBaseURL http://192.168.1.20:2401 -AllowInsecureDevelopmentAuth
 ```
 
+局域网明文 HTTP 地址下，Core 会记录一条警告并关闭 Star 礼物/收益提现链接（提现 URL 是 bearer
+链接，loopback 之外只允许 HTTPS），其余功能照常可用；需要提现时改用 HTTPS 的 public base URL。
+
 真正的公网部署先单独运行 `new-docker-env.ps1` 生成配置，按 §2 把 phone-code provider 改为
 webhook，再运行无参数 `start-docker.ps1`。已有 `.env` 时启动脚本始终复用原凭据；传入的新地址
 或 development-auth 参数只会警告而不会覆盖，需要变更时应显式编辑 `.env` 后重启。
 
 默认镜像前缀是 `ghcr.io/iamxvbaba/gramsrv`，包含 `migrate`、`file`、`core`、`egress`、
-`sfu`、`edge` 六个 package。体验 tag 是 `v2`，每次发布同时产生不可变的 `sha-<commit>` tag。
+`sfu`、`admin`、`edge` 七个 package。体验 tag 是 `v2`，每次发布同时产生不可变的 `sha-<commit>` tag。
 自动随 `v2` push 发布目前已暂停；维护者需要在 GitHub Actions 中手动运行
 `Publish v2 container images` workflow。GHCR 首次创建 package 时默认是 private；维护者需要在
-GitHub Packages 中把这六个 package 分别设置成 Public，之后普通用户无需登录即可拉取。若暂时
+GitHub Packages 中把这七个 package 分别设置成 Public，之后普通用户无需登录即可拉取。若暂时
 保持 private，先执行 `docker login ghcr.io`。
 
 修改源码后要验证本地镜像时，显式构建；Compose 中的 Edge 本地构建目标同样是带公开测试密钥的
@@ -131,6 +134,9 @@ GitHub Packages 中把这六个 package 分别设置成 Public，之后普通用
 ```powershell
 .\scripts\start-docker.ps1 -Build
 ```
+
+之后重启这套本地构建的镜像时加 `-NoPull`（`start-docker.sh` 为 `--no-pull`）：脚本不再访问镜像仓库，
+缺少镜像时直接失败，不会用已发布的镜像悄悄覆盖本地 tag。与 `-Build` 同用时不刷新基础镜像。
 
 需要拆开执行或在 Linux/macOS 上运行时：
 
@@ -204,7 +210,14 @@ IPv4 Docker 部署默认启用内嵌 TURN 和 RTMP；路由器/NAT 与 Windows/L
 `http://<AdvertiseIP>:...` 时，会让 2401 直接绑定该地址，便于局域网首次体验；公网反代 2401
 时保留宿主 loopback binding，并让 nginx/Caddy 终止 TLS。不要直接公开 pprof 或内部 gRPC。
 
-Bot API、Admin、TON worker 没有在默认 Compose 中启用；需要时应增加显式配置和验证。
+Admin 默认启用，登录密码保存在 owner-only 的 `deploy/docker/.env`；它只读挂载 `file_data` 以显示
+本机 blob/spool 磁盘容量，所有管理写操作都经 Core Admin API。TON worker 没有在默认 Compose 中启用；
+需要时应增加显式配置和验证。
+
+HTTP Bot API 网关默认关闭。在 `.env` 设置 `TELESRV_BOT_API_ADDR=0.0.0.0:8088` 即可启用（容器内端口固定 8088）；
+一键脚本随之加载 `compose.bot-api.yaml`，按 `TELESRV_BOT_API_BIND_IP:TELESRV_BOT_API_PORT`（默认
+`127.0.0.1:8088`）发布端口。手动运行 Compose 时在 `compose.yaml` 之后追加
+`-f deploy/docker/compose.bot-api.yaml`。Bot API 是明文 HTTP，公网访问请保留 loopback 并经 TLS 反向代理。
 
 ## 5. 数据和 RSA 身份
 

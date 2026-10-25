@@ -87,6 +87,11 @@ type MediaStore interface {
 	ListAvailableReactions(ctx context.Context) ([]domain.AvailableReaction, error)
 	CountAvailableReactions(ctx context.Context) (int, error)
 
+	// WithTx runs fn inside a database transaction with a transaction-scoped
+	// MediaStore. If fn returns nil the transaction is committed; otherwise it
+	// is rolled back.
+	WithTx(ctx context.Context, fn func(ctx context.Context, txMedia MediaStore) error) error
+
 	// 头像历史（owner = user/channel；current = active 中 sort_order 最大者）。
 	AddProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) error
 	CurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (int64, bool, error)

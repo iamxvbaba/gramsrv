@@ -9,49 +9,6 @@ import (
 	"unicode/utf8"
 )
 
-func (r *Router) onMessagesSearchStickerSets(ctx context.Context, req *tg.MessagesSearchStickerSetsRequest) (tg.MessagesFoundStickerSetsClass, error) {
-	if _, _, err := r.currentUserID(ctx); err != nil {
-		return nil, internalErr()
-	}
-	if utf8.RuneCountInString(req.Q) > maxStickerSearchQLength {
-		return nil, limitInvalidErr()
-	}
-	if req.Hash != 0 {
-		return &tg.MessagesFoundStickerSetsNotModified{}, nil
-	}
-	return &tg.MessagesFoundStickerSets{
-		Hash: 0,
-		Sets: []tg.StickerSetCoveredClass{},
-	}, nil
-}
-
-func (r *Router) onMessagesSearchStickers(ctx context.Context, req *tg.MessagesSearchStickersRequest) (tg.MessagesFoundStickersClass, error) {
-	if _, _, err := r.currentUserID(ctx); err != nil {
-		return nil, internalErr()
-	}
-	if req.Offset < 0 || req.Offset > domain.MaxMessageBoxID || req.Limit < 0 || req.Limit > maxSearchResultsLimit {
-		return nil, limitInvalidErr()
-	}
-	if utf8.RuneCountInString(req.Q) > maxStickerSearchQLength || utf8.RuneCountInString(req.Emoticon) > maxStickerSearchQLength {
-		return nil, limitInvalidErr()
-	}
-	if len(req.LangCode) > maxStickerSearchLangs {
-		return nil, limitInvalidErr()
-	}
-	for _, lang := range req.LangCode {
-		if err := validateEmojiLangCode(lang); err != nil {
-			return nil, err
-		}
-	}
-	if req.Hash != 0 {
-		return &tg.MessagesFoundStickersNotModified{}, nil
-	}
-	return &tg.MessagesFoundStickers{
-		Hash:     0,
-		Stickers: []tg.DocumentClass{},
-	}, nil
-}
-
 func (r *Router) onMessagesGetSearchResultsCalendar(ctx context.Context, req *tg.MessagesGetSearchResultsCalendarRequest) (*tg.MessagesSearchResultsCalendar, error) {
 	if req.OffsetID < 0 || req.OffsetID > domain.MaxMessageBoxID || req.OffsetDate < 0 {
 		return nil, limitInvalidErr()
@@ -530,20 +487,18 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 		return &tg.MessagesMessages{}, nil
 	}
 	query := normalizeSearchQuery(req.Q)
-	musicOnly := messagesSearchFilterMusic(req.Filter)
+	categories := mediaCategoriesForFilter(req.Filter)
+	filtered := len(categories) > 0
 	communityInput, hasCommunity := req.GetCommunity()
 	if !hasCommunity && req.Community != nil {
 		communityInput, hasCommunity = req.Community, true
 	}
-	emptyCommunitySearch := query == "" && !musicOnly && hasCommunity && messagesSearchFilterEmpty(req.Filter)
-	if query == "" && !musicOnly && !emptyCommunitySearch {
+	emptyCommunitySearch := query == "" && !filtered && hasCommunity && messagesSearchFilterEmpty(req.Filter)
+	if query == "" && !filtered && !emptyCommunitySearch {
 		return nil, searchQueryEmptyErr()
 	}
 	if utf8.RuneCountInString(query) > maxMessageSearchQLength {
 		return nil, limitInvalidErr()
-	}
-	if !musicOnly && searchFilterNeedsMediaStore(req.Filter) {
-		return &tg.MessagesMessages{}, nil
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -570,9 +525,20 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 	if hasFolderID && folderID < 0 {
 		return nil, folderIDInvalidErr()
 	}
-	channelOffsetID, err := r.searchGlobalChannelOffsetID(ctx, userID, req.OffsetPeer)
-	if err != nil {
-		return nil, err
+	offsetPeer := domain.Peer{}
+	if req.OffsetPeer != nil {
+		if _, empty := req.OffsetPeer.(*tg.InputPeerEmpty); !empty {
+			offsetPeer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.OffsetPeer)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if req.MinDate < 0 || req.MaxDate < 0 || req.OffsetRate < 0 || req.OffsetID < 0 || req.OffsetID > domain.MaxMessageBoxID {
+		return nil, limitInvalidErr()
+	}
+	if req.Filter != nil && !messagesSearchFilterEmpty(req.Filter) && !filtered {
+		return nil, filterInvalidErr()
 	}
 	if emptyCommunitySearch {
 		result := appendCommunitySearchChat(&tg.MessagesMessages{}, communityView)
@@ -582,18 +548,21 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 	var private domain.MessageList
 	if !req.BroadcastsOnly && !req.GroupsOnly && r.deps.Messages != nil {
 		filter := domain.MessageFilter{
-			Query:      query,
-			OffsetID:   req.OffsetID,
-			OffsetDate: req.OffsetRate,
-			Limit:      limit + 1,
-			MusicOnly:  musicOnly,
+			Query:           query,
+			OffsetID:        req.OffsetID,
+			OffsetDate:      req.OffsetRate,
+			Limit:           limit + 1,
+			GlobalSearch:    true,
+			OffsetPeer:      offsetPeer,
+			MediaCategories: categories,
+			MinDate:         req.MinDate,
+			MaxDate:         req.MaxDate,
+			HasFolderID:     hasFolderID,
+			FolderID:        folderID,
 		}
 		if communityView != nil {
 			filter.RestrictPeerIDs = true
 			filter.PeerIDs = communityScope.BotUserIDs
-		}
-		if req.MaxDate > 0 {
-			filter.OffsetDate = req.MaxDate
 		}
 		if req.UsersOnly || !req.BroadcastsOnly && !req.GroupsOnly {
 			private, err = r.deps.Messages.Search(ctx, userID, filter)
@@ -604,7 +573,7 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 		}
 	}
 	if req.UsersOnly || r.deps.Channels == nil {
-		result := appendCommunitySearchChat(r.tgMessagesMessages(ctx, userID, r.enrichMessageList(ctx, userID, limitMessageList(private, limit))), communityView)
+		result := appendCommunitySearchChat(r.tgGlobalSearchMessages(ctx, userID, limit, private, domain.ChannelHistory{}), communityView)
 		return result, nil
 	}
 	channelHistory, err := r.deps.Channels.SearchJoinedMessages(ctx, userID, domain.ChannelGlobalSearchRequest{
@@ -614,11 +583,12 @@ func (r *Router) onMessagesSearchGlobal(ctx context.Context, req *tg.MessagesSea
 		AllowPublicPreview: communityView != nil,
 		BroadcastsOnly:     req.BroadcastsOnly,
 		GroupsOnly:         req.GroupsOnly,
-		MusicOnly:          musicOnly,
+		MediaCategories:    categories,
+		OffsetIsUser:       offsetPeer.Type == domain.PeerTypeUser,
 		HasFolderID:        hasFolderID,
 		FolderID:           folderID,
 		OffsetRate:         req.OffsetRate,
-		OffsetChannelID:    channelOffsetID,
+		OffsetChannelID:    offsetPeer.ID,
 		OffsetID:           req.OffsetID,
 		MinDate:            req.MinDate,
 		MaxDate:            req.MaxDate,
@@ -705,6 +675,7 @@ func tgGlobalSearchMessages(viewerUserID int64, limit int, private domain.Messag
 		hits = append(hits, globalSearchHit{
 			date:      msg.Date,
 			peerRank:  msg.ChannelID,
+			channel:   true,
 			messageID: msg.ID,
 			message:   item,
 		})
@@ -716,6 +687,9 @@ func tgGlobalSearchMessages(viewerUserID int64, limit int, private domain.Messag
 		}
 		if a.peerRank != b.peerRank {
 			return a.peerRank > b.peerRank
+		}
+		if a.channel != b.channel {
+			return a.channel
 		}
 		return a.messageID > b.messageID
 	})

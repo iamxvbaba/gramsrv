@@ -205,6 +205,15 @@ export function parseIDs(value: string, invalidMessage = "msg ids invalid"): num
 // toUnixSeconds reads a datetime-local input. Such an input carries no zone, so
 // the value parses as the operator's local time — which is the time they picked.
 // 0 means "empty or unparseable", which every caller treats as "not scheduled".
+// titleFromFilename derives a display title from an uploaded animation file. The
+// directory part and the trailing extension (".tgs", ".json", ".lottie") are
+// dropped, so "gifts/crown.tgs" just becomes "crown" for the gift name field.
+export function titleFromFilename(value: string): string {
+  const base = (value ?? "").split(/[\\/]/).pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
 export function toUnixSeconds(value: string): number {
   if (!value.trim()) return 0;
   const ms = new Date(value).getTime();

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/config"
+	"telesrv/internal/domain"
 	"telesrv/internal/hoststats"
 )
 
@@ -84,6 +85,16 @@ type uiConfig struct {
 	DiskStatsPath string
 	// Permissions is the right set a panel session is issued with.
 	Permissions []string
+	// IdentityDir must point at the same directory every Core instance reads
+	// (identity.dir in core.yaml and admin.yaml), so an identity edit here is
+	// picked up by the Core identity watcher without a restart.
+	IdentityDir string
+	// WelcomeMessagePhoneDefault/WelcomeMessageEmailDefault/LoginCodeMessageDefault
+	// are the compiled-in templates Core falls back to whenever the identity
+	// panel override is unset; v2 role YAML exposes no override for them.
+	WelcomeMessagePhoneDefault string
+	WelcomeMessageEmailDefault string
+	LoginCodeMessageDefault    string
 }
 
 // loadConfig reads the standalone admin YAML and converts it to uiConfig.
@@ -105,6 +116,11 @@ func loadConfig() (uiConfig, error) {
 		SessionKey:    sum[:],
 		DiskStatsPath: appCfg.DiskStatsPath,
 		Permissions:   appCfg.Permissions,
+		IdentityDir:   appCfg.IdentityDir,
+
+		WelcomeMessagePhoneDefault: domain.DefaultWelcomeMessagePhoneTemplate,
+		WelcomeMessageEmailDefault: domain.DefaultWelcomeMessageEmailTemplate,
+		LoginCodeMessageDefault:    domain.DefaultLoginCodeMessageTemplate,
 	}, nil
 }
 

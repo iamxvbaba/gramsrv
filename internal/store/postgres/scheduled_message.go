@@ -1,8 +1,11 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -22,7 +25,7 @@ const maxScheduledMessagePage = 100
 const scheduledRetryBackoffSeconds = 30
 
 func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.ScheduleMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error) {
-	if req.OwnerUserID == 0 || req.Peer.ID == 0 || req.ScheduleDate <= 0 {
+	if req.OwnerUserID == 0 || req.Peer.ID == 0 || req.ScheduleDate <= 0 || !domain.ValidScheduleRepeat(req.ScheduleRepeatPeriod) || (req.ScheduleDate == domain.ScheduleWhenOnline && (req.ScheduleRepeatPeriod != 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == req.OwnerUserID)) {
 		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: invalid request")
 	}
 	if req.Peer.Type != domain.PeerTypeUser && req.Peer.Type != domain.PeerTypeChannel {
@@ -70,12 +73,30 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("lock scheduled owner: %w", err)
 	}
+	fingerprint := req.IdempotencyFingerprint
+	if len(fingerprint) == 0 {
+		immutable := req
+		immutable.Date = 0
+		data, err := json.Marshal(immutable)
+		if err != nil {
+			return domain.ScheduledMessage{}, err
+		}
+		hash := sha256.Sum256(data)
+		fingerprint = hash[:]
+	}
 	if req.RandomID != 0 {
 		existing, ok, err := getPendingScheduledByRandomID(ctx, tx, req.OwnerUserID, req.RandomID)
 		if err != nil {
 			return domain.ScheduledMessage{}, err
 		}
 		if ok {
+			var stored []byte
+			if err := tx.QueryRow(ctx, "SELECT request_fingerprint FROM scheduled_messages WHERE owner_user_id=$1 AND scheduled_id=$2", req.OwnerUserID, existing.ID).Scan(&stored); err != nil {
+				return domain.ScheduledMessage{}, err
+			}
+			if !bytes.Equal(stored, fingerprint) {
+				return domain.ScheduledMessage{}, domain.ErrMessageRandomIDDuplicate
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return domain.ScheduledMessage{}, fmt.Errorf("commit duplicate scheduled message: %w", err)
 			}
@@ -83,9 +104,21 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 			return existing, nil
 		}
 	}
+	var pending int
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM scheduled_messages WHERE owner_user_id=$1 AND peer_type=$2 AND peer_id=$3 AND state IN ('pending','dispatching')", req.OwnerUserID, string(req.Peer.Type), req.Peer.ID).Scan(&pending); err != nil {
+		return domain.ScheduledMessage{}, err
+	}
+	if pending >= maxScheduledMessagePage {
+		return domain.ScheduledMessage{}, domain.ErrScheduledLimit
+	}
 	nextID, err := nextScheduledMessageID(ctx, tx, req.OwnerUserID)
 	if err != nil {
 		return domain.ScheduledMessage{}, err
+	}
+	forumTopic := req.ReplyTo != nil && req.ReplyTo.ForumTopic
+	fwdChannelPost := 0
+	if req.Forward != nil {
+		fwdChannelPost = req.Forward.ChannelPost
 	}
 	sendAsType, sendAsID := "", int64(0)
 	if req.SendAs != nil {
@@ -100,7 +133,8 @@ INSERT INTO scheduled_messages (
   quote_text, quote_entities, quote_offset,
   fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
   send_as_peer_type, send_as_peer_id,
-  schedule_date, schedule_repeat_period, state, created_at, updated_at
+  schedule_date, schedule_repeat_period, state, created_at, updated_at,
+ reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,request_fingerprint
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
   $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12,
@@ -108,14 +142,15 @@ INSERT INTO scheduled_messages (
   $17, $18::jsonb, $19,
   $20, $21, $22, $23,
   $24, $25,
-  $26, $27, 'pending', $28, $28
+  $26, $27, 'pending', $28, $28,
+ $29,$30,$31::jsonb,$32,$33,$34,$35,$36
 )`, req.OwnerUserID, nextID, string(req.Peer.Type), req.Peer.ID, req.RandomID, req.Date,
 		req.Message, entities, media, richMessage, req.Silent, req.NoForwards,
 		meta.ReplyToMsgID, meta.ReplyToPeerType, meta.ReplyToPeerID, meta.ReplyToTopID,
 		meta.QuoteText, meta.QuoteEntitiesJSON, meta.QuoteOffset,
 		meta.FwdFromPeerType, meta.FwdFromPeerID, meta.FwdFromName, meta.FwdDate,
 		sendAsType, sendAsID,
-		req.ScheduleDate, req.ScheduleRepeatPeriod, req.Date); err != nil {
+		req.ScheduleDate, req.ScheduleRepeatPeriod, req.Date, meta.ReplyToStoryID, forumTopic, meta.ReplyExternalJSON, fwdChannelPost, meta.FwdSavedFromPeerType, meta.FwdSavedFromPeerID, meta.FwdSavedFromMsgID, fingerprint); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("insert scheduled message: %w", err)
 	}
 	if err := setHasScheduledTx(ctx, tx, req.OwnerUserID, req.Peer, true); err != nil {
@@ -210,6 +245,24 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 	if !ok {
 		return domain.ScheduledMessage{}, domain.ErrMessageIDInvalid
 	}
+	period := current.ScheduleRepeatPeriod
+	if req.SetRepeatPeriod {
+		period = req.ScheduleRepeatPeriod
+	}
+	if !domain.ValidScheduleRepeat(period) || (req.ScheduleDate == domain.ScheduleWhenOnline && period != 0) {
+		return domain.ScheduledMessage{}, domain.ErrScheduleInvalid
+	}
+	media := current.Media
+	if req.ReplaceMedia {
+		if err := domain.ValidateMessageMediaReplacement(current.Media, req.Media, 0, current.Forward != nil); err != nil {
+			return domain.ScheduledMessage{}, err
+		}
+		media = req.Media
+	}
+	encodedMedia, err := encodeMessageMedia(media)
+	if err != nil {
+		return domain.ScheduledMessage{}, err
+	}
 	message := current.Message
 	entities := append([]domain.MessageEntity(nil), current.Entities...)
 	richMessage := current.RichMessage
@@ -220,7 +273,7 @@ func (s *MessageStore) EditScheduledMessage(ctx context.Context, req domain.Edit
 	if req.SetRichMessage {
 		richMessage = req.RichMessage
 	}
-	if message == "" && current.Media.IsZero() && richMessage.IsZero() {
+	if message == "" && media.IsZero() && richMessage.IsZero() {
 		return domain.ScheduledMessage{}, domain.ErrMessageEmpty
 	}
 	encodedEntities, err := encodeMessageEntities(entities)
@@ -237,13 +290,14 @@ SET body = $5,
     entities = $6::jsonb,
     rich_message = $7::jsonb,
     schedule_date = $8,
-    updated_at = $9
+    updated_at = $9, schedule_repeat_period=$10, media=$11::jsonb,
+    generation=generation+1,state='pending',lease_until=0,manual_dispatch=false,last_error=''
 WHERE owner_user_id = $1
   AND peer_type = $2
   AND peer_id = $3
   AND scheduled_id = $4
-  AND state = 'pending'
-RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Type), req.Peer.ID, req.ID, message, encodedEntities, encodedRichMessage, req.ScheduleDate, req.Date)
+  AND state IN ('pending','dispatching')
+RETURNING `+scheduledMessageSelectColumns(), req.OwnerUserID, string(req.Peer.Type), req.Peer.ID, req.ID, message, encodedEntities, encodedRichMessage, req.ScheduleDate, req.Date, period, encodedMedia)
 	msg, err := scanScheduledMessage(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -348,6 +402,8 @@ func (s *MessageStore) ClaimScheduledMessages(ctx context.Context, claim domain.
 	rows, err := s.db.Query(ctx, `
 UPDATE scheduled_messages
 SET state = 'dispatching',
+    generation = generation + 1,
+    manual_dispatch = true,
     lease_until = $6,
     updated_at = $5,
     last_error = ''
@@ -363,7 +419,7 @@ RETURNING `+scheduledMessageSelectColumns(), claim.OwnerUserID, string(claim.Pee
 	return scanScheduledMessages(rows)
 }
 
-func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error) {
+func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int, onlineUserIDs []int64) ([]domain.ScheduledMessage, error) {
 	if now <= 0 || limit <= 0 {
 		return nil, nil
 	}
@@ -375,16 +431,15 @@ func (s *MessageStore) ClaimDueScheduledMessages(ctx context.Context, now, limit
 	}
 	// retryFloor 让上一次投递失败（last_error 非空）的 pending 行至少退避
 	// scheduledRetryBackoffSeconds 秒再被认领；同时回收 lease 已过期却仍卡在
-	// 'dispatching' 的行——派发器在 claim 之后、MarkScheduledMessageSent 之前
-	// 崩溃/部署/OOM 会留下这种行，旧实现只认领 'pending' 导致该定时消息永久不
-	// 投递且 has_scheduled 永远为真。重投由 random_id 幂等兜底（命中 Duplicate
-	// 仍会 MarkScheduledMessageSent 清状态）。
+	// 'dispatching' 的行——派发器在 claim 之后、发送事务提交之前崩溃/部署/OOM
+	// 会留下这种行。重新认领会递增 generation，旧 claim 的发送事务因此在行锁
+	// 校验处失败；发送与 sent 状态同事务提交，已提交的行不会再被认领。
 	retryFloor := now - scheduledRetryBackoffSeconds
 	rows, err := s.db.Query(ctx, `
 WITH due AS (
   SELECT sm.owner_user_id, sm.scheduled_id
   FROM scheduled_messages sm
-  WHERE sm.schedule_date <= $1
+  WHERE (sm.manual_dispatch OR sm.schedule_date <= $1 OR (sm.schedule_date = 2147483646 AND sm.peer_type = 'user' AND sm.peer_id = ANY($5::bigint[])))
     AND (
       (sm.state = 'pending' AND (sm.last_error = '' OR sm.updated_at <= $4))
       OR (sm.state = 'dispatching' AND sm.lease_until <= $1)
@@ -395,80 +450,21 @@ WITH due AS (
 )
 UPDATE scheduled_messages sm
 SET state = 'dispatching',
+    generation = sm.generation + 1,
     lease_until = $1 + $3,
     updated_at = $1,
     last_error = ''
 FROM due
 WHERE sm.owner_user_id = due.owner_user_id
   AND sm.scheduled_id = due.scheduled_id
-RETURNING `+scheduledMessageSelectColumnsFor("sm"), now, limit, leaseSeconds, retryFloor)
+RETURNING `+scheduledMessageSelectColumnsFor("sm"), now, limit, leaseSeconds, retryFloor, onlineUserIDs)
 	if err != nil {
 		return nil, fmt.Errorf("claim due scheduled messages: %w", err)
 	}
 	return scanScheduledMessages(rows)
 }
 
-func (s *MessageStore) MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error {
-	if ownerUserID == 0 || id <= 0 {
-		return nil
-	}
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
-	}
-	beginner, ok := s.db.(txBeginner)
-	if !ok {
-		return fmt.Errorf("mark scheduled sent: db does not support transactions")
-	}
-	tx, err := beginner.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin mark scheduled sent: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	if err := lockUsersForUpdate(ctx, tx, ownerUserID); err != nil {
-		return fmt.Errorf("lock scheduled sent owner: %w", err)
-	}
-	row := tx.QueryRow(ctx, `
-UPDATE scheduled_messages
-SET state = 'sent',
-    sent_message_id = $3,
-    lease_until = 0,
-    updated_at = $4
-WHERE owner_user_id = $1
-  AND scheduled_id = $2
-RETURNING `+scheduledMessageSelectColumns(), ownerUserID, id, sentMessageID, date)
-	msg, err := scanScheduledMessage(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("mark scheduled sent: %w", err)
-	}
-	if err := refreshHasScheduledTx(ctx, tx, ownerUserID, msg.Peer); err != nil {
-		return err
-	}
-	intents, err := effects(msg)
-	if err != nil {
-		return fmt.Errorf("build mark scheduled sent delivery effects: %w", err)
-	}
-	if len(intents) == 0 {
-		return store.ErrDeliveryOutboxRequired
-	}
-	if _, err := applyDeliveryEffectsTx(ctx, tx, intents); err != nil {
-		return fmt.Errorf("apply mark scheduled sent delivery effects: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit mark scheduled sent: %w", err)
-	}
-	committed = true
-	return nil
-}
-
-func (s *MessageStore) ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, errText string) error {
+func (s *MessageStore) ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, generation int64, errText string) error {
 	if ownerUserID == 0 || id <= 0 {
 		return nil
 	}
@@ -480,7 +476,7 @@ SET state = 'pending',
     updated_at = EXTRACT(EPOCH FROM now())::int
 WHERE owner_user_id = $1
   AND scheduled_id = $2
-  AND state = 'dispatching'`, ownerUserID, id, errText)
+  AND state = 'dispatching' AND generation = $4`, ownerUserID, id, errText, generation)
 	if err != nil {
 		return fmt.Errorf("release scheduled message: %w", err)
 	}
@@ -568,7 +564,7 @@ reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
 quote_text, quote_entities::text, quote_offset,
 fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
 send_as_peer_type, send_as_peer_id,
-schedule_date, schedule_repeat_period, state, sent_message_id, created_at, updated_at`
+schedule_date, schedule_repeat_period, state, sent_message_id, created_at, updated_at, generation, manual_dispatch,reply_to_story_id,reply_forum_topic,reply_external::text,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id`
 }
 
 func scheduledMessageSelectColumnsFor(alias string) string {
@@ -582,7 +578,7 @@ func scheduledMessageSelectColumnsFor(alias string) string {
 ` + prefix + `quote_text, ` + prefix + `quote_entities::text, ` + prefix + `quote_offset,
 ` + prefix + `fwd_from_peer_type, ` + prefix + `fwd_from_peer_id, ` + prefix + `fwd_from_name, ` + prefix + `fwd_date,
 ` + prefix + `send_as_peer_type, ` + prefix + `send_as_peer_id,
-` + prefix + `schedule_date, ` + prefix + `schedule_repeat_period, ` + prefix + `state, ` + prefix + `sent_message_id, ` + prefix + `created_at, ` + prefix + `updated_at`
+` + prefix + `schedule_date, ` + prefix + `schedule_repeat_period, ` + prefix + `state, ` + prefix + `sent_message_id, ` + prefix + `created_at, ` + prefix + `updated_at, ` + prefix + `generation, ` + prefix + `manual_dispatch` + ", " + prefix + `reply_to_story_id` + ", " + prefix + `reply_forum_topic` + ", " + prefix + `reply_external::text` + ", " + prefix + `fwd_channel_post` + ", " + prefix + `fwd_saved_from_peer_type` + ", " + prefix + `fwd_saved_from_peer_id` + ", " + prefix + `fwd_saved_from_msg_id`
 }
 
 func scanScheduledMessages(rows pgx.Rows) ([]domain.ScheduledMessage, error) {
@@ -622,6 +618,13 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		sendAsPeerType       string
 		sendAsPeerID         int64
 		scheduleRepeatPeriod int32
+		replyStoryID         int32
+		replyForum           bool
+		replyExternal        string
+		fwdChannelPost       int
+		fwdSavedType         string
+		fwdSavedID           int64
+		fwdSavedMsgID        int32
 	)
 	if err := scanner.Scan(
 		&msg.OwnerUserID, &msg.ID, &peerType, &msg.Peer.ID, &msg.RandomID, &msg.CreatedAt,
@@ -630,7 +633,8 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		&quoteText, &quoteEntitiesJSON, &quoteOffset,
 		&fwdFromPeerType, &fwdFromPeerID, &fwdFromName, &fwdDate,
 		&sendAsPeerType, &sendAsPeerID,
-		&msg.ScheduleDate, &scheduleRepeatPeriod, &msg.State, &msg.SentMessageID, &msg.CreatedAt, &msg.UpdatedAt,
+		&msg.ScheduleDate, &scheduleRepeatPeriod, &msg.State, &msg.SentMessageID, &msg.CreatedAt, &msg.UpdatedAt, &msg.Generation,
+		&msg.ManualDispatch, &replyStoryID, &replyForum, &replyExternal, &fwdChannelPost, &fwdSavedType, &fwdSavedID, &fwdSavedMsgID,
 	); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("scan scheduled message: %w", err)
 	}
@@ -651,17 +655,22 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled rich message: %w", err)
 	}
 	msg.RichMessage = richMessage
-	// scheduled_messages 不存 saved_from：到点投递经 SendPrivateText 实时
-	// 重算 saved 语义（self-chat 直发归 self），fwd saved 维度恒空。
+	// Restore the complete scheduled reply and forward snapshot.
 	_, _, reply, forward, err := messageMetadataFromFields(
 		msg.Silent, msg.NoForwards, replyToMsgID, replyToPeerType, replyToPeerID, replyToTopID,
-		0, // scheduled_messages 不持久化 story 回复（定时回复 story 是边角，恒 0）
-		quoteText, quoteEntitiesJSON, quoteOffset, "{}",
+		replyStoryID,
+		quoteText, quoteEntitiesJSON, quoteOffset, replyExternal,
 		fwdFromPeerType, fwdFromPeerID, fwdFromName, fwdDate,
-		"", 0, 0,
+		fwdSavedType, fwdSavedID, fwdSavedMsgID,
 	)
 	if err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("decode scheduled metadata: %w", err)
+	}
+	if reply != nil {
+		reply.ForumTopic = replyForum
+	}
+	if forward != nil {
+		forward.ChannelPost = fwdChannelPost
 	}
 	msg.ReplyTo = reply
 	msg.Forward = forward
@@ -678,7 +687,7 @@ FROM scheduled_messages
 WHERE owner_user_id = $1
   AND random_id = $2
   AND random_id <> 0
-  AND state IN ('pending', 'dispatching')
+
 ORDER BY scheduled_id ASC
 LIMIT 1`, ownerUserID, randomID)
 	msg, err := scanScheduledMessage(row)
@@ -716,7 +725,7 @@ WHERE owner_user_id = $1
   AND peer_type = $2
   AND peer_id = $3
   AND scheduled_id = $4
-  AND state = 'pending'
+  AND state IN ('pending','dispatching')
 FOR UPDATE`, ownerUserID, string(peer.Type), peer.ID, id)
 	msg, err := scanScheduledMessage(row)
 	if err == nil {
@@ -746,8 +755,8 @@ func setHasScheduledTx(ctx context.Context, db pgx.Tx, ownerUserID int64, peer d
 	switch peer.Type {
 	case domain.PeerTypeUser:
 		_, err := db.Exec(ctx, `
-INSERT INTO dialogs (user_id, peer_type, peer_id, has_scheduled)
-VALUES ($1, 'user', $2, $3)
+INSERT INTO dialogs (user_id, peer_type, peer_id, has_scheduled, ttl_period)
+VALUES ($1, 'user', $2, $3,private_dialog_initial_ttl($1,$2))
 ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
   has_scheduled = EXCLUDED.has_scheduled,
   updated_at = now()`, ownerUserID, peer.ID, has)

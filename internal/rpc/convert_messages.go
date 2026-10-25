@@ -146,6 +146,23 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		return &tg.MessageActionSuggestProfilePhoto{Photo: tgPhoto(*m.ServiceAction.Photo)}
 	case domain.MessageServiceActionPinMessage:
 		return &tg.MessageActionPinMessage{}
+	case domain.MessageServiceActionPayment:
+		payment := m.ServiceAction.Payment
+		if payment == nil || payment.ChargeID == "" {
+			return &tg.MessageActionEmpty{}
+		}
+		// messageActionPaymentSentMe is the bot's copy of a settled invoice.
+		// Charge.ID is what the Bot API calls telegram_payment_charge_id and
+		// refundStarPayment has to be given.
+		return &tg.MessageActionPaymentSentMe{
+			Currency:    payment.Currency,
+			TotalAmount: payment.TotalAmount,
+			Payload:     []byte(payment.Payload),
+			Charge: tg.PaymentCharge{
+				ID:               payment.ChargeID,
+				ProviderChargeID: payment.ProviderChargeID,
+			},
+		}
 	case domain.MessageServiceActionSetChatTheme:
 		return &tg.MessageActionSetChatTheme{
 			Theme: &tg.ChatTheme{Emoticon: m.ServiceAction.ChatThemeEmoticon},
@@ -496,13 +513,18 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 		}
 		if m.ReplyTo.QuoteText == "" && external.Text != "" {
 			header.SetQuoteText(external.Text)
-			header.SetQuoteEntities(tgMessageEntities(external.Entities))
+			if externalEntities := tgMessageEntities(external.Entities); len(externalEntities) > 0 {
+				header.SetQuoteEntities(externalEntities)
+			}
 		}
 	}
 	if m.ReplyTo.QuoteText != "" {
 		header.SetQuote(true)
 		header.SetQuoteText(m.ReplyTo.QuoteText)
-		header.SetQuoteEntities(tgMessageEntities(m.ReplyTo.QuoteEntities))
+		// WHY: the layer-228 adapter rejects a set quote_entities flag with nil; a plain-text quote has none.
+		if quoteEntities := tgMessageEntities(m.ReplyTo.QuoteEntities); len(quoteEntities) > 0 {
+			header.SetQuoteEntities(quoteEntities)
+		}
 		header.SetQuoteOffset(m.ReplyTo.QuoteOffset)
 	}
 	return header

@@ -73,15 +73,11 @@ func (*captureMessages) ClaimScheduledMessages(context.Context, int64, domain.Sc
 	return nil, store.ErrDeliveryOutboxRequired
 }
 
-func (*captureMessages) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
+func (*captureMessages) ClaimDueScheduledMessages(context.Context, int, int, int, []int64) ([]domain.ScheduledMessage, error) {
 	return nil, store.ErrDeliveryOutboxRequired
 }
 
-func (*captureMessages) MarkScheduledMessageSent(context.Context, int64, int, int, int, store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error {
-	return store.ErrDeliveryOutboxRequired
-}
-
-func (*captureMessages) ReleaseScheduledMessage(context.Context, int64, int, string) error {
+func (*captureMessages) ReleaseScheduledMessage(context.Context, int64, int, int64, string) error {
 	return store.ErrDeliveryOutboxRequired
 }
 
@@ -313,36 +309,44 @@ func (s *scheduledCaptureMessages) ClaimScheduledMessages(_ context.Context, use
 	return s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: claim.OwnerUserID, Peer: claim.Peer, IDs: claim.IDs}), nil
 }
 
-func (s *scheduledCaptureMessages) ClaimDueScheduledMessages(context.Context, int, int, int) ([]domain.ScheduledMessage, error) {
+func (s *scheduledCaptureMessages) ClaimDueScheduledMessages(context.Context, int, int, int, []int64) ([]domain.ScheduledMessage, error) {
 	return nil, nil
 }
 
-func (s *scheduledCaptureMessages) MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error {
-	items := s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: ownerUserID, IDs: []int{id}})
-	if len(items) == 0 {
-		return nil
+// SendPrivateText mirrors the store's scheduled fence: a scheduled send also
+// commits the sent transition and its durable completion delivery.
+func (s *scheduledCaptureMessages) SendPrivateText(ctx context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+	res, err := s.captureMessages.SendPrivateText(ctx, userID, req)
+	if err != nil || req.ScheduledDelivery == nil {
+		return res, err
 	}
-	item := items[0]
-	item.State = "sent"
-	item.SentMessageID = sentMessageID
-	item.UpdatedAt = date
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
+	delivery := req.ScheduledDelivery
+	if delivery.Payload == nil {
+		return domain.SendPrivateTextResult{}, store.ErrDeliveryOutboxRequired
 	}
-	intents, err := effects(item)
-	if err != nil {
-		return err
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}
+	if items := s.matchScheduled(domain.ScheduledMessageFilter{OwnerUserID: userID, Peer: peer, IDs: []int{delivery.ID}}); len(items) > 0 {
+		sent := items[0]
+		sent.State = "sent"
+		sent.SentMessageID = res.SenderMessage.ID
+		payload, err := delivery.Payload(domain.ScheduledCompletion{Sent: sent})
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		if err := applyCaptureDeliveryEffects(ctx, s.deliveryOutbox, []store.DeliveryEffect{store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+			TargetUserID: userID, ExcludeAuthKeyID: delivery.ExcludeAuthKeyID, ExcludeSessionID: delivery.ExcludeSessionID,
+			Payload: payload, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+		})}); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
 	}
-	if err := applyCaptureDeliveryEffects(ctx, s.deliveryOutbox, intents); err != nil {
-		return err
-	}
-	s.markedScheduledID = id
-	s.markedSentID = sentMessageID
-	s.removeScheduled(domain.ScheduledMessageFilter{OwnerUserID: ownerUserID, Peer: item.Peer, IDs: []int{id}})
-	return nil
+	s.markedScheduledID = delivery.ID
+	s.markedSentID = res.SenderMessage.ID
+	s.removeScheduled(domain.ScheduledMessageFilter{OwnerUserID: userID, Peer: peer, IDs: []int{delivery.ID}})
+	return res, nil
 }
 
-func (s *scheduledCaptureMessages) ReleaseScheduledMessage(_ context.Context, _ int64, id int, errText string) error {
+func (s *scheduledCaptureMessages) ReleaseScheduledMessage(_ context.Context, _ int64, id int, _ int64, errText string) error {
 	s.releasedScheduled = id
 	s.releasedErrMessage = errText
 	return nil

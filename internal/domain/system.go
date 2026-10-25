@@ -111,13 +111,42 @@ func PremiumBotConfiguredUsername() string {
 	return "premiumbot"
 }
 
+// officialSystemUserDisplayName 覆盖 OfficialSystemUser 的 FirstName——
+// 空表示「使用 branding.ProductName()」（编译期默认）。operator 在
+// Server Settings → Server identity 中配置的名称既在启动时写入，也在运行期
+// 由身份 watcher 检测到变化后重新写入（主服务器与管理面板分属两个进程、只共享
+// identity.json），因此用 atomic.Value 承载，避免投影路径与刷新路径的数据竞争。
+// 刻意只覆盖展示名，不动 Username：@username 是稳定、可寻址的标识符，
+// 其他东西可能已引用它；展示名则只出现在聊天头部。
+var officialSystemUserDisplayName atomic.Value
+
+// SetOfficialSystemUserDisplayName 记录 operator 为官方系统账号 (777000)
+// 配置的自定义服务器名，启动时与运行期身份刷新时调用。
+// 传 "" 表示回退到 branding.ProductName()——与 avatar 覆盖相同的
+// 「未设置 → 默认值」契约。
+func SetOfficialSystemUserDisplayName(name string) {
+	officialSystemUserDisplayName.Store(strings.TrimSpace(name))
+}
+
+// officialSystemDisplayName 返回官方系统账号当前生效的展示名：若通过
+// SetOfficialSystemUserDisplayName 设置了 operator 自定义值则用之，否则
+// branding.ProductName()。OfficialSystemUser（777000 的 FirstName）与登录
+// 欢迎消息的 {{server_name}} 占位符（见 login_welcome_template.go）共用，
+// 保证两者一致。
+func officialSystemDisplayName() string {
+	if name, ok := officialSystemUserDisplayName.Load().(string); ok && name != "" {
+		return name
+	}
+	return branding.ProductName()
+}
+
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
 func OfficialSystemUser() User {
 	return User{
 		ID:         OfficialSystemUserID,
 		AccessHash: 6599886787491911851,
 		Phone:      OfficialSystemPhone,
-		FirstName:  branding.ProductName(),
+		FirstName:  officialSystemDisplayName(),
 		Username:   branding.ProductUsername(),
 		Verified:   true,
 		Support:    true,

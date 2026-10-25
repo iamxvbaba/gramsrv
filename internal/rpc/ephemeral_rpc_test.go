@@ -99,3 +99,18 @@ func TestEphemeralReportPersistsOnlyFinalIdempotentEvidence(t *testing.T) {
 		t.Fatalf("ReportTarget calls=%d", ephemeral.calls)
 	}
 }
+
+func TestEphemeralReplyFromInputRejectsQuotes(t *testing.T) {
+	if top, id, err := ephemeralReplyFromInput(&tg.InputReplyToMessage{ReplyToMsgID: 7}); err != nil || top != 7 || id != 0 {
+		t.Fatalf("topic reply = (%d, %d, %v), want (7, 0, nil)", top, id, err)
+	}
+	flat := &tg.InputReplyToMessage{ReplyToMsgID: 7}
+	flat.SetQuoteText("quoted")
+	rich := &tg.InputReplyToMessage{ReplyToMsgID: 7}
+	rich.SetQuoteRich([]tg.RichTextClass{&tg.TextPlain{Text: "quoted"}})
+	for name, input := range map[string]*tg.InputReplyToMessage{"quote_text": flat, "quote_rich": rich} {
+		if _, _, err := ephemeralReplyFromInput(input); err == nil || !strings.Contains(err.Error(), "INPUT_CONSTRUCTOR_INVALID") {
+			t.Fatalf("%s err = %v, want INPUT_CONSTRUCTOR_INVALID", name, err)
+		}
+	}
+}

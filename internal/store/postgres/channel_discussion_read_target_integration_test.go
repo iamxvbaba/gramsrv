@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -135,5 +136,29 @@ SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2
 	target, err = channels.ResolveDiscussionReadTarget(ctx, owner.ID, broadcast.Channel.ID, post.Message.ID, rootID)
 	if err != nil || !target.AlreadyRead {
 		t.Fatalf("resolve after read = %+v err %v, want already read", target, err)
+	}
+	if _, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+		UserID: subscriber.ID, ChannelID: group.Channel.ID, RandomID: 9912903,
+		ReplyTo: &domain.MessageReply{TopMessageID: rootID + 10000},
+		Media:   &domain.MessageMedia{Kind: domain.MessageMediaKindContact, Contact: &domain.MessageContact{PhoneNumber: "+1991", FirstName: "Bad"}},
+		Date:    1700002904,
+	}); !errors.Is(err, domain.ErrReplyMessageIDInvalid) {
+		t.Fatalf("invalid top-only media reply err=%v, want ErrReplyMessageIDInvalid", err)
+	}
+	mediaComment, err := channels.SendChannelMessage(ctx, domain.SendChannelMessageRequest{
+		UserID: subscriber.ID, ChannelID: group.Channel.ID, RandomID: 9912904,
+		ReplyTo: &domain.MessageReply{TopMessageID: rootID},
+		Media:   &domain.MessageMedia{Kind: domain.MessageMediaKindContact, Contact: &domain.MessageContact{PhoneNumber: "+1991", FirstName: "Media"}},
+		Date:    1700002905,
+	})
+	if err != nil {
+		t.Fatalf("send top-only media comment: %v", err)
+	}
+	if mediaComment.Message.ReplyTo == nil || mediaComment.Message.ReplyTo.MessageID != rootID || mediaComment.Message.ReplyTo.TopMessageID != rootID || mediaComment.Message.Pts != post.Discussion.Message.Pts+2 {
+		t.Fatalf("top-only media comment = %+v, want root %d and contiguous channel pts", mediaComment.Message, rootID)
+	}
+	var persistedTop int
+	if err := pool.QueryRow(ctx, `SELECT reply_to_top_id FROM channel_messages WHERE channel_id=$1 AND id=$2`, group.Channel.ID, mediaComment.Message.ID).Scan(&persistedTop); err != nil || persistedTop != rootID {
+		t.Fatalf("persisted media reply top=%d err=%v, want %d", persistedTop, err, rootID)
 	}
 }

@@ -257,10 +257,16 @@ func isHTTPHeaderPrefix(header [4]byte) bool {
 	}
 }
 
-func websocketRouteHandler(handler http.Handler, allowedOrigins []string) http.Handler {
+// websocketRouteHandler upgrades /apiws* and hands every other path to
+// fallback (nil: 404). fallback never sees a WebSocket path.
+func websocketRouteHandler(handler http.Handler, allowedOrigins []string, fallback http.Handler) http.Handler {
 	origins := websocketOriginSet(allowedOrigins)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := websocketAllowedPaths[r.URL.Path]; !ok {
+			if fallback != nil {
+				fallback.ServeHTTP(w, r)
+				return
+			}
 			http.NotFound(w, r)
 			return
 		}

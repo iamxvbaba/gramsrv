@@ -303,7 +303,7 @@ func (r *Router) onMessagesGetForumTopics(ctx context.Context, req *tg.MessagesG
 			}
 		}
 	}
-	return r.forumTopicsResponse(ctx, userID, view, list, includeGeneral), nil
+	return r.applyForumTopicNotifySettings(ctx, userID, view.Channel.ID, r.forumTopicsResponse(ctx, userID, view, list, includeGeneral))
 }
 
 func (r *Router) onMessagesGetForumTopicsByID(ctx context.Context, req *tg.MessagesGetForumTopicsByIDRequest) (*tg.MessagesForumTopics, error) {
@@ -350,7 +350,7 @@ func (r *Router) onMessagesGetForumTopicsByID(ctx context.Context, req *tg.Messa
 			return nil, forumTopicError(err)
 		}
 	}
-	return r.forumTopicsByIDResponse(ctx, userID, view, list, includeGeneral, requestedIDs), nil
+	return r.applyForumTopicNotifySettings(ctx, userID, view.Channel.ID, r.forumTopicsByIDResponse(ctx, userID, view, list, includeGeneral, requestedIDs))
 }
 
 // forumTopicsByIDResponse keeps the request's unique ID order and returns one

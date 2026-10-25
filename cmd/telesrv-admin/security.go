@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,10 +34,20 @@ import (
 // Both comparisons are constant time, for the same reason the session MAC is.
 
 // Panel permission names. They match the strings an operator configures in
-// TELESRV_ADMIN_UI_PERMISSIONS and the ones the admin API enforces.
+// TELESRV_ADMIN_UI_PERMISSIONS and the ones the admin routes enforce.
 const (
-	permissionAll                = "*"
-	permissionPremiumManage      = "premium.manage"
+	permissionAll           = "*"
+	permissionPremiumManage = "premium.manage"
+	// permissionDonationsManage gates the crypto donations admin page:
+	// wallet status, chain config (RPC/WS endpoint, enabled flag,
+	// confirmation depth, pricing) and the deposit/transaction history.
+	// Never exposes the wallet mnemonic or a private key -- there is no
+	// admin route that returns either.
+	permissionDonationsManage = "donations.manage"
+	// permissionPricesManage gates the shop pricing page: the effective
+	// product prices, the product kill switches and the stars rate the bot
+	// bills star purchases at.
+	permissionPricesManage       = "prices.manage"
 	permissionBotTokenRead       = "bots.token.read"
 	permissionVerificationReview = "verification.review"
 	permissionVerificationRevoke = "verification.revoke"
@@ -47,7 +58,173 @@ const (
 	// curates the icon catalogue and strips granted marks.
 	permissionBotVerificationReview = "botverification.review"
 	permissionBotVerificationManage = "botverification.manage"
+
+	// permissionAdminsManage gates the operator accounts themselves: creating
+	// them, editing their rights, disabling them, resetting their passwords.
+	//
+	// It is the one right that can grant every other right, so it is never
+	// implied by anything else. guardManagerRemoval additionally refuses the
+	// edit that would leave nobody holding it.
+	permissionAdminsManage = "admins.manage"
+
+	// permissionAuditRead gates the global action log. It is deliberately NOT
+	// implied by the read rights of the sections it covers: seeing who did what
+	// is a supervisory job, not a working-level one.
+	permissionAuditRead = "audit.read"
+
+	// Section rights, in read/manage pairs that follow the sidebar. Reading a
+	// section and changing it are separate grants because most of the people
+	// who need to look at this data never need to alter it.
+	permissionAccountsRead     = "accounts.read"
+	permissionAccountsManage   = "accounts.manage"
+	permissionChannelsRead     = "channels.read"
+	permissionChannelsManage   = "channels.manage"
+	permissionBotsRead         = "bots.read"
+	permissionBotsManage       = "bots.manage"
+	permissionMessagesRead     = "messages.read"
+	permissionMessagesManage   = "messages.manage"
+	permissionModerationReview = "moderation.review"
+	permissionBroadcastsRead   = "broadcasts.read"
+	permissionBroadcastsSend   = "broadcasts.send"
+	permissionStorageRead      = "storage.read"
+	permissionStorageManage    = "storage.manage"
+	// Sticker packs, emoji packs and the GIF catalogue: one section as far as
+	// the panel is concerned, so one pair of rights.
+	permissionContentRead     = "content.read"
+	permissionContentManage   = "content.manage"
+	permissionUsernamesRead   = "usernames.read"
+	permissionUsernamesManage = "usernames.manage"
+	// Collectible phone numbers are their own section with their own pair.
+	permissionPhonesRead   = "phones.read"
+	permissionPhonesManage = "phones.manage"
+	// Star gifts, give-gifts and auctions/drops are one "gifts" section.
+	permissionGiftsRead   = "gifts.read"
+	permissionGiftsManage = "gifts.manage"
+	// Account-ratings review and adjustment.
+	permissionRatingsRead   = "ratings.read"
+	permissionRatingsManage = "ratings.manage"
+	// The Stars ledger is an audit surface in its own right: balances and the
+	// signed per-account history. Read-only, so a session that only has to
+	// investigate (or clean up after) a balance bug never needs a management
+	// right to look.
+	permissionStarsRead     = "stars.read"
+	permissionDashboardRead = "dashboard.read"
+
+	// permissionServerManage gates the whole Server Settings surface: reading
+	// and editing the server identity (name/description/icon), the .env file,
+	// and the status page. The route additionally enforces the break-glass
+	// operator identity; this name is not assignable to named operators.
+	permissionServerManage = "server.manage"
+
+	// permissionSessionOnly marks the handful of routes that need a session but
+	// no right: reading who you are, and signing out. It is not a grantable
+	// name -- scopedRoute treats it as "authenticated is enough" -- so it can
+	// never be typed into an account's permission list by mistake.
+	permissionSessionOnly = ""
 )
+
+// assignablePermissions is the vocabulary the operator-accounts screen offers.
+//
+// The wildcard is deliberately absent: it is meaningful in
+// TELESRV_ADMIN_UI_PERMISSIONS for the break-glass login, but handing "*" to a
+// named account through a UI is how least privilege quietly stops being a
+// thing. An operator who genuinely needs everything gets every entry ticked,
+// which at least leaves a legible record of what was granted.
+func assignablePermissions() []string {
+	return []string{
+		permissionAccountsRead,
+		permissionAccountsManage,
+		permissionChannelsRead,
+		permissionChannelsManage,
+		permissionBotsRead,
+		permissionBotsManage,
+		permissionMessagesRead,
+		permissionMessagesManage,
+		permissionModerationReview,
+		permissionBroadcastsRead,
+		permissionBroadcastsSend,
+		permissionContentRead,
+		permissionContentManage,
+		permissionUsernamesRead,
+		permissionUsernamesManage,
+		permissionPhonesRead,
+		permissionPhonesManage,
+		permissionGiftsRead,
+		permissionGiftsManage,
+		permissionRatingsRead,
+		permissionRatingsManage,
+		permissionStarsRead,
+		permissionStorageRead,
+		permissionStorageManage,
+		permissionDashboardRead,
+		permissionPremiumManage,
+		permissionDonationsManage,
+		permissionPricesManage,
+		permissionBotTokenRead,
+		permissionVerificationReview,
+		permissionVerificationRevoke,
+		permissionBotVerificationReview,
+		permissionBotVerificationManage,
+		permissionAuditRead,
+		permissionAdminsManage,
+	}
+}
+
+// validatePermissions refuses anything the operator-accounts routes cannot
+// grant: the wildcard (reserved for the break-glass login set in the
+// environment) and names outside the assignable vocabulary. Being strict here
+// is what makes a permission list stored against a named account a legible
+// record of least privilege instead of a marker that silently means everything.
+func validatePermissions(permissions []string) error {
+	assignable := assignablePermissions()
+	for _, p := range permissions {
+		if p == permissionAll {
+			return fmt.Errorf("%s is not assignable to a named operator account", permissionAll)
+		}
+		found := false
+		for _, allowed := range assignable {
+			if p == allowed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown permission %q", p)
+		}
+	}
+	return nil
+}
+
+// scopedRoute is the only way an API route should be registered. Requiring the
+// permission as an argument is what makes the panel deny-by-default: a route
+// cannot be added without someone stating which right it belongs to, so the
+// failure mode of forgetting is a compile error rather than an endpoint that
+// quietly answers to everyone.
+//
+// permissionSessionOnly is the deliberate exception, spelled out at each use.
+func (s *server) scopedRoute(permission string, handler http.Handler) http.Handler {
+	if permission == permissionSessionOnly {
+		return s.requireAuthAPI(handler)
+	}
+	return s.requireAuthAPI(s.requirePermission(permission, handler))
+}
+
+// scopedRouteAll is scopedRoute for a route that needs more than one right at
+// once -- taking a granted verification badge away needs both the right to work
+// the queue and the separate right to revoke. Every permission must be held;
+// they are requirements, not alternatives.
+func (s *server) scopedRouteAll(permissions []string, handler http.Handler) http.Handler {
+	if len(permissions) == 0 {
+		// Refusing outright beats silently degrading to "any session": an empty
+		// list here is a mistake at the call site, not a way to open a route.
+		panic("scopedRouteAll: no permissions given")
+	}
+	wrapped := handler
+	for i := len(permissions) - 1; i >= 0; i-- {
+		wrapped = s.requirePermission(permissions[i], wrapped)
+	}
+	return s.requireAuthAPI(wrapped)
+}
 
 type permissionsKey struct{}
 
@@ -69,10 +246,45 @@ func (s *server) requireAuthAPI(next http.Handler) http.Handler {
 		if !checkMutationSafety(w, r, claims) {
 			return
 		}
+		// Rights inside the cookie are a 12-hour snapshot; the account they
+		// belong to may have been disabled, demoted or had its password changed
+		// since. Re-read it and use what the database says now, so revocation
+		// takes effect on the next request rather than at session expiry.
+		permissions, ok := s.currentSessionPermissions(r.Context(), claims)
+		if !ok {
+			clearSessionCookie(w)
+			writeAPIError(w, http.StatusUnauthorized, "session is no longer valid")
+			return
+		}
 		ctx := context.WithValue(r.Context(), actorKey{}, claims.Actor)
-		ctx = context.WithValue(ctx, permissionsKey{}, newPanelPermissions(claims.Permissions))
+		ctx = context.WithValue(ctx, permissionsKey{}, permissions)
+		ctx = context.WithValue(ctx, operatorIDKey{}, claims.UserID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// currentSessionPermissions resolves the rights this request actually gets.
+//
+// The break-glass operator (UserID 0) has no database row and keeps the
+// configured set -- that login exists precisely for when the database cannot
+// be consulted, so it must not depend on one.
+//
+// A named account is re-read every request. Anything that moved its token
+// epoch invalidates the session; anything that narrowed its permissions
+// narrows this request. A read failure is treated as a refusal rather than as
+// permission, so a database outage cannot silently widen access.
+func (s *server) currentSessionPermissions(ctx context.Context, claims sessionClaims) (panelPermissions, bool) {
+	if claims.UserID == 0 {
+		return newPanelPermissions(claims.Permissions), true
+	}
+	if s.read == nil {
+		return panelPermissions{}, false
+	}
+	enabled, epoch, permissions, err := s.read.AdminConsoleSessionState(ctx, claims.UserID)
+	if err != nil || !enabled || epoch != claims.Epoch {
+		return panelPermissions{}, false
+	}
+	return newPanelPermissions(permissions), true
 }
 
 // requirePermission refuses a session that was not granted the right, before the

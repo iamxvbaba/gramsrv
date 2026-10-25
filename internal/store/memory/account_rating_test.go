@@ -46,8 +46,8 @@ func TestSaveAccountRating(t *testing.T) {
 			input:       accountRatingFixture(11, 450, 1, now),
 			wantChanged: true,
 			check: func(t *testing.T, s *AccountRatingStore, stored domain.AccountRating) {
-				if stored.Level != 2 || stored.Stars != 450 || stored.Version != 1 ||
-					stored.CurrentLevelStars != 400 || stored.NextLevelStars != 900 || !stored.HasNextLevel {
+				if stored.Level != 4 || stored.Stars != 450 || stored.Version != 1 ||
+					stored.CurrentLevelStars != 400 || stored.NextLevelStars != 625 || !stored.HasNextLevel {
 					t.Fatalf("stored=%+v", stored)
 				}
 				read, err := s.AccountRating(ctx, 11)
@@ -62,7 +62,7 @@ func TestSaveAccountRating(t *testing.T) {
 			input:       accountRatingFixture(11, 1000, 2, now.Add(time.Minute)),
 			wantChanged: true,
 			check: func(t *testing.T, s *AccountRatingStore, stored domain.AccountRating) {
-				if stored.Version != 2 || stored.Stars != 1000 || stored.Level != 3 {
+				if stored.Version != 2 || stored.Stars != 1000 || stored.Level != 6 {
 					t.Fatalf("stored=%+v", stored)
 				}
 			},
@@ -140,7 +140,7 @@ func TestSaveAccountRating(t *testing.T) {
 			wantChanged: true,
 			check: func(t *testing.T, s *AccountRatingStore, stored domain.AccountRating) {
 				pending, ok := stored.PendingLevel()
-				if !ok || pending.Stars != 950 || pending.Level != 3 {
+				if !ok || pending.Stars != 950 || pending.Level != 6 {
 					t.Fatalf("pending=%+v ok=%v", pending, ok)
 				}
 			},

@@ -66,12 +66,18 @@ func (r *Router) publicRecommendationSourceChannel(ctx context.Context, userID i
 	}
 	channel, err := r.deps.Channels.GetJoinableChannel(ctx, userID, ref.ID)
 	if err != nil {
+		r.log.Debug("channels.getChannelRecommendations source not joinable",
+			append(r.contextLogFields(ctx), zap.Int64("source_channel_id", ref.ID), zap.Error(err))...)
 		return 0, channelInvalidErr(err)
 	}
 	if !inputChannelAccessHashMatches(ref, channel) {
+		r.log.Debug("channels.getChannelRecommendations source access hash mismatch",
+			append(r.contextLogFields(ctx), zap.Int64("source_channel_id", ref.ID))...)
 		return 0, channelInvalidErr(domain.ErrChannelPrivate)
 	}
-	if channel.Deleted || !channel.Broadcast || channel.Megagroup || channel.Username == "" {
+	if channel.Deleted {
+		r.log.Debug("channels.getChannelRecommendations source deleted",
+			append(r.contextLogFields(ctx), zap.Int64("source_channel_id", ref.ID))...)
 		return 0, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	return channel.ID, nil
@@ -513,6 +519,13 @@ func (r *Router) userIDsFromInputUsers(ctx context.Context, currentUserID int64,
 			return nil, internalErr()
 		}
 		if !found || u.ID == 0 {
+			return nil, peerIDInvalidErr()
+		}
+		// Every caller of this helper writes: invites, member adds, admin
+		// grants, bans, premium gift recipients. A tombstone accepts none of
+		// them, and resolving an InputUser never reads the users row, so the
+		// deleted bit has to be checked here rather than per call site.
+		if u.Deleted {
 			return nil, peerIDInvalidErr()
 		}
 		if _, ok := seen[u.ID]; ok {

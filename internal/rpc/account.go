@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
@@ -13,6 +14,7 @@ import (
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
+	"telesrv/internal/geoip"
 )
 
 // registerAccount 注册 account.* RPC handler。
@@ -80,6 +82,9 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.AccountGetPasswordRequest](d, tlprofile.SemanticMethodAccountGetPassword, func(ctx context.Context, layerRequest *tg.AccountGetPasswordRequest) (any, error) {
 		return r.onAccountGetPassword(ctx)
+	})
+	registerRPC[*tg.AccountGetTmpPasswordRequest](d, tlprofile.SemanticMethodAccountGetTmpPassword, func(ctx context.Context, layerRequest *tg.AccountGetTmpPasswordRequest) (any, error) {
+		return r.onAccountGetTmpPassword(ctx, layerRequest)
 	})
 	registerRPC[*tg.AccountGetNotifySettingsRequest](d, tlprofile.SemanticMethodAccountGetNotifySettings, func(ctx context.Context, layerRequest *tg.AccountGetNotifySettingsRequest) (any, error) {
 		return r.onAccountGetNotifySettings(ctx, layerRequest.
@@ -409,6 +414,19 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 
 		return &tg.AccountWebBrowserSettings{}, nil
 	})
+	// account.updateWebBrowserSettings / deleteWebBrowserSettingsExceptions /
+	// toggleWebBrowserSettingsException：telesrv 不接入网页浏览器（web bot）集成。
+	// iOS 会在浏览器设置页调用这些方法，缺 handler 会落到 Unhandled RPC（500
+	// NOT_IMPLEMENTED）。改动是空操作：保持 getWebBrowserSettings 返回的空设置语义。
+	registerRPC[*tg.AccountUpdateWebBrowserSettingsRequest](d, tlprofile.SemanticMethodAccountUpdateWebBrowserSettings, func(ctx context.Context, layerRequest *tg.AccountUpdateWebBrowserSettingsRequest) (any, error) {
+		return &tg.AccountWebBrowserSettings{}, nil
+	})
+	registerRPC[*tg.AccountDeleteWebBrowserSettingsExceptionsRequest](d, tlprofile.SemanticMethodAccountDeleteWebBrowserSettingsExceptions, func(ctx context.Context, layerRequest *tg.AccountDeleteWebBrowserSettingsExceptionsRequest) (any, error) {
+		return &tg.AccountWebBrowserSettings{}, nil
+	})
+	registerRPC[*tg.AccountToggleWebBrowserSettingsExceptionRequest](d, tlprofile.SemanticMethodAccountToggleWebBrowserSettingsException, func(ctx context.Context, layerRequest *tg.AccountToggleWebBrowserSettingsExceptionRequest) (any, error) {
+		return &tg.Updates{}, nil
+	})
 	registerRPC[*tg.AccountGetNotifyExceptionsRequest](d, tlprofile.SemanticMethodAccountGetNotifyExceptions, func(ctx context.Context, layerRequest *tg.AccountGetNotifyExceptionsRequest) (any, error) {
 		return r.onAccountGetNotifyExceptions(ctx, layerRequest)
 	})
@@ -481,7 +499,7 @@ func wallpaperReferenceLogFields(method string, input tg.InputWallPaperClass) []
 
 func (r *Router) onAccountGetPassword(ctx context.Context) (*tg.AccountPassword, error) {
 	if r.deps.Account == nil {
-		return tgPassword(domain.PasswordSettings{SecureRandom: []byte("telesrv-tdesktop-dev-secure-rand")}), nil
+		return nil, internalErr()
 	}
 	userID, _, _, err := r.currentOrPendingPasswordUserID(ctx)
 	if err != nil {
@@ -587,8 +605,10 @@ func (r *Router) onAccountGetAuthorizations(ctx context.Context) (*tg.AccountAut
 		return nil, internalErr()
 	}
 	out := &tg.AccountAuthorizations{Authorizations: make([]tg.Authorization, 0, len(items))}
+	locations := r.resolveAuthorizationLocations(ctx, items)
+	now := int(r.clock.Now().Unix())
 	for _, item := range items {
-		out.Authorizations = append(out.Authorizations, tgAuthorization(item, authKeyID, int(r.clock.Now().Unix())))
+		out.Authorizations = append(out.Authorizations, r.tgAuthorization(locations[item.IP], item, authKeyID, now))
 	}
 	return out, nil
 }
@@ -805,7 +825,7 @@ func (r *Router) onAccountInitPasskeyRegistration(ctx context.Context) (*tg.Acco
 }
 
 // onAccountRegisterPasskey 验证注册 attestation 并持久化凭据。
-func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.InputPasskeyCredentialClass) (*tg.Passkey, error) {
+func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.InputPasskeyCredentialPublicKey) (*tg.Passkey, error) {
 	if r.deps.Passkey == nil {
 		return nil, internalErr()
 	}
@@ -1038,7 +1058,7 @@ func (r *Router) onAccountResetPassword(ctx context.Context) (tg.AccountResetPas
 		return nil, internalErr()
 	}
 	if r.deps.Account == nil {
-		return &tg.AccountResetPasswordFailedWait{RetryDate: int(r.clock.Now().Unix()) + 86400}, nil
+		return nil, internalErr()
 	}
 	result, err := r.deps.Account.ResetPassword(ctx, userID)
 	if err != nil {
@@ -1461,6 +1481,11 @@ func (r *Router) onAccountSetReactionsNotifySettings(ctx context.Context, settin
 		return nil, internalErr()
 	}
 	notify := domainReactionsNotifySettings(settings)
+	sound, err := domainNotificationSound(settings.Sound)
+	if err != nil {
+		return nil, err
+	}
+	notify.Sound = sound
 	if r.deps.Account == nil {
 		return nil, internalErr()
 	}
@@ -1500,7 +1525,7 @@ func domainReactionNotifyFrom(get func() (tg.ReactionNotificationsFromClass, boo
 
 func tgReactionsNotifySettings(settings domain.ReactionsNotifySettings) *tg.ReactionsNotifySettings {
 	out := &tg.ReactionsNotifySettings{
-		Sound:        &tg.NotificationSoundDefault{},
+		Sound:        tgNotificationSound(settings.Sound),
 		ShowPreviews: settings.ShowPreviews,
 	}
 	if value := tgReactionNotifyFrom(settings.MessagesFrom); value != nil {
@@ -1569,6 +1594,13 @@ func (r *Router) onAccountCheckUsername(ctx context.Context, username string) (b
 	}
 	okUsername, err := svc.CheckUsername(ctx, userID, username)
 	if err != nil {
+		// account.checkUsername is a query: invalid or occupied usernames are
+		// answered with boolFalse instead of a hard RPC error. Clients poll it
+		// on every keystroke while editing a username and treat the error and
+		// the false result identically, so failing the RPC only adds log noise.
+		if errors.Is(err, domain.ErrUsernameInvalid) || errors.Is(err, domain.ErrUsernameOccupied) {
+			return false, nil
+		}
 		return false, usernameErr(err)
 	}
 	return okUsername, nil
@@ -1921,7 +1953,46 @@ func (r *Router) onAccountGetCollectibleEmojiStatuses(ctx context.Context, hash 
 	return &tg.AccountEmojiStatuses{Hash: catalogHash, Statuses: statuses}, nil
 }
 
-func tgAuthorization(a domain.Authorization, currentAuthKeyID [8]byte, now int) tg.Authorization {
+// authorizationLocationUnknown 是国家/地区都解析不出来时的回退文案。
+//
+// 协议层没有 help.requestIpAddress 的对等实现,地理归属只能由部署方自备;没有
+// 解析器、解析器失败或上游查无此 IP 时都必须回落到这里,而不是回传空串——
+// 空串会让客户端把位置渲染成空行,比显示 Unknown 更难解释。
+const authorizationLocationUnknown = "Unknown"
+
+// authorizationLocationLookupTimeout 限制一次会话列表请求里地理解析的总时长。
+//
+// 解析是纯展示增强,拖慢 account.getAuthorizations 没有任何好处,所以给它封顶:
+// 超时后剩余地址按 Unknown 回落,列表照常返回。
+const authorizationLocationLookupTimeout = 3 * time.Second
+
+// resolveAuthorizationLocations 批量解析本次会话列表里出现过的所有 IP。
+//
+// 必须批量:上游一次往返约 0.7s 且限流很凶,逐条解析会把成本乘以设备数。
+// 未注入解析器、或列表里没有任何 IP 时返回 nil,逐条查找会自然回落到占位文案。
+func (r *Router) resolveAuthorizationLocations(ctx context.Context, items []domain.Authorization) map[string]geoip.Location {
+	if r.deps.GeoIP == nil || len(items) == 0 {
+		return nil
+	}
+	ips := make([]string, 0, len(items))
+	for _, item := range items {
+		// 空白地址同样跳过:解析器会把它判成不可解析,但那仍是一次无谓的调用,
+		// 而上游配额经不起无谓的调用。
+		if strings.TrimSpace(item.IP) != "" {
+			ips = append(ips, item.IP)
+		}
+	}
+	if len(ips) == 0 {
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, authorizationLocationLookupTimeout)
+	defer cancel()
+	return r.deps.GeoIP.Resolve(lookupCtx, ips)
+}
+
+// tgAuthorization 把一条持久化的授权转成 TL 授权。loc 由调用方预先批量解析,
+// 取不到时退化为零值 -> Unknown。
+func (r *Router) tgAuthorization(loc geoip.Location, a domain.Authorization, currentAuthKeyID [8]byte, now int) tg.Authorization {
 	created := int(a.CreatedAt.Unix())
 	if created == 0 {
 		created = now
@@ -1943,9 +2014,18 @@ func tgAuthorization(a domain.Authorization, currentAuthKeyID [8]byte, now int) 
 		DateCreated:   created,
 		DateActive:    active,
 		IP:            a.IP,
-		Country:       "Unknown",
-		Region:        "Unknown",
+		Country:       authorizationLocationText(loc.Country),
+		Region:        authorizationLocationText(loc.Region),
 	}
+}
+
+// authorizationLocationText 收敛空值到占位文案。上游对查不到的 IP 会返回空的
+// country_name/city,那属于"没查到",不属于"这个 IP 没有国家"。
+func authorizationLocationText(value string) string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return trimmed
+	}
+	return authorizationLocationUnknown
 }
 
 func (r *Router) onAccountGetDefaultProfilePhotoEmojis(ctx context.Context, hash int64) (tg.EmojiListClass, error) {

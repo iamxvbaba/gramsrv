@@ -5,20 +5,21 @@ import { GramsrvClient } from "./gramsrv.js";
 import { commandList, createBot } from "./bot.js";
 import { normalizeLanguage, translate } from "./i18n.js";
 import { parseTelesrvDelivery, verifyTelesrvSignature } from "./otp.js";
+import { isRealMode } from "./real-number.js";
+import { describeProxy } from "./proxy.js";
 
 const config = loadConfig();
-const db = new BotDatabase(config.dbPath);
+const db = new BotDatabase(config.dbUrl);
+// Fail before opening the webhook or polling Telegram if the required schema
+// migration has not been applied. Runtime startup never repairs persisted data.
+await db.pool.query("SELECT retired FROM numbers LIMIT 0");
 const gramsrv = new GramsrvClient(config);
 const bot = createBot({ config, db, gramsrv });
 
 function escapeHTML(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"); }
 function json(response, status, body) { response.writeHead(status, { "content-type": "application/json; charset=utf-8" }); response.end(JSON.stringify(body)); }
 
-function languageByChatID(chatID) {
-  return normalizeLanguage(db.userByChatID(chatID)?.language, config.defaultLanguage);
-}
-
-function loginCodeMessage(language, recipient, code, unbound = false) {
+function loginCodeMessage(language, recipient, code) {
   const variables = {
     product: escapeHTML(config.productName),
     phone: escapeHTML(recipient),
@@ -32,7 +33,6 @@ function loginCodeMessage(language, recipient, code, unbound = false) {
     "",
     translate(language, "otpWarning", variables),
   ];
-  if (unbound) lines.push("", translate(language, "otpUnbound", variables));
   return lines.join("\n");
 }
 
@@ -40,14 +40,14 @@ async function deliverLoginCode(recipient, code, chatIDs) {
   let delivered = 0;
   for (const chatID of chatIDs) {
     try {
-      await bot.api.sendMessage(chatID, loginCodeMessage(languageByChatID(chatID), recipient, code), { parse_mode: "HTML" });
+      const language = normalizeLanguage((await db.userByChatID(chatID))?.language, config.defaultLanguage);
+      const sent = await bot.api.sendMessage(chatID, loginCodeMessage(language, recipient, code), { parse_mode: "HTML" });
+      if (sent?.message_id) setTimeout(() => bot.api.deleteMessage(chatID, sent.message_id).catch(() => {}), 120_000).unref?.();
       delivered++;
     }
     catch (error) { console.error("OTP delivery failed", chatID, error); }
   }
-  if (!delivered) for (const owner of config.ownerIDs) {
-    await bot.api.sendMessage(owner, loginCodeMessage(languageByChatID(owner), recipient, code, true), { parse_mode: "HTML" }).catch(() => {});
-  }
+  if (!delivered) console.log(`OTP code for ${recipient} did not match any bound chat, not sent`);
 }
 
 const server = http.createServer((request, response) => {
@@ -61,15 +61,18 @@ const server = http.createServer((request, response) => {
       const raw = Buffer.concat(chunks);
       if (!verifyTelesrvSignature(config.codeWebhookSecret, request.headers, raw)) return json(response, 401, { accepted: false, error_code: "SIGNATURE_INVALID", retryable: false });
       const { recipient, code, deliveryID, expiresAt, fingerprint } = parseTelesrvDelivery(raw, request.headers);
-      const delivery = db.acceptLoginCodeDelivery(deliveryID, fingerprint, recipient, code, expiresAt);
-      // Authentication must not depend on Telegram Bot API latency. Persist the
-      // code, acknowledge gramsrv immediately, then fan it out asynchronously.
-      json(response, 202, { accepted: true, message_id: `grammy:${deliveryID}` });
-      if (!delivery.duplicate) void deliverLoginCode(recipient, code, delivery.chatIDs).catch((error) => console.error("OTP dispatch failed", error));
+      db.acceptLoginCodeDelivery(deliveryID, fingerprint, recipient, code, expiresAt).then((delivery) => {
+        json(response, 202, { accepted: true, message_id: `grammy:${deliveryID}` });
+        if (!delivery.duplicate) void deliverLoginCode(recipient, code, delivery.chatIDs).catch((error) => console.error("OTP dispatch failed", error));
+      }).catch((error) => {
+        console.error("OTP webhook failed", error);
+        const conflict = error.message === "IDEMPOTENCY_CONFLICT";
+        const retired = error.message === "NUMBER_RETIRED";
+        json(response, conflict ? 409 : 400, { accepted: false, error_code: conflict ? "IDEMPOTENCY_CONFLICT" : retired ? "RECIPIENT_INVALID" : "JSON_INVALID", retryable: false });
+      });
     } catch (error) {
       console.error("OTP webhook failed", error);
-      const conflict = error.message === "IDEMPOTENCY_CONFLICT";
-      return json(response, conflict ? 409 : 400, { accepted: false, error_code: conflict ? "IDEMPOTENCY_CONFLICT" : "JSON_INVALID", retryable: false });
+      json(response, 400, { accepted: false, error_code: "JSON_INVALID", retryable: false });
     }
   });
 });
@@ -79,6 +82,8 @@ server.listen(config.codePort, config.codeHost, () => console.log(`OTP webhook l
 const me = await bot.api.getMe();
 bot.botInfo = me;
 console.log(`Starting @${me.username}`);
+console.log(`Bot mode: ${config.botMode}`);
+if (config.telegramProxy) console.log(`Proxy: ${describeProxy(config.telegramProxy)}`);
 await bot.api.setMyCommands(commandList(config.defaultLanguage));
 await bot.api.setMyCommands(commandList("ru"), { language_code: "ru" });
 await bot.api.setMyCommands(commandList("en"), { language_code: "en" });
@@ -86,7 +91,7 @@ await bot.api.setMyCommands(commandList("en"), { language_code: "en" });
 let stopping = false;
 async function shutdown(signal) {
   if (stopping) return; stopping = true; console.log(`Stopping on ${signal}`);
-  bot.stop(); server.close(); db.close();
+  bot.stop(); server.close(); await db.close();
 }
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));

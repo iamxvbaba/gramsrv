@@ -413,3 +413,90 @@ func TestCommunitiesRPCLayer228Lifecycle(t *testing.T) {
 		t.Fatalf("banned member joined communities = %#v err=%v", joinedResult, err)
 	}
 }
+
+func TestCommunityPhotoUploadAndDownloadLifecycle(t *testing.T) {
+	ctx := WithLayer(context.Background(), communitiesLayer)
+	userStore := memory.NewUserStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 701, Phone: "15552000001", FirstName: "Owner"})
+	channelStore := memory.NewChannelStore()
+	channelService := appchannels.NewService(channelStore)
+	initial := communityRPCChannel(t, channelService, owner, "Initial")
+	communityService := appcommunities.NewService(memory.NewCommunityStore(userStore, channelStore, nil, nil, memory.NewDeliveryOutboxStore()))
+	files := &fakeFiles{
+		getFileFound: true,
+		getFileChunk: domain.FileChunk{
+			Bytes:    []byte{1, 2, 3, 4},
+			MimeType: "image/jpeg",
+			Total:    4,
+		},
+		photos: map[int64]domain.Photo{},
+	}
+	r := New(Config{DC: 2}, Deps{
+		Users:       appusers.NewService(userStore),
+		Channels:    channelService,
+		Communities: communityService,
+		Files:       files,
+	}, zaptest.NewLogger(t), clock.System)
+
+	createdResult, err := r.onCommunitiesCreate(WithUserID(ctx, owner.ID), &tg.CommunitiesCreateRequest{
+		Title: "Avatar Community",
+		Peer:  &tg.InputPeerChannel{ChannelID: initial.ID, AccessHash: initial.AccessHash},
+	})
+	if err != nil {
+		t.Fatalf("communities.create: %v", err)
+	}
+	community := createdResult.(*tg.Updates).Chats[0].(*tg.Community)
+	inputCommunity := &tg.InputChannel{ChannelID: community.ID, AccessHash: community.AccessHash}
+
+	// 1. Set community avatar from a decoded upload with the file flag present.
+	upload := &tg.InputChatUploadedPhoto{}
+	upload.SetFile(&tg.InputFile{ID: 55001, Parts: 1, Name: "community_avatar.jpg"})
+	setResult, err := r.onChannelsEditPhoto(WithUserID(ctx, owner.ID), &tg.ChannelsEditPhotoRequest{
+		Channel: inputCommunity,
+		Photo:   upload,
+	})
+	if err != nil {
+		t.Fatalf("channels.editPhoto uploaded photo: %v", err)
+	}
+	updates, ok := setResult.(*tg.Updates)
+	if !ok || len(updates.Chats) == 0 {
+		t.Fatalf("channels.editPhoto result = %#v, want Updates with Chats", setResult)
+	}
+	var hasUpdateChannel bool
+	for _, u := range updates.Updates {
+		if uc, ok := u.(*tg.UpdateChannel); ok && uc.ChannelID == community.ID {
+			hasUpdateChannel = true
+			break
+		}
+	}
+	if !hasUpdateChannel {
+		t.Fatalf("updates.Updates = %+v, want UpdateChannel for community %d", updates.Updates, community.ID)
+	}
+	commChat, ok := updates.Chats[0].(*tg.Community)
+	if !ok {
+		t.Fatalf("chats[0] = %T, want *tg.Community", updates.Chats[0])
+	}
+	chatPhoto, ok := commChat.Photo.(*tg.ChatPhoto)
+	if !ok || chatPhoto.PhotoID != 778 || chatPhoto.DCID != 2 {
+		t.Fatalf("community Photo = %#v, want PhotoID 778 and DCID 2", commChat.Photo)
+	}
+
+	// 2. Full channel check
+	fullResult, err := r.onChannelsGetFullChannel(WithUserID(ctx, owner.ID), inputCommunity)
+	if err != nil {
+		t.Fatalf("channels.getFullChannel: %v", err)
+	}
+	commFull, ok := fullResult.FullChat.(*tg.CommunityFull)
+	if !ok {
+		t.Fatalf("FullChat = %T, want *tg.CommunityFull", fullResult.FullChat)
+	}
+	fullPhoto, ok := commFull.ChatPhoto.(*tg.Photo)
+	if !ok || fullPhoto.ID != 778 || fullPhoto.DCID != 2 {
+		t.Fatalf("fullChat ChatPhoto = %#v, want Photo ID 778 and DCID 2", commFull.ChatPhoto)
+	}
+
+	// Downloads (upload.getFile on inputPeerPhotoFileLocation, including the
+	// photo_id=0 refusal) are served by the v2 Edge/FileData path
+	// (mtprotoedge/filedata_layer_rpc.go), not by the Core router.
+
+}

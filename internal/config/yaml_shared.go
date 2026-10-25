@@ -216,6 +216,17 @@ func applyCommonYAML(b *envBuilder, y CommonYAML) error {
 	return nil
 }
 
+// IdentityYAML locates the operator-editable server identity (identity.json
+// plus icon). Core and Admin must point at the same directory: Admin writes it
+// and every Core instance watches it.
+type IdentityYAML struct {
+	Dir string `yaml:"dir"`
+}
+
+func applyIdentityYAML(b *envBuilder, y IdentityYAML) {
+	b.setString("TELESRV_IDENTITY_DIR", y.Dir)
+}
+
 func applyBrandingYAML(b *envBuilder, y BrandingYAML) {
 	b.setString("TELESRV_BRAND_PRODUCT_NAME", y.ProductName)
 	b.setString("TELESRV_BRAND_PRODUCT_USERNAME", y.ProductUsername)

@@ -28,6 +28,14 @@ export class GramsrvClient {
     return this.post("/v1/accounts/debit-stars", this.command(reason, { user_id: userID, amount }, idempotencyKey));
   }
 
+  async resolveUserByPhone(phone) {
+    const result = await this.post("/v1/accounts/resolve-by-phone", { phone });
+    if (result?.found === false && result.user_id === 0) return 0;
+    const id = Number(result?.user_id);
+    if (result?.found === true && Number.isSafeInteger(id) && id > 0) return id;
+    throw new Error("invalid account lookup response");
+  }
+
   grantPremium(userID, months, reason = "Telegram bot purchase", idempotencyKey = "") {
     return this.post("/v1/accounts/grant-premium", this.command(reason, { user_id: userID, months }, idempotencyKey));
   }

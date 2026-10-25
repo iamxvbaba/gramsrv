@@ -627,3 +627,23 @@ func legacyBasicGroupAdminRights() tg.ChatAdminRights {
 		Other:          true,
 	}
 }
+
+// onMessagesDeleteChat maps the legacy creator-only "delete chat" entry onto
+// channels.deleteChannel for the megagroup that messages.createChat created
+// under the same id, so the creator check and the member fanout stay in one
+// place (gramsrv#139). The method returns Bool, so the calling session gets the
+// channelForbidden tombstone pushed instead of as an rpc_result. It is the same
+// non-PTS channel-state snapshot deleteChannel already delivers transiently to
+// every other member session; the durable fact is the deleted channel, which
+// getDialogs/getChannels re-project after a missed push.
+func (r *Router) onMessagesDeleteChat(ctx context.Context, chatID int64) (bool, error) {
+	if chatID <= 0 {
+		return false, peerIDInvalidErr()
+	}
+	updates, err := r.onChannelsDeleteChannel(ctx, &tg.InputChannel{ChannelID: chatID})
+	if err != nil {
+		return false, err
+	}
+	r.pushCurrentSessionTransient(ctx, "push legacy delete chat updates", updates)
+	return true, nil
+}

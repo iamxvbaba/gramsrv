@@ -1,5 +1,9 @@
 version: 1
 
+# Shared with core.local.yaml: Admin writes the server identity, Core watches it.
+identity:
+  dir: data/identity
+
 postgres:
   dsn: ${TELESRV_POSTGRES_DSN}
 

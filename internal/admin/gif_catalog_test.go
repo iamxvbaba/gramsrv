@@ -22,7 +22,7 @@ func (s *fakeGifCatalogService) AdminUploadGifMaterial(context.Context, string, 
 	s.uploadCalls++
 	return domain.Document{ID: 91}, nil
 }
-func (s *fakeGifCatalogService) AdminCreateGifCatalogEntry(context.Context, string, int64) (domain.GifCatalogEntry, error) {
+func (s *fakeGifCatalogService) AdminCreateGifCatalogEntry(context.Context, string, int64, string) (domain.GifCatalogEntry, error) {
 	s.createCalls++
 	entry := domain.GifCatalogEntry{ID: 92, DocumentID: 91, Title: "Wave", Enabled: true}
 	s.entries = append(s.entries, entry)
@@ -36,6 +36,9 @@ func (*fakeGifCatalogService) AdminSetGifCatalogEnabled(context.Context, int64, 
 	return true, nil
 }
 func (*fakeGifCatalogService) AdminSetGifCatalogSortOrder(context.Context, int64, int) (bool, error) {
+	return true, nil
+}
+func (*fakeGifCatalogService) AdminSetGifCatalogCategory(context.Context, int64, string) (bool, error) {
 	return true, nil
 }
 func (*fakeGifCatalogService) AdminDeleteGifCatalogEntry(context.Context, int64) (bool, error) {
@@ -82,5 +85,36 @@ func TestCreateGifCatalogEntryReplayAndContentFingerprint(t *testing.T) {
 	}
 	if gifs.listCalls != 1 || gifs.uploadCalls != 1 || gifs.createCalls != 1 {
 		t.Fatalf("conflict mutated list/upload/create=%d/%d/%d", gifs.listCalls, gifs.uploadCalls, gifs.createCalls)
+	}
+}
+
+func TestSetGifCatalogCategoryValidatesAndAudits(t *testing.T) {
+	ctx := context.Background()
+	gifs := &fakeGifCatalogService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), GifCatalog: gifs, Now: fixedNow})
+	meta := CommandMeta{CommandID: "gif-category-1", Actor: "ops", Reason: "catalog"}
+	if _, err := svc.SetGifCatalogCategory(ctx, SetGifCatalogCategoryRequest{CommandMeta: meta, ID: 92, Category: "invalid"}); err != domain.ErrGifCatalogEntryInvalid {
+		t.Fatalf("invalid category err=%v", err)
+	}
+	result, err := svc.SetGifCatalogCategory(ctx, SetGifCatalogCategoryRequest{CommandMeta: meta, ID: 92, Category: domain.GifCategoryAnimals})
+	if err != nil || result.Status != string(domain.AdminCommandCompleted) {
+		t.Fatalf("set category = %+v err=%v", result, err)
+	}
+	meta.CommandID = "gif-category-2"
+	result, err = svc.SetGifCatalogCategory(ctx, SetGifCatalogCategoryRequest{CommandMeta: meta, ID: 92, Category: ""})
+	if err != nil || result.Status != string(domain.AdminCommandCompleted) {
+		t.Fatalf("restore auto = %+v err=%v", result, err)
+	}
+}
+
+func TestCreateGifCatalogEntryRejectsOversizeFilenameBeforeUpload(t *testing.T) {
+	gifs := &fakeGifCatalogService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), GifCatalog: gifs, Now: fixedNow})
+	_, err := svc.CreateGifCatalogEntry(context.Background(), CreateGifCatalogEntryRequest{
+		CommandMeta: CommandMeta{CommandID: "gif-long-name", Actor: "ops", Reason: "catalog"},
+		Title:       "Cat", FileName: strings.Repeat("x", domain.MaxGifCatalogFileNameLen+1), Data: []byte("GIF89a-one"),
+	})
+	if err != domain.ErrGifCatalogEntryInvalid || gifs.uploadCalls != 0 {
+		t.Fatalf("err=%v uploadCalls=%d", err, gifs.uploadCalls)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -58,6 +59,28 @@ func TestAdminAPIGifCatalogKeepsInt64IDsAsStrings(t *testing.T) {
 	}
 }
 
+type gifCategoryCaptureService struct {
+	fakeService
+	req admin.SetGifCatalogCategoryRequest
+}
+
+func (s *gifCategoryCaptureService) SetGifCatalogCategory(_ context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error) {
+	s.req = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed"}, nil
+}
+
+func TestAdminAPISetGifCatalogCategoryRoute(t *testing.T) {
+	svc := &gifCategoryCaptureService{}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/gif-catalog/set-category", strings.NewReader(`{"command_id":"gif-category-1","actor":"ops","reason":"catalog","id":"9007199254740993","category":"animals"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || svc.req.ID != 9_007_199_254_740_993 || svc.req.Category != domain.GifCategoryAnimals {
+		t.Fatalf("status=%d req=%+v body=%s", rec.Code, svc.req, rec.Body.String())
+	}
+}
+
 func TestAdminAPISetAccountFrozen(t *testing.T) {
 	svc := &captureFreezeService{}
 	srv := &Server{token: "secret", svc: svc}
@@ -73,6 +96,24 @@ func TestAdminAPISetAccountFrozen(t *testing.T) {
 	}
 	if svc.req.UserID != 1001 || !svc.req.Frozen || svc.req.Until.IsZero() || svc.req.AppealURL != "https://appeals.example.test" {
 		t.Fatalf("decoded freeze request = %+v", svc.req)
+	}
+}
+
+func TestAdminAPIDeleteAccount(t *testing.T) {
+	svc := &captureDeleteService{}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/delete", strings.NewReader(`{"command_id":"c2","actor":"ops","reason":"fraud","dry_run":true,"user_id":1002}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"command_id":"c2"`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if svc.req.UserID != 1002 {
+		t.Fatalf("decoded delete request = %+v", svc.req)
 	}
 }
 
@@ -507,6 +548,35 @@ func TestAdminAPIImportStarGiftMultipart(t *testing.T) {
 	}
 }
 
+func TestAdminAPIImportGiftPackMultipart(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("metadata", `{"command_id":"pack-1","actor":"ops","reason":"catalog","dry_run":true}`); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "custom.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := []byte("zip payload")
+	if _, err := part.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc := &captureGiftService{}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/gifts/import-pack", &body)
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || svc.packReq.CommandID != "pack-1" || svc.packReq.FileName != "custom.zip" || !bytes.Equal(svc.packReq.Data, archive) {
+		t.Fatalf("status=%d request=%+v body=%s", rec.Code, svc.packReq, rec.Body.String())
+	}
+}
+
 func TestAdminAPIPublishStarGiftCollectiblesMultipart(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -590,14 +660,70 @@ func TestOfficialStarGiftListItemExposesExplicitCapabilities(t *testing.T) {
 
 type fakeService struct{}
 
+type resolveByPhoneService struct {
+	fakeService
+	phone string
+	found bool
+	user  domain.User
+}
+
+func (s *resolveByPhoneService) ResolveUserByPhone(_ context.Context, phone string) (domain.User, bool, error) {
+	s.phone = phone
+	return s.user, s.found, nil
+}
+
+func TestAdminAPIResolveUserByPhone(t *testing.T) {
+	svc := &resolveByPhoneService{found: true, user: domain.User{ID: 1_780_243_207}}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/resolve-by-phone", strings.NewReader(`{"phone":"+79991234567"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.phone != "+79991234567" {
+		t.Fatalf("decoded phone = %q", svc.phone)
+	}
+	if !strings.Contains(rec.Body.String(), `"found":true`) || !strings.Contains(rec.Body.String(), `"user_id":1780243207`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestAdminAPIResolveUserByPhoneNotFound(t *testing.T) {
+	svc := &resolveByPhoneService{}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/resolve-by-phone", strings.NewReader(`{"phone":"+79990000000"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"found":false`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
 type captureFreezeService struct {
 	fakeService
 	req admin.SetAccountFrozenRequest
 }
 
+type captureDeleteService struct {
+	fakeService
+	req admin.DeleteAccountRequest
+}
+
+func (s *captureDeleteService) DeleteAccount(_ context.Context, req admin.DeleteAccountRequest) (admin.CommandResult, error) {
+	s.req = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 type captureGiftService struct {
 	fakeService
-	req admin.ImportStarGiftRequest
+	req     admin.ImportStarGiftRequest
+	packReq admin.ImportGiftPackRequest
 }
 
 type captureCollectibleService struct {
@@ -615,6 +741,11 @@ func (s *captureGiftService) ImportStarGift(_ context.Context, req admin.ImportS
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (s *captureGiftService) ImportGiftPack(_ context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error) {
+	s.packReq = req
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (s *captureCollectibleService) PublishStarGiftCollectibles(_ context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error) {
 	s.req = req
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
@@ -624,11 +755,19 @@ func (fakeService) SetAccountFrozen(_ context.Context, req admin.SetAccountFroze
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) DeleteAccount(_ context.Context, req admin.DeleteAccountRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) GrantPremium(_ context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
 func (fakeService) GrantStars(_ context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) UpdateDonationChain(_ context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
@@ -768,6 +907,10 @@ func (fakeService) ImportStarGift(_ context.Context, req admin.ImportStarGiftReq
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) ImportGiftPack(_ context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) ImportOfficialStarGift(_ context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
@@ -812,6 +955,9 @@ func (fakeService) SetGifCatalogEnabled(_ context.Context, req admin.SetGifCatal
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 func (fakeService) SetGifCatalogSortOrder(_ context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+func (fakeService) SetGifCatalogCategory(_ context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 func (fakeService) DeleteGifCatalogEntry(_ context.Context, req admin.DeleteGifCatalogEntryRequest) (admin.CommandResult, error) {
@@ -865,6 +1011,17 @@ type captureCollectibleUsernameService struct {
 	del      admin.DeleteCollectibleUsernameRequest
 	filter   domain.CollectibleUsernameFilter
 	assetID  int64
+}
+
+type failingMintService struct {
+	captureCollectibleUsernameService
+	result admin.CommandResult
+	err    error
+}
+
+func (s *failingMintService) MintCollectibleUsername(_ context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error) {
+	s.mint = req
+	return s.result, s.err
 }
 
 func (s *captureCollectibleUsernameService) MintCollectibleUsername(_ context.Context, req admin.MintCollectibleUsernameRequest) (admin.CommandResult, error) {
@@ -1028,6 +1185,31 @@ func TestAdminAPIMintCollectibleUsernameForwardsExactInt64AndDryRun(t *testing.T
 	if svc.mint.Username != "durov" || svc.mint.OwnerUserID != 1001 || svc.mint.Amount != maxInt64 ||
 		svc.mint.CryptoAmount != 250000000000 || svc.mint.PurchaseDate != 1700000000 || !svc.mint.DryRun {
 		t.Fatalf("decoded mint request = %+v", svc.mint)
+	}
+}
+
+func TestAdminAPIMintCommandFailureCarriesStableCode(t *testing.T) {
+	svc := &failingMintService{result: admin.CommandResult{
+		CommandID: "mint-1", Action: admin.ActionMintCollectibleUsername, Status: "failed",
+		DryRun: true, Error: admin.CodeUsernameOccupied + ": username occupied", Code: admin.CodeUsernameOccupied,
+	}, err: errors.New(admin.CodeUsernameOccupied)}
+	srv := &Server{token: "secret", svc: svc}
+	req := httptest.NewRequest(http.MethodPost, "/v1/collectible-usernames/mint", strings.NewReader(
+		`{"command_id":"mint-1","actor":"ops","reason":"duplicate","dry_run":true,"username":"durov","owner_user_id":"1001","currency":"TON","amount":"0"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	var body struct {
+		Code   string `json:"code"`
+		Error  string `json:"error"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if rec.Code != http.StatusBadRequest || body.Status != "failed" ||
+		body.Code != admin.CodeUsernameOccupied || !strings.Contains(body.Error, admin.CodeUsernameOccupied) {
+		t.Fatalf("status=%d body=%s, want a failed command carrying the stable occupied code", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1224,5 +1406,9 @@ func (fakeService) AccountRatings(context.Context, domain.AccountRatingFilter) (
 }
 
 func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.AccountRatingEvent, error) {
+	return nil, nil
+}
+
+func (fakeService) ListRecentAdminCommands(context.Context, int, string) ([]domain.AdminCommand, error) {
 	return nil, nil
 }

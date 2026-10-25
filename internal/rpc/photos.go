@@ -496,9 +496,19 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	photos, total, err := r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
-	if err != nil {
-		return nil, internalErr()
+	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
+	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
+	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
+	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
+	var photos []domain.Photo
+	var total int
+	if target.ID != currentUserID && target.Deleted {
+		// tombstone: empty album
+	} else {
+		photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
+		if err != nil {
+			return nil, internalErr()
+		}
 	}
 	tgPhotos := make([]tg.PhotoClass, 0, len(photos))
 	for _, p := range photos {
@@ -723,6 +733,23 @@ func (r *Router) ProfilePhotoDeliveryEffects(ctx context.Context, user domain.Us
 	return r.profilePhotoDeliveryEffects(ctx, user.ID, user, false, domain.ProfilePhotoKindProfile)
 }
 
+// ProfilePhotoSeedEffects is the startup boundary for embedded avatars of
+// built-in accounts. It reuses the admin self-user projection, so a seeded
+// avatar and an operator-set avatar commit the same durable delivery fact.
+func (r *Router) ProfilePhotoSeedEffects(ctx context.Context, userID int64) (store.DeliveryEffectsBuilder[store.ProfilePhotoMutation], error) {
+	if r.deps.Users == nil {
+		return nil, errors.New("profile photo seed: users dependency is not configured")
+	}
+	user, err := r.deps.Users.Self(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.ID != userID {
+		return nil, domain.ErrUserNotFound
+	}
+	return r.ProfilePhotoDeliveryEffects(ctx, user), nil
+}
+
 func (r *Router) ProfilePhotoCommitted(userID int64) {
 	r.invalidateRPCProjectionForUser(userID)
 }
@@ -760,21 +787,19 @@ func (r *Router) resolveInputChatPhoto(ctx context.Context, userID int64, input 
 	case *tg.InputChatPhotoEmpty:
 		return nil, nil
 	case *tg.InputChatUploadedPhoto:
-		file, ok := in.GetFile()
-		if !ok {
-			return nil, photoInvalidErr()
-		}
 		if r.deps.Files == nil {
 			return nil, photoInvalidErr()
 		}
-		ref, ok := uploadedFileRef(userID, file)
-		if !ok {
-			return nil, fileReferenceInvalidErr()
-		}
-		// 频道/群头像用 avatar 尺寸（'a'/'c'），匹配 InputPeerPhotoFileLocation 下载路径。
-		photo, err := r.deps.Files.CreateAvatarFromUpload(ctx, ref)
+		upload, mediaFlags, err := parseProfilePhotoUpload(in)
 		if err != nil {
-			return nil, photoUploadErr(err)
+			return nil, err
+		}
+		if mediaFlags == 0 {
+			return nil, photoInvalidErr()
+		}
+		photo, err := r.createProfilePhoto(ctx, userID, upload)
+		if err != nil {
+			return nil, err
 		}
 		return &photo, nil
 	case *tg.InputChatPhoto:

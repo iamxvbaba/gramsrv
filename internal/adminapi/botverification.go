@@ -287,6 +287,22 @@ func (s *Server) handleRevokeCustomVerification(w http.ResponseWriter, r *http.R
 	writeBotVerificationCommandResult(w, result, err)
 }
 
+func (s *Server) handleGrantBotVerificationMark(w http.ResponseWriter, r *http.Request) {
+	var req admin.GrantBotVerificationRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// The shop sends peer_type: a missing one is most likely a truncated body,
+	// and silently treating it as a user would grant against the wrong peer
+	// namespace rather than failing loudly.
+	if req.PeerType == "" {
+		req.PeerType = domain.PeerTypeUser
+	}
+	s.applyVerificationPrincipal(r, &req.CommandMeta)
+	result, err := s.svc.GrantBotVerification(r.Context(), req)
+	writeBotVerificationCommandResult(w, result, err)
+}
+
 func (s *Server) handleApproveBotVerification(w http.ResponseWriter, r *http.Request) {
 	id, ok := moderationPathID(w, r, "id")
 	if !ok {
@@ -549,10 +565,13 @@ func writeBotVerificationCommandResult(w http.ResponseWriter, result admin.Comma
 		status = http.StatusBadRequest
 	}
 	if result.CommandID == "" {
-		result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error()}
+		result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error(), Code: code}
 	}
 	if result.Error == "" {
 		result.Error = err.Error()
+	}
+	if result.Code == "" {
+		result.Code = code
 	}
 	if code == admin.CodeCustomVerificationConflict {
 		result.Message = "another operator changed this row first; reload it and try again"

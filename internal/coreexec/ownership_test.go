@@ -26,7 +26,7 @@ func TestGRPCDispatchRequestTransfersOwnedWire(t *testing.T) {
 				Wire:    wire,
 			}
 
-			req := grpcDispatchRequest(&captured, [8]byte{1}, 2, 3, 4, true, nil)
+			req := grpcDispatchRequest(&captured, [8]byte{1}, 2, 3, 4, true, nil, "")
 			if req == nil {
 				t.Fatal("grpcDispatchRequest returned nil")
 			}

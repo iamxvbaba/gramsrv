@@ -12,6 +12,7 @@ import (
 	"strings"
 	appchannels "telesrv/internal/app/channels"
 	appcommunities "telesrv/internal/app/communities"
+	appmessages "telesrv/internal/app/messages"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -875,5 +876,45 @@ func TestMessagesGetMessagesReturnsOwnerMessages(t *testing.T) {
 	}
 	if len(box.Users) != 1 {
 		t.Fatalf("users = %+v, want peer user", box.Users)
+	}
+}
+
+func TestMessagesSearchGlobalMediaAllowsEmptyQuery(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	a, _ := users.Create(ctx, domain.User{Phone: "15550081101", FirstName: "A", AccessHash: 11})
+	b, _ := users.Create(ctx, domain.User{Phone: "15550081102", FirstName: "B", AccessHash: 12})
+	dialogs := memory.NewDialogStore()
+	store := memory.NewMessageStore(dialogs)
+	media := []*domain.MessageMedia{
+		{Kind: domain.MessageMediaKindPhoto, Photo: &domain.Photo{ID: 301, AccessHash: 31}},
+		{Kind: domain.MessageMediaKindDocument, Document: &domain.Document{ID: 302, AccessHash: 32, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrVideo}}}},
+		{Kind: domain.MessageMediaKindDocument, Document: &domain.Document{ID: 303, AccessHash: 33}},
+		{Kind: domain.MessageMediaKindDocument, Document: &domain.Document{ID: 304, AccessHash: 34, Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrAudio, Voice: true}}}},
+	}
+	for i, m := range media {
+		if _, err := store.SendPrivateText(ctx, domain.SendPrivateTextRequest{SenderUserID: a.ID, RecipientUserID: b.ID, RandomID: int64(701 + i), Media: m, Date: 1700000100 + i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := New(Config{}, Deps{Users: appusers.NewService(users), Messages: appmessages.NewService(store, dialogs)}, zaptest.NewLogger(t), clock.System)
+	for _, tc := range []struct {
+		name   string
+		filter tg.MessagesFilterClass
+		want   int
+	}{
+		{"photo", &tg.InputMessagesFilterPhotos{}, 1}, {"video", &tg.InputMessagesFilterVideo{}, 1},
+		{"photo_video", &tg.InputMessagesFilterPhotoVideo{}, 2}, {"document", &tg.InputMessagesFilterDocument{}, 1},
+		{"voice", &tg.InputMessagesFilterVoice{}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := r.onMessagesSearchGlobal(WithUserID(ctx, b.ID), &tg.MessagesSearchGlobalRequest{Filter: tc.filter, OffsetPeer: &tg.InputPeerEmpty{}, Limit: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := len(messagesFromMessagesClass(t, got)); n != tc.want {
+				t.Fatalf("got %d media results; want %d", n, tc.want)
+			}
+		})
 	}
 }

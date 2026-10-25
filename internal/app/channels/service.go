@@ -712,11 +712,11 @@ func (s *Service) SearchPublicChannels(ctx context.Context, userID int64, query 
 }
 
 // SetSignatures toggles channel post signatures.
-func (s *Service) SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
+func (s *Service) SetSignatures(ctx context.Context, userID, channelID int64, enabled, profiles bool) (domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
-	return s.channels.SetSignatures(ctx, userID, channelID, enabled)
+	return s.channels.SetSignatures(ctx, userID, channelID, enabled, profiles)
 }
 
 // SetPhoto 设置/清除频道头像（photo==nil 表示清除）。
@@ -1514,6 +1514,34 @@ func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {
 	return s.sendGate.CanSendMessages(ctx, userID)
 }
 
+// EditFactCheck 写入或删除一条消息的事实核查标签（Layer 231）。
+// 空文本表示删除标签；权限由 store 按“作者或可编辑消息的管理员”裁决。
+func (s *Service) EditFactCheck(ctx context.Context, userID int64, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return domain.EditFactCheckResult{}, domain.ErrChannelInvalid
+	}
+	if req.UserID == 0 {
+		req.UserID = userID
+	}
+	if req.UserID != userID || req.ChannelID == 0 || req.MessageID <= 0 {
+		return domain.EditFactCheckResult{}, domain.ErrChannelInvalid
+	}
+	return s.channels.EditFactCheck(ctx, req)
+}
+
+// GetFactChecks 批量读取一组消息的事实核查标签（Layer 231）。
+// Reuse the exact-message read boundary, including public preview and cleared history.
+func (s *Service) GetFactChecks(ctx context.Context, userID, channelID int64, messageIDs []int) (domain.FactCheckList, error) {
+	if s == nil || s.channels == nil || userID == 0 || channelID == 0 || len(messageIDs) == 0 {
+		return domain.FactCheckList{}, nil
+	}
+	history, err := s.GetMessages(ctx, userID, channelID, messageIDs)
+	if err != nil {
+		return domain.FactCheckList{}, err
+	}
+	return domain.FactChecksForMessages(history.Messages, messageIDs), nil
+}
+
 // EditMessage edits a channel/supergroup text message.
 func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
 	if s == nil || s.channels == nil || userID == 0 {
@@ -1621,7 +1649,7 @@ func (s *Service) DeleteParticipantHistory(ctx context.Context, userID int64, re
 	if req.UserID == 0 {
 		req.UserID = userID
 	}
-	if req.UserID != userID || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if req.UserID != userID || req.ChannelID == 0 || (req.Participant.ID <= 0 || (req.Participant.Type != domain.PeerTypeUser && req.Participant.Type != domain.PeerTypeChannel)) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
 	return s.channels.DeleteChannelParticipantHistory(ctx, req)
@@ -2013,7 +2041,7 @@ func (s *Service) SearchJoinedMessages(ctx context.Context, userID int64, req do
 		return domain.ChannelHistory{}, nil
 	}
 	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" && !req.MusicOnly {
+	if req.Query == "" && !req.MusicOnly && len(req.MediaCategories) == 0 {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
 	}
 	if utf8.RuneCountInString(req.Query) > domain.MaxChannelHistoryQueryLength {

@@ -1,5 +1,37 @@
 package domain
 
+import "fmt"
+
+type NotificationSoundKind uint8
+
+const (
+	NotificationSoundDefault NotificationSoundKind = iota
+	NotificationSoundNone
+	NotificationSoundLocal
+	NotificationSoundRingtone
+)
+
+// NotificationSound preserves the wire choice without importing TL types.
+type NotificationSound struct {
+	Kind  NotificationSoundKind `json:"kind"`
+	Title string                `json:"title,omitempty"`
+	Data  string                `json:"data,omitempty"`
+	ID    int64                 `json:"id,omitempty"`
+}
+
+func (s NotificationSound) Valid() bool {
+	switch s.Kind {
+	case NotificationSoundDefault, NotificationSoundNone:
+		return s.Title == "" && s.Data == "" && s.ID == 0
+	case NotificationSoundLocal:
+		return len(s.Title) <= 256 && len(s.Data) <= 4096 && s.Data != "" && s.ID == 0
+	case NotificationSoundRingtone:
+		return s.ID != 0 && s.Title == "" && s.Data == ""
+	default:
+		return false
+	}
+}
+
 // NotifyScopeKind 区分通知设置的作用域：具体 peer / 三类全局默认（私聊/群/频道）。
 type NotifyScopeKind string
 
@@ -19,20 +51,28 @@ type NotifyScope struct {
 }
 
 // PeerNotifySettings 是 peerNotifySettings 的业务层表达。各字段为指针=可选：
-// nil 表示该项未设置（客户端按所属类别默认继承）。声音字段恒为默认，v1 不建模
-// 自定义铃声（custom sound 罕见，留后续）。
+// nil 表示该项未设置（客户端按所属类别默认继承）。
 type PeerNotifySettings struct {
 	ShowPreviews      *bool
 	Silent            *bool
 	MuteUntil         *int
 	StoriesMuted      *bool
 	StoriesHideSender *bool
+	Sound             *NotificationSound
+	StoriesSound      *NotificationSound
+}
+
+func (s PeerNotifySettings) Validate() error {
+	if (s.Sound != nil && !s.Sound.Valid()) || (s.StoriesSound != nil && !s.StoriesSound.Valid()) {
+		return fmt.Errorf("invalid notification sound")
+	}
+	return nil
 }
 
 // IsZero 报告该设置是否全部未设置（无需持久化/可视为继承默认）。
 func (s PeerNotifySettings) IsZero() bool {
 	return s.ShowPreviews == nil && s.Silent == nil && s.MuteUntil == nil &&
-		s.StoriesMuted == nil && s.StoriesHideSender == nil
+		s.StoriesMuted == nil && s.StoriesHideSender == nil && s.Sound == nil && s.StoriesSound == nil
 }
 
 // NotifyException 是一个 peer（可含 forum 话题）的非默认通知设置，供
@@ -46,6 +86,14 @@ type NotifyException struct {
 // Clone 深拷贝指针字段，供内存 store 隔离。
 func (s PeerNotifySettings) Clone() PeerNotifySettings {
 	out := PeerNotifySettings{}
+	if s.Sound != nil {
+		v := *s.Sound
+		out.Sound = &v
+	}
+	if s.StoriesSound != nil {
+		v := *s.StoriesSound
+		out.StoriesSound = &v
+	}
 	if s.ShowPreviews != nil {
 		v := *s.ShowPreviews
 		out.ShowPreviews = &v

@@ -10,6 +10,13 @@ import (
 	"testing"
 )
 
+// 官方礼物快照会随 Telegram 上新礼物而增长。以下下界只用来识别空快照或被截断的
+// 快照，不锁定任何一份具体归档，因此刷新快照不会让这些 opt-in 测试变红。
+const (
+	minOfficialSnapshotGifts    = 100
+	minOfficialUpgradeableGifts = 50
+)
+
 func TestCatalogVerifiesSelectedDocument(t *testing.T) {
 	root := t.TempDir()
 	data := []byte("official-tgs")
@@ -74,7 +81,20 @@ func TestConfiguredOfficialSnapshotIsComplete(t *testing.T) {
 		}
 		verifiedDocuments[bundle.BaseDocument.ID] = struct{}{}
 		if bundle.Collectible == nil {
+			if include {
+				t.Fatalf("gift %d: manifest declares an attribute pool but no collectible was loaded", item.ID)
+			}
 			continue
+		}
+		// manifest 声明的属性池必须真的能加载出同样数量、且哈希已校验的文档。
+		// 这一条替代了原先写死的属性总数：它检查的是「声明即可用」这个不变量，
+		// 而不是某一份具体归档的数字。
+		if len(bundle.Collectible.Models) != item.ModelCount ||
+			len(bundle.Collectible.Patterns) != item.PatternCount ||
+			len(bundle.Collectible.Backdrops) != item.BackdropCount {
+			t.Fatalf("gift %d: manifest declares %d/%d/%d models/patterns/backdrops but loaded %d/%d/%d",
+				item.ID, item.ModelCount, item.PatternCount, item.BackdropCount,
+				len(bundle.Collectible.Models), len(bundle.Collectible.Patterns), len(bundle.Collectible.Backdrops))
 		}
 		sets++
 		attributes += len(bundle.Collectible.Models) + len(bundle.Collectible.Patterns) + len(bundle.Collectible.Backdrops)
@@ -88,10 +108,20 @@ func TestConfiguredOfficialSnapshotIsComplete(t *testing.T) {
 			verifiedDocuments[pattern.Document.ID] = struct{}{}
 		}
 	}
-	if len(items) != 149 || sets != 116 || attributes != 40332 || crafted != 108 || upgradable != 114 || craftable != 2 || len(verifiedDocuments) != 8333 {
-		t.Fatalf("gifts=%d sets=%d attributes=%d crafted=%d upgradable=%d craftable=%d documents=%d",
-			len(items), sets, attributes, crafted, upgradable, craftable, len(verifiedDocuments))
+	// 官方目录会随 Telegram 上新礼物而变化。把礼物/属性总数写死，会让每次刷新快照
+	// 都红灯，而真正的损坏（文档哈希不符、属性池被截断）反而被同样的噪声淹没。
+	// 这里只断言与具体归档无关的下界：挡住空快照、截断快照和空属性池。
+	if len(items) < minOfficialSnapshotGifts {
+		t.Fatalf("catalog has %d gifts, want at least %d", len(items), minOfficialSnapshotGifts)
 	}
+	if upgradable < minOfficialUpgradeableGifts {
+		t.Fatalf("only %d upgradeable gifts, want at least %d", upgradable, minOfficialUpgradeableGifts)
+	}
+	if len(verifiedDocuments) == 0 {
+		t.Fatal("no documents were verified")
+	}
+	t.Logf("gifts=%d sets=%d attributes=%d crafted=%d upgradable=%d craftable=%d documents=%d",
+		len(items), sets, attributes, crafted, upgradable, craftable, len(verifiedDocuments))
 }
 
 func TestGiftSummaryCapabilitiesRequireCompleteOfficialFacts(t *testing.T) {

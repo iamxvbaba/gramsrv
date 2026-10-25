@@ -15,6 +15,9 @@ admin:
     addr: core:2599
     token: ${TELESRV_ADMIN_API_TOKEN}
 
+identity:
+  dir: /var/lib/telesrv-identity
+
 storage:
   blob_backend: ${TELESRV_BLOB_BACKEND}
   blob_dir: /var/lib/telesrv-file/blobs

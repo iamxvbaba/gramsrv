@@ -44,7 +44,15 @@ type Config struct {
 	TONGiftExports     TONGiftExportResolver
 	TONGiftClaims      TONGiftClaimResolver
 	TONGiftFiles       PublicFileResolver
-	ModerationAppeals  ModerationAppealResolver
+	// MiniApps serves the self-hosted BotFather and Stickers Mini Apps
+	// (NewConfiguredMiniAppsHandler); nil leaves their routes unregistered.
+	MiniApps          http.Handler
+	ModerationAppeals ModerationAppealResolver
+	// DevStarsPaymentsEnabled registers the local dev/fiat Stars/Premium
+	// checkout (/payments/dev-stars). Denied by default; enable only in
+	// dev/test. It is wired from the same TELESRV_DEV_STARS_PAYMENTS_ENABLED
+	// setting as rpc.Config.DevStarsPaymentsEnabled.
+	DevStarsPaymentsEnabled bool
 	// TelegramLogin is the optional OIDC/Login HTTP adapter. Public Web owns
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
@@ -208,14 +216,18 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		logger:                 logger,
 		giftPreviewCacheDir:    strings.TrimSpace(cfg.GiftPreviewCacheDir),
 		giftPreviewRendererURL: strings.TrimSpace(cfg.GiftPreviewRendererURL),
+		allowDevPayments:       cfg.DevStarsPaymentsEnabled,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
-	mux.HandleFunc("GET /payments/dev-stars", h.devStarsCheckout)
+	if cfg.DevStarsPaymentsEnabled {
+		mux.HandleFunc("GET /payments/dev-stars", h.devStarsCheckout)
+	}
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
+	mux.HandleFunc("GET /joinchat/{hash}", h.joinChatLink)
 	mux.HandleFunc("GET /nft/{slug}", h.uniqueGift)
 	mux.HandleFunc("GET /nft/{slug}/{$}", h.uniqueGift)
 	if h.giftPreviewCacheDir != "" && h.giftPreviewRendererURL != "" {
@@ -230,6 +242,20 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	}
 	if cfg.TONGiftClaims != nil {
 		registerTONGiftClaimRoutes(mux, publicRoutePrefix, h)
+	}
+	if cfg.MiniApps != nil {
+		mux.Handle("GET /botfather", cfg.MiniApps)
+		mux.Handle("GET /botfather/{$}", cfg.MiniApps)
+		mux.Handle("GET /stickers", cfg.MiniApps)
+		mux.Handle("GET /stickers/{$}", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/botfather/status", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/botfather/validate", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/botfather/bots", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/botfather/bots", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers/mine", cfg.MiniApps)
+		mux.Handle("POST /api/miniapps/stickers", cfg.MiniApps)
+		mux.Handle("GET /api/miniapps/stickers/{shortName}", cfg.MiniApps)
 	}
 	if cfg.ModerationAppeals != nil {
 		mux.HandleFunc("GET /appeal/{token}", h.moderationAppeal)
@@ -306,6 +332,7 @@ type handler struct {
 	logger                 *zap.Logger
 	giftPreviewCacheDir    string
 	giftPreviewRendererURL string
+	allowDevPayments       bool
 }
 
 type moderationAppealPage struct {
@@ -344,6 +371,10 @@ proxy.postEvent('payment_form_submit', JSON.stringify({title:'telesrv dev paymen
 </script></body></html>`))
 
 func (h *handler) devStarsCheckout(w http.ResponseWriter, r *http.Request) {
+	if !h.allowDevPayments {
+		http.NotFound(w, r)
+		return
+	}
 	raw := strings.TrimSpace(r.URL.Query().Get("form_id"))
 	formID, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || formID == 0 || raw != strconv.FormatInt(formID, 10) {
@@ -626,6 +657,37 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *handler) joinChatLink(w http.ResponseWriter, r *http.Request) {
+	h.inviteLink(w, strings.TrimSpace(r.PathValue("hash")))
+}
+
+// inviteLink renders a landing page for /+HASH and /joinchat/HASH that opens
+// the invite in the app. It does not resolve the chat: the app shows the
+// preview (messages.checkChatInvite) once it opens the link.
+func (h *handler) inviteLink(w http.ResponseWriter, hash string) {
+	if !links.ValidInviteHash(hash) {
+		h.serveUsernameNotFound(w, "+"+hash)
+		return
+	}
+	app := h.appLinks.BuildInvite(hash)
+	data := pageData{
+		AppName:      h.appName,
+		Title:        "Group Invite",
+		KindLabel:    "invite link",
+		Subtitle:     "+" + hash,
+		Description:  "This page opens the app so you can preview and join this chat.",
+		CanonicalURL: h.publicBaseURL + "/+" + hash,
+		AppURL:       template.URL(app),
+		LegacyTgURL:  template.URL(legacyTgURL("join", "invite", hash)),
+	}
+	data.AppURLJS = template.JS(strconv.Quote(app))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	if err := landingTemplate.Execute(w, data); err != nil {
+		http.Error(w, "render invite page failed", http.StatusInternalServerError)
+	}
+}
+
 func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if h.uniqueGifts == nil || !validStarGiftSlugPath(slug) {
@@ -846,6 +908,11 @@ func intColorToHex(c int) string {
 
 func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.PathValue("username"))
+	// /+HASH is an invite link (the t.me form), not a username.
+	if hash, ok := strings.CutPrefix(username, "+"); ok {
+		h.inviteLink(w, hash)
+		return
+	}
 	if !validUsernamePath(username) {
 		h.serveUsernameNotFound(w, username)
 		return
@@ -1383,7 +1450,13 @@ func publicWebAppURL(webBaseURL, legacyURL string) string {
 
 func publicSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		if strings.HasPrefix(r.URL.Path, "/botfather") || strings.HasPrefix(r.URL.Path, "/stickers") || strings.HasPrefix(r.URL.Path, "/api/miniapps/") {
+			// The Mini App pages are self-contained and call back only to this
+			// origin; no Telegram or CDN origin becomes an accidental dependency.
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		} else {
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		}
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")

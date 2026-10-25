@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -20,6 +21,12 @@ import (
 func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsCanPurchaseStoreRequest](d, tlprofile.SemanticMethodPaymentsCanPurchaseStore, func(ctx context.Context, req *tg.PaymentsCanPurchaseStoreRequest) (any, error) {
 		return r.onPaymentsCanPurchaseStore(ctx, req)
+	})
+	// Keep the fixed local-ledger reference rate consistent with app config.
+	registerRPC[*tg.PaymentsGetCurrencyRatesRequest](d, tlprofile.SemanticMethodPaymentsGetCurrencyRates, func(ctx context.Context, _ *tg.PaymentsGetCurrencyRatesRequest) (any, error) {
+		return &tg.PaymentsCurrencyRates{Rates: []tg.CurrencyRate{
+			{Currency: "USD", Rate: domain.TonUSDRate},
+		}}, nil
 	})
 	registerRPC[*tg.PaymentsAssignPlayMarketTransactionRequest](d, tlprofile.SemanticMethodPaymentsAssignPlayMarketTransaction, func(ctx context.Context, req *tg.PaymentsAssignPlayMarketTransactionRequest) (any, error) {
 		return r.onPaymentsAssignPlayMarketTransaction(ctx, req)
@@ -117,6 +124,12 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURL, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (any, error) {
 		return r.onPaymentsGetStarGiftWithdrawalURL(ctx, req)
 	})
+	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURLLegacy, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (any, error) {
+		return r.onPaymentsGetStarGiftWithdrawalURLLegacy(ctx, req)
+	})
+	registerRPC[*tg.PaymentsDeleteStarGiftRequest](d, tlprofile.SemanticMethodPaymentsDeleteStarGift, func(ctx context.Context, req *tg.PaymentsDeleteStarGiftRequest) (any, error) {
+		return r.onPaymentsDeleteStarGift(ctx, req)
+	})
 	registerRPC[*tg.PaymentsSendStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsSendStarGiftOffer, func(ctx context.Context, req *tg.PaymentsSendStarGiftOfferRequest) (any, error) {
 		return r.onPaymentsSendStarGiftOffer(ctx, req)
 	})
@@ -198,9 +211,12 @@ func (r *Router) onPaymentsAssignPlayMarketTransaction(ctx context.Context, _ *t
 }
 
 // onPaymentsGetStarsRevenueStats exposes real channel Star Gift proceeds from
-// the same peer-scoped ledger as getStarsStatus/getStarsTransactions. Personal
-// and bot revenue remain the bounded compatibility response because their
-// revenue bucket is distinct from the general Stars balance and is not modeled.
+// the same peer-scoped ledger as getStarsStatus/getStarsTransactions, and real
+// bot invoice proceeds from the bot Stars wallet.
+//
+// Personal user revenue remains the bounded compatibility response: a plain
+// user has no revenue bucket distinct from their own spendable Stars balance,
+// and reporting the latter as income would show spending as earnings.
 func (r *Router) onPaymentsGetStarsRevenueStats(ctx context.Context, req *tg.PaymentsGetStarsRevenueStatsRequest) (*tg.PaymentsStarsRevenueStats, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
@@ -215,7 +231,21 @@ func (r *Router) onPaymentsGetStarsRevenueStats(ctx context.Context, req *tg.Pay
 	}
 	ton := req.GetTon()
 	if owner.Type != domain.PeerTypeChannel {
-		return tdesktop.StarsRevenueStats(ton), nil
+		// The bot wallet is XTR-only: there is no TON variant of bot invoice
+		// proceeds, so a ton=true request keeps the bounded stub.
+		if ton || owner.Type != domain.PeerTypeUser {
+			return tdesktop.StarsRevenueStats(ton), nil
+		}
+		// Re-resolve the peer: a bot wallet is owned by the viewer, so it has
+		// to be admitted before the personal-user stub is returned.
+		botID, createdAt, ok, err := r.botStarsWalletOwner(ctx, userID, req.Peer)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return tdesktop.StarsRevenueStats(ton), nil
+		}
+		return r.botStarsRevenueStats(ctx, userID, botID, createdAt, ton)
 	}
 	if r.deps.Channels == nil {
 		return nil, peerIDInvalidErr()
@@ -272,6 +302,303 @@ func (r *Router) onPaymentsGetStarsRevenueStats(ctx context.Context, req *tg.Pay
 	issuer, withdrawalAvailable := r.deps.Gifts.(channelRevenueWithdrawalIssuer)
 	stats.Status.WithdrawalEnabled = isCreator && balance > 0 && withdrawalAvailable && issuer.ChannelRevenueWithdrawalAvailable()
 	return stats, nil
+}
+
+// botStarsRevenueStats reports a bot's own Stars wallet, which holds the XTR
+// invoice proceeds and is deliberately separate from the bot user identity's
+// personal balance.
+//
+// Only the bot's owner may read it: revenue is operator business data, and
+// payments.getStarsStatus is the method that exposes a principal's own
+// spendable balance. A non-owner asking for a peer's wallet gets
+// USER_PERMISSION_DENIED rather than a zeroed stub, so an operator cannot
+// mistake "not yours" for "you earned nothing".
+func (r *Router) botStarsRevenueStats(ctx context.Context, viewerID, botUserID int64, createdAt time.Time, ton bool) (*tg.PaymentsStarsRevenueStats, error) {
+	stats := tdesktop.StarsRevenueStats(ton)
+	ledger, ok := r.deps.Gifts.(botStarsWalletReader)
+	if !ok {
+		return stats, nil
+	}
+	balance, err := ledger.BotStarsBalance(ctx, botUserID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	overallRevenue, err := ledger.BotStarsOverallRevenue(ctx, botUserID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	amount := tg.StarsAmountClass(&tg.StarsAmount{Amount: balance})
+	overallAmount := tg.StarsAmountClass(&tg.StarsAmount{Amount: overallRevenue})
+	if ton {
+		amount = &tg.StarsTonAmount{Amount: balance}
+		overallAmount = &tg.StarsTonAmount{Amount: overallRevenue}
+	}
+	// Bot wallet funds are spent through the bot's own invoices and gifts, not
+	// withdrawn to a personal ledger, so withdrawal stays disabled exactly like
+	// a creator channel without a configured withdrawal provider.
+	stats.Status.CurrentBalance = amount
+	stats.Status.AvailableBalance = amount
+	stats.Status.OverallRevenue = overallAmount
+	stats.Status.WithdrawalEnabled = false
+	// The TON wallet is a separate bucket that telesrv does not model, so the
+	// chart keeps the compatibility error for a ton=true request.
+	if ton {
+		return stats, nil
+	}
+	graph, err := r.botStarsRevenueGraph(ctx, ledger, botUserID, createdAt, int(r.clock.Now().Unix()))
+	if err != nil {
+		return nil, err
+	}
+	stats.RevenueGraph = graph
+	return stats, nil
+}
+
+// botStarsRevenueGraph renders the wallet journal as the inline-JSON chart the
+// official clients expect.
+//
+// Layer 228 ships no line/bar StatsGraph constructor: statsGraph is the only
+// data-carrying form and its payload is a DataJSON object. The client parses
+// {"columns":[["x",<ms>,...],["revenue",<v>,...]],"yTickFormatter":"XTR"}
+// directly out of the response, so nothing has to be fetched over HTTP.
+//
+// An empty series must stay a statsGraphError: the renderer logs "Empty
+// columns list" and draws nothing for a column array without an x column.
+func (r *Router) botStarsRevenueGraph(ctx context.Context, ledger botStarsWalletReader, botUserID int64, createdAt time.Time, now int) (tg.StatsGraphClass, error) {
+	const (
+		bucketSeconds = 86400
+		maxPoints     = 366
+		// minPoints is the smallest window the official stack renderer draws
+		// correctly; see the padding below.
+		minPoints = 3
+	)
+	// Anchor to UTC midnight so the daily buckets line up with the day boundary
+	// the client assumes when it derives a day label from an x value.
+	today := (now / bucketSeconds) * bucketSeconds
+	// The axis starts at the day the bot was created, not at a fixed lookback:
+	// a bot three days old must not be drawn against a year of empty space.
+	// The window is still capped so a long-lived bot stays bounded.
+	earliest := today - (maxPoints-1)*bucketSeconds
+	from := today
+	if !createdAt.IsZero() {
+		createdDay := int(createdAt.Unix()) / bucketSeconds * bucketSeconds
+		switch {
+		case createdDay < earliest:
+			from = earliest
+		case createdDay > today:
+			// Clock skew or a creation date in the future: never plot a window
+			// that ends before it starts.
+			from = today
+		default:
+			from = createdDay
+		}
+	}
+	// The stack renderer derives the bar step from xPercentage[1] and reads that
+	// index unguarded, so fewer than three points is not merely ugly: one point
+	// is an out-of-bounds read and two points collapse the bar step to zero.
+	// Pad a young bot's window instead of shipping a broken chart.
+	if from > today-(minPoints-1)*bucketSeconds {
+		from = today - (minPoints-1)*bucketSeconds
+	}
+	points, err := ledger.BotStarsRevenueSeries(ctx, botUserID, from, today)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if len(points) == 0 {
+		return &tg.StatsGraphError{Error: "Not enough data to display."}, nil
+	}
+	// A stack bar needs equal-length columns, so gaps are filled with zero
+	// rather than leaving a shorter y column the renderer would truncate.
+	byDay := make(map[int]domain.BotStarsRevenuePoint, len(points))
+	for _, point := range points {
+		byDay[point.DayStart] = point
+	}
+	// Column 0 is the shared x axis, then one column per stacked series.
+	columns := make([][]any, 0, 3)
+	xColumn := make([]any, 0, maxPoints)
+	xColumn = append(xColumn, "x")
+	revenueColumn := make([]any, 0, maxPoints)
+	revenueColumn = append(revenueColumn, "revenue")
+	for day := from; day <= today; day += bucketSeconds {
+		point := byDay[day]
+		// The renderer derives its default one-day step from milliseconds.
+		xColumn = append(xColumn, int64(day)*1000)
+		revenueColumn = append(revenueColumn, point.Amount)
+	}
+	// One line only. A second line is what makes the client draw its legend
+	// buttons (ChartWidget::setupFilterButtons bails out at lines.size() <= 1),
+	// and an extra row of buttons under the chart reads as a rendering glitch.
+	// Spend and refunds stay in the transaction list, where they belong, and the
+	// overview numbers already carry the balance.
+	columns = append(columns, xColumn, revenueColumn)
+	payload, err := json.Marshal(map[string]any{
+		"columns": columns,
+		// XTR selects the Stars formatter in the client; without it the axis
+		// renders as a plain number and the chart looks like fiat.
+		"yTickFormatter": "XTR",
+		// TDesktop paints each line from the colorKey via
+		// FillLineColorsByKey, so without this it falls back to a black bar.
+		// GOLDEN is the theme key the client itself uses for Stars; the hex is
+		// only the pre-theme fallback and is the palette value #eba52d. Android
+		// overrides the color with its own yellow either way.
+		"colors": map[string]string{"revenue": "GOLDEN#eba52d"},
+		// An absent name leaves the point-details label blank, and the client
+		// does not localize a server-supplied string.
+		"names": map[string]string{"revenue": "Revenue"},
+	})
+	if err != nil {
+		return nil, internalErr()
+	}
+	return &tg.StatsGraph{JSON: tg.DataJSON{Data: string(payload)}}, nil
+}
+
+// botStarsWalletStatus serves payments.getStarsStatus for a bot wallet peer by
+// reporting the wallet balance in the same starsStatus envelope the personal
+// and channel paths use.
+//
+// The TON wallet is a separate bucket that telesrv does not model, so a
+// ton=true request returns a zeroed envelope instead of the XTR balance.
+func (r *Router) botStarsWalletStatus(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (*tg.PaymentsStarsStatus, bool, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, true, internalErr()
+	}
+	// handled must stay true on an error: the caller only propagates the error
+	// when it considers the peer handled, so a false here would silently drop a
+	// permission denial and fall through to the personal-user path.
+	botID, _, ok, err := r.botStarsWalletOwner(ctx, userID, req.Peer)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	ton := req.GetTon()
+	if ton {
+		return emptyStarsStatus(&tg.StarsTonAmount{}), true, nil
+	}
+	ledger, supported := r.deps.Gifts.(botStarsWalletReader)
+	if !supported {
+		return emptyStarsStatus(&tg.StarsAmount{}), true, nil
+	}
+	balance, err := ledger.BotStarsBalance(ctx, botID)
+	if err != nil {
+		return nil, true, internalErr()
+	}
+	out := emptyStarsStatus(&tg.StarsAmount{Amount: balance})
+	// The wallet belongs to a bot, so hand the viewer that user object; the
+	// client renders the balance next to the bot it is showing.
+	if bot, found, err := r.deps.Users.ByID(ctx, userID, botID); err == nil && found {
+		out.Users = tgUsersForViewer(userID, []domain.User{bot})
+	}
+	return out, true, nil
+}
+
+// botStarsWalletReader is the optional bot-wallet projection. Gateways without
+// the lifecycle store keep returning the zeroed compatibility response.
+type botStarsWalletReader interface {
+	BotStarsBalance(ctx context.Context, botUserID int64) (int64, error)
+	BotStarsOverallRevenue(ctx context.Context, botUserID int64) (int64, error)
+	BotStarsRevenueSeries(ctx context.Context, botUserID int64, fromUnix, toUnix int) ([]domain.BotStarsRevenuePoint, error)
+	BotStarsTransactions(ctx context.Context, botUserID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
+}
+
+// botStarsWalletTransactions serves payments.getStarsTransactions for a bot
+// wallet peer. handled=false means the peer is not a bot wallet and the caller
+// must fall through to the personal/channel path.
+//
+// The TON wallet is a different bucket that telesrv does not model, so a
+// ton=true request returns a zeroed envelope instead of an XTR history.
+func (r *Router) botStarsWalletTransactions(ctx context.Context, req *tg.PaymentsGetStarsTransactionsRequest) (*tg.PaymentsStarsStatus, bool, error) {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, true, internalErr()
+	}
+	// handled must stay true on an error: the caller only propagates the error
+	// when it considers the peer handled, so a false here would silently drop a
+	// permission denial and fall through to the personal-user path.
+	botID, _, ok, err := r.botStarsWalletOwner(ctx, userID, req.Peer)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	ton := req.GetTon()
+	if ton {
+		return emptyStarsStatus(&tg.StarsTonAmount{}), true, nil
+	}
+	query, err := starsTransactionQuery(req)
+	if err != nil {
+		return nil, true, err
+	}
+	ledger, supported := r.deps.Gifts.(botStarsWalletReader)
+	if !supported {
+		return emptyStarsStatus(&tg.StarsAmount{}), true, nil
+	}
+	page, err := ledger.BotStarsTransactions(ctx, botID, query)
+	if err != nil {
+		return nil, true, internalErr()
+	}
+	out := emptyStarsStatus(&tg.StarsAmount{Amount: page.Balance})
+	if txns := tgStarsTransactions(page.Transactions); len(txns) > 0 {
+		out.SetHistory(txns)
+	}
+	// The last page must omit next_offset, otherwise the client pages forever.
+	if page.NextOffset != "" {
+		out.SetNextOffset(page.NextOffset)
+	}
+	// Counterparties are payers, so the viewer needs their user objects or the
+	// history renders as bare ids.
+	if len(page.Transactions) > 0 {
+		userIDs := make([]int64, 0, len(page.Transactions))
+		for _, txn := range page.Transactions {
+			if txn.Peer.Type == domain.PeerTypeUser {
+				userIDs = append(userIDs, txn.Peer.ID)
+			}
+		}
+		out.Users = tgUsersForViewer(userID, r.domainUsersForIDs(ctx, userID, uniqueInt64(userIDs)))
+	}
+	return out, true, nil
+}
+
+// botStarsWalletOwner resolves an input peer to the bot whose wallet the
+// viewer is allowed to read.
+//
+// ok=false means the peer is not a bot wallet at all (a plain user or a
+// channel), so the caller falls back to its normal path. A bot wallet the
+// viewer does not own is an error rather than a zeroed stub, so an operator
+// cannot mistake "not yours" for "you earned nothing".
+// botStarsWalletOwner returns the bot id plus its creation day, which anchors
+// the revenue chart. A zero createdAt means the record predates the field and
+// the caller falls back to a single-day window.
+func (r *Router) botStarsWalletOwner(ctx context.Context, viewerID int64, input tg.InputPeerClass) (botUserID int64, createdAt time.Time, ok bool, err error) {
+	owner, err := r.checkedDomainPeerFromInputPeer(ctx, viewerID, input)
+	if err != nil {
+		return 0, time.Time{}, false, err
+	}
+	// A plain user peer has no separate revenue bucket: getStarsStatus is the
+	// method that exposes a principal's own spendable balance.
+	if owner.Type != domain.PeerTypeUser || owner.ID == viewerID {
+		return 0, time.Time{}, false, nil
+	}
+	if r.deps.Users == nil || r.deps.Bots == nil {
+		return 0, time.Time{}, false, nil
+	}
+	bot, found, err := r.deps.Users.ByID(ctx, viewerID, owner.ID)
+	if err != nil {
+		return 0, time.Time{}, false, internalErr()
+	}
+	if !found || !bot.Bot {
+		return 0, time.Time{}, false, nil
+	}
+	owns, err := r.deps.Bots.OwnsBot(ctx, viewerID, owner.ID)
+	if err != nil {
+		return 0, time.Time{}, false, internalErr()
+	}
+	if !owns {
+		return 0, time.Time{}, false, tgerr.New(403, "USER_PERMISSION_DENIED")
+	}
+	return owner.ID, bot.CreatedAt, true, nil
 }
 
 type channelRevenueWithdrawalIssuer interface {
@@ -424,6 +751,19 @@ type channelGiftLedgerReader interface {
 // 响应必须是 payments.starsStatus（balance/chats/users 都是必填，空 vector 即可）——
 // 两端客户端无条件读取 balance（DrKLO StarsAmount 反序列化 / TDesktop vbalance()）。
 func (r *Router) onPaymentsGetStarsStatus(ctx context.Context, req *tg.PaymentsGetStarsStatusRequest) (*tg.PaymentsStarsStatus, error) {
+	if req == nil {
+		return nil, peerIDInvalidErr()
+	}
+	// A bot wallet is addressed by the bot peer, which the shared star-gift
+	// owner check rejects because it admits only self and channels.
+	//
+	// TDesktop reaches the bot earn screen through this method: it renders the
+	// wallet balance in the bot profile and hides the whole balance section
+	// while that balance is zero. Without this branch the request fails, the
+	// section stays hidden and the revenue chart is never even requested.
+	if status, handled, err := r.botStarsWalletStatus(ctx, req); handled {
+		return status, err
+	}
 	userID, owner, err := r.starGiftLedgerOwner(ctx, req)
 	if err != nil {
 		return nil, err
@@ -502,6 +842,16 @@ func (r *Router) onPaymentsGetStarsSubscriptions(ctx context.Context, req *tg.Pa
 // onPaymentsGetStarsTransactions 返回 keyset 分页的 Stars 流水（同 starsStatus 信封）。
 // 末页必须省略 next_offset（flag 不置），否则 DrKLO 会无限翻页。
 func (r *Router) onPaymentsGetStarsTransactions(ctx context.Context, req *tg.PaymentsGetStarsTransactionsRequest) (*tg.PaymentsStarsStatus, error) {
+	if req == nil {
+		return nil, peerIDInvalidErr()
+	}
+	// A bot wallet is addressed by the bot peer itself, which the shared
+	// star-gift owner check rejects because it only admits self and channels.
+	// Resolve it first so the bot history reaches the same starsStatus envelope
+	// the official Stars screen pages through.
+	if status, handled, err := r.botStarsWalletTransactions(ctx, req); handled {
+		return status, err
+	}
 	userID, owner, err := r.starGiftTransactionLedgerOwner(ctx, req)
 	if err != nil {
 		return nil, err
@@ -784,7 +1134,7 @@ func tgTonTransactions(in []domain.TonTransaction) []tg.StarsTransaction {
 // 真实 peer 走 starsTransactionPeer，其余兜底 Unsupported（Peer 字段必填，不可为 nil）。
 func tgStarsTransactionPeer(t domain.StarsTransaction) tg.StarsTransactionPeerClass {
 	switch t.Reason {
-	case domain.StarsReasonGrant, domain.StarsReasonTopup:
+	case domain.StarsReasonGrant, domain.StarsReasonTopup, domain.StarsReasonDonationDeposit:
 		return &tg.StarsTransactionPeerFragment{}
 	case domain.StarsReasonPremium:
 		return &tg.StarsTransactionPeerPremiumBot{}

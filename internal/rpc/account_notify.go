@@ -74,7 +74,7 @@ func (r *Router) onAccountGetNotifySettings(ctx context.Context, peer tg.InputNo
 	if err != nil {
 		return nil, internalErr()
 	}
-	return tgPeerNotifySettings(&settings), nil
+	return tgScopeNotifySettings(scope, &settings), nil
 }
 
 func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.AccountUpdateNotifySettingsRequest) (bool, error) {
@@ -90,6 +90,20 @@ func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.Acco
 		return false, peerIDInvalidErr()
 	}
 	settings := domainPeerNotifySettings(req.Settings)
+	if v, ok := req.Settings.GetSound(); ok {
+		sound, err := domainNotificationSound(v)
+		if err != nil {
+			return false, err
+		}
+		settings.Sound = &sound
+	}
+	if v, ok := req.Settings.GetStoriesSound(); ok {
+		sound, err := domainNotificationSound(v)
+		if err != nil {
+			return false, err
+		}
+		settings.StoriesSound = &sound
+	}
 	if err := r.requireAccountDelivery(userID, "account.updateNotifySettings"); err != nil {
 		return false, err
 	}
@@ -100,7 +114,7 @@ func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.Acco
 	payload, err := encodeDeliveryUpdate(&tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateNotifySettings{
 			Peer:           tgNotifyPeer(scope),
-			NotifySettings: *tgPeerNotifySettings(&settings),
+			NotifySettings: *tgScopeNotifySettings(scope, &settings),
 		}},
 		Users: []tg.UserClass{},
 		Chats: []tg.ChatClass{},
@@ -211,14 +225,14 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 		if filterPeer != nil && ex.Peer != *filterPeer {
 			continue
 		}
-		if !notifyExceptionQualifies(ex.Settings, compareStories) {
+		if !notifyExceptionQualifies(ex.Settings, compareStories) && !(req.CompareSound && (ex.Settings.Sound != nil || compareStories && ex.Settings.StoriesSound != nil)) {
 			continue
 		}
 		scope := domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: ex.Peer, TopicID: ex.TopicID}
 		s := ex.Settings
 		updates = append(updates, &tg.UpdateNotifySettings{
 			Peer:           tgNotifyPeer(scope),
-			NotifySettings: *tgPeerNotifySettings(&s),
+			NotifySettings: *tgScopeNotifySettings(scope, &s),
 		})
 		switch ex.Peer.Type {
 		case domain.PeerTypeUser:
@@ -249,7 +263,7 @@ func (r *Router) onAccountGetNotifyExceptions(ctx context.Context, req *tg.Accou
 }
 
 // notifyExceptionQualifies 判定一条异常是否纳入 getNotifyExceptions 结果。
-// 自定义铃声未建模故 compare_sound 无额外效果。
+// 声音比较由调用方按 compare_sound 独立处理。
 func notifyExceptionQualifies(s domain.PeerNotifySettings, compareStories bool) bool {
 	if s.MuteUntil != nil || s.Silent != nil || s.ShowPreviews != nil {
 		return true
@@ -281,7 +295,17 @@ func (r *Router) tgChatsForChannelIDs(ctx context.Context, viewerUserID int64, c
 // 保留默认（声音=default、show_previews=true 等），已设置字段覆盖。nil=纯默认，
 // 与历史 tdesktop.NotifySettings() 行为一致。
 func tgPeerNotifySettings(s *domain.PeerNotifySettings) *tg.PeerNotifySettings {
-	out := tdesktop.NotifySettings()
+	return applyStoredNotifySettings(tdesktop.NotifySettings(), s)
+}
+
+func tgScopeNotifySettings(scope domain.NotifyScope, s *domain.PeerNotifySettings) *tg.PeerNotifySettings {
+	if scope.TopicID != 0 {
+		return applyStoredNotifySettings(&tg.PeerNotifySettings{}, s)
+	}
+	return tgPeerNotifySettings(s)
+}
+
+func applyStoredNotifySettings(out *tg.PeerNotifySettings, s *domain.PeerNotifySettings) *tg.PeerNotifySettings {
 	if s == nil {
 		return out
 	}
@@ -300,6 +324,17 @@ func tgPeerNotifySettings(s *domain.PeerNotifySettings) *tg.PeerNotifySettings {
 	if s.StoriesHideSender != nil {
 		out.SetStoriesHideSender(*s.StoriesHideSender)
 	}
+	if s.Sound != nil {
+		out.SetIosSound(tgNotificationSound(*s.Sound))
+		out.SetAndroidSound(tgNotificationSound(*s.Sound))
+		out.SetOtherSound(tgNotificationSound(*s.Sound))
+	}
+	if s.StoriesSound != nil {
+		out.SetStoriesIosSound(tgNotificationSound(*s.StoriesSound))
+		out.SetStoriesAndroidSound(tgNotificationSound(*s.StoriesSound))
+		out.SetStoriesOtherSound(tgNotificationSound(*s.StoriesSound))
+	}
+
 	return out
 }
 

@@ -34,6 +34,24 @@ type UsersService interface {
 	UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, date int) (domain.User, domain.UpdateEvent, error)
 }
 
+type InvoiceService interface {
+	BotAPISendInvoice(ctx context.Context, botID, chatID int64, title, description, payload string, amount int64) (domain.Message, error)
+	BotAPIRefundStarPayment(ctx context.Context, botID, userID int64, telegramPaymentChargeID string) (bool, error)
+}
+
+// StarGiftGatewayService exposes the Star Gift catalog and purchase to bots. It is
+// optional so lightweight Bot API gateways retain the smaller core interface; the
+// production RPC router implements it through the same durable Stars payment
+// pipeline as MTProto payments.sendStarsForm.
+type StarGiftGatewayService interface {
+	BotAPIAvailableGifts(ctx context.Context) ([]domain.StarGift, error)
+	// BotAPISendStarGift purchases and sends one gift out of the bot's Stars
+	// balance. userID and chatID are the two mutually exclusive Bot API recipient
+	// selectors; the gateway resolves whichever is non-zero into a peer. requestID
+	// is the telesrv idempotency key (empty means "charge again").
+	BotAPISendStarGift(ctx context.Context, botID, giftID, userID, chatID int64, payForUpgrade bool, message domain.PremiumGiftMessage, requestID string) (bool, error)
+}
+
 type WebAppService interface {
 	AnswerWebAppQueryFromBotAPI(ctx context.Context, botID int64, webAppQueryID string, result domain.BotInlineResult) (inlineMessageID string, err error)
 	SavePreparedInlineMessageFromBotAPI(ctx context.Context, botID, userID int64, result domain.BotInlineResult, peerTypes []string) (id string, expireDate int, err error)
@@ -41,6 +59,9 @@ type WebAppService interface {
 
 type GatewayService interface {
 	BotAPISelf(ctx context.Context, botID int64) (domain.User, error)
+	// BotAPIDropPendingUpdates discards the queue the bot has not confirmed, which
+	// is what dropPendingUpdates does in the Bot API.
+	BotAPIDropPendingUpdates(ctx context.Context, botID int64) error
 	BotAPIUpdates(ctx context.Context, botID int64, offset int64) ([]domain.UpdateEvent, error)
 	BotAPISendMessage(ctx context.Context, botID, chatID int64, text string, entities []domain.MessageEntity, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview, silent bool, replyToMessageID int) (domain.Message, error)
 	BotAPISendRichMessage(ctx context.Context, botID, chatID int64, rich domain.BotAPIRichMessageInput, replyMarkup *domain.MessageReplyMarkup, silent, noForwards bool, replyToMessageID int, effectID int64) (domain.Message, error)
@@ -51,7 +72,19 @@ type GatewayService interface {
 	BotAPIEditInlineRichMessage(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, rich domain.BotAPIRichMessageInput, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (bool, error)
 	BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error)
 	BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, callbackQueryID, text, url string, showAlert bool, cacheTime int) (bool, error)
+	BotAPIAnswerPreCheckoutQuery(ctx context.Context, botID int64, queryID string, ok bool, errorMessage string) (bool, error)
 	BotAPIGetFile(ctx context.Context, botID int64, locationKey string, offset int64, limit int) (domain.FileChunk, bool, error)
+}
+
+// MessageActionGatewayService carries the Bot API methods that act on an
+// existing chat or message instead of sending a new one: sendChatAction,
+// editMessageCaption and editMessageReplyMarkup (gramsrv#137). Like the other
+// optional surfaces it is reached by type assertion; gateway_contract_test
+// pins the production Router to it.
+type MessageActionGatewayService interface {
+	BotAPISendChatAction(ctx context.Context, botID, chatID int64, action domain.BotAPIChatAction, topMessageID int) (bool, error)
+	BotAPIEditMessageCaption(ctx context.Context, botID, chatID int64, messageID int, caption string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup) (domain.Message, error)
+	BotAPIEditMessageReplyMarkup(ctx context.Context, botID, chatID int64, messageID int, replyMarkup *domain.MessageReplyMarkup) (domain.Message, error)
 }
 
 type EphemeralGatewayService interface {
@@ -102,14 +135,14 @@ type GatewayWebhookControl interface {
 	ConfirmBotAPIWebhookDelivery(ctx context.Context, botID, updateID int64) error
 }
 
-func Start(ctx context.Context, addr string, bots BotsService, users UsersService, webapps WebAppService, gateway GatewayService, logger *zap.Logger) (*http.Server, error) {
+func Start(ctx context.Context, addr string, bots BotsService, users UsersService, webapps WebAppService, invoices InvoiceService, gateway GatewayService, logger *zap.Logger) (*http.Server, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, nil
 	}
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	handler := &handler{bots: bots, users: users, webapps: webapps, gateway: gateway, logger: logger, webhookClient: newWebhookHTTPClient()}
+	handler := &handler{bots: bots, users: users, webapps: webapps, invoices: invoices, gateway: gateway, logger: logger, webhookClient: newWebhookHTTPClient()}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler.routes(),
@@ -140,6 +173,7 @@ func Start(ctx context.Context, addr string, bots BotsService, users UsersServic
 }
 
 type handler struct {
+	invoices      InvoiceService
 	bots          BotsService
 	users         UsersService
 	webapps       WebAppService
@@ -249,6 +283,12 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.sendEphemeralLocation(w, r, botID, true)
 	case "editmessagetext":
 		h.editMessageText(w, r, botID)
+	case "editmessagecaption":
+		h.editMessageCaption(w, r, botID)
+	case "editmessagereplymarkup":
+		h.editMessageReplyMarkup(w, r, botID)
+	case "sendchataction":
+		h.sendChatAction(w, r, botID)
 	case "deletemessage":
 		h.deleteMessage(w, r, botID)
 	case "editephemeralmessagetext":
@@ -265,6 +305,8 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.answerCallbackQuery(w, r, botID)
 	case "getfile":
 		h.getFile(w, r, botID)
+	case "droppendingupdates":
+		h.dropPendingUpdates(w, r, botID)
 	case "deletewebhook":
 		h.deleteWebhook(w, r, botID)
 	case "getwebhookinfo":
@@ -281,10 +323,22 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		h.answerWebAppQuery(w, r, botID)
 	case "savepreparedinlinemessage":
 		h.savePreparedInlineMessage(w, r, botID)
+	case "getavailablegifts":
+		h.getAvailableGifts(w, r)
+	case "sendgift":
+		h.sendGift(w, r, botID)
 	case "giftpremiumsubscription":
 		h.giftPremiumSubscription(w, r, botID)
-	case "answershippingquery", "answerprecheckoutquery":
-		writeAPIError(w, http.StatusNotImplemented, "BLOCKED_DURABLE_QUERY_STATE_MISSING")
+	case "sendinvoice":
+		h.sendInvoice(w, r, botID)
+	case "refundstarpayment":
+		h.refundStarPayment(w, r, botID)
+	case "answerprecheckoutquery":
+		h.answerPreCheckoutQuery(w, r, botID)
+	case "answershippingquery":
+		// Shipping never becomes part of a Stars purchase: telesrv settles XTR
+		// only, so there is no shipping step to answer.
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
 	default:
 		writeAPIError(w, http.StatusNotFound, "METHOD_NOT_FOUND")
 	}
@@ -358,6 +412,110 @@ func (h *handler) giftPremiumSubscription(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeAPIOK(w, success)
+}
+
+// sendGift 实现 Bot API sendGift：机器人用自身 Stars 余额买一份星礼物送给用户或频道。
+//
+// 参数遵循官方 Bot API 形态：gift_id 必填，user_id 与 chat_id 二选一（互斥），
+// pay_for_upgrade 购买 collectible 升级，text/text_parse_mode/text_entities 是随礼物
+// 显示的短文本。request_id 与 Idempotency-Key 头是 telesrv 的幂等扩展，语义与
+// giftPremiumSubscription 相同：同键同请求返回 true 且不再扣款，同键不同请求报错。
+func (h *handler) sendGift(w http.ResponseWriter, r *http.Request, botID int64) {
+	gateway, ok := h.gateway.(StarGiftGatewayService)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return
+	}
+	values, err := requestValues(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
+		return
+	}
+	giftID, err := strconv.ParseInt(strings.TrimSpace(values["gift_id"]), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "GIFT_ID_INVALID")
+		return
+	}
+	userID, userErr := botAPIOptionalInt64(values["user_id"])
+	chatID, chatErr := botAPIOptionalInt64(values["chat_id"])
+	// 两者都没给或都给都不是合法请求：官方模型里它们互斥，缺失时无法决定收礼人。
+	if userErr != nil || chatErr != nil ||
+		(userID == 0 && chatID == 0) || (userID != 0 && chatID != 0) {
+		writeAPIError(w, http.StatusBadRequest, "CHAT_ID_INVALID")
+		return
+	}
+	text, entities, err := botAPIFormattedTextRaw(
+		values["text"], values["text_parse_mode"], values["text_entities"],
+		domain.MaxPremiumGiftMessageRunes, false,
+	)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !premiumGiftBotAPIEntitiesAllowed(entities) {
+		writeAPIError(w, http.StatusBadRequest, "ENTITY_TYPE_UNSUPPORTED")
+		return
+	}
+	requestID, err := botAPIRequestID(r, values)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	success, err := gateway.BotAPISendStarGift(
+		r.Context(),
+		botID,
+		giftID,
+		userID,
+		chatID,
+		apiBool(values["pay_for_upgrade"]),
+		domain.PremiumGiftMessage{Text: text, Entities: entities},
+		requestID,
+	)
+	if err != nil {
+		// STAR_GIFT_UNAVAILABLE 表示礼物子系统自己不可用（каталог/журнал не отвечают），
+		// а не запрос неверен: 500, иначе бот решит, что ошибся его вызов.
+		if description := apiErrorDescription(err); description == "STAR_GIFT_UNAVAILABLE" {
+			writeAPIError(w, http.StatusInternalServerError, description)
+			return
+		} else {
+			writeAPIError(w, http.StatusBadRequest, description)
+			return
+		}
+	}
+	writeAPIOK(w, success)
+}
+
+// botAPIOptionalInt64 解析可选整数字段：空值表示「未提供」，非法内容是错误。
+func botAPIOptionalInt64(raw string) (int64, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
+// botAPIRequestID 归一化幂等键：本地 request_id 与 Idempotency-Key 头同时出现时必须
+// 一致，缺失时生成随机键——无键的重试会再次扣款，所以宁可给每个调用一个唯一键。
+func botAPIRequestID(r *http.Request, values map[string]string) (string, error) {
+	requestID := strings.TrimSpace(values["request_id"])
+	headerID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if requestID != "" && headerID != "" && requestID != headerID {
+		return "", errors.New("IDEMPOTENCY_KEY_INVALID")
+	}
+	if requestID == "" {
+		requestID = headerID
+	}
+	if requestID == "" {
+		requestID = randomBotAPIOwner()
+	}
+	if !validBotAPIIdempotencyKey(requestID) {
+		return "", errors.New("IDEMPOTENCY_KEY_INVALID")
+	}
+	return requestID, nil
 }
 
 func premiumGiftBotAPIEntitiesAllowed(entities []domain.MessageEntity) bool {
@@ -529,6 +687,56 @@ func randomBotAPIOwner() string {
 	return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
 }
 
+// dropPendingUpdates implements the Bot API dropPendingUpdates. It discards the
+// queued updates the bot has not confirmed yet, which is how a bot that fell
+// behind stops trying to work through a backlog.
+func (h *handler) dropPendingUpdates(w http.ResponseWriter, r *http.Request, botID int64) {
+	if h.gateway == nil {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return
+	}
+	if err := h.gateway.BotAPIDropPendingUpdates(r.Context(), botID); err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return
+	}
+	writeAPIOK(w, true)
+}
+
+// webhookLeaseWait bounds how long setWebhook/deleteWebhook wait for an
+// in-flight delivery. A delivery holds the lease for at most one webhook round
+// trip (webhookHTTPClient timeout), so this outlasts it with some slack.
+var webhookLeaseWait = 20 * time.Second
+
+// acquireWebhookLeaseWaiting takes the webhook lease for a config change,
+// waiting out a running delivery instead of failing: Telegram never rejects
+// setWebhook/deleteWebhook because an update is being delivered, and bots that
+// call deleteWebhook right after a delivery would otherwise keep a webhook and
+// get 409 from getUpdates.
+func acquireWebhookLeaseWaiting(ctx context.Context, control GatewayWebhookControl, botID int64, owner string) (bool, error) {
+	deadline := time.NewTimer(webhookLeaseWait)
+	defer deadline.Stop()
+	backoff := 25 * time.Millisecond
+	for {
+		acquired, err := control.AcquireBotAPIWebhookLease(ctx, botID, owner, webhookLeaseTTL)
+		if err != nil || acquired {
+			return acquired, err
+		}
+		retry := time.NewTimer(backoff)
+		select {
+		case <-retry.C:
+		case <-deadline.C:
+			retry.Stop()
+			return false, nil
+		case <-ctx.Done():
+			retry.Stop()
+			return false, ctx.Err()
+		}
+		if backoff < 500*time.Millisecond {
+			backoff *= 2
+		}
+	}
+}
+
 func (h *handler) deleteWebhook(w http.ResponseWriter, r *http.Request, botID int64) {
 	values, err := requestValues(r)
 	if err != nil {
@@ -545,7 +753,7 @@ func (h *handler) deleteWebhook(w http.ResponseWriter, r *http.Request, botID in
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 		return
 	} else if found {
-		acquired, err := control.AcquireBotAPIWebhookLease(r.Context(), botID, leaseOwner, 30*time.Second)
+		acquired, err := acquireWebhookLeaseWaiting(r.Context(), control, botID, leaseOwner)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 			return
@@ -974,6 +1182,32 @@ func (h *handler) deleteMessage(w http.ResponseWriter, r *http.Request, botID in
 	writeAPIOK(w, ok)
 }
 
+// answerPreCheckoutQuery implements the Bot API answerPreCheckoutQuery. It is the
+// only thing that opens the payment gate: the payer waits up to 10 seconds for it.
+func (h *handler) answerPreCheckoutQuery(w http.ResponseWriter, r *http.Request, botID int64) {
+	if h.gateway == nil {
+		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
+		return
+	}
+	values, err := requestValues(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "BAD_REQUEST")
+		return
+	}
+	queryID := strings.TrimSpace(values["pre_checkout_query_id"])
+	if queryID == "" {
+		writeAPIError(w, http.StatusBadRequest, "QUERY_ID_INVALID")
+		return
+	}
+	ok, err := h.gateway.BotAPIAnswerPreCheckoutQuery(r.Context(), botID, queryID,
+		apiBool(values["ok"]), values["error_message"])
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiErrorDescription(err))
+		return
+	}
+	writeAPIOK(w, ok)
+}
+
 func (h *handler) answerCallbackQuery(w http.ResponseWriter, r *http.Request, botID int64) {
 	if h.gateway == nil {
 		writeAPIError(w, http.StatusNotImplemented, "METHOD_NOT_FOUND")
@@ -1163,7 +1397,7 @@ func (h *handler) setWebhook(w http.ResponseWriter, r *http.Request, botID int64
 		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 		return
 	} else if found {
-		acquired, err := control.AcquireBotAPIWebhookLease(r.Context(), botID, webhookOwner, 30*time.Second)
+		acquired, err := acquireWebhookLeaseWaiting(r.Context(), control, botID, webhookOwner)
 		if err != nil {
 			writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
 			return
@@ -1578,6 +1812,10 @@ func apiErrorDescription(err error) string {
 		"MEDIA_INVALID",
 		"USER_BOT_REQUIRED",
 		"QUERY_ID_INVALID",
+		"MESSAGE_THREAD_ID_INVALID",
+		"MESSAGE_HAS_NO_CAPTION",
+		"MESSAGE_AUTHOR_REQUIRED",
+		"ACTION_INVALID",
 		"MESSAGE_ID_INVALID",
 		"MESSAGE_NOT_MODIFIED",
 		"BOT_COMMAND_INVALID",
@@ -1589,11 +1827,26 @@ func apiErrorDescription(err error) string {
 		"WEBHOOK_NOT_IMPLEMENTED",
 		"MONTH_COUNT_INVALID",
 		"STAR_COUNT_INVALID",
+		"GIFT_NOT_AVAILABLE",
+		"GIFT_UPGRADE_UNAVAILABLE",
+		"STAR_GIFT_UNAVAILABLE",
 		"IDEMPOTENCY_KEY_INVALID",
 		"BALANCE_TOO_LOW",
 		"PREMIUM_GIFT_SELF_INVALID",
 		"PREMIUM_GIFT_CODE_INVALID",
 		"PAYMENT_FORM_INVALID",
+		"INVOICE_INVALID",
+		"INVOICE_ALREADY_EXISTS",
+		"INVOICE_ALREADY_PAID",
+		"INVOICE_REFUNDED",
+		"INVOICE_AMOUNT_INVALID",
+		"CURRENCY_INVALID",
+		"AMOUNT_INVALID",
+		"TITLE_INVALID",
+		"DESCRIPTION_INVALID",
+		"PAYLOAD_INVALID",
+		"CHARGE_ID_INVALID",
+		"CHARGE_ID_NOT_FOUND",
 	} {
 		if strings.Contains(text, marker) {
 			return marker

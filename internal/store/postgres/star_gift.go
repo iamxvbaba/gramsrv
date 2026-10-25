@@ -24,7 +24,7 @@ func NewStarGiftStore(db sqlcgen.DBTX) *StarGiftStore {
 
 const starGiftCatalogSelect = `
 SELECT c.gift_id, r.id, r.stars, r.convert_stars, r.title,
-       r.limited, r.sold_out, r.birthday, r.require_premium,
+       r.limited, r.sold_out, r.birthday, r.require_premium, r.support_only,
        r.limited_per_user, r.peer_color_available, r.auction,
        c.availability_remains, r.availability_total, c.availability_resale,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
@@ -43,9 +43,19 @@ LEFT JOIN star_gift_collectible_revisions cr ON cr.id = c.collectible_revision_i
 JOIN documents d ON d.id = r.document_id`
 
 func (s *StarGiftStore) Catalog(ctx context.Context) ([]domain.StarGift, error) {
-	rows, err := s.db.Query(ctx, starGiftCatalogSelect+`
-WHERE c.enabled
-ORDER BY c.sort_order, c.gift_id`)
+	return s.listCatalog(ctx, true)
+}
+
+func (s *StarGiftStore) CatalogAll(ctx context.Context) ([]domain.StarGift, error) {
+	return s.listCatalog(ctx, false)
+}
+
+func (s *StarGiftStore) listCatalog(ctx context.Context, enabledOnly bool) ([]domain.StarGift, error) {
+	query := starGiftCatalogSelect
+	if enabledOnly {
+		query += ` WHERE c.enabled`
+	}
+	rows, err := s.db.Query(ctx, query+` ORDER BY c.sort_order, c.gift_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list star gift catalog: %w", err)
 	}
@@ -158,7 +168,7 @@ func (s *StarGiftStore) CatalogRevision(ctx context.Context, revisionID int64) (
 	}
 	gift, err := scanCatalogGift(s.db.QueryRow(ctx, `
 SELECT r.gift_id, r.id, r.stars, r.convert_stars, r.title,
-       r.limited, r.sold_out, r.birthday, r.require_premium,
+       r.limited, r.sold_out, r.birthday, r.require_premium, r.support_only,
        r.limited_per_user, r.peer_color_available, r.auction,
        c.availability_remains, r.availability_total, c.availability_resale,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
@@ -194,7 +204,7 @@ func scanCatalogGift(row rowScanner) (domain.StarGift, error) {
 	var background domain.StarGiftBackground
 	if err := row.Scan(
 		&gift.ID, &gift.RevisionID, &gift.Stars, &gift.ConvertStars, &gift.Title,
-		&gift.Limited, &gift.SoldOut, &gift.Birthday, &gift.RequirePremium,
+		&gift.Limited, &gift.SoldOut, &gift.Birthday, &gift.RequirePremium, &gift.SupportOnly,
 		&gift.LimitedPerUser, &gift.PeerColorAvailable, &gift.Auction,
 		&gift.AvailabilityRemains, &gift.AvailabilityTotal, &gift.AvailabilityResale,
 		&gift.FirstSaleDate, &gift.LastSaleDate, &gift.ResellMinStars,
@@ -270,13 +280,24 @@ INSERT INTO star_gift_catalog (
 				return fmt.Errorf("insert star gift catalog: %w", err)
 			}
 		} else {
-			var ignored int64
+			current := domain.StarGift{ID: giftID}
 			if err := tx.QueryRow(ctx, `
-SELECT active_revision_id FROM star_gift_catalog WHERE gift_id=$1 FOR UPDATE`, giftID).Scan(&ignored); err != nil {
+SELECT r.limited, r.sold_out, r.auction, r.availability_total,
+       c.availability_remains, c.availability_resale, c.resell_min_stars,
+       c.first_sale_date, c.last_sale_date
+FROM star_gift_catalog c
+JOIN star_gift_catalog_revisions r ON r.id=c.active_revision_id
+WHERE c.gift_id=$1 FOR UPDATE OF c`, giftID).Scan(
+				&current.Limited, &current.SoldOut, &current.Auction, &current.AvailabilityTotal,
+				&current.AvailabilityRemains, &current.AvailabilityResale, &current.ResellMinStars,
+				&current.FirstSaleDate, &current.LastSaleDate); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return domain.ErrStarGiftNotFound
 				}
 				return fmt.Errorf("lock star gift catalog: %w", err)
+			}
+			if err := write.PreserveCatalogInventory(current); err != nil {
+				return err
 			}
 			if err := tx.QueryRow(ctx, `
 SELECT COALESCE(MAX(revision), 0) + 1
@@ -304,11 +325,11 @@ INSERT INTO star_gift_catalog_revisions (
     released_by_peer_type, released_by_peer_id, per_user_total, locked_until_date,
     auction_slug, gifts_per_round, auction_start_date, upgrade_variants,
     background_center_color, background_edge_color, background_text_color,
-    auction_round_duration
+    auction_round_duration, support_only
 ) VALUES (
     $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
 	NULLIF($19::bigint,0),$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,
-	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41
+	$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42
 )`,
 			revisionID, giftID, revision, write.Title, write.Stars, write.ConvertStars, write.Document.ID,
 			string(write.Animation.JSON), write.Animation.SHA256, write.Animation.SourceName, string(write.Animation.SourceFormat),
@@ -320,7 +341,7 @@ INSERT INTO star_gift_catalog_revisions (
 			write.LockedUntilDate, write.AuctionSlug, write.GiftsPerRound, write.AuctionStartDate,
 			write.UpgradeVariants, nullableBackgroundColor(write.Background, "center"),
 			nullableBackgroundColor(write.Background, "edge"), nullableBackgroundColor(write.Background, "text"),
-			write.AuctionRoundDuration,
+			write.AuctionRoundDuration, write.SupportOnly,
 		); err != nil {
 			return fmt.Errorf("insert star gift revision: %w", err)
 		}
@@ -599,7 +620,7 @@ WHERE c.gift_id=$1`, giftID).Scan(&raw)
 func catalogEntryByID(ctx context.Context, db sqlcgen.DBTX, giftID int64) (domain.StarGiftCatalogEntry, error) {
 	row := db.QueryRow(ctx, `
 SELECT c.gift_id, r.id, r.stars, r.convert_stars, r.title,
-       r.limited, r.sold_out, r.birthday, r.require_premium,
+       r.limited, r.sold_out, r.birthday, r.require_premium, r.support_only,
        r.limited_per_user, r.peer_color_available, r.auction,
        c.availability_remains, r.availability_total, c.availability_resale,
        c.first_sale_date, c.last_sale_date, c.resell_min_stars,
@@ -628,7 +649,7 @@ WHERE c.gift_id=$1`, giftID)
 	var background domain.StarGiftBackground
 	if err := row.Scan(
 		&entry.Gift.ID, &entry.Gift.RevisionID, &entry.Gift.Stars, &entry.Gift.ConvertStars, &entry.Gift.Title,
-		&entry.Gift.Limited, &entry.Gift.SoldOut, &entry.Gift.Birthday, &entry.Gift.RequirePremium,
+		&entry.Gift.Limited, &entry.Gift.SoldOut, &entry.Gift.Birthday, &entry.Gift.RequirePremium, &entry.Gift.SupportOnly,
 		&entry.Gift.LimitedPerUser, &entry.Gift.PeerColorAvailable, &entry.Gift.Auction,
 		&entry.Gift.AvailabilityRemains, &entry.Gift.AvailabilityTotal, &entry.Gift.AvailabilityResale,
 		&entry.Gift.FirstSaleDate, &entry.Gift.LastSaleDate, &entry.Gift.ResellMinStars,
@@ -732,6 +753,11 @@ LEFT JOIN star_gift_collectible_revisions acr
 	if filter.ExcludeHosted {
 		conditions = append(conditions, "p.lifecycle_status='active'")
 	}
+	if filter.PeerColorAvailable {
+		joins += `
+JOIN star_gift_catalog_revisions pcr ON pcr.id = c.active_revision_id`
+		conditions = append(conditions, "p.unique_gift_id IS NOT NULL AND pcr.peer_color_available")
+	}
 	if filter.ExcludeUnique {
 		conditions = append(conditions, "p.unique_gift_id IS NULL")
 	}
@@ -741,10 +767,10 @@ LEFT JOIN star_gift_collectible_revisions acr
 		conditions = append(conditions, "p.unique_gift_id IS NOT NULL")
 	}
 	upgradable := `(p.unique_gift_id IS NULL AND acr.id IS NOT NULL AND acr.upgrade_stars > 0 AND acr.issued < acr.supply_total)`
-	if filter.ExcludeUpgradable {
+	if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable {
 		conditions = append(conditions, "NOT "+upgradable)
 	}
-	if filter.ExcludeUnupgradable {
+	if filter.ExcludeUnupgradable && !filter.ExcludeUpgradable {
 		conditions = append(conditions, upgradable)
 	}
 	if filter.CollectionID > 0 {
@@ -763,27 +789,48 @@ WHERE ci.saved_gift_id = p.id AND ci.collection_id = $%d
 	}
 	page := domain.SavedStarGiftPage{Count: total}
 
-	profileOrder := filter.CollectionID == 0
-	if cursor, ok := domain.DecodeSavedStarGiftListCursor(offset); ok {
+	// sort_by_value 的“价格”统一以 Telegram Stars 计价：优先在售挂牌价，
+	// 其次已记录的 XTR 价值，最后回落到目录定价。TON 计价的挂牌没有官方
+	// 汇率可换算，因此按目录价参与排序而不是伪造换算结果。
+	priceExpr := `COALESCE(
+  (SELECT MAX(l.amount) FROM star_gift_listings l
+    WHERE l.unique_gift_id = p.unique_gift_id AND l.currency = 'XTR'),
+  (SELECT u.value_amount FROM unique_star_gifts u
+    WHERE u.id = p.unique_gift_id AND u.value_currency = 'XTR'),
+  (SELECT rv.stars FROM star_gift_catalog cg
+     JOIN star_gift_catalog_revisions rv ON rv.id = cg.active_revision_id
+    WHERE cg.gift_id = p.gift_id), 0)`
+	profileOrder := filter.CollectionID == 0 && !filter.SortByValue
+	if filter.SortByValue {
+		if price, cursorID, ok := domain.DecodeSavedStarGiftPriceCursor(offset); ok {
+			args = append(args, price, cursorID)
+			where += fmt.Sprintf(" AND (%s < $%d OR (%s = $%d AND p.id < $%d))",
+				priceExpr, len(args)-1, priceExpr, len(args)-1, len(args))
+		}
+	} else if cursor, ok := domain.DecodeSavedStarGiftListCursor(offset); ok {
 		if profileOrder && cursor.PinnedOrder > 0 {
-			args = append(args, cursor.PinnedOrder, cursor.ID)
+			args = append(args, cursor.PinnedOrder, cursor.Date, cursor.ID)
 			where += fmt.Sprintf(` AND (
-    (%s) = 0
-    OR (%s) > $%d
-    OR ((%s) = $%d AND p.id < $%d)
-)`, effectivePinned, effectivePinned, len(args)-1, effectivePinned, len(args)-1, len(args))
+    (%[4]s) = 0
+    OR (%[4]s) > $%[1]d
+    OR ((%[4]s) = $%[1]d AND (p.gift_date, p.id) < ($%[2]d, $%[3]d))
+)`, len(args)-2, len(args)-1, len(args), effectivePinned)
+		} else if profileOrder {
+			args = append(args, cursor.Date, cursor.ID)
+			where += fmt.Sprintf(" AND (%s) = 0 AND (p.gift_date, p.id) < ($%d, $%d)", effectivePinned, len(args)-1, len(args))
 		} else {
+			// Collection pages are ordered by id only: binding the unused date
+			// would leave a parameter PostgreSQL cannot type.
 			args = append(args, cursor.ID)
-			if profileOrder {
-				where += fmt.Sprintf(" AND (%s) = 0 AND p.id < $%d", effectivePinned, len(args))
-			} else {
-				where += fmt.Sprintf(" AND p.id < $%d", len(args))
-			}
+			where += fmt.Sprintf(" AND p.id < $%d", len(args))
 		}
 	}
 	orderBy := "ORDER BY p.id DESC"
-	if profileOrder {
-		orderBy = "ORDER BY ((" + effectivePinned + ") = 0), (" + effectivePinned + "), p.id DESC"
+	switch {
+	case filter.SortByValue:
+		orderBy = "ORDER BY " + priceExpr + " DESC, p.id DESC"
+	case profileOrder:
+		orderBy = "ORDER BY ((" + effectivePinned + ") = 0), (" + effectivePinned + "), p.gift_date DESC, p.id DESC"
 	}
 	args = append(args, limit+1)
 	limitPlaceholder := len(args)
@@ -821,14 +868,43 @@ LIMIT $`+fmt.Sprint(limitPlaceholder), args...)
 	if len(gifts) > limit {
 		gifts = gifts[:limit]
 		last := gifts[len(gifts)-1]
-		pinnedOrder := 0
-		if profileOrder {
-			pinnedOrder = last.PinnedOrder
+		if filter.SortByValue {
+			price, priceErr := s.savedStarGiftPrice(ctx, last.ID)
+			if priceErr != nil {
+				return domain.SavedStarGiftPage{}, priceErr
+			}
+			page.NextOffset = domain.EncodeSavedStarGiftPriceCursor(price, last.ID)
+		} else {
+			pinnedOrder := 0
+			if profileOrder {
+				pinnedOrder = last.PinnedOrder
+			}
+			page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.Date, last.ID)
 		}
-		page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.ID)
 	}
 	page.Gifts = gifts
 	return page, nil
+}
+
+// savedStarGiftPrice 取单个实例的排序价格，供 sort_by_value 生成 keyset 游标。
+func (s *StarGiftStore) savedStarGiftPrice(ctx context.Context, id int64) (int64, error) {
+	var price int64
+	err := s.db.QueryRow(ctx, `SELECT COALESCE(
+  (SELECT l.amount FROM star_gift_listings l
+    WHERE l.unique_gift_id = p.unique_gift_id AND l.currency = 'XTR'),
+  (SELECT u.value_amount FROM unique_star_gifts u
+    WHERE u.id = p.unique_gift_id AND u.value_currency = 'XTR'),
+  (SELECT rv.stars FROM star_gift_catalog cg
+     JOIN star_gift_catalog_revisions rv ON rv.id = cg.active_revision_id
+    WHERE cg.gift_id = p.gift_id), 0)
+FROM peer_star_gifts p WHERE p.id=$1`, id).Scan(&price)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("star gift price: %w", err)
+	}
+	return price, nil
 }
 
 func (s *StarGiftStore) ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error) {
@@ -1039,8 +1115,8 @@ func (s *StarGiftStore) CountByOwner(ctx context.Context, owner domain.Peer) (in
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 LEFT JOIN star_gift_ton_profile_links l ON l.unique_gift_id=p.unique_gift_id
-WHERE (p.lifecycle_status='active' AND p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND NOT p.unsaved)
-   OR ($1='user' AND p.lifecycle_status='exported' AND l.host_user_id=$2 AND NOT l.unsaved
+WHERE (p.lifecycle_status='active' AND p.owner_peer_type=$1 AND p.owner_peer_id=$2)
+   OR ($1='user' AND p.lifecycle_status='exported' AND l.host_user_id=$2
        AND u.host_peer_type='user' AND u.host_peer_id=$2 AND u.owner_address<>'' AND NOT u.burned)`, string(owner.Type), owner.ID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count star gifts: %w", err)
 	}

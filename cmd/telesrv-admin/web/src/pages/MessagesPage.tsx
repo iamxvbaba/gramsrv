@@ -8,8 +8,10 @@ import { useI18n } from "../i18n";
 import { displayName, formatUnix, parseIDs, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { AccountRow, MessageListResponse } from "../types";
+import { GroupMessagesTab } from "./GroupMessagesPage";
+import { SectionTabs } from "../components/SectionTabs";
 
-export function MessagesPage({ navigate }: { navigate: Navigate }) {
+function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [owner, setOwner] = useState<AccountRow | null>(null);
   const [peer, setPeer] = useState<AccountRow | null>(null);
@@ -67,7 +69,7 @@ export function MessagesPage({ navigate }: { navigate: Navigate }) {
   }
 
   return (
-    <PageFrame title={t("messages.privateTitle")} eyebrow={t("messages.privateEyebrow")}>
+    <>
       {error && <Alert>{error}</Alert>}
       <QueryPanel>
         <div className="message-selector-grid">
@@ -154,6 +156,28 @@ export function MessagesPage({ navigate }: { navigate: Navigate }) {
           </tbody>
         </table>
       </div>
+    </>
+  );
+}
+
+// The two message stores are one screen with two tabs rather than two sidebar
+// entries: they are the same job ("look at what was said") over different peer
+// kinds, and a nested menu made that look like two unrelated sections.
+export function MessagesPage({ navigate, tab, path }: {
+  navigate: Navigate;
+  tab: "private" | "groups";
+  // The path the page was opened on, so the shared tab bar can mark the active
+  // tab. "/messages" is an alias of the private view and lights the same tab.
+  path: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <PageFrame
+      title={tab === "groups" ? t("messages.groupTitle") : t("messages.privateTitle")}
+      eyebrow={tab === "groups" ? t("messages.groupEyebrow") : t("messages.privateEyebrow")}
+    >
+      <SectionTabs sectionId="messages" active={path} navigate={navigate} />
+      {tab === "private" ? <PrivateMessagesTab navigate={navigate} /> : <GroupMessagesTab navigate={navigate} />}
     </PageFrame>
   );
 }

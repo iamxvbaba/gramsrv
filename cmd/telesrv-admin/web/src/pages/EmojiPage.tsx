@@ -2,6 +2,7 @@ import { Check, ChevronRight, Copy, Layers3, Loader2, RefreshCw, Search } from "
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { StaticLottie } from "../components/StaticLottie";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { EmojiListResponse, EmojiRow } from "../types";
@@ -118,6 +119,7 @@ export function EmojiPage({ navigate }: { navigate: Navigate }) {
         </>
       }
     >
+      <SectionTabs sectionId="media" active="/emoji" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("emoji.currentPage")} value={String(rows.length)} />

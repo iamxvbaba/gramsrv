@@ -405,8 +405,10 @@ func normalizeBusinessRecipients(in domain.BusinessRecipients) (domain.BusinessR
 		users = append(users, id)
 	}
 	out.Users = users
-	if !out.ExistingChats && !out.NewChats && !out.Contacts && !out.NonContacts && len(out.Users) == 0 {
-		return domain.BusinessRecipients{}, domain.ErrBusinessProfileInvalid
+	// exclude_selected with nothing selected means "everyone", which is how
+	// clients save "All 1-to-1 chats except…" with no exceptions.
+	if !out.ExcludeSelected && !out.ExistingChats && !out.NewChats && !out.Contacts && !out.NonContacts && len(out.Users) == 0 {
+		return domain.BusinessRecipients{}, domain.ErrBusinessRecipientsEmpty
 	}
 	return out, nil
 }

@@ -351,7 +351,7 @@ func (s *ChannelStore) channelHistoryClearAnchor(
 
 func (s *ChannelStore) SearchJoinedMessages(ctx context.Context, viewerUserID int64, req domain.ChannelGlobalSearchRequest) (domain.ChannelHistory, error) {
 	query := strings.TrimSpace(req.Query)
-	if viewerUserID == 0 || (query == "" && !req.MusicOnly) {
+	if viewerUserID == 0 || (query == "" && !req.MusicOnly && len(req.MediaCategories) == 0) {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
 	}
 	limit := req.Limit
@@ -369,6 +369,10 @@ func (s *ChannelStore) SearchJoinedMessages(ctx context.Context, viewerUserID in
 		where += fmt.Sprintf(`
 AND body <> ''
 AND body ILIKE $%d ESCAPE '\'`, len(args))
+	}
+	if len(req.MediaCategories) > 0 {
+		args = append(args, mediaCategoriesToInt16(req.MediaCategories))
+		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM channel_message_media mi WHERE mi.channel_id = channel_messages.channel_id AND mi.id = channel_messages.id AND mi.category = ANY($%d::smallint[]))`, len(args))
 	}
 	if req.MusicOnly {
 		where += `
@@ -418,21 +422,27 @@ AND EXISTS (
 		args = append(args, req.MaxDate)
 		where += fmt.Sprintf(" AND message_date < $%d", len(args))
 	}
-	switch {
-	case req.OffsetRate > 0 && req.OffsetChannelID > 0 && req.OffsetID > 0:
-		args = append(args, req.OffsetRate, req.OffsetChannelID, req.OffsetID)
+	if req.OffsetIsUser && req.OffsetChannelID > 0 && req.OffsetRate > 0 {
+		args = append(args, req.OffsetRate, req.OffsetChannelID)
 		n := len(args)
-		where += fmt.Sprintf(" AND (message_date < $%d OR (message_date = $%d AND (channel_id < $%d OR (channel_id = $%d AND id < $%d))))", n-2, n-2, n-1, n-1, n)
-	case req.OffsetRate > 0:
-		args = append(args, req.OffsetRate)
-		where += fmt.Sprintf(" AND message_date < $%d", len(args))
-	case req.OffsetChannelID > 0 && req.OffsetID > 0:
-		args = append(args, req.OffsetChannelID, req.OffsetID)
-		n := len(args)
-		where += fmt.Sprintf(" AND (channel_id < $%d OR (channel_id = $%d AND id < $%d))", n-1, n-1, n)
-	case req.OffsetID > 0:
-		args = append(args, req.OffsetID)
-		where += fmt.Sprintf(" AND id < $%d", len(args))
+		where += fmt.Sprintf(" AND (message_date, channel_id) < ($%d, $%d)", n-1, n)
+	} else {
+		switch {
+		case req.OffsetRate > 0 && req.OffsetChannelID > 0 && req.OffsetID > 0:
+			args = append(args, req.OffsetRate, req.OffsetChannelID, req.OffsetID)
+			n := len(args)
+			where += fmt.Sprintf(" AND (message_date < $%d OR (message_date = $%d AND (channel_id < $%d OR (channel_id = $%d AND id < $%d))))", n-2, n-2, n-1, n-1, n)
+		case req.OffsetRate > 0:
+			args = append(args, req.OffsetRate)
+			where += fmt.Sprintf(" AND message_date < $%d", len(args))
+		case req.OffsetChannelID > 0 && req.OffsetID > 0:
+			args = append(args, req.OffsetChannelID, req.OffsetID)
+			n := len(args)
+			where += fmt.Sprintf(" AND (channel_id < $%d OR (channel_id = $%d AND id < $%d))", n-1, n-1, n)
+		case req.OffsetID > 0:
+			args = append(args, req.OffsetID)
+			where += fmt.Sprintf(" AND id < $%d", len(args))
+		}
 	}
 	queryLimit := limit + 1
 	args = append(args, queryLimit)

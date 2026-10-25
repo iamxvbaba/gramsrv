@@ -1114,6 +1114,14 @@ func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, user
 	if err != nil {
 		return domain.User{}, false, err
 	}
+	// 冻结账号对观察者呈 deleted 墓碑：其全部 username（常规槽位 + collectible NFT）
+	// 不再解析到该用户，contacts.resolveUsername 报 USERNAME_NOT_OCCUPIED（客户端显示
+	// 「未找到」）。占用检查走 peer_usernames 注册表持有关系，冻结期仍报告占住
+	// （USERNAME_OCCUPIED），只是投影层隐身；解冻后墓碑消失，解析与占用语义即刻
+	// 恢复，无需任何数据回写。
+	if u.Deleted {
+		return domain.User{}, false, nil
+	}
 	return u, true, nil
 }
 
@@ -1323,9 +1331,7 @@ func (s *Service) projectOne(ctx context.Context, viewerUserID int64, user domai
 }
 
 func normalizeUsername(username string) string {
-	username = strings.TrimSpace(username)
-	username = strings.TrimPrefix(username, "@")
-	return strings.TrimSpace(username)
+	return domain.NormalizeUsername(username)
 }
 
 func validUsername(username string) bool {

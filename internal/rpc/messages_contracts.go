@@ -39,6 +39,7 @@ type channelHistoryTTLService interface {
 }
 
 type globalSearchHit struct {
+	channel   bool
 	date      int
 	peerRank  int64
 	messageID int

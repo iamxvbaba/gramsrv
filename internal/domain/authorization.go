@@ -43,4 +43,7 @@ type AuthKeyClientInfo struct {
 	SystemVersion      string
 	APIID              int
 	AppVersion         string
+	// IP 是最近一次会话建立的客户端对端地址（host-only）。只做 metadata 级别的
+	// 合并刷新，绝不当作登录/绑定的身份证据，也不会触碰 created_at。
+	IP string
 }

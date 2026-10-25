@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_authorizations_device_fingerprint;

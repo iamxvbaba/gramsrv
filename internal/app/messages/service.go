@@ -10,6 +10,8 @@ import (
 	"telesrv/internal/store"
 )
 
+var errScheduledAccountRequired = errors.New("account is required")
+
 var errMessageStoreRequired = errors.New("messages store is required")
 
 // Service 提供消息历史、搜索与已读业务。
@@ -30,13 +32,23 @@ type Service struct {
 	viewerProjectionComplete bool
 	botResponder             BotResponder
 	sendGate                 SendPermissionChecker
-	business                 *businessAutomationConfig
+	// recipientUsers resolves the private recipient without viewer projection.
+	// It is only a tombstone probe: viewer-scoped fields are irrelevant to
+	// whether the peer still accepts writes.
+	recipientUsers RecipientUserReader
+	business       *businessAutomationConfig
 
 	privateMediaCountCache *privateMediaCountReadModelCache
 }
 
 type SendPermissionChecker interface {
 	CanSendMessages(ctx context.Context, userID int64) error
+}
+
+// RecipientUserReader is the minimal unprojected user lookup the send gate
+// needs. There is no viewer: the answer only depends on the target row.
+type RecipientUserReader interface {
+	ByID(ctx context.Context, userID int64) (domain.User, bool, error)
 }
 
 // BotResponder 响应投递给服务端内置 bot（BotFather）的私聊消息。
@@ -84,6 +96,12 @@ func WithSendPermissionChecker(c SendPermissionChecker) Option {
 	return func(s *Service) { s.sendGate = c }
 }
 
+// WithRecipientUserReader wires the tombstone probe that blocks private writes to
+// deleted accounts.
+func WithRecipientUserReader(r RecipientUserReader) Option {
+	return func(s *Service) { s.recipientUsers = r }
+}
+
 // WithReadModelVersions enables durable hash-token guarded media count caching.
 func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 	return func(s *Service) { s.versions = v }
@@ -129,6 +147,26 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 	if req.SenderUserID != userID {
 		return domain.SendPrivateTextResult{}, domain.ErrAuthenticatedScopeInvalid
 	}
+	return s.sendPrivateText(ctx, userID, req)
+}
+
+// PostPrivateServiceMessage 让服务端自己落一条私聊服务消息，它的发送者不是当前
+// 认证用户。Bot Stars 付款凭证属于这一类：消息来自付款人，落到 bot 的会话里，
+// 而服务器此时 acting 的身份是 bot 本身，SendPrivateText 的发送者校验无法表达它。
+// 不开认证作用域检查是安全的——调用方是服务端逻辑，没有请求方可控的入口。
+func (s *Service) PostPrivateServiceMessage(ctx context.Context, recipientUserID, fromUserID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
+	if s == nil || s.messages == nil || recipientUserID == 0 || fromUserID == 0 {
+		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
+	}
+	if req.Media == nil || req.Media.Kind != domain.MessageMediaKindService {
+		return domain.SendPrivateTextResult{}, domain.ErrMessageEmpty
+	}
+	req.SenderUserID = fromUserID
+	req.RecipientUserID = recipientUserID
+	return s.sendPrivateText(ctx, fromUserID, req)
+}
+
+func (s *Service) sendPrivateText(ctx context.Context, userID int64, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
 	if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
@@ -152,6 +190,9 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 		}
 	}
 	if err := s.ensureCanSend(ctx, req.SenderUserID); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if err := s.ensureCanSendRecipient(ctx, req.RecipientUserID); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
 	automation, automationOK := s.prepareBusinessAutomation(ctx, req)
@@ -196,6 +237,25 @@ func (s *Service) ensureCanSend(ctx context.Context, userID int64) error {
 }
 
 // SetChatTheme updates the shared private-chat theme and records the timeline service message.
+// ensureCanSendRecipient blocks private writes to a tombstone. A deleted account
+// keeps its rows for history, so the store happily accepts the message; without
+// this gate the sender's dialog would show a delivered message nobody can ever
+// read back. Rejecting with PEER_ID_INVALID is the official shape: the peer is
+// no longer a writable contact.
+func (s *Service) ensureCanSendRecipient(ctx context.Context, recipientUserID int64) error {
+	if s == nil || recipientUserID == 0 || s.recipientUsers == nil {
+		return nil
+	}
+	u, found, err := s.recipientUsers.ByID(ctx, recipientUserID)
+	if err != nil {
+		return err
+	}
+	if !found || u.Deleted {
+		return domain.ErrPeerDeleted
+	}
+	return nil
+}
+
 func (s *Service) SetChatTheme(ctx context.Context, userID int64, req domain.SetPrivateChatThemeRequest) (domain.SetPrivateChatThemeResult, error) {
 	out := domain.SetPrivateChatThemeResult{
 		OwnerUserID: userID,
@@ -678,14 +738,8 @@ func (s *Service) DeleteSavedHistory(ctx context.Context, userID int64, req doma
 }
 
 func (s *Service) ScheduleMessage(ctx context.Context, userID int64, req domain.ScheduleMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error) {
-	if s == nil || s.messages == nil {
-		return domain.ScheduledMessage{}, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return domain.ScheduledMessage{}, nil
-	}
-	if req.OwnerUserID == 0 {
-		req.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &req.OwnerUserID); err != nil {
+		return domain.ScheduledMessage{}, err
 	}
 	if effects == nil {
 		return domain.ScheduledMessage{}, store.ErrDeliveryOutboxRequired
@@ -694,27 +748,15 @@ func (s *Service) ScheduleMessage(ctx context.Context, userID int64, req domain.
 }
 
 func (s *Service) ListScheduledMessages(ctx context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	if s == nil || s.messages == nil {
-		return domain.ScheduledMessageList{}, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return domain.ScheduledMessageList{}, nil
-	}
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &filter.OwnerUserID); err != nil {
+		return domain.ScheduledMessageList{}, err
 	}
 	return s.messages.ListScheduledMessages(ctx, filter)
 }
 
 func (s *Service) EditScheduledMessage(ctx context.Context, userID int64, req domain.EditScheduledMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error) {
-	if s == nil || s.messages == nil {
-		return domain.ScheduledMessage{}, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return domain.ScheduledMessage{}, nil
-	}
-	if req.OwnerUserID == 0 {
-		req.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &req.OwnerUserID); err != nil {
+		return domain.ScheduledMessage{}, err
 	}
 	if effects == nil {
 		return domain.ScheduledMessage{}, store.ErrDeliveryOutboxRequired
@@ -723,27 +765,15 @@ func (s *Service) EditScheduledMessage(ctx context.Context, userID int64, req do
 }
 
 func (s *Service) GetScheduledMessages(ctx context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error) {
-	if s == nil || s.messages == nil {
-		return domain.ScheduledMessageList{}, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return domain.ScheduledMessageList{}, nil
-	}
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &filter.OwnerUserID); err != nil {
+		return domain.ScheduledMessageList{}, err
 	}
 	return s.messages.GetScheduledMessages(ctx, filter)
 }
 
 func (s *Service) DeleteScheduledMessages(ctx context.Context, userID int64, filter domain.ScheduledMessageFilter, date int, effects store.DeliveryEffectsBuilder[[]domain.ScheduledMessage]) ([]domain.ScheduledMessage, error) {
-	if s == nil || s.messages == nil {
-		return nil, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return nil, nil
-	}
-	if filter.OwnerUserID == 0 {
-		filter.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &filter.OwnerUserID); err != nil {
+		return nil, err
 	}
 	if effects == nil {
 		return nil, store.ErrDeliveryOutboxRequired
@@ -752,40 +782,28 @@ func (s *Service) DeleteScheduledMessages(ctx context.Context, userID int64, fil
 }
 
 func (s *Service) ClaimScheduledMessages(ctx context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error) {
-	if s == nil || s.messages == nil {
-		return nil, errMessageStoreRequired
-	}
-	if userID == 0 {
-		return nil, nil
-	}
-	if claim.OwnerUserID == 0 {
-		claim.OwnerUserID = userID
+	if err := s.scheduledOwner(userID, &claim.OwnerUserID); err != nil {
+		return nil, err
 	}
 	return s.messages.ClaimScheduledMessages(ctx, claim)
 }
 
-func (s *Service) ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error) {
+// ClaimDueScheduledMessages also claims "when online" messages whose recipient
+// is in onlineUserIDs (this Core instance's presence view).
+func (s *Service) ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int, onlineUserIDs []int64) ([]domain.ScheduledMessage, error) {
 	if s == nil || s.messages == nil {
 		return nil, errMessageStoreRequired
 	}
-	return s.messages.ClaimDueScheduledMessages(ctx, now, limit, leaseSeconds)
+	return s.messages.ClaimDueScheduledMessages(ctx, now, limit, leaseSeconds, onlineUserIDs)
 }
 
-func (s *Service) MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error {
+// ReleaseScheduledMessage returns a failed claim to pending only while the
+// claim generation still owns the row.
+func (s *Service) ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, generation int64, errText string) error {
 	if s == nil || s.messages == nil {
 		return errMessageStoreRequired
 	}
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
-	}
-	return s.messages.MarkScheduledMessageSent(ctx, ownerUserID, id, sentMessageID, date, effects)
-}
-
-func (s *Service) ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, errText string) error {
-	if s == nil || s.messages == nil {
-		return errMessageStoreRequired
-	}
-	return s.messages.ReleaseScheduledMessage(ctx, ownerUserID, id, errText)
+	return s.messages.ReleaseScheduledMessage(ctx, ownerUserID, id, generation, errText)
 }
 
 func (s *Service) HasScheduledMessages(ctx context.Context, userID int64, peer domain.Peer) (bool, error) {
@@ -793,9 +811,25 @@ func (s *Service) HasScheduledMessages(ctx context.Context, userID int64, peer d
 		return false, errMessageStoreRequired
 	}
 	if userID == 0 {
-		return false, nil
+		return false, errScheduledAccountRequired
 	}
 	return s.messages.HasScheduledMessages(ctx, userID, peer)
+}
+
+// scheduledOwner binds a scheduled-queue request to the calling account. A
+// request naming another owner is a programming error, not a fallback.
+func (s *Service) scheduledOwner(userID int64, owner *int64) error {
+	if s == nil || s.messages == nil {
+		return errMessageStoreRequired
+	}
+	if userID == 0 {
+		return errScheduledAccountRequired
+	}
+	if *owner != 0 && *owner != userID {
+		return fmt.Errorf("scheduled message account mismatch")
+	}
+	*owner = userID
+	return nil
 }
 
 func (s *Service) GetPrivateHistoryTTL(ctx context.Context, userID int64, peer domain.Peer) (int, error) {
@@ -826,7 +860,7 @@ func (s *Service) DefaultHistoryTTL(ctx context.Context, userID int64) (int, err
 		return 0, errMessageStoreRequired
 	}
 	if userID == 0 {
-		return 0, nil
+		return 0, errScheduledAccountRequired
 	}
 	return s.messages.DefaultHistoryTTL(ctx, userID)
 }
@@ -836,7 +870,7 @@ func (s *Service) SetDefaultHistoryTTL(ctx context.Context, userID int64, period
 		return errMessageStoreRequired
 	}
 	if userID == 0 {
-		return nil
+		return errScheduledAccountRequired
 	}
 	return s.messages.SetDefaultHistoryTTL(ctx, userID, period)
 }

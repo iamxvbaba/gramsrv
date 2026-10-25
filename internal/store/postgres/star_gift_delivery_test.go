@@ -1,6 +1,8 @@
 package postgres
 
 import (
+	"context"
+
 	"telesrv/internal/domain"
 	storepkg "telesrv/internal/store"
 )
@@ -25,4 +27,12 @@ func starGiftConvertTestEffects(result domain.StarGiftConvertResult) ([]storepkg
 		Payload:        []byte("star-gift-convert-balance-test"),
 		RecoveryPolicy: storepkg.OutboxRecoveryAbsoluteReload,
 	})}, nil
+}
+
+func purchaseStarGiftForTest(ctx context.Context, lifecycle *StarGiftLifecycleStore, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error) {
+	return lifecycle.PurchaseStarGiftWithDelivery(ctx, req, starGiftPurchaseTestEffects)
+}
+
+func convertStarGiftForTest(ctx context.Context, lifecycle *StarGiftLifecycleStore, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error) {
+	return lifecycle.ConvertStarGiftWithDelivery(ctx, req, starGiftConvertTestEffects)
 }

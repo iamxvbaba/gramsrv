@@ -400,6 +400,25 @@ func (s *Server) prepareInboundLayerRPCBatch(ctx context.Context, c *Conn, plan 
 				item.payload = destroyAuthKeyRequest{}
 				continue
 			}
+			if terminal, recognized := wrappedHelpTestTerminal(err); recognized {
+				if terminal.WireSize != bin.Word || !validWrappedHelpTestChain(terminal) {
+					s.log.Debug("Wrapped help.test terminal rejected",
+						zap.Int("profile", int(terminal.Profile)),
+						zap.Int("wire_size", terminal.WireSize),
+						zap.Int("wrapper_count", terminal.WrapperCount()),
+						zap.Int64("msg_id", item.msgID),
+					)
+					item.kind = inboundItemRPCAdmissionError
+					item.method = "help.test"
+					item.payload = &mt.RPCError{ErrorCode: 400, ErrorMessage: "INPUT_REQUEST_INVALID"}
+					c.metrics.InboundRPCDropped(item.method, "layer_admission")
+					continue
+				}
+				item.kind = inboundItemHelpTest
+				item.method = "help.test"
+				item.payload = helpTestRequest{}
+				continue
+			}
 			if errors.Is(err, ErrLayerProfileConflict) {
 				return err
 			}
@@ -1092,6 +1111,14 @@ func (s *Server) decodeInboundLayerRPCWithOptions(state LayerProfileSnapshot, bo
 				zap.Uint32("wire_id", terminal.WireID),
 				zap.Int("wire_size", terminal.WireSize),
 			)
+		} else if terminal, recognized := wrappedHelpTestTerminal(err); recognized {
+			method = "help.test"
+			s.log.Debug("Generated wrapper admission exposed legacy terminal",
+				zap.String("method", method),
+				zap.Int("profile", int(terminal.Profile)),
+				zap.Uint32("wire_id", terminal.WireID),
+				zap.Int("wire_size", terminal.WireSize),
+			)
 		} else {
 			s.log.Warn("Unhandled RPC admission (compatibility trace)",
 				zap.String("method", method), zap.Error(err))
@@ -1197,6 +1224,7 @@ func (s *Server) logLayerRPCAdmissionRejection(
 		zap.Int("raw_layer_evidence", cursor.rawLayer),
 		zap.Int64("layer_evidence_msg_id", cursor.evidenceMsgID),
 		zap.Bool("explicit_layer_selector", layerRPCAdmissionHasExplicitSelector(item.body, admissionErr)),
+		zap.String("inner_wire_id", innerLayerRPCWireIDName(item.body)),
 		zap.Int("rpc_error_code", rpcError.ErrorCode),
 		zap.String("rpc_error_message", rpcError.ErrorMessage),
 		zap.Error(admissionErr),
@@ -1206,6 +1234,54 @@ func (s *Server) logLayerRPCAdmissionRejection(
 		return
 	}
 	s.log.Debug("RPC exact admission rejected", fields...)
+}
+
+// innerLayerRPCWireIDName peeks past the invokeWithLayer envelope to report which
+// method the client actually asked for, as a hex wire id.
+//
+// The rejection log records top_level_wire_id, which for a layer-wrapped call is
+// always the wrapper itself, so it cannot distinguish "the client wants a method
+// we serve, at a layer we do not" from "the client wants a method nobody has
+// written". Both look identical in the log, and they need different fixes.
+//
+// The raw id is logged rather than a resolved name because tlprofile exposes no
+// wire-id-to-name lookup; a name is derived from this offline against the
+// profile's generated tables.
+//
+// Best-effort by design. A body that is not an invokeWithLayer envelope, or whose
+// layer field does not parse, yields "-" rather than a guess.
+func innerLayerRPCWireIDName(body []byte) string {
+	envelope := innerLayerRPCEnvelope(body)
+	if envelope == nil {
+		return "-"
+	}
+	inner, err := (&bin.Buffer{Buf: envelope}).PeekID()
+	if err != nil {
+		return "-"
+	}
+	return fmt.Sprintf("#%08x", inner)
+}
+
+// innerLayerRPCEnvelope returns the bytes of the query wrapped by
+// invokeWithLayer, or nil when body is not that envelope. The layer field is
+// consumed but its value is not interpreted: the point is to reach the query, not
+// to second-guess the admission decision that already rejected it.
+func innerLayerRPCEnvelope(body []byte) []byte {
+	buf := &bin.Buffer{Buf: body}
+	id, err := buf.PeekID()
+	if err != nil || id != tg.InvokeWithLayerRequestTypeID {
+		return nil
+	}
+	if err = buf.ConsumeID(id); err != nil {
+		return nil
+	}
+	// invokeWithLayer carries the requested layer as a bare int before the query.
+	// It is a 4-byte int, not a long: reading 8 bytes here consumed the first four
+	// bytes of the query too, and every wrapped call reported as unreadable.
+	if _, err = buf.Int(); err != nil {
+		return nil
+	}
+	return buf.Buf
 }
 
 func layerProfileOriginLogName(origin LayerProfileOrigin) string {

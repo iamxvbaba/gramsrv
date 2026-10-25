@@ -58,6 +58,31 @@ func (s *StarGiftStore) PublishCollectibleRevision(ctx context.Context, write do
 			}
 			return fmt.Errorf("lock collectible catalog gift: %w", err)
 		}
+		// Collectible numbers are unique across every published revision of one
+		// gift_id. A new pool must continue the serial instead of restarting at
+		// one, so seed its issued counter with the numbers already minted or
+		// reserved (unconverted auction wins) and reject a supply smaller than
+		// that consumed set. Otherwise the pool advertizes "quantity 1, issued
+		// 600" and allocateCollectibleGiftNum hands out numbers beyond the
+		// displayed supply while skipping the occupied ones.
+		var consumedCount, consumedMaxNum int
+		if err := tx.QueryRow(ctx, `
+WITH consumed AS (
+    SELECT num FROM unique_star_gifts WHERE gift_id=$1
+    UNION
+    SELECT gift_num FROM peer_star_gifts WHERE gift_id=$1 AND gift_num>0 AND unique_gift_id IS NULL
+)
+SELECT COALESCE(COUNT(*), 0), COALESCE(MAX(num), 0) FROM consumed`, write.GiftID).Scan(&consumedCount, &consumedMaxNum); err != nil {
+			return fmt.Errorf("count consumed collectible numbers: %w", err)
+		}
+		carried := consumedCount
+		if consumedMaxNum > carried {
+			carried = consumedMaxNum
+		}
+		if write.SupplyTotal < carried {
+			return fmt.Errorf("%w: gift %d already occupies %d collectible numbers; supply %d is smaller than the pool it must continue",
+				domain.ErrStarGiftLifecycleInvalid, write.GiftID, carried, write.SupplyTotal)
+		}
 		var revision int
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(MAX(revision), 0) + 1 FROM star_gift_collectible_revisions WHERE gift_id=$1`, write.GiftID).Scan(&revision); err != nil {
@@ -66,10 +91,10 @@ SELECT COALESCE(MAX(revision), 0) + 1 FROM star_gift_collectible_revisions WHERE
 		var revisionID int64
 		if err := tx.QueryRow(ctx, `
 INSERT INTO star_gift_collectible_revisions
-    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id,
+    (gift_id, revision, upgrade_stars, supply_total, issued, slug_prefix, status, created_by, command_id,
      official_gift_id, source_manifest_sha256)
-VALUES ($1,$2,$3,$4,$5,'draft',$6,$7,NULLIF($8::bigint,0),$9)
-RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, write.SlugPrefix, write.Actor, write.CommandID,
+VALUES ($1,$2,$3,$4,$5,$6,'draft',$7,$8,NULLIF($9::bigint,0),$10)
+RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, carried, write.SlugPrefix, write.Actor, write.CommandID,
 			write.OfficialGiftID, nullableSHA256(write.SourceManifestSHA256)).Scan(&revisionID); err != nil {
 			return fmt.Errorf("insert collectible revision: %w", err)
 		}
@@ -338,12 +363,13 @@ ORDER BY a.sort_order, a.id`, prefix, craftedExpression, animationJSONExpression
 func listCollectibleBackdrops(ctx context.Context, db sqlcgen.DBTX, revisionID int64, options collectibleRevisionReadOptions) ([]domain.StarGiftCollectibleAttribute, error) {
 	prefix := ""
 	from := "star_gift_collectible_backdrops a"
-	where := "WHERE a.collectible_revision_id=$1"
+	where := "WHERE a.collectible_revision_id=$1 AND a.name NOT LIKE 'Crafted Gradient %'"
 	args := []any{revisionID}
 	if options.samplePerKind > 0 {
 		prefix = `WITH picked AS MATERIALIZED (
     SELECT id FROM star_gift_collectible_backdrops
     WHERE collectible_revision_id=$1 AND rarity_kind='permille' AND rarity_permille > 0
+      AND name NOT LIKE 'Crafted Gradient %'
     ORDER BY random()
     LIMIT $2
 )`
@@ -394,6 +420,36 @@ WHERE c.gift_id=$1 AND a.id=$2`, table), giftID, attributeID).Scan(&raw)
 		return nil, false, fmt.Errorf("get collectible animation: %w", err)
 	}
 	return raw, true, nil
+}
+
+// CollectibleAnimationBlob returns the original immutable TGS blob for an
+// attribute.  The animation_json column is JSONB for catalog/query purposes;
+// JSONB canonicalization can reorder/drop JSON details that rlottie relies on,
+// so renderers must use the content-addressed source blob when available.
+func (s *StarGiftStore) CollectibleAnimationBlob(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) (domain.FileBlob, bool, error) {
+	table := "star_gift_collectible_models"
+	if kind == domain.StarGiftCollectiblePattern {
+		table = "star_gift_collectible_patterns"
+	} else if kind != domain.StarGiftCollectibleModel {
+		return domain.FileBlob{}, false, nil
+	}
+	var blob domain.FileBlob
+	var backend string
+	err := s.db.QueryRow(ctx, fmt.Sprintf(`
+SELECT b.location_key, b.backend, b.object_key, b.size, b.sha256, b.mime_type
+FROM %s a
+JOIN star_gift_catalog c ON c.collectible_revision_id=a.collectible_revision_id
+JOIN file_blobs b ON b.location_key='doc:' || a.document_id::text
+WHERE c.gift_id=$1 AND a.id=$2`, table), giftID, attributeID).Scan(
+		&blob.LocationKey, &backend, &blob.ObjectKey, &blob.Size, &blob.SHA256, &blob.MimeType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.FileBlob{}, false, nil
+	}
+	if err != nil {
+		return domain.FileBlob{}, false, fmt.Errorf("get collectible animation blob: %w", err)
+	}
+	blob.Backend = domain.MediaBackend(backend)
+	return blob, true, nil
 }
 
 func (s *StarGiftStore) UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error) {
@@ -484,7 +540,7 @@ SELECT u.id, u.gift_id, u.collectible_revision_id, u.source_saved_gift_id, u.tit
        u.offer_min_stars, u.craft_chance_permille, u.last_sale_date,
        u.last_sale_currency, u.last_sale_amount,
        r.issued, r.supply_total, sg.from_user_id, u.original_owner_peer_type, u.original_owner_peer_id,
-	       sg.gift_date, sg.message, sg.message_entities::text, sg.name_hidden,
+	       sg.gift_date, sg.message, sg.message_entities::text, sg.name_hidden, sg.unsaved,
        m.id, m.name, m.rarity_kind, COALESCE(m.rarity_permille,0), m.crafted, md.id, md.access_hash, md.file_reference, md.date,
        md.mime_type, md.size, md.dc_id, md.attributes::text, md.thumbs::text,
        p.id, p.name, p.rarity_kind, COALESCE(p.rarity_permille,0), pd.id, pd.access_hash, pd.file_reference, pd.date,
@@ -499,7 +555,7 @@ JOIN star_gift_collectible_patterns p ON p.id=u.pattern_attribute_id
 JOIN documents pd ON pd.id=p.document_id
 JOIN star_gift_collectible_backdrops b ON b.id=u.backdrop_attribute_id
 JOIN peer_star_gifts sg ON sg.id=u.source_saved_gift_id
-LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id
+LEFT JOIN star_gift_listings l ON l.unique_gift_id=u.id AND NOT l.suspended
 WHERE %s`, predicate)
 }
 
@@ -525,7 +581,7 @@ func scanUniqueStarGift(row rowScanner) (domain.UniqueStarGift, error) {
 		&lastSaleCurrency, &lastSaleAmount,
 		&unique.AvailabilityIssued, &unique.AvailabilityTotal,
 		&unique.OriginalFromUserID, &originalOwnerType, &unique.OriginalOwner.ID, &unique.OriginalDate,
-		&unique.OriginalMessage, &originalMessageEntitiesJSON, &unique.OriginalNameHidden,
+		&unique.OriginalMessage, &originalMessageEntitiesJSON, &unique.OriginalNameHidden, &unique.Unsaved,
 		&unique.Model.ID, &unique.Model.Name, &unique.Model.RarityKind, &unique.Model.RarityPermille, &unique.Model.Crafted,
 		&unique.Model.Document.ID, &unique.Model.Document.AccessHash, &unique.Model.Document.FileReference,
 		&unique.Model.Document.Date, &unique.Model.Document.MimeType, &unique.Model.Document.Size,

@@ -245,7 +245,9 @@ type QuickReplyMutation struct {
 func NormalizeBusinessChatLinkInput(in BusinessChatLinkInput) (BusinessChatLinkInput, error) {
 	in.Message = strings.TrimSpace(in.Message)
 	in.Title = strings.TrimSpace(in.Title)
-	if in.Message == "" || utf8.RuneCountInString(in.Message) > MaxBusinessChatLinkMessage {
+	// An empty message is valid: official clients create a link with no
+	// text first and fill it in with account.editBusinessChatLink.
+	if utf8.RuneCountInString(in.Message) > MaxBusinessChatLinkMessage {
 		return BusinessChatLinkInput{}, ErrBusinessChatLinkInvalid
 	}
 	if utf8.RuneCountInString(in.Title) > MaxBusinessChatLinkTitle {

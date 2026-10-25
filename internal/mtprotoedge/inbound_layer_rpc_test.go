@@ -465,7 +465,7 @@ func TestNestedExplicitLayerAdmissionErrorsAreNotDefaultFailures(t *testing.T) {
 	unsupported := exactLayerRPCBody(t, &tg.InvokeAfterMsgRequest{
 		MsgID: 1,
 		Query: &tg.InvokeWithLayerRequest{
-			Layer: 230,
+			Layer: testFutureLayer,
 			Query: &tg.HelpGetConfigRequest{},
 		},
 	})
@@ -510,7 +510,7 @@ func TestNestedExplicitLayerAdmissionErrorsAreNotDefaultFailures(t *testing.T) {
 			}
 			switch test.name {
 			case "unsupported":
-				if !strings.Contains(err.Error(), "unsupported exact profile 230") {
+				if !strings.Contains(err.Error(), fmt.Sprintf("unsupported exact profile %d", testFutureLayer)) {
 					t.Fatalf("unsupported selector error = %v", err)
 				}
 			case "conflict":
@@ -782,7 +782,7 @@ func TestFutureExactLayerWatermarkAllowsOnlyNewerSupportedSelfHeal(t *testing.T)
 	s := New(Options{DC: 2, LayerRPC: handler})
 	authKeyID := [8]byte{0x31, 0x04}
 	const sessionID = int64(3104)
-	if _, err := handler.FreezeNegotiatedSessionLayerAt(authKeyID, sessionID, 230, 100); err != nil {
+	if _, err := handler.FreezeNegotiatedSessionLayerAt(authKeyID, sessionID, testFutureLayer, 100); err != nil {
 		t.Fatal(err)
 	}
 	c := &Conn{authKeyID: authKeyID, sessionID: sessionID, metrics: NopMetrics{}}
@@ -811,7 +811,7 @@ func TestFutureExactLayerWatermarkAllowsOnlyNewerSupportedSelfHeal(t *testing.T)
 	if oldPlan.items[1].kind != inboundItemRPCAdmissionError {
 		t.Fatalf("naked non-invariant after future watermark kind=%d, want admission error", oldPlan.items[1].kind)
 	}
-	if state, rawLayer, msgID := c.layerProfileRawEvidenceState(); state.Origin != LayerProfileUnknown || rawLayer != 230 || msgID != 100 {
+	if state, rawLayer, msgID := c.layerProfileRawEvidenceState(); state.Origin != LayerProfileUnknown || rawLayer != testFutureLayer || msgID != 100 {
 		t.Fatalf("future raw watermark = %#v raw:%d msgID:%d", state, rawLayer, msgID)
 	}
 	if got := handler.publications(); len(got) != 0 {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -169,6 +171,10 @@ type Conn struct {
 	// 单连接只保留并发配额；实际 worker 来自 Server 共享池，避免每连接预留 goroutine。
 	rpcRootCtx     context.Context
 	rpcMaxInflight int
+	// remoteAddr 是 MTProto 连接对端的规范化 IP 字面量（来自 net.Conn.RemoteAddr，
+	// 去掉端口与 zone，IPv4-mapped 还原为 IPv4）；绑定设备授权时写入 authorizations.ip，
+	// 便于在 admin 面板看到登录 IP。非 IP 的对端（如 unix socket）不记录。
+	remoteAddr string
 
 	// sentContentMessages is retained only for standalone construction tests.
 	// Server connections allocate seq_no from logical-session outboundState.
@@ -438,3 +444,21 @@ func (c *Conn) ReceivesUpdates() bool { return c.receivesUpdates.Load() }
 // SetReceivesUpdates 设置该连接是否接收主动推送的 updates。
 // 登录后的主连接在 updates.getState/getDifference 建立同步基线后置为 true。
 func (c *Conn) SetReceivesUpdates(v bool) { c.receivesUpdates.Store(v) }
+
+// setRemoteAddrStr 记录 MTProto 连接的对端地址（remote 形如 host:port 或纯 host）。
+// 只保留可解析为 IP 的规范化字面量：CoreExec 会把它原样转交 Core，Core 拒绝任何
+// 非规范 IP，因此 Edge 侧不得转发 unix socket 路径等非 IP 值。
+func (c *Conn) setRemoteAddrStr(remote string) {
+	host := remote
+	if h, _, err := net.SplitHostPort(remote); err == nil {
+		host = h
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return
+	}
+	c.remoteAddr = addr.WithZone("").Unmap().String()
+}
+
+// clientIP 返回连接的对端 IP（host 部分），未设置时为空字符串。
+func (c *Conn) clientIP() string { return c.remoteAddr }

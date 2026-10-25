@@ -21,6 +21,7 @@ func TestPasswordErrMapsRecoveryState(t *testing.T) {
 		want string
 	}{
 		{domain.ErrRecoveryCodeEmpty, "CODE_EMPTY"},
+		{&domain.EmailUnconfirmedError{CodeLength: 6}, "EMAIL_UNCONFIRMED"},
 		{domain.ErrRecoveryCodeInvalid, "CODE_INVALID"},
 		{domain.ErrPasswordRecoveryExpired, "PASSWORD_RECOVERY_EXPIRED"},
 	}

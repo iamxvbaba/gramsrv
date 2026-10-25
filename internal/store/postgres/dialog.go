@@ -878,8 +878,8 @@ WHERE user_id = $1 AND peer_type = $2 AND peer_id = $3`,
 			return false, nil
 		}
 		if _, err := s.db.Exec(ctx, `
-INSERT INTO dialogs (user_id, peer_type, peer_id, theme_emoticon)
-VALUES ($1, $2, $3, $4)`,
+INSERT INTO dialogs (user_id, peer_type, peer_id, theme_emoticon, ttl_period)
+VALUES ($1, $2, $3, $4,CASE WHEN $2::varchar='user' THEN private_dialog_initial_ttl($1,$3) ELSE 0 END)`,
 			userID, string(peer.Type), peer.ID, emoticon); err != nil {
 			return false, fmt.Errorf("insert dialog chat theme: %w", err)
 		}

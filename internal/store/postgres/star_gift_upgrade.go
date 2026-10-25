@@ -72,12 +72,14 @@ func (s *StarGiftUpgradeStore) GrantUniqueStarGift(ctx context.Context, req doma
 		},
 	}}
 	messageReq := domain.SendPrivateTextRequest{
-		SenderUserID:           req.SenderID,
-		RecipientUserID:        req.Recipient.ID,
-		RandomID:               lifecycleCommandRandomID("admin-collectible-grant", req.Recipient.ID, req.CommandKey),
-		Date:                   req.Date,
-		OriginUserID:           req.SenderID,
-		RecipientBlocked:       req.RecipientBlocked,
+		SenderUserID:    req.SenderID,
+		RecipientUserID: req.Recipient.ID,
+		RandomID:        lifecycleCommandRandomID("admin-collectible-grant", req.Recipient.ID, req.CommandKey),
+		Date:            req.Date,
+		OriginUserID:    req.SenderID,
+		// WHY: grant recipients keep the gift even when they blocked the
+		// system; the recipient box must be allocated for the owner message id.
+		RecipientBlocked:       false,
 		IdempotencyFingerprint: fingerprint[:],
 		Media:                  placeholder,
 	}
@@ -183,11 +185,11 @@ INSERT INTO unique_star_gifts
     (id, gift_id, collectible_revision_id, source_saved_gift_id, title, slug, num,
      owner_peer_type, owner_peer_id, model_attribute_id, pattern_attribute_id,
      backdrop_attribute_id, keep_original_details, original_owner_peer_type, original_owner_peer_id,
-     craft_chance_permille, offer_min_stars)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13,$14,$15,$16)`,
+     released_by_peer_type, released_by_peer_id, craft_chance_permille, offer_min_stars)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13,$14,$15,$16,$17,$18)`,
 				uniqueID, gift.ID, revision.ID, savedID, gift.Title, slug, num,
 				string(req.Recipient.Type), req.Recipient.ID, modelID, patternID, backdropID,
-				string(req.Recipient.Type), req.Recipient.ID, craftChancePermille, s.lifecycle.OfferMinStars); err != nil {
+				string(req.Recipient.Type), req.Recipient.ID, nullableStarGiftPeerType(gift.ReleasedBy), nullableStarGiftPeerID(gift.ReleasedBy), craftChancePermille, s.lifecycle.OfferMinStars); err != nil {
 				return fmt.Errorf("insert admin unique star gift: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `UPDATE star_gift_collectible_revisions SET issued=issued+1 WHERE id=$1`, revision.ID); err != nil {
@@ -411,6 +413,11 @@ func (s *StarGiftUpgradeStore) UpgradeStarGift(ctx context.Context, req domain.S
 			if locked.UniqueGiftID != 0 {
 				return domain.ErrStarGiftAlreadyUpgraded
 			}
+			// A deleted gift keeps its row for the audit trail but has left the
+			// profile; it is no longer something the owner can upgrade.
+			if !locked.LifecycleStatus.Live() {
+				return domain.ErrStarGiftNotFound
+			}
 
 			revision, err := lockActiveCollectibleRevision(ctx, tx, locked.GiftID)
 			if err != nil {
@@ -479,8 +486,10 @@ WHERE collectible_revision_id=$1 AND crafted
 				return fmt.Errorf("allocate unique star gift id: %w", err)
 			}
 			var title string
-			if err := tx.QueryRow(ctx, `SELECT title FROM star_gift_catalog_revisions WHERE id=$1`, locked.RevisionID).Scan(&title); err != nil {
-				return fmt.Errorf("load upgrade gift title: %w", err)
+			var releasedByType string
+			var releasedByID int64
+			if err := tx.QueryRow(ctx, `SELECT title, COALESCE(released_by_peer_type,''), COALESCE(released_by_peer_id,0) FROM star_gift_catalog_revisions WHERE id=$1`, locked.RevisionID).Scan(&title, &releasedByType, &releasedByID); err != nil {
+				return fmt.Errorf("load upgrade gift released by: %w", err)
 			}
 			slug := fmt.Sprintf("%s-%d", revision.SlugPrefix, num)
 			if _, err := tx.Exec(ctx, `
@@ -488,11 +497,11 @@ INSERT INTO unique_star_gifts
     (id, gift_id, collectible_revision_id, source_saved_gift_id, title, slug, num,
      owner_peer_type, owner_peer_id, model_attribute_id, pattern_attribute_id,
      backdrop_attribute_id, keep_original_details, original_owner_peer_type, original_owner_peer_id,
-     craft_chance_permille, offer_min_stars)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+     released_by_peer_type, released_by_peer_id, craft_chance_permille, offer_min_stars)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 				uniqueID, locked.GiftID, revision.ID, locked.ID, title, slug, num,
 				string(locked.Owner.Type), locked.Owner.ID, modelID, patternID, backdropID, req.KeepOriginalDetails,
-				string(locked.Owner.Type), locked.Owner.ID, craftChancePermille, s.lifecycle.OfferMinStars); err != nil {
+				string(locked.Owner.Type), locked.Owner.ID, nullableStarGiftPeerType(domain.Peer{Type: domain.PeerType(releasedByType), ID: releasedByID}), nullableStarGiftPeerID(domain.Peer{Type: domain.PeerType(releasedByType), ID: releasedByID}), craftChancePermille, s.lifecycle.OfferMinStars); err != nil {
 				return fmt.Errorf("insert unique star gift: %w", err)
 			}
 			if _, err := tx.Exec(ctx, `UPDATE star_gift_collectible_revisions SET issued=issued+1 WHERE id=$1`, revision.ID); err != nil {
@@ -1058,6 +1067,8 @@ func resolveCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, r
 	extra := ""
 	if table == "star_gift_collectible_models" {
 		extra = " AND NOT crafted"
+	} else if table == "star_gift_collectible_backdrops" {
+		extra = " AND name NOT LIKE 'Crafted Gradient %'"
 	}
 	var ok bool
 	if err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s
@@ -1075,6 +1086,8 @@ func chooseCollectibleAttribute(ctx context.Context, tx pgx.Tx, table string, re
 	extra := ""
 	if table == "star_gift_collectible_models" {
 		extra = " AND NOT crafted"
+	} else if table == "star_gift_collectible_backdrops" {
+		extra = " AND name NOT LIKE 'Crafted Gradient %'"
 	}
 	rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id, rarity_permille FROM %s
 WHERE collectible_revision_id=$1 AND rarity_kind='permille' AND rarity_permille > 0%s

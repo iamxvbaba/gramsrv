@@ -28,7 +28,41 @@ type CoreConfigYAML struct {
 	TelegramLogin TelegramLoginYAML `yaml:"telegram_login"`
 	AI            AIYAML            `yaml:"ai"`
 	Translation   TranslationYAML   `yaml:"translation"`
+	Transcription TranscriptionYAML `yaml:"transcription"`
+	Donations     DonationsYAML     `yaml:"donations"`
+	OperatorBot   OperatorBotYAML   `yaml:"operator_bot"`
+	MiniApps      MiniAppsYAML      `yaml:"mini_apps"`
+	Moderation    ModerationYAML    `yaml:"moderation"`
 	StarGifts     StarGiftsYAML     `yaml:"star_gifts"`
+	Identity      IdentityYAML      `yaml:"identity"`
+	GeoIP         GeoIPYAML         `yaml:"geoip"`
+	SensitiveRate SensitiveRateYAML `yaml:"sensitive_rate_limits"`
+}
+
+// SensitiveRateYAML bounds 2FA verification, withdrawals and money-moving
+// payments.* RPCs per user; a limit <= 0 disables that group.
+type SensitiveRateYAML struct {
+	SRPLimit         *int   `yaml:"srp_limit"`
+	SRPWindow        string `yaml:"srp_window"`
+	WithdrawalLimit  *int   `yaml:"withdrawal_limit"`
+	WithdrawalWindow string `yaml:"withdrawal_window"`
+	PaymentLimit     *int   `yaml:"payment_limit"`
+	PaymentWindow    string `yaml:"payment_window"`
+}
+
+// GeoIPYAML configures the opt-in account.getAuthorizations country/region
+// lookup. An empty endpoints list keeps the "Unknown" placeholders.
+type GeoIPYAML struct {
+	Endpoints          []string `yaml:"endpoints"`
+	Timeout            string   `yaml:"timeout"`
+	Concurrency        *int     `yaml:"concurrency"`
+	CacheTTL           string   `yaml:"cache_ttl"`
+	NegativeTTL        string   `yaml:"negative_ttl"`
+	CacheSize          *int     `yaml:"cache_size"`
+	RateLimitThreshold *int     `yaml:"rate_limit_threshold"`
+	RateLimitCooldown  string   `yaml:"rate_limit_cooldown"`
+	DownThreshold      *int     `yaml:"down_threshold"`
+	DownCooldown       string   `yaml:"down_cooldown"`
 }
 
 type GroupCallYAML struct {
@@ -92,6 +126,7 @@ type StarGiftsYAML struct {
 	ResellDelay              string             `yaml:"resell_delay"`
 	CraftDelay               string             `yaml:"craft_delay"`
 	CraftChancePermille      *int               `yaml:"craft_chance_permille"`
+	CrossCraftUserIDs        []int64            `yaml:"cross_craft_user_ids"`
 	Export                   StarGiftExportYAML `yaml:"export"`
 }
 
@@ -140,6 +175,7 @@ type SeedsYAML struct {
 
 type AuthYAML struct {
 	DevCode              string   `yaml:"dev_code"`
+	LoginCodeTemplate    string   `yaml:"login_code_message_template"`
 	CodeTTL              string   `yaml:"code_ttl"`
 	CodeMaxAttempts      *int     `yaml:"code_max_attempts"`
 	PhoneRateLimit       *int     `yaml:"phone_rate_limit"`
@@ -155,6 +191,7 @@ type AuthYAML struct {
 	OTPWebhookSecret     string   `yaml:"otp_webhook_secret"`
 	OTPWebhookTimeout    string   `yaml:"otp_webhook_timeout"`
 	SMTP                 SMTPYAML `yaml:"smtp"`
+	CheckNumberFormat    *bool    `yaml:"check_number_format"`
 }
 
 type SMTPYAML struct {
@@ -220,6 +257,44 @@ type TranslationYAML struct {
 	Timeout    string   `yaml:"timeout"`
 	RateLimit  *int     `yaml:"rate_limit"`
 	RateWindow string   `yaml:"rate_window"`
+}
+
+// ModerationYAML overrides the warning line prepended to a SCAM/FAKE-flagged
+// peer's About in read projections; empty keeps the built-in English text.
+type ModerationYAML struct {
+	ScamProfileWarning string `yaml:"scam_profile_warning"`
+	FakeProfileWarning string `yaml:"fake_profile_warning"`
+}
+
+// MiniAppsYAML holds optional bot tokens for verifying the self-hosted
+// BotFather and Stickers Mini App initData. Empty values fall back to the
+// system bots' stored token secrets. They are secrets: keep them out of
+// tracked files.
+type MiniAppsYAML struct {
+	BotFatherToken string `yaml:"botfather_token"`
+	StickersToken  string `yaml:"stickers_token"`
+}
+
+// OperatorBotYAML enables the in-process account-freeze operator dialog on an
+// existing bot account. Both bot_user_id and chat_ids are required; the
+// actions run through admin.SetAccountFrozen with its audit trail.
+type OperatorBotYAML struct {
+	BotUserID int64   `yaml:"bot_user_id"`
+	ChatIDs   []int64 `yaml:"chat_ids"`
+}
+
+// DonationsYAML configures crypto donations. wallet_key_file must name the
+// same shared key file on every Core (decision D7); empty disables donations.
+type DonationsYAML struct {
+	WalletKeyFile string `yaml:"wallet_key_file"`
+	PollInterval  string `yaml:"poll_interval"`
+}
+
+// TranscriptionYAML points messages.transcribeAudio at a local ASR HTTP backend
+// (whisper-server style /inference). An empty asr_url keeps it disabled.
+type TranscriptionYAML struct {
+	ASRURL     string `yaml:"asr_url"`
+	ASRTimeout string `yaml:"asr_timeout"`
 }
 
 // CoreTURNYAML contains signaling-only TURN settings. The standalone SFU role
@@ -292,6 +367,22 @@ type CoreConfig struct {
 	TelegramLoginSweepInterval         time.Duration
 	TelegramLoginSweepBatch            int
 	AdminScopedTokens                  []AdminScopedToken
+	SRPRateLimit                       int
+	SRPRateWindow                      time.Duration
+	WithdrawalRateLimit                int
+	WithdrawalRateWindow               time.Duration
+	PaymentRateLimit                   int
+	PaymentRateWindow                  time.Duration
+	GeoIPEndpoints                     []string
+	GeoIPTimeout                       time.Duration
+	GeoIPConcurrency                   int
+	GeoIPCacheTTL                      time.Duration
+	GeoIPNegativeTTL                   time.Duration
+	GeoIPCacheSize                     int
+	GeoIPRateLimitThreshold            int
+	GeoIPRateLimitCooldown             time.Duration
+	GeoIPDownThreshold                 int
+	GeoIPDownCooldown                  time.Duration
 	PostgresDSN                        string
 	PostgresMaxConns                   int
 	PostgresMinConns                   int
@@ -301,6 +392,7 @@ type CoreConfig struct {
 	RedisDB                            int
 	InstanceID                         string
 	DevAuthCode                        string
+	LoginCodeMessageTemplate           string
 	AuthCodeTTL                        time.Duration
 	PhoneCodeLength                    int
 	AuthCodeMaxAttempts                int
@@ -348,6 +440,10 @@ type CoreConfig struct {
 	TranslationEnabled                 bool
 	TranslationProviders               []string
 	TranslationTimeout                 time.Duration
+	ASRURL                             string
+	ASRTimeout                         time.Duration
+	DonationWalletKeyFile              string
+	DonationPollInterval               time.Duration
 	TranslationRateLimit               int
 	TranslationRateWindow              time.Duration
 	TempKeyResolveCacheMaxEntries      int
@@ -432,6 +528,7 @@ type CoreConfig struct {
 	PremiumGrantMonths                 int
 	PremiumBotUsername                 string
 	PremiumBotUserID                   int64
+	IdentityDir                        string
 	PremiumPlans                       []domain.PremiumPlan
 	PasskeyRPID                        string
 	PasskeyAllowedOrigins              []string
@@ -463,6 +560,14 @@ type CoreConfig struct {
 	StarGiftTONProofDomain             string
 	StarGiftTONCapabilitySecretFile    string
 	StarGiftTONAllowUserIDs            []int64
+	StarGiftCrossCraftUserIDs          []int64
+	OperatorBotUserID                  int64
+	OperatorBotChatIDs                 []int64
+	ScamProfileWarning                 string
+	FakeProfileWarning                 string
+	CheckNumberFormat                  bool
+	MiniAppBotFatherToken              string
+	MiniAppStickersToken               string
 	StarGiftTONExportTTL               time.Duration
 	StarGiftTONChallengeTTL            time.Duration
 	StarGiftTONFinalizerBatch          int
@@ -607,6 +712,22 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		TelegramLoginSweepInterval:         c.TelegramLoginSweepInterval,
 		TelegramLoginSweepBatch:            c.TelegramLoginSweepBatch,
 		AdminScopedTokens:                  append([]AdminScopedToken(nil), c.AdminScopedTokens...),
+		SRPRateLimit:                       c.SRPRateLimit,
+		SRPRateWindow:                      c.SRPRateWindow,
+		WithdrawalRateLimit:                c.WithdrawalRateLimit,
+		WithdrawalRateWindow:               c.WithdrawalRateWindow,
+		PaymentRateLimit:                   c.PaymentRateLimit,
+		PaymentRateWindow:                  c.PaymentRateWindow,
+		GeoIPEndpoints:                     append([]string(nil), c.GeoIPEndpoints...),
+		GeoIPTimeout:                       c.GeoIPTimeout,
+		GeoIPConcurrency:                   c.GeoIPConcurrency,
+		GeoIPCacheTTL:                      c.GeoIPCacheTTL,
+		GeoIPNegativeTTL:                   c.GeoIPNegativeTTL,
+		GeoIPCacheSize:                     c.GeoIPCacheSize,
+		GeoIPRateLimitThreshold:            c.GeoIPRateLimitThreshold,
+		GeoIPRateLimitCooldown:             c.GeoIPRateLimitCooldown,
+		GeoIPDownThreshold:                 c.GeoIPDownThreshold,
+		GeoIPDownCooldown:                  c.GeoIPDownCooldown,
 		PostgresDSN:                        c.PostgresDSN,
 		PostgresMaxConns:                   c.PostgresMaxConns,
 		PostgresMinConns:                   c.PostgresMinConns,
@@ -616,6 +737,7 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		RedisDB:                            c.RedisDB,
 		InstanceID:                         c.InstanceID,
 		DevAuthCode:                        c.DevAuthCode,
+		LoginCodeMessageTemplate:           c.LoginCodeMessageTemplate,
 		AuthCodeTTL:                        c.AuthCodeTTL,
 		PhoneCodeLength:                    c.PhoneCodeLength,
 		AuthCodeMaxAttempts:                c.AuthCodeMaxAttempts,
@@ -663,6 +785,13 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		TranslationEnabled:                 c.TranslationEnabled,
 		TranslationProviders:               append([]string(nil), c.TranslationProviders...),
 		TranslationTimeout:                 c.TranslationTimeout,
+		ScamProfileWarning:                 c.ScamProfileWarning,
+		FakeProfileWarning:                 c.FakeProfileWarning,
+		CheckNumberFormat:                  c.CheckNumberFormat,
+		ASRURL:                             c.ASRURL,
+		ASRTimeout:                         c.ASRTimeout,
+		DonationWalletKeyFile:              c.DonationWalletKeyFile,
+		DonationPollInterval:               c.DonationPollInterval,
 		TranslationRateLimit:               c.TranslationRateLimit,
 		TranslationRateWindow:              c.TranslationRateWindow,
 		TempKeyResolveCacheMaxEntries:      c.TempKeyResolveCacheMaxEntries,
@@ -746,6 +875,7 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		CallExpiryInterval:                 c.CallExpiryInterval,
 		PremiumGrantMonths:                 c.PremiumGrantMonths,
 		PremiumBotUsername:                 c.PremiumBotUsername,
+		IdentityDir:                        c.IdentityDir,
 		PremiumBotUserID:                   c.PremiumBotUserID,
 		PremiumPlans:                       append([]domain.PremiumPlan(nil), c.PremiumPlans...),
 		PasskeyRPID:                        c.PasskeyRPID,
@@ -851,7 +981,9 @@ func coreConfigFromConfig(c Config) CoreConfig {
 
 // LoadCore reads the Core role YAML config and returns the runtime snapshot used by the Core process.
 func LoadCore() (CoreConfig, error) {
-	var starGiftTONAllowUserIDs []int64
+	var starGiftTONAllowUserIDs, starGiftCrossCraftUserIDs, operatorBotChatIDs []int64
+	var operatorBotUserID int64
+	var miniAppBotFatherToken, miniAppStickersToken string
 	cfg, err := loadRoleYAML(roleCore, func(b *envBuilder, y CoreConfigYAML) error {
 		if err := requireYAMLVersion(y.Version); err != nil {
 			return err
@@ -884,6 +1016,7 @@ func LoadCore() (CoreConfig, error) {
 			return err
 		}
 		applySeedsYAML(b, y.Seeds)
+		applyIdentityYAML(b, y.Identity)
 		if err := applyAuthYAML(b, y.Auth); err != nil {
 			return err
 		}
@@ -908,13 +1041,50 @@ func LoadCore() (CoreConfig, error) {
 		if err := applyTranslationYAML(b, y.Translation); err != nil {
 			return err
 		}
+		b.setString("TELESRV_SCAM_WARNING", y.Moderation.ScamProfileWarning)
+		b.setString("TELESRV_FAKE_WARNING", y.Moderation.FakeProfileWarning)
+		b.setString("TELESRV_DONATION_WALLET_KEY_FILE", y.Donations.WalletKeyFile)
+		if err := b.setDuration("TELESRV_DONATION_POLL_INTERVAL", y.Donations.PollInterval); err != nil {
+			return err
+		}
+		b.setString("TELESRV_ASR_URL", y.Transcription.ASRURL)
+		if err := b.setDuration("TELESRV_ASR_TIMEOUT", y.Transcription.ASRTimeout); err != nil {
+			return err
+		}
 		if err := applyStarGiftsYAML(b, y.StarGifts); err != nil {
+			return err
+		}
+		if err := applyGeoIPYAML(b, y.GeoIP); err != nil {
+			return err
+		}
+		if err := applySensitiveRateYAML(b, y.SensitiveRate); err != nil {
 			return err
 		}
 		var err error
 		starGiftTONAllowUserIDs, err = validateTONAllowUserIDs(y.StarGifts.Export.TON.AllowUserIDs)
 		if err != nil {
 			return err
+		}
+		starGiftCrossCraftUserIDs, err = validateUserIDList("star_gifts.cross_craft_user_ids", y.StarGifts.CrossCraftUserIDs)
+		if err != nil {
+			return err
+		}
+		operatorBotChatIDs, err = validateUserIDList("operator_bot.chat_ids", y.OperatorBot.ChatIDs)
+		if err != nil {
+			return err
+		}
+		if y.OperatorBot.BotUserID < 0 {
+			return fmt.Errorf("operator_bot.bot_user_id must not be negative")
+		}
+		operatorBotUserID = y.OperatorBot.BotUserID
+		miniAppBotFatherToken = strings.TrimSpace(y.MiniApps.BotFatherToken)
+		miniAppStickersToken = strings.TrimSpace(y.MiniApps.StickersToken)
+		for field, token := range map[string]string{"mini_apps.botfather_token": miniAppBotFatherToken, "mini_apps.stickers_token": miniAppStickersToken} {
+			if token != "" {
+				if id, secret, ok := domain.ParseBotToken(token); !ok || id <= 0 || secret == "" {
+					return fmt.Errorf("%s must be a bot token", field)
+				}
+			}
 		}
 		return nil
 	})
@@ -923,10 +1093,19 @@ func LoadCore() (CoreConfig, error) {
 	}
 	result := coreConfigFromConfig(cfg)
 	result.StarGiftTONAllowUserIDs = starGiftTONAllowUserIDs
+	result.StarGiftCrossCraftUserIDs = starGiftCrossCraftUserIDs
+	result.MiniAppBotFatherToken = miniAppBotFatherToken
+	result.MiniAppStickersToken = miniAppStickersToken
+	result.OperatorBotUserID = operatorBotUserID
+	result.OperatorBotChatIDs = operatorBotChatIDs
 	return result, nil
 }
 
 func validateTONAllowUserIDs(ids []int64) ([]int64, error) {
+	return validateUserIDList("star_gifts.export.ton.allow_user_ids", ids)
+}
+
+func validateUserIDList(field string, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -934,15 +1113,49 @@ func validateTONAllowUserIDs(ids []int64) ([]int64, error) {
 	seen := make(map[int64]struct{}, len(ids))
 	for _, id := range ids {
 		if id <= 0 {
-			return nil, fmt.Errorf("star_gifts.export.ton.allow_user_ids must contain positive user IDs")
+			return nil, fmt.Errorf("%s must contain positive user IDs", field)
 		}
 		if _, exists := seen[id]; exists {
-			return nil, fmt.Errorf("star_gifts.export.ton.allow_user_ids contains duplicate user ID %d", id)
+			return nil, fmt.Errorf("%s contains duplicate user ID %d", field, id)
 		}
 		seen[id] = struct{}{}
 		result = append(result, id)
 	}
 	return result, nil
+}
+
+func applySensitiveRateYAML(b *envBuilder, y SensitiveRateYAML) error {
+	b.setInt("TELESRV_SRP_RATE_LIMIT", y.SRPLimit)
+	if err := b.setDuration("TELESRV_SRP_RATE_WINDOW", y.SRPWindow); err != nil {
+		return err
+	}
+	b.setInt("TELESRV_WITHDRAWAL_RATE_LIMIT", y.WithdrawalLimit)
+	if err := b.setDuration("TELESRV_WITHDRAWAL_RATE_WINDOW", y.WithdrawalWindow); err != nil {
+		return err
+	}
+	b.setInt("TELESRV_PAYMENT_RATE_LIMIT", y.PaymentLimit)
+	return b.setDuration("TELESRV_PAYMENT_RATE_WINDOW", y.PaymentWindow)
+}
+
+func applyGeoIPYAML(b *envBuilder, y GeoIPYAML) error {
+	b.setList("TELESRV_GEOIP_ENDPOINTS", y.Endpoints)
+	if err := b.setDuration("TELESRV_GEOIP_TIMEOUT", y.Timeout); err != nil {
+		return err
+	}
+	b.setInt("TELESRV_GEOIP_CONCURRENCY", y.Concurrency)
+	if err := b.setDuration("TELESRV_GEOIP_CACHE_TTL", y.CacheTTL); err != nil {
+		return err
+	}
+	if err := b.setDuration("TELESRV_GEOIP_NEGATIVE_TTL", y.NegativeTTL); err != nil {
+		return err
+	}
+	b.setInt("TELESRV_GEOIP_CACHE_SIZE", y.CacheSize)
+	b.setInt("TELESRV_GEOIP_RATE_LIMIT_THRESHOLD", y.RateLimitThreshold)
+	if err := b.setDuration("TELESRV_GEOIP_RATE_LIMIT_COOLDOWN", y.RateLimitCooldown); err != nil {
+		return err
+	}
+	b.setInt("TELESRV_GEOIP_DOWN_THRESHOLD", y.DownThreshold)
+	return b.setDuration("TELESRV_GEOIP_DOWN_COOLDOWN", y.DownCooldown)
 }
 
 func applyStarGiftsYAML(b *envBuilder, y StarGiftsYAML) error {
@@ -1051,6 +1264,8 @@ func applySeedsYAML(b *envBuilder, y SeedsYAML) {
 
 func applyAuthYAML(b *envBuilder, y AuthYAML) error {
 	b.setString("TELESRV_DEV_AUTH_CODE", y.DevCode)
+	b.setBool("TELESRV_CHECK_NUMBER_FORMAT", y.CheckNumberFormat)
+	b.setString("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", y.LoginCodeTemplate)
 	if err := b.setDuration("TELESRV_AUTH_CODE_TTL", y.CodeTTL); err != nil {
 		return err
 	}

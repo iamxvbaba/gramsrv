@@ -1,0 +1,13 @@
+# Only dependency manifests and runtime source belong in this image context.
+*
+!package.json
+!package-lock.json
+!src/
+!src/**
+# Keep accidental credentials/runtime files out even when placed under src/.
+**/.env
+**/.env.*
+**/node_modules
+**/*.log
+**/*.db
+**/*.sqlite*

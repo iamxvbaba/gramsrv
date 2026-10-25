@@ -136,6 +136,14 @@ func (s *Service) Catalog(ctx context.Context) ([]domain.StarGift, error) {
 	return append([]domain.StarGift(nil), s.gifts...), nil
 }
 
+// CatalogAll reads a fresh catalog including disabled gifts for admin imports.
+func (s *Service) CatalogAll(ctx context.Context) ([]domain.StarGift, error) {
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("star gift store is not configured")
+	}
+	return s.store.CatalogAll(ctx)
+}
+
 func (s *Service) CatalogHash(ctx context.Context) (int, error) {
 	if err := s.ensureCatalog(ctx); err != nil {
 		return 0, err
@@ -226,7 +234,7 @@ func (s *Service) materializeCatalogWrite(ctx context.Context, write *domain.Sta
 		Attributes: []domain.DocumentAttribute{
 			{Kind: domain.DocAttrImageSize, W: 512, H: 512},
 			{Kind: domain.DocAttrSticker, Alt: "🎁"},
-			{Kind: domain.DocAttrFilename, FileName: "gift.tgs"},
+			{Kind: domain.DocAttrFilename, FileName: "AnimatedSticker.tgs"},
 		},
 	}
 	write.Blob = domain.FileBlob{
@@ -498,6 +506,32 @@ func (s *Service) CollectibleAnimationJSON(ctx context.Context, giftID int64, ki
 	if s == nil || s.store == nil {
 		return nil, false, nil
 	}
+	// PostgreSQL keeps the queryable animation projection in JSONB, but JSONB
+	// canonicalization is not a lossless source for every Lottie/TGS document.
+	// Prefer the immutable content-addressed TGS blob and decompress it back to
+	// the original JSON for renderers; the JSONB path remains a compatibility
+	// fallback for memory/test stores and older rows without a blob.
+	if s.blobs != nil {
+		if blobStore, ok := s.store.(interface {
+			CollectibleAnimationBlob(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) (domain.FileBlob, bool, error)
+		}); ok {
+			blob, found, err := blobStore.CollectibleAnimationBlob(ctx, giftID, kind, attributeID)
+			if err != nil {
+				return nil, false, err
+			}
+			if found {
+				data, err := s.blobs.Get(ctx, blob.ObjectKey)
+				if err != nil {
+					return nil, false, fmt.Errorf("get collectible animation blob bytes: %w", err)
+				}
+				raw, err := decompressSingleTGS(data)
+				if err != nil {
+					return nil, false, fmt.Errorf("decompress collectible animation blob: %w", err)
+				}
+				return raw, true, nil
+			}
+		}
+	}
 	return s.store.CollectibleAnimationJSON(ctx, giftID, kind, attributeID)
 }
 
@@ -578,6 +612,14 @@ func (s *Service) IssuePurchaseForm(ctx context.Context, form domain.StarGiftPur
 		return domain.StarGiftPurchaseForm{}, domain.ErrStarGiftFormPurposeInvalid
 	}
 	return s.lifecycle.IssueStarGiftPurchaseForm(ctx, form)
+}
+
+// SettledStarGiftPurchase checks the durable command before issuing another form.
+func (s *Service) SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.StarGiftPurchaseResult{}, false, domain.ErrStarGiftUnavailable
+	}
+	return s.lifecycle.SettledStarGiftPurchase(ctx, req)
 }
 
 func validPurchaseForm(form domain.StarGiftPurchaseForm) bool {
@@ -739,12 +781,16 @@ func (s *Service) Withdraw(ctx context.Context, req domain.StarGiftWithdrawalReq
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftWithdrawalUnavailable
 	}
 	saved, found, err := s.store.GetByRef(ctx, req.Ref)
-	if err != nil || !found || saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) ||
-		saved.UniqueGiftID == 0 || !saved.LifecycleStatus.Live() || saved.CanExportAt > req.Date {
-		if err != nil {
-			return domain.StarGiftWithdrawal{}, err
-		}
+	if err != nil {
+		return domain.StarGiftWithdrawal{}, err
+	}
+	if !found || saved.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID}) ||
+		saved.UniqueGiftID == 0 || !saved.LifecycleStatus.Live() {
 		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftTransferUnavailable
+	}
+	// can_export_at 只认服务端时钟：前端改时间戳无法提前触发导出。
+	if saved.CanExportAt > req.Date {
+		return domain.StarGiftWithdrawal{}, domain.ErrStarGiftExportCooldown
 	}
 	unique, found, err := s.store.UniqueByID(ctx, saved.UniqueGiftID)
 	if err != nil || !found || unique.Burned || unique.Owner != saved.Owner {
@@ -775,6 +821,16 @@ func (s *Service) Withdraw(ctx context.Context, req domain.StarGiftWithdrawalReq
 		return domain.StarGiftWithdrawal{}, err
 	}
 	return recorded, nil
+}
+
+// DeleteStarGift implements payments.deleteStarGift (Layer 232): the owner
+// removes a received gift from the profile. The gift row survives as audit
+// history, so the delete is a lifecycle transition owned by the store.
+func (s *Service) DeleteStarGift(ctx context.Context, req domain.StarGiftDeleteRequest) (domain.StarGiftDeleteResult, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.StarGiftDeleteResult{}, domain.ErrStarGiftDeleteUnavailable
+	}
+	return s.lifecycle.DeleteStarGift(ctx, req)
 }
 
 func (s *Service) ResolveWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error) {
@@ -910,6 +966,56 @@ func (s *Service) ChannelTonTransactions(ctx context.Context, channelID int64, q
 	return s.lifecycle.ChannelTonTransactions(ctx, channelID, query)
 }
 
+// BotStarsBalance returns a bot's own revenue wallet balance. Without the
+// lifecycle store (isolated memory test adapters) the wallet reads zero, which
+// matches a bot that has never been paid.
+func (s *Service) BotStarsBalance(ctx context.Context, botUserID int64) (int64, error) {
+	if s == nil || s.lifecycle == nil {
+		return 0, nil
+	}
+	return s.lifecycle.BotStarsBalance(ctx, botUserID)
+}
+
+// BotStarsOverallRevenue returns the bot's lifetime positive revenue, which
+// stays monotonic across refunds and spends.
+func (s *Service) BotStarsOverallRevenue(ctx context.Context, botUserID int64) (int64, error) {
+	if s == nil || s.lifecycle == nil {
+		return 0, nil
+	}
+	return s.lifecycle.BotStarsOverallRevenue(ctx, botUserID)
+}
+
+func (s *Service) BotStarsTransactions(ctx context.Context, botUserID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {
+	if s == nil || s.lifecycle == nil {
+		return domain.StarsTransactionPage{}, nil
+	}
+	query, err := domain.NormalizeStarsTransactionQuery(query)
+	if err != nil {
+		return domain.StarsTransactionPage{}, err
+	}
+	return s.lifecycle.BotStarsTransactions(ctx, botUserID, query)
+}
+
+// CreditBotStarsWallet settles one invoice into the bot's own wallet. The
+// second return value is false when InvoiceKey was already settled, which makes
+// the call safe to retry after a transport timeout.
+func (s *Service) CreditBotStarsWallet(ctx context.Context, credit domain.BotStarsCredit) (int64, bool, error) {
+	if s == nil || s.lifecycle == nil {
+		return 0, false, domain.ErrStarGiftLifecycleInvalid
+	}
+	return s.lifecycle.CreditBotStarsWallet(ctx, credit)
+}
+
+// BotStarsRevenueSeries returns the per-day revenue series backing the bot
+// revenue chart. Without the lifecycle store the series is empty, which the
+// RPC layer projects as a "no data" graph.
+func (s *Service) BotStarsRevenueSeries(ctx context.Context, botUserID int64, fromUnix, toUnix int) ([]domain.BotStarsRevenuePoint, error) {
+	if s == nil || s.lifecycle == nil {
+		return nil, nil
+	}
+	return s.lifecycle.BotStarsRevenueSeries(ctx, botUserID, fromUnix, toUnix)
+}
+
 func (s *Service) SweepLifecycle(ctx context.Context, now, limit int) error {
 	if s == nil || s.lifecycle == nil {
 		return nil
@@ -973,6 +1079,20 @@ func (s *Service) ListSavedFiltered(ctx context.Context, filter domain.SavedStar
 		filter.Limit = domain.MaxSavedStarGiftsLimit
 	}
 	return s.store.ListByOwnerFiltered(ctx, filter)
+}
+
+// CrossCraftCapability is projected only to an eligible owner's own saved gifts.
+func (s *Service) CrossCraftCapability(ctx context.Context, userID int64) (bool, int, error) {
+	if s == nil || s.lifecycle == nil {
+		return false, 0, nil
+	}
+	capability, ok := s.lifecycle.(interface {
+		CrossCraftCapability(context.Context, int64) (bool, int, error)
+	})
+	if !ok {
+		return false, 0, nil
+	}
+	return capability.CrossCraftCapability(ctx, userID)
 }
 
 func (s *Service) GetSaved(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error) {

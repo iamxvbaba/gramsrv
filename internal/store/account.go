@@ -11,15 +11,25 @@ type PasswordStore interface {
 	GetByUser(ctx context.Context, userID int64) (domain.PasswordSettings, bool, error)
 	LoginEmailOwner(ctx context.Context, email string) (int64, bool, error)
 	Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error
+	Mutate(ctx context.Context, userID int64, apply func(*domain.PasswordSettings) error) error
+}
+
+// TmpPasswordStore persists account.getTmpPassword grants, at most one per
+// permanent auth key: PutTmpPassword replaces that authorization's previous
+// grant. Durable implementations delete the grant with its authorization and
+// return ErrAuthorizationStateChanged when the authorization no longer exists.
+type TmpPasswordStore interface {
+	PutTmpPassword(ctx context.Context, grant domain.TmpPasswordGrant) error
+	TmpPasswordByAuthKey(ctx context.Context, authKeyID [8]byte) (domain.TmpPasswordGrant, bool, error)
 }
 
 // AccountReactionSettingsStore persists account-level reaction preferences.
 type AccountReactionSettingsStore interface {
 	GetReactionSettings(ctx context.Context, userID int64) (domain.AccountReactionSettings, bool, error)
-	SaveReactionSettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings, effects DeliveryEffectsBuilder[domain.AccountReactionSettings]) error
-	// SaveReactionsNotifySettings persists the constructor-less reaction-notify
-	// preference. There is deliberately no fake Update or empty delivery effect.
-	SaveReactionsNotifySettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings) error
+	// UpdateReactionSettings merges a patch under the owner lock and commits its
+	// delivery effects atomically. Only a notify-only patch, which has no update
+	// constructor, may pass nil effects; there is no fake Update for it.
+	UpdateReactionSettings(ctx context.Context, userID int64, patch domain.AccountReactionSettingsPatch, effects DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error)
 }
 
 // AccountSettingsStore persists account-level singleton settings (global privacy,
@@ -39,6 +49,8 @@ type AccountSettingsBatchStore interface {
 // NotifySettingsStore persists per-scope notification settings (specific peer /
 // forum topic / the three category defaults: users, chats, broadcasts).
 type NotifySettingsStore interface {
+	// GetForumTopicNotifySettings loads one bounded topic page for one owner and peer.
+	GetForumTopicNotifySettings(ctx context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error)
 	GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error)
 	SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error
 	SaveNotifySettingsWithDelivery(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings, delivery DeliveryOutboxEnqueue) error

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -25,6 +26,16 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 	}
 	prevMsg := s.messages[req.ChannelID][idx]
 	msg := prevMsg
+	if req.ReplaceMedia {
+		if err := domain.ValidateMessageMediaReplacement(msg.Media, req.Media, msg.GroupedID, msg.Forward != nil); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
+	if req.PreserveText {
+		req.Message = msg.Body
+		req.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+	}
+
 	finalMedia := msg.Media
 	if req.Media != nil {
 		finalMedia = req.Media
@@ -34,7 +45,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 		finalRich = req.RichMessage
 	}
 	if strings.TrimSpace(req.Message) == "" && finalMedia.IsZero() && finalRich.IsZero() {
-		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
+		return domain.EditChannelMessageResult{}, domain.ErrMessageEmpty
 	}
 	// WebPageResolve：频道链接预览就地替换（服务端内部，幂等守卫即授权）。只换 media、
 	// 不碰 body/entities/edit_date，事件为 channel_web_page。
@@ -78,7 +89,7 @@ func (s *ChannelStore) EditChannelMessage(_ context.Context, req domain.EditChan
 		return domain.EditChannelMessageResult{}, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(msg.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
+	if (req.Media == nil || reflect.DeepEqual(req.Media, msg.Media)) && !req.SetReplyMarkup && !richChanged && msg.Body == req.Message && sameMessageEntities(msg.Entities, req.Entities) {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
 	}
 	pts := s.nextChannelPtsLocked(req.ChannelID)

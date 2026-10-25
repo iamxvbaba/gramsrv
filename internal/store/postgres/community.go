@@ -1410,6 +1410,9 @@ func (s *CommunityStore) EditCommunityDefaultBannedRights(ctx context.Context, a
 }
 
 func (s *CommunityStore) SetCommunityPhoto(ctx context.Context, actorUserID, communityID int64, photo *domain.Photo, date int, effects store.DeliveryEffectsBuilder[store.CommunityDeliverySnapshot]) (domain.CommunityView, bool, error) {
+	if photo != nil && (photo.ID == 0 || photo.DCID <= 0) {
+		return domain.CommunityView{}, false, domain.ErrPhotoInvalid
+	}
 	type result struct {
 		view    domain.CommunityView
 		changed bool
@@ -1427,6 +1430,9 @@ func (s *CommunityStore) SetCommunityPhoto(ctx context.Context, actorUserID, com
 		if photo != nil {
 			id, dc = photo.ID, photo.DCID
 			stripped = domain.StrippedFromSizes(photo.Sizes)
+		}
+		if stripped == nil {
+			stripped = []byte{}
 		}
 		changed := c.PhotoID != id || c.PhotoDCID != dc || string(c.PhotoStripped) != string(stripped)
 		if changed {

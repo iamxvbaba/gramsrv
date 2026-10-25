@@ -50,7 +50,6 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 	}
 	effects, requiredDocs := seedEffectsCatalog(parsed)
 	s.effects = effects
-	s.effectsHash = effectsCatalogHash(effects)
 	stats.Effects = len(effects)
 
 	stateHash, err := s.seedEffectsStateHash(raw, docsDir)
@@ -65,17 +64,29 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 	if err != nil {
 		return err
 	}
-	if matched && ready {
-		return nil
-	}
-
-	// 多个 effect 常共享同一文档(static icon 尤甚):每个唯一源文档只导一次。
-	for _, dj := range requiredDocs {
-		if _, err := s.importDocument(ctx, dj, docsDir, index, stats); err != nil {
+	if !matched || !ready {
+		for _, dj := range requiredDocs {
+			if _, err := s.importDocument(ctx, dj, docsDir, index, domain.StickerSetRef{}, stats); err != nil {
+				return err
+			}
+		}
+		if err := s.putSeedState(ctx, seedEffectsStateKey, stateHash); err != nil {
 			return err
 		}
 	}
-	return s.putSeedState(ctx, seedEffectsStateKey, stateHash)
+	ids := make([]int64, 0, len(requiredDocs))
+	for _, doc := range requiredDocs {
+		ids = append(ids, doc.ID)
+	}
+	docs, err := s.media.GetDocuments(ctx, ids)
+	if err != nil {
+		return err
+	}
+	if len(docs) != len(ids) {
+		return fmt.Errorf("effects catalog documents incomplete")
+	}
+	s.effectsHash, err = effectsCatalogHash(effects, orderDocuments(docs, ids))
+	return err
 }
 
 func seedEffectsCatalog(parsed seedEffectsFileJSON) ([]domain.AvailableEffect, []seedDocumentJSON) {
@@ -141,9 +152,9 @@ func (s *Service) AvailableEffects(ctx context.Context) ([]domain.AvailableEffec
 
 // effectsCatalogHash 由 effect 字段算稳定正整数 hash（FNV-1a）。内容变则 hash 变,
 // 客户端发旧 hash 即不命中→重取。
-func effectsCatalogHash(effects []domain.AvailableEffect) int {
+func effectsCatalogHash(effects []domain.AvailableEffect, docs []domain.Document) (int, error) {
 	if len(effects) == 0 {
-		return 0
+		return 0, nil
 	}
 	h := fnv.New64a()
 	var buf [8]byte
@@ -163,5 +174,10 @@ func effectsCatalogHash(effects []domain.AvailableEffect) int {
 			put(0)
 		}
 	}
-	return int(h.Sum64() & 0x7fffffff)
+	// Metadata repairs must invalidate cached effect documents too, otherwise
+	// TDLib can overwrite a refreshed set credential with a stale effect reference.
+	if err := json.NewEncoder(h).Encode(docs); err != nil {
+		return 0, err
+	}
+	return int(h.Sum64() & 0x7fffffff), nil
 }

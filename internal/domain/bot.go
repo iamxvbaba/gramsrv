@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -70,6 +71,9 @@ var (
 	// ErrBotSessionsNotRevoked 表示 token 已轮换但撤销已登录 session 失败
 	//（token 不可回滚，调用方须告知用户重试以确保旧 session 终止）。
 	ErrBotSessionsNotRevoked = errors.New("bot sessions not revoked")
+	// ErrBotDeletionUnsupported 表示当前 store 未实现删号（只有 Postgres 实现），
+	// 调用方须如实告知用户本服不支持，而不是谎称已删除。
+	ErrBotDeletionUnsupported = errors.New("bot deletion unsupported")
 )
 
 const (
@@ -262,6 +266,96 @@ func ValidBotCommandName(cmd string) bool {
 
 // BotProfile 是 bots 表一行：bot 账号的元数据与 token。
 // 显示名/username/about 复用 users 行，不在此重复。
+// BotInvoice is one XTR invoice a bot sent as a chat message.
+//
+// payments.sendPaymentForm carries no purpose in this layer, so the price is
+// taken from this record: the client only sends the message id and the server
+// resolves the amount it itself advertised. That is what makes a bot invoice
+// settleable without any extra TL constructor.
+//
+// ChargeID is the telegram_payment_charge_id the client reports, kept so
+// refundStarPayment can find the invoice again.
+type BotInvoice struct {
+	ID          int64
+	BotUserID   int64
+	ChatID      int64
+	MessageID   int
+	Title       string
+	Description string
+	// Amount is in whole Stars. currency is always XTR: telesrv does not model
+	// a fiat checkout, so there is nothing else an invoice could settle.
+	Amount   int64
+	Currency string
+	// Payload is the Bot API start_param, opaque to the server and echoed back
+	// to the bot so it can tell what was bought.
+	Payload  string
+	ChargeID string
+	PayerID  int64
+	Paid     bool
+	PaidAt   int
+	Date     int
+	Refunded bool
+}
+
+// Bot invoice failures.
+var (
+	ErrBotInvoiceInvalid  = errors.New("bot invoice invalid")
+	ErrBotInvoiceNotFound = errors.New("bot invoice not found")
+	// ErrBotInvoiceSettled means the invoice is already paid, so paying it
+	// again would charge the buyer twice.
+	ErrBotInvoiceSettled = errors.New("bot invoice already settled")
+	// ErrBotInvoiceRefunded means the charge was already reversed.
+	ErrBotInvoiceRefunded = errors.New("bot invoice already refunded")
+)
+
+// Invoice is the messageMediaInvoice payload a bot advertises.
+//
+// It is deliberately separate from PremiumInvoice: that type carries a Premium
+// plan (months, plan version, entitlement message) and its Valid() rejects a
+// plain product, so reusing it for a bot sale would mean filling in fields that
+// mean nothing here. The Premium bot keeps its own type.
+type Invoice struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	AmountStars int64  `json:"amount_stars"`
+	StartParam  string `json:"start_param,omitempty"`
+}
+
+// Valid reports whether the invoice can be projected onto messageMediaInvoice.
+func (i Invoice) Valid() bool {
+	return utf8.RuneCountInString(i.Title) > 0 &&
+		utf8.RuneCountInString(i.Title) <= BotInvoiceMaxTitle &&
+		utf8.RuneCountInString(i.Description) > 0 &&
+		utf8.RuneCountInString(i.Description) <= BotInvoiceMaxDescription &&
+		i.AmountStars > 0 && len(i.StartParam) <= BotInvoiceMaxPayload
+}
+
+// BotInvoiceMaxTitle is the messageMediaInvoice title budget.
+const BotInvoiceMaxTitle = 32
+
+// BotInvoiceMaxDescription is the messageMediaInvoice description budget.
+const BotInvoiceMaxDescription = 255
+
+// BotInvoiceMaxPayload is the start_param budget Telegram allows.
+const BotInvoiceMaxPayload = 64
+
+// GramsrvBotUserID is the built-in @gramsrv moderation bot account used by
+// WithGramsrvAdmin. Zero means the bot is not provisioned on this server.
+const GramsrvBotUserID = int64(0)
+
+// Valid reports whether the invoice describes a well-formed XTR sale.
+func (i BotInvoice) Valid() bool {
+	return i.BotUserID > 0 && i.ChatID != 0 && i.MessageID > 0 && i.Amount > 0 &&
+		i.Currency == PremiumCurrencyStars &&
+		utf8.RuneCountInString(i.Title) <= BotInvoiceMaxTitle &&
+		utf8.RuneCountInString(i.Description) <= BotInvoiceMaxDescription &&
+		len(i.Payload) <= BotInvoiceMaxPayload
+}
+
+// Settled reports whether the invoice has already been paid, which makes a
+// replayed sendPaymentForm a duplicate rather than a second charge.
+func (i BotInvoice) Settled() bool { return i.Paid && i.ChargeID != "" }
+
 type BotProfile struct {
 	BotUserID         int64
 	OwnerUserID       int64

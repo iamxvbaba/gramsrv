@@ -53,3 +53,19 @@ type AccountFreezeNotification struct {
 	Frozen       bool
 	Attempts     int
 }
+
+// AccountDeletionNotification is the durable, coalesced tombstone refresh one
+// viewer still owes after an account was deleted.
+//
+// It is the deletion counterpart of AccountFreezeNotification. A freeze already
+// had this queue; deletion used to reach viewers through an online-only fan-out,
+// which silently skipped every viewer that happened to be offline at that moment
+// and left the client rendering a stale name with a live composer. Offline
+// viewers receive this row once they come back, so the tombstone converges for
+// everyone rather than only for whoever was connected.
+type AccountDeletionNotification struct {
+	ID            int64
+	TargetUserID  int64
+	DeletedUserID int64
+	Attempts      int
+}

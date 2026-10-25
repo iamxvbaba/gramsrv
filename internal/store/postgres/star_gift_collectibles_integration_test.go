@@ -23,10 +23,11 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
 	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
 		Title: "Comet", Stars: 50, ConvertStars: 25, Enabled: true,
-		Document:  collectibleTestDocument(baseDocumentID, "gift.tgs"),
-		Blob:      collectibleTestBlob(baseDocumentID, "gift"),
-		Animation: collectibleTestAnimation("gift.tgs"),
-		Actor:     "integration", CommandID: "catalog-" + suffix,
+		ReleasedBy: domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID},
+		Document:   collectibleTestDocument(baseDocumentID, "gift.tgs"),
+		Blob:       collectibleTestBlob(baseDocumentID, "gift"),
+		Animation:  collectibleTestAnimation("gift.tgs"),
+		Actor:      "integration", CommandID: "catalog-" + suffix,
 	})
 	if err != nil {
 		t.Fatalf("create collectible catalog gift: %v", err)
@@ -109,6 +110,16 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
 		Date: 1700001000, ConvertStars: 25, Message: "original",
 	})
+	// A catalog update after purchase must not change the original issuer.
+	if _, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		GiftID: entry.Gift.ID, Title: "Changed Comet", Stars: 50, ConvertStars: 25, Enabled: true,
+		ReleasedBy: ownerPeer,
+		Document:   collectibleTestDocument(baseDocumentID+99, "gift-updated.tgs"),
+		Blob:       collectibleTestBlob(baseDocumentID+99, "gift-updated"), Animation: collectibleTestAnimation("gift-updated.tgs"),
+		Actor: "integration", CommandID: "catalog-update-" + suffix,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	savedID := saved.ID
 	stars := NewStarsStore(pool)
 	if _, _, err := stars.EnsureGrant(ctx, owner.ID, 1000, 1700001001); err != nil {
@@ -120,16 +131,41 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: saved.MsgID},
 		KeepOriginalDetails: true, ChargeStars: 100, FormID: 991,
 		CommandKey: "paid-" + suffix, Date: 1700001002,
+		// This aggregate test asserts these exact attributes; keep the production
+		// random sampler out of this fixture's expected-name assertions.
+		ModelAttributeID:    poolRevision.Models[0].ID,
+		PatternAttributeID:  poolRevision.Patterns[0].ID,
+		BackdropAttributeID: poolRevision.Backdrops[0].ID,
 	}
 	upgraded, err := upgrades.UpgradeStarGift(ctx, req)
 	if err != nil {
 		t.Fatalf("upgrade star gift: %v", err)
+	}
+	if upgraded.Unique.ReleasedBy != (domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}) || upgraded.Unique.Title != "Comet" {
+		t.Fatalf("upgrade lost immutable issuer/title: %+v", upgraded.Unique)
 	}
 	if upgraded.Duplicate || upgraded.Unique.Num != 1 || upgraded.Unique.Slug != "comet-"+suffix+"-1" ||
 		upgraded.Unique.Model.Name != "Aurora" || upgraded.Unique.Pattern.Name != "Orbit" ||
 		upgraded.Unique.Backdrop.Name != "Midnight" || upgraded.Balance.Balance != 900 ||
 		upgraded.Saved.ID != savedID || upgraded.Saved.UniqueGiftID != upgraded.Unique.ID || upgraded.Saved.UpgradeMsgID <= 0 {
 		t.Fatalf("upgrade result = %+v", upgraded)
+	}
+	for _, unsaved := range []bool{true, false} {
+		if changed, err := gifts.SetUnsaved(ctx, req.Ref, unsaved); err != nil || !changed {
+			t.Fatalf("set upgraded gift unsaved=%v: changed=%v err=%v", unsaved, changed, err)
+		}
+		bySlug, found, err := gifts.UniqueBySlug(ctx, upgraded.Unique.Slug)
+		if err != nil || !found || bySlug.Unsaved != unsaved || bySlug.Owner != ownerPeer {
+			t.Fatalf("unique slug projection after unsaved=%v: found=%v err=%v gift=%+v", unsaved, found, err, bySlug)
+		}
+		byID, found, err := gifts.UniqueByID(ctx, upgraded.Unique.ID)
+		if err != nil || !found || byID.Unsaved != unsaved || byID.Owner != ownerPeer {
+			t.Fatalf("unique ID projection after unsaved=%v: found=%v err=%v gift=%+v", unsaved, found, err, byID)
+		}
+		byIDs, err := gifts.UniqueByIDs(ctx, []int64{upgraded.Unique.ID})
+		if current, found := byIDs[upgraded.Unique.ID]; err != nil || !found || current.Unsaved != unsaved || current.Owner != ownerPeer {
+			t.Fatalf("unique batch projection after unsaved=%v: found=%v err=%v gift=%+v", unsaved, found, err, current)
+		}
 	}
 	ownerMessage := upgraded.Send.RecipientMessage
 	if ownerMessage.OwnerUserID != owner.ID || ownerMessage.Pts <= 0 || ownerMessage.Media == nil ||
@@ -211,6 +247,9 @@ WHERE owner_user_id=$1 AND msg_id=$2`, sender.ID, ownerMessage.ID).Scan(&senderA
 	replayed, err := upgrades.UpgradeStarGift(ctx, req)
 	if err != nil {
 		t.Fatalf("replay upgrade: %v", err)
+	}
+	if replayed.Unique.ReleasedBy != upgraded.Unique.ReleasedBy {
+		t.Fatal("replay changed issuer")
 	}
 	if !replayed.Duplicate || replayed.Unique.ID != upgraded.Unique.ID || replayed.Balance.Balance != 900 ||
 		upgradedSourceEditForUser(replayed, owner.ID).Event.Pts != ownerSourceEdit.Event.Pts {
@@ -634,8 +673,9 @@ func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
 	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
 	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
 		Title: "Admin Grant " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
-		Document: collectibleTestDocument(baseDocumentID, "admin-grant-gift.tgs"),
-		Blob:     collectibleTestBlob(baseDocumentID, "admin-grant-gift"), Animation: collectibleTestAnimation("admin-grant-gift.tgs"),
+		ReleasedBy: domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		Document:   collectibleTestDocument(baseDocumentID, "admin-grant-gift.tgs"),
+		Blob:       collectibleTestBlob(baseDocumentID, "admin-grant-gift"), Animation: collectibleTestAnimation("admin-grant-gift.tgs"),
 		Actor: "integration", CommandID: "admin-grant-catalog-" + suffix,
 	})
 	if err != nil {
@@ -708,6 +748,9 @@ func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grant admin unique gift: %v", err)
 	}
+	if granted.Unique.ReleasedBy != entry.Gift.ReleasedBy {
+		t.Fatalf("admin grant issuer = %+v, want %+v", granted.Unique.ReleasedBy, entry.Gift.ReleasedBy)
+	}
 	action := granted.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
 	if granted.Duplicate || granted.Saved.MsgID <= 0 || granted.Saved.MsgID != granted.Saved.UpgradeMsgID ||
 		granted.Saved.UniqueGiftID != granted.Unique.ID || granted.Unique.Num != 1 ||
@@ -740,6 +783,70 @@ func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
 	}
 	if issued != 1 || commandCount != 1 {
 		t.Fatalf("replay duplicated aggregate: issued=%d commands=%d", issued, commandCount)
+	}
+}
+
+func TestAdminUniqueStarGiftGrantDeliversWhenRecipientBlocked(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	recipient := createTestUser(t, ctx, NewUserStore(pool), "+1788"+suffix+"62", "BlockedGiftRecipient", "")
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Blocked Grant " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "blocked-grant-gift.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "blocked-grant-gift"), Animation: collectibleTestAnimation("blocked-grant-gift.tgs"),
+		Actor: "integration", CommandID: "blocked-grant-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create blocked grant catalog gift: %v", err)
+	}
+	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 2, SlugPrefix: "blocked-grant-" + suffix,
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "blocked-model-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "blocked-model-one"), Animation: collectibleTestAnimationPtr("blocked-model-one.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "blocked-pattern-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "blocked-pattern-one"), Animation: collectibleTestAnimationPtr("blocked-pattern-one.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop One", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
+		Actor: "integration", CommandID: "blocked-grant-pool-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("publish blocked grant collectible pool: %v", err)
+	}
+	upgrades := NewStarGiftUpgradeStore(pool, newTestMessageStore(pool))
+	req := domain.AdminStarGiftGrant{
+		SenderID: domain.OfficialSystemUserID, Recipient: domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		GiftID: entry.Gift.ID, Upgrade: true, CommandKey: "admin-blocked-" + suffix, Date: now,
+		Message: "blocked collected", RecipientBlocked: true,
+		ModelAttributeID: revision.Models[0].ID, PatternAttributeID: revision.Patterns[0].ID, BackdropAttributeID: revision.Backdrops[0].ID,
+	}
+	granted, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("grant admin unique gift with blocked recipient: %v", err)
+	}
+	if granted.Duplicate || granted.Saved.MsgID <= 0 || granted.Saved.UpgradeMsgID <= 0 ||
+		granted.Unique.Num != 1 || granted.Unique.ID <= 0 {
+		t.Fatalf("blocked-recipient grant result=%+v", granted)
+	}
+	var savedCount, uniqueCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM peer_star_gifts WHERE owner_peer_type='user' AND owner_peer_id=$1 AND gift_id=$2`,
+		recipient.ID, entry.Gift.ID).Scan(&savedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM unique_star_gifts WHERE gift_id=$1`, entry.Gift.ID).Scan(&uniqueCount); err != nil {
+		t.Fatal(err)
+	}
+	if savedCount != 1 || uniqueCount != 1 {
+		t.Fatalf("blocked-recipient grant state: saved=%d unique=%d", savedCount, uniqueCount)
 	}
 }
 
@@ -828,6 +935,120 @@ func createCollectibleSavedGift(
 	}
 	saved.ID = id
 	return saved
+}
+
+func TestStarGiftCollectibleRevisionCarriesConsumedPoolPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	sender := createTestUser(t, ctx, users, "+1779"+suffix+"51", "RevisionSender", "")
+	owner := createTestUser(t, ctx, users, "+1779"+suffix+"52", "RevisionOwner", "")
+	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Revision Carried " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "revision-carried.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "revision-carried"), Animation: collectibleTestAnimation("revision-carried.tgs"),
+		Actor: "integration", CommandID: "revision-carried-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create revision-carried catalog: %v", err)
+	}
+	poolWrite := func(command, prefix string) domain.StarGiftCollectibleWrite {
+		return domain.StarGiftCollectibleWrite{
+			GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 600, SlugPrefix: prefix,
+			Models: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectibleModel, Name: "Aurora", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 922,
+					Document: collectibleTestDocumentPtr(baseDocumentID+1, "model.tgs"),
+					Blob:     collectibleTestBlobPtr(baseDocumentID+1, "model"), Animation: collectibleTestAnimationPtr("model.tgs")},
+				{Kind: domain.StarGiftCollectibleModel, Name: "Crafted Aurora", RarityKind: domain.StarGiftRarityLegendary, Crafted: true,
+					Document: collectibleTestDocumentPtr(baseDocumentID+3, "crafted-model.tgs"),
+					Blob:     collectibleTestBlobPtr(baseDocumentID+3, "crafted-model"), Animation: collectibleTestAnimationPtr("crafted-model.tgs")},
+				{Kind: domain.StarGiftCollectibleModel, Name: "Solar", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 78,
+					Document: collectibleTestDocumentPtr(baseDocumentID+4, "model-two.tgs"),
+					Blob:     collectibleTestBlobPtr(baseDocumentID+4, "model-two"), Animation: collectibleTestAnimationPtr("model-two.tgs")},
+			},
+			Patterns: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
+					Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")},
+				{Kind: domain.StarGiftCollectiblePattern, Name: "Rings", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 11,
+					Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "pattern-two"), Animation: collectibleTestAnimationPtr("pattern-two.tgs")},
+			},
+			Backdrops: []domain.StarGiftCollectibleAttribute{
+				{Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999},
+				{Kind: domain.StarGiftCollectibleBackdrop, Name: "Daylight", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1},
+			},
+			Actor: "integration", CommandID: command,
+		}
+	}
+	firstRevision, err := gifts.PublishCollectibleRevision(ctx, poolWrite("revision-carried-pool-"+suffix, "rc-"+suffix))
+	if err != nil {
+		t.Fatalf("publish first revision pool: %v", err)
+	}
+	if firstRevision.Issued != 0 || firstRevision.SupplyTotal != 600 {
+		t.Fatalf("first published revision = %+v", firstRevision)
+	}
+	messages := newTestMessageStore(pool)
+	upgrades := NewStarGiftUpgradeStore(pool, messages)
+	stars := NewStarsStore(pool)
+	if _, _, err := stars.EnsureGrant(ctx, owner.ID, 1000, 1700002000); err != nil {
+		t.Fatalf("grant upgrade stars: %v", err)
+	}
+	for i := 1; i <= 2; i++ {
+		saved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
+			Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
+			Date: int(1700002000 + int64(i)), ConvertStars: 25, Message: "carried",
+		})
+		upgraded, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
+			UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: saved.MsgID},
+			KeepOriginalDetails: true, ChargeStars: 100, FormID: int64(992) + int64(i),
+			CommandKey: fmt.Sprintf("revision-carried-upgrade-%s-%d", suffix, i), Date: int(1700003000 + int64(i)),
+		})
+		if err != nil || upgraded.Unique.Num != i {
+			t.Fatalf("upgrade %d = %+v err %v, want num %d", i, upgraded, err, i)
+		}
+	}
+
+	shrunk := poolWrite("revision-carried-shrunk-"+suffix, "rc-shrunk-"+suffix)
+	shrunk.SupplyTotal = 1
+	if _, err := gifts.PublishCollectibleRevision(ctx, shrunk); !errors.Is(err, domain.ErrStarGiftLifecycleInvalid) {
+		t.Fatalf("re-publish under consumed supply = %v, want ErrStarGiftLifecycleInvalid", err)
+	}
+
+	continued := poolWrite("revision-carried-next-"+suffix, "rc-"+suffix+"-b")
+	secondRevision, err := gifts.PublishCollectibleRevision(ctx, continued)
+	if err != nil {
+		t.Fatalf("publish continued revision: %v", err)
+	}
+	if secondRevision.Revision <= firstRevision.Revision || secondRevision.Issued != 2 || secondRevision.SupplyTotal != 600 {
+		t.Fatalf("continued revision = %+v, want revision>%d issued=2 supply=600", secondRevision, firstRevision.Revision)
+	}
+	availability, err := gifts.CollectibleAvailability(ctx, []int64{entry.Gift.ID})
+	if err != nil || availability[entry.Gift.ID].Issued != 2 || availability[entry.Gift.ID].SupplyTotal != 600 {
+		t.Fatalf("availability after continuation = %+v err %v", availability, err)
+	}
+	saved := createCollectibleSavedGift(t, ctx, messages, gifts, entry.Gift, domain.SavedStarGift{
+		Owner: ownerPeer, FromUserID: sender.ID, GiftID: entry.Gift.ID, RevisionID: entry.Gift.RevisionID,
+		Date: 1700004000, ConvertStars: 25, Message: "carried-next",
+	})
+	upgraded, err := upgrades.UpgradeStarGift(ctx, domain.StarGiftUpgradeRequest{
+		UserID: owner.ID, Ref: domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: saved.MsgID},
+		KeepOriginalDetails: true, ChargeStars: 100, FormID: 994,
+		CommandKey: "revision-carried-upgrade-" + suffix + "-next", Date: 1700005000,
+	})
+	if err != nil {
+		t.Fatalf("continue upgrade: %v", err)
+	}
+	if upgraded.Unique.Num != 3 || upgraded.Unique.Slug != "rc-"+suffix+"-b-3" {
+		t.Fatalf("continued upgrade = %+v, want num 3 slug rc-%s-b-3", upgraded, suffix)
+	}
+	finalAvailability, err := gifts.CollectibleAvailability(ctx, []int64{entry.Gift.ID})
+	if err != nil || finalAvailability[entry.Gift.ID].Issued != 3 {
+		t.Fatalf("availability after third mint = %+v err %v", finalAvailability, err)
+	}
 }
 
 func upgradedSourceEditForUser(result domain.StarGiftUpgradeResult, userID int64) domain.EditedMessageForUser {

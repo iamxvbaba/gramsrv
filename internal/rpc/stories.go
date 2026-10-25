@@ -1095,9 +1095,20 @@ func (r *Router) onStoriesGetPeerMaxIDs(ctx context.Context, id []tg.InputPeerCl
 			// recentStory at this index and resolve every ordinary peer normally.
 			continue
 		}
-		peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, input)
-		if err != nil {
-			return nil, err
+		peer, ok := r.domainPeerFromInputPeer(userID, input)
+		if !ok || peer.ID == 0 {
+			return nil, peerIDInvalidErr()
+		}
+		if peer.Type == domain.PeerTypeChannel {
+			if err := r.validateInputPeerChannelAccess(ctx, userID, input, peer.ID); err != nil {
+				// A banned channel carries no stories and the viewer is still
+				// entitled to probe the rest of the tray, so leave this slot
+				// empty. Access-hash mismatches keep failing loudly.
+				if tgerr.Is(err, "USER_BANNED_IN_CHANNEL") {
+					continue
+				}
+				return nil, err
+			}
 		}
 		peers = append(peers, peer)
 		positions = append(positions, i)

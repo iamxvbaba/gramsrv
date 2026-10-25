@@ -42,6 +42,11 @@ edge:
     max_entries: 262144
     ttl: 30m
 
+# Read-only view of the identity Admin writes; Edge serves it publicly with the
+# RSA key at /owpengram/server-info on the MTProto port.
+identity:
+  dir: /var/lib/telesrv-identity
+
 core_exec:
   resolver: dns
   targets:

@@ -1,10 +1,16 @@
+import { withBase } from "./lib/base";
 import type {
   AccountDetail,
   AccountListResponse,
+  DonationChainsResponse,
+  DonationDepositListResponse,
+  DonationWalletStatus,
   AccountRatingDetail,
   AccountRatingListResponse,
+  AdminConsoleUserList,
   AdminLoginResult,
   AdminSession,
+  AuditLogListResponse,
   BotDetail,
   BotListResponse,
   BroadcastListResponse,
@@ -17,6 +23,7 @@ import type {
   CustomVerificationRequestListResponse,
   VerificationIconListResponse,
   EmojiListResponse,
+  ServerIdentity,
   ChannelListResponse,
   CollectibleUsernameDetail,
   CollectibleUsernameListResponse,
@@ -32,12 +39,19 @@ import type {
   ModerationCaseRow,
   ModerationReport,
   OfficialStarGiftListResponse,
+  ItemPricesResponse,
   PremiumPlansResponse,
   StarGiftAuctionListResponse,
   StarGiftCollectiblePreview,
   StarGiftListResponse,
   StickerSetListResponse,
   StorageStatsResponse,
+  StatsResponse,
+  GiftAttributesResponse,
+  StarsLedgerResponse,
+  StarsTopListResponse,
+  SharedDeviceGroupListResponse,
+  UniqueStarGiftListResponse,
   VerificationApplicationDetail,
   VerificationApplicationListResponse,
   VerificationCountsResponse
@@ -45,10 +59,12 @@ import type {
 
 export class APIError extends Error {
   status: number;
+  result?: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, result?: unknown) {
     super(message);
     this.status = status;
+    this.result = result;
   }
 }
 
@@ -123,7 +139,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
       headers[csrfHeaderName] = token;
     }
   }
-  const response = await fetch(url, {
+  const response = await fetch(withBase(url), {
     credentials: "same-origin",
     ...init,
     headers
@@ -132,7 +148,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const message = data?.error || data?.Error || data?.message || response.statusText;
-    throw new APIError(response.status, message);
+    throw new APIError(response.status, message, data);
   }
   return data as T;
 }
@@ -146,10 +162,10 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   session: () => request<AdminSession>("/api/session"),
-  login: async (secret: string) => {
+  login: async (username: string, secret: string) => {
     const result = await request<AdminLoginResult>("/api/login", {
       method: "POST",
-      body: JSON.stringify({ secret })
+      body: JSON.stringify({ username, secret })
     });
     // Stashed here rather than in the caller so no login path can forget it.
     rememberCSRFToken(result.csrf_token);
@@ -158,6 +174,7 @@ export const api = {
   logout: () => request<{ ok: boolean }>("/api/logout", { method: "POST", body: "{}" }),
   accounts: (params: URLSearchParams) => request<AccountListResponse>(`/api/accounts?${params.toString()}`),
   account: (id: number) => request<AccountDetail>(`/api/accounts/${id}`),
+  sharedDeviceGroups: (params: URLSearchParams) => request<SharedDeviceGroupListResponse>(`/api/accounts/shared-devices?${params.toString()}`),
   channels: (params: URLSearchParams) => request<ChannelListResponse>(`/api/channels?${params.toString()}`),
   channel: (id: number) => request<ChannelDetail>(`/api/channels/${id}`),
   bots: (params: URLSearchParams) => request<BotListResponse>(`/api/bots?${params.toString()}`),
@@ -172,12 +189,29 @@ export const api = {
     request<CollectiblePhoneListResponse>(`/api/collectible-phones?${params.toString()}`),
   collectiblePhone: (id: string) =>
     request<CollectiblePhoneDetail>(`/api/collectible-phones/${encodeURIComponent(id)}`),
+  nftGifts: (params: URLSearchParams) =>
+    request<UniqueStarGiftListResponse>(`/api/nft-gifts?${params.toString()}`),
   accountRatings: (params: URLSearchParams) =>
     request<AccountRatingListResponse>(`/api/account-ratings?${params.toString()}`),
   accountRating: (userID: string) =>
     request<AccountRatingDetail>(`/api/account-ratings/${encodeURIComponent(userID)}`),
+  starsTop: (params: URLSearchParams) => request<StarsTopListResponse>(`/api/stars/top?${params.toString()}`),
+  // The account id is an int64 decimal string end to end, so it is never parsed
+  // into a number on the way to the URL.
+  starsLedger: (userID: string, params: URLSearchParams) =>
+    request<StarsLedgerResponse>(`/api/stars/ledger/${encodeURIComponent(userID)}?${params.toString()}`),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
+  donationWalletStatus: () => request<DonationWalletStatus>("/api/donations/wallet"),
+  donationChains: () => request<DonationChainsResponse>("/api/donations/chains"),
+  donationDeposits: (params: URLSearchParams) => request<DonationDepositListResponse>(`/api/donations/deposits?${params.toString()}`),
+  itemPrices: () => request<ItemPricesResponse>("/api/item-prices"),
   storageStats: () => request<StorageStatsResponse>("/api/storage/stats"),
+  stats: (days?: number) => {
+    const params = days && days > 0 ? `?days=${days}` : "";
+    return request<StatsResponse>(`/api/stats${params}`);
+  },
+  giftAttributes: (id: string) =>
+    request<GiftAttributesResponse>(`/api/gifts/${encodeURIComponent(id)}/attributes`),
   verificationApplications: (params: URLSearchParams) =>
     request<VerificationApplicationListResponse>(`/api/verification/applications?${params.toString()}`),
   // The application id is an int64 decimal string end to end, so it is never
@@ -241,20 +275,39 @@ export const api = {
 	giftCollectibles: (id: string) => request<StarGiftCollectiblePreview>(`/api/gifts/${encodeURIComponent(id)}/collectibles`),
 	giftCollectibleAnimation: (giftID: string, kind: "model" | "pattern", attributeID: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(giftID)}/collectibles/${kind}/${encodeURIComponent(attributeID)}/animation`),
 	importGift: (form: FormData) => request<CommandResult>("/api/actions/import-gift", { method: "POST", body: form }),
+	importGiftPack: (form: FormData) => request<CommandResult>("/api/actions/import-gift-pack", { method: "POST", body: form }),
 	importOfficialGift: (payload: Record<string, unknown>) => request<CommandResult>("/api/actions/import-official-gift", { method: "POST", body: JSON.stringify(payload) }),
 	publishGiftCollectibles: (giftID: string, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${encodeURIComponent(giftID)}`, { method: "POST", body: form }),
 	gifCatalog: () => request<GifCatalogListResponse>("/api/gif-catalog"),
 	stickerSets: (kind: "stickers" | "emoji") => request<StickerSetListResponse>(`/api/stickers?kind=${encodeURIComponent(kind)}`),
 	stickerSetDocuments: (setID: string) => request<{ document_ids: string[] }>(`/api/stickers/${encodeURIComponent(setID)}/documents`),
-	stickerDocumentAnimationURL: (documentID: string) => `/api/stickers/documents/${encodeURIComponent(documentID)}/animation`,
-	gifCatalogDocumentPreviewURL: (documentID: string) => `/api/gif-catalog/documents/${encodeURIComponent(documentID)}/preview`,
+	stickerDocumentAnimationURL: (documentID: string) => withBase(`/api/stickers/documents/${encodeURIComponent(documentID)}/animation`),
+	gifCatalogDocumentPreviewURL: (documentID: string) => withBase(`/api/gif-catalog/documents/${encodeURIComponent(documentID)}/preview`),
 	createStickerSet: (form: FormData) => request<CommandResult>("/api/actions/create-sticker-set", { method: "POST", body: form }),
 	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	createGifCatalogEntry: (form: FormData) => request<CommandResult>("/api/actions/create-gif-catalog-entry", { method: "POST", body: form }),
 	setAccountAvatar: (form: FormData) => request<CommandResult>("/api/actions/set-account-avatar", { method: "POST", body: form }),
 	setChannelAvatar: (form: FormData) => request<CommandResult>("/api/actions/set-channel-avatar", { method: "POST", body: form }),
-  action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
+  adminUsers: () => request<AdminConsoleUserList>("/api/admin-users"),
+  auditLogs: (params: URLSearchParams) => request<AuditLogListResponse>(`/api/audit-logs?${params.toString()}`),
+  // Server Settings -- identity and login-notification template overrides are
+  // saved through the generic action() below; the read side and status probes
+  // have their own GETs, and the icon upload is multipart (a base64 body would
+  // inflate a file ~33% and decodeAction's 1MiB cap would reject it before the
+  // handler ever saw it -- see serversettings.go).
+  serverIdentity: () => request<ServerIdentity>("/api/server/identity"),
+  serverIconURL: (bust = 0) => withBase(`/api/server/icon?_=${bust}`),
+  // The login screen renders before a session exists, so it cannot read the
+  // server.manage-gated icon route. This one is public and serves the same
+  // bytes; the page falls back to /logo.png on a 404 (no icon configured).
+  publicServerIconURL: (bust = 0) => withBase(`/api/public/icon?_=${bust}`),
+  uploadServerIcon: (form: FormData) => request<CommandResult>("/api/actions/upload-server-icon", { method: "POST", body: form }),
+  // action posts an audited command. A FormData body is sent as multipart -- the
+// browser sets the boundary and request() leaves Content-Type alone for it --
+// which is how the archive and directory uploads post a file alongside the
+// reason and command id.
+action: (path: string, payload: Record<string, unknown> | FormData) => request<CommandResult>(path, {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: payload instanceof FormData ? payload : JSON.stringify(payload)
   })
 };

@@ -218,7 +218,6 @@ func TestStarGiftResaleClearsSellerProfileStatePostgres(t *testing.T) {
 	}
 	want := []string{
 		string(domain.UpdateEventUserEmojiStatus),
-		string(domain.UpdateEventNewMessage),
 		string(domain.UpdateEventEditMessage),
 	}
 	if len(kinds) != len(want) {

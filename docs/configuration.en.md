@@ -34,6 +34,18 @@ overrides. In role YAML, client-visible branding belongs to Core under
 limited `storage` block only for selecting the local path sampled by its host-disk
 dashboard; it does not configure or initialize the object-store backend.
 
+### Profile moderation warnings
+
+| Setting | Type / code default | Description |
+|---|---|---|
+| `TELESRV_SCAM_WARNING` (YAML `moderation.scam_profile_warning`) | string / built-in English fraud warning | Prefix for SCAM peers in readable user/channel About fields and non-member invite previews. Empty or whitespace selects the built-in text. |
+| `TELESRV_FAKE_WARNING` (YAML `moderation.fake_profile_warning`) | string / built-in English impersonation warning | Equivalent prefix for FAKE peers. SCAM takes precedence if both flags are present. |
+
+About privacy hides the entire user About projection, including the warning. A user's own view and channel creators/admins with ChangeInfo receive the stored description used by the editor. Warning text is never persisted or stripped from author input; flag badges remain available to clients. Changes require restart.
+
+main also reports `.env` / `.env.example` drift at startup; v2 roles read YAML and have no `.env`, so that report is not ported.
+
+
 ## 2. MTProto listener, transport, and resource budgets
 
 | Setting | Type / code default | Description and constraints |
@@ -81,7 +93,8 @@ dashboard; it does not configure or initialize the object-store backend.
 | `TELESRV_EGRESS_DELIVERY_GRPC_TLS_SERVER_NAME` | string / empty | Server name used by the Edge gRPC client when verifying the Egress Delivery server certificate. A non-empty value also enables TLS. |
 | `TELESRV_EGRESS_DELIVERY_GRPC_TLS_CLIENT_CERT_FILE` / `TELESRV_EGRESS_DELIVERY_GRPC_TLS_CLIENT_KEY_FILE` | path / empty | Edge gRPC client certificate and private key for Egress Delivery calls. They must be configured together. |
 | `TELESRV_EGRESS_DELIVERY_TOKEN` | secret string / empty | Bearer token for Egress Delivery gRPC APIs. `cmd/telesrv-edge` and `cmd/telesrv-egress` both require an explicit non-empty value, and it must not contain newlines. |
-| `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | Enables MTProto-over-WebSocket demultiplexing on the MTProto listener. |
+| `TELESRV_CHECK_NUMBER_FORMAT` (YAML `auth.check_number_format` in `core.yaml`) | bool / `false` | Login identity format policy. Default `false` canonicalizes numbers described by the country numbering plan and also accepts 4-32 digit nonzero-leading identities outside that plan (including short or unassigned ranges and unknown calling codes). `true` additionally requires ordinary numbers to pass assigned-range validation. Both modes reject leading trunk zeroes, retain the independent 7-15 digit virtual `+888` rule, and forbid login as reserved `+42777`. Every Core must use the same value; the v2 Admin role only proxies to the Core Admin API, so it has no separate setting. Changing to strict mode can make previously accepted identities unavailable for phone-based operations; it does not rewrite stored numbers. |
+| `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | Enables MTProto-over-WebSocket demultiplexing on the MTProto listener. The same HTTP side of Edge also serves the public `GET /owpengram/server-info` (RSA public key, home DC, Server identity name/description, `has_icon`) and `GET /owpengram/server-icon`, so OwpenGram-family clients can fill in "Add server" from `host:port`; with `false` both answer nothing. |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | Browser WebSocket origin allow-list. `*` is for temporary debugging only. |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | Global physical connection admission limit. Negative disables this gate. |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | Per-source-IP physical connection limit. Negative disables this gate. |
@@ -496,12 +509,12 @@ backend initialization path.
 
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
-| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_v2?sslmode=disable` | Primary durable business database. Local `main` and `v2` use separate `telesrv_main` / `telesrv_v2` databases because their migration histories differ. Production must replace the development credentials and TLS policy. |
+| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_v2?sslmode=disable` | Primary durable business database. Local `main` and `v2` use separate `telesrv_main` / `telesrv_v2` databases because their migration histories differ. Production must replace the development credentials and TLS policy. Set it explicitly, URL-encoding reserved characters, when the development Compose stack uses a custom `TELESRV_POSTGRES_PASSWORD`. |
 | `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool maximum connections. `<=0` delegates to pgx defaults, which are usually too small for production outbox/RPC concurrency. |
 | `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool pre-warmed minimum connections. |
 | `TELESRV_POSTGRES_COUNTER_RECOVERY_MAX_CONNS` | positive int / `4` | Maximum size of the PostgreSQL pool dedicated to Redis box/channel counter cold recovery. It must be independent from the business transaction pool; Core startup fails for non-positive values. YAML: `postgres.counter_recovery_max_conns`. |
 | `TELESRV_REDIS_ADDR` | address / `127.0.0.1:6399` | Redis used for volatile codes, limits, and shared update/cache state. |
-| `TELESRV_REDIS_PASSWORD` | secret string / empty | Redis password. |
+| `TELESRV_REDIS_PASSWORD` | secret string / empty | Redis password. The local YAML examples share it with the development Compose stack through `redis.password: ${TELESRV_REDIS_PASSWORD}`; empty keeps the passwordless development behavior, and roles must be restarted after a change. |
 | `TELESRV_REDIS_DB` | int / `0` | Redis logical database number. |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` language-pack seed directory. |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | Read-only snapshot generated by `cmd/giftfetch`, used for verified explicit imports in the admin UI. |
@@ -536,6 +549,15 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 | Setting | Type / code default | Description and constraints |
 |---|---|---|
 | `TELESRV_DEV_AUTH_CODE` | sensitive string / `12345` | Fixed code used by `PHONE_CODE_DELIVERY_PROVIDER=development`; do not expose this default publicly. |
+| `TELESRV_IDENTITY_DIR` | path / `data/identity` | Shared directory for the Admin-managed 777000 name, avatar, and login-code template. YAML: `identity.dir` in both `core.yaml` and `admin.yaml` (Docker mounts the shared `identity_data` volume at `/var/lib/telesrv-identity`); every Core instance watches it, and new code deliveries read the template override live. `edge.yaml` may set the same `identity.dir` (Docker mounts it read-only) so Edge publishes the name, description and icon at `/owpengram/server-info`; without it Edge serves only the key and DC. |
+| `TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE` | text / built-in template | Default 777000 login-code message for existing accounts; the Admin override takes precedence. Include `{{code}}` exactly once; `{{server_name}}` is optional. Changes affect new deliveries, while retries restore the first message. YAML: `auth.login_code_message_template` in `core.yaml`. |
+| `TELESRV_SRP_RATE_LIMIT` / `TELESRV_SRP_RATE_WINDOW` | int / `10`, duration / `1m` | Per-user bound on 2FA password verification RPCs (per auth key before login), enforced on both the direct and the CoreExec dispatch path; `<=0` disables. YAML: `sensitive_rate_limits.srp_limit` / `srp_window` in `core.yaml`. |
+| `TELESRV_WITHDRAWAL_RATE_LIMIT` / `TELESRV_WITHDRAWAL_RATE_WINDOW` | int / `5`, duration / `1m` | Per-user bound on star-gift and Stars revenue withdrawal RPCs. YAML: `sensitive_rate_limits.withdrawal_limit` / `withdrawal_window`. |
+| `TELESRV_PAYMENT_RATE_LIMIT` / `TELESRV_PAYMENT_RATE_WINDOW` | int / `30`, duration / `1m` | Per-user bound on money-moving `payments.*` RPCs (forms, transfers, offers, bids, upgrades, crafting). YAML: `sensitive_rate_limits.payment_limit` / `payment_window`. |
+| `TELESRV_ASR_URL` / `TELESRV_ASR_TIMEOUT` | string / empty, duration / `120s` | Local ASR HTTP backend for `messages.transcribeAudio` (whisper-server style `POST {url}/inference`); empty answers `TRANSCRIPTION_FAILED`. Must be an absolute http(s) URL without userinfo. YAML: `transcription.asr_url` / `asr_timeout` in `core.yaml`. The completion update is written to the durable outbox in the transaction that marks the result done. |
+| `TELESRV_DONATION_WALLET_KEY_FILE` / `TELESRV_DONATION_POLL_INTERVAL` | path / empty, duration / `5s` | Crypto donations: the shared AES-256-GCM key file for the wallet mnemonic (32 raw bytes or 64 hex chars). Every Core must point at the same key; the server never generates it (D7). Empty disables donations; a configured path that is missing or malformed fails Core startup. Wallet provisioning and chain watchers run only on the Core holding the PostgreSQL advisory lease `telesrv-donations-leader`. YAML: `donations.wallet_key_file` / `poll_interval` in `core.yaml`. See `docs/donations.md`. |
+| `operator_bot.bot_user_id` / `operator_bot.chat_ids` | int64 / `0`, positive int64 sequence / empty | In-process account-freeze operator dialog: hands an existing bot account to a built-in handler so allowlisted users can freeze or unfreeze accounts with `/account`, `/freeze`, `/unfreeze` and a confirm button (through `admin.SetAccountFrozen`, audited). Enabled only when both are set. Main hardcodes the bot as `1250000023` (an account its deployment created by hand); v2 makes it configurable so it never captures an unrelated bot that gets that ID. Core YAML only. |
+| `mini_apps.botfather_token` / `mini_apps.stickers_token` | bot token / empty | Bot tokens used to verify initData for the self-hosted BotFather and Stickers Mini Apps (public Web `/botfather`, `/stickers`); empty falls back to the system bots' stored token secrets. These are secrets; keep them out of tracked files. Main reads `TELESRV_MINIAPP_BOTFATHER_TOKEN` / `TELESRV_MINIAPP_STICKERS_TOKEN` from the environment; v2 reads Core YAML only. Mini App writes (create bot, set about, create sticker set) take the same durable delivery path as the MTProto RPCs. |
 | `TELESRV_AUTH_CODE_TTL` | duration / `5m` | Login/registration/email verification code lifetime; must be positive. |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | int / `5` | Maximum wrong attempts for one code/hash; must be positive. |
 | `TELESRV_PHONE_CODE_LENGTH` | int / `5` | Random SMS-code length for the `webhook` phone provider; allowed range `4..10`. |
@@ -567,6 +589,16 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 |---|---|---|
 | `TELESRV_MAPBOX_TOKEN` | secret string / empty | Mapbox Static Images access token for `upload.getWebFile` map previews. Empty uses deterministic placeholders. |
 | `TELESRV_MAPTILE_CACHE_DIR` | path / `data/maptiles` | Disk cache for fetched map thumbnails, preserving byte-stable chunk downloads and limiting quota use. |
+| `TELESRV_GEOIP_ENDPOINTS` | list / empty | Opt-in ordered failover chain resolving session IPs to country/region text for `account.getAuthorizations` and the authorization returned by QR login approval. Every entry must contain `{ip}` and use `http`/`https`. Both the code default and `.env.example` leave this empty: locations stay `Unknown` and no GeoIP request is made. Enabling it discloses session IPs to the selected providers; review their policies or use a self-hosted proxy. Private, CGNAT, documentation, benchmarking, local and reserved addresses are filtered before HTTP, including mapped IPv4. Ready-made values: `https://api.ipapi.is/?q={ip}`, `https://reallyfreegeoip.org/json/{ip}`, `https://hackmyip.com/api/lookup?ip={ip}`, `https://get.geojs.io/v1/ip/geo/{ip}.json`. Unrecognised hosts use the generic JSON parser. YAML: `geoip.endpoints` (a sequence) in `core.yaml`; the rows below map to `geoip.timeout`, `geoip.concurrency`, `geoip.cache_ttl`, `geoip.negative_ttl`, `geoip.cache_size`, `geoip.rate_limit_threshold`, `geoip.rate_limit_cooldown`, `geoip.down_threshold` and `geoip.down_cooldown`. |
+| `TELESRV_GEOIP_TIMEOUT` | duration / `2s` | Per-request timeout for each GeoIP backend. Must be positive and at most `10s`. |
+| `TELESRV_GEOIP_CONCURRENCY` | int / `4` | Maximum in-flight requests across all backends per session-list batch. Must be `1..32`. |
+| `TELESRV_GEOIP_CACHE_TTL` | duration / `24h` | Validity of a successfully resolved address, whichever backend resolved it. Must be positive and longer than the negative TTL. |
+| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | Validity of "no backend had an answer" (rate limit, provider timeout, network error, unknown IP). Written only after the whole chain has been tried. Caller cancellation or the total RPC lookup deadline never writes a negative entry or marks a provider down. Must be positive and shorter than `TELESRV_GEOIP_CACHE_TTL`. |
+| `TELESRV_GEOIP_CACHE_SIZE` | int / `4096` | Upper bound on cached addresses. Must be `1..1000000`. |
+| `TELESRV_GEOIP_RATE_LIMIT_THRESHOLD` | int / `3` | Consecutive HTTP 429 responses from one backend before it is skipped. Must be `1..100`. Counters are per backend, so one exhausted provider never affects the others. |
+| `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN` | duration / `2m` | How long a rate-limited backend receives no request at all. Must be positive and at most `1h`. |
+| `TELESRV_GEOIP_DOWN_THRESHOLD` | int / `2` | Consecutive timeouts/5xx before a backend is considered unreachable. Must be `1..100`. |
+| `TELESRV_GEOIP_DOWN_COOLDOWN` | duration / `30s` | How long an unreachable backend is skipped. Must be positive and at most `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN`, since a network hiccup should not take a provider offline as long as a quota window. |
 | `TELESRV_EXTERNAL_MEDIA_ENABLE` | bool / `true` | Enables SSRF-protected fetching of external photo/document URLs. |
 | `TELESRV_EXTERNAL_MEDIA_MAX_BYTES` | int bytes / `10485760` | Maximum response body per external-media fetch. Downstream treats `<=0` as the 10 MiB safe default. |
 | `TELESRV_EXTERNAL_MEDIA_RATE_PER_MIN` | int / `60` | Global external-media fetches per minute. Downstream treats `<=0` as its default. |
@@ -579,6 +611,23 @@ objects, verified size/SHA-256, and updated `file_blobs.backend`.
 | `TELESRV_UPLOAD_INFLIGHT_MAX_BYTES` | int64 bytes / `4194304000` | Per-user unassembled upload-byte cap; `<=0` means unlimited. |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_PARTS` | int / `8000` | Per-user unassembled upload-part row cap; `<=0` means unlimited. |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_FILES` | int / `64` | Per-user concurrent unassembled `file_id` cap; `<=0` means unlimited. |
+
+GeoIP is display-only: it does not change authorization identity, session flags,
+stored IPs or update counters. The total lookup budget is 3 seconds. Cancellation
+stops new work and failover, joins in-flight workers before reading results, and
+keeps any already completed locations. Missing locations remain `Unknown`.
+IPv6 queries are limited to native global unicast; translation/transition and
+unallocated ranges are not sent. Special-use filtering follows the
+[IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/) and
+[IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/) registries.
+
+`ipapi.is` accepts both the flat anonymous response and the keyed `location`
+object described in its [API documentation](https://ipapi.is/developers.html).
+Add `&key=YOUR_KEY` to its URL template when using a key; unused ownership/threat
+fields do not participate in geolocation parsing. Startup and failure diagnostics
+contain provider hostnames and structured status only, never URL credentials,
+paths, query strings, raw HTTP errors or response bodies. Keep real endpoints and
+credentials in the untracked deployment configuration.
 
 ## 7. AI compose and business automation
 
@@ -681,6 +730,7 @@ path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze
 | `star_gifts.resell_delay` | duration / `0s` | Delay snapshotted into `can_resell_at`. |
 | `star_gifts.craft_delay` | duration / `0s` | Delay snapshotted into `can_craft_at`. |
 | `star_gifts.craft_chance_permille` | int / `250` | Per-input local craft success contribution, capped at 1000 permille. |
+| `star_gifts.cross_craft_user_ids` | positive int64 sequence / empty | Accounts allowed to craft across collections (mixed gifts, new attributes generated by AI); empty disables it. Only effective with a usable `openai_chat` AI provider. Duplicates and non-positive IDs fail startup. Ports main 3a84827a's `TELESRV_STAR_GIFT_CROSS_CRAFT_USER_IDS`; v2 reads it from Core YAML only. |
 | `star_gifts.export.mode` | `local` / `ton` / `disabled`; default `local` | `local` preserves the current same-origin gift export, `disabled` disables only gift export, and `ton` delegates to the isolated TON worker. None of these modes disables channel Stars/internal-TON revenue claims. A TON worker that fails admission must fail closed instead of falling back to local export. |
 
 Core reads the following `star_gifts.export.ton` keys only when `mode: ton` activates the production chain flow:
@@ -763,6 +813,14 @@ All rating weights are non-negative magnitudes and are validated even when the f
 later is not the moment a typo is discovered. The defaults above are exactly the shipped domain formula, so behaviour
 is identical whether or not these keys are set. The final score is clamped at zero: penalties can erase a rating but
 never invert it.
+
+**Levels run from 0 to 100** (level 0 is any score below 25), and 100 is this server's local policy ceiling for
+`stars_rating`; the TL field itself is an integer without this bound. The score for level *n* is `25 * n²` -- quadratic, so the first levels arrive quickly and the top ones
+stay meaningful. Level 100 therefore costs 250k score, the same ceiling the previous 50-level ladder used, so every
+stored score was remapped onto the finer scale (a score that used to be level *n* lands on level 2*n* or 2*n*+1; the
+threshold itself maps exactly onto 2*n*) by the `0261_rating_level_scale` migration (main 0237) instead of drifting until
+the next recompute. Past level 100 `next_level_stars` is omitted, which is what makes a client show the max-level badge
+instead of a progress bar.
 
 **Collectible username prices are stored in the smallest units of their currency**, because that is what
 `fragment.collectibleInfo` carries: `amount` is "the total price in the smallest units of the currency (integer, not
@@ -873,7 +931,7 @@ that cannot do what it says fails startup instead of being silently unreachable.
 | `TELESRV_TURN_BRIDGE_RELAY_MAX_PORT` | int / `12563` | Separate Docker bridge-fallback maximum that bounds per-port publishing. |
 | `TELESRV_SFU_HOST_NETWORK` | bool / Docker default `true` | Runs Docker SFU directly on the host network to avoid per-relay-port mappings; `false` selects the explicit bridge fallback. |
 | `TELESRV_CALL_TURN_CREDENTIAL_TTL` | duration / `6h` | Per-call TURN credential lifetime. |
-| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | Forces `p2p_allowed=false` to test TURN relay paths. |
+| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | Forces `p2p_allowed=false` to test TURN relay paths. Private-call P2P is contacts-only by default (see TURN section): unless the two parties are reciprocal contacts, `p2p_allowed=false` always, so stranger callers can never learn each other's real IP. |
 | `TELESRV_SFU_UDP_PORT` | int / `12399` | Pion ICE UDPMux port; allow it through the firewall. |
 | `TELESRV_SFU_BIND_IP` | IPv4 / `0.0.0.0` | Local bind for the standalone SFU media socket; directly controls the host interface in Docker host-network mode. |
 | `TELESRV_SFU_ADVERTISE_IP` | string / empty | Client-reachable ICE candidate IP. Empty falls back to `TELESRV_ADVERTISE_IP`; loopback silently breaks real-device media. |
@@ -902,3 +960,15 @@ that cannot do what it says fails startup instead of being silently unreachable.
 ## 12. Production minimum checklist
 
 At minimum, production operators should explicitly review and override the development credentials/endpoints: PostgreSQL DSN and TLS, Redis password/network exposure, RSA key persistence, fixed development auth code exposure, Admin credentials/session key, OTP Webhook/SMTP secrets, AI/Mapbox API keys, CoreExec/FileData/Egress Delivery/SFU gRPC control TLS/mTLS, TURN secret and firewall ports, public URLs/scheme alignment, and non-loopback SFU/TURN advertise addresses for real devices. TON Star Gift rollout additionally requires pinned lite servers/checkpoint/collection code hash, separate capability/bot/relayer secrets, a one-user allowlist, a `mint.enabled: false` preflight, and complete testnet/canary/rollback gates.
+
+## Optional wallet and donations capabilities (v2)
+
+Main's Layer 230 in-app wallet (`TELESRV_WALLET_STATE_DIR`, `TELESRV_WALLET_KEY_FILE`,
+`TELESRV_WALLET_TONCENTER_API_KEY`) is not part of v2 yet; `wallet.*` / `toncenter.*`
+stay traced as NOT_IMPLEMENTED and app config reports `wallet_available:false`.
+
+Crypto donations are off unless the Core YAML sets `donations.wallet_key_file`; that is
+v2's equivalent of main's `TELESRV_DONATIONS_ENABLED`. Migration 0263 disables chains that
+still carry an empty or seeded placeholder endpoint and keeps configured remote endpoints.
+Cross-collection crafting is configured with `star_gifts.cross_craft_user_ids` (see the
+table above).

@@ -2,6 +2,7 @@ package stargifts
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +14,8 @@ func TestLocalWithdrawalProviderIsInternalAndBounded(t *testing.T) {
 			t.Fatalf("invalid withdrawal base URL %q accepted", invalid)
 		}
 	}
-	if _, err := NewLocalWithdrawalProvider("http://example.test"); err == nil {
-		t.Fatal("plaintext public withdrawal bearer URL accepted")
+	if _, err := NewLocalWithdrawalProvider("http://example.test"); !errors.Is(err, ErrLocalWithdrawalInsecureBaseURL) {
+		t.Fatalf("plaintext public withdrawal bearer URL err=%v, want ErrLocalWithdrawalInsecureBaseURL", err)
 	}
 	if _, err := NewLocalWithdrawalProvider("http://127.0.0.1:2401"); err != nil {
 		t.Fatalf("loopback development withdrawal URL rejected: %v", err)

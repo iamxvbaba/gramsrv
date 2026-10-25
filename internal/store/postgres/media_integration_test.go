@@ -3,12 +3,15 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // TestMediaStoreRoundTrip 验证 MediaStore 各表的写读往返（含 nil bytea 归一、JSONB attributes/sizes、
@@ -457,5 +460,144 @@ func cleanupProfilePhotoDetailsRows(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, "DELETE FROM photos WHERE id = ANY($1::bigint[])", photoIDs); err != nil {
 		t.Fatalf("cleanup profile photo details photos: %v", err)
+	}
+}
+
+// TestMediaStoreAvatarSeedConcurrencySerialized proves the storage-boundary
+// serialisation that bot-avatar seeding relies on: two concurrent
+// check-then-bind "seed" transactions for the same owner (each inside WithTx,
+// which holds the advisory lock) cannot interleave. Exactly one current avatar
+// row survives and the losing transaction leaves no bound orphan row. Requires
+// TELESRV_TEST_POSTGRES_DSN.
+func TestMediaStoreAvatarSeedConcurrencySerialized(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := NewMediaStore(pool)
+
+	const ownerID = int64(9100000000000000700)
+	const photoA = int64(9100000000000000701)
+	const photoB = int64(9100000000000000702)
+	photoIDs := []int64{photoA, photoB}
+	t.Cleanup(func() { cleanupProfilePhotoDetailsRows(t, context.Background(), pool, ownerID, photoIDs) })
+
+	for _, id := range photoIDs {
+		if err := s.PutPhoto(ctx, domain.Photo{ID: id, AccessHash: id, DCID: 2, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 800, H: 600, Size: 4096}}}); err != nil {
+			t.Fatalf("put photo %d: %v", id, err)
+		}
+	}
+
+	// SeedOne models one instance's check-then-bind inside the locked tx.
+	seedOne := func(photoID int64) error {
+		return s.WithTx(ctx, func(ctx context.Context, tx store.MediaStore) error {
+			if _, ok, err := tx.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile); err != nil {
+				return err
+			} else if ok {
+				return nil
+			}
+			return tx.AddProfilePhotoKind(ctx, domain.PeerTypeUser, ownerID, domain.ProfilePhotoKindProfile, photoID, 1700000000)
+		})
+	}
+
+	var wg sync.WaitGroup
+	var errs [2]error
+	for i, photo := range photoIDs {
+		wg.Add(1)
+		go func(photo int64, idx int) {
+			defer wg.Done()
+			errs[idx] = seedOne(photo)
+		}(photo, i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("seed %d failed: %v", i, err)
+		}
+	}
+
+	// Exactly one active current row, and no orphan bound row for the loser.
+	var activeCount, totalRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM profile_photos WHERE owner_peer_type='user' AND owner_peer_id=$1 AND active`, ownerID).Scan(&activeCount); err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM profile_photos WHERE owner_peer_type='user' AND owner_peer_id=$1`, ownerID).Scan(&totalRows); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if activeCount != 1 {
+		t.Fatalf("expected exactly 1 active current avatar, got %d", activeCount)
+	}
+	if totalRows != 1 {
+		t.Fatalf("expected exactly 1 bound profile_photos row (no orphan), got %d", totalRows)
+	}
+}
+
+// TestMediaStoreAvatarSeedDeliveryCommitsInsideSeedTx pins the v2 boundary the
+// bot-avatar seed relies on: inside the advisory-locked WithTx transaction, the
+// current-avatar binding and its durable delivery outbox row commit together,
+// an aborted seed leaves neither, and a binding without delivery effects is
+// rejected. Requires TELESRV_TEST_POSTGRES_DSN.
+func TestMediaStoreAvatarSeedDeliveryCommitsInsideSeedTx(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	s := NewMediaStore(pool)
+	users := NewUserStore(pool)
+	u, err := users.Create(ctx, domain.User{AccessHash: 97, Phone: "+1665" + randomSuffix(t) + "01", FirstName: "AvatarSeed"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	const photoID = int64(9100000000000000711)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM edge_delivery_outbox WHERE target_user_id = $1", u.ID)
+		cleanupProfilePhotoDetailsRows(t, context.Background(), pool, u.ID, []int64{photoID})
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", u.ID)
+	})
+	if err := s.PutPhoto(ctx, domain.Photo{ID: photoID, AccessHash: photoID, DCID: 2, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "x", W: 640, H: 640, Size: 2048}}}); err != nil {
+		t.Fatalf("put photo: %v", err)
+	}
+	effects := func(snapshot store.ProfilePhotoMutation) ([]store.DeliveryEffect, error) {
+		return []store.DeliveryEffect{store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+			TargetUserID: snapshot.OwnerID, Payload: []byte("seed"), RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+		})}, nil
+	}
+	counts := func() (active, outbox int) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM profile_photos WHERE owner_peer_type='user' AND owner_peer_id=$1 AND active`, u.ID).Scan(&active); err != nil {
+			t.Fatalf("count active profile photos: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM edge_delivery_outbox WHERE target_user_id=$1`, u.ID).Scan(&outbox); err != nil {
+			t.Fatalf("count delivery outbox: %v", err)
+		}
+		return active, outbox
+	}
+	bind := func(build store.DeliveryEffectsBuilder[store.ProfilePhotoMutation], abort error) error {
+		return s.WithTx(ctx, func(ctx context.Context, tx store.MediaStore) error {
+			if _, found, err := tx.SetProfilePhotoKindWithDelivery(ctx, domain.PeerTypeUser, u.ID, domain.ProfilePhotoKindProfile, photoID, 1700000000, build); err != nil {
+				return err
+			} else if !found {
+				return errors.New("seed photo not found")
+			}
+			return abort
+		})
+	}
+
+	if err := bind(nil, nil); !errors.Is(err, store.ErrDeliveryOutboxRequired) {
+		t.Fatalf("bind without delivery err = %v, want ErrDeliveryOutboxRequired", err)
+	}
+	if active, outbox := counts(); active != 0 || outbox != 0 {
+		t.Fatalf("rejected bind persisted active=%d outbox=%d", active, outbox)
+	}
+
+	errAbort := errors.New("abort seed")
+	if err := bind(effects, errAbort); !errors.Is(err, errAbort) {
+		t.Fatalf("aborted seed err = %v, want %v", err, errAbort)
+	}
+	if active, outbox := counts(); active != 0 || outbox != 0 {
+		t.Fatalf("aborted seed persisted active=%d outbox=%d", active, outbox)
+	}
+
+	if err := bind(effects, nil); err != nil {
+		t.Fatalf("committed seed: %v", err)
+	}
+	if active, outbox := counts(); active != 1 || outbox != 1 {
+		t.Fatalf("committed seed active=%d outbox=%d, want 1/1", active, outbox)
 	}
 }

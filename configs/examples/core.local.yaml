@@ -31,8 +31,13 @@ branding:
 postgres:
   dsn: ${TELESRV_POSTGRES_DSN}
 
+# Shared with admin.local.yaml: Admin writes the server identity, Core watches it.
+identity:
+  dir: data/identity
+
 redis:
   addr: 127.0.0.1:6399
+  password: ${TELESRV_REDIS_PASSWORD}
   db: 0
 
 core_exec:

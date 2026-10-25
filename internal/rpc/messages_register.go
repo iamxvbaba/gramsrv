@@ -578,6 +578,15 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesEditMessageRequest](d, tlprofile.SemanticMethodMessagesEditMessage, func(ctx context.Context, layerRequest *tg.MessagesEditMessageRequest) (any, error) {
 		return r.onMessagesEditMessage(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesEditFactCheckRequest](d, tlprofile.SemanticMethodMessagesEditFactCheck, func(ctx context.Context, layerRequest *tg.MessagesEditFactCheckRequest) (any, error) {
+		return r.onMessagesEditFactCheck(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesDeleteFactCheckRequest](d, tlprofile.SemanticMethodMessagesDeleteFactCheck, func(ctx context.Context, layerRequest *tg.MessagesDeleteFactCheckRequest) (any, error) {
+		return r.onMessagesDeleteFactCheck(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetFactCheckRequest](d, tlprofile.SemanticMethodMessagesGetFactCheck, func(ctx context.Context, layerRequest *tg.MessagesGetFactCheckRequest) (any, error) {
+		return r.onMessagesGetFactCheck(ctx, layerRequest)
+	})
 	registerRPC[*tg.MessagesGetOutboxReadDateRequest](d, tlprofile.SemanticMethodMessagesGetOutboxReadDate, func(ctx context.Context, layerRequest *tg.MessagesGetOutboxReadDateRequest) (any, error) {
 		return r.onMessagesGetOutboxReadDate(ctx, layerRequest)
 	})
@@ -596,6 +605,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.MessagesGetRichMessageRequest](d, tlprofile.SemanticMethodMessagesGetRichMessage, func(ctx context.Context, layerRequest *tg.MessagesGetRichMessageRequest) (any, error) {
 		return r.onMessagesGetRichMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetExtendedMediaRequest](d, tlprofile.SemanticMethodMessagesGetExtendedMedia, func(ctx context.Context, layerRequest *tg.MessagesGetExtendedMediaRequest) (any, error) {
+		return r.onMessagesGetExtendedMedia(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesGetHistoryRequest](d, tlprofile.SemanticMethodMessagesGetHistory, func(ctx context.Context, req *tg.MessagesGetHistoryRequest) (any, error) {
 		userID, _, err := r.currentUserID(ctx)
@@ -884,19 +896,13 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		return r.onMessagesGetSearchResultsPositions(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesSendReactionRequest](d, tlprofile.SemanticMethodMessagesSendReaction, func(ctx context.Context, layerRequest *tg.MessagesSendReactionRequest) (any, error) {
-
-		// 语音转文字无识别后端：注册为显式失败（TRANSCRIPTION_FAILED），premium
-		// 客户端点击转录按钮得到优雅失败提示，而不是 NOT_IMPLEMENTED trace。
 		return r.onMessagesSendReaction(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesComposeMessageWithAIRequest](d, tlprofile.SemanticMethodMessagesComposeMessageWithAI, func(ctx context.Context, layerRequest *tg.MessagesComposeMessageWithAIRequest) (any, error) {
 		return r.onMessagesComposeMessageWithAI(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesTranscribeAudioRequest](d, tlprofile.SemanticMethodMessagesTranscribeAudio, func(ctx context.Context, req *tg.MessagesTranscribeAudioRequest) (any, error) {
-		if _, _, err := r.currentUserID(ctx); err != nil {
-			return nil, internalErr()
-		}
-		return nil, tgerr400("TRANSCRIPTION_FAILED")
+		return r.onMessagesTranscribeAudio(ctx, req)
 	})
 	registerRPC[*tg.MessagesGetMessagesReactionsRequest](d, tlprofile.SemanticMethodMessagesGetMessagesReactions, func(ctx context.Context, layerRequest *tg.MessagesGetMessagesReactionsRequest) (any, error) {
 		return r.onMessagesGetMessagesReactions(ctx, layerRequest)

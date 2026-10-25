@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -21,10 +22,10 @@ func (s *GifCatalogStore) CreateGifCatalogEntry(ctx context.Context, entry domai
 	}
 	row := s.db.QueryRow(ctx, `
 INSERT INTO gif_catalog
-    (id, title, document_id, enabled, sort_order, created_by, source_filename, source_sha256)
-VALUES ($1, $2, $3, true, $4, $5, $6, $7)
+    (id, title, file_name, document_id, enabled, sort_order, created_by, source_filename, source_sha256)
+VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8)
 RETURNING id, title, document_id, enabled, sort_order, created_by,
-          source_filename, source_sha256, created_at, updated_at`, entry.ID, entry.Title, entry.DocumentID, entry.SortOrder, entry.CreatedBy,
+          source_filename, source_sha256, file_name, category_override, created_at, updated_at`, entry.ID, entry.Title, entry.FileName, entry.DocumentID, entry.SortOrder, entry.CreatedBy,
 		entry.SourceFilename, entry.SourceSHA256)
 	out, err := scanGifCatalogEntry(row.Scan)
 	var pgErr *pgconn.PgError
@@ -54,7 +55,7 @@ SELECT EXISTS(SELECT 1 FROM gif_catalog WHERE source_filename = $1),
 func (s *GifCatalogStore) ListGifCatalog(ctx context.Context, onlyEnabled bool) ([]domain.GifCatalogEntry, error) {
 	rows, err := s.db.Query(ctx, `
 SELECT id, title, document_id, enabled, sort_order, created_by,
-       source_filename, source_sha256, created_at, updated_at
+       source_filename, source_sha256, file_name, category_override, created_at, updated_at
 FROM gif_catalog
 WHERE NOT $1 OR enabled
 ORDER BY sort_order, id`, onlyEnabled)
@@ -89,6 +90,17 @@ func (s *GifCatalogStore) SetGifCatalogSortOrder(ctx context.Context, id int64, 
 	return tag.RowsAffected() > 0, nil
 }
 
+func (s *GifCatalogStore) SetGifCatalogCategory(ctx context.Context, id int64, category string) (bool, error) {
+	if category != "" && !domain.ValidGifCategory(category) {
+		return false, domain.ErrGifCatalogEntryInvalid
+	}
+	tag, err := s.db.Exec(ctx, `UPDATE gif_catalog SET category_override=NULLIF($2, ''), updated_at=now() WHERE id=$1`, id, category)
+	if err != nil {
+		return false, fmt.Errorf("set gif catalog category: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *GifCatalogStore) DeleteGifCatalogEntry(ctx context.Context, id int64) (bool, error) {
 	tag, err := s.db.Exec(ctx, `DELETE FROM gif_catalog WHERE id=$1`, id)
 	if err != nil {
@@ -99,7 +111,15 @@ func (s *GifCatalogStore) DeleteGifCatalogEntry(ctx context.Context, id int64) (
 
 func scanGifCatalogEntry(scan func(...any) error) (domain.GifCatalogEntry, error) {
 	var e domain.GifCatalogEntry
+	var categoryOverride *string
 	err := scan(&e.ID, &e.Title, &e.DocumentID, &e.Enabled, &e.SortOrder, &e.CreatedBy,
-		&e.SourceFilename, &e.SourceSHA256, &e.CreatedAt, &e.UpdatedAt)
+		&e.SourceFilename, &e.SourceSHA256, &e.FileName, &categoryOverride, &e.CreatedAt, &e.UpdatedAt)
+	if err == nil {
+		if categoryOverride != nil {
+			e.Category, e.CategoryManual = *categoryOverride, true
+		} else {
+			e.Category = domain.ClassifyGifCategory(e.Title, strings.TrimSpace(e.FileName))
+		}
+	}
 	return e, err
 }

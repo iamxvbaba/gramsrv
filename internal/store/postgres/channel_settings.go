@@ -566,8 +566,8 @@ func (s *ChannelStore) ResolvePublicChannelUsername(ctx context.Context, viewerU
 	return ch, true, nil
 }
 
-func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error) {
-	if userID == 0 || channelID == 0 {
+func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int64, enabled, profiles bool) (domain.Channel, error) {
+	if userID == 0 || channelID == 0 || profiles && !enabled {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	beginner, ok := s.db.(txBeginner)
@@ -584,6 +584,17 @@ func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int6
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// Serialize flag changes and their audit events, following membership -> channel lock order.
+	var lockedID int64
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id=$2 FOR UPDATE`, channelID, userID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Channel{}, domain.ErrChannelPrivate
+		}
+		return domain.Channel{}, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM channels WHERE id=$1 FOR UPDATE`, channelID).Scan(&lockedID); err != nil {
+		return domain.Channel{}, err
+	}
 	channel, member, err := s.getChannelForMember(ctx, tx, userID, channelID)
 	if err != nil {
 		return domain.Channel{}, err
@@ -591,11 +602,16 @@ func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int6
 	if !canChangeChannelInfo(member) {
 		return domain.Channel{}, domain.ErrChannelAdminRequired
 	}
+	if profiles && (!channel.Broadcast || channel.Megagroup) {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	prevProfiles := channel.SignatureProfiles
 	prev := channel.Signatures
-	if _, err := tx.Exec(ctx, `UPDATE channels SET signatures = $2, updated_at = now() WHERE id = $1`, channelID, enabled); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE channels SET signatures = $2, signature_profiles = $3, updated_at = now() WHERE id = $1`, channelID, enabled, profiles); err != nil {
 		return domain.Channel{}, fmt.Errorf("update channel signatures: %w", err)
 	}
 	channel.Signatures = enabled
+	channel.SignatureProfiles = profiles
 	if prev != enabled {
 		if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 			ChannelID: channelID,
@@ -608,10 +624,21 @@ func (s *ChannelStore) SetSignatures(ctx context.Context, userID, channelID int6
 			return domain.Channel{}, err
 		}
 	}
+	if prevProfiles != profiles {
+		if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+			ChannelID: channelID, UserID: userID, Date: nowUnix(),
+			Type: domain.ChannelAdminLogToggleSignatureProfiles, PrevBool: prevProfiles, NewBool: profiles,
+		}); err != nil {
+			return domain.Channel{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Channel{}, fmt.Errorf("commit toggle channel signatures: %w", err)
 	}
 	committed = true
+	if s.rowCache != nil {
+		s.rowCache.delete(channelID)
+	}
 	return channel, nil
 }
 

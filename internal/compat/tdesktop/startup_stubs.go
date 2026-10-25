@@ -34,6 +34,8 @@ func PrivacyRules(key tg.InputPrivacyKeyClass) *tg.AccountPrivacyRules {
 		rule = &tg.PrivacyValueDisallowAll{}
 	case *tg.InputPrivacyKeyBirthday:
 		rule = &tg.PrivacyValueAllowContacts{}
+	case *tg.InputPrivacyKeyChatInvite:
+		rule = &tg.PrivacyValueAllowContacts{}
 	}
 	return &tg.AccountPrivacyRules{
 		Rules: []tg.PrivacyRuleClass{rule},

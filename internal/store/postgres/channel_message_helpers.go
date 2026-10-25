@@ -33,12 +33,13 @@ func scanChannelMessage(row rowScanner) (domain.ChannelMessage, error) {
 	var savedPeerType string
 	var savedPeerID int64
 	var suggestedPostJSON string
+	var factCheckJSON string
 	if err := row.Scan(
 		&msg.ChannelID, &msg.ID, &msg.RandomID, &msg.SenderUserID, &fromType, &msg.From.ID,
 		&sendAsType, &sendAsID, &msg.Date, &msg.EditDate, &msg.Post, &msg.Silent, &msg.NoForwards,
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
-		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON,
+		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &msg.ShowMessageSender, &factCheckJSON,
 	); err != nil {
 		return domain.ChannelMessage{}, err
 	}
@@ -68,6 +69,10 @@ func scanChannelMessage(row rowScanner) (domain.ChannelMessage, error) {
 		return domain.ChannelMessage{}, err
 	}
 	msg.RichMessage, err = decodeRichMessage(richMessageJSON)
+	if err != nil {
+		return domain.ChannelMessage{}, err
+	}
+	msg.FactCheck, err = decodeFactCheck(factCheckJSON)
 	if err != nil {
 		return domain.ChannelMessage{}, err
 	}
@@ -92,12 +97,13 @@ func scanChannelMessageWithCount(row rowScanner) (domain.ChannelMessage, int, er
 	var savedPeerType string
 	var savedPeerID int64
 	var suggestedPostJSON string
+	var factCheckJSON string
 	if err := row.Scan(
 		&msg.ChannelID, &msg.ID, &msg.RandomID, &msg.SenderUserID, &fromType, &msg.From.ID,
 		&sendAsType, &sendAsID, &msg.Date, &msg.EditDate, &msg.Post, &msg.Silent, &msg.NoForwards,
 		&msg.Body, &entities, &reply, &replyMsgID, &replyPeerType, &replyPeerID, &replyTopID,
 		&forward, &discussionChannelID, &discussionMessageID, &action, &msg.Pts, &msg.Deleted, &mediaJSON,
-		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &count,
+		&replyMarkupJSON, &richMessageJSON, &msg.TTLPeriod, &msg.ExpiresAt, &msg.ViewsCount, &msg.PostAuthor, &msg.Pinned, &msg.ViaBotID, &msg.GroupedID, &msg.FromBoostsApplied, &savedPeerType, &savedPeerID, &msg.PaidMessageStars, &suggestedPostJSON, &msg.ShowMessageSender, &factCheckJSON, &count,
 	); err != nil {
 		return domain.ChannelMessage{}, 0, err
 	}
@@ -127,6 +133,10 @@ func scanChannelMessageWithCount(row rowScanner) (domain.ChannelMessage, int, er
 		return domain.ChannelMessage{}, 0, err
 	}
 	msg.RichMessage, err = decodeRichMessage(richMessageJSON)
+	if err != nil {
+		return domain.ChannelMessage{}, 0, err
+	}
+	msg.FactCheck, err = decodeFactCheck(factCheckJSON)
 	if err != nil {
 		return domain.ChannelMessage{}, 0, err
 	}

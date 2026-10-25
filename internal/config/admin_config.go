@@ -10,6 +10,7 @@ type AdminConfigYAML struct {
 	Postgres PostgresYAML     `yaml:"postgres"`
 	Admin    AdminYAML        `yaml:"admin"`
 	Storage  AdminStorageYAML `yaml:"storage"`
+	Identity IdentityYAML     `yaml:"identity"`
 }
 
 type AdminYAML struct {
@@ -46,6 +47,8 @@ type AdminConfig struct {
 	SessionKey    string
 	DiskStatsPath string
 	Permissions   []string
+	// IdentityDir is the server identity directory shared with Core.
+	IdentityDir string
 }
 
 func LoadAdmin() (AdminConfig, error) {
@@ -105,6 +108,7 @@ func adminConfigFromYAML(y AdminConfigYAML) (AdminConfig, error) {
 		SessionKey:    strings.TrimSpace(y.Admin.UI.SessionKey),
 		DiskStatsPath: diskStatsPath,
 		Permissions:   permissions,
+		IdentityDir:   stringDefault(y.Identity.Dir, "data/identity"),
 	}
 	if cfg.PostgresDSN == "" {
 		return AdminConfig{}, fmt.Errorf("postgres.dsn is required by cmd/telesrv-admin")

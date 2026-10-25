@@ -135,7 +135,7 @@ func registerLayerRPCAdmissionFieldPreflights(d *tlprofile.Dispatcher) error {
 			if !ok {
 				return inputRequestInvalidErr()
 			}
-			if totalParts <= 0 || totalParts > int32(appfiles.MaxUploadParts) {
+			if !appfiles.ValidBigUploadPartCount(int(totalParts)) {
 				return filePartInvalidErr()
 			}
 			return nil
@@ -252,7 +252,7 @@ func preflightUploadPart(wire rawRPCPreflightWire, bytesOffset int, big bool) er
 			return inputRequestInvalidErr()
 		}
 		totalParts := int32(rawTotalParts)
-		if totalParts <= 0 || totalParts > appfiles.MaxUploadParts {
+		if !appfiles.ValidBigUploadPartCount(int(totalParts)) {
 			return filePartInvalidErr()
 		}
 	}

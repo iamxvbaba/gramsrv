@@ -3,7 +3,6 @@ package rpc
 import (
 	"bytes"
 	"context"
-	"fmt"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -251,13 +250,13 @@ func (r *Router) stickerCollectionDocuments(ctx context.Context, userID int64, k
 	for _, id := range ids { // 保持集合顺序（最新在前）
 		doc, ok := byID[id]
 		if !ok {
-			return nil, fmt.Errorf("sticker collection %s references missing document %d", kind, id)
+			continue // 引用已被删除的文档：冷静跳过而不是整单 500
 		}
 		if kind == domain.StickerCollectionGif && !doc.IsGif() {
-			return nil, fmt.Errorf("saved gif collection references non-GIFv document %d", id)
+			continue
 		}
 		if kind != domain.StickerCollectionGif && !doc.IsSticker() {
-			return nil, fmt.Errorf("sticker collection %s references non-sticker document %d", kind, id)
+			continue
 		}
 		docs = append(docs, doc)
 		dates = append(dates, dateByID[id])

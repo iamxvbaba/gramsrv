@@ -72,6 +72,9 @@ type memoryPrivateSendPrefix struct {
 
 // Caller holds s.mu; this helper owns the dialog/event locks through commit.
 func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, fingerprint []byte, prefix *memoryPrivateSendPrefix) (domain.SendPrivateTextResult, error) {
+	if err := s.checkScheduledDeliveryLocked(req.ScheduledDelivery, req.SenderUserID, domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}, req.RandomID); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	if replay, found, err := s.lookupPrivateSendReplayLocked(domain.PrivateSendReplayRequest{
 		SenderUserID:           req.SenderUserID,
 		RecipientUserID:        req.RecipientUserID,
@@ -193,6 +196,19 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 			return domain.SendPrivateTextResult{}, err
 		}
 	}
+	scheduledCompletion, err := s.stageScheduledCompletionLocked(req.ScheduledDelivery, sender.ID, req.Date)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if scheduledCompletion != nil {
+		if _, err := s.deliveryOutbox.Enqueue(context.Background(), store.DeliveryOutboxEnqueue{
+			TargetUserID: scheduledCompletion.effect.TargetUserID, ExcludeAuthKeyID: scheduledCompletion.effect.ExcludeAuthKeyID,
+			ExcludeSessionID: scheduledCompletion.effect.ExcludeSessionID, Payload: scheduledCompletion.effect.Payload,
+			RecoveryPolicy: scheduledCompletion.effect.RecoveryPolicy,
+		}); err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("apply memory scheduled completion delivery: %w", err)
+		}
+	}
 	// No fallible work follows: publish the prefix and message under all locks.
 	if prefix != nil {
 		prefix.apply(prefixEvents)
@@ -262,6 +278,7 @@ func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, 
 		SenderEvent:      newMessageEvent(sender),
 		RecipientEvent:   newMessageEvent(recipient),
 		DraftEvent:       cloneUpdateEvent(draftEvent),
+		NextScheduled:    s.publishScheduledCompletionLocked(scheduledCompletion),
 	}, nil
 }
 

@@ -7,24 +7,45 @@ import (
 	"strings"
 	"testing"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
+
 	"telesrv/internal/config"
 )
 
 func TestLocalStarGiftWithdrawalRequiresPublicListener(t *testing.T) {
-	options, err := localStarGiftWithdrawalOptions("not-a-url", "", config.StarGiftExportModeLocal)
+	options, err := localStarGiftWithdrawalOptions("not-a-url", "", config.StarGiftExportModeLocal, nil)
 	if err != nil || options != nil {
 		t.Fatalf("disabled public listener options=%d err=%v, want nil without URL construction", len(options), err)
 	}
-	options, err = localStarGiftWithdrawalOptions("https://links.example.test", "127.0.0.1:2401", config.StarGiftExportModeLocal)
+	options, err = localStarGiftWithdrawalOptions("https://links.example.test", "127.0.0.1:2401", config.StarGiftExportModeLocal, nil)
 	if err != nil || len(options) != 2 {
 		t.Fatalf("local mode options=%d err=%v, want gift and revenue providers", len(options), err)
 	}
-	options, err = localStarGiftWithdrawalOptions("https://links.example.test", "127.0.0.1:2401", config.StarGiftExportModeDisabled)
+	options, err = localStarGiftWithdrawalOptions("https://links.example.test", "127.0.0.1:2401", config.StarGiftExportModeDisabled, nil)
 	if err != nil || len(options) != 1 {
 		t.Fatalf("disabled gift export options=%d err=%v, want revenue provider", len(options), err)
 	}
-	if options, err = localStarGiftWithdrawalOptions("not-a-url", "127.0.0.1:2401", config.StarGiftExportModeLocal); err == nil || options != nil {
+	if options, err = localStarGiftWithdrawalOptions("not-a-url", "127.0.0.1:2401", config.StarGiftExportModeLocal, nil); err == nil || options != nil {
 		t.Fatalf("enabled listener accepted dead public URL: options=%d err=%v", len(options), err)
+	}
+}
+
+// TestLocalStarGiftWithdrawalSkipsPlainHTTPOutsideLoopback pins gramsrv#135: the
+// Docker LAN quick start uses http://<LAN IP>:2401, which must not stop Core
+// from starting; it only leaves the bearer-URL withdrawal providers out, with
+// a warning. Loopback HTTP keeps them.
+func TestLocalStarGiftWithdrawalSkipsPlainHTTPOutsideLoopback(t *testing.T) {
+	core, logs := observer.New(zap.WarnLevel)
+	options, err := localStarGiftWithdrawalOptions("http://192.168.1.20:2401", "0.0.0.0:2401", config.StarGiftExportModeLocal, zap.New(core))
+	if err != nil || options != nil {
+		t.Fatalf("plain-HTTP LAN options=%d err=%v, want no providers and no startup error", len(options), err)
+	}
+	if logs.FilterMessageSnippet("withdrawal disabled").Len() != 1 {
+		t.Fatalf("plain-HTTP LAN logs = %v, want one warning", logs.All())
+	}
+	if options, err = localStarGiftWithdrawalOptions("http://127.0.0.1:2401", "127.0.0.1:2401", config.StarGiftExportModeLocal, nil); err != nil || len(options) != 2 {
+		t.Fatalf("loopback HTTP options=%d err=%v, want gift and revenue providers", len(options), err)
 	}
 }
 

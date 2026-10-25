@@ -118,7 +118,7 @@ var errActivationAuthKeyRejected = errors.New("activation auth key no longer exi
 // 直接复用 current.key/current.salt 解密。任何 provisional 在 claim 建立后、发 required
 // control 前都会最终回查 AuthKeyStore，使外部撤销与 activation 线性化。
 // plain 是 serveConn 持有的复用明文缓冲，frame 的 slice 仅在下一帧解密前有效。
-func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
+func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *connState, current *Conn, remote string, fetchedKey *store.AuthKeyData, b, plain *bin.Buffer) (*Conn, error) {
 	var key crypto.AuthKey
 	var serverSalt int64
 	var authKeyExpiresAt int
@@ -163,6 +163,8 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		} else {
 			current = s.newConn(tc, key, frame.sessionID, serverSalt)
 		}
+		// 记录对端 IP，供绑定设备授权时写入 authorizations.ip（admin 面板可见）。
+		current.setRemoteAddrStr(remote)
 		current.authKeyExpiresAt = authKeyExpiresAt
 		// Same-session evidence is restored as explicit; auth-key metadata is only
 		// an inherited default and can be corrected by the next invokeWithLayer.
@@ -1609,7 +1611,8 @@ func clientMessageContentPolicyFor(typeID uint32) clientMessageContentPolicy {
 		mt.BadServerSaltTypeID,
 		mt.MsgDetailedInfoTypeID,
 		mt.MsgNewDetailedInfoTypeID,
-		destroyAuthKeyRequestTypeID:
+		destroyAuthKeyRequestTypeID,
+		helpTestRequestTypeID:
 		return clientMessageContentOptional
 	default:
 		return clientMessageContentRequired

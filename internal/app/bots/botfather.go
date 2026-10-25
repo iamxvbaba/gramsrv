@@ -35,6 +35,8 @@ const (
 	botFatherCmdSetInlineFB    = "setinlinefeedback"
 	botFatherCmdSetJoinGroups  = "setjoingroups"
 	botFatherCmdSetPrivacy     = "setprivacy"
+	botFatherCmdSetUserPic     = "setuserpic"
+	botFatherCmdDeleteBot      = "deletebot"
 	botFatherCmdSetLogin       = "setlogin"
 	botFatherCmdLoginInfo      = "logininfo"
 	botFatherCmdResetLogin     = "resetloginsecret"
@@ -44,6 +46,7 @@ const (
 	botFatherStepUsername = "username"
 	botFatherStepChoose   = "choose"
 	botFatherStepValue    = "value"
+	botFatherStepConfirm  = "confirm"
 
 	botFatherDraftBotID       = "bot_id"
 	botFatherDraftBotUsername = "bot_username"
@@ -51,28 +54,41 @@ const (
 	maxTelegramLoginCommandsPerMessage = 32
 )
 
+// botFatherHelpText 与官方 BotFather 一样按功能分区列命令，而不是一张平铺的长表：
+// 客户端里 /help 的可读性直接取决于这个排版。官方有、本服没有的命令（/setuserpic）
+// 在清单里显式标注未支持——帮助文案不承诺做不到的事；本服多出来的 Telegram Login
+// 命令单列一节，避免和官方条目混在一起。
 func botFatherHelpText() string {
 	return `I can help you create and manage ` + branding.ProductName() + ` bots.
 
 You can control me by sending these commands:
 
 /newbot - create a new bot
-/mybots - list your bots
-/token - show a bot's token
-/revoke - revoke a bot's token
+/mybots - edit your bots
+
+Edit Bots
 /setname - change a bot's name
-/setdescription - change a bot's description
-/setabouttext - change a bot's about info
-/setcommands - change a bot's command list
+/setdescription - change bot description
+/setabouttext - change bot about info
+/setuserpic - change bot profile photo (not available on this server yet)
+/setcommands - change the list of commands
+/deletebot - delete a bot
+
+Bot Settings
+/token - get authorization token
+/revoke - revoke bot access token
 /setinline - toggle inline mode
 /setinlinegeo - toggle inline location requests
 /setinlinefeedback - change inline feedback settings
-/setjoingroups - toggle whether a bot can join groups
-/setprivacy - toggle a bot's group privacy mode
-/setlogin - configure Telegram Login allowed URLs and signing
+/setjoingroups - can your bot be added to groups?
+/setprivacy - toggle privacy mode in groups
+
+Telegram Login
+/setlogin - configure Telegram Login for a bot
 /logininfo - show a bot's Telegram Login configuration
 /resetloginsecret - rotate a bot's OIDC Client Secret
 /done - finish the active Telegram Login configuration
+
 /cancel - cancel the current operation
 /help - show this message`
 }
@@ -92,6 +108,9 @@ func (s *Service) HandlesBot(botUserID int64) bool {
 		return false
 	}
 	if s.premium != nil && botUserID == s.premium.BotUserID() {
+		return true
+	}
+	if s.gramsrvOperatorBotID > 0 && botUserID == s.gramsrvOperatorBotID && len(s.gramsrvOperators) > 0 && s.gramsrvFreezes != nil {
 		return true
 	}
 	switch botUserID {
@@ -126,6 +145,10 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 	case domain.VerifierBotUserID:
 		go s.respondAsVerifier(userID, msg)
 	default:
+		if s.gramsrvOperatorBotID > 0 && botUserID == s.gramsrvOperatorBotID {
+			go s.respondAsGramsrvOperator(userID, msg.Body)
+			return
+		}
 		if s.premium != nil && botUserID == s.premium.BotUserID() {
 			go s.respondAsPremium(botUserID, userID, msg, session)
 		}
@@ -225,6 +248,7 @@ var botFatherGlobalCommands = map[string]bool{
 	botFatherCmdSetName: true, botFatherCmdSetDescription: true, botFatherCmdSetAbout: true,
 	botFatherCmdSetCommands: true, botFatherCmdSetInline: true, botFatherCmdSetInlineGeo: true,
 	botFatherCmdSetInlineFB: true, botFatherCmdSetJoinGroups: true, botFatherCmdSetPrivacy: true,
+	botFatherCmdSetUserPic: true, botFatherCmdDeleteBot: true,
 	botFatherCmdSetLogin: true, botFatherCmdLoginInfo: true, botFatherCmdResetLogin: true,
 }
 
@@ -261,6 +285,8 @@ func (s *Service) handleBotFather(ctx context.Context, userID int64, text string
 		return s.handleNewBotUsername(ctx, state, text)
 	case state.Step == botFatherStepChoose:
 		return s.handleChooseBot(ctx, state, text)
+	case state.Step == botFatherStepConfirm:
+		return s.handleBotConfirm(ctx, state, text)
 	case state.Step == botFatherStepValue:
 		return s.handleSetValue(ctx, state, text)
 	default:
@@ -282,6 +308,7 @@ var pickerPrompts = map[string]string{
 	botFatherCmdSetInlineGeo:   "Choose a bot to change inline location requests for. Send the bot's username:",
 	botFatherCmdSetJoinGroups:  "Choose a bot to configure group joining for. Send the bot's username:",
 	botFatherCmdSetPrivacy:     "Choose a bot to configure group privacy for. Send the bot's username:",
+	botFatherCmdDeleteBot:      "Choose a bot to delete. Send the bot's username:",
 	botFatherCmdSetLogin:       "Choose a bot to configure Telegram Login for. Send the bot's username:",
 	botFatherCmdLoginInfo:      "Choose a bot whose Telegram Login configuration you want to inspect:",
 	botFatherCmdResetLogin:     "Choose a bot whose OIDC Client Secret you want to rotate:",
@@ -318,6 +345,8 @@ func (s *Service) stepPrompt(state domain.BotChatState) botReply {
 		return botReply{Text: "Please send a username for your bot. It must end in `bot`. Or /cancel."}
 	case state.Step == botFatherStepChoose:
 		return botReply{Text: "Please send the username of one of your bots, or /cancel."}
+	case state.Step == botFatherStepConfirm:
+		return botReply{Text: botDeleteConfirmPrompt(state.Draft[botFatherDraftBotUsername])}
 	case state.Step == botFatherStepValue:
 		return botReply{Text: valuePrompt(state.Command, state.Draft[botFatherDraftBotUsername])}
 	default:
@@ -378,15 +407,20 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 			return botReply{Text: "You don't have any bots yet. Use /newbot to create one."}
 		}
 		return botReply{Text: "Here are your bots:\n\n@" + strings.Join(usernames, "\n@")}
-	case botFatherCmdToken, botFatherCmdRevoke,
+	case botFatherCmdToken, botFatherCmdRevoke, botFatherCmdDeleteBot,
 		botFatherCmdSetName, botFatherCmdSetDescription, botFatherCmdSetAbout,
 		botFatherCmdSetCommands, botFatherCmdSetInline, botFatherCmdSetInlineGeo,
 		botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy,
 		botFatherCmdSetLogin, botFatherCmdLoginInfo, botFatherCmdResetLogin:
 		return s.startBotPicker(ctx, userID, cmd)
+	case "confirm":
+		return s.handleBotFatherConfirmCommand(ctx, userID)
 	case botFatherCmdSetInlineFB:
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
 		return botReply{Text: "Inline feedback settings are not supported yet. Use /setinline to enable or disable inline mode."}
+	case botFatherCmdSetUserPic:
+		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
+		return botReply{Text: "Sorry, changing a bot's profile photo is not supported on this server yet. Send /help for a list of commands."}
 	default:
 		return botReply{Text: "Unrecognized command. Say what? Send /help for a list of commands."}
 	}
@@ -581,10 +615,92 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 			return internalReply()
 		}
 		return botReply{Text: valuePrompt(state.Command, chosen.Username)}
+	case botFatherCmdDeleteBot:
+		// 删号不可逆且会断掉全部 session，因此先停在 confirm step：只有明确的确认词
+		// 才执行，误触发的用户名/空消息一律回到同一句确认提示。
+		state.Step = botFatherStepConfirm
+		if state.Draft == nil {
+			state.Draft = map[string]string{}
+		}
+		state.Draft[botFatherDraftBotID] = strconv.FormatInt(chosen.ID, 10)
+		state.Draft[botFatherDraftBotUsername] = chosen.Username
+		if err := s.bots.UpsertBotChatState(ctx, state); err != nil {
+			s.log.Error("botfather: save chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
+			return internalReply()
+		}
+		return botReply{Text: botDeleteConfirmPrompt(chosen.Username)}
 	default:
 		s.clearState(ctx, state.UserID)
 		return internalReply()
 	}
+}
+
+// handleBotFatherConfirmCommand 处理显式的 /confirm（无活动 confirm step 时不猜）。
+func (s *Service) handleBotFatherConfirmCommand(ctx context.Context, userID int64) botReply {
+	state, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
+	if err != nil {
+		s.log.Error("botfather: get chat state", zap.Int64("user_id", userID), zap.Error(err))
+		return internalReply()
+	}
+	if !found || state.Step != botFatherStepConfirm {
+		return botReply{Text: "There is nothing to confirm right now. Send /help for a list of commands."}
+	}
+	return s.handleBotConfirm(ctx, state, "confirm")
+}
+
+func botDeleteConfirmPrompt(username string) string {
+	return fmt.Sprintf("Are you sure you want to delete @%s? This cannot be undone: the token stops working and every session of the bot is terminated.\n\nSend `confirm` to proceed, or /cancel.", username)
+}
+
+// handleBotConfirm 处理不可逆操作的确认步骤（当前只有 /deletebot）。只有明确的确认词
+// 才动手：任何其他输入都回到同一句确认提示，避免把误触发的消息当成确认。
+func (s *Service) handleBotConfirm(ctx context.Context, state domain.BotChatState, text string) botReply {
+	if state.Command != botFatherCmdDeleteBot {
+		s.clearState(ctx, state.UserID)
+		return internalReply()
+	}
+	username := state.Draft[botFatherDraftBotUsername]
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "confirm", "yes", "delete":
+	default:
+		return botReply{Text: botDeleteConfirmPrompt(username)}
+	}
+	botID, _ := strconv.ParseInt(state.Draft[botFatherDraftBotID], 10, 64)
+	if botID == 0 || username == "" {
+		s.clearState(ctx, state.UserID)
+		return botReply{Text: "Something went wrong, I forgot which bot we were deleting. Send /deletebot to start again."}
+	}
+	// 防御性复核 owner（状态是服务端存的，正常已是 owned bot）。
+	if owns, err := s.OwnsBot(ctx, state.UserID, botID); err != nil {
+		s.log.Error("botfather: owns bot", zap.Int64("bot_user_id", botID), zap.Error(err))
+		return internalReply()
+	} else if !owns {
+		s.clearState(ctx, state.UserID)
+		return botReply{Text: "That bot is no longer available."}
+	}
+	// DeleteBotWithDelivery 先撤销 session 再删号：撤销失败时什么都没删，如实告知并保留
+	// 状态让用户重试。v2：删号与 owner 侧更新同事务写 durable 投递。
+	var effects store.DeliveryEffectsBuilder[store.BotLifecycleDeliverySnapshot]
+	if s.hooks != nil {
+		effects = s.hooks.BotLifecycleDeliveryEffects(ctx)
+	}
+	if _, err := s.DeleteBotWithDelivery(ctx, botID, effects); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrBotSessionsNotRevoked):
+			return botReply{Text: fmt.Sprintf("I couldn't delete @%s because I couldn't terminate the sessions it is already logged into. Nothing was deleted — please run /deletebot again in a moment.", username)}
+		case errors.Is(err, domain.ErrBotDeletionUnsupported):
+			s.clearState(ctx, state.UserID)
+			return botReply{Text: "Sorry, deleting bots is not supported on this server."}
+		case errors.Is(err, domain.ErrBotNotFound):
+			s.clearState(ctx, state.UserID)
+			return botReply{Text: "That bot is no longer available."}
+		default:
+			s.log.Error("botfather: delete bot", zap.Int64("bot_user_id", botID), zap.Error(err))
+			return internalReply()
+		}
+	}
+	s.clearState(ctx, state.UserID)
+	return botReply{Text: fmt.Sprintf("Success! @%s has been deleted. Its token no longer works and all of its sessions have been terminated.", username)}
 }
 
 // handleSetValue 处理选中 bot 后的收值步骤（/setname 等）。

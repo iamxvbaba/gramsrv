@@ -681,3 +681,81 @@ func (c *memoryBaseUserCache) Delete(_ context.Context, ids []int64) error {
 	}
 	return nil
 }
+
+type fakeUserFreezeProvider struct {
+	items map[int64]domain.AccountFreeze
+}
+
+func (f *fakeUserFreezeProvider) AccountFreezes(_ context.Context, ids []int64) (map[int64]domain.AccountFreeze, error) {
+	out := make(map[int64]domain.AccountFreeze, len(ids))
+	for _, id := range ids {
+		if freeze, ok := f.items[id]; ok && freeze.Frozen {
+			out[id] = freeze
+		}
+	}
+	return out, nil
+}
+
+// TestFrozenAccountUsernamesHiddenFromResolutionButStayOccupied locks the frozen
+// username semantics for every kind of name (editable slot + collectible NFT):
+//   - contacts.resolveUsername must NOT resolve a frozen account's usernames.
+//   - a claimer updating to one of those names must get USERNAME_OCCUPIED.
+//   - unfreezing restores resolution instantly (projection-only, no writes).
+func TestFrozenAccountUsernamesHiddenFromResolutionButStayOccupied(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewUserStore()
+	owner, err := store.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000991", FirstName: "Frozen Owner", Username: "frozen_name"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	claimer, err := store.Create(ctx, domain.User{AccessHash: 2, Phone: "15550000992", FirstName: "Claimer"})
+	if err != nil {
+		t.Fatalf("create claimer: %v", err)
+	}
+	registry := memory.NewCollectibleUsernameStore()
+	store.AttachUsernameRegistry(registry)
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+	if _, err := registry.SetEditableUsername(ctx, peer, owner.Username); err != nil {
+		t.Fatalf("seed editable registry: %v", err)
+	}
+	if _, created, err := registry.MintCollectibleUsername(ctx, domain.MintCollectibleUsernameRequest{
+		Username: "frozen_nft",
+		Owner:    peer,
+		Currency: domain.CollectibleCurrencyStars,
+		Amount:   1,
+		Actor:    "test",
+	}); err != nil || !created {
+		t.Fatalf("mint collectible: created=%v err=%v", created, err)
+	}
+
+	freeze := &fakeUserFreezeProvider{items: map[int64]domain.AccountFreeze{
+		owner.ID: {UserID: owner.ID, Frozen: true},
+	}}
+	svc := NewService(store, WithAccountFreezeProvider(freeze))
+
+	// 冻结期：常规 + NFT 都不再解析。
+	if _, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_name"); err != nil || found {
+		t.Fatalf("frozen editable resolve found=%v err=%v, want hidden", found, err)
+	}
+	if _, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_nft"); err != nil || found {
+		t.Fatalf("frozen NFT resolve found=%v err=%v, want hidden", found, err)
+	}
+	// 冻结期：占用检查保持占住（不是被释放成可用）。
+	if ok, err := svc.CheckUsername(ctx, claimer.ID, "frozen_name"); err != nil || ok {
+		t.Fatalf("frozen editable check ok=%v err=%v, want occupied", ok, err)
+	}
+	if _, err := svc.UpdateUsername(ctx, claimer.ID, "frozen_name"); !errors.Is(err, domain.ErrUsernameOccupied) {
+		t.Fatalf("claim frozen editable err=%v, want username occupied", err)
+	}
+
+	// 解冻即恢复：无数据回写，全部 username 重新可解析。
+	delete(freeze.items, owner.ID)
+	resolved, found, err := svc.ResolveUsername(ctx, claimer.ID, "frozen_name")
+	if err != nil || !found || resolved.ID != owner.ID {
+		t.Fatalf("unfrozen editable resolve = user %+v found=%v err=%v, want owner", resolved, found, err)
+	}
+	resolved, found, err = svc.ResolveUsername(ctx, claimer.ID, "frozen_nft")
+	if err != nil || !found || resolved.ID != owner.ID {
+		t.Fatalf("unfrozen NFT resolve = user %+v found=%v err=%v, want owner", resolved, found, err)
+	}
+}

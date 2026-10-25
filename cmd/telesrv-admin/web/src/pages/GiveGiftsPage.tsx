@@ -1,13 +1,15 @@
 import { Gift, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
+import { SectionTabs } from "../components/SectionTabs";
 import { StaticLottie } from "../components/StaticLottie";
 import { Alert, Badge, PageFrame } from "../components/ui";
 import { useI18n } from "../i18n";
+import type { Navigate } from "../routing";
 import type { StarGiftRow } from "../types";
 import { GiveGiftForm } from "./GiveGiftForm";
 
-export function GiveGiftsPage() {
+export function GiveGiftsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [gifts, setGifts] = useState<StarGiftRow[]>([]);
   const [query, setQuery] = useState("");
@@ -43,6 +45,7 @@ export function GiveGiftsPage() {
     <PageFrame title={t("giveGifts.pageTitle")} eyebrow={t("giveGifts.eyebrow")} actions={
       <button className="btn" type="button" onClick={() => load()} disabled={busy}><RefreshCw size={15} /> {t("common.refresh")}</button>
     }>
+      <SectionTabs sectionId="gifts" active="/give-gifts" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <p className="give-gift-upgrade-note">{t("giveGifts.hint")}</p>
       <div className="give-gift-layout">

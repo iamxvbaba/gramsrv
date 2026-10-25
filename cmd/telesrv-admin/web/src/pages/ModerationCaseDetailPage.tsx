@@ -1,11 +1,12 @@
-import { ArrowLeft, CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ExternalLink, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Alert, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
+import { permissionMessagesRead, useCan } from "../permissions";
 import { formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
-import type { ModerationCaseDetail, ModerationReport } from "../types";
+import type { ModerationCaseDetail, ModerationReport, ModerationReportItem } from "../types";
 import {
   CaseSeverity,
   CaseStatus,
@@ -192,37 +193,63 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
             </div>
             <section className="section-block">
               <SectionHead title={t("moderation.evidence")} text={t("moderation.evidenceHint")} />
-              <div className="toolbar">
-                {detail.ReportIDs.map((reportID) => (
-                  <button className="btn" key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
-                    #{reportID}
-                  </button>
-                ))}
+              <div className="detail-stack">
+                <div className="toolbar">
+                  {detail.ReportIDs.map((reportID) => (
+                    <button className="btn" key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
+                      #{reportID}
+                    </button>
+                  ))}
+                </div>
+                {report && (
+                  <>
+                    <div className="summary-grid">
+                      <Summary
+                        label={t("moderation.sourceAndReason")}
+                        value={`${moderationEnumLabel(t, "source", report.Source)} / ${moderationEnumLabel(t, "reason", report.Reason)}`}
+                      />
+                      <Summary label={t("moderation.reporter")} value={String(report.ReporterUserID)} mono />
+                      <Summary label={t("moderation.option")} value={report.Option} mono />
+                      <Summary label={t("common.time")} value={formatDate(report.CreatedAt)} />
+                    </div>
+                    {report.Comment && <p className="about-text">{report.Comment}</p>}
+                    <ReportEvidence t={t} report={report} navigate={navigate} />
+                  </>
+                )}
               </div>
-              {report && (
-                <>
-                  <div className="summary-grid">
-                    <Summary
-                      label={t("moderation.sourceAndReason")}
-                      value={`${moderationEnumLabel(t, "source", report.Source)} / ${moderationEnumLabel(t, "reason", report.Reason)}`}
-                    />
-                    <Summary label={t("moderation.reporter")} value={String(report.ReporterUserID)} mono />
-                    <Summary label={t("moderation.option")} value={report.Option} mono />
-                    <Summary label={t("common.time")} value={formatDate(report.CreatedAt)} />
-                  </div>
-                  {report.Comment && <p className="about-text">{report.Comment}</p>}
-                  <JsonBlock value={JSON.stringify(report, null, 2)} />
-                </>
-              )}
             </section>
             <section className="section-block">
               <SectionHead title={t("moderation.decisionAudit")} text={t("moderation.decisionAuditHint")} />
-              <JsonBlock value={JSON.stringify({ decisions: detail.Decisions, actions: detail.Actions }, null, 2)} />
+              <div className="detail-stack">
+                <DecisionAudit t={t} detail={detail} />
+              </div>
             </section>
             {detail.Appeals.length > 0 && (
               <section className="section-block">
                 <SectionHead title={t("moderation.appeals")} />
-                <JsonBlock value={JSON.stringify(detail.Appeals, null, 2)} />
+                {detail.Appeals.map((appeal) => (
+                  <div className="stacked-sections" key={appeal.ID}>
+                    <div className="summary-grid">
+                      <Summary label={t("moderation.appellant")} value={String(appeal.AppellantUserID)} mono />
+                      <Summary
+                        label={t("moderation.appealStatus")}
+                        value={moderationEnumLabel(t, "appealStatus", appeal.Status)}
+                      />
+                      <Summary
+                        label={t("moderation.previousCaseStatus")}
+                        value={moderationEnumLabel(t, "status", appeal.PreviousCaseStatus)}
+                      />
+                      <Summary label={t("moderation.reviewer")} value={appeal.Reviewer || "-"} />
+                      <Summary label={t("common.time")} value={formatDate(appeal.CreatedAt)} />
+                      <Summary
+                        label={t("moderation.reviewedAt")}
+                        value={appeal.ReviewedAt ? formatDate(appeal.ReviewedAt) : "-"}
+                      />
+                    </div>
+                    {appeal.Text && <p className="about-text">{appeal.Text}</p>}
+                    {appeal.ReviewReason && <p className="about-text">{appeal.ReviewReason}</p>}
+                  </div>
+                ))}
               </section>
             )}
           </div>
@@ -302,6 +329,216 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
         }
       />
     </PageFrame>
+  );
+}
+
+// ReportEvidence renders the report's attached evidence as a table (kind,
+// peer, ids, author) with each frozen snapshot tucked behind a disclosure.
+// Reported messages are shown in full -- body wrapped, media hinted -- and the
+// message itself is one click away in the Messages console when the operator
+// has messages.read. Media held as evidence gets its own small table so an
+// operator can act on it.
+function ReportEvidence({ t, report, navigate }: { t: TFunction; report: ModerationReport; navigate: Navigate }) {
+  const canReadMessages = useCan(permissionMessagesRead);
+  return (
+    <div className="detail-stack">
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr>
+            <th>{t("moderation.itemKind")}</th>
+            <th>{t("moderation.peer")}</th>
+            <th>{t("moderation.itemID")}</th>
+            <th>{t("moderation.secondaryID")}</th>
+            <th>{t("audit.actor")}</th>
+            <th>{t("messages.body")}</th>
+            <th>{t("moderation.snapshot")}</th>
+          </tr></thead>
+          <tbody>
+            {report.Items.map((evidence, index) => {
+              const body = messageEvidenceBody(evidence.Evidence);
+              const media = messageEvidenceMedia(evidence.Evidence);
+              const openLink = messageConsoleLink(report, evidence);
+              return (
+              <tr key={`${evidence.Kind}-${index}`}>
+                <td><Badge>{moderationEnumLabel(t, "itemKind", evidence.Kind)}</Badge></td>
+                <td className="mono">{evidence.Peer ? moderationTargetLabel(t, evidence.Peer.Type, evidence.Peer.ID) : "-"}</td>
+                <td className="mono">{evidence.ItemID || "-"}</td>
+                <td className="mono">{evidence.SecondaryID || "-"}</td>
+                <td className="mono">{evidence.AuthorUserID || "-"}</td>
+                <td className="evidence-message-cell">
+                  <div className="evidence-message" title={body ?? undefined}>
+                    {body || (media ? `[${media}]` : "-")}
+                  </div>
+                  {openLink && canReadMessages && (
+                    <button className="evidence-open" type="button" onClick={() => navigate(openLink)}>
+                      <ExternalLink size={12} /> {t("moderation.openMessage")}
+                    </button>
+                  )}
+                </td>
+                <td>
+                  {evidence.Evidence != null
+                    ? (
+                      <details>
+                        <summary>{t("moderation.snapshot")}</summary>
+                        <JsonBlock value={JSON.stringify(evidence.Evidence, null, 2)} />
+                      </details>
+                    )
+                    : "-"}
+                </td>
+              </tr>
+              );
+            })}
+            {report.Items.length === 0 && <EmptyRow colSpan={7} />}
+          </tbody>
+        </table>
+      </div>
+      {report.MediaHolds.length > 0 && (
+        <>
+          <div className="dock-title">{t("moderation.mediaHolds")}</div>
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr>
+                <th>{t("moderation.mediaItem")}</th>
+                <th>{t("moderation.mediaKind")}</th>
+                <th>{t("moderation.storageKey")}</th>
+              </tr></thead>
+              <tbody>
+                {report.MediaHolds.map((hold, index) => (
+                  <tr key={`${hold.StorageKey}-${index}`}>
+                    <td>#{hold.ItemIndex}</td>
+                    <td>{moderationEnumLabel(t, "mediaKind", hold.Kind)}</td>
+                    <td className="mono">{hold.StorageKey}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// messageEvidenceBody pulls the reported content out of a frozen snapshot so
+// the operator sees what was actually reported instead of having to open the
+// raw JSON disclosure: message items expose their text in `body`,
+// reaction items nest the message under `message.body`, and stories carry the
+// text as `caption`. Anything else has no displayable message.
+function messageEvidenceBody(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== "object") return null;
+  const snapshot = evidence as Record<string, unknown>;
+  const candidates: unknown[] = [snapshot.body];
+  const message = snapshot.message;
+  if (message && typeof message === "object") {
+    candidates.push((message as Record<string, unknown>).body);
+  }
+  candidates.push(snapshot.caption);
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return null;
+}
+
+// messageEvidenceMedia returns the media kind hint (photo, document, poll, ...)
+// when the snapshot carries media but no body, so an attachment-only reported
+// message still reads as a message instead of an empty cell.
+function messageEvidenceMedia(evidence: unknown): string | null {
+  if (!evidence || typeof evidence !== "object") return null;
+  const snapshot = evidence as Record<string, unknown>;
+  if (snapshot.media && typeof snapshot.media === "object") {
+    const kind = (snapshot.media as Record<string, unknown>).kind;
+    if (typeof kind === "string" && kind) return kind;
+  }
+  return null;
+}
+
+// messageConsoleLink deep-links a reported message into the Messages console
+// (both gated by messages.read): private messages were loaded from the
+// reporter's box, so the report's reporter id is the box owner; channel
+// messages address the detail page with the channel peer id. Anything that is
+// not a message item cannot be opened there.
+function messageConsoleLink(report: ModerationReport, evidence: ModerationReportItem): string | null {
+  if (evidence.Kind !== "message" || !evidence.Peer || !evidence.ItemID) return null;
+  if (evidence.Peer.Type === "channel") {
+    return `/messages/groups/detail?channel_id=${evidence.Peer.ID}&msg_id=${evidence.ItemID}`;
+  }
+  if (evidence.Peer.Type === "user" && report.ReporterUserID > 0) {
+    return `/messages/private/detail?owner_user_id=${report.ReporterUserID}&msg_id=${evidence.ItemID}`;
+  }
+  return null;
+}
+
+// DecisionAudit replaces the decisions/actions JSON dump with two tables: the
+// decision record (who decided what, and why) and the durable action queue
+// (status, attempts, last error, and the payload behind a disclosure).
+function DecisionAudit({ t, detail }: { t: TFunction; detail: ModerationCaseDetail }) {
+  return (
+    <div className="detail-stack">
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr>
+            <th>{t("moderation.decisionKind")}</th>
+            <th>{t("audit.actor")}</th>
+            <th>{t("audit.reason")}</th>
+            <th>{t("common.time")}</th>
+          </tr></thead>
+          <tbody>
+            {detail.Decisions.map((decision) => (
+              <tr key={decision.ID}>
+                <td>
+                  <Badge tone={decision.Kind === "violation" ? "warn" : "good"}>
+                    {moderationEnumLabel(t, "kind", decision.Kind)}
+                  </Badge>
+                </td>
+                <td>{decision.Actor || "-"}</td>
+                <td>{decision.Reason || "-"}</td>
+                <td>{formatDate(decision.CreatedAt)}</td>
+              </tr>
+            ))}
+            {detail.Decisions.length === 0 && <EmptyRow colSpan={4} />}
+          </tbody>
+        </table>
+      </div>
+      <div className="dock-title">{t("moderation.actionKind")}</div>
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead><tr>
+            <th>{t("moderation.actionKind")}</th>
+            <th>{t("common.status")}</th>
+            <th>{t("moderation.attempts")}</th>
+            <th>{t("moderation.lastError")}</th>
+            <th>{t("moderation.payload")}</th>
+            <th>{t("common.time")}</th>
+          </tr></thead>
+          <tbody>
+            {detail.Actions.map((action) => (
+              <tr key={action.ID}>
+                <td className="mono">{action.Kind}</td>
+                <td>
+                  <Badge tone={action.Status === "succeeded" ? "good" : action.Status === "failed" ? "danger" : "warn"}>
+                    {moderationEnumLabel(t, "actionStatus", action.Status)}
+                  </Badge>
+                </td>
+                <td>{action.Attempts}</td>
+                <td>{action.LastError || "-"}</td>
+                <td>
+                  {action.Payload && Object.keys(action.Payload).length > 0
+                    ? (
+                      <details>
+                        <summary>{t("moderation.payload")}</summary>
+                        <JsonBlock value={JSON.stringify(action.Payload, null, 2)} />
+                      </details>
+                    )
+                    : "-"}
+                </td>
+                <td>{formatDate(action.CreatedAt)}</td>
+              </tr>
+            ))}
+            {detail.Actions.length === 0 && <EmptyRow colSpan={6} />}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

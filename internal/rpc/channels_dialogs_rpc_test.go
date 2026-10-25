@@ -542,8 +542,22 @@ func TestChannelsGetChannelRecommendationsRPC(t *testing.T) {
 		}
 	}
 
-	if _, err := r.onChannelsGetChannelRecommendations(WithUserID(ctx, owner.ID), recommendationsReq(group)); err == nil || !strings.Contains(err.Error(), "CHANNEL_INVALID") {
-		t.Fatalf("megagroup recommendations err = %v, want CHANNEL_INVALID", err)
+	got, err = r.onChannelsGetChannelRecommendations(WithUserID(ctx, owner.ID), recommendationsReq(group))
+	if err != nil {
+		t.Fatalf("megagroup recommendations by source err = %v, want none", err)
+	}
+	groupSlice, ok := got.(*tg.MessagesChatsSlice)
+	if !ok {
+		t.Fatalf("megagroup recommendations = %T %+v, want messages.chatsSlice", got, got)
+	}
+	for _, chat := range groupSlice.Chats {
+		channel, ok := chat.(*tg.Channel)
+		if !ok {
+			t.Fatalf("megagroup recommendation chat = %T, want channel", chat)
+		}
+		if channel.ID == group.ID {
+			t.Fatalf("megagroup recommendations include the source channel itself: %+v", channel)
+		}
 	}
 
 	globalA := createPublicBroadcast(other, "Global A", "global_recs_a", 5000)
@@ -1005,5 +1019,76 @@ func TestChannelDiscussionRepliesRPCUsesLinkedMegagroup(t *testing.T) {
 	}
 	if afterRead.ReadInboxMaxID != comment.ID || afterRead.UnreadCount != 0 {
 		t.Fatalf("discussion after read = %+v, want read inbox %d and no unread", afterRead, comment.ID)
+	}
+}
+
+func TestChannelCommentMediaTopOnlyReplyUsesLinkedRoot(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	owner, err := users.Create(ctx, domain.User{AccessHash: 701, Phone: "15550002971", FirstName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channels := appchannels.NewService(memory.NewChannelStore())
+	r := New(Config{}, Deps{Users: appusers.NewService(users), Channels: channels}, zaptest.NewLogger(t), clock.System)
+	broadcast, err := channels.CreateChannel(ctx, owner.ID, domain.CreateChannelRequest{Title: "Media comments", Broadcast: true, Date: 1700002971})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := channels.CreateMegagroupFromCreateChat(ctx, owner.ID, domain.CreateChannelRequest{Title: "Media discussion", Date: 1700002972})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := channels.SetDiscussionGroup(ctx, owner.ID, broadcast.Channel.ID, group.Channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	post, err := channels.SendMessage(ctx, owner.ID, domain.SendChannelMessageRequest{ChannelID: broadcast.Channel.ID, RandomID: 2971001, Message: "post", Date: 1700002973})
+	if err != nil || post.Discussion == nil {
+		t.Fatalf("send linked post = %+v err=%v", post, err)
+	}
+	rootID := post.Discussion.Message.ID
+	inputGroup := &tg.InputPeerChannel{ChannelID: group.Channel.ID, AccessHash: group.Channel.AccessHash}
+	send := func(randomID int64, topID int) (tg.UpdatesClass, error) {
+		reply := &tg.InputReplyToMessage{}
+		reply.SetTopMsgID(topID)
+		req := &tg.MessagesSendMediaRequest{
+			Peer: inputGroup, Media: &tg.InputMediaContact{PhoneNumber: "+15550002971", FirstName: "Owner", Vcard: "BEGIN:VCARD\nFN:Owner\nEND:VCARD"}, RandomID: randomID,
+		}
+		req.SetReplyTo(reply)
+		return r.onMessagesSendMedia(WithUserID(ctx, owner.ID), req)
+	}
+	if _, err := send(2971002, 1); !tgerr.Is(err, "REPLY_MESSAGE_ID_INVALID") {
+		t.Fatalf("unrelated top-only root err=%v, want REPLY_MESSAGE_ID_INVALID", err)
+	}
+	updates, err := send(2971003, rootID)
+	if err != nil {
+		t.Fatalf("send comment media: %v", err)
+	}
+	var comment *tg.Message
+	for _, update := range updates.(*tg.Updates).Updates {
+		if u, ok := update.(*tg.UpdateNewChannelMessage); ok {
+			comment, _ = u.Message.(*tg.Message)
+		}
+	}
+	if comment == nil {
+		t.Fatalf("comment update = %+v", updates)
+	}
+	header, ok := comment.ReplyTo.(*tg.MessageReplyHeader)
+	if !ok || header.ReplyToMsgID != rootID {
+		t.Fatalf("comment reply = %+v, want root %d", comment.ReplyTo, rootID)
+	}
+	if topID, ok := header.GetReplyToTopID(); !ok || topID != rootID {
+		t.Fatalf("comment top = %d/%v, want %d", topID, ok, rootID)
+	}
+	if _, ok := comment.Media.(*tg.MessageMediaContact); !ok {
+		t.Fatalf("comment media = %T, want contact", comment.Media)
+	}
+	replies, err := r.onMessagesGetReplies(WithUserID(ctx, owner.ID), &tg.MessagesGetRepliesRequest{Peer: &tg.InputPeerChannel{ChannelID: broadcast.Channel.ID, AccessHash: broadcast.Channel.AccessHash}, MsgID: post.Message.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("get linked comments: %v", err)
+	}
+	got, _, _ := searchMessagesPayload(t, replies)
+	if len(got) != 1 || got[0].(*tg.Message).ID != comment.ID {
+		t.Fatalf("linked comments = %+v, want media comment %d", got, comment.ID)
 	}
 }

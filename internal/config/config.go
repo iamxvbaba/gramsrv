@@ -52,6 +52,10 @@ type Config struct {
 	// partitioning auth keys, sessions, or business state. See
 	// mtprotoedge.Options.StrictDC for the optional strict behavior.
 	StrictDCCheck bool
+	// CheckNumberFormat 要求普通手机号通过已分配号段校验。默认关闭，
+	// 国家号码计划无法描述的 4-32 位非零开头号码也可作为登录身份。
+	// +888 虚拟号码与保留系统号继续使用各自的独立规则。
+	CheckNumberFormat bool
 	// MTProtoMaxConnections / PerIP 覆盖 raw Accept、codec sniff、握手到认证 session
 	// 的完整物理连接生命周期；负数关闭对应 admission 上限。
 	MTProtoMaxConnections      int
@@ -244,6 +248,29 @@ type Config struct {
 	// granting or dropping rights.
 	AdminScopedTokens []AdminScopedToken
 
+	// GeoIP* 控制 account.getAuthorizations 里会话国家/地区文案的解析。协议层
+	// 没有 help.requestIpAddress 的对等实现,没配这些项时 country/region 继续
+	// 回传 "Unknown" 占位文案,与启用前完全一致。
+	//
+	// GeoIPEndpoints 是按顺序 failover 的后端列表:每个元素是含 {ip} 占位符的 URL
+	// 模板,第一个是主力,上一个查不到或此刻不可用就自动落到下一个。空列表表示未启用。
+	//
+	// 单后端必然会让一部分会话显示 Unknown,实测 2026-09 四家的失效方式各不相同:
+	// reallyfreegeoip.org 连续几次请求后 429(约 60s 恢复);geojs.io 只有 ASN 级
+	// 覆盖,1.1.1.1 那种地址连 country 字段都没有;hackmyip.com 间歇性回 400;
+	// ipapi.is 对保留网段回 is_bogon。所以缓存和熔断不是优化而是必需品,调小
+	// CacheTTL 或 NegativeTTL 会明显提高限流概率。
+	GeoIPEndpoints          []string
+	GeoIPTimeout            time.Duration
+	GeoIPConcurrency        int
+	GeoIPCacheTTL           time.Duration
+	GeoIPNegativeTTL        time.Duration
+	GeoIPCacheSize          int
+	GeoIPRateLimitThreshold int
+	GeoIPRateLimitCooldown  time.Duration
+	GeoIPDownThreshold      int
+	GeoIPDownCooldown       time.Duration
+
 	// PostgresDSN 是业务数据（auth_key / user / authorization 等）持久化的 PostgreSQL 连接串。
 	// 依赖由 deploy/docker-compose.yml 启动；职责划分见 docs/persistence-layer.md。
 	PostgresDSN string
@@ -271,6 +298,11 @@ type Config struct {
 
 	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
 	DevAuthCode string
+	// 欢迎消息模板分别用于登录成功后的欢迎消息；登录码模板用于已有账号
+	// 777000 durable 验证码投递，管理面板覆盖可在下一次发码时实时生效。
+	WelcomeMessagePhoneTemplate string
+	WelcomeMessageEmailTemplate string
+	LoginCodeMessageTemplate    string
 	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
 	AuthCodeTTL time.Duration
 	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
@@ -369,6 +401,10 @@ type Config struct {
 	// PremiumPromoSeedDir 是 help.getPremiumPromo 视频与缩略图导出目录。
 	// 目录缺失时保留无视频兼容响应；目录存在但内容非法时启动失败。
 	PremiumPromoSeedDir string
+	// IdentityDir 存放管理员可编辑的服务器身份（identity.json 中的名称/简介、icon.<ext>
+	// 图标）——见 internal/identity。由 cmd/telesrv-admin 的面板写入、cmd/telesrv 每次
+	// 使用前实时读取，编辑即时生效、无需重启服务器。
+	IdentityDir string
 	// BusinessAIProvider 控制服务端 Business automation 回复生成器。
 	// 空值/"echo" 回显触发私聊文本，用于跑通后续 AI provider 链路；
 	// "template" 使用 quick reply 模板。
@@ -379,6 +415,15 @@ type Config struct {
 	AIProviders []AIProviderConfig
 	// AITimeout 是单次 provider 调用总超时。
 	AITimeout time.Duration
+	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key
+	// while pre-auth); <=0 disables. Withdrawal/Payment bound star-gift and Stars
+	// revenue withdrawals and money-moving payments.* RPCs per user.
+	SRPRateLimit         int
+	SRPRateWindow        time.Duration
+	WithdrawalRateLimit  int
+	WithdrawalRateWindow time.Duration
+	PaymentRateLimit     int
+	PaymentRateWindow    time.Duration
 	// AIRateLimit/AIRateWindow 是账号级 compose AI 限流。
 	AIRateLimit  int
 	AIRateWindow time.Duration
@@ -392,6 +437,16 @@ type Config struct {
 	TranslationTimeout    time.Duration
 	TranslationRateLimit  int
 	TranslationRateWindow time.Duration
+	// ASRURL/ASRTimeout 指向本地 ASR HTTP 后端（whisper-server 的 /inference）。
+	// URL 为空则语音转文字不可用，messages.transcribeAudio 显式回 TRANSCRIPTION_FAILED。
+	ASRURL     string
+	ASRTimeout time.Duration
+	// DonationWalletKeyFile names the shared AES-256-GCM key file that encrypts
+	// the crypto donations wallet mnemonic. Every Core must point at the same
+	// key; it is never generated (decision D7). Empty disables donations.
+	DonationWalletKeyFile string
+	// DonationPollInterval is how often each chain watcher polls for blocks.
+	DonationPollInterval time.Duration
 	// TempKeyResolveCacheMaxEntries 是 Router temp→perm 解析缓存容量。
 	TempKeyResolveCacheMaxEntries int
 	// TempKeyResolveCacheTTL 是 temp→perm 绑定的进程内复核周期。绑定/revoke 有精确
@@ -687,6 +742,16 @@ type Config struct {
 	// message send, so delivery cadence is a worker property.
 	VerificationNotifyInterval time.Duration
 	VerificationNotifyBatch    int
+	// ScamProfileWarning / FakeProfileWarning are the first line the server
+	// prepends to a peer's About in getFullUser / channels.getFullChannel and
+	// the chat-invite preview after an admin flags the peer SCAM/FAKE. Official
+	// clients render their own localized badge from the flag, but the badge is
+	// easy to miss; this text makes the mark part of the description itself,
+	// shown above the owner's own text. Empty keeps built-in English defaults
+	// (domain.ModerationProfileWarning). The stored description is never
+	// rewritten -- the warning lives only in the read projection.
+	ScamProfileWarning string
+	FakeProfileWarning string
 	// Broadcast worker enumerates all-user campaigns and delivers claimed
 	// recipients in bounded batches. Lease permits another instance to recover a
 	// claim after a crash; it is not a message timeout.
@@ -759,6 +824,8 @@ type Config struct {
 	// CallTURNCredentialTTL 是按通话签发的 TURN 凭据有效期。
 	CallTURNCredentialTTL time.Duration
 	// CallForceRelay 强制 p2p_allowed=false（调试 TURN 中继路径用）。
+	// 私聊通话 P2P 默认仅限互为联系人（rpc 层互认联系人硬门槛 + phone_p2p
+	// 默认 AllowContacts）；此开关让整条链路强制走中继。
 	CallForceRelay bool
 
 	// LiveStreamEnable 为 true 时启用频道 RTMP 直播媒体面（内嵌 RTMP ingest + ffmpeg 切段）。
@@ -948,6 +1015,7 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		DC:                                envIntOr("TELESRV_DC", 2),
 		DefaultCountryCode:                countryCode,
 		StrictDCCheck:                     envBoolOr("TELESRV_STRICT_DC_CHECK", false),
+		CheckNumberFormat:                 envBoolOr("TELESRV_CHECK_NUMBER_FORMAT", false),
 		MTProtoMaxConnections:             envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
 		MTProtoMaxConnectionsPerIP:        envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
 		MTProtoMaxConcurrentHandshakes:    envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
@@ -1041,6 +1109,16 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		TelegramLoginSweepBatch:               envIntOr("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", 500),
 		AdminUIPermissions:                    envListOr("TELESRV_ADMIN_UI_PERMISSIONS", []string{adminPermissionAll}),
 		AdminScopedTokens:                     adminScopedTokens,
+		GeoIPEndpoints:                        envListOr("TELESRV_GEOIP_ENDPOINTS", nil),
+		GeoIPTimeout:                          envDurationOr("TELESRV_GEOIP_TIMEOUT", 2*time.Second),
+		GeoIPConcurrency:                      envIntOr("TELESRV_GEOIP_CONCURRENCY", 4),
+		GeoIPCacheTTL:                         envDurationOr("TELESRV_GEOIP_CACHE_TTL", 24*time.Hour),
+		GeoIPNegativeTTL:                      envDurationOr("TELESRV_GEOIP_NEGATIVE_TTL", 5*time.Minute),
+		GeoIPCacheSize:                        envIntOr("TELESRV_GEOIP_CACHE_SIZE", 4096),
+		GeoIPRateLimitThreshold:               envIntOr("TELESRV_GEOIP_RATE_LIMIT_THRESHOLD", 3),
+		GeoIPRateLimitCooldown:                envDurationOr("TELESRV_GEOIP_RATE_LIMIT_COOLDOWN", 2*time.Minute),
+		GeoIPDownThreshold:                    envIntOr("TELESRV_GEOIP_DOWN_THRESHOLD", 2),
+		GeoIPDownCooldown:                     envDurationOr("TELESRV_GEOIP_DOWN_COOLDOWN", 30*time.Second),
 		AdminUIAddr:                           envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:                       envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:                          envOr("TELESRV_ADMIN_UI_TOKEN", ""),
@@ -1064,6 +1142,9 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		),
 
 		DevAuthCode:                       envOr("TELESRV_DEV_AUTH_CODE", "12345"),
+		WelcomeMessagePhoneTemplate:       envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
+		WelcomeMessageEmailTemplate:       envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
+		LoginCodeMessageTemplate:          envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),
 		AuthCodeTTL:                       envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
 		PhoneCodeLength:                   envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
 		AuthCodeMaxAttempts:               envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
@@ -1108,6 +1189,7 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		GifSeedDir:                        envOr("TELESRV_GIF_SEED_DIR", "data/gifs"),
 		StickerSeedMaxSets:                envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
 		PremiumPromoSeedDir:               envOr("TELESRV_PREMIUM_PROMO_SEED_DIR", "data/premium-promo"),
+		IdentityDir:                       envOr("TELESRV_IDENTITY_DIR", "data/identity"),
 		MapboxToken:                       envOr("TELESRV_MAPBOX_TOKEN", ""),
 		MapTileCacheDir:                   envOr("TELESRV_MAPTILE_CACHE_DIR", "data/maptiles"),
 		ExternalMediaEnable:               envBoolOr("TELESRV_EXTERNAL_MEDIA_ENABLE", true),
@@ -1120,6 +1202,12 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		AIEnabled:                         envBoolOr("TELESRV_AI_ENABLED", true),
 		AIProviders:                       loadAIProviders(fileEnv),
 		AITimeout:                         envDurationOr("TELESRV_AI_TIMEOUT", 15*time.Second),
+		SRPRateLimit:                      envIntOr("TELESRV_SRP_RATE_LIMIT", 10),
+		SRPRateWindow:                     envDurationOr("TELESRV_SRP_RATE_WINDOW", time.Minute),
+		WithdrawalRateLimit:               envIntOr("TELESRV_WITHDRAWAL_RATE_LIMIT", 5),
+		WithdrawalRateWindow:              envDurationOr("TELESRV_WITHDRAWAL_RATE_WINDOW", time.Minute),
+		PaymentRateLimit:                  envIntOr("TELESRV_PAYMENT_RATE_LIMIT", 30),
+		PaymentRateWindow:                 envDurationOr("TELESRV_PAYMENT_RATE_WINDOW", time.Minute),
 		AIRateLimit:                       envIntOr("TELESRV_AI_RATE_LIMIT", 20),
 		AIRateWindow:                      envDurationOr("TELESRV_AI_RATE_WINDOW", time.Minute),
 		AIPrivacyLogContent:               envBoolOr("TELESRV_AI_LOG_CONTENT", false),
@@ -1128,6 +1216,10 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		TranslationTimeout:                envDurationOr("TELESRV_TRANSLATION_TIMEOUT", 15*time.Second),
 		TranslationRateLimit:              envIntOr("TELESRV_TRANSLATION_RATE_LIMIT", 60),
 		TranslationRateWindow:             envDurationOr("TELESRV_TRANSLATION_RATE_WINDOW", time.Minute),
+		ASRURL:                            strings.TrimSpace(envOr("TELESRV_ASR_URL", "")),
+		ASRTimeout:                        envDurationOr("TELESRV_ASR_TIMEOUT", 120*time.Second),
+		DonationWalletKeyFile:             strings.TrimSpace(envOr("TELESRV_DONATION_WALLET_KEY_FILE", "")),
+		DonationPollInterval:              envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),
 		TempKeyResolveCacheMaxEntries:     envIntOr("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", 262144),
 		TempKeyResolveCacheTTL:            envDurationOr("TELESRV_TEMP_KEY_CACHE_TTL", 30*time.Minute),
 		ReadModelVersionCacheMaxEntries:   envIntOr("TELESRV_READ_MODEL_VERSION_CACHE_MAX", 1_000_000),
@@ -1237,7 +1329,7 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		StarGiftTONProceedsPermille:        envIntOr("TELESRV_STARGIFT_TON_PROCEEDS_PERMILLE", 1000),
 		StarGiftResaleMaxStars:             envInt64Or("TELESRV_STARGIFT_RESALE_MAX_STARS", 250_000),
 		StarGiftResaleMaxTON:               envInt64Or("TELESRV_STARGIFT_RESALE_MAX_TON", 10_000),
-		StarGiftResaleMinStars:             envInt64Or("TELESRV_STARGIFT_RESALE_MIN_STARS", 125),
+		StarGiftResaleMinStars:             envInt64Or("TELESRV_STARGIFT_RESALE_MIN_STARS", domain.MinStarGiftResaleStars),
 		StarGiftTONStarsRate:               envInt64Or("TELESRV_STARGIFT_TON_STARS_RATE", 100),
 		StarGiftExportDelay:                envDurationOr("TELESRV_STARGIFT_EXPORT_DELAY", 0),
 		StarGiftTransferDelay:              envDurationOr("TELESRV_STARGIFT_TRANSFER_DELAY", 0),
@@ -1294,6 +1386,10 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		VerificationBotRateWindow:    envDurationOr("TELESRV_VERIFICATION_BOT_RATE_WINDOW", time.Minute),
 		VerificationNotifyInterval:   envDurationOr("TELESRV_VERIFICATION_NOTIFY_INTERVAL", 15*time.Second),
 		VerificationNotifyBatch:      envIntOr("TELESRV_VERIFICATION_NOTIFY_BATCH", 50),
+		// Empty keeps the built-in English defaults: domain trims and falls
+		// back when the stored text is blank (domain.SetModerationProfileWarning).
+		ScamProfileWarning:           envOr("TELESRV_SCAM_WARNING", ""),
+		FakeProfileWarning:           envOr("TELESRV_FAKE_WARNING", ""),
 		BroadcastWorkerInterval:      envDurationOr("TELESRV_BROADCAST_WORKER_INTERVAL", 3*time.Second),
 		BroadcastWorkerLease:         envDurationOr("TELESRV_BROADCAST_WORKER_LEASE", 30*time.Second),
 		BroadcastMaterializeBatch:    envIntOr("TELESRV_BROADCAST_MATERIALIZE_BATCH", 200),
@@ -1378,6 +1474,15 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 	}
 	if err := validateTelegramLoginConfig(cfg); err != nil {
 		return Config{}, err
+	}
+	if err := validateGeoIPConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateASRConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if cfg.DonationPollInterval <= 0 {
+		return Config{}, fmt.Errorf("TELESRV_DONATION_POLL_INTERVAL must be positive")
 	}
 	if err := validateBlobStorageConfig(cfg); err != nil {
 		return Config{}, err
@@ -1703,6 +1808,65 @@ func parseTCPPort(envKey, raw string) (int, error) {
 		return 0, fmt.Errorf("%s must be between 1 and 65535", envKey)
 	}
 	return port, nil
+}
+
+// validateGeoIPConfig 校验会话地理归属后端链。未配置端点时全部放行——
+// 会话列表会继续回传 "Unknown" 占位文案,这是未启用时的预期行为,不该让服务起不来。
+func validateGeoIPConfig(cfg Config) error {
+	configured := 0
+	for index, endpoint := range cfg.GeoIPEndpoints {
+		if strings.TrimSpace(endpoint) == "" {
+			continue
+		}
+		configured++
+		if !strings.Contains(endpoint, "{ip}") {
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must contain the {ip} placeholder", index+1)
+		}
+		parsed, err := url.Parse(strings.TrimSpace(endpoint))
+		if err != nil {
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d is not a valid URL", index+1)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must use http or https", index+1)
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("TELESRV_GEOIP_ENDPOINTS entry %d must include a host", index+1)
+		}
+	}
+	// 全是空白的列表等同于未启用,不该拖出后面那堆数值校验。
+	if configured == 0 {
+		return nil
+	}
+	// 上游正常响应 0.6~1.3s。给到 10s 以上就说明值填错了(比如误当成 duration
+	// 字符串解析),那时候每一批解析都会先耗掉整个预算才回落 Unknown。
+	if cfg.GeoIPTimeout <= 0 || cfg.GeoIPTimeout > 10*time.Second {
+		return fmt.Errorf("TELESRV_GEOIP_TIMEOUT must be greater than zero and at most 10s")
+	}
+	if cfg.GeoIPConcurrency <= 0 || cfg.GeoIPConcurrency > 32 {
+		return fmt.Errorf("TELESRV_GEOIP_CONCURRENCY must be 1..32")
+	}
+	// 负缓存必须显著短于正文缓存:负缓存过期后只应重试失败的那次解析,长到
+	// 和正文缓存一样就等于一次限流把该 IP 冻到第二天。
+	if cfg.GeoIPNegativeTTL <= 0 || cfg.GeoIPCacheTTL <= 0 || cfg.GeoIPNegativeTTL >= cfg.GeoIPCacheTTL {
+		return fmt.Errorf("TELESRV_GEOIP_NEGATIVE_TTL must be greater than zero and shorter than TELESRV_GEOIP_CACHE_TTL")
+	}
+	if cfg.GeoIPCacheSize <= 0 || cfg.GeoIPCacheSize > 1_000_000 {
+		return fmt.Errorf("TELESRV_GEOIP_CACHE_SIZE must be 1..1000000")
+	}
+	if cfg.GeoIPRateLimitThreshold <= 0 || cfg.GeoIPRateLimitThreshold > 100 {
+		return fmt.Errorf("TELESRV_GEOIP_RATE_LIMIT_THRESHOLD must be 1..100")
+	}
+	if cfg.GeoIPRateLimitCooldown <= 0 || cfg.GeoIPRateLimitCooldown > time.Hour {
+		return fmt.Errorf("TELESRV_GEOIP_RATE_LIMIT_COOLDOWN must be greater than zero and at most 1h")
+	}
+	// 不可达窗口必须比限流窗口短:后端只是抖了一下不该离线比配额窗口还久。
+	if cfg.GeoIPDownThreshold <= 0 || cfg.GeoIPDownThreshold > 100 {
+		return fmt.Errorf("TELESRV_GEOIP_DOWN_THRESHOLD must be 1..100")
+	}
+	if cfg.GeoIPDownCooldown <= 0 || cfg.GeoIPDownCooldown > cfg.GeoIPRateLimitCooldown {
+		return fmt.Errorf("TELESRV_GEOIP_DOWN_COOLDOWN must be greater than zero and at most TELESRV_GEOIP_RATE_LIMIT_COOLDOWN")
+	}
+	return nil
 }
 
 func validateTelegramLoginConfig(cfg Config) error {
@@ -2149,6 +2313,20 @@ func validatePerformanceConfig(cfg Config) error {
 	}
 	if cfg.ChannelDifferenceCacheMaxEntries > 0 && (cfg.ChannelDifferenceCacheMaxBytes <= 0 || cfg.ChannelDifferenceCacheTTL <= 0) {
 		return fmt.Errorf("channel difference cache bytes and ttl must be positive when enabled")
+	}
+	return nil
+}
+
+func validateASRConfig(cfg Config) error {
+	if cfg.ASRURL == "" {
+		return nil
+	}
+	if cfg.ASRTimeout <= 0 {
+		return fmt.Errorf("TELESRV_ASR_TIMEOUT must be positive")
+	}
+	u, err := url.Parse(cfg.ASRURL)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("TELESRV_ASR_URL must be an absolute http(s) URL without userinfo")
 	}
 	return nil
 }

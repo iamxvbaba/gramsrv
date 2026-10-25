@@ -49,6 +49,16 @@ type BotStore interface {
 	ReorderBotAppPreviewMedia(ctx context.Context, botUserID, appID int64, mediaIDs []int64) (int, error)
 
 	UpsertAttachMenuBot(ctx context.Context, bot domain.BotAttachMenuBot) (int, error)
+
+	// Bot invoices. Creation is called inside the invoice message transaction.
+	CreateBotInvoice(ctx context.Context, invoice domain.BotInvoice) (domain.BotInvoice, error)
+	// BotInvoiceByMessage resolves the invoice behind an inputInvoiceMessage.
+	BotInvoiceByMessage(ctx context.Context, botUserID, chatID int64, messageID int) (domain.BotInvoice, bool, error)
+
+	// BotInvoiceByCharge resolves an invoice by telegram_payment_charge_id without
+	// changing it, so the caller can check ownership before acting.
+	BotInvoiceByCharge(ctx context.Context, chargeID string) (domain.BotInvoice, bool, error)
+
 	GetAttachMenuBot(ctx context.Context, botUserID int64) (domain.BotAttachMenuBot, bool, error)
 	ListAttachMenuBots(ctx context.Context) ([]domain.BotAttachMenuBot, error)
 	GetAttachMenuState(ctx context.Context, userID, botUserID int64) (domain.BotAttachMenuState, bool, error)

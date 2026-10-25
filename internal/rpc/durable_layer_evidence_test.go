@@ -8,11 +8,16 @@ import (
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
+
+// testFutureLayer is one past the newest exact profile, so it stays an
+// unsupported layer whatever the current canonical is.
+const testFutureLayer = int(tlprofile.ProfileCanonical) + 1
 
 func TestDurableSessionLayerSurvivesRestartAndRejectsOldSelectorRollback(t *testing.T) {
 	ctx := context.Background()
@@ -146,12 +151,12 @@ func TestDurableSessionLayerFutureProfileCanBeCorrectedByGreaterSelector(t *test
 	now := time.Now().UTC()
 	futureID := int64(proto.NewMessageIDGen(func() time.Time { return now }).New(proto.MessageFromClient))
 	correctID := int64(proto.NewMessageIDGen(func() time.Time { return now.Add(time.Second) }).New(proto.MessageFromClient))
-	if _, applied, err := keys.AdvanceSessionLayer(ctx, authKeyID, 20, 230, futureID); err != nil || !applied {
+	if _, applied, err := keys.AdvanceSessionLayer(ctx, authKeyID, 20, testFutureLayer, futureID); err != nil || !applied {
 		t.Fatalf("seed future evidence = applied %v err %v", applied, err)
 	}
 	r := New(Config{}, Deps{AuthKeySessionLayers: keys}, zaptest.NewLogger(t), clock.System)
 	layer, msgID, found, err := r.ResolveNegotiatedSessionLayerEvidence(ctx, authKeyID, 20)
-	if err != nil || !found || layer != 230 || msgID != futureID {
+	if err != nil || !found || layer != testFutureLayer || msgID != futureID {
 		t.Fatalf("future restore = (%d,%d,%v,%v)", layer, msgID, found, err)
 	}
 	if _, _, cached := r.NegotiatedSessionLayerEvidence(authKeyID, 20); cached {
@@ -258,7 +263,7 @@ func TestDurableInheritedLayerRevalidatesEachNewSession(t *testing.T) {
 	if layer, found, err := r.ResolveInheritedAuthKeyLayer(ctx, authKeyID); err != nil || !found || layer != 225 {
 		t.Fatalf("initial default = (%d,%v,%v)", layer, found, err)
 	}
-	if _, applied, err := keys.AdvanceSessionLayer(ctx, authKeyID, 52, 230, msgIDs(proto.MessageFromClient)); err != nil || !applied {
+	if _, applied, err := keys.AdvanceSessionLayer(ctx, authKeyID, 52, testFutureLayer, msgIDs(proto.MessageFromClient)); err != nil || !applied {
 		t.Fatalf("seed future default = applied %v err %v", applied, err)
 	}
 	if layer, found, err := r.ResolveInheritedAuthKeyLayer(ctx, authKeyID); err != nil || !found || layer != 0 {

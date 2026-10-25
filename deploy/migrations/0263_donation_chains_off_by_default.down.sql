@@ -1,0 +1,4 @@
+-- This data cleanup is intentionally not reversed automatically: the old
+-- enabled value was not retained, so enabling rows would overwrite explicit
+-- operator decisions. Re-enable a configured chain through the normal admin
+-- command after selecting its endpoint.

@@ -64,13 +64,20 @@ func rankGifCatalogEntries(entries []domain.GifCatalogEntry, query string) []dom
 		return entries
 	}
 	matched := make([]domain.GifCatalogEntry, 0, len(entries))
+	categoryMatched := make([]domain.GifCatalogEntry, 0, len(entries))
 	rest := make([]domain.GifCatalogEntry, 0, len(entries))
 	for _, entry := range entries {
+		category := entry.Category
+		if category == "" {
+			category = domain.ClassifyGifCategory(entry.Title, entry.FileName)
+		}
 		if strings.Contains(strings.ToLower(entry.Title), query) {
 			matched = append(matched, entry)
+		} else if domain.GifCategoryMatchesQuery(category, query) {
+			categoryMatched = append(categoryMatched, entry)
 		} else {
 			rest = append(rest, entry)
 		}
 	}
-	return append(matched, rest...)
+	return append(append(matched, categoryMatched...), rest...)
 }

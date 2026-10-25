@@ -497,6 +497,151 @@ func TestBotWriteAccessGrant(t *testing.T) {
 	}
 }
 
+func TestBotFatherHelpTextIsSectioned(t *testing.T) {
+	svc, users, _, messages := newTestService(t)
+	owner := newOwner(t, users, "+2010")
+
+	reply := sendToBotFather(t, svc, messages, owner, "/help")
+	// 分区标题与官方一致；官方有而本服未实现的命令必须显式标注，不能假装支持。
+	for _, want := range []string{
+		"You can control me by sending these commands:",
+		"Edit Bots\n",
+		"Bot Settings\n",
+		"Telegram Login\n",
+		"/deletebot - delete a bot",
+		"/setuserpic - change bot profile photo (not available on this server yet)",
+	} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("/help reply missing %q:\n%s", want, reply)
+		}
+	}
+}
+
+func TestBotFatherSetUserPicIsExplicitlyUnsupported(t *testing.T) {
+	svc, users, _, messages := newTestService(t)
+	owner := newOwner(t, users, "+2011")
+	bot := makeBot(t, svc, owner, "Pic Bot", "pic_test_bot")
+
+	if reply := sendToBotFather(t, svc, messages, owner, "/setuserpic"); !strings.Contains(reply, "not supported on this server yet") {
+		t.Fatalf("/setuserpic reply = %q, want explicit stub", reply)
+	}
+	// 不支持的命令不得留下悬空状态。
+	if reply := sendToBotFather(t, svc, messages, owner, "Some Name"); !strings.Contains(reply, "/help") {
+		t.Fatalf("post-/setuserpic reply = %q, want fallback", reply)
+	}
+	// 也不得碰 bot 的任何设置。
+	if _, found, err := svc.bots.GetBot(context.Background(), bot.ID); err != nil || !found {
+		t.Fatalf("bot profile missing: found=%v err=%v", found, err)
+	}
+}
+
+func TestBotFatherDeleteBotRequiresConfirmation(t *testing.T) {
+	users := memory.NewUserStore()
+	memoryBots := memory.NewBotStore(users)
+	botStore := &countingBotStore{BotStore: memoryBots}
+	dialogs := memory.NewDialogStore()
+	memoryBots.AttachDeliveryDependencies(dialogs, memory.NewDeliveryOutboxStore())
+	messages := memory.NewMessageStore(dialogs)
+	rev := &captureRevoker{}
+	svc := NewService(users, botStore, messages)
+	svc.SetRouterHooks(rev)
+	owner := newOwner(t, users, "+2012")
+	bot := makeBot(t, svc, owner, "Doomed Bot", "doomed_bot")
+	ctx := context.Background()
+
+	if reply := sendToBotFather(t, svc, messages, owner, "/deletebot"); !strings.Contains(reply, "Choose a bot to delete") {
+		t.Fatalf("/deletebot reply = %q, want pick bot", reply)
+	}
+	if reply := sendToBotFather(t, svc, messages, owner, "@doomed_bot"); !strings.Contains(reply, "Are you sure") {
+		t.Fatalf("choose reply = %q, want confirmation prompt", reply)
+	}
+	// 任何非确认输入都不能删号。
+	for _, noise := range []string{"", "no", "what?", "@doomed_bot"} {
+		if reply := sendToBotFather(t, svc, messages, owner, noise); !strings.Contains(reply, "Are you sure") {
+			t.Fatalf("input %q reply = %q, want confirmation prompt", noise, reply)
+		}
+		if botStore.deleteCalls != 0 {
+			t.Fatalf("input %q triggered deletion (deleteCalls=%d)", noise, botStore.deleteCalls)
+		}
+	}
+	if rev.botUserID != 0 {
+		t.Fatalf("RevokeBotSessions called before confirmation: bot=%d", rev.botUserID)
+	}
+	if _, found, err := botStore.GetBot(ctx, bot.ID); err != nil || !found {
+		t.Fatalf("bot disappeared before confirmation: found=%v err=%v", found, err)
+	}
+
+	// 显式确认才删号，并连带撤销已登录 session。
+	if reply := sendToBotFather(t, svc, messages, owner, "confirm"); !strings.Contains(reply, "has been deleted") {
+		t.Fatalf("confirm reply = %q, want deletion notice", reply)
+	}
+	if botStore.deleteCalls != 1 || rev.botUserID != bot.ID {
+		t.Fatalf("deleteCalls=%d revoked=%d, want 1 and %d", botStore.deleteCalls, rev.botUserID, bot.ID)
+	}
+	// 状态已复位：后续文本不再走 confirm 分支。
+	if reply := sendToBotFather(t, svc, messages, owner, "hello"); !strings.Contains(reply, "/help") {
+		t.Fatalf("post-delete reply = %q, want fallback", reply)
+	}
+}
+
+func TestBotFatherDeleteBotReportsRevocationFailure(t *testing.T) {
+	users := memory.NewUserStore()
+	memoryBots := memory.NewBotStore(users)
+	botStore := &countingBotStore{BotStore: memoryBots}
+	dialogs := memory.NewDialogStore()
+	memoryBots.AttachDeliveryDependencies(dialogs, memory.NewDeliveryOutboxStore())
+	messages := memory.NewMessageStore(dialogs)
+	rev := &captureRevoker{err: errors.New("authorization store unavailable")}
+	svc := NewService(users, botStore, messages)
+	svc.SetRouterHooks(rev)
+	owner := newOwner(t, users, "+2013")
+	bot := makeBot(t, svc, owner, "Stuck Bot", "stuck_bot")
+
+	sendToBotFather(t, svc, messages, owner, "/deletebot")
+	sendToBotFather(t, svc, messages, owner, "@stuck_bot")
+	reply := sendToBotFather(t, svc, messages, owner, "confirm")
+	// 没删掉就必须说没删掉，绝不谎称成功。
+	if !strings.Contains(reply, "Nothing was deleted") {
+		t.Fatalf("confirm reply = %q, want honest failure", reply)
+	}
+	if botStore.deleteCalls != 0 {
+		t.Fatalf("deleteCalls=%d after failed revocation", botStore.deleteCalls)
+	}
+	if _, found, err := botStore.GetBot(context.Background(), bot.ID); err != nil || !found {
+		t.Fatalf("bot deleted despite failed revocation: found=%v err=%v", found, err)
+	}
+	// 状态保留：重试即可继续（revoker 恢复后同一确认词生效）。
+	rev.err = nil
+	if reply := sendToBotFather(t, svc, messages, owner, "confirm"); !strings.Contains(reply, "has been deleted") {
+		t.Fatalf("retry reply = %q, want deletion notice", reply)
+	}
+}
+
+func TestBotFatherDeleteBotRejectsForeignBot(t *testing.T) {
+	users := memory.NewUserStore()
+	memoryBots := memory.NewBotStore(users)
+	botStore := &countingBotStore{BotStore: memoryBots}
+	dialogs := memory.NewDialogStore()
+	memoryBots.AttachDeliveryDependencies(dialogs, memory.NewDeliveryOutboxStore())
+	messages := memory.NewMessageStore(dialogs)
+	svc := NewService(users, botStore, messages)
+	svc.SetRouterHooks(&captureRevoker{})
+	owner := newOwner(t, users, "+2015")
+	other := newOwner(t, users, "+2016")
+	makeBot(t, svc, owner, "Own Bot", "own_owner_bot")
+	makeBot(t, svc, other, "Other Bot", "other_owner_bot")
+
+	if reply := sendToBotFather(t, svc, messages, owner, "/deletebot"); !strings.Contains(reply, "@own_owner_bot") {
+		t.Fatalf("/deletebot reply = %q, want own bot in list", reply)
+	}
+	if reply := sendToBotFather(t, svc, messages, owner, "@other_owner_bot"); !strings.Contains(reply, "among yours") {
+		t.Fatalf("foreign bot reply = %q, want rejection", reply)
+	}
+	if botStore.deleteCalls != 0 {
+		t.Fatalf("deleteCalls=%d after foreign bot attempt", botStore.deleteCalls)
+	}
+}
+
 type captureRevoker struct {
 	botUserID int64
 	err       error

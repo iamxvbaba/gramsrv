@@ -11,7 +11,7 @@ import (
 func tgSelfUser(u domain.User) *tg.User {
 	u = officialSystemUserPresentation(u)
 	if u.Deleted {
-		return &tg.User{ID: u.ID, Deleted: true}
+		return tgDeletedUser(u)
 	}
 	out := &tg.User{
 		ID:            u.ID,
@@ -45,7 +45,7 @@ func tgSelfUser(u domain.User) *tg.User {
 func tgUser(u domain.User) *tg.User {
 	u = officialSystemUserPresentation(u)
 	if u.Deleted {
-		return &tg.User{ID: u.ID, Deleted: true}
+		return tgDeletedUser(u)
 	}
 	out := &tg.User{
 		ID:            u.ID,
@@ -73,6 +73,18 @@ func tgUser(u domain.User) *tg.User {
 		out.Photo = photo
 	}
 	return out
+}
+
+// applyFrozenUserMark stamps user#b1b8cc83 bot_verification_icon:flags2.14 on a
+// peer tombstone when the deleted presentation comes from an account freeze. The
+// icon id must name a real custom emoji document in the operator catalogue,
+// otherwise the client resolves it through messages.getCustomEmojiDocuments as
+// empty and draws no badge; it is a synthetic projection only, never persisted.
+func applyFrozenUserMark(out *tg.User, u domain.User) {
+	if out == nil || !u.FrozenForViewer {
+		return
+	}
+	out.SetBotVerificationIcon(accountFrozenMarkIcon)
 }
 
 // officialSystemUserPresentation keeps the durable reserved identity stable
@@ -217,6 +229,36 @@ func applyTgUserBotFields(out *tg.User, u domain.User) {
 func isSystemUserID(id int64) bool {
 	_, ok := domain.SystemUserByID(id)
 	return ok
+}
+
+// deletedAccountDisplayName is what a tombstone presents as on the wire. Clients
+// derive the same string from the deleted flag, but sending it explicitly keeps
+// the name stable across clients whose updateUser handling only merges the photo
+// and never re-reads first_name.
+const deletedAccountDisplayName = "Deleted Account"
+
+// tgDeletedUser builds the tombstone a deleted account is projected as: the id,
+// the deleted flag and an explicit empty avatar. Every other field is stripped.
+//
+// The explicit userProfilePhotoEmpty is what makes the account render as a ghost
+// instead of an avatarless stranger: the client is told "no photo" in the shape it
+// expects, rather than being left to infer it from a missing optional field, and
+// deletion already deactivated the profile_photos rows so no real avatar can be
+// projected for this id again.
+func tgDeletedUser(u domain.User) *tg.User {
+	out := &tg.User{
+		ID:        u.ID,
+		Deleted:   true,
+		FirstName: deletedAccountDisplayName,
+		Photo:     &tg.UserProfilePhotoEmpty{},
+		// An absent status field is not the same as an empty one: clients keep the
+		// cached presence when the flag is missing, which is how a deleted account
+		// kept showing "last seen recently" right after it appeared as deleted.
+		// An explicit userStatusEmpty is what actually clears it.
+		Status: &tg.UserStatusEmpty{},
+	}
+	applyFrozenUserMark(out, u)
+	return out
 }
 
 // tgUserProfilePhoto 由 domain.User 反范式头像字段构造 UserProfilePhoto；无头像返回 nil（Encode 时为 empty）。

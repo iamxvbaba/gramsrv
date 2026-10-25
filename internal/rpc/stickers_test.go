@@ -488,12 +488,13 @@ func TestMessagesGetFeaturedStickersSurfacesSeededSets(t *testing.T) {
 		},
 		sets: map[domain.StickerSetKind][]domain.StickerSet{
 			domain.StickerSetKindStickers: {
-				{ID: 10, AccessHash: 100, ShortName: "one", Title: "One", Count: 2, Hash: 123, DocumentIDs: []int64{201, 202}},
-				{ID: 11, AccessHash: 110, ShortName: "two", Title: "Two", Count: 1, Hash: 456, DocumentIDs: []int64{301}},
-				{ID: 12, AccessHash: 120, ShortName: "arch", Title: "Arch", Hash: 789, Archived: true, DocumentIDs: []int64{301}},
+				{ID: 10, AccessHash: 100, ShortName: "one", Title: "One", Kind: domain.StickerSetKindStickers, Count: 2, Hash: 123, DocumentIDs: []int64{201, 202}},
+				{ID: 11, AccessHash: 110, ShortName: "two", Title: "Two", Kind: domain.StickerSetKindStickers, Count: 1, Hash: 456, DocumentIDs: []int64{301}},
+				{ID: 12, AccessHash: 120, ShortName: "arch", Title: "Arch", Kind: domain.StickerSetKindStickers, Hash: 789, Archived: true, DocumentIDs: []int64{301}},
+				{ID: 13, Title: "Deleted", Kind: domain.StickerSetKindStickers, Deleted: true, DocumentIDs: []int64{301}},
 			},
 			domain.StickerSetKindEmoji: {
-				{ID: 20, AccessHash: 200, ShortName: "emo", Title: "Emo", Count: 1, Hash: 999, Emojis: true, DocumentIDs: []int64{201}},
+				{ID: 20, AccessHash: 200, ShortName: "emo", Title: "Emo", Kind: domain.StickerSetKindEmoji, Count: 1, Hash: 999, Emojis: true, DocumentIDs: []int64{201}},
 			},
 		},
 	}

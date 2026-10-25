@@ -5,6 +5,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -370,9 +372,32 @@ func (r *Router) onMessagesSetBotShippingResults(ctx context.Context, req *tg.Me
 	return false, queryIDInvalidErr()
 }
 
+// onMessagesSetBotPrecheckoutResults 是 bot 对 pre-checkout 的应答，也是付款闸门的
+// 唯一开锁方式：付款方挂在 sendStarsForm/sendPaymentForm 里等这个回答。
+//
+// resolve 只接受该询问的属主 bot，所以别的 bot 即使拿到 query_id 也无法代答。
 func (r *Router) onMessagesSetBotPrecheckoutResults(ctx context.Context, req *tg.MessagesSetBotPrecheckoutResultsRequest) (bool, error) {
-	if _, err := r.callerBotID(ctx); err != nil {
+	botID, err := r.callerBotID(ctx)
+	if err != nil {
 		return false, err
 	}
-	return false, queryIDInvalidErr()
+	if req == nil {
+		return false, inputRequestInvalidErr()
+	}
+	success := req.GetSuccess()
+	errorMessage, _ := req.GetError()
+	if !success && utf8.RuneCountInString(errorMessage) > preCheckoutErrorMaxLen {
+		return false, tgerr.New(400, "MESSAGE_TOO_LONG")
+	}
+	resolved, err := r.preCheckouts.resolve(ctx, botID, req.QueryID, domain.BotPreCheckoutAnswer{OK: success, Error: errorMessage})
+	if err != nil {
+		r.log.Warn("resolve shared bot pre-checkout", zap.Int64("bot_user_id", botID), zap.Int64("query_id", req.QueryID), zap.Error(err))
+		return false, internalErr()
+	}
+	if !resolved {
+		// 询问不存在、已超时或不属于该 bot：Bot API 对此回 QUERY_ID_INVALID，
+		// 而不是静默丢弃，否则 bot 会以为自己批准了付款。
+		return false, queryIDInvalidErr()
+	}
+	return true, nil
 }

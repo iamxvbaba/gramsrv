@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_IMAGE=golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59
+ARG GO_IMAGE=golang:1.26-alpine
 ARG ALPINE_IMAGE=alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build-base
@@ -128,7 +128,7 @@ LABEL org.opencontainers.image.title="telesrv" \
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -S -g 10001 telesrv \
     && adduser -S -D -H -u 10001 -G telesrv telesrv \
-    && install -d -o telesrv -g telesrv -m 0750 /app /etc/telesrv /var/lib/telesrv
+    && install -d -o telesrv -g telesrv -m 0750 /app /etc/telesrv /var/lib/telesrv /var/lib/telesrv-identity
 
 COPY --from=build-healthcheck /out/telesrv-healthcheck /usr/local/bin/telesrv-healthcheck
 COPY --chmod=0555 deploy/docker/docker-entrypoint.sh /usr/local/bin/telesrv-container-entrypoint

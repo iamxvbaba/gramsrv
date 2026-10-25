@@ -2,13 +2,16 @@ package rpc
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -37,6 +40,9 @@ func (r *Router) sendStarGiftTransferForm(ctx context.Context, userID, formID in
 		if _, err := r.deps.Stars.GetBalance(ctx, userID); err != nil {
 			return nil, starsErr(err)
 		}
+	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, userIDInvalidErr()
 	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
@@ -109,6 +115,9 @@ func (r *Router) sendStarGiftResaleForm(ctx context.Context, userID, formID int6
 		if _, err := r.deps.Stars.GetBalance(ctx, userID); err != nil {
 			return nil, starsErr(err)
 		}
+	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, userIDInvalidErr()
 	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
@@ -227,6 +236,9 @@ func (r *Router) starGiftAuctionBidTarget(ctx context.Context, userID int64, inv
 	state, err := r.deps.Gifts.AuctionState(ctx, userID, inv.GiftID, "", int(r.clock.Now().Unix()))
 	if err != nil {
 		return domain.StarGiftAuction{}, domain.Peer{}, 0, starGiftLifecycleErr(err)
+	}
+	if state.Gift.SupportOnly && !r.viewerSupport(ctx, userID) {
+		return domain.StarGiftAuction{}, domain.Peer{}, 0, starGiftInvalidErr()
 	}
 	oldAmount := state.UserState.BidAmount
 	peer := domain.Peer{Type: domain.PeerTypeUser, ID: userID}
@@ -435,9 +447,15 @@ func (r *Router) onPaymentsCheckCanSendGift(ctx context.Context, req *tg.Payment
 	if !found {
 		return nil, starGiftInvalidErr()
 	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
 	now := int(r.clock.Now().Unix())
 	switch {
 	case gift.SoldOut || gift.Limited && gift.AvailabilityRemains <= 0:
+		return &tg.PaymentsCheckCanSendGiftResultFail{Reason: tg.TextWithEntities{Text: "This gift is sold out."}}, nil
+	case gift.SupportOnly && !r.viewerSupport(ctx, userID):
 		return &tg.PaymentsCheckCanSendGiftResultFail{Reason: tg.TextWithEntities{Text: "This gift is sold out."}}, nil
 	case gift.LockedUntilDate > now:
 		return &tg.PaymentsCheckCanSendGiftResultFail{Reason: tg.TextWithEntities{Text: "This gift is not available yet."}}, nil
@@ -449,15 +467,26 @@ func (r *Router) onPaymentsCheckCanSendGift(ctx context.Context, req *tg.Payment
 }
 
 func (r *Router) onPaymentsGetUniqueStarGiftValueInfo(ctx context.Context, req *tg.PaymentsGetUniqueStarGiftValueInfoRequest) (*tg.PaymentsUniqueStarGiftValueInfo, error) {
-	if req == nil || strings.TrimSpace(req.Slug) == "" || r.deps.Gifts == nil {
-		return nil, starGiftInvalidErr()
+	if req == nil || r.deps.Gifts == nil {
+		return nil, starGiftSlugInvalidErr()
 	}
-	unique, found, err := r.deps.Gifts.UniqueBySlug(ctx, req.Slug)
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+	if slug == "" || len(slug) > domain.MaxStarGiftSlugBytes {
+		return nil, starGiftSlugInvalidErr()
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if r.userIsBot(ctx, userID) {
+		return nil, botMethodInvalidErr()
+	}
+	unique, found, err := r.deps.Gifts.UniqueBySlug(ctx, slug)
 	if err != nil {
 		return nil, internalErr()
 	}
 	if !found {
-		return nil, starGiftInvalidErr()
+		return nil, starGiftSlugInvalidErr()
 	}
 	info, err := r.deps.Gifts.ValueInfo(ctx, unique.ID)
 	if err != nil {
@@ -479,7 +508,11 @@ func (r *Router) onPaymentsGetUniqueStarGiftValueInfo(ctx context.Context, req *
 	if info.AveragePrice > 0 {
 		out.SetAveragePrice(info.AveragePrice)
 	}
-	out.SetListedCount(info.ListedCount)
+	if info.ListedCount > 0 {
+		out.SetListedCount(info.ListedCount)
+	}
+	// last_sale_on_fragment 与 fragment_listed_* 只有在本服务确实记录了
+	// Fragment 侧成交/挂牌时才可置位；自托管账本没有该来源，缺省即“未知”。
 	return out, nil
 }
 
@@ -540,18 +573,13 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 		}
 		if found {
 			hash := int64(preview.Revision)
-			// SetAttributes and SetAttributesHash share the SAME wire flag bit
-			// (flags.1) -- that's the real Telegram schema, not a choice made
-			// here. Calling SetAttributesHash alone (the "hash still matches,
-			// nothing to resend" case below) sets that bit while leaving
-			// Attributes at its Go zero value (nil), which the TL encoder
-			// then rejects for every single request: "malformed canonical
-			// value: explicit flag has nil interface field attributes". Every
-			// call through this branch must always leave Attributes non-nil,
-			// so build it (empty slice when unchanged, is fine and distinct
-			// from "field absent") before ever touching the shared flag.
-			attributes := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
+			// attributes and attributes_hash share flag bit 1. The profile encoder
+			// requires both fields once that bit is set, so a lone SetAttributesHash
+			// produces "explicit flag has nil interface field attributes". When the
+			// caller's hash already matches, omit the flag entirely (the client keeps
+			// its cached attribute list); otherwise publish the list and hash together.
 			if attributesHash != hash {
+				attributes := make([]tg.StarGiftAttributeClass, 0, len(preview.Models)+len(preview.Patterns)+len(preview.Backdrops))
 				for _, attribute := range preview.Models {
 					attributes = append(attributes, tgStarGiftAttribute(attribute))
 				}
@@ -561,9 +589,9 @@ func (r *Router) onPaymentsGetResaleStarGifts(ctx context.Context, req *tg.Payme
 				for _, attribute := range preview.Backdrops {
 					attributes = append(attributes, tgStarGiftAttribute(attribute))
 				}
+				out.SetAttributesHash(hash)
+				out.SetAttributes(attributes)
 			}
-			out.SetAttributes(attributes)
-			out.SetAttributesHash(hash)
 		}
 	}
 	return out, nil
@@ -630,6 +658,9 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	if err != nil {
 		return nil, err
 	}
+	if r.giftRecipientDeleted(ctx, userID, to) {
+		return nil, starGiftInvalidErr()
+	}
 	recipientUnsaved, err := r.starGiftRecipientUnsaved(ctx, userID, to)
 	if err != nil {
 		return nil, err
@@ -647,22 +678,146 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 	return r.starGiftTransferUpdates(ctx, userID, result, false), nil
 }
 
+// onPaymentsDeleteStarGift implements payments.deleteStarGift (Layer 232).
+// 只有礼物主人能删自己的那份普通礼物：礼物离开资料页，同时退出所属集合。
+// 已升级的藏品、限量/拍卖礼物以及仍带转换价或预付升级 Stars 的礼物一律拒绝
+// （STARGIFT_INVALID），因为删除不可逆、会连带销毁这些 Stars。删除不硬删行：
+// 升级命令、报价、转账记录都引用这一行。频道礼物属于频道资产，不走个人删除
+// 路径（STARGIFT_OWNER_INVALID）；频道方删除需要频道所有权/转账权限语义，
+// 目前尚未实现。
+func (r *Router) onPaymentsDeleteStarGift(ctx context.Context, req *tg.PaymentsDeleteStarGiftRequest) (bool, error) {
+	if req == nil {
+		return false, inputRequestInvalidErr()
+	}
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if r.deps.Gifts == nil {
+		return false, notImplementedErr()
+	}
+	if r.userIsBot(ctx, userID) {
+		return false, botMethodInvalidErr()
+	}
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, starGiftInvalidErr()
+	}
+	// 频道礼物属于频道资产：官方客户端允许有转账权限的频道主/管理员删除，
+	// 这需要另一套频道所有权检查，本方法明确不覆盖，继续按个人删除路径拒绝。
+	if ref.Owner.Type != domain.PeerTypeUser || ref.Owner.ID != userID {
+		return false, tgerr.New(400, "STARGIFT_OWNER_INVALID")
+	}
+	result, err := r.deps.Gifts.DeleteStarGift(ctx, domain.StarGiftDeleteRequest{
+		UserID: userID, Ref: ref, Date: int(r.clock.Now().Unix()),
+	})
+	if err != nil {
+		return false, starGiftLifecycleErr(err)
+	}
+	if !result.Deleted {
+		return false, starGiftInvalidErr()
+	}
+	// 礼物离开资料页 → 失效 owner full 投影。
+	r.invalidateStarGiftOwnerProjection(ref.Owner)
+	return true, nil
+}
+
 func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
-	if req == nil || r.deps.Gifts == nil || r.deps.Account == nil {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	// Layer 232 的 2FA 证明是本授权经 account.getTmpPassword 签发的 tmp_password。
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, authKeyID [8]byte, now time.Time) error {
+		return r.deps.Account.CheckTmpPassword(ctx, userID, authKeyID, req.TmpPassword, now)
+	})
+}
+
+// onPaymentsGetStarGiftWithdrawalURLLegacy 服务 exact Layer 225–231 客户端：
+// 它们的 payments.getStarGiftWithdrawalUrl#d06e93a8 携带 SRP 证明而不是
+// tmp_password。td 把该构造器提升为独立的 legacy 方法，证明原样到达这里，
+// 只按 SRP 校验，永远不会被当成 tmp_password 或被丢弃。
+func (r *Router) onPaymentsGetStarGiftWithdrawalURLLegacy(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, _ [8]byte, _ time.Time) error {
+		// 与 payments.getStarsRevenueWithdrawalUrl 一致只认 SRP：账号已设 2FA 时
+		// inputCheckPasswordEmpty 不是证明。
+		if _, ok := req.Password.(*tg.InputCheckPasswordSRP); !ok {
+			return domain.ErrPasswordHashInvalid
+		}
+		return r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password))
+	})
+}
+
+// starGiftWithdrawalURL 是两种 2FA 证明共用的导出门禁；checkProof 只校验
+// 各自方法的证明，其余顺序与判定对两种证明完全相同。
+func (r *Router) starGiftWithdrawalURL(
+	ctx context.Context,
+	input tg.InputSavedStarGiftClass,
+	checkProof func(userID int64, authKeyID [8]byte, now time.Time) error,
+) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if r.deps.Gifts == nil || r.deps.Account == nil || r.deps.Auth == nil {
 		return nil, starGiftInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
 	}
-	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
+	if r.userIsBot(ctx, userID) {
+		return nil, botMethodInvalidErr()
+	}
+	// 2FA 先于所有权与礼物状态校验：没有通过密码的调用方连“这个 slug 是否
+	// 可导出”都不该知道，withdrawal 是财务操作，顺序即信息泄露面。
+	passwordState, err := r.deps.Account.RevenueWithdrawalPasswordState(ctx, userID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	// 未设 2FA 的账号没有可校验的证明：空 tmp_password 与 inputCheckPasswordEmpty
+	// 都不能代表通过；与 payments.getStarsRevenueWithdrawalUrl 一致，先要求账号已设 2FA。
+	if !passwordState.HasPassword {
+		return nil, tgerr.New(400, "PASSWORD_MISSING")
+	}
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) {
+		return nil, authKeyUnregisteredErr()
+	}
+	now := r.clock.Now()
+	if err := checkProof(userID, authKeyID, now); err != nil {
 		return nil, passwordErr(err)
 	}
-	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
-	if err != nil || !ok || ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+	if wait := revenueWithdrawalFreshWait(passwordState.PasswordChangedAt, now); wait < 0 {
+		return nil, internalErr()
+	} else if wait > 0 {
+		return nil, tgerr.New(400, fmt.Sprintf("PASSWORD_TOO_FRESH_%d", wait))
+	}
+	authorization, found, err := r.deps.Auth.Authorization(ctx, authKeyID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !found || authorization.AuthKeyID != authKeyID || authorization.UserID != userID || authorization.PasswordPending {
+		return nil, authKeyUnregisteredErr()
+	}
+	if wait := revenueWithdrawalFreshWait(authorization.CreatedAt, now); wait < 0 {
+		return nil, internalErr()
+	} else if wait > 0 {
+		return nil, tgerr.New(400, fmt.Sprintf("SESSION_TOO_FRESH_%d", wait))
+	}
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, input)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, starGiftInvalidErr()
 	}
-	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(r.clock.Now().Unix())})
+	// Host / 链上托管的收藏品 host 不是 owner，永远拿不到 ownership-only 操作。
+	if ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
+		return nil, tgerr.New(400, "STARGIFT_OWNER_INVALID")
+	}
+	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(now.Unix())})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
@@ -778,6 +933,8 @@ func (r *Router) onPaymentsCraftStarGift(ctx context.Context, req *tg.PaymentsCr
 		CommandKey: "rpc:" + strings.Join(commandParts, ","), Date: int(r.clock.Now().Unix()),
 		OriginAuthKeyID: rawAuthKeyIDForOrigin(ctx), OriginSessionID: sessionIDOrZero(ctx)})
 	if err != nil {
+		r.log.Warn("craft star gift failed",
+			zap.Int64("user_id", userID), zap.String("command_key", "rpc:"+strings.Join(commandParts, ",")), zap.Error(err))
 		return nil, starGiftLifecycleErr(err)
 	}
 	r.invalidateRPCProjectionForUser(userID)
@@ -839,8 +996,30 @@ func (r *Router) onPaymentsGetStarGiftAuctionState(ctx context.Context, req *tg.
 	if !state.Finished && req.Version == state.Version {
 		stateClass = &tg.StarGiftAuctionStateNotModified{}
 	}
-	return &tg.PaymentsStarGiftAuctionState{Gift: tgStarGift(state.Gift), State: stateClass,
+	return &tg.PaymentsStarGiftAuctionState{Gift: tgStarGift(state.Gift, r.clock.Now().Unix()), State: stateClass,
 		UserState: tgStarGiftAuctionUserState(state.UserState), Timeout: 30, Users: r.auctionUsers(ctx, userID, state), Chats: []tg.ChatClass{}}, nil
+}
+
+// starGiftActiveAuctionsHash is the change-sensitive list version clients echo
+// back as hash: gift identity plus the mutable auction progress fields, so any
+// new round, bid level change or finished flag flips the hash.
+func starGiftActiveAuctionsHash(states []domain.StarGiftAuction) int64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	put := func(v int64) {
+		binary.LittleEndian.PutUint64(buf[:], uint64(v))
+		h.Write(buf[:])
+	}
+	for _, st := range states {
+		put(st.Gift.ID)
+		put(int64(st.Version))
+		put(int64(st.CurrentRound))
+		put(int64(st.GiftsLeft))
+		put(int64(st.EndDate))
+		put(st.AveragePrice)
+		put(int64(st.ListedCount))
+	}
+	return int64(h.Sum64())
 }
 
 func (r *Router) onPaymentsGetStarGiftActiveAuctions(ctx context.Context, req *tg.PaymentsGetStarGiftActiveAuctionsRequest) (tg.PaymentsStarGiftActiveAuctionsClass, error) {
@@ -858,10 +1037,13 @@ func (r *Router) onPaymentsGetStarGiftActiveAuctions(ctx context.Context, req *t
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
+	if req.Hash != 0 && req.Hash == starGiftActiveAuctionsHash(states) {
+		return &tg.PaymentsStarGiftActiveAuctionsNotModified{}, nil
+	}
 	out := &tg.PaymentsStarGiftActiveAuctions{Auctions: make([]tg.StarGiftActiveAuctionState, 0, len(states)), Users: []tg.UserClass{}, Chats: []tg.ChatClass{}}
 	userIDs := make([]int64, 0)
 	for _, state := range states {
-		out.Auctions = append(out.Auctions, tg.StarGiftActiveAuctionState{Gift: tgStarGift(state.Gift),
+		out.Auctions = append(out.Auctions, tg.StarGiftActiveAuctionState{Gift: tgStarGift(state.Gift, r.clock.Now().Unix()),
 			State: tgStarGiftAuctionState(state), UserState: tgStarGiftAuctionUserState(state.UserState)})
 		userIDs = append(userIDs, state.TopBidders...)
 	}
@@ -1074,9 +1256,12 @@ func starGiftLifecycleErr(err error) error {
 		return tgerr.New(400, "PREMIUM_ACCOUNT_REQUIRED")
 	case errors.Is(err, domain.ErrStarGiftOfferExpired):
 		return tgerr.New(400, "STARGIFT_OFFER_EXPIRED")
+	case errors.Is(err, domain.ErrStarGiftRecipientUnavailable):
+		return userIDInvalidErr()
 	case errors.Is(err, domain.ErrStarGiftOwnerInvalid):
 		return tgerr.New(400, "STARGIFT_OWNER_INVALID")
-	case errors.Is(err, domain.ErrStarGiftWithdrawalUnavailable):
+	case errors.Is(err, domain.ErrStarGiftWithdrawalUnavailable),
+		errors.Is(err, domain.ErrStarGiftExportCooldown):
 		return tgerr.New(400, "STARGIFT_WITHDRAWAL_UNAVAILABLE")
 	case errors.Is(err, domain.ErrStarGiftCraftUnavailable):
 		return tgerr.New(400, "STARGIFT_CRAFT_UNAVAILABLE")
@@ -1088,10 +1273,27 @@ func starGiftLifecycleErr(err error) error {
 	case errors.Is(err, domain.ErrStarGiftNotFound), errors.Is(err, domain.ErrStarGiftResaleUnavailable),
 		errors.Is(err, domain.ErrStarGiftTransferUnavailable), errors.Is(err, domain.ErrStarGiftOfferInvalid),
 		errors.Is(err, domain.ErrStarGiftAuctionUnavailable),
+		errors.Is(err, domain.ErrStarGiftDeleteUnavailable),
 		errors.Is(err, domain.ErrStarGiftUnavailable), errors.Is(err, domain.ErrStarGiftInvalid),
 		errors.Is(err, domain.ErrStarGiftCollectibleUnavailable):
 		return starGiftInvalidErr()
 	default:
 		return internalErr()
 	}
+}
+
+// giftRecipientDeleted reports whether an outgoing gift target is an account
+// tombstone. Every gift write resolves its recipient through a peer reference,
+// which never touches the users row, so the deleted bit has to be checked
+// explicitly at this boundary -- otherwise a deleted account can still be handed
+// gifts, offers and marketplace purchases.
+func (r *Router) giftRecipientDeleted(ctx context.Context, actorUserID int64, to domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || to.Type != domain.PeerTypeUser || to.ID <= 0 || to.ID == actorUserID {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, actorUserID, to.ID)
+	if err != nil || !found {
+		return false
+	}
+	return u.Deleted
 }

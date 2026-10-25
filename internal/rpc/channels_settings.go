@@ -55,7 +55,7 @@ func (r *Router) onChannelsUpdateUsername(ctx context.Context, req *tg.ChannelsU
 
 func (r *Router) onChannelsToggleSignatures(ctx context.Context, req *tg.ChannelsToggleSignaturesRequest) (tg.UpdatesClass, error) {
 	return r.applyChannelAdminStateMutation(ctx, req.Channel, func(ctx context.Context, userID, channelID int64) (domain.Channel, error) {
-		return r.deps.Channels.SetSignatures(ctx, userID, channelID, req.SignaturesEnabled)
+		return r.deps.Channels.SetSignatures(ctx, userID, channelID, req.SignaturesEnabled, req.ProfilesEnabled)
 	})
 }
 

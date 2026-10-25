@@ -10,6 +10,10 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
+// testFutureLayer is one past the newest exact profile, so it stays an
+// unsupported layer whatever the current canonical is.
+const testFutureLayer = int(tlprofile.ProfileCanonical) + 1
+
 type countingInheritedLayerResolver struct {
 	LayerRPCHandler
 	calls int
@@ -107,7 +111,7 @@ func TestConnSeedLayerProfile(t *testing.T) {
 }
 
 func TestConnLayerProfileRejectsUnsupported(t *testing.T) {
-	for _, profile := range []tlprofile.Profile{0, 219, 230} {
+	for _, profile := range []tlprofile.Profile{0, 219, tlprofile.Profile(testFutureLayer)} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			c := &Conn{}
 			if err := c.FreezeLayerProfile(profile); !errors.Is(err, ErrLayerProfileUnsupported) {
@@ -217,7 +221,7 @@ func TestSessionManagerSeedsOnlyUnknownRawAuthKeyConnections(t *testing.T) {
 	if got := inherited.LayerProfileState(); got.Profile != tlprofile.Profile226 || got.Origin != LayerProfileInherited {
 		t.Fatalf("existing inherited connection was overwritten = %#v", got)
 	}
-	if seeded := m.SeedInheritedLayerForRawAuthKey(authKeyID, 230); seeded != 0 {
+	if seeded := m.SeedInheritedLayerForRawAuthKey(authKeyID, testFutureLayer); seeded != 0 {
 		t.Fatalf("unsupported layer seeded %d connections", seeded)
 	}
 }

@@ -6,6 +6,7 @@ import { PermissionsProvider } from "./permissions";
 import { Routes } from "./pages/Routes";
 import { currentRoute, type RouteState } from "./routing";
 import type { AdminSession } from "./types";
+import { withBase } from "./lib/base";
 
 export function App() {
   // One GET /api/session at boot carries both the actor and the permission set the
@@ -28,7 +29,7 @@ export function App() {
   }, []);
 
   const navigate = (href: string) => {
-    window.history.pushState(null, "", href);
+    window.history.pushState(null, "", withBase(href));
     setRoute(currentRoute());
   };
 

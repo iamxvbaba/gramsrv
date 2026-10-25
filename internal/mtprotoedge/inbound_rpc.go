@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"telesrv/internal/transport"
 )
 
 // ErrInboundRPCQueueFull 表示 inbound RPC 已触达单连接或进程级预算。
@@ -940,6 +942,11 @@ func (c *Conn) runInboundRPC(task inboundRPC) {
 
 	c.metrics.InboundRPCStarted(task.method, now.Sub(task.enqueuedAt))
 	ctx := task.ctx
+	// 把连接对端 IP 作为中立传输元数据注入，绑定设备授权时写 authorizations.ip。
+	// Edge 只产生传输事实；由 RPC 层的 transport.ClientIPFrom 消费，避免反向依赖。
+	if ip := c.clientIP(); ip != "" {
+		ctx = transport.WithClientIP(ctx, ip)
+	}
 	if task.run != nil {
 		_ = task.run(ctx)
 	}

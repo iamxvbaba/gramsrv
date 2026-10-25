@@ -184,6 +184,7 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 		UserID:          req.UserID,
 		JoinAsChannelID: req.JoinAsChannelID,
 		SSRC:            req.SSRC,
+		Muted:           req.Muted,
 		JoinDate:        req.Now,
 		ActiveDate:      req.Now,
 		LastCheckDate:   req.Now,
@@ -196,11 +197,15 @@ func (s *GroupCallStore) JoinGroupCall(_ context.Context, req domain.JoinGroupCa
 	if rejoining && wasActive {
 		// 同设备换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
 		p.JoinDate = existing.JoinDate
+		p.MutedByAdmin = existing.MutedByAdmin
 	}
 	// join_muted 策略：普通成员入会即静音且不可自行开麦（muted_by_admin）。
 	if call.JoinMuted && !req.IsAdmin {
 		p.Muted = true
 		p.MutedByAdmin = true
+	}
+	if p.MutedByAdmin {
+		p.Muted = true
 	}
 	rows[req.UserID] = p
 	for i, inv := range s.invites[req.CallID] {

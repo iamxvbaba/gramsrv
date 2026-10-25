@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
 	"github.com/iamxvbaba/td/tlprofile"
@@ -292,13 +294,21 @@ func (r *Router) onContactsGetBlocked(ctx context.Context, req *tg.ContactsGetBl
 	if err != nil {
 		return nil, internalErr()
 	}
-	if req.Limit > 100 || req.Offset < 0 {
-		return nil, limitInvalidErr()
+	offset, limit := req.Offset, req.Limit
+	if limit > 100 || offset < 0 {
+		r.log.Debug("contacts.getBlocked clamped out-of-range pagination",
+			append(r.contextLogFields(ctx), zap.Int("offset", offset), zap.Int("limit", limit))...)
+		if offset < 0 {
+			offset = 0
+		}
+		if limit > 100 {
+			limit = 100
+		}
 	}
 	if r.deps.Contacts == nil {
 		return tdesktop.BlockedContacts(), nil
 	}
-	list, err := r.deps.Contacts.GetBlocked(ctx, userID, req.Offset, req.Limit)
+	list, err := r.deps.Contacts.GetBlocked(ctx, userID, offset, limit)
 	if err != nil {
 		return nil, internalErr()
 	}
@@ -315,7 +325,7 @@ func (r *Router) onContactsGetBlocked(ctx context.Context, req *tg.ContactsGetBl
 		users = append(users, r.tgUser(item.User))
 	}
 	r.applyUsernamesToPeerObjects(ctx, users, nil)
-	if list.Count > len(blocked)+req.Offset {
+	if list.Count > len(blocked)+offset {
 		return &tg.ContactsBlockedSlice{Count: list.Count, Blocked: blocked, Chats: []tg.ChatClass{}, Users: users}, nil
 	}
 	return &tg.ContactsBlocked{Blocked: blocked, Chats: []tg.ChatClass{}, Users: users}, nil
@@ -390,8 +400,16 @@ func (r *Router) onContactsGetStatuses(ctx context.Context) ([]tg.ContactStatus,
 		seen[id] = struct{}{}
 		u := contact.User
 		if current, ok := usersByID[id]; ok {
+			u.Deleted = current.Deleted
 			u.LastSeenAt = current.LastSeenAt
 			u.Status = current.Status
+		}
+		if u.Deleted || r.isFrozenPresenceUser(id) {
+			out = append(out, tg.ContactStatus{
+				UserID: id,
+				Status: &tg.UserStatusEmpty{},
+			})
+			continue
 		}
 		status := u.Status
 		if statusVisible[id] {
@@ -493,7 +511,9 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	if err != nil {
 		return nil, contactErr(err)
 	}
-	if !found {
+	// A tombstone has no name, phone or avatar to keep in a contact list, so
+	// adding one would only leave an unreachable row behind.
+	if !found || target.Deleted {
 		return nil, contactIDInvalidErr()
 	}
 	rawNote, hasNote := req.GetNote()
@@ -966,6 +986,11 @@ func contactErr(err error) error {
 		return limitInvalidErr()
 	case errors.Is(err, store.ErrBlocklistInvalid):
 		return contactIDInvalidErr()
+	case errors.Is(err, store.ErrBlocklistConflict):
+		// REPEATABLE READ snapshot raced a concurrent blocklist write. The loss
+		// is only the failed CAS: the winning transaction fully committed, so the
+		// client can refresh and retry instead of seeing a 500.
+		return blocklistConflictErr()
 	case errors.Is(err, contacts.ErrContactNameEmpty):
 		return contactNameEmptyErr()
 	case errors.Is(err, contacts.ErrContactIDInvalid):
@@ -973,6 +998,11 @@ func contactErr(err error) error {
 	case errors.Is(err, contacts.ErrContactReqMissing):
 		return contactReqMissingErr()
 	default:
+		if pgErr := (&pgconn.PgError{}); errors.As(err, &pgErr) && (pgErr.Code == "40001" || pgErr.Code == "40P01") {
+			return blocklistConflictErr()
+		}
 		return internalErr()
 	}
 }
+
+func blocklistConflictErr() error { return tgerr.New(400, "BLOCKLIST_CONFLICT") }

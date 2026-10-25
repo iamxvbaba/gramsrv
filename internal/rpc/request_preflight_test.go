@@ -79,6 +79,8 @@ func TestUploadPartPreflightBeforeBytesDecode(t *testing.T) {
 		{name: "small_at_cap", id: tg.UploadSaveFilePartRequestTypeID, offset: 16, size: appfiles.MaxUploadPartBytes},
 		{name: "small_over_cap", id: tg.UploadSaveFilePartRequestTypeID, offset: 16, size: appfiles.MaxUploadPartBytes + 1, want: "FILE_PART_TOO_BIG"},
 		{name: "big_at_cap", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, big: true, parts: appfiles.MaxUploadParts, size: appfiles.MaxUploadPartBytes},
+		{name: "big_unknown", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, big: true, parts: -1, size: 64 << 10},
+		{name: "big_invalid_negative", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, big: true, parts: -2, size: 64 << 10, want: "FILE_PART_INVALID"},
 		{name: "part_negative", id: tg.UploadSaveFilePartRequestTypeID, offset: 16, part: -1, size: 1, want: "FILE_PART_INVALID"},
 		{name: "part_at_limit", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, part: appfiles.MaxUploadParts, parts: appfiles.MaxUploadParts, size: 1, want: "FILE_PART_INVALID"},
 		{name: "big_parts_over_cap", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, big: true, parts: appfiles.MaxUploadParts + 1, size: 1, want: "FILE_PART_INVALID"},
@@ -118,6 +120,8 @@ func TestLayerRPCFlatBytesPayloadSizeRequiresCompleteLegalUpload(t *testing.T) {
 	}{
 		{name: "small", id: tg.UploadSaveFilePartRequestTypeID, offset: 16, size: 64 << 10, wantOK: true},
 		{name: "big", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, parts: 364, size: 64 << 10, wantOK: true},
+		{name: "big_unknown", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, parts: -1, size: 64 << 10, wantOK: true},
+		{name: "big_invalid_negative", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, parts: -2, size: 64 << 10},
 		{name: "part_negative", id: tg.UploadSaveFilePartRequestTypeID, offset: 16, part: -1, size: 1},
 		{name: "part_at_limit", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, part: appfiles.MaxUploadParts, parts: 364, size: 1},
 		{name: "big_total_invalid", id: tg.UploadSaveBigFilePartRequestTypeID, offset: 20, parts: 0, size: 64 << 10},

@@ -3,16 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { UserPicker } from "../components/EntityPicker";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, PageFrame, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatCurrency, formatCurrencyAmount, toSmallestUnits } from "../lib/format";
+import type { Navigate } from "../routing";
 import type { AccountRow, CollectiblePhoneRow, CollectiblePhoneTier } from "../types";
 
 type Status = "" | "vault" | "owned" | "burned";
 
 function shownPhone(value: string) { return value.startsWith("+") ? value : `+${value}`; }
 
-export function CollectiblePhonesPage() {
+export function CollectiblePhonesPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [rows, setRows] = useState<CollectiblePhoneRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -73,6 +75,7 @@ export function CollectiblePhonesPage() {
   return <PageFrame title={t("phones.pageTitle")} eyebrow={t("phones.eyebrow")} actions={
     <button className="btn icon-text" onClick={load} disabled={busy}><RefreshCw size={15} className={busy ? "spin" : ""}/>{t("common.refresh")}</button>
   }>
+    <SectionTabs sectionId="nft" active="/collectible-phones" navigate={navigate} />
     {error && <Alert>{error}</Alert>}
     <div className="metric-row compact-metrics">
       <div className="metric"><span>{t("phones.standard")}</span><strong>{counts.standard}</strong></div>

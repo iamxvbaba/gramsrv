@@ -26,6 +26,10 @@ import (
 
 func starGiftInvalidErr() error { return tgerr.New(400, "STARGIFT_INVALID") }
 
+// starGiftSlugInvalidErr 对齐官方 payments.getUniqueStarGiftValueInfo 的
+// STARGIFT_SLUG_INVALID：只有“slug 本身无效”用它，其它语义仍走 STARGIFT_INVALID。
+func starGiftSlugInvalidErr() error { return tgerr.New(400, "STARGIFT_SLUG_INVALID") }
+
 func devStarsTopupOptions() []tg.StarsTopupOption {
 	return []tg.StarsTopupOption{
 		{Stars: 1000, Currency: "USD", Amount: 99},
@@ -91,6 +95,17 @@ func validDevStarsPaymentCredentials(credentials tg.InputPaymentCredentialsClass
 		return false
 	}
 	return payload["type"] == "telesrv_dev" && payload["form_id"] == strconv.FormatInt(formID, 10)
+}
+
+// devPaymentsErr reports a denied dev/fiat purchase. The local checkout is
+// denied by default (DevStarsPaymentsEnabled); the purchase simply does not
+// exist here, matching the NOT_IMPLEMENTED policy used for unconfigured
+// purchases.
+func (r *Router) devPaymentsErr() error {
+	if r.cfg.DevStarsPaymentsEnabled {
+		return nil
+	}
+	return notImplementedErr()
 }
 
 func (r *Router) onPaymentsGetStarsGiveawayOptions(ctx context.Context) ([]tg.StarsGiveawayOption, error) {
@@ -349,6 +364,9 @@ func (r *Router) starsGiveawayPaymentForm(ctx context.Context, buyerUserID int64
 	if r.deps.Stars == nil {
 		return nil, notImplementedErr()
 	}
+	if err := r.devPaymentsErr(); err != nil {
+		return nil, err
+	}
 	now := int(r.clock.Now().Unix())
 	form, err := r.deps.Stars.IssuePurchaseForm(ctx, domain.StarsPurchaseForm{
 		Kind: domain.StarsPurchaseGiveaway, BuyerUserID: buyerUserID, Giveaway: giveaway,
@@ -382,7 +400,7 @@ func (r *Router) onPaymentsGetStarGifts(ctx context.Context, hash int) (tg.Payme
 	_ = catalogHash
 	return &tg.PaymentsStarGifts{
 		Hash:  catalogHash,
-		Gifts: tgStarGifts(catalog),
+		Gifts: tgStarGifts(catalog, r.clock.Now().Unix()),
 		Chats: []tg.ChatClass{},
 		Users: []tg.UserClass{},
 	}, nil
@@ -406,7 +424,26 @@ func (r *Router) onPaymentsGetPaymentForm(ctx context.Context, req *tg.PaymentsG
 	}
 
 	switch inv := req.Invoice.(type) {
-	case *tg.InputInvoicePremiumGiftStars, *tg.InputInvoicePremiumGiftCode, *tg.InputInvoiceMessage:
+	case *tg.InputInvoiceMessage:
+		// A bot's own invoice wins over the Premium path: the premium handler
+		// only accepts the built-in Premium bot, so a third-party bot invoice
+		// would otherwise be rejected as an unknown invoice.
+		if form, err := r.botInvoicePaymentForm(ctx, userID, inv.Peer, inv.MsgID); err == nil {
+			return form, nil
+		} else if !isInvoiceLookupMiss(err) {
+			// Logged as well, so a failure here is distinguishable from the
+			// miss path above when reading the server log.
+			if r.log != nil {
+				r.log.Warn("bot invoice form error",
+					zap.Int64("viewer_id", userID),
+					zap.Int("msg_id", inv.MsgID),
+					zap.Error(err),
+				)
+			}
+			return nil, err
+		}
+		return r.premiumPaymentForm(ctx, userID, inv)
+	case *tg.InputInvoicePremiumGiftStars, *tg.InputInvoicePremiumGiftCode:
 		return r.premiumPaymentForm(ctx, userID, inv)
 	case *tg.InputInvoiceStars:
 		if inv != nil {
@@ -574,6 +611,9 @@ func (r *Router) starsGiftPaymentForm(ctx context.Context, buyerUserID int64, pu
 	if r.deps.Stars == nil {
 		return nil, notImplementedErr()
 	}
+	if err := r.devPaymentsErr(); err != nil {
+		return nil, err
+	}
 	now := int(r.clock.Now().Unix())
 	form, err := r.deps.Stars.IssuePurchaseForm(ctx, domain.StarsPurchaseForm{
 		Kind: domain.StarsPurchaseGift, BuyerUserID: buyerUserID, RecipientUserID: recipient.ID,
@@ -603,8 +643,23 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 		return nil, internalErr()
 	}
 
+	if msgInv, ok := req.Invoice.(*tg.InputInvoiceMessage); ok {
+		// A bot invoice is settled here too, not only over sendPaymentForm:
+		// TDesktop pays a stars invoice with sendStarsForm, so routing this
+		// straight to the Premium handler answered INVOICE_INVALID for every
+		// bot invoice. A miss falls through so Premium invoices still work.
+		res, handled, err := r.botInvoiceSettle(ctx, userID, &tg.PaymentsSendPaymentFormRequest{
+			FormID:  req.FormID,
+			Invoice: msgInv,
+		}, msgInv)
+		if handled {
+			return res, err
+		}
+		return r.sendPremiumStarsForm(ctx, userID, req.FormID, msgInv)
+	}
+
 	switch inv := req.Invoice.(type) {
-	case *tg.InputInvoicePremiumGiftStars, *tg.InputInvoiceMessage:
+	case *tg.InputInvoicePremiumGiftStars:
 		return r.sendPremiumStarsForm(ctx, userID, req.FormID, inv)
 	case *tg.InputInvoiceStars:
 		if inv != nil {
@@ -663,6 +718,9 @@ func (r *Router) onPaymentsSendStarsForm(ctx context.Context, req *tg.PaymentsSe
 	buyerPremium := r.viewerPremium(ctx, userID)
 	if gift.RequirePremium && !buyerPremium {
 		return nil, tgerr400("PREMIUM_ACCOUNT_REQUIRED")
+	}
+	if gift.SupportOnly && !r.viewerSupport(ctx, userID) {
+		return nil, tgerr.New(400, "STARGIFT_USAGE_LIMITED")
 	}
 	upgradeStars := int64(0)
 	if inv.IncludeUpgrade {
@@ -725,7 +783,18 @@ func (r *Router) onPaymentsSendPaymentForm(ctx context.Context, req *tg.Payments
 	if err != nil {
 		return nil, internalErr()
 	}
-	if !r.cfg.DevStarsPaymentsEnabled || !validDevStarsPaymentCredentials(req.Credentials, req.FormID) {
+	// A bot invoice is settled for real Stars, so it is handled before the
+	// dev-payment gates below: those require a local WebView provider and
+	// form-bound credentials, which an XTR purchase never carries.
+	if inv, ok := req.Invoice.(*tg.InputInvoiceMessage); ok {
+		if result, settled, err := r.botInvoiceSettle(ctx, userID, req, inv); settled {
+			return result, err
+		}
+	}
+	if err := r.devPaymentsErr(); err != nil {
+		return nil, err
+	}
+	if !validDevStarsPaymentCredentials(req.Credentials, req.FormID) {
 		return nil, tgerr.New(400, "PAYMENT_CREDENTIALS_INVALID")
 	}
 	if _, present := req.GetRequestedInfoID(); present || req.RequestedInfoID != "" {
@@ -877,6 +946,9 @@ func (r *Router) validateStarsTopupPurpose(ctx context.Context, userID int64, pu
 func (r *Router) starsTopupPaymentForm(ctx context.Context, userID int64, purpose *tg.InputStorePaymentStarsTopup) (tg.PaymentsPaymentFormClass, error) {
 	if r.deps.Stars == nil {
 		return nil, notImplementedErr()
+	}
+	if err := r.devPaymentsErr(); err != nil {
+		return nil, err
 	}
 	_, peer, err := r.validateStarsTopupPurpose(ctx, userID, purpose)
 	if err != nil {
@@ -1089,6 +1161,12 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 	if r.deps.Gifts == nil {
 		return emptySavedStarGifts(), nil
 	}
+	// A deleted account is a tombstone: its profile exposes no gifts, NFT ones
+	// included. The rows stay attached to the stable user id for the ledger, but
+	// nothing may render them as possessions of a ghost.
+	if r.starGiftOwnerDeleted(ctx, userID, owner) {
+		return emptySavedStarGifts(), nil
+	}
 	// Gifts hidden from the profile (unsaved) are visible only to the owner (or a
 	// channel admin). Never trust the client's exclude_unsaved flag for other
 	// viewers: force-exclude hidden gifts unless the requester manages the owner.
@@ -1106,6 +1184,8 @@ func (r *Router) onPaymentsGetSavedStarGifts(ctx context.Context, req *tg.Paymen
 		ExcludeHosted:       req.ExcludeHosted,
 		ExcludeUpgradable:   req.ExcludeUpgradable,
 		ExcludeUnupgradable: req.ExcludeUnupgradable,
+		SortByValue:         req.SortByValue,
+		PeerColorAvailable:  req.PeerColorAvailable,
 		CollectionID:        collectionID,
 		Offset:              req.Offset,
 		Limit:               req.Limit,
@@ -1150,12 +1230,26 @@ func (r *Router) onPaymentsGetSavedStarGift(ctx context.Context, refs []tg.Input
 		manageCache[owner] = v
 		return v
 	}
+	// Same tombstone rule as the profile listing: a deleted account owns nothing
+	// a client may still fetch by reference.
+	deletedCache := make(map[domain.Peer]bool)
+	ownerDeleted := func(owner domain.Peer) bool {
+		if v, ok := deletedCache[owner]; ok {
+			return v
+		}
+		v := r.starGiftOwnerDeleted(ctx, userID, owner)
+		deletedCache[owner] = v
+		return v
+	}
 	for _, ref := range refs {
 		dref, ok, err := r.starGiftRefFromInput(ctx, userID, ref)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
+			continue
+		}
+		if ownerDeleted(dref.Owner) {
 			continue
 		}
 		g, found, err := r.deps.Gifts.GetSaved(ctx, dref)
@@ -1267,6 +1361,23 @@ func (r *Router) starGiftFromCatalog(ctx context.Context, giftID int64) (domain.
 		return domain.StarGift{}, starGiftInvalidErr()
 	}
 	return gift, nil
+}
+
+// starGiftOwnerDeleted reports whether a gift owner is a deleted tombstone.
+// Channels are never deleted this way, and self always resolves to the caller's
+// own live account, so only the user branch needs a lookup.
+func (r *Router) starGiftOwnerDeleted(ctx context.Context, viewerUserID int64, owner domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || owner.Type != domain.PeerTypeUser || owner.ID <= 0 {
+		return false
+	}
+	if owner.ID == viewerUserID {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, viewerUserID, owner.ID)
+	if err != nil || !found {
+		return err != nil
+	}
+	return u.Deleted
 }
 
 // starGiftOwnerPeer 解析 getSavedStarGifts 的 owner：inputPeerSelf/空 → 自己，否则解析 user/channel peer。
@@ -1402,6 +1513,41 @@ func (r *Router) tgSavedStarGiftsResponse(ctx context.Context, viewerUserID int6
 			}
 		}
 	}
+	if capability, ok := r.deps.Gifts.(interface {
+		CrossCraftCapability(context.Context, int64) (bool, int, error)
+	}); ok && len(uniqueIDs) > 0 {
+		allowed, chance, err := capability.CrossCraftCapability(ctx, viewerUserID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			for i := range gifts {
+				gift := &gifts[i]
+				if gift.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) {
+					continue
+				}
+				gift.CanCraftAt = 0
+				if gift.Unique != nil {
+					gift.Unique.CraftChancePermille = 0
+				}
+			}
+		} else {
+			for i := range gifts {
+				gift := &gifts[i]
+				if gift.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) ||
+					!gift.LifecycleStatus.Live() || gift.Unique == nil || gift.Unique.Burned ||
+					gift.Unique.OwnerAddress != "" || gift.Unique.GiftAddress != "" {
+					continue
+				}
+				if gift.CanCraftAt == 0 {
+					gift.CanCraftAt = 1
+				}
+				if gift.Unique.CraftChancePermille == 0 {
+					gift.Unique.CraftChancePermille = chance
+				}
+			}
+		}
+	}
 	catalog, err := r.resolveStarGiftCatalog(ctx, gifts)
 	if err != nil {
 		return nil, err
@@ -1410,7 +1556,7 @@ func (r *Router) tgSavedStarGiftsResponse(ctx context.Context, viewerUserID int6
 	if err != nil {
 		return nil, err
 	}
-	projected := tgSavedStarGifts(viewerUserID, gifts, catalog, availability)
+	projected := tgSavedStarGifts(viewerUserID, gifts, catalog, availability, r.clock.Now().Unix())
 	out := &tg.PaymentsSavedStarGifts{
 		Count: count,
 		Gifts: projected,
@@ -1459,16 +1605,16 @@ func emptySavedStarGifts() *tg.PaymentsSavedStarGifts {
 }
 
 // tgStarGifts 把目录投影为 []tg.StarGiftClass。
-func tgStarGifts(catalog []domain.StarGift) []tg.StarGiftClass {
+func tgStarGifts(catalog []domain.StarGift, now int64) []tg.StarGiftClass {
 	out := make([]tg.StarGiftClass, 0, len(catalog))
 	for _, g := range catalog {
-		out = append(out, tgStarGift(g))
+		out = append(out, tgStarGift(g, now))
 	}
 	return out
 }
 
 // tgStarGift 把目录项投影为 tg.StarGift（Sticker 须为带 sticker 属性的有效 Document）。
-func tgStarGift(g domain.StarGift) *tg.StarGift {
+func tgStarGift(g domain.StarGift, now int64) *tg.StarGift {
 	gift := &tg.StarGift{
 		Limited: g.Limited, SoldOut: g.SoldOut, Birthday: g.Birthday,
 		RequirePremium: g.RequirePremium, LimitedPerUser: g.LimitedPerUser,
@@ -1505,7 +1651,7 @@ func tgStarGift(g domain.StarGift) *tg.StarGift {
 		gift.SetPerUserTotal(g.PerUserTotal)
 		gift.SetPerUserRemains(g.PerUserRemains)
 	}
-	if g.LockedUntilDate > 0 {
+	if g.LockedUntilDate > 0 && int64(g.LockedUntilDate) > now {
 		gift.SetLockedUntilDate(g.LockedUntilDate)
 	}
 	if g.Auction {
@@ -1646,12 +1792,12 @@ func (r *Router) resolveStarGiftCatalog(ctx context.Context, gifts []domain.Save
 }
 
 // tgSavedStarGifts 把已收到礼物实例投影为 []tg.SavedStarGift。
-func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog map[int64]domain.StarGift, availability map[int64]domain.StarGiftCollectibleAvailability) []tg.SavedStarGift {
+func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog map[int64]domain.StarGift, availability map[int64]domain.StarGiftCollectibleAvailability, now int64) []tg.SavedStarGift {
 	out := make([]tg.SavedStarGift, 0, len(gifts))
 	for _, g := range gifts {
 		item := tg.SavedStarGift{
 			Date: g.Date,
-			Gift: tgSavedStarGiftGift(g, catalog, availability),
+			Gift: tgSavedStarGiftGift(g, catalog, availability, now),
 		}
 		if g.NameHidden {
 			item.NameHidden = true
@@ -1732,7 +1878,7 @@ func tgSavedStarGifts(viewerUserID int64, gifts []domain.SavedStarGift, catalog 
 }
 
 // tgSavedStarGiftGift 按收到时的不可变 revision 投影，目录停用或后续改版不影响历史显示。
-func tgSavedStarGiftGift(g domain.SavedStarGift, catalog map[int64]domain.StarGift, availability map[int64]domain.StarGiftCollectibleAvailability) tg.StarGiftClass {
+func tgSavedStarGiftGift(g domain.SavedStarGift, catalog map[int64]domain.StarGift, availability map[int64]domain.StarGiftCollectibleAvailability, now int64) tg.StarGiftClass {
 	if g.Unique != nil {
 		return tgUniqueStarGift(*g.Unique)
 	}
@@ -1742,7 +1888,7 @@ func tgSavedStarGiftGift(g domain.SavedStarGift, catalog map[int64]domain.StarGi
 			gift.UpgradeTotal = current.SupplyTotal
 			gift.UpgradeIssued = current.Issued
 		}
-		out := tgStarGift(gift)
+		out := tgStarGift(gift, now)
 		out.ConvertStars = g.ConvertStars
 		// 拍卖中标的礼物必须显示成交价（中标出价），目录 revision 里存的是起拍价。
 		if g.PaidStars > 0 {
@@ -1770,6 +1916,16 @@ func savedStarGiftUserIDs(viewerUserID int64, gifts []domain.SavedStarGift) []in
 	seen := make(map[int64]struct{}, len(gifts))
 	ids := make([]int64, 0, len(gifts))
 	for _, g := range gifts {
+		if g.Unique != nil {
+			for _, peer := range []domain.Peer{g.Unique.Owner, g.Unique.Host} {
+				if peer.Type == domain.PeerTypeUser && peer.ID > 0 {
+					if _, ok := seen[peer.ID]; !ok {
+						seen[peer.ID] = struct{}{}
+						ids = append(ids, peer.ID)
+					}
+				}
+			}
+		}
 		if g.FromUserID == 0 || !savedStarGiftOriginalDetailsVisible(viewerUserID, g) {
 			continue
 		}

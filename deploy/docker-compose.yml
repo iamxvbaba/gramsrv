@@ -30,7 +30,7 @@ services:
     environment:
       POSTGRES_DB: telesrv
       POSTGRES_USER: telesrv
-      POSTGRES_PASSWORD: telesrv
+      POSTGRES_PASSWORD: ${TELESRV_POSTGRES_PASSWORD:-telesrv}
       TZ: UTC
     ports:
       - "127.0.0.1:5432:5432"
@@ -47,13 +47,18 @@ services:
   redis:
     image: redis:7-alpine
     container_name: telesrv-redis
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${TELESRV_REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
     ports:
       - "127.0.0.1:6399:6379"   # 仅宿主回环可达；容器内仍为 6379
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then export REDISCLI_AUTH=\"$$REDIS_PASSWORD\"; fi; redis-cli --no-auth-warning ping | grep -qx PONG"]
       interval: 5s
       timeout: 3s
       retries: 10

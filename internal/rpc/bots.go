@@ -121,8 +121,7 @@ func (r *Router) registerBots(d *tlprofile.Dispatcher) {
 			Bot)
 	})
 	registerRPC[*tg.BotsCheckUsernameRequest](d, tlprofile.SemanticMethodBotsCheckUsername, func(ctx context.Context, layerRequest *tg.BotsCheckUsernameRequest) (any, error) {
-		return r.onBotsCheckUsername(ctx, layerRequest.
-			Username)
+		return r.onBotsCheckUsername(ctx, layerRequest)
 	})
 	registerRPC[*tg.BotsCreateBotRequest](d, tlprofile.SemanticMethodBotsCreateBot, func(ctx context.Context, layerRequest *tg.BotsCreateBotRequest) (any, error) {
 		return r.onBotsCreateBot(ctx, layerRequest)
@@ -212,7 +211,15 @@ func (r *Router) onBotsGetAdminedBots(ctx context.Context) ([]tg.UserClass, erro
 	return r.tgUsersForViewer(userID, bots), nil
 }
 
-func (r *Router) onBotsCheckUsername(ctx context.Context, username string) (bool, error) {
+func (r *Router) onBotsCheckUsername(ctx context.Context, req *tg.BotsCheckUsernameRequest) (bool, error) {
+	if req == nil {
+		return false, usernameInvalidErr()
+	}
+	// Additional bot usernames have distinct ownership/lifecycle semantics.
+	if req.Additional || req.Flags.Has(0) {
+		return false, methodInvalidErr()
+	}
+	username := req.Username
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return false, internalErr()

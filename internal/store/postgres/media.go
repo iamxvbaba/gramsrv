@@ -1708,6 +1708,24 @@ WHERE owner_peer_type = $1
 	return maxOrder, err
 }
 
+// WithTx runs fn inside a database transaction with a transaction-scoped
+// MediaStore. If fn returns nil the transaction is committed; otherwise it
+// is rolled back. A transaction-scoped advisory lock serialises concurrent
+// bot-avatar seeding across instances; being xact-scoped it is released
+// automatically on commit OR rollback, so a failed seed cannot leak the lock
+// on its pooled connection.
+func (s *MediaStore) WithTx(ctx context.Context, fn func(ctx context.Context, txMedia store.MediaStore) error) error {
+	return withTx(ctx, s.db, "media.WithTx", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, botAvatarsLockKey); err != nil {
+			return fmt.Errorf("acquire bot avatar lock: %w", err)
+		}
+		txStore := &MediaStore{db: tx, q: s.q.WithTx(tx), documents: newDocumentMetaCache(documentMetaCacheCapacity)}
+		return fn(ctx, txStore)
+	})
+}
+
+const botAvatarsLockKey = int64(0x626f746176617461) // "botavata"
+
 func normalizeProfilePhotoKind(kind domain.ProfilePhotoKind) domain.ProfilePhotoKind {
 	if kind == domain.ProfilePhotoKindFallback {
 		return kind

@@ -48,6 +48,48 @@
   border-radius: var(--radius);
 }
 
+/* Compose detail sub-blocks (summary, tables, disclosures) with a consistent
+   vertical rhythm instead of letting them butt against each other. */
+.detail-stack {
+  display: grid;
+  gap: 10px;
+}
+
+/* Reported-message column in moderation evidence. The body is the primary
+   evidence for a message report, so it must be readable inline -- wrapped in
+   full -- not clamped to an ellipsis the operator has to hover or dig for. */
+td.evidence-message-cell {
+  vertical-align: top;
+  min-width: 240px;
+}
+
+.evidence-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* "Open message" jumps from a report item to the same message in the
+   Messages console, so the operator sees the report in context. */
+.evidence-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  color: var(--brand);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.evidence-open:hover {
+  background: var(--panel-subtle);
+  border-color: var(--brand-tint-border);
+}
+
 .section-block,
 .action-dock,
 .surface {
@@ -84,6 +126,29 @@
   color: var(--text-soft);
   font-weight: 800;
   border-bottom: 1px solid var(--line);
+}
+
+/* Irreversible actions get their own block, visually cut off from the routine
+   controls above it: a hairline in the danger tone on all sides, a tinted
+   background, and space above. It reads as "not one of the others" before the
+   label is parsed. */
+.account-danger-zone {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+}
+
+.account-danger-zone .dock-title {
+  color: var(--danger);
+  border-bottom-color: var(--danger-border);
+}
+
+.account-danger-zone .muted {
+  margin: 0;
 }
 
 .action-dock > .btn,
@@ -446,7 +511,7 @@
 .gift-field-label { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 .gift-file-copy strong { overflow: hidden; color: var(--heading); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .gift-file-copy small { color: var(--muted); font-size: 11px; font-weight: 500; }
-.gift-file-action { padding: 7px 10px; color: var(--brand); background: var(--brand-tint); border: 1px solid var(--brand-tint-border); border-radius: var(--radius-sm); font-size: 11px; font-weight: 800; }
+.gift-file-action { padding: 7px 10px; color: var(--brand); background: var(--brand-tint); border: 1px solid var(--brand-tint-border); border-radius: var(--radius-sm); font-size: 11px; font-weight: 800; white-space: nowrap; }
 
 .gif-catalog-thumb { width: 72px; height: 52px; object-fit: cover; border-radius: var(--radius-sm); background: var(--panel-subtle); }
 .gif-catalog-preview { display: grid; place-items: center; max-height: 220px; overflow: hidden; background: var(--panel-subtle); border: 1px solid var(--line); border-radius: var(--radius-sm); }
@@ -639,6 +704,9 @@
 .gift-table-price { color: var(--warn); }
 .gift-supply-status { margin-top: 4px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .gift-table-actions { display: flex; align-items: center; gap: 6px; }
+.gift-name { display: inline-flex; align-items: center; gap: 6px; }
+.gift-page-size { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.gift-page-size select { height: 30px; padding: 0 8px; color: var(--text); background: var(--input-bg); border: 1px solid var(--line); border-radius: var(--radius-sm); font: inherit; font-weight: 700; }
 .collectible-button { color: var(--purple); background: var(--purple-tint); border-color: var(--purple-border); }
 .collectible-button:hover { background: var(--purple-tint); border-color: var(--purple); }
 
@@ -825,6 +893,37 @@
 .emoji-id:hover {
   border-color: var(--brand-tint-border);
   color: var(--brand);
+}
+
+/* Click-to-copy inline cell values (e.g. user IDs in the accounts table). */
+.copy-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 6px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.copy-id span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy-id svg {
+  flex: 0 0 auto;
+}
+
+.copy-id:hover {
+  color: var(--brand);
+  background: var(--panel-subtle);
+  border-color: var(--brand-tint-border);
 }
 
 .emoji-sub {
@@ -1447,4 +1546,375 @@
   color: #fff;
   font-weight: 800;
   letter-spacing: -.02em;
+}
+
+.avatar-col { width: 44px; }
+
+.avatar-link {
+  display: block;
+  padding: 0;
+  line-height: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+/* --- Server Settings (cmd/telesrv-admin/serversettings.go) ------------ */
+
+/* The identity card's icon slot: the image/figure on the left with a little
+   "edit" button pinned to its corner, the two text fields filling the rest of
+   the section's width on the right, full-width Save button spanning the whole
+   section beneath. */
+.avatar-edit-slot {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* The uploaded server icon is a squircle everywhere else it appears: the
+   sidebar brand and the login screen both render it through .brand-mark at
+   30%. This card renders the same file through .avatar-photo-img, which is a
+   50% circle, so the operator's own logo read as a circle here and as a
+   rounded square in the two places they recognise it. Scoped to the edit slot
+   so the account avatars using .avatar-photo-img elsewhere keep their circles. */
+.avatar-edit-slot .avatar-photo-img {
+  border-radius: 30%;
+}
+
+.avatar-edit-btn {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--brand);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.avatar-edit-btn:hover {
+  background: var(--brand-tint);
+  border-color: var(--brand);
+}
+
+.identity-card {
+  width: 100%;
+}
+
+.identity-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.identity-layout .server-identity-fields {
+  flex: 1 1 auto;
+  gap: 12px;
+}
+
+.identity-layout .form-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.identity-save-row {
+  margin-top: 18px;
+}
+
+.template-reset-row {
+  margin-top: 10px;
+}
+
+.template-textarea {
+  resize: none;
+}
+
+.identity-save-row .btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 40px;
+}
+
+.server-icon-default {
+  background: var(--panel-subtle);
+  border: 1px solid var(--line-strong);
+}
+
+/* Login-notification template cards: lead paragraphs with the {{...}}
+   placeholders rendered as monospace chips, and a warning line under a
+   login-code template that would not actually carry the OTP. */
+.muted-lead {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.muted-lead code {
+  padding: 1px 5px;
+  margin: 0 2px;
+  color: var(--code-text);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-xs);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+}
+
+.code-lead {
+  margin-top: 1.5em;
+  padding-top: 1em;
+  border-top: 1px solid var(--line);
+}
+
+.field-warning {
+  display: block;
+  margin-top: 4px;
+  color: var(--danger-text);
+  font-size: 0.85em;
+}
+
+/* Section blocks carry scroll-anchor so a deep link ("?focus=...") doesn't
+   tuck the card's heading under the sticky topbar. */
+.scroll-anchor {
+  scroll-margin-top: 88px;
+}
+
+/* The .env editor: one collapsible group per `##` section of .env.example,
+   expanding to the editable fields (see internal/procctl/env.go). */
+.env-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.env-group {
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.env-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--panel-subtle);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.env-group-toggle:hover {
+  background: var(--brand-tint);
+}
+
+.env-group-toggle-text {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.env-group-toggle-title {
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.env-group-toggle-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.env-group-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.env-group.open .env-group-chevron {
+  transform: rotate(180deg);
+}
+
+.env-group-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.env-group-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.env-field .env-field-desc {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.env-save-row {
+  margin-top: 12px;
+}
+
+/* Server Settings' Settings/Services tab bar. */
+/* A section with five tabs (Commerce) does not fit a 390px screen at
+   fit-content: the bar was overflowing the page and pushing the whole layout
+   wide. It scrolls horizontally instead, which keeps every tab reachable on a
+   phone and keeps the bar visually a bar rather than a clipped edge. */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 18px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tab-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  appearance: none;
+  border: none;
+  background: transparent;
+  text-decoration: none;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+}
+
+.tab-btn.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* Read-only status cards -- Services tab (host / MTProto reachability probes
+   plus the Compose container list, which already covers Postgres and Redis). */
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.service-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text-soft);
+}
+
+.service-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.service-card-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.service-card-detail {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-card-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+  padding: 4px 9px;
+  border-radius: 999px;
+}
+
+.service-card-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-card.tone-good .service-card-icon { color: var(--good); }
+.service-card.tone-good .service-card-status {
+  color: var(--good);
+  background: var(--good-tint);
+  border: 1px solid var(--good-border);
+}
+
+.service-card.tone-warn .service-card-icon { color: var(--warn); }
+.service-card.tone-warn .service-card-status {
+  color: var(--warn);
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-border);
+}
+
+.service-card.tone-danger .service-card-icon { color: var(--danger); }
+.service-card.tone-danger .service-card-status {
+  color: var(--danger);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-border);
+}
+
+.service-card.tone-idle .service-card-status {
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+}
+
+.services-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

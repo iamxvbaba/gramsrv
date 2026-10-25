@@ -88,6 +88,7 @@ type Service struct {
 	messages               store.MessageStore
 	dialogs                store.DialogStore
 	loginCodeDelivery      store.LoginCodeDeliveryStore
+	loginCodeTemplate      func() (string, error)
 	bots                   store.BotStore
 	fixedCode              string
 	codeTTL                time.Duration
@@ -142,6 +143,12 @@ func WithLoginCodeDelivery(delivery store.LoginCodeDeliveryStore) Option {
 	return func(s *Service) {
 		s.loginCodeDelivery = delivery
 	}
+}
+
+// WithLoginCodeMessageTemplateResolver reads the effective template for each
+// delivery, allowing Admin identity changes to take effect without a restart.
+func WithLoginCodeMessageTemplateResolver(resolve func() (string, error)) Option {
+	return func(s *Service) { s.loginCodeTemplate = resolve }
 }
 
 // WithPasswords lets sign-in stop at SESSION_PASSWORD_NEEDED for 2FA accounts.
@@ -508,11 +515,20 @@ func (s *Service) deliverLoginCode(ctx context.Context, userID int64, phoneCodeH
 	if s.loginCodeDelivery == nil {
 		return ErrLoginCodeDeliveryUnavailable
 	}
+	var template string
+	if s.loginCodeTemplate != nil {
+		resolved, err := s.loginCodeTemplate()
+		if err != nil {
+			return errors.Join(ErrLoginCodeDeliveryFailed, fmt.Errorf("resolve login code message template: %w", err))
+		}
+		template = resolved
+	}
 	now := time.Now()
 	if _, err := s.loginCodeDelivery.DeliverLoginCodeMessage(ctx, domain.LoginCodeDeliveryRequest{
 		UserID:        userID,
 		PhoneCodeHash: phoneCodeHash,
 		Code:          code,
+		Template:      template,
 		Date:          int(now.Unix()),
 		ExpiresAt:     now.Add(s.codeTTL).Unix(),
 	}); err != nil {

@@ -182,6 +182,24 @@ func botAPIQueuedUpdateKind(botID int64, item domain.BotAPIUpdate, now time.Time
 	if item.Ephemeral != nil && !botAPIQueuedEphemeralValid(botID, item, now) {
 		return "", false
 	}
+	if item.Kind == domain.BotAPIUpdatePreCheckoutQuery {
+		query := item.PreCheckout
+		if query == nil || query.ID == 0 || query.BotUserID != botID || query.UserID <= 0 ||
+			query.Currency == "" || query.TotalAmount <= 0 || item.Date <= 0 {
+			return "", false
+		}
+		// The gate lives 10 seconds, so a queued question that was never read is
+		// worthless: letting it through would only deliver a query whose window
+		// has already closed and confuse the bot into answering a stale id.
+		if !now.Before(time.Unix(int64(item.Date), 0).Add(preCheckoutTimeout)) {
+			return "", false
+		}
+		// Returned here rather than falling through: the checks below require a
+		// message id and a peer type, and a pre-checkout question has neither by
+		// design. Letting it fall through rejected every question after it had
+		// already been validated, which is why the bot never saw one.
+		return eventType, true
+	}
 	if item.Kind == domain.BotAPIUpdateCallbackQuery {
 		if item.Date <= 0 || !now.Before(time.Unix(int64(item.Date), 0).Add(botCallbackTimeout)) {
 			return "", false
@@ -249,6 +267,23 @@ func botAPIQueuedUpdateEventFromMessages(botID int64, item domain.BotAPIUpdate, 
 			event.BotCallbackQuery = &callback
 		}
 		return event, true
+	}
+	// A pre-checkout query is not about any message: it carries only the order
+	// fields, with no peer and no message id. It therefore has to be handled
+	// before the peer switch below, which would drop it for having neither.
+	if eventType == domain.UpdateEventBotPreCheckoutQuery {
+		query := item.PreCheckout
+		if query == nil {
+			return domain.UpdateEvent{}, false
+		}
+		preCheckout := *query
+		return domain.UpdateEvent{
+			UserID:         botID,
+			Type:           eventType,
+			BotAPIUpdateID: item.ID,
+			Date:           item.Date,
+			BotPreCheckout: &preCheckout,
+		}, true
 	}
 	if eventType == domain.UpdateEventBotCallbackQuery && item.Callback.InlineMessage != nil {
 		callback := *item.Callback
@@ -348,6 +383,8 @@ func botAPIUpdateEventType(kind domain.BotAPIUpdateKind) (domain.UpdateEventType
 		return domain.UpdateEventEditMessage, true
 	case domain.BotAPIUpdateCallbackQuery:
 		return domain.UpdateEventBotCallbackQuery, true
+	case domain.BotAPIUpdatePreCheckoutQuery:
+		return domain.UpdateEventBotPreCheckoutQuery, true
 	default:
 		return "", false
 	}
@@ -676,6 +713,11 @@ func botAPIMessageMediaProjectable(media *domain.MessageMedia) bool {
 			return media.ServiceAction.WebViewData != nil
 		case domain.MessageServiceActionRequestedPeer:
 			return botAPIRequestedPeerProjectable(media.ServiceAction.RequestedPeer)
+		case domain.MessageServiceActionPayment:
+			// The service message has no media of its own; it is only reachable
+			// as successful_payment, so it would otherwise be filtered out here
+			// and the bot would never learn the charge id.
+			return media.ServiceAction.Payment != nil && media.ServiceAction.Payment.ChargeID != ""
 		default:
 			return false
 		}

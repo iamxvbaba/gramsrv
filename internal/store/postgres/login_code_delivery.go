@@ -31,6 +31,7 @@ type loginCodeDeliveryReceiptQuerier interface {
 type loginCodeDeliveryReceipt struct {
 	userID           int64
 	codeFingerprint  []byte
+	template         string
 	privateMessageID int64
 	messageBoxID     int
 	pts              int
@@ -55,7 +56,8 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 	if req.ExpiresAt <= int64(req.Date) {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("login code receipt expiry: %w: date=%d expires_at=%d", domain.ErrLoginCodeDeliveryInvalid, req.Date, req.ExpiresAt)
 	}
-	base, err := domain.OfficialLoginCodeMessage(req.UserID, req.Code, req.Date)
+	template := domain.SnapshotLoginCodeMessageTemplate(req.Template)
+	base, err := domain.OfficialLoginCodeMessageWithTemplate(req.UserID, template, req.Code, req.Date)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, err
 	}
@@ -99,6 +101,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 		}
 		msg, err := store.RestoreLoginCodeDeliveryMessage(
 			receipt.userID,
+			receipt.template,
 			req.Code,
 			receipt.messageDate,
 			receipt.privateMessageID,
@@ -224,9 +227,10 @@ INSERT INTO login_code_message_deliveries (
   message_box_id,
   pts,
   message_date,
+  template,
   expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		deliveryKey[:], codeFingerprint[:], req.UserID, msg.UID, msg.ID, msg.Pts, msg.Date, time.Unix(req.ExpiresAt, 0).UTC(),
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		deliveryKey[:], codeFingerprint[:], req.UserID, msg.UID, msg.ID, msg.Pts, msg.Date, template, time.Unix(req.ExpiresAt, 0).UTC(),
 	); err != nil {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("save login code delivery receipt: %w", err)
 	}
@@ -269,6 +273,7 @@ func (s *MessageStore) recoverLoginCodeDeliveryAfterCommitError(
 			}
 			msg, err := store.RestoreLoginCodeDeliveryMessage(
 				receipt.userID,
+				receipt.template,
 				req.Code,
 				receipt.messageDate,
 				receipt.privateMessageID,
@@ -305,7 +310,8 @@ SELECT user_id,
        private_message_id,
        message_box_id,
        pts,
-       message_date
+       message_date,
+       template
 FROM login_code_message_deliveries
 WHERE delivery_key = $1`, deliveryKey[:]).Scan(
 		&receipt.userID,
@@ -314,6 +320,7 @@ WHERE delivery_key = $1`, deliveryKey[:]).Scan(
 		&boxID,
 		&pts,
 		&messageDate,
+		&receipt.template,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return loginCodeDeliveryReceipt{}, false, nil

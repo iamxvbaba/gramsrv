@@ -34,7 +34,7 @@ func (r *Router) onMessagesSetDefaultHistoryTTL(ctx context.Context, period int)
 	if err != nil {
 		return false, internalErr()
 	}
-	if period < 0 || period > maxHistoryTTLPeriod {
+	if period < 0 || period > 365*24*3600 || period%86400 != 0 {
 		return false, ttlPeriodInvalidErr()
 	}
 	if r.deps.Messages == nil {

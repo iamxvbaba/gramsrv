@@ -53,6 +53,9 @@ func (s *gifCatalogMemoryStore) SetGifCatalogEnabled(context.Context, int64, boo
 func (s *gifCatalogMemoryStore) SetGifCatalogSortOrder(context.Context, int64, int) (bool, error) {
 	return false, nil
 }
+func (s *gifCatalogMemoryStore) SetGifCatalogCategory(context.Context, int64, string) (bool, error) {
+	return false, nil
+}
 func (s *gifCatalogMemoryStore) DeleteGifCatalogEntry(context.Context, int64) (bool, error) {
 	return false, nil
 }

@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/identity"
 	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -85,6 +87,51 @@ func TestExistingAccountSendCodeDeliversBeforeSignInAndDoesNotRedeliver(t *testi
 	}
 	if lateMessage.ID != 0 || len(delivery.requests) != 1 {
 		t.Fatalf("SignIn lateMessage=%+v delivery calls=%d, want zero/unchanged", lateMessage, len(delivery.requests))
+	}
+}
+
+func TestLoginCodeTemplateResolverReadsEveryDelivery(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	u, err := users.Create(ctx, domain.User{Phone: "15550009221", FirstName: "Template"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	events := memory.NewUpdateEventStore()
+	delivery := memory.NewLoginCodeDeliveryStore(messages, events)
+	identityStore := identity.NewStore(t.TempDir())
+	if err := identityStore.SetLoginCodeMessageTemplate("Panel 🔐 {{code}} for {{server_name}}"); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(users, memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginCodeDelivery(delivery),
+		WithLoginCodeMessageTemplateResolver(func() (string, error) {
+			info, err := identityStore.Get()
+			if err != nil {
+				return "", err
+			}
+			return domain.ResolveLoginCodeMessageTemplate(info.LoginCodeMessageTemplate, "Environment {{code}}"), nil
+		}))
+	for _, want := range []string{"Panel 🔐 12345", "Environment 12345"} {
+		if _, err := svc.SendCode(ctx, u.Phone); err != nil {
+			t.Fatalf("SendCode: %v", err)
+		}
+		history, err := messages.ListByUser(ctx, u.ID, domain.MessageFilter{HasPeer: true, Peer: domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID}, Limit: 10})
+		if err != nil || len(history.Messages) == 0 || !strings.Contains(history.Messages[0].Body, want) {
+			t.Fatalf("latest login message = %+v err=%v, want %q", history.Messages, err, want)
+		}
+		if len(history.Messages[0].Entities) != 1 || history.Messages[0].Entities[0].Length != 5 {
+			t.Fatalf("code entity = %+v", history.Messages[0].Entities)
+		}
+		if err := identityStore.SetLoginCodeMessageTemplate(""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := events.ListAfter(ctx, u.ID, 0, 10)
+	if err != nil || len(list) != 2 || list[1].Pts != list[0].Pts+1 {
+		t.Fatalf("durable login events = %+v err=%v", list, err)
 	}
 }
 

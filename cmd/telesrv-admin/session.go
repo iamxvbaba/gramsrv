@@ -26,10 +26,28 @@ type sessionClaims struct {
 	Actor string `json:"actor"`
 	Exp   int64  `json:"exp"`
 	Nonce string `json:"nonce"`
-	// Permissions is the right set granted to this session, taken from
-	// TELESRV_ADMIN_UI_PERMISSIONS at login. It travels inside the signed cookie
-	// rather than being re-read per request, so a session keeps the rights it was
-	// issued with, and it cannot be edited by the browser: the HMAC covers it.
+	// UserID identifies the admin_console_users row this session belongs to.
+	//
+	// Zero means the break-glass operator: whoever logged in with
+	// TELESRV_ADMIN_UI_PASSWORD / _TOKEN rather than a named account. That
+	// login has no database row, so it is deliberately exempt from the
+	// per-request revocation check below -- it is the way back in when the
+	// database is unreachable or every named account has been locked out.
+	UserID int64 `json:"uid,omitempty"`
+	// Epoch is the account's token_epoch at the moment this session was minted.
+	//
+	// Permissions travel inside the signed cookie, which is fast but means a
+	// 12-hour session would otherwise keep whatever rights it was issued with
+	// long after they were taken away. Every request re-reads the account's
+	// current epoch and refuses the session if it has moved, so disabling an
+	// operator, editing their rights or changing their password logs them out
+	// on their very next request.
+	Epoch int32 `json:"epoch,omitempty"`
+	// Permissions is the right set granted to this session. For a named account
+	// it is a snapshot of that row's permissions; for the break-glass operator
+	// it comes from TELESRV_ADMIN_UI_PERMISSIONS. It cannot be edited by the
+	// browser: the HMAC covers it. It is still re-read per request for named
+	// accounts (see Epoch) so an edit narrows access immediately.
 	Permissions []string `json:"permissions,omitempty"`
 	// CSRF is the double-submit token bound to this session. Binding it into the
 	// signed claims is what makes the cookie/header pair unforgeable by a sibling

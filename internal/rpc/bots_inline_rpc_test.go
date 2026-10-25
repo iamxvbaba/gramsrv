@@ -19,6 +19,7 @@ import (
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
+	"telesrv/internal/store/storetest"
 )
 
 type inlineBotRPCTestFixture struct {
@@ -125,13 +126,14 @@ func newInlineBotRPCTestFixture(t *testing.T) inlineBotRPCTestFixture {
 		t.Fatalf("set inline placeholder: %v", err)
 	}
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
-		Users:         appusers.NewService(users),
-		Bots:          bots,
-		Messages:      messages,
-		Channels:      channels,
-		Files:         files,
-		Inline:        newTestInlineRegistryStore(),
-		BotAPIUpdates: memory.NewBotAPIUpdateStore(),
+		Users:           appusers.NewService(users),
+		Bots:            bots,
+		Messages:        messages,
+		Channels:        channels,
+		Files:           files,
+		Inline:          newTestInlineRegistryStore(),
+		BotAPIUpdates:   memory.NewBotAPIUpdateStore(),
+		BotPreCheckouts: storetest.NewBotPreCheckoutRegistryStore(),
 	}, zaptest.NewLogger(t), clock.System)
 	return inlineBotRPCTestFixture{router: r, bots: bots, channels: channels, files: files, owner: owner, peer: peer, bot: bot, photo: photo, document: document}
 }

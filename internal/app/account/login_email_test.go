@@ -83,6 +83,23 @@ type afterSavePasswordStore struct {
 	afterSave func(userID int64, settings domain.PasswordSettings)
 }
 
+func (s *afterSavePasswordStore) Mutate(ctx context.Context, userID int64, apply func(*domain.PasswordSettings) error) error {
+	var saved domain.PasswordSettings
+	if err := s.PasswordStore.Mutate(ctx, userID, func(settings *domain.PasswordSettings) error {
+		if err := apply(settings); err != nil {
+			return err
+		}
+		saved = *settings
+		return nil
+	}); err != nil {
+		return err
+	}
+	if s.afterSave != nil {
+		s.once.Do(func() { s.afterSave(userID, saved) })
+	}
+	return nil
+}
+
 func (s *afterSavePasswordStore) Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error {
 	if err := s.PasswordStore.Save(ctx, userID, settings); err != nil {
 		return err
@@ -305,12 +322,19 @@ func TestRecoveryEmailDoesNotLeakIntoLoginEmailPattern(t *testing.T) {
 	svc, users := newLoginEmailService(t)
 	u := createUser(t, users, "15550010004")
 
-	// 设置 2FA 恢复邮箱（email-only 路径即可触发历史 bug 的写入点）。
-	if err := svc.UpdatePasswordSettings(ctx, u.ID, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{
-		Email:    "recovery@secret.com",
-		HasEmail: true,
+	sender := &captureMailSender{}
+	svc.loginEmailSender = sender
+	initial, err := svc.GetPassword(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	algo := initial.NewAlgo
+	algo.Salt1 = append(algo.Salt1, make([]byte, 32)...)
+	if err := setConfirmedPassword(t, svc, sender, u.ID, domain.PasswordInputSettings{
+		NewAlgo: &algo, NewPasswordHash: verifierForPassword(algo, []byte("owner password")),
+		Email: "recovery@secret.com", HasEmail: true,
 	}); err != nil {
-		t.Fatalf("UpdatePasswordSettings: %v", err)
+		t.Fatal(err)
 	}
 
 	settings, err := svc.GetPassword(ctx, u.ID)

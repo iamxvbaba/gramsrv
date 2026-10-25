@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 
@@ -106,7 +108,7 @@ func (f *telegramLoginRPCFixture) authorization(t *testing.T, match bool) telegr
 }
 
 func TestTelegramLoginRPCsAcrossExactLayerProfiles(t *testing.T) {
-	for profile := tlprofile.Profile225; profile <= tlprofile.Profile228; profile++ {
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile232; profile++ {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			f := newTelegramLoginRPCFixture(t)
 
@@ -123,6 +125,23 @@ func TestTelegramLoginRPCsAcrossExactLayerProfiles(t *testing.T) {
 			prompt, ok := dispatchCanonicalValue(result).(*tg.URLAuthResultRequest)
 			if !ok || prompt.Bot.GetID() != f.bot.ID || !prompt.RequestWriteAccess || len(prompt.MatchCodes) != 5 {
 				t.Fatalf("request result = %#v", dispatchCanonicalValue(result))
+			}
+			if prompt.RequestWallet || prompt.Flags.Has(8) || prompt.Flags.Has(9) || prompt.Flags.Has(10) {
+				t.Fatal("ordinary login unexpectedly requested wallet authorization")
+			}
+			var resultWire bin.Buffer
+			if err := result.Encode(&resultWire); err != nil {
+				t.Fatalf("encode exact Layer %d login result: %v", profile, err)
+			}
+			wantID := uint32(0x3cd623ec)
+			if profile >= tlprofile.Profile231 {
+				wantID = 0xbdca6167
+			}
+			if got, _ := resultWire.PeekID(); got != wantID {
+				t.Fatalf("Layer %d login result constructor = %#x, want %#x", profile, got, wantID)
+			}
+			if _, err := tlprofile.DecodeObject(profile, &resultWire, tlprofile.Limits{}); err != nil || resultWire.Len() != 0 {
+				t.Fatalf("decode exact Layer %d login result: %v, trailing=%d", profile, err, resultWire.Len())
 			}
 
 			checked, method := dispatchExactLayerRPCTest(t, f.router, f.ctx, profile, &tg.MessagesCheckURLAuthMatchCodeRequest{
@@ -231,6 +250,44 @@ func TestTelegramLoginRPCsAcrossExactLayerProfiles(t *testing.T) {
 				t.Fatalf("resetWebAuthorizations = %#v method=%q", dispatchCanonicalValue(resetAll), method)
 			}
 		})
+	}
+}
+
+func TestLayer231WalletOAuthRejectedBeforeLoginApproval(t *testing.T) {
+	f := newTelegramLoginRPCFixture(t)
+	authorization := f.authorization(t, false)
+	for _, session := range []tg.InputTonConnectOauthSession{
+		{},
+		{SessionID: 42, ChallengeAnswer: []byte{1}, Body: []byte{2},
+			Proof: tg.WalletOwnershipProof{Timestamp: 123, Signature: []byte{3}}},
+	} {
+		request := &tg.MessagesAcceptURLAuthRequest{}
+		request.SetURL(authorization.DeepLink)
+		request.SetTonconnectSession(session)
+		wire := encodeExactLayerRPC(t, tlprofile.Profile231, request)
+		admitted, err := f.router.AdmitLayer(tlprofile.Profile231, &wire, tlprofile.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, method, err := f.router.DispatchAdmitted(f.ctx, [8]byte{}, 0, 0, 0, admitted); method != "messages.acceptUrlAuth" || !tgerr.Is(err, "METHOD_INVALID") {
+			t.Fatalf("wallet OAuth = %q, %v; want METHOD_INVALID", method, err)
+		}
+		pending, err := f.service.RequestByDeepLink(f.ctx, authorization.DeepLink)
+		if err != nil || pending.Status != domain.TelegramLoginRequestPending || pending.AuthorizedUserID != 0 {
+			t.Fatalf("wallet OAuth mutated login request: %#v, %v", pending, err)
+		}
+		web, err := f.service.ListWebAuthorizations(f.ctx, f.user.ID)
+		if err != nil || len(web) != 0 {
+			t.Fatalf("wallet OAuth created a web authorization: %#v, %v", web, err)
+		}
+	}
+
+	ordinary := &tg.MessagesAcceptURLAuthRequest{}
+	ordinary.SetURL(authorization.DeepLink)
+	dispatchExactLayerRPCTest(t, f.router, f.ctx, tlprofile.Profile231, ordinary)
+	ordinary.SetTonconnectSession(tg.InputTonConnectOauthSession{})
+	if _, err := f.router.onMessagesAcceptURLAuth(f.ctx, ordinary); !tgerr.Is(err, "METHOD_INVALID") {
+		t.Fatalf("approved plain login accepted wallet OAuth replay: %v", err)
 	}
 }
 

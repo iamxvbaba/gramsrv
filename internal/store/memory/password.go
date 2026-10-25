@@ -104,19 +104,35 @@ func (s *PasswordStore) GetByUser(_ context.Context, userID int64) (domain.Passw
 
 func (s *PasswordStore) Save(_ context.Context, userID int64, settings domain.PasswordSettings) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.savePasswordLocked(userID, settings)
+}
+
+func (s *PasswordStore) savePasswordLocked(userID int64, settings domain.PasswordSettings) error {
 	settings.LoginEmail = normalizeLoginEmail(settings.LoginEmail)
 	settings.LoginEmailPattern = domain.MaskEmail(settings.LoginEmail)
 	if settings.LoginEmail != "" {
 		for ownerUserID, existing := range s.m {
 			if ownerUserID != userID && strings.EqualFold(existing.LoginEmail, settings.LoginEmail) {
-				s.mu.Unlock()
 				return domain.ErrEmailOccupied
 			}
 		}
 	}
 	s.m[userID] = clonePasswordSettings(settings)
-	s.mu.Unlock()
 	return nil
+}
+
+func (s *PasswordStore) Mutate(ctx context.Context, userID int64, apply func(*domain.PasswordSettings) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	settings := clonePasswordSettings(s.m[userID])
+	if err := apply(&settings); err != nil {
+		return err
+	}
+	return s.savePasswordLocked(userID, settings)
 }
 
 func (s *PasswordStore) LoginEmailOwner(_ context.Context, email string) (int64, bool, error) {
@@ -140,6 +156,19 @@ func normalizeLoginEmail(email string) string {
 
 func clonePasswordSettings(in domain.PasswordSettings) domain.PasswordSettings {
 	out := in
+	if in.PendingChange != nil {
+		change := *in.PendingChange
+		change.CodeHash = append([]byte(nil), change.CodeHash...)
+		change.Input.NewPasswordHash = append([]byte(nil), change.Input.NewPasswordHash...)
+		if change.Input.NewAlgo != nil {
+			algo := *change.Input.NewAlgo
+			algo.Salt1 = append([]byte(nil), algo.Salt1...)
+			algo.Salt2 = append([]byte(nil), algo.Salt2...)
+			algo.P = append([]byte(nil), algo.P...)
+			change.Input.NewAlgo = &algo
+		}
+		out.PendingChange = &change
+	}
 	if in.CurrentAlgo != nil {
 		algo := *in.CurrentAlgo
 		algo.Salt1 = append([]byte(nil), algo.Salt1...)
@@ -165,35 +194,36 @@ func (s *PasswordStore) GetReactionSettings(_ context.Context, userID int64) (do
 	return cloneAccountReactionSettings(settings), ok, nil
 }
 
-func (s *PasswordStore) SaveReactionSettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) error {
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
-	}
-	settings = cloneAccountReactionSettings(settings)
-	intents, err := effects(settings)
-	if err != nil {
-		return err
-	}
-	s.mu.RLock()
-	outbox := s.deliveryOutbox
-	s.mu.RUnlock()
-	if _, err := applyDeliveryEffects(ctx, intents, outbox, nil); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.reactions[userID] = settings
-	s.mu.Unlock()
-	return nil
-}
-
-func (s *PasswordStore) SaveReactionsNotifySettings(_ context.Context, userID int64, settings domain.AccountReactionSettings) error {
+// UpdateReactionSettings mirrors the PostgreSQL patch boundary: the patch,
+// its delivery effects and the stored settings change together or not at all.
+func (s *PasswordStore) UpdateReactionSettings(ctx context.Context, userID int64, patch domain.AccountReactionSettingsPatch, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error) {
 	if userID <= 0 {
-		return store.ErrDeliveryOutboxRequired
+		return domain.AccountReactionSettings{}, fmt.Errorf("update reaction settings: invalid user")
+	}
+	if effects == nil && !patch.NotifyOnly() {
+		return domain.AccountReactionSettings{}, store.ErrDeliveryOutboxRequired
 	}
 	s.mu.Lock()
-	s.reactions[userID] = cloneAccountReactionSettings(settings)
-	s.mu.Unlock()
-	return nil
+	defer s.mu.Unlock()
+	current, found := s.reactions[userID]
+	if !found {
+		current = domain.DefaultAccountReactionSettings()
+	}
+	updated, err := patch.Apply(current)
+	if err != nil {
+		return domain.AccountReactionSettings{}, err
+	}
+	if effects != nil {
+		intents, err := effects(cloneAccountReactionSettings(updated))
+		if err != nil {
+			return domain.AccountReactionSettings{}, err
+		}
+		if _, err := applyDeliveryEffects(ctx, intents, s.deliveryOutbox, nil); err != nil {
+			return domain.AccountReactionSettings{}, err
+		}
+	}
+	s.reactions[userID] = cloneAccountReactionSettings(updated)
+	return cloneAccountReactionSettings(updated), nil
 }
 
 func cloneAccountReactionSettings(in domain.AccountReactionSettings) domain.AccountReactionSettings {
@@ -256,7 +286,23 @@ func (s *PasswordStore) GetNotifySettings(_ context.Context, ownerUserID int64, 
 	return settings.Clone(), ok, nil
 }
 
+func (s *PasswordStore) GetForumTopicNotifySettings(_ context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[int]domain.PeerNotifySettings, len(topicIDs))
+	for _, id := range topicIDs {
+		key := notifySettingsKeyOf(ownerUserID, domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: peer, TopicID: id})
+		if settings, ok := s.notifySettings[key]; ok {
+			out[id] = settings.Clone()
+		}
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) SaveNotifySettings(_ context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	s.notifySettings[notifySettingsKeyOf(ownerUserID, scope)] = settings.Clone()
 	s.mu.Unlock()

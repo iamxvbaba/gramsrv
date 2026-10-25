@@ -10,9 +10,17 @@ import (
 	"time"
 )
 
+var errMemoryChannelScheduledDelivery = errors.New("memory channel store cannot fence scheduled delivery")
+
 func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChannelMessageRequest) (domain.SendChannelMessageResult, error) {
 	if req.UserID == 0 || req.ChannelID == 0 {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
+	}
+	if req.ScheduledDelivery != nil {
+		// The scheduled queue lives in MessageStore; this test-only store cannot
+		// fence it inside the channel write without a cross-store lock order.
+		// Fail closed rather than send without the scheduled transition.
+		return domain.SendChannelMessageResult{}, errMemoryChannelScheduledDelivery
 	}
 	if strings.TrimSpace(req.Message) == "" && req.Action == nil && req.Media.IsZero() && req.RichMessage.IsZero() {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
@@ -187,6 +195,7 @@ func (s *ChannelStore) SendChannelMessage(_ context.Context, req domain.SendChan
 		From:              domain.Peer{Type: domain.PeerTypeUser, ID: req.UserID},
 		Date:              req.Date,
 		Post:              channel.Broadcast,
+		ShowMessageSender: channel.Broadcast && channel.SignatureProfiles && sendAs != nil && !(sendAs.Type == domain.PeerTypeChannel && sendAs.ID == channel.ID),
 		PostAuthor:        memoryChannelPostAuthor(channel, req.PostAuthor),
 		Silent:            req.Silent,
 		NoForwards:        req.NoForwards || channel.NoForwards,
@@ -475,7 +484,7 @@ func canSendChannelMessageWithBoost(channel domain.Channel, member domain.Channe
 
 // memoryChannelPostAuthor 仅在 signatures 开启的 broadcast post 上保留签名。
 func memoryChannelPostAuthor(channel domain.Channel, author string) string {
-	if !channel.Broadcast || !channel.Signatures {
+	if !channel.Broadcast || !channel.Signatures || channel.SignatureProfiles {
 		return ""
 	}
 	return author

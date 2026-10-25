@@ -78,10 +78,10 @@ func (s *MessageStore) DefaultHistoryTTL(ctx context.Context, userID int64) (int
 }
 
 func (s *MessageStore) SetDefaultHistoryTTL(ctx context.Context, userID int64, period int) error {
-	if userID == 0 {
-		return nil
+	if userID <= 0 {
+		return fmt.Errorf("set default history ttl: invalid user")
 	}
-	if period < 0 {
+	if period < 0 || period > 365*86400 || period%86400 != 0 {
 		return fmt.Errorf("set default history ttl: invalid period")
 	}
 	tag, err := s.db.Exec(ctx, `

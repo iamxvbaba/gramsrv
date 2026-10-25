@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { BotDatabase } from "../src/db.js";
 import { executeCompensatedRefund, fulfillmentForSale, reverseSaleFulfillment } from "../src/bot.js";
 
@@ -16,7 +13,7 @@ test("legacy Stars sale resolves the exact granted amount from its title", () =>
 
 test("Stars reversal debits the snapshotted grant with a deterministic key", async () => {
   const calls = [];
-  const db = { starsRate: () => 999 };
+  const db = { starsRate: async () => 999 };
   const gramsrv = { debitStars: async (...args) => calls.push(args) };
   const sale = { charge_id: "charge-1", fulfillment: { kind: "stars", recipientID: 1001, amount: 20 } };
   await reverseSaleFulfillment(sale, db, gramsrv);
@@ -25,7 +22,7 @@ test("Stars reversal debits the snapshotted grant with a deterministic key", asy
 
 test("Premium reversal only revokes the entitlement created by the purchase", async () => {
   const calls = [];
-  const db = { starsRate: () => 20 };
+  const db = { starsRate: async () => 20 };
   const gramsrv = { revokePremium: async (...args) => calls.push(args) };
   const sale = { charge_id: "charge-premium", fulfillment: { kind: "premium", recipientID: 1001, months: 3, entitlementID: 77 } };
   await reverseSaleFulfillment(sale, db, gramsrv);
@@ -34,27 +31,48 @@ test("Premium reversal only revokes the entitlement created by the purchase", as
 
 test("legacy Premium reversal fails safe instead of clearing unrelated Premium", async () => {
   const sale = { charge_id: "legacy", product: "premium_1m", recipient_id: 1001, fulfillment: {} };
-  await assert.rejects(() => reverseSaleFulfillment(sale, { starsRate: () => 20 }, {}), /ID/);
+  await assert.rejects(() => reverseSaleFulfillment(sale, { starsRate: async () => 20 }, {}), /ID/);
 });
 
-test("Telegram retry does not debit the internal product twice", async (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "telesrv-refund-"));
-  const db = new BotDatabase(path.join(dir, "bot.sqlite3"));
-  t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
-  db.addSale({
-    product: "stars_1", title: "20 Telesrv Stars", starsPrice: 1, recipientID: 1001,
+function mockDb() {
+  const sales = new Map();
+  const refunds = new Map();
+  return {
+    starsRate: async () => 20,
+    addSale: async (sale) => { sales.set(sale.chargeID, { ...sale, payment_status: "done" }); },
+    saleByCharge: async (id) => {
+      const s = sales.get(id);
+      return s ? { ...s, charge_id: s.chargeID, fulfillment: s.fulfillment, payment_status: "done" } : null;
+    },
+    beginRefund: async (chargeID) => {
+      if (!refunds.has(chargeID)) refunds.set(chargeID, { charge_id: chargeID, status: "reversing", internal_reversed: false });
+      return refunds.get(chargeID);
+    },
+    markRefundInternal: async (chargeID) => { const r = refunds.get(chargeID); if (r) { r.internal_reversed = true; r.status = "internal_reversed"; } },
+    markRefunded: async (chargeID) => { const r = refunds.get(chargeID); if (r) { r.status = "completed"; r.internal_reversed = true; } },
+    failRefund: async (chargeID) => { const r = refunds.get(chargeID); if (r) r.status = r.internal_reversed ? "internal_reversed" : "failed"; },
+    isRefunded: async (chargeID) => refunds.get(chargeID)?.status === "completed",
+    refundByCharge: async (id) => refunds.get(id) ?? null,
+  };
+}
+
+test("Telegram retry does not debit the internal product twice", async () => {
+  const db = mockDb();
+  await db.addSale({
+    product: "stars_1", title: "20 Stars", starsPrice: 1, recipientID: 1001,
     buyerID: 7, buyerName: "Buyer", chargeID: "charge-retry",
     fulfillment: { kind: "stars", recipientID: 1001, amount: 20 },
   });
-  const sale = db.saleByCharge("charge-retry");
+  const sale = await db.saleByCharge("charge-retry");
   const debits = [];
   const gramsrv = { debitStars: async (...args) => debits.push(args) };
   await assert.rejects(() => executeCompensatedRefund({
     sale, telegramID: 7, db, gramsrv,
     refundStarPayment: async () => { throw new Error("temporary Telegram failure"); },
   }), /temporary/);
-  assert.equal(db.refundByCharge("charge-retry").status, "internal_reversed");
+  const afterFail = await db.refundByCharge("charge-retry");
+  assert.equal(afterFail.status, "internal_reversed");
   await executeCompensatedRefund({ sale, telegramID: 7, db, gramsrv, refundStarPayment: async () => true });
   assert.equal(debits.length, 1);
-  assert.equal(db.isRefunded("charge-retry"), true);
+  assert.equal(await db.isRefunded("charge-retry"), true);
 });

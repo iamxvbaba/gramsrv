@@ -52,7 +52,7 @@ func TestAccountSetReactionsNotifySettingsPersistsOrFailsClosed(t *testing.T) {
 	r := New(Config{}, Deps{
 		Account: appaccount.NewService(passwords, appaccount.WithReactionSettings(passwords)),
 	}, zaptest.NewLogger(t), clock.System)
-	input := tg.ReactionsNotifySettings{ShowPreviews: false}
+	input := tg.ReactionsNotifySettings{ShowPreviews: false, Sound: &tg.NotificationSoundDefault{}}
 	if _, err := r.onAccountSetReactionsNotifySettings(ctx, input); err != nil {
 		t.Fatalf("set reaction notify: %v", err)
 	}

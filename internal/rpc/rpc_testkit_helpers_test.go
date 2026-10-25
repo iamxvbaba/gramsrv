@@ -56,6 +56,7 @@ func newRPCChannelFixture(t *testing.T) *rpcChannelFixture {
 		channels: channelStore,
 		delivery: delivery,
 		router: New(Config{}, Deps{
+			Account:        newForumNotifyTestAccount(),
 			Users:          appusers.NewService(userStore),
 			Channels:       appchannels.NewService(channelStore),
 			Dialogs:        appdialogs.NewService(dialogStore, channelStore),

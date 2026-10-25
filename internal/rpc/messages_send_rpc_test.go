@@ -400,6 +400,23 @@ func TestMessageReplyFromInputUnsupportedShapesReturnExplicitErrors(t *testing.T
 			}),
 			want: "POLL_OPTION_INVALID",
 		},
+		{
+			name: "rich quote",
+			input: withReplyMsg(func(reply *tg.InputReplyToMessage) {
+				reply.SetQuoteRich([]tg.RichTextClass{&tg.TextPlain{Text: "quoted"}})
+			}),
+			want: "QUOTE_TEXT_INVALID",
+		},
+		{
+			// The flat fallback does not make the rich quote storable: keeping only
+			// quote_text would still drop formatting the client asked for.
+			name: "rich quote with flat fallback",
+			input: withReplyMsg(func(reply *tg.InputReplyToMessage) {
+				reply.SetQuoteText("quoted")
+				reply.SetQuoteRich([]tg.RichTextClass{&tg.TextPlain{Text: "quoted"}})
+			}),
+			want: "QUOTE_TEXT_INVALID",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

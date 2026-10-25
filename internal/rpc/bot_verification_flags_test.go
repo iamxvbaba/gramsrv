@@ -115,24 +115,24 @@ func assertMessagesEnvelopeBotVerificationIcon(t *testing.T, out tg.MessagesMess
 // TestBotVerificationConstructorIDs pins the two constructor ids the feature
 // serialises. A drift here silently reshapes every payload below.
 func TestBotVerificationConstructorIDs(t *testing.T) {
-	if tg.BotVerificationTypeID != 0xf93cd45c {
-		t.Fatalf("botVerification constructor id = %#x, want 0xf93cd45c", tg.BotVerificationTypeID)
+	if tg.BotVerificationTypeID != 0xf72e0ed9 {
+		t.Fatalf("botVerification constructor id = %#x, want 0xf72e0ed9", tg.BotVerificationTypeID)
 	}
-	if tg.BotVerifierSettingsTypeID != 0xb0cd6617 {
-		t.Fatalf("botVerifierSettings constructor id = %#x, want 0xb0cd6617", tg.BotVerifierSettingsTypeID)
+	if tg.BotVerifierSettingsTypeID != 0xa12aefff {
+		t.Fatalf("botVerifierSettings constructor id = %#x, want 0xa12aefff", tg.BotVerifierSettingsTypeID)
 	}
 	// The carriers, so a layer bump that reshuffles them is caught here too.
-	if tg.UserTypeID != 0xb1b8cc83 || tg.ChannelTypeID != 0xd49f34c6 {
+	if tg.UserTypeID != 0xb1b8cc83 || tg.ChannelTypeID != 0x7ad15240 {
 		t.Fatalf("peer constructor ids = user %#x / channel %#x", tg.UserTypeID, tg.ChannelTypeID)
 	}
-	if tg.UserFullTypeID != 0x6cbe645 || tg.ChannelFullTypeID != 0xa04e8d3a {
+	if tg.UserFullTypeID != 0xb90c2afd || tg.ChannelFullTypeID != 0xc4c4dd40 {
 		t.Fatalf("full constructor ids = userFull %#x / channelFull %#x", tg.UserFullTypeID, tg.ChannelFullTypeID)
 	}
 	if tg.ChatInviteTypeID != 0x5c9d3702 || tg.BotInfoTypeID != 0x4d8a0299 {
 		t.Fatalf("constructor ids = chatInvite %#x / botInfo %#x", tg.ChatInviteTypeID, tg.BotInfoTypeID)
 	}
-	if tg.BotsSetCustomVerificationRequestTypeID != 0x8b89dfbd {
-		t.Fatalf("bots.setCustomVerification id = %#x, want 0x8b89dfbd", tg.BotsSetCustomVerificationRequestTypeID)
+	if tg.BotsSetCustomVerificationRequestTypeID != 0xf4946757 {
+		t.Fatalf("bots.setCustomVerification id = %#x, want 0xf4946757", tg.BotsSetCustomVerificationRequestTypeID)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestBotVerificationTLProjectionShapes(t *testing.T) {
 	}
 	decoded := &tg.BotVerification{}
 	tlRoundTrip(t, &value, decoded)
-	if decoded.BotID != 42 || decoded.Icon != 777 || decoded.Description != "Verified by Acme" {
+	if decoded.BotID != 42 || decoded.Icon != 777 || decoded.Description.Text != "Verified by Acme" || len(decoded.Description.Entities) != 0 {
 		t.Fatalf("botVerification = %+v", decoded)
 	}
 	for _, bad := range []domain.BotVerification{
@@ -173,7 +173,7 @@ func TestBotVerificationTLProjectionShapes(t *testing.T) {
 	if !decodedSettings.GetCanModifyCustomDescription() || !decodedSettings.Flags.Has(1) {
 		t.Fatalf("can_modify_custom_description not on flags.1: %032b", uint32(decodedSettings.Flags))
 	}
-	if desc, ok := decodedSettings.GetCustomDescription(); !ok || desc != "Verified by Acme Trust" ||
+	if desc, ok := decodedSettings.GetCustomDescription(); !ok || desc.Text != "Verified by Acme Trust" || len(desc.Entities) != 0 ||
 		!decodedSettings.Flags.Has(0) {
 		t.Fatalf("custom_description not on flags.0: %q ok=%v flags %032b", desc, ok, uint32(decodedSettings.Flags))
 	}
@@ -270,7 +270,7 @@ func TestUserAndUserFullCarryBotVerificationOnLayer228Bits(t *testing.T) {
 	if !ok {
 		t.Fatalf("userFull bot_verification unset: %+v", markedFull)
 	}
-	if mark.BotID != f.bot.ID || mark.Icon != 8800001 || mark.Description != "Official reseller" {
+	if mark.BotID != f.bot.ID || mark.Icon != 8800001 || mark.Description.Text != "Official reseller" {
 		t.Fatalf("userFull bot_verification = %+v, want verifier %d icon 8800001", mark, f.bot.ID)
 	}
 	assertFlagBitDelta(t, "userFull", plainFull.Flags2, markedFull.Flags2, 12)
@@ -484,7 +484,7 @@ func TestChannelAndChannelFullCarryBotVerificationOnLayer228Bits(t *testing.T) {
 	if !ok {
 		t.Fatalf("channelFull bot_verification unset: %+v", markedFull)
 	}
-	if mark.BotID != f.bot.ID || mark.Icon != 8800003 || mark.Description != "Community partner" {
+	if mark.BotID != f.bot.ID || mark.Icon != 8800003 || mark.Description.Text != "Community partner" {
 		t.Fatalf("channelFull bot_verification = %+v, want verifier %d icon 8800003", mark, f.bot.ID)
 	}
 	assertFlagBitDelta(t, "channelFull", plainFull.Flags2, markedFull.Flags2, 17)
@@ -586,7 +586,7 @@ func TestChatInviteCarriesBotVerificationOnFlags13(t *testing.T) {
 	if !ok {
 		t.Fatalf("invite bot_verification unset: %+v", marked)
 	}
-	if mark.BotID != 777000123 || mark.Icon != 8800005 || mark.Description != "Verified by Acme Trust" {
+	if mark.BotID != 777000123 || mark.Icon != 8800005 || mark.Description.Text != "Verified by Acme Trust" {
 		t.Fatalf("invite bot_verification = %+v", mark)
 	}
 	assertFlagBitDelta(t, "chatInvite", plain.Flags, marked.Flags, 13)

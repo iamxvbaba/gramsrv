@@ -226,7 +226,7 @@ func (s *ChannelStore) ListChannelHistory(_ context.Context, viewerUserID int64,
 
 func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int64, req domain.ChannelGlobalSearchRequest) (domain.ChannelHistory, error) {
 	query := strings.ToLower(strings.TrimSpace(req.Query))
-	if viewerUserID == 0 || (query == "" && !req.MusicOnly) {
+	if viewerUserID == 0 || (query == "" && !req.MusicOnly && len(req.MediaCategories) == 0) {
 		return domain.ChannelHistory{}, domain.ErrChannelInvalid
 	}
 	if req.Limit <= 0 || req.Limit > domain.MaxChannelGlobalSearchLimit {
@@ -275,7 +275,7 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 			if msg.Deleted {
 				continue
 			}
-			if query == "" && !req.MusicOnly || query != "" && strings.TrimSpace(msg.Body) == "" {
+			if query == "" && !req.MusicOnly && len(req.MediaCategories) == 0 || query != "" && strings.TrimSpace(msg.Body) == "" {
 				continue
 			}
 			if joined && member.AvailableMinID > 0 && msg.ID <= member.AvailableMinID {
@@ -288,6 +288,9 @@ func (s *ChannelStore) SearchJoinedMessages(_ context.Context, viewerUserID int6
 				continue
 			}
 			if !channelGlobalSearchAfterCursor(msg, req) {
+				continue
+			}
+			if !domain.MatchesMediaCategories(msg.Media, msg.Entities, req.MediaCategories) {
 				continue
 			}
 			if req.MusicOnly && !msg.Media.IsMusic() {

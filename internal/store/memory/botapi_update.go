@@ -245,15 +245,16 @@ func (s *BotAPIUpdateStore) EnqueueBotAPIUpdate(_ context.Context, req domain.En
 		}
 	}
 	row := domain.BotAPIUpdate{
-		ID:        s.nextID,
-		BotUserID: req.BotUserID,
-		Kind:      req.Kind,
-		Peer:      req.Peer,
-		MessageID: req.MessageID,
-		SourcePts: req.SourcePts,
-		Date:      req.Date,
-		Callback:  cloneBotAPICallback(req.Callback),
-		Ephemeral: cloneBotAPIEphemeral(req.Ephemeral),
+		ID:          s.nextID,
+		BotUserID:   req.BotUserID,
+		Kind:        req.Kind,
+		Peer:        req.Peer,
+		MessageID:   req.MessageID,
+		SourcePts:   req.SourcePts,
+		Date:        req.Date,
+		Callback:    cloneBotAPICallback(req.Callback),
+		PreCheckout: cloneBotAPIPreCheckout(req.PreCheckout),
+		Ephemeral:   cloneBotAPIEphemeral(req.Ephemeral),
 	}
 	s.nextID++
 	s.rows = append(s.rows, row)
@@ -419,7 +420,10 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 	if req.BotUserID == 0 {
 		return fmt.Errorf("invalid bot api update")
 	}
-	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage && req.Kind != domain.BotAPIUpdateCallbackQuery {
+	// A pre-checkout query is message-less by design: the bot is asked before any
+	// payment exists, so it carries no peer and no message id.
+	if req.Kind != domain.BotAPIUpdateMessage && req.Kind != domain.BotAPIUpdateEditedMessage &&
+		req.Kind != domain.BotAPIUpdateCallbackQuery && req.Kind != domain.BotAPIUpdatePreCheckoutQuery {
 		return fmt.Errorf("invalid bot api update kind %q", req.Kind)
 	}
 	switch req.Peer.Type {
@@ -428,7 +432,7 @@ func validateBotAPIUpdateRequest(req domain.EnqueueBotAPIUpdateRequest) error {
 			return fmt.Errorf("invalid bot api update peer")
 		}
 	case "":
-		if req.Kind != domain.BotAPIUpdateCallbackQuery || req.Peer.ID != 0 || req.MessageID != 0 {
+		if req.Peer.ID != 0 || req.MessageID != 0 {
 			return fmt.Errorf("invalid bot api update peer")
 		}
 	default:
@@ -469,6 +473,12 @@ func botAPIUpdateKey(req domain.EnqueueBotAPIUpdateRequest) string {
 	if req.Kind == domain.BotAPIUpdateCallbackQuery && req.Callback != nil {
 		return fmt.Sprintf("%d:%s:%d", req.BotUserID, req.Kind, req.Callback.ID)
 	}
+	// A pre-checkout query has no peer, message or pts, so the generic key would
+	// collapse every question to the same bot into one row. The query id is what
+	// makes it unique.
+	if req.PreCheckout != nil {
+		return fmt.Sprintf("%d:%s:%d", req.BotUserID, req.Kind, req.PreCheckout.ID)
+	}
 	if req.Ephemeral != nil {
 		return fmt.Sprintf("%d:%s:ephemeral:%s:%d:%d:%d", req.BotUserID, req.Kind, req.Peer.Type, req.Peer.ID, req.MessageID, req.Ephemeral.Message.Version)
 	}
@@ -477,6 +487,7 @@ func botAPIUpdateKey(req domain.EnqueueBotAPIUpdateRequest) string {
 
 func cloneBotAPIUpdate(row domain.BotAPIUpdate) domain.BotAPIUpdate {
 	row.Callback = cloneBotAPICallback(row.Callback)
+	row.PreCheckout = cloneBotAPIPreCheckout(row.PreCheckout)
 	row.Ephemeral = cloneBotAPIEphemeral(row.Ephemeral)
 	return row
 }
@@ -486,6 +497,14 @@ func cloneBotAPIEphemeral(in *domain.BotAPIEphemeralPayload) *domain.BotAPIEphem
 		return nil
 	}
 	return domain.NewBotAPIEphemeralPayload(cloneEphemeralMessage(in.EphemeralMessage()))
+}
+
+func cloneBotAPIPreCheckout(in *domain.BotPreCheckoutQuery) *domain.BotPreCheckoutQuery {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func cloneBotAPICallback(in *domain.BotCallbackQuery) *domain.BotCallbackQuery {

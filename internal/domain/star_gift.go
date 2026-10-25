@@ -33,6 +33,7 @@ type StarGift struct {
 	SoldOut              bool
 	Birthday             bool
 	RequirePremium       bool
+	SupportOnly          bool
 	LimitedPerUser       bool
 	PeerColorAvailable   bool
 	Auction              bool
@@ -103,6 +104,9 @@ const (
 	StarGiftLifecycleConverted StarGiftLifecycleStatus = "converted"
 	StarGiftLifecycleBurned    StarGiftLifecycleStatus = "burned"
 	StarGiftLifecycleExported  StarGiftLifecycleStatus = "exported"
+	// StarGiftLifecycleDeleted 是 payments.deleteStarGift 的终态：礼物离开资料页，
+	// 但历史行仍然保留（升级命令、报价、转账记录都引用它，不能硬删）。
+	StarGiftLifecycleDeleted StarGiftLifecycleStatus = "deleted"
 )
 
 func (s StarGiftLifecycleStatus) Live() bool {
@@ -242,6 +246,7 @@ type UniqueStarGift struct {
 	OriginalMessage         string
 	OriginalMessageEntities []MessageEntity
 	OriginalNameHidden      bool
+	Unsaved                 bool // true when the source saved gift is hidden from the owner's profile
 	CreatedAt               time.Time
 }
 
@@ -284,6 +289,17 @@ const (
 // Since every bid must clear the one before it, an uncapped auction escalates into
 // that range on its own.
 const MaxStarGiftAuctionBidStars int64 = 10_000_000
+
+// StarGiftResaleFloorMultiple is the maximum magnitude a listing may exceed the
+// gift's base release price and still count toward the dynamic resale floor
+// (resell_min_stars / floor_price). The floor is computed as the cheapest active
+// listing for the gift type, but a single overpriced "troll" listing (set far
+// above the ~base price on purpose) would otherwise hijack that MIN and become
+// the enforced floor for every future listing of the same gift. Listings above
+// multiple×base are ignored by the floor projection while still remaining
+// visible and purchasable — the floor stays market-driven and per-gift, never an
+// absolute hardcoded minimum.
+const StarGiftResaleFloorMultiple int64 = 10
 
 type StarGiftAmount struct {
 	Currency StarGiftCurrency
@@ -387,6 +403,7 @@ type AdminStarGiftGrantResult struct {
 type StarGiftPurchaseRequest struct {
 	BuyerUserID      int64
 	BuyerPremium     bool
+	BuyerIsBot       bool
 	To               Peer
 	GiftID           int64
 	RevisionID       int64
@@ -681,6 +698,16 @@ type StarGiftCraftRequest struct {
 	OriginSessionID int64
 }
 
+// StarGiftCraftSource is loaded by the server from owned collectible gifts.
+type StarGiftCraftSource struct {
+	UniqueID      int64
+	GiftID        int64
+	ModelID       int64
+	ModelName     string
+	AnimationJSON []byte
+	Backdrop      StarGiftCollectibleAttribute
+}
+
 type StarGiftCraftResult struct {
 	Success     bool
 	Chance      int
@@ -760,6 +787,22 @@ type StarGiftWithdrawalRequest struct {
 	UserID int64
 	Ref    SavedStarGiftRef
 	Date   int
+}
+
+// StarGiftDeleteRequest 是 payments.deleteStarGift 的输入：调用者要删掉自己
+// 收到的那份普通礼物。已升级的藏品、限量/拍卖礼物以及仍带 Stars 的礼物不可删除。
+type StarGiftDeleteRequest struct {
+	UserID int64
+	Ref    SavedStarGiftRef
+	Date   int
+}
+
+// StarGiftDeleteResult 报告删除结果。已升级成藏品（NFT）的礼物不可删除，
+// 所以 UniqueGiftID 恒为 0。
+type StarGiftDeleteResult struct {
+	SavedGiftID  int64
+	UniqueGiftID int64
+	Deleted      bool
 }
 
 type StarGiftWithdrawal struct {
@@ -908,6 +951,7 @@ type StarGiftCatalogWrite struct {
 	SoldOut              bool
 	Birthday             bool
 	RequirePremium       bool
+	SupportOnly          bool
 	LimitedPerUser       bool
 	PeerColorAvailable   bool
 	Auction              bool
@@ -1003,18 +1047,46 @@ func (w StarGiftCatalogWrite) ValidateLifecycleAuthoring(now int) error {
 // AvailabilityRemains seeds the client's "N left" projection; auction settlement
 // keeps it in step with gifts_left afterwards.
 func (w *StarGiftCatalogWrite) NormalizeLifecycleAuthoring(now int) {
+	if w.AvailabilityTotal > 0 {
+		w.Limited = true
+	}
 	if w.Auction {
 		w.Limited = true
 		if w.AuctionStartDate <= 0 {
 			w.AuctionStartDate = now
 		}
 	}
-	// Also seeds a plain (non-auction) Limited gift's remaining count -- see
-	// ValidateLifecycleAuthoring's own Limited branch for the authoring
-	// contract this pairs with.
-	if w.Limited && w.AvailabilityRemains <= 0 {
+	// Zero on an existing identity can mean exhausted, never uninitialized.
+	// The store preserves its inventory while holding the same lock as purchases.
+	// Negative values must not be silently repaired either.
+	if w.GiftID == 0 && w.Limited && !w.SoldOut && w.AvailabilityRemains == 0 {
 		w.AvailabilityRemains = w.AvailabilityTotal
 	}
+}
+
+// PreserveCatalogInventory applies an existing identity's inventory to a new
+// revision. Call at the write boundary while holding the catalog lock.
+// Replacing a revision edits presentation/pricing, not its original issuance
+// cap. A different cap or sales mode requires a new gift identity.
+func (w *StarGiftCatalogWrite) PreserveCatalogInventory(current StarGift) error {
+	if w.GiftID == 0 || w.GiftID != current.ID {
+		return fmt.Errorf("%w: inventory identity mismatch", ErrStarGiftLifecycleInvalid)
+	}
+	if current.AvailabilityRemains < 0 || current.AvailabilityTotal < 0 ||
+		(current.Limited && (current.AvailabilityTotal == 0 || current.AvailabilityRemains > current.AvailabilityTotal)) ||
+		(!current.Limited && (current.AvailabilityTotal != 0 || current.AvailabilityRemains != 0)) {
+		return fmt.Errorf("%w: invalid persisted inventory", ErrStarGiftLifecycleInvalid)
+	}
+	if w.AvailabilityTotal < 0 || (w.AvailabilityTotal != 0 && w.AvailabilityTotal != current.AvailabilityTotal) ||
+		(w.Limited && !current.Limited) || w.Auction != current.Auction {
+		return fmt.Errorf("%w: existing gift supply and sales mode are immutable; create a new gift", ErrStarGiftLifecycleInvalid)
+	}
+	// Omitted authoring fields mean preserve, not convert to unlimited.
+	w.Limited, w.SoldOut = current.Limited, current.SoldOut
+	w.AvailabilityTotal, w.AvailabilityRemains = current.AvailabilityTotal, current.AvailabilityRemains
+	w.AvailabilityResale, w.ResellMinStars = current.AvailabilityResale, current.ResellMinStars
+	w.FirstSaleDate, w.LastSaleDate = current.FirstSaleDate, current.LastSaleDate
+	return nil
 }
 
 // StarGiftCatalogBundleWrite atomically publishes one catalog revision and its optional
@@ -1082,6 +1154,7 @@ type SavedStarGiftPage struct {
 // order: pinned gifts first by PinnedOrder, then unpinned gifts by ID DESC.
 // PinnedOrder == 0 identifies the unpinned segment.
 type SavedStarGiftListCursor struct {
+	Date        int
 	PinnedOrder int
 	ID          int64
 }
@@ -1100,9 +1173,14 @@ type SavedStarGiftFilter struct {
 	ExcludeHosted       bool
 	ExcludeUpgradable   bool
 	ExcludeUnupgradable bool
-	CollectionID        int
-	Offset              string
-	Limit               int
+	// SortByValue 对应 sort_by_value：按价格而不是接收时间排序。
+	SortByValue bool
+	// PeerColorAvailable 对应 peer_color_available：只返回调色板可用作
+	// 收藏品消息调色板的收藏品。
+	PeerColorAvailable bool
+	CollectionID       int
+	Offset             string
+	Limit              int
 }
 
 // Star gift 边界常量。
@@ -1136,6 +1214,12 @@ const (
 	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
 	// official clients. Pin requests are complete replacement vectors.
 	MaxPinnedStarGifts = 6
+	// MinStarGiftResaleStars is the default Stars resale floor (main gramsrv #151):
+	// it equals the clients' built-in stars_stargift_resale_amount_min and the
+	// value help.getAppConfig advertises. v2 keeps D4: a gift's authored
+	// resell_min_stars wins, and this value is only the default for the
+	// configured fallback (StarGiftMarketPolicy.ResaleMinStars).
+	MinStarGiftResaleStars int64 = 125
 )
 
 // Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
@@ -1159,17 +1243,20 @@ var (
 	// another LIMITED ("drop") gift within StarGiftLimitedPurchaseCooldown of
 	// their last one -- an anti-scalper throttle, see prepareStarGiftPurchase.
 	// Unlimited/regular gifts are never subject to it.
-	ErrStarGiftPurchaseRateLimited     = errors.New("stargift: purchase rate limited")
-	ErrStarGiftCollectibleUnavailable  = errors.New("stargift: collectible upgrade unavailable")
-	ErrStarGiftAlreadyUpgraded         = errors.New("stargift: already upgraded")
-	ErrStarGiftCollectibleSoldOut      = errors.New("stargift: collectible supply exhausted")
-	ErrStarGiftCollectibleInvalid      = errors.New("stargift: invalid collectible definition")
-	ErrStarGiftCollectionNotFound      = errors.New("stargift: collection not found")
-	ErrStarGiftCollectionsFull         = errors.New("stargift: collections full")
-	ErrStarGiftUnavailable             = errors.New("stargift: unavailable")
-	ErrStarGiftOwnerInvalid            = errors.New("stargift: owner invalid")
-	ErrStarGiftTransferUnavailable     = errors.New("stargift: transfer unavailable")
-	ErrStarGiftResaleUnavailable       = errors.New("stargift: resale unavailable")
+	ErrStarGiftPurchaseRateLimited    = errors.New("stargift: purchase rate limited")
+	ErrStarGiftCollectibleUnavailable = errors.New("stargift: collectible upgrade unavailable")
+	ErrStarGiftAlreadyUpgraded        = errors.New("stargift: already upgraded")
+	ErrStarGiftCollectibleSoldOut     = errors.New("stargift: collectible supply exhausted")
+	ErrStarGiftCollectibleInvalid     = errors.New("stargift: invalid collectible definition")
+	ErrStarGiftCollectionNotFound     = errors.New("stargift: collection not found")
+	ErrStarGiftCollectionsFull        = errors.New("stargift: collections full")
+	ErrStarGiftUnavailable            = errors.New("stargift: unavailable")
+	ErrStarGiftOwnerInvalid           = errors.New("stargift: owner invalid")
+	ErrStarGiftTransferUnavailable    = errors.New("stargift: transfer unavailable")
+	ErrStarGiftResaleUnavailable      = errors.New("stargift: resale unavailable")
+	// ErrStarGiftDeleteUnavailable 表示这份礼物当前不可删除：已转换、已导出、
+	// 已升级成藏品、限量或拍卖礼物、仍带转换价或预付升级 Stars、已被删除。
+	ErrStarGiftDeleteUnavailable       = errors.New("stargift: delete unavailable")
 	ErrStarGiftOfferInvalid            = errors.New("stargift: offer invalid")
 	ErrStarGiftOfferExpired            = errors.New("stargift: offer expired")
 	ErrStarGiftCraftUnavailable        = errors.New("stargift: craft unavailable")
@@ -1184,7 +1271,13 @@ var (
 	// ErrStarGiftHasCollectibles 表示该礼物已有实例被转换为独立的收藏级 NFT
 	// （unique_star_gifts），永久删除会破坏这些独立对象（可能已导出到 TON
 	// 链上），因此拒绝——需要先单独处理这些收藏品。
-	ErrStarGiftHasCollectibles             = errors.New("stargift: has upgraded collectible instances")
+	ErrStarGiftHasCollectibles = errors.New("stargift: has upgraded collectible instances")
+	// ErrStarGiftRecipientUnavailable 表示收礼人对其它用户呈 deleted 墓碑
+	// （冻结账号），礼物不能再被送出。
+	ErrStarGiftRecipientUnavailable = errors.New("stargift: recipient account unavailable")
+	// ErrStarGiftExportCooldown 表示 can_export_at 尚未到期：服务端时钟未到
+	// 可导出时刻，客户端无法用任何输入提前触发 withdrawal。
+	ErrStarGiftExportCooldown              = errors.New("stargift: export cooldown active")
 	ErrChannelRevenueWithdrawalInvalid     = errors.New("channel revenue: withdrawal invalid")
 	ErrChannelRevenueWithdrawalExpired     = errors.New("channel revenue: withdrawal expired")
 	ErrChannelRevenueInsufficient          = errors.New("channel revenue: insufficient balance")
@@ -1192,7 +1285,11 @@ var (
 	ErrStarGiftFormExpired                 = errors.New("stargift: payment form expired")
 	ErrStarGiftFormPurposeInvalid          = errors.New("stargift: payment form purpose invalid")
 	ErrStarGiftFormAmountMismatch          = errors.New("stargift: payment form amount mismatch")
+	ErrStarGiftNotConvertible              = errors.New("stargift: not convertible")
+	ErrStarGiftIdempotencyConflict         = errors.New("stargift: idempotency conflict")
 )
+
+var ErrStarGiftListed = errors.New("сначала снимите подарок с продажи")
 
 var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
@@ -1240,9 +1337,9 @@ func ValidateStarGiftCollectibleWrite(write StarGiftCollectibleWrite) error {
 }
 
 // validateStarGiftUpgradePreviewPool protects the official-client animation contract. The
-// preview response includes the target attribute plus the published selectable pool; TDesktop
-// deduplicates models and patterns by document identity and needs a non-target item in every
-// category before its spinner can transition to the finished state.
+// preview response includes the target attribute plus the published selectable pool. A pool may
+// intentionally contain one deterministic model or pattern; when it contains several entries,
+// every entry must still have its own document identity so clients do not deduplicate the pool.
 func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireStoredAsset bool) error {
 	validateAnimated := func(kind StarGiftCollectibleAttributeKind, attributes []StarGiftCollectibleAttribute) error {
 		selectable := 0
@@ -1259,11 +1356,11 @@ func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireS
 				documents[attribute.Document.ID] = struct{}{}
 			}
 		}
-		if selectable < 2 {
-			return fmt.Errorf("%w: %s preview requires at least two selectable attributes", ErrStarGiftCollectibleInvalid, kind)
+		if selectable < 1 {
+			return fmt.Errorf("%w: %s preview requires a selectable attribute", ErrStarGiftCollectibleInvalid, kind)
 		}
-		if requireStoredAsset && len(documents) < 2 {
-			return fmt.Errorf("%w: %s preview requires at least two distinct documents", ErrStarGiftCollectibleInvalid, kind)
+		if requireStoredAsset && len(documents) != selectable {
+			return fmt.Errorf("%w: %s preview attributes require distinct documents", ErrStarGiftCollectibleInvalid, kind)
 		}
 		return nil
 	}
@@ -1421,11 +1518,11 @@ func StarGiftCollectionHash(title string, giftIDs []int64) int64 {
 // EncodeSavedStarGiftListCursor encodes the exact profile-order key of the last
 // visible gift. The version prefix keeps this cursor distinct from other star
 // gift lists that are ordered only by instance ID.
-func EncodeSavedStarGiftListCursor(pinnedOrder int, id int64) string {
-	if pinnedOrder < 0 || id <= 0 {
+func EncodeSavedStarGiftListCursor(pinnedOrder, date int, id int64) string {
+	if pinnedOrder < 0 || date < 0 || id <= 0 {
 		return ""
 	}
-	raw := "v1:" + strconv.Itoa(pinnedOrder) + ":" + strconv.FormatInt(id, 10)
+	raw := "v2:" + strconv.Itoa(pinnedOrder) + ":" + strconv.Itoa(date) + ":" + strconv.FormatInt(id, 10)
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
@@ -1440,18 +1537,56 @@ func DecodeSavedStarGiftListCursor(s string) (SavedStarGiftListCursor, bool) {
 		return SavedStarGiftListCursor{}, false
 	}
 	parts := strings.Split(string(raw), ":")
-	if len(parts) != 3 || parts[0] != "v1" {
+	if len(parts) != 4 || parts[0] != "v2" {
 		return SavedStarGiftListCursor{}, false
 	}
 	order, err := strconv.ParseInt(parts[1], 10, 32)
 	if err != nil || order < 0 {
 		return SavedStarGiftListCursor{}, false
 	}
-	id, err := strconv.ParseInt(parts[2], 10, 64)
+	date, err := strconv.ParseInt(parts[2], 10, 32)
+	if err != nil || date < 0 {
+		return SavedStarGiftListCursor{}, false
+	}
+	id, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil || id <= 0 {
 		return SavedStarGiftListCursor{}, false
 	}
-	return SavedStarGiftListCursor{PinnedOrder: int(order), ID: id}, true
+	return SavedStarGiftListCursor{PinnedOrder: int(order), Date: int(date), ID: id}, true
+}
+
+// EncodeSavedStarGiftPriceCursor 编码 sort_by_value 排序的 keyset 游标
+// （价格降序、同价按实例 id 降序）。价格允许为 0，因此只校验 id。
+func EncodeSavedStarGiftPriceCursor(price, id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	raw := "v2:" + strconv.FormatInt(price, 10) + ":" + strconv.FormatInt(id, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeSavedStarGiftPriceCursor 反解价格游标；无法解析（含过期的 v1 游标）返回 ok=false。
+func DecodeSavedStarGiftPriceCursor(s string) (price int64, id int64, ok bool) {
+	if s == "" {
+		return 0, 0, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return 0, 0, false
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 3 || parts[0] != "v2" {
+		return 0, 0, false
+	}
+	price, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	id, err = strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || id <= 0 {
+		return 0, 0, false
+	}
+	return price, id, true
 }
 
 // EncodeStarGiftCursor / DecodeStarGiftCursor are simple instance-ID cursors

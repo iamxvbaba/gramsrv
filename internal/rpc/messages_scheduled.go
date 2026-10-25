@@ -2,8 +2,10 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -94,6 +96,9 @@ func (r *Router) onMessagesSendScheduledMessages(ctx context.Context, req *tg.Me
 	if err != nil {
 		return nil, messageIDInvalidErr()
 	}
+	if len(claimed) == 0 {
+		return nil, messageIDInvalidErr()
+	}
 	return r.sendClaimedScheduledMessages(ctx, userID, peer, claimed, now)
 }
 
@@ -161,8 +166,8 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 	if r.deps.Messages == nil {
 		return nil, peerIDInvalidErr()
 	}
-	if repeatPeriod != 0 {
-		return nil, scheduleDateInvalidErr()
+	if err := r.validateSchedule(ctx, userID, peer, scheduleDate, repeatPeriod); err != nil {
+		return nil, err
 	}
 	if err := r.requireAccountDelivery(userID, "messages.scheduleMessage"); err != nil {
 		return nil, err
@@ -189,27 +194,32 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 	}
 	date := int(r.clock.Now().Unix())
 	scheduleReq := domain.ScheduleMessageRequest{
-		OwnerUserID:          userID,
-		Peer:                 peer,
-		RandomID:             p.randomID,
-		Message:              p.message,
-		Entities:             domainMessageEntitiesForViewer(userID, p.entities),
-		Media:                p.media,
-		RichMessage:          p.richMessage,
-		Silent:               p.silent,
-		NoForwards:           p.noforwards,
-		ReplyTo:              replyTo,
-		SendAs:               sendAs,
-		ScheduleDate:         scheduleDate,
-		ScheduleRepeatPeriod: repeatPeriod,
-		Date:                 date,
-		ClearDraft:           p.clearDraft,
+		OwnerUserID:            userID,
+		IdempotencyFingerprint: p.idempotencyFingerprint,
+		Peer:                   peer,
+		RandomID:               p.randomID,
+		Message:                p.message,
+		Entities:               domainMessageEntitiesForViewer(userID, p.entities),
+		Media:                  p.media,
+		RichMessage:            p.richMessage,
+		Silent:                 p.silent,
+		NoForwards:             p.noforwards,
+		ReplyTo:                replyTo,
+		SendAs:                 sendAs,
+		ScheduleDate:           scheduleDate,
+		ScheduleRepeatPeriod:   repeatPeriod,
+		Date:                   date,
+		ClearDraft:             p.clearDraft,
 	}
 	deliveryRefs := r.preloadScheduledDeliveryRefs(ctx, userID, scheduledFromRequest(scheduleReq))
 	msg, err := r.deps.Messages.ScheduleMessage(ctx, userID, scheduleReq, scheduledNewDeliveryEffects(ctx, userID, p.randomID, date, deliveryRefs))
+	if errors.Is(err, domain.ErrScheduledLimit) {
+		return nil, tgerr.New(400, "SCHEDULE_TOO_MUCH")
+	}
 	if err != nil {
 		return nil, messageSendErr(err)
 	}
+	r.wakeScheduledDelivery()
 	updates := r.tgNewScheduledMessageUpdates(ctx, userID, msg, p.randomID, date)
 	return updates, nil
 }
@@ -228,30 +238,39 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 	deletedIDs := make([]int, 0, len(claimed))
 	sentIDs := make([]int, 0, len(claimed))
 	for _, scheduled := range claimed {
-		updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, outgoingSend{
-			randomID:    scheduled.RandomID,
-			message:     scheduled.Message,
-			entities:    tgInputMessageEntities(scheduled.Entities),
-			media:       scheduled.Media,
-			richMessage: scheduled.RichMessage,
-			silent:      scheduled.Silent,
-			noforwards:  scheduled.NoForwards,
-		})
+		updates, err := func() (tg.UpdatesClass, error) {
+			if !scheduled.ManualDispatch && scheduled.ScheduleDate == domain.ScheduleWhenOnline {
+				if err := r.validateOnlineSchedule(ctx, userID, scheduled.Peer); err != nil {
+					return nil, err
+				}
+				if r.userPresenceStatus(scheduled.Peer.ID).Kind != domain.UserStatusOnline {
+					return nil, scheduleDateInvalidErr()
+				}
+			}
+			sendAs, err := r.validateScheduledSendAs(ctx, userID, scheduled.Peer, scheduled.SendAs)
+			if err != nil {
+				return nil, err
+			}
+			updates, _, err := r.sendOutgoing(ctx, userID, scheduled.Peer, outgoingSend{
+				randomID:          scheduled.RandomID,
+				scheduledDelivery: r.scheduledCompletionDelivery(ctx, scheduled, date),
+				replyTo:           scheduled.ReplyTo, replyToReady: true, forward: scheduled.Forward, sendAs: sendAs, sendAsReady: true,
+				message:     scheduled.Message,
+				entities:    tgInputMessageEntities(scheduled.Entities),
+				media:       scheduled.Media,
+				richMessage: scheduled.RichMessage,
+				silent:      scheduled.Silent,
+				noforwards:  scheduled.NoForwards,
+			})
+			return updates, err
+		}()
 		if err != nil {
-			if r.deps.Messages != nil {
-				_ = r.deps.Messages.ReleaseScheduledMessage(ctx, scheduled.OwnerUserID, scheduled.ID, err.Error())
+			if releaseErr := r.deps.Messages.ReleaseScheduledMessage(ctx, scheduled.OwnerUserID, scheduled.ID, scheduled.Generation, err.Error()); releaseErr != nil {
+				return nil, fmt.Errorf("send scheduled: %w; release: %v", err, releaseErr)
 			}
 			return nil, err
 		}
 		sentID := sentMessageIDFromUpdates(updates)
-		if r.deps.Messages == nil {
-			return nil, internalErr()
-		}
-		deleteChats := r.chatsForMessageUpdate(ctx, scheduled.OwnerUserID, domain.Message{Peer: scheduled.Peer})
-		if err := r.deps.Messages.MarkScheduledMessageSent(ctx, scheduled.OwnerUserID, scheduled.ID, sentID, date,
-			scheduledDeleteDeliveryEffects(ctx, scheduled.OwnerUserID, date, deleteChats)); err != nil {
-			return nil, internalErr()
-		}
 		deletedIDs = append(deletedIDs, scheduled.ID)
 		sentIDs = append(sentIDs, sentID)
 		if up, ok := updates.(*tg.Updates); ok {
@@ -272,10 +291,13 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 func (r *Router) tgScheduledMessages(ctx context.Context, userID int64, peer domain.Peer, list domain.ScheduledMessageList) tg.MessagesMessagesClass {
 	messages := scheduledMessagesAsDomainMessages(list.Messages, userID)
 	out := make([]tg.MessageClass, 0, len(messages))
-	for _, msg := range messages {
+	for i, msg := range messages {
 		item := tgMessage(msg)
 		if scheduled, ok := item.(*tg.Message); ok {
 			scheduled.SetFromScheduled(true)
+			if list.Messages[i].ScheduleRepeatPeriod > 0 {
+				scheduled.SetScheduleRepeatPeriod(list.Messages[i].ScheduleRepeatPeriod)
+			}
 		}
 		if item != nil {
 			out = append(out, item)
@@ -317,6 +339,9 @@ func tgNewScheduledMessageUpdatesWithRefs(userID int64, msg domain.ScheduledMess
 	item := tgMessage(domainMsg)
 	if scheduled, ok := item.(*tg.Message); ok {
 		scheduled.SetFromScheduled(true)
+		if msg.ScheduleRepeatPeriod > 0 {
+			scheduled.SetScheduleRepeatPeriod(msg.ScheduleRepeatPeriod)
+		}
 	}
 	updates := make([]tg.UpdateClass, 0, 2)
 	if randomID != 0 {
@@ -360,18 +385,33 @@ func scheduledNewDeliveryEffects(ctx context.Context, userID int64, randomID int
 	}
 }
 
-func scheduledDeleteDeliveryEffects(ctx context.Context, userID int64, date int, chats []tg.ChatClass) store.DeliveryEffectsBuilder[domain.ScheduledMessage] {
+// scheduledCompletionDelivery fences one claimed message into the send
+// transaction. The owner's updateDeleteScheduledMessages(sent) and, for a
+// repeat, updateNewScheduledMessage(next) are encoded inside that transaction
+// and committed as one durable delivery; the current session (manual
+// messages.sendScheduledMessages) gets them from the RPC result instead.
+func (r *Router) scheduledCompletionDelivery(ctx context.Context, scheduled domain.ScheduledMessage, date int) *domain.ScheduledDelivery {
 	excludeAuthKeyID, excludeSessionID := deliveryExclusionFromContext(ctx)
-	return func(msg domain.ScheduledMessage) ([]store.DeliveryEffect, error) {
-		updates := tgDeleteScheduledUpdates(msg.Peer, []int{msg.ID}, nonZeroScheduledSentIDs(msg.SentMessageID), chats, date)
-		payload, err := encodeDeliveryUpdate(updates)
-		if err != nil {
-			return nil, fmt.Errorf("encode scheduled delete delivery: %w", err)
-		}
-		return []store.DeliveryEffect{store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
-			TargetUserID: userID, ExcludeAuthKeyID: excludeAuthKeyID, ExcludeSessionID: excludeSessionID,
-			Payload: payload, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
-		})}, nil
+	owner := scheduled.OwnerUserID
+	chats := r.chatsForMessageUpdate(ctx, owner, domain.Message{Peer: scheduled.Peer})
+	refs := r.preloadScheduledDeliveryRefs(ctx, owner, scheduled)
+	return &domain.ScheduledDelivery{
+		OwnerUserID: owner, ID: scheduled.ID, Generation: scheduled.Generation,
+		ExcludeAuthKeyID: excludeAuthKeyID, ExcludeSessionID: excludeSessionID,
+		Payload: func(completion domain.ScheduledCompletion) ([]byte, error) {
+			updates := tgDeleteScheduledUpdates(completion.Sent.Peer, []int{completion.Sent.ID}, nonZeroScheduledSentIDs(completion.Sent.SentMessageID), chats, date)
+			if completion.Next != nil {
+				next := tgNewScheduledMessageUpdatesWithRefs(owner, *completion.Next, 0, date, refs)
+				updates.Updates = append(updates.Updates, next.Updates...)
+				updates.Users = mergeTGUsers(updates.Users, next.Users)
+				updates.Chats = mergeTGChats(updates.Chats, next.Chats)
+			}
+			payload, err := encodeDeliveryUpdate(updates)
+			if err != nil {
+				return nil, fmt.Errorf("encode scheduled completion delivery: %w", err)
+			}
+			return payload, nil
+		},
 	}
 }
 
@@ -462,6 +502,9 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	if r.deps.Messages == nil {
 		return nil, peerIDInvalidErr()
 	}
+	if err := r.validateSchedule(ctx, userID, toPeer, req.ScheduleDate, req.ScheduleRepeatPeriod); err != nil {
+		return nil, err
+	}
 	if err := r.requireAccountDelivery(userID, "messages.scheduleForwardMessages"); err != nil {
 		return nil, err
 	}
@@ -479,6 +522,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	}
 	domainMessages := make([]domain.Message, 0, len(sources))
 	for i, source := range sources {
+		source = source.withoutMediaCaption(req.DropMediaCaptions)
 		forward := source.forward
 		if req.DropAuthor {
 			forward = nil
@@ -513,6 +557,9 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 		item := tgMessage(domainMsg)
 		if scheduled, ok := item.(*tg.Message); ok {
 			scheduled.SetFromScheduled(true)
+			if msg.ScheduleRepeatPeriod > 0 {
+				scheduled.SetScheduleRepeatPeriod(msg.ScheduleRepeatPeriod)
+			}
 		}
 		if item == nil {
 			item = &tg.MessageEmpty{ID: msg.ID}
@@ -524,7 +571,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	return updates, nil
 }
 
-func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer domain.Peer, id int, message string, setMessage bool, entities []tg.MessageEntityClass, richMessage *domain.MessageRichMessage, setRichMessage bool, scheduleDate int) (tg.UpdatesClass, error) {
+func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer domain.Peer, id int, message string, setMessage bool, entities []tg.MessageEntityClass, richMessage *domain.MessageRichMessage, setRichMessage bool, scheduleDate int, repeat int, setRepeat bool, media *domain.MessageMedia) (tg.UpdatesClass, error) {
 	if r.deps.Messages == nil {
 		return nil, messageIDInvalidErr()
 	}
@@ -535,18 +582,26 @@ func (r *Router) editScheduledMessage(ctx context.Context, userID int64, peer do
 	if scheduleDateIsImmediate(scheduleDate, now) {
 		return nil, scheduleDateInvalidErr()
 	}
+	if err := r.validateSchedule(ctx, userID, peer, scheduleDate, repeat); err != nil {
+		return nil, err
+	}
 	current, err := r.deps.Messages.GetScheduledMessages(ctx, userID, domain.ScheduledMessageFilter{
 		OwnerUserID: userID, Peer: peer, IDs: []int{id}, Limit: 1,
 	})
 	if err != nil || len(current.Messages) != 1 {
 		return nil, messageIDInvalidErr()
 	}
-	deliveryRefs := r.preloadScheduledDeliveryRefs(ctx, userID, current.Messages[0])
+	refSource := current.Messages[0]
+	if media != nil {
+		refSource.Media = media
+	}
+	deliveryRefs := r.preloadScheduledDeliveryRefs(ctx, userID, refSource)
 	msg, err := r.deps.Messages.EditScheduledMessage(ctx, userID, domain.EditScheduledMessageRequest{
-		OwnerUserID:    userID,
-		Peer:           peer,
-		ID:             id,
-		SetMessage:     setMessage,
+		OwnerUserID:     userID,
+		Peer:            peer,
+		ID:              id,
+		SetMessage:      setMessage,
+		SetRepeatPeriod: setRepeat, ScheduleRepeatPeriod: repeat, ReplaceMedia: media != nil, Media: media,
 		Message:        message,
 		Entities:       domainMessageEntitiesForViewer(userID, entities),
 		SetRichMessage: setRichMessage,

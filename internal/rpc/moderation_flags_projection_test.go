@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/iamxvbaba/td/bin"
@@ -64,8 +65,18 @@ func TestModerationFlagsProjectToChannelWithoutMutatingAbout(t *testing.T) {
 	if !decoded.Scam || decoded.Fake {
 		t.Fatalf("decoded channel=%+v", decoded)
 	}
+	// The basic tg.Channel carries no About, so only the full projection can
+	// show the mark: it prepends the server warning above the owner's text
+	// while the stored description itself stays untouched.
 	full := tgChannelFull(domain.ChannelView{Channel: channel})
-	if full.About != channel.About {
-		t.Fatalf("about=%q, want unmodified %q", full.About, channel.About)
+	wantAbout := domain.ModerationProfileWarning(true, false, channel.About)
+	if full.About != wantAbout {
+		t.Fatalf("about=%q, want warning over owner text %q", full.About, wantAbout)
+	}
+	if !strings.HasSuffix(full.About, "Owner description") {
+		t.Fatalf("about=%q, want the owner's own text kept below the warning", full.About)
+	}
+	if channel.About != "Owner description" {
+		t.Fatalf("stored about mutated to %q", channel.About)
 	}
 }

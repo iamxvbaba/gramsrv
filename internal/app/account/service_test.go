@@ -20,7 +20,8 @@ import (
 func TestPasswordSRPRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	const userID int64 = 1001
-	svc := NewService(memory.NewPasswordStore())
+	sender := &captureMailSender{}
+	svc := NewService(memory.NewPasswordStore(), WithLoginEmailVerification(memory.NewCodeStore(), sender, time.Minute, 3, 6))
 
 	initial, err := svc.GetPassword(ctx, userID)
 	if err != nil {
@@ -36,7 +37,7 @@ func TestPasswordSRPRoundTrip(t *testing.T) {
 		Email:           "alice@example.com",
 		HasEmail:        true,
 	}
-	if err := svc.UpdatePasswordSettings(ctx, userID, domain.PasswordCheck{Empty: true}, input); err != nil {
+	if err := setConfirmedPassword(t, svc, sender, userID, input); err != nil {
 		t.Fatalf("UpdatePasswordSettings set password: %v", err)
 	}
 
@@ -81,7 +82,7 @@ func TestRecoverPasswordClearsTwoFactorPassword(t *testing.T) {
 	}
 	algo := initial.NewAlgo
 	algo.Salt1 = append(append([]byte(nil), algo.Salt1...), bytes.Repeat([]byte{0x5C}, 32)...)
-	if err := svc.UpdatePasswordSettings(ctx, userID, domain.PasswordCheck{Empty: true}, domain.PasswordInputSettings{
+	if err := setConfirmedPassword(t, svc, sender, userID, domain.PasswordInputSettings{
 		NewAlgo:         &algo,
 		NewPasswordHash: verifierForPassword(algo, []byte("old password")),
 		Email:           "bob@example.com",
@@ -90,6 +91,7 @@ func TestRecoverPasswordClearsTwoFactorPassword(t *testing.T) {
 		t.Fatalf("UpdatePasswordSettings set password: %v", err)
 	}
 
+	sender.requests = nil
 	pattern, err := svc.RequestPasswordRecovery(ctx, userID)
 	if err != nil {
 		t.Fatalf("RequestPasswordRecovery: %v", err)

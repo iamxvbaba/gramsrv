@@ -1,43 +1,55 @@
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/plus-jakarta-sans-400.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/plus-jakarta-sans-500.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/plus-jakarta-sans-600.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/plus-jakarta-sans-700.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/plus-jakarta-sans-800.woff2") format("woff2"); }
+
 :root {
   color-scheme: light;
 
   /* Surfaces */
-  --bg: #eef1f5;
-  --bg-accent: #e7ecf1;
+  --bg: #f7f9fc;
+  --bg-accent: #eef1f5;
   --panel: #ffffff;
-  --panel-subtle: #f5f8fb;
-  --panel-strong: #eef2f6;
-  --surface-soft: #f2f7f6;
+  --panel-subtle: #f7f9fc;
+  --panel-strong: #f1f5f9;
+  /* Loading placeholders. Kept as their own pair rather than reusing the
+     panel shades because the sheen has to read as lighter than the base in
+     both themes, and the panel ramp runs the opposite way in dark. */
+  --skeleton-base: #e6ebf2;
+  --skeleton-sheen: #f4f7fa;
+  --surface-soft: #f2f7fd;
   --overlay: rgba(24, 34, 47, 0.42);
-  --topbar-bg: rgba(255, 255, 255, 0.86);
+  --topbar-bg: rgba(255, 255, 255, 0.94);
 
   /* Lines */
-  --line: #e5eaf0;
-  --line-strong: #d3dce4;
+  --line: #e2e8f0;
+  --line-strong: #cbd5e1;
 
   /* Text */
-  --heading: #253040;
-  --text: #333f4d;
-  --text-soft: #45525f;
-  --muted: #6d7885;
-  --muted-2: #9aa4b1;
+  --heading: #101828;
+  --text: #0f1720;
+  --text-soft: #344054;
+  --muted: #64748b;
+  --muted-2: #94a3b8;
 
   /* Brand */
-  --brand: #1f7d6f;
-  --brand-strong: #196155;
-  --brand-2: #3a6cae;
-  --brand-tint: #e8f4f0;
-  --brand-tint-border: #c8e2db;
-  --brand-tint-text: #235d53;
+  --brand: #2563eb;
+  --brand-strong: #1d4ed8;
+  --brand-2: #38bdf8;
+  --grad: linear-gradient(135deg, #38bdf8 0%, #2563eb 55%, #1e40af 100%);
+  --brand-tint: #eaf2fd;
+  --brand-tint-border: #c7dcf9;
+  --brand-tint-text: #1e3a8a;
 
   /* Semantic */
-  --good: #1f8a57;
+  --good: #167447;
   --good-tint: #eaf6ef;
   --good-border: #c1e1cf;
-  --warn: #a86a12;
+  --warn: #a15c07;
   --warn-tint: #fcf4e4;
   --warn-border: #e7d09e;
-  --danger: #c0392b;
+  --danger: #b42318;
   --danger-tint: #fcefec;
   --danger-border: #eecac3;
   --danger-text: #8f2f27;
@@ -61,20 +73,22 @@
   --code-border: #2b3a49;
 
   /* Sidebar */
-  --sidebar: #1c2530;
-  --sidebar-soft: #26313d;
-  --sidebar-line: #313c4a;
-  --sidebar-row: #232d38;
-  --sidebar-text: #dbe3ec;
-  --sidebar-muted: #8b98a8;
-  --sidebar-faint: #7c8a9a;
+  --sidebar: #08080e;
+  --sidebar-soft: #12121a;
+  --sidebar-line: #222228;
+  --sidebar-row: #17171f;
+  --sidebar-text: #c6d0dc;
+  --sidebar-muted: #8fa0b4;
+  --sidebar-faint: #8492a6;
   --sidebar-heading: #ffffff;
 
   /* Effects */
-  --focus: rgba(31, 125, 111, 0.16);
-  --shadow: 0 12px 34px rgba(24, 39, 56, 0.1);
+  --focus: rgba(37, 99, 235, 0.16);
+  --shadow: 0 28px 70px -36px rgba(5, 5, 8, 0.35);
   --shadow-sm: 0 2px 10px rgba(24, 39, 56, 0.05);
-  --shadow-brand: 0 8px 22px rgba(31, 125, 111, 0.22);
+  --shadow-brand: 0 8px 22px rgba(37, 99, 235, 0.22);
+  --hero-glow: rgba(37, 99, 235, 0.14);
+  --hero-grid: rgba(5, 5, 8, 0.04);
 
   /* Radii */
   --radius-xs: 8px;
@@ -91,6 +105,8 @@
   --panel: #171f28;
   --panel-subtle: #1c2530;
   --panel-strong: #212c38;
+  --skeleton-base: #212c38;
+  --skeleton-sheen: #2e3d4c;
   --surface-soft: #1a232d;
   --overlay: rgba(5, 8, 12, 0.62);
   --topbar-bg: rgba(21, 28, 36, 0.86);
@@ -104,12 +120,12 @@
   --muted: #98a4b1;
   --muted-2: #6d7885;
 
-  --brand: #37a596;
-  --brand-strong: #45b6a6;
-  --brand-2: #6fa8e6;
-  --brand-tint: #14322d;
-  --brand-tint-border: #245349;
-  --brand-tint-text: #7fd3c4;
+  --brand: #5b9dff;
+  --brand-strong: #7db4ff;
+  --brand-2: #7cd1fb;
+  --brand-tint: #142a4a;
+  --brand-tint-border: #24466e;
+  --brand-tint-text: #9dc3f5;
 
   --good: #47c281;
   --good-tint: #12301f;
@@ -146,10 +162,12 @@
   --sidebar-faint: #6f7b88;
   --sidebar-heading: #f0f4f8;
 
-  --focus: rgba(55, 165, 150, 0.24);
+  --focus: rgba(91, 157, 255, 0.24);
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.46);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.38);
-  --shadow-brand: 0 8px 22px rgba(55, 165, 150, 0.26);
+  --shadow-brand: 0 8px 22px rgba(91, 157, 255, 0.26);
+  --hero-glow: rgba(91, 157, 255, 0.25);
+  --hero-grid: rgba(255, 255, 255, 0.04);
 }
 
 * {
@@ -166,7 +184,7 @@ body {
   margin: 0;
   color: var(--text);
   background: var(--bg);
-  font: 13px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 13px/1.45 "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   transition: background-color 200ms ease, color 200ms ease;
@@ -187,7 +205,7 @@ a {
 .shell {
   display: grid;
   min-height: 100vh;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -202,6 +220,13 @@ a {
   color: var(--sidebar-text);
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-line);
+}
+
+/* Desktop keeps the sidebar fully expanded, so the expand/collapse toggle is
+   only needed on the mobile rail. Hidden here, re-enabled in the responsive
+   block. */
+.sidebar-toggle-wrap {
+  display: none;
 }
 
 .brand {
@@ -220,16 +245,25 @@ a {
   box-shadow: var(--shadow-brand);
 }
 
+/* The brand mark is a rounded square, not a circle. An operator uploads a
+   square image, and clipping it to a circle cut the corners off artwork they
+   designed as a square -- a logo that reads as "a square with empty borders
+   where a circle should be". A squircle shows the uploaded pixels as they were
+   drawn and still reads as an app icon at 30px. */
 .brand-mark {
   display: grid;
   width: 34px;
   height: 34px;
+  border-radius: 30%;
+  overflow: hidden;
   place-items: center;
-  color: #ffffff;
-  background: var(--brand);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: var(--radius-sm);
-  font-weight: 800;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .brand strong {
@@ -287,7 +321,7 @@ a {
 .nav-section.active .nav-section-toggle {
   color: var(--sidebar-heading);
   background: var(--sidebar-soft);
-  border-color: var(--sidebar-line);
+  border-color: #34404d;
 }
 
 .nav-section-chevron {
@@ -331,7 +365,7 @@ a {
 .nav-item.active {
   color: var(--sidebar-heading);
   background: var(--sidebar-soft);
-  border-color: var(--sidebar-line);
+  border-color: #34404d;
 }
 
 .nav-item.active .nav-dot {
@@ -353,7 +387,7 @@ a {
   padding: 0 8px;
   color: var(--sidebar-text);
   background: var(--sidebar-row);
-  border: 1px solid var(--sidebar-line);
+  border: 1px solid #27313c;
   border-radius: var(--radius-sm);
 }
 
@@ -460,8 +494,11 @@ a {
 .actor-pill {
   display: inline-flex;
   min-height: 30px;
+  /* Icon and name read as one label rather than two adjacent things. */
+  gap: 6px;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 12px;
+  font-weight: 600;
   color: var(--text-soft);
   background: var(--panel-subtle);
   border: 1px solid var(--line);
@@ -472,6 +509,45 @@ a {
   display: grid;
   gap: 16px;
   padding: 18px 24px 30px;
+}
+
+/* On a screen with both width and height to spare the shell becomes a
+   viewport-height grid so the content area, rather than the document, is what
+   scrolls. The topbar and the sidebar were already independent of the scroll
+   position -- one sticky, one height-locked -- so pinning the shell changes
+   nothing about them, and it is what lets the overview size itself to the
+   space it has instead of guessing at it.
+
+   The min-height is the honest part: a short laptop window does not have the
+   vertical room for a fixed-height overview, and squeezing it produced panels
+   clipped to a few pixels rather than anything readable. Below that the old
+   document scroll applies and the page simply gets taller, which is what every
+   other page in the panel has always done. */
+@media (min-width: 1181px) and (min-height: 820px) {
+  .shell {
+    height: 100vh;
+  }
+
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .content {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    /* Stop the one implicit row from absorbing the leftover height. A grid
+       container with a definite height stretches its auto-sized rows by
+       default, and every page in the panel is a single .page-frame -- so each
+       page card was pulled to the full viewport with its own rows smeared out
+       to match, which is the "everything is stretched" look. The overview
+       opts back in with an explicit 1fr row (.content:has(> .overview) in
+       02-pages-and-forms.css); everything else stacks from the top, which is
+       how it behaved before this media query existed. */
+    align-content: start;
+  }
 }
 
 .eyebrow {

@@ -52,7 +52,7 @@ func TestStoredRichMessageMissingLayerDecodesAsExact228(t *testing.T) {
 	}
 }
 
-func TestNewRichMessageStoresExact229Profile(t *testing.T) {
+func TestNewRichMessageStoresExact230Profile(t *testing.T) {
 	r := &Router{}
 	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessage{
 		Blocks: []tg.PageBlockClass{&tg.PageBlockBlockquote{
@@ -68,7 +68,7 @@ func TestNewRichMessageStoresExact229Profile(t *testing.T) {
 		t.Fatalf("stored blocks layer = %d, want canonical %d", rich.BlocksLayer, tlprofile.ProfileCanonical)
 	}
 	if got := binary.LittleEndian.Uint32(rich.Blocks[8:12]); got != 0x66d1670b {
-		t.Fatalf("stored blockquote constructor = %#08x, want Layer 229", got)
+		t.Fatalf("stored blockquote constructor = %#08x, want Layer 230", got)
 	}
 }
 
@@ -102,7 +102,7 @@ func TestLayer228SenderRichMessageProjectsToLayer229Receiver(t *testing.T) {
 		t.Fatalf("storage layer = %d, want canonical %d", stored.BlocksLayer, tlprofile.ProfileCanonical)
 	}
 	if got := binary.LittleEndian.Uint32(stored.Blocks[8:12]); got != 0x66d1670b {
-		t.Fatalf("storage constructor = %#08x, want Layer 229", got)
+		t.Fatalf("storage constructor = %#08x, want Layer 230", got)
 	}
 
 	projected, err := tgRichMessage(stored)
@@ -1272,4 +1272,21 @@ func newRichDraftTestRouter(t *testing.T) (*Router, domain.User, domain.User) {
 		Files:   &fakeFiles{docs: map[int64]domain.Document{}, photos: map[int64]domain.Photo{}},
 	}, zaptest.NewLogger(t), clock.System)
 	return r, owner, friend
+}
+
+func TestStoredRichMessageExplicit229ProfileIsRetained(t *testing.T) {
+	blocks := []tg.PageBlockClass{&tg.PageBlockBlockquote{Collapsed: true, Text: &tg.TextPlain{Text: "stored 229"}, Caption: &tg.TextEmpty{}}}
+	var wire bin.Buffer
+	if err := tlprofile.EncodePageBlockVector(tlprofile.Profile229, blocks, &wire); err != nil {
+		t.Fatal(err)
+	}
+	rich := &domain.MessageRichMessage{BlocksLayer: 229, Blocks: wire.Copy()}
+	got, err := tgRichMessage(rich)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := got.Blocks[0].(*tg.PageBlockBlockquote)
+	if !quote.Collapsed || quote.Text.(*tg.TextPlain).Text != "stored 229" || rich.BlocksLayer != 229 {
+		t.Fatalf("229 snapshot changed: %+v", got)
+	}
 }

@@ -170,6 +170,12 @@ func (r *Router) onMessagesAcceptURLAuth(ctx context.Context, req *tg.MessagesAc
 	if err != nil {
 		return nil, err
 	}
+	if req.Flags.Has(5) || !req.TonconnectSession.Zero() {
+		// Layer 231 wallet OAuth needs ownership proof verification and a binding
+		// between the login request and the wallet session. Reject before either
+		// approval or an already-approved replay can report plain-login success.
+		return nil, methodInvalidErr()
+	}
 	_, hasPeer := req.GetPeer()
 	deepLink, hasURL := req.GetURL()
 	matchCode, hasMatchCode := req.GetMatchCode()

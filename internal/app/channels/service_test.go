@@ -2239,17 +2239,17 @@ func TestDeleteParticipantHistoryDeletesOneBoundedSenderPage(t *testing.T) {
 		t.Fatalf("member second SendMessage: %v", err)
 	}
 	if _, err := service.DeleteParticipantHistory(ctx, 1002, domain.DeleteChannelParticipantHistoryRequest{
-		ChannelID:         created.Channel.ID,
-		ParticipantUserID: 1001,
-		Date:              14,
+		ChannelID:   created.Channel.ID,
+		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1001},
+		Date:        14,
 	}); !errors.Is(err, domain.ErrChannelAdminRequired) {
 		t.Fatalf("member DeleteParticipantHistory err = %v, want ErrChannelAdminRequired", err)
 	}
 
 	deleted, err := service.DeleteParticipantHistory(ctx, 1001, domain.DeleteChannelParticipantHistoryRequest{
-		ChannelID:         created.Channel.ID,
-		ParticipantUserID: 1002,
-		Date:              15,
+		ChannelID:   created.Channel.ID,
+		Participant: domain.Peer{Type: domain.PeerTypeUser, ID: 1002},
+		Date:        15,
 	})
 	if err != nil {
 		t.Fatalf("DeleteParticipantHistory: %v", err)
@@ -2760,7 +2760,7 @@ func TestChannelUsernameAndSignatures(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EditAdmin: %v", err)
 	}
-	signed, err := service.SetSignatures(ctx, 1002, created.Channel.ID, true)
+	signed, err := service.SetSignatures(ctx, 1002, created.Channel.ID, true, false)
 	if err != nil {
 		t.Fatalf("SetSignatures by change-info admin: %v", err)
 	}

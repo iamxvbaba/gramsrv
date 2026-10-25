@@ -54,15 +54,25 @@ func (r *Router) onChannelsDeleteParticipantHistory(ctx context.Context, req *tg
 	if err != nil {
 		return nil, err
 	}
-	peer, ok := r.domainPeerFromInputPeer(0, req.Participant)
-	if !ok || peer.Type != domain.PeerTypeUser || peer.ID == 0 {
+	peer, ok := r.domainPeerFromInputPeer(userID, req.Participant)
+	if !ok || (peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel) || peer.ID <= 0 {
 		return nil, peerIDInvalidErr()
 	}
+	if p, ok := req.Participant.(*tg.InputPeerUser); ok {
+		if err := r.validateInputUser(ctx, &tg.InputUser{UserID: p.UserID, AccessHash: p.AccessHash}); err != nil {
+			return nil, err
+		}
+	}
+	if peer.Type == domain.PeerTypeChannel {
+		if err := r.validateInputPeerChannelAccess(ctx, userID, req.Participant, peer.ID); err != nil {
+			return nil, err
+		}
+	}
 	res, err := r.deps.Channels.DeleteParticipantHistory(ctx, userID, domain.DeleteChannelParticipantHistoryRequest{
-		UserID:            userID,
-		ChannelID:         channelID,
-		ParticipantUserID: peer.ID,
-		Date:              int(r.clock.Now().Unix()),
+		UserID:      userID,
+		ChannelID:   channelID,
+		Participant: peer,
+		Date:        int(r.clock.Now().Unix()),
 	})
 	if err != nil {
 		return nil, channelDeleteErr(err)
@@ -319,6 +329,20 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	if !view.Self.CanInviteUsers(view.Channel) {
 		return nil, channelInviteErr(domain.ErrChannelAdminRequired)
 	}
+	// Bots can join a broadcast channel only as admins (channels.editAdmin);
+	// chat_invite privacy no longer filters them, so reject the plain-member
+	// write explicitly, as TDesktop's local USER_BOT handling expects.
+	if view.Channel.Broadcast && !view.Channel.Megagroup {
+		for _, targetUserID := range userIDs {
+			bot, _, err := r.lookupUserBotStatus(ctx, targetUserID)
+			if err != nil {
+				return nil, internalErr()
+			}
+			if bot {
+				return nil, tgerr400("USER_BOT")
+			}
+		}
+	}
 	userIDs, missingInvitees, err := r.filterChatInvitePrivacy(ctx, userID, userIDs)
 	if err != nil {
 		return nil, internalErr()
@@ -409,7 +433,9 @@ func (r *Router) onChannelsEditAdmin(ctx context.Context, req *tg.ChannelsEditAd
 	if err != nil {
 		return nil, internalErr()
 	}
-	if !found || target.ID == 0 {
+	// An account tombstone can hold no admin rights: the grant would outlive the
+	// account and keep the peer's row in every participants projection.
+	if !found || target.ID == 0 || target.Deleted {
 		return nil, peerIDInvalidErr()
 	}
 	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, req.Channel); ok {

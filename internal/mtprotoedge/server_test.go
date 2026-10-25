@@ -8,9 +8,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -346,7 +348,7 @@ func TestSamePortWebSocketTransportRoundTrip(t *testing.T) {
 	mux := newSamePortMux(ln, 5*time.Second)
 	wsLn, wsHandler := transport.WebsocketListener(ln.Addr())
 	httpServer := &http.Server{
-		Handler:           websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}),
+		Handler:           websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}, nil),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -517,7 +519,7 @@ func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 
 	_, wsHandler := transport.WebsocketListener(ln.Addr())
-	httpServer := &http.Server{Handler: websocketRouteHandler(wsHandler, []string{"http://localhost:1234"})}
+	httpServer := &http.Server{Handler: websocketRouteHandler(wsHandler, []string{"http://localhost:1234"}, nil)}
 	go func() { _ = httpServer.Serve(ln) }()
 	defer func() { _ = httpServer.Close() }()
 
@@ -538,6 +540,63 @@ func TestWebSocketRouteHandlerChecksBrowserOrigin(t *testing.T) {
 	status = wsUpgradeStatus(t, host, "/nope", "http://localhost:1234")
 	if !strings.Contains(status, "404") {
 		t.Fatalf("disallowed path: got status %q, want 404", status)
+	}
+}
+
+// TestSamePortHTTPServesInjectedRoutes pins gramsrv#138: a plain HTTP GET on the
+// MTProto port reaches the injected same-port handler, while /apiws* stays on
+// the WebSocket upgrade path and is never handed to it.
+func TestSamePortHTTPServesInjectedRoutes(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var mu sync.Mutex
+	var seen []string
+	srv := New(Options{
+		Logger:        zaptest.NewLogger(t),
+		ObfuscatedTCP: true,
+		WebSocket:     true,
+		SamePortHTTP: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seen = append(seen, r.URL.Path)
+			mu.Unlock()
+			if r.URL.Path != "/owpengram/server-info" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = io.WriteString(w, `{"dc_id":2}`)
+		}),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx, ln) }()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + ln.Addr().String() + "/owpengram/server-info")
+	if err != nil {
+		t.Fatalf("GET server-info: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != `{"dc_id":2}` {
+		t.Fatalf("GET server-info = %d %q", resp.StatusCode, body)
+	}
+	if status := wsUpgradeStatus(t, ln.Addr().String(), "/apiws", ""); !strings.Contains(status, "101") {
+		t.Fatalf("/apiws upgrade with a same-port handler = %q, want 101", status)
+	}
+	mu.Lock()
+	got := append([]string(nil), seen...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != "/owpengram/server-info" {
+		t.Fatalf("same-port handler saw %v, want only the server-info path", got)
+	}
+	cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop")
 	}
 }
 

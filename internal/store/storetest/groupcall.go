@@ -45,6 +45,7 @@ func RunGroupCallStoreContract(t *testing.T, factory GroupCallStoreFactory) {
 	t.Run("JoinVersionMonotonic", func(t *testing.T) { contractJoinVersion(t, factory) })
 	t.Run("SSRCDuplicateAndRejoin", func(t *testing.T) { contractSSRC(t, factory) })
 	t.Run("JoinMutedPolicy", func(t *testing.T) { contractJoinMuted(t, factory) })
+	t.Run("JoinRequestedMute", func(t *testing.T) { contractJoinRequestedMute(t, factory) })
 	t.Run("TouchAndSweep", func(t *testing.T) { contractTouchSweep(t, factory) })
 	t.Run("DiscardClearsParticipants", func(t *testing.T) { contractDiscard(t, factory) })
 	t.Run("ListPagination", func(t *testing.T) { contractListPagination(t, factory) })
@@ -233,6 +234,40 @@ func contractJoinVideoState(t *testing.T, factory GroupCallStoreFactory) {
 	})
 	if err != nil || !changed || len(mut2.Participant.PresentationJSON) != 0 {
 		t.Fatalf("clear presentation = %s changed=%v err=%v", mut2.Participant.PresentationJSON, changed, err)
+	}
+}
+
+func contractJoinRequestedMute(t *testing.T, factory GroupCallStoreFactory) {
+	st, channelID := factory(t)
+	ctx := context.Background()
+	call := newContractCall(t, st, channelID, channelID*100+1)
+	now := baseNow()
+	request := domain.JoinGroupCallRequest{CallID: call.ID, UserID: 101, SSRC: 7001, Muted: true, IsAdmin: true, Now: now}
+	first, err := st.JoinGroupCall(ctx, request)
+	if err != nil || !first.Participant.Muted || first.Participant.MutedByAdmin {
+		t.Fatalf("requested muted join: participant=%+v err=%v", first.Participant, err)
+	}
+	unmuted := false
+	out, changed, err := st.UpdateParticipant(ctx, call.ID, 101, domain.GroupCallParticipantUpdate{Muted: &unmuted, Now: now + 1})
+	if err != nil || !changed || out.Participant.Muted {
+		t.Fatalf("unmute after muted join: participant=%+v changed=%v err=%v", out.Participant, changed, err)
+	}
+	request.SSRC++
+	request.Now++
+	request.Muted = false
+	rejoined, err := st.JoinGroupCall(ctx, request)
+	if err != nil || rejoined.Participant.Muted || rejoined.Call.ParticipantsCount != 1 || rejoined.Participant.JoinDate != first.Participant.JoinDate {
+		t.Fatalf("unmuted rejoin: %+v err=%v", rejoined, err)
+	}
+	muted := true
+	if _, _, err := st.UpdateParticipant(ctx, call.ID, 101, domain.GroupCallParticipantUpdate{Muted: &muted, MutedByAdmin: &muted, Now: now + 2}); err != nil {
+		t.Fatal(err)
+	}
+	request.SSRC++
+	request.Now++
+	rejoined, err = st.JoinGroupCall(ctx, request)
+	if err != nil || !rejoined.Participant.Muted || !rejoined.Participant.MutedByAdmin {
+		t.Fatalf("rejoin bypassed administrator mute: %+v err=%v", rejoined, err)
 	}
 }
 

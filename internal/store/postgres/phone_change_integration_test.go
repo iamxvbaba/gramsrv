@@ -27,10 +27,13 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	changes := NewPhoneChangeStore(pool)
 	events := NewUpdateEventStore(pool)
-	suffix := time.Now().UnixNano() % 1_000_000_000
-	oldPhone := fmt.Sprintf("1661%d01", suffix)
-	occupiedPhone := fmt.Sprintf("1661%d02", suffix)
-	newPhone := fmt.Sprintf("1661%d03", suffix)
+	suffix := time.Now().UnixNano() % 1000
+	// NANP numbers must be 11 digits ("1650555" + 3 subscriber digits) to pass
+	// domain.ValidPhone's strict E.164 check; the suffix keeps each run's set
+	// unique across repeated runs against the same database.
+	oldPhone := fmt.Sprintf("16505550%03d", (suffix+1)%1000)
+	occupiedPhone := fmt.Sprintf("16505550%03d", (suffix+2)%1000)
+	newPhone := fmt.Sprintf("16505550%03d", (suffix+3)%1000)
 	u1, err := users.Create(ctx, domain.User{AccessHash: 301, Phone: oldPhone, FirstName: "PhoneOne"})
 	if err != nil {
 		t.Fatalf("create user1: %v", err)
@@ -113,7 +116,9 @@ func TestPhoneChangeStoreUpdatesUserWithoutPTSPostgres(t *testing.T) {
 	if err != nil || retry.Changed || retry.User.Phone != newPhone {
 		t.Fatalf("idempotent retry = %+v err=%v", retry, err)
 	}
-	if pts, err := events.MaxContiguousPts(ctx, u1.ID); err != nil || pts != 1 {
+	// 改号不分配账号 PTS（updateUserPhone 无 pts），重试同样不得产生
+	// PTS/event/outbox。
+	if pts, err := events.MaxContiguousPts(ctx, u1.ID); err != nil || pts != 0 {
 		t.Fatalf("pts after retry = %d err=%v", pts, err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM edge_delivery_outbox WHERE target_user_id=$1`, u1.ID).Scan(&deliveryCount); err != nil || deliveryCount != 1 {

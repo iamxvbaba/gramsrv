@@ -382,7 +382,7 @@ func adminLogEventMatchesFilter(typ domain.ChannelAdminLogEventType, filter doma
 		return filter.EditRank
 	case domain.ChannelAdminLogChangeTitle, domain.ChannelAdminLogChangeUsername, domain.ChannelAdminLogChangeLinkedChat, domain.ChannelAdminLogToggleSlowMode:
 		return filter.Info
-	case domain.ChannelAdminLogToggleSignatures, domain.ChannelAdminLogTogglePreHistoryHidden, domain.ChannelAdminLogToggleAntiSpam, domain.ChannelAdminLogToggleAutotranslation:
+	case domain.ChannelAdminLogToggleSignatureProfiles, domain.ChannelAdminLogToggleSignatures, domain.ChannelAdminLogTogglePreHistoryHidden, domain.ChannelAdminLogToggleAntiSpam, domain.ChannelAdminLogToggleAutotranslation:
 		return filter.Settings
 	case domain.ChannelAdminLogToggleForum:
 		return filter.Settings || filter.Forums

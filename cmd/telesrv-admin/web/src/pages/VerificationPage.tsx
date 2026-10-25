@@ -1,9 +1,11 @@
 import { BadgeCheck, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
+import { permissionBotVerificationReview, useCan } from "../permissions";
 import type { Navigate } from "../routing";
 import type {
   VerificationApplicationRow,
@@ -19,6 +21,7 @@ const targetTypes: VerificationTargetType[] = ["bot", "channel", "supergroup", "
 
 export function VerificationPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
+  const canSeeThirdParty = useCan(permissionBotVerificationReview);
   const [status, setStatus] = useState<StatusFilter>("all");
   const [targetType, setTargetType] = useState<TargetFilter>("all");
   const [reviewer, setReviewer] = useState("");
@@ -87,6 +90,7 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
+      <SectionTabs sectionId="verification" active="/verification" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         {statuses.map((item) => (

@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 	"reflect"
 	"sync"
+	appaccount "telesrv/internal/app/account"
 	appauth "telesrv/internal/app/auth"
 	appdialogs "telesrv/internal/app/dialogs"
 	"telesrv/internal/domain"
@@ -505,6 +506,31 @@ func TestObservedClientLayerNeverLeaksAcrossAuthKeySessions(t *testing.T) {
 	}
 	if got, ok := r.NegotiatedLayer(effectiveAuthKey, 101); ok || got != currentClientLayer {
 		t.Fatalf("effective auth metadata layer = (%d,%v), want (%d,false)", got, ok, currentClientLayer)
+	}
+}
+
+func TestPersistAuthKeyClientInfoCarriesClientIP(t *testing.T) {
+	authKeyID := [8]byte{0x68, 0x25, 0x7a, 0x09}
+	auth := &captureAuthService{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+	ctx := WithAuthKeyID(
+		WithRawAuthKeyID(WithClientIP(context.Background(), "203.0.113.17"), authKeyID),
+		authKeyID,
+	)
+
+	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{
+		layer:         currentClientLayer,
+		hasClientInfo: true,
+		clientInfo: ClientInfo{
+			APIID: 2040, DeviceModel: "Pixel 9", SystemVersion: "SDK 36", AppVersion: "12.8.7",
+		},
+	})
+
+	got := auth.authKeyClientInfos[authKeyID].IP
+	if got != "203.0.113.17" {
+		t.Fatalf("persisted client IP = %q, want %q", got, "203.0.113.17")
 	}
 }
 
@@ -1191,6 +1217,8 @@ func TestDispatchPushesOnlinePeerStatusesToRestoredSession(t *testing.T) {
 // aggregate fixtures in their focused tests instead of sharing this empty one.
 func TestTDesktopStartupReadRPCsEncode(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Messages: &scheduledCaptureMessages{captureMessages: &captureMessages{}},
+		Account:  appaccount.NewService(memory.NewPasswordStore()),
 		Users: staticUsersService{user: domain.User{
 			ID:         1000000001,
 			AccessHash: 42,

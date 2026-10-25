@@ -176,3 +176,14 @@ func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumen
 	}
 	return true, nil
 }
+
+// SeedState returns the recorded seed fingerprint for key. Transaction-scoped
+// seeders (SeedTx) use it to keep startup seeding idempotent.
+func (s *Service) SeedState(ctx context.Context, key string) (string, bool, error) {
+	return s.media.GetSeedState(ctx, key)
+}
+
+// PutSeedState records the seed fingerprint for key.
+func (s *Service) PutSeedState(ctx context.Context, key, hash string) error {
+	return s.putSeedState(ctx, key, hash)
+}

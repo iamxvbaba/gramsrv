@@ -888,6 +888,7 @@ func TestRepliesDiscussionAndForumTopicsProjectStoriesMaxID(t *testing.T) {
 	upsertStory(domain.Peer{Type: domain.PeerTypeChannel, ID: group.Channel.ID}, 63)
 	upsertStory(domain.Peer{Type: domain.PeerTypeChannel, ID: forum.Channel.ID}, 67)
 	r := New(Config{}, Deps{
+		Account:  newForumNotifyTestAccount(),
 		Users:    appusers.NewService(userStore),
 		Channels: channelService,
 		Stories:  appstories.NewService(storyStore),

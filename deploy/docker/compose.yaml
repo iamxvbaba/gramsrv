@@ -188,6 +188,7 @@ services:
       TELESRV_GROUPCALL_CONTROL_TOKEN: ${TELESRV_GROUPCALL_CONTROL_TOKEN:?set TELESRV_GROUPCALL_CONTROL_TOKEN in deploy/docker/.env}
       TELESRV_SFU_CONTROL_TOKEN: ${TELESRV_SFU_CONTROL_TOKEN:?set TELESRV_SFU_CONTROL_TOKEN in deploy/docker/.env}
       TELESRV_ADMIN_API_TOKEN: ${TELESRV_ADMIN_API_TOKEN:?set TELESRV_ADMIN_API_TOKEN in deploy/docker/.env}
+      TELESRV_BOT_API_ADDR: ${TELESRV_BOT_API_ADDR:-}
       TELESRV_DEV_AUTH_CODE: ${TELESRV_DEV_AUTH_CODE:?set TELESRV_DEV_AUTH_CODE in deploy/docker/.env}
       TELESRV_PHONE_CODE_DELIVERY_PROVIDER: ${TELESRV_PHONE_CODE_DELIVERY_PROVIDER:-development}
       TELESRV_ALLOW_INSECURE_DEVELOPMENT_AUTH: ${TELESRV_ALLOW_INSECURE_DEVELOPMENT_AUTH:-false}
@@ -233,6 +234,8 @@ services:
     volumes:
       - core_state:/var/lib/telesrv-core
       - core_tmp:/var/tmp/telesrv-core
+      # Server identity is written by Admin and watched by every Core instance.
+      - identity_data:/var/lib/telesrv-identity:ro
     expose:
       - "2420"
       - "2440"
@@ -310,6 +313,7 @@ services:
         condition: service_healthy
     volumes:
       - file_data:/var/lib/telesrv-file:ro
+      - identity_data:/var/lib/telesrv-identity
     ports:
       - name: admin-ui
         target: 2600
@@ -482,6 +486,8 @@ services:
         condition: service_healthy
     volumes:
       - edge_state:/var/lib/telesrv-edge
+      # Public server identity (name/description/icon) for /owpengram/server-info.
+      - identity_data:/var/lib/telesrv-identity:ro
     ports:
       - name: mtproto
         target: 2398
@@ -530,4 +536,5 @@ volumes:
   file_tmp:
   core_state:
   core_tmp:
+  identity_data:
   edge_state:

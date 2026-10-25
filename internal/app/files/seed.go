@@ -54,24 +54,6 @@ func (s *Service) SeedMedia(ctx context.Context, root string, maxRegularSets int
 
 	phaseStarted := time.Now()
 	phaseBefore := stats
-	// reactions
-	if n, err := s.media.CountAvailableReactions(ctx); err != nil {
-		return stats, err
-	} else if n == 0 {
-		if err := s.seedReactions(ctx, root, &stats); err != nil {
-			return stats, fmt.Errorf("seed reactions: %w", err)
-		}
-	} else if incomplete, err := s.availableReactionSeedNeedsRepair(ctx); err != nil {
-		return stats, err
-	} else if incomplete {
-		if err := s.seedReactions(ctx, root, &stats); err != nil {
-			return stats, fmt.Errorf("repair reactions: %w", err)
-		}
-	}
-	s.logSeedPhase("reactions", phaseStarted, phaseBefore, stats)
-
-	phaseStarted = time.Now()
-	phaseBefore = stats
 	// sticker sets（default 系统集 + 常规集 + emoji 集）：始终扫描导出目录以**增量**拾取
 	// 新增的 set 目录——importStickerSetDir 跳过内容(hash)未变的已有集,只导入新集/变更集。
 	// 这样向已部署(非空 store)的 data/sticker-seed 丢新集后重启即可生效,无需清库重 seed。
@@ -98,6 +80,24 @@ func (s *Service) SeedMedia(ctx context.Context, root string, maxRegularSets int
 		return stats, fmt.Errorf("record sticker preview seed state: %w", err)
 	}
 	s.logSeedPhase("sticker_sets", phaseStarted, phaseBefore, stats)
+
+	phaseStarted = time.Now()
+	phaseBefore = stats
+	// reactions
+	if n, err := s.media.CountAvailableReactions(ctx); err != nil {
+		return stats, err
+	} else if n == 0 {
+		if err := s.seedReactions(ctx, root, &stats); err != nil {
+			return stats, fmt.Errorf("seed reactions: %w", err)
+		}
+	} else if incomplete, err := s.availableReactionSeedNeedsRepair(ctx); err != nil {
+		return stats, err
+	} else if incomplete {
+		if err := s.seedReactions(ctx, root, &stats); err != nil {
+			return stats, fmt.Errorf("repair reactions: %w", err)
+		}
+	}
+	s.logSeedPhase("reactions", phaseStarted, phaseBefore, stats)
 
 	phaseStarted = time.Now()
 	phaseBefore = stats
@@ -161,7 +161,7 @@ func (s *Service) seedReactions(ctx context.Context, root string, stats *SeedSta
 			if d == nil || d.ID == 0 {
 				return nil
 			}
-			doc, err := s.importDocument(ctx, *d, reactionsDir, index, stats)
+			doc, err := s.importDocument(ctx, *d, reactionsDir, index, domain.StickerSetRef{}, stats)
 			if err != nil {
 				return err
 			}
@@ -317,10 +317,15 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 	// （缩略图内联缓存修复路径）。这让 seedStickerSets 可在非空 store 上每次启动安全重扫,
 	// 仅导入新增/变更集；但系统集分类由导出元数据决定，旧库中 hash 相同但 system_key/kind
 	// 错误的记录必须重写，避免 constructor 方式取不到同一个资源集。
-	if !force {
-		if existing, found, err := s.media.GetStickerSetByID(ctx, sj.ID); err != nil {
-			return err
-		} else if found && existing.Hash == sj.Hash && existing.SystemKey == systemKey && existing.Kind == kind {
+	existing, found, err := s.media.GetStickerSetByID(ctx, sj.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		// Source exports may come from different accounts. Once published locally,
+		// a set's credential remains stable across imports from those accounts.
+		sj.AccessHash = existing.AccessHash
+		if !force && existing.Hash == sj.Hash && existing.SystemKey == systemKey && existing.Kind == kind {
 			return nil
 		}
 	}
@@ -333,7 +338,7 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 	docIDs := make([]int64, 0, len(info.Result.Documents))
 	docs := make([]domain.Document, 0, len(info.Result.Documents))
 	for _, dj := range info.Result.Documents {
-		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats)
+		doc, err := s.importDocument(ctx, dj, stickersDir, index, domain.StickerSetRef{ID: sj.ID, AccessHash: sj.AccessHash}, stats)
 		if err != nil {
 			return err
 		}
@@ -379,7 +384,7 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 
 // ---- 单个 document 导入 ----
 
-func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, stats *SeedStats) (domain.Document, error) {
+func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, owner domain.StickerSetRef, stats *SeedStats) (domain.Document, error) {
 	if dj.ID == 0 {
 		return domain.Document{}, nil
 	}
@@ -397,6 +402,10 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 		Size:          dj.Size,
 		DCID:          s.dc,
 		Attributes:    seedDocumentAttributes(dj.Attributes),
+	}
+
+	if err := s.bindSeedStickerReferences(ctx, doc.Attributes, owner); err != nil {
+		return domain.Document{}, fmt.Errorf("document %d sticker reference: %w", dj.ID, err)
 	}
 
 	// 主体 blob：doc:<document-id>

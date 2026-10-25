@@ -643,7 +643,11 @@ func TestLayerAdmissionUploadFieldsCoverEveryProfile(t *testing.T) {
 			if _, err := r.AdmitLayer(profile, &atCap, tlprofile.Limits{}); err != nil {
 				t.Fatal(err)
 			}
-			for _, totalParts := range []int{0, -1, appfiles.MaxUploadParts + 1} {
+			unknown := encodeExactLayerRPC(t, profile, &tg.UploadSaveBigFilePartRequest{FileTotalParts: -1, Bytes: []byte{1}})
+			if _, err := r.AdmitLayer(profile, &unknown, tlprofile.Limits{}); err != nil {
+				t.Fatalf("generated upload with unknown total: %v", err)
+			}
+			for _, totalParts := range []int{0, -2, appfiles.MaxUploadParts + 1} {
 				body := encodeExactLayerRPC(t, profile, &tg.UploadSaveBigFilePartRequest{FileTotalParts: totalParts})
 				original := body.Copy()
 				if _, err := r.AdmitLayer(profile, &body, tlprofile.Limits{}); !tgerr.Is(err, "FILE_PART_INVALID") {

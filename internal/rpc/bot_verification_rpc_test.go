@@ -273,7 +273,7 @@ func setCustomVerificationRequest(peer tg.InputPeerClass, bot tg.InputUserClass,
 	}
 	req.SetEnabled(enabled)
 	if description != "" {
-		req.SetCustomDescription(description)
+		req.SetCustomDescription(tg.TextWithEntities{Text: description})
 	}
 	return req
 }
@@ -552,5 +552,19 @@ func TestBotsSetCustomVerificationWithoutServiceStaysForbidden(t *testing.T) {
 		setCustomVerificationRequest(&tg.InputPeerEmpty{}, inputUser(f.bot), true, "")); ok ||
 		!tgerr.Is(err, "PEER_ID_INVALID") {
 		t.Fatalf("empty peer without service = %v,%v, want false,PEER_ID_INVALID", ok, err)
+	}
+}
+
+func TestBotsSetCustomVerificationRejectsUnpersistableEntities(t *testing.T) {
+	f := newBotVerificationFixture(t, newFakeBotVerifications())
+	f.enableVerifier(f.bot.ID, 5550006, true)
+	req := setCustomVerificationRequest(inputPeerUser(f.target), inputUser(f.bot), true, "Verified")
+	req.SetCustomDescription(tg.TextWithEntities{Text: "Verified", Entities: []tg.MessageEntityClass{&tg.MessageEntityBold{Length: 8}}})
+	ok, err := f.router.onBotsSetCustomVerification(WithUserID(context.Background(), f.owner.ID), req)
+	if ok || !tgerr.Is(err, "BOT_VERIFIER_FORBIDDEN") {
+		t.Fatalf("rich verification = %v, %v", ok, err)
+	}
+	if f.verify.setCalls != 0 || len(f.verify.marks) != 0 {
+		t.Fatal("rejected entities reached persistence")
 	}
 }

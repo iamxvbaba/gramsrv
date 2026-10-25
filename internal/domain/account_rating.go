@@ -13,11 +13,21 @@ import (
 // stored level through userFull's existing rating fields so official clients can
 // render it without a client patch.
 const (
-	// MaxAccountRatingLevel bounds the local gramsrv level.
-	MaxAccountRatingLevel = 50
+	// MaxAccountRatingLevel bounds the local rating policy. The TL schema
+	// represents starsRating.level as int; 100 is this server's chosen ceiling,
+	// not a protocol limit or a claim about Telegram's private rating policy.
+	MaxAccountRatingLevel = 100
 	// accountRatingLevelUnit is the score required for level 1. Thresholds grow
 	// quadratically from it: level n needs accountRatingLevelUnit * n^2.
-	accountRatingLevelUnit = 100
+	//
+	// The unit is chosen so the top rung costs the same score it used to:
+	// accountRatingLevelUnit * MaxAccountRatingLevel^2 is 250k, exactly what the
+	// previous 50-level ladder asked for. Doubling the level count therefore
+	// doubles the resolution of the ladder instead of moving every stored score
+	// further out of reach -- a score that used to be level n is now level 2n --
+	// so the whole existing population spreads across all 100 levels rather than
+	// piling up on the first few with a few whale accounts pinned to the ceiling.
+	accountRatingLevelUnit = 25
 	// MaxAccountRatingReasonLength matches the event ledger CHECK on reason.
 	MaxAccountRatingReasonLength = 512
 	// MaxAccountRatingActorLength matches the event ledger CHECK on actor.

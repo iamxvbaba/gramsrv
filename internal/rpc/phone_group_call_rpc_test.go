@@ -646,8 +646,31 @@ func TestGroupCallM2MuteMatrix(t *testing.T) {
 	}
 
 	// --- 现在成员可自行 unmute ---
-	if _, err := f.router.onPhoneEditGroupCallParticipant(memberCtx, selfUnmute); err != nil {
+	res, err = f.router.onPhoneEditGroupCallParticipant(memberCtx, selfUnmute)
+	if err != nil {
 		t.Fatalf("self unmute after allow: %v", err)
+	}
+	row = findUpdate[*tg.UpdateGroupCallParticipants](t, res).Participants[0]
+	if row.Muted || row.CanSelfUnmute {
+		t.Fatalf("unmuted row = %+v, want neither muted nor self-muted", row)
+	}
+	participants, err := f.router.onPhoneGetGroupParticipants(memberCtx, &tg.PhoneGetGroupParticipantsRequest{
+		Call: &inputCall, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("reload after unmute: %v", err)
+	}
+	foundSelf := false
+	for _, participant := range participants.Participants {
+		if participant.Self {
+			foundSelf = true
+			if participant.Muted || participant.CanSelfUnmute {
+				t.Fatalf("reload restored self mute: %+v", participant)
+			}
+		}
+	}
+	if !foundSelf {
+		t.Fatal("reload omitted current participant")
 	}
 
 	// --- admin 设全局音量 ---

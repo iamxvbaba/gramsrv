@@ -48,6 +48,82 @@ func TestPhotosGetUserPhotosPreservesMaxIDRefreshOffset(t *testing.T) {
 	}
 }
 
+// TestPhotoUserPhotosOfFrozenPeerIsEmptyAlbum locks the two-avatar artifact:
+// a frozen (or durably deleted) account is a peer tombstone whose main avatar
+// collapses to the "Deleted account" placeholder, so its profile photo album
+// must not keep serving the real photo. The album data stays in Files storage —
+// unfreezing reverts this to the real photos without any data loss.
+func TestPhotosGetUserPhotosOfFrozenPeerIsEmptyAlbum(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	target, err := userStore.Create(ctx, domain.User{AccessHash: 24, Phone: "15550002104", FirstName: "FrozenTarget"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	viewer, err := userStore.Create(ctx, domain.User{AccessHash: 25, Phone: "15550002105", FirstName: "Viewer"})
+	if err != nil {
+		t.Fatalf("create viewer: %v", err)
+	}
+	freeze := freezeMarkTestFreezes{items: map[int64]domain.AccountFreeze{
+		target.ID: {UserID: target.ID, Frozen: true},
+	}}
+	files := &fakeFiles{
+		profilePhotos:      []domain.Photo{{ID: 9100000000000000310, AccessHash: 9, DCID: 2}},
+		profilePhotosTotal: 1,
+	}
+	r := New(Config{}, Deps{
+		Users: appusers.NewService(userStore, appusers.WithAccountFreezeProvider(freeze)),
+		Files: files,
+	}, zaptest.NewLogger(t), clock.System)
+
+	got, err := r.onPhotosGetUserPhotos(WithUserID(ctx, viewer.ID), &tg.PhotosGetUserPhotosRequest{
+		UserID: &tg.InputUser{UserID: target.ID, AccessHash: target.AccessHash},
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("get frozen user photos: %v", err)
+	}
+	album, ok := got.(*tg.PhotosPhotos)
+	if !ok {
+		t.Fatalf("get user photos = %T, want *tg.PhotosPhotos", got)
+	}
+	if len(album.Photos) != 0 {
+		t.Fatalf("frozen album photos = %d, want 0 (deleted placeholder only)", len(album.Photos))
+	}
+	if files.lastProfileCalls != 0 {
+		t.Fatalf("frozen album hit Files store %d times, want projected empty", files.lastProfileCalls)
+	}
+	if len(album.Users) != 1 {
+		t.Fatalf("frozen album users = %d, want tombstone user", len(album.Users))
+	}
+	peer, ok := album.Users[0].(*tg.User)
+	if !ok {
+		t.Fatalf("frozen album user = %T, want *tg.User", album.Users[0])
+	}
+	if !peer.Deleted {
+		t.Fatalf("frozen album user deleted = false, want tombstone")
+	}
+
+	delete(freeze.items, target.ID)
+	got, err = r.onPhotosGetUserPhotos(WithUserID(ctx, viewer.ID), &tg.PhotosGetUserPhotosRequest{
+		UserID: &tg.InputUser{UserID: target.ID, AccessHash: target.AccessHash},
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("get unfrozen user photos: %v", err)
+	}
+	album, ok = got.(*tg.PhotosPhotos)
+	if !ok {
+		t.Fatalf("unfrozen user photos = %T, want *tg.PhotosPhotos", got)
+	}
+	if len(album.Photos) != 1 {
+		t.Fatalf("unfrozen album photos = %d, want restored real photo", len(album.Photos))
+	}
+	if files.lastProfileCalls == 0 {
+		t.Fatalf("unfrozen album did not reach Files store")
+	}
+}
+
 func TestPhotosGetUserPhotosProjectsStoryPeerFlags(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()

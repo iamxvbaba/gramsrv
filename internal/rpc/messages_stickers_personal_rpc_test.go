@@ -86,6 +86,26 @@ func TestFavedStickersRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFavedStickersSkipMissingDocument 回归：集合引用已被删除的文档时 getFavedStickers
+// 必须冷静跳过而不是整体 500（此前 forms 的 messages.getFavedStickers 报 INTERNAL_SERVER_ERROR）。
+func TestFavedStickersSkipMissingDocument(t *testing.T) {
+	r, _ := stickerCollectionRouter(t)
+	ctx := WithUserID(context.Background(), 1000000001)
+
+	if ok, err := r.onMessagesFaveSticker(ctx, &tg.MessagesFaveStickerRequest{ID: inputDoc(101, 11)}); err != nil || !ok {
+		t.Fatalf("fave 101 = ok %v err %v", ok, err)
+	}
+	if ok, err := r.onMessagesFaveSticker(ctx, &tg.MessagesFaveStickerRequest{ID: inputDoc(102, 12)}); err != nil || !ok {
+		t.Fatalf("fave 102 = ok %v err %v", ok, err)
+	}
+	files := r.deps.Files.(*fakeFiles)
+	delete(files.docs, 101) // 文档后来被删除
+	ids := favedStickerIDs(t, r, ctx, 0)
+	if len(ids) != 1 || ids[0] != 102 {
+		t.Fatalf("faved after doc deletion = %v, want [102]", ids)
+	}
+}
+
 // TestRecentStickersRoundTrip 验证 saveRecentSticker/getRecentStickers + dates + clear。
 func TestRecentStickersRoundTrip(t *testing.T) {
 	r, _ := stickerCollectionRouter(t)

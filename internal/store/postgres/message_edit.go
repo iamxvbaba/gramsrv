@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
+	"reflect"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/postgres/sqlcgen"
 	"time"
@@ -63,6 +64,28 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		}
 		return res, fmt.Errorf("get message for edit: %w", err)
 	}
+	targetMedia, err := decodeMessageMedia(target.MediaJson)
+	if err != nil {
+		return res, err
+	}
+	if req.ReplaceMedia {
+		if err := domain.ValidateMessageMediaReplacement(targetMedia, req.Media, target.GroupedID,
+			target.FwdDate != 0 || target.FwdFromPeerID != 0 || target.FwdFromName != ""); err != nil {
+			return res, err
+		}
+	}
+	if req.PreserveText {
+		req.Message = target.Body
+		req.Entities, err = decodeMessageEntities(target.EntitiesJson)
+		if err != nil {
+			return res, err
+		}
+		entities, err = encodeMessageEntities(req.Entities)
+		if err != nil {
+			return res, err
+		}
+	}
+
 	targetRich, err := decodeRichMessage(target.RichMessageJson)
 	if err != nil {
 		return res, fmt.Errorf("decode target rich message: %w", err)
@@ -87,7 +110,7 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 		return res, domain.ErrMessageAuthorRequired
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
+	if (req.Media == nil || reflect.DeepEqual(req.Media, targetMedia)) && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)

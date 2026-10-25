@@ -50,6 +50,7 @@ type Service struct {
 	authorizations            store.AuthorizationStore
 	phoneChanges              store.PhoneChangeStore
 	lifecycle                 store.AccountLifecycleStore
+	tmpPasswords              store.TmpPasswordStore
 	publicBaseURL             string
 	codes                     store.CodeStore
 	phoneChangeCode           string
@@ -237,35 +238,30 @@ func (s *Service) GetSavedMusicByIDs(ctx context.Context, userID int64, ids []in
 
 // GetPassword 返回当前账号 2FA 配置。未登录或无记录时返回持久化策略的默认 no-password 配置。
 func (s *Service) GetPassword(ctx context.Context, userID int64) (domain.PasswordSettings, error) {
-	if s == nil || s.passwords == nil || userID == 0 {
+	// Anonymous clients may request the public KDF parameters before login.
+	if userID == 0 {
 		return defaultPasswordSettings(), nil
 	}
-	settings, found, err := s.passwords.GetByUser(ctx, userID)
-	if err != nil {
-		return domain.PasswordSettings{}, err
-	}
-	if !found {
-		return defaultPasswordSettings(), nil
-	}
-	settings = normalizePasswordSettings(settings)
-	if settings.HasPassword {
-		secret, b, err := makeSRPChallenge(settings.SRPVerifier)
-		if err != nil {
-			return domain.PasswordSettings{}, err
-		}
-		settings.SRPBSecret = secret
-		settings.SRPB = b
-		if settings.SRPID == 0 {
-			settings.SRPID, err = randomInt64()
+
+	var result domain.PasswordSettings
+	err := s.mutatePassword(ctx, userID, func(settings *domain.PasswordSettings) error {
+		if settings.HasPassword {
+			secret, b, err := makeSRPChallenge(settings.SRPVerifier)
 			if err != nil {
-				return domain.PasswordSettings{}, err
+				return err
+			}
+			settings.SRPBSecret, settings.SRPB = secret, b
+			if settings.SRPID == 0 {
+				settings.SRPID, err = randomInt64()
+				if err != nil {
+					return err
+				}
 			}
 		}
-		if err := s.passwords.Save(ctx, userID, settings); err != nil {
-			return domain.PasswordSettings{}, err
-		}
-	}
-	return settings, nil
+		result = *settings
+		return nil
+	})
+	return result, err
 }
 
 func defaultPasswordSettings() domain.PasswordSettings {
@@ -332,60 +328,6 @@ func (s *Service) GetPasswordSettings(ctx context.Context, userID int64, check d
 	return domain.PrivatePasswordSettings{Email: settings.RecoveryEmail}, nil
 }
 
-// UpdatePasswordSettings sets, changes, clears, or updates the recovery email for 2FA.
-func (s *Service) UpdatePasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck, input domain.PasswordInputSettings) error {
-	if s == nil || s.passwords == nil || userID == 0 {
-		return nil
-	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if err := checkSRP(settings, check); err != nil {
-		return err
-	}
-	if len(input.NewPasswordHash) == 0 && !input.HasEmail {
-		settings = defaultPasswordSettings()
-		settings.SecureRandom = randomBytesOrDefault(passwordHashSize, settings.SecureRandom)
-		return s.passwords.Save(ctx, userID, settings)
-	}
-	if len(input.NewPasswordHash) > 0 {
-		if err := validateNewPasswordSettings(input); err != nil {
-			return err
-		}
-		srpID, err := randomInt64()
-		if err != nil {
-			return err
-		}
-		algo := *input.NewAlgo
-		settings.CurrentAlgo = &algo
-		settings.NewAlgo = defaultPasswordAlgo()
-		settings.SRPVerifier = padToHash(input.NewPasswordHash)
-		secret, b, err := makeSRPChallenge(settings.SRPVerifier)
-		if err != nil {
-			return err
-		}
-		settings.SRPBSecret = secret
-		settings.SRPB = b
-		settings.SRPID = srpID
-		settings.HasPassword = true
-		if input.HasHint {
-			settings.Hint = input.Hint
-		}
-	}
-	if input.HasEmail {
-		email := strings.TrimSpace(input.Email)
-		if email != "" && !strings.Contains(email, "@") {
-			return domain.ErrEmailInvalid
-		}
-		settings.RecoveryEmail = email
-		settings.HasRecovery = email != ""
-		settings.EmailUnconfirmedPattern = ""
-	}
-	settings.SecureRandom = randomBytesOrDefault(passwordHashSize, settings.SecureRandom)
-	return s.passwords.Save(ctx, userID, normalizePasswordSettings(settings))
-}
-
 func (s *Service) RequestPasswordRecovery(ctx context.Context, userID int64) (string, error) {
 	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
 	if err != nil {
@@ -449,124 +391,6 @@ func (s *Service) CheckRecoveryPassword(ctx context.Context, userID int64, code 
 		return domain.ErrPasswordRecoveryExpired
 	}
 	return s.verifyPasswordRecoveryCode(ctx, userID, passwordRecoveryBinding(settings), code, false)
-}
-
-func (s *Service) RecoverPassword(ctx context.Context, userID int64, code string, input *domain.PasswordInputSettings) error {
-	if s == nil || s.passwords == nil || userID == 0 {
-		return domain.ErrPasswordRecoveryExpired
-	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if !settings.HasPassword || settings.RecoveryEmail == "" {
-		return domain.ErrPasswordRecoveryExpired
-	}
-	binding := passwordRecoveryBinding(settings)
-	if input == nil || len(input.NewPasswordHash) == 0 {
-		if err := s.verifyPasswordRecoveryCode(ctx, userID, binding, code, true); err != nil {
-			return err
-		}
-		return s.passwords.Save(ctx, userID, defaultPasswordSettings())
-	}
-	// Reject invalid proofs before doing the comparatively expensive SRP
-	// verifier/challenge work. The final consuming check below still decides
-	// the single winner if the code changes concurrently.
-	if err := s.verifyPasswordRecoveryCode(ctx, userID, binding, code, false); err != nil {
-		return err
-	}
-	if err := validateNewPasswordSettings(*input); err != nil {
-		return err
-	}
-	settings.CurrentAlgo = input.NewAlgo
-	settings.SRPVerifier = padToHash(input.NewPasswordHash)
-	settings.SRPID, err = randomInt64()
-	if err != nil {
-		return err
-	}
-	settings.SRPBSecret, settings.SRPB, err = makeSRPChallenge(settings.SRPVerifier)
-	if err != nil {
-		return err
-	}
-	settings.HasPassword = true
-	if input.HasHint {
-		settings.Hint = input.Hint
-	}
-	if err := s.verifyPasswordRecoveryCode(ctx, userID, binding, code, true); err != nil {
-		return err
-	}
-	return s.passwords.Save(ctx, userID, normalizePasswordSettings(settings))
-}
-
-func (s *Service) ResetPassword(ctx context.Context, userID int64) (domain.PasswordResetResult, error) {
-	if s == nil || s.passwords == nil || userID == 0 {
-		return domain.PasswordResetResult{Kind: domain.PasswordResetFailedWait, RetryDate: int(time.Now().Add(passwordResetRetry).Unix())}, nil
-	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return domain.PasswordResetResult{}, err
-	}
-	if !settings.HasPassword {
-		return domain.PasswordResetResult{Kind: domain.PasswordResetOK}, nil
-	}
-	if settings.HasRecovery {
-		return domain.PasswordResetResult{}, domain.ErrPasswordRecoveryNA
-	}
-	now := time.Now()
-	if settings.PendingResetDate > 0 {
-		if now.Unix() >= int64(settings.PendingResetDate) {
-			next := defaultPasswordSettings()
-			next.SecureRandom = randomBytesOrDefault(passwordHashSize, settings.SecureRandom)
-			if err := s.passwords.Save(ctx, userID, next); err != nil {
-				return domain.PasswordResetResult{}, err
-			}
-			return domain.PasswordResetResult{Kind: domain.PasswordResetOK}, nil
-		}
-		return domain.PasswordResetResult{Kind: domain.PasswordResetRequestedWait, UntilDate: settings.PendingResetDate}, nil
-	}
-	settings.PendingResetDate = int(now.Add(passwordResetWait).Unix())
-	if err := s.passwords.Save(ctx, userID, normalizePasswordSettings(settings)); err != nil {
-		return domain.PasswordResetResult{}, err
-	}
-	return domain.PasswordResetResult{Kind: domain.PasswordResetRequestedWait, UntilDate: settings.PendingResetDate}, nil
-}
-
-func (s *Service) DeclinePasswordReset(ctx context.Context, userID int64) error {
-	if s == nil || s.passwords == nil || userID == 0 {
-		return nil
-	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return err
-	}
-	settings.PendingResetDate = 0
-	return s.passwords.Save(ctx, userID, normalizePasswordSettings(settings))
-}
-
-func (s *Service) ConfirmPasswordEmail(ctx context.Context, userID int64, code string) error {
-	return s.CheckRecoveryPassword(ctx, userID, code)
-}
-
-func (s *Service) ResendPasswordEmail(ctx context.Context, userID int64) error {
-	_, err := s.RequestPasswordRecovery(ctx, userID)
-	return err
-}
-
-func (s *Service) CancelPasswordEmail(ctx context.Context, userID int64) error {
-	if s != nil && s.codes != nil && userID != 0 {
-		if err := s.codes.Del(ctx, passwordRecoveryCodeKey(userID)); err != nil {
-			return err
-		}
-	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return err
-	}
-	settings.EmailUnconfirmedPattern = ""
-	if s.passwords != nil {
-		return s.passwords.Save(ctx, userID, settings)
-	}
-	return nil
 }
 
 func passwordRecoveryCodeKey(userID int64) string {
@@ -1021,13 +845,11 @@ func (s *Service) SetLoginEmail(ctx context.Context, userID int64, email string)
 	if err := s.ensureLoginEmailAvailable(ctx, userID, email); err != nil {
 		return err
 	}
-	settings, err := s.GetPasswordWithoutRefresh(ctx, userID)
-	if err != nil {
-		return err
-	}
-	settings.LoginEmail = email
-	settings.LoginEmailPattern = emailPattern(email)
-	return s.passwords.Save(ctx, userID, settings)
+	return s.mutatePassword(ctx, userID, func(settings *domain.PasswordSettings) error {
+		settings.LoginEmail = email
+		settings.LoginEmailPattern = emailPattern(email)
+		return nil
+	})
 }
 
 // ValidLoginEmail exposes the same normalization/shape gate to trusted
@@ -1067,13 +889,11 @@ func (s *Service) ClearLoginEmail(ctx context.Context, userID int64) error {
 	if s == nil || s.passwords == nil || userID == 0 {
 		return domain.ErrEmailInvalid
 	}
-	settings, found, err := s.passwords.GetByUser(ctx, userID)
-	if err != nil || !found {
-		return err
-	}
-	settings.LoginEmail = ""
-	settings.LoginEmailPattern = ""
-	return s.passwords.Save(ctx, userID, settings)
+	return s.mutatePassword(ctx, userID, func(settings *domain.PasswordSettings) error {
+		settings.LoginEmail = ""
+		settings.LoginEmailPattern = ""
+		return nil
+	})
 }
 
 func (s *Service) ensureLoginEmailAvailable(ctx context.Context, userID int64, email string) error {
@@ -1117,57 +937,34 @@ func (s *Service) GetReactionSettings(ctx context.Context, userID int64) (domain
 	if !found {
 		return domain.DefaultAccountReactionSettings(), nil
 	}
-	return normalizeReactionSettings(settings), nil
+	return settings, domain.ValidateAccountReactionSettings(settings)
 }
 
-// SetReactionsNotifySettings stores reaction notification preferences.
+// Each patch is merged under the store lock; unrelated concurrent settings survive.
 func (s *Service) SetReactionsNotifySettings(ctx context.Context, userID int64, notify domain.ReactionsNotifySettings) (domain.AccountReactionSettings, error) {
-	if s == nil || s.reactions == nil || userID == 0 {
-		return domain.AccountReactionSettings{}, store.ErrDeliveryOutboxRequired
-	}
-	settings, err := s.GetReactionSettings(ctx, userID)
-	if err != nil {
-		return domain.AccountReactionSettings{}, err
-	}
-	settings.Notify = normalizeNotifySettings(notify)
-	settings = normalizeReactionSettings(settings)
-	if err := s.reactions.SaveReactionsNotifySettings(ctx, userID, settings); err != nil {
-		return domain.AccountReactionSettings{}, err
-	}
-	return settings, nil
+	return s.updateReactionSettings(ctx, userID, domain.AccountReactionSettingsPatch{Notify: &notify}, nil)
 }
-
-// SetDefaultReaction stores the account default quick reaction.
 func (s *Service) SetDefaultReaction(ctx context.Context, userID int64, reaction domain.MessageReaction) (domain.AccountReactionSettings, error) {
-	settings, err := s.GetReactionSettings(ctx, userID)
-	if err != nil {
-		return domain.AccountReactionSettings{}, err
-	}
-	if !reaction.Valid() {
-		reaction = domain.DefaultAccountReactionSettings().DefaultReaction
-	}
-	settings.DefaultReaction = reaction
-	return s.saveReactionSettings(ctx, userID, settings, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+	return s.updateReactionSettings(ctx, userID, domain.AccountReactionSettingsPatch{DefaultReaction: &reaction}, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+		// messages.setDefaultReaction has no update constructor; clients reread
+		// it from help.getConfig.
 		return nil, nil
 	})
 }
 
 // SetPaidReactionPrivacy stores the account default paid reaction privacy.
 func (s *Service) SetPaidReactionPrivacy(ctx context.Context, userID int64, privacy domain.PaidReactionPrivacy, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error) {
-	settings, err := s.GetReactionSettings(ctx, userID)
-	if err != nil {
-		return domain.AccountReactionSettings{}, err
-	}
-	settings.PaidPrivacy = normalizePaidPrivacy(privacy)
-	return s.saveReactionSettings(ctx, userID, settings, effects)
-}
-
-func (s *Service) saveReactionSettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error) {
-	settings = normalizeReactionSettings(settings)
-	if s == nil || s.reactions == nil || userID == 0 || effects == nil {
+	if effects == nil {
 		return domain.AccountReactionSettings{}, store.ErrDeliveryOutboxRequired
 	}
-	return settings, s.reactions.SaveReactionSettings(ctx, userID, settings, effects)
+	return s.updateReactionSettings(ctx, userID, domain.AccountReactionSettingsPatch{PaidPrivacy: &privacy}, effects)
+}
+
+func (s *Service) updateReactionSettings(ctx context.Context, userID int64, patch domain.AccountReactionSettingsPatch, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error) {
+	if s == nil || s.reactions == nil || userID <= 0 {
+		return domain.AccountReactionSettings{}, store.ErrDeliveryOutboxRequired
+	}
+	return s.reactions.UpdateReactionSettings(ctx, userID, patch, effects)
 }
 
 // GetAccountSettings 返回账号级单例设置（未持久化时回落默认）。
@@ -1276,7 +1073,23 @@ func (s *Service) saveAccountSettings(ctx context.Context, userID int64, setting
 	return settings, s.settings.SaveAccountSettings(ctx, userID, settings)
 }
 
-// GetNotifySettings 返回某作用域的通知设置（未配置返回零值=继承默认）。
+// ForumTopicNotifySettings loads explicit preferences for a bounded authorized topic page.
+func (s *Service) ForumTopicNotifySettings(ctx context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error) {
+	if s == nil || s.notify == nil || ownerUserID <= 0 {
+		return nil, errors.New("forum topic notification store is unavailable")
+	}
+	if peer.Type != domain.PeerTypeChannel || peer.ID <= 0 || len(topicIDs) > 200 {
+		return nil, errors.New("invalid forum topic notification scope")
+	}
+	for _, id := range topicIDs {
+		if id <= 0 || id > domain.MaxMessageBoxID {
+			return nil, errors.New("invalid forum topic identifier")
+		}
+	}
+	return s.notify.GetForumTopicNotifySettings(ctx, ownerUserID, peer, topicIDs)
+}
+
+// GetNotifySettings returns one scope's explicit notification preferences.
 func (s *Service) GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, error) {
 	if s == nil || s.notify == nil || ownerUserID == 0 {
 		return domain.PeerNotifySettings{}, nil
@@ -1373,29 +1186,6 @@ func (s *Service) ListUserStickerSets(ctx context.Context, userID int64, kind do
 	return s.stickerSets.ListUserStickerSets(ctx, userID, kind, archived, offsetID, limit)
 }
 
-func normalizeReactionSettings(settings domain.AccountReactionSettings) domain.AccountReactionSettings {
-	defaults := domain.DefaultAccountReactionSettings()
-	settings.Notify = normalizeNotifySettings(settings.Notify)
-	if !settings.DefaultReaction.Valid() {
-		settings.DefaultReaction = defaults.DefaultReaction
-	}
-	settings.PaidPrivacy = normalizePaidPrivacy(settings.PaidPrivacy)
-	return settings
-}
-
-func normalizeNotifySettings(settings domain.ReactionsNotifySettings) domain.ReactionsNotifySettings {
-	if !validNotifyFrom(settings.MessagesFrom) {
-		settings.MessagesFrom = domain.ReactionNotifyFromContacts
-	}
-	if !validNotifyFrom(settings.StoriesFrom) {
-		settings.StoriesFrom = domain.ReactionNotifyFromContacts
-	}
-	if !validNotifyFrom(settings.PollVotesFrom) {
-		settings.PollVotesFrom = domain.ReactionNotifyFromContacts
-	}
-	return settings
-}
-
 func validNotifyFrom(value domain.ReactionNotifyFrom) bool {
 	switch value {
 	case domain.ReactionNotifyFromNone, domain.ReactionNotifyFromContacts, domain.ReactionNotifyFromAll:
@@ -1403,17 +1193,4 @@ func validNotifyFrom(value domain.ReactionNotifyFrom) bool {
 	default:
 		return false
 	}
-}
-
-func normalizePaidPrivacy(privacy domain.PaidReactionPrivacy) domain.PaidReactionPrivacy {
-	switch privacy.Kind {
-	case domain.PaidReactionPrivacyAnonymous:
-		return domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyAnonymous}
-	case domain.PaidReactionPrivacyPeer:
-		if privacy.Peer != nil && privacy.Peer.ID != 0 {
-			peer := *privacy.Peer
-			return domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyPeer, Peer: &peer}
-		}
-	}
-	return domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyDefault}
 }

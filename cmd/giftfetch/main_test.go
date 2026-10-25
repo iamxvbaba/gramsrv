@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
+	"rsc.io/qr"
 )
 
 func TestHasRenderableStickerAttribute(t *testing.T) {
@@ -160,6 +162,84 @@ func TestParseSOCKS5Proxy(t *testing.T) {
 				t.Fatalf("parseSOCKS5Proxy(%q) succeeded", raw)
 			}
 		})
+	}
+}
+
+func TestClientOptions(t *testing.T) {
+	// 登录与抓取共用同一份出口配置：SOCKS5_PROXY 只影响 Resolver，绝不能改写会话路径。
+	t.Run("no proxy keeps default resolver", func(t *testing.T) {
+		t.Setenv("SOCKS5_PROXY", "")
+		opts, err := clientOptions(filepath.Join(t.TempDir(), "gift.session"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.Resolver != nil {
+			t.Fatal("resolver was set without SOCKS5_PROXY")
+		}
+		if opts.SessionStorage == nil {
+			t.Fatal("session storage was not configured")
+		}
+	})
+	t.Run("proxy installs resolver", func(t *testing.T) {
+		t.Setenv("SOCKS5_PROXY", "socks5://proxy.example:1080")
+		opts, err := clientOptions(filepath.Join(t.TempDir(), "gift.session"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.Resolver == nil {
+			t.Fatal("resolver was not set for SOCKS5_PROXY")
+		}
+		if opts.SessionStorage == nil {
+			t.Fatal("session storage was lost when a proxy was configured")
+		}
+	})
+	t.Run("invalid proxy is rejected", func(t *testing.T) {
+		t.Setenv("SOCKS5_PROXY", "http://proxy.example:1080")
+		if _, err := clientOptions(filepath.Join(t.TempDir(), "gift.session")); err == nil {
+			t.Fatal("clientOptions accepted a non-socks5 proxy")
+		}
+	})
+}
+
+func TestQRPNGPath(t *testing.T) {
+	if got := qrPNGPath("/tmp/gift.session", ""); got != "/tmp/gift.session.qr.png" {
+		t.Fatalf("default = %q", got)
+	}
+	if got := qrPNGPath("/tmp/gift.session", "  /tmp/custom.png  "); got != "/tmp/custom.png" {
+		t.Fatalf("override = %q", got)
+	}
+}
+
+func TestRenderTerminalQR(t *testing.T) {
+	code, err := qr.Encode("tg://login?token=AQKRKtNqRuP9uXfzvZO1aM0B1y11TJTdRix55tK-CQVEGw==", qr.H)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := renderTerminalQR(code)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+
+	// 每个字符承载两行模块，四周再加两个模块的静区。
+	wantDim := code.Size + 2*2
+	wantLines := (wantDim + 1) / 2
+	if len(lines) != wantLines {
+		t.Fatalf("lines = %d, want %d", len(lines), wantLines)
+	}
+	runes := 0
+	for _, line := range lines {
+		n := len([]rune(line))
+		if n != wantDim {
+			t.Fatalf("line width = %d, want %d", n, wantDim)
+		}
+		runes += n
+	}
+	if runes == 0 {
+		t.Fatal("rendered nothing")
+	}
+	// 静区必须全白，否则手机扫不出来。
+	for _, line := range lines {
+		if !strings.HasPrefix(line, strings.Repeat(" ", 2)) || !strings.HasSuffix(line, strings.Repeat(" ", 2)) {
+			t.Fatalf("quiet zone is not blank: %q", line)
+		}
 	}
 }
 

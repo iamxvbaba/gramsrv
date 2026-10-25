@@ -2889,10 +2889,10 @@ func isLayerInvariantRPCResultEncoder(msg bin.Encoder) bool {
 }
 
 // isLayerInvariantControlEncoder is intentionally a closed type proof. It
-// admits leaf MTProto service values plus the closed destroy_auth_key
-// rpc_result whose inner constructor is validated by its concrete type.
-// Generic rpc_result, gzip and container envelopes remain excluded because
-// they can carry profile-dependent application payloads.
+// admits leaf MTProto service values plus the closed destroy_auth_key and
+// legacy help.test rpc_results whose inner constructors are validated by their
+// concrete type. Generic rpc_result, gzip and container envelopes remain
+// excluded because they can carry profile-dependent application payloads.
 func isLayerInvariantControlEncoder(msg bin.Encoder) bool {
 	switch msg.(type) {
 	case *mt.Pong,
@@ -2904,7 +2904,8 @@ func isLayerInvariantControlEncoder(msg bin.Encoder) bool {
 		*mt.DestroySessionNone,
 		*mt.BadMsgNotification,
 		*mt.BadServerSalt,
-		*destroyAuthKeyRPCResult:
+		*destroyAuthKeyRPCResult,
+		*helpTestRPCResult:
 		return true
 	default:
 		return false

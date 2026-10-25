@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
@@ -31,6 +32,13 @@ const (
 	ratingListDefaultLimit      = 50
 	ratingListMaxLimit          = 200
 	ratingEventLimit            = 50
+	// Stars ledger pages. The history bound mirrors
+	// domain.MaxStarsTransactionsLimit, so a table page costs the same whichever
+	// surface asks.
+	starsListDefaultLimit    = 50
+	starsListMaxLimit        = 200
+	starsHistoryDefaultLimit = 50
+	starsHistoryMaxLimit     = 100
 	// Verification review queue pages. The bounds mirror app/verification, so the
 	// panel and the admin API page the queue identically.
 	verificationListDefaultLimit = 50
@@ -273,6 +281,12 @@ func newReadStore(pool *pgxpool.Pool) *readStore {
 	return &readStore{pool: pool}
 }
 
+// Ping probes the Postgres pool, backing the Server Settings status page's
+// "database" component.
+func (r *readStore) Ping(ctx context.Context) error {
+	return r.pool.Ping(ctx)
+}
+
 // AccountUsername is one collectible (Fragment-style) username a peer holds.
 //
 // Active mirrors the username#b4073647 flag: an inactive collectible is still
@@ -364,6 +378,33 @@ type AuthorizationRow struct {
 	PasswordPending bool
 	CreatedAt       time.Time
 	ActiveAt        time.Time
+}
+
+// SharedDeviceAccount is one account whose authorizations matched a
+// SharedDeviceGroup's device fingerprint.
+type SharedDeviceAccount struct {
+	UserID    int64
+	Phone     string
+	Username  string
+	FirstName string
+	LastName  string
+	ActiveAt  time.Time
+}
+
+// SharedDeviceGroup is a device fingerprint (device_model + system_version +
+// platform + ip) shared by more than one distinct account's authorizations --
+// a heuristic multi-accounting signal, not proof: device_model/system_version
+// are client-reported and spoofable, and ip alone collides naturally behind
+// NAT, shared wifi, or carrier CGNAT. Treat this as a lead to investigate, not
+// a verdict.
+type SharedDeviceGroup struct {
+	DeviceModel   string
+	SystemVersion string
+	Platform      string
+	IP            string
+	AccountCount  int
+	LastActiveAt  time.Time
+	Accounts      []SharedDeviceAccount
 }
 
 type AuditLogRow struct {
@@ -942,6 +983,88 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 		out = out[:limit]
 	}
 	return out, hasMore, nil
+}
+
+// ListSharedDeviceGroups pages through device fingerprints (device_model +
+// system_version + platform + ip) that more than one distinct account has
+// authorized from -- see SharedDeviceGroup's doc comment on why this is a
+// heuristic, not a verdict. Pagination is plain offset/limit over the
+// aggregated group list (not the raw authorizations table): the number of
+// *groups* is expected to stay small relative to total session count, so an
+// offset scan over the pre-aggregated CTE is cheap even though offset
+// pagination over raw rows elsewhere in this file deliberately uses a keyset
+// cursor instead.
+func (s *readStore) ListSharedDeviceGroups(ctx context.Context, offset, limit int) ([]SharedDeviceGroup, bool, error) {
+	if limit <= 0 {
+		limit = accountListDefaultLimit
+	}
+	if limit > accountListMaxLimit {
+		limit = accountListMaxLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH device_groups AS (
+	SELECT device_model, system_version, platform, ip,
+		count(DISTINCT user_id)::int AS account_count,
+		max(active_at) AS last_active_at
+	FROM authorizations
+	WHERE device_model <> ''
+	GROUP BY device_model, system_version, platform, ip
+	HAVING count(DISTINCT user_id) > 1
+	ORDER BY max(active_at) DESC, device_model, system_version, platform, ip
+	LIMIT $1 OFFSET $2
+),
+members AS (
+	SELECT DISTINCT ON (a.device_model, a.system_version, a.platform, a.ip, a.user_id)
+		a.device_model, a.system_version, a.platform, a.ip, a.user_id, a.active_at
+	FROM authorizations a
+	JOIN device_groups g ON a.device_model = g.device_model AND a.system_version = g.system_version
+		AND a.platform = g.platform AND a.ip = g.ip
+	ORDER BY a.device_model, a.system_version, a.platform, a.ip, a.user_id, a.active_at DESC
+)
+SELECT g.device_model, g.system_version, g.platform, g.ip, g.account_count, g.last_active_at,
+	m.user_id, m.active_at, u.phone, u.username, u.first_name, u.last_name
+FROM device_groups g
+JOIN members m ON m.device_model = g.device_model AND m.system_version = g.system_version
+	AND m.platform = g.platform AND m.ip = g.ip
+JOIN users u ON u.id = m.user_id
+ORDER BY g.last_active_at DESC, g.device_model, g.system_version, g.platform, g.ip, m.active_at DESC`,
+		limit+1, offset)
+	if err != nil {
+		return nil, false, fmt.Errorf("list shared device groups: %w", err)
+	}
+	defer rows.Close()
+
+	groups := make([]SharedDeviceGroup, 0, limit+1)
+	for rows.Next() {
+		var (
+			deviceModel, systemVersion, platform, ip string
+			accountCount                             int
+			lastActiveAt                             time.Time
+			acc                                      SharedDeviceAccount
+		)
+		if err := rows.Scan(&deviceModel, &systemVersion, &platform, &ip, &accountCount, &lastActiveAt,
+			&acc.UserID, &acc.ActiveAt, &acc.Phone, &acc.Username, &acc.FirstName, &acc.LastName); err != nil {
+			return nil, false, err
+		}
+		if len(groups) == 0 {
+			groups = append(groups, SharedDeviceGroup{DeviceModel: deviceModel, SystemVersion: systemVersion, Platform: platform, IP: ip, AccountCount: accountCount, LastActiveAt: lastActiveAt})
+		} else if last := &groups[len(groups)-1]; last.DeviceModel != deviceModel || last.SystemVersion != systemVersion || last.Platform != platform || last.IP != ip {
+			groups = append(groups, SharedDeviceGroup{DeviceModel: deviceModel, SystemVersion: systemVersion, Platform: platform, IP: ip, AccountCount: accountCount, LastActiveAt: lastActiveAt})
+		}
+		last := &groups[len(groups)-1]
+		last.Accounts = append(last.Accounts, acc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(groups) > limit
+	if hasMore {
+		groups = groups[:limit]
+	}
+	return groups, hasMore, nil
 }
 
 func (s *readStore) AccountDetail(ctx context.Context, userID int64) (AccountDetail, error) {
@@ -1691,6 +1814,100 @@ WHERE cu.id = $1`, id).Scan(collectibleUsernameScanDest(&out.Asset)...)
 	return out, nil
 }
 
+// UniqueStarGiftRow is one minted collectible star gift (the NFT-style,
+// numbered gift instance a saved gift turns into after an upgrade) with its
+// holder resolved for display. The panel's "NFT Gifts" tab lists these, NOT
+// the catalog definitions: an operator here is looking at what accounts
+// actually hold, not at what can be bought.
+type UniqueStarGiftRow struct {
+	ID                  int64 `json:"ID,string"`
+	GiftID              int64 `json:"GiftID,string"`
+	Title               string
+	Slug                string
+	Num                 int
+	OwnerPeerType       string
+	OwnerPeerID         int64 `json:"OwnerPeerID,string"`
+	OwnerUsername       string
+	OwnerName           string
+	OwnerAddress        string
+	WalletName          string
+	GiftAddress         string
+	HostPeerType        string
+	HostPeerID          int64 `json:"HostPeerID,string"`
+	Burned              bool
+	Crafted             bool
+	KeepOriginalDetails bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+const uniqueStarGiftSelectColumns = `u.id, u.gift_id,
+	COALESCE(NULLIF(u.title, ''), NULLIF(r.title, ''), '') AS title,
+	u.slug, u.num, COALESCE(u.owner_peer_type, ''), COALESCE(u.owner_peer_id, 0),
+	COALESCE(NULLIF(ou.username, ''), NULLIF(oc.username, ''), '') AS owner_username,
+	COALESCE(NULLIF(ou.first_name, ''), NULLIF(oc.title, ''), '') AS owner_name,
+	COALESCE(u.owner_address, ''), COALESCE(NULLIF(u.owner_name, ''), ''), COALESCE(u.gift_address, ''),
+	COALESCE(u.host_peer_type, ''), COALESCE(u.host_peer_id, 0),
+	u.burned, u.crafted, u.keep_original_details, u.created_at, u.updated_at`
+
+const uniqueStarGiftJoins = `
+FROM unique_star_gifts u
+LEFT JOIN star_gift_catalog c ON c.gift_id = u.gift_id
+LEFT JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
+LEFT JOIN users ou ON u.owner_peer_type = 'user' AND ou.id = u.owner_peer_id
+LEFT JOIN channels oc ON u.owner_peer_type = 'channel' AND oc.id = u.owner_peer_id`
+
+func uniqueStarGiftScanDest(item *UniqueStarGiftRow) []any {
+	return []any{
+		&item.ID, &item.GiftID, &item.Title, &item.Slug, &item.Num,
+		&item.OwnerPeerType, &item.OwnerPeerID, &item.OwnerUsername, &item.OwnerName,
+		&item.OwnerAddress, &item.WalletName, &item.GiftAddress, &item.HostPeerType, &item.HostPeerID,
+		&item.Burned, &item.Crafted, &item.KeepOriginalDetails, &item.CreatedAt, &item.UpdatedAt,
+	}
+}
+
+// ListUniqueStarGifts pages over minted gift instances newest first, keyset by
+// descending id. giftID/ownerUserID/q are optional filters; q matches a slug
+// prefix, a title substring or the NFT address, which is how an operator looks a
+// gift up.
+func (s *readStore) ListUniqueStarGifts(ctx context.Context, giftID, ownerUserID, beforeID int64, q string, limit int) ([]UniqueStarGiftRow, bool, error) {
+	if limit <= 0 {
+		limit = collectibleListDefaultLimit
+	}
+	if limit > collectibleListMaxLimit {
+		limit = collectibleListMaxLimit
+	}
+	query := escapeLikePattern(strings.ToLower(strings.TrimSpace(q)))
+	rows, err := s.pool.Query(ctx, `
+SELECT `+uniqueStarGiftSelectColumns+uniqueStarGiftJoins+`
+WHERE ($1::bigint = 0 OR u.gift_id = $1)
+	AND ($2::bigint = 0 OR (u.owner_peer_type = 'user' AND u.owner_peer_id = $2))
+	AND ($3 = '' OR lower(u.slug) LIKE $3 || '%' OR lower(COALESCE(NULLIF(u.title, ''), r.title, '')) LIKE '%' || $3 || '%' OR lower(COALESCE(u.gift_address, '')) LIKE '%' || $3 || '%' OR lower(COALESCE(u.owner_name, '')) LIKE '%' || $3 || '%')
+	AND ($4::bigint = 0 OR u.id < $4)
+ORDER BY u.id DESC
+LIMIT $5`, giftID, ownerUserID, query, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list unique star gifts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]UniqueStarGiftRow, 0, limit+1)
+	for rows.Next() {
+		var item UniqueStarGiftRow
+		if err := rows.Scan(uniqueStarGiftScanDest(&item)...); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
 func (s *readStore) collectibleUsernameTransfers(ctx context.Context, collectibleID int64) ([]CollectibleUsernameTransferRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT t.id, t.collectible_id, t.kind,
@@ -1943,6 +2160,196 @@ WHERE u.id = $1`, userID).Scan(&row.UserID, &row.Username, &row.FirstName)
 	row.NextLevelStars = next
 	row.HasNextLevel = hasNext
 	return row, nil
+}
+
+// StarsAccountRow is one account's current Stars position plus the size of its
+// ledger. The row only exists once an account has any Stars (credits create the
+// balance row), so a drained balance of zero is still visible and findable: an
+// audit has to see the accounts the dupe-paying bug handed stars to even after
+// they spent them. Granted tells whether the starting grant was ever paid out.
+type StarsAccountRow struct {
+	UserID    int64 `json:"UserID,string"`
+	Phone     string
+	Username  string
+	FirstName string
+	LastName  string
+	Balance   int64 `json:"Balance,string"`
+	Granted   bool
+	UpdatedAt time.Time
+	TxnCount  int64 `json:"TxnCount,string"`
+}
+
+// StarsLedgerEntryRow is one signed Stars entry, newest first: positive amounts
+// are credits, negative amounts debits. Reason is the stored reason string
+// ("grant", "topup", "gift", "adjust" for admin grants/debits, ...) and peer is
+// the counterparty when the entry moved stars between two accounts.
+type StarsLedgerEntryRow struct {
+	ID          int64 `json:"ID,string"`
+	Amount      int64 `json:"Amount,string"`
+	Date        int64 `json:"Date,string"`
+	Reason      string
+	Title       string
+	Description string
+	PeerType    string
+	PeerID      int64 `json:"PeerID,string"`
+}
+
+// starsAccountSelectColumns is shared by the leaderboard and the account ledger
+// so both surfaces render the same identity. The transaction-count subquery runs
+// against the (user_id, id DESC) index, so it is cheap on both.
+const starsAccountSelectColumns = `u.id,
+	COALESCE(u.phone, ''),
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(u.first_name, ''),
+	COALESCE(u.last_name, ''),
+	sb.balance,
+	sb.granted,
+	sb.updated_at,
+	(SELECT count(*) FROM stars_transactions st WHERE st.user_id = sb.user_id)`
+
+const starsAccountFrom = `
+FROM stars_balances sb
+JOIN users u ON u.id = sb.user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = sb.user_id AND p.editable`
+
+func scanStarsAccountRow(scan func(dest ...any) error, item *StarsAccountRow) error {
+	return scan(&item.UserID, &item.Phone, &item.Username, &item.FirstName, &item.LastName,
+		&item.Balance, &item.Granted, &item.UpdatedAt, &item.TxnCount)
+}
+
+// ListStarsTopAccounts pages the Stars leaderboard by current balance, ordered
+// balance DESC with the user id as the stable tie-break. The keyset cursor is the
+// last row's user id, resolved back to its (balance, user_id) position from the
+// balances table in a CTE, exactly like the account-ratings leaderboard.
+//
+// The optional free-text query matches a username prefix (editable or
+// collectible), a first/last name or phone prefix, and a bare number as the user
+// id, mirroring the accounts tab. It also widens the pool: with an empty query
+// the page is the leaderboard proper (balance > 0 only), but once an operator
+// types a search every account that ever had a Stars row is matchable, so a
+// balance spent down to zero is still found during an audit.
+func (s *readStore) ListStarsTopAccounts(ctx context.Context, beforeID int64, limit int, query string) ([]StarsAccountRow, bool, error) {
+	if limit <= 0 {
+		limit = starsListDefaultLimit
+	}
+	if limit > starsListMaxLimit {
+		limit = starsListMaxLimit
+	}
+	query = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(query), "@"), "+"))
+	pattern := ""
+	queryUserID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryUserID = parsed
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH cursor_row AS (
+	SELECT balance AS c_balance, user_id AS c_user_id
+	FROM stars_balances WHERE $1::bigint <> 0 AND user_id = $1
+)
+SELECT `+starsAccountSelectColumns+starsAccountFrom+`
+LEFT JOIN cursor_row c ON true
+WHERE (($3::text = '' AND sb.balance > 0) OR ($3::text <> '' AND (
+	($4::bigint <> 0 AND sb.user_id = $4)
+	OR lower(COALESCE(u.username, '')) LIKE $2::text
+	OR lower(COALESCE(u.first_name, '')) LIKE $2::text
+	OR lower(COALESCE(u.last_name, '')) LIKE $2::text
+	OR lower(COALESCE(u.phone, '')) LIKE $2::text
+	OR EXISTS (
+		SELECT 1 FROM peer_usernames pu
+		WHERE pu.peer_type = 'user' AND pu.peer_id = sb.user_id
+			AND pu.username_lower LIKE $2::text
+	)
+)))
+AND (
+	c.c_user_id IS NULL
+	OR sb.balance < c.c_balance
+	OR (sb.balance = c.c_balance AND sb.user_id > c.c_user_id)
+)
+ORDER BY sb.balance DESC, sb.user_id
+LIMIT $5::int`, beforeID, pattern, query, queryUserID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list stars top accounts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StarsAccountRow, 0, limit+1)
+	for rows.Next() {
+		var item StarsAccountRow
+		if err := scanStarsAccountRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// starsAccount resolves one account's current Stars position. An account that
+// never had a Stars row reports errReadNotFound so the API answers 404: there is
+// no ledger to audit and the panel has to say so instead of drawing an empty one.
+func (s *readStore) starsAccount(ctx context.Context, userID int64) (StarsAccountRow, error) {
+	var out StarsAccountRow
+	err := scanStarsAccountRow(s.pool.QueryRow(ctx,
+		`SELECT `+starsAccountSelectColumns+starsAccountFrom+` WHERE sb.user_id = $1`, userID).Scan, &out)
+	switch {
+	case err == nil:
+		return out, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		return out, errReadNotFound
+	default:
+		return out, fmt.Errorf("get stars account: %w", err)
+	}
+}
+
+// StarsAccountLedger returns one account's signed history, newest first, paged
+// by keyset on the transaction id (beforeID = "everything older than this id").
+// The account summary rides along so the detail page renders identity, current
+// balance and ledger size together without a second query.
+func (s *readStore) StarsAccountLedger(ctx context.Context, userID, beforeID int64, limit int) (StarsAccountRow, []StarsLedgerEntryRow, bool, error) {
+	if limit <= 0 {
+		limit = starsHistoryDefaultLimit
+	}
+	if limit > starsHistoryMaxLimit {
+		limit = starsHistoryMaxLimit
+	}
+	account, err := s.starsAccount(ctx, userID)
+	if err != nil {
+		return account, nil, false, err
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, amount, date, reason, title, description, peer_type, COALESCE(peer_id, 0)
+FROM stars_transactions
+WHERE user_id = $1 AND ($2::bigint = 0 OR id < $2)
+ORDER BY id DESC
+LIMIT $3`, userID, beforeID, limit+1)
+	if err != nil {
+		return account, nil, false, fmt.Errorf("list stars ledger: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StarsLedgerEntryRow, 0, limit+1)
+	for rows.Next() {
+		var item StarsLedgerEntryRow
+		if err := rows.Scan(&item.ID, &item.Amount, &item.Date, &item.Reason, &item.Title, &item.Description, &item.PeerType, &item.PeerID); err != nil {
+			return account, nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return account, nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return account, out, hasMore, nil
 }
 
 func (s *readStore) accountRatingEvents(ctx context.Context, userID int64) ([]AccountRatingEventRow, error) {
@@ -2787,4 +3194,167 @@ func clampBotVerificationLimit(limit int) int {
 		return botVerificationListMaxLimit
 	}
 	return limit
+}
+
+// DonationWalletStatusRow is the operator's one-glance view of the crypto
+// donations custodial wallet: whether one has ever been generated (it's
+// auto-provisioned at server startup if missing, never by an admin action --
+// see docs/donations.md) and how many users have been assigned a deposit
+// address. It never carries the mnemonic or a private key -- those live only
+// in server memory and the encrypted-at-rest seed row, out of reach of every
+// admin API route.
+type DonationWalletStatusRow struct {
+	HasWallet    bool
+	AddressCount int64
+}
+
+// donationWalletStatus reports whether a wallet exists and how many
+// addresses have been handed out, for the donations admin page's header.
+func (s *readStore) donationWalletStatus(ctx context.Context) (DonationWalletStatusRow, error) {
+	var out DonationWalletStatusRow
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM donation_wallet WHERE id = 1)`).Scan(&out.HasWallet); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("check donation wallet status: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM donation_addresses`).Scan(&out.AddressCount); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("count donation addresses: %w", err)
+	}
+	return out, nil
+}
+
+// donationChains lists every configured chain, enabled or not, for the
+// config editor -- writes go through admin.Service.UpdateDonationChain (for
+// the audit trail), this is a plain read.
+func (s *readStore) donationChains(ctx context.Context) ([]domain.DonationChain, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+confirmations_required, price_feed_address, manual_usd_rate_micros, enabled
+FROM donation_chains ORDER BY chain_key`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation chains: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationChain, 0)
+	for rows.Next() {
+		var c domain.DonationChain
+		if err := rows.Scan(&c.Key, &c.Name, &c.ChainID, &c.RPCURL, &c.WSURL, &c.NativeSymbol, &c.NativeDecimals,
+			&c.ConfirmationsRequired, &c.PriceFeedAddress, &c.ManualUSDRateMicros, &c.Enabled); err != nil {
+			return nil, fmt.Errorf("scan donation chain: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// donationTokens lists every configured stablecoin row across every chain,
+// including ones with an empty contract address the operator hasn't filled
+// in yet -- shown next to donationChains so the operator can see at a
+// glance which chains are actually watchable (see domain.DonationChain.Watchable
+// and domain.DonationToken.Watchable).
+func (s *readStore) donationTokens(ctx context.Context) ([]domain.DonationToken, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, symbol, contract_address, decimals
+FROM donation_tokens ORDER BY chain_key, symbol`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation tokens: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationToken, 0)
+	for rows.Next() {
+		var t domain.DonationToken
+		if err := rows.Scan(&t.ChainKey, &t.Symbol, &t.ContractAddress, &t.Decimals); err != nil {
+			return nil, fmt.Errorf("scan donation token: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DonationDepositRow is one deposit with the donor resolved for display.
+type DonationDepositRow struct {
+	domain.DonationDeposit
+	UserPhone     string
+	UserFirstName string
+}
+
+// donationDeposits lists every deposit across every user, newest first, for
+// the transactions/donations history table. beforeID is an exclusive
+// keyset cursor (0 for the first page).
+func (s *readStore) donationDeposits(ctx context.Context, beforeID int64, limit int) ([]DonationDepositRow, bool, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id, d.user_id, d.chain_key, d.token_symbol, d.tx_hash, d.log_index, d.block_number,
+	d.amount_raw::text, d.usd_value_micros, d.stars_credited, d.status, d.confirmations,
+	d.detected_at, d.credited_at, COALESCE(u.phone, ''), COALESCE(u.first_name, '')
+FROM donation_deposits d
+LEFT JOIN users u ON u.id = d.user_id
+WHERE $1::bigint = 0 OR d.id < $1
+ORDER BY d.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list donation deposits: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DonationDepositRow, 0, limit+1)
+	for rows.Next() {
+		var d DonationDepositRow
+		var status string
+		var creditedAt pgtype.Timestamptz
+		if err := rows.Scan(&d.ID, &d.UserID, &d.ChainKey, &d.TokenSymbol, &d.TxHash, &d.LogIndex, &d.BlockNumber,
+			&d.AmountRaw, &d.USDValueMicros, &d.StarsCredited, &status, &d.Confirmations,
+			&d.DetectedAt, &creditedAt, &d.UserPhone, &d.UserFirstName); err != nil {
+			return nil, false, fmt.Errorf("scan donation deposit: %w", err)
+		}
+		d.Status = domain.DonationDepositStatus(status)
+		if creditedAt.Valid {
+			d.CreditedAt = creditedAt.Time
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate donation deposits: %w", err)
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// itemPrices returns the stored per-product price overrides (no merge —
+// domain.MergeItemPrices applies the defaults on top); writes go through
+// admin.Service.UpdateItemPrice for the audit trail.
+func (s *readStore) itemPrices(ctx context.Context) ([]domain.ItemPrice, error) {
+	rows, err := s.pool.Query(ctx, `SELECT product_code, stars_price, bid, enabled, updated_by,
+extract(epoch FROM updated_at)::bigint AS updated_at
+FROM item_prices ORDER BY product_code`)
+	if err != nil {
+		return nil, fmt.Errorf("list item prices: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.ItemPrice, 0)
+	for rows.Next() {
+		var p domain.ItemPrice
+		if err := rows.Scan(&p.ProductCode, &p.StarsPrice, &p.Bid, &p.Enabled,
+			&p.UpdatedBy, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan item price: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// starsRate reads the configured FG Stars rate; 0 means never set, which the
+// panel renders as an empty field rather than a number nobody chose.
+func (s *readStore) starsRate(ctx context.Context) (int64, error) {
+	var value int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT value FROM shop_settings WHERE key = $1`, domain.ShopSettingStarsRate,
+	).Scan(&value)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read stars rate: %w", err)
+	}
+	return value, nil
 }

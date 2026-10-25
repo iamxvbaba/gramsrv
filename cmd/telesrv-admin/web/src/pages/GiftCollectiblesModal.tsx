@@ -6,6 +6,7 @@ import { api, errorMessage } from "../api";
 import { Alert, Badge } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { CommandResult, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview, StarGiftRow } from "../types";
+import { titleFromFilename } from "../lib/format";
 
 type AnimationData = Record<string, unknown>;
 type AnimatedDraft = {
@@ -149,7 +150,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
   };
 
   async function chooseFile(kind: "models" | "patterns", row: AnimatedDraft, file: File | null) {
-    updateAnimated(kind, row.key, { file, animation: null, fileError: "" });
+    updateAnimated(kind, row.key, { file, name: file && !row.name.trim() ? titleFromFilename(file.name) : row.name, animation: null, fileError: "" });
     if (!file) return;
     try {
       const animation = await parseAnimationFile(file);

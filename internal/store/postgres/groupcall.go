@@ -303,6 +303,7 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 		UserID:          req.UserID,
 		JoinAsChannelID: req.JoinAsChannelID,
 		SSRC:            req.SSRC,
+		Muted:           req.Muted,
 		JoinDate:        req.Now,
 		ActiveDate:      req.Now,
 		LastCheckDate:   req.Now,
@@ -312,10 +313,14 @@ func (s *GroupCallStore) JoinGroupCall(ctx context.Context, req domain.JoinGroup
 	if wasActive {
 		// 同人换 ssrc 的 rejoin 保留原 join_date（列表排序稳定）。
 		p.JoinDate = existing.JoinDate
+		p.MutedByAdmin = existing.MutedByAdmin
 	}
 	if call.JoinMuted && !req.IsAdmin {
 		p.Muted = true
 		p.MutedByAdmin = true
+	}
+	if p.MutedByAdmin {
+		p.Muted = true
 	}
 	p.VideoJSON = append([]byte(nil), req.VideoJSON...)
 	// video_json 整体替换、presentation_json 清空（rejoin 后客户端会重发

@@ -65,3 +65,16 @@ test("catalog titles and invoice descriptions are localized", () => {
   assert.equal(cyrillic.test(localizeProduct(product, "en").description), false);
   assert.equal(cyrillic.test(localizeProduct(product, "ru").description), true);
 });
+
+test("new real-number and admin lookup translation keys exist in both languages", () => {
+  const requiredKeys = [
+    "errorRealModeOnly", "errorRandomModeOnly", "phoneTitle", "phoneIntro",
+    "phoneShareButton", "phoneCancelButton", "phoneStatus", "phoneBound",
+    "phoneUnbindButton", "phoneUnbound", "errorContactNotOwn",
+    "adminLookupButton", "adminPromptLookup", "adminLookupResult", "adminLookupNotFound",
+  ];
+  for (const key of requiredKeys) {
+    assert.ok(key in messages.en, `Missing English key: ${key}`);
+    assert.ok(key in messages.ru, `Missing Russian key: ${key}`);
+  }
+});

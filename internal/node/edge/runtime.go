@@ -23,10 +23,12 @@ import (
 	"telesrv/internal/edgecontrol/redisregistry"
 	egresssvc "telesrv/internal/egress"
 	"telesrv/internal/filedata"
+	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
 	"telesrv/internal/node/common"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/rpc"
+	"telesrv/internal/serverinfo"
 	"telesrv/internal/store/redisstore"
 )
 
@@ -301,6 +303,7 @@ func runWithConfig(
 		ObfuscatedTCP:                  true,
 		WebSocket:                      cfg.WebSocketEnable,
 		WebSocketAllowedOrigins:        cfg.WebSocketAllowedOrigins,
+		SamePortHTTP:                   serverinfo.Handler(cfg.DC, rsaKey, identity.NewStore(cfg.IdentityDir)),
 		MaxConnections:                 cfg.MTProtoMaxConnections,
 		MaxConnectionsPerIP:            cfg.MTProtoMaxConnectionsPerIP,
 		MaxConcurrentHandshakes:        cfg.MTProtoMaxConcurrentHandshakes,

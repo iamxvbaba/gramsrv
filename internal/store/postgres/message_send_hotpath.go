@@ -15,7 +15,7 @@ import (
 // compatibility fallback. The rich/media/hook paths have additional durable
 // writes and therefore cannot share this SQL without hiding their invariants.
 func plainPrivateSendHotPath(req domain.SendPrivateTextRequest, hooks privateSendTxHooks) bool {
-	return len(hooks.lockUserIDs) == 0 &&
+	return len(hooks.lockUserIDs) == 0 && req.ScheduledDelivery == nil &&
 		hooks.before == nil && hooks.projectMedia == nil && hooks.afterAllocate == nil && hooks.after == nil &&
 		len(req.Entities) == 0 && req.Media.IsZero() && req.ReplyMarkup.IsZero() && req.RichMessage.IsZero() &&
 		req.ReplyTo == nil && req.Forward == nil && !req.Silent && !req.NoForwards &&
@@ -42,15 +42,7 @@ func createPlainPrivateMessage(
 WITH effective_ttl AS MATERIALIZED (
   SELECT CASE
     WHEN $7::int <> 0 THEN $7::int
-    ELSE GREATEST(COALESCE((
-      SELECT COALESCE(NULLIF(d.ttl_period, 0), u.default_history_ttl_period, 0)::int
-      FROM users u
-      LEFT JOIN dialogs d
-        ON d.user_id = u.id
-       AND d.peer_type = 'user'
-       AND d.peer_id = $2::bigint
-      WHERE u.id = $1::bigint
-    ), 0), 0)
+    ELSE private_dialog_initial_ttl($1::bigint, $2::bigint)
   END AS ttl_period
 ), inserted AS (
   INSERT INTO private_messages (
@@ -207,11 +199,12 @@ WITH box_seed (
   RETURNING owner_user_id, box_id, peer_id, outgoing, pts
 ), dialog_rows AS (
   INSERT INTO dialogs (
-    user_id, peer_type, peer_id, top_message_id, top_message_date, unread_count
+    user_id, peer_type, peer_id, top_message_id, top_message_date, unread_count, ttl_period
   )
   SELECT
     b.owner_user_id, 'user', b.peer_id, b.box_id, $12::int,
-    CASE WHEN b.outgoing THEN 0 ELSE 1 END
+    CASE WHEN b.outgoing THEN 0 ELSE 1 END,
+    private_dialog_initial_ttl($1::bigint, $2::bigint)
   FROM boxes b
   ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
     top_message_id = CASE

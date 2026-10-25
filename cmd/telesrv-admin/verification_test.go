@@ -35,7 +35,7 @@ func panelServer(t *testing.T, permissions ...string) *server {
 func signIn(t *testing.T, srv *server) ([]*http.Cookie, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"secret":"letmein"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","secret":"letmein"}`))
 	srv.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
@@ -186,6 +186,9 @@ func TestCSRFProtectionCoversEveryExistingMutatingRoute(t *testing.T) {
 		"/api/moderation/cases/7/claim",
 		"/api/verification/applications/7/approve",
 		"/api/actions/revoke-verification",
+		"/api/actions/create-admin-operator",
+		"/api/actions/set-admin-operator-access",
+		"/api/actions/set-admin-operator-password",
 	} {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, withCookies(httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)), cookies))
@@ -247,7 +250,7 @@ func originRequest(origin, host string) *http.Request {
 
 func TestLoginRefusesAForeignOrigin(t *testing.T) {
 	srv := panelServer(t, permissionAll)
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"secret":"letmein"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","secret":"letmein"}`))
 	req.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)

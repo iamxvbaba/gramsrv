@@ -91,8 +91,8 @@ func TestPublicChannelPreviewRPCsAllowNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-member getSendAs public preview: %v", err)
 	}
-	if len(sendAs.Peers) != 1 {
-		t.Fatalf("sendAs peers = %+v, want only current user peer", sendAs.Peers)
+	if len(sendAs.Peers) != 0 {
+		t.Fatalf("sendAs peers = %+v, non-member cannot post to broadcast", sendAs.Peers)
 	}
 	if len(sendAs.Chats) != 1 {
 		t.Fatalf("sendAs chats = %d, want public channel chat", len(sendAs.Chats))

@@ -33,6 +33,9 @@ const (
 	EphemeralPushEdit     EphemeralPushKind = "edit"
 	EphemeralPushDelete   EphemeralPushKind = "delete"
 	EphemeralPushCallback EphemeralPushKind = "callback"
+	// EphemeralPushPreCheckout carries a pre-checkout query to the bot. It has no
+	// message of its own, so Message stays zero and PreCheckout is authoritative.
+	EphemeralPushPreCheckout EphemeralPushKind = "pre_checkout"
 )
 
 // EphemeralPush is a process-to-process online accelerator. It is deliberately
@@ -45,6 +48,7 @@ type EphemeralPush struct {
 	TargetBusinessAuthKey [8]byte
 	Message               domain.EphemeralMessage
 	Callback              *domain.BotCallbackQuery
+	PreCheckout           *domain.BotPreCheckoutQuery
 	Date                  int
 }
 

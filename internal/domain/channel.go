@@ -437,6 +437,7 @@ type Channel struct {
 	JoinToSend               bool
 	JoinRequest              bool
 	Signatures               bool
+	SignatureProfiles        bool
 	PreHistoryHidden         bool
 	ParticipantsHidden       bool
 	AntiSpam                 bool
@@ -705,13 +706,15 @@ type ChannelMessage struct {
 	Date             int
 	EditDate         int
 	Post             bool
-	Silent           bool
-	NoForwards       bool
-	Body             string
-	Entities         []MessageEntity
-	ReplyTo          *MessageReply
-	Forward          *MessageForward
-	ViaBotID         int64
+	// ShowMessageSender snapshots profile visibility; historical posts remain anonymous.
+	ShowMessageSender bool
+	Silent            bool
+	NoForwards        bool
+	Body              string
+	Entities          []MessageEntity
+	ReplyTo           *MessageReply
+	Forward           *MessageForward
+	ViaBotID          int64
 	// GroupedID 相册分组 id（sendMultiMedia 同组共享非零值，非相册恒 0）。
 	GroupedID   int64
 	ReplyMarkup *MessageReplyMarkup
@@ -722,6 +725,8 @@ type ChannelMessage struct {
 	Media       *MessageMedia
 	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
+	// FactCheck 是 Layer 231 事实核查标签快照，可选；无标签的消息恒 nil。
+	FactCheck *FactCheck
 	// FromBoostsApplied 是发送时的 sender boost 数快照（message.from_boosts_applied）。
 	FromBoostsApplied int
 	TTLPeriod         int
@@ -735,6 +740,19 @@ type ChannelMessage struct {
 	PostAuthor string
 	Pts        int
 	Deleted    bool
+}
+
+// LinkedDiscussionRootMatches verifies the exact source-post/root pair for a
+// top-only comment reply. A normal forwarded message is not a thread root.
+func LinkedDiscussionRootMatches(group, source Channel, root, post ChannelMessage) bool {
+	return group.Megagroup && !group.Deleted && group.LinkedChatID == source.ID &&
+		source.Broadcast && !source.Deleted && source.LinkedChatID == group.ID &&
+		root.ChannelID == group.ID && root.ID > 0 && !root.Deleted && root.ReplyTo == nil &&
+		root.From == (Peer{Type: PeerTypeChannel, ID: source.ID}) &&
+		root.Forward != nil && root.Forward.From == root.From &&
+		root.Forward.ChannelPost == post.ID && post.ID > 0 && post.Post && !post.Deleted &&
+		post.ChannelID == source.ID && post.Discussion != nil &&
+		post.Discussion.ChannelID == group.ID && post.Discussion.MessageID == root.ID
 }
 
 // ProjectChannelHistoryClearMessage returns the owner-local service-message
@@ -1088,29 +1106,30 @@ func FilterChannelUpdateEventForAvailableMinID(event ChannelUpdateEvent, availab
 type ChannelAdminLogEventType string
 
 const (
-	ChannelAdminLogChangeTitle            ChannelAdminLogEventType = "change_title"
-	ChannelAdminLogChangeUsername         ChannelAdminLogEventType = "change_username"
-	ChannelAdminLogChangeLinkedChat       ChannelAdminLogEventType = "change_linked_chat"
-	ChannelAdminLogToggleSignatures       ChannelAdminLogEventType = "toggle_signatures"
-	ChannelAdminLogTogglePreHistoryHidden ChannelAdminLogEventType = "toggle_pre_history_hidden"
-	ChannelAdminLogToggleForum            ChannelAdminLogEventType = "toggle_forum"
-	ChannelAdminLogToggleAutotranslation  ChannelAdminLogEventType = "toggle_autotranslation"
-	ChannelAdminLogToggleAntiSpam         ChannelAdminLogEventType = "toggle_anti_spam"
-	ChannelAdminLogToggleSlowMode         ChannelAdminLogEventType = "toggle_slow_mode"
-	ChannelAdminLogParticipantInvite      ChannelAdminLogEventType = "participant_invite"
-	ChannelAdminLogParticipantJoin        ChannelAdminLogEventType = "participant_join"
-	ChannelAdminLogParticipantLeave       ChannelAdminLogEventType = "participant_leave"
-	ChannelAdminLogParticipantPromote     ChannelAdminLogEventType = "participant_promote"
-	ChannelAdminLogParticipantDemote      ChannelAdminLogEventType = "participant_demote"
-	ChannelAdminLogParticipantEditRank    ChannelAdminLogEventType = "participant_edit_rank"
-	ChannelAdminLogParticipantBan         ChannelAdminLogEventType = "participant_ban"
-	ChannelAdminLogParticipantUnban       ChannelAdminLogEventType = "participant_unban"
-	ChannelAdminLogParticipantKick        ChannelAdminLogEventType = "participant_kick"
-	ChannelAdminLogParticipantUnkick      ChannelAdminLogEventType = "participant_unkick"
-	ChannelAdminLogUpdatePinned           ChannelAdminLogEventType = "update_pinned"
-	ChannelAdminLogSendMessage            ChannelAdminLogEventType = "send_message"
-	ChannelAdminLogEditMessage            ChannelAdminLogEventType = "edit_message"
-	ChannelAdminLogDeleteMessage          ChannelAdminLogEventType = "delete_message"
+	ChannelAdminLogChangeTitle             ChannelAdminLogEventType = "change_title"
+	ChannelAdminLogChangeUsername          ChannelAdminLogEventType = "change_username"
+	ChannelAdminLogChangeLinkedChat        ChannelAdminLogEventType = "change_linked_chat"
+	ChannelAdminLogToggleSignatures        ChannelAdminLogEventType = "toggle_signatures"
+	ChannelAdminLogToggleSignatureProfiles ChannelAdminLogEventType = "toggle_signature_profiles"
+	ChannelAdminLogTogglePreHistoryHidden  ChannelAdminLogEventType = "toggle_pre_history_hidden"
+	ChannelAdminLogToggleForum             ChannelAdminLogEventType = "toggle_forum"
+	ChannelAdminLogToggleAutotranslation   ChannelAdminLogEventType = "toggle_autotranslation"
+	ChannelAdminLogToggleAntiSpam          ChannelAdminLogEventType = "toggle_anti_spam"
+	ChannelAdminLogToggleSlowMode          ChannelAdminLogEventType = "toggle_slow_mode"
+	ChannelAdminLogParticipantInvite       ChannelAdminLogEventType = "participant_invite"
+	ChannelAdminLogParticipantJoin         ChannelAdminLogEventType = "participant_join"
+	ChannelAdminLogParticipantLeave        ChannelAdminLogEventType = "participant_leave"
+	ChannelAdminLogParticipantPromote      ChannelAdminLogEventType = "participant_promote"
+	ChannelAdminLogParticipantDemote       ChannelAdminLogEventType = "participant_demote"
+	ChannelAdminLogParticipantEditRank     ChannelAdminLogEventType = "participant_edit_rank"
+	ChannelAdminLogParticipantBan          ChannelAdminLogEventType = "participant_ban"
+	ChannelAdminLogParticipantUnban        ChannelAdminLogEventType = "participant_unban"
+	ChannelAdminLogParticipantKick         ChannelAdminLogEventType = "participant_kick"
+	ChannelAdminLogParticipantUnkick       ChannelAdminLogEventType = "participant_unkick"
+	ChannelAdminLogUpdatePinned            ChannelAdminLogEventType = "update_pinned"
+	ChannelAdminLogSendMessage             ChannelAdminLogEventType = "send_message"
+	ChannelAdminLogEditMessage             ChannelAdminLogEventType = "edit_message"
+	ChannelAdminLogDeleteMessage           ChannelAdminLogEventType = "delete_message"
 )
 
 // ChannelAdminLogEvent is a channel-scoped audit entry.
@@ -1193,6 +1212,10 @@ type ChannelView struct {
 	// Forbidden 表示当前 viewer 被踢/被禁止查看：查询响应必须呈现
 	// channelForbidden 形态而不是省略，客户端靠它感知自己已离开会话。
 	Forbidden bool
+	// LinkedChatUsable 表示 Channel.LinkedChatID 指向一个真实存在、未删除且为
+	// megagroup 的讨论频道。为 false 时转换层不得下发 linked_chat_id:客户端拿到
+	// 悬空 id 会渲染"讨论"入口,点进去却是一个空频道。
+	LinkedChatUsable bool
 }
 
 // ChannelParticipantList is a paged participant response.
@@ -1593,9 +1616,10 @@ type DeleteChannelResult struct {
 
 // SendChannelMessageRequest sends one channel/supergroup message.
 type SendChannelMessageRequest struct {
-	UserID    int64
-	ChannelID int64
-	RandomID  int64
+	ScheduledDelivery *ScheduledDelivery
+	UserID            int64
+	ChannelID         int64
+	RandomID          int64
 	// IdempotencyFingerprint is the SHA-256 of the immutable client send intent. RPC callers
 	// provide a raw-TL per-item value; internal callers leave it empty for the store fallback.
 	IdempotencyFingerprint []byte
@@ -1837,11 +1861,12 @@ type ChannelPaidMessagesPriceResult struct {
 
 // SendChannelMessageResult describes a channel message send.
 type SendChannelMessageResult struct {
-	Channel    Channel
-	Message    ChannelMessage
-	Event      ChannelUpdateEvent
-	Recipients []int64
-	Duplicate  bool
+	NextScheduled *ScheduledMessage
+	Channel       Channel
+	Message       ChannelMessage
+	Event         ChannelUpdateEvent
+	Recipients    []int64
+	Duplicate     bool
 	// DraftEvent is the account-scoped draft deletion committed by the first
 	// send. The channel message itself remains in the channel PTS domain.
 	DraftEvent UpdateEvent
@@ -1959,12 +1984,16 @@ type DeleteChannelForumTopicHistoryRequest struct {
 // EditChannelMessageRequest edits one text message in a channel/supergroup.
 // Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止）。
 type EditChannelMessageRequest struct {
-	UserID    int64
-	ChannelID int64
-	ID        int
-	Message   string
-	Entities  []MessageEntity
-	Media     *MessageMedia
+	// ReplaceMedia admits a user-visible photo/video/document replacement.
+	ReplaceMedia bool
+	// PreserveText keeps the authoritative caption and entities for media-only edits.
+	PreserveText bool
+	UserID       int64
+	ChannelID    int64
+	ID           int
+	Message      string
+	Entities     []MessageEntity
+	Media        *MessageMedia
 	// SetReplyMarkup 置位时替换 reply_markup（ReplyMarkup 为 nil/空 = 清空键盘）。
 	SetReplyMarkup bool
 	ReplyMarkup    *MessageReplyMarkup
@@ -2037,10 +2066,10 @@ type DeleteChannelHistoryRequest struct {
 
 // DeleteChannelParticipantHistoryRequest deletes one bounded page of messages sent by a participant.
 type DeleteChannelParticipantHistoryRequest struct {
-	UserID            int64
-	ChannelID         int64
-	ParticipantUserID int64
-	Date              int
+	UserID      int64
+	ChannelID   int64
+	Participant Peer
+	Date        int
 }
 
 // DeleteChannelHistoryResult describes a channel history delete/clear page.
@@ -2301,6 +2330,8 @@ type ChannelSearchPostsRequest struct {
 // ChannelGlobalSearchRequest describes a bounded messages.searchGlobal page
 // over channel/supergroup messages visible to the current account.
 type ChannelGlobalSearchRequest struct {
+	MediaCategories    []MediaCategory
+	OffsetIsUser       bool
 	Query              string
 	ChannelIDs         []int64
 	RestrictChannelIDs bool

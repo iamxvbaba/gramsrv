@@ -114,6 +114,24 @@ func TestNotifySettingsRoundTripPostgres(t *testing.T) {
 	}
 
 	// reset 清空全部作用域。
+	for _, id := range []int{42, 43} {
+		if err := store.SaveNotifySettings(ctx, u.ID, domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: peerB, TopicID: id}, domain.PeerNotifySettings{MuteUntil: &mute}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	topics, err := store.GetForumTopicNotifySettings(ctx, u.ID, peerB, []int{1, 42})
+	if err != nil || len(topics) != 1 || topics[42].MuteUntil == nil || *topics[42].MuteUntil != mute {
+		t.Fatalf("forum batch = %+v, err %v", topics, err)
+	}
+	for _, isolated := range []struct {
+		owner int64
+		peer  domain.Peer
+	}{{u.ID + 1, peerB}, {u.ID, peerA}} {
+		settings, err := store.GetForumTopicNotifySettings(ctx, isolated.owner, isolated.peer, []int{42})
+		if err != nil || len(settings) != 0 {
+			t.Fatalf("isolated forum settings = %+v, err %v", settings, err)
+		}
+	}
 	if err := store.ResetNotifySettingsWithDelivery(ctx, u.ID, func(snapshot storepkg.NotifySettingsResetSnapshot) ([]storepkg.DeliveryEffect, error) {
 		return []storepkg.DeliveryEffect{storepkg.AbsoluteDeliveryEffect(storepkg.DeliveryOutboxEnqueue{
 			TargetUserID: snapshot.OwnerUserID, Payload: []byte{1}, RecoveryPolicy: storepkg.OutboxRecoveryAbsoluteReload,

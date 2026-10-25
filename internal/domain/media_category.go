@@ -168,3 +168,18 @@ func hasURLEntity(entities []MessageEntity) bool {
 	}
 	return false
 }
+
+// MatchesMediaCategories applies the union predicate used by global search.
+func MatchesMediaCategories(media *MessageMedia, entities []MessageEntity, categories []MediaCategory) bool {
+	if len(categories) == 0 {
+		return true
+	}
+	for _, actual := range ClassifyMediaCategories(media, entities) {
+		for _, wanted := range categories {
+			if actual == wanted {
+				return true
+			}
+		}
+	}
+	return false
+}

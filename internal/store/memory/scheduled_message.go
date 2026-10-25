@@ -24,7 +24,8 @@ type memoryScheduledMessage struct {
 }
 
 func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.ScheduleMessageRequest, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) (domain.ScheduledMessage, error) {
-	if s == nil || req.OwnerUserID == 0 || req.Peer.ID == 0 || req.ScheduleDate <= 0 {
+	if s == nil || req.OwnerUserID == 0 || req.Peer.ID == 0 || req.ScheduleDate <= 0 || !domain.ValidScheduleRepeat(req.ScheduleRepeatPeriod) ||
+		(req.ScheduleDate == domain.ScheduleWhenOnline && (req.ScheduleRepeatPeriod != 0 || req.Peer.Type != domain.PeerTypeUser || req.Peer.ID == req.OwnerUserID)) {
 		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: invalid request")
 	}
 	if req.Peer.Type != domain.PeerTypeUser && req.Peer.Type != domain.PeerTypeChannel {
@@ -68,14 +69,18 @@ func (s *MessageStore) CreateScheduledMessage(ctx context.Context, req domain.Sc
 		aggregateEvents.mu.Lock()
 		defer aggregateEvents.mu.Unlock()
 	}
-	nextID := 1
-	for id := range owner {
-		if id >= nextID {
-			nextID = id + 1
+	pending := 0
+	for _, item := range owner {
+		if item.message.Peer == req.Peer && memoryScheduledActive(item.message.State) {
+			pending++
 		}
 	}
-	if nextID > domain.MaxMessageBoxID {
-		return domain.ScheduledMessage{}, fmt.Errorf("create scheduled message: id space exhausted")
+	if pending >= memoryScheduledPageLimit {
+		return domain.ScheduledMessage{}, domain.ErrScheduledLimit
+	}
+	nextID, err := nextMemoryScheduledID(owner)
+	if err != nil {
+		return domain.ScheduledMessage{}, err
 	}
 	msg := domain.ScheduledMessage{
 		OwnerUserID: req.OwnerUserID, ID: nextID, Peer: req.Peer, RandomID: req.RandomID,
@@ -333,6 +338,8 @@ func (s *MessageStore) ClaimScheduledMessages(_ context.Context, claim domain.Sc
 			continue
 		}
 		item.message.State = "dispatching"
+		item.message.Generation++
+		item.message.ManualDispatch = true
 		item.message.UpdatedAt = claim.Now
 		item.leaseUntil = claim.LeaseUntil
 		item.lastError = ""
@@ -342,7 +349,7 @@ func (s *MessageStore) ClaimScheduledMessages(_ context.Context, claim domain.Sc
 	return out, nil
 }
 
-func (s *MessageStore) ClaimDueScheduledMessages(_ context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error) {
+func (s *MessageStore) ClaimDueScheduledMessages(_ context.Context, now, limit, leaseSeconds int, onlineUserIDs []int64) ([]domain.ScheduledMessage, error) {
 	if s == nil || now <= 0 || limit <= 0 {
 		return nil, nil
 	}
@@ -356,12 +363,19 @@ func (s *MessageStore) ClaimDueScheduledMessages(_ context.Context, now, limit, 
 		owner int64
 		id    int
 	}
+	online := make(map[int64]struct{}, len(onlineUserIDs))
+	for _, id := range onlineUserIDs {
+		online[id] = struct{}{}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	refs := make([]ref, 0)
 	for ownerID, owner := range s.scheduledMessages {
 		for id, item := range owner {
-			if item.message.ScheduleDate > now {
+			msg := item.message
+			_, recipientOnline := online[msg.Peer.ID]
+			whenOnline := msg.ScheduleDate == domain.ScheduleWhenOnline && msg.Peer.Type == domain.PeerTypeUser && recipientOnline
+			if !msg.ManualDispatch && msg.ScheduleDate > now && !whenOnline {
 				continue
 			}
 			pendingDue := item.message.State == "pending" && (item.lastError == "" || item.message.UpdatedAt <= now-memoryScheduledRetryDelay)
@@ -389,6 +403,7 @@ func (s *MessageStore) ClaimDueScheduledMessages(_ context.Context, now, limit, 
 	for _, key := range refs {
 		item := s.scheduledMessages[key.owner][key.id]
 		item.message.State = "dispatching"
+		item.message.Generation++
 		item.message.UpdatedAt = now
 		item.leaseUntil = now + leaseSeconds
 		item.lastError = ""
@@ -398,48 +413,14 @@ func (s *MessageStore) ClaimDueScheduledMessages(_ context.Context, now, limit, 
 	return out, nil
 }
 
-func (s *MessageStore) MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error {
-	if s == nil || ownerUserID == 0 || id <= 0 {
-		return nil
-	}
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	item, ok := s.scheduledMessages[ownerUserID][id]
-	if !ok {
-		return nil
-	}
-	msg := cloneScheduledMessage(item.message)
-	msg.State = "sent"
-	msg.SentMessageID = sentMessageID
-	msg.UpdatedAt = date
-	intents, err := effects(cloneScheduledMessage(msg))
-	if err != nil {
-		return fmt.Errorf("build mark scheduled sent delivery effects: %w", err)
-	}
-	if len(intents) == 0 {
-		return store.ErrDeliveryOutboxRequired
-	}
-	if _, err := applyDeliveryEffects(ctx, intents, s.deliveryOutbox, nil); err != nil {
-		return fmt.Errorf("apply mark scheduled sent delivery effects: %w", err)
-	}
-	item.message = msg
-	item.leaseUntil = 0
-	s.scheduledMessages[ownerUserID][id] = item
-	s.refreshMemoryHasScheduledLocked(ownerUserID, msg.Peer)
-	return nil
-}
-
-func (s *MessageStore) ReleaseScheduledMessage(_ context.Context, ownerUserID int64, id int, errText string) error {
+func (s *MessageStore) ReleaseScheduledMessage(_ context.Context, ownerUserID int64, id int, generation int64, errText string) error {
 	if s == nil || ownerUserID == 0 || id <= 0 {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item, ok := s.scheduledMessages[ownerUserID][id]
-	if !ok || item.message.State != "dispatching" {
+	if !ok || item.message.State != "dispatching" || item.message.Generation != generation {
 		return nil
 	}
 	item.message.State = "pending"
@@ -448,6 +429,142 @@ func (s *MessageStore) ReleaseScheduledMessage(_ context.Context, ownerUserID in
 	item.lastError = errText
 	s.scheduledMessages[ownerUserID][id] = item
 	return nil
+}
+
+// checkScheduledDeliveryLocked mirrors the PostgreSQL row fence: a cancelled,
+// edited, released or reclaimed message cannot be sent by a stale claim.
+// Caller holds s.mu.
+func (s *MessageStore) checkScheduledDeliveryLocked(claim *domain.ScheduledDelivery, owner int64, peer domain.Peer, randomID int64) error {
+	if claim == nil {
+		return nil
+	}
+	if claim.OwnerUserID != owner || claim.ID <= 0 || claim.Generation <= 0 {
+		return domain.ErrScheduledClaimLost
+	}
+	if claim.Payload == nil {
+		return store.ErrDeliveryOutboxRequired
+	}
+	item, ok := s.scheduledMessages[owner][claim.ID]
+	if !ok || item.message.State != "dispatching" || item.message.Generation != claim.Generation ||
+		item.message.Peer != peer || item.message.RandomID != randomID {
+		return domain.ErrScheduledClaimLost
+	}
+	return nil
+}
+
+// memoryScheduledCompletion is staged before the send publishes anything and
+// applied with it, like the PostgreSQL send transaction.
+type memoryScheduledCompletion struct {
+	owner  int64
+	sent   memoryScheduledMessage
+	next   *memoryScheduledMessage
+	effect store.DeliveryEffect
+}
+
+// stageScheduledCompletionLocked builds the sent transition, any repeat
+// occurrence and the owner's durable delivery. Caller holds s.mu.
+func (s *MessageStore) stageScheduledCompletionLocked(claim *domain.ScheduledDelivery, sentID, date int) (*memoryScheduledCompletion, error) {
+	if claim == nil {
+		return nil, nil
+	}
+	if sentID <= 0 {
+		return nil, fmt.Errorf("scheduled delivery missing sent id")
+	}
+	owner := s.scheduledMessages[claim.OwnerUserID]
+	sent := owner[claim.ID]
+	sent.message = cloneScheduledMessage(sent.message)
+	sent.message.State = "sent"
+	sent.message.SentMessageID = sentID
+	sent.message.UpdatedAt = date
+	sent.leaseUntil = 0
+	stage := &memoryScheduledCompletion{owner: claim.OwnerUserID, sent: sent}
+	var next *domain.ScheduledMessage
+	if period := sent.message.ScheduleRepeatPeriod; period > 0 {
+		if !domain.ValidScheduleRepeat(period) || int64(date)+int64(period) >= domain.ScheduleWhenOnline {
+			return nil, domain.ErrScheduleInvalid
+		}
+		// The memory store does not model Premium expiry; RPC admission already
+		// required Premium for a repeating schedule.
+		nextID, err := nextMemoryScheduledID(owner)
+		if err != nil {
+			return nil, err
+		}
+		msg := cloneScheduledMessage(sent.message)
+		msg.ID, msg.RandomID = nextID, memoryScheduledOccurrenceRandomID(claim.OwnerUserID, nextID, date)
+		msg.ScheduleDate, msg.State, msg.SentMessageID = date+period, "pending", 0
+		msg.Generation, msg.ManualDispatch, msg.CreatedAt, msg.UpdatedAt = 0, false, date, date
+		stage.next = &memoryScheduledMessage{message: msg}
+		next = &msg
+	}
+	var nextCopy *domain.ScheduledMessage
+	if next != nil {
+		copied := cloneScheduledMessage(*next)
+		nextCopy = &copied
+	}
+	payload, err := claim.Payload(domain.ScheduledCompletion{Sent: cloneScheduledMessage(sent.message), Next: nextCopy})
+	if err != nil {
+		return nil, fmt.Errorf("build scheduled completion delivery: %w", err)
+	}
+	stage.effect = store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+		TargetUserID: claim.OwnerUserID, ExcludeAuthKeyID: claim.ExcludeAuthKeyID, ExcludeSessionID: claim.ExcludeSessionID,
+		Payload: payload, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+	})
+	if err := stage.effect.Validate(); err != nil {
+		return nil, err
+	}
+	if s.deliveryOutbox == nil {
+		return nil, store.ErrDeliveryOutboxRequired
+	}
+	return stage, nil
+}
+
+// publishScheduledCompletionLocked applies a staged completion. Caller holds
+// s.mu and the dialog lock (private send aggregate) and has already enqueued
+// stage.effect.
+func (s *MessageStore) publishScheduledCompletionLocked(stage *memoryScheduledCompletion) *domain.ScheduledMessage {
+	if stage == nil {
+		return nil
+	}
+	owner := s.scheduledMessages[stage.owner]
+	owner[stage.sent.message.ID] = stage.sent
+	var next *domain.ScheduledMessage
+	if stage.next != nil {
+		owner[stage.next.message.ID] = *stage.next
+		copied := cloneScheduledMessage(stage.next.message)
+		next = &copied
+	}
+	if peer := stage.sent.message.Peer; s.dialogs != nil && peer.Type == domain.PeerTypeUser {
+		s.setMemoryHasScheduledStateLocked(stage.owner, peer, s.hasMemoryScheduledLocked(stage.owner, peer))
+	}
+	return next
+}
+
+func nextMemoryScheduledID(owner map[int]memoryScheduledMessage) (int, error) {
+	nextID := 1
+	for id := range owner {
+		if id >= nextID {
+			nextID = id + 1
+		}
+	}
+	if nextID > domain.MaxMessageBoxID {
+		return 0, fmt.Errorf("create scheduled message: id space exhausted")
+	}
+	return nextID, nil
+}
+
+// memoryScheduledOccurrenceRandomID derives a stable non-zero identity for a
+// repeat occurrence; PostgreSQL draws it from crypto/rand.
+func memoryScheduledOccurrenceRandomID(owner int64, id, date int) int64 {
+	h := fnv.New64a()
+	var buf [8]byte
+	for _, value := range []int64{owner, int64(id), int64(date)} {
+		binary.LittleEndian.PutUint64(buf[:], uint64(value))
+		_, _ = h.Write(buf[:])
+	}
+	if v := int64(h.Sum64() & 0x7fffffffffffffff); v != 0 {
+		return v
+	}
+	return 1
 }
 
 func (s *MessageStore) HasScheduledMessages(_ context.Context, ownerUserID int64, peer domain.Peer) (bool, error) {

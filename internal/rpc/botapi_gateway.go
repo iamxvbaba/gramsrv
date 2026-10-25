@@ -299,6 +299,8 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 	if utf8.RuneCountInString(text) > domain.MaxMessageTextLength {
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
 	}
+	// 服务端自动实体补全必须早于私聊/频道分流，两条写路径落同一份结果。
+	entities = r.augmentBotAPIAutoEntities(text, entities)
 	var reply *domain.MessageReply
 	if replyToMessageID > 0 {
 		reply = &domain.MessageReply{Peer: peer, MessageID: replyToMessageID}
@@ -412,6 +414,8 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 	if utf8.RuneCountInString(caption) > domain.MaxMessageTextLength {
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
 	}
+	// caption 与正文同口径：/buy 等命令、@mention、裸域名都要有服务端实体才蓝显。
+	entities = r.augmentBotAPIAutoEntities(caption, entities)
 	media, err := r.botAPIMedia(ctx, botID, kind, locationKey, remoteURL, fileName, mimeType, fileBytes)
 	if err != nil {
 		return domain.Message{}, err
@@ -466,7 +470,9 @@ func (r *Router) BotAPISendEphemeral(ctx context.Context, input domain.BotAPIEph
 		return domain.EphemeralMessage{}, err
 	}
 	baseContent := domain.EphemeralContent{
-		Message: input.Text, Entities: append([]domain.MessageEntity(nil), input.Entities...), ReplyMarkup: input.ReplyMarkup,
+		Message:     input.Text,
+		Entities:    r.augmentBotAPIAutoEntities(input.Text, append([]domain.MessageEntity(nil), input.Entities...)),
+		ReplyMarkup: input.ReplyMarkup,
 	}
 	if !utf8.ValidString(baseContent.Message) || utf8.RuneCountInString(baseContent.Message) > domain.MaxMessageTextLength || len(baseContent.Entities) > domain.MaxMessageEntityCount ||
 		!validEphemeralEntityBounds(baseContent.Message, baseContent.Entities) {
@@ -521,6 +527,9 @@ func (r *Router) BotAPIEditEphemeral(ctx context.Context, input domain.BotAPIEph
 		if err := r.validateReplyMarkupForPeer(ctx, input.BotUserID, peer, fields.ReplyMarkup); err != nil {
 			return false, err
 		}
+	}
+	if fields.SetMessage {
+		fields.Entities = r.augmentBotAPIAutoEntities(fields.Message, fields.Entities)
 	}
 	if fields.SetMessage && (!utf8.ValidString(fields.Message) || !validEphemeralEntityBounds(fields.Message, fields.Entities) || utf8.RuneCountInString(fields.Message) > domain.MaxMessageTextLength) {
 		return false, errors.New("ENTITY_BOUNDS_INVALID")
@@ -950,6 +959,7 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 			return domain.Message{}, err
 		}
 	}
+	entities = r.augmentBotAPIAutoEntities(text, entities)
 	res, err := r.deps.Messages.EditMessage(ctx, botID, domain.EditMessageRequest{
 		OwnerUserID:    botID,
 		Peer:           peer,
@@ -1064,7 +1074,8 @@ func (r *Router) BotAPIEditInlineMessageText(ctx context.Context, botID int64, i
 		NoWebpage: disableWebPagePreview,
 	}
 	req.SetMessage(text)
-	if len(entities) > 0 {
+	// inline 消息同样由服务端补自动实体，否则 /buy 在 inline 结果里不蓝显。
+	if entities = r.augmentBotAPIAutoEntities(text, entities); len(entities) > 0 {
 		req.SetEntities(tgMessageEntities(entities))
 	}
 	if setReplyMarkup {
@@ -1130,6 +1141,31 @@ func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, m
 }
 
 // BotAPIAnswerCallbackQuery bridges Bot API answerCallbackQuery to the same
+// BotAPIAnswerPreCheckoutQuery answers the Bot API answerPreCheckoutQuery. The
+// payment is held open for at most 10 seconds waiting for exactly this call, so an
+// answer that arrives late is rejected rather than silently applied.
+func (r *Router) BotAPIAnswerPreCheckoutQuery(ctx context.Context, botID int64, queryIDRaw string, ok bool, errorMessage string) (bool, error) {
+	if r == nil || r.preCheckouts == nil || botID == 0 {
+		return false, errors.New("BOT_INVALID")
+	}
+	queryID, err := strconv.ParseInt(strings.TrimSpace(queryIDRaw), 10, 64)
+	if err != nil || queryID == 0 {
+		return false, errors.New("QUERY_ID_INVALID")
+	}
+	errorMessage = strings.TrimSpace(errorMessage)
+	if !ok && utf8.RuneCountInString(errorMessage) > preCheckoutErrorMaxLen {
+		return false, errors.New("MESSAGE_TOO_LONG")
+	}
+	resolved, err := r.preCheckouts.resolve(ctx, botID, queryID, domain.BotPreCheckoutAnswer{OK: ok, Error: errorMessage})
+	if err != nil {
+		return false, err
+	}
+	if !resolved {
+		return false, errors.New("QUERY_ID_INVALID")
+	}
+	return true, nil
+}
+
 // shared callback registry used by messages.setBotCallbackAnswer.
 func (r *Router) BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, callbackQueryID, text, url string, showAlert bool, cacheTime int) (bool, error) {
 	if r == nil || r.callbacks == nil || botID == 0 {

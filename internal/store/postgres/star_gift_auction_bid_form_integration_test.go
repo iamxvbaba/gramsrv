@@ -19,6 +19,57 @@ import (
 // to re-enter. This pins both halves of the fix: the settled form is rejected instead
 // of being mistaken for the new bid, and the state the rpc layer hashes into the next
 // form id (the bidder's own bid generation) has moved, so the next form is a new one.
+// A gift whose entire auction supply is awarded must flip sold_out=true on the
+// active revision so the rpc layer exposes its first/last sale timestamps.
+func TestStarGiftAuctionExhaustedSupplyFlipsSoldOutPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	users := NewUserStore(pool)
+	bidder := createTestUser(t, ctx, users, "+1992"+suffix+"01", "AuctionSellout", "")
+	bidderPeer := domain.Peer{Type: domain.PeerTypeUser, ID: bidder.ID}
+	if _, _, err := NewStarsStore(pool).EnsureGrant(ctx, bidder.ID, 10000, now); err != nil {
+		t.Fatalf("grant bid stars: %v", err)
+	}
+
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Auction Sellout " + suffix, Stars: 100, Enabled: true, Limited: true, Auction: true,
+		AvailabilityTotal: 1, AvailabilityRemains: 1, GiftsPerRound: 1, AuctionStartDate: now - 10,
+		AuctionRoundDuration: 60, AuctionSlug: "auction-sellout-" + suffix,
+		Document:  collectibleTestDocument(baseDocumentID, "auction-sellout.tgs"),
+		Blob:      collectibleTestBlob(baseDocumentID, "auction-sellout"),
+		Animation: collectibleTestAnimation("auction-sellout.tgs"),
+		Actor:     "integration", CommandID: "auction-sellout-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create sellout auction: %v", err)
+	}
+	lifecycle := NewStarGiftLifecycleStore(pool, newTestMessageStore(pool), 1_000_000)
+	if _, _, err := lifecycle.BidStarGiftAuction(ctx, domain.StarGiftAuctionBidRequest{UserID: bidder.ID,
+		GiftID: entry.Gift.ID, Peer: bidderPeer, BidAmount: 200, FormID: 41301, Date: now}); err != nil {
+		t.Fatalf("bid sellout auction: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_auctions SET next_round_at=$2 WHERE gift_id=$1`, entry.Gift.ID, now+2); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.SweepStarGiftLifecycle(ctx, now+2, 1000); err != nil {
+		t.Fatalf("settle sellout auction: %v", err)
+	}
+	var soldOut bool
+	var remains int
+	if err := pool.QueryRow(ctx, `SELECT r.sold_out,c.availability_remains FROM star_gift_catalog c
+JOIN star_gift_catalog_revisions r ON r.id=c.active_revision_id WHERE c.gift_id=$1`, entry.Gift.ID).
+		Scan(&soldOut, &remains); err != nil {
+		t.Fatal(err)
+	}
+	if !soldOut || remains != 0 {
+		t.Fatalf("exhausted auction supply sold_out=%v remains=%d, want true/0", soldOut, remains)
+	}
+}
+
 func TestStarGiftAuctionBidAfterSettledRoundNeedsFreshFormPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

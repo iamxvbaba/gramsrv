@@ -451,7 +451,29 @@ func (r *Router) onMessagesGetOldFeaturedStickers(ctx context.Context, req *tg.M
 	if req == nil {
 		return r.onMessagesGetFeaturedStickers(ctx, 0)
 	}
-	return r.onMessagesGetFeaturedStickers(ctx, req.Hash)
+	full, err := r.onMessagesGetFeaturedStickers(ctx, req.Hash)
+	if err != nil {
+		return nil, err
+	}
+	// offset/limit page through the full featured list; the hash still covers
+	// the whole list, so a paged request never answers NotModified.
+	featured, ok := full.(*tg.MessagesFeaturedStickers)
+	if !ok || req.Offset <= 0 && req.Limit <= 0 {
+		return full, nil
+	}
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(featured.Sets) {
+		offset = len(featured.Sets)
+	}
+	end := len(featured.Sets)
+	if req.Limit > 0 && offset+req.Limit < end {
+		end = offset + req.Limit
+	}
+	featured.Sets = featured.Sets[offset:end]
+	return featured, nil
 }
 
 // featuredStickersForKind 把已 seed 的（未归档）贴纸/emoji 集作为 trending 呈现。
@@ -466,13 +488,7 @@ func (r *Router) featuredStickersForKind(ctx context.Context, hash int64, kind d
 	if err != nil {
 		return nil, internalErr()
 	}
-	visible := make([]domain.StickerSet, 0, len(sets))
-	for _, s := range sets {
-		if s.ID == 0 || s.Archived {
-			continue
-		}
-		visible = append(visible, s)
-	}
+	visible := domain.SearchStickerSets(sets, kind, "")
 	if len(visible) == 0 {
 		return messagesFeaturedStickersEmpty(hash), nil
 	}

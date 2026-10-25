@@ -14,9 +14,8 @@ type ScheduledMessageStore interface {
 	GetScheduledMessages(ctx context.Context, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error)
 	DeleteScheduledMessages(ctx context.Context, filter domain.ScheduledMessageFilter, date int, effects DeliveryEffectsBuilder[[]domain.ScheduledMessage]) ([]domain.ScheduledMessage, error)
 	ClaimScheduledMessages(ctx context.Context, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error)
-	ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error)
-	MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects DeliveryEffectsBuilder[domain.ScheduledMessage]) error
-	ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, errText string) error
+	ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int, onlineUserIDs []int64) ([]domain.ScheduledMessage, error)
+	ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, generation int64, errText string) error
 	HasScheduledMessages(ctx context.Context, ownerUserID int64, peer domain.Peer) (bool, error)
 }
 

@@ -278,18 +278,23 @@ type MessageList struct {
 
 // MessageFilter 描述历史/搜索查询条件。
 type MessageFilter struct {
-	HasPeer    bool
-	Peer       Peer
-	Query      string
-	OffsetID   int
-	OffsetDate int
-	MinDate    int
-	MaxDate    int
-	AddOffset  int
-	Limit      int
-	MaxID      int
-	MinID      int
-	Hash       int64
+	GlobalSearch    bool
+	OffsetPeer      Peer
+	MediaCategories []MediaCategory
+	HasFolderID     bool
+	FolderID        int
+	HasPeer         bool
+	Peer            Peer
+	Query           string
+	OffsetID        int
+	OffsetDate      int
+	MinDate         int
+	MaxDate         int
+	AddOffset       int
+	Limit           int
+	MaxID           int
+	MinID           int
+	Hash            int64
 	// SenderUserID intersects all other predicates; zero means no sender filter.
 	SenderUserID int64
 	// CountOnly ignores pagination and returns the exact filtered total without
@@ -318,19 +323,20 @@ type MessageFilter struct {
 
 // SendPrivateTextRequest 是私聊文本/媒体发送命令。
 type SendPrivateTextRequest struct {
-	SenderUserID    int64
-	RecipientUserID int64
-	RandomID        int64
-	Message         string
-	Entities        []MessageEntity
-	Media           *MessageMedia
-	Silent          bool
-	NoForwards      bool
-	ReplyTo         *MessageReply
-	Forward         *MessageForward
-	Date            int
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	ScheduledDelivery *ScheduledDelivery
+	SenderUserID      int64
+	RecipientUserID   int64
+	RandomID          int64
+	Message           string
+	Entities          []MessageEntity
+	Media             *MessageMedia
+	Silent            bool
+	NoForwards        bool
+	ReplyTo           *MessageReply
+	Forward           *MessageForward
+	Date              int
+	OriginAuthKeyID   [8]byte
+	OriginSessionID   int64
 	// OriginClientSession carries the exact request's initConnection language
 	// into an in-process bot responder. Stores and idempotency fingerprints
 	// intentionally ignore this ephemeral metadata.
@@ -389,6 +395,7 @@ type PrivateSendReplayRequest struct {
 
 // SendPrivateTextResult 描述一次私聊文本发送的双端结果。
 type SendPrivateTextResult struct {
+	NextScheduled    *ScheduledMessage
 	SenderMessage    Message
 	RecipientMessage Message
 	SenderEvent      UpdateEvent
@@ -575,6 +582,10 @@ type OutboxReadDateRequest struct {
 // Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止，
 // rpc 层负责限定媒体种类）；nil 表示纯文本编辑。
 type EditMessageRequest struct {
+	// ReplaceMedia admits a user-visible photo/video/document replacement.
+	ReplaceMedia bool
+	// PreserveText keeps the authoritative caption and entities for media-only edits.
+	PreserveText    bool
 	OwnerUserID     int64
 	Peer            Peer
 	ID              int
@@ -787,6 +798,8 @@ type UnpinAllPrivateMessagesRequest struct {
 // ScheduledMessage is a pending account-owned message that has not entered
 // normal peer history yet.
 type ScheduledMessage struct {
+	ManualDispatch       bool
+	Generation           int64
 	OwnerUserID          int64
 	ID                   int
 	Peer                 Peer
@@ -825,21 +838,22 @@ type PrivateHistoryTTLResult struct {
 
 // ScheduleMessageRequest creates one scheduled message.
 type ScheduleMessageRequest struct {
-	OwnerUserID          int64
-	Peer                 Peer
-	RandomID             int64
-	Message              string
-	Entities             []MessageEntity
-	Media                *MessageMedia
-	RichMessage          *MessageRichMessage
-	Silent               bool
-	NoForwards           bool
-	ReplyTo              *MessageReply
-	Forward              *MessageForward
-	SendAs               *Peer
-	ScheduleDate         int
-	ScheduleRepeatPeriod int
-	Date                 int
+	IdempotencyFingerprint []byte
+	OwnerUserID            int64
+	Peer                   Peer
+	RandomID               int64
+	Message                string
+	Entities               []MessageEntity
+	Media                  *MessageMedia
+	RichMessage            *MessageRichMessage
+	Silent                 bool
+	NoForwards             bool
+	ReplyTo                *MessageReply
+	Forward                *MessageForward
+	SendAs                 *Peer
+	ScheduleDate           int
+	ScheduleRepeatPeriod   int
+	Date                   int
 	// ClearDraft joins the draft deletion to scheduled-message creation. It is
 	// execution intent and is not retained on the scheduled row.
 	ClearDraft bool
@@ -848,16 +862,20 @@ type ScheduleMessageRequest struct {
 // EditScheduledMessageRequest updates one pending scheduled message before it
 // enters normal history.
 type EditScheduledMessageRequest struct {
-	OwnerUserID    int64
-	Peer           Peer
-	ID             int
-	SetMessage     bool
-	Message        string
-	Entities       []MessageEntity
-	SetRichMessage bool
-	RichMessage    *MessageRichMessage
-	ScheduleDate   int
-	Date           int
+	SetRepeatPeriod      bool
+	ScheduleRepeatPeriod int
+	ReplaceMedia         bool
+	Media                *MessageMedia
+	OwnerUserID          int64
+	Peer                 Peer
+	ID                   int
+	SetMessage           bool
+	Message              string
+	Entities             []MessageEntity
+	SetRichMessage       bool
+	RichMessage          *MessageRichMessage
+	ScheduleDate         int
+	Date                 int
 }
 
 // ScheduledMessageFilter selects scheduled messages for one owner/peer.

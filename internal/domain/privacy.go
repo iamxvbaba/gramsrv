@@ -81,6 +81,13 @@ func DefaultPrivacyRules(key PrivacyKey) []PrivacyRule {
 		return []PrivacyRule{{Kind: PrivacyRuleDisallowAll}}
 	case PrivacyKeyBirthday:
 		return []PrivacyRule{{Kind: PrivacyRuleAllowContacts}}
+	case PrivacyKeyChatInvite:
+		// 默认只允许联系人把账号拉进群组/频道，避免陌生人任意拉人。
+		return []PrivacyRule{{Kind: PrivacyRuleAllowContacts}}
+	case PrivacyKeyPhoneP2P:
+		// 安全默认：P2P 通话会暴露双方真实 IP，默认只允许联系人之间直连，
+		// 其余一律回落 TURN 中继（与 rpc 层互认联系人硬门槛一致）。
+		return []PrivacyRule{{Kind: PrivacyRuleAllowContacts}}
 	default:
 		return []PrivacyRule{{Kind: PrivacyRuleAllowAll}}
 	}

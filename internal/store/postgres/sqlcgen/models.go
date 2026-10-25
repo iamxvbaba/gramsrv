@@ -70,6 +70,8 @@ type AccountPassword struct {
 	RecoveryEmail           string
 	LoginEmail              string
 	PasswordChangedAt       pgtype.Timestamptz
+	PendingResetDate        int32
+	PendingChange           []byte
 }
 
 type AccountPrivacyRule struct {
@@ -119,6 +121,7 @@ type AccountReactionSetting struct {
 	PaidPrivacyPeerType  *string
 	PaidPrivacyPeerID    *int64
 	UpdatedAt            pgtype.Timestamptz
+	Sound                []byte
 }
 
 type AccountRestriction struct {
@@ -154,6 +157,16 @@ type AccountSetting struct {
 	DisallowStargiftsFromChannels    bool
 }
 
+type AccountTmpPassword struct {
+	AuthKeyID              int64
+	UserID                 int64
+	AuthorizationCreatedAt pgtype.Timestamptz
+	PasswordChangedAt      pgtype.Timestamptz
+	SecretHash             []byte
+	ValidUntil             pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+}
+
 type AdminAuditLog struct {
 	ID             int64
 	CommandID      string
@@ -186,6 +199,18 @@ type AdminCommand struct {
 	Error          string
 	CreatedAt      pgtype.Timestamptz
 	CompletedAt    pgtype.Timestamptz
+}
+
+type AdminConsoleUser struct {
+	ID           int64
+	Username     string
+	PasswordHash string
+	Permissions  []string
+	Enabled      bool
+	TokenEpoch   int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	LastLoginAt  pgtype.Timestamptz
 }
 
 type AiComposeTone struct {
@@ -374,6 +399,7 @@ type BotApiUpdate struct {
 	CallbackInlineMessageID  int32
 	CallbackInlineAccessHash int64
 	EphemeralPayload         []byte
+	PreCheckoutPayload       []byte
 }
 
 type BotApiUpdateState struct {
@@ -466,6 +492,24 @@ type BotInfoLocalization struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type BotInvoice struct {
+	ID          int64
+	BotUserID   int64
+	ChatID      int64
+	MessageID   int32
+	Title       string
+	Description string
+	Amount      int64
+	Currency    string
+	Payload     string
+	ChargeID    string
+	PayerUserID int64
+	Paid        bool
+	Refunded    bool
+	PaidAt      int32
+	Date        int32
+}
+
 type BotLoginAllowedUrl struct {
 	ID            int64
 	BotUserID     int64
@@ -496,6 +540,33 @@ type BotLoginNativeApp struct {
 	Enabled             bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+}
+
+type BotStarsBalance struct {
+	BotUserID int64
+	Balance   int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+type BotStarsPayment struct {
+	InvoiceKey   string
+	BotUserID    int64
+	PayerUserID  int64
+	Amount       int64
+	BalanceAfter int64
+	SettledAt    int32
+}
+
+type BotStarsTransaction struct {
+	ID          int64
+	BotUserID   int64
+	ActorUserID int64
+	Amount      int64
+	Reason      string
+	PeerType    string
+	PeerID      int64
+	InvoiceKey  *string
+	Date        int32
 }
 
 type BotUserPermission struct {
@@ -659,6 +730,7 @@ type Channel struct {
 	Scam                          bool
 	Fake                          bool
 	Gigagroup                     bool
+	SignatureProfiles             bool
 }
 
 type ChannelAdminLogEvent struct {
@@ -950,6 +1022,8 @@ type ChannelMessage struct {
 	RequestFingerprint  []byte
 	SuggestedPost       []byte
 	PaidMessageStars    int64
+	ShowMessageSender   bool
+	Factcheck           []byte
 }
 
 type ChannelMessageMedium struct {
@@ -1502,6 +1576,66 @@ type Document struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type DonationAddress struct {
+	UserID          int64
+	DerivationIndex int64
+	Address         string
+	CreatedAt       pgtype.Timestamptz
+}
+
+type DonationChain struct {
+	ChainKey              string
+	Name                  string
+	ChainID               int64
+	RpcUrl                string
+	WsUrl                 string
+	NativeSymbol          string
+	NativeDecimals        int32
+	ConfirmationsRequired int32
+	PriceFeedAddress      string
+	ManualUsdRateMicros   int64
+	Enabled               bool
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type DonationChainCursor struct {
+	ChainKey         string
+	LastScannedBlock int64
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type DonationDeposit struct {
+	ID             int64
+	UserID         int64
+	ChainKey       string
+	TokenSymbol    string
+	TxHash         string
+	LogIndex       int32
+	BlockNumber    int64
+	AmountRaw      pgtype.Numeric
+	UsdValueMicros int64
+	StarsCredited  int64
+	Status         string
+	Confirmations  int32
+	DetectedAt     pgtype.Timestamptz
+	CreditedAt     pgtype.Timestamptz
+}
+
+type DonationToken struct {
+	ChainKey        string
+	Symbol          string
+	ContractAddress string
+	Decimals        int32
+}
+
+type DonationWallet struct {
+	ID            int16
+	EncryptedSeed []byte
+	Nonce         []byte
+	CreatedAt     pgtype.Timestamptz
+}
+
 type EdgeDeliveryOutbox struct {
 	ID               int64
 	TargetUserID     int64
@@ -1636,16 +1770,18 @@ type FileBlob struct {
 }
 
 type GifCatalog struct {
-	ID             int64
-	Title          string
-	DocumentID     int64
-	Enabled        bool
-	SortOrder      int32
-	CreatedBy      string
-	SourceFilename string
-	SourceSha256   string
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               int64
+	Title            string
+	DocumentID       int64
+	Enabled          bool
+	SortOrder        int32
+	CreatedBy        string
+	SourceFilename   string
+	SourceSha256     string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	FileName         string
+	CategoryOverride *string
 }
 
 type GifCatalogCapacity struct {
@@ -1734,6 +1870,15 @@ type GroupCallScheduleSubscriber struct {
 	UserID int64
 }
 
+type ItemPrice struct {
+	ProductCode string
+	StarsPrice  int32
+	Bid         int64
+	Enabled     bool
+	UpdatedBy   string
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type LangPack struct {
 	LangPack     string
 	LangCode     string
@@ -1771,6 +1916,8 @@ type LoginCodeMessageDelivery struct {
 	MessageDate      int32
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	// Rendered first-delivery template with {{code}} placeholder, never the secret code; empty means legacy built-in template
+	Template string
 }
 
 type MessageBox struct {
@@ -1829,6 +1976,20 @@ type MessageBoxMedium struct {
 	PeerID      int64
 	Category    int16
 	MessageDate int32
+}
+
+type MessageTranscription struct {
+	DocumentID      int64
+	TranscriptionID int64
+	Status          string
+	Text            string
+	RequestedBy     int64
+	PeerType        string
+	PeerID          int64
+	MsgID           int32
+	Failure         string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ModerationAction struct {
@@ -1963,6 +2124,8 @@ type NotifySetting struct {
 	StoriesMuted      *bool
 	StoriesHideSender *bool
 	UpdatedAt         pgtype.Timestamptz
+	Sound             []byte
+	StoriesSound      []byte
 }
 
 type PasskeyCredential struct {
@@ -2335,6 +2498,16 @@ type ScheduledMessage struct {
 	LastError            string
 	CreatedAt            int32
 	UpdatedAt            int32
+	Generation           int64
+	ManualDispatch       bool
+	ReplyToStoryID       int32
+	ReplyForumTopic      bool
+	ReplyExternal        []byte
+	FwdChannelPost       int32
+	FwdSavedFromPeerType string
+	FwdSavedFromPeerID   int64
+	FwdSavedFromMsgID    int32
+	RequestFingerprint   []byte
 }
 
 type SecretChat struct {
@@ -2368,6 +2541,13 @@ type SeedState struct {
 	Key         string
 	ContentHash string
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type ShopSetting struct {
+	Key       string
+	Value     int64
+	UpdatedBy string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type SponsoredMessageImpression struct {
@@ -2520,6 +2700,7 @@ type StarGiftCatalogRevision struct {
 	BackgroundEdgeColor   *int32
 	BackgroundTextColor   *int32
 	AuctionRoundDuration  int32
+	SupportOnly           bool
 }
 
 // Purchase-time snapshot of per-admin channel gift notification intents; delivery uses deterministic private-message replay.
@@ -2678,6 +2859,11 @@ type StarGiftDropDetailsCommand struct {
 	CreatedAt    int32
 }
 
+type StarGiftLimitedPurchaseCooldown struct {
+	UserID           int64
+	LastPurchaseDate int32
+}
+
 type StarGiftListing struct {
 	UniqueGiftID   int64
 	SellerPeerType string
@@ -2687,6 +2873,7 @@ type StarGiftListing struct {
 	ListedAt       int32
 	UpdatedAt      int32
 	Version        int64
+	Suspended      bool
 }
 
 type StarGiftNotificationSetting struct {

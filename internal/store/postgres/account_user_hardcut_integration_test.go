@@ -79,7 +79,7 @@ func TestAccountUserReliableMutationsAreAtomicPostgres(t *testing.T) {
 
 	settings := domain.DefaultAccountReactionSettings()
 	settings.Notify.ShowPreviews = false
-	if err := passwords.SaveReactionsNotifySettings(ctx, owner.ID, settings); err != nil {
+	if _, err := passwords.UpdateReactionSettings(ctx, owner.ID, domain.AccountReactionSettingsPatch{Notify: &settings.Notify}, nil); err != nil {
 		t.Fatalf("save reaction notify: %v", err)
 	}
 	if got, found, err := passwords.GetReactionSettings(ctx, owner.ID); err != nil || !found || got.Notify.ShowPreviews {

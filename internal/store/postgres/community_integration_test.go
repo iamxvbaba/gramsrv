@@ -88,6 +88,37 @@ func TestCommunityStoreLifecycleIsAtomicInPostgres(t *testing.T) {
 		t.Fatalf("create community: %v", err)
 	}
 	communityID = created.Community.ID
+
+	// A valid image may omit its stripped thumbnail; pgx must write empty bytea,
+	// and the configured media DC must survive without a default-DC fallback.
+	photo := &domain.Photo{ID: 91001, DCID: 5}
+	if _, _, err := store.SetCommunityPhoto(ctx, member.ID, communityID, photo, 1_800_200_003, postgresCommunityTestEffects); !errors.Is(err, domain.ErrCommunityAdminRequired) {
+		t.Fatalf("non-admin photo update: %v", err)
+	}
+	if _, _, err := store.SetCommunityPhoto(ctx, owner.ID, communityID, &domain.Photo{ID: 91001}, 1_800_200_003, postgresCommunityTestEffects); !errors.Is(err, domain.ErrPhotoInvalid) {
+		t.Fatalf("missing media DC: %v", err)
+	}
+	var ptsBefore, ptsAfter int
+	if err := pool.QueryRow(ctx, "SELECT pts FROM channels WHERE id=$1", initial.Channel.ID).Scan(&ptsBefore); err != nil {
+		t.Fatal(err)
+	}
+	view, changed, err := store.SetCommunityPhoto(ctx, owner.ID, communityID, photo, 1_800_200_003, postgresCommunityTestEffects)
+	if err != nil || !changed || view.Community.PhotoID != photo.ID || view.Community.PhotoDCID != 5 {
+		t.Fatalf("set photo=%+v changed=%v err=%v", view.Community, changed, err)
+	}
+	var emptyThumb bool
+	if err := pool.QueryRow(ctx, "SELECT photo_stripped IS NOT NULL AND octet_length(photo_stripped)=0 FROM communities WHERE id=$1", communityID).Scan(&emptyThumb); err != nil || !emptyThumb {
+		t.Fatalf("empty thumbnail=%v err=%v", emptyThumb, err)
+	}
+	if _, changed, err := store.SetCommunityPhoto(ctx, owner.ID, communityID, photo, 1_800_200_004, postgresCommunityTestEffects); err != nil || changed {
+		t.Fatalf("duplicate photo changed=%v err=%v", changed, err)
+	}
+	if _, changed, err := store.SetCommunityPhoto(ctx, owner.ID, communityID, nil, 1_800_200_005, postgresCommunityTestEffects); err != nil || !changed {
+		t.Fatalf("clear photo changed=%v err=%v", changed, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT pts FROM channels WHERE id=$1", initial.Channel.ID).Scan(&ptsAfter); err != nil || ptsAfter != ptsBefore {
+		t.Fatalf("community photo changed channel pts: %d -> %d err=%v", ptsBefore, ptsAfter, err)
+	}
 	if len(created.ServiceMessages) != 1 || created.ServiceMessages[0].Event.Pts == 0 {
 		t.Fatalf("create service messages = %+v", created.ServiceMessages)
 	}

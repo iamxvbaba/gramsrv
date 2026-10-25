@@ -1,9 +1,11 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
 import { useI18n, type TFunction } from "../i18n";
 import { formatUnix } from "../lib/format";
+import type { Navigate } from "../routing";
 import type { StarGiftAuctionRow } from "../types";
 import { LottiePreview } from "./GiftsPage";
 
@@ -57,7 +59,7 @@ function auctionStatus(row: StarGiftAuctionRow, now: number) {
   }
 }
 
-export function AuctionsPage() {
+export function AuctionsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [rows, setRows] = useState<StarGiftAuctionRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -90,6 +92,7 @@ export function AuctionsPage() {
       actions={<>
         <button className="btn" type="button" disabled={busy} onClick={() => void load()}><RefreshCw size={15} />{t("common.refresh")}</button>
       </>}>
+      <SectionTabs sectionId="gifts" active="/auctions" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("auctions.metricAuctions")} value={String(stats.auctions)} />

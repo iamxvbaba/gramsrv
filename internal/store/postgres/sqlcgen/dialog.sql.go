@@ -1914,9 +1914,10 @@ INSERT INTO dialogs (
   unread_mentions_count,
   unread_reactions_count,
   pinned,
-  unread_mark
+  unread_mark,ttl_period
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+  CASE WHEN $2::varchar = 'user' THEN private_dialog_initial_ttl($1,$3) ELSE 0 END
 )
 ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
   top_message_id = EXCLUDED.top_message_id,
@@ -2054,9 +2055,11 @@ INSERT INTO dialogs (
   peer_id,
   top_message_id,
   top_message_date,
-  unread_count
+  unread_count,
+  ttl_period
 ) VALUES (
-  $1, $2, $3, $4, $5, 1
+  $1, $2, $3, $4, $5, 1,
+  CASE WHEN $2::varchar = 'user' THEN private_dialog_initial_ttl($3, $1) ELSE 0 END
 )
 ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
   top_message_id = GREATEST(dialogs.top_message_id, EXCLUDED.top_message_id),
@@ -2104,9 +2107,11 @@ INSERT INTO dialogs (
   peer_id,
   top_message_id,
   top_message_date,
-  unread_count
+  unread_count,
+  ttl_period
 ) VALUES (
-  $1, $2, $3, $4, $5, 0
+  $1, $2, $3, $4, $5, 0,
+  CASE WHEN $2::varchar = 'user' THEN private_dialog_initial_ttl($1, $3) ELSE 0 END
 )
 ON CONFLICT (user_id, peer_type, peer_id) DO UPDATE SET
   top_message_id = EXCLUDED.top_message_id,

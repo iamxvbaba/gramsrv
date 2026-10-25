@@ -16,10 +16,15 @@ func hookTestMessage(reqMsgID int64, coordinator *rpcResultDeliveryCoordinator, 
 func TestRPCDeliveryHookExecutorBoundsAdmissionWithoutBlockingDelivery(t *testing.T) {
 	executor := newRPCDeliveryHookExecutor(1, 1)
 	started := make(chan struct{})
-	release := make(chan struct{})
+	// The hook signals that it is running and then occupies the single worker
+	// for a guaranteed 50ms. The sleep is what keeps the "completes" timing
+	// honest: host monotonic clocks tick coarsely (a Windows VM in CI can
+	// quantise back-to-back time.Now reads to the same tick), so a hook that
+	// only waits on a channel a test closes microseconds later reliably
+	// measures as 0ns duration and the snapshot assertion below would flake.
 	first := hookTestMessage(1, nil, func() {
 		close(started)
-		<-release
+		time.Sleep(50 * time.Millisecond)
 	})
 	if err := first.prepareDeliveryHook(executor); err != nil {
 		t.Fatalf("reserve first hook: %v", err)
@@ -44,7 +49,9 @@ func TestRPCDeliveryHookExecutorBoundsAdmissionWithoutBlockingDelivery(t *testin
 	if err := second.prepareDeliveryHook(executor); !errors.Is(err, ErrRPCDeliveryHookCapacity) {
 		t.Fatalf("second reservation = %v, want capacity error", err)
 	}
-	close(release)
+	// The first hook is still running (its 50ms window has not elapsed yet, and
+	// admission is what matters, not how long the worker is held). Wait for it
+	// to finish and drain the capacity token.
 	deadline := time.Now().Add(time.Second)
 	for len(executor.slots) != 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -54,7 +61,7 @@ func TestRPCDeliveryHookExecutorBoundsAdmissionWithoutBlockingDelivery(t *testin
 	}
 	snapshot := executor.runtimeSnapshot()
 	if snapshot.workers != 1 || snapshot.capacity != 1 || snapshot.completed != 1 || snapshot.rejected != 1 ||
-		snapshot.reserved != 0 || snapshot.queued != 0 || snapshot.running != 0 || snapshot.durationSeconds <= 0 {
+		snapshot.reserved != 0 || snapshot.queued != 0 || snapshot.running != 0 || snapshot.durationSeconds < 0.05 {
 		t.Fatalf("executor snapshot = %#v", snapshot)
 	}
 }

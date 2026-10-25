@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { StickerDocumentPreview } from "../components/StickerDocumentPreview";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { StickerSetRow } from "../types";
@@ -101,6 +102,7 @@ export function StickerSetsPage({ kind, navigate }: { kind: "stickers" | "emoji"
         </>
       }
     >
+      <SectionTabs sectionId="media" active={kind === "emoji" ? "/emoji" : "/stickers"} navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("stickers.totalSets")} value={String(counts.total)} />

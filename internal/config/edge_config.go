@@ -13,6 +13,10 @@ type EdgeConfigYAML struct {
 	CoreExec   GRPCClientYAML `yaml:"core_exec"`
 	FileData   GRPCClientYAML `yaml:"file_data"`
 	Egress     EdgeEgressYAML `yaml:"egress"`
+	// Identity lets Edge publish the operator-edited name, description and
+	// icon next to its RSA key at /owpengram/server-info (read-only; Admin
+	// stays the only writer).
+	Identity IdentityYAML `yaml:"identity"`
 }
 
 type EdgeYAML struct {
@@ -77,6 +81,7 @@ func LoadEdge() (EdgeConfig, error) {
 		}
 		b.setString("TELESRV_LISTEN", y.Edge.Listen)
 		b.setString("TELESRV_RSA_KEY", y.Edge.RSAKey)
+		applyIdentityYAML(b, y.Identity)
 		b.setBool("TELESRV_WEBSOCKET_ENABLE", y.Edge.WebSocket.Enabled)
 		b.setList("TELESRV_WEBSOCKET_ALLOWED_ORIGINS", y.Edge.WebSocket.AllowedOrigins)
 		b.setInt("TELESRV_MTPROTO_MAX_CONNECTIONS", y.Edge.MTProto.MaxConnections)
@@ -141,6 +146,7 @@ type EdgeConfig struct {
 	AdvertiseIP                           string
 	AdvertisePort                         int
 	RSAKeyPath                            string
+	IdentityDir                           string
 	DC                                    int
 	DefaultCountryCode                    string
 	StrictDCCheck                         bool
@@ -224,7 +230,7 @@ func edgeConfigFromConfig(c Config) EdgeConfig {
 	return EdgeConfig{
 		DebugAddr: c.DebugAddr, Branding: c.Branding, PremiumBotUsername: c.PremiumBotUsername, PremiumBotUserID: c.PremiumBotUserID,
 		ListenAddr: c.ListenAddr, WebSocketEnable: c.WebSocketEnable, WebSocketAllowedOrigins: append([]string(nil), c.WebSocketAllowedOrigins...),
-		AdvertiseIP: c.AdvertiseIP, AdvertisePort: c.AdvertisePort, RSAKeyPath: c.RSAKeyPath, DC: c.DC, DefaultCountryCode: c.DefaultCountryCode, StrictDCCheck: c.StrictDCCheck,
+		AdvertiseIP: c.AdvertiseIP, AdvertisePort: c.AdvertisePort, RSAKeyPath: c.RSAKeyPath, IdentityDir: c.IdentityDir, DC: c.DC, DefaultCountryCode: c.DefaultCountryCode, StrictDCCheck: c.StrictDCCheck,
 		MTProtoMaxConnections: c.MTProtoMaxConnections, MTProtoMaxConnectionsPerIP: c.MTProtoMaxConnectionsPerIP, MTProtoMaxConcurrentHandshakes: c.MTProtoMaxConcurrentHandshakes,
 		MTProtoRPCMaxInflight: c.MTProtoRPCMaxInflight, MTProtoRPCQueueSize: c.MTProtoRPCQueueSize, MTProtoRPCTimeout: c.MTProtoRPCTimeout,
 		MTProtoRPCGlobalWorkers: c.MTProtoRPCGlobalWorkers, MTProtoRPCGlobalMaxTasks: c.MTProtoRPCGlobalMaxTasks, MTProtoRPCGlobalMaxBytes: c.MTProtoRPCGlobalMaxBytes,

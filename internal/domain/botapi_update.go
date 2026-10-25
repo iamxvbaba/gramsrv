@@ -6,10 +6,39 @@ import "time"
 type BotAPIUpdateKind string
 
 const (
-	BotAPIUpdateMessage       BotAPIUpdateKind = "message"
-	BotAPIUpdateEditedMessage BotAPIUpdateKind = "edited_message"
-	BotAPIUpdateCallbackQuery BotAPIUpdateKind = "callback_query"
+	BotAPIUpdateMessage          BotAPIUpdateKind = "message"
+	BotAPIUpdateEditedMessage    BotAPIUpdateKind = "edited_message"
+	BotAPIUpdateCallbackQuery    BotAPIUpdateKind = "callback_query"
+	BotAPIUpdatePreCheckoutQuery BotAPIUpdateKind = "pre_checkout_query"
 )
+
+// BotPreCheckoutQuery is the protocol-neutral payload shared by the MTProto
+// updateBotPrecheckoutQuery and the HTTP Bot API PreCheckoutQuery projection.
+//
+// It asks the bot to confirm an order before any Stars move. The payer is held in
+// the payment RPC for PreCheckoutTimeout; if the bot has not answered by then the
+// payment is failed, which is what makes this a real gate and not a notification.
+type BotPreCheckoutQuery struct {
+	ID        int64 `json:"id"`
+	BotUserID int64 `json:"bot_user_id"`
+	UserID    int64 `json:"user_id"`
+	// Currency and TotalAmount are what the payer is about to be charged. The bot
+	// is expected to verify them against its own order state.
+	Currency    string `json:"currency"`
+	TotalAmount int64  `json:"total_amount"`
+	// Payload is the invoice_payload from sendInvoice, the bot's own order key.
+	Payload string `json:"invoice_payload"`
+	// ShippingOptionID is reserved: telesrv settles Stars only and models no
+	// shipping, so it is always empty.
+	ShippingOptionID string `json:"shipping_option_id,omitempty"`
+}
+
+// BotPreCheckoutAnswer is what the bot sends back. Error is the message the payer
+// sees when OK is false.
+type BotPreCheckoutAnswer struct {
+	OK    bool
+	Error string
+}
 
 // BotCallbackQuery is the protocol-neutral payload shared by MTProto
 // updateBotCallbackQuery and the HTTP Bot API CallbackQuery projection.
@@ -152,18 +181,22 @@ type BotAPIUpdate struct {
 	SourcePts int
 	Date      int
 	Callback  *BotCallbackQuery
-	Ephemeral *BotAPIEphemeralPayload
+	// PreCheckout carries a pre-checkout query. It has no message of its own, so
+	// Peer and MessageID stay zero and the projection reads only this field.
+	PreCheckout *BotPreCheckoutQuery
+	Ephemeral   *BotAPIEphemeralPayload
 }
 
 // EnqueueBotAPIUpdateRequest describes a message-like update that should be
 // delivered to one bot via getUpdates.
 type EnqueueBotAPIUpdateRequest struct {
-	BotUserID int64
-	Kind      BotAPIUpdateKind
-	Peer      Peer
-	MessageID int
-	SourcePts int
-	Date      int
-	Callback  *BotCallbackQuery
-	Ephemeral *BotAPIEphemeralPayload
+	BotUserID   int64
+	Kind        BotAPIUpdateKind
+	Peer        Peer
+	MessageID   int
+	SourcePts   int
+	Date        int
+	Callback    *BotCallbackQuery
+	PreCheckout *BotPreCheckoutQuery
+	Ephemeral   *BotAPIEphemeralPayload
 }

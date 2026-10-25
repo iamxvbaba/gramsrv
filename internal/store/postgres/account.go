@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,22 +37,30 @@ SELECT
   email_unconfirmed_pattern, login_email_pattern, secure_random,
   current_algo_salt1, current_algo_salt2, current_algo_g, current_algo_p,
   srp_id, srp_verifier, srp_b_secret, srp_b,
-  recovery_email, login_email
+  recovery_email, login_email, pending_reset_date, pending_change
 FROM account_passwords
 WHERE user_id = $1`, userID)
 	var settings domain.PasswordSettings
-	var salt1, salt2, p []byte
+	var salt1, salt2, p, pending []byte
 	if err := row.Scan(
 		&settings.HasRecovery, &settings.HasSecureValues, &settings.HasPassword, &settings.Hint,
 		&settings.EmailUnconfirmedPattern, &settings.LoginEmailPattern, &settings.SecureRandom,
 		&salt1, &salt2, &settings.NewAlgo.G, &p,
 		&settings.SRPID, &settings.SRPVerifier, &settings.SRPBSecret, &settings.SRPB,
-		&settings.RecoveryEmail, &settings.LoginEmail,
+		&settings.RecoveryEmail, &settings.LoginEmail, &settings.PendingResetDate, &pending,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.PasswordSettings{}, false, nil
 		}
 		return domain.PasswordSettings{}, false, fmt.Errorf("get account password: %w", err)
+	}
+	if len(pending) != 0 {
+		if len(pending) > 16384 {
+			return domain.PasswordSettings{}, false, fmt.Errorf("pending password change exceeds bound")
+		}
+		if err := json.Unmarshal(pending, &settings.PendingChange); err != nil {
+			return domain.PasswordSettings{}, false, fmt.Errorf("decode pending password change: %w", err)
+		}
 	}
 	if len(salt1) > 0 || len(salt2) > 0 || len(p) > 0 || settings.NewAlgo.G != 0 {
 		settings.CurrentAlgo = &domain.PasswordKDFAlgo{
@@ -69,6 +78,25 @@ WHERE user_id = $1`, userID)
 	settings.SRPBSecret = append([]byte(nil), settings.SRPBSecret...)
 	settings.SRPB = append([]byte(nil), settings.SRPB...)
 	return settings, true, nil
+}
+
+// Mutate serializes factor changes with account deletion and concurrent SRP refresh.
+func (s *PasswordStore) Mutate(ctx context.Context, userID int64, apply func(*domain.PasswordSettings) error) error {
+	return withTx(ctx, s.db, "mutate account password", func(tx pgx.Tx) error {
+		var id int64
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, userID).Scan(&id); err != nil {
+			return err
+		}
+		store := NewPasswordStore(tx)
+		settings, _, err := store.GetByUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if err := apply(&settings); err != nil {
+			return err
+		}
+		return store.Save(ctx, userID, settings)
+	})
 }
 
 func (s *PasswordStore) LoginEmailOwner(ctx context.Context, email string) (int64, bool, error) {
@@ -92,6 +120,17 @@ LIMIT 1`, email)
 }
 
 func (s *PasswordStore) Save(ctx context.Context, userID int64, settings domain.PasswordSettings) error {
+	var pending []byte
+	if settings.PendingChange != nil {
+		var err error
+		pending, err = json.Marshal(settings.PendingChange)
+		if err != nil {
+			return err
+		}
+		if len(pending) > 8192 {
+			return fmt.Errorf("pending password change exceeds bound")
+		}
+	}
 	settings.LoginEmail = normalizeStoredLoginEmail(settings.LoginEmail)
 	settings.LoginEmailPattern = domain.MaskEmail(settings.LoginEmail)
 	algo := settings.NewAlgo
@@ -104,9 +143,9 @@ INSERT INTO account_passwords (
   email_unconfirmed_pattern, login_email_pattern, secure_random,
   current_algo_salt1, current_algo_salt2, current_algo_g, current_algo_p,
   srp_id, srp_verifier, srp_b_secret, srp_b,
-  recovery_email, login_email
+  recovery_email, login_email, pending_reset_date, pending_change
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 ON CONFLICT (user_id) DO UPDATE SET
   has_recovery = EXCLUDED.has_recovery,
   has_secure_values = EXCLUDED.has_secure_values,
@@ -125,13 +164,15 @@ ON CONFLICT (user_id) DO UPDATE SET
   srp_b = EXCLUDED.srp_b,
   recovery_email = EXCLUDED.recovery_email,
   login_email = EXCLUDED.login_email,
+  pending_reset_date = EXCLUDED.pending_reset_date,
+  pending_change = EXCLUDED.pending_change,
   updated_at = now()`,
 		userID,
 		settings.HasRecovery, settings.HasSecureValues, settings.HasPassword, settings.Hint,
 		settings.EmailUnconfirmedPattern, settings.LoginEmailPattern, nonNilBytea(settings.SecureRandom),
 		nonNilBytea(algo.Salt1), nonNilBytea(algo.Salt2), algo.G, nonNilBytea(algo.P),
 		settings.SRPID, nonNilBytea(settings.SRPVerifier), nonNilBytea(settings.SRPBSecret), nonNilBytea(settings.SRPB),
-		settings.RecoveryEmail, settings.LoginEmail,
+		settings.RecoveryEmail, settings.LoginEmail, settings.PendingResetDate, pending,
 	)
 	if err != nil {
 		if isAccountPasswordLoginEmailUnique(err) {
@@ -162,7 +203,7 @@ func nonNilBytea(in []byte) []byte {
 
 func (s *PasswordStore) GetReactionSettings(ctx context.Context, userID int64) (domain.AccountReactionSettings, bool, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT messages_notify_from, stories_notify_from, poll_votes_notify_from, show_previews,
+SELECT messages_notify_from, stories_notify_from, poll_votes_notify_from, show_previews, sound,
        default_reaction_type, default_reaction_value,
        paid_privacy_kind, paid_privacy_peer_type, paid_privacy_peer_id
 FROM account_reaction_settings
@@ -174,7 +215,7 @@ WHERE user_id = $1`, userID)
 	var paidPeerID sql.NullInt64
 	settings := domain.DefaultAccountReactionSettings()
 	if err := row.Scan(
-		&messagesFrom, &storiesFrom, &pollVotesFrom, &settings.Notify.ShowPreviews,
+		&messagesFrom, &storiesFrom, &pollVotesFrom, &settings.Notify.ShowPreviews, &settings.Notify.Sound,
 		&defaultType, &defaultValue, &paidKind, &paidPeerType, &paidPeerID,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -185,60 +226,23 @@ WHERE user_id = $1`, userID)
 	settings.Notify.MessagesFrom = domain.ReactionNotifyFrom(messagesFrom)
 	settings.Notify.StoriesFrom = domain.ReactionNotifyFrom(storiesFrom)
 	settings.Notify.PollVotesFrom = domain.ReactionNotifyFrom(pollVotesFrom)
-	if reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(defaultType), defaultValue); ok {
-		settings.DefaultReaction = reaction
+	reaction, ok := domain.MessageReactionFromValue(domain.MessageReactionType(defaultType), defaultValue)
+	if !ok {
+		return domain.AccountReactionSettings{}, false, fmt.Errorf("invalid persisted default reaction")
 	}
+	settings.DefaultReaction = reaction
 	settings.PaidPrivacy = domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyKind(paidKind)}
 	if settings.PaidPrivacy.Kind == domain.PaidReactionPrivacyPeer && paidPeerType.Valid && paidPeerID.Valid {
 		peer := domain.Peer{Type: domain.PeerType(paidPeerType.String), ID: paidPeerID.Int64}
 		settings.PaidPrivacy.Peer = &peer
 	}
-	return settings, true, nil
-}
-
-func (s *PasswordStore) SaveReactionSettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) error {
-	if effects == nil {
-		return store.ErrDeliveryOutboxRequired
-	}
-	beginner, ok := s.db.(txBeginner)
-	if !ok {
-		return fmt.Errorf("save account reaction settings: db does not support transactions")
-	}
-	tx, err := beginner.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin account reaction settings tx: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	if err := saveReactionSettingsRow(ctx, tx, userID, settings); err != nil {
-		return err
-	}
-	intents, err := effects(settings)
-	if err != nil {
-		return fmt.Errorf("build account reaction settings delivery effects: %w", err)
-	}
-	if _, err := applyDeliveryEffectsTx(ctx, tx, intents); err != nil {
-		return fmt.Errorf("apply account reaction settings delivery effects: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit account reaction settings tx: %w", err)
-	}
-	committed = true
-	return nil
-}
-
-func (s *PasswordStore) SaveReactionsNotifySettings(ctx context.Context, userID int64, settings domain.AccountReactionSettings) error {
-	if userID <= 0 {
-		return fmt.Errorf("save reactions notify settings: invalid user")
-	}
-	return saveReactionSettingsRow(ctx, s.db, userID, settings)
+	return settings, true, domain.ValidateAccountReactionSettings(settings)
 }
 
 func saveReactionSettingsRow(ctx context.Context, db sqlcgen.DBTX, userID int64, settings domain.AccountReactionSettings) error {
+	if err := domain.ValidateAccountReactionSettings(settings); err != nil {
+		return err
+	}
 	var paidPeerType any
 	var paidPeerID any
 	if settings.PaidPrivacy.Kind == domain.PaidReactionPrivacyPeer && settings.PaidPrivacy.Peer != nil {
@@ -247,14 +251,15 @@ func saveReactionSettingsRow(ctx context.Context, db sqlcgen.DBTX, userID int64,
 	}
 	if _, err := db.Exec(ctx, `
 INSERT INTO account_reaction_settings (
-    user_id, messages_notify_from, stories_notify_from, poll_votes_notify_from, show_previews,
+    user_id, messages_notify_from, stories_notify_from, poll_votes_notify_from, show_previews, sound,
     default_reaction_type, default_reaction_value, paid_privacy_kind, paid_privacy_peer_type, paid_privacy_peer_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+) VALUES ($1,$2,$3,$4,$5,$11,$6,$7,$8,$9,$10)
 ON CONFLICT (user_id) DO UPDATE SET
     messages_notify_from = EXCLUDED.messages_notify_from,
     stories_notify_from = EXCLUDED.stories_notify_from,
     poll_votes_notify_from = EXCLUDED.poll_votes_notify_from,
     show_previews = EXCLUDED.show_previews,
+    sound = EXCLUDED.sound,
     default_reaction_type = EXCLUDED.default_reaction_type,
     default_reaction_value = EXCLUDED.default_reaction_value,
     paid_privacy_kind = EXCLUDED.paid_privacy_kind,
@@ -264,7 +269,7 @@ ON CONFLICT (user_id) DO UPDATE SET
 		userID,
 		string(settings.Notify.MessagesFrom), string(settings.Notify.StoriesFrom), string(settings.Notify.PollVotesFrom), settings.Notify.ShowPreviews,
 		string(settings.DefaultReaction.Type), settings.DefaultReaction.Value(),
-		string(settings.PaidPrivacy.Kind), paidPeerType, paidPeerID,
+		string(settings.PaidPrivacy.Kind), paidPeerType, paidPeerID, settings.Notify.Sound,
 	); err != nil {
 		return fmt.Errorf("save account reaction settings: %w", err)
 	}
@@ -389,13 +394,17 @@ func notifyScopeColumns(scope domain.NotifyScope) (kind, peerType string, peerID
 	return kind, "", 0, 0
 }
 
-func scanNotifySettings(row pgx.Row) (domain.PeerNotifySettings, error) {
+func scanNotifySettings(row pgx.Row, prefix ...any) (domain.PeerNotifySettings, error) {
 	var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
 	var muteUntil sql.NullInt32
-	if err := row.Scan(&showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+	var sound, storiesSound *domain.NotificationSound
+	if err := row.Scan(append(prefix, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender, &sound, &storiesSound)...); err != nil {
 		return domain.PeerNotifySettings{}, err
 	}
-	out := domain.PeerNotifySettings{}
+	out := domain.PeerNotifySettings{Sound: sound, StoriesSound: storiesSound}
+	if err := out.Validate(); err != nil {
+		return domain.PeerNotifySettings{}, err
+	}
 	if showPreviews.Valid {
 		out.ShowPreviews = &showPreviews.Bool
 	}
@@ -415,10 +424,37 @@ func scanNotifySettings(row pgx.Row) (domain.PeerNotifySettings, error) {
 	return out, nil
 }
 
+func (s *PasswordStore) GetForumTopicNotifySettings(ctx context.Context, ownerUserID int64, peer domain.Peer, topicIDs []int) (map[int]domain.PeerNotifySettings, error) {
+	out := make(map[int]domain.PeerNotifySettings, len(topicIDs))
+	if len(topicIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT topic_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
+FROM notify_settings
+WHERE owner_user_id = $1 AND scope_kind = 'peer' AND peer_type = $2 AND peer_id = $3 AND topic_id = ANY($4::int[])`,
+		ownerUserID, string(peer.Type), peer.ID, topicIDs)
+	if err != nil {
+		return nil, fmt.Errorf("batch get forum notification settings: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		settings, err := scanNotifySettings(rows, &id)
+		if err != nil {
+			return nil, fmt.Errorf("scan forum notification settings: %w", err)
+		}
+		out[id] = settings
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate forum notification settings: %w", err)
+	}
+	return out, nil
+}
+
 func (s *PasswordStore) GetNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope) (domain.PeerNotifySettings, bool, error) {
 	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
 	row := s.db.QueryRow(ctx, `
-SELECT show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = $2 AND peer_type = $3 AND peer_id = $4 AND topic_id = $5`,
 		ownerUserID, kind, peerType, peerID, topicID)
@@ -433,22 +469,27 @@ WHERE owner_user_id = $1 AND scope_kind = $2 AND peer_type = $3 AND peer_id = $4
 }
 
 func (s *PasswordStore) SaveNotifySettings(ctx context.Context, ownerUserID int64, scope domain.NotifyScope, settings domain.PeerNotifySettings) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
 	kind, peerType, peerID, topicID := notifyScopeColumns(scope)
 	if _, err := s.db.Exec(ctx, `
 INSERT INTO notify_settings (
     owner_user_id, scope_kind, peer_type, peer_id, topic_id,
-    show_previews, silent, mute_until, stories_muted, stories_hide_sender
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (owner_user_id, scope_kind, peer_type, peer_id, topic_id) DO UPDATE SET
     show_previews = EXCLUDED.show_previews,
     silent = EXCLUDED.silent,
     mute_until = EXCLUDED.mute_until,
     stories_muted = EXCLUDED.stories_muted,
     stories_hide_sender = EXCLUDED.stories_hide_sender,
+    sound = EXCLUDED.sound,
+    stories_sound = EXCLUDED.stories_sound,
     updated_at = now()`,
 		ownerUserID, kind, peerType, peerID, topicID,
 		nullableBool(settings.ShowPreviews), nullableBool(settings.Silent), nullableInt(settings.MuteUntil),
-		nullableBool(settings.StoriesMuted), nullableBool(settings.StoriesHideSender),
+		nullableBool(settings.StoriesMuted), nullableBool(settings.StoriesHideSender), settings.Sound, settings.StoriesSound,
 	); err != nil {
 		return fmt.Errorf("save notify settings: %w", err)
 	}
@@ -567,7 +608,7 @@ func (s *PasswordStore) GetPeerNotifySettings(ctx context.Context, ownerUserID i
 		ids = append(ids, p.ID)
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
   AND (peer_type, peer_id) IN (SELECT * FROM unnest($2::text[], $3::bigint[]))`,
@@ -581,10 +622,14 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
 		var peerID int64
 		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
 		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		var sound, storiesSound *domain.NotificationSound
+		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender, &sound, &storiesSound); err != nil {
 			return nil, fmt.Errorf("scan notify settings: %w", err)
 		}
-		settings := domain.PeerNotifySettings{}
+		settings := domain.PeerNotifySettings{Sound: sound, StoriesSound: storiesSound}
+		if err := settings.Validate(); err != nil {
+			return nil, err
+		}
 		if showPreviews.Valid {
 			settings.ShowPreviews = &showPreviews.Bool
 		}
@@ -612,7 +657,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0
 func (s *PasswordStore) AllPeerNotifySettings(ctx context.Context, ownerUserID int64) (map[domain.Peer]domain.PeerNotifySettings, error) {
 	// owner-scoped 单查询，走部分索引 notify_settings_owner_peer_idx（scope_kind='peer' AND topic_id=0）。
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 	if err != nil {
@@ -625,10 +670,14 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 		var peerID int64
 		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
 		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		var sound, storiesSound *domain.NotificationSound
+		if err := rows.Scan(&peerType, &peerID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender, &sound, &storiesSound); err != nil {
 			return nil, fmt.Errorf("scan all peer notify settings: %w", err)
 		}
-		settings := domain.PeerNotifySettings{}
+		settings := domain.PeerNotifySettings{Sound: sound, StoriesSound: storiesSound}
+		if err := settings.Validate(); err != nil {
+			return nil, err
+		}
 		if showPreviews.Valid {
 			settings.ShowPreviews = &showPreviews.Bool
 		}
@@ -655,7 +704,7 @@ WHERE owner_user_id = $1 AND scope_kind = 'peer' AND topic_id = 0`, ownerUserID)
 
 func (s *PasswordStore) ListNotifyExceptions(ctx context.Context, ownerUserID int64) ([]domain.NotifyException, error) {
 	rows, err := s.db.Query(ctx, `
-SELECT peer_type, peer_id, topic_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender
+SELECT peer_type, peer_id, topic_id, show_previews, silent, mute_until, stories_muted, stories_hide_sender, sound, stories_sound
 FROM notify_settings
 WHERE owner_user_id = $1 AND scope_kind = 'peer'
 ORDER BY peer_type, peer_id, topic_id`, ownerUserID)
@@ -670,10 +719,14 @@ ORDER BY peer_type, peer_id, topic_id`, ownerUserID)
 		var topicID int
 		var showPreviews, silent, storiesMuted, storiesHideSender sql.NullBool
 		var muteUntil sql.NullInt32
-		if err := rows.Scan(&peerType, &peerID, &topicID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender); err != nil {
+		var sound, storiesSound *domain.NotificationSound
+		if err := rows.Scan(&peerType, &peerID, &topicID, &showPreviews, &silent, &muteUntil, &storiesMuted, &storiesHideSender, &sound, &storiesSound); err != nil {
 			return nil, fmt.Errorf("scan notify exception: %w", err)
 		}
-		settings := domain.PeerNotifySettings{}
+		settings := domain.PeerNotifySettings{Sound: sound, StoriesSound: storiesSound}
+		if err := settings.Validate(); err != nil {
+			return nil, err
+		}
 		if showPreviews.Valid {
 			settings.ShowPreviews = &showPreviews.Bool
 		}
@@ -1230,4 +1283,50 @@ func (s *PasswordStore) querySavedMusicDocuments(ctx context.Context, sql string
 		return nil, fmt.Errorf("scan saved music documents: %w", err)
 	}
 	return docs, nil
+}
+
+// UpdateReactionSettings merges one patch under the owner lock so concurrent
+// writers of unrelated fields cannot lose each other's value. Delivery effects
+// commit in the same transaction; a notify-only patch has no update
+// constructor and may pass nil effects.
+func (s *PasswordStore) UpdateReactionSettings(ctx context.Context, userID int64, patch domain.AccountReactionSettingsPatch, effects store.DeliveryEffectsBuilder[domain.AccountReactionSettings]) (domain.AccountReactionSettings, error) {
+	if userID <= 0 {
+		return domain.AccountReactionSettings{}, fmt.Errorf("update reaction settings: invalid user")
+	}
+	if effects == nil && !patch.NotifyOnly() {
+		return domain.AccountReactionSettings{}, store.ErrDeliveryOutboxRequired
+	}
+	var updated domain.AccountReactionSettings
+	err := withTx(ctx, s.db, "update reaction settings", func(tx pgx.Tx) error {
+		if err := lockUsersForUpdate(ctx, tx, userID); err != nil {
+			return err
+		}
+		target := NewPasswordStore(tx)
+		current, found, err := target.GetReactionSettings(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			current = domain.DefaultAccountReactionSettings()
+		}
+		updated, err = patch.Apply(current)
+		if err != nil {
+			return err
+		}
+		if err := saveReactionSettingsRow(ctx, tx, userID, updated); err != nil {
+			return err
+		}
+		if effects == nil {
+			return nil
+		}
+		intents, err := effects(updated)
+		if err != nil {
+			return fmt.Errorf("build account reaction settings delivery effects: %w", err)
+		}
+		if _, err := applyDeliveryEffectsTx(ctx, tx, intents); err != nil {
+			return fmt.Errorf("apply account reaction settings delivery effects: %w", err)
+		}
+		return nil
+	})
+	return updated, err
 }

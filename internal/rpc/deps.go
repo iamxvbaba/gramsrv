@@ -6,6 +6,7 @@ import (
 
 	"telesrv/internal/domain"
 	"telesrv/internal/edgecontrol"
+	"telesrv/internal/geoip"
 	"telesrv/internal/sfu"
 	"telesrv/internal/store"
 	"telesrv/internal/turnsrv"
@@ -190,6 +191,15 @@ type BotsService interface {
 	DeleteRequestedWebViewButton(ctx context.Context, botUserID, userID int64, reqID string) error
 	SetBotEmojiStatusPermission(ctx context.Context, botUserID, userID int64, allowed bool) error
 	BotEmojiStatusPermission(ctx context.Context, botUserID, userID int64) (bool, error)
+
+	// Bot XTR invoices. The stored row is the settlement authority: in this
+	// layer payments.sendPaymentForm carries no purpose, so the price is
+	// resolved from the invoice instead of the request.
+	CreateBotInvoice(ctx context.Context, invoice domain.BotInvoice) (domain.BotInvoice, error)
+	BotInvoiceByMessage(ctx context.Context, botUserID, chatID int64, messageID int) (domain.BotInvoice, bool, error)
+
+	BotInvoiceByCharge(ctx context.Context, chargeID string) (domain.BotInvoice, bool, error)
+
 	PutWebViewCustomMethodQuery(ctx context.Context, botUserID, userID int64, method, paramsJSON string) (domain.BotWebViewCustomMethodQuery, error)
 }
 
@@ -264,6 +274,8 @@ type AccountService interface {
 	GetPasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck) (domain.PrivatePasswordSettings, error)
 	UpdatePasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck, input domain.PasswordInputSettings) error
 	CheckPassword(ctx context.Context, userID int64, check domain.PasswordCheck) error
+	IssueTmpPassword(ctx context.Context, userID int64, authKeyID [8]byte, check domain.PasswordCheck, period int, now time.Time) (domain.TmpPassword, error)
+	CheckTmpPassword(ctx context.Context, userID int64, authKeyID [8]byte, tmpPassword []byte, now time.Time) error
 	RevenueWithdrawalPasswordState(ctx context.Context, userID int64) (domain.RevenueWithdrawalPasswordState, error)
 	RequestPasswordRecovery(ctx context.Context, userID int64) (string, error)
 	CheckRecoveryPassword(ctx context.Context, userID int64, code string) error
@@ -347,6 +359,15 @@ type AccountFreezeService interface {
 type AccountFreezeNotificationService interface {
 	ClaimAccountFreezeNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountFreezeNotification, error)
 	CommitAccountFreezeNotificationDelivery(ctx context.Context, id, version int64, payload []byte, now time.Time) error
+}
+
+// AccountDeletionNotificationService owns the durable tombstone queue. Deletion
+// fans out to every viewer who ever shared a contact or a dialog with the
+// account, so it is a queue rather than a synchronous fan-out. Delivery moves a
+// claimed row into edge_delivery_outbox in one transaction (v2: no Core push).
+type AccountDeletionNotificationService interface {
+	ClaimAccountDeletionNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountDeletionNotification, error)
+	DeliverAccountDeletionNotification(ctx context.Context, id int64, now time.Time, delivery store.DeliveryOutboxEnqueue) error
 }
 
 // UpdatesService 抽象 update 状态查询。
@@ -451,9 +472,8 @@ type MessagesService interface {
 	GetScheduledMessages(ctx context.Context, userID int64, filter domain.ScheduledMessageFilter) (domain.ScheduledMessageList, error)
 	DeleteScheduledMessages(ctx context.Context, userID int64, filter domain.ScheduledMessageFilter, date int, effects store.DeliveryEffectsBuilder[[]domain.ScheduledMessage]) ([]domain.ScheduledMessage, error)
 	ClaimScheduledMessages(ctx context.Context, userID int64, claim domain.ScheduledMessageClaim) ([]domain.ScheduledMessage, error)
-	ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int) ([]domain.ScheduledMessage, error)
-	MarkScheduledMessageSent(ctx context.Context, ownerUserID int64, id, sentMessageID, date int, effects store.DeliveryEffectsBuilder[domain.ScheduledMessage]) error
-	ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, errText string) error
+	ClaimDueScheduledMessages(ctx context.Context, now, limit, leaseSeconds int, onlineUserIDs []int64) ([]domain.ScheduledMessage, error)
+	ReleaseScheduledMessage(ctx context.Context, ownerUserID int64, id int, generation int64, errText string) error
 	HasScheduledMessages(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
 	GetPrivateHistoryTTL(ctx context.Context, userID int64, peer domain.Peer) (int, error)
 	SetPrivateHistoryTTL(ctx context.Context, userID int64, peer domain.Peer, period int, effects store.DeliveryEffectsBuilder[domain.PrivateHistoryTTLResult]) error
@@ -563,6 +583,10 @@ type ChannelsService interface {
 	JoinChannel(ctx context.Context, userID, channelID int64, date int, effects store.DeliveryEffectsBuilder[store.ChannelPendingJoinDeliverySnapshot]) (domain.CreateChannelResult, error)
 	LeaveChannel(ctx context.Context, userID, channelID int64, date int) (domain.CreateChannelResult, error)
 	EditTitle(ctx context.Context, userID int64, req domain.EditChannelTitleRequest) (domain.EditChannelTitleResult, error)
+	// EditFactCheck 写入/删除消息的 Layer 231 事实核查标签；空文本表示删除。
+	EditFactCheck(ctx context.Context, userID int64, req domain.EditFactCheckRequest) (domain.EditFactCheckResult, error)
+	// GetFactChecks 批量读取消息的事实核查标签。
+	GetFactChecks(ctx context.Context, userID, channelID int64, messageIDs []int) (domain.FactCheckList, error)
 	SetWallpaper(ctx context.Context, userID int64, req domain.SetChannelWallpaperRequest) (domain.SetChannelWallpaperResult, error)
 	EditAbout(ctx context.Context, userID int64, req domain.EditChannelAboutRequest) (domain.Channel, error)
 	EditAdmin(ctx context.Context, userID int64, req domain.EditChannelAdminRequest) (domain.EditChannelAdminResult, error)
@@ -579,7 +603,7 @@ type ChannelsService interface {
 	ListSendAsChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ResolvePublicUsername(ctx context.Context, userID int64, username string) (domain.Channel, bool, error)
 	SearchPublicChannels(ctx context.Context, userID int64, query string, limit int) (domain.PublicChannelSearchResult, error)
-	SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
+	SetSignatures(ctx context.Context, userID, channelID int64, enabled, profiles bool) (domain.Channel, error)
 	SetPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error)
 	SetPreHistoryHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetParticipantsHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
@@ -822,6 +846,14 @@ type EphemeralService interface {
 	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
 }
 
+// TranscriptionService 把 voice 文档交给本地 ASR 后端转写（app/transcription）：
+// 缓存命中直接回文本，否则登记 pending 任务；完成通知由 runtime 注入的
+// TranscribedAudioDelivery 在标记完成的同一事务写 durable outbox。nil 或后端未
+// 配置时调用方回 TRANSCRIPTION_FAILED。
+type TranscriptionService interface {
+	Transcribe(ctx context.Context, userID int64, peer domain.Peer, msgID int, document domain.Document) (domain.TranscriptionResult, error)
+}
+
 // WelcomeMessageService owns the independent durable Layer 229 peer templates.
 // It has no transient device, PTS, difference, push or outbox responsibility.
 type WelcomeMessageService interface {
@@ -938,62 +970,68 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers       store.AuthKeySessionLayerStore
-	ReadModelVersions          store.ReadModelVersionStore
-	UserProjectionFacts        UserProjectionFactInvalidator
-	Account                    AccountService
-	Privacy                    PrivacyService
-	Help                       HelpService
-	AppUpdates                 updatecdn.Resolver
-	AccountFreeze              AccountFreezeService
-	AccountFreezeNotifications AccountFreezeNotificationService
-	AICompose                  AIComposeService
-	Ephemeral                  EphemeralService
-	EphemeralPush              store.EphemeralPushBroker
-	WelcomeMessages            WelcomeMessageService
-	Moderation                 ModerationService
-	Users                      UsersService
-	Usernames                  UsernameRegistryService
-	CollectiblePhones          CollectiblePhoneService
-	AccountRatings             AccountRatingService
-	BotVerifications           BotVerificationService
-	TelegramLogin              TelegramLoginService
-	Updates                    UpdatesService
-	DeliveryOutbox             store.DeliveryOutboxStore
-	BootstrapUpdates           store.BootstrapUpdateJobStore
-	BotAPIUpdates              store.BotAPIUpdateStore
-	BotCallbacks               store.BotCallbackRegistryStore
-	LoginTokens                store.LoginTokenRegistryStore
-	Contacts                   ContactsService
-	Dialogs                    DialogsService
-	Chatlists                  ChatlistsService
-	Messages                   MessagesService
-	Translation                TranslationService
-	Stories                    StoriesService
-	Channels                   ChannelsService
-	Communities                CommunitiesService
-	Files                      FilesService
-	PremiumPromo               PremiumPromoService
-	Premium                    PremiumService
-	Bots                       BotsService
-	ServiceBotCallbacks        ServiceBotCallbacks
-	ServiceBotInlineResults    ServiceBotInlineResults
-	Polls                      PollsService
-	Phone                      PhoneService
-	GroupCalls                 GroupCallsService
-	LiveStreams                LiveStreamsService
-	SFU                        sfu.Service
-	TURN                       turnsrv.Service
-	LangPack                   LangPackService
-	Sessions                   EdgeController
-	Inline                     store.InlineRegistryStore
-	Limiter                    RateLimiter
-	Metrics                    Metrics
-	SecretChats                SecretChatService
-	Stars                      StarsService
-	Gifts                      GiftsService
-	Passkey                    PasskeyService
-	Themes                     ThemeService
+	AuthKeySessionLayers         store.AuthKeySessionLayerStore
+	ReadModelVersions            store.ReadModelVersionStore
+	UserProjectionFacts          UserProjectionFactInvalidator
+	Account                      AccountService
+	Privacy                      PrivacyService
+	Help                         HelpService
+	AppUpdates                   updatecdn.Resolver
+	AccountFreeze                AccountFreezeService
+	AccountFreezeNotifications   AccountFreezeNotificationService
+	AccountDeletionNotifications AccountDeletionNotificationService
+	AICompose                    AIComposeService
+	Ephemeral                    EphemeralService
+	EphemeralPush                store.EphemeralPushBroker
+	WelcomeMessages              WelcomeMessageService
+	Moderation                   ModerationService
+	Users                        UsersService
+	Usernames                    UsernameRegistryService
+	CollectiblePhones            CollectiblePhoneService
+	AccountRatings               AccountRatingService
+	BotVerifications             BotVerificationService
+	TelegramLogin                TelegramLoginService
+	Updates                      UpdatesService
+	DeliveryOutbox               store.DeliveryOutboxStore
+	BootstrapUpdates             store.BootstrapUpdateJobStore
+	BotAPIUpdates                store.BotAPIUpdateStore
+	BotCallbacks                 store.BotCallbackRegistryStore
+	BotPreCheckouts              store.BotPreCheckoutRegistryStore
+	LoginTokens                  store.LoginTokenRegistryStore
+	Contacts                     ContactsService
+	Dialogs                      DialogsService
+	Chatlists                    ChatlistsService
+	Messages                     MessagesService
+	Translation                  TranslationService
+	Transcriptions               TranscriptionService
+	Stories                      StoriesService
+	Channels                     ChannelsService
+	Communities                  CommunitiesService
+	Files                        FilesService
+	PremiumPromo                 PremiumPromoService
+	Premium                      PremiumService
+	Bots                         BotsService
+	ServiceBotCallbacks          ServiceBotCallbacks
+	ServiceBotInlineResults      ServiceBotInlineResults
+	Polls                        PollsService
+	Phone                        PhoneService
+	GroupCalls                   GroupCallsService
+	LiveStreams                  LiveStreamsService
+	SFU                          sfu.Service
+	TURN                         turnsrv.Service
+	LangPack                     LangPackService
+	Sessions                     EdgeController
+	Inline                       store.InlineRegistryStore
+	Limiter                      RateLimiter
+	Metrics                      Metrics
+	SecretChats                  SecretChatService
+	Stars                        StarsService
+	Gifts                        GiftsService
+	Passkey                      PasskeyService
+	Themes                       ThemeService
+	// GeoIP 把会话记录的 IP 解析为 account.getAuthorizations 展示用的国家/地区
+	// 文案。为 nil(未配置地理后端)时列表继续回传占位文案,与启用前一致。
+	GeoIP geoip.Resolver
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。
@@ -1024,6 +1062,7 @@ type PasskeyService interface {
 // GiftsService 抽象 Star 礼物（app/stargifts）：目录 + peer 收到的礼物实例 CRUD。
 // 扣费/退款/服务消息投递由 rpc 层经 Stars 账本 + Messages.SendPrivateText 编排。
 type GiftsService interface {
+	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
 	CatalogHash(ctx context.Context) (int, error)
 	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
@@ -1069,6 +1108,9 @@ type GiftsService interface {
 	DropOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
 	SetNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
 	Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error)
+	// DeleteStarGift removes a received gift from the owner's profile
+	// (payments.deleteStarGift, Layer 232).
+	DeleteStarGift(ctx context.Context, req domain.StarGiftDeleteRequest) (domain.StarGiftDeleteResult, error)
 	TonBalance(ctx context.Context, userID int64) (int64, error)
 	TonTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
 	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)

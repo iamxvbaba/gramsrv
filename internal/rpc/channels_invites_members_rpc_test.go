@@ -145,8 +145,11 @@ func TestChannelsGetParticipantsRetainsDeletedAccountTombstone(t *testing.T) {
 		if !ok || u.ID != member.ID {
 			continue
 		}
-		if !u.Deleted || u.AccessHash != 0 || u.Phone != "" || u.FirstName != "" || u.LastName != "" || u.Username != "" || u.Photo != nil || u.Status != nil {
+		if !u.Deleted || u.AccessHash != 0 || u.Phone != "" || u.FirstName != "Deleted Account" || u.LastName != "" || u.Username != "" || !isEmptyUserStatus(u.Status) {
 			t.Fatalf("deleted member projection leaked profile state: %+v", u)
+		}
+		if _, ok := u.Photo.(*tg.UserProfilePhotoEmpty); !ok {
+			t.Fatalf("deleted member photo = %+v, want userProfilePhotoEmpty", u.Photo)
 		}
 		return
 	}

@@ -70,7 +70,7 @@ func TestStarGiftCustomEmojiEntitiesSurviveAllProjections(t *testing.T) {
 	saved := tgSavedStarGifts(1001, []domain.SavedStarGift{{
 		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 1001}, Message: "🎁",
 		MessageEntities: []domain.MessageEntity{entity},
-	}}, nil, nil)[0]
+	}}, nil, nil, 0)[0]
 	savedMessage, ok := saved.GetMessage()
 	if !ok || len(savedMessage.Entities) != 1 {
 		t.Fatalf("saved message = %+v", savedMessage)

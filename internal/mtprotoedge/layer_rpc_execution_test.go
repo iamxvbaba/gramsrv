@@ -3,6 +3,7 @@ package mtprotoedge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -229,5 +230,99 @@ func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
 	}
 	if got := handler.calls.Load(); got != 1 {
 		t.Fatalf("replay repeated business calls=%d", got)
+	}
+}
+
+// childDeadlineLayerRPC fails the admitted business call with a store failure
+// whose inner cause is a child-operation deadline, not the request context.
+type childDeadlineLayerRPC struct {
+	*admissionOnlyLayerRPC
+	calls atomic.Int32
+}
+
+func (h *childDeadlineLayerRPC) DispatchAdmitted(
+	context.Context,
+	[8]byte,
+	int64,
+	int64,
+	uint64,
+	tlprofile.Admission,
+) (tlprofile.Result, string, error) {
+	h.calls.Add(1)
+	return nil, "help.getConfig", fmt.Errorf("child store op: %w", context.DeadlineExceeded)
+}
+
+// TestChildOperationDeadlineWithLiveOuterContextPublishesInternal pins the
+// review finding: a child-operation timeout must not suppress the terminal RPC
+// result merely because the wrapped error is context.DeadlineExceeded. Only the
+// authoritative request/connection context may do that; with a live outer
+// context the client must still receive a terminal INTERNAL instead of nothing.
+func TestChildOperationDeadlineWithLiveOuterContextPublishesInternal(t *testing.T) {
+	dispatcher := tlprofile.NewDispatcher()
+	admit := func(request bin.Encoder) tlprofile.Admission {
+		t.Helper()
+		body := &bin.Buffer{Buf: exactLayerRPCBody(t, request)}
+		admitted, err := dispatcher.Admit(tlprofile.Profile227, body, tlprofile.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return admitted
+	}
+	request := admit(&tg.HelpGetConfigRequest{})
+	handler := &childDeadlineLayerRPC{
+		admissionOnlyLayerRPC: newAdmissionOnlyLayerRPC(),
+	}
+	s := New(Options{DC: 2, LayerRPC: handler})
+	c := newOutboundTestConn(t, &collectingSessionTransport{}, newOutboundTrackedBudget(1<<20))
+	c.authKeyID = [8]byte{0x42, 0x02}
+	c.sessionID = 4202
+	const reqMsgID = int64(420200)
+	claim, err := s.rpcResults.AcquireLayerIdentified(
+		c.authKeyID, c.sessionID, reqMsgID,
+		tlprofile.Profile227, request.Prepared().Identity(),
+	)
+	if err != nil || claim.owner == nil {
+		t.Fatalf("owner acquisition err=%v", err)
+	}
+	// The outer context stays live: only the child operation crossed its own
+	// deadline, so the client still exists and expects a terminal result.
+	if err := s.handleAdmittedLayerRPC(
+		context.Background(), c, reqMsgID, claim.admissionSeq,
+		"help.getConfig", request, claim.owner, nil,
+	); err != nil {
+		t.Fatalf("publish child-deadline failure: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var completed rpcResultAcquire
+	for {
+		completed, err = s.rpcResults.AcquireLayerIdentified(
+			c.authKeyID, c.sessionID, reqMsgID,
+			tlprofile.Profile227, request.Prepared().Identity(),
+		)
+		if err == nil && completed.state == rpcResultAcquireCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child-deadline failure was suppressed: state=%d err=%v", completed.state, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	var envelope proto.Result
+	if err := envelope.Decode(&bin.Buffer{Buf: completed.encoded.body}); err != nil {
+		t.Fatal(err)
+	}
+	var rpcErr mt.RPCError
+	if err := rpcErr.Decode(&bin.Buffer{Buf: envelope.Result}); err != nil {
+		t.Fatal(err)
+	}
+	// v2 maps an expired child deadline (for example a CoreExec gRPC
+	// deadline) to the same 500 RPC_TIMEOUT terminal as the Edge deadline;
+	// main publishes INTERNAL. Either way the terminal must not be suppressed.
+	if rpcErr.ErrorCode != 500 || rpcErr.ErrorMessage != "RPC_TIMEOUT" {
+		t.Fatalf("child-deadline terminal = %+v", rpcErr)
+	}
+	if got := handler.calls.Load(); got != 1 {
+		t.Fatalf("business calls=%d, want 1", got)
 	}
 }

@@ -141,6 +141,11 @@ LAN address of the Docker host:
 .\scripts\start-docker.ps1 -AdvertiseIP 192.168.1.20 -PublicBaseURL http://192.168.1.20:2401 -PublicWebBaseURL http://192.168.1.20:2401 -AllowInsecureDevelopmentAuth
 ```
 
+With a plain-HTTP LAN address, Core logs a warning and disables Star gift and
+revenue withdrawal links (they are bearer URLs, so only HTTPS is accepted
+outside loopback); everything else keeps working. Use an HTTPS public base URL
+when withdrawals are needed.
+
 For a real Internet-facing deployment, first run `new-docker-env.ps1` by itself,
 configure the phone-code webhook described in Section 2, and then run
 `start-docker.ps1` without address parameters. If `.env` already exists, the
@@ -148,13 +153,13 @@ startup script always reuses its credentials. New address or development-auth
 parameters only produce a warning and never overwrite deployment identity. Edit
 `.env` explicitly before restarting when an address must change.
 
-The default image prefix is `ghcr.io/iamxvbaba/gramsrv`. It contains six
-packages: `migrate`, `file`, `core`, `egress`, `sfu`, and `edge`. The convenient
+The default image prefix is `ghcr.io/iamxvbaba/gramsrv`. It contains seven
+packages: `migrate`, `file`, `core`, `egress`, `sfu`, `admin`, and `edge`. The convenient
 channel tag is `v2`; every publish also produces an immutable `sha-<commit>`
 tag. Automatic publication on `v2` pushes is currently paused; maintainers run
 the `Publish v2 container images` workflow manually from GitHub Actions. A newly
 created GHCR package is private by default, so maintainers must set each of the
-six packages to Public in GitHub Packages before anonymous one-click pulls
+seven packages to Public in GitHub Packages before anonymous one-click pulls
 work. While they remain private, run `docker login ghcr.io` first.
 
 To validate modified source with locally built images, opt in explicitly. The
@@ -163,6 +168,11 @@ Compose Edge build target is `edge-test`, matching the public v2 test channel:
 ```powershell
 .\scripts\start-docker.ps1 -Build
 ```
+
+To restart that locally built stack later, add `-NoPull` (`--no-pull` for
+`start-docker.sh`): the script then never contacts the registry and fails on a
+missing image instead of silently replacing the local tag with a published
+one. Combined with `-Build`, base images are not refreshed.
 
 To run the phases separately, or to start on Linux/macOS:
 
@@ -252,8 +262,19 @@ simple LAN experience. For an Internet-facing reverse proxy, keep 2401 bound to
 host loopback and terminate TLS in nginx or Caddy. Never publish pprof or
 internal gRPC directly.
 
-Bot API, Admin, and the TON worker are not enabled by the default Compose
-topology; add explicit configuration and validation when needed.
+Admin is enabled by default. Its login password is stored in the owner-only
+`deploy/docker/.env`; it mounts `file_data` read-only for local blob/spool disk
+capacity and sends every administrative write through the Core Admin API. The
+TON worker is not enabled by the default Compose topology; add explicit
+configuration and validation when needed.
+
+The HTTP Bot API gateway is off by default. Set
+`TELESRV_BOT_API_ADDR=0.0.0.0:8088` in `.env` to enable it (the container port
+stays 8088); the one-click scripts then also load `compose.bot-api.yaml`, which
+publishes it on `TELESRV_BOT_API_BIND_IP:TELESRV_BOT_API_PORT` (default
+`127.0.0.1:8088`). When running Compose by hand, append
+`-f deploy/docker/compose.bot-api.yaml` after `compose.yaml`. The Bot API is
+plain HTTP: for Internet access keep it on loopback behind a TLS reverse proxy.
 
 ## 5. Data and RSA Identity
 

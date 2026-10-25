@@ -309,6 +309,12 @@ func (r *Router) DispatchAdmitted(
 	if err := r.checkFrozenRPC(ctx, method); err != nil {
 		return nil, method, err
 	}
+	// The groups are keyed by canonical TypeID, so every exact profile of a
+	// method (and td's legacy methods, whose canonical ID is their historical
+	// wire ID) spends the same budget as on the Router.Dispatch path.
+	if err := r.checkSensitiveRPCRateLimit(ctx, canonicalID); err != nil {
+		return nil, method, err
+	}
 	if profileKnown && profileEvidenceFresh {
 		r.maybeMarkSessionReceivesUpdates(ctx)
 	}

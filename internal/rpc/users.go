@@ -153,9 +153,15 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	}
 	// A deleted account is a durable peer tombstone. Its retained rows keep
 	// message and membership references resolvable, but none of those private
-	// read models belong in users.getFullUser after deletion.
+	// read models belong in users.getFullUser after deletion. A frozen account is
+	// projected as a peer tombstone too, but carries the synthetic "frozen"
+	// third-party mark (icon + description) alongside the deleted presentation.
 	if u.Deleted {
-		return deletedUserFull(u.ID, user), nil
+		out := deletedUserFull(u.ID, user)
+		if u.FrozenForViewer {
+			applyFrozenUserFullMark(&out.FullUser, u)
+		}
+		return out, nil
 	}
 	if err := r.applyBotCanEditToUser(ctx, currentUserID, u, user); err != nil {
 		return nil, err
@@ -312,6 +318,17 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	if !visibility[domain.PrivacyKeyAbout] {
 		about = ""
 	}
+	// SCAM/FAKE: the warning is server-authored, so it rides the same privacy
+	// gate as the owner's own text -- a viewer without About access sees the
+	// mark's badge only, never the injected sentence. Prepended, never stored:
+	// the warning lives in this projection alone (domain.ModerationProfileWarning).
+	//
+	// Skipped for the owner's own view: clients prefill the bio editor from this
+	// same About, so injecting the line there would put our warning into the box
+	// the owner is about to edit (and it would come back through updateProfile).
+	if u.ID != currentUserID && visibility[domain.PrivacyKeyAbout] {
+		about = domain.ModerationProfileWarning(u.Scam, u.Fake, about)
+	}
 	full := tg.UserFull{
 		ID:             u.ID,
 		About:          about,
@@ -419,7 +436,7 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	}
 	// star gift 数量：客户端把资料页 Gifts 区段/标签页门控在 stargifts_count>0
 	//（DrKLO ProfileActivity:10497 / TDesktop data_user.cpp:924），不下发则收到的礼物
-	// 不在资料页展示。计展示在资料的礼物数（非转换、非隐藏）。
+	// 不在资料页展示。计持有的全部活跃礼物（含隐藏）；隐藏只影响他人看到的列表。
 	if r.deps.Gifts != nil {
 		if n, err := r.deps.Gifts.CountSaved(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}); err == nil && n > 0 {
 			full.SetStargiftsCount(n)

@@ -16,6 +16,9 @@ func (r *Router) authzFromCtx(ctx context.Context) domain.Authorization {
 		a.AppVersion = ci.AppVersion
 		a.APIID = ci.APIID
 	}
+	if ip, ok := ClientIPFrom(ctx); ok {
+		a.IP = ip
+	}
 	return a
 }
 

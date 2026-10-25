@@ -81,6 +81,10 @@ func (r *Router) NotifyAccountFreezeChanged(_ context.Context, freeze domain.Acc
 	if r == nil || freeze.UserID == 0 {
 		return nil
 	}
+	r.applyFrozenPresence(freeze.UserID, freeze.Frozen)
+	if freeze.Frozen {
+		r.announceFrozenEmptyStatus(freeze.UserID)
+	}
 	if r.deps.UserProjectionFacts != nil {
 		r.deps.UserProjectionFacts.InvalidateAccountFreezeFact(freeze.UserID)
 	}

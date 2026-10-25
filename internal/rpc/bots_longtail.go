@@ -552,7 +552,12 @@ func (r *Router) onBotsSetCustomVerification(ctx context.Context, req *tg.BotsSe
 		CallerUserID:  userID,
 	}
 	if description, ok := req.GetCustomDescription(); ok {
-		setRequest.CustomDescription = description
+		// The service persists plain text. Do not acknowledge rich text whose
+		// entities would be lost; full rich verification is a separate feature.
+		if len(description.Entities) != 0 {
+			return false, botVerifierForbiddenErr()
+		}
+		setRequest.CustomDescription = description.Text
 	}
 	// Shape-only validation at the edge (peer kind, description length, revoke that
 	// still carries a description) so a malformed request gets a deterministic TL

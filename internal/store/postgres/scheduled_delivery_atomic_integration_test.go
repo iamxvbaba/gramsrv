@@ -82,16 +82,31 @@ func TestScheduledMutationAndAbsoluteDeliveryCommitAtomicallyPostgres(t *testing
 		t.Fatalf("scheduled disappeared after failed delete = %+v err %v", loaded, err)
 	}
 
-	if err := messages.MarkScheduledMessageSent(ctx, owner.ID, scheduled.ID, 77, 1_700_010_003, failedOne); !errors.Is(err, projectionErr) {
-		t.Fatalf("failed mark-sent err = %v, want projection error", err)
+	// D6: the sent transition and its owner delivery commit inside the send
+	// transaction, so a failing completion payload rolls back the message too.
+	claimed, err := messages.ClaimScheduledMessages(ctx, domain.ScheduledMessageClaim{
+		OwnerUserID: owner.ID, Peer: peer, IDs: []int{scheduled.ID}, Now: 1_700_010_003, LeaseUntil: 1_700_010_063,
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim scheduled = %+v err %v", claimed, err)
+	}
+	if _, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID: owner.ID, RecipientUserID: peerUser.ID, RandomID: claimed[0].RandomID, Message: claimed[0].Message, Date: 1_700_010_003,
+		ScheduledDelivery: &domain.ScheduledDelivery{
+			OwnerUserID: owner.ID, ID: claimed[0].ID, Generation: claimed[0].Generation,
+			Payload: func(domain.ScheduledCompletion) ([]byte, error) { return nil, projectionErr },
+		},
+	}); !errors.Is(err, projectionErr) {
+		t.Fatalf("failed scheduled completion err = %v, want projection error", err)
 	}
 	var state string
-	var sentMessageID int
-	if err := pool.QueryRow(ctx, `SELECT state, sent_message_id FROM scheduled_messages WHERE owner_user_id = $1 AND scheduled_id = $2`, owner.ID, scheduled.ID).Scan(&state, &sentMessageID); err != nil {
-		t.Fatalf("read scheduled state after failed mark-sent: %v", err)
+	var sentMessageID, sentRows int
+	if err := pool.QueryRow(ctx, `SELECT state, sent_message_id, (SELECT count(*) FROM private_messages WHERE sender_user_id = $1)
+FROM scheduled_messages WHERE owner_user_id = $1 AND scheduled_id = $2`, owner.ID, scheduled.ID).Scan(&state, &sentMessageID, &sentRows); err != nil {
+		t.Fatalf("read scheduled state after failed completion: %v", err)
 	}
-	if state != "pending" || sentMessageID != 0 {
-		t.Fatalf("failed mark-sent survived rollback: state=%s sent=%d", state, sentMessageID)
+	if state != "dispatching" || sentMessageID != 0 || sentRows != 0 {
+		t.Fatalf("failed completion survived rollback: state=%s sent=%d messages=%d", state, sentMessageID, sentRows)
 	}
 	var deliveryAfter, afterPTS int
 	if err := pool.QueryRow(ctx, `SELECT

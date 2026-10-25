@@ -156,6 +156,22 @@
   gap: 8px;
 }
 
+/* A label longer than the fixed 92px column wraps to one word per line, which is
+   unreadable -- "Server Stars per 1 Telegram Star" became a four-line stack on a
+   phone. The column also holds short labels the console uses everywhere, so it
+   widens to fit a full label where there is room and collapses to a single
+   column on narrow screens rather than breaking the words up. */
+.result-line {
+  grid-template-columns: minmax(92px, max-content) minmax(0, 1fr);
+}
+
+@media (max-width: 760px) {
+  .result-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
 .result-line span {
   color: var(--muted);
 }
@@ -176,22 +192,126 @@
 }
 
 .login-page {
+  position: relative;
   display: grid;
   min-height: 100vh;
   place-items: center;
   padding: 24px;
   background: var(--bg);
+  background-image:
+    radial-gradient(900px 480px at 50% -8%, var(--hero-glow) 0%, rgba(0, 0, 0, 0) 70%),
+    linear-gradient(var(--hero-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
+  background-size: auto, 44px 44px, 44px 44px;
+  overflow: hidden;
+}
+
+.bg-orbs {
+  position: absolute;
+  inset: -60px;
+  z-index: 0;
+  pointer-events: none;
+  /* Eased so the pointer parallax glides instead of snapping to the cursor,
+     matching the marketing site. will-change keeps it off the main thread. */
+  transition: transform 0.3s ease-out;
+  will-change: transform;
+}
+
+.bg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  pointer-events: none;
+}
+
+.bg-orb--1 {
+  top: -15%;
+  left: -10%;
+  width: 700px;
+  height: 700px;
+  background: color-mix(in srgb, var(--brand-2) 40%, transparent);
+  animation: loginOrbFloat1 20s ease-in-out infinite;
+}
+
+.bg-orb--2 {
+  top: 25%;
+  right: -15%;
+  width: 600px;
+  height: 600px;
+  background: color-mix(in srgb, var(--brand) 38%, transparent);
+  animation: loginOrbFloat2 24s ease-in-out infinite;
+}
+
+.bg-orb--3 {
+  bottom: -15%;
+  left: 30%;
+  width: 500px;
+  height: 500px;
+  background: color-mix(in srgb, var(--brand-2) 30%, transparent);
+  animation: loginOrbFloat3 28s ease-in-out infinite;
+}
+
+@keyframes loginOrbFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(60px, -40px) scale(1.08); }
+  66% { transform: translate(-30px, 30px) scale(.92); }
+}
+@keyframes loginOrbFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-50px, -35px) scale(.93); }
+  66% { transform: translate(45px, 25px) scale(1.07); }
+}
+@keyframes loginOrbFloat3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, 45px) scale(1.06); }
+  66% { transform: translate(-55px, -25px) scale(.94); }
+}
+
+@media (max-width: 720px) {
+  .bg-orb { filter: blur(60px); }
+  .bg-orb--1 { width: 350px; height: 350px; }
+  .bg-orb--2 { width: 300px; height: 300px; }
+  .bg-orb--3 { width: 250px; height: 250px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-orb { animation: none; }
+  .bg-orbs { transition: none; }
+}
+
+.login-page .login-panel {
+  position: relative;
+  z-index: 1;
 }
 
 .login-panel {
   display: grid;
-  width: min(420px, 100%);
-  gap: 18px;
-  padding: 22px;
+  width: min(480px, 100%);
+  gap: 22px;
+  padding: 30px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
+  /* The rest of the panel is scoped up from the admin panel's normal
+     13px/dense sizing -- everywhere else on this site is a data-table console
+     meant to be scanned, but this screen is one form, seen once per session,
+     at whatever size someone's monitor happens to be. */
+  font-size: 15px;
+}
+
+.login-panel .brand-mark {
+  width: 44px;
+  height: 44px;
+}
+
+.login-panel .brand strong {
+  font-size: 18px;
+}
+
+.login-panel .brand small {
+  margin-top: 4px;
+  font-size: 13px;
 }
 
 .login-head {
@@ -320,4 +440,272 @@
   border-radius: var(--radius-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* A tall command modal with a scrolling body, for forms with long content --
+	e.g. the operator permission editor. The confirm row stays pinned at the
+	bottom instead of being pushed off screen by the checklist. */
+.modal.command-modal.narrow {
+  max-width: 520px;
+}
+
+.operator-identity {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.operator-identity .form-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.permission-groups {
+  display: grid;
+  max-height: 52vh;
+  overflow-y: auto;
+  gap: 10px;
+  padding: 2px;
+}
+
+.permission-group {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-subtle);
+}
+
+.permission-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.permission-group-head > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.permission-group-head strong {
+  color: var(--heading);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.permission-group-head small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 6px 12px;
+}
+
+.permission-item {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: background .12s ease, border-color .12s ease;
+}
+
+.permission-item:hover {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.permission-item input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+.permission-item input[type="checkbox"]:disabled {
+  cursor: default;
+}
+
+.permission-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.permission-copy strong {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.permission-copy small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.permission-item.standalone {
+  margin-top: 4px;
+  border-color: var(--line);
+  background: var(--panel-subtle);
+}
+
+/* Right chips shown in table cells: the human-readable name with the raw
+	permission string as its tooltip. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 2px 8px;
+  color: var(--brand-tint-text);
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: 999px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-row .chip {
+  margin-top: 2px;
+}
+
+/* The operators table reuses the badge styles for status; keep the tiny chip
+	flavour there too since one row can carry several. */
+.status-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.status-chip.good {
+  color: var(--good);
+  background: var(--good-tint);
+  border: 1px solid var(--good-border);
+}
+
+.status-chip.bad {
+  color: var(--danger);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger-border);
+}
+
+/* Audit log page: filters on one line, expandable detail rows, and a wider
+	reason cell that truncates instead of wrapping mid-table. */
+.filter-toolbar {
+  align-items: end;
+}
+
+.filter-toolbar .form-field {
+  min-width: 150px;
+}
+
+.audit-table .truncate {
+  max-width: 340px;
+}
+
+.audit-row .expand-btn {
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.audit-detail td {
+  padding: 12px 16px;
+  background: var(--panel-subtle);
+}
+
+.audit-detail .json-block {
+  margin: 0;
+}
+
+.audit-detail .alert {
+  margin-bottom: 10px;
+}
+
+/* The drifting icon field behind the sign-in card. Sits above the blurred orbs
+   and below the panel, so the two background layers read as one scene.
+   Fills whichever .app-background contains it. */
+.bg-icons {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  color: var(--brand-2);
+  pointer-events: none;
+}
+
+.bg-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+/* The background wrapper. On the sign-in screen it fills that screen; behind
+   the workspace it is pinned to the viewport so it does not scroll away under
+   a long page, and so the icons -- which bounce off window bounds -- stay
+   inside the area they are drawn in. */
+.app-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-background--workspace {
+  position: fixed;
+}
+
+/* Quieter behind real content than behind a lone sign-in card: the panel is
+   dense with tables and numbers, and the background has to stay background. */
+.app-background--workspace .bg-icons {
+  opacity: 0.55;
+}
+
+.app-background--workspace .bg-orb {
+  opacity: 0.6;
+}
+
+/* The chrome paints over the background: the sidebar hides the part of it that
+   would otherwise show through the navigation, which is also why the wrapper
+   can span the whole viewport instead of hard-coding the sidebar's width.
+   Only z-index is set here -- the sidebar is already sticky, and restating
+   position would be a chance to change it by accident. The topbar needs
+   nothing: it carries z-index 20 of its own, and a rule here would out-specify
+   its own "position: sticky" and quietly stop it sticking. */
+.shell > .sidebar {
+  z-index: 2;
+}
+
+.workspace > .content {
+  position: relative;
+  z-index: 1;
 }

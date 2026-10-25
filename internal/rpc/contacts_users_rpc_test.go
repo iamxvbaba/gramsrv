@@ -706,6 +706,16 @@ func TestUsernameRPCLifecycle(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("check occupied = ok %v err %v, want false/nil", ok, err)
 	}
+	// Invalid and free usernames are answered with a boolean, never a hard
+	// RPC error, because clients poll while typing and treat both identically.
+	ok, err = r.onAccountCheckUsername(reqCtx, "ab")
+	if err != nil || ok {
+		t.Fatalf("check invalid = ok %v err %v, want false/nil", ok, err)
+	}
+	ok, err = r.onAccountCheckUsername(reqCtx, "brand_new_name")
+	if err != nil || !ok {
+		t.Fatalf("check free = ok %v err %v, want true/nil", ok, err)
+	}
 	user, err := r.onAccountUpdateUsername(reqCtx, "owner_name")
 	if err != nil {
 		t.Fatalf("update username: %v", err)
@@ -1228,6 +1238,55 @@ func TestContactsStatusesUsePresenceAndContactsKeepStableProjection(t *testing.T
 	}
 	if _, ok := user.Status.(*tg.UserStatusRecently); !ok {
 		t.Fatalf("contacts user status = %T, want stable non-presence projection", user.Status)
+	}
+}
+
+func TestContactsGetStatusesSuppressesDeletedAndFrozenUsers(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	alice, err := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "1001", FirstName: "Alice"})
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	deleted, err := userStore.Create(ctx, domain.User{AccessHash: 22, Phone: "1002", FirstName: "Deleted", Deleted: true, LastSeenAt: 1700000000})
+	if err != nil {
+		t.Fatalf("create deleted: %v", err)
+	}
+	// Active in user store, but flagged in the in-process frozenPresence mask:
+	frozen, err := userStore.Create(ctx, domain.User{AccessHash: 33, Phone: "1003", FirstName: "Frozen", LastSeenAt: 1700000000})
+	if err != nil {
+		t.Fatalf("create frozen: %v", err)
+	}
+
+	contacts := memory.NewContactStore()
+	if err := contacts.SaveList(ctx, alice.ID, domain.ContactList{
+		Contacts: []domain.Contact{
+			{User: domain.User{ID: deleted.ID, FirstName: "Deleted", Contact: true, LastSeenAt: 1700000000}},
+			{User: domain.User{ID: frozen.ID, FirstName: "Frozen", Contact: true, LastSeenAt: 1700000000}},
+		},
+	}); err != nil {
+		t.Fatalf("save contacts: %v", err)
+	}
+
+	r := New(Config{}, Deps{
+		Contacts: appcontacts.NewService(contacts, userStore),
+		Users:    appusers.NewService(userStore),
+	}, zaptest.NewLogger(t), clock.System)
+
+	// Populate the in-process mask for frozen user
+	r.applyFrozenPresence(frozen.ID, true)
+
+	statuses, err := r.onContactsGetStatuses(WithUserID(ctx, alice.ID))
+	if err != nil {
+		t.Fatalf("contacts.getStatuses: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("statuses count = %d, want 2", len(statuses))
+	}
+	for _, st := range statuses {
+		if _, ok := st.Status.(*tg.UserStatusEmpty); !ok {
+			t.Fatalf("user %d status = %T, want *tg.UserStatusEmpty (empty status, no recently/timestamp)", st.UserID, st.Status)
+		}
 	}
 }
 

@@ -72,14 +72,10 @@ WITH input AS MATERIALIZED (
     i.*,
     CASE
       WHEN i.requested_ttl_period <> 0 THEN i.requested_ttl_period
-      ELSE GREATEST(COALESCE(NULLIF(d.ttl_period, 0), u.default_history_ttl_period, 0), 0)::int
+      ELSE private_dialog_initial_ttl(i.sender_user_id, i.recipient_user_id)
     END AS ttl_period
   FROM input i
   JOIN users u ON u.id = i.sender_user_id
-  LEFT JOIN dialogs d
-    ON d.user_id = i.sender_user_id
-   AND d.peer_type = 'user'
-   AND d.peer_id = i.recipient_user_id
 ), inserted AS (
   INSERT INTO private_messages (
     sender_user_id, recipient_user_id, random_id, request_fingerprint,
@@ -360,11 +356,14 @@ WITH input AS MATERIALIZED (
   RETURNING owner_user_id, box_id, private_message_id, peer_id, outgoing, pts
 ), dialog_rows AS (
   INSERT INTO dialogs (
-    user_id, peer_type, peer_id, top_message_id, top_message_date, unread_count
+    user_id, peer_type, peer_id, top_message_id, top_message_date, unread_count, ttl_period
   )
   SELECT
     b.owner_user_id, 'user', b.peer_id, b.box_id, i.message_date,
-    CASE WHEN b.outgoing THEN 0 ELSE 1 END
+    CASE WHEN b.outgoing THEN 0 ELSE 1 END,
+    private_dialog_initial_ttl(
+      CASE WHEN b.outgoing THEN b.owner_user_id ELSE b.peer_id END,
+      CASE WHEN b.outgoing THEN b.peer_id ELSE b.owner_user_id END)
   FROM boxes b
   JOIN input i ON i.private_message_id = b.private_message_id
   ORDER BY b.owner_user_id

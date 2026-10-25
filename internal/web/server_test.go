@@ -72,7 +72,10 @@ func TestTelegramLoginWidgetRoutesReachProvider(t *testing.T) {
 }
 
 func TestDevStarsCheckoutEmitsFormBoundTelegramCredentials(t *testing.T) {
-	h := newTestHandler(t, fakeResolver{}, "https://links.example.test")
+	h, err := NewHandler(Config{StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
 	for _, target := range []string{
 		"/payments/dev-stars",
 		"/payments/dev-stars?form_id=0",
@@ -94,6 +97,15 @@ func TestDevStarsCheckoutEmitsFormBoundTelegramCredentials(t *testing.T) {
 		!strings.Contains(body, "type:'telesrv_dev',form_id:'-70001'") ||
 		!strings.Contains(body, "No card, Google Play, App Store, or external payment provider will be charged") {
 		t.Fatalf("dev checkout status=%d headers=%v body=%q", rr.Code, rr.Header(), body)
+	}
+}
+
+func TestDevStarsCheckoutDeniedByDefault(t *testing.T) {
+	h := newTestHandler(t, fakeResolver{}, "https://links.example.test")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/payments/dev-stars?form_id=-70001", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("dev checkout must be hidden when DevStarsPaymentsEnabled is unset, got status=%d", rr.Code)
 	}
 }
 
@@ -622,6 +634,35 @@ func TestHandlerServesChatlistLandingPage(t *testing.T) {
 	}
 }
 
+func TestHandlerServesInviteLandingPage(t *testing.T) {
+	for _, path := range []string{"/+-8xLylQARl-KhfaVnD7xNeQv", "/joinchat/-8xLylQARl-KhfaVnD7xNeQv"} {
+		rr := httptest.NewRecorder()
+		newTestHandler(t, fakeResolver{}, "http://127.0.0.1:2401").ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200; body=%s", path, rr.Code, rr.Body.String())
+		}
+		body := rr.Body.String()
+		for _, want := range []string{
+			"Group Invite",
+			"http://127.0.0.1:2401/&#43;-8xLylQARl-KhfaVnD7xNeQv", // html/template escapes "+" in attributes
+			"telesrv://join?invite=-8xLylQARl-KhfaVnD7xNeQv",
+			"tg://join?invite=-8xLylQARl-KhfaVnD7xNeQv",
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s body missing %q:\n%s", path, want, body)
+			}
+		}
+		if strings.Contains(body, "Username not found") {
+			t.Fatalf("%s rendered as a username lookup:\n%s", path, body)
+		}
+	}
+	rr := httptest.NewRecorder()
+	newTestHandler(t, fakeResolver{}, "http://127.0.0.1:2401").ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/+bad.hash", nil))
+	if strings.Contains(rr.Body.String(), "join?invite=") {
+		t.Fatalf("invalid invite hash produced an app link:\n%s", rr.Body.String())
+	}
+}
+
 func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 	users := fakeUsers{
 		"tetrisbot": {
@@ -706,6 +747,8 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		{path: "/addstickers/stickers_pack", want: "owpg://tenant.example.test/addstickers?set=stickers_pack"},
 		{path: "/addemoji/emoji_pack", want: "owpg://tenant.example.test/addemoji?set=emoji_pack"},
 		{path: "/addlist/shared-folder", want: "owpg://tenant.example.test/addlist?slug=shared-folder"},
+		{path: "/+AbC-123_xyz", want: "owpg://tenant.example.test/+AbC-123_xyz"},
+		{path: "/joinchat/AbC-123_xyz", want: "owpg://tenant.example.test/+AbC-123_xyz"},
 		{path: "/nft/gift-1", want: "owpg://tenant.example.test/nft?slug=gift-1"},
 	} {
 		rr := httptest.NewRecorder()
@@ -1123,4 +1166,63 @@ func (f *fakePhotos) GetPhoto(_ context.Context, id int64) (domain.Photo, bool, 
 func (f *fakePhotos) GetFile(_ context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error) {
 	chunk, ok := f.files[req.LocationKey]
 	return chunk, ok, nil
+}
+
+func TestLocalMiniAppsUseGramsrvRoutes(t *testing.T) {
+	miniSets := miniAppsStickerStub{sets: []domain.StickerSet{{ID: 1, ShortName: "flashgram", Title: "Flashgram", Count: 3, Kind: domain.StickerSetKindStickers}}}
+	h, err := NewHandler(Config{
+		StickerSets:   fakeResolver{},
+		PublicBaseURL: "https://links.example.test",
+		MiniApps:      NewConfiguredMiniAppsHandler(MiniAppsConfig{AppName: "Flashgram", Stickers: miniSets}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/botfather", "/stickers"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Gramsrv mini app") || strings.Contains(rr.Body.String(), "telegram.org") ||
+			strings.Contains(rr.Header().Get("Content-Security-Policy"), "https://telegram.org") {
+			t.Fatalf("GET %s status=%d body=%q", target, rr.Code, rr.Body.String())
+		}
+	}
+	validate := httptest.NewRecorder()
+	h.ServeHTTP(validate, httptest.NewRequest(http.MethodPost, "/api/miniapps/botfather/validate", strings.NewReader(`{"token":"123456:AAAAAAAAAAAAAAAAAAAA"}`)))
+	if validate.Code != http.StatusOK || !strings.Contains(validate.Body.String(), `"valid":true`) {
+		t.Fatalf("validate status=%d body=%q", validate.Code, validate.Body.String())
+	}
+	sets := httptest.NewRecorder()
+	h.ServeHTTP(sets, httptest.NewRequest(http.MethodGet, "/api/miniapps/stickers", nil))
+	if sets.Code != http.StatusOK || !strings.Contains(sets.Body.String(), "flashgram") {
+		t.Fatalf("sets status=%d body=%q", sets.Code, sets.Body.String())
+	}
+}
+
+type miniAppsStickerStub struct{ sets []domain.StickerSet }
+
+func (s miniAppsStickerStub) ListStickerSets(_ context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
+	out := make([]domain.StickerSet, 0, len(s.sets))
+	for _, set := range s.sets {
+		if set.Kind == kind {
+			out = append(out, set)
+		}
+	}
+	return out, nil
+}
+
+func (s miniAppsStickerStub) ResolveStickerSet(_ context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
+	for _, set := range s.sets {
+		if ref.Kind == domain.StickerSetRefByShortName && set.ShortName == ref.ShortName {
+			return set, nil, true, nil
+		}
+	}
+	return domain.StickerSet{}, nil, false, nil
+}
+
+func (s miniAppsStickerStub) ListCreatedStickerSets(context.Context, int64, int64, int) ([]domain.StickerSet, int, error) {
+	return nil, 0, nil
+}
+
+func (s miniAppsStickerStub) CreateStickerSet(context.Context, domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
+	return domain.StickerSet{}, nil, nil
 }

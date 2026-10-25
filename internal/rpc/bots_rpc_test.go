@@ -104,7 +104,7 @@ func TestBotsManagedCreateAndTokenRPCs(t *testing.T) {
 	r, svc, _, outbox, owner, manager := newBotRPCTestRouter(t)
 	ownerCtx := WithUserID(ctx, owner.ID)
 
-	if ok, err := r.onBotsCheckUsername(ownerCtx, "fresh_rpc_bot"); err != nil || !ok {
+	if ok, err := r.onBotsCheckUsername(ownerCtx, &tg.BotsCheckUsernameRequest{Username: "fresh_rpc_bot"}); err != nil || !ok {
 		t.Fatalf("check free username = %v,%v, want true,nil", ok, err)
 	}
 
@@ -141,7 +141,7 @@ func TestBotsManagedCreateAndTokenRPCs(t *testing.T) {
 		t.Fatalf("create user projection = %#v", createUpdates.Users)
 	}
 
-	if ok, err := r.onBotsCheckUsername(ownerCtx, "fresh_rpc_bot"); err != nil || ok {
+	if ok, err := r.onBotsCheckUsername(ownerCtx, &tg.BotsCheckUsernameRequest{Username: "fresh_rpc_bot"}); err != nil || ok {
 		t.Fatalf("check occupied username = %v,%v, want false,nil", ok, err)
 	}
 

@@ -106,6 +106,13 @@ func TestDefaultPrivacyRules(t *testing.T) {
 	if len(profile.Rules) != 1 || profile.Rules[0].Kind != domain.PrivacyRuleAllowAll {
 		t.Fatalf("profile default = %+v, want allow all", profile.Rules)
 	}
+	invites, err := svc.GetRules(ctx, 1001, domain.PrivacyKeyChatInvite)
+	if err != nil {
+		t.Fatalf("chat invite rules: %v", err)
+	}
+	if len(invites.Rules) != 1 || invites.Rules[0].Kind != domain.PrivacyRuleAllowContacts {
+		t.Fatalf("chat invite default = %+v, want allow contacts", invites.Rules)
+	}
 }
 
 func TestCanSeeAnonymousHonorsPublicOnlyRules(t *testing.T) {
@@ -534,4 +541,95 @@ func TestLargeMembershipBatchBypassesLRUAdmissionWithoutEvictingHotPair(t *testi
 	if memberships.batchCalls != 2 || memberships.calls != 0 {
 		t.Fatalf("hot pair was evicted by non-admitted batch: batch=%d scalar=%d", memberships.batchCalls, memberships.calls)
 	}
+}
+
+func TestP2PAllowedBetween(t *testing.T) {
+	ctx := context.Background()
+	const (
+		aliceID int64 = 11
+		bobID   int64 = 22
+		carolID int64 = 33
+	)
+	allowAll := []domain.PrivacyRule{{Kind: domain.PrivacyRuleAllowAll}}
+	disallowAll := []domain.PrivacyRule{{Kind: domain.PrivacyRuleDisallowAll}}
+	addContact := func(t *testing.T, contacts *memory.ContactStore, owner, contact int64) {
+		t.Helper()
+		if _, err := contacts.Upsert(ctx, owner, domain.ContactInput{ContactUserID: contact, FirstName: "Contact"}); err != nil {
+			t.Fatalf("upsert contact %d->%d: %v", owner, contact, err)
+		}
+	}
+
+	t.Run("mutual contacts default allow", func(t *testing.T) {
+		contacts := memory.NewContactStore()
+		svc := NewService(memory.NewPrivacyStore(), contacts)
+		addContact(t, contacts, aliceID, bobID)
+		addContact(t, contacts, bobID, aliceID)
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, bobID)
+		if err != nil || !allowed {
+			t.Fatalf("P2PAllowedBetween(alice,bob) = %v err=%v, want true (mutual contacts, default rules)", allowed, err)
+		}
+	})
+
+	t.Run("one-sided contact denied", func(t *testing.T) {
+		contacts := memory.NewContactStore()
+		svc := NewService(memory.NewPrivacyStore(), contacts)
+		addContact(t, contacts, aliceID, bobID)
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, bobID)
+		if err != nil || allowed {
+			t.Fatalf("P2PAllowedBetween(alice,bob) = %v err=%v, want false (one-sided)", allowed, err)
+		}
+	})
+
+	t.Run("strangers with stored allow-all still denied", func(t *testing.T) {
+		svc := NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+		if _, err := svc.SetRules(ctx, aliceID, domain.PrivacyKeyPhoneP2P, allowAll); err != nil {
+			t.Fatalf("set alice phone_p2p allow-all: %v", err)
+		}
+		if _, err := svc.SetRules(ctx, bobID, domain.PrivacyKeyPhoneP2P, allowAll); err != nil {
+			t.Fatalf("set bob phone_p2p allow-all: %v", err)
+		}
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, bobID)
+		if err != nil || allowed {
+			t.Fatalf("P2PAllowedBetween(alice,bob) = %v err=%v, want false (gate overrides stored allow-all for non-contacts)", allowed, err)
+		}
+	})
+
+	t.Run("mutual contacts with stored allow-all allowed", func(t *testing.T) {
+		contacts := memory.NewContactStore()
+		svc := NewService(memory.NewPrivacyStore(), contacts)
+		addContact(t, contacts, aliceID, bobID)
+		addContact(t, contacts, bobID, aliceID)
+		if _, err := svc.SetRules(ctx, aliceID, domain.PrivacyKeyPhoneP2P, allowAll); err != nil {
+			t.Fatalf("set alice phone_p2p allow-all: %v", err)
+		}
+		if _, err := svc.SetRules(ctx, bobID, domain.PrivacyKeyPhoneP2P, allowAll); err != nil {
+			t.Fatalf("set bob phone_p2p allow-all: %v", err)
+		}
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, bobID)
+		if err != nil || !allowed {
+			t.Fatalf("P2PAllowedBetween(alice,bob) = %v err=%v, want true (mutual contacts, allow-all)", allowed, err)
+		}
+	})
+
+	t.Run("mutual contacts but one side disallows all denied", func(t *testing.T) {
+		contacts := memory.NewContactStore()
+		svc := NewService(memory.NewPrivacyStore(), contacts)
+		addContact(t, contacts, aliceID, bobID)
+		addContact(t, contacts, bobID, aliceID)
+		if _, err := svc.SetRules(ctx, bobID, domain.PrivacyKeyPhoneP2P, disallowAll); err != nil {
+			t.Fatalf("set bob phone_p2p disallow-all: %v", err)
+		}
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, bobID)
+		if err != nil || allowed {
+			t.Fatalf("P2PAllowedBetween(alice,bob) = %v err=%v, want false (callee disallows)", allowed, err)
+		}
+	})
+
+	t.Run("self call denied", func(t *testing.T) {
+		svc := NewService(memory.NewPrivacyStore(), memory.NewContactStore())
+		allowed, err := svc.P2PAllowedBetween(ctx, aliceID, aliceID)
+		if err != nil || allowed {
+			t.Fatalf("P2PAllowedBetween(self) = %v err=%v, want false", allowed, err)
+		}
+	})
 }

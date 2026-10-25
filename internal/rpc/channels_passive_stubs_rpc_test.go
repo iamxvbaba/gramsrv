@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"strings"
 	apptelemetry "telesrv/internal/app/clienttelemetry"
 	appmessages "telesrv/internal/app/messages"
@@ -113,8 +114,8 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get full channel after clearing default send as: %v", err)
 	}
-	if _, ok := fullAfterClear.FullChat.(*tg.ChannelFull).GetDefaultSendAs(); ok {
-		t.Fatalf("full channel default_send_as still set after saving self")
+	if peer, ok := fullAfterClear.FullChat.(*tg.ChannelFull).DefaultSendAs.(*tg.PeerUser); !ok || peer.UserID != owner.ID {
+		t.Fatalf("full channel default_send_as = %#v after saving self", fullAfterClear.FullChat.(*tg.ChannelFull).DefaultSendAs)
 	}
 	if _, err := r.onMessagesSaveDefaultSendAs(ownerCtx, &tg.MessagesSaveDefaultSendAsRequest{
 		Peer:   inputPeerChannel(channel),
@@ -270,6 +271,10 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if _, err := r.onMessagesDeleteSavedHistory(ownerCtx, badDeleteDate); err == nil || !strings.Contains(err.Error(), "LIMIT_INVALID") {
 		t.Fatalf("messages.deleteSavedHistory min_date err = %v, want LIMIT_INVALID", err)
 	}
+	messageService := r.deps.Messages
+	scheduleStore := &scheduledCaptureMessages{captureMessages: &captureMessages{}}
+	attachCaptureMessagesDeliveryOutbox(scheduleStore.captureMessages)
+	r.deps.Messages = scheduleStore
 	scheduledHistory, err := r.onMessagesGetScheduledHistory(ownerCtx, &tg.MessagesGetScheduledHistoryRequest{
 		Peer: inputPeerChannel(channel),
 	})
@@ -300,6 +305,7 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "LIMIT_INVALID") {
 		t.Fatalf("messages.getScheduledMessages id cap err = %v, want LIMIT_INVALID", err)
 	}
+	scheduleStore.scheduled = []domain.ScheduledMessage{{OwnerUserID: owner.ID, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, ID: 7}, {OwnerUserID: owner.ID, Peer: domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}, ID: 8}}
 	deletedScheduled, err := r.onMessagesDeleteScheduledMessages(ownerCtx, &tg.MessagesDeleteScheduledMessagesRequest{
 		Peer: inputPeerChannel(channel),
 		ID:   []int{7, 8},
@@ -307,16 +313,18 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("messages.deleteScheduledMessages: %v", err)
 	}
-	if got := deletedScheduled.(*tg.Updates).Updates; len(got) != 0 {
-		t.Fatalf("messages.deleteScheduledMessages updates = %+v, want no update for missing scheduled messages", got)
+	if got := deletedScheduled.(*tg.Updates).Updates; len(got) != 1 {
+		t.Fatalf("messages.deleteScheduledMessages updates = %+v, want one update", got)
+	} else if update, ok := got[0].(*tg.UpdateDeleteScheduledMessages); !ok || len(update.Messages) != 2 || update.Messages[0] != 7 {
+		t.Fatalf("messages.deleteScheduledMessages update = %#v, want requested ids", got[0])
 	}
-	missingScheduled, err := r.onMessagesSendScheduledMessages(ownerCtx, &tg.MessagesSendScheduledMessagesRequest{
+	if _, err := r.onMessagesSendScheduledMessages(ownerCtx, &tg.MessagesSendScheduledMessagesRequest{
 		Peer: inputPeerChannel(channel),
 		ID:   []int{7},
-	})
-	if err != nil || len(missingScheduled.(*tg.Updates).Updates) != 0 {
-		t.Fatalf("messages.sendScheduledMessages missing result = %+v err %v, want idempotent empty updates", missingScheduled, err)
+	}); err == nil || !strings.Contains(err.Error(), "MESSAGE_ID_INVALID") {
+		t.Fatalf("messages.sendScheduledMessages err = %v, want MESSAGE_ID_INVALID", err)
 	}
+	r.deps.Messages = messageService
 	if _, err := r.onMessagesCreateForumTopic(ownerCtx, &tg.MessagesCreateForumTopicRequest{
 		Peer:     inputPeerChannel(channel),
 		Title:    "Topic",
@@ -748,23 +756,13 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	if _, err := r.onMessagesGetCustomEmojiDocuments(ownerCtx, make([]int64, maxEmojiDocuments+1)); err == nil || !strings.Contains(err.Error(), "LIMIT_INVALID") {
 		t.Fatalf("messages.getCustomEmojiDocuments too many err = %v, want LIMIT_INVALID", err)
 	}
-	stickerSets, err := r.onMessagesSearchStickerSets(ownerCtx, &tg.MessagesSearchStickerSetsRequest{Q: "cat"})
-	if err != nil {
-		t.Fatalf("messages.searchStickerSets: %v", err)
+	// Sticker search now requires the real catalog dependency and must not
+	// report a successful empty result when this stub-only fixture omits it.
+	if _, err := r.onMessagesSearchStickerSets(ownerCtx, &tg.MessagesSearchStickerSetsRequest{Q: "cat"}); err == nil || !strings.Contains(err.Error(), "INTERNAL_SERVER_ERROR") {
+		t.Fatalf("sticker set search without catalog: %v", err)
 	}
-	if found, ok := stickerSets.(*tg.MessagesFoundStickerSets); !ok || len(found.Sets) != 0 {
-		t.Fatalf("messages.searchStickerSets = %#v, want empty found sets", stickerSets)
-	}
-	stickers, err := r.onMessagesSearchStickers(ownerCtx, &tg.MessagesSearchStickersRequest{
-		Q:        "cat",
-		LangCode: []string{"en"},
-		Limit:    50,
-	})
-	if err != nil {
-		t.Fatalf("messages.searchStickers: %v", err)
-	}
-	if found, ok := stickers.(*tg.MessagesFoundStickers); !ok || len(found.Stickers) != 0 {
-		t.Fatalf("messages.searchStickers = %#v, want empty found stickers", stickers)
+	if _, err := r.onMessagesSearchStickers(ownerCtx, &tg.MessagesSearchStickersRequest{Q: "cat", LangCode: []string{"en"}, Limit: 50}); err == nil || !strings.Contains(err.Error(), "INTERNAL_SERVER_ERROR") {
+		t.Fatalf("sticker search without catalog: %v", err)
 	}
 	if _, err := r.onMessagesSearchStickers(ownerCtx, &tg.MessagesSearchStickersRequest{
 		Limit: maxSearchResultsLimit + 1,
@@ -795,6 +793,9 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 	}
 	if len(extended.(*tg.Updates).Updates) != 0 {
 		t.Fatalf("messages.getExtendedMedia = %+v, want empty updates", extended)
+	}
+	if !r.dispatcher.Has(tlprofile.SemanticMethodMessagesGetExtendedMedia) {
+		t.Fatalf("messages.getExtendedMedia not registered, Android clients get 500 NOT_IMPLEMENTED")
 	}
 	topReactions, err := r.onMessagesGetTopReactions(ownerCtx, &tg.MessagesGetTopReactionsRequest{Limit: 3})
 	if err != nil {

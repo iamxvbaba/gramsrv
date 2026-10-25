@@ -94,6 +94,52 @@ FROM gif_catalog_capacity WHERE singleton`).Scan(&existing, &reserved); err != n
 	assertGifCatalogCapacity(t, ctx, pool, domain.MaxGifCatalogEntries)
 }
 
+func TestGifCatalogCategoryOverrideAndAutoRestore(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	id := time.Now().UnixNano()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM gif_catalog WHERE id=$1`, id)
+		_, _ = pool.Exec(ctx, `DELETE FROM documents WHERE id=$1`, id)
+	})
+	if err := NewMediaStore(pool).PutDocument(ctx, domain.Document{ID: id, MimeType: "video/mp4", Size: 1, DCID: 2}); err != nil {
+		t.Fatal(err)
+	}
+	store := NewGifCatalogStore(pool)
+	entry, err := store.CreateGifCatalogEntry(ctx, domain.GifCatalogEntry{ID: id, Title: "Untitled", FileName: "cat.gif", DocumentID: id})
+	if err != nil || entry.Category != domain.GifCategoryAnimals || entry.CategoryManual {
+		t.Fatalf("auto entry = %+v err=%v", entry, err)
+	}
+	if changed, err := store.SetGifCatalogCategory(ctx, id, domain.GifCategorySports); err != nil || !changed {
+		t.Fatalf("override changed=%v err=%v", changed, err)
+	}
+	entries, err := store.ListGifCatalog(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found domain.GifCatalogEntry
+	for _, candidate := range entries {
+		if candidate.ID == id {
+			found = candidate
+		}
+	}
+	if found.Category != domain.GifCategorySports || !found.CategoryManual {
+		t.Fatalf("manual entry = %+v", found)
+	}
+	if changed, err := store.SetGifCatalogCategory(ctx, id, ""); err != nil || !changed {
+		t.Fatalf("restore changed=%v err=%v", changed, err)
+	}
+	entries, err = store.ListGifCatalog(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range entries {
+		if candidate.ID == id && (candidate.Category != domain.GifCategoryAnimals || candidate.CategoryManual) {
+			t.Fatalf("restored entry = %+v", candidate)
+		}
+	}
+}
+
 func assertGifCatalogCapacity(t *testing.T, ctx context.Context, pool *pgxpool.Pool, want int) {
 	t.Helper()
 	var rows, reserved int

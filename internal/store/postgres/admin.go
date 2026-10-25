@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -90,6 +91,35 @@ func (s *AdminStore) finishCommandNoTx(ctx context.Context, commandID string, st
 		return domain.AdminCommand{}, err
 	}
 	return cmd, nil
+}
+
+func (s *AdminStore) ListRecentCommands(ctx context.Context, limit int, actor string) ([]domain.AdminCommand, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT command_id, actor, action, target_user_id, target_peer_type, target_peer_id,
+	dry_run, reason, request, result, status, error, created_at, NULL::timestamptz AS completed_at
+FROM admin_audit_logs
+WHERE ($1 = '' OR actor = $1)
+ORDER BY created_at DESC, command_id DESC
+LIMIT $2`, strings.TrimSpace(actor), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent admin commands: %w", err)
+	}
+	defer rows.Close()
+	commands := make([]domain.AdminCommand, 0, limit)
+	for rows.Next() {
+		cmd, err := scanAdminCommand(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan admin command: %w", err)
+		}
+		commands = append(commands, cmd)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list recent admin commands: %w", err)
+	}
+	return commands, nil
 }
 
 func finishAdminCommand(ctx context.Context, db sqlcgen.DBTX, commandID string, status domain.AdminCommandStatus, resultJSON []byte, errorText string) (domain.AdminCommand, error) {
@@ -211,7 +241,7 @@ WHERE user_id = ANY($1::bigint[]) AND frozen = true`, userIDs)
 func (s *AdminStore) SetAccountFreeze(ctx context.Context, freeze domain.AccountFreeze) (domain.AccountFreeze, error) {
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
-		return setAccountFreezeRow(ctx, s.db, freeze)
+		return domain.AccountFreeze{}, fmt.Errorf("set account freeze requires a transaction")
 	}
 	tx, err := beginner.Begin(ctx)
 	if err != nil {
@@ -225,6 +255,10 @@ func (s *AdminStore) SetAccountFreeze(ctx context.Context, freeze domain.Account
 	}()
 	out, err := setAccountFreezeRow(ctx, tx, freeze)
 	if err != nil {
+		return domain.AccountFreeze{}, err
+	}
+	// Freeze and market suspension must commit together.
+	if err := syncStarGiftListingsForAccountFreeze(ctx, tx, out.UserID, out.Frozen); err != nil {
 		return domain.AccountFreeze{}, err
 	}
 	if err := enqueueAccountFreezeNotifications(ctx, tx, out); err != nil {

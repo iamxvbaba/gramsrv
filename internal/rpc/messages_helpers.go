@@ -287,33 +287,6 @@ func draftInputMedia(media tg.InputMediaClass) tg.InputMediaClass {
 	}
 }
 
-func (r *Router) searchGlobalChannelOffsetID(ctx context.Context, userID int64, peer tg.InputPeerClass) (int64, error) {
-	if peer == nil {
-		return 0, nil
-	}
-	switch peer.(type) {
-	case *tg.InputPeerEmpty:
-		return 0, nil
-	}
-	ref, ok := inputPeerChannelRef(peer)
-	if !ok {
-		return 0, nil
-	}
-	if ref.ID <= 0 {
-		return 0, peerIDInvalidErr()
-	}
-	if ref.CheckAccessHash && r.deps.Channels != nil {
-		view, err := r.deps.Channels.ResolveChannel(ctx, userID, ref.ID)
-		if err != nil {
-			return 0, channelInvalidErr(err)
-		}
-		if !inputChannelAccessHashMatches(ref, view.Channel) {
-			return 0, channelInvalidErr(domain.ErrChannelPrivate)
-		}
-	}
-	return ref.ID, nil
-}
-
 func (s forwardSource) userID() int64 {
 	if s.from.Type == domain.PeerTypeUser {
 		return s.from.ID
@@ -600,4 +573,18 @@ func (r *Router) chatsForInputPeer(ctx context.Context, userID int64, peer tg.In
 		return []tg.ChatClass{}
 	}
 	return []tg.ChatClass{tgChannelChatForView(userID, view)}
+}
+
+// peerIsDeletedAccount reports whether a resolved peer points at an account
+// tombstone. Peer references never read the users row, so every write path that
+// accepts an InputPeer has to ask before acting on it.
+func (r *Router) peerIsDeletedAccount(ctx context.Context, peer domain.Peer) bool {
+	if r == nil || r.deps.Users == nil || peer.Type != domain.PeerTypeUser || peer.ID <= 0 {
+		return false
+	}
+	u, found, err := r.deps.Users.ByID(ctx, 0, peer.ID)
+	if err != nil || !found {
+		return false
+	}
+	return u.Deleted
 }

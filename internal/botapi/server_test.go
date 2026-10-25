@@ -971,6 +971,34 @@ func TestDeleteWebhookDropsPendingAndWebhookInfoReportsCount(t *testing.T) {
 	}
 }
 
+func TestWebhookChangesWaitForInFlightDelivery(t *testing.T) {
+	for _, method := range []string{"deleteWebhook", "setWebhook"} {
+		t.Run(method, func(t *testing.T) {
+			bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
+			gateway := &fakeBotAPIGateway{webhookFound: true, webhook: domain.BotAPIWebhook{BotUserID: 1001, URL: "https://bot.example.test/hook"}, webhookLeaseBusy: 3}
+			h := (&handler{bots: bots, gateway: gateway}).routes()
+			res := performBotAPIRequest(t, h, bots.profile, method, `{"url":"https://bot.example.test/new"}`)
+			if res.Code != http.StatusOK || gateway.webhookLeaseAttempts != 4 {
+				t.Fatalf("%s status=%d body=%s attempts=%d, want 200 after the delivery releases the lease",
+					method, res.Code, res.Body.String(), gateway.webhookLeaseAttempts)
+			}
+		})
+	}
+}
+
+func TestWebhookChangesConflictWhenDeliveryNeverReleases(t *testing.T) {
+	previous := webhookLeaseWait
+	webhookLeaseWait = 100 * time.Millisecond
+	defer func() { webhookLeaseWait = previous }()
+	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
+	gateway := &fakeBotAPIGateway{webhookFound: true, webhook: domain.BotAPIWebhook{BotUserID: 1001, URL: "https://bot.example.test/hook"}, webhookLeaseBusy: -1}
+	h := (&handler{bots: bots, gateway: gateway}).routes()
+	res := performBotAPIRequest(t, h, bots.profile, "deleteWebhook", `{}`)
+	if res.Code != http.StatusConflict || gateway.webhookLeaseAttempts < 2 {
+		t.Fatalf("deleteWebhook status=%d body=%s attempts=%d, want 409 after retrying", res.Code, res.Body.String(), gateway.webhookLeaseAttempts)
+	}
+}
+
 func TestSetWebhookPersistsConfigReportsInfoAndConflictsWithPolling(t *testing.T) {
 	bots := &fakeBotAPIBots{profile: domain.BotProfile{BotUserID: 1001, TokenSecret: "secret"}}
 	gateway := &fakeBotAPIGateway{pendingCount: 3}
@@ -1000,6 +1028,16 @@ func TestSetWebhookPersistsConfigReportsInfoAndConflictsWithPolling(t *testing.T
 	if poll.Code != http.StatusConflict || !strings.Contains(poll.Body.String(), "webhook is active") {
 		t.Fatalf("getUpdates status=%d body=%s", poll.Code, poll.Body.String())
 	}
+	// Assert on the effect, not on ok:true: several methods answer ok:true and a
+	// status-only check would pass while the queue was left untouched.
+	gateway.dropPending = false
+	dropOnly := performBotAPIRequest(t, h, bots.profile, "dropPendingUpdates", `{}`)
+	if dropOnly.Code != http.StatusOK || !strings.Contains(dropOnly.Body.String(), `"ok":true`) ||
+		!gateway.dropPending {
+		t.Fatalf("dropPendingUpdates status=%d body=%s drop=%v",
+			dropOnly.Code, dropOnly.Body.String(), gateway.dropPending)
+	}
+
 	del := performBotAPIRequest(t, h, bots.profile, "deleteWebhook", `{}`)
 	if del.Code != http.StatusOK || !gateway.webhookDeleted || gateway.webhookFound {
 		t.Fatalf("deleteWebhook status=%d body=%s deleted=%v", del.Code, del.Body.String(), gateway.webhookDeleted)
@@ -1468,7 +1506,11 @@ func (f *fakeWebAppService) SavePreparedInlineMessageFromBotAPI(_ context.Contex
 }
 
 type fakeBotAPIGateway struct {
-	self domain.User
+	availableGifts    []domain.StarGift
+	availableGiftsErr error
+	starGiftCalled    bool
+	starGiftErr       error
+	self              domain.User
 
 	updates      []domain.UpdateEvent
 	updateBotID  int64
@@ -1532,6 +1574,17 @@ type fakeBotAPIGateway struct {
 	premiumGiftMessage       domain.PremiumGiftMessage
 	premiumGiftRequestID     string
 	premiumGiftResult        bool
+	starGiftResult           bool
+	starGiftBotID            int64
+	starGiftID               int64
+	starGiftUserID           int64
+	starGiftChatID           int64
+	starGiftPayForUpgrade    bool
+	starGiftMessage          domain.PremiumGiftMessage
+	starGiftRequestID        string
+	// webhookLeaseBusy fails that many lease attempts first (a running delivery); -1 never frees it.
+	webhookLeaseBusy     int
+	webhookLeaseAttempts int
 }
 
 func (f *fakeBotAPIGateway) BotAPIGiftPremiumSubscription(
@@ -1550,6 +1603,22 @@ func (f *fakeBotAPIGateway) BotAPIGiftPremiumSubscription(
 	f.premiumGiftMessage = message
 	f.premiumGiftRequestID = requestID
 	return f.premiumGiftResult, nil
+}
+
+func (f *fakeBotAPIGateway) BotAPIAvailableGifts(context.Context) ([]domain.StarGift, error) {
+	return f.availableGifts, f.availableGiftsErr
+}
+
+func (f *fakeBotAPIGateway) BotAPISendStarGift(_ context.Context, botID, giftID, userID, chatID int64, payForUpgrade bool, message domain.PremiumGiftMessage, requestID string) (bool, error) {
+	f.starGiftCalled = true
+	f.starGiftBotID = botID
+	f.starGiftID = giftID
+	f.starGiftUserID = userID
+	f.starGiftChatID = chatID
+	f.starGiftPayForUpgrade = payForUpgrade
+	f.starGiftMessage = message
+	f.starGiftRequestID = requestID
+	return f.starGiftResult, f.starGiftErr
 }
 
 func (f *fakeBotAPIGateway) BotAPISelf(context.Context, int64) (domain.User, error) {
@@ -1601,6 +1670,10 @@ func (f *fakeBotAPIGateway) ListDueBotAPIWebhooks(context.Context, int) ([]domai
 }
 
 func (f *fakeBotAPIGateway) AcquireBotAPIWebhookLease(context.Context, int64, string, time.Duration) (bool, error) {
+	f.webhookLeaseAttempts++
+	if f.webhookLeaseBusy < 0 || f.webhookLeaseAttempts <= f.webhookLeaseBusy {
+		return false, nil
+	}
 	return true, nil
 }
 
@@ -1686,6 +1759,10 @@ func (f *fakeBotAPIGateway) BotAPIEditInlineRichMessage(_ context.Context, _ int
 
 func (f *fakeBotAPIGateway) BotAPIDeleteMessage(context.Context, int64, int64, int) (bool, error) {
 	f.deleteCalled = true
+	return true, nil
+}
+
+func (f *fakeBotAPIGateway) BotAPIAnswerPreCheckoutQuery(_ context.Context, _ int64, _ string, _ bool, _ string) (bool, error) {
 	return true, nil
 }
 

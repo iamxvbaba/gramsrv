@@ -26,10 +26,71 @@ const (
 	StarsPurchaseTopup    StarsPurchaseKind = "topup"
 	StarsPurchaseGift     StarsPurchaseKind = "gift"
 	StarsPurchaseGiveaway StarsPurchaseKind = "giveaway"
+	// StarsPurchaseBotInvoice is a settled XTR invoice whose proceeds belong to
+	// a bot's own revenue wallet rather than to the payer's personal balance.
+	StarsPurchaseBotInvoice StarsPurchaseKind = "bot_invoice"
 )
 
 func (k StarsPurchaseKind) Valid() bool {
-	return k == StarsPurchaseTopup || k == StarsPurchaseGift || k == StarsPurchaseGiveaway
+	return k == StarsPurchaseTopup || k == StarsPurchaseGift || k == StarsPurchaseGiveaway ||
+		k == StarsPurchaseBotInvoice
+}
+
+// BotStarsCredit is one settled XTR invoice that credits a bot's own revenue
+// wallet. InvoiceKey makes the credit idempotent across retried
+// payments.sendPaymentForm calls: a replay returns the stored balance instead
+// of minting a second credit. Amount must be positive; refunds carry their own
+// key and a negative Amount.
+type BotStarsCredit struct {
+	BotUserID   int64
+	PayerUserID int64
+	Amount      int64
+	Reason      StarsTransactionReason
+	InvoiceKey  string
+	Date        int
+}
+
+// Valid reports whether the credit describes a well-formed wallet mutation.
+func (c BotStarsCredit) Valid() bool {
+	switch c.Reason {
+	case StarsReasonBotInvoice, StarsReasonBotRefund:
+	default:
+		return false
+	}
+	return c.BotUserID > 0 && c.PayerUserID > 0 && c.Date > 0 &&
+		c.Amount != 0 && c.InvoiceKey != "" && len(c.InvoiceKey) <= 128
+}
+
+// BotStarsPayment is the durable receipt of one settled invoice credit. It
+// records the post-transaction balance so a duplicate settlement can be
+// answered without re-reading the mutable balance row.
+type BotStarsPayment struct {
+	InvoiceKey   string
+	BotUserID    int64
+	PayerUserID  int64
+	Amount       int64
+	BalanceAfter int64
+	SettledAt    int
+}
+
+// BotStarsRevenuePoint is one UTC day of bot wallet activity. DayStart is the
+// Unix second at 00:00 UTC, which the RPC layer multiplies by 1000 because the
+// official chart renderer expects millisecond x values.
+//
+// Amount is the day's inbound sum and Spent the day's outbound sum. Spent is
+// deliberately not called "withdrawn": Telegram uses "withdrawal" for a
+// Fragment cash-out, which telesrv does not support for a bot wallet at all -
+// withdrawal_enabled stays false - so that word would promise a payout that
+// does not exist.
+type BotStarsRevenuePoint struct {
+	DayStart int
+	Amount   int64
+	Spent    int64
+}
+
+// Valid reports whether the point can be rendered on the revenue chart.
+func (p BotStarsRevenuePoint) Valid() bool {
+	return p.DayStart > 0 && p.Amount >= 0 && p.Spent >= 0
 }
 
 // StarsGiveawayPurchase is the complete immutable purpose behind one direct
@@ -122,6 +183,11 @@ const (
 	StarsReasonCollectible StarsTransactionReason = "collectible"
 	// StarsReasonWalletTransfer 是钱包里用户之间任意的点对点转账（目前仅 TON 账本使用）。
 	StarsReasonWalletTransfer StarsTransactionReason = "wallet_transfer"
+	// StarsReasonDonationDeposit is a crypto deposit credited after on-chain confirmation.
+	StarsReasonDonationDeposit StarsTransactionReason = "donation_deposit"
+	StarsReasonBotInvoice      StarsTransactionReason = "bot_invoice" // 结算 XTR 发票，贷记 bot 钱包
+	StarsReasonBotSpend        StarsTransactionReason = "bot_spend"   // bot 钱包支出
+	StarsReasonBotRefund       StarsTransactionReason = "bot_refund"  // 发票退款，借记 bot 钱包
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
@@ -200,6 +266,9 @@ type StarsTransactionPage struct {
 	NextOffset   string // 空表示无更多页（DrKLO 据此停止翻页，勿在末页给非空值）
 	Users        []User // History 中提到的对手方用户，供 tg Users 富化
 }
+
+// TonUSDRate is the fixed local-ledger USD reference rate, not a live market quote.
+const TonUSDRate = 1.3448279670684584
 
 // TonTransaction is an entry in telesrv's internal nanoton ledger. It models
 // the Telegram TON-denominated gift UI without contacting a wallet, Fragment,

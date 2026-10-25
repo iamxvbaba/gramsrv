@@ -345,8 +345,9 @@ func ephemeralReplyFromInput(reply tg.InputReplyToClass) (topMessageID, ephemera
 		if topMessageID <= 0 || topMessageID > domain.MaxMessageBoxID {
 			return 0, 0, messageIDInvalidErr()
 		}
+		_, hasQuoteRich := value.GetQuoteRich()
 		if value.ReplyToPeerID != nil || value.QuoteText != "" || len(value.QuoteEntities) != 0 || value.QuoteOffset != 0 ||
-			value.MonoforumPeerID != nil || value.TodoItemID != 0 || len(value.PollOption) != 0 {
+			value.MonoforumPeerID != nil || value.TodoItemID != 0 || len(value.PollOption) != 0 || hasQuoteRich {
 			return 0, 0, inputConstructorInvalidErr()
 		}
 		return topMessageID, 0, nil

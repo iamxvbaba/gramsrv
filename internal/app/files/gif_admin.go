@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
@@ -71,16 +72,16 @@ func detectGifCatalogUploadMime(data []byte) (string, bool) {
 	}
 }
 
-func (s *Service) AdminCreateGifCatalogEntry(ctx context.Context, title string, documentID int64) (domain.GifCatalogEntry, error) {
-	return s.createGifCatalogEntry(ctx, title, documentID, "", "")
+func (s *Service) AdminCreateGifCatalogEntry(ctx context.Context, title string, documentID int64, fileName string) (domain.GifCatalogEntry, error) {
+	return s.createGifCatalogEntry(ctx, title, documentID, fileName, "", "")
 }
 
-func (s *Service) createGifCatalogEntry(ctx context.Context, title string, documentID int64, sourceFilename, sourceSHA256 string) (domain.GifCatalogEntry, error) {
+func (s *Service) createGifCatalogEntry(ctx context.Context, title string, documentID int64, fileName, sourceFilename, sourceSHA256 string) (domain.GifCatalogEntry, error) {
 	if s.gifCatalog == nil {
 		return domain.GifCatalogEntry{}, domain.ErrGifCatalogUnavailable
 	}
 	title = strings.TrimSpace(title)
-	if title == "" || len(title) > domain.MaxGifCatalogTitleLen || documentID == 0 ||
+	if title == "" || len(title) > domain.MaxGifCatalogTitleLen || utf8.RuneCountInString(fileName) > domain.MaxGifCatalogFileNameLen || documentID == 0 ||
 		((sourceFilename == "") != (sourceSHA256 == "")) {
 		return domain.GifCatalogEntry{}, domain.ErrGifCatalogEntryInvalid
 	}
@@ -96,9 +97,23 @@ func (s *Service) createGifCatalogEntry(ctx context.Context, title string, docum
 		return domain.GifCatalogEntry{}, domain.ErrGifCatalogEntryInvalid
 	}
 	return s.gifCatalog.CreateGifCatalogEntry(ctx, domain.GifCatalogEntry{
-		ID: randomID(), Title: title, DocumentID: documentID,
+		ID: randomID(), Title: title, FileName: fileName, DocumentID: documentID,
 		SourceFilename: sourceFilename, SourceSHA256: sourceSHA256,
 	})
+}
+
+func (s *Service) AdminSetGifCatalogCategory(ctx context.Context, id int64, category string) (bool, error) {
+	if s.gifCatalog == nil {
+		return false, domain.ErrGifCatalogUnavailable
+	}
+	if category != "" && !domain.ValidGifCategory(category) {
+		return false, domain.ErrGifCatalogEntryInvalid
+	}
+	changed, err := s.gifCatalog.SetGifCatalogCategory(ctx, id, category)
+	if err == nil && !changed {
+		err = domain.ErrGifCatalogEntryNotFound
+	}
+	return changed, err
 }
 
 func (s *Service) AdminListGifCatalog(ctx context.Context) ([]domain.GifCatalogEntry, error) {

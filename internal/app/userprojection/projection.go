@@ -538,12 +538,22 @@ func reapplyExclusiveCollectiblePhone(user domain.User, phone domain.Collectible
 }
 
 func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
-	// Base users and self users must never retain a viewer-scoped restriction.
-	user.RestrictionReasons = nil
-	if user.Deleted || viewerUserID == 0 || user.ID == 0 || user.ID == viewerUserID || !freeze.Frozen {
-		return user
+	// Frozen accounts are presented to peers as deleted accounts: the client
+	// renders "Deleted account" instead of the frozen persona. The owner and
+	// unauthenticated/system views keep the live account. The tombstone carries
+	// FrozenForViewer so the RPC boundary can attach the synthetic "frozen"
+	// third-party mark alongside the deleted presentation.
+	if freeze.Frozen && viewerUserID != 0 && user.ID != 0 && user.ID != viewerUserID && user.ID != domain.OfficialSystemUserID {
+		user.Deleted = true
+		tombstone := user.DeletedTombstone()
+		tombstone.FrozenForViewer = true
+		return tombstone
 	}
-	user.RestrictionReasons = domain.AccountFrozenRestrictionReasons()
+	if freeze.Frozen {
+		user.Status = domain.UserStatus{Kind: domain.UserStatusEmpty}
+		user.LastSeenAt = 0
+	}
+	user.RestrictionReasons = nil
 	return user
 }
 
@@ -630,7 +640,9 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 		return user.DeletedTombstone()
 	}
 	if !found {
-		user.Phone = ""
+		// A contact relationship alone never grants phone visibility; the target
+		// account phone is governed by PhoneNumber privacy (applyPrivacy decides
+		// whether to strip it — never wipe here so AllowAll still surfaces it).
 		user.Contact = false
 		user.Mutual = false
 		user.CloseFriend = false

@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: grammystore_postgres_dev
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - grammynet
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  grammystore:
+    build: .
+    container_name: grammystore_app_dev
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DATABASE_HOST=grammystore_postgres_dev
+    networks:
+      - grammynet
+    ports:
+      - "${CODE_HTTP_PORT:-2800}:2800"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  grammynet:
+    driver: bridge
+
+volumes:
+  pgdata_dev:

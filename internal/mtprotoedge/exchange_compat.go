@@ -5,6 +5,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -138,10 +139,10 @@ SendResPQ:
 	)
 	{
 		if dhParams.DH.Nonce != req.Nonce {
-			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params nonce does not match req_pq")
+			return exchange.ServerExchangeResult{}, wrapKeyNotFound(gofaster.New("req_DH_params nonce does not match req_pq"))
 		}
 		if dhParams.DH.ServerNonce != serverNonce {
-			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params server_nonce does not match resPQ")
+			return exchange.ServerExchangeResult{}, wrapKeyNotFound(gofaster.New("req_DH_params server_nonce does not match resPQ"))
 		}
 		if dhParams.DH.PublicKeyFingerprint != s.key.Fingerprint() {
 			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params public key fingerprint does not match server key")
@@ -224,10 +225,10 @@ SendResPQ:
 	}
 	s.log.Debug("Received client SetClientDHParamsRequest")
 	if clientDhParams.Nonce != req.Nonce {
-		return exchange.ServerExchangeResult{}, gofaster.New("set_client_DH_params nonce does not match req_pq")
+		return exchange.ServerExchangeResult{}, wrapKeyNotFound(gofaster.New("set_client_DH_params nonce does not match req_pq"))
 	}
 	if clientDhParams.ServerNonce != serverNonce {
-		return exchange.ServerExchangeResult{}, gofaster.New("set_client_DH_params server_nonce does not match resPQ")
+		return exchange.ServerExchangeResult{}, wrapKeyNotFound(gofaster.New("set_client_DH_params server_nonce does not match resPQ"))
 	}
 
 	decrypted, err := crypto.DecryptExchangeAnswer(clientDhParams.EncryptedData, key, iv)
@@ -439,7 +440,17 @@ func (s serverExchangeCompat) readUnencrypted(ctx context.Context, b *bin.Buffer
 	}
 	b.ResetTo(msg.MessageData)
 
-	return data.Decode(b)
+	err := data.Decode(b)
+	var unexpected *bin.UnexpectedIDErr
+	if errors.As(err, &unexpected) &&
+		(unexpected.ID == mt.ReqDHParamsRequestTypeID || unexpected.ID == mt.SetClientDHParamsRequestTypeID) {
+		// TDLib resumes last_query after an ordinary socket failure, including
+		// on a new connection whose probe used another nonce. This connection
+		// has no matching exchange state: reject it with -404 so the client
+		// clears the stale handshake. EOF alone causes endless replay/reconnect.
+		return exchangeError(codec.CodeAuthKeyNotFound, err)
+	}
+	return err
 }
 
 // validUnencryptedHandshakeMessageID preserves the normal client message-id

@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS public.admin_console_users;

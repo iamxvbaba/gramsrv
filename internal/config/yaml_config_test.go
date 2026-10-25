@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"telesrv/internal/domain"
 )
 
 func TestLoadEdgeReadsRoleYAMLWithoutProcessEnvOverride(t *testing.T) {
@@ -199,6 +201,80 @@ postgres:
 	}
 	if cfg.PostgresDSN != "postgres://core-test" || cfg.PostgresMaxConns != 11 || cfg.PostgresMinConns != 3 || cfg.PostgresCounterRecoveryMaxConns != 2 {
 		t.Fatalf("postgres config = dsn:%q max:%d min:%d recovery:%d", cfg.PostgresDSN, cfg.PostgresMaxConns, cfg.PostgresMinConns, cfg.PostgresCounterRecoveryMaxConns)
+	}
+}
+
+// The 777000 login-code default template is Core YAML only; the Admin
+// identity override still takes precedence at delivery time.
+func TestLoadCoreReadsLoginCodeMessageTemplateFromYAML(t *testing.T) {
+	path := writeRoleYAML(t, "core-auth.yaml", `
+version: 1
+auth:
+  login_code_message_template: "Operator code {{code}} for {{server_name}}"
+`)
+	t.Setenv("TELESRV_CONFIG", path)
+	t.Setenv("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", "process env must not apply: {{code}}")
+
+	cfg, err := LoadCore()
+	if err != nil {
+		t.Fatalf("LoadCore: %v", err)
+	}
+	if cfg.LoginCodeMessageTemplate != "Operator code {{code}} for {{server_name}}" {
+		t.Fatalf("login code template = %q", cfg.LoginCodeMessageTemplate)
+	}
+
+	path = writeRoleYAML(t, "core-auth-default.yaml", "version: 1\n")
+	t.Setenv("TELESRV_CONFIG", path)
+	cfg, err = LoadCore()
+	if err != nil {
+		t.Fatalf("LoadCore default: %v", err)
+	}
+	if cfg.LoginCodeMessageTemplate != domain.DefaultLoginCodeMessageTemplate {
+		t.Fatalf("default login code template = %q", cfg.LoginCodeMessageTemplate)
+	}
+	if cfg.CheckNumberFormat {
+		t.Fatal("default CheckNumberFormat = true, want lenient policy")
+	}
+}
+
+func TestLoadCoreReadsCheckNumberFormatFromYAML(t *testing.T) {
+	path := writeRoleYAML(t, "core-phone-format.yaml", `
+version: 1
+auth:
+  check_number_format: true
+`)
+	t.Setenv("TELESRV_CONFIG", path)
+	t.Setenv("TELESRV_CHECK_NUMBER_FORMAT", "false")
+
+	cfg, err := LoadCore()
+	if err != nil {
+		t.Fatalf("LoadCore: %v", err)
+	}
+	if !cfg.CheckNumberFormat {
+		t.Fatal("CheckNumberFormat = false, want YAML auth.check_number_format")
+	}
+}
+
+func TestLoadCoreReadsSensitiveRateLimitsFromYAML(t *testing.T) {
+	path := writeRoleYAML(t, "core-sensitive-rate.yaml", `
+version: 1
+sensitive_rate_limits:
+  srp_limit: 3
+  srp_window: 30s
+  withdrawal_limit: 0
+  payment_limit: 12
+  payment_window: 2m
+`)
+	t.Setenv("TELESRV_CONFIG", path)
+	t.Setenv("TELESRV_SRP_RATE_LIMIT", "99")
+	cfg, err := LoadCore()
+	if err != nil {
+		t.Fatalf("LoadCore: %v", err)
+	}
+	if cfg.SRPRateLimit != 3 || cfg.SRPRateWindow != 30*time.Second || cfg.WithdrawalRateLimit != 0 ||
+		cfg.WithdrawalRateWindow != time.Minute || cfg.PaymentRateLimit != 12 || cfg.PaymentRateWindow != 2*time.Minute {
+		t.Fatalf("sensitive rate limits = srp %d/%s withdrawal %d/%s payment %d/%s", cfg.SRPRateLimit, cfg.SRPRateWindow,
+			cfg.WithdrawalRateLimit, cfg.WithdrawalRateWindow, cfg.PaymentRateLimit, cfg.PaymentRateWindow)
 	}
 }
 
@@ -637,14 +713,14 @@ func TestLoadDockerRoleYAMLFiles(t *testing.T) {
 	}{
 		{name: "edge", file: "edge.yaml", load: func() error {
 			cfg, err := LoadEdge()
-			if err == nil && (cfg.InstanceID != "compose-test-1" || cfg.CoreExecGRPCTargets != "core:2440" || cfg.CoreExecGRPCResolver != "dns" || cfg.FileGRPCTargets != "file:2520" || cfg.FileGRPCResolver != "dns" || cfg.EgressDeliveryGRPCTargets != "egress:2510" || cfg.EgressDeliveryGRPCResolver != "dns") {
+			if err == nil && (cfg.InstanceID != "compose-test-1" || cfg.CoreExecGRPCTargets != "core:2440" || cfg.CoreExecGRPCResolver != "dns" || cfg.FileGRPCTargets != "file:2520" || cfg.FileGRPCResolver != "dns" || cfg.EgressDeliveryGRPCTargets != "egress:2510" || cfg.EgressDeliveryGRPCResolver != "dns" || cfg.IdentityDir != "/var/lib/telesrv-identity") {
 				return fmt.Errorf("unexpected Docker edge identity or service targets")
 			}
 			return err
 		}},
 		{name: "core", file: "core.yaml", load: func() error {
 			cfg, err := LoadCore()
-			if err == nil && (cfg.InstanceID != "compose-test-1" || cfg.CoreExecGRPCAddr != "0.0.0.0:2440" || cfg.FileGRPCTargets != "file:2520" || cfg.FileGRPCResolver != "dns" || cfg.AdminAPIAddr != "0.0.0.0:2599" || cfg.AdminAPIToken != "admin-api-secret" || cfg.LangPackSeedDir != "/usr/share/telesrv/langpack" || cfg.OTPWebhookURL != "https://otp.example.test/v1/deliveries" || cfg.OTPWebhookSecret != "otp-secret" || cfg.OTPWebhookTimeout != 4*time.Second || cfg.Branding.ProductName != "Docker Chat" || cfg.Branding.StarsName != "Docker Credits") {
+			if err == nil && (cfg.InstanceID != "compose-test-1" || cfg.CoreExecGRPCAddr != "0.0.0.0:2440" || cfg.FileGRPCTargets != "file:2520" || cfg.FileGRPCResolver != "dns" || cfg.AdminAPIAddr != "0.0.0.0:2599" || cfg.AdminAPIToken != "admin-api-secret" || cfg.BotAPIAddr != "" || cfg.LangPackSeedDir != "/usr/share/telesrv/langpack" || cfg.OTPWebhookURL != "https://otp.example.test/v1/deliveries" || cfg.OTPWebhookSecret != "otp-secret" || cfg.OTPWebhookTimeout != 4*time.Second || cfg.Branding.ProductName != "Docker Chat" || cfg.Branding.StarsName != "Docker Credits") {
 				return fmt.Errorf("unexpected Docker core identity, listeners, or seed path")
 			}
 			return err
@@ -685,6 +761,72 @@ func TestLoadDockerRoleYAMLFiles(t *testing.T) {
 				t.Fatalf("load Docker %s: %v", tt.file, err)
 			}
 		})
+	}
+	// gramsrv #116: core.yaml used to hard-code bot_api_addr: "", so the
+	// documented TELESRV_BOT_API_ADDR could never enable the Bot API gateway.
+	t.Run("core bot api", func(t *testing.T) {
+		t.Setenv("TELESRV_CONFIG", filepath.Join(dockerConfigDir, "core.yaml"))
+		t.Setenv("TELESRV_BOT_API_ADDR", "0.0.0.0:8088")
+		cfg, err := LoadCore()
+		if err != nil {
+			t.Fatalf("load Docker core.yaml: %v", err)
+		}
+		if cfg.BotAPIAddr != "0.0.0.0:8088" {
+			t.Fatalf("Docker core BotAPIAddr = %q, want the TELESRV_BOT_API_ADDR value", cfg.BotAPIAddr)
+		}
+	})
+}
+
+// TestDockerBotAPIOverridePublishesCoreGateway pins the opt-in Bot API path:
+// the default topology keeps the gateway off, and compose.bot-api.yaml
+// publishes core's container port 8088 on the configured host address.
+func TestDockerBotAPIOverridePublishesCoreGateway(t *testing.T) {
+	dockerDir := filepath.Join("..", "..", "deploy", "docker")
+	envExample, err := os.ReadFile(filepath.Join(dockerDir, ".env.example"))
+	if err != nil {
+		t.Fatalf("read .env.example: %v", err)
+	}
+	for _, line := range []string{"TELESRV_BOT_API_ADDR=\n", "TELESRV_BOT_API_BIND_IP=127.0.0.1\n", "TELESRV_BOT_API_PORT=8088\n"} {
+		if !strings.Contains(string(envExample), line) {
+			t.Errorf(".env.example is missing %q (the gateway must default to off on loopback)", strings.TrimSpace(line))
+		}
+	}
+	overrideData, err := os.ReadFile(filepath.Join(dockerDir, "compose.bot-api.yaml"))
+	if err != nil {
+		t.Fatalf("read compose.bot-api.yaml: %v", err)
+	}
+	var override struct {
+		Services map[string]struct {
+			Ports []struct {
+				Name      string `yaml:"name"`
+				Target    int    `yaml:"target"`
+				Published string `yaml:"published"`
+				HostIP    string `yaml:"host_ip"`
+				Protocol  string `yaml:"protocol"`
+			} `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(overrideData, &override); err != nil {
+		t.Fatalf("parse compose.bot-api.yaml: %v", err)
+	}
+	if len(override.Services) != 1 {
+		t.Fatalf("compose.bot-api.yaml services = %v, want only core", override.Services)
+	}
+	core, ok := override.Services["core"]
+	if !ok || len(core.Ports) != 1 {
+		t.Fatalf("compose.bot-api.yaml core ports = %+v, want one bot-api port", core.Ports)
+	}
+	port := core.Ports[0]
+	if port.Name != "bot-api" || port.Target != 8088 || port.Published != "${TELESRV_BOT_API_PORT:-8088}" ||
+		port.HostIP != "${TELESRV_BOT_API_BIND_IP:-127.0.0.1}" || port.Protocol != "tcp" {
+		t.Fatalf("bot-api port = %+v, want container 8088 on TELESRV_BOT_API_BIND_IP:TELESRV_BOT_API_PORT", port)
+	}
+	composeData, err := os.ReadFile(filepath.Join(dockerDir, "compose.yaml"))
+	if err != nil {
+		t.Fatalf("read compose.yaml: %v", err)
+	}
+	if strings.Contains(string(composeData), "8088") {
+		t.Error("the default compose.yaml must not publish the Bot API port; it is opt-in through compose.bot-api.yaml")
 	}
 }
 

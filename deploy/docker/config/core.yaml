@@ -90,7 +90,9 @@ translation:
   enabled: false
 
 http:
-  bot_api_addr: ""
+  # Empty disables the HTTP Bot API gateway. Enable with 0.0.0.0:8088 and
+  # publish it through compose.bot-api.yaml (see deploy/docker/.env.example).
+  bot_api_addr: "${TELESRV_BOT_API_ADDR}"
   admin_api_addr: 0.0.0.0:2599
   admin_api_token: ${TELESRV_ADMIN_API_TOKEN}
   public_link_web_addr: 0.0.0.0:2401
@@ -105,6 +107,9 @@ media:
   map_tile_cache_dir: /var/lib/telesrv-core/maptiles
   external_media_enable: ${TELESRV_EXTERNAL_MEDIA_ENABLE}
   web_page_preview_enable: ${TELESRV_WEBPAGE_PREVIEW_ENABLE}
+
+identity:
+  dir: /var/lib/telesrv-identity
 
 seeds:
   langpack_dir: /usr/share/telesrv/langpack

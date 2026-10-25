@@ -25,6 +25,11 @@ func (r *Router) onPaymentsGetStarGiftCollections(ctx context.Context, req *tg.P
 	if r.deps.Gifts == nil {
 		return &tg.PaymentsStarGiftCollections{Collections: []tg.StarGiftCollection{}}, nil
 	}
+	// Collections are part of the same profile surface as the gifts they hold, so
+	// a deleted owner exposes neither.
+	if r.starGiftOwnerDeleted(ctx, userID, owner) {
+		return &tg.PaymentsStarGiftCollections{Collections: []tg.StarGiftCollection{}}, nil
+	}
 	collections, err := r.deps.Gifts.ListCollections(ctx, owner)
 	if err != nil {
 		return nil, starGiftCollectionErr(err)

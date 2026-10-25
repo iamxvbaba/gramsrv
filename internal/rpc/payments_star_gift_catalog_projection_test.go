@@ -10,6 +10,30 @@ import (
 	"telesrv/internal/domain"
 )
 
+func TestStarGiftProjectionDropsElapsedLockedUntilDate(t *testing.T) {
+	gift := domain.StarGift{
+		ID: 8201, Stars: 100, ConvertStars: 85, LockedUntilDate: 1750000000,
+	}
+	tests := []struct {
+		name     string
+		now      int64
+		wantSet  bool
+	}{
+		{name: "future lock date stays advertised", now: 1740000000, wantSet: true},
+		{name: "elapsed lock date is dropped so the client unblocks the gift", now: 1750000001, wantSet: false},
+		{name: "lock date exactly at now is dropped", now: 1750000000, wantSet: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projected := tgStarGift(gift, test.now)
+			value, ok := projected.GetLockedUntilDate()
+			if ok != test.wantSet {
+				t.Fatalf("locked_until_date set = %v (value %d), want %v", ok, value, test.wantSet)
+			}
+		})
+	}
+}
+
 func TestStarGiftCatalogProjectionKeepsSaleDatesBehindSoldOutFlag(t *testing.T) {
 	base := domain.StarGift{
 		ID:            8001,
@@ -61,7 +85,7 @@ func TestStarGiftCatalogProjectionKeepsSaleDatesBehindSoldOutFlag(t *testing.T) 
 			} {
 				response := &tg.PaymentsStarGifts{
 					Hash:  1,
-					Gifts: []tg.StarGiftClass{tgStarGift(test.gift)},
+					Gifts: []tg.StarGiftClass{tgStarGift(test.gift, 0)},
 					Chats: []tg.ChatClass{},
 					Users: []tg.UserClass{},
 				}

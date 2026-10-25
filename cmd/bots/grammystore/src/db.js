@@ -1,7 +1,5 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
+import pg from "pg";
 import { randomInt, randomBytes } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 
 const RU_CODES = ["900", "902", "903", "904", "905", "906", "908", "909", "910", "911", "912", "913", "914", "915", "916", "917", "918", "919", "920", "921", "922", "923", "925", "926", "927", "928", "929", "930", "931", "932", "933", "937", "938", "939", "950", "951", "952", "953", "960", "961", "962", "963", "964", "965", "966", "967", "968", "969", "980", "981", "982", "983", "984", "985", "986", "987", "988", "989", "999"];
 const US_CODES = ["212", "213", "214", "215", "224", "281", "305", "310", "312", "313", "323", "347", "404", "407", "408", "410", "412", "415", "425", "469", "501", "503", "504", "505", "512", "513", "516", "561", "602", "603", "605", "612", "614", "615", "617", "619", "623", "702", "703", "704", "706", "708", "713", "714", "718", "720", "801", "802", "804", "805", "808", "813", "815", "816", "818", "901", "903", "904", "907", "909", "913", "914", "916", "917", "919"];
@@ -34,213 +32,289 @@ function generatedNumber(format, country) {
 }
 
 export class BotDatabase {
-  constructor(filename) {
-    mkdirSync(path.dirname(filename), { recursive: true });
-    this.db = new DatabaseSync(filename);
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000");
-    this.migrate();
+  constructor(dbUrl, { generateNumber = generatedNumber } = {}) {
+    this.pool = new pg.Pool({ connectionString: dbUrl, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 10000 });
+    this.generateNumber = generateNumber;
+    pg.types.setTypeParser(20, (val) => Number(val));
   }
 
-  migrate() {
-    this.db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  telegram_id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, username TEXT NOT NULL DEFAULT '', first_name TEXT NOT NULL DEFAULT '', server_user_id INTEGER NOT NULL DEFAULT 0,
-  language TEXT NOT NULL DEFAULT 'ru', notifications INTEGER NOT NULL DEFAULT 1, bonus INTEGER NOT NULL DEFAULT 0,
-  referred_by INTEGER REFERENCES users(telegram_id), referral_count INTEGER NOT NULL DEFAULT 0, daily_day TEXT NOT NULL DEFAULT '',
-  spin_day TEXT NOT NULL DEFAULT '', spin_day_count INTEGER NOT NULL DEFAULT 0, spin_week TEXT NOT NULL DEFAULT '', spin_week_count INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS numbers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, phone TEXT NOT NULL UNIQUE, display TEXT NOT NULL, format TEXT NOT NULL, country TEXT NOT NULL,
-  owner_id INTEGER NOT NULL REFERENCES users(telegram_id), chat_id INTEGER NOT NULL, is_current INTEGER NOT NULL DEFAULT 1,
-  login_code TEXT NOT NULL DEFAULT '', code_expires_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS numbers_current_owner_idx ON numbers(owner_id) WHERE is_current=1;
-CREATE TABLE IF NOT EXISTS code_access (phone TEXT NOT NULL, telegram_id INTEGER NOT NULL, PRIMARY KEY(phone, telegram_id));
-CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS pending (telegram_id INTEGER PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS processed_payments (
-  charge_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, invoice_payload TEXT NOT NULL, amount INTEGER NOT NULL,
-  status TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS sales (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, product TEXT NOT NULL, title TEXT NOT NULL,
-  stars_price INTEGER NOT NULL, recipient_id INTEGER NOT NULL, buyer_id INTEGER NOT NULL, buyer_name TEXT NOT NULL DEFAULT '', charge_id TEXT NOT NULL UNIQUE,
-  fulfillment_json TEXT NOT NULL DEFAULT '{}'
-);
-CREATE TABLE IF NOT EXISTS recent_recipients (
-  buyer_id INTEGER NOT NULL, recipient_id INTEGER NOT NULL, used_at INTEGER NOT NULL, PRIMARY KEY(buyer_id, recipient_id)
-);
-CREATE TABLE IF NOT EXISTS promos (
-  code TEXT PRIMARY KEY, stars_amount INTEGER NOT NULL, max_acts INTEGER NOT NULL, activations INTEGER NOT NULL DEFAULT 0,
-  active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS promo_claims (code TEXT NOT NULL REFERENCES promos(code), telegram_id INTEGER NOT NULL, claimed_at INTEGER NOT NULL, PRIMARY KEY(code, telegram_id));
-CREATE TABLE IF NOT EXISTS giveaways (
-  id TEXT PRIMARY KEY, text TEXT NOT NULL, stars_amount INTEGER NOT NULL, max_acts INTEGER NOT NULL,
-  activations INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS giveaway_claims (giveaway_id TEXT NOT NULL REFERENCES giveaways(id), telegram_id INTEGER NOT NULL, claimed_at INTEGER NOT NULL, PRIMARY KEY(giveaway_id, telegram_id));
-CREATE TABLE IF NOT EXISTS support_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER NOT NULL, chat_id INTEGER NOT NULL, text TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open', created_at INTEGER NOT NULL, answered_at INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS refunds (
-  charge_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, refunded_at INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'completed', internal_reversed INTEGER NOT NULL DEFAULT 1,
-  error TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS spin_awards (
-  telegram_id INTEGER NOT NULL, day TEXT NOT NULL, week TEXT NOT NULL, server_user_id INTEGER NOT NULL,
-  prize INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL,
-  PRIMARY KEY(telegram_id, day)
-);
-CREATE TABLE IF NOT EXISTS otp_deliveries (
-  delivery_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, recipient TEXT NOT NULL,
-  code TEXT NOT NULL, expires_at INTEGER NOT NULL, accepted_at INTEGER NOT NULL
-);
-INSERT OR IGNORE INTO settings(key,value) VALUES('stars_rate','20');
-`);
-    this.ensureColumn("sales", "fulfillment_json", "TEXT NOT NULL DEFAULT '{}'");
-    this.ensureColumn("refunds", "status", "TEXT NOT NULL DEFAULT 'completed'");
-    this.ensureColumn("refunds", "internal_reversed", "INTEGER NOT NULL DEFAULT 1");
-    this.ensureColumn("refunds", "error", "TEXT NOT NULL DEFAULT ''");
-    this.ensureColumn("refunds", "updated_at", "INTEGER NOT NULL DEFAULT 0");
+  async close() { await this.pool.end(); }
+
+  async tx(work) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const value = await work(client);
+      await client.query("COMMIT");
+      return value;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  ensureColumn(table, column, definition) {
-    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all();
-    if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-
-  close() { this.db.close(); }
-  tx(work) { this.db.exec("BEGIN IMMEDIATE"); try { const value = work(); this.db.exec("COMMIT"); return value; } catch (error) { this.db.exec("ROLLBACK"); throw error; } }
-
-  upsertUser(from, chatID, language = "ru", referrerID = 0, referralBonus = 0) {
-    const timestamp = now();
-    return this.tx(() => {
-      const existing = this.db.prepare("SELECT * FROM users WHERE telegram_id=?").get(from.id);
-      this.db.prepare(`INSERT INTO users(telegram_id,chat_id,username,first_name,language,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET chat_id=excluded.chat_id,username=excluded.username,first_name=excluded.first_name,updated_at=excluded.updated_at`)
-        .run(from.id, chatID, from.username ?? "", from.first_name ?? "", language, timestamp, timestamp);
+  async upsertUser(from, chatID, language = "ru", referrerID = 0, referralBonus = 0) {
+    return this.tx(async (client) => {
+      const existing = (await client.query("SELECT * FROM users WHERE telegram_id = $1", [from.id])).rows[0] ?? null;
+      await client.query(
+        `INSERT INTO users(telegram_id, chat_id, username, first_name, language, created_at, updated_at)
+         VALUES($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT(telegram_id) DO UPDATE SET chat_id = EXCLUDED.chat_id, username = EXCLUDED.username,
+         first_name = EXCLUDED.first_name, updated_at = EXCLUDED.updated_at`,
+        [from.id, chatID, from.username ?? "", from.first_name ?? "", language, now(), now()]
+      );
       if (!existing && referrerID > 0 && referrerID !== from.id) {
-        const referrer = this.db.prepare("SELECT telegram_id FROM users WHERE telegram_id=?").get(referrerID);
+        const referrer = (await client.query("SELECT telegram_id FROM users WHERE telegram_id = $1", [referrerID])).rows[0];
         if (referrer) {
-          this.db.prepare("UPDATE users SET referred_by=? WHERE telegram_id=? AND referred_by IS NULL").run(referrerID, from.id);
-          this.db.prepare("UPDATE users SET referral_count=referral_count+1,bonus=bonus+?,updated_at=? WHERE telegram_id=?").run(referralBonus, timestamp, referrerID);
+          await client.query("UPDATE users SET referred_by = $1 WHERE telegram_id = $2 AND referred_by IS NULL", [referrerID, from.id]);
+          await client.query("UPDATE users SET referral_count = referral_count + 1, bonus = bonus + $1, updated_at = $2 WHERE telegram_id = $3", [referralBonus, now(), referrerID]);
         }
       }
-      return this.user(from.id);
+      return (await client.query("SELECT * FROM users WHERE telegram_id = $1", [from.id])).rows[0];
     });
   }
 
-  user(id) { return this.db.prepare("SELECT * FROM users WHERE telegram_id=?").get(id) ?? null; }
-  userByChatID(chatID) { return this.db.prepare("SELECT * FROM users WHERE chat_id=? ORDER BY updated_at DESC LIMIT 1").get(chatID) ?? null; }
-  users() { return this.db.prepare("SELECT * FROM users ORDER BY created_at").all(); }
-  notificationRecipients(ttlDays = 30) {
-    const threshold = now() - Math.max(1, ttlDays) * 86400;
-    return this.db.prepare("SELECT * FROM users WHERE notifications=1 AND updated_at>=? ORDER BY created_at").all(threshold);
-  }
-  stats() { return { users: this.db.prepare("SELECT count(*) n FROM users").get().n, numbers: this.db.prepare("SELECT count(*) n FROM numbers").get().n, sales: this.db.prepare("SELECT count(*) n FROM sales").get().n }; }
-  setLanguage(id, language) { this.db.prepare("UPDATE users SET language=?,updated_at=? WHERE telegram_id=?").run(language, now(), id); }
-  toggleNotifications(id) { this.db.prepare("UPDATE users SET notifications=1-notifications,updated_at=? WHERE telegram_id=?").run(now(), id); return Boolean(this.user(id)?.notifications); }
-  setServerUserID(id, serverUserID) { this.db.prepare("UPDATE users SET server_user_id=?,updated_at=? WHERE telegram_id=?").run(serverUserID, now(), id); }
-  addBonus(id, amount) {
-    if (!Number.isSafeInteger(amount)) throw new Error("invalid bonus amount");
-    const result = this.db.prepare("UPDATE users SET bonus=MAX(0,bonus+?),updated_at=? WHERE telegram_id=?").run(amount, now(), id);
-    if (!result.changes) throw new Error("invalid Telegram ID");
-    return this.user(id).bonus;
+  async user(id) {
+    const res = await this.pool.query("SELECT * FROM users WHERE telegram_id = $1", [id]);
+    return res.rows[0] ?? null;
   }
 
-  claimDaily(id, amount) {
-    return this.tx(() => {
-      const user = this.user(id); if (!user) throw new Error("user not found");
-      const day = dayKey(); if (user.daily_day === day) return { claimed: false, balance: user.bonus };
-      this.db.prepare("UPDATE users SET daily_day=?,bonus=bonus+?,updated_at=? WHERE telegram_id=?").run(day, amount, now(), id);
+  async userByChatID(chatID) {
+    const res = await this.pool.query("SELECT * FROM users WHERE chat_id = $1 ORDER BY updated_at DESC LIMIT 1", [chatID]);
+    return res.rows[0] ?? null;
+  }
+
+  async users() {
+    const res = await this.pool.query("SELECT * FROM users ORDER BY created_at");
+    return res.rows;
+  }
+
+  async notificationRecipients(ttlDays = 30) {
+    const threshold = now() - Math.max(1, ttlDays) * 86400;
+    const res = await this.pool.query("SELECT * FROM users WHERE notifications = 1 AND updated_at >= $1 ORDER BY created_at", [threshold]);
+    return res.rows;
+  }
+
+  async stats() {
+    const [users, numbers, sales] = await Promise.all([
+      this.pool.query("SELECT count(*)::int n FROM users"),
+      this.pool.query("SELECT count(*)::int n FROM numbers"),
+      this.pool.query("SELECT count(*)::int n FROM sales"),
+    ]);
+    return { users: users.rows[0].n, numbers: numbers.rows[0].n, sales: sales.rows[0].n };
+  }
+
+  async setLanguage(id, language) {
+    await this.pool.query("UPDATE users SET language = $1, updated_at = $2 WHERE telegram_id = $3", [language, now(), id]);
+  }
+
+  async toggleNotifications(id) {
+    const res = await this.pool.query("UPDATE users SET notifications = 1 - notifications, updated_at = $1 WHERE telegram_id = $2 RETURNING notifications", [now(), id]);
+    return Boolean(res.rows[0]?.notifications);
+  }
+
+  async setServerUserID(id, serverUserID) {
+    await this.pool.query("UPDATE users SET server_user_id = $1, updated_at = $2 WHERE telegram_id = $3", [serverUserID, now(), id]);
+  }
+
+  async addBonus(id, amount) {
+    if (!Number.isSafeInteger(amount)) throw new Error("invalid bonus amount");
+    const res = await this.pool.query("UPDATE users SET bonus = GREATEST(0, bonus + $1), updated_at = $2 WHERE telegram_id = $3 RETURNING bonus", [amount, now(), id]);
+    if (!res.rowCount) throw new Error("invalid Telegram ID");
+    return res.rows[0].bonus;
+  }
+
+  async claimDaily(id, amount) {
+    return this.tx(async (client) => {
+      const user = (await client.query("SELECT * FROM users WHERE telegram_id = $1", [id])).rows[0];
+      if (!user) throw new Error("user not found");
+      const day = dayKey();
+      if (user.daily_day === day) return { claimed: false, balance: user.bonus };
+      await client.query("UPDATE users SET daily_day = $1, bonus = bonus + $2, updated_at = $3 WHERE telegram_id = $4", [day, amount, now(), id]);
       return { claimed: true, balance: user.bonus + amount };
     });
   }
 
-  createNumber(ownerID, chatID, format = "free", country = "RU", replace = false) {
-    return this.tx(() => {
-      const current = this.currentNumber(ownerID);
-      if (current && !replace) return current;
-      if (replace) this.db.prepare("UPDATE numbers SET is_current=0 WHERE owner_id=? AND is_current=1").run(ownerID);
-      for (let attempt = 0; attempt < 400; attempt++) {
-        const generated = generatedNumber(format, country);
-        const code = String(randomInt(10000, 100000));
-        try {
-          const result = this.db.prepare(`INSERT INTO numbers(phone,display,format,country,owner_id,chat_id,is_current,login_code,code_expires_at,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?)`).run(generated.phone, generated.display, format, generated.country, ownerID, chatID, 1, code, now() + 300, now());
-          return this.db.prepare("SELECT * FROM numbers WHERE id=?").get(result.lastInsertRowid);
-        } catch (error) { if (!String(error.message).includes("UNIQUE")) throw error; }
-      }
-      throw new Error("could not generate a unique number");
-    });
+  async createNumber(ownerID, chatID, format = "free", country = "RU", replace = false) {
+    return this.tx((client) => this.createNumberInTransaction(client, ownerID, chatID, format, country, replace));
   }
 
-  currentNumber(ownerID) { return this.db.prepare("SELECT * FROM numbers WHERE owner_id=? AND is_current=1").get(ownerID) ?? null; }
-  numbers(ownerID) { return this.db.prepare("SELECT * FROM numbers WHERE owner_id=? ORDER BY id DESC").all(ownerID); }
-  findNumber(phone) { return this.db.prepare("SELECT * FROM numbers WHERE phone=? ORDER BY is_current DESC,id DESC LIMIT 1").get(normalizePhone(phone)) ?? null; }
-  updateLoginCode(phone, code, expiresAt = now() + 300) {
+  async createNumberInTransaction(client, ownerID, chatID, format, country, replace) {
+    // Serialize allocations for one owner, including the first allocation.
+    const owner = await client.query("SELECT telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE", [ownerID]);
+    if (!owner.rowCount) throw new Error("user not found");
+    const current = (await client.query("SELECT * FROM numbers WHERE owner_id = $1 AND is_current = TRUE", [ownerID])).rows[0] ?? null;
+    if (current && !replace) return current;
+    if (current && current.format !== "free") throw new Error("account already has an active anonymous number");
+    if (format === "free") {
+      const owned = (await client.query("SELECT count(*)::int n FROM numbers WHERE owner_id = $1 AND format = 'free'", [ownerID])).rows[0].n;
+      if (owned >= 10) throw new Error("free number reservation limit reached");
+    }
+    if (current) {
+      // Client-confirmed phone changes may not have finished yet. Keep the
+      // previous number reserved to this owner and its OTP route alive.
+      await client.query("UPDATE numbers SET is_current = FALSE WHERE id = $1", [current.id]);
+    }
+    for (let attempt = 0; attempt < 400; attempt++) {
+      const generated = this.generateNumber(format, country);
+      // Only phone collisions are retryable. A caught PostgreSQL unique
+      // violation would abort the transaction and poison the next attempt.
+      const result = await client.query(
+        `INSERT INTO numbers(phone, display, format, country, owner_id, chat_id, is_current, login_code, code_expires_at, created_at)
+         VALUES($1, $2, $3, $4, $5, $6, TRUE, '', 0, $7)
+         ON CONFLICT(phone) DO NOTHING RETURNING *`,
+        [generated.phone, generated.display, format, generated.country, ownerID, chatID, now()]
+      );
+      if (result.rowCount) return result.rows[0];
+    }
+    throw new Error("could not generate a unique number");
+  }
+
+  async currentNumber(ownerID) {
+    const res = await this.pool.query("SELECT * FROM numbers WHERE owner_id = $1 AND is_current = TRUE", [ownerID]);
+    return res.rows[0] ?? null;
+  }
+
+  async numbers(ownerID) {
+    const res = await this.pool.query("SELECT * FROM numbers WHERE owner_id = $1 AND retired = FALSE ORDER BY id DESC", [ownerID]);
+    return res.rows;
+  }
+
+  async findNumber(phone) {
+    const res = await this.pool.query("SELECT * FROM numbers WHERE phone = $1 AND retired = FALSE", [normalizePhone(phone)]);
+    return res.rows[0] ?? null;
+  }
+
+  async findNumberByPhone(phone) {
+    return this.findNumber(phone);
+  }
+
+  async updateLoginCode(phone, code, expiresAt = now() + 300) {
     phone = normalizePhone(phone);
-    return this.tx(() => {
-      this.db.prepare("UPDATE numbers SET login_code=?,code_expires_at=? WHERE phone=?").run(String(code), expiresAt, phone);
-      const number = this.findNumber(phone);
-      const access = this.db.prepare("SELECT u.chat_id FROM code_access a JOIN users u ON u.telegram_id=a.telegram_id WHERE a.phone=?").all(phone);
-      const chatIDs = new Set(access.map((row) => row.chat_id)); if (number?.chat_id) chatIDs.add(number.chat_id);
+    return this.tx(async (client) => {
+      const locked = (await client.query("SELECT * FROM numbers WHERE phone = $1 FOR UPDATE", [phone])).rows[0];
+      if (locked?.retired) throw new Error("NUMBER_RETIRED");
+      await client.query("UPDATE numbers SET login_code = $1, code_expires_at = GREATEST(code_expires_at, $2) WHERE phone = $3", [String(code), expiresAt, phone]);
+      const number = (await client.query("SELECT * FROM numbers WHERE phone = $1", [phone])).rows[0] ?? null;
+      const access = (await client.query(
+        "SELECT u.chat_id FROM code_access a JOIN users u ON u.telegram_id = a.telegram_id WHERE a.phone = $1", [phone]
+      )).rows;
+      const chatIDs = new Set(access.map((row) => row.chat_id));
+      if (number?.chat_id) chatIDs.add(number.chat_id);
+      const verified = (await client.query("SELECT chat_id FROM verified_phones WHERE phone = $1", [phone])).rows;
+      for (const row of verified) chatIDs.add(row.chat_id);
       return { number, chatIDs: [...chatIDs] };
     });
   }
-  acceptLoginCodeDelivery(deliveryID, fingerprint, phone, code, expiresAt) {
+
+  async acceptLoginCodeDelivery(deliveryID, fingerprint, phone, code, expiresAt) {
     phone = normalizePhone(phone);
-    return this.tx(() => {
-      const existing = this.db.prepare("SELECT * FROM otp_deliveries WHERE delivery_id=?").get(deliveryID);
+    return this.tx(async (client) => {
+      // Same lock as refund retirement: no code can be accepted between the
+      // expiry/remote-account checks and retirement. Duplicate IDs serialize too.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`otp:${deliveryID}`]);
+      const locked = (await client.query("SELECT * FROM numbers WHERE phone = $1 FOR UPDATE", [phone])).rows[0];
+      if (locked?.retired) throw new Error("NUMBER_RETIRED");
+      const existing = (await client.query("SELECT * FROM otp_deliveries WHERE delivery_id = $1", [deliveryID])).rows[0];
       if (existing) {
         if (existing.fingerprint !== fingerprint) throw new Error("IDEMPOTENCY_CONFLICT");
-        return { duplicate: true, number: this.findNumber(existing.recipient), chatIDs: [] };
+        const number = (await client.query("SELECT * FROM numbers WHERE phone = $1 AND retired = FALSE", [existing.recipient])).rows[0] ?? null;
+        return { duplicate: true, number, chatIDs: [] };
       }
-      this.db.prepare("INSERT INTO otp_deliveries(delivery_id,fingerprint,recipient,code,expires_at,accepted_at) VALUES(?,?,?,?,?,?)").run(deliveryID, fingerprint, phone, String(code), expiresAt, now());
-      this.db.prepare("UPDATE numbers SET login_code=?,code_expires_at=? WHERE phone=?").run(String(code), expiresAt, phone);
-      const number = this.findNumber(phone);
-      const access = this.db.prepare("SELECT u.chat_id FROM code_access a JOIN users u ON u.telegram_id=a.telegram_id WHERE a.phone=?").all(phone);
-      const chatIDs = new Set(access.map((row) => row.chat_id)); if (number?.chat_id) chatIDs.add(number.chat_id);
+      await client.query(
+        "INSERT INTO otp_deliveries(delivery_id, fingerprint, recipient, code, expires_at, accepted_at) VALUES($1, $2, $3, $4, $5, $6)",
+        [deliveryID, fingerprint, phone, String(code), expiresAt, now()]
+      );
+      await client.query("UPDATE numbers SET login_code = $1, code_expires_at = GREATEST(code_expires_at, $2) WHERE phone = $3", [String(code), expiresAt, phone]);
+      const number = (await client.query("SELECT * FROM numbers WHERE phone = $1", [phone])).rows[0] ?? null;
+      const access = (await client.query(
+        "SELECT u.chat_id FROM code_access a JOIN users u ON u.telegram_id = a.telegram_id WHERE a.phone = $1", [phone]
+      )).rows;
+      const chatIDs = new Set(access.map((row) => row.chat_id));
+      if (number?.chat_id) chatIDs.add(number.chat_id);
+      const verified = (await client.query("SELECT chat_id FROM verified_phones WHERE phone = $1", [phone])).rows;
+      for (const row of verified) chatIDs.add(row.chat_id);
       return { duplicate: false, number, chatIDs: [...chatIDs] };
     });
   }
-  grantCodeAccess(phone, telegramID) { this.db.prepare("INSERT OR IGNORE INTO code_access(phone,telegram_id) VALUES(?,?)").run(normalizePhone(phone), telegramID); }
 
-  revokePurchasedNumber(ownerID, numberID, phone) {
-    return this.tx(() => {
-      const number = this.db.prepare("SELECT * FROM numbers WHERE id=? AND owner_id=? AND phone=?").get(numberID, ownerID, normalizePhone(phone));
-      if (!number) return false;
-      if (number.format === "free") throw new Error("the persistent free number cannot be refunded");
-      this.db.prepare("DELETE FROM code_access WHERE phone=?").run(number.phone);
-      this.db.prepare("DELETE FROM numbers WHERE id=?").run(number.id);
+  async grantCodeAccess(phone, telegramID) {
+    await this.pool.query("INSERT INTO code_access(phone, telegram_id) VALUES($1, $2) ON CONFLICT DO NOTHING", [normalizePhone(phone), telegramID]);
+  }
+
+  async revokePurchasedNumber(ownerID, numberID, phone, resolveUserByPhone) {
+    if (typeof resolveUserByPhone !== "function") throw new Error("account lookup is required for number refunds");
+    return this.tx(async (client) => {
+      await client.query("SELECT telegram_id FROM users WHERE telegram_id = $1 FOR UPDATE", [ownerID]);
+      const number = (await client.query("SELECT * FROM numbers WHERE id = $1 AND owner_id = $2 AND phone = $3 FOR UPDATE", [numberID, ownerID, normalizePhone(phone)])).rows[0];
+      if (!number) throw new Error("purchased number not found");
+      if (number.retired) return false;
+      if (number.format === "free") throw new Error("the free number cannot be refunded");
+      if (number.code_expires_at > now()) throw new Error("number has unexpired verification codes; retry after they expire");
+      // A bounded read-only Admin API call while holding the number lock. A
+      // failure or an existing account keeps the original OTP route untouched.
+      if (await resolveUserByPhone(number.phone) !== 0) throw new Error("number is still bound; change it in the signed-in client before refunding");
+      await client.query("DELETE FROM code_access WHERE phone = $1", [number.phone]);
+      await client.query("UPDATE numbers SET retired = TRUE, is_current = FALSE, login_code = '', code_expires_at = 0 WHERE id = $1", [number.id]);
       if (number.is_current) {
-        const previous = this.db.prepare("SELECT id FROM numbers WHERE owner_id=? ORDER BY id DESC LIMIT 1").get(ownerID);
-        if (previous) this.db.prepare("UPDATE numbers SET is_current=1 WHERE id=?").run(previous.id);
+        await client.query("UPDATE numbers SET is_current = TRUE WHERE id = (SELECT id FROM numbers WHERE owner_id = $1 AND format = 'free' AND retired = FALSE ORDER BY id DESC LIMIT 1)", [ownerID]);
       }
       return true;
     });
   }
 
-  getSetting(key, fallback = "") { return this.db.prepare("SELECT value FROM settings WHERE key=?").get(key)?.value ?? fallback; }
-  setSetting(key, value) { this.db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, String(value)); }
-  starsRate() { const value = Number(this.getSetting("stars_rate", "20")); return Number.isSafeInteger(value) && value > 0 ? value : 20; }
+  async getSetting(key, fallback = "") {
+    const res = await this.pool.query("SELECT value FROM settings WHERE key = $1", [key]);
+    return res.rows[0]?.value ?? fallback;
+  }
 
-  setPending(id, kind, payload = {}) { this.db.prepare("INSERT INTO pending(telegram_id,kind,payload,updated_at) VALUES(?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET kind=excluded.kind,payload=excluded.payload,updated_at=excluded.updated_at").run(id, kind, JSON.stringify(payload), now()); }
-  pending(id) { const row = this.db.prepare("SELECT * FROM pending WHERE telegram_id=?").get(id); return row ? { kind: row.kind, payload: JSON.parse(row.payload) } : null; }
-  clearPending(id) { this.db.prepare("DELETE FROM pending WHERE telegram_id=?").run(id); }
+  async setSetting(key, value) {
+    await this.pool.query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value", [key, String(value)]);
+  }
 
-  recentRecipients(buyerID) { return this.db.prepare("SELECT recipient_id FROM recent_recipients WHERE buyer_id=? ORDER BY used_at DESC LIMIT 3").all(buyerID).map((row) => row.recipient_id); }
-  rememberRecipient(buyerID, recipientID) { this.db.prepare("INSERT INTO recent_recipients(buyer_id,recipient_id,used_at) VALUES(?,?,?) ON CONFLICT(buyer_id,recipient_id) DO UPDATE SET used_at=excluded.used_at").run(buyerID, recipientID, now()); }
+  async starsRate() {
+    const value = Number(await this.getSetting("stars_rate", "20"));
+    return Number.isSafeInteger(value) && value > 0 ? value : 20;
+  }
 
-  reserveSpin(id, serverUserID, proposedPrize) {
-    return this.tx(() => {
-      const user = this.user(id); if (!user) throw new Error("user not found");
+  async setPending(id, kind, payload = {}) {
+    await this.pool.query(
+      `INSERT INTO pending(telegram_id, kind, payload, updated_at) VALUES($1, $2, $3, $4)
+       ON CONFLICT(telegram_id) DO UPDATE SET kind = EXCLUDED.kind, payload = EXCLUDED.payload, updated_at = EXCLUDED.updated_at`,
+      [id, kind, JSON.stringify(payload), now()]
+    );
+  }
+
+  async pending(id) {
+    const res = await this.pool.query("SELECT * FROM pending WHERE telegram_id = $1", [id]);
+    const row = res.rows[0];
+    return row ? { kind: row.kind, payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload } : null;
+  }
+
+  async clearPending(id) {
+    await this.pool.query("DELETE FROM pending WHERE telegram_id = $1", [id]);
+  }
+
+  async recentRecipients(buyerID) {
+    const res = await this.pool.query("SELECT recipient_id FROM recent_recipients WHERE buyer_id = $1 ORDER BY used_at DESC LIMIT 3", [buyerID]);
+    return res.rows.map((row) => row.recipient_id);
+  }
+
+  async rememberRecipient(buyerID, recipientID) {
+    await this.pool.query(
+      "INSERT INTO recent_recipients(buyer_id, recipient_id, used_at) VALUES($1, $2, $3) ON CONFLICT(buyer_id, recipient_id) DO UPDATE SET used_at = EXCLUDED.used_at",
+      [buyerID, recipientID, now()]
+    );
+  }
+
+  async reserveSpin(id, serverUserID, proposedPrize) {
+    return this.tx(async (client) => {
+      const user = (await client.query("SELECT * FROM users WHERE telegram_id = $1", [id])).rows[0];
+      if (!user) throw new Error("user not found");
       const day = dayKey(), week = weekKey();
-      const existing = this.db.prepare("SELECT * FROM spin_awards WHERE telegram_id=? AND day=?").get(id, day);
+      const existing = (await client.query("SELECT * FROM spin_awards WHERE telegram_id = $1 AND day = $2", [id, day])).rows[0];
       if (existing) {
         if (existing.status === "done") throw new Error("daily spin limit reached");
         if (existing.server_user_id !== serverUserID) throw new Error("finish the pending spin with the original server account ID");
@@ -250,93 +324,257 @@ INSERT OR IGNORE INTO settings(key,value) VALUES('stars_rate','20');
       const weekCount = user.spin_week === week ? user.spin_week_count : 0;
       if (dayCount >= 1) throw new Error("daily spin limit reached");
       if (weekCount >= 5) throw new Error("weekly spin limit reached");
-      this.db.prepare("UPDATE users SET spin_day=?,spin_day_count=?,spin_week=?,spin_week_count=?,updated_at=? WHERE telegram_id=?").run(day, dayCount + 1, week, weekCount + 1, now(), id);
-      this.db.prepare("INSERT INTO spin_awards(telegram_id,day,week,server_user_id,prize,status,created_at) VALUES(?,?,?,?,?,'pending',?)").run(id, day, week, serverUserID, proposedPrize, now());
-      return this.db.prepare("SELECT * FROM spin_awards WHERE telegram_id=? AND day=?").get(id, day);
+      await client.query(
+        "UPDATE users SET spin_day = $1, spin_day_count = $2, spin_week = $3, spin_week_count = $4, updated_at = $5 WHERE telegram_id = $6",
+        [day, dayCount + 1, week, weekCount + 1, now(), id]
+      );
+      const result = await client.query(
+        "INSERT INTO spin_awards(telegram_id, day, week, server_user_id, prize, status, created_at) VALUES($1, $2, $3, $4, $5, 'pending', $6) RETURNING *",
+        [id, day, week, serverUserID, proposedPrize, now()]
+      );
+      return result.rows[0];
     });
   }
-  finishSpin(id, day) { this.db.prepare("UPDATE spin_awards SET status='done' WHERE telegram_id=? AND day=?").run(id, day); }
 
-  createPromo(code, stars, limit) {
+  async finishSpin(id, day) {
+    await this.pool.query("UPDATE spin_awards SET status = 'done' WHERE telegram_id = $1 AND day = $2", [id, day]);
+  }
+
+  async createPromo(code, stars, limit) {
     code = String(code ?? "").trim().toLowerCase();
     if (!/^[a-z0-9_-]{3,32}$/.test(code) || !Number.isSafeInteger(stars) || stars <= 0 || !Number.isSafeInteger(limit) || limit < 0) throw new Error("invalid promo parameters");
-    this.db.prepare("INSERT INTO promos(code,stars_amount,max_acts,created_at) VALUES(?,?,?,?)").run(code, stars, limit, now());
+    await this.pool.query("INSERT INTO promos(code, stars_amount, max_acts, created_at) VALUES($1, $2, $3, $4)", [code, stars, limit, now()]);
     return code;
   }
-  claimPromo(code, id) { return this.claimCampaign("promo", code.trim().toLowerCase(), id); }
-  createGiveaway(text, stars, limit) {
+
+  async claimPromo(code, id) { return this.claimCampaign("promo", code.trim().toLowerCase(), id); }
+
+  async createGiveaway(text, stars, limit) {
     text = String(text ?? "").trim();
     if (!text || text.length > 1000 || !Number.isSafeInteger(stars) || stars <= 0 || !Number.isSafeInteger(limit) || limit < 0) throw new Error("invalid giveaway parameters");
     const id = randomBytes(4).toString("hex");
-    this.db.prepare("INSERT INTO giveaways(id,text,stars_amount,max_acts,created_at) VALUES(?,?,?,?,?)").run(id, text, stars, limit, now());
-    return this.db.prepare("SELECT * FROM giveaways WHERE id=?").get(id);
+    const result = await this.pool.query(
+      "INSERT INTO giveaways(id, text, stars_amount, max_acts, created_at) VALUES($1, $2, $3, $4, $5) RETURNING *",
+      [id, text, stars, limit, now()]
+    );
+    return result.rows[0];
   }
-  claimGiveaway(id, telegramID) { return this.claimCampaign("giveaway", id, telegramID); }
 
-  releaseCampaignClaim(kind, key, telegramID) {
+  async claimGiveaway(id, telegramID) { return this.claimCampaign("giveaway", id, telegramID); }
+
+  async releaseCampaignClaim(kind, key, telegramID) {
     const table = kind === "promo" ? "promos" : "giveaways";
     const claims = kind === "promo" ? "promo_claims" : "giveaway_claims";
     const keyColumn = kind === "promo" ? "code" : "giveaway_id";
     const itemKey = kind === "promo" ? "code" : "id";
-    this.tx(() => {
-      const removed = this.db.prepare(`DELETE FROM ${claims} WHERE ${keyColumn}=? AND telegram_id=?`).run(key, telegramID);
-      if (removed.changes) this.db.prepare(`UPDATE ${table} SET activations=MAX(0,activations-1),active=1 WHERE ${itemKey}=?`).run(key);
+    await this.tx(async (client) => {
+      const removed = await client.query(`DELETE FROM ${claims} WHERE ${keyColumn} = $1 AND telegram_id = $2`, [key, telegramID]);
+      if (removed.rowCount) await client.query(`UPDATE ${table} SET activations = GREATEST(0, activations - 1), active = TRUE WHERE ${itemKey} = $1`, [key]);
     });
   }
 
-  claimCampaign(kind, key, telegramID) {
+  async claimCampaign(kind, key, telegramID) {
     const table = kind === "promo" ? "promos" : "giveaways";
     const claims = kind === "promo" ? "promo_claims" : "giveaway_claims";
     const keyColumn = kind === "promo" ? "code" : "giveaway_id";
-    return this.tx(() => {
-      const item = this.db.prepare(`SELECT * FROM ${table} WHERE ${kind === "promo" ? "code" : "id"}=?`).get(key);
+    const itemKey = kind === "promo" ? "code" : "id";
+    return this.tx(async (client) => {
+      const item = (await client.query(`SELECT * FROM ${table} WHERE ${itemKey} = $1`, [key])).rows[0];
       if (!item || !item.active) throw new Error("campaign is unavailable");
       if (item.max_acts > 0 && item.activations >= item.max_acts) throw new Error("campaign limit reached");
-      if (this.db.prepare(`SELECT 1 FROM ${claims} WHERE ${keyColumn}=? AND telegram_id=?`).get(key, telegramID)) throw new Error("already claimed");
-      this.db.prepare(`INSERT INTO ${claims}(${keyColumn},telegram_id,claimed_at) VALUES(?,?,?)`).run(key, telegramID, now());
-      const active = item.max_acts <= 0 || item.activations + 1 < item.max_acts ? 1 : 0;
-      this.db.prepare(`UPDATE ${table} SET activations=activations+1,active=? WHERE ${kind === "promo" ? "code" : "id"}=?`).run(active, key);
+      const claimed = (await client.query(`SELECT 1 FROM ${claims} WHERE ${keyColumn} = $1 AND telegram_id = $2`, [key, telegramID])).rows[0];
+      if (claimed) throw new Error("already claimed");
+      await client.query(`INSERT INTO ${claims}(${keyColumn}, telegram_id, claimed_at) VALUES($1, $2, $3)`, [key, telegramID, now()]);
+      const active = item.max_acts <= 0 || item.activations + 1 < item.max_acts;
+      await client.query(`UPDATE ${table} SET activations = activations + 1, active = $1 WHERE ${itemKey} = $2`, [active, key]);
       return { ...item, activations: item.activations + 1, active, stars_amount: item.stars_amount };
     });
   }
 
-  beginPayment(chargeID, telegramID, payload, amount) {
-    return this.tx(() => {
-      const row = this.db.prepare("SELECT * FROM processed_payments WHERE charge_id=?").get(chargeID);
+  async beginPayment(chargeID, telegramID, payload, amount) {
+    return this.tx(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`payment:${chargeID}`]);
+      const row = (await client.query("SELECT * FROM processed_payments WHERE charge_id = $1", [chargeID])).rows[0];
+      if (row && (row.telegram_id !== telegramID || row.invoice_payload !== payload || row.amount !== amount)) throw new Error("IDEMPOTENCY_CONFLICT");
       if (row?.status === "done") return false;
       if (row?.status === "processing" && row.updated_at > now() - 300) return false;
-      this.db.prepare(`INSERT INTO processed_payments(charge_id,telegram_id,invoice_payload,amount,status,updated_at) VALUES(?,?,?,?,?,?)
-        ON CONFLICT(charge_id) DO UPDATE SET status='processing',error='',updated_at=excluded.updated_at`).run(chargeID, telegramID, payload, amount, "processing", now());
+      await client.query(
+        `INSERT INTO processed_payments(charge_id, telegram_id, invoice_payload, amount, status, updated_at)
+         VALUES($1, $2, $3, $4, 'processing', $5)
+         ON CONFLICT(charge_id) DO UPDATE SET status = 'processing', error = '', updated_at = EXCLUDED.updated_at`,
+        [chargeID, telegramID, payload, amount, now()]
+      );
       return true;
     });
   }
-  finishPayment(chargeID) { this.db.prepare("UPDATE processed_payments SET status='done',error='',updated_at=? WHERE charge_id=?").run(now(), chargeID); }
-  failPayment(chargeID, error) { this.db.prepare("UPDATE processed_payments SET status='failed',error=?,updated_at=? WHERE charge_id=?").run(String(error).slice(0, 1000), now(), chargeID); }
-  addSale(sale) { this.db.prepare(`INSERT OR IGNORE INTO sales(created_at,product,title,stars_price,recipient_id,buyer_id,buyer_name,charge_id,fulfillment_json) VALUES(?,?,?,?,?,?,?,?,?)`).run(now(), sale.product, sale.title, sale.starsPrice, sale.recipientID, sale.buyerID, sale.buyerName ?? "", sale.chargeID, JSON.stringify(sale.fulfillment ?? {})); }
-  saleByCharge(chargeID) {
-    const row = this.db.prepare(`SELECT s.*,p.invoice_payload,p.status payment_status FROM sales s LEFT JOIN processed_payments p ON p.charge_id=s.charge_id WHERE s.charge_id=?`).get(chargeID);
+
+  async finishPayment(chargeID) {
+    await this.pool.query("UPDATE processed_payments SET status = 'done', error = '', updated_at = $1 WHERE charge_id = $2", [now(), chargeID]);
+  }
+
+  async failPayment(chargeID, error) {
+    await this.pool.query("UPDATE processed_payments SET status = 'failed', error = $1, updated_at = $2 WHERE charge_id = $3 AND status <> 'done'", [String(error).slice(0, 1000), now(), chargeID]);
+  }
+
+  async addSale(sale) {
+    await this.insertSale(this.pool, sale);
+  }
+
+  async insertSale(client, sale) {
+    await client.query(
+      `INSERT INTO sales(created_at, product, title, stars_price, recipient_id, buyer_id, buyer_name, charge_id, fulfillment_json)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING`,
+      [now(), sale.product, sale.title, sale.starsPrice, sale.recipientID, sale.buyerID, sale.buyerName ?? "", sale.chargeID, JSON.stringify(sale.fulfillment ?? {})]
+    );
+  }
+
+  async paymentByCharge(chargeID) {
+    return (await this.pool.query("SELECT * FROM processed_payments WHERE charge_id = $1", [chargeID])).rows[0] ?? null;
+  }
+
+  async fulfillNumberPurchase(sale, chatID, format) {
+    return this.tx(async (client) => {
+      const payment = (await client.query("SELECT * FROM processed_payments WHERE charge_id = $1 FOR UPDATE", [sale.chargeID])).rows[0];
+      if (!payment || payment.telegram_id !== sale.buyerID || payment.amount !== sale.starsPrice) throw new Error("IDEMPOTENCY_CONFLICT");
+      const existing = (await client.query("SELECT * FROM sales WHERE charge_id = $1", [sale.chargeID])).rows[0];
+      if (existing) {
+        if (existing.buyer_id !== sale.buyerID || existing.product !== sale.product || existing.stars_price !== sale.starsPrice) throw new Error("IDEMPOTENCY_CONFLICT");
+        const number = (await client.query("SELECT * FROM numbers WHERE id = $1 AND owner_id = $2", [existing.fulfillment_json.numberID, sale.buyerID])).rows[0];
+        if (!number) throw new Error("recorded purchased number is missing");
+        return number;
+      }
+      const number = await this.createNumberInTransaction(client, sale.buyerID, chatID, format, "ANON", true);
+      const fulfillment = { kind: "number", ownerID: sale.buyerID, numberID: number.id, phone: number.phone, format: number.format };
+      await this.insertSale(client, { ...sale, recipientID: sale.buyerID, fulfillment });
+      await client.query("UPDATE processed_payments SET status = 'done', error = '', updated_at = $1 WHERE charge_id = $2", [now(), sale.chargeID]);
+      return number;
+    });
+  }
+
+  async saleByCharge(chargeID) {
+    const res = await this.pool.query(
+      "SELECT s.*, p.invoice_payload, p.status AS payment_status FROM sales s LEFT JOIN processed_payments p ON p.charge_id = s.charge_id WHERE s.charge_id = $1",
+      [chargeID]
+    );
+    const row = res.rows[0];
     if (!row) return null;
-    try { row.fulfillment = JSON.parse(row.fulfillment_json || "{}"); } catch { row.fulfillment = {}; }
+    if (typeof row.fulfillment_json === "string") {
+      try { row.fulfillment = JSON.parse(row.fulfillment_json || "{}"); } catch { row.fulfillment = {}; }
+    } else {
+      row.fulfillment = row.fulfillment_json || {};
+    }
     return row;
   }
-  recentSales(limit = 20) { return this.db.prepare("SELECT * FROM sales ORDER BY id DESC LIMIT ?").all(limit); }
-  refundByCharge(chargeID) { return this.db.prepare("SELECT * FROM refunds WHERE charge_id=?").get(chargeID) ?? null; }
-  isRefunded(chargeID) { return this.refundByCharge(chargeID)?.status === "completed"; }
-  beginRefund(chargeID, telegramID) {
-    this.db.prepare(`INSERT INTO refunds(charge_id,telegram_id,refunded_at,status,internal_reversed,error,updated_at)
-      VALUES(?,?,0,'reversing',0,'',?) ON CONFLICT(charge_id) DO UPDATE SET telegram_id=excluded.telegram_id,
-      status=CASE WHEN refunds.status='completed' THEN refunds.status WHEN refunds.internal_reversed=1 THEN 'internal_reversed' ELSE 'reversing' END,
-      error='',updated_at=excluded.updated_at`).run(chargeID, telegramID, now());
+
+  async recentSales(limit = 20) {
+    const res = await this.pool.query("SELECT * FROM sales ORDER BY id DESC LIMIT $1", [limit]);
+    return res.rows;
+  }
+
+  async refundByCharge(chargeID) {
+    const res = await this.pool.query("SELECT * FROM refunds WHERE charge_id = $1", [chargeID]);
+    return res.rows[0] ?? null;
+  }
+
+  async isRefunded(chargeID) {
+    const refund = await this.refundByCharge(chargeID);
+    return refund?.status === "completed";
+  }
+
+  async beginRefund(chargeID, telegramID) {
+    await this.pool.query(
+      `INSERT INTO refunds(charge_id, telegram_id, refunded_at, status, internal_reversed, error, updated_at)
+       VALUES($1, $2, 0, 'reversing', FALSE, '', $3)
+       ON CONFLICT(charge_id) DO UPDATE SET telegram_id = EXCLUDED.telegram_id,
+       status = CASE WHEN refunds.status = 'completed' THEN refunds.status WHEN refunds.internal_reversed = TRUE THEN 'internal_reversed' ELSE 'reversing' END,
+       error = '', updated_at = EXCLUDED.updated_at`,
+      [chargeID, telegramID, now()]
+    );
     return this.refundByCharge(chargeID);
   }
-  markRefundInternal(chargeID) { this.db.prepare("UPDATE refunds SET status='internal_reversed',internal_reversed=1,error='',updated_at=? WHERE charge_id=?").run(now(), chargeID); }
-  failRefund(chargeID, error) { this.db.prepare("UPDATE refunds SET status=CASE WHEN internal_reversed=1 THEN 'internal_reversed' ELSE 'failed' END,error=?,updated_at=? WHERE charge_id=?").run(String(error).slice(0, 1000), now(), chargeID); }
-  markRefunded(chargeID, telegramID) { this.db.prepare(`INSERT INTO refunds(charge_id,telegram_id,refunded_at,status,internal_reversed,error,updated_at) VALUES(?,?,?,'completed',1,'',?)
-    ON CONFLICT(charge_id) DO UPDATE SET telegram_id=excluded.telegram_id,refunded_at=excluded.refunded_at,status='completed',internal_reversed=1,error='',updated_at=excluded.updated_at`).run(chargeID, telegramID, now(), now()); }
 
-  addSupportMessage(id, chatID, text) { const result = this.db.prepare("INSERT INTO support_messages(telegram_id,chat_id,text,created_at) VALUES(?,?,?,?)").run(id, chatID, text, now()); return Number(result.lastInsertRowid); }
-  supportMessage(ticketID) { return this.db.prepare("SELECT * FROM support_messages WHERE id=?").get(ticketID) ?? null; }
-  closeSupportMessage(ticketID) { this.db.prepare("UPDATE support_messages SET status='answered',answered_at=? WHERE id=?").run(now(), ticketID); }
+  async markRefundInternal(chargeID) {
+    await this.pool.query("UPDATE refunds SET status = 'internal_reversed', internal_reversed = TRUE, error = '', updated_at = $1 WHERE charge_id = $2", [now(), chargeID]);
+  }
+
+  async failRefund(chargeID, error) {
+    await this.pool.query(
+      "UPDATE refunds SET status = CASE WHEN internal_reversed = TRUE THEN 'internal_reversed' ELSE 'failed' END, error = $1, updated_at = $2 WHERE charge_id = $3",
+      [String(error).slice(0, 1000), now(), chargeID]
+    );
+  }
+
+  async markRefunded(chargeID, telegramID) {
+    await this.pool.query(
+      `INSERT INTO refunds(charge_id, telegram_id, refunded_at, status, internal_reversed, error, updated_at)
+       VALUES($1, $2, $3, 'completed', TRUE, '', $3)
+       ON CONFLICT(charge_id) DO UPDATE SET telegram_id = EXCLUDED.telegram_id, refunded_at = EXCLUDED.refunded_at,
+       status = 'completed', internal_reversed = TRUE, error = '', updated_at = EXCLUDED.updated_at`,
+      [chargeID, telegramID, now()]
+    );
+  }
+
+  async addSupportMessage(id, chatID, text) {
+    const res = await this.pool.query(
+      "INSERT INTO support_messages(telegram_id, chat_id, text, created_at) VALUES($1, $2, $3, $4) RETURNING id",
+      [id, chatID, text, now()]
+    );
+    return res.rows[0].id;
+  }
+
+  async supportMessage(ticketID) {
+    const res = await this.pool.query("SELECT * FROM support_messages WHERE id = $1", [ticketID]);
+    return res.rows[0] ?? null;
+  }
+
+  async closeSupportMessage(ticketID) {
+    await this.pool.query("UPDATE support_messages SET status = 'answered', answered_at = $1 WHERE id = $2", [now(), ticketID]);
+  }
+
+  // --- Verified phones (real-number mode) ---
+
+  async verifiedPhone(telegramID) {
+    const res = await this.pool.query("SELECT * FROM verified_phones WHERE telegram_id = $1", [telegramID]);
+    return res.rows[0] ?? null;
+  }
+
+  async bindVerifiedPhone(telegramID, chatID, phone) {
+    const formatted = normalizePhone(phone);
+    return this.tx(async (client) => {
+      await client.query("DELETE FROM verified_phones WHERE phone = $1", [formatted]);
+      const res = await client.query(
+        `INSERT INTO verified_phones(phone, telegram_id, chat_id, verified_at) VALUES($1, $2, $3, $4)
+         ON CONFLICT(telegram_id) DO UPDATE SET phone = EXCLUDED.phone, chat_id = EXCLUDED.chat_id, verified_at = EXCLUDED.verified_at
+         RETURNING *`,
+        [formatted, telegramID, chatID, now()]
+      );
+      return res.rows[0] ?? null;
+    });
+  }
+
+  async unbindVerifiedPhone(telegramID) {
+    const res = await this.pool.query("DELETE FROM verified_phones WHERE telegram_id = $1", [telegramID]);
+    return res.rowCount > 0;
+  }
+
+  // --- Admin exact lookups (no dumps) ---
+
+  async adminLookupByNumber(phone) {
+    phone = normalizePhone(phone);
+    const number = await this.findNumber(phone);
+    if (!number) return null;
+    const owner = await this.user(number.owner_id);
+    const verified = await this.pool.query("SELECT * FROM verified_phones WHERE phone = $1", [phone]);
+    return { number, owner, verifiedPhone: verified.rows[0] ?? null };
+  }
+
+  async adminLookupByTelegramID(telegramID) {
+    const user = await this.user(telegramID);
+    if (!user) return null;
+    const numbers = await this.numbers(telegramID);
+    const verified = await this.verifiedPhone(telegramID);
+    return { user, numbers, verifiedPhone: verified };
+  }
 }
 
 export const internals = { generatedNumber, normalizePhone, dayKey, weekKey };

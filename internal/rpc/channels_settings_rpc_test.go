@@ -646,6 +646,7 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	dialogStore := memory.NewDialogStore()
 	dialogStore.BindDialogAggregateStores(channelStore, nil)
 	r := New(Config{}, Deps{
+		Account:        newForumNotifyTestAccount(),
 		Users:          userService,
 		Channels:       channelService,
 		Dialogs:        appdialogs.NewService(dialogStore, channelStore),
@@ -1612,8 +1613,8 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	}
 	recommendationsReq := &tg.ChannelsGetChannelRecommendationsRequest{}
 	recommendationsReq.SetChannel(input)
-	if _, err := r.onChannelsGetChannelRecommendations(WithUserID(ctx, owner.ID), recommendationsReq); err == nil || !strings.Contains(err.Error(), "CHANNEL_INVALID") {
-		t.Fatalf("megagroup channel recommendations err = %v, want CHANNEL_INVALID", err)
+	if _, err := r.onChannelsGetChannelRecommendations(WithUserID(ctx, owner.ID), recommendationsReq); err != nil {
+		t.Fatalf("megagroup channel recommendations err = %v, want none", err)
 	}
 	if ok, err := r.onChannelsSetEmojiStickers(WithUserID(ctx, owner.ID), &tg.ChannelsSetEmojiStickersRequest{Channel: input, Stickerset: &tg.InputStickerSetEmpty{}}); err != nil || !ok {
 		t.Fatalf("set emoji stickers = ok %v err %v, want true", ok, err)

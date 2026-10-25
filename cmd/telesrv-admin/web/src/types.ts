@@ -52,6 +52,39 @@ export type AuthorizationRow = {
   ActiveAt: string;
 };
 
+// SharedDeviceAccount is one account whose authorizations matched a
+// SharedDeviceGroup's device fingerprint.
+export type SharedDeviceAccount = {
+  UserID: number;
+  Phone: string;
+  Username: string;
+  FirstName: string;
+  LastName: string;
+  ActiveAt: string;
+};
+
+// SharedDeviceGroup is a device fingerprint (device model + OS + platform +
+// IP) shared by more than one distinct account -- a heuristic multi-account
+// signal, not proof (device_model/system_version are client-reported and
+// spoofable, and IP alone collides behind NAT/shared wifi/carrier CGNAT).
+export type SharedDeviceGroup = {
+  DeviceModel: string;
+  SystemVersion: string;
+  Platform: string;
+  IP: string;
+  AccountCount: number;
+  LastActiveAt: string;
+  Accounts: SharedDeviceAccount[];
+};
+
+export type SharedDeviceGroupListResponse = {
+  limit: number;
+  offset: number;
+  rows: SharedDeviceGroup[];
+  has_more: boolean;
+  next_offset: number;
+};
+
 export type AuditLogRow = {
   ID: number;
   CommandID: string;
@@ -63,6 +96,83 @@ export type AuditLogRow = {
   Error: string;
   Result: string;
   CreatedAt: string;
+};
+
+export type DonationChain = {
+  Key: string;
+  Name: string;
+  ChainID: number;
+  RPCURL: string;
+  WSURL: string;
+  NativeSymbol: string;
+  NativeDecimals: number;
+  ConfirmationsRequired: number;
+  PriceFeedAddress: string;
+  ManualUSDRateMicros: number;
+  Enabled: boolean;
+};
+
+export type DonationToken = {
+  ChainKey: string;
+  Symbol: string;
+  ContractAddress: string;
+  Decimals: number;
+};
+
+export type DonationChainsResponse = {
+  chains: DonationChain[];
+  tokens: DonationToken[];
+};
+
+export type DonationWalletStatus = {
+  HasWallet: boolean;
+  AddressCount: number;
+};
+
+export type ItemPrice = {
+  product_code: string;
+  title?: string;
+  stars_price: number;
+  bid: number;
+  enabled: boolean;
+  updated_by?: string;
+  updated_at?: number;
+};
+
+export type ItemPricesResponse = {
+  rows: ItemPrice[];
+  stars_rate: number;
+  // The stars_N package sizes the bot offers. Their price is the package size
+  // itself and they credit size * stars_rate server Stars, so they are not
+  // per-product rows and are listed read-only rather than editable.
+  star_packages?: number[];
+};
+
+export type DonationDepositStatus = "pending" | "confirmed" | "credited" | "orphaned";
+
+export type DonationDepositRow = {
+  ID: number;
+  UserID: number;
+  ChainKey: string;
+  TokenSymbol: string;
+  TxHash: string;
+  LogIndex: number;
+  BlockNumber: number;
+  AmountRaw: string;
+  USDValueMicros: number;
+  StarsCredited: number;
+  Status: DonationDepositStatus;
+  Confirmations: number;
+  DetectedAt: string;
+  CreditedAt: string;
+  UserPhone: string;
+  UserFirstName: string;
+};
+
+export type DonationDepositListResponse = {
+  rows: DonationDepositRow[];
+  has_more: boolean;
+  next_before_id: string;
 };
 
 export type AccountDetail = {
@@ -377,6 +487,26 @@ export type ModerationCaseDetail = {
   Appeals: ModerationAppeal[];
 };
 
+// One evidence reference plus its frozen snapshot. EvidenceSchemaVersion marks
+// the shape of Evidence; the admin console only ever displays it, never repairs
+// it, so Evidence stays `unknown` here.
+export type ModerationReportItem = {
+  Kind: string;
+  Peer: ModerationPeer;
+  ItemID: number;
+  SecondaryID: number;
+  AuthorUserID: number;
+  EvidenceSchemaVersion: number;
+  Evidence: unknown;
+  EvidenceHash: string;
+};
+
+export type ModerationMediaHold = {
+  ItemIndex: number;
+  Kind: string;
+  StorageKey: string;
+};
+
 export type ModerationReport = {
   ID: number;
   ReporterUserID: number;
@@ -385,8 +515,8 @@ export type ModerationReport = {
   Reason: string;
   Option: string;
   Comment: string;
-  Items: Array<Record<string, unknown>>;
-  MediaHolds: Array<Record<string, unknown>>;
+  Items: ModerationReportItem[];
+  MediaHolds: ModerationMediaHold[];
   CreatedAt: string;
 };
 
@@ -486,6 +616,39 @@ export type CollectibleUsernameDetail = {
   transfers: CollectibleUsernameTransferRow[] | null;
 };
 
+// One minted collectible star gift (an NFT-style, numbered gift instance) as the
+// NFT Items -> NFT Gifts tab lists it. int64 columns arrive as JSON strings.
+export type UniqueStarGiftRow = {
+  ID: string;
+  GiftID: string;
+  Title: string;
+  Slug: string;
+  Num: number;
+  OwnerPeerType: CollectiblePeerType;
+  OwnerPeerID: string;
+  OwnerUsername: string;
+  OwnerName: string;
+  OwnerAddress: string;
+  WalletName: string;
+  GiftAddress: string;
+  HostPeerType: string;
+  HostPeerID: string;
+  Burned: boolean;
+  Crafted: boolean;
+  KeepOriginalDetails: boolean;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type UniqueStarGiftListResponse = {
+  rows: UniqueStarGiftRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+// Payload of the NFT Gifts "TON wallet" command: ref addresses the gift by
+// slug, NFT address or id, clear releases it back to its Telegram owner.
+
 export type CollectiblePhoneTier = "standard" | "exclusive";
 export type CollectiblePhoneStatus = "vault" | "owned" | "burned";
 export type CollectiblePhoneRow = {
@@ -556,6 +719,46 @@ export type AccountRatingListResponse = {
 export type AccountRatingDetail = {
   rating: AccountRatingRow;
   events: AccountRatingEventRow[] | null;
+};
+
+// The Stars audit surfaces. Every int64 is tagged `,string` on the backend, so
+// user ids, balances and transaction amounts stay decimal strings and never pass
+// through a float -- a Stars balance outgrows Number.MAX_SAFE_INTEGER almost
+// anywhere the project wants to scale.
+export type StarsAccountRow = {
+  UserID: string;
+  Phone: string;
+  Username: string;
+  FirstName: string;
+  LastName: string;
+  Balance: string;
+  Granted: boolean;
+  UpdatedAt: string;
+  TxnCount: string;
+};
+
+export type StarsTopListResponse = {
+  rows: StarsAccountRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type StarsLedgerEntryRow = {
+  ID: string;
+  Amount: string;
+  Date: string;
+  Reason: string;
+  Title: string;
+  Description: string;
+  PeerType: string;
+  PeerID: string;
+};
+
+export type StarsLedgerResponse = {
+  account: StarsAccountRow;
+  entries: StarsLedgerEntryRow[] | null;
+  has_more: boolean;
+  next_before_id: string;
 };
 
 // Official platform verification. Every int64 the backend tags `,string` stays a
@@ -790,6 +993,56 @@ export type AdminLoginResult = AdminSession & {
   csrf_token: string;
 };
 
+// One admin console operator. Mirrors AdminConsoleUser in adminusers.go; the
+// password hash deliberately has no representation here.
+export type AdminConsoleUser = {
+  id: number;
+  username: string;
+  permissions: string[];
+  enabled: boolean;
+  token_epoch: number;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+};
+
+// The built-in operator backed by TELESRV_ADMIN_UI_PASSWORD / _TOKEN. It has no
+// database row, so it carries no id and cannot be edited from the panel.
+export type AdminConsoleSystemOperator = {
+  username: string;
+  permissions: string[];
+  enabled: boolean;
+  system: true;
+};
+
+export type AdminConsoleUserList = {
+  system?: AdminConsoleSystemOperator;
+  rows: AdminConsoleUser[];
+  // The rights the server is willing to assign, so the editor cannot drift
+  // from what the routes actually enforce.
+  available_permissions: string[];
+};
+
+// One row of the global action trail served by GET /api/audit-logs (audit.go).
+export type AuditLogEntry = {
+  id: number;
+  command_id: string;
+  actor: string;
+  action: string;
+  dry_run: boolean;
+  reason: string;
+  status: string;
+  error?: string;
+  result?: string;
+  created_at: string;
+  target_type?: string;
+  target_id?: number;
+};
+
+export type AuditLogListResponse = {
+  rows: AuditLogEntry[];
+};
+
 export type MessageDetail = {
   Message: MessageRow;
   MessageJSON: string;
@@ -936,6 +1189,9 @@ export type BroadcastListResponse = {
 export type GifCatalogRow = {
   ID: string;
   Title: string;
+  FileName: string;
+  Category: string;
+  CategoryManual: boolean;
   DocumentID: string;
   Enabled: boolean;
   SortOrder: number;
@@ -978,4 +1234,58 @@ export type GroupMessageListResponse = {
   before_id: number;
   limit: number;
   rows: GroupMessageRow[];
+};
+
+// Server Settings (cmd/telesrv-admin/serversettings.go):
+// identity + login-notification template overrides, .env groups, and the
+// read-only status probes. The optional fields come back omitted when the
+// override is unset (json:"...,omitempty"), so they are undefined rather than
+// "" in that case.
+export type ServerIdentity = {
+  name: string;
+  description: string;
+  icon_ext?: string;
+  welcome_message_phone_template?: string;
+  welcome_message_email_template?: string;
+  login_code_message_template?: string;
+  default_welcome_message_phone_template: string;
+  default_welcome_message_email_template: string;
+  default_login_code_message_template: string;
+};
+
+export type StatsDailyCountPoint = {
+  date: string;
+  value: number;
+};
+
+export type StatsDailyStarPoint = {
+  date: string;
+  stars: number;
+  gifts: number;
+};
+
+export type StatsResponse = {
+  stars_given_today: number;
+  gifts_sent_today: number;
+  stars_given_total: number;
+  gifts_sent_total: number;
+  star_balance_total: number;
+  users_total: number;
+  online_now: number;
+  days: number;
+  users_chart: StatsDailyCountPoint[];
+  active_chart: StatsDailyCountPoint[];
+  stars_chart: StatsDailyStarPoint[];
+};
+
+export type GiftAttributeRow = { id: number; name: string; rarity: number };
+export type GiftBackdropRow = GiftAttributeRow & { backdrop_id: number };
+
+export type GiftAttributesResponse = {
+  gift_id: number;
+  visual_only: boolean;
+  has_upgrade: boolean;
+  models: GiftAttributeRow[];
+  patterns: GiftAttributeRow[];
+  backdrops: GiftBackdropRow[];
 };

@@ -231,7 +231,29 @@ func (s *ChannelStore) GetChannel(ctx context.Context, viewerUserID, channelID i
 	if err := g.Wait(); err != nil {
 		return domain.ChannelView{}, err
 	}
-	return domain.ChannelView{Channel: channel, Self: member, Dialog: dialog, SelfBoostsApplied: selfBoosts, ExportedInvite: exportedInvite}, nil
+	view := domain.ChannelView{Channel: channel, Self: member, Dialog: dialog, SelfBoostsApplied: selfBoosts, ExportedInvite: exportedInvite}
+	view.LinkedChatUsable = s.linkedChatUsable(ctx, channel)
+	return view, nil
+}
+
+// linkedChatUsable 校验 Channel.LinkedChatID 指向的对端真实可用。linked_chat_id 是双向的:
+// broadcast 指向讨论组(须为 megagroup),megagroup 指向母频道(须为 broadcast)。任一方向
+// 悬空(对端不存在/已删除/类型不符)都会让客户端渲染"讨论"入口,点进去却是空频道。
+func (s *ChannelStore) linkedChatUsable(ctx context.Context, ch domain.Channel) bool {
+	if ch.LinkedChatID == 0 {
+		return false
+	}
+	linked, err := s.channelByID(ctx, s.db, ch.LinkedChatID)
+	if err != nil || linked.Deleted {
+		return false
+	}
+	switch {
+	case ch.Broadcast:
+		return linked.Megagroup && !linked.Broadcast
+	case ch.Megagroup:
+		return linked.Broadcast && !linked.Megagroup
+	}
+	return false
 }
 
 // GetLinkedDiscussionChannel projects a private discussion peer through the
@@ -466,13 +488,13 @@ INSERT INTO channels (
     autotranslation, restricted_sponsored, broadcast_messages_allowed, send_paid_messages_stars,
     noforwards, join_to_send, join_request, signatures, pre_history_hidden, participants_hidden, antispam, linked_chat_id, slowmode_seconds, boosts_unrestrict, default_banned_rights, available_reactions,
     color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, emoji_status_document_id, emoji_status_until,
-    participants_count, admins_count, kicked_count, banned_count, top_message_id, pinned_message_id, pts, ttl_period, date, deleted, monoforum, linked_monoforum_id
-) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47)`,
+    participants_count, admins_count, kicked_count, banned_count, top_message_id, pinned_message_id, pts, ttl_period, date, deleted, monoforum, linked_monoforum_id, signature_profiles
+) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48)`,
 		ch.ID, ch.AccessHash, ch.CreatorUserID, ch.Title, ch.About, ch.Username, ch.Verified, ch.Broadcast, ch.Megagroup, ch.Forum,
 		ch.ForumTabs, ch.Autotranslation, ch.RestrictedSponsored, ch.BroadcastMessagesAllowed, ch.SendPaidMessagesStars, ch.NoForwards, ch.JoinToSend, ch.JoinRequest, ch.Signatures, ch.PreHistoryHidden, ch.ParticipantsHidden, ch.AntiSpam, ch.LinkedChatID, ch.SlowmodeSeconds, ch.BoostsUnrestrict, rights, reactions,
 		ch.Color.HasColor, ch.Color.Color, ch.Color.BackgroundEmojiID, ch.ProfileColor.HasColor, ch.ProfileColor.Color, ch.ProfileColor.BackgroundEmojiID, ch.EmojiStatus.DocumentID, ch.EmojiStatus.Until,
 		ch.ParticipantsCount, ch.AdminsCount,
-		ch.KickedCount, ch.BannedCount, ch.TopMessageID, ch.PinnedMessageID, ch.Pts, ch.TTLPeriod, ch.Date, ch.Deleted, ch.Monoforum, ch.LinkedMonoforumID); err != nil {
+		ch.KickedCount, ch.BannedCount, ch.TopMessageID, ch.PinnedMessageID, ch.Pts, ch.TTLPeriod, ch.Date, ch.Deleted, ch.Monoforum, ch.LinkedMonoforumID, ch.SignatureProfiles); err != nil {
 		return fmt.Errorf("insert channel: %w", err)
 	}
 	return nil
@@ -492,7 +514,7 @@ func scanChannel(row rowScanner) (domain.Channel, error) {
 func channelScanDest(ch *domain.Channel, rights, reactionPolicy *string, wallpaper **string) []any {
 	return []any{
 		&ch.ID, &ch.AccessHash, &ch.CreatorUserID, &ch.Title, &ch.About, &ch.Username, &ch.Verified, &ch.Scam, &ch.Fake, &ch.Gigagroup,
-		&ch.Broadcast, &ch.Megagroup, &ch.Forum, &ch.ForumTabs, &ch.Autotranslation, &ch.RestrictedSponsored, &ch.BroadcastMessagesAllowed, &ch.SendPaidMessagesStars, &ch.NoForwards, &ch.JoinToSend, &ch.JoinRequest, &ch.Signatures, &ch.PreHistoryHidden, &ch.ParticipantsHidden, &ch.AntiSpam, &ch.HasLink, &ch.LinkedChatID, &ch.LinkedCommunityID, &ch.Monoforum, &ch.LinkedMonoforumID, &ch.SlowmodeSeconds, &ch.BoostsUnrestrict, rights,
+		&ch.Broadcast, &ch.Megagroup, &ch.Forum, &ch.ForumTabs, &ch.Autotranslation, &ch.RestrictedSponsored, &ch.BroadcastMessagesAllowed, &ch.SendPaidMessagesStars, &ch.NoForwards, &ch.JoinToSend, &ch.JoinRequest, &ch.Signatures, &ch.SignatureProfiles, &ch.PreHistoryHidden, &ch.ParticipantsHidden, &ch.AntiSpam, &ch.HasLink, &ch.LinkedChatID, &ch.LinkedCommunityID, &ch.Monoforum, &ch.LinkedMonoforumID, &ch.SlowmodeSeconds, &ch.BoostsUnrestrict, rights,
 		reactionPolicy, &ch.Color.HasColor, &ch.Color.Color, &ch.Color.BackgroundEmojiID, &ch.ProfileColor.HasColor, &ch.ProfileColor.Color, &ch.ProfileColor.BackgroundEmojiID, &ch.EmojiStatus.DocumentID, &ch.EmojiStatus.Until,
 		wallpaper, &ch.ParticipantsCount, &ch.AdminsCount, &ch.KickedCount, &ch.BannedCount, &ch.TopMessageID,
 		&ch.PinnedMessageID, &ch.Pts, &ch.TTLPeriod, &ch.Date, &ch.Deleted,

@@ -108,6 +108,7 @@ func (r *GRPCRemote) ObserveInitConnection(ctx context.Context, authKeyID [8]byt
 		SystemLangCode: systemLangCode,
 		LangPack:       langPack,
 		LangCode:       langCode,
+		ClientIp:       clientIPToPB(ctx),
 	})
 	if err != nil {
 		callErr := grpcRemoteCallError("observe_init_connection", err)

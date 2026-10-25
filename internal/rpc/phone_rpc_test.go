@@ -124,6 +124,12 @@ func (p stubPrivacy) CanSee(_ context.Context, _, _ int64, key domain.PrivacyKey
 	return !p.deny[key], nil
 }
 
+// P2PAllowedBetween 让 stub 满足 phoneP2PGate：缺省放行（与 CanSee 的隐式
+// 全部放行一致），deny[phone_p2p] 时拒绝 P2P。
+func (p stubPrivacy) P2PAllowedBetween(context.Context, int64, int64) (bool, error) {
+	return !p.deny[domain.PrivacyKeyPhoneP2P], nil
+}
+
 type phoneFixture struct {
 	t        *testing.T
 	ctx      context.Context
@@ -235,6 +241,101 @@ func phoneCallPayload(t *testing.T, rec phonePushRecord) tg.PhoneCallClass {
 		t.Fatalf("pushed update = %T, want UpdatePhoneCall", updates.Updates[0])
 	}
 	return upd.PhoneCall
+}
+
+// legacyPrivacy 实现 PrivacyService 但不实现 phoneP2PGate（模拟旧隐私提供方）。
+type legacyPrivacy struct{}
+
+func (legacyPrivacy) GetRules(context.Context, int64, domain.PrivacyKey) (domain.PrivacyRules, error) {
+	return domain.PrivacyRules{}, nil
+}
+
+func (legacyPrivacy) SetRules(context.Context, int64, domain.PrivacyKey, []domain.PrivacyRule) (domain.PrivacyRules, error) {
+	return domain.PrivacyRules{}, nil
+}
+
+func (legacyPrivacy) AddAllowUser(context.Context, int64, domain.PrivacyKey, int64) (domain.PrivacyRules, bool, error) {
+	return domain.PrivacyRules{}, false, nil
+}
+
+func (legacyPrivacy) CanSee(context.Context, int64, int64, domain.PrivacyKey) (bool, error) {
+	return true, nil
+}
+
+// p2pDenyPrivacy implements phoneP2PGate but always forbids P2P: under the old
+// CanSee-only logic its AllowAll would have granted P2P, so the gate is what
+// decides.
+type p2pDenyPrivacy struct{ legacyPrivacy }
+
+func (p2pDenyPrivacy) P2PAllowedBetween(context.Context, int64, int64) (bool, error) {
+	return false, nil
+}
+
+// TestPhoneCallP2PDeniedByDefault asserts the security default: P2P is denied
+// whenever the reciprocal-contact gate cannot be satisfied (privacy service
+// absent, lacks the gate, or explicitly denies), so non-contact callers never
+// learn each other's real IP.
+func TestPhoneCallP2PDeniedByDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		privacy PrivacyService
+	}{
+		{"privacy service absent", nil},
+		{"privacy lacks reciprocal-contact gate", legacyPrivacy{}},
+		{"gate explicitly denies", p2pDenyPrivacy{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newPhoneFixture(t, tt.privacy)
+			ga, gaHash, gb := phoneTestKeys()
+			res, err := f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
+				UserID:   &tg.InputUser{UserID: f.callee.ID, AccessHash: f.callee.AccessHash},
+				RandomID: 7,
+				GAHash:   gaHash,
+				Protocol: phoneTestProtocol(),
+			})
+			if err != nil {
+				t.Fatalf("requestCall: %v", err)
+			}
+			waiting, ok := res.PhoneCall.(*tg.PhoneCallWaiting)
+			if !ok {
+				t.Fatalf("requestCall result = %T, want PhoneCallWaiting", res.PhoneCall)
+			}
+			callID, accessHash := waiting.ID, waiting.AccessHash
+			f.sessions.reset()
+
+			if ok, err := f.router.onPhoneReceivedCall(f.calleeCtx(), tg.InputPhoneCall{ID: callID, AccessHash: accessHash}); err != nil || !ok {
+				t.Fatalf("receivedCall = %v err=%v", ok, err)
+			}
+			f.sessions.reset()
+
+			if _, err := f.router.onPhoneAcceptCall(f.calleeCtx(), &tg.PhoneAcceptCallRequest{
+				Peer:     tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
+				GB:       gb,
+				Protocol: phoneTestProtocol(),
+			}); err != nil {
+				t.Fatalf("acceptCall: %v", err)
+			}
+			f.sessions.reset()
+
+			confirmRes, err := f.router.onPhoneConfirmCall(f.callerCtx(), &tg.PhoneConfirmCallRequest{
+				Peer:           tg.InputPhoneCall{ID: callID, AccessHash: accessHash},
+				GA:             ga,
+				KeyFingerprint: 1,
+				Protocol:       phoneTestProtocol(),
+			})
+			if err != nil {
+				t.Fatalf("confirmCall: %v", err)
+			}
+			callerView, ok := confirmRes.PhoneCall.(*tg.PhoneCall)
+			if !ok {
+				t.Fatalf("confirm result = %T, want *tg.PhoneCall", confirmRes.PhoneCall)
+			}
+			if callerView.P2PAllowed {
+				t.Fatalf("p2p_allowed must be false for %s", tt.name)
+			}
+		})
+	}
 }
 
 func TestPhoneCallRPCHappyPath(t *testing.T) {

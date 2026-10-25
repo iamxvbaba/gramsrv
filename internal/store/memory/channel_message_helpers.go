@@ -31,6 +31,11 @@ func cloneChannelMessage(in domain.ChannelMessage) domain.ChannelMessage {
 	in.Forward = cloneMessageForward(in.Forward)
 	in.ReplyMarkup = cloneReplyMarkup(in.ReplyMarkup)
 	in.RichMessage = cloneRichMessage(in.RichMessage)
+	if in.FactCheck != nil {
+		check := *in.FactCheck
+		check.Entities = append([]domain.MessageEntity(nil), check.Entities...)
+		in.FactCheck = &check
+	}
 	in.Discussion = cloneChannelDiscussionRef(in.Discussion)
 	in.Replies = cloneChannelMessageReplies(in.Replies)
 	in.Reactions = cloneChannelMessageReactionsPtr(in.Reactions)

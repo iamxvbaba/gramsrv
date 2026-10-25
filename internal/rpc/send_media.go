@@ -22,6 +22,8 @@ const maxContactVcardLength = 8192
 
 // outgoingSend 是 sendOutgoing 的入参：一条已校验的出站消息。
 type outgoingSend struct {
+	scheduledDelivery      *domain.ScheduledDelivery
+	forward                *domain.MessageForward
 	randomID               int64
 	idempotencyFingerprint []byte
 	idempotencyPreflighted bool
@@ -120,6 +122,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			UserID:                 userID,
 			ChannelID:              peer.ID,
 			RandomID:               p.randomID,
+			ScheduledDelivery:      p.scheduledDelivery,
+			Forward:                p.forward,
 			IdempotencyFingerprint: p.idempotencyFingerprint,
 			IdempotencyPreflighted: p.idempotencyPreflighted,
 			Message:                p.message,
@@ -159,6 +163,9 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			}
 			// 频道链接预览 pending 占位：带外解析并就地替换（异步，不阻塞发送 echo）。
 			r.maybeEnqueueWebPageResolve(userID, peer, res.Message.ID, res.Message.Media)
+		}
+		if res.NextScheduled != nil {
+			updates.Updates = append(updates.Updates, r.tgNewScheduledMessageUpdates(ctx, userID, *res.NextScheduled, 0, int(r.clock.Now().Unix())).Updates...)
 		}
 		return updates, res.Duplicate, nil
 	}
@@ -217,6 +224,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		SenderUserID:           userID,
 		RecipientUserID:        peer.ID,
 		RandomID:               p.randomID,
+		ScheduledDelivery:      p.scheduledDelivery,
+		Forward:                p.forward,
 		Message:                p.message,
 		Entities:               domainMessageEntitiesForViewer(userID, p.entities),
 		Media:                  p.media,
@@ -266,7 +275,11 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 			return nil, false, internalErr()
 		}
 	}
-	return tgPrivateSendResultUpdates(res, p.randomID, true, users, chats), res.Duplicate, nil
+	updates := tgPrivateSendResultUpdates(res, p.randomID, true, users, chats)
+	if res.NextScheduled != nil {
+		updates.Updates = append(updates.Updates, r.tgNewScheduledMessageUpdates(ctx, userID, *res.NextScheduled, 0, int(r.clock.Now().Unix())).Updates...)
+	}
+	return updates, res.Duplicate, nil
 }
 
 // onMessagesUploadMedia 解析 InputMedia（上传或引用），返回可复用的 tg.MessageMedia。
@@ -310,7 +323,7 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if len(req.Entities) > maxMessageEntityCount {
 		return nil, limitInvalidErr()
 	}
-	if req.ScheduleRepeatPeriod != 0 {
+	if !domain.ValidScheduleRepeat(req.ScheduleRepeatPeriod) || (req.ScheduleRepeatPeriod != 0 && (scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) || req.ScheduleDate == domain.ScheduleWhenOnline)) {
 		return nil, scheduleDateInvalidErr()
 	}
 	if req.Media == nil {

@@ -31,7 +31,8 @@ func TestAccountReactionSettingsAndAbsoluteDeliveryCommitAtomicallyPostgres(t *t
 		t.Fatalf("read pts before paid privacy: %v", err)
 	}
 	projectionErr := errors.New("paid privacy projection failed")
-	if err := passwords.SaveReactionSettings(ctx, user.ID, settings, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+	patch := domain.AccountReactionSettingsPatch{PaidPrivacy: &settings.PaidPrivacy}
+	if _, err := passwords.UpdateReactionSettings(ctx, user.ID, patch, func(domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
 		return nil, projectionErr
 	}); !errors.Is(err, projectionErr) {
 		t.Fatalf("failed paid privacy err = %v, want projection error", err)
@@ -40,7 +41,7 @@ func TestAccountReactionSettingsAndAbsoluteDeliveryCommitAtomicallyPostgres(t *t
 		t.Fatalf("paid privacy survived failed builder: found=%v err=%v", found, err)
 	}
 
-	if err := passwords.SaveReactionSettings(ctx, user.ID, settings, func(snapshot domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
+	if _, err := passwords.UpdateReactionSettings(ctx, user.ID, patch, func(snapshot domain.AccountReactionSettings) ([]store.DeliveryEffect, error) {
 		if snapshot.PaidPrivacy.Kind != domain.PaidReactionPrivacyAnonymous {
 			return nil, errors.New("unexpected paid privacy snapshot")
 		}

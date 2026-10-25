@@ -210,16 +210,25 @@ func (r *Router) onMessagesReportReadMetrics(ctx context.Context, req *tg.Messag
 			SeenRangeRatioPermille:        metric.SeenRangeRatioPermille,
 		})
 	}
-	sort.Slice(payload, func(i, j int) bool {
-		return payload[i].MessageID < payload[j].MessageID
-	})
 	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
 		return false, err
 	}
-	if err := r.validateTelemetryMessageIDs(ctx, userID, peer, ids); err != nil {
+	// The client reports views for messages it has already locally cached, so
+	// some IDs can point at messages this server has since deleted or trimmed
+	// out of history. Those are stale telemetry, not a protocol error: drop
+	// them instead of answering MESSAGE_ID_INVALID, which makes the client
+	// treat a routine stats flush as a failure.
+	ids, payload, err = r.resolveTelemetryMessageIDs(ctx, userID, peer, ids, payload)
+	if err != nil {
 		return false, err
 	}
+	if len(ids) == 0 {
+		return true, nil
+	}
+	sort.Slice(payload, func(i, j int) bool {
+		return payload[i].MessageID < payload[j].MessageID
+	})
 	if r.deps.ClientTelemetry == nil {
 		return false, internalErr()
 	}
@@ -319,52 +328,87 @@ func (r *Router) onMessagesReportSponsoredMessage(ctx context.Context, req *tg.M
 	return &tg.ChannelsSponsoredMessageReportResultReported{}, nil
 }
 
+// validateTelemetryMessageIDs is the strict variant used by delivery reports:
+// every ID must resolve to a message this server actually holds for the peer,
+// otherwise the client claims work that never happened here.
 func (r *Router) validateTelemetryMessageIDs(ctx context.Context, userID int64, peer domain.Peer, ids []int) error {
+	existing, err := r.telemetryExistingMessageIDs(ctx, userID, peer, ids)
+	if err != nil {
+		return err
+	}
+	if len(existing) != len(ids) {
+		return messageIDInvalidErr()
+	}
+	return nil
+}
+
+// resolveTelemetryMessageIDs is the lenient variant used by read metrics: IDs
+// the server no longer holds (deleted/trimmed history) are dropped instead of
+// turning a routine stats flush into an error.
+func (r *Router) resolveTelemetryMessageIDs(ctx context.Context, userID int64, peer domain.Peer, ids []int, payload []readMetricTelemetry) ([]int, []readMetricTelemetry, error) {
+	existing, err := r.telemetryExistingMessageIDs(ctx, userID, peer, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	filteredIDs := make([]int, 0, len(ids))
+	filteredPayload := make([]readMetricTelemetry, 0, len(payload))
+	for i, id := range ids {
+		if _, ok := existing[id]; !ok {
+			continue
+		}
+		filteredIDs = append(filteredIDs, id)
+		filteredPayload = append(filteredPayload, payload[i])
+	}
+	if len(filteredIDs) == 0 {
+		return nil, []readMetricTelemetry{}, nil
+	}
+	return filteredIDs, filteredPayload, nil
+}
+
+func (r *Router) telemetryExistingMessageIDs(ctx context.Context, userID int64, peer domain.Peer, ids []int) (map[int]struct{}, error) {
 	if len(ids) == 0 || len(ids) > domain.MaxGetMessageIDs {
-		return limitInvalidErr()
+		return nil, limitInvalidErr()
 	}
 	needed := make(map[int]struct{}, len(ids))
 	for _, id := range ids {
 		if id <= 0 || id > domain.MaxMessageBoxID {
-			return messageIDInvalidErr()
+			return nil, messageIDInvalidErr()
 		}
 		if _, duplicate := needed[id]; duplicate {
-			return messageIDInvalidErr()
+			return nil, messageIDInvalidErr()
 		}
 		needed[id] = struct{}{}
 	}
+	existing := make(map[int]struct{}, len(ids))
 	switch peer.Type {
 	case domain.PeerTypeUser:
 		if r.deps.Messages == nil {
-			return internalErr()
+			return nil, internalErr()
 		}
 		list, err := r.deps.Messages.GetMessages(ctx, userID, ids)
 		if err != nil {
-			return internalErr()
+			return nil, internalErr()
 		}
 		for _, message := range list.Messages {
 			if message.Peer == peer {
-				delete(needed, message.ID)
+				existing[message.ID] = struct{}{}
 			}
 		}
 	case domain.PeerTypeChannel:
 		if r.deps.Channels == nil {
-			return internalErr()
+			return nil, internalErr()
 		}
 		history, err := r.deps.Channels.GetMessages(ctx, userID, peer.ID, ids)
 		if err != nil {
-			return internalErr()
+			return nil, internalErr()
 		}
 		for _, message := range history.Messages {
-			delete(needed, message.ID)
+			existing[message.ID] = struct{}{}
 		}
 	default:
-		return peerIDInvalidErr()
+		return nil, peerIDInvalidErr()
 	}
-	if len(needed) != 0 {
-		return messageIDInvalidErr()
-	}
-	return nil
+	return existing, nil
 }
 
 func messageIDs64(ids []int) []int64 {

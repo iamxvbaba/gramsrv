@@ -94,6 +94,7 @@ func TestClientMessageContentPolicy(t *testing.T) {
 		{name: "http_wait", typeID: mt.HTTPWaitRequestTypeID, want: clientMessageContentOptional},
 		{name: "rpc_drop_answer", typeID: mt.RPCDropAnswerRequestTypeID, want: clientMessageContentOptional},
 		{name: "destroy_auth_key", typeID: destroyAuthKeyRequestTypeID, want: clientMessageContentOptional},
+		{name: "help_test", typeID: helpTestRequestTypeID, want: clientMessageContentOptional},
 	}
 
 	now := time.Now()

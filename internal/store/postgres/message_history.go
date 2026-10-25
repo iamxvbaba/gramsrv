@@ -78,6 +78,9 @@ func (s *MessageStore) GetByUID(ctx context.Context, userID, uid int64) (domain.
 }
 
 func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
+	if filter.GlobalSearch {
+		return s.searchGlobalMessages(ctx, userID, filter)
+	}
 	if filter.CountOnly {
 		total, err := s.countMessagesByUser(ctx, userID, filter)
 		if err != nil {

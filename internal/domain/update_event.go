@@ -15,6 +15,10 @@ const (
 	// UpdateEventBotCallbackQuery 仅用于 Bot API 专用 update_id 队列投影；不写账号
 	// pts/difference/outbox。
 	UpdateEventBotCallbackQuery UpdateEventType = "bot_callback_query"
+	// UpdateEventBotPreCheckoutQuery 与 callback 一样只服务 Bot API 队列投影；
+	// 不写账号 pts/difference/outbox。付款方挂在支付 RPC 里等 bot 应答，见
+	// precheckout_registry.go。
+	UpdateEventBotPreCheckoutQuery UpdateEventType = "bot_pre_checkout_query"
 	// UpdateEventWebPage 映射 updateWebPage：异步解析完成后把消息里的 pending 链接预览
 	// 占位就地替换为已解析卡片。携带账号 pts（非 LacksWirePts），消息快照经 box JOIN 重建，
 	// 故 difference/dispatch 与 edit_message 同走通用消息事件路径，仅 tg 投影构造器不同。
@@ -112,6 +116,8 @@ type UpdateEvent struct {
 	QuickReply        QuickReply
 	QuickReplyMessage QuickReplyMessage
 	BotCallbackQuery  *BotCallbackQuery
+	// BotPreCheckout 携带付款前询问本身；该事件没有消息，Peer/MessageID 为零。
+	BotPreCheckout *BotPreCheckoutQuery
 	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
 	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
 	BotAPIUpdateID   int64

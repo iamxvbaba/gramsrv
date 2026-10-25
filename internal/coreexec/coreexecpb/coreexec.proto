@@ -98,6 +98,9 @@ message DispatchRequest {
   uint64 admission_seq = 9;
   bool profile_evidence_fresh = 10;
   IdentityHint identity_hint = 11;
+  // Edge-observed peer IP literal: canonical, without port or zone. Empty when
+  // the transport peer is not an IP. Core rejects any other form.
+  string client_ip = 12;
 }
 
 message DispatchResponse {
@@ -276,6 +279,8 @@ message ObserveInitConnectionRequest {
   string system_lang_code = 8;
   string lang_pack = 9;
   string lang_code = 10;
+  // Same canonical Edge-observed peer IP contract as DispatchRequest.client_ip.
+  string client_ip = 11;
 }
 
 message ErrorResponse {

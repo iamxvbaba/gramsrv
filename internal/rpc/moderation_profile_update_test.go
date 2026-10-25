@@ -137,3 +137,45 @@ func TestChannelStateRefreshEventBypassesServerProjectionCache(t *testing.T) {
 		t.Fatalf("authoritative channel refresh = calls:%d channels:%+v", channels.freshCalls, events[0].Channels)
 	}
 }
+
+// A deleted peer has to reach the client as Deleted Account, not as an unnamed
+// stranger. updateUser alone only refreshes the photo on several clients, so the
+// v2 durable tombstone delivery carries the name through updateUserName and an
+// explicit empty status as well.
+func TestDeletedAccountDeliveryCarriesDisplayName(t *testing.T) {
+	const (
+		targetID = int64(4004)
+		viewerID = int64(1001)
+	)
+	r := New(Config{}, Deps{}, zap.NewNop(), clock.System)
+	effects, err := r.UserAudienceDeliveryEffects(store.UserAudienceDeliverySnapshot{
+		User:     domain.User{ID: targetID, Deleted: true, DeletedAt: 1_800_000_000},
+		Audience: []int64{viewerID},
+	})
+	if err != nil || len(effects) != 1 {
+		t.Fatalf("build tombstone effects = %+v err=%v", effects, err)
+	}
+	decoded, err := decodeDeliveryUpdate(effects[0].Payload)
+	if err != nil {
+		t.Fatalf("decode effect: %v", err)
+	}
+	updates, ok := decoded.(*tg.Updates)
+	if !ok {
+		t.Fatalf("updates = %T", decoded)
+	}
+	var sawRefresh, sawName, sawEmptyStatus bool
+	for _, update := range updates.Updates {
+		switch typed := update.(type) {
+		case *tg.UpdateUser:
+			sawRefresh = typed.UserID == targetID
+		case *tg.UpdateUserName:
+			sawName = typed.UserID == targetID && typed.FirstName == deletedAccountDisplayName
+		case *tg.UpdateUserStatus:
+			_, empty := typed.Status.(*tg.UserStatusEmpty)
+			sawEmptyStatus = typed.UserID == targetID && empty
+		}
+	}
+	if !sawRefresh || !sawName || !sawEmptyStatus {
+		t.Fatalf("tombstone delivery refresh=%v name=%v emptyStatus=%v: %+v", sawRefresh, sawName, sawEmptyStatus, updates.Updates)
+	}
+}

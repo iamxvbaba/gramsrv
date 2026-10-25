@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Navigate } from "../routing";
+import { withBase } from "../lib/base";
 
 export function AppLink({
   href,
@@ -15,7 +16,7 @@ export function AppLink({
   return (
     <a
       className={className}
-      href={href}
+      href={withBase(href)}
       onClick={(event) => {
         event.preventDefault();
         navigate(href);

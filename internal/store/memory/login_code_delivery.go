@@ -12,6 +12,7 @@ import (
 type loginCodeDeliveryRecord struct {
 	userID           int64
 	codeFingerprint  [32]byte
+	template         string
 	privateMessageID int64
 	messageBoxID     int
 	pts              int
@@ -53,7 +54,8 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 	if req.ExpiresAt <= int64(req.Date) {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("memory login code receipt expiry: %w: date=%d expires_at=%d", domain.ErrLoginCodeDeliveryInvalid, req.Date, req.ExpiresAt)
 	}
-	base, err := domain.OfficialLoginCodeMessage(req.UserID, req.Code, req.Date)
+	template := domain.SnapshotLoginCodeMessageTemplate(req.Template)
+	base, err := domain.OfficialLoginCodeMessageWithTemplate(req.UserID, template, req.Code, req.Date)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, err
 	}
@@ -70,6 +72,7 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 		}
 		msg, err := store.RestoreLoginCodeDeliveryMessage(
 			receipt.userID,
+			receipt.template,
 			req.Code,
 			receipt.messageDate,
 			receipt.privateMessageID,
@@ -120,6 +123,7 @@ func (s *LoginCodeDeliveryStore) DeliverLoginCodeMessage(_ context.Context, req 
 	s.messages.loginCodeDeliveries[deliveryKey] = loginCodeDeliveryRecord{
 		userID:           req.UserID,
 		codeFingerprint:  codeFingerprint,
+		template:         template,
 		privateMessageID: base.UID,
 		messageBoxID:     base.ID,
 		pts:              base.Pts,

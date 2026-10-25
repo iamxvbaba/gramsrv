@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,6 +13,11 @@ import (
 )
 
 const localWithdrawalTTL = 15 * time.Minute
+
+// ErrLocalWithdrawalInsecureBaseURL reports a plain-HTTP public base URL
+// outside loopback. Withdrawal links are bearer URLs, so they must not travel
+// over a plaintext network; callers decide whether that disables the feature.
+var ErrLocalWithdrawalInsecureBaseURL = errors.New("local star gift withdrawal base URL requires HTTPS outside loopback")
 
 // LocalWithdrawalProvider implements the TON/export UX entirely inside
 // telesrv. It mints an unguessable, short-lived bearer URL; no external
@@ -28,7 +34,7 @@ func NewLocalWithdrawalProvider(publicBaseURL string) (*LocalWithdrawalProvider,
 		return nil, fmt.Errorf("invalid local star gift withdrawal base URL")
 	}
 	if parsed.Scheme == "http" && !localWithdrawalLoopbackHost(parsed.Hostname()) {
-		return nil, fmt.Errorf("local star gift withdrawal base URL requires HTTPS outside loopback")
+		return nil, ErrLocalWithdrawalInsecureBaseURL
 	}
 	return &LocalWithdrawalProvider{publicBaseURL: publicBaseURL}, nil
 }

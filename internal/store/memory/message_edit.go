@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"telesrv/internal/domain"
 	"time"
@@ -29,6 +30,16 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 	if targetIndex < 0 {
 		return res, domain.ErrMessageIDInvalid
 	}
+	if req.ReplaceMedia {
+		if err := domain.ValidateMessageMediaReplacement(target.Media, req.Media, target.GroupedID, target.Forward != nil); err != nil {
+			return res, err
+		}
+	}
+	if req.PreserveText {
+		req.Message = target.Body
+		req.Entities = append([]domain.MessageEntity(nil), target.Entities...)
+	}
+
 	authorEdit := target.Out && target.From.ID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
 	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validMemoryTodoParticipantEdit(req, target) {
@@ -53,7 +64,7 @@ func (s *MessageStore) EditMessage(_ context.Context, req domain.EditMessageRequ
 		return res, domain.ErrMessageEmpty
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(target.RichMessage, req.RichMessage)
-	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
+	if (req.Media == nil || reflect.DeepEqual(req.Media, target.Media)) && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && equalMessageEntities(target.Entities, req.Entities) {
 		return res, domain.ErrMessageNotModified
 	}
 	messageSenderID := target.From.ID

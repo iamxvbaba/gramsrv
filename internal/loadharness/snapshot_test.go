@@ -1,7 +1,6 @@
 package loadharness
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -107,13 +106,7 @@ func TestClientStateRoundTripLocksSeededChannelIdentity(t *testing.T) {
 	if err := WriteClientState(path, state); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("client state mode = %o, want 600", info.Mode().Perm())
-	}
+	requireOwnerOnly(t, path)
 	loaded, err := LoadClientState(path)
 	if err != nil {
 		t.Fatal(err)

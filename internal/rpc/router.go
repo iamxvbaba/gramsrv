@@ -81,12 +81,26 @@ type Config struct {
 	// 阈值。<=0 关闭（默认行为不变）。
 	CatchupRateLimit  int
 	CatchupRateWindow time.Duration
+	// SRPRateLimit bounds 2FA password verification RPCs per user (per auth key while pre-auth); <=0 disables.
+	SRPRateLimit int
+	// SRPRateWindow is the sliding window for SRPRateLimit.
+	SRPRateWindow time.Duration
+	// WithdrawalRateLimit bounds star-gift and Stars revenue withdrawal RPCs per user; <=0 disables.
+	WithdrawalRateLimit int
+	// WithdrawalRateWindow is the sliding window for WithdrawalRateLimit.
+	WithdrawalRateWindow time.Duration
+	// PaymentRateLimit bounds money-moving payments.* RPCs (forms, transfers, offers, bids, upgrades, crafting) per user; <=0 disables.
+	PaymentRateLimit int
+	// PaymentRateWindow is the sliding window for PaymentRateLimit.
+	PaymentRateWindow time.Duration
 	// ChannelNudgeMaxTargets 是一次 fan-out 的 >cap nudge 目标上限（设计 Phase 0b 限速兜底）；
 	// <=0 用内置默认 defaultChannelNudgeMaxTargets。
 	ChannelNudgeMaxTargets int
 	// CallSignalingMaxBytes 是 phone.sendSignalingData 单条载荷上限；<=0 不限制。
 	CallSignalingMaxBytes int
 	// CallForceRelay 强制私聊通话 p2p_allowed=false（调试 TURN 中继路径）。
+	// 注意：P2P 默认即安全收紧为仅限互为联系人（phone_turn.go 互认联系人硬门槛），
+	// 此开关仅用于全量回退 TURN 的调试/兜底。
 	CallForceRelay bool
 	// GroupCallMaxParticipants 是群通话单房间参与者上限；<=0 不限制。
 	GroupCallMaxParticipants int
@@ -177,6 +191,8 @@ type Router struct {
 	dialogsPinnedListSF        singleflight.Group
 	channelFullBotSF           singleflight.Group
 	presence                   *presenceTracker
+	preCheckouts               *preCheckoutRegistry
+	scheduledWake              chan struct{}
 	callbacks                  *callbackRegistry
 	inlines                    *inlineRegistry
 	webviews                   *webViewRegistry
@@ -219,6 +235,13 @@ type Router struct {
 	transientPrivateBigReactions transientPrivateBigReactionCache
 	accountSettings              *accountSettingsCache
 	accountFreezeWake            chan struct{}
+	accountDeletionWake          chan struct{}
+
+	// frozenPresence 记录因账号冻结而不得向任何对端显示/广播在线的 userID。
+	// freeze/unfreeze 由 admin hook 与 durable 通知 worker 即时维护；会话首次绑定时
+	// 用 durable fact 补种（seedFrozenPresence），覆盖重启/漏消息后旧在线水位外泄。
+	// 零值 sync.Map 即可用。值仅为占位，存在即冻结。
+	frozenPresence sync.Map // userID(int64) -> struct{}
 	// webPageResolveSem 是链接预览异步解析的并发信号量（有界）：发送后把 pending 占位
 	// 解析为卡片并就地替换。满则丢弃任务（消息留 pending）。nil=未启用（测试可直接调
 	// resolvePendingWebPage 同步验证）。
@@ -295,7 +318,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("%016x", randomNonZeroInt64())
 	}
-	r := &Router{cfg: cfg, appLinks: appLinks, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(deps.BotCallbacks), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(deps.LoginTokens), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storySparseProjectionCache: newStorySparseProjectionCache(deps.ReadModelVersions, cfg.StoryActivePeerCacheMaxEntries, cfg.StoryHiddenListCacheMaxEntries, cfg.StoryHiddenListCacheMaxBytes), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), receiverUserProjectionCache: newReceiverUserProjectionCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), peerIdentityCache: newPeerIdentityCache(cfg.PeerIdentityCacheMaxEntries), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), accountFreezeWake: make(chan struct{}, 1), instanceID: instanceID}
+	r := &Router{cfg: cfg, appLinks: appLinks, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), scheduledWake: make(chan struct{}, 1), callbacks: newCallbackRegistry(deps.BotCallbacks), preCheckouts: newPreCheckoutRegistry(deps.BotPreCheckouts), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(deps.LoginTokens), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storySparseProjectionCache: newStorySparseProjectionCache(deps.ReadModelVersions, cfg.StoryActivePeerCacheMaxEntries, cfg.StoryHiddenListCacheMaxEntries, cfg.StoryHiddenListCacheMaxBytes), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), receiverUserProjectionCache: newReceiverUserProjectionCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), peerIdentityCache: newPeerIdentityCache(cfg.PeerIdentityCacheMaxEntries), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), accountFreezeWake: make(chan struct{}, 1), accountDeletionWake: make(chan struct{}, 1), instanceID: instanceID}
 	r.botAPIEnqueueQueue = newBotAPIEnqueueDispatcher(log, defaultBotAPIEnqueueBuffer)
 	// Zero-valued hand-built Router configs are used by focused unit tests and
 	// retain the direct fake-store path. Validated production config always
@@ -878,6 +901,9 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err := r.checkFrozenRPC(ctx, tlTypeName(id)); err != nil {
 			return nil, err
 		}
+		if err := r.checkSensitiveRPCRateLimit(ctx, id); err != nil {
+			return nil, err
+		}
 		// 任何未包 invokeWithoutUpdates 的已登录 RPC 都把当前 session 视为 updates
 		// 接收者。仅靠 updates.getState/getDifference 置位会漏掉 DrKLO 热恢复：
 		// 它重连后不重建同步基线（pts 在进程内存里），只发普通业务请求，置位
@@ -1138,6 +1164,9 @@ func (r *Router) persistAuthKeyClientInfo(ctx context.Context, info clientSessio
 		return
 	}
 	domainInfo := domainAuthKeyClientInfo(info)
+	if ip, ok := ClientIPFrom(ctx); ok {
+		domainInfo.IP = ip
+	}
 	if domainInfo.Layer == 0 && domainInfo.DeviceModel == "" && domainInfo.Platform == "" &&
 		domainInfo.SystemVersion == "" && domainInfo.APIID == 0 && domainInfo.AppVersion == "" {
 		return

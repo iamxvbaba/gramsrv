@@ -75,6 +75,25 @@ func (s *MessageStore) ListByUser(_ context.Context, userID int64, filter domain
 		}
 	}
 	s.mu.RUnlock()
+	if filter.GlobalSearch && filter.HasFolderID {
+		peers := map[domain.Peer]bool{}
+		if s.dialogs != nil {
+			s.dialogs.mu.RLock()
+			for _, d := range s.dialogs.m[userID].Dialogs {
+				if d.FolderID == filter.FolderID {
+					peers[d.Peer] = true
+				}
+			}
+			s.dialogs.mu.RUnlock()
+		}
+		kept := messages[:0]
+		for _, m := range messages {
+			if peers[m.Peer] {
+				kept = append(kept, m)
+			}
+		}
+		messages = kept
+	}
 	s.enrichPrivateMessagePolls(messages, int(time.Now().Unix()))
 	return filterMessageList(messages, filter), nil
 }
@@ -314,6 +333,9 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 	}
 	base := make([]domain.Message, 0, len(messages))
 	for _, msg := range messages {
+		if filter.GlobalSearch && msg.Peer.Type != domain.PeerTypeUser {
+			continue
+		}
 		if filter.HasPeer && msg.Peer != filter.Peer {
 			continue
 		}
@@ -346,6 +368,9 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 		if filter.PinnedOnly && !msg.Pinned {
 			continue
 		}
+		if !domain.MatchesMediaCategories(msg.Media, msg.Entities, filter.MediaCategories) {
+			continue
+		}
 		if filter.MusicOnly && !msg.Media.IsMusic() {
 			continue
 		}
@@ -367,6 +392,45 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	if filter.GlobalSearch {
+		sort.Slice(base, func(i, j int) bool {
+			a, b := base[i], base[j]
+			if a.Date != b.Date {
+				return a.Date > b.Date
+			}
+			if a.Peer.ID != b.Peer.ID {
+				return a.Peer.ID > b.Peer.ID
+			}
+			return a.ID > b.ID
+		})
+		page := make([]domain.Message, 0, limit)
+		for _, m := range base {
+			if filter.OffsetDate > 0 {
+				if m.Date > filter.OffsetDate {
+					continue
+				}
+				if m.Date == filter.OffsetDate {
+					if filter.OffsetPeer.ID == 0 || m.Peer.ID > filter.OffsetPeer.ID {
+						continue
+					}
+					if m.Peer.ID == filter.OffsetPeer.ID && filter.OffsetPeer.Type != domain.PeerTypeChannel && m.ID >= filter.OffsetID {
+						continue
+					}
+				}
+			} else if filter.OffsetID > 0 && m.ID >= filter.OffsetID {
+				continue
+			}
+			page = append(page, m)
+			if len(page) > limit {
+				break
+			}
+		}
+		count := len(page)
+		if len(page) > limit {
+			page = page[:limit]
+		}
+		return domain.MessageList{Messages: page, Users: usersForMessages(page), Count: count}
 	}
 	page := pageMessageHistory(base, filter, limit)
 	return domain.MessageList{

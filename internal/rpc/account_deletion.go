@@ -61,6 +61,10 @@ func (r *Router) onAccountDeleteAccount(ctx context.Context, req *tg.AccountDele
 		}
 		return false, tgerr.New(420, fmt.Sprintf("2FA_CONFIRM_WAIT_%d", wait))
 	}
+	// v2: the tombstone reaches every contact/dialog viewer through the durable
+	// account_deletion_notifications queue, whose worker converts rows into
+	// edge_delivery_outbox deliveries; wake it instead of pushing from Core.
+	r.wakeAccountDeletionNotifications()
 	if err := r.finishDeletedAccountAuthorizations(ctx, userID, outcome.Deletion.RevokedAuthorizations); err != nil {
 		return false, internalErr()
 	}
@@ -175,6 +179,7 @@ func (r *Router) NotifyModerationAccountDeletion(ctx context.Context, result dom
 	}
 	r.invalidateDeletedUserProjectionFacts(result.User.ID)
 	r.flushRPCProjectionCache()
+	r.wakeAccountDeletionNotifications()
 }
 
 func (r *Router) invalidateDeletedUserProjectionFacts(userID int64) {

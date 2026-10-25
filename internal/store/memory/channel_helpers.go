@@ -272,6 +272,9 @@ func channelGlobalSearchAfterCursor(msg domain.ChannelMessage, req domain.Channe
 			return false
 		}
 	}
+	if req.OffsetIsUser && msg.ChannelID == req.OffsetChannelID {
+		return false
+	}
 	if req.OffsetID > 0 {
 		return msg.ID < req.OffsetID
 	}
@@ -537,8 +540,25 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 		return nil, domain.ErrReplyMessageIDInvalid
 	}
 	if req.ReplyTo.MessageID == 0 {
-		if req.ReplyTo.TopMessageID <= 0 || !channel.Forum {
+		if req.ReplyTo.TopMessageID <= 0 {
 			return nil, domain.ErrReplyMessageIDInvalid
+		}
+		if !channel.Forum {
+			root, ok := s.findMessageLocked(req.ChannelID, req.ReplyTo.TopMessageID)
+			if !ok || root.ID <= member.AvailableMinID || channel.LinkedChatID == 0 || root.Forward == nil {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+			source, ok := s.channels[channel.LinkedChatID]
+			if !ok {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+			post, ok := s.findMessageLocked(source.ID, root.Forward.ChannelPost)
+			if !ok || !domain.LinkedDiscussionRootMatches(channel, source, root, post) {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+			reply := cloneMessageReply(req.ReplyTo)
+			reply.MessageID, reply.TopMessageID, reply.Peer = root.ID, root.ID, channelPeer
+			return reply, nil
 		}
 		topic, ok := s.topics[req.ChannelID][req.ReplyTo.TopMessageID]
 		if !ok || topic.Hidden {
@@ -565,9 +585,9 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
-		return nil, domain.ErrReplyMessageIDInvalid
-	}
+	// 与 postgres ChannelStore 同口径:top_msg_id 只是话题落点提示,不是回复有效性判据,
+	// reply_to_msg_id 已唯一指向存在的消息,线程根由服务端推导。客户端带无关 top_msg_id
+	// (TDesktop 发媒体回复时下发)不再拒绝整个回复。
 	if channel.Forum && reply.TopMessageID > 0 {
 		if topic, ok := s.topics[req.ChannelID][reply.TopMessageID]; ok && !topic.Hidden {
 			if topic.Closed && !canManageForumTopic(channel, member, topic, req.UserID, selfBoostsApplied) {

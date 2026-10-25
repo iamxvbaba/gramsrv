@@ -395,7 +395,7 @@ func (r *GRPCRemote) DispatchAdmitted(ctx context.Context, authKeyID [8]byte, se
 	callCtx, cancel := r.withRequestTimeout(ctx)
 	defer cancel()
 	start := time.Now()
-	res, err := r.client.DispatchAdmitted(callCtx, grpcDispatchRequest(&captured, authKeyID, sessionID, msgID, admissionSeq, profileEvidenceFresh(ctx), identityHintToPB(ctx)))
+	res, err := r.client.DispatchAdmitted(callCtx, grpcDispatchRequest(&captured, authKeyID, sessionID, msgID, admissionSeq, profileEvidenceFresh(ctx), identityHintToPB(ctx), clientIPToPB(ctx)))
 	if err != nil {
 		callErr := grpcRemoteCallError("dispatch_admitted", err)
 		observeCoreExecGRPCCall(r.metrics, "client", "dispatch_admitted", start, grpcRemoteCallOutcome(callErr))
@@ -597,7 +597,7 @@ func (r *GRPCRemote) PrepareAdmittedReplay(ctx context.Context, authKeyID [8]byt
 	callCtx, cancel := r.withRequestTimeout(ctx)
 	defer cancel()
 	start := time.Now()
-	res, err := r.client.PrepareAdmittedReplay(callCtx, grpcDispatchRequest(&captured, authKeyID, sessionID, msgID, admissionSeq, profileEvidenceFresh(ctx), identityHintToPB(ctx)))
+	res, err := r.client.PrepareAdmittedReplay(callCtx, grpcDispatchRequest(&captured, authKeyID, sessionID, msgID, admissionSeq, profileEvidenceFresh(ctx), identityHintToPB(ctx), clientIPToPB(ctx)))
 	if err != nil {
 		callErr := grpcRemoteCallError("prepare_admitted_replay", err)
 		observeCoreExecGRPCCall(r.metrics, "client", "prepare_admitted_replay", start, grpcRemoteCallOutcome(callErr))
@@ -864,6 +864,10 @@ func (s *coreExecGRPCServer) DispatchAdmitted(ctx context.Context, req *coreexec
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	ctx, err = applyClientIPPB(ctx, req.GetClientIp())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	result, method, err := s.handler.DispatchAdmitted(ctx, authKeyID, req.GetSessionId(), req.GetMsgId(), req.GetAdmissionSeq(), admitted)
 	if method != "" {
 		methodForMetrics = method
@@ -918,6 +922,10 @@ func (s *coreExecGRPCServer) PrepareAdmittedReplay(ctx context.Context, req *cor
 	}
 	ctx = s.handler.WithLayerRPCProfileEvidenceFresh(ctx, req.GetProfileEvidenceFresh())
 	ctx, err = applyIdentityHintPB(ctx, s.handler, authKeyID, req.GetSessionId(), req.GetIdentityHint())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	ctx, err = applyClientIPPB(ctx, req.GetClientIp())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -1029,6 +1037,10 @@ func (s *coreExecGRPCServer) ObserveInitConnection(ctx context.Context, req *cor
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "bad auth_key_id")
 	}
+	ctx, err = applyClientIPPB(ctx, req.GetClientIp())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	err = s.handler.ObserveInitConnection(
 		ctx,
 		authKeyID,
@@ -1105,7 +1117,7 @@ func (s *coreExecGRPCServer) purgeExpiredReplayHooksLocked(now time.Time) {
 	}
 }
 
-func grpcDispatchRequest(captured *capturedAdmission, authKeyID [8]byte, sessionID, msgID int64, admissionSeq uint64, fresh bool, identityHint *coreexecpb.IdentityHint) *coreexecpb.DispatchRequest {
+func grpcDispatchRequest(captured *capturedAdmission, authKeyID [8]byte, sessionID, msgID int64, admissionSeq uint64, fresh bool, identityHint *coreexecpb.IdentityHint, clientIP string) *coreexecpb.DispatchRequest {
 	if captured == nil {
 		return nil
 	}
@@ -1126,6 +1138,7 @@ func grpcDispatchRequest(captured *capturedAdmission, authKeyID [8]byte, session
 		AdmissionSeq:         admissionSeq,
 		ProfileEvidenceFresh: fresh,
 		IdentityHint:         identityHint,
+		ClientIp:             clientIP,
 	}
 }
 

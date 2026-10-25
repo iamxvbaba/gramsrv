@@ -349,10 +349,13 @@ func writeVerificationCommandResult(w http.ResponseWriter, result admin.CommandR
 		status = http.StatusBadRequest
 	}
 	if result.CommandID == "" {
-		result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error()}
+		result = admin.CommandResult{Status: "failed", Message: "command failed", Error: err.Error(), Code: code}
 	}
 	if result.Error == "" {
 		result.Error = err.Error()
+	}
+	if result.Code == "" {
+		result.Code = code
 	}
 	if code == admin.CodeVerificationConflict {
 		result.Message = "another reviewer changed this application first; reload it and decide again"

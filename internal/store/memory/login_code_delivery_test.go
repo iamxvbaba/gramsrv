@@ -22,6 +22,7 @@ func TestLoginCodeDeliveryStoreCommitsMessageEventDialogAndReplay(t *testing.T) 
 		UserID:        userID,
 		PhoneCodeHash: "phone-code-hash-one",
 		Code:          "12345",
+		Template:      "Memory 🔐 {{code}}",
 		Date:          1700000000,
 		ExpiresAt:     1700000300,
 	}
@@ -54,6 +55,7 @@ func TestLoginCodeDeliveryStoreCommitsMessageEventDialogAndReplay(t *testing.T) 
 
 	replayReq := req
 	replayReq.Date++
+	replayReq.Template = "Changed {{code}}"
 	replay, err := deliveries.DeliverLoginCodeMessage(ctx, replayReq)
 	if err != nil {
 		t.Fatalf("replay DeliverLoginCodeMessage: %v", err)

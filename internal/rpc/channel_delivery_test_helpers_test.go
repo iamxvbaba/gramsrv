@@ -20,6 +20,15 @@ func testPendingJoinEffects(snapshot store.ChannelPendingJoinDeliverySnapshot) (
 	return effects, nil
 }
 
+func testAvailableMinEffects(snapshot store.ChannelAvailableMinDeliverySnapshot) ([]store.DeliveryEffect, error) {
+	if snapshot.TargetUserID == 0 {
+		return nil, nil
+	}
+	return []store.DeliveryEffect{store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+		TargetUserID: snapshot.TargetUserID, Payload: []byte{1}, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+	})}, nil
+}
+
 func TestPendingJoinDeliveryEffectsUseViewerPayloadAndOnlyCurrentSessionExclusion(t *testing.T) {
 	r := &Router{}
 	authKeyID := [8]byte{9, 8, 7}

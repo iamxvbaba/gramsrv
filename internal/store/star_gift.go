@@ -11,6 +11,8 @@ import (
 type StarGiftStore interface {
 	// Catalog 返回启用的当前目录快照，按 sort_order/gift_id 排序。
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
+	// CatalogAll includes disabled gifts for admin import duplicate detection.
+	CatalogAll(ctx context.Context) ([]domain.StarGift, error)
 	// CatalogGift 只返回当前启用版本，供新购买校验。
 	CatalogGift(ctx context.Context, giftID int64) (domain.StarGift, bool, error)
 	// CatalogRevision 返回不可变历史版本，供已领取礼物投影。
@@ -58,7 +60,8 @@ type StarGiftStore interface {
 	// ResolveSavedIDs resolves an ordered batch of protocol references without
 	// per-gift round trips. Every ref must belong to owner and resolve to a live gift.
 	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
-	// CountByOwner 返回某 owner 展示在资料的礼物数（非转换、非隐藏），供 full.stargifts_count。
+	// CountByOwner 返回某 owner 持有的活跃礼物总数（含隐藏/未展示的），
+	// 供 full.stargifts_count。隐藏只影响列表展示，不减少计数。
 	CountByOwner(ctx context.Context, owner domain.Peer) (int, error)
 	// SetUnsaved 切换礼物在资料的展示（saveStarGift）；返回是否命中一行。
 	SetUnsaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
@@ -83,6 +86,7 @@ type StarGiftUpgradeStore interface {
 // balances and service-message updates. Implementations must serialize on the saved/unique
 // aggregate and return exact replays for command-key/random-id retries.
 type StarGiftLifecycleStore interface {
+	SettledStarGiftPurchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, bool, error)
 	IssueStarGiftPurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
 	ValidateStarGiftPurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
 	PurchaseStarGiftWithDelivery(ctx context.Context, req domain.StarGiftPurchaseRequest, effects DeliveryEffectsBuilder[domain.StarGiftPurchaseResult]) (domain.StarGiftPurchaseResult, error)
@@ -106,6 +110,11 @@ type StarGiftLifecycleStore interface {
 	SetStarGiftNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
 	StarGiftNotificationsEnabled(ctx context.Context, userID, channelID int64) (bool, error)
 	RecordStarGiftWithdrawal(ctx context.Context, req domain.StarGiftWithdrawalRequest, provider, providerRequestID, url string, expiresAt int) (domain.StarGiftWithdrawal, error)
+	// DeleteStarGift implements payments.deleteStarGift: it moves the saved
+	// gift into the deleted lifecycle state and drops it from every collection.
+	// Refused: an upgraded collectible, a limited-edition or auction gift, and
+	// a gift that still carries Stars (conversion value or prepaid upgrade).
+	DeleteStarGift(ctx context.Context, req domain.StarGiftDeleteRequest) (domain.StarGiftDeleteResult, error)
 	ResolveStarGiftWithdrawal(ctx context.Context, providerRequestID string) (domain.StarGiftWithdrawal, bool, error)
 	CompleteStarGiftWithdrawal(ctx context.Context, providerRequestID string, date int) (domain.StarGiftWithdrawal, error)
 	IssueChannelRevenueWithdrawal(ctx context.Context, req domain.ChannelRevenueWithdrawalRequest) (domain.ChannelRevenueWithdrawal, error)
@@ -119,6 +128,21 @@ type StarGiftLifecycleStore interface {
 	ChannelTonBalance(ctx context.Context, channelID int64) (int64, error)
 	ChannelTonOverallRevenue(ctx context.Context, channelID int64) (int64, error)
 	ChannelTonTransactions(ctx context.Context, channelID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
+	// BotStarsBalance reads a bot's own revenue wallet, which is deliberately
+	// separate from the bot user identity's personal Stars balance.
+	BotStarsBalance(ctx context.Context, botUserID int64) (int64, error)
+	// BotStarsOverallRevenue sums only positive entries: it is lifetime revenue
+	// and stays monotonic across refunds and spends.
+	BotStarsOverallRevenue(ctx context.Context, botUserID int64) (int64, error)
+	BotStarsTransactions(ctx context.Context, botUserID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
+	// CreditBotStarsWallet applies one settled invoice atomically and reports
+	// whether the credit was new. A replay of the same InvoiceKey returns the
+	// stored balance with false instead of minting a second credit.
+	CreditBotStarsWallet(ctx context.Context, credit domain.BotStarsCredit) (balance int64, credited bool, err error)
+	// BotStarsRevenueSeries aggregates the bot wallet journal into one row per
+	// UTC day over [fromUnix, toUnix] so the revenue chart can be rendered
+	// without pulling the whole history into memory.
+	BotStarsRevenueSeries(ctx context.Context, botUserID int64, fromUnix, toUnix int) ([]domain.BotStarsRevenuePoint, error)
 	// SweepStarGiftLifecycle advances time-driven offer/auction aggregates and
 	// drains their durable notification/delivery outboxes in bounded batches.
 	SweepStarGiftLifecycle(ctx context.Context, now, limit int) error

@@ -345,59 +345,49 @@ WHERE sender_user_id=$1 AND recipient_user_id=$2`, buyer.ID, recipient.ID).
 		t.Fatalf("recipient premium_updated_at set=%v err=%v", premiumUpdatedAt, err)
 	}
 
-	// Two distinct successful gifts racing for the same recipient must append
-	// two full windows. Locking only the balance or only the intent would lose
-	// one extension when both transactions read the same premium_expires_at.
-	additionalForms := make([]domain.PremiumPaymentForm, 2)
-	for i := range additionalForms {
-		additionalForms[i], err = premium.IssuePremiumPaymentForm(ctx, domain.PremiumPaymentForm{
-			IdempotencyKey:  "premium-integration-extension-form-" + string(rune('a'+i)),
-			BuyerUserID:     buyer.ID,
-			Kind:            domain.PremiumPurchaseGift,
-			RecipientUserID: recipient.ID,
-			Months:          plan.Months,
-			DurationDays:    plan.DurationDays,
-			AmountStars:     plan.AmountStars,
-			PlanVersion:     plan.Version,
-			IssuedAt:        now + 2,
-			ExpiresAt:       now + 2 + domain.PremiumPaymentFormTTLSeconds,
-		})
-		if err != nil {
-			t.Fatalf("issue concurrent extension form %d: %v", i, err)
-		}
+	// A second gift while the recipient is still active must be rejected
+	// outright -- Premium rewarded gift windows never stack
+	// (PremiumSubscriptionActiveError). Neither the balance, the ledger, the
+	// entitlement set nor the message stream may change.
+	activeForm, err := premium.IssuePremiumPaymentForm(ctx, domain.PremiumPaymentForm{
+		IdempotencyKey:  "premium-integration-extension-form",
+		BuyerUserID:     buyer.ID,
+		Kind:            domain.PremiumPurchaseGift,
+		RecipientUserID: recipient.ID,
+		Months:          plan.Months,
+		DurationDays:    plan.DurationDays,
+		AmountStars:     plan.AmountStars,
+		PlanVersion:     plan.Version,
+		IssuedAt:        now + 3,
+		ExpiresAt:       now + 3 + domain.PremiumPaymentFormTTLSeconds,
+	})
+	if err != nil {
+		t.Fatalf("issue active-extension form: %v", err)
 	}
-	extensionErrs := make([]error, len(additionalForms))
-	startExtensions := make(chan struct{})
-	for i := range additionalForms {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			<-startExtensions
-			_, extensionErrs[index] = premium.PurchasePremiumWithDelivery(ctx, domain.PremiumPurchaseRequest{
-				BuyerUserID: buyer.ID, FormID: additionalForms[index].ID,
-				Kind: domain.PremiumPurchaseGift, RecipientUserID: recipient.ID,
-				Months: plan.Months, PlanVersion: plan.Version, Date: now + 3,
-				CommandKey: "premium-integration-extension-" + string(rune('a'+index)),
-			}, postgresPremiumPurchaseEffects([8]byte{}, 0))
-		}(i)
+	var activeErr domain.PremiumSubscriptionActiveError
+	if _, err := premium.PurchasePremiumWithDelivery(ctx, domain.PremiumPurchaseRequest{
+		BuyerUserID: buyer.ID, FormID: activeForm.ID, Kind: domain.PremiumPurchaseGift,
+		RecipientUserID: recipient.ID, Months: plan.Months, PlanVersion: plan.Version,
+		Date: now + 3, CommandKey: "premium-integration-extension-purchase",
+	}, postgresPremiumPurchaseEffects([8]byte{}, 0)); !errors.As(err, &activeErr) {
+		t.Fatalf("active gift err=%v, want PremiumSubscriptionActiveError", err)
 	}
-	close(startExtensions)
-	wg.Wait()
-	for i, extensionErr := range extensionErrs {
-		if extensionErr != nil {
-			t.Fatalf("concurrent extension %d: %v", i, extensionErr)
-		}
+	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 4250 {
+		t.Fatalf("balance changed by rejected extension=%+v err=%v, want 4250", balance, err)
 	}
-	extended, err := premium.ActivePremiumEntitlements(ctx, recipient.ID, now+3)
-	if err != nil || len(extended) != 3 {
-		t.Fatalf("concurrent extension entitlements=%+v err=%v", extended, err)
+	activeSet, err := premium.ActivePremiumEntitlements(ctx, recipient.ID, now+3)
+	if err != nil || len(activeSet) != 1 {
+		t.Fatalf("entitlements after rejected extension=%+v err=%v, want the original one", activeSet, err)
 	}
-	wantExtendedUntil := entitlements[0].ExpiresAt + 2*plan.DurationDays*24*60*60
-	if extended[len(extended)-1].ExpiresAt != wantExtendedUntil {
-		t.Fatalf("concurrent extension until=%d, want %d", extended[len(extended)-1].ExpiresAt, wantExtendedUntil)
+	var rejectedTxn, rejectedMessage int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM stars_transactions WHERE premium_payment_intent_id=$1`,
+		activeForm.ID).Scan(&rejectedTxn); err != nil || rejectedTxn != 0 {
+		t.Fatalf("rejected extension ledger=%d err=%v, want 0", rejectedTxn, err)
 	}
-	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 2750 {
-		t.Fatalf("balance after concurrent extensions=%+v err=%v, want 2750", balance, err)
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM private_messages
+WHERE sender_user_id=$1 AND recipient_user_id=$2`, buyer.ID, recipient.ID).
+		Scan(&rejectedMessage); err != nil || rejectedMessage != 1 {
+		t.Fatalf("rejected extension messages=%d err=%v, want the original gift only", rejectedMessage, err)
 	}
 
 	refund := domain.PremiumRefundRequest{
@@ -413,7 +403,7 @@ WHERE sender_user_id=$1 AND recipient_user_id=$2`, buyer.ID, recipient.ID).
 	if err != nil || !replayRefund.Duplicate {
 		t.Fatalf("refund replay = %+v err=%v", replayRefund, err)
 	}
-	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 3500 {
+	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 5000 {
 		t.Fatalf("balance after refund = %+v err=%v", balance, err)
 	}
 	var refundCredits int
@@ -456,7 +446,7 @@ VALUES($1,true) ON CONFLICT(user_id) DO UPDATE SET disallow_premium_gifts=true`,
 	}, postgresPremiumPurchaseEffects([8]byte{}, 0)); !errors.Is(err, domain.ErrPremiumRecipientRestricted) {
 		t.Fatalf("privacy-restricted purchase err=%v", err)
 	}
-	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 3500 {
+	if balance, err := stars.GetBalance(ctx, buyer.ID); err != nil || balance.Balance != 5000 {
 		t.Fatalf("balance changed by privacy-restricted purchase=%+v err=%v", balance, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE account_settings SET disallow_premium_gifts=false WHERE user_id=$1`,
@@ -485,7 +475,7 @@ VALUES($1,true) ON CONFLICT(user_id) DO UPDATE SET disallow_premium_gifts=true`,
 		Date: now + 6, CommandKey: "premium-integration-self-purchase",
 	}, postgresPremiumPurchaseEffects([8]byte{}, 0))
 	if err != nil || selfPurchase.Duplicate || !selfPurchase.User.PremiumActiveAt(int64(now+6)) ||
-		selfPurchase.Balance.Balance != 2750 {
+		selfPurchase.Balance.Balance != 4250 {
 		t.Fatalf("self purchase = %+v err=%v", selfPurchase, err)
 	}
 	var selfConfirmationCount int

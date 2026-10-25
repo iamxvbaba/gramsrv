@@ -84,7 +84,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	peer := &tg.PeerChannel{ChannelID: m.ChannelID}
 	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
 	from := tg.PeerClass(nil)
-	if !m.Post && m.SendAs != nil && m.SendAs.ID != 0 {
+	if (!m.Post || m.ShowMessageSender) && m.SendAs != nil && m.SendAs.ID != 0 {
 		from = tgPeer(*m.SendAs)
 	}
 	if !m.Post && from == nil && m.From.ID != 0 {
@@ -158,6 +158,11 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	}
 	if m.PaidMessageStars > 0 {
 		msg.SetPaidMessageStars(m.PaidMessageStars)
+	}
+	// Layer 231 事实核查标签随消息下发；need_check 置位时只带 hash，
+	// 客户端滚动到该消息时用 messages.getFactCheck 懒加载结论文本。
+	if factCheck := tgFactCheck(m.FactCheck); factCheck != nil {
+		msg.SetFactcheck(*factCheck)
 	}
 	if m.Pinned {
 		msg.SetPinned(true)
@@ -450,21 +455,22 @@ func tgChannelForbidden(ch domain.Channel) *tg.ChannelForbidden {
 
 func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember) *tg.Channel {
 	out := &tg.Channel{
-		Creator:    ch.CreatorUserID == viewerUserID && viewerUserID != 0,
-		Verified:   ch.Verified,
-		Scam:       ch.Scam,
-		Fake:       ch.Fake,
-		Gigagroup:  ch.Gigagroup,
-		Broadcast:  ch.Broadcast,
-		Megagroup:  ch.Megagroup,
-		Forum:      ch.Forum,
-		ForumTabs:  ch.ForumTabs,
-		Noforwards: ch.NoForwards,
-		Signatures: ch.Signatures,
-		ID:         ch.ID,
-		Title:      ch.Title,
-		Photo:      tgChatPhoto(ch),
-		Date:       ch.Date,
+		Creator:           ch.CreatorUserID == viewerUserID && viewerUserID != 0,
+		Verified:          ch.Verified,
+		Scam:              ch.Scam,
+		Fake:              ch.Fake,
+		Gigagroup:         ch.Gigagroup,
+		Broadcast:         ch.Broadcast,
+		Megagroup:         ch.Megagroup,
+		Forum:             ch.Forum,
+		ForumTabs:         ch.ForumTabs,
+		Noforwards:        ch.NoForwards,
+		Signatures:        ch.Signatures,
+		SignatureProfiles: ch.SignatureProfiles,
+		ID:                ch.ID,
+		Title:             ch.Title,
+		Photo:             tgChatPhoto(ch),
+		Date:              ch.Date,
 	}
 	out.SetAccessHash(ch.AccessHash)
 	out.SetJoinToSend(ch.JoinToSend)
@@ -546,6 +552,12 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 
 func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.ChannelFull {
 	ch := view.Channel
+	about := ch.About
+	// Editors receive the stored text used by the client description editor.
+	// Other viewers receive the warning without changing any write boundary.
+	if !channelMemberCanChangeInfo(view.Self) {
+		about = domain.ModerationProfileWarning(ch.Scam, ch.Fake, about)
+	}
 	full := &tg.ChannelFull{
 		// 广播频道的订阅者列表仅管理员可见（官方语义）：非管理员订阅者拿到
 		// can_view_participants=false，Profile 的 Subscribers/Administrators/Channel Settings
@@ -561,8 +573,12 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanViewStats: !ch.Monoforum && channelMemberIsAdmin(view.Self),
 		ID:           ch.ID,
 		// Official clients render localized warnings from scam/fake flags.
-		// About remains the owner's unmodified description.
-		About:           ch.About,
+		// On top of that badge the server prepends its own warning line to
+		// About (operator-configured via TELESRV_SCAM_WARNING /
+		// TELESRV_FAKE_WARNING), because the badge alone is easy to miss. The
+		// stored description is never rewritten: the warning exists only in
+		// this projection (domain.ModerationProfileWarning).
+		About:           about,
 		ReadInboxMaxID:  view.Dialog.ReadInboxMaxID,
 		ReadOutboxMaxID: view.Dialog.ReadOutboxMaxID,
 		UnreadCount:     view.Dialog.UnreadCount,
@@ -625,7 +641,9 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 	if view.Dialog.ViewForumAsMessages {
 		full.SetViewForumAsMessages(true)
 	}
-	if ch.LinkedChatID != 0 {
+	// linked_chat_id 只在讨论频道真实可用(存在、未删除、为 megagroup)时下发。悬空 id 会让
+	// 客户端渲染"讨论"入口,点进去却是一个空频道;校验结果由 store 在 ChannelView 上给出。
+	if ch.LinkedChatID != 0 && view.LinkedChatUsable {
 		full.SetLinkedChatID(ch.LinkedChatID)
 	}
 	if defaultSendAs := validDefaultSendAsPeer(view); defaultSendAs != nil {
@@ -804,6 +822,8 @@ func tgChannelAdminLogEvent(viewerUserID int64, event domain.ChannelAdminLogEven
 		action = &tg.ChannelAdminLogEventActionChangeUsername{PrevValue: event.PrevString, NewValue: event.NewString}
 	case domain.ChannelAdminLogChangeLinkedChat:
 		action = &tg.ChannelAdminLogEventActionChangeLinkedChat{PrevValue: int64(event.PrevInt), NewValue: int64(event.NewInt)}
+	case domain.ChannelAdminLogToggleSignatureProfiles:
+		action = &tg.ChannelAdminLogEventActionToggleSignatureProfiles{NewValue: event.NewBool}
 	case domain.ChannelAdminLogToggleSignatures:
 		action = &tg.ChannelAdminLogEventActionToggleSignatures{NewValue: event.NewBool}
 	case domain.ChannelAdminLogTogglePreHistoryHidden:

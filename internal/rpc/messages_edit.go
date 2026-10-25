@@ -11,7 +11,7 @@ import (
 func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEditMessageRequest) (tg.UpdatesClass, error) {
 	scheduleDate, hasScheduleDate := req.GetScheduleDate()
 	scheduleRepeatPeriod, hasScheduleRepeatPeriod := req.GetScheduleRepeatPeriod()
-	if hasScheduleRepeatPeriod && scheduleRepeatPeriod != 0 {
+	if hasScheduleRepeatPeriod && !domain.ValidScheduleRepeat(scheduleRepeatPeriod) {
 		return nil, scheduleDateInvalidErr()
 	}
 	if hasScheduleRepeatPeriod && !hasScheduleDate {
@@ -64,11 +64,21 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 		return nil, err
 	}
 	if hasScheduleDate {
+		var replacement *domain.MessageMedia
 		if media, ok := req.GetMedia(); ok && !editMessageMediaCanDegradeToText(media) {
-			return nil, mediaInvalidErr()
+			switch media.(type) {
+			case *tg.InputMediaPhoto, *tg.InputMediaUploadedPhoto, *tg.InputMediaDocument, *tg.InputMediaUploadedDocument:
+				replacement, err = r.resolveInputMedia(ctx, userID, media)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, mediaInvalidErr()
+			}
 		}
-		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, replaceRichMessage, scheduleDate)
+		return r.editScheduledMessage(ctx, userID, peer, req.ID, message, hasMessage, entities, richMessage, replaceRichMessage, scheduleDate, scheduleRepeatPeriod, hasScheduleRepeatPeriod, replacement)
 	}
+	var replacementMedia *domain.MessageMedia
 	if media, ok := req.GetMedia(); ok {
 		// 关闭 poll 走 editMessage + InputMediaPoll(closed)（TDesktop "Stop poll" 路径）。
 		if pollMedia, isPoll := media.(*tg.InputMediaPoll); isPoll {
@@ -79,21 +89,25 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return r.onEditMessageLiveLocation(ctx, req, liveMedia)
 		}
 		if !editMessageMediaCanDegradeToText(media) {
-			return nil, mediaInvalidErr()
+			switch media.(type) {
+			case *tg.InputMediaPhoto, *tg.InputMediaUploadedPhoto, *tg.InputMediaDocument, *tg.InputMediaUploadedDocument:
+				replacementMedia, err = r.resolveInputMedia(ctx, userID, media)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, mediaInvalidErr()
+			}
 		}
 	}
 	_, hasMediaForContent := req.GetMedia()
 	if !hasMessage && !hasRichMessage && !hasMediaForContent {
 		return nil, messageEmptyErr()
 	}
-	if message == "" && richMessage == nil {
-		// 编辑媒体消息时 message="" 是合法的清空 caption；当前文本-only
-		// 编辑模型由 store 层校验目标消息（无媒体的纯文本消息清空仍会
-		// 落 MESSAGE_EMPTY），RPC 层不再一刀切拒绝。
-		if !hasMediaForContent {
-			return nil, messageEmptyErr()
-		}
-	}
+	// An explicit empty message clears a media caption without re-uploading media.
+	// The store validates the final content against the authoritative target;
+	// an empty plain-text message still returns MESSAGE_EMPTY there.
+
 	// reply_markup（bot inline keyboard）：仅 bot 编辑自己消息时替换/清空（非 bot 丢弃，
 	// 不报错）。P3 仅私聊；markup-only 编辑（无文本）暂不支持——须随文本一起编辑。
 	// 携带 inline markup（即便空 rows）即视为「设置」：空 inline 表示清空键盘，
@@ -124,6 +138,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 			return nil, internalErr()
 		}
 		res, err := r.deps.Channels.EditMessage(ctx, userID, domain.EditChannelMessageRequest{
+			Media: replacementMedia, ReplaceMedia: replacementMedia != nil, PreserveText: !hasMessage && !hasRichMessage,
 			UserID:         userID,
 			ChannelID:      peer.ID,
 			ID:             req.ID,
@@ -157,6 +172,7 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	}
 	sessionID, _ := SessionIDFrom(ctx)
 	res, err := r.deps.Messages.EditMessage(ctx, userID, domain.EditMessageRequest{
+		Media: replacementMedia, ReplaceMedia: replacementMedia != nil, PreserveText: !hasMessage && !hasRichMessage,
 		OwnerUserID:     userID,
 		Peer:            peer,
 		ID:              req.ID,
@@ -261,6 +277,8 @@ func canEditChannelMessageForRPC(member domain.ChannelMember) bool {
 
 func messageEditErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrMessageMediaEditInvalid):
+		return mediaInvalidErr()
 	case errors.Is(err, domain.ErrMessageIDInvalid):
 		return messageIDInvalidErr()
 	case errors.Is(err, domain.ErrMessageEmpty):
@@ -274,8 +292,27 @@ func messageEditErr(err error) error {
 	}
 }
 
+func factCheckErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrMessageNotModified):
+		return messageNotModifiedErr()
+	case errors.Is(err, domain.ErrMessageIDInvalid):
+		return messageIDInvalidErr()
+	case errors.Is(err, domain.ErrFactCheckInvalid):
+		return messageEmptyErr()
+	case errors.Is(err, domain.ErrFactCheckTooLong):
+		return messageTooLongErr()
+	case errors.Is(err, domain.ErrFactCheckForbidden):
+		return messageEditForbiddenErr()
+	default:
+		return channelInvalidErr(err)
+	}
+}
+
 func channelEditErr(err error) error {
 	switch {
+	case errors.Is(err, domain.ErrMessageMediaEditInvalid):
+		return mediaInvalidErr()
 	case errors.Is(err, domain.ErrMessageIDInvalid):
 		return messageIDInvalidErr()
 	case errors.Is(err, domain.ErrMessageEmpty):

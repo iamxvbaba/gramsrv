@@ -130,7 +130,7 @@ func calcSRPM1(settings domain.PasswordSettings, aBytes []byte) ([]byte, error) 
 }
 
 func validateNewPasswordSettings(in domain.PasswordInputSettings) error {
-	if in.NewAlgo == nil || len(in.NewPasswordHash) == 0 {
+	if in.NewAlgo == nil || len(in.NewPasswordHash) == 0 || len(in.NewPasswordHash) > passwordHashSize {
 		return domain.ErrNewSettingsInvalid
 	}
 	algo := in.NewAlgo

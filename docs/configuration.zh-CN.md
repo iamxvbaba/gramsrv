@@ -30,6 +30,18 @@
 拒绝 `storage`，其它角色会严格拒绝 `branding`，不会接受不使用的副本。Admin 有一个独立且
 刻意受限的 `storage` 块，只选择宿主机磁盘看板采样的本地路径，不会配置或初始化对象存储 backend。
 
+### 资料审核警告
+
+| 配置项 | 类型 / 代码默认值 | 说明 |
+|---|---|---|
+| `TELESRV_SCAM_WARNING`（YAML `moderation.scam_profile_warning`） | string / 内置英文涉诈警告 | 在允许读取的用户/频道 About 和非成员邀请预览中，为 SCAM 对象添加前缀。空值或纯空白使用内置文案。 |
+| `TELESRV_FAKE_WARNING`（YAML `moderation.fake_profile_warning`） | string / 内置英文冒充警告 | FAKE 对象的对应前缀；同时存在两个标记时 SCAM 优先。 |
+
+用户 About 隐私隐藏整个字段，包含警告。用户本人、频道创建者及具备 ChangeInfo 权限的管理员读取用于编辑的原始描述。警告只存在于读投影，不落库，也不按匹配文字删除作者输入；客户端仍保留标记徽章。修改配置后需重启。
+
+main 另在启动时比对 `.env` 与 `.env.example` 报告漂移；v2 各角色读 YAML、没有 `.env`，该报告不移植。
+
+
 ## 2. MTProto 监听、传输与资源预算
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
@@ -77,7 +89,8 @@
 | `TELESRV_EGRESS_DELIVERY_GRPC_TLS_SERVER_NAME` | string / 空 | Edge gRPC client 校验 Egress Delivery server certificate 时使用的 server name；非空也会启用 TLS。 |
 | `TELESRV_EGRESS_DELIVERY_GRPC_TLS_CLIENT_CERT_FILE` / `TELESRV_EGRESS_DELIVERY_GRPC_TLS_CLIENT_KEY_FILE` | path / 空 | Edge 调用 Egress Delivery gRPC 时使用的 client certificate 与私钥；二者必须同时配置。 |
 | `TELESRV_EGRESS_DELIVERY_TOKEN` | secret string / 空 | Egress Delivery gRPC API bearer token；`cmd/telesrv-edge` 与 `cmd/telesrv-egress` 都必须显式配置非空值，且不得包含换行。 |
-| `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | 在 MTProto 监听端口启用 MTProto-over-WebSocket 分流。 |
+| `TELESRV_CHECK_NUMBER_FORMAT`（YAML：`core.yaml` 的 `auth.check_number_format`） | bool / `false` | 登录身份格式策略。默认 `false` 按国家号码计划规范化可识别号码，并接受计划外 4-32 位、首位非 0 的身份（包括短号、未分配号段和未知国家码）。`true` 额外要求普通号码通过已分配号段校验。两种模式均拒绝前导 0，保留虚拟 `+888` 的独立 7-15 位规则，并禁止保留号 `+42777` 登录。所有 Core 必须配置一致；v2 Admin 角色只代理 Core Admin API，没有单独开关；切换严格模式可能使之前接纳的身份无法再使用手机号相关操作，但不会重写存量号码。 |
+| `TELESRV_WEBSOCKET_ENABLE` | bool / `true` | 在 MTProto 监听端口启用 MTProto-over-WebSocket 分流。Edge 的同一 HTTP 侧还公开提供 `GET /owpengram/server-info`（RSA 公钥、home DC、Server identity 名称/简介、`has_icon`）和 `GET /owpengram/server-icon`，OwpenGram 系客户端可凭 `host:port` 自动填写“添加服务器”；设为 `false` 时两者都不可用。 |
 | `TELESRV_WEBSOCKET_ALLOWED_ORIGINS` | list / `http://localhost:1234,http://127.0.0.1:1234` | 浏览器 WebSocket origin 白名单；`*` 只用于临时调试。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS` | int / `200000` | 全局物理连接 admission 上限；负数关闭该门禁。 |
 | `TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP` | int / `4096` | 单来源 IP 物理连接上限；负数关闭该门禁。 |
@@ -472,12 +485,12 @@ File YAML。Core 只拥有媒体 metadata 与权限，不持有对象存储配�
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
-| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_v2?sslmode=disable` | 主业务持久库；本地 `main` / `v2` 因迁移历史不同，分别使用 `telesrv_main` / `telesrv_v2`；生产必须替换开发凭证与 TLS 策略。 |
+| `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_v2?sslmode=disable` | 主业务持久库；本地 `main` / `v2` 因迁移历史不同，分别使用 `telesrv_main` / `telesrv_v2`；生产必须替换开发凭证与 TLS 策略。开发 Compose 使用自定义 `TELESRV_POSTGRES_PASSWORD` 时须显式设置并 URL 编码保留字符。 |
 | `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool 最大连接数；`<=0` 使用 pgx 默认值，该默认通常不足以覆盖生产 outbox/RPC 并发。 |
 | `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool 预热最小连接数。 |
 | `TELESRV_POSTGRES_COUNTER_RECOVERY_MAX_CONNS` | positive int / `4` | Redis box/channel 计数器冷恢复专用 PostgreSQL 池上限；必须独立于业务事务池，配置非正数时 Core 启动失败。YAML: `postgres.counter_recovery_max_conns`。 |
 | `TELESRV_REDIS_ADDR` | address / `127.0.0.1:6399` | 验证码、限流、共享更新/缓存易失态使用的 Redis。 |
-| `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。 |
+| `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。本地 YAML 示例以 `redis.password: ${TELESRV_REDIS_PASSWORD}` 与开发 Compose 共用；为空保持开发环境免密，修改后需重启各角色。 |
 | `TELESRV_REDIS_DB` | int / `0` | Redis 逻辑库编号。 |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` 语言包 seed 目录。 |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | `cmd/giftfetch` 生成的只读官方礼物快照；供管理后台选择、验哈希并显式导入。 |
@@ -510,6 +523,15 @@ File YAML。Core 只拥有媒体 metadata 与权限，不持有对象存储配�
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
 | `TELESRV_DEV_AUTH_CODE` | sensitive string / `12345` | `PHONE_CODE_DELIVERY_PROVIDER=development` 使用的固定开发登录码；不得把默认值暴露在公网环境。 |
+| `TELESRV_IDENTITY_DIR` | path / `data/identity` | Admin 管理的 777000 名称、头像及登录码模板共用目录。YAML：`core.yaml` 与 `admin.yaml` 都设置 `identity.dir`（Docker 把共享卷 `identity_data` 挂在 `/var/lib/telesrv-identity`）；每个 Core 实例监听其变化，新验证码投递时实时读取模板覆盖。`edge.yaml` 也可设置同一 `identity.dir`（Docker 以只读方式挂载），Edge 据此在 `/owpengram/server-info` 公开名称、简介与图标；未设置时 Edge 只提供公钥与 DC。 |
+| `TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE` | text / 内置模板 | 已有账号的 777000 登录码消息默认模板；管理面板覆盖优先。必须恰好含一次 `{{code}}`，可含 `{{server_name}}`；修改仅影响新投递，幂等重试恢复首次内容。YAML：`core.yaml` 的 `auth.login_code_message_template`。 |
+| `TELESRV_SRP_RATE_LIMIT` / `TELESRV_SRP_RATE_WINDOW` | int / `10`，duration / `1m` | 每用户（登录前按 auth key）2FA 密码校验 RPC 限流，Edge 直连与 CoreExec 两条分发管线都生效；`<=0` 关闭。YAML：`core.yaml` 的 `sensitive_rate_limits.srp_limit` / `srp_window`。 |
+| `TELESRV_WITHDRAWAL_RATE_LIMIT` / `TELESRV_WITHDRAWAL_RATE_WINDOW` | int / `5`，duration / `1m` | 每用户礼物与 Stars 收益提现 RPC 限流。YAML：`sensitive_rate_limits.withdrawal_limit` / `withdrawal_window`。 |
+| `TELESRV_PAYMENT_RATE_LIMIT` / `TELESRV_PAYMENT_RATE_WINDOW` | int / `30`，duration / `1m` | 每用户资金类 `payments.*` RPC（表单、转赠、报价、竞拍、升级、合成）限流。YAML：`sensitive_rate_limits.payment_limit` / `payment_window`。 |
+| `TELESRV_ASR_URL` / `TELESRV_ASR_TIMEOUT` | string / 空，duration / `120s` | `messages.transcribeAudio` 的本地 ASR HTTP 后端（whisper-server 风格 `POST {url}/inference`）；URL 为空则显式回 `TRANSCRIPTION_FAILED`。URL 必须是不带 userinfo 的绝对 http(s) 地址。YAML：`core.yaml` 的 `transcription.asr_url` / `asr_timeout`。完成通知在标记完成的同一事务写 durable outbox。 |
+| `TELESRV_DONATION_WALLET_KEY_FILE` / `TELESRV_DONATION_POLL_INTERVAL` | path / 空，duration / `5s` | 加密货币捐赠：钱包助记词的 AES-256-GCM 共享密钥文件（32 字节原始值或 64 位 hex），所有 Core 必须指向同一把密钥，服务端从不生成（D7）；为空则关闭捐赠。路径已配置但文件缺失或格式错误会使 Core 启动失败。钱包生成与链上 watcher 只由持有 PG advisory 租约 `telesrv-donations-leader` 的 Core 运行。YAML：`core.yaml` 的 `donations.wallet_key_file` / `poll_interval`。见 `docs/donations.md`。 |
+| `operator_bot.bot_user_id` / `operator_bot.chat_ids` | int64 / `0`，positive int64 sequence / 空 | 进程内的账号冻结操作员对话：把一个已存在的 bot 账号交给内置处理器，白名单内的用户可用 `/account`、`/freeze`、`/unfreeze` 加确认按钮冻结或解冻账号（经 `admin.SetAccountFrozen`，带审计）。两项都配置才启用。main 把 bot 硬编码为 `1250000023`（其部署手工创建的账号），v2 改为配置项，避免误接管恰好拿到该 ID 的 bot。仅 Core YAML。 |
+| `mini_apps.botfather_token` / `mini_apps.stickers_token` | bot token / 空 | 自托管 BotFather 与 Stickers Mini App（公共 Web 的 `/botfather`、`/stickers`）校验 initData 用的 bot token；为空时回落到对应系统 bot 的库内 token secret。属于密钥，不要写进受版本控制的文件。main 读环境变量 `TELESRV_MINIAPP_BOTFATHER_TOKEN` / `TELESRV_MINIAPP_STICKERS_TOKEN`，v2 只从 Core YAML 读取。Mini App 的写操作（建 bot、改简介、建贴纸集）与 MTProto RPC 走同一条 durable 投递路径。 |
 | `TELESRV_AUTH_CODE_TTL` | duration / `5m` | 登录/注册/邮箱验证码有效期，必须为正数。 |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | int / `5` | 单 code/hash 最大错误次数，必须为正数。 |
 | `TELESRV_PHONE_CODE_LENGTH` | int / `5` | `webhook` phone provider 生成的随机 SMS 验证码长度，允许 `4..10`。 |
@@ -541,6 +563,16 @@ File YAML。Core 只拥有媒体 metadata 与权限，不持有对象存储配�
 |---|---|---|
 | `TELESRV_MAPBOX_TOKEN` | secret string / 空 | `upload.getWebFile` 地图缩略图使用的 Mapbox Static Images token；空值使用确定性占位图。 |
 | `TELESRV_MAPTILE_CACHE_DIR` | path / `data/maptiles` | 地图缩略图磁盘缓存，保证分片下载字节稳定并控制上游配额。 |
+| `TELESRV_GEOIP_ENDPOINTS` | list / 空 | 部署者主动启用的地理后端有序 failover 链，用于 `account.getAuthorizations` 和扫码登录确认所返回授权的国家/地区文案。每项必须含 `{ip}` 且使用 `http`/`https`。代码默认值和 `.env.example` 均为空：位置继续为 `Unknown`，不发 GeoIP 请求。启用会将会话 IP 发送给所选供应商，应先审查其隐私政策或使用自建代理。HTTP 前过滤私网、CGNAT、文档、基准测试、本地与保留地址，包含 IPv4-mapped 形式。可选地址：`https://api.ipapi.is/?q={ip}`、`https://reallyfreegeoip.org/json/{ip}`、`https://hackmyip.com/api/lookup?ip={ip}`、`https://get.geojs.io/v1/ip/geo/{ip}.json`。未识别的主机走通用 JSON 解析。 YAML：`core.yaml` 的 `geoip.endpoints`（序列）；下面各行依次对应 `geoip.timeout`、`geoip.concurrency`、`geoip.cache_ttl`、`geoip.negative_ttl`、`geoip.cache_size`、`geoip.rate_limit_threshold`、`geoip.rate_limit_cooldown`、`geoip.down_threshold`、`geoip.down_cooldown`。 |
+| `TELESRV_GEOIP_TIMEOUT` | duration / `2s` | 单个地理后端的单次请求超时；必须为正数且不超过 `10s`。 |
+| `TELESRV_GEOIP_CONCURRENCY` | int / `4` | 单批会话列表解析在所有后端上的在途请求总数上限；必须为 `1..32`。 |
+| `TELESRV_GEOIP_CACHE_TTL` | duration / `24h` | 解析成功地址的缓存有效期（不论由哪个后端解析）；必须为正数且长于负缓存 TTL。 |
+| `TELESRV_GEOIP_NEGATIVE_TTL` | duration / `5m` | “整条链都没给出结果”（限流、后端请求超时、网络错误、查无此 IP）的负缓存期。只有整条链都试过才写入；调用方取消或 RPC 地理查询总预算到期不写负缓存，也不把后端标为故障。必须为正数且短于 `TELESRV_GEOIP_CACHE_TTL`。 |
+| `TELESRV_GEOIP_CACHE_SIZE` | int / `4096` | 缓存地址条目上限；必须为 `1..1000000`。 |
+| `TELESRV_GEOIP_RATE_LIMIT_THRESHOLD` | int / `3` | 单个后端连续收到多少次 HTTP 429 后被整批跳过；必须为 `1..100`。计数按后端独立，一个供应商配额用尽不会影响其他后端。 |
+| `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN` | duration / `2m` | 被限流后端完全不出网请求的冷却时长；必须为正数且不超过 `1h`。 |
+| `TELESRV_GEOIP_DOWN_THRESHOLD` | int / `2` | 连续多少次超时/5xx 后判定后端不可达；必须为 `1..100`。 |
+| `TELESRV_GEOIP_DOWN_COOLDOWN` | duration / `30s` | 不可达后端被跳过的时长；必须为正数且不超过 `TELESRV_GEOIP_RATE_LIMIT_COOLDOWN`，因为一次网络抖动不该让后端离线得像配额窗口那么久。 |
 | `TELESRV_EXTERNAL_MEDIA_ENABLE` | bool / `true` | 启用带 SSRF 防护的外链 photo/document 抓取。 |
 | `TELESRV_EXTERNAL_MEDIA_MAX_BYTES` | int bytes / `10485760` | 单次外链媒体响应体上限；下游把 `<=0` 归一为 10 MiB 安全默认值。 |
 | `TELESRV_EXTERNAL_MEDIA_RATE_PER_MIN` | int / `60` | 全局每分钟外链媒体抓取数；下游把 `<=0` 归一为默认值。 |
@@ -553,6 +585,19 @@ File YAML。Core 只拥有媒体 metadata 与权限，不持有对象存储配�
 | `TELESRV_UPLOAD_INFLIGHT_MAX_BYTES` | int64 bytes / `4194304000` | 单用户未组装上传字节上限；`<=0` 表示不限。 |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_PARTS` | int / `8000` | 单用户未组装分片行数上限；`<=0` 表示不限。 |
 | `TELESRV_UPLOAD_INFLIGHT_MAX_FILES` | int / `64` | 单用户并发未组装 `file_id` 上限；`<=0` 表示不限。 |
+
+GeoIP 只增强展示，不改变授权身份、session flags、存储的 IP 或 update 计数。
+地理查询总预算为 3 秒。取消后停止新增任务和后端切换，等待在途任务结束再读取
+结果；已经完成的结果保留，缺失位置仍显示 `Unknown`。IPv6 仅查询原生 global
+unicast；转换/过渡与未分配地址不发送。特殊用途过滤依据
+[IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/) 与
+[IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/) 登记册。
+
+`ipapi.is` 同时支持匿名的平面响应和携带 key 时的 `location` 对象，格式依据其
+[API 文档](https://ipapi.is/developers.html)。使用 key 时在 URL 模板追加
+`&key=YOUR_KEY`；地理解析不依赖 ownership/threat 等无关字段。启动和失败日志只
+记录供应商主机名与结构化状态，不记录 URL 凭证、路径、查询参数、原始 HTTP
+错误或响应正文。真实端点和凭证应仅保存在不受版本跟踪的部署配置中。
 
 ## 7. AI compose 与 Business automation
 
@@ -648,6 +693,7 @@ File YAML。Core 只拥有媒体 metadata 与权限，不持有对象存储配�
 | `star_gifts.resell_delay` | duration / `0s` | 签发时固化到 `can_resell_at` 的等待期。 |
 | `star_gifts.craft_delay` | duration / `0s` | 签发时固化到 `can_craft_at` 的等待期；可 Craft 礼物即使为 `0s` 也写升级时间这一正数能力边界，0 只表示不具备 Craft 能力或已终结。 |
 | `star_gifts.craft_chance_permille` | int / `250` | 每份输入礼物贡献的本地合成成功概率，累计上限 1000‰。 |
+| `star_gifts.cross_craft_user_ids` | positive int64 sequence / 空 | 跨系列合成（不同礼物混合 craft，由 AI 生成新属性）的账号白名单；空表示关闭。只有同时配置了可用的 `openai_chat` AI provider 时才生效。重复、0 或负值使 Core 启动失败。来自 main 3a84827a 的 `TELESRV_STAR_GIFT_CROSS_CRAFT_USER_IDS`，v2 只从 Core YAML 读取。 |
 | `star_gifts.export.mode` | `local` / `ton` / `disabled`; 默认 `local` | `local` 保持现有 same-origin 礼物导出；`disabled` 只关闭礼物导出；`ton` 交给独立 TON worker。三个模式都不改变频道 Stars/内部 TON 收益领取 provider。主网 worker 未满足 admission 时必须 fail-closed，不能回退 local。 |
 
 Core 的 `star_gifts.export.ton` 仅在 `mode: ton` 时启用正式链路：
@@ -700,6 +746,8 @@ Core 的 `star_gifts.export.ton` 仅在 `mode: ton` 时启用正式链路：
 ### 本地账号评分与 collectible username
 
 账号评分是 gramsrv 自己的本地风控/信誉复合分，组合 Stars 收支、账号活跃和管理处罚；它不承诺 1:1 复刻 Telegram 的私有评分算法。已计算的本地等级会投影到 `userFull.stars_rating`，本人还会收到 `stars_my_pending_rating` 与生效时间，让官方客户端直接显示；他人的 pending 永不下发。资料页只读取后台 worker 已持久化的评分并复用现有 30 分钟 `userFull` 投影缓存，不会同步重算或写库。Collectible username 由管理员签发，本功能不访问外部市场、钱包或区块链节点。
+
+等级为 0..100（分数低于 25 为 0 级），100 是本服为 `stars_rating` 选择的本地策略上限，TL 整数字段本身没有这一限制；n 级需要 `25 * n²` 分（平方增长，前期升级快、后期有分量）。100 级需要 250k 分，与旧 50 级阶梯的封顶分相同，因此 `0261_rating_level_scale`（main 0237）迁移把已存的分数整体映射到更细的刻度（旧 n 级 → 新 2n 或 2n+1 级；恰好落在旧阈值上的分数映射为 2n 级），不会等到下次重算才生效。到达 100 级后不再下发 `next_level_stars`，客户端据此显示满级标记而不是进度条。
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
@@ -777,7 +825,7 @@ Core 的 `star_gifts.export.ton` 仅在 `mode: ton` 时启用正式链路：
 | `TELESRV_TURN_BRIDGE_RELAY_MAX_PORT` | int / `12563` | Docker bridge fallback 的独立上界，限制逐端口 publishing 数量。 |
 | `TELESRV_SFU_HOST_NETWORK` | bool / Docker 默认 `true` | Docker 部署让 SFU 直接使用宿主网络，避免逐 relay 端口映射；`false` 是显式 bridge 兼容模式。 |
 | `TELESRV_CALL_TURN_CREDENTIAL_TTL` | duration / `6h` | 按通话签发的 TURN credential 有效期。 |
-| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | 强制 `p2p_allowed=false`，用于验证 TURN relay 路径。 |
+| `TELESRV_CALL_FORCE_RELAY` | bool / `false` | 强制 `p2p_allowed=false`，用于验证 TURN relay 路径。私聊通话 P2P 默认仅限互为联系人：除非双方互存联系人，否则恒为 `p2p_allowed=false`，陌生人之间永远无法获知对方真实 IP。 |
 | `TELESRV_SFU_UDP_PORT` | int / `12399` | Pion ICE UDPMux 端口，必须放行防火墙。 |
 | `TELESRV_SFU_BIND_IP` | IPv4 / `0.0.0.0` | standalone SFU 媒体 socket 的本地绑定；Docker host network 下直接决定宿主监听接口。 |
 | `TELESRV_SFU_ADVERTISE_IP` | string / 空 | 下发给客户端的 ICE candidate IP；空值回退 `TELESRV_ADVERTISE_IP`，loopback 会静默破坏真机媒体。 |
@@ -806,3 +854,13 @@ Core 的 `star_gifts.export.ton` 仅在 `mode: ton` 时启用正式链路：
 ## 12. 生产部署最低检查清单
 
 生产至少应显式检查并替换这些开发值：PostgreSQL DSN 与 TLS、Redis 密码和网络暴露、RSA 私钥持久化、固定开发验证码暴露、Admin 凭证/session key、OTP Webhook/SMTP secret、AI/Mapbox API key、CoreExec/FileData/Egress Delivery/SFU gRPC control TLS/mTLS、TURN secret 与防火墙端口、公开 URL/scheme 与客户端一致性，以及真机所需的非 loopback SFU/TURN advertise IP。启用 TON Star Gift 时还必须完成固定 lite server/checkpoint/collection code hash、独立 capability/bot/relayer secret、单用户 allowlist、`mint.enabled: false` 预检，以及完整的 testnet/canary/回滚门禁。
+
+## 可选钱包与充值能力（v2）
+
+main 的 Layer 230 应用内钱包（`TELESRV_WALLET_STATE_DIR`、`TELESRV_WALLET_KEY_FILE`、
+`TELESRV_WALLET_TONCENTER_API_KEY`）尚未进入 v2；`wallet.*` / `toncenter.*` 仍为
+compatibility trace + NOT_IMPLEMENTED，app config 恒报 `wallet_available:false`。
+
+加密货币充值只有在 Core YAML 配置了 `donations.wallet_key_file` 时才启用，这对应 main 的
+`TELESRV_DONATIONS_ENABLED`。迁移 0263 关闭仍带空/种子占位端点的链，保留已配置的远端链。
+跨系列合成用 `star_gifts.cross_craft_user_ids` 配置（见上表）。

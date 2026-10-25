@@ -134,6 +134,15 @@ func (b AppLinkBuilder) BuildUsername(username string, query url.Values) string 
 	return b.Build("resolve", query)
 }
 
+// BuildInvite links a chat invite hash. Host-based multi-server clients get the
+// t.me path form /+HASH; the legacy scheme keeps the official join?invite= query.
+func (b AppLinkBuilder) BuildInvite(hash string) string {
+	if b.baseHost != "" {
+		return b.Build("+"+hash, nil)
+	}
+	return b.Build("join", url.Values{"invite": []string{hash}})
+}
+
 // AcceptsEntityURL reports whether a raw custom-scheme URL belongs to this
 // server's configured app-link namespace. The legacy route-as-host scheme is
 // accepted for rollout compatibility; a distinct host-based scheme is limited
@@ -291,6 +300,27 @@ func CleanChatlistSlug(raw string) string {
 		raw = decoded
 	}
 	return raw
+}
+
+// MaxInviteHashBytes bounds the invite hash accepted on public link paths.
+const MaxInviteHashBytes = 64
+
+// ValidInviteHash accepts the base64url alphabet used by exported invite links.
+func ValidInviteHash(hash string) bool {
+	if hash == "" || len(hash) > MaxInviteHashBytes {
+		return false
+	}
+	for _, r := range hash {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func ValidChatlistSlug(slug string) bool {

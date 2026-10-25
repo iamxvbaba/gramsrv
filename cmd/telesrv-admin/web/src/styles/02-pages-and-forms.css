@@ -4,11 +4,386 @@
   gap: 14px;
 }
 
+/* The overview.
+
+   Two bands. The top band is the three small groups -- the queues that want
+   attention, the Stars economy, host health -- laid out three across, because
+   none of them needs more than a row or two of tiles and they read as one strip
+   of "how is it doing". The bottom band is the two groups that genuinely need
+   height: the entity counters on the left and the charts on the right.
+
+   Sizing the bands separately rather than as one five-cell grid is what makes
+   the entity list fit. In a single grid the counter panel competed with three
+   auto-height neighbours for the leftover row and came out ~350px tall, which
+   clipped its ninth tile; as the left cell of the tall band it gets the full
+   remaining height and nothing is cut off.
+
+   The panels are viewport-sized rather than stacked, so the page itself never
+   scrolls on a screen with room to spare -- each panel scrolls its own overflow
+   if a figure ever outgrows it. Below the breakpoint in 01-foundation.css (no
+   width, or a short window) this falls back to an ordinary page that grows.
+*/
+.overview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  height: 100%;
+}
+
+.overview-alerts {
+  display: grid;
+  gap: 8px;
+}
+
+.overview-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.overview-main {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.overview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  padding: 14px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+/* A summary panel's tiles stretch to the panel's height instead of hugging
+   their content. The three panels in the top band are equal thirds of the row,
+   but they hold two, four and three tiles respectively, so content-height tiles
+   left ragged gaps under the shorter panels and pushed each panel's label to a
+   different height. The grid rows stretch to fill and the tile's own rows keep
+   their natural spacing, so the surplus becomes symmetric padding inside each
+   tile rather than dead space below the last one. */
+.overview-summary .overview-panel .overview-tiles {
+  flex: 1;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.overview-summary .overview-panel .stat-tile {
+  align-content: center;
+}
+
+.overview-panel--charts {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+}
+
+/* The dense grids. Columns are auto-fit with a deliberately small minimum:
+   these are nine short counters, and a wider minimum buys a tidier-looking
+   tile at the cost of a third row, which is exactly what does not fit. */
+.overview-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+  align-content: start;
+  gap: 10px;
+}
+
+.overview-tiles--tight {
+  gap: 8px;
+}
+
+/* Host health is always three figures side by side: a RAM reading means little
+   without its total next to it, and this panel only has width for them
+   together, so the three columns are pinned rather than auto-fit. */
+.overview-tiles--health {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* The rest of the band pins its column count for the same reason. The three
+   summary panels are equal thirds of a desktop screen, which auto-fit resolves
+   to three columns -- correct for three figures, wrong for two and for four.
+
+   Every rule here is scoped to .overview-panel--* on purpose: StatsStrip on the
+   standalone statistics page is full width and reads correctly with auto-fit. */
+.overview-panel--economy .overview-tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Two queues. auto-fit gave them three columns, so they took two thirds of the
+   panel and left a hole; and the shared stretch rule above filled the whole
+   band height with them, which read as two enormous slabs with a number in the
+   middle. Hugging the content and centring the row keeps the tiles the size of
+   their neighbours' without the dead space underneath that the stretch existed
+   to avoid. */
+.overview-panel--queues .overview-tiles {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex: 0 0 auto;
+  align-content: center;
+}
+
+/* Nine counters in the left cell of the tall band. auto-fit found five columns
+   there and rendered 5+4, so nine figures used two rows of the four the panel
+   had -- the bottom half was empty and every tile was a cramped 124px. A fixed
+   3x3 fills the panel and makes each tile roughly twice as wide. */
+.overview-panel--people .overview-tiles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 1;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.overview-panel--people .stat-tile {
+  align-content: center;
+}
+
+/* The dense grids drop their secondary lines. "last 5 min", "saved by users"
+   and "localfs backend" qualify the label rather than the figure, and across
+   nine tiles each one costs more than the height of a whole extra row. */
+.overview-tiles--tight .stat-tile--compact .stat-tile-sub {
+  display: none;
+}
+
+.stat-tile--compact {
+  gap: 5px;
+  padding: 9px 10px;
+}
+
+.stat-tile--compact .stat-tile-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.stat-tile--compact .stat-tile-value {
+  font-size: 19px;
+}
+
+/* A nine-digit figure (the Stars balance in circulation runs to nine) has to fit
+   a 110px phone tile. 19px does not, so the compact value steps down on the
+   narrowest breakpoint rather than relying on overflow-wrap to break a number
+   across two lines, which reads as two numbers. */
+@media (max-width: 760px) {
+  .stat-tile--compact .stat-tile-value {
+    font-size: 16px;
+  }
+}
+
+.stat-tile--compact .stat-tile-label {
+  font-size: 11px;
+}
+
+/* The plot height tracks the viewport rather than being a fixed 180px. Three
+   charts stacked in the right panel are the tallest thing on the page, and on a
+   short window a fixed height overflows the panel while the left column still
+   has room to spare. Letting flex size the plot area instead collapsed the
+   bars to nothing, because they are percentages of a track with no other source
+   of height. */
+.overview .chart-bars {
+  height: clamp(80px, 12vh, 180px);
+}
+
+/* Inside the overview the three charts share the right panel, so they are a
+   fixed two-up block rather than an auto-fit row: auto-fit would hand one
+   chart the whole width on a narrow column and stack the rest, which is the
+   scrolling this page exists to remove. The stars chart -- the one with two
+   series and a legend -- spans the full width and takes the leftover height. */
+.overview .stats-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.overview .stats-grid .chart-card:last-child {
+  grid-column: 1 / -1;
+}
+
+.overview .stats-grid .chart-card {
+  min-height: 0;
+}
+
+/* Expanding a chart inside the overview means "give this one the panel", so the
+   others unmount (the existing behaviour) and this one grows into the space
+   they leave behind rather than into a fixed 320px box. */
+.overview .stats-grid.expanded {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: auto;
+  min-height: 0;
+}
+
+.overview .stats-grid.expanded .chart-card {
+  height: 100%;
+}
+
+.overview .stats-grid.expanded .chart-bars {
+  height: 100%;
+  min-height: 220px;
+}
+
+@media (max-width: 1180px), (max-height: 819px) {
+  .overview {
+    height: auto;
+    grid-template-rows: auto auto;
+  }
+
+  /* Once the panels are stacked, each one is as tall as its own content and the
+     stretch rule from the fixed-height layout no longer applies -- a
+     three-column server-health strip would otherwise be forced into one
+     column-wide row per tile and each tile would inherit the strip's height. */
+  .overview-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-summary .overview-panel .overview-tiles {
+    flex: 0 0 auto;
+    grid-auto-rows: auto;
+  }
+
+  /* Back to auto-fit now that the panels are full width instead of a third of
+     it: a pinned 2- or 3-column grid is right for a desktop panel and wrong
+     for a stacked one. */
+  .overview-panel--economy .overview-tiles,
+  .overview-panel--queues .overview-tiles,
+  .overview-panel--people .overview-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(124px, 1fr));
+  }
+
+  .overview-panel--queues .overview-tiles {
+    align-content: start;
+  }
+
+  /* The stacked people panel is as tall as its own content, so there is no
+     surplus for the fill rule to hand out. */
+  .overview-panel--people .overview-tiles {
+    flex: 0 0 auto;
+    grid-auto-rows: auto;
+  }
+
+  .overview-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-panel {
+    overflow: visible;
+  }
+
+  .overview-panel--charts {
+    display: block;
+  }
+
+  .overview .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-auto-rows: auto;
+  }
+
+  .overview .stats-grid.expanded {
+    height: auto;
+  }
+
+  .overview .stats-grid.expanded .chart-bars {
+    height: 320px;
+  }
+}
+
+/* The Stars packages on the Commerce > Shop prices page. A read-only strip:
+   each package is one Telegram-Star amount and the server Stars it credits is
+   that amount times the rate, so there is nothing per-package to edit. The
+   figures recompute from the rate input as it is typed, which is the whole
+   point of showing them next to it. */
+.prices-packages {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.prices-packages-head {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.prices-packages-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+/* --panel-soft does not exist; the sidebar soft variable was the wrong token
+   and rendered the cards near-black against the dark panel. */
+.prices-package {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.prices-package strong {
+  color: var(--heading);
+  font-size: 15px;
+}
+
+.prices-package span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.prices-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+@media (max-width: 760px) {
+  .overview-tiles,
+  .overview-tiles--tight {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+
+  /* Same reason, restated at the panel's own specificity so the desktop pins
+     above do not win here -- 124px fits two columns on a phone where 110px
+     fits three. */
+  .overview-panel--economy .overview-tiles,
+  .overview-panel--queues .overview-tiles,
+  .overview-panel--people .overview-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+
+  /* The health strip stays three across even on a phone: the three figures are
+     only meaningful read together against the same scale, and 110px is enough
+     room for "120.0 GiB" once the compact value size is applied. */
+  .overview-tiles--health {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* In the pinned shell the content area is a one-row grid, so the overview can
+   be told to fill it. :has() is what scopes that to this page alone -- every
+   other page keeps stacking its own sections normally. */
+@media (min-width: 1181px) and (min-height: 820px) {
+  .content:has(> .overview) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
 .dashboard-section {
   display: grid;
   gap: 10px;
 }
 
+/* The section heading carries the statistics range selector and its refresh
+   button inline, on the same baseline as the title, so the control belongs to
+   the charts it changes. */
 .dashboard-section-title {
   display: flex;
   align-items: baseline;
@@ -18,6 +393,10 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.stacked-toolbar--inline {
+  margin-left: auto;
 }
 
 .dashboard-section-title span {
@@ -102,6 +481,11 @@ a.stat-tile.clickable {
   font-size: 24px;
   font-weight: 800;
   line-height: 1.1;
+  /* Nine-digit counters (a Stars balance in circulation runs to eight or nine
+     digits) have to survive a 110px phone tile, and font-size alone cannot know
+     how many digits it is about to be handed. Break inside the number rather
+     than letting it clip against the tile edge. */
+  overflow-wrap: anywhere;
 }
 
 .stat-tile.warn .stat-tile-value {
@@ -818,4 +1202,306 @@ textarea:focus {
 
 .progress-wide .progress-cell {
   min-width: 0;
+}
+
+.stacked-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.segmented-option {
+  min-width: 40px;
+  padding: 5px 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  background: 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.segmented-option:hover {
+  color: var(--heading);
+}
+
+.segmented-option.active {
+  color: var(--brand);
+  background: var(--brand-tint);
+  box-shadow: inset 0 0 0 1px var(--brand-tint-border);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+/* Inside the overview the three charts share the right-hand column, so they are
+   a fixed two-up block rather than an auto-fit row: auto-fit would hand one
+   chart the whole width on a narrow column and stack the rest, which is exactly
+   the scrolling the overview exists to remove. The stars chart -- the one with
+   two series and a legend -- spans the full width and takes the leftover
+   height. */
+.overview .stats-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.overview .stats-grid .chart-card:last-child {
+  grid-column: 1 / -1;
+}
+
+.overview .stats-grid .chart-card {
+  min-height: 0;
+}
+
+/* The plot height tracks the viewport rather than being a fixed 180px. Three
+   charts stacked in the right column are the tallest thing on the page, and on
+   a short laptop a fixed height overflows the panel while the left column still
+   has room to spare. vh is the honest input here: it is literally the space the
+   chart is competing for. Letting flex size the plot area instead collapsed
+   the bars to nothing, because they are percentages of a track with no other
+   source of height. */
+.overview .chart-bars {
+  height: clamp(80px, 12vh, 180px);
+}
+
+/* Expanding a chart inside the overview means "give this one the panel", so the
+   others unmount (the existing behaviour) and this one grows into the space
+   they leave behind rather than into a fixed 320px box. */
+.overview .stats-grid.expanded {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: auto;
+  min-height: 0;
+}
+
+.overview .stats-grid.expanded .chart-card {
+  height: 100%;
+}
+
+.overview .stats-grid.expanded .chart-bars {
+  height: 100%;
+  min-height: 220px;
+}
+
+@media (max-width: 1180px), (max-height: 819px) {
+  .overview .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-auto-rows: auto;
+  }
+
+  .overview .stats-grid.expanded {
+    height: auto;
+  }
+
+  .overview .stats-grid.expanded .chart-bars {
+    height: 320px;
+  }
+}
+
+.stats-grid.expanded {
+  grid-template-columns: 1fr;
+}
+
+.stats-grid.expanded .chart-bars {
+  height: 320px;
+}
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.chart-card-titles {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-card-title {
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.chart-card-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-expand-btn {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  background: 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.chart-expand-btn:hover {
+  color: var(--brand);
+  background: var(--brand-tint);
+  border-color: var(--brand-tint-border);
+}
+
+.chart {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chart-bars {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  height: 180px;
+  min-width: 0;
+}
+
+.chart-col {
+  display: grid;
+  flex: 1 1 0;
+  align-items: end;
+  min-width: 0;
+}
+
+.chart-col-track {
+  position: relative;
+  display: grid;
+  align-items: end;
+  width: 100%;
+  height: calc(100% - 16px);
+  background: repeating-linear-gradient(to top, transparent 0, transparent calc(25% - 1px), var(--line) 25%);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.chart-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--brand-2);
+  border-radius: 2px 2px 0 0;
+}
+
+.chart-line-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  max-width: 220px;
+  padding: 5px 8px;
+  color: var(--on-accent, #fff);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  transform: translate(-50%, -150%);
+}
+
+.chart.line-view .chart-bars,
+.chart-line-svg {
+  overflow: visible;
+}
+
+.chart-line-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.chart-hit {
+  position: relative;
+  flex: 1 1 0;
+  height: 100%;
+  min-width: 0;
+  cursor: crosshair;
+}
+
+.chart-axis-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-legend-item .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.swatch-stars {
+  background: var(--brand-2);
+}
+
+.swatch-gifts {
+  width: 10px;
+  height: 10px;
+  background: 0 0;
+  border: 2px solid var(--danger);
+  border-radius: 999px;
 }

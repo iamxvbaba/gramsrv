@@ -531,6 +531,9 @@ func mergeAuthorizationClientInfo(a *domain.Authorization, info domain.AuthKeyCl
 	if info.AppVersion != "" {
 		a.AppVersion = info.AppVersion
 	}
+	if info.IP != "" {
+		a.IP = info.IP
+	}
 	a.ActiveAt = time.Now()
 }
 

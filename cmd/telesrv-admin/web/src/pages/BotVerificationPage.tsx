@@ -19,6 +19,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, APIError, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { BotPicker } from "../components/EntityPicker";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
 import { displayUsername, formatDate } from "../lib/format";
@@ -108,6 +109,7 @@ export function BotVerificationPage({ navigate }: { navigate: Navigate }) {
         ) : undefined
       }
     >
+      <SectionTabs sectionId="verification" active="/bot-verification" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       {rosterDenied && <Alert>{t("botverification.rosterDenied")}</Alert>}
       {/* The one thing an operator has to understand before touching anything here:

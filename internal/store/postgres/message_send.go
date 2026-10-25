@@ -302,6 +302,9 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.SenderUserID, req.RecipientUserID}); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send dispatch append fences: %w", err)
 	}
+	if err := lockScheduledDelivery(ctx, tx, req.ScheduledDelivery, req.SenderUserID, domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}, req.RandomID); err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
 	if hooks.before != nil || req.ReplyTo != nil {
 		// The preflight above cannot observe another first request until it commits.
 		// Recheck after the per-user transaction lock so aggregate-backed sends
@@ -691,6 +694,11 @@ WHERE sender_user_id = $1
 		}
 	}
 
+	result.NextScheduled, err = completeScheduledDelivery(ctx, tx, req.ScheduledDelivery, sender.ID, req.Date)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("commit send message tx: %w", err)
 	}
@@ -1078,13 +1086,7 @@ func privateHistoryTTLPeriod(ctx context.Context, db sqlcgen.DBTX, ownerUserID, 
 	}
 	var period int
 	err := db.QueryRow(ctx, `
-SELECT COALESCE(NULLIF(d.ttl_period, 0), u.default_history_ttl_period, 0)::int
-FROM users u
-LEFT JOIN dialogs d
-  ON d.user_id = u.id
- AND d.peer_type = 'user'
- AND d.peer_id = $2
-WHERE u.id = $1
+SELECT private_dialog_initial_ttl($1, $2)
 `, ownerUserID, peerUserID).Scan(&period)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil

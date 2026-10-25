@@ -399,7 +399,7 @@ LIMIT $3`, req.ChannelID, maxID, domain.MaxDeleteHistoryBatch)
 }
 
 func (s *ChannelStore) DeleteChannelParticipantHistory(ctx context.Context, req domain.DeleteChannelParticipantHistoryRequest) (domain.DeleteChannelHistoryResult, error) {
-	if req.UserID == 0 || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if req.UserID == 0 || req.ChannelID == 0 || (req.Participant.ID <= 0 || (req.Participant.Type != domain.PeerTypeUser && req.Participant.Type != domain.PeerTypeChannel)) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
 	if req.Date == 0 {
@@ -419,9 +419,23 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(ctx context.Context, req 
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// Match send/edit lock order: actor membership, then channel sequence.
+	var lockedID int64
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM channel_members WHERE channel_id=$1 AND user_id=$2 FOR UPDATE`, req.ChannelID, req.UserID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.DeleteChannelHistoryResult{}, domain.ErrChannelPrivate
+		}
+		return domain.DeleteChannelHistoryResult{}, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT id FROM channels WHERE id=$1 FOR UPDATE`, req.ChannelID).Scan(&lockedID); err != nil {
+		return domain.DeleteChannelHistoryResult{}, err
+	}
 	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, err
+	}
+	if !channel.Megagroup {
+		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
@@ -431,9 +445,12 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(ctx context.Context, req 
 	rows, err := tx.Query(ctx, `
 SELECT id
 FROM channel_messages
-WHERE channel_id = $1 AND sender_user_id = $2 AND id > 1 AND NOT deleted
+WHERE channel_id = $1 AND id > 1 AND NOT deleted
+  AND CASE WHEN NOT post AND send_as_peer_id IS NOT NULL
+      THEN send_as_peer_type = $2 AND send_as_peer_id = $3
+      ELSE from_peer_type = $2 AND from_peer_id = $3 END
 ORDER BY id DESC
-LIMIT $3`, req.ChannelID, req.ParticipantUserID, domain.MaxDeleteHistoryBatch)
+LIMIT $4`, req.ChannelID, string(req.Participant.Type), req.Participant.ID, domain.MaxDeleteHistoryBatch)
 	if err != nil {
 		return domain.DeleteChannelHistoryResult{}, fmt.Errorf("list participant channel history delete ids: %w", err)
 	}

@@ -704,6 +704,7 @@ func adminLogEventTypesForFilter(filter domain.ChannelAdminLogFilter) []string {
 	if filter.Settings {
 		types = append(types,
 			string(domain.ChannelAdminLogToggleSignatures),
+			string(domain.ChannelAdminLogToggleSignatureProfiles),
 			string(domain.ChannelAdminLogTogglePreHistoryHidden),
 			string(domain.ChannelAdminLogToggleAntiSpam),
 			string(domain.ChannelAdminLogToggleAutotranslation),

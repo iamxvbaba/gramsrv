@@ -42,7 +42,11 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	if getStateEstablishesObservedBaseline(ctx) {
 		mode = domain.UpdateStateCommitDeliveredAndObservedBaseline
 	} else if err == nil {
-		r.log.Warn("updates.getState returned current snapshot without advancing observed baseline for client without audited baseline policy",
+		// iOS-and-other clients intentionally opt out of the audited baseline
+		// policy (see getStateEstablishesObservedBaseline) and are served the
+		// plain snapshot. That is the designed behavior, not an anomaly, so it
+		// is debug noise rather than a warn.
+		r.log.Debug("updates.getState returned current snapshot without advancing observed baseline for client without audited baseline policy",
 			r.contextLogFields(ctx)...)
 	}
 	if err != nil {

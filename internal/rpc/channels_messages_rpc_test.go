@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
+	"slices"
 	"strconv"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
@@ -1065,5 +1066,83 @@ func TestChannelsSearchPostsValidatesStubBounds(t *testing.T) {
 	floodHuge.SetQuery(strings.Repeat("x", maxChannelSearchPostsQuery+1))
 	if _, err := r.onChannelsCheckSearchPostsFlood(WithUserID(context.Background(), userID), floodHuge); err == nil || !strings.Contains(err.Error(), "LIMIT_INVALID") {
 		t.Fatalf("channels.checkSearchPostsFlood huge query err = %v, want LIMIT_INVALID", err)
+	}
+}
+
+// TestMessagesDeleteChatDeletesLegacyMegagroupRPC pins gramsrv#139: the legacy
+// creator-only messages.deleteChat must reach the megagroup created under the
+// same id instead of failing as an unhandled 500.
+func TestMessagesDeleteChatDeletesLegacyMegagroupRPC(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	owner, err := userStore.Create(ctx, domain.User{AccessHash: 41, Phone: "15550001041", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	friend, err := userStore.Create(ctx, domain.User{AccessHash: 42, Phone: "15550001042", FirstName: "Friend"})
+	if err != nil {
+		t.Fatalf("create friend: %v", err)
+	}
+	channelStore := memory.NewChannelStore()
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{
+		Users:    appusers.NewService(userStore),
+		Channels: appchannels.NewService(channelStore),
+		Dialogs:  appdialogs.NewService(memory.NewDialogStore(), channelStore),
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+
+	invited, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
+		Users: []tg.InputUserClass{&tg.InputUser{UserID: friend.ID, AccessHash: friend.AccessHash}},
+		Title: "Legacy Delete",
+	})
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	channel := invited.Updates.(*tg.Updates).Chats[0].(*tg.Channel)
+	deleteChat := func(userID, sessionID, chatID int64) (bin.Encoder, error) {
+		t.Helper()
+		req := &tg.MessagesDeleteChatRequest{ChatID: chatID}
+		var b bin.Buffer
+		if err := req.Encode(&b); err != nil {
+			t.Fatalf("encode delete chat: %v", err)
+		}
+		return r.Dispatch(WithSessionID(WithUserID(ctx, userID), sessionID), [8]byte{}, sessionID, &b)
+	}
+
+	if _, err := deleteChat(owner.ID, 7, 0); err == nil || !strings.Contains(err.Error(), "PEER_ID_INVALID") {
+		t.Fatalf("delete chat id 0 err = %v, want PEER_ID_INVALID", err)
+	}
+	if _, err := deleteChat(friend.ID, 8, channel.ID); err == nil || strings.Contains(err.Error(), "NOT_IMPLEMENTED") {
+		t.Fatalf("non-creator delete chat err = %v, want a permission error", err)
+	}
+	if _, err := r.deps.Channels.GetChannel(ctx, owner.ID, channel.ID); err != nil {
+		t.Fatalf("channel after refused delete: %v", err)
+	}
+
+	sessions.clearMessages()
+	enc, err := deleteChat(owner.ID, 9, channel.ID)
+	if err != nil {
+		t.Fatalf("delete chat: %v", err)
+	}
+	var out bin.Buffer
+	if err := enc.Encode(&out); err != nil {
+		t.Fatalf("encode delete chat result: %v", err)
+	}
+	if result, err := tg.DecodeBool(&out); err != nil {
+		t.Fatalf("decode delete chat result: %v", err)
+	} else if _, ok := result.(*tg.BoolTrue); !ok {
+		t.Fatalf("delete chat result = %T, want boolTrue", result)
+	}
+	pushed := sessions.snapshot()
+	current, ok := pushed.message.(*tg.Updates)
+	if pushed.sessionID != 9 || !ok || len(current.Chats) != 1 {
+		t.Fatalf("current session push = %+v, want channelForbidden on session 9", pushed)
+	}
+	if forbidden, ok := current.Chats[0].(*tg.ChannelForbidden); !ok || forbidden.ID != channel.ID {
+		t.Fatalf("current session chat = %#v, want channelForbidden %d", current.Chats[0], channel.ID)
+	}
+	if ids := sessions.pushedUserIDs(); !slices.Contains(ids, friend.ID) {
+		t.Fatalf("pushed users = %v, want the member %d to get the tombstone", ids, friend.ID)
 	}
 }

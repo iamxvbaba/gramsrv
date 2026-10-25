@@ -197,6 +197,11 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		r.applyBotVerificationToChannelFull(ctx, ref.ID, &full)
 		r.applyAndroidChannelReactionEditorCompat(ctx, &full, cached.canChangeInfo)
 		chats := append([]tg.ChatClass(nil), cached.chats...)
+		if cached.defaultSendAsChannelID != 0 {
+			view := domain.ChannelView{Channel: domain.Channel{ID: ref.ID}}
+			view.Dialog.DefaultSendAs = &domain.Peer{Type: domain.PeerTypeChannel, ID: cached.defaultSendAsChannelID}
+			r.applyForeignDefaultSendAsToFull(ctx, userID, view, &full, &chats)
+		}
 		chats = r.appendLinkedDiscussionChat(ctx, userID, ref.ID, chats)
 		r.trackChannelInterest(ctx, userID, ref.ID)
 		users := r.tgUsersForIDs(ctx, userID, cached.userIDs)
@@ -231,15 +236,20 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	// 当前频道默认已由 tgChannelFull 处理；外部频道默认（以自己拥有的别的频道身份发言）需在此投影并
 	// 带上该频道对象，否则客户端拿不到默认 chip。
-	r.applyForeignDefaultSendAsToFull(ctx, userID, view, full, &chats)
+	var defaultSendAsChannelID int64
+	if def := view.Dialog.DefaultSendAs; def != nil && def.Type == domain.PeerTypeChannel && def.ID != view.Channel.ID {
+		defaultSendAsChannelID = def.ID
+	}
 	canChangeInfo := channelMemberCanChangeInfo(view.Self)
 	r.channelFullProjectionCache.StoreIfEpoch(userID, view.Channel.ID, channelFullProjection{
-		accessHash:    view.Channel.AccessHash,
-		canChangeInfo: canChangeInfo,
-		full:          *full,
-		chats:         append([]tg.ChatClass(nil), chats...),
-		userIDs:       userIDs,
+		accessHash:             view.Channel.AccessHash,
+		defaultSendAsChannelID: defaultSendAsChannelID,
+		canChangeInfo:          canChangeInfo,
+		full:                   *full,
+		chats:                  append([]tg.ChatClass(nil), chats...),
+		userIDs:                userIDs,
 	}, loadEpoch)
+	r.applyForeignDefaultSendAsToFull(ctx, userID, view, full, &chats)
 	if err := r.applyWelcomeMessagesToFullChat(ctx, view.Channel.ID, full); err != nil {
 		return nil, err
 	}
@@ -344,6 +354,9 @@ func (r *Router) onChannelsGetSendAs(ctx context.Context, req *tg.ChannelsGetSen
 		}
 		chats = []tg.ChatClass{tgChannelChatForView(userID, view)}
 		owned, ownedErr := r.deps.Channels.ListSendAsChannels(ctx, userID)
+		if ownedErr != nil {
+			return nil, internalErr()
+		}
 		if req.ForPaidReactions {
 			// Paid reaction identities are self plus currently owned/postable
 			// broadcast channels. They are not message send-as candidates and do
@@ -363,21 +376,25 @@ func (r *Router) onChannelsGetSendAs(ctx context.Context, req *tg.ChannelsGetSen
 				}
 			}
 		} else {
+			if view.Channel.Broadcast || view.Self.AdminRights.Anonymous {
+				peers = nil
+			}
+			if view.Channel.Broadcast && view.Channel.SignatureProfiles && canSendAsForeignChannel(view) {
+				peers = append(peers, tg.SendAsPeer{Peer: &tg.PeerUser{UserID: userID}})
+			}
 			// 以「当前频道/群本身」发言：广播频道自帖、匿名管理员等（canCurrentChannelSendAs 判定）。
 			if canCurrentChannelSendAs(view) {
 				peers = append(peers, tg.SendAsPeer{Peer: &tg.PeerChannel{ChannelID: view.Channel.ID}})
 			}
-			// 以「用户自己拥有的其它广播频道」身份在本群发言。非本群关联频道的个人频道需会员
-			// （premium_required，对齐官方：仅本群的 linked 讨论频道免会员），客户端据此置灰/引导开会员，
-			// 服务端在发送侧用 PremiumActiveAt 兜底门控。
-			if ownedErr == nil && len(owned) > 0 {
+			// Broadcast profile authors are free; in groups only linked or verified channels are exempt from Premium.
+			if len(owned) > 0 && (!view.Channel.Broadcast || view.Channel.SignatureProfiles && canSendAsForeignChannel(view)) {
 				extras := make([]domain.Channel, 0, len(owned))
 				for _, ch := range owned {
 					if ch.ID == 0 || ch.ID == view.Channel.ID {
 						continue
 					}
 					sendAs := tg.SendAsPeer{Peer: &tg.PeerChannel{ChannelID: ch.ID}}
-					if ch.ID != view.Channel.LinkedChatID {
+					if !view.Channel.Broadcast && !ch.Verified && ch.ID != view.Channel.LinkedChatID {
 						sendAs.PremiumRequired = true
 					}
 					peers = append(peers, sendAs)

@@ -20,7 +20,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if len(req.ID) > domain.MaxForwardMessageIDs {
 		return nil, limitInvalidErr()
 	}
-	if req.ScheduleRepeatPeriod != 0 {
+	if !domain.ValidScheduleRepeat(req.ScheduleRepeatPeriod) || (req.ScheduleRepeatPeriod != 0 && (scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) || req.ScheduleDate == domain.ScheduleWhenOnline)) {
 		return nil, scheduleDateInvalidErr()
 	}
 	if err := forwardMessagesUnsupportedOptionErr(req); err != nil {
@@ -55,6 +55,12 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	}
 	toPeer, ok := r.domainPeerFromInputPeer(userID, req.ToPeer)
 	if !ok || toPeer.ID == 0 {
+		return nil, peerIDInvalidErr()
+	}
+	// Forwarding is a private write and resolves its target through a peer
+	// reference, which never reads the users row. Without this a deleted account
+	// keeps collecting forwarded history after it stopped accepting messages.
+	if r.peerIsDeletedAccount(ctx, toPeer) {
 		return nil, peerIDInvalidErr()
 	}
 	idempotencyFingerprints := make([][]byte, len(req.ID))
@@ -208,6 +214,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				results = append(results, replays[i].channel)
 				continue
 			}
+			source = source.withoutMediaCaption(req.DropMediaCaptions)
 			forward := source.forward
 			if req.DropAuthor {
 				forward = nil
@@ -283,6 +290,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				res.ReplayDeleteEvents = append(res.ReplayDeleteEvents, sent.ReplayDeleteEvent)
 				continue
 			}
+			source = source.withoutMediaCaption(req.DropMediaCaptions)
 			forward := source.forward
 			if req.DropAuthor {
 				forward = nil
@@ -438,6 +446,7 @@ func (r *Router) forwardMessagesToMonoforum(
 			results = append(results, updates)
 			continue
 		}
+		source = source.withoutMediaCaption(req.DropMediaCaptions)
 		forward := source.forward
 		if req.DropAuthor {
 			forward = nil
@@ -463,6 +472,17 @@ func (r *Router) forwardMessagesToMonoforum(
 		results = append(results, updates)
 	}
 	return combineSendUpdates(results), nil
+}
+
+// withoutMediaCaption derives the outgoing payload without mutating the source.
+// Text with a link preview is still message text, not a media caption.
+func (source forwardSource) withoutMediaCaption(drop bool) forwardSource {
+	if drop && source.media != nil &&
+		(source.media.Kind == domain.MessageMediaKindPhoto || source.media.Kind == domain.MessageMediaKindDocument) {
+		source.body = ""
+		source.entities = nil
+	}
+	return source
 }
 
 func normalizeForwardMessageVectors(ids []int, randomIDs []int64) ([]int, []int64, bool) {

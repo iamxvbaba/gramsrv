@@ -1,7 +1,6 @@
 package loadharness
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -97,13 +96,7 @@ func TestOfflineMutationJournalPersistsMessagesAndActions(t *testing.T) {
 	if loaded.PrivateMessageIDs[0] != 10 || loaded.AccountObservedPts[0] != 20 || loaded.Channels[0].MessageIDs[0] != 30 || loaded.Channels[0].LatestPts != 41 || !loaded.Channels[0].EditDone || loaded.Channels[0].EditPending {
 		t.Fatalf("persisted mutation state = %+v", loaded)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("mutation state mode = %o, want 600", info.Mode().Perm())
-	}
+	requireOwnerOnly(t, path)
 }
 
 func TestOfflineMutationStateRejectsDifferentBaseline(t *testing.T) {

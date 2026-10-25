@@ -81,6 +81,15 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 		}
 	}
 
+	global, err := channels.SearchJoinedMessages(ctx, owner.ID, domain.ChannelGlobalSearchRequest{MediaCategories: []domain.MediaCategory{domain.MediaCategoryPhoto, domain.MediaCategoryVideo}, Limit: 1})
+	if err != nil || len(global.Messages) != 1 || global.Messages[0].ID != videoID || global.Count != 2 {
+		t.Fatalf("global media first page: %+v %v", global, err)
+	}
+	cursor := global.Messages[0]
+	global, err = channels.SearchJoinedMessages(ctx, owner.ID, domain.ChannelGlobalSearchRequest{MediaCategories: []domain.MediaCategory{domain.MediaCategoryPhoto, domain.MediaCategoryVideo}, Limit: 1, OffsetRate: cursor.Date, OffsetChannelID: channelID, OffsetID: cursor.ID})
+	if err != nil || len(global.Messages) != 1 || global.Messages[0].ID != photoID {
+		t.Fatalf("global media next page: %+v %v", global, err)
+	}
 	wantIDs("photos", search(domain.MediaCategoryPhoto), photoID)
 	wantIDs("files", search(domain.MediaCategoryFile), fileID)
 	wantIDs("video", search(domain.MediaCategoryVideo), videoID)
@@ -186,6 +195,19 @@ func TestPrivateMediaCategoryCountsMaterialized(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("send private media: %v", err)
+	}
+	global, err := messages.ListByUser(ctx, bob.ID, domain.MessageFilter{GlobalSearch: true, MediaCategories: []domain.MediaCategory{domain.MediaCategoryFile}, Limit: 1})
+	if err != nil || len(global.Messages) != 1 {
+		t.Fatalf("global private media search: %+v %v", global, err)
+	}
+	cursor := global.Messages[0]
+	second, err := messages.ListByUser(ctx, bob.ID, domain.MessageFilter{GlobalSearch: true, MediaCategories: []domain.MediaCategory{domain.MediaCategoryFile}, Limit: 1, OffsetDate: cursor.Date, OffsetPeer: cursor.Peer, OffsetID: cursor.ID})
+	if err != nil || len(second.Messages) != 0 {
+		t.Fatalf("global private cursor repeated: %+v %v", second, err)
+	}
+	hidden, err := messages.ListByUser(ctx, alice.ID+100000000, domain.MessageFilter{GlobalSearch: true, MediaCategories: []domain.MediaCategory{domain.MediaCategoryFile}, Limit: 1})
+	if err != nil || len(hidden.Messages) != 0 {
+		t.Fatalf("global private account isolation: %+v %v", hidden, err)
 	}
 	combined, err := messages.SearchPrivateMedia(ctx, bob.ID, alice.ID, domain.MediaSearchRequest{
 		Categories:   []domain.MediaCategory{domain.MediaCategoryFile},

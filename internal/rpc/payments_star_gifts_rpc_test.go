@@ -485,6 +485,78 @@ func TestStarGiftPurchaseRequiresActivePremium(t *testing.T) {
 	}
 }
 
+func TestStarGiftSupportOnlyGate(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	dialogs := memory.NewDialogStore()
+	msgStore := memory.NewMessageStore(dialogs)
+	channelStore := memory.NewChannelStore()
+	regular, err := users.Create(ctx, domain.User{AccessHash: 7111, Phone: "15550007111", FirstName: "Regular"})
+	if err != nil {
+		t.Fatalf("create regular: %v", err)
+	}
+	helper, err := users.Create(ctx, domain.User{AccessHash: 7112, Phone: "15550007112", FirstName: "Support", Support: true})
+	if err != nil {
+		t.Fatalf("create support: %v", err)
+	}
+	recipient, err := users.Create(ctx, domain.User{AccessHash: 7113, Phone: "15550007113", FirstName: "Recipient"})
+	if err != nil {
+		t.Fatalf("create recipient: %v", err)
+	}
+	gift := domain.StarGift{
+		ID: 8002, RevisionID: 9002, Stars: 50, ConvertStars: 50, Title: "Beta", SupportOnly: true,
+		Sticker: domain.Document{ID: 701, AccessHash: 8, DCID: 2, MimeType: "application/x-tgsticker", Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrSticker}}},
+	}
+	giftStore := memory.NewStarGiftStore()
+	giftStore.SeedCatalog([]domain.StarGift{gift})
+	starsStore := newStarsTopupRPCStore()
+	// v2 issues star gift payment forms only through the durable lifecycle
+	// aggregate; there is no process-local checkout path.
+	gifts := newStarGiftAggregateRPCService(appstargifts.NewService(giftStore, nil, 2), starsStore.StarsStore, msgStore, channelStore, 1000)
+	gifts.outbox = starsStore.outbox
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true}, Deps{
+		Users:    appusers.NewService(users),
+		Messages: appmessages.NewService(msgStore, dialogs),
+		Channels: appchannels.NewService(channelStore),
+		Stars:    appstars.NewService(starsStore, appstars.WithStartingGrant(1000), appstars.WithPurchaseStore(starsStore)),
+		Gifts:    gifts,
+	}, zaptest.NewLogger(t), clock.System)
+
+	inv := &tg.InputInvoiceStarGift{Peer: &tg.InputPeerUser{UserID: recipient.ID, AccessHash: recipient.AccessHash}, GiftID: gift.ID}
+
+	regularCtx := WithUserID(ctx, regular.ID)
+	checkRes, err := r.onPaymentsCheckCanSendGift(regularCtx, &tg.PaymentsCheckCanSendGiftRequest{GiftID: gift.ID})
+	if err != nil {
+		t.Fatalf("regular checkCanSendGift err=%v", err)
+	}
+	if _, ok := checkRes.(*tg.PaymentsCheckCanSendGiftResultFail); !ok {
+		t.Fatalf("regular checkCanSendGift result=%T, want ResultFail (sold out)", checkRes)
+	}
+
+	supportCtx := WithUserID(ctx, helper.ID)
+	checkResSupport, err := r.onPaymentsCheckCanSendGift(supportCtx, &tg.PaymentsCheckCanSendGiftRequest{GiftID: gift.ID})
+	if err != nil {
+		t.Fatalf("support checkCanSendGift err=%v", err)
+	}
+	if _, ok := checkResSupport.(*tg.PaymentsCheckCanSendGiftResultOk); !ok {
+		t.Fatalf("support checkCanSendGift result=%T, want ResultOk", checkResSupport)
+	}
+	formRes, err := r.onPaymentsGetPaymentForm(supportCtx, &tg.PaymentsGetPaymentFormRequest{Invoice: inv})
+	if err != nil {
+		t.Fatalf("support getPaymentForm: %v", err)
+	}
+	form, ok := formRes.(*tg.PaymentsPaymentFormStarGift)
+	if !ok {
+		t.Fatalf("support gift form=%T", formRes)
+	}
+	if _, err := r.onPaymentsSendStarsForm(supportCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID, Invoice: inv}); err != nil {
+		t.Fatalf("support gift purchase: %v", err)
+	}
+	if _, err := r.onPaymentsSendStarsForm(regularCtx, &tg.PaymentsSendStarsFormRequest{FormID: form.FormID, Invoice: inv}); !tgerr.Is(err, "STARGIFT_USAGE_LIMITED") {
+		t.Fatalf("regular sendStarsForm err=%v, want STARGIFT_USAGE_LIMITED", err)
+	}
+}
+
 func TestStarsGiveawayCatalogFormSettlementReplayAndInfo(t *testing.T) {
 	ctx := context.Background()
 	now := 1_700_000_100
@@ -931,7 +1003,7 @@ func TestSavedStarGiftProjectionCombinesHistoricalCatalogWithCurrentCollectibleA
 		historical.ID: {UpgradeStars: 75, SupplyTotal: 500, Issued: 12},
 	}
 
-	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability)
+	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability, 0)
 	if len(projected) != 1 || !projected[0].CanUpgrade {
 		t.Fatalf("saved gift = %#v, want current pool to make historical gift upgradable", projected)
 	}
@@ -966,7 +1038,7 @@ func TestSavedStarGiftProjectionCombinesHistoricalCatalogWithCurrentCollectibleA
 	}
 
 	availability[historical.ID] = domain.StarGiftCollectibleAvailability{UpgradeStars: 75, SupplyTotal: 500, Issued: 500}
-	soldOut := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability)[0]
+	soldOut := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability, 0)[0]
 	if soldOut.CanUpgrade {
 		t.Fatal("sold-out collectible pool must not advertise upgrade")
 	}
@@ -976,7 +1048,7 @@ func TestSavedStarGiftProjectionCombinesHistoricalCatalogWithCurrentCollectibleA
 		t.Fatal("sold-out catalog projection must not expose upgrade_stars")
 	}
 	saved.PrepaidUpgradeStars = 75
-	soldOutPrepaid := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability)[0]
+	soldOutPrepaid := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, map[int64]domain.StarGift{historical.RevisionID: historical}, availability, 0)[0]
 	if soldOutPrepaid.CanUpgrade {
 		t.Fatal("sold-out prepaid gift must not advertise an upgrade the aggregate will reject")
 	}
@@ -998,7 +1070,7 @@ func TestAuctionAcquiredStarGiftProjectsWinningBid(t *testing.T) {
 	saved := domain.SavedStarGift{GiftID: catalog.ID, RevisionID: catalog.RevisionID, MsgID: 51, Date: 100,
 		GiftNum: 3, PaidStars: 1275}
 
-	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, revisions, nil)
+	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, revisions, nil, 0)
 	if len(projected) != 1 {
 		t.Fatalf("projected = %#v, want one saved gift", projected)
 	}
@@ -1015,7 +1087,7 @@ func TestAuctionAcquiredStarGiftProjectsWinningBid(t *testing.T) {
 
 	// Ordinary gifts keep projecting the immutable historical catalog price.
 	saved.PaidStars = 0
-	plain := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, revisions, nil)[0]
+	plain := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, revisions, nil, 0)[0]
 	inner, ok := plain.Gift.(*tg.StarGift)
 	if !ok || inner.Stars != catalog.Stars {
 		t.Fatalf("non-auction gift = %#v, want catalog price %d", plain.Gift, catalog.Stars)
@@ -1054,7 +1126,7 @@ func TestSavedStarGiftProjectionPreservesCollectibleLifecycle(t *testing.T) {
 		CanExportAt: exportAt, TransferStars: 25, CanTransferAt: transferAt, CanResellAt: resellAt,
 		DropOriginalDetailsStars: 30, CanCraftAt: readyAt,
 	}
-	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, nil, nil)
+	projected := tgSavedStarGifts(0, []domain.SavedStarGift{saved}, nil, nil, 0)
 	if len(projected) != 1 {
 		t.Fatalf("saved lifecycle projection count = %d", len(projected))
 	}
@@ -1083,7 +1155,7 @@ func TestSavedStarGiftProjectionPreservesCollectibleLifecycle(t *testing.T) {
 	zero := tgSavedStarGifts(0, []domain.SavedStarGift{{
 		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: 7102}, GiftID: giftID, RevisionID: revision,
 		MsgID: 45, Date: 101, UniqueGiftID: unique.ID, Unique: &unique,
-	}}, nil, nil)[0]
+	}}, nil, nil, 0)[0]
 	if _, ok := zero.GetCanExportAt(); ok {
 		t.Fatal("zero can_export_at must be absent")
 	}
@@ -1106,7 +1178,7 @@ func TestSavedStarGiftProjectionPreservesCollectibleLifecycle(t *testing.T) {
 	channelSaved.Owner = domain.Peer{Type: domain.PeerTypeChannel, ID: 8102}
 	channelSaved.MsgID = 0
 	channelSaved.SavedID = 51
-	channelProjected := tgSavedStarGifts(0, []domain.SavedStarGift{channelSaved}, nil, nil)[0]
+	channelProjected := tgSavedStarGifts(0, []domain.SavedStarGift{channelSaved}, nil, nil, 0)[0]
 	if _, ok := channelProjected.GetCanExportAt(); ok {
 		t.Fatal("channel can_export_at must be absent until channel export is executable")
 	}
@@ -1367,11 +1439,11 @@ func TestStarGiftPrepaidUpgradeProjectionIsViewerScoped(t *testing.T) {
 	}
 	catalog := map[int64]domain.StarGift{revision: {ID: giftID, RevisionID: revision}}
 	availability := map[int64]domain.StarGiftCollectibleAvailability{giftID: {UpgradeStars: 25, SupplyTotal: 10}}
-	ownerSaved := tgSavedStarGifts(ownerID, []domain.SavedStarGift{saved}, catalog, availability)[0]
+	ownerSaved := tgSavedStarGifts(ownerID, []domain.SavedStarGift{saved}, catalog, availability, 0)[0]
 	if hash, ok := ownerSaved.GetPrepaidUpgradeHash(); ok || hash != "" {
 		t.Fatalf("owner saved gift exposed prepaid hash %q set=%v", hash, ok)
 	}
-	viewerSaved := tgSavedStarGifts(senderID, []domain.SavedStarGift{saved}, catalog, availability)[0]
+	viewerSaved := tgSavedStarGifts(senderID, []domain.SavedStarGift{saved}, catalog, availability, 0)[0]
 	if hash, ok := viewerSaved.GetPrepaidUpgradeHash(); !ok || hash != action.PrepaidUpgradeHash {
 		t.Fatalf("non-owner saved gift prepaid hash = %q set=%v", hash, ok)
 	}
@@ -1622,6 +1694,136 @@ func TestStarGiftCollectiblePreviewUpgradeFormUniqueAndServiceProjection(t *test
 		if decodedActionGift, ok := decodedAction.Gift.(*tg.StarGiftUnique); !ok || !decodedAction.Upgrade || decodedAction.SavedID != 444 || decodedActionGift.Slug != unique.Slug {
 			t.Fatalf("Layer %d unique action lost fields: %#v", profile, decodedAction)
 		}
+	}
+}
+
+func TestUniqueStarGiftLinkPreservesOwnerIdentityWhenUnsaved(t *testing.T) {
+	r, sender, owner, gift := starGiftTestRouter(t)
+	ctx := context.Background()
+	model := collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8101, "Aurora")
+	pattern := collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8102, "Orbit")
+	backdrop := collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 1, "Midnight")
+
+	unique := domain.UniqueStarGift{
+		ID: 9200000000000002, GiftID: gift.ID, Title: gift.Title, Slug: "cake-9", Num: 9,
+		Owner: domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID},
+		Model: model, Pattern: pattern, Backdrop: backdrop,
+		AvailabilityIssued: 1, AvailabilityTotal: 500,
+		Unsaved: true, CraftChancePermille: 250,
+		ResellAmount:        &domain.StarGiftAmount{Currency: domain.StarGiftCurrencyStars, Amount: 500},
+		KeepOriginalDetails: true, OriginalOwner: domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID},
+		OriginalFromUserID: sender.ID, OriginalDate: 1700000000,
+	}
+	service := &uniqueGiftRPCService{GiftsService: r.deps.Gifts, unique: unique}
+	r.deps.Gifts = service
+
+	ownerView, err := r.onPaymentsGetUniqueStarGift(WithUserID(ctx, owner.ID), unique.Slug)
+	if err != nil {
+		t.Fatalf("owner get unique gift err = %v", err)
+	}
+	ownerGift, ok := ownerView.Gift.(*tg.StarGiftUnique)
+	if !ok {
+		t.Fatalf("owner unique gift type = %T", ownerView.Gift)
+	}
+	if peer, set := ownerGift.GetOwnerID(); !set || !reflect.DeepEqual(peer, &tg.PeerUser{UserID: owner.ID}) {
+		t.Fatalf("owner view must retain owner_id for management controls: peer=%#v set=%v", peer, set)
+	}
+	if name, set := ownerGift.GetOwnerName(); set {
+		t.Fatalf("owner view must not replace its own peer with owner_name %q", name)
+	}
+	if amount, set := ownerGift.GetResellAmount(); !set || len(amount) != 1 || ownerGift.CraftChancePermille != 250 {
+		t.Fatalf("owner view lost listing/craft metadata: %#v", ownerGift)
+	}
+
+	viewerView, err := r.onPaymentsGetUniqueStarGift(WithUserID(ctx, sender.ID), unique.Slug)
+	if err != nil {
+		t.Fatalf("viewer get unique gift err = %v", err)
+	}
+	viewerGift, ok := viewerView.Gift.(*tg.StarGiftUnique)
+	if !ok {
+		t.Fatalf("viewer unique gift type = %T", viewerView.Gift)
+	}
+	if _, set := viewerGift.GetOwnerID(); set {
+		t.Fatalf("viewer of hidden gift must not receive owner_id: %#v", viewerGift)
+	}
+	if name, set := viewerGift.GetOwnerName(); !set || name != owner.FirstName {
+		t.Fatalf("viewer of hidden gift owner_name = %q set=%v, want %q", name, set, owner.FirstName)
+	}
+	foundOwnerUser := false
+	for _, user := range viewerView.Users {
+		if u, ok := user.(*tg.User); ok && u.ID == owner.ID {
+			foundOwnerUser = true
+		}
+	}
+	if !foundOwnerUser {
+		t.Fatalf("viewer of hidden gift must still receive owner user object for original details: %#v", viewerView.Users)
+	}
+	var original *tg.StarGiftAttributeOriginalDetails
+	for _, attribute := range viewerGift.Attributes {
+		if value, ok := attribute.(*tg.StarGiftAttributeOriginalDetails); ok {
+			original = value
+		}
+	}
+	if original == nil || !reflect.DeepEqual(original.RecipientID, &tg.PeerUser{UserID: owner.ID}) {
+		t.Fatalf("hidden gift lost its original recipient: %#v", original)
+	}
+	if peer, set := original.GetSenderID(); !set || !reflect.DeepEqual(peer, &tg.PeerUser{UserID: sender.ID}) {
+		t.Fatalf("hidden gift lost its original sender: peer=%#v set=%v", peer, set)
+	}
+	if !reflect.DeepEqual(service.unique, unique) {
+		t.Fatal("viewer-specific projection mutated the stored unique gift")
+	}
+
+	service.unique.Unsaved = false
+	visibleView, err := r.onPaymentsGetUniqueStarGift(WithUserID(ctx, sender.ID), unique.Slug)
+	if err != nil {
+		t.Fatalf("viewer get visible unique gift: %v", err)
+	}
+	visibleGift := visibleView.Gift.(*tg.StarGiftUnique)
+	if peer, set := visibleGift.GetOwnerID(); !set || !reflect.DeepEqual(peer, &tg.PeerUser{UserID: owner.ID}) {
+		t.Fatalf("visible gift lost its public owner: peer=%#v set=%v", peer, set)
+	}
+}
+
+func TestUniqueStarGiftLinkHiddenOwnerNamespacesAndExport(t *testing.T) {
+	r, _, viewer, gift := starGiftTestRouter(t)
+	for _, tc := range []struct {
+		name         string
+		owner        domain.Peer
+		ownerName    string
+		ownerAddress string
+	}{
+		{name: "channel with the same numeric ID", owner: domain.Peer{Type: domain.PeerTypeChannel, ID: viewer.ID}, ownerName: "Channel owner"},
+		{name: "exported gift", ownerAddress: "telesrv-owner:test-export"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unique := domain.UniqueStarGift{
+				ID: 9200000000000003, GiftID: gift.ID, Title: gift.Title, Slug: "cake-10", Num: 10,
+				Owner: tc.owner, OwnerName: tc.ownerName, OwnerAddress: tc.ownerAddress, Unsaved: true,
+				Model:    collectibleRPCAttribute(domain.StarGiftCollectibleModel, 8101, "Aurora"),
+				Pattern:  collectibleRPCAttribute(domain.StarGiftCollectiblePattern, 8102, "Orbit"),
+				Backdrop: collectibleRPCAttribute(domain.StarGiftCollectibleBackdrop, 1, "Midnight"),
+			}
+			r.deps.Gifts = &uniqueGiftRPCService{GiftsService: r.deps.Gifts, unique: unique}
+			view, err := r.onPaymentsGetUniqueStarGift(WithUserID(context.Background(), viewer.ID), unique.Slug)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projected := view.Gift.(*tg.StarGiftUnique)
+			if peer, set := projected.GetOwnerID(); set {
+				t.Fatalf("non-user owner must not match a user by numeric ID: %#v", peer)
+			}
+			if tc.ownerAddress != "" {
+				if address, set := projected.GetOwnerAddress(); !set || address != tc.ownerAddress {
+					t.Fatalf("export address = %q set=%v", address, set)
+				}
+				if name, set := projected.GetOwnerName(); set {
+					t.Fatalf("display name %q must not shadow the export address", name)
+				}
+			} else if name, set := projected.GetOwnerName(); !set || name != tc.ownerName {
+				t.Fatalf("hidden channel owner name = %q set=%v", name, set)
+			}
+		})
 	}
 }
 
@@ -2285,7 +2487,7 @@ func TestStarGiftInsufficientBalance(t *testing.T) {
 	starsStore.AttachDeliveryOutbox(memory.NewDeliveryOutboxStore())
 	baseGifts := appstargifts.NewService(giftStore, nil, 2)
 	gifts := newStarGiftAggregateRPCService(baseGifts, starsStore, msgStore, nil, 1000)
-	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398, PublicBaseURL: "https://links.example.test"}, Deps{
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398, PublicBaseURL: "https://links.example.test", DevStarsPaymentsEnabled: true}, Deps{
 		Users:    appusers.NewService(users),
 		Messages: appmessages.NewService(msgStore, dialogs),
 		Stars:    appstars.NewService(starsStore, appstars.WithStartingGrant(1000)), // < 5000
@@ -2491,6 +2693,26 @@ func TestStarsTopupInvoiceAggregateCreditsBalance(t *testing.T) {
 	}
 }
 
+func TestDevPaymentsDeniedByDefault(t *testing.T) {
+	// DevStarsPaymentsEnabled is off unless explicitly enabled, so the local fiat
+	// checkout must neither issue a form nor accept telesrv_dev credentials.
+	starsStore := newStarsTopupRPCStore()
+	r := New(Config{}, Deps{Stars: appstars.NewService(starsStore, appstars.WithStartingGrant(0), appstars.WithPurchaseStore(starsStore))}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 1001)
+	opt := devStarsTopupOptions()[1]
+	inv := &tg.InputInvoiceStars{Purpose: &tg.InputStorePaymentStarsTopup{
+		Stars: opt.Stars, Currency: opt.Currency, Amount: opt.Amount,
+	}}
+	if _, err := r.onPaymentsGetPaymentForm(ctx, &tg.PaymentsGetPaymentFormRequest{Invoice: inv}); !tgerr.Is(err, "NOT_IMPLEMENTED") {
+		t.Fatalf("getPaymentForm topup with dev payments denied err = %v, want NOT_IMPLEMENTED", err)
+	}
+	if _, err := r.onPaymentsSendPaymentForm(ctx, &tg.PaymentsSendPaymentFormRequest{
+		FormID: 55, Invoice: inv, Credentials: devStarsCredentials(55),
+	}); !tgerr.Is(err, "NOT_IMPLEMENTED") {
+		t.Fatalf("sendPaymentForm with dev payments denied err = %v, want NOT_IMPLEMENTED", err)
+	}
+}
+
 func TestStarsTopupRejectsUnlistedAmount(t *testing.T) {
 	r, sender, _, _ := starGiftTestRouter(t)
 	ctx := WithUserID(context.Background(), sender.ID)
@@ -2525,7 +2747,7 @@ func TestSavedStarGiftAnonymousDetailsVisibleOnlyToReceiver(t *testing.T) {
 	// Telegram iOS needs the sender peer to turn a user gift's msg_id into an
 	// InputSavedStarGiftUser reference. The protocol exposes hidden original
 	// details to the receiver, while keeping them hidden from profile viewers.
-	receiverProjection := tgSavedStarGifts(receiverID, []domain.SavedStarGift{gift}, nil, nil)
+	receiverProjection := tgSavedStarGifts(receiverID, []domain.SavedStarGift{gift}, nil, nil, 0)
 	if len(receiverProjection) != 1 {
 		t.Fatalf("receiver projection len = %d, want 1", len(receiverProjection))
 	}
@@ -2545,7 +2767,7 @@ func TestSavedStarGiftAnonymousDetailsVisibleOnlyToReceiver(t *testing.T) {
 		t.Fatalf("receiver user ids = %v, want sender %d", ids, senderID)
 	}
 
-	viewerProjection := tgSavedStarGifts(viewerID, []domain.SavedStarGift{gift}, nil, nil)
+	viewerProjection := tgSavedStarGifts(viewerID, []domain.SavedStarGift{gift}, nil, nil, 0)
 	if len(viewerProjection) != 1 {
 		t.Fatalf("viewer projection len = %d, want 1", len(viewerProjection))
 	}
@@ -2557,5 +2779,68 @@ func TestSavedStarGiftAnonymousDetailsVisibleOnlyToReceiver(t *testing.T) {
 	}
 	if ids := savedStarGiftUserIDs(viewerID, []domain.SavedStarGift{gift}); len(ids) != 0 {
 		t.Fatalf("anonymous sender user leaked to profile viewer: %v", ids)
+	}
+}
+
+// tombstoneUsersService overlays the account lifecycle tombstone on top of a live
+// users service. In-memory stores have no deletion boundary of their own, so this
+// is how the RPC layer is shown a deleted owner.
+type tombstoneUsersService struct {
+	UsersService
+	deletedIDs map[int64]bool
+}
+
+func (s tombstoneUsersService) ByID(ctx context.Context, currentUserID, userID int64) (domain.User, bool, error) {
+	u, found, err := s.UsersService.ByID(ctx, currentUserID, userID)
+	if err != nil || !found || !s.deletedIDs[userID] {
+		return u, found, err
+	}
+	u.Deleted = true
+	u.DeletedAt = time.Now().Unix()
+	return u.DeletedTombstone(), true, nil
+}
+
+// A deleted account is a tombstone everywhere, gifts included: its profile must
+// not expose what it once owned, NFT gifts in particular, or the client keeps
+// rendering a dead account as a collector.
+func TestDeletedAccountProfileHidesGifts(t *testing.T) {
+	r, sender, recipient, gift := starGiftTestRouter(t)
+	ctx := context.Background()
+	viewerCtx := WithUserID(ctx, sender.ID)
+	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID}
+	unique := domain.UniqueStarGift{ID: 9901, GiftID: gift.ID, Title: "Cake", Slug: "cake-1", Num: 1,
+		Owner: ownerPeer, GiftAddress: "0xabc", OwnerAddress: "0xdef"}
+	if _, err := r.deps.Gifts.RecordSavedGift(ctx, domain.SavedStarGift{
+		Owner: ownerPeer, GiftID: gift.ID, RevisionID: gift.RevisionID, MsgID: 91, Date: 1700000091,
+		UniqueGiftID: unique.ID, Unique: &unique,
+	}); err != nil {
+		t.Fatalf("record NFT gift: %v", err)
+	}
+	req := &tg.PaymentsGetSavedStarGiftsRequest{
+		Peer:  &tg.InputPeerUser{UserID: recipient.ID, AccessHash: recipient.AccessHash},
+		Limit: 10,
+	}
+	live, err := r.onPaymentsGetSavedStarGifts(viewerCtx, req)
+	if err != nil {
+		t.Fatalf("live profile gifts: %v", err)
+	}
+	if live.Count != 1 || len(live.Gifts) != 1 {
+		t.Fatalf("live profile gifts = %d/%d, want the NFT gift to be visible before deletion", live.Count, len(live.Gifts))
+	}
+	// The by-reference endpoint resolves an owner before reading, so it shares the
+	// same tombstone rule. A deleted owner must hide the gift there too.
+	r.deps.Users = tombstoneUsersService{UsersService: r.deps.Users, deletedIDs: map[int64]bool{recipient.ID: true}}
+	if !r.starGiftOwnerDeleted(ctx, sender.ID, ownerPeer) {
+		t.Fatal("deleted gift owner was not recognised as a tombstone")
+	}
+	if r.starGiftOwnerDeleted(ctx, sender.ID, domain.Peer{Type: domain.PeerTypeUser, ID: sender.ID}) {
+		t.Fatal("the viewer's own account must never be treated as a tombstone")
+	}
+	deleted, err := r.onPaymentsGetSavedStarGifts(viewerCtx, req)
+	if err != nil {
+		t.Fatalf("deleted profile gifts: %v", err)
+	}
+	if deleted.Count != 0 || len(deleted.Gifts) != 0 {
+		t.Fatalf("deleted profile gifts = %d/%d, want an empty tombstone profile", deleted.Count, len(deleted.Gifts))
 	}
 }

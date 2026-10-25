@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,8 +33,10 @@ import (
 	communitiesapp "telesrv/internal/app/communities"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
+	donationsapp "telesrv/internal/app/donations"
 	ephemeralapp "telesrv/internal/app/ephemeral"
 	filesapp "telesrv/internal/app/files"
+	"telesrv/internal/app/files/botavatars"
 	groupcallsapp "telesrv/internal/app/groupcalls"
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
@@ -50,8 +53,10 @@ import (
 	"telesrv/internal/app/stargifts"
 	"telesrv/internal/app/stars"
 	storiesapp "telesrv/internal/app/stories"
+	"telesrv/internal/app/systemidentity"
 	telegramloginapp "telesrv/internal/app/telegramlogin"
 	themesapp "telesrv/internal/app/themes"
+	transcriptionapp "telesrv/internal/app/transcription"
 	translationapp "telesrv/internal/app/translation"
 	"telesrv/internal/app/updates"
 	usernamesapp "telesrv/internal/app/usernames"
@@ -68,6 +73,8 @@ import (
 	"telesrv/internal/edgecontrol/redisbus"
 	"telesrv/internal/edgecontrol/redisregistry"
 	"telesrv/internal/filedata"
+	"telesrv/internal/geoip"
+	"telesrv/internal/identity"
 	"telesrv/internal/node/common"
 	nodeprojection "telesrv/internal/node/projection"
 	obsmetrics "telesrv/internal/observability/metrics"
@@ -77,6 +84,7 @@ import (
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
+	freezeseed "telesrv/internal/seed/freeze"
 	"telesrv/internal/sfu"
 	storepkg "telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -89,11 +97,22 @@ import (
 	"telesrv/internal/web"
 )
 
-func localStarGiftWithdrawalOptions(publicBaseURL, publicLinkWebAddr, exportMode string) ([]stargifts.Option, error) {
+func localStarGiftWithdrawalOptions(publicBaseURL, publicLinkWebAddr, exportMode string, logger *zap.Logger) ([]stargifts.Option, error) {
 	if strings.TrimSpace(publicLinkWebAddr) == "" {
 		return nil, nil
 	}
 	provider, err := stargifts.NewLocalWithdrawalProvider(publicBaseURL)
+	if errors.Is(err, stargifts.ErrLocalWithdrawalInsecureBaseURL) {
+		// A plain-HTTP LAN deployment (the Docker quick start) must still
+		// start (gramsrv#135). Without a provider, gift export and channel
+		// revenue withdrawal answer their explicit "unavailable" errors
+		// until the public base URL is HTTPS.
+		if logger != nil {
+			logger.Warn("local star gift and revenue withdrawal disabled: public base URL is plain HTTP outside loopback",
+				zap.String("public_base_url", publicBaseURL))
+		}
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +224,27 @@ func newAIComposeOptions(cfg config.CoreConfig, limiter aiapp.RateLimiter, premi
 		opts = append(opts, aiapp.WithProviders(providers...))
 	}
 	return opts
+}
+
+func newCrossCraftGenerator(cfg config.CoreConfig, blobs stargifts.BlobBackend, logger *zap.Logger) postgres.StarGiftCrossCraftGenerator {
+	if !cfg.AIEnabled {
+		return nil
+	}
+	for _, pc := range cfg.AIProviders {
+		if aiapp.ProviderKind(pc.Kind) != aiapp.ProviderKindOpenAIChat || pc.APIKey == "" {
+			continue
+		}
+		generator := stargifts.NewCrossCraftGenerator(aiapp.ProviderConfig{
+			Name: pc.Name, Kind: aiapp.ProviderKind(pc.Kind), BaseURL: pc.BaseURL, APIKey: pc.APIKey,
+			Model: pc.Model, Timeout: max(cfg.AITimeout, 45*time.Second),
+		}, blobs, cfg.DC)
+		if generator != nil {
+			logger.Info("cross collection craft AI configured", zap.String("provider", pc.Name))
+			return generator
+		}
+	}
+	logger.Warn("cross collection craft AI unavailable")
+	return nil
 }
 
 func newTranslationOptions(cfg config.CoreConfig, limiter translationapp.RateLimiter, logger *zap.Logger) []translationapp.Option {
@@ -549,6 +589,21 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	if err := common.ConfigureProcessGlobals(cfg); err != nil {
 		return err
 	}
+	// Install the phone format policy before any store or service is built.
+	// Login, phone change, contact import and the Admin API (served by Core)
+	// all canonicalize through it, so every Core must use the same value.
+	domain.ConfigurePhoneFormatCheck(cfg.CheckNumberFormat)
+	logger.Info("手机号格式策略", zap.Bool("check_number_format", cfg.CheckNumberFormat))
+	// Server Settings → Server identity lives in cfg.IdentityDir, shared with
+	// the Admin role. The custom name becomes the 777000 display name now; the
+	// identity watcher started after the router keeps name and avatar in sync
+	// with later panel edits on every Core instance without a restart.
+	identityStore := identity.NewStore(cfg.IdentityDir)
+	if info, err := identityStore.Get(); err != nil {
+		logger.Warn("读取服务器身份失败，沿用品牌默认名", zap.Error(err))
+	} else {
+		domain.SetOfficialSystemUserDisplayName(info.Name)
+	}
 	instanceID, err := config.RequireInstanceID(cfg.InstanceID)
 	if err != nil {
 		return fmt.Errorf("invalid instance id: %w", err)
@@ -735,10 +790,12 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	defer bootstrapUpdateStore.Close()
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
 	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
+	botPreCheckoutStore := redisstore.NewBotPreCheckoutRegistryStore(rdb)
 	loginTokenStore := redisstore.NewLoginTokenRegistryStore(rdb)
 	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	welcomeMessageStore := postgres.NewWelcomeMessageStore(pool)
+	messageTranscriptionStore := postgres.NewMessageTranscriptionStore(pool)
 	moderationReportStore := postgres.NewModerationReportStore(pool)
 	authDeliveryReportStore := postgres.NewAuthDeliveryReportStore(pool)
 	clientTelemetryStore := postgres.NewClientTelemetryStore(pool)
@@ -937,6 +994,14 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 			zap.Int("blobs", stats.Blobs),
 		)
 	}
+	if stats, err := filesService.SeedFreezeEmoji(ctx); err != nil {
+		return fmt.Errorf("seed freeze emoji: %w", err)
+	} else if stats.Imported {
+		logger.Info("内置 freeze 表情种子导入完成",
+			zap.Int64("document_id", freezeseed.DocumentID),
+			zap.Int64("set_id", freezeseed.SetID),
+		)
+	}
 	// 默认 emoji status 系统集：从 animated_emoji 精选合成（幂等，已 seed 的存量
 	// 库重启后自动补上）；缺失时 premium 用户的 status 选择器会是空的。
 	if count, created, err := filesService.EnsureDefaultEmojiStatusSet(ctx); err != nil {
@@ -1038,6 +1103,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
 		account.WithAccountLifecycle(accountLifecycleStore),
+		account.WithTmpPasswords(postgres.NewTmpPasswordStore(pool), authzStore),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
 	}
 	var webhookSender otpdelivery.Sender
@@ -1091,6 +1157,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		botsapp.WithStickerSetCreator(filesService),
 		botsapp.WithGifCatalog(filesService),
 		botsapp.WithTelegramLogin(telegramLoginService),
+		botsapp.WithGramsrvOperatorBot(cfg.OperatorBotUserID, cfg.OperatorBotChatIDs, adminService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
 		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	groupCallStore := postgres.NewGroupCallStore(pool)
@@ -1215,8 +1282,12 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 			ResaleMaxStars:        cfg.StarGiftResaleMaxStars,
 			ResaleMaxTONNanoton:   cfg.StarGiftResaleMaxTON * 1_000_000_000,
 			ResaleMinStars:        cfg.StarGiftResaleMinStars,
-		}))
-	starGiftWithdrawalOptions, err := localStarGiftWithdrawalOptions(cfg.PublicBaseURL, cfg.PublicLinkWebAddr, cfg.StarGiftExportMode)
+		}),
+		postgres.WithStarGiftCrossCraftGenerator(newCrossCraftGenerator(cfg, blobBackend, logger)),
+		postgres.WithStarGiftCrossCraftChance(cfg.StarGiftCraftChancePermille),
+		postgres.WithStarGiftCrossCraftUsers(cfg.StarGiftCrossCraftUserIDs),
+		postgres.WithStarGiftCrossCraftBlobReader(blobBackend))
+	starGiftWithdrawalOptions, err := localStarGiftWithdrawalOptions(cfg.PublicBaseURL, cfg.PublicLinkWebAddr, cfg.StarGiftExportMode, logger)
 	if err != nil {
 		return fmt.Errorf("init local star gift withdrawal provider: %w", err)
 	}
@@ -1298,6 +1369,25 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		}
 	}
 	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC, starGiftOptions...)
+	domain.SetModerationProfileWarning(cfg.ScamProfileWarning, cfg.FakeProfileWarning)
+	// Crypto donations (D7): every Core decrypts the wallet with the same shared
+	// key file; only the donations lease holder provisions the wallet and runs
+	// the chain watchers. No key file means the feature is off, while the chain
+	// registry stays editable.
+	donationStore := postgres.NewDonationStore(pool)
+	donationsService := donationsapp.NewConfigOnlyService(donationStore)
+	if cfg.DonationWalletKeyFile != "" {
+		donationWalletKey, err := donationsapp.LoadEncryptionKeyFile(cfg.DonationWalletKeyFile)
+		if err != nil {
+			return fmt.Errorf("init donations wallet key: %w", err)
+		}
+		donationsService, err = donationsapp.NewService(ctx, donationStore, donationWalletKey)
+		if err != nil {
+			return fmt.Errorf("init donations service: %w", err)
+		}
+	}
+	botsService.SetDonationsSource(donationsService)
+	donationsService.SetNotifier(botsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -1354,6 +1444,13 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)
 	welcomeMessageService := welcomemessagesapp.NewService(welcomeMessageStore, channelsService)
+	transcriptionService := transcriptionapp.NewService(
+		messageTranscriptionStore,
+		filesService,
+		cfg.ASRURL,
+		cfg.ASRTimeout,
+		logger.Named("transcription"),
+	)
 	storiesService := storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService))
 	chatlistsService := chatlistsapp.NewService(
 		chatlistStore,
@@ -1372,6 +1469,9 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		messageapp.WithBotResponder(botsService),
 		messageapp.WithSendPermissionChecker(adminService),
 		messageapp.WithBusinessAutomation(businessAutomationStore, businessAutomationOptions...),
+		// The recipient probe only needs the unprojected row, so the send gate
+		// reads the tombstone without viewer projection.
+		messageapp.WithRecipientUserReader(userStore),
 	)
 	moderationService := moderationapp.NewService(
 		moderationReportStore,
@@ -1397,6 +1497,13 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
 		auth.WithLoginCodeDelivery(messageStore),
+		auth.WithLoginCodeMessageTemplateResolver(func() (string, error) {
+			info, err := identityStore.Get()
+			if err != nil {
+				return "", err
+			}
+			return domain.ResolveLoginCodeMessageTemplate(info.LoginCodeMessageTemplate, cfg.LoginCodeMessageTemplate), nil
+		}),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
@@ -1499,6 +1606,33 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		}
 		appUpdateResolver = client
 	}
+	// 会话地理归属(account.getAuthorizations 的 country/region)。协议层没有
+	// help.requestIpAddress 的对等实现,不配 endpoint 时 resolver 为 nil,列表继续回传
+	// "Unknown" 占位文案——这是未启用时的预期路径,不该让服务起不来。
+	geoIPResolver, err := geoip.New(geoip.Config{
+		Endpoints:          cfg.GeoIPEndpoints,
+		Timeout:            cfg.GeoIPTimeout,
+		Concurrency:        cfg.GeoIPConcurrency,
+		CacheTTL:           cfg.GeoIPCacheTTL,
+		NegativeTTL:        cfg.GeoIPNegativeTTL,
+		CacheSize:          cfg.GeoIPCacheSize,
+		RateLimitThreshold: cfg.GeoIPRateLimitThreshold,
+		RateLimitCooldown:  cfg.GeoIPRateLimitCooldown,
+		DownThreshold:      cfg.GeoIPDownThreshold,
+		DownCooldown:       cfg.GeoIPDownCooldown,
+	}, logger.Named("geoip"))
+	if err != nil {
+		return fmt.Errorf("init geoip resolver: %w", err)
+	}
+	if geoIPResolver != nil {
+		defer func() { _ = geoIPResolver.Close() }()
+		// failover 链是有序的,启动时打出来,排查"为什么这条会话显示 Unknown"时能直接
+		// 看出当时主力是哪个。
+		logger.Info("会话地理归属已启用",
+			zap.Strings("backends", geoip.EndpointNames(cfg.GeoIPEndpoints)))
+	} else {
+		logger.Info("会话地理归属未启用：account.getAuthorizations 继续回传 Unknown 占位文案")
+	}
 	router := rpc.New(rpc.Config{
 		DevStarsPaymentsEnabled:  cfg.DevStarsPaymentsEnabled,
 		DC:                       cfg.DC,
@@ -1514,6 +1648,12 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		AuthCodeRateWindow:       cfg.AuthCodeRateWindow,
 		CatchupRateLimit:         cfg.CatchupRateLimit,
 		CatchupRateWindow:        cfg.CatchupRateWindow,
+		SRPRateLimit:             cfg.SRPRateLimit,
+		SRPRateWindow:            cfg.SRPRateWindow,
+		WithdrawalRateLimit:      cfg.WithdrawalRateLimit,
+		WithdrawalRateWindow:     cfg.WithdrawalRateWindow,
+		PaymentRateLimit:         cfg.PaymentRateLimit,
+		PaymentRateWindow:        cfg.PaymentRateWindow,
 		ChannelNudgeMaxTargets:   cfg.ChannelNudgeMaxTargets,
 		CallSignalingMaxBytes:    cfg.CallSignalingMaxBytes,
 		CallForceRelay:           cfg.CallForceRelay,
@@ -1552,61 +1692,90 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 			help.WithMapboxToken(cfg.MapboxToken),
 			help.WithPremiumBotUsername(cfg.PremiumBotUsername),
 			help.WithAccountFreezeProvider(adminService)),
-		AppUpdates:                 appUpdateResolver,
-		AccountFreeze:              userProjectionFacts,
-		AccountFreezeNotifications: adminService,
-		AICompose:                  aiComposeService,
-		Ephemeral:                  ephemeralService,
-		EphemeralPush:              ephemeralStore,
-		WelcomeMessages:            welcomeMessageService,
-		Moderation:                 moderationService,
-		Users:                      usersService,
-		Usernames:                  usernamesService,
-		CollectiblePhones:          collectiblePhoneStore,
-		AccountRatings:             ratingService,
-		BotVerifications:           botVerificationService,
-		TelegramLogin:              telegramLoginRPCDependency(telegramLoginService),
-		Updates:                    updatesService,
-		DeliveryOutbox:             deliveryOutboxStore,
-		BootstrapUpdates:           bootstrapUpdateStore,
-		BotAPIUpdates:              botAPIUpdateStore,
-		BotCallbacks:               botCallbackStore,
-		LoginTokens:                loginTokenStore,
-		Contacts:                   contactsService,
-		Dialogs:                    dialogsService,
-		Chatlists:                  chatlistsService,
-		Messages:                   messagesService,
-		Translation:                translationService,
-		Channels:                   channelsService,
-		Communities:                communitiesService,
-		Files:                      filesService,
-		PremiumPromo:               filesService,
-		Bots:                       botsService,
-		ServiceBotCallbacks:        botsService,
-		ServiceBotInlineResults:    botsService,
-		Polls:                      pollsapp.NewService(pollStore),
-		Stories:                    storiesService,
-		Phone:                      phoneService,
-		SecretChats:                secretChatService,
-		Stars:                      starsService,
-		Premium:                    premiumService,
-		Gifts:                      giftsService,
-		Passkey:                    passkeyService,
-		Themes:                     themeService,
-		GroupCalls:                 groupCallsService,
-		LiveStreams:                liveStreamDep(liveStreamService),
-		SFU:                        sfuService,
-		TURN:                       turnService,
-		LangPack:                   langPackService,
-		Sessions:                   edgeControl,
-		Metrics:                    metricRegistry,
-		Inline:                     inlineRegistryStore,
-		Limiter:                    rateLimiter,
+		AppUpdates:                   appUpdateResolver,
+		AccountFreeze:                userProjectionFacts,
+		AccountFreezeNotifications:   adminService,
+		AccountDeletionNotifications: accountLifecycleStore,
+		AICompose:                    aiComposeService,
+		Ephemeral:                    ephemeralService,
+		EphemeralPush:                ephemeralStore,
+		WelcomeMessages:              welcomeMessageService,
+		Moderation:                   moderationService,
+		Users:                        usersService,
+		Usernames:                    usernamesService,
+		CollectiblePhones:            collectiblePhoneStore,
+		AccountRatings:               ratingService,
+		BotVerifications:             botVerificationService,
+		TelegramLogin:                telegramLoginRPCDependency(telegramLoginService),
+		Updates:                      updatesService,
+		DeliveryOutbox:               deliveryOutboxStore,
+		BootstrapUpdates:             bootstrapUpdateStore,
+		BotAPIUpdates:                botAPIUpdateStore,
+		BotCallbacks:                 botCallbackStore,
+		BotPreCheckouts:              botPreCheckoutStore,
+		LoginTokens:                  loginTokenStore,
+		Contacts:                     contactsService,
+		Dialogs:                      dialogsService,
+		Chatlists:                    chatlistsService,
+		Messages:                     messagesService,
+		Translation:                  translationService,
+		Transcriptions:               transcriptionService,
+		Channels:                     channelsService,
+		Communities:                  communitiesService,
+		Files:                        filesService,
+		PremiumPromo:                 filesService,
+		Bots:                         botsService,
+		ServiceBotCallbacks:          botsService,
+		ServiceBotInlineResults:      botsService,
+		Polls:                        pollsapp.NewService(pollStore),
+		Stories:                      storiesService,
+		Phone:                        phoneService,
+		SecretChats:                  secretChatService,
+		Stars:                        starsService,
+		Premium:                      premiumService,
+		Gifts:                        giftsService,
+		Passkey:                      passkeyService,
+		Themes:                       themeService,
+		GeoIP:                        geoIPResolver,
+		GroupCalls:                   groupCallsService,
+		LiveStreams:                  liveStreamDep(liveStreamService),
+		SFU:                          sfuService,
+		TURN:                         turnService,
+		LangPack:                     langPackService,
+		Sessions:                     edgeControl,
+		Metrics:                      metricRegistry,
+		Inline:                       inlineRegistryStore,
+		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	registerPresenceWorkMetrics(metricRegistry, router)
 	verificationVerifier.userDelivery = router.UserAudienceDeliveryEffects
 	usernamesService.SetUserAudienceDelivery(router.UsernameAudienceDeliveryEffects)
 	botVerificationService.SetUserAudienceDelivery(router.UserAudienceDeliveryEffects)
+	// Assign embedded avatars to the built-in system account and bots (idempotent).
+	// Runs after EnsurePremiumBotIdentity so the configured Premium bot ID exists,
+	// after the router so each avatar write commits its durable delivery fact,
+	// and before CoreExec admits the first RPC.
+	if err := botavatars.Seed(ctx, filesService, router, time.Now().Unix()); err != nil {
+		return fmt.Errorf("seed bot avatars: %w", err)
+	}
+	// The official system account (777000) follows Server identity: seed its
+	// avatar from the operator icon (or the bundled default) through the same
+	// durable delivery boundary. The seed is fingerprinted in seed_states, so
+	// every instance applying it at startup and from its watcher converges on
+	// one avatar without churn.
+	seedOfficialAvatar := func(ctx context.Context, icon []byte, now int64) (bool, error) {
+		return botavatars.SeedOfficialSystemAvatar(ctx, filesService, router, icon, now)
+	}
+	if _, err := systemidentity.Apply(ctx, identityStore, seedOfficialAvatar, time.Now().Unix()); err != nil {
+		// Identity is a deployment branding layer: a malformed or unreadable
+		// identity.json must not stop Core from booting.
+		logger.Warn("apply server identity failed", zap.Error(err))
+	}
+	go (&systemidentity.Watcher{
+		Store:      identityStore,
+		SeedAvatar: seedOfficialAvatar,
+		Logger:     logger.Named("server-identity"),
+	}).Run(ctx)
 	if _, err := coreexec.StartGRPC(ctx, coreexec.GRPCServerConfig{
 		Addr:              cfg.CoreExecGRPCAddr,
 		InstanceID:        instanceID,
@@ -1662,36 +1831,41 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		go runRemoteSFUOwnerHeartbeat()
 	}
 	adminService.Configure(adminapp.Dependencies{
-		Auth:                  authService,
-		Revoker:               router,
-		Users:                 usersService,
-		UserAudienceDelivery:  router.UserAudienceDeliveryEffects,
-		Account:               accountService,
-		Photos:                filesService,
-		AvatarDelivery:        router,
-		Stars:                 starsService,
-		StarsDelivery:         router.StarsBalanceDeliveryEffects,
-		Premium:               premiumService,
-		PremiumUserDelivery:   router.PremiumUserDeliveryEffects,
-		PremiumRefundDelivery: router.PremiumRefundDeliveryEffects,
-		UserProjectionCache:   router,
-		FreezeNotifier:        router,
-		Channels:              channelsService,
-		ChannelNotifier:       router,
-		Messages:              messagesService,
-		Gifts:                 giftsService,
-		GiftGranter:           router,
-		Bots:                  botsService,
-		Broadcast:             broadcastService,
-		Emoji:                 filesService,
-		StickerSets:           filesService,
-		GifCatalog:            filesService,
-		Moderation:            moderationService,
-		Usernames:             usernamesService,
-		CollectiblePhones:     collectiblePhoneStore,
-		Rating:                ratingService,
-		Verification:          verificationService,
-		BotVerification:       botVerificationService,
+		Auth:                    authService,
+		Revoker:                 router,
+		Users:                   usersService,
+		UserLookup:              userStore,
+		UserAudienceDelivery:    router.UserAudienceDeliveryEffects,
+		Account:                 accountService,
+		Photos:                  filesService,
+		Donations:               donationsService,
+		AvatarDelivery:          router,
+		Stars:                   starsService,
+		StarsDelivery:           router.StarsBalanceDeliveryEffects,
+		Premium:                 premiumService,
+		PremiumUserDelivery:     router.PremiumUserDeliveryEffects,
+		PremiumRefundDelivery:   router.PremiumRefundDeliveryEffects,
+		UserProjectionCache:     router,
+		FreezeNotifier:          router,
+		AccountDeletion:         accountLifecycleStore,
+		AccountDeletionNotifier: router,
+		Channels:                channelsService,
+		ChannelNotifier:         router,
+		Messages:                messagesService,
+		Gifts:                   giftsService,
+		GiftGranter:             router,
+		Bots:                    botsService,
+		Broadcast:               broadcastService,
+		Emoji:                   filesService,
+		StickerSets:             filesService,
+		GifCatalog:              filesService,
+		Moderation:              moderationService,
+		Usernames:               usernamesService,
+		CollectiblePhones:       collectiblePhoneStore,
+		Rating:                  ratingService,
+		Verification:            verificationService,
+		BotVerification:         botVerificationService,
+		ItemPrices:              postgres.NewItemPriceStore(pool),
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are
@@ -1755,6 +1929,14 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	// router 创建后注入。
 	botsService.SetRouterHooks(router)
 	botsService.SetTextDraftPusher(router)
+	transcriptionService.SetCompletionDelivery(router.TranscribedAudioDelivery)
+	donationsService.SetBalanceDelivery(router.StarsBalanceDeliveryEffects)
+	if donationsService.KeyConfigured() {
+		donationLog := logger.Named("donations")
+		go postgres.RunWithAdvisoryLease(ctx, pool, "telesrv-donations-leader", 30*time.Second, donationLog, func(leaseCtx context.Context) error {
+			return donationsService.RunLeader(leaseCtx, cfg.DonationPollInterval, donationLog)
+		})
+	}
 	if tonFinalizerStore != nil {
 		finalizer, err := tonfinalizer.New(tonFinalizerStore, tonfinalizer.Config{
 			WorkerID: instanceID + ":ton-finalizer", Batch: cfg.StarGiftTONFinalizerBatch,
@@ -1794,6 +1976,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	go router.RunPremiumSweeper(ctx, cfg.PremiumSweepInterval, cfg.PremiumSweepBatch)
 	go router.RunAccountLifecycle(ctx, time.Minute, 500)
 	go router.RunAccountFreezeNotifications(ctx, time.Minute, 500)
+	go router.RunAccountDeletionNotifications(ctx, time.Minute, 500)
 	if telegramLoginService != nil {
 		go runTelegramLoginRetention(ctx, telegramLoginService, cfg.TelegramLoginRetention, cfg.TelegramLoginSweepInterval, cfg.TelegramLoginSweepBatch, logger.Named("telegram-login-retention"))
 	}
@@ -1826,7 +2009,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 	go router.RunInlineBotPushSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
 	go router.RunAuthInvalidationSubscriber(ctx)
-	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
+	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}
 	// Scoped tokens carry a bounded permission set; the master token stays
@@ -1847,23 +2030,34 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		return fmt.Errorf("start admin api: %w", err)
 	}
 	if _, err := web.Start(ctx, web.Config{
-		Addr:                   cfg.PublicLinkWebAddr,
-		PublicBaseURL:          cfg.PublicBaseURL,
-		AppScheme:              cfg.PublicAppScheme,
-		AppLinkBase:            cfg.PublicAppLinkBase,
-		WebBaseURL:             cfg.PublicWebBaseURL,
-		AppName:                cfg.PublicAppName,
-		StickerSets:            filesService,
-		Users:                  userStore,
-		Channels:               channelStore,
-		Privacy:                privacyService,
-		Photos:                 filesService,
-		UniqueGifts:            giftsService,
-		GiftWithdrawals:        giftsService,
-		RevenueWithdrawals:     giftsService,
-		TONGiftExports:         tonExportService,
-		TONGiftClaims:          tonClaimService,
-		TONGiftFiles:           filesService,
+		Addr:                    cfg.PublicLinkWebAddr,
+		PublicBaseURL:           cfg.PublicBaseURL,
+		AppScheme:               cfg.PublicAppScheme,
+		AppLinkBase:             cfg.PublicAppLinkBase,
+		WebBaseURL:              cfg.PublicWebBaseURL,
+		AppName:                 cfg.PublicAppName,
+		DevStarsPaymentsEnabled: cfg.DevStarsPaymentsEnabled,
+		StickerSets:             filesService,
+		Users:                   userStore,
+		Channels:                channelStore,
+		Privacy:                 privacyService,
+		Photos:                  filesService,
+		UniqueGifts:             giftsService,
+		GiftWithdrawals:         giftsService,
+		RevenueWithdrawals:      giftsService,
+		TONGiftExports:          tonExportService,
+		TONGiftClaims:           tonClaimService,
+		TONGiftFiles:            filesService,
+		MiniApps: web.NewConfiguredMiniAppsHandler(web.MiniAppsConfig{
+			AppName:  cfg.PublicAppName,
+			Bots:     miniAppBots{router: router, bots: botsService},
+			Stickers: miniAppStickers{router: router, files: filesService},
+			Tokens:   botStore,
+			// Mini App initData is signed with the launching bot's token. These
+			// optional overrides stay server-side; the pages never receive them.
+			BotFatherToken: cfg.MiniAppBotFatherToken,
+			StickersToken:  cfg.MiniAppStickersToken,
+		}),
 		ModerationAppeals:      moderationService,
 		TelegramLogin:          telegramLoginHTTPHandler,
 		GiftPreviewCacheDir:    cfg.GiftPreviewCacheDir,
@@ -1927,4 +2121,45 @@ func runTelegramLoginRetention(ctx context.Context, service *telegramloginapp.Se
 			run()
 		}
 	}
+}
+
+// miniAppBots and miniAppStickers adapt the services to the public Web Mini
+// Apps: reads go straight to the services, writes through the Router bridges
+// so they commit the same durable deliveries as the MTProto RPCs.
+type miniAppBots struct {
+	router *rpc.Router
+	bots   *botsapp.Service
+}
+
+func (m miniAppBots) CreateBot(ctx context.Context, ownerUserID int64, name, username string) (domain.User, string, error) {
+	return m.router.MiniAppCreateBot(ctx, ownerUserID, name, username)
+}
+
+func (m miniAppBots) ListOwnedBots(ctx context.Context, ownerUserID int64) ([]domain.User, error) {
+	return m.bots.ListOwnedBots(ctx, ownerUserID)
+}
+
+func (m miniAppBots) SetBotInfo(ctx context.Context, botUserID int64, update domain.BotInfoUpdate) (int, error) {
+	return m.router.MiniAppSetBotInfo(ctx, botUserID, update)
+}
+
+type miniAppStickers struct {
+	router *rpc.Router
+	files  *filesapp.Service
+}
+
+func (m miniAppStickers) ListStickerSets(ctx context.Context, kind domain.StickerSetKind) ([]domain.StickerSet, error) {
+	return m.files.ListStickerSets(ctx, kind)
+}
+
+func (m miniAppStickers) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
+	return m.files.ResolveStickerSet(ctx, ref)
+}
+
+func (m miniAppStickers) ListCreatedStickerSets(ctx context.Context, userID int64, offsetID int64, limit int) ([]domain.StickerSet, int, error) {
+	return m.files.ListCreatedStickerSets(ctx, userID, offsetID, limit)
+}
+
+func (m miniAppStickers) CreateStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
+	return m.router.MiniAppCreateStickerSet(ctx, req)
 }

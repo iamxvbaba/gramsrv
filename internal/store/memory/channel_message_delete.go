@@ -171,7 +171,7 @@ func (s *ChannelStore) DeleteChannelHistory(ctx context.Context, req domain.Dele
 }
 
 func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req domain.DeleteChannelParticipantHistoryRequest) (domain.DeleteChannelHistoryResult, error) {
-	if req.UserID == 0 || req.ChannelID == 0 || req.ParticipantUserID == 0 {
+	if req.UserID == 0 || req.ChannelID == 0 || (req.Participant.ID <= 0 || (req.Participant.Type != domain.PeerTypeUser && req.Participant.Type != domain.PeerTypeChannel)) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()
@@ -181,6 +181,9 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 		return domain.DeleteChannelHistoryResult{}, err
 	}
 	member := s.members[req.ChannelID][req.UserID]
+	if !channel.Megagroup {
+		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelInvalid
+	}
 	if !canDeleteAnyChannelMessage(member) {
 		return domain.DeleteChannelHistoryResult{}, domain.ErrChannelAdminRequired
 	}
@@ -189,7 +192,11 @@ func (s *ChannelStore) DeleteChannelParticipantHistory(_ context.Context, req do
 	ids := make([]int, 0, domain.MaxDeleteHistoryBatch)
 	for i := len(s.messages[req.ChannelID]) - 1; i >= 0; i-- {
 		msg := s.messages[req.ChannelID][i]
-		if msg.Deleted || msg.SenderUserID != req.ParticipantUserID || msg.ID <= 1 {
+		sender := msg.From
+		if !msg.Post && msg.SendAs != nil {
+			sender = *msg.SendAs
+		}
+		if msg.Deleted || sender != req.Participant || msg.ID <= 1 {
 			continue
 		}
 		ids = append(ids, msg.ID)

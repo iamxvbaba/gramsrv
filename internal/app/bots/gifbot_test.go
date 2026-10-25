@@ -39,3 +39,15 @@ func TestGifBotFailsFastOnMissingDocument(t *testing.T) {
 		t.Fatalf("handled=%v err=%v", handled, err)
 	}
 }
+
+func TestGifBotRanksManualCategoryAfterTitleMatches(t *testing.T) {
+	entries := []domain.GifCatalogEntry{
+		{ID: 1, Title: "Unrelated", Category: domain.GifCategoryAnimals, CategoryManual: true},
+		{ID: 2, Title: "Cat wave", Category: domain.GifCategoryReaction},
+		{ID: 3, Title: "Other", Category: domain.GifCategoryOther},
+	}
+	got := rankGifCatalogEntries(entries, "cat")
+	if got[0].ID != 2 || got[1].ID != 1 || got[2].ID != 3 {
+		t.Fatalf("ranked IDs = %d,%d,%d", got[0].ID, got[1].ID, got[2].ID)
+	}
+}

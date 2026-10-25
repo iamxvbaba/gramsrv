@@ -223,7 +223,9 @@ func tgDraftReplyTo(d domain.DialogDraft) tg.InputReplyToClass {
 		reply.SetQuoteText(d.ReplyTo.QuoteText)
 	}
 	if len(d.ReplyTo.QuoteEntities) > 0 {
-		reply.SetQuoteEntities(tgMessageEntities(d.ReplyTo.QuoteEntities))
+		if draftEntities := tgMessageEntities(d.ReplyTo.QuoteEntities); len(draftEntities) > 0 {
+			reply.SetQuoteEntities(draftEntities)
+		}
 	}
 	if d.ReplyTo.QuoteOffset > 0 {
 		reply.SetQuoteOffset(d.ReplyTo.QuoteOffset)

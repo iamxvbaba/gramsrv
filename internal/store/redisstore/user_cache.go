@@ -68,6 +68,14 @@ type userBaseValue struct {
 	ProfileColor                  int   `json:"profile_color,omitempty"`
 	ProfileColorBackgroundEmojiID int64 `json:"profile_color_background_emoji_id,omitempty"`
 	LastSeenAt                    int   `json:"last_seen_at"`
+	// deleted 必须随缓存往返，与上面的 bot/premium/scam 同一坑位：账号删除后第一
+	// 次读会把墓碑写进缓存，若该位丢失，之后每次命中都把墓碑还原成"名字为空、
+	// LastSeenAt 为 0 的活用户"，客户端随即渲染成"最近上线"的陌生账号而不是
+	// Deleted Account。DeletionSource/Reason 同理是审计字段。
+	Deleted        bool   `json:"deleted,omitempty"`
+	DeletedAt      int64  `json:"deleted_at,omitempty"`
+	DeletionSource string `json:"deletion_source,omitempty"`
+	DeletionReason string `json:"deletion_reason,omitempty"`
 }
 
 func baseValueFromUser(u domain.User) userBaseValue {
@@ -101,6 +109,10 @@ func baseValueFromUser(u domain.User) userBaseValue {
 		ProfileColor:                  u.ProfileColor.Color,
 		ProfileColorBackgroundEmojiID: u.ProfileColor.BackgroundEmojiID,
 		LastSeenAt:                    u.LastSeenAt,
+		Deleted:                       u.Deleted,
+		DeletedAt:                     u.DeletedAt,
+		DeletionSource:                string(u.DeletionSource),
+		DeletionReason:                u.DeletionReason,
 	}
 }
 
@@ -136,7 +148,11 @@ func (v userBaseValue) user() domain.User {
 			Color:             v.ProfileColor,
 			BackgroundEmojiID: v.ProfileColorBackgroundEmojiID,
 		},
-		LastSeenAt: v.LastSeenAt,
+		LastSeenAt:     v.LastSeenAt,
+		Deleted:        v.Deleted,
+		DeletedAt:      v.DeletedAt,
+		DeletionSource: domain.AccountDeletionSource(v.DeletionSource),
+		DeletionReason: v.DeletionReason,
 	}
 }
 

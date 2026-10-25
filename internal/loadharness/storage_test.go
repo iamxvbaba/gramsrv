@@ -5,7 +5,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -46,15 +45,7 @@ func TestEncryptedFileStorageRoundTripAndNonceRotation(t *testing.T) {
 	if _, err := (&EncryptedFileStorage{Path: path, Key: wrong}).LoadSession(context.Background()); err == nil {
 		t.Fatal("wrong session key unexpectedly authenticated")
 	}
-	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := info.Mode().Perm(); got != 0o600 {
-			t.Fatalf("session mode = %o, want 600", got)
-		}
-	}
+	requireOwnerOnly(t, path)
 }
 
 func TestSessionKeyGenerationRefusesOverwrite(t *testing.T) {

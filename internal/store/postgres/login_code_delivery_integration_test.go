@@ -26,6 +26,7 @@ func TestLoginCodeDeliveryPostgresAtomicFactsAndReplay(t *testing.T) {
 		UserID:        user.ID,
 		PhoneCodeHash: "pg-login-code-basic-" + randomSuffix(t),
 		Code:          "12345",
+		Template:      "🔐 {{server_name}} code: {{code}}",
 		Date:          1700001000,
 		ExpiresAt:     1700001300,
 	}
@@ -40,6 +41,9 @@ func TestLoginCodeDeliveryPostgresAtomicFactsAndReplay(t *testing.T) {
 	}
 
 	assertLoginCodeDeliveryFacts(t, ctx, pool, user.ID, first.Message, 1)
+	if !strings.Contains(first.Message.Body, "🔐") || !strings.Contains(first.Message.Body, req.Code) || len(first.Message.Entities) != 1 {
+		t.Fatalf("custom template body/entities = %q / %+v", first.Message.Body, first.Message.Entities)
+	}
 	var senderUserID, recipientUserID, randomID int64
 	var delivered bool
 	var senderBoxID, senderPts, recipientBoxID, recipientPts int32
@@ -79,18 +83,23 @@ WHERE sender_user_id = $1 AND id = $2`, domain.OfficialSystemUserID, first.Messa
 	}
 
 	var deliveryKey, codeFingerprint []byte
+	var storedTemplate string
 	if err := pool.QueryRow(ctx, `
-SELECT delivery_key, code_fingerprint
+SELECT delivery_key, code_fingerprint, template
 FROM login_code_message_deliveries
-WHERE user_id = $1 AND message_box_id = $2`, user.ID, first.Message.ID).Scan(&deliveryKey, &codeFingerprint); err != nil {
+WHERE user_id = $1 AND message_box_id = $2`, user.ID, first.Message.ID).Scan(&deliveryKey, &codeFingerprint, &storedTemplate); err != nil {
 		t.Fatalf("load compact receipt: %v", err)
 	}
 	if len(deliveryKey) != 32 || len(codeFingerprint) != 32 || string(deliveryKey) == req.PhoneCodeHash {
 		t.Fatalf("compact receipt key/fingerprint lengths = %d/%d", len(deliveryKey), len(codeFingerprint))
 	}
+	if !strings.Contains(storedTemplate, "{{code}}") || strings.Contains(storedTemplate, req.Code) || strings.Contains(storedTemplate, "{{server_name}}") {
+		t.Fatalf("receipt template = %q, want rendered brand and placeholder without code", storedTemplate)
+	}
 
 	replayReq := req
 	replayReq.Date += 99
+	replayReq.Template = "Changed after first delivery: {{code}}"
 	replay, err := newTestMessageStore(pool).DeliverLoginCodeMessage(ctx, replayReq)
 	if err != nil {
 		t.Fatalf("replay DeliverLoginCodeMessage: %v", err)

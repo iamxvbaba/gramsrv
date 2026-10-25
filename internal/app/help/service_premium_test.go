@@ -76,6 +76,7 @@ func TestAppConfigPremiumKeys(t *testing.T) {
 		"reactions_user_max_premium":                3,
 		"boosts_channel_level_max":                  100,
 		"stargifts_pinned_to_top_limit":             6,
+		"stars_stargift_resale_amount_min":          float64(domain.MinStarGiftResaleStars),
 		"gift_text_length_max":                      domain.MaxPremiumGiftMessageRunes,
 		"about_length_limit_default":                70,
 		"about_length_limit_premium":                140,

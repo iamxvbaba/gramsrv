@@ -1,0 +1,11 @@
+services:
+  core:
+    # Publishes the HTTP Bot API gateway. Load this file only together with a
+    # non-empty TELESRV_BOT_API_ADDR (start-docker does it automatically); the
+    # listener inside the core container must use port 8088.
+    ports:
+      - name: bot-api
+        target: 8088
+        published: "${TELESRV_BOT_API_PORT:-8088}"
+        host_ip: ${TELESRV_BOT_API_BIND_IP:-127.0.0.1}
+        protocol: tcp

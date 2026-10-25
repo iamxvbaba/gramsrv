@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { useI18n } from "../i18n";
 import { currencyExponent, displayUsername, formatCurrency, formatDate, toSmallestUnits } from "../lib/format";
@@ -117,6 +118,7 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
         </button>
       }
     >
+      <SectionTabs sectionId="nft" active="/collectible-usernames" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
         <Metric label={t("usernames.metricLoaded")} value={String(rows.length)} />

@@ -302,7 +302,8 @@ func (s *Service) ResendConfirmPhoneCode(ctx context.Context, userID int64, auth
 		return "", domain.AuthCodeDelivery{}, false, err
 	}
 	u, found, err := s.users.ByID(ctx, userID)
-	if err != nil || !found || u.Deleted || domain.NormalizePhone(phone) != domain.NormalizePhone(u.Phone) {
+	canonicalPhone := domain.NormalizePhone(phone)
+	if err != nil || !found || u.Deleted || canonicalPhone == "" || canonicalPhone != domain.NormalizePhone(u.Phone) {
 		if err == nil {
 			err = domain.ErrPhoneCodeInvalid
 		}
@@ -333,7 +334,8 @@ func (s *Service) CancelConfirmPhoneCode(ctx context.Context, userID int64, auth
 	if err != nil || !found || rec.Purpose != store.PhoneCodePurposeConfirmPhone || rec.UserID != userID || rec.AuthKeyID != authKeyID {
 		return false, err
 	}
-	if domain.NormalizePhone(phone) != domain.NormalizePhone(rec.Phone) {
+	canonicalPhone := domain.NormalizePhone(phone)
+	if canonicalPhone == "" || canonicalPhone != domain.NormalizePhone(rec.Phone) {
 		return true, domain.ErrPhoneCodeInvalid
 	}
 	_, _, err = s.codes.ConsumeScoped(ctx, hash, rec.Scope())

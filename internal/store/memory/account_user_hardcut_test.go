@@ -134,7 +134,7 @@ func TestReactionsNotifySettingsMustPersistMemory(t *testing.T) {
 	passwords := NewPasswordStore()
 	settings := domain.DefaultAccountReactionSettings()
 	settings.Notify.ShowPreviews = false
-	if err := passwords.SaveReactionsNotifySettings(ctx, 1001, settings); err != nil {
+	if _, err := passwords.UpdateReactionSettings(ctx, 1001, domain.AccountReactionSettingsPatch{Notify: &settings.Notify}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, found, err := passwords.GetReactionSettings(ctx, 1001)

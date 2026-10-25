@@ -16,6 +16,8 @@ import (
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tlprofile"
+
+	"telesrv/internal/transport"
 )
 
 // rpcRewrapRegistry links only an explicit official-client transition:
@@ -1048,8 +1050,9 @@ func (s *Server) scheduleRewrappedInitObservation(c *Conn, init rpcRewrapInit) {
 	if !ok || c == nil {
 		return
 	}
+	clientIP := c.clientIP()
 	if !scheduleRPCRewrapObservation(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(transport.WithClientIP(context.Background(), clientIP), 5*time.Second)
 		defer cancel()
 		if err := observer.ObserveInitConnection(
 			ctx, c.authKeyID, c.sessionID, init.layer, init.apiID,

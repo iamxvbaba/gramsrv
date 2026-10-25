@@ -77,7 +77,7 @@ func TestBadServerSaltRetainsOneProvisionalConnUntilCorrected(t *testing.T) {
 	cs := newConnState()
 	var plain bin.Buffer
 
-	firstConn, err := s.handleEncrypted(context.Background(), tr, cs, nil, &stored, firstWrong, &plain)
+	firstConn, err := s.handleEncrypted(context.Background(), tr, cs, nil, "", &stored, firstWrong, &plain)
 	if err != nil {
 		t.Fatalf("first bad salt: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestBadServerSaltRetainsOneProvisionalConnUntilCorrected(t *testing.T) {
 	secondWrong, _ := encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 		t, key, wrongSalt, serverSalt, sessionID, secondID, 3,
 	)
-	secondConn, err := s.handleEncrypted(context.Background(), tr, cs, firstConn, nil, secondWrong, &plain)
+	secondConn, err := s.handleEncrypted(context.Background(), tr, cs, firstConn, "", nil, secondWrong, &plain)
 	if err != nil {
 		t.Fatalf("second bad salt: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestBadServerSaltRetainsOneProvisionalConnUntilCorrected(t *testing.T) {
 	corrected, _ := encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 		t, key, serverSalt, serverSalt, sessionID, firstID, 1,
 	)
-	activeConn, err := s.handleEncrypted(context.Background(), tr, cs, secondConn, nil, corrected, &plain)
+	activeConn, err := s.handleEncrypted(context.Background(), tr, cs, secondConn, "", nil, corrected, &plain)
 	if err != nil {
 		t.Fatalf("corrected retry: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestWrongSaltSessionChangeTransfersPhysicalOwnership(t *testing.T) {
 	}
 	cs := newConnState()
 	var plain bin.Buffer
-	oldConn, err := s.handleEncrypted(context.Background(), tr, cs, nil, &stored, firstFrame, &plain)
+	oldConn, err := s.handleEncrypted(context.Background(), tr, cs, nil, "", &stored, firstFrame, &plain)
 	if err != nil {
 		t.Fatalf("activate first session: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestWrongSaltSessionChangeTransfersPhysicalOwnership(t *testing.T) {
 	wrongFrame, _ := encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 		t, key, wrongSalt, serverSalt, secondSID, secondID, 1,
 	)
-	newConn, err := s.handleEncrypted(context.Background(), tr, cs, oldConn, nil, wrongFrame, &plain)
+	newConn, err := s.handleEncrypted(context.Background(), tr, cs, oldConn, "", nil, wrongFrame, &plain)
 	if err != nil {
 		t.Fatalf("new session bad salt: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestWrongSaltSessionChangeTransfersPhysicalOwnership(t *testing.T) {
 	corrected, _ := encryptedRPCFrameWithAuthoritativeSaltForBarrierTest(
 		t, key, serverSalt, serverSalt, secondSID, secondID, 1,
 	)
-	activated, err := s.handleEncrypted(context.Background(), tr, cs, newConn, nil, corrected, &plain)
+	activated, err := s.handleEncrypted(context.Background(), tr, cs, newConn, "", nil, corrected, &plain)
 	if err != nil {
 		t.Fatalf("activate transferred session: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestHandleEncryptedRequiredSessionBarrierPrecedesStateRegistrationAndRPC(t 
 	}
 	done := make(chan result, 1)
 	go func() {
-		conn, err := s.handleEncrypted(context.Background(), tr, cs, nil, &stored, frame, &plain)
+		conn, err := s.handleEncrypted(context.Background(), tr, cs, nil, "", &stored, frame, &plain)
 		done <- result{conn: conn, err: err}
 	}()
 
@@ -394,7 +394,7 @@ func TestHandleEncryptedRequiredSessionBarrierFailureIsAtomic(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.handleEncrypted(context.Background(), tr, cs, nil, &stored, frame, &plain)
+		_, err := s.handleEncrypted(context.Background(), tr, cs, nil, "", &stored, frame, &plain)
 		done <- err
 	}()
 	select {
@@ -458,7 +458,7 @@ func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testin
 	firstTransport := &collectingSessionTransport{}
 	firstState := newConnState()
 	var firstPlain bin.Buffer
-	firstConn, err := s.handleEncrypted(context.Background(), firstTransport, firstState, nil, &stored, firstFrame, &firstPlain)
+	firstConn, err := s.handleEncrypted(context.Background(), firstTransport, firstState, nil, "", &stored, firstFrame, &firstPlain)
 	if err != nil {
 		t.Fatalf("first handleEncrypted: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestCrossConnectionInflightRPCHasOneBusinessOwnerAndReplaysResult(t *testin
 	}
 	secondDone := make(chan handleResult, 1)
 	go func() {
-		conn, handleErr := s.handleEncrypted(context.Background(), secondTransport, secondState, nil, &stored, secondFrame, &secondPlain)
+		conn, handleErr := s.handleEncrypted(context.Background(), secondTransport, secondState, nil, "", &stored, secondFrame, &secondPlain)
 		secondDone <- handleResult{conn: conn, err: handleErr}
 	}()
 
@@ -566,7 +566,7 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	firstTransport := &collectingSessionTransport{}
 	firstState := newConnState()
 	var firstPlain bin.Buffer
-	firstConn, err := s.handleEncrypted(context.Background(), firstTransport, firstState, nil, &stored, firstFrame, &firstPlain)
+	firstConn, err := s.handleEncrypted(context.Background(), firstTransport, firstState, nil, "", &stored, firstFrame, &firstPlain)
 	if err != nil {
 		t.Fatalf("first handleEncrypted: %v", err)
 	}
@@ -580,7 +580,7 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	secondTransport := &collectingSessionTransport{}
 	secondState := newConnState()
 	var secondPlain bin.Buffer
-	secondConn, err := s.handleEncrypted(context.Background(), secondTransport, secondState, nil, &stored, secondFrame, &secondPlain)
+	secondConn, err := s.handleEncrypted(context.Background(), secondTransport, secondState, nil, "", &stored, secondFrame, &secondPlain)
 	if err != nil && !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("second handleEncrypted: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	thirdTransport := &collectingSessionTransport{}
 	thirdState := newConnState()
 	var thirdPlain bin.Buffer
-	thirdConn, err := s.handleEncrypted(context.Background(), thirdTransport, thirdState, nil, &stored, thirdFrame, &thirdPlain)
+	thirdConn, err := s.handleEncrypted(context.Background(), thirdTransport, thirdState, nil, "", &stored, thirdFrame, &thirdPlain)
 	if err != nil {
 		t.Fatalf("third handleEncrypted: %v", err)
 	}

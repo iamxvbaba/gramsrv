@@ -336,7 +336,11 @@ func (r *Router) onAuthAcceptLoginToken(ctx context.Context, token []byte) (*tg.
 	r.setAuthUserCache(bound.AuthKeyID, userID, true)
 	r.bindLoginTokenTarget(accept.target, userID)
 	r.pushLoginTokenAccepted(ctx, accept.target)
-	out := tgAuthorization(bound, scannerAuthKeyID, int(now.Unix()))
+	// 扫码登录的 acceptLoginToken 也会立刻回一条授权给客户端展示,和
+	// account.getAuthorizations 走同一套地理归属解析;只有这一条记录,单元素
+	// 批量即可。
+	boundLocations := r.resolveAuthorizationLocations(ctx, []domain.Authorization{bound})
+	out := r.tgAuthorization(boundLocations[bound.IP], bound, scannerAuthKeyID, int(now.Unix()))
 	return &out, nil
 }
 

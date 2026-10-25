@@ -165,6 +165,12 @@ VALUES($1,$2,$3,$4,$5,NULL,NULL,'{}'::jsonb,$6,$7,$8,$9,$10,$11)`, req.BuyerUser
 		return domain.StarsPurchaseResult{}, err
 	}
 	result.Send = sent
+	if sent.Duplicate {
+		if replay, found, replayErr := s.loadStarsPurchaseReplay(ctx, req, fingerprint); replayErr != nil || found {
+			return replay, replayErr
+		}
+		return domain.StarsPurchaseResult{}, domain.ErrStarsPurchaseFormInvalid
+	}
 	return result, nil
 }
 

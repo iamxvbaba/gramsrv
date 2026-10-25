@@ -26,6 +26,8 @@ type StarGiftStore struct {
 	uniqueByID       map[int64]domain.UniqueStarGift
 	uniqueBySlug     map[string]int64
 	collections      map[domain.Peer][]domain.StarGiftCollection
+	listings         map[int64][]domain.StarGiftAmount
+	displaySettings  map[int]domain.StarGiftCollectionDisplaySettings
 	nextAttributeID  int64
 	nextCollectionID int
 }
@@ -37,8 +39,24 @@ func NewStarGiftStore() *StarGiftStore {
 		enabled: make(map[int64]bool), sortOrder: make(map[int64]int), animations: make(map[int64][]byte),
 		collectibles: make(map[int64]domain.StarGiftCollectibleRevision),
 		uniqueByID:   make(map[int64]domain.UniqueStarGift), uniqueBySlug: make(map[string]int64),
-		collections: make(map[domain.Peer][]domain.StarGiftCollection),
+		collections:     make(map[domain.Peer][]domain.StarGiftCollection),
+		listings:        make(map[int64][]domain.StarGiftAmount),
+		displaySettings: make(map[int]domain.StarGiftCollectionDisplaySettings),
 	}
+}
+
+// SeedListings installs resale listing prices for tests, keyed by unique gift id.
+func (s *StarGiftStore) SeedListings(uniqueGiftID int64, amounts []domain.StarGiftAmount) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listings[uniqueGiftID] = amounts
+}
+
+// SeedUnique installs a unique gift projection for tests.
+func (s *StarGiftStore) SeedUnique(unique domain.UniqueStarGift) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.uniqueByID[unique.ID] = unique
 }
 
 // SeedCatalog installs valid immutable catalog snapshots for tests.
@@ -63,11 +81,19 @@ func (s *StarGiftStore) SeedCatalog(gifts []domain.StarGift) {
 }
 
 func (s *StarGiftStore) Catalog(_ context.Context) ([]domain.StarGift, error) {
+	return s.listCatalog(true), nil
+}
+
+func (s *StarGiftStore) CatalogAll(_ context.Context) ([]domain.StarGift, error) {
+	return s.listCatalog(false), nil
+}
+
+func (s *StarGiftStore) listCatalog(enabledOnly bool) []domain.StarGift {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]domain.StarGift, 0, len(s.catalog))
 	for id, gift := range s.catalog {
-		if s.enabled[id] {
+		if !enabledOnly || s.enabled[id] {
 			out = append(out, gift)
 		}
 	}
@@ -77,7 +103,7 @@ func (s *StarGiftStore) Catalog(_ context.Context) ([]domain.StarGift, error) {
 		}
 		return s.sortOrder[out[i].ID] < s.sortOrder[out[j].ID]
 	})
-	return out, nil
+	return out
 }
 
 func (s *StarGiftStore) CatalogGift(_ context.Context, giftID int64) (domain.StarGift, bool, error) {
@@ -105,15 +131,22 @@ func (s *StarGiftStore) createCatalogRevisionLocked(write domain.StarGiftCatalog
 	if giftID == 0 {
 		s.nextGiftID++
 		giftID = s.nextGiftID
-	} else if _, ok := s.catalog[giftID]; !ok {
-		return domain.StarGiftCatalogEntry{}, domain.ErrStarGiftNotFound
+	} else {
+		current, ok := s.catalog[giftID]
+		if !ok {
+			return domain.StarGiftCatalogEntry{}, domain.ErrStarGiftNotFound
+		}
+		if err := write.PreserveCatalogInventory(current); err != nil {
+			return domain.StarGiftCatalogEntry{}, err
+		}
 	}
 	s.nextRevID++
 	gift := domain.StarGift{
 		ID: giftID, RevisionID: s.nextRevID, Stars: write.Stars, ConvertStars: write.ConvertStars,
 		Title: write.Title, Sticker: write.Document,
 		Limited: write.Limited, SoldOut: write.SoldOut, Birthday: write.Birthday,
-		RequirePremium: write.RequirePremium, LimitedPerUser: write.LimitedPerUser,
+		RequirePremium: write.RequirePremium, SupportOnly: write.SupportOnly,
+		LimitedPerUser:     write.LimitedPerUser,
 		PeerColorAvailable: write.PeerColorAvailable, Auction: write.Auction,
 		AvailabilityRemains: write.AvailabilityRemains, AvailabilityTotal: write.AvailabilityTotal,
 		AvailabilityResale: write.AvailabilityResale, FirstSaleDate: write.FirstSaleDate,
@@ -440,19 +473,58 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 				upgradable = gift.UpgradeStars > 0 && gift.UpgradeIssued < gift.UpgradeTotal
 			}
 		}
-		if filter.ExcludeUpgradable && upgradable {
+		if filter.ExcludeUpgradable && !filter.ExcludeUnupgradable && upgradable {
 			continue
 		}
-		if filter.ExcludeUnupgradable && !upgradable {
+		if filter.ExcludeUnupgradable && !filter.ExcludeUpgradable && !upgradable {
 			continue
+		}
+		// 内存存储只产出 lifecycle_status=active 的行，hosted 行由 SQL 侧的
+		// host 视图单独给出，因此 exclude_hosted 在这里是空操作而非过滤
+		// “唯一化过的礼物”。
+		if filter.PeerColorAvailable {
+			gift, ok := s.catalog[g.GiftID]
+			if !ok || g.UniqueGiftID == 0 || !gift.PeerColorAvailable {
+				continue
+			}
 		}
 		if filter.CollectionID > 0 && !containsInt(g.CollectionIDs, filter.CollectionID) {
 			continue
 		}
 		matched = append(matched, g)
 	}
-	profileOrder := filter.CollectionID == 0
+	priceOf := func(g domain.SavedStarGift) int64 {
+		if g.UniqueGiftID != 0 {
+			if amounts, ok := s.listings[g.UniqueGiftID]; ok {
+				var maxXTR int64
+				for _, a := range amounts {
+					if a.Currency == domain.StarGiftCurrencyStars && a.Amount > maxXTR {
+						maxXTR = a.Amount
+					}
+				}
+				if maxXTR > 0 {
+					return maxXTR
+				}
+			}
+			if unique, ok := s.uniqueByID[g.UniqueGiftID]; ok &&
+				unique.ValueCurrency == "XTR" && unique.ValueAmount > 0 {
+				return unique.ValueAmount
+			}
+		}
+		if gift, ok := s.catalog[g.GiftID]; ok {
+			return gift.Stars
+		}
+		return 0
+	}
+	profileOrder := filter.CollectionID == 0 && !filter.SortByValue
 	sort.Slice(matched, func(i, j int) bool {
+		if filter.SortByValue {
+			pi, pj := priceOf(matched[i]), priceOf(matched[j])
+			if pi != pj {
+				return pi > pj
+			}
+			return matched[i].ID > matched[j].ID
+		}
 		if profileOrder {
 			iPinned := matched[i].PinnedOrder > 0
 			jPinned := matched[j].PinnedOrder > 0
@@ -463,20 +535,29 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 				return matched[i].PinnedOrder < matched[j].PinnedOrder
 			}
 		}
+		if profileOrder && matched[i].Date != matched[j].Date {
+			return matched[i].Date > matched[j].Date
+		}
 		return matched[i].ID > matched[j].ID
 	})
 	page := domain.SavedStarGiftPage{Count: len(matched)}
 	cursor, hasCursor := domain.DecodeSavedStarGiftListCursor(offset)
+	priceCursor, priceCursorID, hasPriceCursor := domain.DecodeSavedStarGiftPriceCursor(offset)
 	out := make([]domain.SavedStarGift, 0, limit+1)
 	for _, g := range matched {
-		if hasCursor {
+		if filter.SortByValue && hasPriceCursor {
+			price := priceOf(g)
+			if price > priceCursor || price == priceCursor && g.ID >= priceCursorID {
+				continue
+			}
+		} else if hasCursor {
 			if profileOrder {
 				if cursor.PinnedOrder > 0 {
 					if g.PinnedOrder > 0 && (g.PinnedOrder < cursor.PinnedOrder ||
-						g.PinnedOrder == cursor.PinnedOrder && g.ID >= cursor.ID) {
+						g.PinnedOrder == cursor.PinnedOrder && atOrBeforeProfileCursor(cursor, g)) {
 						continue
 					}
-				} else if g.PinnedOrder > 0 || g.ID >= cursor.ID {
+				} else if g.PinnedOrder > 0 || atOrBeforeProfileCursor(cursor, g) {
 					continue
 				}
 			} else if g.ID >= cursor.ID {
@@ -491,11 +572,15 @@ func (s *StarGiftStore) ListByOwnerFiltered(_ context.Context, filter domain.Sav
 	if len(out) > limit {
 		out = out[:limit]
 		last := out[len(out)-1]
-		pinnedOrder := 0
-		if profileOrder {
-			pinnedOrder = last.PinnedOrder
+		if filter.SortByValue {
+			page.NextOffset = domain.EncodeSavedStarGiftPriceCursor(priceOf(last), last.ID)
+		} else {
+			pinnedOrder := 0
+			if profileOrder {
+				pinnedOrder = last.PinnedOrder
+			}
+			page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.Date, last.ID)
 		}
-		page.NextOffset = domain.EncodeSavedStarGiftListCursor(pinnedOrder, last.ID)
 	}
 	page.Gifts = out
 	return page, nil
@@ -558,7 +643,7 @@ func (s *StarGiftStore) CountByOwner(_ context.Context, owner domain.Peer) (int,
 	defer s.mu.Unlock()
 	n := 0
 	for _, g := range s.gifts {
-		if g.Owner == owner && g.LifecycleStatus.Live() && !g.Unsaved {
+		if g.Owner == owner && g.LifecycleStatus.Live() {
 			n++
 		}
 	}
@@ -924,4 +1009,8 @@ func (s *StarGiftStore) savedStarGiftMatchesRef(g domain.SavedStarGift, ref doma
 	default:
 		return false
 	}
+}
+
+func atOrBeforeProfileCursor(cursor domain.SavedStarGiftListCursor, g domain.SavedStarGift) bool {
+	return g.Date > cursor.Date || (g.Date == cursor.Date && g.ID >= cursor.ID)
 }

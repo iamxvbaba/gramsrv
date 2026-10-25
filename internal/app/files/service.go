@@ -13,6 +13,8 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 
+	"telesrv/internal/app/files/botavatars"
+
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -199,6 +201,60 @@ func NewService(media store.MediaStore, blobs BlobBackend, dc int, opts ...Optio
 	return s
 }
 
+// txMediaStore is a subset of store.MediaStore that supports transactions.
+type txMediaStore interface {
+	store.MediaStore
+	WithTx(ctx context.Context, fn func(ctx context.Context, txMedia store.MediaStore) error) error
+}
+
+// SeedTx implements botavatars.AvatarSetter. It runs fn inside a single
+// transaction holding the PostgreSQL advisory lock that serialises bot-avatar
+// seeding across instances. If fn returns an error the transaction is rolled
+// back (including any media created inside), otherwise it is committed. This
+// makes the check+create+bind sequence atomic and orphan-free.
+//
+// The avatar pipeline needs more than the media store: creating the Premium
+// bot's animated avatar stages bytes through uploadParts (SaveFilePart) and
+// derives the video still through thumbs. Both, along with every other
+// configured dependency, are carried onto the transaction-scoped service;
+// only media is swapped for its transactional view. The singleflight groups
+// and the premiumPromo mutex are deliberately re-initialised fresh because a
+// lock must never be copied after it has been used by the outer service.
+func (s *Service) SeedTx(ctx context.Context, fn func(ctx context.Context, tx botavatars.AvatarSetter) error) error {
+	txMs, ok := s.media.(txMediaStore)
+	if !ok {
+		return fmt.Errorf("bot avatar: media store does not support transactions")
+	}
+	return txMs.WithTx(ctx, func(ctx context.Context, txMedia store.MediaStore) error {
+		txService := &Service{
+			media:              txMedia,
+			gifCatalog:         s.gifCatalog,
+			blobs:              s.blobs,
+			uploadParts:        s.uploadParts,
+			assembler:          s.assembler,
+			dc:                 s.dc,
+			log:                s.log,
+			thumbs:             s.thumbs,
+			thumbsSet:          s.thumbsSet,
+			gifs:               s.gifs,
+			gifsSet:            s.gifsSet,
+			blobCache:          s.blobCache,
+			byteCache:          s.byteCache,
+			stickerSetCache:    s.stickerSetCache,
+			stickerSetNegCache: s.stickerSetNegCache,
+			uploadQuota:        s.uploadQuota,
+			mapTiles:           s.mapTiles,
+			externalMedia:      s.externalMedia,
+			webpage:            s.webpage,
+			effects:            s.effects,
+			effectsHash:        s.effectsHash,
+			premiumPromo:       s.premiumPromo,
+			premiumPromoReady:  s.premiumPromoReady,
+		}
+		return fn(ctx, txService)
+	})
+}
+
 // SaveFilePart 累积一个 small file 分片。
 func (s *Service) SaveFilePart(ctx context.Context, ownerUserID, fileID int64, part int, bytes []byte) (bool, error) {
 	if err := validatePart(part, len(bytes)); err != nil {
@@ -215,12 +271,18 @@ func (s *Service) SaveFilePart(ctx context.Context, ownerUserID, fileID int64, p
 	return true, nil
 }
 
-// SaveBigFilePart 累积一个 big file 分片（带已知总分片数）。
+// ValidBigUploadPartCount accepts TDLib's unknown-size generated upload marker.
+// The final inputFileBig must still declare the actual positive part count.
+func ValidBigUploadPartCount(totalParts int) bool {
+	return totalParts == -1 || (totalParts > 0 && totalParts <= MaxUploadParts)
+}
+
+// SaveBigFilePart stores a big-file part, including an in-progress generation.
 func (s *Service) SaveBigFilePart(ctx context.Context, ownerUserID, fileID int64, part, totalParts int, bytes []byte) (bool, error) {
 	if err := validatePart(part, len(bytes)); err != nil {
 		return false, err
 	}
-	if totalParts <= 0 || totalParts > MaxUploadParts {
+	if !ValidBigUploadPartCount(totalParts) || (totalParts > 0 && part >= totalParts) {
 		return false, domain.ErrFilePartsInvalid
 	}
 	if err := s.saveFilePart(ctx, domain.UploadPart{
@@ -720,7 +782,7 @@ func orderDocuments(docs []domain.Document, ids []int64) []domain.Document {
 }
 
 // assembleUpload 把已上传分片按 part 顺序拼成完整字节，并清理分片。
-// expectedParts>0 时校验分片连续且齐全。
+// The final positive part count must match all contiguous stored parts.
 func (s *Service) assembleUpload(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]byte, error) {
 	buf, err := s.readUploadBytes(ctx, ownerUserID, fileID, expectedParts)
 	if err != nil {
@@ -802,6 +864,9 @@ func (s *Service) AssembleUploadBlob(ctx context.Context, ownerUserID, fileID in
 }
 
 func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, fileID int64, expectedParts int) ([]domain.UploadPart, int64, error) {
+	if expectedParts <= 0 || expectedParts > MaxUploadParts {
+		return nil, 0, domain.ErrFilePartsInvalid
+	}
 	parts, err := s.media.LoadFileParts(ctx, ownerUserID, fileID)
 	if err != nil {
 		return nil, 0, err
@@ -809,7 +874,7 @@ func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, f
 	if len(parts) == 0 {
 		return nil, 0, domain.ErrFilePartsInvalid
 	}
-	if expectedParts > 0 && len(parts) != expectedParts {
+	if len(parts) != expectedParts {
 		return nil, 0, domain.ErrFilePartsInvalid
 	}
 	var total int64
@@ -818,6 +883,12 @@ func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, f
 			return nil, 0, domain.ErrFilePartsInvalid // 缺片或乱序
 		}
 		if p.Size <= 0 || p.Size > MaxUploadPartBytes || p.ObjectKey == "" {
+			return nil, 0, domain.ErrFilePartsInvalid
+		}
+		if p.Big != parts[0].Big ||
+			(p.Big && (!ValidBigUploadPartCount(p.TotalParts) ||
+				(p.TotalParts > 0 && p.TotalParts != expectedParts))) ||
+			(!p.Big && p.TotalParts != 0) {
 			return nil, 0, domain.ErrFilePartsInvalid
 		}
 		total += p.Size

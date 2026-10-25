@@ -1,14 +1,18 @@
-import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, FileJson2, Gem, Layers, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
+import { SectionTabs } from "../components/SectionTabs";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
-import { formatDate, localInputValue, toUnixSeconds } from "../lib/format";
+import { formatDate, localInputValue, titleFromFilename, toUnixSeconds } from "../lib/format";
+import type { Navigate } from "../routing";
 import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
+import { GiftAttributesModal } from "./GiftAttributesModal";
+import { GiftPackModal } from "./GiftPackModal";
 
 type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
 
@@ -101,12 +105,14 @@ function OfficialLottiePreview({ sourceGiftID }: { sourceGiftID: string }) {
   return <div className="gift-animation-shell"><div className="gift-animation" ref={host} /></div>;
 }
 
-export function GiftsPage() {
+export function GiftsPage({ navigate }: { navigate: Navigate }) {
   const { t } = useI18n();
   const [gifts, setGifts] = useState<StarGiftRow[]>([]);
   const [query, setQuery] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
+  const [poolsGift, setPoolsGift] = useState<StarGiftRow | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [importSource, setImportSource] = useState<"official" | "file">("official");
   const [officialGifts, setOfficialGifts] = useState<OfficialStarGiftRow[]>([]);
@@ -142,6 +148,11 @@ export function GiftsPage() {
   const [auctionStartAt, setAuctionStartAt] = useState("");
   const [unlockAt, setUnlockAt] = useState(() => localInputValue(3600));
   const [enabled, setEnabled] = useState(true);
+  const [supportOnly, setSupportOnly] = useState(false);
+  const [premium, setPremium] = useState(false);
+  const [birthday, setBirthday] = useState(false);
+  const [releasedBy, setReleasedBy] = useState("");
+  const [perUserLimit, setPerUserLimit] = useState("0");
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<CommandResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -273,6 +284,11 @@ export function GiftsPage() {
 			stars,
 			convert_stars: convertStars,
       enabled,
+      support_only: supportOnly,
+      require_premium: premium,
+      birthday: birthday,
+      released_by_peer: releasedBy.trim(),
+      per_user_total: Number(perUserLimit),
       sort_order: Number(sortOrder),
       ...lifecyclePayload()
     }));
@@ -324,10 +340,15 @@ export function GiftsPage() {
     return {
       command_id: commandID, reason: reason.trim(), confirm,
 		source_gift_id: sourceGiftID, gift_id: giftID, title: title.trim(),
-		stars, convert_stars: convertStars, enabled, sort_order: Number(sortOrder),
+		stars, convert_stars: convertStars, enabled, support_only: supportOnly, sort_order: Number(sortOrder),
+		require_premium: premium, birthday: birthday,
+		released_by_peer: releasedBy.trim(), per_user_total: Number(perUserLimit),
 		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
       ...limitedFields,
-      supply_total: supplyTotalOverride, slug_prefix: slugPrefix.trim().toLowerCase(),
+      // Collectible supply caps an ordinary base gift only when that pool is
+      // imported; an auction sends its own supply through the same field.
+      supply_total: lifecycleMode === "auction" ? supplyTotalOverride : includeCollectible ? Number(supplyTotal) : 0,
+      slug_prefix: slugPrefix.trim().toLowerCase(),
       locked_until_date: lockedUntil,
       ...auctionFields
     };
@@ -340,7 +361,7 @@ export function GiftsPage() {
     setConvertStars(String(gift.convert_stars));
     setIncludeCollectible(gift.can_upgrade);
 		setUpgradeStars(gift.upgrade_stars);
-		setSupplyTotal(String(gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)));
+    setSupplyTotal(String(gift.can_upgrade ? (gift.availability_total > 0 ? gift.availability_total : Math.max(gift.upgrade_variants, 1)) : 0));
     // Slug follows the display name (see the title-sync effect above) --
     // only fall back to the old official-<id> shape if the title itself is
     // empty, so the link is never blank.
@@ -376,7 +397,7 @@ export function GiftsPage() {
 
   function startImport() {
 	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
-    setEnabled(true); setReason(""); setFile(null); setPreview(null); setImportError("");
+    setEnabled(true); setSupportOnly(false); setPremium(false); setBirthday(false); setReleasedBy(""); setPerUserLimit("0"); setReason(""); setFile(null); setPreview(null); setImportError("");
     setLifecycleMode("regular"); setSlugPrefixTouched(false); setAuctionSlugTouched(false); setLimited(false); setLimitedSupplyTouched(false);
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
   }
@@ -384,6 +405,7 @@ export function GiftsPage() {
   function startRevision(gift: StarGiftRow) {
     setGiftID(gift.GiftID); setTitle(gift.Title); setStars(String(gift.Stars));
     setConvertStars(String(gift.ConvertStars)); setSortOrder(String(gift.SortOrder)); setEnabled(gift.Enabled);
+    setReleasedBy(""); setPerUserLimit("0"); setPremium(false); setBirthday(false);
     setReason(""); setFile(null); setPreview(null); setImportError("");
     setLifecycleMode("regular"); setSlugPrefixTouched(false); setAuctionSlugTouched(false); setLimited(false); setLimitedSupplyTouched(false);
     setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
@@ -392,8 +414,10 @@ export function GiftsPage() {
   return (
     <PageFrame title={t("gifts.pageTitle")} eyebrow={t("gifts.eyebrow")} actions={<>
       <button className="btn" type="button" onClick={() => load()} disabled={busy}><RefreshCw size={15} /> {t("common.refresh")}</button>
+      <button className="btn" type="button" onClick={() => setPackOpen(true)}><PackagePlus size={15} /> {t("gifts.pack.title")}</button>
       <button className="btn primary" type="button" onClick={startImport}><Plus size={15} /> {t("gifts.add")}</button>
     </>}>
+      <SectionTabs sectionId="gifts" active="/gifts" navigate={navigate} />
       {error && <Alert>{error}</Alert>}
       <div className="metric-row gift-metrics">
         <Metric label={t("gifts.total")} value={String(gifts.length)} />
@@ -425,7 +449,7 @@ export function GiftsPage() {
                   {gift.Limited && <div className="gift-supply-status">{t("gifts.supplyStatus", { remains: gift.AvailabilityRemains, total: gift.AvailabilityTotal })}</div>}
                 </td>
                 <td>{formatDate(gift.UpdatedAt)}</td>
-                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} />{gift.SoldOut && gift.Enabled && <span title={t("gifts.hideSoldOutHint")}><ActionButton compact tone="warn" icon={<Trash2 size={13} />} label={t("gifts.hideSoldOut")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: false })} onDone={() => void load()} /></span>}<ActionButton compact tone="danger" icon={<Trash2 size={13} />} label={t("gifts.delete")} path="/api/actions/delete-gift" payload={() => ({ gift_id: gift.GiftID })} onDone={() => void load()} /></div></td>
+                <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => setPoolsGift(gift)}><Layers size={13} />{t("gifts.pools")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} />{gift.SoldOut && gift.Enabled && <span title={t("gifts.hideSoldOutHint")}><ActionButton compact tone="warn" icon={<Trash2 size={13} />} label={t("gifts.hideSoldOut")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: false })} onDone={() => void load()} /></span>}<ActionButton compact tone="danger" icon={<Trash2 size={13} />} label={t("gifts.delete")} path="/api/actions/delete-gift" payload={() => ({ gift_id: gift.GiftID })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
             {visibleGifts.length === 0 && <EmptyRow colSpan={9} />}
@@ -496,11 +520,17 @@ export function GiftsPage() {
                     <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
                     <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(slugify(e.target.value)); setSlugPrefixTouched(true); setPreview(null); }} /></label>
                   </div>}
+                  {includeCollectible && <div className="gift-import-note"><span>{t("gifts.officialSupplyHint")}</span></div>}
                 </>}
               </section> : <>
                 <div className="gift-import-note"><span>{t("gifts.importHint")}</span><div className="gift-format-chips" aria-label={t("gifts.formats")}><span>TGS</span><span>Lottie JSON</span></div></div>
                 <label className={`gift-file-picker ${file ? "has-file" : ""}`}>
-                  <input type="file" accept=".tgs,.json,.lottie,application/json,application/x-tgsticker" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setPreview(null); }} />
+                  <input type="file" accept=".tgs,.json,.lottie,application/json,application/x-tgsticker" onChange={(e) => {
+                    const next = e.target.files?.[0] ?? null;
+                    setFile(next);
+                    setPreview(null);
+                    if (next && !title) setTitle(titleFromFilename(next.name));
+                  }} />
                   <span className="gift-file-icon"><FileJson2 size={22} /></span>
                   <span className="gift-file-copy"><span className="gift-field-label">{t("gifts.animation")}</span><strong>{file ? file.name : t("gifts.filePrompt")}</strong><small>{file ? formatBytes(file.size) : t("gifts.fileHint")}</small></span>
                   <span className="gift-file-action">{file ? t("gifts.changeFile") : t("gifts.chooseFile")}</span>
@@ -511,7 +541,11 @@ export function GiftsPage() {
                 <label><span>{t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => { setStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
                 <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
+                <label><span>{t("gifts.releasedBy")}</span><input value={releasedBy} placeholder="@durov" maxLength={128} onChange={(e) => { setReleasedBy(e.target.value); setPreview(null); }} /></label>
+                <label><span>{t("gifts.perUserLimit")}</span><input type="number" min="0" value={perUserLimit} onChange={(e) => { setPerUserLimit(e.target.value); setPreview(null); }} /></label>
               </div>
+              <label className="gift-switch"><input type="checkbox" checked={premium} onChange={(e) => { setPremium(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.premium")}</span></label>
+              <label className="gift-switch"><input type="checkbox" checked={birthday} onChange={(e) => { setBirthday(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.birthday")}</span></label>
               <section className="gift-lifecycle">
                 <span className="gift-field-label">{t("gifts.lifecycle.label")}</span>
                 <div className="gift-source-tabs" role="group" aria-label={t("gifts.lifecycle.label")}>
@@ -547,6 +581,7 @@ export function GiftsPage() {
               </section>
               <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
               <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
+              <label className="gift-switch"><input type="checkbox" checked={supportOnly} onChange={(e) => { setSupportOnly(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.supportOnly")}</span></label>
               {importError && <Alert>{importError}</Alert>}
               {preview && <div className="gift-validation"><div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{t("gifts.validationReady")}</strong><span>{t("gifts.validationHint")}</span></div></div><pre>{JSON.stringify(preview.details, null, 2)}</pre></div>}
             </div>
@@ -560,6 +595,8 @@ export function GiftsPage() {
         document.body
       )}
       {collectibleGift && <GiftCollectiblesModal gift={collectibleGift} onClose={() => setCollectibleGift(null)} onPublished={() => void load()} />}
+      {poolsGift && <GiftAttributesModal giftID={poolsGift.GiftID} title={poolsGift.Title || `Gift #${poolsGift.GiftID}`} onClose={() => setPoolsGift(null)} />}
+      {packOpen && <GiftPackModal onClose={() => setPackOpen(false)} onImported={() => void load()} />}
     </PageFrame>
   );
 }

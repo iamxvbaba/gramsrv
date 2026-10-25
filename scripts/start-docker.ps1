@@ -22,7 +22,13 @@ param(
     [switch]$AllowInsecureDevelopmentAuth,
 
     [Parameter()]
-    [switch]$Build
+    [switch]$Build,
+
+    # Never contact the registry: start the role images already present locally
+    # (for example a stack built earlier with -Build). With -Build, base images
+    # are not refreshed.
+    [Parameter()]
+    [switch]$NoPull
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +102,13 @@ if ($deployment.ContainsKey('TELESRV_SFU_HOST_NETWORK') -and
     $deployment['TELESRV_SFU_HOST_NETWORK'] -eq 'false') {
     $composeBase += @("--file", (Join-Path $dockerDir "compose.sfu-bridge-network.yaml"))
 }
+$botApiAddr = $deployment['TELESRV_BOT_API_ADDR']
+if (-not [string]::IsNullOrWhiteSpace($botApiAddr)) {
+    if ($botApiAddr -notin @('0.0.0.0:8088', ':8088', '[::]:8088')) {
+        throw "TELESRV_BOT_API_ADDR must be empty or listen on container port 8088 on all interfaces (0.0.0.0:8088); publish another host port with TELESRV_BOT_API_PORT."
+    }
+    $composeBase += @("--file", (Join-Path $dockerDir "compose.bot-api.yaml"))
+}
 
 function Invoke-Compose {
     param([string[]]$Arguments)
@@ -108,15 +121,24 @@ function Invoke-Compose {
 
 Invoke-Compose -Arguments @("config", "--quiet")
 
-if ($Build) {
+$upArguments = @("up", "--detach", "--no-build", "--wait", "--wait-timeout", "600")
+if ($Build -and -not $NoPull) {
     Invoke-Compose -Arguments @("build", "--pull")
 }
-else {
+elseif ($Build) {
+    Invoke-Compose -Arguments @("build")
+}
+elseif (-not $NoPull) {
     Invoke-Compose -Arguments @("pull")
+}
+# Without a pull, a missing image must fail here instead of being fetched
+# silently and replacing a locally built tag (gramsrv#136).
+if ($NoPull) {
+    $upArguments += @("--pull", "never")
 }
 
 try {
-    Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--wait", "--wait-timeout", "600")
+    Invoke-Compose -Arguments $upArguments
 }
 catch {
     & docker @composeBase logs --no-color --tail 120

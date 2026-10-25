@@ -13,25 +13,33 @@ import (
 // 凭据在 requestCall 受理时一次性签发并存于 call 快照——同一通话的所有视角
 //（RPC 响应与推送、主叫与被叫）看到同一份 connections，与官方行为一致。
 
-// phoneCallPrivacyP2P 计算 phone_p2p 隐私的双向 AND：任一方不允许对方 P2P，
-// 该通话就只能走中继（p2p_allowed=false 时 tgcalls 丢弃全部非 relay candidate）。
-// 隐私服务缺席时按放行处理（与 P1 行为一致）；CallForceRelay 强制中继（调试用）。
+// phoneP2PGate 是 privacy 服务提供的互认联系人硬门槛。privacy 服务缺席或未实现
+// 该接口时一律拒绝 P2P（安全默认，fail closed）：P2P 会暴露双方真实 IP，宁可多走
+// TURN 中继也不让陌生人拿到。
+type phoneP2PGate interface {
+	P2PAllowedBetween(ctx context.Context, callerID, calleeID int64) (bool, error)
+}
+
+// phoneCallPrivacyP2P 决定私聊通话能否 P2P 直连。安全默认：只有互认联系人之间才
+// 放行 P2P（privacy 服务按双方 phone_p2p 规则 AND 且联系互为存录），无法确证
+// 联系人关系时拒绝 P2P（p2p_allowed=false 时 tgcalls 丢弃全部非 relay candidate）。
+// 旧实现失败放行（P1 兼容）：隐私服务缺席/出错即默认放行——这是 IP 泄露来源，已改为
+// fail closed。CallForceRelay 仍强制全线中继（调试用）。
 func (r *Router) phoneCallPrivacyP2P(ctx context.Context, callerID, calleeID int64) bool {
 	if r.cfg.CallForceRelay {
 		return false
 	}
-	if r.deps.Privacy == nil {
-		return true
+	gate, ok := r.deps.Privacy.(phoneP2PGate)
+	if !ok {
+		r.log.Warn("phone p2p denied: privacy service lacks reciprocal-contact gate")
+		return false
 	}
-	calleeAllows, err := r.deps.Privacy.CanSee(ctx, calleeID, callerID, domain.PrivacyKeyPhoneP2P)
+	allowed, err := gate.P2PAllowedBetween(ctx, callerID, calleeID)
 	if err != nil {
-		return true
+		r.log.Warn("phone p2p denied: reciprocal-contact gate error", zap.Error(err))
+		return false
 	}
-	callerAllows, err := r.deps.Privacy.CanSee(ctx, callerID, calleeID, domain.PrivacyKeyPhoneP2P)
-	if err != nil {
-		return true
-	}
-	return calleeAllows && callerAllows
+	return allowed
 }
 
 // phoneCallConnections 为一通通话签发 STUN/TURN 条目。TURN 未启用返回空列表
