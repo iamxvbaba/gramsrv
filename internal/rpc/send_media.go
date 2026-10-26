@@ -49,6 +49,7 @@ type outgoingSend struct {
 	// 频道侧忽略（官方群/频道不渲染特效）。
 	effect         int64
 	allowPaidStars int64
+	paidStars      int64
 }
 
 // sendOutgoing 把一条出站消息落地到私聊或频道，返回 *tg.Updates、是否重复、错误。
@@ -128,9 +129,11 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	if r.deps.Messages == nil {
 		return nil, false, peerIDInvalidErr()
 	}
-	if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, p.allowPaidStars, 1); err != nil {
+	charged, err := r.privatePaidStarsCharge(ctx, userID, peer.ID, p.allowPaidStars, 1)
+	if err != nil {
 		return nil, false, err
 	}
+	p.paidStars = charged
 	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, p.media != nil && p.media.HasUnreadPayload()); err != nil {
 		return nil, false, err
 	}
@@ -190,6 +193,7 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		ViaBotID:               p.viaBotID,
 		GroupedID:              p.groupedID,
 		Effect:                 p.effect,
+		PaidStars:              p.paidStars,
 	})
 	if err != nil {
 		fields := append(r.contextLogFields(ctx),
@@ -221,7 +225,12 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		r.maybeEnqueueWebPageResolve(userID, peer, res.SenderMessage.ID, res.SenderMessage.Media)
 		r.enqueueBotAPIPrivateMessageUpdateAsync(ctx, res)
 	}
-	return tgPrivateSendResultUpdates(res, p.randomID, true, users, chats), res.Duplicate, nil
+	out := tgPrivateSendResultUpdates(res, p.randomID, true, users, chats)
+	if !res.Duplicate && res.PaidStars != nil {
+		out.Updates = append(out.Updates, &tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: res.PaidStars.SenderBalance}})
+		r.pushUserUpdates(ctx, peer.ID, &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: res.PaidStars.RecipientBalance}}}})
+	}
+	return out, res.Duplicate, nil
 }
 
 // onMessagesUploadMedia 解析 InputMedia（上传或引用），返回可复用的 tg.MessageMedia。

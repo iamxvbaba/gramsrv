@@ -1780,6 +1780,7 @@ type MessageBox struct {
 	Effect               int64
 	HideEdited           bool
 	ReplyExternal        []byte
+	PaidMessageStars     int64
 }
 
 type MessageBoxMedium struct {
@@ -2170,6 +2171,7 @@ type PrivateMessage struct {
 	SenderDeleteDate       int32
 	SenderDeleteMessageIds []byte
 	ReplyExternal          []byte
+	PaidMessageStars       int64
 }
 
 type PrivateMessageReaction struct {
@@ -2305,6 +2307,7 @@ type ScheduledMessage struct {
 	LastError            string
 	CreatedAt            int32
 	UpdatedAt            int32
+	PaidStars            int64
 }
 
 type SecretChat struct {

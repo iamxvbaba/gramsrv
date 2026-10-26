@@ -136,7 +136,24 @@ WHERE (peer_usernames.username_lower, peer_usernames.username)
 }
 
 func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (res domain.SendPrivateTextResult, err error) {
-	return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{})
+	hooks := privateSendTxHooks{}
+	var charge *domain.PaidStarsCharge
+	if req.PaidStars > 0 && req.SenderUserID != req.RecipientUserID {
+		hooks.before = func(ctx context.Context, tx pgx.Tx, out *domain.SendPrivateTextRequest) error {
+			c, err := chargePaidMessageStarsTx(ctx, tx, req.SenderUserID, req.RecipientUserID, req.PaidStars)
+			if err != nil {
+				return err
+			}
+			charge = &c
+			return nil
+		}
+	}
+	res, err = s.sendPrivateTextWithHooks(ctx, req, hooks)
+	if err != nil {
+		return res, err
+	}
+	res.PaidStars = charge
+	return res, nil
 }
 
 type privateSendTxHooks struct {
@@ -397,6 +414,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		ViaBotID:           req.ViaBotID,
 		GroupedID:          req.GroupedID,
 		Effect:             req.Effect,
+		PaidMessageStars:   req.PaidStars,
 	}
 	applyCreatePrivateMessageMetadata(&privateArg, senderMeta)
 	pm, err := qtx.CreatePrivateMessage(ctx, privateArg)
@@ -495,6 +513,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 		ViaBotID:         req.ViaBotID,
 		GroupedID:        req.GroupedID,
 		Effect:           req.Effect,
+		PaidMessageStars: req.PaidStars,
 		// voice/round 在发送者自己的副本上也保持"未听"，直到对端
 		// readMessageContents 触发 sender 侧清除；发给自己无人可听，恒已读。
 		MediaUnread:    media.Sender.HasUnreadPayload() && !selfMessage,
@@ -573,6 +592,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 			Effect:           req.Effect,
 			MediaUnread:      media.Recipient.HasUnreadPayload(),
 			ReactionUnread:   false,
+			PaidMessageStars: req.PaidStars,
 		}
 		applyCreateMessageBoxMetadata(&recipientArg, recipientMeta)
 		recipientRow, err := qtx.CreateMessageBox(ctx, recipientArg)

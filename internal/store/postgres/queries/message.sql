@@ -125,7 +125,8 @@ INSERT INTO private_messages (
   rich_message,
   via_bot_id,
   grouped_id,
-  effect
+  effect,
+  paid_message_stars
 ) VALUES (
   $1, $2, $3, sqlc.arg(request_fingerprint)::bytea, sqlc.arg(recipient_delivered)::boolean,
   0, 0, 0, 0,
@@ -150,7 +151,8 @@ INSERT INTO private_messages (
   sqlc.arg(rich_message_json)::jsonb,
   sqlc.arg(via_bot_id)::bigint,
   sqlc.arg(grouped_id)::bigint,
-  sqlc.arg(effect)::bigint
+  sqlc.arg(effect)::bigint,
+  sqlc.arg(paid_message_stars)::bigint
 )
 ON CONFLICT (sender_user_id, random_id) WHERE random_id <> 0 DO NOTHING
 RETURNING
@@ -236,7 +238,8 @@ INSERT INTO message_boxes (
   rich_message,
   via_bot_id,
   grouped_id,
-  effect
+  effect,
+  paid_message_stars
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8,
   sqlc.arg(ttl_period)::int,
@@ -270,7 +273,8 @@ INSERT INTO message_boxes (
   sqlc.arg(rich_message_json)::jsonb,
   sqlc.arg(via_bot_id)::bigint,
   sqlc.arg(grouped_id)::bigint,
-  sqlc.arg(effect)::bigint
+  sqlc.arg(effect)::bigint,
+  sqlc.arg(paid_message_stars)::bigint
 )
 RETURNING
   box_id,
@@ -316,7 +320,8 @@ RETURNING
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
-  rich_message::text AS rich_message_json;
+  rich_message::text AS rich_message_json,
+  paid_message_stars;
 
 -- name: GetMessageBoxByPrivateMessage :one
 SELECT
@@ -363,7 +368,8 @@ SELECT
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
-  rich_message::text AS rich_message_json
+  rich_message::text AS rich_message_json,
+  paid_message_stars
 FROM message_boxes
 WHERE owner_user_id = $1
   AND private_message_id = $2
@@ -508,6 +514,7 @@ base AS NOT MATERIALIZED (
     m.effect,
     m.reply_markup::text AS reply_markup_json,
     m.rich_message::text AS rich_message_json,
+    m.paid_message_stars,
     COALESCE(peer_u.id, 0)::bigint AS peer_user_id,
     COALESCE(peer_u.access_hash, 0)::bigint AS peer_access_hash,
     COALESCE(peer_u.phone, '')::text AS peer_phone,
@@ -711,6 +718,7 @@ SELECT
   effect,
   reply_markup_json,
   rich_message_json,
+  paid_message_stars,
   peer_user_id,
   peer_access_hash,
   peer_phone,
@@ -795,6 +803,7 @@ SELECT
   m.effect,
   m.reply_markup::text AS reply_markup_json,
   m.rich_message::text AS rich_message_json,
+  m.paid_message_stars,
   COALESCE(peer_u.id, 0)::bigint AS peer_user_id,
   COALESCE(peer_u.access_hash, 0)::bigint AS peer_access_hash,
   COALESCE(peer_u.phone, '')::text AS peer_phone,
@@ -1007,6 +1016,7 @@ SELECT
   m.effect,
   m.reply_markup::text AS reply_markup_json,
   m.rich_message::text AS rich_message_json,
+  m.paid_message_stars,
   COALESCE(peer_u.id, 0)::bigint AS peer_user_id,
   COALESCE(peer_u.access_hash, 0)::bigint AS peer_access_hash,
   COALESCE(peer_u.phone, '')::text AS peer_phone,
@@ -1148,7 +1158,8 @@ SELECT
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
-  rich_message::text AS rich_message_json
+  rich_message::text AS rich_message_json,
+  paid_message_stars
 FROM message_boxes
 WHERE owner_user_id = ANY(sqlc.arg(owner_user_ids)::bigint[])
   AND message_sender_id = sqlc.arg(message_sender_id)::bigint
@@ -1237,7 +1248,8 @@ RETURNING
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
-  rich_message::text AS rich_message_json;
+  rich_message::text AS rich_message_json,
+  paid_message_stars;
 
 -- name: GetDialogReadStateForUpdate :one
 SELECT
@@ -1539,7 +1551,8 @@ SELECT
   grouped_id,
   effect,
   reply_markup::text AS reply_markup_json,
-  rich_message::text AS rich_message_json
+  rich_message::text AS rich_message_json,
+  paid_message_stars
 FROM message_boxes
 WHERE owner_user_id = @owner_user_id
   AND peer_type = @peer_type

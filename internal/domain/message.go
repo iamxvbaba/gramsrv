@@ -166,6 +166,7 @@ type Message struct {
 	// 仅 self-chat box 行非零：直发笔记 = self；转发进收藏夹 = 源会话 peer；
 	// 存量回填兜底 hidden author 占位 user 2666000。非 self-chat 行恒零值。
 	SavedPeer Peer
+	PaidStars int64
 }
 
 // NewHistoryClearMessage 把一个 owner 视角的现有 box 原位投影为
@@ -363,6 +364,7 @@ type SendPrivateTextRequest struct {
 	ReplyMarkup *MessageReplyMarkup
 	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
+	PaidStars   int64
 }
 
 // HasContent reports whether the command contains a client-visible message payload.
@@ -383,12 +385,19 @@ type PrivateSendReplayRequest struct {
 }
 
 // SendPrivateTextResult 描述一次私聊文本发送的双端结果。
+type PaidStarsCharge struct {
+	Amount           int64
+	SenderBalance    int64
+	RecipientBalance int64
+}
+
 type SendPrivateTextResult struct {
 	SenderMessage    Message
 	RecipientMessage Message
 	SenderEvent      UpdateEvent
 	RecipientEvent   UpdateEvent
 	Duplicate        bool
+	PaidStars        *PaidStarsCharge
 	// ReplayDeleteEvent is the already-durable sender-side deletion that must
 	// follow the first-send snapshot in an exact random_id replay. It never
 	// represents a newly allocated event.
@@ -794,6 +803,7 @@ type ScheduledMessage struct {
 	SendAs               *Peer
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
+	PaidStars            int64
 	CreatedAt            int
 	UpdatedAt            int
 	State                string
@@ -823,6 +833,7 @@ type ScheduleMessageRequest struct {
 	SendAs               *Peer
 	ScheduleDate         int
 	ScheduleRepeatPeriod int
+	PaidStars            int64
 	Date                 int
 }
 
