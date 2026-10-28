@@ -624,9 +624,16 @@ func (s *Service) ListStickerSets(ctx context.Context, kind domain.StickerSetKin
 	return s.media.ListStickerSets(ctx, kind)
 }
 
+// stickerSetPublishAttempts bounds how often a lookup re-reads after a
+// concurrent write invalidated its snapshot. The cache epoch is shared by every
+// set, so a steady stream of unrelated sticker-set writes must not keep a cold
+// lookup re-querying PostgreSQL; the last read is still a valid answer for a
+// read racing a write, it is only left out of the cache.
+const stickerSetPublishAttempts = 3
+
 // ResolveStickerSet 按 ref 解析贴纸集，并按 DocumentIDs 顺序加载其文档。
 func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
-	for {
+	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return domain.StickerSet{}, nil, false, err
 		}
@@ -665,7 +672,7 @@ func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRe
 			return domain.StickerSet{}, nil, false, err
 		}
 		ordered := orderDocuments(docs, set.DocumentIDs)
-		if s.stickerSetCache.putIfEpoch(set, ordered, epoch) {
+		if s.stickerSetCache.putIfEpoch(set, ordered, epoch) || attempt >= stickerSetPublishAttempts {
 			return set, ordered, true, nil
 		}
 		// 与预热相同，旧查询不得覆盖并发修改；重试时优先使用写路径刚发布的缓存。
