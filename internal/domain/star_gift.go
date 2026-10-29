@@ -668,10 +668,14 @@ type StarGiftListingRequest struct {
 }
 
 type StarGiftResalePurchaseRequest struct {
-	BuyerUserID      int64
-	Slug             string
-	To               Peer
-	Amount           StarGiftAmount
+	BuyerUserID int64
+	Slug        string
+	To          Peer
+	Amount      StarGiftAmount
+	// ListingAmount is the listing's own price when the buyer pays in another
+	// currency (TON for a Stars listing): the buyer is charged Amount and the
+	// seller is credited ListingAmount. Zero means Amount is the listing price.
+	ListingAmount    StarGiftAmount
 	FormID           int64
 	CommandKey       string
 	Date             int
