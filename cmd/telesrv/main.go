@@ -1243,7 +1243,8 @@ func run(logger *zap.Logger) error {
 		botsapp.WithTelegramLogin(telegramLoginService),
 		botsapp.WithGramsrvOperatorBot(cfg.GramsrvBotChatIDs, adminService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
-		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
+		botsapp.WithPublicBaseURL(cfg.PublicBaseURL),
+		botsapp.WithBotAPIURL(cfg.BotAPIPublicURL))
 	// The built-in ChatBot and StickersBot are seeded with the default product
 	// name in their bio (users.about) and description (bots.description). Align
 	// them with the active branding on startup so the seeded "telesrv" text is

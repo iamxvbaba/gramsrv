@@ -586,7 +586,15 @@ func (s *Service) handleNewBotUsername(ctx context.Context, state domain.BotChat
 		s.log.Error("botfather: delete chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
 	}
 	head := fmt.Sprintf("Done! Congratulations on your new bot. You will find it at %s.\n\nUse this token to access the HTTP API:\n", s.publicURL(u.Username))
-	return tokenReply(head, token, "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+	return tokenReply(head, token, s.botAPIHint()+"\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+}
+
+// botAPIHint names this server's Bot API base URL, when one is configured.
+func (s *Service) botAPIHint() string {
+	if s.botAPIURL == "" {
+		return ""
+	}
+	return "\n\nBot API on this server: " + s.botAPIURL + "/bot<token>/<method>"
 }
 
 func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState, text string) botReply {
@@ -623,7 +631,7 @@ func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState,
 			return internalReply()
 		}
 		head := "You can use this token to access HTTP API:\n"
-		return tokenReply(head, domain.FormatBotToken(chosen.ID, profile.TokenSecret), "\n\nFor a description of the Bot API, see this page: https://core.telegram.org/bots/api")
+		return tokenReply(head, domain.FormatBotToken(chosen.ID, profile.TokenSecret), s.botAPIHint()+"\n\nFor a description of the Bot API, see this page: https://core.telegram.org/bots/api")
 	case botFatherCmdRevoke:
 		defer s.clearState(ctx, state.UserID)
 		token, err := s.RevokeBotToken(ctx, state.UserID, chosen.ID)
