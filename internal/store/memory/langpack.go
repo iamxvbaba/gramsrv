@@ -39,6 +39,18 @@ func (s *LangPackStore) GetSeedCatalog(_ context.Context, catalog string) (domai
 	return state, nil
 }
 
+func (s *LangPackStore) PutSeedCatalog(_ context.Context, catalog domain.LangPackSeedCatalog) error {
+	if catalog.Catalog == "" {
+		catalog.Catalog = "default"
+	}
+	catalog.Scopes = append([]string(nil), catalog.Scopes...)
+	catalog.Packs = append([]domain.LangPackSeedCatalogEntry(nil), catalog.Packs...)
+	s.mu.Lock()
+	s.catalogs[catalog.Catalog] = catalog
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *LangPackStore) GetPack(_ context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error) {
 	s.mu.RLock()
 	pack := s.m[langPackKey(langPack, langCode)]
@@ -197,7 +209,7 @@ func (s *LangPackStore) ReconcileSeed(_ context.Context, seed domain.LangPackSee
 		s.seedHashes[key] = entry.ContentHash
 		written += len(pack.Strings)
 	}
-	s.catalogs[catalog] = seedCatalogSnapshot(seed)
+	s.catalogs[catalog] = seed.CatalogSnapshot()
 	return written, nil
 }
 
@@ -220,25 +232,6 @@ func validateSeedEntry(entry domain.LangPackSeedEntry) error {
 		return fmt.Errorf("langpack %s/%s loaded %d strings, want %d", entry.Pack.LangPack, entry.Pack.LangCode, len(entry.Pack.Strings), entry.StringsCount)
 	}
 	return nil
-}
-
-func seedCatalogSnapshot(seed domain.LangPackSeed) domain.LangPackSeedCatalog {
-	state := domain.LangPackSeedCatalog{
-		Catalog: seed.Catalog,
-		Scopes:  append([]string(nil), seed.Scopes...),
-		Packs:   make([]domain.LangPackSeedCatalogEntry, 0, len(seed.Packs)),
-	}
-	for _, entry := range seed.Packs {
-		state.Packs = append(state.Packs, domain.LangPackSeedCatalogEntry{
-			LangPack:     entry.Pack.LangPack,
-			LangCode:     entry.Pack.LangCode,
-			Version:      entry.Pack.Version,
-			SourceHash:   entry.SourceHash,
-			ContentHash:  entry.ContentHash,
-			StringsCount: entry.StringsCount,
-		})
-	}
-	return state
 }
 
 func langPackKey(langPack, langCode string) string {

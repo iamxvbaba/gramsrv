@@ -1309,6 +1309,10 @@ type StarsService interface {
 // WalletService 抽象 Layer 230 应用内 TON 钱包（app/wallet）：所有权挑战、账号与
 // TON 地址的绑定关系、以及（可选）第三方 provider 转发。为 nil(未配置钱包目录)时
 // wallet.* 一律回 WALLET_UNAVAILABLE，而不是把请求当成未知方法丢弃。
+type WalletTransferService interface {
+	TransferWalletGram(ctx context.Context, req domain.WalletGramTransferRequest) (domain.WalletGramTransferResult, error)
+}
+
 type WalletService interface {
 	// GetProofChallenge 生成与账号 + MTProto 授权绑定的不可预测挑战。
 	GetProofChallenge(ctx context.Context, userID int64, authKeyID [8]byte) (domain.WalletChallenge, error)

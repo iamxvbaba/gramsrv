@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,11 +56,12 @@ func (c *countingMediaStore) GetStickerSetByID(ctx context.Context, id int64) (d
 
 type countingBlobBackend struct {
 	BlobBackend
-	getRangeCalls int
+	// WarmCaches 并发读 blob，计数必须是原子的。
+	getRangeCalls atomic.Int64
 }
 
 func (c *countingBlobBackend) GetRange(ctx context.Context, objectKey string, offset, limit int64) ([]byte, int64, error) {
-	c.getRangeCalls++
+	c.getRangeCalls.Add(1)
 	return c.BlobBackend.GetRange(ctx, objectKey, offset, limit)
 }
 
@@ -108,8 +110,8 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	if counting.getBlobCalls != 1 {
 		t.Errorf("getBlobCalls = %d, want 1", counting.getBlobCalls)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Errorf("getRangeCalls = %d, want 1", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Errorf("getRangeCalls = %d, want 1", got)
 	}
 
 	// 第二次：同 location 命中元数据与字节缓存；[5,10) 直接从内存切片。
@@ -123,8 +125,8 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	if counting.getBlobCalls != 1 {
 		t.Errorf("getBlobCalls = %d, want 1 (cache hit)", counting.getBlobCalls)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Errorf("getRangeCalls = %d, want 1 (byte cache hit)", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Errorf("getRangeCalls = %d, want 1 (byte cache hit)", got)
 	}
 }
 
@@ -353,8 +355,8 @@ func TestGetFileLogsCacheHitMiss(t *testing.T) {
 		second["returned_bytes"] != int64(5) {
 		t.Fatalf("second cache log = %#v, want byte cache hit", second)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Fatalf("GetRange calls = %d, want only first miss to read backend", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Fatalf("GetRange calls = %d, want only first miss to read backend", got)
 	}
 }
 
@@ -391,8 +393,8 @@ func TestGetFileDoesNotByteCacheLargeBlob(t *testing.T) {
 			t.Fatalf("chunk %d = %q, want seven x bytes", i, chunk.Bytes)
 		}
 	}
-	if blobs.getRangeCalls != 2 {
-		t.Errorf("getRangeCalls = %d, want 2 (large blob is not byte cached)", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 2 {
+		t.Errorf("getRangeCalls = %d, want 2 (large blob is not byte cached)", got)
 	}
 }
 
@@ -482,7 +484,7 @@ func TestWarmCachesPreloadsStickerSetAndSmallBlobs(t *testing.T) {
 	if stats.StickerSets != 1 || stats.Documents != 1 || stats.Blobs != 2 {
 		t.Fatalf("warm stats = %+v, want 1 set, 1 doc, 2 blobs", stats)
 	}
-	blobs.getRangeCalls = 0
+	blobs.getRangeCalls.Store(0)
 	chunk, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:100", Offset: 0, Limit: 7})
 	if err != nil || !ok {
 		t.Fatalf("getfile ok=%v err=%v", ok, err)
@@ -490,8 +492,8 @@ func TestWarmCachesPreloadsStickerSetAndSmallBlobs(t *testing.T) {
 	if string(chunk.Bytes) != "sticker" {
 		t.Fatalf("chunk = %q, want sticker", chunk.Bytes)
 	}
-	if blobs.getRangeCalls != 0 {
-		t.Fatalf("prewarmed blob should be served from byte cache, GetRange calls = %d", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 0 {
+		t.Fatalf("prewarmed blob should be served from byte cache, GetRange calls = %d", got)
 	}
 
 	gotSet, docs, found, err := svc.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: set.ID})
@@ -508,5 +510,99 @@ func TestWarmCachesPreloadsStickerSetAndSmallBlobs(t *testing.T) {
 	_, docsAgain, found, err := svc.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: set.ID})
 	if err != nil || !found || docsAgain[0].ID != doc.ID {
 		t.Fatalf("cached docs were mutated: found=%v err=%v docs=%+v", found, err, docsAgain)
+	}
+}
+
+// blockedStickerDocumentsStore 挂起第一次查询的已读快照，允许 RPC 在预热发布前完成写入。
+type blockedStickerDocumentsStore struct {
+	*fakeMediaStore
+	loaded  chan struct{}
+	release chan struct{}
+	blocked atomic.Bool
+}
+
+func (s *blockedStickerDocumentsStore) GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error) {
+	docs, err := s.fakeMediaStore.GetDocuments(ctx, ids)
+	if s.blocked.CompareAndSwap(false, true) {
+		close(s.loaded)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return docs, err
+}
+
+func TestStickerSetCacheRejectsConcurrentStaleLoads(t *testing.T) {
+	for _, loader := range []string{"warmup", "lookup"} {
+		for _, mutation := range []string{"delete", "rename"} {
+			t.Run(loader+"/"+mutation, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				media := &blockedStickerDocumentsStore{
+					fakeMediaStore: newFakeMediaStore(),
+					loaded:         make(chan struct{}),
+					release:        make(chan struct{}),
+				}
+				if err := media.PutDocument(ctx, domain.Document{ID: 1000001}); err != nil {
+					t.Fatal(err)
+				}
+				if err := media.PutStickerSet(ctx, domain.StickerSet{
+					ID: 1, AccessHash: 2, CreatorUserID: 42, ShortName: "TestSet", Title: "Original",
+					Kind: domain.StickerSetKindStickers, DocumentIDs: []int64{1000001},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				svc := NewService(media, nil, 2)
+				ref := domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: 1, AccessHash: 2}
+				done := make(chan error, 1)
+				go func() {
+					if loader == "warmup" {
+						_, err := svc.WarmCaches(ctx)
+						done <- err
+					} else {
+						_, _, _, err := svc.ResolveStickerSet(ctx, ref)
+						done <- err
+					}
+				}()
+				select {
+				case <-media.loaded:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+
+				if mutation == "delete" {
+					// 缓存尚为空时的失效也必须挡住在途查询。
+					if _, err := svc.AdminDeleteStickerSet(ctx, 1); err != nil {
+						t.Fatal(err)
+					}
+				} else if _, _, err := svc.RenameStickerSet(ctx, 42, ref, "Renamed"); err != nil {
+					t.Fatal(err)
+				}
+				close(media.release)
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+
+				for _, lookup := range []domain.StickerSetRef{ref, {Kind: domain.StickerSetRefByShortName, ShortName: "TestSet"}} {
+					set, _, found, err := svc.ResolveStickerSet(ctx, lookup)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if mutation == "delete" && found {
+						t.Fatalf("stale load resurrected deleted set: %+v", set)
+					}
+					if mutation == "rename" && (!found || set.Title != "Renamed") {
+						t.Fatalf("stale load overwrote renamed set: set=%+v found=%v", set, found)
+					}
+				}
+			})
+		}
 	}
 }

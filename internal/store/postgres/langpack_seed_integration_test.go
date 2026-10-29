@@ -29,6 +29,8 @@ func TestLangPackSeedReconciliationPostgres(t *testing.T) {
 			SourceHash:    "source-v1",
 			ContentHash:   "hash-v1",
 			StringsCount:  2,
+			Size:          1234,
+			ModTime:       time.Unix(1700000000, 123).UnixNano(),
 			ContentLoaded: true,
 			Pack: domain.LangPack{
 				LangPack: packName,
@@ -53,8 +55,17 @@ func TestLangPackSeedReconciliationPostgres(t *testing.T) {
 		t.Fatalf("reconcile unchanged v1 = %d, %v", written, err)
 	}
 	catalog, err := store.GetSeedCatalog(ctx, packName)
-	if err != nil || len(catalog.Packs) != 1 || catalog.Packs[0].SourceHash != "source-v1" {
+	if err != nil || !domain.SameSeedCatalogSnapshot(catalog, seedV1.CatalogSnapshot()) {
 		t.Fatalf("seed catalog = %+v, %v", catalog, err)
+	}
+	// stat-only 刷新须保留源 hash，并在 JSON 往返后保留纳秒精度。
+	catalog.Packs[0].ModTime++
+	if err := store.PutSeedCatalog(ctx, catalog); err != nil {
+		t.Fatalf("refresh seed catalog: %v", err)
+	}
+	refreshed, err := store.GetSeedCatalog(ctx, packName)
+	if err != nil || !domain.SameSeedCatalogSnapshot(refreshed, catalog) {
+		t.Fatalf("refreshed seed catalog = %+v, %v", refreshed, err)
 	}
 
 	seedV2 := domain.LangPackSeed{

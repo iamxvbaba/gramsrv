@@ -288,6 +288,45 @@ WHERE location_key = ANY($1::text[])`, locationKeys)
 	return out, nil
 }
 
+// SeedThumbStates 批量取文档缩略图的校验元数据。刻意只解码前 16 个 base64 字符：
+// 启动期校验几千个 seed 文档时，把 thumbs 里的内联字节整段拉回内存才是主要开销。
+func (s *MediaStore) SeedThumbStates(ctx context.Context, documentIDs []int64) ([]store.SeedThumbState, error) {
+	if len(documentIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT d.id,
+       COALESCE(t->>'type', ''),
+       COALESCE(t->>'kind', ''),
+       COALESCE((t->>'size')::int, 0),
+       CASE WHEN COALESCE(t->>'bytes', '') <> '' THEN octet_length(decode(t->>'bytes', 'base64')) ELSE 0 END,
+       COALESCE(b.size, 0),
+       COALESCE(b.mime_type, ''),
+       b.location_key IS NOT NULL,
+       CASE WHEN COALESCE(t->>'bytes', '') <> '' THEN decode(left(t->>'bytes', 16), 'base64') ELSE NULL END
+FROM documents d
+CROSS JOIN LATERAL jsonb_array_elements(d.thumbs) t
+LEFT JOIN file_blobs b ON b.location_key = 'doc:' || d.id || ':' || (t->>'type')
+WHERE d.id = ANY($1::bigint[])`, documentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get seed thumb states: %w", err)
+	}
+	defer rows.Close()
+	out := make([]store.SeedThumbState, 0, len(documentIDs))
+	for rows.Next() {
+		var state store.SeedThumbState
+		if err := rows.Scan(&state.DocumentID, &state.Type, &state.Kind, &state.DeclaredSize,
+			&state.DataSize, &state.BlobSize, &state.BlobMime, &state.HasBlob, &state.Head); err != nil {
+			return nil, fmt.Errorf("scan seed thumb state: %w", err)
+		}
+		out = append(out, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FileBlobBackendCounts returns the persisted permanent-backend distribution.
 // Startup uses it as a fail-fast invariant: a configured backend is never
 // allowed to read rows written for another backend through an implicit fallback.
@@ -1167,6 +1206,17 @@ func scanStickerSet(row stickerSetScanner) (domain.StickerSet, error) {
 func (s *MediaStore) CountStickerSets(ctx context.Context) (int, error) {
 	n, err := s.q.CountStickerSets(ctx)
 	return int(n), err
+}
+
+func (s *MediaStore) CountStickerSetsByIDs(ctx context.Context, ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var n int
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM sticker_sets WHERE id = ANY($1::bigint[])`, ids).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count sticker sets by ids: %w", err)
+	}
+	return n, nil
 }
 
 func stickerSetFromRow(row sqlcgen.GetStickerSetByIDRow) (domain.StickerSet, bool, error) {

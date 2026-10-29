@@ -115,6 +115,7 @@ type Service struct {
 	provider     Provider
 	balances     BalanceSource
 	transactions TransactionSource
+	transfers    TransferStore
 	keys         *KeyCipher
 	domain       string
 	now          func() time.Time

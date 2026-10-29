@@ -18,8 +18,10 @@ import (
 )
 
 type seedCandidate struct {
-	path string
-	meta domain.LangPack
+	path    string
+	meta    domain.LangPack
+	size    int64
+	modTime int64
 }
 
 // SeedDirectory 将导出的 .strings 文件清单原子对账到 LangPackStore。
@@ -61,6 +63,25 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	}
 	for _, key := range keys {
 		candidate := candidates[key]
+		// 版本号（编码在文件名里）、文件大小和 mtime 都未变时复用上次的 hash。
+		// 同大小的编辑也必须重新校验；旧清单缺少 size/mtime 时先算一次 SHA256，
+		// 再补写完整 stat 元数据，不能把未知大小当作内容相同。
+		if old, ok := previousByKey[key]; ok &&
+			old.Version == candidate.meta.Version &&
+			old.Size > 0 && old.Size == candidate.size &&
+			old.ModTime != 0 && old.ModTime == candidate.modTime &&
+			old.SourceHash != "" && old.ContentHash != "" && old.StringsCount > 0 {
+			seed.Packs = append(seed.Packs, domain.LangPackSeedEntry{
+				Pack:          candidate.meta,
+				SourceHash:    old.SourceHash,
+				ContentHash:   old.ContentHash,
+				StringsCount:  old.StringsCount,
+				Size:          candidate.size,
+				ModTime:       candidate.modTime,
+				ContentLoaded: false,
+			})
+			continue
+		}
 		sourceHash, err := fileSHA256(candidate.path)
 		if err != nil {
 			return 0, fmt.Errorf("hash langpack source %q: %w", candidate.path, err)
@@ -74,6 +95,8 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 				SourceHash:    sourceHash,
 				ContentHash:   old.ContentHash,
 				StringsCount:  old.StringsCount,
+				Size:          candidate.size,
+				ModTime:       candidate.modTime,
 				ContentLoaded: false,
 			})
 			continue
@@ -95,8 +118,25 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 			SourceHash:    sourceHash,
 			ContentHash:   hash,
 			StringsCount:  len(pack.Strings),
+			Size:          candidate.size,
+			ModTime:       candidate.modTime,
 			ContentLoaded: true,
 		})
+	}
+
+	// 目录内容没变时直接返回：ReconcileSeed 会为每个语言包做 2-3 次查询，远端 PG 上
+	// 是数百次往返（启动期数秒），而结果只会全部命中相同 hash。要强制重放，删掉
+	// seed_states 里的 langpack:v2:catalog:<catalog> 即可。
+	if sameSeedCatalog(previous, seed) {
+		// 旧清单或 touch 后的文件已在上面通过内容 hash 校验；只补写 stat 快照，
+		// 下次启动即可复用 hash，不必再读整个文件。
+		snapshot := seed.CatalogSnapshot()
+		if !domain.SameSeedCatalogSnapshot(previous, snapshot) {
+			if err := s.packs.PutSeedCatalog(ctx, snapshot); err != nil {
+				return 0, fmt.Errorf("refresh langpack seed catalog: %w", err)
+			}
+		}
+		return 0, nil
 	}
 
 	seeded, err := s.packs.ReconcileSeed(ctx, seed)
@@ -105,6 +145,40 @@ func (s *Service) SeedDirectory(ctx context.Context, root string) (int, error) {
 	}
 	s.flushCaches()
 	return seeded, nil
+}
+
+// sameSeedCatalog 判断导出目录算出的目录清单与上次落库的清单是否一致。比较按
+// pack/code 建映射，不依赖历史清单的写入顺序（早期的记录并非按路径排序写入）。
+func sameSeedCatalog(previous domain.LangPackSeedCatalog, seed domain.LangPackSeed) bool {
+	if previous.Catalog != seed.Catalog ||
+		len(previous.Scopes) != len(seed.Scopes) ||
+		len(previous.Packs) != len(seed.Packs) {
+		return false
+	}
+	scopes := make(map[string]struct{}, len(previous.Scopes))
+	for _, scope := range previous.Scopes {
+		scopes[scope] = struct{}{}
+	}
+	for _, scope := range seed.Scopes {
+		if _, ok := scopes[scope]; !ok {
+			return false
+		}
+	}
+	packs := make(map[string]domain.LangPackSeedCatalogEntry, len(previous.Packs))
+	for _, entry := range previous.Packs {
+		packs[entry.LangPack+"\x00"+entry.LangCode] = entry
+	}
+	for _, pack := range seed.Packs {
+		old, ok := packs[pack.Pack.LangPack+"\x00"+pack.Pack.LangCode]
+		if !ok ||
+			old.Version != pack.Pack.Version ||
+			old.SourceHash != pack.SourceHash ||
+			old.ContentHash != pack.ContentHash ||
+			old.StringsCount != pack.StringsCount {
+			return false
+		}
+	}
+	return true
 }
 
 func fileSHA256(path string) (string, error) {
@@ -152,6 +226,11 @@ func scanSeedCandidates(root string) (map[string]seedCandidate, []string, error)
 		if err != nil {
 			return err
 		}
+		// 与 ParseTDesktopFile 一样跟随符号链接，校验实际被读取文件的 stat。
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
 		if relDir := filepath.Dir(rel); relDir != "." {
 			firstDir := strings.Split(relDir, string(filepath.Separator))[0]
 			scope := normalizePack(firstDir)
@@ -169,7 +248,7 @@ func scanSeedCandidates(root string) (map[string]seedCandidate, []string, error)
 				return fmt.Errorf("duplicate langpack version %s/%s v%d in %q and %q", meta.LangPack, meta.LangCode, meta.Version, previous.path, path)
 			}
 		}
-		candidates[key] = seedCandidate{path: path, meta: meta}
+		candidates[key] = seedCandidate{path: path, meta: meta, size: info.Size(), modTime: info.ModTime().UnixNano()}
 		return nil
 	})
 	if err != nil {

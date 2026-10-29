@@ -1841,7 +1841,7 @@ func (s *StarGiftLifecycleStore) TonTransactions(ctx context.Context, userID int
 	}
 	where, order, args := starsTransactionQueryParts("user_id", "amount_nanoton", userID, query)
 	rows, err := s.db.Query(ctx, `SELECT id,user_id,COALESCE(peer_type,''),COALESCE(peer_id,0),COALESCE(gift_id,0),
-amount_nanoton,date,reason FROM ton_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, args...)
+amount_nanoton,date,reason,comment FROM ton_transactions WHERE `+where+` ORDER BY id `+order+` LIMIT $2`, args...)
 	if err != nil {
 		return domain.TonTransactionPage{}, err
 	}
@@ -1850,7 +1850,7 @@ amount_nanoton,date,reason FROM ton_transactions WHERE `+where+` ORDER BY id `+o
 	for rows.Next() {
 		var item domain.TonTransaction
 		var peerType string
-		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.GiftID, &item.Amount, &item.Date, &item.Reason); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &peerType, &item.Peer.ID, &item.GiftID, &item.Amount, &item.Date, &item.Reason, &item.Comment); err != nil {
 			return domain.TonTransactionPage{}, err
 		}
 		item.Peer.Type = domain.PeerType(peerType)

@@ -3,9 +3,16 @@ package files
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+
+	"golang.org/x/sync/errgroup"
 
 	"telesrv/internal/domain"
 )
+
+// warmBlobReadConcurrency 限制启动预热时并发读 blob 的数量。预热的都是 ≤256KB 的小
+// 文件，8 路足够盖住本地磁盘/对象存储的延迟，又不会在启动时抢满 I/O。
+const warmBlobReadConcurrency = 8
 
 // WarmStats 汇报一次启动资源缓存预热结果。
 type WarmStats struct {
@@ -18,57 +25,55 @@ type WarmStats struct {
 // SeedMedia 在已有数据时会跳过导入；该方法保证普通 server 重启后历史 sticker 首次渲染也不是冷缓存。
 func (s *Service) WarmCaches(ctx context.Context) (WarmStats, error) {
 	var stats WarmStats
-	// 第一阶段：收集所有待预热文档（贴纸集 + reaction），按 doc ID 去重。
-	seenDocs := make(map[int64]struct{})
-	docs := make([]domain.Document, 0, 256)
-	collect := func(doc domain.Document) {
-		if doc.ID == 0 {
-			return
-		}
-		if _, ok := seenDocs[doc.ID]; ok {
-			return
-		}
-		seenDocs[doc.ID] = struct{}{}
-		docs = append(docs, doc)
-	}
+	// 必须在查询集合前取 epoch：查询期间的 RPC 修改/删除会使整份预热快照失效。
+	epoch := s.stickerSetCache.loadEpoch()
+	// 第一阶段：一次取齐所有贴纸集 + reaction，再一条查询取回全部文档。过去逐集
+	// GetDocuments 在远端 PG 上要 60+ 次往返。
+	var sets []domain.StickerSet
+	docIDs := make([]int64, 0, 4096)
 	for _, kind := range []domain.StickerSetKind{
 		domain.StickerSetKindStickers,
 		domain.StickerSetKindEmoji,
 		domain.StickerSetKindMasks,
 		domain.StickerSetKindSystem,
 	} {
-		sets, err := s.media.ListStickerSets(ctx, kind)
+		list, err := s.media.ListStickerSets(ctx, kind)
 		if err != nil {
 			return stats, err
 		}
-		for _, set := range sets {
-			setDocs, err := s.media.GetDocuments(ctx, set.DocumentIDs)
-			if err != nil {
-				return stats, err
-			}
-			ordered := orderDocuments(setDocs, set.DocumentIDs)
-			s.stickerSetCache.put(set, ordered)
-			stats.StickerSets++
-			for _, doc := range ordered {
-				collect(doc)
-			}
+		for _, set := range list {
+			sets = append(sets, set)
+			docIDs = append(docIDs, set.DocumentIDs...)
 		}
 	}
 	reactions, err := s.media.ListAvailableReactions(ctx)
 	if err != nil {
 		return stats, err
 	}
-	reactionIDs := make([]int64, 0, len(reactions)*4)
 	for _, reaction := range reactions {
-		reactionIDs = append(reactionIDs, reaction.DocumentIDs()...)
+		docIDs = append(docIDs, reaction.DocumentIDs()...)
 	}
-	reactionDocs, err := s.media.GetDocuments(ctx, reactionIDs)
+	allDocs, err := s.media.GetDocuments(ctx, docIDs)
 	if err != nil {
 		return stats, err
 	}
-	for _, doc := range reactionDocs {
-		collect(doc)
+	byID := make(map[int64]domain.Document, len(allDocs))
+	for _, doc := range allDocs {
+		byID[doc.ID] = doc
 	}
+	for _, set := range sets {
+		ordered := make([]domain.Document, 0, len(set.DocumentIDs))
+		for _, id := range set.DocumentIDs {
+			if doc, ok := byID[id]; ok {
+				ordered = append(ordered, doc)
+			}
+		}
+		if s.stickerSetCache.putIfEpoch(set, ordered, epoch) {
+			stats.StickerSets++
+		}
+	}
+	// GetDocuments 已按 id 去重，且 docIDs 正是贴纸集 ∪ reaction 的全部文档。
+	docs := allDocs
 	stats.Documents = len(docs)
 
 	// 第二阶段：一发 ANY 查询批量取所有 location key 的 blob 元数据，替代过去逐个
@@ -82,20 +87,32 @@ func (s *Service) WarmCaches(ctx context.Context) (WarmStats, error) {
 		return stats, err
 	}
 	// 第三阶段：填充元数据缓存，并把小 blob 的全量字节读入字节缓存（blob backend 读，非 PG）。
+	// 读取按 blob backend 并行：串行时一次重启要按顺序读几千个小文件，2.3 s 里绝大多数
+	// 时间花在等待单次读的延迟上。哈希/计数都用原子量，缓存本身是加锁的。
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(warmBlobReadConcurrency)
+	var warmed atomic.Int64
 	for _, key := range keys {
 		blob, ok := blobs[key]
 		if !ok {
 			continue
 		}
 		s.blobCache.put(key, blob)
-		warmed, err := s.warmBlobBytes(ctx, blob)
-		if err != nil {
-			return stats, err
-		}
-		if warmed {
-			stats.Blobs++
-		}
+		group.Go(func() error {
+			ok, err := s.warmBlobBytes(groupCtx, blob)
+			if err != nil {
+				return err
+			}
+			if ok {
+				warmed.Add(1)
+			}
+			return nil
+		})
 	}
+	if err := group.Wait(); err != nil {
+		return stats, err
+	}
+	stats.Blobs = int(warmed.Load())
 	return stats, nil
 }
 

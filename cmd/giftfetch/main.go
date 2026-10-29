@@ -278,7 +278,8 @@ func run(timeout time.Duration, opts telegram.Options, fn func(context.Context, 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client := telegram.NewClient(apiID, apiHash, opts)
+	id, hash := apiCredentials(apiID, apiHash)
+	client := telegram.NewClient(id, hash, opts)
 	if err := client.Run(ctx, func(ctx context.Context) error {
 		return fn(ctx, client)
 	}); err != nil {
@@ -1295,4 +1296,19 @@ func writeFileAtomic(path string, data []byte) error {
 		}
 	}
 	return nil
+}
+
+// apiCredentials returns TG_API_ID/TG_API_HASH when set (the public TDesktop id
+// is rate-limited with API_ID_PUBLISHED_FLOOD), otherwise the given defaults.
+func apiCredentials(defID int, defHash string) (int, string) {
+	id, hash := defID, defHash
+	if v := strings.TrimSpace(os.Getenv("TG_API_ID")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			id = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("TG_API_HASH")); v != "" {
+		hash = v
+	}
+	return id, hash
 }

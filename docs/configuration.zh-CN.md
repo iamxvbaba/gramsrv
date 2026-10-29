@@ -727,6 +727,21 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 卷的 wallet/keys.key。主密钥与完整账号状态必须共同备份；首次生成 0600 文件，
 重启校验已有密文与配置密钥一致，不推断没有存量证据的 raw-key 编码。
 可选 `TELESRV_WALLET_TONCENTER_API_KEY` 要求已配置目录；留空不访问外部 TON。
+
+`TELESRV_WALLET_INTERNAL_TRANSFERS=false` 默认关闭，只控制本部署内部 Gram 账本的用户间转账。
+启用时必须配置钱包目录并使用兼容客户端；它不启用 TON 链上发送或 gasless。
+还必须设置 `TELESRV_STARGIFT_TON_STARTING_GRANT=0`；启动校验与扣款存储均拒绝非零初始赠款，防止注册多个账号集中免费余额。
+关闭赠款不追溯删除已有余额，运维启用转账前须审核历史赠款。
+每笔转账必须通过账号 2FA 的 SRP 校验取得 `account.getTmpPassword`，授权在同一资金事务中一次性消耗。
+授权必须属于当前登录及密码版本，未过期且签发不超过 120 秒；无 2FA 的账号须先设置密码。
+`wallet.sendTransfer.data_normal` 使用版本 1 JSON：`version`、`recipient_user_id`、`random_id`、
+`amount_nanoton`、可选 `comment` 和 Base64 编码的 32 字节 `tmp_password`。收款人和随机 ID 必须与 RPC 一致。
+相同请求重试返回原回执，旧 JSON、所有 TON BOC 和 gasless 请求均拒绝。地址查询不创建其他用户的钱包。
+收款人更换绑定钱包不影响相同请求重放；相同 random_id 携带不同授权或内容返回 `RANDOM_ID_DUPLICATE`。
+发送方回执使用发送方负数流水的 ID。收款人拉黑发送方时，转账与私聊回执均拒绝。
+其他非联系人消息隐私与付费消息规则尚未应用于此扩展回执，扩大部署前需单独确定该策略。
+help 服务按配置发布扩展能力，保留运维显式 app-config；丢失的余额推送由 `wallet.getState` 恢复。
+本扩展的 upstream 接纳仍需维护者明确决定，部署启用不代表维护者批准。
 余额/流水来自本服 nanoton 账本，不代表链上到账；链上发送、gasless、备份/导出和
 TON Connect 会话尚未实现，开启目录不等于开启这些能力。
 

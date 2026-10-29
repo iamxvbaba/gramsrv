@@ -36,9 +36,7 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return r.onHelpGetAppUpdate(ctx, layerRequest.Source)
 	})
 	registerRPC[*tg.HelpGetAppConfigRequest](d, tlprofile.SemanticMethodHelpGetAppConfig, func(ctx context.Context, layerRequest *tg.HelpGetAppConfigRequest) (any, error) {
-		hash := layerRequest.
-			Hash
-		_ = hash
+		hash := layerRequest.Hash
 
 		if r.deps.Help == nil {
 			return tdesktop.AppConfig(hash), nil

@@ -139,3 +139,18 @@ SESSION=/root/.giftfetch.session go run ./cmd/giftfetch \
 The session file is a live account credential; keep it outside the repository
 and out of version control. Full flag reference, the snapshot layout and the
 validation the fetcher performs are in [`docs/giftfetch.md`](giftfetch.md).
+
+## 7. Sticker, emoji and reaction seeds (optional)
+
+Without a seed directory (`TELESRV_STICKER_SEED_DIR`, `data/sticker-seed` by
+default) the server has no reactions, custom emoji or sticker sets. Export them
+from official Telegram with `cmd/stickerfetch`, using the same kind of session:
+
+```sh
+SESSION=/root/.giftfetch.session go run ./cmd/stickerfetch data/sticker-seed reactions
+SESSION=/root/.giftfetch.session go run ./cmd/stickerfetch -timeout 3h \
+    data/sticker-seed/telegram_emoji_export featured_emoji
+```
+
+The directory layout, all set specs and the thumbnail requirements are in
+[`docs/stickerfetch.md`](stickerfetch.md).

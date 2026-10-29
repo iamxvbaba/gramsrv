@@ -295,6 +295,21 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		}
 		return &tg.MessageActionStarGiftPurchaseOfferDeclined{Expired: action.Expired,
 			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price)}
+	case domain.MessageServiceActionGramTransfer:
+		action := m.ServiceAction.GramTransfer
+		if action == nil || action.Amount <= 0 {
+			return &tg.MessageActionEmpty{}
+		}
+		out := &tg.MessageActionGramTransfer{
+			Amount:           action.Amount,
+			PeerAddress:      action.PeerAddress,
+			TransactionID:    action.TransactionID,
+			CommentEncrypted: action.CommentEncrypted,
+		}
+		if action.Comment != "" {
+			out.SetComment(action.Comment)
+		}
+		return out
 	case domain.MessageServiceActionGiftPremium:
 		action := m.ServiceAction.GiftPremium
 		if action == nil || action.Currency == "" || action.Amount <= 0 || action.Days <= 0 {

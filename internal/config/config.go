@@ -186,6 +186,8 @@ type Config struct {
 	// 0600 JSON（挑战 + 已验证地址绑定），目录必须没有 group/other 权限。留空
 	// 即禁用钱包，此时 wallet.* 回 WALLET_UNAVAILABLE。
 	WalletStateDir string
+	// WalletInternalTransfers explicitly enables password-authorized ledger transfers.
+	WalletInternalTransfers bool
 	// WalletKeyFile 是钱包私钥的 AES-256-GCM 主密钥文件。缺失时首次启动生成
 	// 0600 文件；与 MTProto RSA 身份密钥同属 data/ 下的“必须备份”文件。
 	WalletKeyFile string
@@ -1051,6 +1053,7 @@ func Load() (Config, error) {
 		TelegramLoginRetention:                envDurationOr("TELESRV_TELEGRAM_LOGIN_RETENTION", 7*24*time.Hour),
 		TelegramLoginSweepInterval:            envDurationOr("TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL", 5*time.Minute),
 		TelegramLoginSweepBatch:               envIntOr("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", 500),
+		WalletInternalTransfers:               envBoolOr("TELESRV_WALLET_INTERNAL_TRANSFERS", false),
 		WalletStateDir:                        strings.TrimSpace(envAllowEmptyOr("TELESRV_WALLET_STATE_DIR", "")),
 		WalletKeyFile:                         envOr("TELESRV_WALLET_KEY_FILE", "data/wallet/keys.key"),
 		WalletToncenterAPIKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_WALLET_TONCENTER_API_KEY", "")),
@@ -1796,9 +1799,15 @@ func validateTelegramLoginConfig(cfg Config) error {
 }
 
 func validateWalletConfig(cfg Config) error {
+	if cfg.WalletInternalTransfers && cfg.StarGiftTONStartingGrant != 0 {
+		return fmt.Errorf("TELESRV_WALLET_INTERNAL_TRANSFERS requires TELESRV_STARGIFT_TON_STARTING_GRANT=0; per-account starting grants cannot be pooled through transfers")
+	}
 	// 钱包目录留空即禁用，此时不要求密钥文件存在；启用时必须给出私钥主密钥
 	// 路径，否则钱包状态会被写入明文风险无法接受的形态。
 	if cfg.WalletStateDir == "" {
+		if cfg.WalletInternalTransfers {
+			return fmt.Errorf("TELESRV_WALLET_INTERNAL_TRANSFERS requires TELESRV_WALLET_STATE_DIR")
+		}
 		if cfg.WalletToncenterAPIKey != "" {
 			return fmt.Errorf("TELESRV_WALLET_TONCENTER_API_KEY requires TELESRV_WALLET_STATE_DIR")
 		}

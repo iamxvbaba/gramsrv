@@ -84,12 +84,13 @@ const defaultAppConfigHash = 37 // 默认 app config 内容变更时必须递增
 // (登录页/启动配置是高频握手路径)。运维改库需重启生效。timezones/emoji 等其余目录走
 // internal/seed/catalog(go:embed 一次解析),本就在内存。
 type Service struct {
-	appConfigs    store.AppConfigStore
-	countries     store.CountryStore
-	accountFreeze AccountFreezeProvider
-	mapboxToken   string
-	premiumBot    string
-	walletEnabled bool
+	appConfigs              store.AppConfigStore
+	countries               store.CountryStore
+	accountFreeze           AccountFreezeProvider
+	mapboxToken             string
+	premiumBot              string
+	walletEnabled           bool
+	walletInternalTransfers bool
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -135,6 +136,12 @@ func WithWalletAvailable(available bool) Option {
 	return func(s *Service) {
 		s.walletEnabled = available
 	}
+}
+
+// WithInternalWalletTransfers publishes the explicitly configured internal extension.
+// It never enables chain sending or gasless. Stored operator app configs remain authoritative.
+func WithInternalWalletTransfers(enabled bool) Option {
+	return func(s *Service) { s.walletInternalTransfers = enabled }
 }
 
 // NewService 创建 help 服务。
@@ -274,6 +281,17 @@ func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 		return defaultAppConfig("")
 	}
 	defaultCfg := defaultAppConfigWithPremiumBot(s.mapboxToken, s.premiumBot, s.walletEnabled)
+	if s.walletEnabled && s.walletInternalTransfers {
+		var values map[string]json.RawMessage
+		if json.Unmarshal(defaultCfg.JSON, &values) == nil {
+			values["wallet_internal_gram"] = json.RawMessage("true")
+			values["wallet_internal_gram_transfer_version"] = json.RawMessage("1")
+			values["wallet_transfer_requires_password"] = json.RawMessage("true")
+			values["wallet_transfer_min_nanos"] = json.RawMessage("1")
+			defaultCfg.JSON, _ = json.Marshal(values)
+			defaultCfg.Hash = int(crc32.ChecksumIEEE(defaultCfg.JSON) & 0x7fffffff)
+		}
+	}
 	s.appConfigOnce.Do(func() {
 		if s.appConfigs == nil {
 			s.appConfigCache = defaultCfg

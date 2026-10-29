@@ -224,6 +224,7 @@ func (c *blobBytesCache) put(key string, bytes []byte) {
 
 type stickerSetFullCache struct {
 	mu       sync.RWMutex
+	epoch    uint64
 	byID     map[int64]stickerSetFullEntry
 	byShort  map[string]int64
 	bySystem map[string]int64
@@ -269,6 +270,32 @@ func (c *stickerSetFullCache) put(set domain.StickerSet, docs []domain.Document)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.epoch++
+	c.putLocked(set, docs)
+}
+
+func (c *stickerSetFullCache) loadEpoch() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.epoch
+}
+
+// putIfEpoch 只发布读取期间未发生修改/删除的快照。预热与 RPC 的读缓存填充不推进
+// epoch，写入/失效则推进；即使删除时缓存还为空，也能挡住稍后完成的旧查询。
+func (c *stickerSetFullCache) putIfEpoch(set domain.StickerSet, docs []domain.Document, epoch uint64) bool {
+	if set.ID == 0 {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.epoch != epoch {
+		return false
+	}
+	c.putLocked(set, docs)
+	return true
+}
+
+func (c *stickerSetFullCache) putLocked(set domain.StickerSet, docs []domain.Document) {
 	c.byID[set.ID] = stickerSetFullEntry{
 		set:  copyStickerSet(set),
 		docs: copyDocuments(docs),
@@ -287,6 +314,7 @@ func (c *stickerSetFullCache) delete(set domain.StickerSet) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.epoch++
 	delete(c.byID, set.ID)
 	if set.ShortName != "" {
 		delete(c.byShort, set.ShortName)

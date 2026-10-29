@@ -56,13 +56,17 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 	if err != nil {
 		return err
 	}
-	ready, err := s.seedDocumentJSONsReady(ctx, requiredDocs, index)
+	storedDocs, ready, err := s.seedDocumentJSONsReady(ctx, requiredDocs, index)
 	if err != nil {
 		return err
 	}
 	matched, err := s.seedStateMatches(ctx, seedEffectsStateKey, stateHash)
 	if err != nil {
 		return err
+	}
+	ids := make([]int64, 0, len(requiredDocs))
+	for _, doc := range requiredDocs {
+		ids = append(ids, doc.ID)
 	}
 	if !matched || !ready {
 		for _, dj := range requiredDocs {
@@ -73,19 +77,16 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 		if err := s.putSeedState(ctx, seedEffectsStateKey, stateHash); err != nil {
 			return err
 		}
+		// 导入可能改写了文档/缩略图，重读一次再算 hash。
+		storedDocs, err = s.media.GetDocuments(ctx, ids)
+		if err != nil {
+			return err
+		}
 	}
-	ids := make([]int64, 0, len(requiredDocs))
-	for _, doc := range requiredDocs {
-		ids = append(ids, doc.ID)
-	}
-	docs, err := s.media.GetDocuments(ctx, ids)
-	if err != nil {
-		return err
-	}
-	if len(docs) != len(ids) {
+	if len(storedDocs) != len(ids) {
 		return fmt.Errorf("effects catalog documents incomplete")
 	}
-	s.effectsHash, err = effectsCatalogHash(effects, orderDocuments(docs, ids))
+	s.effectsHash, err = effectsCatalogHash(effects, orderDocuments(storedDocs, ids))
 	return err
 }
 
@@ -176,7 +177,20 @@ func effectsCatalogHash(effects []domain.AvailableEffect, docs []domain.Document
 	}
 	// Metadata repairs must invalidate cached effect documents too, otherwise
 	// TDLib can overwrite a refreshed set credential with a stale effect reference.
-	if err := json.NewEncoder(h).Encode(docs); err != nil {
+	// 缩略图字节直接带长度写入 hash，避免 JSON/base64 开销。cached 的实际 size 可能
+	// 只由 len(Bytes) 决定，path/stripped 的 Bytes 更是直接下发给客户端，不能丢出 hash。
+	trimmed := make([]domain.Document, len(docs))
+	for i, doc := range docs {
+		thumbs := append([]domain.PhotoSize(nil), doc.Thumbs...)
+		for j := range thumbs {
+			put(int64(len(thumbs[j].Bytes)))
+			_, _ = h.Write(thumbs[j].Bytes)
+			thumbs[j].Bytes = nil
+		}
+		doc.Thumbs = thumbs
+		trimmed[i] = doc
+	}
+	if err := json.NewEncoder(h).Encode(trimmed); err != nil {
 		return 0, err
 	}
 	return int(h.Sum64() & 0x7fffffff), nil

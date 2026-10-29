@@ -131,6 +131,25 @@ func (s *LangPackStore) ReconcileSeed(ctx context.Context, seed domain.LangPackS
 	return written, nil
 }
 
+// PutSeedCatalog 只覆盖目录清单快照，供“内容 hash 未变但文件 stat 元数据需要
+// 刷新”的启动路径使用，避免为补写大小/mtime 跑完整的 ReconcileSeed。
+func (s *LangPackStore) PutSeedCatalog(ctx context.Context, catalog domain.LangPackSeedCatalog) error {
+	if catalog.Catalog == "" {
+		catalog.Catalog = "default"
+	}
+	encoded, err := json.Marshal(catalog)
+	if err != nil {
+		return fmt.Errorf("encode langpack seed catalog %q: %w", catalog.Catalog, err)
+	}
+	if err := s.q.PutLangPackSeedHash(ctx, sqlcgen.PutLangPackSeedHashParams{
+		Key:         langPackSeedManifestStateKey(catalog.Catalog),
+		ContentHash: string(encoded),
+	}); err != nil {
+		return fmt.Errorf("put langpack seed catalog %q: %w", catalog.Catalog, err)
+	}
+	return nil
+}
+
 func (s *LangPackStore) UpsertPack(ctx context.Context, pack domain.LangPack) error {
 	if txer, ok := s.db.(interface {
 		Begin(context.Context) (pgx.Tx, error)
@@ -285,7 +304,7 @@ func reconcileSeedWith(ctx context.Context, tx pgx.Tx, q *sqlcgen.Queries, seed 
 	}); err != nil {
 		return 0, fmt.Errorf("put langpack seed scopes for %q: %w", catalog, err)
 	}
-	manifest := seedCatalogSnapshot(seed)
+	manifest := seed.CatalogSnapshot()
 	encodedManifest, err := json.Marshal(manifest)
 	if err != nil {
 		return 0, fmt.Errorf("encode langpack seed catalog %q: %w", catalog, err)
@@ -393,25 +412,6 @@ func validateSeedEntry(entry domain.LangPackSeedEntry) error {
 		return fmt.Errorf("langpack %s/%s loaded %d strings, want %d", entry.Pack.LangPack, entry.Pack.LangCode, len(entry.Pack.Strings), entry.StringsCount)
 	}
 	return nil
-}
-
-func seedCatalogSnapshot(seed domain.LangPackSeed) domain.LangPackSeedCatalog {
-	state := domain.LangPackSeedCatalog{
-		Catalog: seed.Catalog,
-		Scopes:  append([]string(nil), seed.Scopes...),
-		Packs:   make([]domain.LangPackSeedCatalogEntry, 0, len(seed.Packs)),
-	}
-	for _, entry := range seed.Packs {
-		state.Packs = append(state.Packs, domain.LangPackSeedCatalogEntry{
-			LangPack:     entry.Pack.LangPack,
-			LangCode:     entry.Pack.LangCode,
-			Version:      entry.Pack.Version,
-			SourceHash:   entry.SourceHash,
-			ContentHash:  entry.ContentHash,
-			StringsCount: entry.StringsCount,
-		})
-	}
-	return state
 }
 
 func invalidateLangPackSeedCatalogs(ctx context.Context, db sqlcgen.DBTX) error {

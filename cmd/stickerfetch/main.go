@@ -11,19 +11,35 @@
 //	emoji_default_topic_icons    inputStickerSetEmojiDefaultTopicIcons
 //	premium_gifts                inputStickerSetPremiumGifts
 //	ton_gifts                    inputStickerSetTonGifts
+//	id:<id>:<access_hash>        inputStickerSetID (any set, e.g. from featured lists)
+//	dice:<emoji>                 inputStickerSetDice
+//	animated_emoji               inputStickerSetAnimatedEmoji
+//	animated_emoji_animations    inputStickerSetAnimatedEmojiAnimations
+//	emoji_generic_animations     inputStickerSetEmojiGenericAnimations
+//	effects                      messages.getAvailableEffects
+//	reactions                    messages.getAvailableReactions -> telegram_reactions_export/
+//	featured_emoji               every set from messages.getFeaturedEmojiStickers
+//	featured_stickers            every set from messages.getFeaturedStickers
+//
+// Documents are exported with their thumbs: Android renders .tgs stickers and
+// custom emoji as such only when thumbs are present.
 //
 // 需登录会话(复用 appearancefetch 的 /tmp/appearance.session,SESSION env 可覆盖)。
+// TG_API_ID / TG_API_HASH override the built-in TDesktop credentials, which
+// Telegram may answer with API_ID_PUBLISHED_FLOOD.
 //
-// 用法: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]
+// 用法: SESSION=/tmp/appearance.session stickerfetch [-timeout 12m] <out_dir> <spec> [spec...]
 package main
 
 import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +65,26 @@ func specToInput(spec string) (tg.InputStickerSetClass, string, error) {
 	case strings.HasPrefix(spec, "short:"):
 		name := strings.TrimPrefix(spec, "short:")
 		return &tg.InputStickerSetShortName{ShortName: name}, name, nil
+	case strings.HasPrefix(spec, "id:"):
+		parts := strings.Split(strings.TrimPrefix(spec, "id:"), ":")
+		if len(parts) != 2 {
+			return nil, "", fmt.Errorf("bad spec %q, want id:<id>:<access_hash>", spec)
+		}
+		id, err1 := strconv.ParseInt(parts[0], 10, 64)
+		hash, err2 := strconv.ParseInt(parts[1], 10, 64)
+		if err1 != nil || err2 != nil {
+			return nil, "", fmt.Errorf("bad spec %q", spec)
+		}
+		return &tg.InputStickerSetID{ID: id, AccessHash: hash}, "", nil
+	case strings.HasPrefix(spec, "dice:"):
+		emoticon := strings.TrimPrefix(spec, "dice:")
+		return &tg.InputStickerSetDice{Emoticon: emoticon}, "Dice", nil
+	case spec == "animated_emoji":
+		return &tg.InputStickerSetAnimatedEmoji{}, "AnimatedEmoji", nil
+	case spec == "animated_emoji_animations":
+		return &tg.InputStickerSetAnimatedEmojiAnimations{}, "AnimatedEmojiAnimations", nil
+	case spec == "emoji_generic_animations":
+		return &tg.InputStickerSetEmojiGenericAnimations{}, "EmojiGenericAnimations", nil
 	case spec == "emoji_default_statuses":
 		return &tg.InputStickerSetEmojiDefaultStatuses{}, "EmojiDefaultStatuses", nil
 	case spec == "emoji_channel_default_statuses":
@@ -90,14 +126,29 @@ type inputSetRefJSON struct {
 }
 
 type documentJSON struct {
-	ID            int64      `json:"id"`
-	AccessHash    int64      `json:"access_hash"`
-	FileReference string     `json:"file_reference"`
-	Date          string     `json:"date"`
-	MimeType      string     `json:"mime_type"`
-	Size          int64      `json:"size"`
-	DCID          int        `json:"dc_id"`
-	Attributes    []attrJSON `json:"attributes"`
+	ID            int64       `json:"id"`
+	AccessHash    int64       `json:"access_hash"`
+	FileReference string      `json:"file_reference"`
+	Date          string      `json:"date"`
+	MimeType      string      `json:"mime_type"`
+	Size          int64       `json:"size"`
+	DCID          int         `json:"dc_id"`
+	Attributes    []attrJSON  `json:"attributes"`
+	Thumbs        []thumbJSON `json:"thumbs,omitempty"`
+}
+
+// thumbJSON mirrors internal/app/files seedThumbJSON. Inline sizes carry their
+// bytes as hex; downloadable PhotoSize files sit next to the document as
+// <docid>_thumb<N>_PhotoSize_type<t>.jpg (the name SeedMedia's index expects;
+// the content may be WebP, the server sniffs the MIME type).
+type thumbJSON struct {
+	Type     string `json:"_"`
+	SizeType string `json:"type"`
+	W        int    `json:"w,omitempty"`
+	H        int    `json:"h,omitempty"`
+	Size     int    `json:"size,omitempty"`
+	Bytes    string `json:"bytes,omitempty"`
+	Sizes    []int  `json:"sizes,omitempty"`
 }
 
 type packJSON struct {
@@ -115,6 +166,11 @@ type setJSON struct {
 	Official   bool   `json:"official"`
 	Masks      bool   `json:"masks"`
 	Emojis     bool   `json:"emojis"`
+
+	Thumbs          []thumbJSON `json:"thumbs,omitempty"`
+	ThumbDCID       int         `json:"thumb_dc_id,omitempty"`
+	ThumbVersion    int         `json:"thumb_version,omitempty"`
+	ThumbDocumentID *int64      `json:"thumb_document_id,omitempty"`
 }
 
 type resultJSON struct {
@@ -159,18 +215,29 @@ func mapAttrs(in []tg.DocumentAttributeClass) []attrJSON {
 	return out
 }
 
+const usageSpecs = "short:<name> | id:<id>:<access_hash> | emoji_default_statuses | emoji_channel_default_statuses |\n" +
+	"  emoji_default_topic_icons | premium_gifts | ton_gifts | dice:<emoji> | animated_emoji |\n" +
+	"  animated_emoji_animations | emoji_generic_animations | effects | reactions | featured_emoji | featured_stickers"
+
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch <out_dir> <spec> [spec...]\n  spec: short:<name> | emoji_default_statuses | emoji_channel_default_statuses | emoji_default_topic_icons | premium_gifts | ton_gifts | effects")
+	timeout := flag.Duration("timeout", 12*time.Minute, "overall run timeout; featured_emoji/featured_stickers exports can take hours")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: SESSION=/tmp/appearance.session stickerfetch [-timeout 12m] <out_dir> <spec> [spec...]\n  spec: %s\n", usageSpecs)
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+	if flag.NArg() < 2 {
+		flag.Usage()
 		os.Exit(2)
 	}
-	out := os.Args[1]
-	specs := os.Args[2:]
+	out := flag.Arg(0)
+	specs := flag.Args()[1:]
 
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	client := telegram.NewClient(tdesktopAPIID, tdesktopAPIHash, telegram.Options{
+	id, hash := apiCredentials(tdesktopAPIID, tdesktopAPIHash)
+	client := telegram.NewClient(id, hash, telegram.Options{
 		SessionStorage: &telegram.FileSessionStorage{Path: sessionPath()},
 	})
 	if err := client.Run(ctx, func(ctx context.Context) error {
@@ -183,6 +250,10 @@ func main() {
 			var err error
 			if spec == "effects" {
 				err = fetchEffects(ctx, api, dl, out)
+			} else if spec == "reactions" {
+				err = fetchReactions(ctx, api, dl, out)
+			} else if spec == "featured_emoji" || spec == "featured_stickers" {
+				err = fetchFeatured(ctx, api, dl, out, spec == "featured_emoji")
 			} else {
 				err = fetchSet(ctx, api, dl, out, spec)
 			}
@@ -241,6 +312,10 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 				return fmt.Errorf("download doc %d (%d/%d): %w", doc.ID, i+1, len(full.Documents), err)
 			}
 		}
+		thumbs, err := exportThumbs(ctx, fetcher(api, dl), stickersDir, doc)
+		if err != nil {
+			return fmt.Errorf("thumbs of doc %d: %w", doc.ID, err)
+		}
 		docs = append(docs, documentJSON{
 			ID:            doc.ID,
 			AccessHash:    doc.AccessHash,
@@ -250,6 +325,7 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 			Size:          doc.Size,
 			DCID:          doc.DCID,
 			Attributes:    mapAttrs(doc.Attributes),
+			Thumbs:        thumbs,
 		})
 		if (i+1)%25 == 0 || i+1 == len(full.Documents) {
 			fmt.Printf("[%s] docs %d/%d\n", spec, i+1, len(full.Documents))
@@ -276,6 +352,11 @@ func fetchSet(ctx context.Context, api *tg.Client, dl *downloader.Downloader, ou
 				Official:   full.Set.Official,
 				Masks:      full.Set.Masks,
 				Emojis:     full.Set.Emojis,
+
+				Thumbs:          inlineThumbs(full.Set.Thumbs),
+				ThumbDCID:       full.Set.ThumbDCID,
+				ThumbVersion:    full.Set.ThumbVersion,
+				ThumbDocumentID: optionalInt64(full.Set.GetThumbDocumentID()),
 			},
 			Packs:     packs,
 			Documents: docs,
@@ -303,6 +384,16 @@ func completeExistingFile(path string, wantSize int64) bool {
 	return info.Size() > 0
 }
 
+// fetchFunc stores one file location at path. Production uses downloadToFile;
+// tests substitute a fake so the export format can be checked offline.
+type fetchFunc func(ctx context.Context, loc tg.InputFileLocationClass, dir, path string) error
+
+func fetcher(api *tg.Client, dl *downloader.Downloader) fetchFunc {
+	return func(ctx context.Context, loc tg.InputFileLocationClass, dir, path string) error {
+		return downloadToFile(ctx, dl, api, loc, dir, path)
+	}
+}
+
 func downloadToFile(ctx context.Context, dl *downloader.Downloader, api *tg.Client, loc tg.InputFileLocationClass, dir, path string) error {
 	tmp, err := os.CreateTemp(dir, ".download-*")
 	if err != nil {
@@ -317,6 +408,10 @@ func downloadToFile(ctx context.Context, dl *downloader.Downloader, api *tg.Clie
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// os.CreateTemp creates 0600 files; seeds are read by the server under another uid.
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
 		return err
 	}
 	_ = os.Remove(path)
@@ -343,7 +438,7 @@ type effectsFileJSON struct {
 }
 
 // downloadDoc 下载一个文档主体到 dir/<docid>.<ext> 并返回其 seed 元数据。
-func downloadDoc(ctx context.Context, api *tg.Client, dl *downloader.Downloader, dir string, doc *tg.Document) (documentJSON, error) {
+func downloadDoc(ctx context.Context, fetch fetchFunc, dir string, doc *tg.Document) (documentJSON, error) {
 	ext := ".tgs"
 	switch doc.MimeType {
 	case "video/webm":
@@ -352,16 +447,16 @@ func downloadDoc(ctx context.Context, api *tg.Client, dl *downloader.Downloader,
 		ext = ".webp"
 	}
 	path := filepath.Join(dir, fmt.Sprintf("%d%s", doc.ID, ext))
-	f, err := os.Create(path)
+	if !completeExistingFile(path, doc.Size) {
+		loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference}
+		if err := fetch(ctx, loc, dir, path); err != nil {
+			return documentJSON{}, fmt.Errorf("download doc %d: %w", doc.ID, err)
+		}
+	}
+	thumbs, err := exportThumbs(ctx, fetch, dir, doc)
 	if err != nil {
-		return documentJSON{}, err
+		return documentJSON{}, fmt.Errorf("thumbs of doc %d: %w", doc.ID, err)
 	}
-	loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference}
-	if _, err := dl.Download(api, loc).Stream(ctx, f); err != nil {
-		f.Close()
-		return documentJSON{}, fmt.Errorf("download doc %d: %w", doc.ID, err)
-	}
-	f.Close()
 	return documentJSON{
 		ID:            doc.ID,
 		AccessHash:    doc.AccessHash,
@@ -371,10 +466,12 @@ func downloadDoc(ctx context.Context, api *tg.Client, dl *downloader.Downloader,
 		Size:          doc.Size,
 		DCID:          doc.DCID,
 		Attributes:    mapAttrs(doc.Attributes),
+		Thumbs:        thumbs,
 	}, nil
 }
 
 func fetchEffects(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot string) error {
+	fetch := fetcher(api, dl)
 	res, err := api.MessagesGetAvailableEffects(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("getAvailableEffects: %w", err)
@@ -395,7 +492,7 @@ func fetchEffects(ctx context.Context, api *tg.Client, dl *downloader.Downloader
 		if !ok {
 			continue
 		}
-		dj, err := downloadDoc(ctx, api, dl, docsDir, doc)
+		dj, err := downloadDoc(ctx, fetch, docsDir, doc)
 		if err != nil {
 			return err
 		}
@@ -420,4 +517,217 @@ func fetchEffects(ctx context.Context, api *tg.Client, dl *downloader.Downloader
 	}
 	fmt.Printf("[effects] effects=%d documents=%d\n", len(out.Result.Effects), len(out.Result.Documents))
 	return nil
+}
+
+// ---- 可用 reaction(messages.getAvailableReactions)----
+// 写成 SeedMedia.seedReactions 读取的布局:
+// <out>/telegram_reactions_export/global_json/available_reactions_raw.json + reactions/<docid>.<ext>
+
+type reactionJSON struct {
+	Reaction          string        `json:"reaction"`
+	Title             string        `json:"title"`
+	Inactive          bool          `json:"inactive,omitempty"`
+	Premium           bool          `json:"premium,omitempty"`
+	StaticIcon        *documentJSON `json:"static_icon,omitempty"`
+	AppearAnimation   *documentJSON `json:"appear_animation,omitempty"`
+	SelectAnimation   *documentJSON `json:"select_animation,omitempty"`
+	ActivateAnimation *documentJSON `json:"activate_animation,omitempty"`
+	EffectAnimation   *documentJSON `json:"effect_animation,omitempty"`
+	AroundAnimation   *documentJSON `json:"around_animation,omitempty"`
+	CenterIcon        *documentJSON `json:"center_icon,omitempty"`
+}
+
+func fetchReactions(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot string) error {
+	res, err := api.MessagesGetAvailableReactions(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("getAvailableReactions: %w", err)
+	}
+	full, ok := res.(*tg.MessagesAvailableReactions)
+	if !ok {
+		return fmt.Errorf("got %T, want messagesAvailableReactions", res)
+	}
+	return writeReactionsExport(ctx, fetcher(api, dl), outRoot, full.Reactions)
+}
+
+// writeReactionsExport writes the layout seedReactions imports:
+// telegram_reactions_export/global_json/available_reactions_raw.json plus the
+// documents and their thumbs under telegram_reactions_export/reactions.
+func writeReactionsExport(ctx context.Context, fetch fetchFunc, outRoot string, list []tg.AvailableReaction) error {
+	dir := filepath.Join(outRoot, "telegram_reactions_export")
+	docsDir := filepath.Join(dir, "reactions")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "global_json"), 0o755); err != nil {
+		return err
+	}
+	seen := map[int64]*documentJSON{}
+	get := func(d tg.DocumentClass) (*documentJSON, error) {
+		doc, ok := d.(*tg.Document)
+		if !ok {
+			return nil, nil
+		}
+		if dj, ok := seen[doc.ID]; ok {
+			return dj, nil
+		}
+		dj, err := downloadDoc(ctx, fetch, docsDir, doc)
+		if err != nil {
+			return nil, err
+		}
+		seen[doc.ID] = &dj
+		return &dj, nil
+	}
+	reactions := make([]reactionJSON, 0, len(list))
+	for i, r := range list {
+		rj := reactionJSON{Reaction: r.Reaction, Title: r.Title, Inactive: r.Inactive, Premium: r.Premium}
+		docs := []struct {
+			dst **documentJSON
+			src tg.DocumentClass
+		}{
+			{&rj.StaticIcon, r.StaticIcon},
+			{&rj.AppearAnimation, r.AppearAnimation},
+			{&rj.SelectAnimation, r.SelectAnimation},
+			{&rj.ActivateAnimation, r.ActivateAnimation},
+			{&rj.EffectAnimation, r.EffectAnimation},
+		}
+		if v, ok := r.GetAroundAnimation(); ok {
+			docs = append(docs, struct {
+				dst **documentJSON
+				src tg.DocumentClass
+			}{&rj.AroundAnimation, v})
+		}
+		if v, ok := r.GetCenterIcon(); ok {
+			docs = append(docs, struct {
+				dst **documentJSON
+				src tg.DocumentClass
+			}{&rj.CenterIcon, v})
+		}
+		for _, d := range docs {
+			if d.src == nil {
+				continue
+			}
+			dj, err := get(d.src)
+			if err != nil {
+				return fmt.Errorf("reaction %s: %w", r.Reaction, err)
+			}
+			*d.dst = dj
+		}
+		reactions = append(reactions, rj)
+		fmt.Printf("[reactions] %d/%d %s\n", i+1, len(list), r.Reaction)
+	}
+	b, err := json.MarshalIndent(map[string]any{"result": map[string]any{"reactions": reactions}}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "global_json", "available_reactions_raw.json"), append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("[reactions] reactions=%d documents=%d\n", len(reactions), len(seen))
+	return nil
+}
+
+// fetchFeatured 拉取官方当前推荐的贴纸/emoji 集(messages.getFeatured[Emoji]Stickers),逐个按 ID 导出。
+func fetchFeatured(ctx context.Context, api *tg.Client, dl *downloader.Downloader, outRoot string, emoji bool) error {
+	var res tg.MessagesFeaturedStickersClass
+	var err error
+	if emoji {
+		res, err = api.MessagesGetFeaturedEmojiStickers(ctx, 0)
+	} else {
+		res, err = api.MessagesGetFeaturedStickers(ctx, 0)
+	}
+	if err != nil {
+		return fmt.Errorf("getFeatured: %w", err)
+	}
+	full, ok := res.(*tg.MessagesFeaturedStickers)
+	if !ok {
+		return fmt.Errorf("got %T, want messagesFeaturedStickers", res)
+	}
+	fmt.Printf("[featured] emoji=%v sets=%d\n", emoji, len(full.Sets))
+	for _, covered := range full.Sets {
+		set := covered.GetSet()
+		spec := fmt.Sprintf("id:%d:%d", set.ID, set.AccessHash)
+		if err := fetchSet(ctx, api, dl, outRoot, spec); err != nil {
+			fmt.Fprintf(os.Stderr, "skip featured %s (%s): %v\n", set.ShortName, spec, err)
+		}
+	}
+	return nil
+}
+
+// exportThumbs maps a document's thumbs to seed JSON, downloading PhotoSize
+// renditions next to the document. Android only renders .tgs stickers and
+// custom emoji as such when thumbs are present, and the server draws emoji
+// avatars from them, so they are not optional.
+func exportThumbs(ctx context.Context, fetch fetchFunc, dir string, doc *tg.Document) ([]thumbJSON, error) {
+	out := make([]thumbJSON, 0, len(doc.Thumbs))
+	for i, th := range doc.Thumbs {
+		switch v := th.(type) {
+		case *tg.PhotoPathSize:
+			out = append(out, thumbJSON{Type: "PhotoPathSize", SizeType: v.Type, Bytes: hex.EncodeToString(v.Bytes)})
+		case *tg.PhotoStrippedSize:
+			out = append(out, thumbJSON{Type: "PhotoStrippedSize", SizeType: v.Type, Bytes: hex.EncodeToString(v.Bytes)})
+		case *tg.PhotoCachedSize:
+			out = append(out, thumbJSON{Type: "PhotoCachedSize", SizeType: v.Type, W: v.W, H: v.H, Bytes: hex.EncodeToString(v.Bytes)})
+		case *tg.PhotoSize, *tg.PhotoSizeProgressive:
+			var typ string
+			var w, h, size int
+			var sizes []int
+			kind := "PhotoSize"
+			if ps, ok := v.(*tg.PhotoSize); ok {
+				typ, w, h, size = ps.Type, ps.W, ps.H, ps.Size
+			} else {
+				pp := v.(*tg.PhotoSizeProgressive)
+				typ, w, h, sizes, kind = pp.Type, pp.W, pp.H, pp.Sizes, "PhotoSizeProgressive"
+				if len(sizes) > 0 {
+					size = sizes[len(sizes)-1]
+				}
+			}
+			path := filepath.Join(dir, fmt.Sprintf("%d_thumb%d_PhotoSize_type%s.jpg", doc.ID, i, typ))
+			if !completeExistingFile(path, int64(size)) {
+				loc := &tg.InputDocumentFileLocation{ID: doc.ID, AccessHash: doc.AccessHash, FileReference: doc.FileReference, ThumbSize: typ}
+				if err := fetch(ctx, loc, dir, path); err != nil {
+					return nil, fmt.Errorf("thumb %s: %w", typ, err)
+				}
+			}
+			out = append(out, thumbJSON{Type: kind, SizeType: typ, W: w, H: h, Size: size, Sizes: sizes})
+		}
+	}
+	return out, nil
+}
+
+// inlineThumbs keeps the set thumbs SeedMedia stores inline (path/stripped/cached).
+func inlineThumbs(in []tg.PhotoSizeClass) []thumbJSON {
+	var out []thumbJSON
+	for _, th := range in {
+		switch v := th.(type) {
+		case *tg.PhotoPathSize:
+			out = append(out, thumbJSON{Type: "PhotoPathSize", SizeType: v.Type, Bytes: hex.EncodeToString(v.Bytes)})
+		case *tg.PhotoStrippedSize:
+			out = append(out, thumbJSON{Type: "PhotoStrippedSize", SizeType: v.Type, Bytes: hex.EncodeToString(v.Bytes)})
+		case *tg.PhotoCachedSize:
+			out = append(out, thumbJSON{Type: "PhotoCachedSize", SizeType: v.Type, W: v.W, H: v.H, Bytes: hex.EncodeToString(v.Bytes)})
+		}
+	}
+	return out
+}
+
+func optionalInt64(v int64, ok bool) *int64 {
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+// apiCredentials returns TG_API_ID/TG_API_HASH when set (the public TDesktop id
+// is rate-limited with API_ID_PUBLISHED_FLOOD), otherwise the given defaults.
+func apiCredentials(defID int, defHash string) (int, string) {
+	id, hash := defID, defHash
+	if v := strings.TrimSpace(os.Getenv("TG_API_ID")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			id = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("TG_API_HASH")); v != "" {
+		hash = v
+	}
+	return id, hash
 }

@@ -18,6 +18,9 @@ import (
 // WalletService 是 deps.go 里声明的应用内 TON 钱包边界；本文件只负责把它
 // 映射到 Layer 230 的 wallet.* / toncenter.* 语义方法。
 func (r *Router) registerWallet(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.WalletSendTransferRequest](d, tlprofile.SemanticMethodWalletSendTransfer, func(ctx context.Context, req *tg.WalletSendTransferRequest) (any, error) {
+		return r.onWalletSendTransfer(ctx, req)
+	})
 	registerRPC[*tg.WalletGetProofChallengeRequest](d, tlprofile.SemanticMethodWalletGetProofChallenge, func(ctx context.Context, _ *tg.WalletGetProofChallengeRequest) (any, error) {
 		uid, key, err := r.walletCaller(ctx, "challenge", 60)
 		if err != nil {
@@ -319,13 +322,17 @@ func (r *Router) onWalletTransactions(ctx context.Context, req *tg.WalletGetTran
 		out.SetNextOffset(page.NextOffset)
 	}
 	for _, txn := range page.Transactions {
-		out.Transactions = append(out.Transactions, tg.WalletTransaction{
+		item := tg.WalletTransaction{
 			ID:       strconv.FormatInt(txn.ID, 10),
 			Amount:   txn.Amount,
 			Date:     txn.Date,
 			Incoming: txn.Amount > 0,
 			Peer:     walletTransactionPeer(txn.Peer),
-		})
+		}
+		if txn.Comment != "" {
+			item.SetComment(txn.Comment)
+		}
+		out.Transactions = append(out.Transactions, item)
 	}
 	return out, nil
 }
@@ -374,7 +381,10 @@ func (r *Router) onWalletAddresses(ctx context.Context, req *tg.WalletGetUserAdd
 	if err != nil {
 		return nil, err
 	}
-	if req.Flags != 0 || len(req.ID) > 100 || len(req.Addresses) > 100 {
+	// force only asks for a fresh read; we always read links straight from the
+	// store, so it changes nothing -- but refusing it breaks clients that set
+	// the bit (profile wallet rows among them).
+	if req.Flags&^0x1 != 0 || len(req.ID) > 100 || len(req.Addresses) > 100 {
 		return nil, inputRequestInvalidErr()
 	}
 	if r.deps.Users == nil {
