@@ -96,6 +96,9 @@ type Config struct {
 	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
 	// app/store 事实源，不维护独立 bot 状态。
 	BotAPIAddr string
+	// BotAPIPublicURL is the client-reachable Bot API base URL that BotFather
+	// shows next to a token; empty shows none.
+	BotAPIPublicURL string
 	// GramsrvBotChatIDs is the exact private-chat allowlist for the built-in
 	// @gramsrv operator bot. Values are numeric user/chat IDs, never usernames.
 	GramsrvBotChatIDs         []int64
@@ -1008,6 +1011,7 @@ func Load() (Config, error) {
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
 		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		BotAPIPublicURL:                       strings.TrimSpace(envOr("TELESRV_BOT_API_PUBLIC_URL", "")),
 		GramsrvBotChatIDs:                     gramsrvBotChatIDs,
 		StarGiftCrossCraftUserIDs:             crossCraftUserIDs,
 		AdminAPIAddr:                          envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),

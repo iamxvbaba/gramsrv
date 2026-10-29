@@ -2,6 +2,7 @@ package bots
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -425,5 +426,21 @@ func TestBotFatherInlineGeoPickerDropsStaleStep(t *testing.T) {
 	}
 	if u, _, _ := users.ByID(ctx, bot.ID); u.FirstName != "Stale Step Bot" {
 		t.Fatalf("bot name = %q, want untouched", u.FirstName)
+	}
+}
+
+// With a public Bot API URL configured, BotFather tells the owner where to
+// send requests next to the token; without one the reply is unchanged.
+func TestBotFatherTokenShowsConfiguredBotAPIURL(t *testing.T) {
+	svc, users, _, messages := newTestService(t)
+	WithBotAPIURL(" https://api.example.com/ ")(svc)
+	owner := newOwner(t, users, "+2027")
+	makeBot(t, svc, owner, "Hint Bot", "hint_url_bot")
+
+	latestBotFatherMessage(t, svc, messages, owner, "/token")
+	sendToBotFather(t, svc, messages, owner, "@hint_url_bot")
+	reply := lastBotFatherReply(t, messages, owner.ID)
+	if !strings.Contains(reply.Body, "\n\nBot API on this server: https://api.example.com/bot<token>/<method>\n\n") {
+		t.Fatalf("token reply = %q, want the configured Bot API URL", reply.Body)
 	}
 }

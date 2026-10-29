@@ -73,6 +73,7 @@ live expanded buffer 释放后会归还进程内存，但不会返还该 frame �
 |---|---|---|
 | `TELESRV_DEBUG_ADDR` | nullable address / `127.0.0.1:6060` | pprof/debug 监听；空值关闭。生产必须保持 loopback，通过 SSH 隧道抓取。 |
 | `TELESRV_BOT_API_ADDR` | nullable address / 空 | 最小 HTTP Bot API 监听；空值关闭，与 MTProto 共用 app/store 事实。`setWebhook` 接受任意合法 `http://` 或 `https://` 主机/IP 与 `1..65535` 端口。 |
+| `TELESRV_BOT_API_PUBLIC_URL` | URL / 空 | 客户端可达的 Bot API 基础地址（例如 `https://api.example.com`）。BotFather 在 `/newbot` 与 `/token` 返回 token 时附带显示；空值不显示。不影响监听。 |
 | `TELESRV_ADMIN_API_ADDR` | nullable address / 空 | 进程内 Admin 写 API；空值关闭，生产应只监听 loopback。 |
 | `TELESRV_ADMIN_API_TOKEN` | secret string / 空 | Admin API bearer token；启用 Admin API 时必须显式配置，并与 Admin UI 使用的 token 一致。 |
 | `TELESRV_ADMIN_UI_ADDR` | address / `127.0.0.1:2600` | 独立 `cmd/telesrv-admin` 监听地址。 |

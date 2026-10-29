@@ -36,6 +36,7 @@
 | Метод | `http(s)://<host>/bot<TOKEN>/<METHOD>` |
 | Скачивание файлов | `http(s)://<host>/file/bot<TOKEN>/<file_path>` |
 | Настройка слушателя | `TELESRV_BOT_API_ADDR`; пустое значение отключает шлюз |
+| Публичный адрес, который показывает BotFather | `TELESRV_BOT_API_PUBLIC_URL`; пустое значение — не показывать |
 | Лимит тела запроса | 25 MiB файла + 1 MiB служебных данных (`FILE_TOO_BIG`) |
 | Content-Type | `application/json`, `multipart/form-data`, `application/x-www-form-urlencoded` |
 

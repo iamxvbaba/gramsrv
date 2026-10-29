@@ -36,6 +36,7 @@ Russian version of this document: [bot-api.ru.md](./bot-api.ru.md).
 | Method endpoint | `http(s)://<host>/bot<TOKEN>/<METHOD>` |
 | File download | `http(s)://<host>/file/bot<TOKEN>/<file_path>` |
 | Listener setting | `TELESRV_BOT_API_ADDR`; an empty value disables the gateway |
+| Public address shown by BotFather | `TELESRV_BOT_API_PUBLIC_URL`; empty shows none |
 | Request body limit | 25 MiB upload + 1 MiB overhead (`FILE_TOO_BIG`) |
 | Accepted content types | `application/json`, `multipart/form-data`, `application/x-www-form-urlencoded` |
 
