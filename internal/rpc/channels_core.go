@@ -220,6 +220,9 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		return nil, err
 	}
 	full := tgChannelFull(view, r.cfg.PublicBaseURL)
+	if tab, ok := r.mainTabFor(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: view.Channel.ID}); ok {
+		full.SetMainTab(tab)
+	}
 	r.applyChannelStatsCapability(full)
 	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}

@@ -358,6 +358,7 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	r.registerFragment(d)
 	r.registerEphemeral(d)
 	r.registerWallet(d)
+	r.registerProfileMainTab(d)
 
 	r.dispatcher = d
 	return r

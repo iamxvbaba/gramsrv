@@ -84,7 +84,11 @@ func (r *Router) publicRecommendationSourceChannel(ctx context.Context, userID i
 }
 
 func (r *Router) onChannelsSetMainProfileTab(ctx context.Context, req *tg.ChannelsSetMainProfileTabRequest) (bool, error) {
-	if _, _, err := r.channelChangeInfoView(ctx, req.Channel); err != nil {
+	_, view, err := r.channelChangeInfoView(ctx, req.Channel)
+	if err != nil {
+		return false, err
+	}
+	if err := r.saveChannelMainTab(ctx, view.Channel.ID, req.Tab); err != nil {
 		return false, err
 	}
 	return true, nil

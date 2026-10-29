@@ -1965,6 +1965,7 @@ func run(logger *zap.Logger) error {
 		Premium:                      premiumService,
 		Gifts:                        giftsService,
 		Wallet:                       walletService,
+		MainTabs:                     postgres.NewPeerMainTabStore(pool),
 		Passkey:                      passkeyService,
 		Themes:                       themeService,
 		GeoIP:                        geoIPResolver,
