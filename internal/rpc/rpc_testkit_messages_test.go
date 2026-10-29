@@ -114,6 +114,7 @@ func (s *scheduledCaptureMessages) ScheduleMessage(_ context.Context, userID int
 		SendAs:               req.SendAs,
 		ScheduleDate:         req.ScheduleDate,
 		ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
+		PaidStars:            req.PaidStars,
 		CreatedAt:            req.Date,
 		UpdatedAt:            req.Date,
 		State:                "pending",

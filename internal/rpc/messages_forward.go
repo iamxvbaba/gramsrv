@@ -149,11 +149,13 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 	if err != nil {
 		return nil, err
 	}
+	var forwardCharged int64
 	if toPeer.Type == domain.PeerTypeUser {
 		if req.AllowPaidFloodskip {
 			return nil, paymentUnsupportedErr()
 		}
-		if err := r.ensurePrivateContactAllowed(ctx, userID, toPeer.ID, req.AllowPaidStars, len(absentIndexes)); err != nil {
+		forwardCharged, err = r.privatePaidStarsCharge(ctx, userID, toPeer.ID, req.AllowPaidStars, len(absentIndexes))
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -327,6 +329,7 @@ func (r *Router) onMessagesForwardMessages(ctx context.Context, req *tg.Messages
 				RecipientBlocked:       recipientBlocked,
 				IdempotencyFingerprint: idempotencyFingerprints[i],
 				IdempotencyPreflighted: replays[i].checked,
+				PaidStars:              forwardCharged,
 			})
 			if err != nil {
 				return nil, messageForwardErr(err)
