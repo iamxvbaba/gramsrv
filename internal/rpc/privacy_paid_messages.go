@@ -134,6 +134,27 @@ func (r *Router) privatePaidStarsCharge(
 	return charged, nil
 }
 
+// ensurePaidStarsBalance rejects a paid album or forward the sender cannot cover
+// before its first message commits. Each message is still debited in its own send
+// transaction, so a concurrent spend can stop the batch later; the client then
+// retries the unsent random_ids and the committed ones replay without a new charge.
+func (r *Router) ensurePaidStarsBalance(ctx context.Context, senderUserID, perMessage int64, messageCount int) error {
+	if perMessage <= 0 || messageCount < 1 || r.deps.Stars == nil {
+		return nil
+	}
+	if perMessage > math.MaxInt64/int64(messageCount) {
+		return starsAmountInvalidErr()
+	}
+	balance, err := r.deps.Stars.GetBalance(ctx, senderUserID)
+	if err != nil {
+		return starsErr(err)
+	}
+	if balance.Balance < perMessage*int64(messageCount) {
+		return balanceTooLowErr()
+	}
+	return nil
+}
+
 func (r *Router) ensurePrivateContactAllowed(
 	ctx context.Context,
 	senderUserID, recipientUserID, allowPaidStars int64,

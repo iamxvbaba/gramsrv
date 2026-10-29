@@ -189,8 +189,8 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 	if err != nil {
 		return nil, err
 	}
-	var scheduledPaidStars int64
-	if peer.Type == domain.PeerTypeUser {
+	scheduledPaidStars := p.paidStars
+	if peer.Type == domain.PeerTypeUser && !p.paidStarsReady {
 		charged, err := r.privatePaidStarsCharge(ctx, userID, peer.ID, p.allowPaidStars, 1)
 		if err != nil {
 			return nil, err
