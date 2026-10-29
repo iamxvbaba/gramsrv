@@ -119,13 +119,16 @@ func (s *ChannelStore) EditChannelAbout(_ context.Context, req domain.EditChanne
 }
 
 func (s *ChannelStore) CheckUsername(_ context.Context, userID, channelID int64, username string) (bool, error) {
-	if userID == 0 || channelID == 0 || strings.TrimSpace(username) == "" {
+	if userID == 0 || channelID < 0 || strings.TrimSpace(username) == "" {
 		return false, domain.ErrChannelInvalid
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if _, err := s.channelForMemberLocked(userID, channelID); err != nil {
-		return false, err
+	// channelID 0: a channel being created; only whether the name is free.
+	if channelID != 0 {
+		if _, err := s.channelForMemberLocked(userID, channelID); err != nil {
+			return false, err
+		}
 	}
 	usernameLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	for id, channel := range s.channels {

@@ -17,9 +17,13 @@ func (r *Router) onChannelsCheckUsername(ctx context.Context, req *tg.ChannelsCh
 	if err != nil {
 		return false, internalErr()
 	}
-	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
-	if err != nil {
-		return false, err
+	// inputChannelEmpty asks about a channel that does not exist yet: the
+	// client checks the name while creating a public channel or group.
+	var channelID int64
+	if _, empty := req.Channel.(*tg.InputChannelEmpty); !empty {
+		if channelID, err = r.channelIDFromInput(ctx, userID, req.Channel); err != nil {
+			return false, err
+		}
 	}
 	okUsername, err := r.deps.Channels.CheckUsername(ctx, userID, channelID, req.Username)
 	if err != nil {
