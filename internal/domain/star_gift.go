@@ -1296,12 +1296,35 @@ var (
 
 var ErrStarGiftListed = errors.New("сначала снимите подарок с продажи")
 
-var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+// Collectible slugs keep their case, like Telegram's "PlushPepe-123"; lookups
+// compare them case-insensitively.
+var starGiftCollectibleSlugPrefix = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,47}$`)
+
+// StarGiftSlugPrefixFromTitle derives a Telegram-style slug prefix from a gift
+// title: "Plush Pepe" -> "PlushPepe", "Durov's Cap" -> "DurovsCap". Only ASCII
+// letters and digits are kept; the result is empty when nothing remains (a
+// title in another script), and the caller then picks its own fallback.
+func StarGiftSlugPrefixFromTitle(title string) string {
+	var b strings.Builder
+	for _, r := range title {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			if b.Len() == 40 {
+				break
+			}
+		}
+	}
+	// Digits alone ("#5170...") are not a name; the caller falls back.
+	if !strings.ContainsAny(b.String(), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") {
+		return ""
+	}
+	return b.String()
+}
 
 // ValidateStarGiftCollectibleDraft validates the operator-authored definition before animation
 // blobs/documents are allocated. This is the validation boundary used by admin dry-runs.
 func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
-	write.SlugPrefix = strings.TrimSpace(strings.ToLower(write.SlugPrefix))
+	write.SlugPrefix = strings.TrimSpace(write.SlugPrefix)
 	if write.GiftID <= 0 || write.UpgradeStars <= 0 || write.SupplyTotal <= 0 ||
 		!starGiftCollectibleSlugPrefix.MatchString(write.SlugPrefix) || strings.TrimSpace(write.CommandID) == "" {
 		return ErrStarGiftCollectibleInvalid

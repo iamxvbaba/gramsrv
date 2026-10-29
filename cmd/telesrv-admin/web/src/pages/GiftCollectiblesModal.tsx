@@ -7,6 +7,7 @@ import { Alert, Badge } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { CommandResult, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview, StarGiftRow } from "../types";
 import { titleFromFilename } from "../lib/format";
+import { defaultGiftSlug } from "../lib/slug";
 
 type AnimationData = Record<string, unknown>;
 type AnimatedDraft = {
@@ -116,7 +117,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
   const [preview, setPreview] = useState<CommandResult | null>(null);
   const [upgradeStars, setUpgradeStars] = useState("100");
   const [supplyTotal, setSupplyTotal] = useState("1000");
-  const [slugPrefix, setSlugPrefix] = useState(`gift-${gift.GiftID}`);
+  const [slugPrefix, setSlugPrefix] = useState(() => defaultGiftSlug(gift.Title, gift.GiftID));
   const [reason, setReason] = useState("");
   const [models, setModels] = useState<AnimatedDraft[]>(() => initialAnimated("model"));
   const [patterns, setPatterns] = useState<AnimatedDraft[]>(() => initialAnimated("pattern"));
@@ -130,7 +131,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
       if (value.found) {
         setUpgradeStars(String(value.upgrade_stars ?? 100));
         setSupplyTotal(String(value.supply_total ?? 1000));
-        setSlugPrefix(value.slug_prefix ?? `gift-${gift.GiftID}`);
+        setSlugPrefix(value.slug_prefix ?? defaultGiftSlug(gift.Title, gift.GiftID));
       }
     }).catch((err) => setError(errorMessage(err))).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -170,7 +171,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
     const animatedMetadata = (rows: AnimatedDraft[]) => rows.map((row) => ({ name: row.name.trim(), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder), file_key: row.key }));
     form.set("metadata", JSON.stringify({
       command_id: commandID, reason: reason.trim(), confirm,
-		upgrade_stars: upgradeStars, supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase(),
+		upgrade_stars: upgradeStars, supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim(),
       models: animatedMetadata(models), patterns: animatedMetadata(patterns),
       backdrops: backdrops.map((row) => ({
         name: row.name.trim(), backdrop_id: Number(row.backdropID), rarity_permille: Number(row.rarity), sort_order: Number(row.sortOrder),
@@ -239,7 +240,7 @@ export function GiftCollectiblesModal({ gift, onClose, onPublished }: { gift: St
           <div className="gift-fields-grid collectible-main-fields">
             <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); invalidate(); }} /></label>
             <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); invalidate(); }} /></label>
-            <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); invalidate(); }} /></label>
+            <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value); invalidate(); }} /></label>
             <label><span>{t("gifts.reason")}</span><input value={reason} maxLength={1000} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
           </div>
           {renderAnimatedRows("models", models, setModels)}

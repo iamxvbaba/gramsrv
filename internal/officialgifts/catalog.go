@@ -301,7 +301,7 @@ func (c *Catalog) List(ctx context.Context) ([]GiftSummary, error) {
 		gift := snap.gifts[id]
 		doc := snap.documents[gift.DocumentIDs[0]]
 		summary := GiftSummary{
-			ID: id, Title: branding.UserVisibleText(gift.Title, ""), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
+			ID: id, Title: displayTitle(id, branding.UserVisibleText(gift.Title, ""), gift.Stars), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
 			UpgradeStars: gift.UpgradeStars, AvailabilityTotal: gift.AvailabilityTotal,
 			AvailabilityRemains: gift.AvailabilityRemains, AvailabilityResale: gift.AvailabilityResale,
 			Limited: gift.Limited, SoldOut: gift.SoldOut, Birthday: gift.Birthday,
@@ -344,7 +344,7 @@ func (c *Catalog) Bundle(ctx context.Context, giftID int64, includeCollectible b
 	out := Bundle{
 		ManifestSHA256: append([]byte(nil), snap.manifestSHA...),
 		SourceJSON:     append([]byte(nil), gift.SourceJSON...),
-		Gift: Gift{ID: gift.ID, Title: branding.UserVisibleText(gift.Title, ""), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
+		Gift: Gift{ID: gift.ID, Title: displayTitle(gift.ID, branding.UserVisibleText(gift.Title, ""), gift.Stars), Stars: gift.Stars, ConvertStars: gift.ConvertStars,
 			UpgradeStars: gift.UpgradeStars, AvailabilityTotal: gift.AvailabilityTotal,
 			AvailabilityRemains: gift.AvailabilityRemains, Limited: gift.Limited, SoldOut: gift.SoldOut,
 			Birthday: gift.Birthday, RequirePremium: gift.RequirePremium, LimitedPerUser: gift.LimitedPerUser,
