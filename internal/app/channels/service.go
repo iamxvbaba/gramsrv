@@ -557,7 +557,8 @@ func (s *Service) DeleteChannel(ctx context.Context, userID int64, req domain.De
 
 // CheckUsername checks whether a channel username is syntactically valid and free.
 func (s *Service) CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error) {
-	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
+	// channelID 0 checks a name for a channel that is still being created.
+	if s == nil || s.channels == nil || userID == 0 || channelID < 0 {
 		return false, domain.ErrChannelInvalid
 	}
 	username = normalizeChannelUsername(username)

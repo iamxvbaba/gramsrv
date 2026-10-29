@@ -198,11 +198,14 @@ func (s *ChannelStore) EditChannelAbout(ctx context.Context, req domain.EditChan
 }
 
 func (s *ChannelStore) CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error) {
-	if userID == 0 || channelID == 0 || strings.TrimSpace(username) == "" {
+	if userID == 0 || channelID < 0 || strings.TrimSpace(username) == "" {
 		return false, domain.ErrChannelInvalid
 	}
-	if _, _, err := s.getChannelForMember(ctx, s.db, userID, channelID); err != nil {
-		return false, err
+	// channelID 0: a channel being created; only whether the name is free.
+	if channelID != 0 {
+		if _, _, err := s.getChannelForMember(ctx, s.db, userID, channelID); err != nil {
+			return false, err
+		}
 	}
 	usernameLower := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(username, "@")))
 	return peerUsernameAvailable(ctx, s.db, usernameLower, peerUsernameTypeChannel, channelID)
