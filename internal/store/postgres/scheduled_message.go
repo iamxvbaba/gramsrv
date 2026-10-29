@@ -134,7 +134,7 @@ INSERT INTO scheduled_messages (
   fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
   send_as_peer_type, send_as_peer_id,
   schedule_date, schedule_repeat_period, state, created_at, updated_at,
- reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,request_fingerprint
+ reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,request_fingerprint,paid_stars
 ) VALUES (
   $1, $2, $3, $4, $5, $6,
   $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12,
@@ -143,14 +143,14 @@ INSERT INTO scheduled_messages (
   $20, $21, $22, $23,
   $24, $25,
   $26, $27, 'pending', $28, $28,
- $29,$30,$31::jsonb,$32,$33,$34,$35,$36
+ $29,$30,$31::jsonb,$32,$33,$34,$35,$36,$37
 )`, req.OwnerUserID, nextID, string(req.Peer.Type), req.Peer.ID, req.RandomID, req.Date,
 		req.Message, entities, media, richMessage, req.Silent, req.NoForwards,
 		meta.ReplyToMsgID, meta.ReplyToPeerType, meta.ReplyToPeerID, meta.ReplyToTopID,
 		meta.QuoteText, meta.QuoteEntitiesJSON, meta.QuoteOffset,
 		meta.FwdFromPeerType, meta.FwdFromPeerID, meta.FwdFromName, meta.FwdDate,
 		sendAsType, sendAsID,
-		req.ScheduleDate, req.ScheduleRepeatPeriod, req.Date, meta.ReplyToStoryID, forumTopic, meta.ReplyExternalJSON, fwdChannelPost, meta.FwdSavedFromPeerType, meta.FwdSavedFromPeerID, meta.FwdSavedFromMsgID, fingerprint); err != nil {
+		req.ScheduleDate, req.ScheduleRepeatPeriod, req.Date, meta.ReplyToStoryID, forumTopic, meta.ReplyExternalJSON, fwdChannelPost, meta.FwdSavedFromPeerType, meta.FwdSavedFromPeerID, meta.FwdSavedFromMsgID, fingerprint, req.PaidStars); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("insert scheduled message: %w", err)
 	}
 	if err := setHasScheduledTx(ctx, tx, req.OwnerUserID, req.Peer, true); err != nil {
@@ -564,7 +564,7 @@ reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
 quote_text, quote_entities::text, quote_offset,
 fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
 send_as_peer_type, send_as_peer_id,
-schedule_date, schedule_repeat_period, state, sent_message_id, created_at, updated_at, generation, manual_dispatch,reply_to_story_id,reply_forum_topic,reply_external::text,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id`
+schedule_date, schedule_repeat_period, state, sent_message_id, created_at, updated_at, generation, manual_dispatch,reply_to_story_id,reply_forum_topic,reply_external::text,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,paid_stars`
 }
 
 func scheduledMessageSelectColumnsFor(alias string) string {
@@ -578,7 +578,7 @@ func scheduledMessageSelectColumnsFor(alias string) string {
 ` + prefix + `quote_text, ` + prefix + `quote_entities::text, ` + prefix + `quote_offset,
 ` + prefix + `fwd_from_peer_type, ` + prefix + `fwd_from_peer_id, ` + prefix + `fwd_from_name, ` + prefix + `fwd_date,
 ` + prefix + `send_as_peer_type, ` + prefix + `send_as_peer_id,
-` + prefix + `schedule_date, ` + prefix + `schedule_repeat_period, ` + prefix + `state, ` + prefix + `sent_message_id, ` + prefix + `created_at, ` + prefix + `updated_at, ` + prefix + `generation, ` + prefix + `manual_dispatch` + ", " + prefix + `reply_to_story_id` + ", " + prefix + `reply_forum_topic` + ", " + prefix + `reply_external::text` + ", " + prefix + `fwd_channel_post` + ", " + prefix + `fwd_saved_from_peer_type` + ", " + prefix + `fwd_saved_from_peer_id` + ", " + prefix + `fwd_saved_from_msg_id`
+` + prefix + `schedule_date, ` + prefix + `schedule_repeat_period, ` + prefix + `state, ` + prefix + `sent_message_id, ` + prefix + `created_at, ` + prefix + `updated_at, ` + prefix + `generation, ` + prefix + `manual_dispatch` + ", " + prefix + `reply_to_story_id` + ", " + prefix + `reply_forum_topic` + ", " + prefix + `reply_external::text` + ", " + prefix + `fwd_channel_post` + ", " + prefix + `fwd_saved_from_peer_type` + ", " + prefix + `fwd_saved_from_peer_id` + ", " + prefix + `fwd_saved_from_msg_id` + ", " + prefix + `paid_stars`
 }
 
 func scanScheduledMessages(rows pgx.Rows) ([]domain.ScheduledMessage, error) {
@@ -634,7 +634,7 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 		&fwdFromPeerType, &fwdFromPeerID, &fwdFromName, &fwdDate,
 		&sendAsPeerType, &sendAsPeerID,
 		&msg.ScheduleDate, &scheduleRepeatPeriod, &msg.State, &msg.SentMessageID, &msg.CreatedAt, &msg.UpdatedAt, &msg.Generation,
-		&msg.ManualDispatch, &replyStoryID, &replyForum, &replyExternal, &fwdChannelPost, &fwdSavedType, &fwdSavedID, &fwdSavedMsgID,
+		&msg.ManualDispatch, &replyStoryID, &replyForum, &replyExternal, &fwdChannelPost, &fwdSavedType, &fwdSavedID, &fwdSavedMsgID, &msg.PaidStars,
 	); err != nil {
 		return domain.ScheduledMessage{}, fmt.Errorf("scan scheduled message: %w", err)
 	}

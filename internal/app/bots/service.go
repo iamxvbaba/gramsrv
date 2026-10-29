@@ -154,6 +154,8 @@ type Service struct {
 	gramsrvOperatorBotID  int64
 	gramsrvOperators      map[int64]bool
 	gramsrvFreezes        gramsrvAccountFreezeManager
+	// botAPIURL is the public Bot API base URL shown with every token.
+	botAPIURL string
 	// dialogLimiter bounds how often one applicant can drive a service-bot dialog.
 	// The verification service already rate-limits application creation; this is the
 	// separate bound on dialog traffic itself, so a script cannot spin the state
@@ -168,6 +170,12 @@ type Service struct {
 
 // Option 调整 bots 服务的可选依赖。
 type Option func(*Service)
+
+// WithBotAPIURL makes BotFather show the public Bot API base URL next to a
+// token, so bot owners know where to send requests on this server.
+func WithBotAPIURL(url string) Option {
+	return func(s *Service) { s.botAPIURL = strings.TrimRight(strings.TrimSpace(url), "/") }
+}
 
 // WithLogger 注入日志器（缺省 zap.NewNop）。
 func WithLogger(log *zap.Logger) Option {

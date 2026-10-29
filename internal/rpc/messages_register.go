@@ -359,6 +359,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.MessagesSearchStickerSetsRequest](d, tlprofile.SemanticMethodMessagesSearchStickerSets, func(ctx context.Context, layerRequest *tg.MessagesSearchStickerSetsRequest) (any, error) {
 		return r.onMessagesSearchStickerSets(ctx, layerRequest)
 	})
+	registerRPC[*tg.MessagesSearchEmojiStickerSetsRequest](d, tlprofile.SemanticMethodMessagesSearchEmojiStickerSets, func(ctx context.Context, layerRequest *tg.MessagesSearchEmojiStickerSetsRequest) (any, error) {
+		return r.onMessagesSearchEmojiStickerSets(ctx, layerRequest)
+	})
 	registerRPC[*tg.MessagesSearchStickersRequest](d, tlprofile.SemanticMethodMessagesSearchStickers, func(ctx context.Context, layerRequest *tg.MessagesSearchStickersRequest) (any, error) {
 		return r.onMessagesSearchStickers(ctx, layerRequest)
 	})

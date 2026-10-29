@@ -125,6 +125,41 @@ func TestScheduledDeliveryFencesClaimsAndCommitsNextOccurrence(t *testing.T) {
 	}
 }
 
+func TestScheduledDeliveryNextOccurrenceKeepsPaidStars(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	users := NewUserStore(pool)
+	suffix := randomSuffix(t)
+	a := createTestUser(t, ctx, users, "+1613"+suffix+"01", "Paid repeat owner", "")
+	b := createTestUser(t, ctx, users, "+1613"+suffix+"02", "Paid repeat peer", "")
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM users WHERE id=ANY($1::bigint[])", []int64{a.ID, b.ID}) })
+	const now = 1800002000
+	if _, err := pool.Exec(ctx, "UPDATE users SET premium_expires_at=to_timestamp($2) WHERE id=$1", a.ID, now+864000); err != nil {
+		t.Fatal(err)
+	}
+	messages := NewMessageStore(pool, WithMessageAllocators(&perUserCounterAllocator{}))
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: b.ID}
+	msg, err := messages.CreateScheduledMessage(ctx, domain.ScheduleMessageRequest{OwnerUserID: a.ID, Peer: peer, RandomID: 2001, Message: "paid repeat", ScheduleDate: now, ScheduleRepeatPeriod: 86400, PaidStars: 9, Date: now - 60}, scheduledOwnerEffects(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := messages.ClaimScheduledMessages(ctx, domain.ScheduledMessageClaim{OwnerUserID: a.ID, Peer: peer, IDs: []int{msg.ID}, Now: now, LeaseUntil: now + 60})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("claim %v %v", items, err)
+	}
+	claimed := items[0]
+	result, err := messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{SenderUserID: a.ID, RecipientUserID: b.ID, RandomID: claimed.RandomID, Message: claimed.Message, Date: now + 1, ScheduledDelivery: &domain.ScheduledDelivery{
+		OwnerUserID: a.ID, ID: claimed.ID, Generation: claimed.Generation,
+		Payload: func(domain.ScheduledCompletion) ([]byte, error) { return []byte{1}, nil },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NextScheduled == nil || result.NextScheduled.PaidStars != 9 {
+		t.Fatalf("next occurrence must keep the scheduled paid stars: %+v", result.NextScheduled)
+	}
+}
+
 func TestScheduledOnlineClaimsOnlyEligibleTargets(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -192,6 +192,14 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 	if err != nil {
 		return nil, err
 	}
+	scheduledPaidStars := p.paidStars
+	if peer.Type == domain.PeerTypeUser && !p.paidStarsReady {
+		charged, err := r.privatePaidStarsCharge(ctx, userID, peer.ID, p.allowPaidStars, 1)
+		if err != nil {
+			return nil, err
+		}
+		scheduledPaidStars = charged
+	}
 	date := int(r.clock.Now().Unix())
 	scheduleReq := domain.ScheduleMessageRequest{
 		OwnerUserID:            userID,
@@ -208,6 +216,7 @@ func (r *Router) scheduleOutgoing(ctx context.Context, userID int64, peer domain
 		SendAs:                 sendAs,
 		ScheduleDate:           scheduleDate,
 		ScheduleRepeatPeriod:   repeatPeriod,
+		PaidStars:              scheduledPaidStars,
 		Date:                   date,
 		ClearDraft:             p.clearDraft,
 	}
@@ -255,12 +264,13 @@ func (r *Router) sendClaimedScheduledMessages(ctx context.Context, userID int64,
 				randomID:          scheduled.RandomID,
 				scheduledDelivery: r.scheduledCompletionDelivery(ctx, scheduled, date),
 				replyTo:           scheduled.ReplyTo, replyToReady: true, forward: scheduled.Forward, sendAs: sendAs, sendAsReady: true,
-				message:     scheduled.Message,
-				entities:    tgInputMessageEntities(scheduled.Entities),
-				media:       scheduled.Media,
-				richMessage: scheduled.RichMessage,
-				silent:      scheduled.Silent,
-				noforwards:  scheduled.NoForwards,
+				message:        scheduled.Message,
+				entities:       tgInputMessageEntities(scheduled.Entities),
+				media:          scheduled.Media,
+				richMessage:    scheduled.RichMessage,
+				silent:         scheduled.Silent,
+				noforwards:     scheduled.NoForwards,
+				allowPaidStars: scheduled.PaidStars,
 			})
 			return updates, err
 		}()
@@ -512,6 +522,17 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 	if err != nil {
 		return nil, messageForwardErr(err)
 	}
+	if req.AllowPaidStars < 0 {
+		return nil, starsAmountInvalidErr()
+	}
+	var scheduledFwdPaid int64
+	if toPeer.Type == domain.PeerTypeUser {
+		charged, err := r.privatePaidStarsCharge(ctx, userID, toPeer.ID, req.AllowPaidStars, len(sources))
+		if err != nil {
+			return nil, err
+		}
+		scheduledFwdPaid = charged
+	}
 	date := int(r.clock.Now().Unix())
 	updates := &tg.Updates{
 		Updates: make([]tg.UpdateClass, 0, len(sources)*2),
@@ -541,6 +562,7 @@ func (r *Router) scheduleForwardMessages(ctx context.Context, userID int64, from
 			SendAs:               sendAs,
 			ScheduleDate:         req.ScheduleDate,
 			ScheduleRepeatPeriod: req.ScheduleRepeatPeriod,
+			PaidStars:            scheduledFwdPaid,
 			Date:                 date,
 		}
 		deliveryRefs := r.preloadScheduledDeliveryRefs(ctx, userID, scheduledFromRequest(scheduleReq))

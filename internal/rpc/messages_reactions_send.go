@@ -389,7 +389,10 @@ func (r *Router) channelMessagesReactionsUpdates(ctx context.Context, viewerUser
 			Reactions: *converted,
 		}
 		if ok {
-			if topID := channelMessageThreadRootID(msg); topID > 0 && topID != id {
+			// top_msg_id names a forum topic. In an ordinary group a reply
+			// thread is not a topic, and setting it made clients ask for
+			// forum topics of a non-forum chat (CHANNEL_FORUM_MISSING).
+			if topID := channelMessageThreadRootID(msg); res.Channel.Forum && topID > 0 && topID != id {
 				update.SetTopMsgID(topID)
 			}
 			if msg.SavedPeer.ID != 0 {

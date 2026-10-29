@@ -1027,8 +1027,10 @@ type Deps struct {
 	SecretChats                  SecretChatService
 	Stars                        StarsService
 	Gifts                        GiftsService
-	Passkey                      PasskeyService
-	Themes                       ThemeService
+	// MainTabs stores account/channel setMainProfileTab; nil keeps the default tab.
+	MainTabs MainTabStore
+	Passkey  PasskeyService
+	Themes   ThemeService
 	// GeoIP 把会话记录的 IP 解析为 account.getAuthorizations 展示用的国家/地区
 	// 文案。为 nil(未配置地理后端)时列表继续回传占位文案,与启用前一致。
 	GeoIP geoip.Resolver

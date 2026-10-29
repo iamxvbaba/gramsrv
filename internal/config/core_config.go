@@ -83,7 +83,10 @@ type SFUOwnerYAML struct {
 }
 
 type CoreHTTPYAML struct {
-	BotAPIAddr        *string                `yaml:"bot_api_addr"`
+	BotAPIAddr *string `yaml:"bot_api_addr"`
+	// BotAPIPublicURL is the client-reachable Bot API base URL BotFather shows
+	// next to a token (/newbot, /token); it does not change the listener.
+	BotAPIPublicURL   *string                `yaml:"bot_api_public_url"`
 	AdminAPIAddr      *string                `yaml:"admin_api_addr"`
 	AdminAPIToken     string                 `yaml:"admin_api_token"`
 	AdminScopedTokens []AdminScopedTokenYAML `yaml:"admin_scoped_tokens"`
@@ -342,6 +345,7 @@ type CoreConfig struct {
 	FileGRPCTLSClientKeyFile           string
 	FileToken                          string
 	PublicBaseURL                      string
+	BotAPIPublicURL                    string
 	Branding                           branding.Config
 	UpdatePublicURL                    string
 	UpdateServiceURL                   string
@@ -687,6 +691,7 @@ func coreConfigFromConfig(c Config) CoreConfig {
 		FileGRPCTLSClientKeyFile:           c.FileGRPCTLSClientKeyFile,
 		FileToken:                          c.FileToken,
 		PublicBaseURL:                      c.PublicBaseURL,
+		BotAPIPublicURL:                    c.BotAPIPublicURL,
 		Branding:                           c.Branding,
 		UpdatePublicURL:                    c.UpdatePublicURL,
 		UpdateServiceURL:                   c.UpdateServiceURL,
@@ -1006,6 +1011,7 @@ func LoadCore() (CoreConfig, error) {
 			return err
 		}
 		b.setOptionalString("TELESRV_BOT_API_ADDR", y.HTTP.BotAPIAddr)
+		b.setOptionalString("TELESRV_BOT_API_PUBLIC_URL", y.HTTP.BotAPIPublicURL)
 		b.setOptionalString("TELESRV_ADMIN_API_ADDR", y.HTTP.AdminAPIAddr)
 		b.setString("TELESRV_ADMIN_API_TOKEN", y.HTTP.AdminAPIToken)
 		b.setString("TELESRV_ADMIN_SCOPED_TOKENS", formatAdminScopedTokensYAML(y.HTTP.AdminScopedTokens))

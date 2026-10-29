@@ -98,6 +98,9 @@ type Config struct {
 	// BotAPIAddr 是最小 HTTP Bot API 网关监听地址；为空关闭。该网关复用 MTProto
 	// app/store 事实源，不维护独立 bot 状态。
 	BotAPIAddr string
+	// BotAPIPublicURL is the client-reachable Bot API base URL that BotFather
+	// shows next to a token; empty shows none.
+	BotAPIPublicURL string
 	// AdminAPIAddr 是 telesrv 进程内管理写 API 监听地址；为空关闭。
 	AdminAPIAddr string
 	// AdminAPIToken 是 Admin API bearer token；开启 AdminAPIAddr 时必须显式配置。
@@ -1041,6 +1044,7 @@ func loadFromEnv(fileEnv envSource) (Config, error) {
 		MTProtoOutboundWriteGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_OUTBOUND_WRITE_GLOBAL_MAX_BYTES", 512<<20),
 		DebugAddr:                             envAllowEmptyOr("TELESRV_DEBUG_ADDR", "127.0.0.1:6060"),
 		BotAPIAddr:                            envAllowEmptyOr("TELESRV_BOT_API_ADDR", ""),
+		BotAPIPublicURL:                       strings.TrimSpace(envOr("TELESRV_BOT_API_PUBLIC_URL", "")),
 		AdminAPIAddr:                          envAllowEmptyOr("TELESRV_ADMIN_API_ADDR", ""),
 		AdminAPIToken:                         envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		GroupCallControlAddr:                  envAllowEmptyOr("TELESRV_GROUPCALL_CONTROL_ADDR", ""),

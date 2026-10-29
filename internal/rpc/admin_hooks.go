@@ -61,10 +61,7 @@ func (r *Router) starsBalanceDeliveryEffects(balance domain.StarsBalance, exclud
 	if (excludeAuthKeyID == ([8]byte{})) != (excludeSessionID == 0) {
 		return nil, fmt.Errorf("stars balance delivery exclusion requires raw auth key and session")
 	}
-	payload, err := encodeDeliveryUpdate(&tg.Updates{
-		Updates: []tg.UpdateClass{&tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: balance.Balance}}},
-		Date:    int(r.clock.Now().Unix()),
-	})
+	payload, err := r.starsBalancePayload(balance.Balance)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +69,16 @@ func (r *Router) starsBalanceDeliveryEffects(balance domain.StarsBalance, exclud
 		TargetUserID: balance.UserID, ExcludeAuthKeyID: excludeAuthKeyID, ExcludeSessionID: excludeSessionID, Payload: payload,
 		RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
 	})}, nil
+}
+
+// starsBalancePayload encodes an absolute updateStarsBalance for durable
+// delivery. It also serves as domain.PaidStarsBalancePayload, so a paid
+// private send commits both balance refreshes in its own transaction.
+func (r *Router) starsBalancePayload(balance int64) ([]byte, error) {
+	return encodeDeliveryUpdate(&tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: balance}}},
+		Date:    int(r.clock.Now().Unix()),
+	})
 }
 
 // NotifyAccountFreezeChanged invalidates target-scoped projections immediately

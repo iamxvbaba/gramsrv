@@ -98,40 +98,68 @@ func (r *Router) viewerIsPremiumForPrivacy(ctx context.Context, viewerUserID int
 	return premium, nil
 }
 
+func (r *Router) privatePaidStarsCharge(
+	ctx context.Context,
+	senderUserID, recipientUserID, allowPaidStars int64,
+	messageCount int,
+) (int64, error) {
+	if allowPaidStars < 0 || messageCount < 1 {
+		return 0, starsAmountInvalidErr()
+	}
+	requirement, err := r.privateContactRestrictionFor(ctx, senderUserID, recipientUserID)
+	if err != nil {
+		return 0, err
+	}
+	if requirement.requirePremium {
+		premium, err := r.viewerIsPremiumForPrivacy(ctx, senderUserID)
+		if err != nil {
+			return 0, err
+		}
+		if !premium {
+			return 0, premiumAccountRequiredErr()
+		}
+		return 0, nil
+	}
+	if requirement.paidStars <= 0 {
+		return 0, nil
+	}
+	if requirement.paidStars > math.MaxInt64/int64(messageCount) {
+		return 0, starsAmountInvalidErr()
+	}
+	charged := requirement.paidStars
+	required := charged * int64(messageCount)
+	if allowPaidStars < required {
+		return 0, allowPaymentRequiredErr(required)
+	}
+	return charged, nil
+}
+
+// ensurePaidStarsBalance rejects a paid album or forward the sender cannot cover
+// before its first message commits. Each message is still debited in its own send
+// transaction, so a concurrent spend can stop the batch later; the client then
+// retries the unsent random_ids and the committed ones replay without a new charge.
+func (r *Router) ensurePaidStarsBalance(ctx context.Context, senderUserID, perMessage int64, messageCount int) error {
+	if perMessage <= 0 || messageCount < 1 || r.deps.Stars == nil {
+		return nil
+	}
+	if perMessage > math.MaxInt64/int64(messageCount) {
+		return starsAmountInvalidErr()
+	}
+	balance, err := r.deps.Stars.GetBalance(ctx, senderUserID)
+	if err != nil {
+		return starsErr(err)
+	}
+	if balance.Balance < perMessage*int64(messageCount) {
+		return balanceTooLowErr()
+	}
+	return nil
+}
+
 func (r *Router) ensurePrivateContactAllowed(
 	ctx context.Context,
 	senderUserID, recipientUserID, allowPaidStars int64,
 	messageCount int,
 ) error {
-	if allowPaidStars < 0 || messageCount < 1 {
-		return starsAmountInvalidErr()
-	}
-	requirement, err := r.privateContactRestrictionFor(ctx, senderUserID, recipientUserID)
-	if err != nil {
-		return err
-	}
-	if requirement.requirePremium {
-		premium, err := r.viewerIsPremiumForPrivacy(ctx, senderUserID)
-		if err != nil {
-			return err
-		}
-		if !premium {
-			return premiumAccountRequiredErr()
-		}
-		return nil
-	}
-	if requirement.paidStars <= 0 {
-		return nil
-	}
-	if requirement.paidStars > math.MaxInt64/int64(messageCount) {
-		return starsAmountInvalidErr()
-	}
-	required := requirement.paidStars * int64(messageCount)
-	if allowPaidStars < required {
-		return allowPaymentRequiredErr(required)
-	}
-	// The privacy gate and no-paid exception are complete here. The separate
-	// private paid-message ledger is not part of the current message store yet;
-	// never accept an authorization without an atomic debit.
-	return paymentUnsupportedErr()
+	_, err := r.privatePaidStarsCharge(ctx, senderUserID, recipientUserID, allowPaidStars, messageCount)
+	return err
 }

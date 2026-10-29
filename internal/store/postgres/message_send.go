@@ -129,7 +129,68 @@ WHERE (peer_usernames.username_lower, peer_usernames.username)
 }
 
 func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (res domain.SendPrivateTextResult, err error) {
-	return s.sendPrivateTextWithHooks(ctx, req, privateSendTxHooks{})
+	hooks := privateSendTxHooks{}
+	var charge *domain.PaidStarsCharge
+	if req.PaidStars > 0 && req.SenderUserID != req.RecipientUserID {
+		if req.PaidStarsBalance == nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("paid private send requires durable stars balance delivery")
+		}
+		hooks.before = func(ctx context.Context, tx pgx.Tx, out *domain.SendPrivateTextRequest) error {
+			c, err := chargePaidMessageStarsTx(ctx, tx, req.SenderUserID, req.RecipientUserID, req.PaidStars)
+			if err != nil {
+				return err
+			}
+			charge = &c
+			return nil
+		}
+		hooks.after = func(ctx context.Context, tx pgx.Tx, _ domain.SendPrivateTextResult) error {
+			if charge == nil {
+				return nil
+			}
+			effects, err := paidStarsBalanceEffects(req, *charge)
+			if err != nil {
+				return err
+			}
+			if _, err := applyDeliveryEffectsTx(ctx, tx, effects); err != nil {
+				return fmt.Errorf("apply paid message balance delivery: %w", err)
+			}
+			return nil
+		}
+	}
+	res, err = s.sendPrivateTextWithHooks(ctx, req, hooks)
+	if err != nil {
+		return res, err
+	}
+	res.PaidStars = charge
+	return res, nil
+}
+
+// paidStarsBalanceEffects refreshes both balances a paid private send moved:
+// the recipient on every session, and the sender on every session except the
+// origin request, which carries updateStarsBalance in its result. A send with
+// no origin (a scheduled delivery) refreshes every sender session too.
+func paidStarsBalanceEffects(req domain.SendPrivateTextRequest, charge domain.PaidStarsCharge) ([]store.DeliveryEffect, error) {
+	if (req.OriginAuthKeyID == ([8]byte{})) != (req.OriginSessionID == 0) {
+		return nil, fmt.Errorf("paid message balance delivery exclusion requires raw auth key and session")
+	}
+	recipient, err := req.PaidStarsBalance(charge.RecipientBalance)
+	if err != nil {
+		return nil, fmt.Errorf("encode paid message recipient balance: %w", err)
+	}
+	sender, err := req.PaidStarsBalance(charge.SenderBalance)
+	if err != nil {
+		return nil, fmt.Errorf("encode paid message sender balance: %w", err)
+	}
+	return []store.DeliveryEffect{
+		store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+			TargetUserID: req.RecipientUserID, Payload: recipient,
+			RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+		}),
+		store.AbsoluteDeliveryEffect(store.DeliveryOutboxEnqueue{
+			TargetUserID: req.SenderUserID, ExcludeAuthKeyID: req.OriginAuthKeyID, ExcludeSessionID: req.OriginSessionID,
+			Payload: sender, RecoveryPolicy: store.OutboxRecoveryAbsoluteReload,
+		}),
+	}, nil
 }
 
 type privateSendTxHooks struct {
@@ -387,6 +448,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			ViaBotID:           req.ViaBotID,
 			GroupedID:          req.GroupedID,
 			Effect:             req.Effect,
+			PaidMessageStars:   req.PaidStars,
 		}
 		applyCreatePrivateMessageMetadata(&privateArg, senderMeta)
 		pm, err = qtx.CreatePrivateMessage(ctx, privateArg)
@@ -508,6 +570,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 		ViaBotID:         req.ViaBotID,
 		GroupedID:        req.GroupedID,
 		Effect:           req.Effect,
+		PaidMessageStars: req.PaidStars,
 		// voice/round 在发送者自己的副本上也保持"未听"，直到对端
 		// readMessageContents 触发 sender 侧清除；发给自己无人可听，恒已读。
 		MediaUnread:    media.Sender.HasUnreadPayload() && !selfMessage,
@@ -586,6 +649,7 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 			Effect:           req.Effect,
 			MediaUnread:      media.Recipient.HasUnreadPayload(),
 			ReactionUnread:   false,
+			PaidMessageStars: req.PaidStars,
 		}
 		applyCreateMessageBoxMetadata(&recipientArg, recipientMeta)
 		recipientRow, err := qtx.CreateMessageBox(ctx, recipientArg)

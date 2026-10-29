@@ -708,6 +708,19 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	if err != nil || !updated {
 		t.Fatalf("update username = %v err %v, want true", updated, err)
 	}
+	// A channel that is still being created is checked with inputChannelEmpty.
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{{"public_team", false}, {"fresh_team", true}} {
+		ok, err := r.onChannelsCheckUsername(WithUserID(ctx, owner.ID), &tg.ChannelsCheckUsernameRequest{
+			Channel:  &tg.InputChannelEmpty{},
+			Username: tc.name,
+		})
+		if err != nil || ok != tc.want {
+			t.Fatalf("check %q for a new channel = %v err %v, want %v", tc.name, ok, err, tc.want)
+		}
+	}
 	admined, err := r.onChannelsGetAdminedPublicChannels(WithUserID(ctx, owner.ID), &tg.ChannelsGetAdminedPublicChannelsRequest{})
 	if err != nil {
 		t.Fatalf("get admined public channels: %v", err)

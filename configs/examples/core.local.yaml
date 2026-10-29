@@ -75,6 +75,8 @@ translation:
 
 http:
   bot_api_addr: ""
+  # Bot API base URL BotFather shows with a token (/newbot, /token); empty shows nothing.
+  bot_api_public_url: ""
   admin_api_addr: ""
   public_link_web_addr: 127.0.0.1:2401
 

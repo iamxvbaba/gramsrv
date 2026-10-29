@@ -77,13 +77,13 @@ func completeScheduledDelivery(ctx context.Context, tx pgx.Tx, claim *domain.Sch
  reply_to_msg_id, reply_to_peer_type, reply_to_peer_id, reply_to_top_id,
  quote_text, quote_entities, quote_offset, fwd_from_peer_type, fwd_from_peer_id, fwd_from_name, fwd_date,
  send_as_peer_type, send_as_peer_id, schedule_date, schedule_repeat_period, state, created_at, updated_at,
- reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id)
+ reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,paid_stars)
  SELECT owner_user_id,$3,peer_type,peer_id,$4,$5,
  body,entities,media,rich_message,silent,noforwards,
  reply_to_msg_id,reply_to_peer_type,reply_to_peer_id,reply_to_top_id,
  quote_text,quote_entities,quote_offset,fwd_from_peer_type,fwd_from_peer_id,fwd_from_name,fwd_date,
  send_as_peer_type,send_as_peer_id,$5+schedule_repeat_period,schedule_repeat_period,'pending',$5,$5,
- reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id
+ reply_to_story_id,reply_forum_topic,reply_external,fwd_channel_post,fwd_saved_from_peer_type,fwd_saved_from_peer_id,fwd_saved_from_msg_id,paid_stars
  FROM scheduled_messages WHERE owner_user_id=$1 AND scheduled_id=$2`, claim.OwnerUserID, claim.ID, id, randomID, date)
 			if err != nil {
 				return nil, err

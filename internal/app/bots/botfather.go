@@ -298,16 +298,16 @@ func (s *Service) handleBotFather(ctx context.Context, userID int64, text string
 
 // pickerCommands 是「先选 bot」的命令集（choose step 后按命令分流）。
 var pickerPrompts = map[string]string{
-	botFatherCmdToken:          "Choose a bot to generate a token for. Send the bot's username:",
+	botFatherCmdToken:          "Choose a bot to get Bot API access token.",
 	botFatherCmdRevoke:         "Choose a bot to revoke the token of. Send the bot's username:",
-	botFatherCmdSetName:        "Choose a bot to change the name of. Send the bot's username:",
-	botFatherCmdSetDescription: "Choose a bot to change the description of. Send the bot's username:",
-	botFatherCmdSetAbout:       "Choose a bot to change the about info of. Send the bot's username:",
-	botFatherCmdSetCommands:    "Choose a bot to change the command list of. Send the bot's username:",
-	botFatherCmdSetInline:      "Choose a bot to change inline mode for. Send the bot's username:",
-	botFatherCmdSetInlineGeo:   "Choose a bot to change inline location requests for. Send the bot's username:",
-	botFatherCmdSetJoinGroups:  "Choose a bot to configure group joining for. Send the bot's username:",
-	botFatherCmdSetPrivacy:     "Choose a bot to configure group privacy for. Send the bot's username:",
+	botFatherCmdSetName:        "Choose a bot to change name.",
+	botFatherCmdSetDescription: "Choose a bot to change description.",
+	botFatherCmdSetAbout:       "Choose a bot to change the about section.",
+	botFatherCmdSetCommands:    "Choose a bot to change the list of commands.",
+	botFatherCmdSetInline:      "Choose a bot to change inline queries status.",
+	botFatherCmdSetInlineGeo:   "Choose a bot to change inline location request settings.",
+	botFatherCmdSetJoinGroups:  "Choose a bot to change group membership settings.",
+	botFatherCmdSetPrivacy:     "Choose a bot to change group messages settings.",
 	botFatherCmdDeleteBot:      "Choose a bot to delete. Send the bot's username:",
 	botFatherCmdSetLogin:       "Choose a bot to configure Telegram Login for. Send the bot's username:",
 	botFatherCmdLoginInfo:      "Choose a bot whose Telegram Login configuration you want to inspect:",
@@ -315,14 +315,32 @@ var pickerPrompts = map[string]string{
 }
 
 // startBotPicker 列出 owner 的 bot 并进入 choose step（所有需先选 bot 的命令共用）。
+// 每个 bot 渲染成 reply keyboard（输入框下方、非消息附件）里的一颗 @username 文本
+// 按钮；点一下客户端就发送该用户名，走的正是 handleChooseBot 的手输路径——所以
+// 不需要 callback query，也不存在可伪造/过期的按钮数据。键盘 single_use：选中一个
+// 就自动收起。
 func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) botReply {
-	usernames, err := s.ownedBotUsernames(ctx, userID)
+	owned, err := s.ownedBots(ctx, userID)
 	if err != nil {
 		s.log.Error("botfather: list bots", zap.Int64("user_id", userID), zap.Error(err))
 		return internalReply()
 	}
-	if len(usernames) == 0 {
+	if len(owned) == 0 {
+		// 这里不清状态：一个 bot 都没有时挂着的只可能是 /newbot 草稿，留着让用户
+		// 继续创建（bot 级步骤会在自己复核 owner 时失败并自行清理）。
 		return botReply{Text: "You don't have any bots yet. Use /newbot to create one."}
+	}
+	// /setinlinegeo 只对已开启 inline mode 的 bot 有意义，键盘里也只列这些 bot。
+	if cmd == botFatherCmdSetInlineGeo {
+		owned = botFatherInlineBots(owned)
+		if len(owned) == 0 {
+			// 命令起不来就必须清掉挂着的步骤：否则用户看到「没有 inline bot」后
+			// 随手发的下一条文本，会被上一条命令的步骤当成自己的输入执行——
+			// 例如 /setname 的收值会把那条文本写成 bot 名字，/deletebot 的
+			// confirm 还处于待确认状态。
+			s.clearState(ctx, userID)
+			return botReply{Text: "You don't have any bots with inline mode enabled. Use /setinline to enable it first."}
+		}
 	}
 	if err := s.bots.UpsertBotChatState(ctx, domain.BotChatState{
 		BotUserID: domain.BotFatherUserID,
@@ -333,7 +351,60 @@ func (s *Service) startBotPicker(ctx context.Context, userID int64, cmd string) 
 		s.log.Error("botfather: save chat state", zap.Int64("user_id", userID), zap.Error(err))
 		return internalReply()
 	}
-	return botReply{Text: pickerPrompts[cmd] + "\n\n@" + strings.Join(usernames, "\n@")}
+	reply := botReply{Text: pickerPrompts[cmd]}
+	var buttons []domain.MarkupButton
+	for _, b := range owned {
+		if b.user.Username == "" {
+			continue
+		}
+		buttons = append(buttons, domain.MarkupButton{
+			Type: domain.MarkupButtonText,
+			Text: "@" + b.user.Username,
+		})
+	}
+	// 两颗一行：BotFather 的 bot 列表通常不止一个，两列比一列短一半。
+	var rows [][]domain.MarkupButton
+	for len(buttons) > 0 {
+		n := min(2, len(buttons))
+		rows = append(rows, buttons[:n])
+		buttons = buttons[n:]
+	}
+	if len(rows) > 0 {
+		reply.ReplyMarkup = &domain.MessageReplyMarkup{
+			Type:      domain.MessageReplyMarkupKeyboard,
+			Keyboard:  rows,
+			Resize:    true,
+			SingleUse: true,
+		}
+	}
+	return reply
+}
+
+// botFatherInlineBots 只保留 inline mode 已开启的 bot（placeholder 非空即开启）。
+func botFatherInlineBots(owned []ownedBot) []ownedBot {
+	out := make([]ownedBot, 0, len(owned))
+	for _, b := range owned {
+		if b.profile.InlinePlaceholder != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// botFatherToggleKeyboard 是 Enable/Disable 两键 reply keyboard；点击发送对应文本，
+// 走的正是 applyToggle/applySetInlineGeo 已支持的手输路径。
+func botFatherToggleKeyboard() *domain.MessageReplyMarkup {
+	return &domain.MessageReplyMarkup{
+		Type: domain.MessageReplyMarkupKeyboard,
+		Keyboard: [][]domain.MarkupButton{
+			{
+				{Type: domain.MarkupButtonText, Text: "Enable"},
+				{Type: domain.MarkupButtonText, Text: "Disable"},
+			},
+		},
+		Resize:    true,
+		SingleUse: true,
+	}
 }
 
 // stepPrompt 返回当前对话步骤的引导文案（空输入兜底用）。
@@ -344,7 +415,7 @@ func (s *Service) stepPrompt(state domain.BotChatState) botReply {
 	case state.Command == botFatherCmdNewBot && state.Step == botFatherStepUsername:
 		return botReply{Text: "Please send a username for your bot. It must end in `bot`. Or /cancel."}
 	case state.Step == botFatherStepChoose:
-		return botReply{Text: "Please send the username of one of your bots, or /cancel."}
+		return botReply{Text: "Tap one of the buttons above, or send the username of one of your bots, or /cancel."}
 	case state.Step == botFatherStepConfirm:
 		return botReply{Text: botDeleteConfirmPrompt(state.Draft[botFatherDraftBotUsername])}
 	case state.Step == botFatherStepValue:
@@ -430,26 +501,50 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 func valuePrompt(cmd, username string) string {
 	switch cmd {
 	case botFatherCmdSetName:
-		return fmt.Sprintf("OK. Send me the new name for @%s.", username)
+		return "OK. Send me the new name for your bot."
 	case botFatherCmdSetDescription:
-		return fmt.Sprintf("OK. Send me the new description for @%s. People will see it on the bot's profile page, before they start a chat with it.", username)
+		return "OK. Send me the new description for the bot. People will see this description when they open a chat with your bot, in a block titled 'What can this bot do?'."
 	case botFatherCmdSetAbout:
-		return fmt.Sprintf("OK. Send me the new about text for @%s. People will see this text on the bot's profile page and it will be sent together with a link to your bot when they share it with someone.", username)
+		return "OK. Send me the new 'About' text. People will see this text on the bot's profile page and it will be sent together with a link to your bot when they share it with someone."
 	case botFatherCmdSetCommands:
-		return fmt.Sprintf("OK. Send me a list of commands for @%s. Please use this format:\n\ncommand1 - Description\ncommand2 - Another description\n\nSend /empty to clear the list.", username)
+		return "OK. Send me a list of commands for your bot. Please use this format:\n\ncommand1 - Description\ncommand2 - Another description\n\nSend /empty to keep the list empty."
 	case botFatherCmdSetInline:
-		return fmt.Sprintf("This will enable inline queries for @%s. Send me the placeholder text people will see after typing the bot username, or send /empty to disable inline mode.", username)
+		return fmt.Sprintf("This will enable inline queries for your bot. https://core.telegram.org/bots/inline. Use /empty to disable.\n\nTo enable inline mode, please send me the placeholder message for queries to your bot. People will see this placeholder whenever they type @%s in the message field – in any chat. Tell them what they can get from your bot (e.g., Search GIFs...).", username)
 	case botFatherCmdSetInlineGeo:
-		return fmt.Sprintf("Send 'enable' to allow @%s to receive location in inline queries, or 'disable' to turn it off.", username)
+		return fmt.Sprintf("If enabled, @%s will ask for permission to get the user's location each time they send a request.\n\nSend 'enable' or 'disable'.", username)
 	case botFatherCmdSetJoinGroups:
-		return fmt.Sprintf("Send 'enable' to allow @%s to be added to groups, or 'disable' to prevent it.", username)
+		return "'Enable' - bot can be added to groups.\n'Disable' - block group invitations, the bot can't be added to groups.\n\nSend 'enable' or 'disable'."
 	case botFatherCmdSetPrivacy:
-		return fmt.Sprintf("Send 'enable' to turn ON group privacy for @%s (it will only receive commands and replies), or 'disable' to let it receive all group messages.", username)
+		return "'Enable' - your bot will only receive messages that either start with the '/' symbol or mention the bot by username.\n'Disable' - your bot will receive all messages that people send to groups.\n\nSend 'enable' or 'disable'."
 	case botFatherCmdSetLogin:
 		return telegramLoginConfigurationPrompt(username)
 	default:
 		return "Send the new value, or /cancel."
 	}
+}
+
+func inlineGeoPrompt(username string, enabled bool) string {
+	status := "DISABLED"
+	if enabled {
+		status = "ENABLED"
+	}
+	return fmt.Sprintf("If enabled, @%s will ask for permission to get the user's location each time they send a request.\nCurrent value is: %s.", username, status)
+}
+
+func joinGroupsPrompt(allowed bool) string {
+	status := "DISABLED"
+	if allowed {
+		status = "ENABLED"
+	}
+	return fmt.Sprintf("'Enable' - bot can be added to groups.\n'Disable' - block group invitations, the bot can't be added to groups.\nCurrent status is: %s", status)
+}
+
+func privacyPrompt(enabled bool) string {
+	status := "DISABLED"
+	if enabled {
+		status = "ENABLED"
+	}
+	return fmt.Sprintf("'Enable' - your bot will only receive messages that either start with the '/' symbol or mention the bot by username.\n'Disable' - your bot will receive all messages that people send to groups.\nCurrent status is: %s", status)
 }
 
 func (s *Service) handleNewBotName(ctx context.Context, state domain.BotChatState, name string) botReply {
@@ -498,7 +593,15 @@ func (s *Service) handleNewBotUsername(ctx context.Context, state domain.BotChat
 		s.log.Error("botfather: delete chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
 	}
 	head := fmt.Sprintf("Done! Congratulations on your new bot. You will find it at %s.\n\nUse this token to access the HTTP API:\n", s.publicURL(u.Username))
-	return tokenReply(head, token, "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+	return tokenReply(head, token, s.botAPIHint()+"\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+}
+
+// botAPIHint names this server's Bot API base URL, when one is configured.
+func (s *Service) botAPIHint() string {
+	if s.botAPIURL == "" {
+		return ""
+	}
+	return "\n\nBot API on this server: " + s.botAPIURL + "/bot<token>/<method>"
 }
 
 func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState, text string) botReply {
@@ -518,6 +621,12 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 	if chosen == nil {
 		return botReply{Text: "I don't see that bot among yours. Send the username of one of your bots, or /cancel."}
 	}
+	return s.applyBotChoice(ctx, state, *chosen)
+}
+
+// applyBotChoice 在已确认 bot 属于该用户后执行 choose step 对应命令的唯一入口——
+// 直接输入用户名与点击 @username 按钮都走这里。
+func (s *Service) applyBotChoice(ctx context.Context, state domain.BotChatState, chosen domain.User) botReply {
 	switch state.Command {
 	case botFatherCmdToken:
 		defer s.clearState(ctx, state.UserID)
@@ -528,8 +637,8 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 			}
 			return internalReply()
 		}
-		head := fmt.Sprintf("You can use this token to access the HTTP API for @%s:\n", chosen.Username)
-		return tokenReply(head, domain.FormatBotToken(chosen.ID, profile.TokenSecret), "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+		head := "You can use this token to access HTTP API:\n"
+		return tokenReply(head, domain.FormatBotToken(chosen.ID, profile.TokenSecret), s.botAPIHint()+"\n\nFor a description of the Bot API, see this page: https://core.telegram.org/bots/api")
 	case botFatherCmdRevoke:
 		defer s.clearState(ctx, state.UserID)
 		token, err := s.RevokeBotToken(ctx, state.UserID, chosen.ID)
@@ -614,7 +723,31 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 			s.log.Error("botfather: save chat state", zap.Int64("user_id", state.UserID), zap.Error(err))
 			return internalReply()
 		}
-		return botReply{Text: valuePrompt(state.Command, chosen.Username)}
+		switch state.Command {
+		case botFatherCmdSetInlineGeo, botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy:
+			profile, found, err := s.bots.GetBot(ctx, chosen.ID)
+			if err != nil {
+				s.log.Error("botfather: get bot settings", zap.Int64("bot_user_id", chosen.ID), zap.Error(err))
+				return internalReply()
+			}
+			if !found {
+				s.clearState(ctx, state.UserID)
+				return botReply{Text: "That bot is no longer available."}
+			}
+			reply := botReply{ReplyMarkup: botFatherToggleKeyboard()}
+			switch state.Command {
+			case botFatherCmdSetInlineGeo:
+				reply.Text = inlineGeoPrompt(chosen.Username, profile.InlineGeo)
+			case botFatherCmdSetJoinGroups:
+				reply.Text = joinGroupsPrompt(!profile.Nochats)
+			default:
+				// 隐私模式开着时 bot 只看命令/回复，即 profile.ChatHistory=false。
+				reply.Text = privacyPrompt(!profile.ChatHistory)
+			}
+			return reply
+		default:
+			return botReply{Text: valuePrompt(state.Command, chosen.Username)}
+		}
 	case botFatherCmdDeleteBot:
 		// 删号不可逆且会断掉全部 session，因此先停在 confirm step：只有明确的确认词
 		// 才执行，误触发的用户名/空消息一律回到同一句确认提示。
@@ -731,13 +864,13 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 	switch state.Command {
 	case botFatherCmdSetName:
 		_, err = s.SetBotInfoWithDelivery(ctx, botID, domain.BotInfoUpdate{SetName: true, Name: text}, infoEffects)
-		reply = okReply(err, fmt.Sprintf("Success! Name updated for @%s.", username), "Sorry, that name is invalid. Please try a different one.")
+		reply = okReply(err, "Success! Name updated. /help", "Sorry, that name is invalid. Please try a different one.")
 	case botFatherCmdSetDescription:
 		_, err = s.SetBotInfoWithDelivery(ctx, botID, domain.BotInfoUpdate{SetDescription: true, Description: text}, infoEffects)
-		reply = okReply(err, "Success! Description updated.", "Sorry, that description is too long.")
+		reply = okReply(err, "Success! Description updated. You will be able to see the changes within a few minutes. /help", "Sorry, that description is too long.")
 	case botFatherCmdSetAbout:
 		_, err = s.SetBotInfoWithDelivery(ctx, botID, domain.BotInfoUpdate{SetAbout: true, About: text}, infoEffects)
-		reply = okReply(err, "Success! About section updated.", "Sorry, that about text is too long.")
+		reply = okReply(err, "Success! About section updated. /help", "Sorry, that about text is too long.")
 	case botFatherCmdSetCommands:
 		reply, err = s.applySetCommands(ctx, botID, text)
 	case botFatherCmdSetInline:
@@ -765,6 +898,17 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 	return reply
 }
 
+// botFatherCommandListInvalidText 是 /setcommands 的统一拒绝文案：格式错误和内容
+// 非法（命令名/描述不合规）对用户是同一件事——重发一份合规列表或 /empty。
+func botFatherCommandListInvalidText() string {
+	return `Sorry, the list of commands is invalid. Please use this format:
+
+command1 - Description
+command2 - Another description
+
+You can also send /empty to clear the list or keep it empty.`
+}
+
 // applySetCommands 解析多行 "command - Description"（/empty 清空）并写入。
 func (s *Service) applySetCommands(ctx context.Context, botID int64, text string) (botReply, error) {
 	var commands []domain.BotCommand
@@ -776,7 +920,7 @@ func (s *Service) applySetCommands(ctx context.Context, botID int64, text string
 			}
 			cmd, desc, ok := strings.Cut(line, "-")
 			if !ok {
-				return botReply{Text: "Invalid format. Each line must be: command - Description. Try again or /cancel."}, domain.ErrBotCommandInvalid
+				return botReply{Text: botFatherCommandListInvalidText()}, domain.ErrBotCommandInvalid
 			}
 			commands = append(commands, domain.BotCommand{
 				Command:     strings.TrimSpace(cmd),
@@ -785,7 +929,7 @@ func (s *Service) applySetCommands(ctx context.Context, botID int64, text string
 		}
 	}
 	if _, err := s.SetBotCommands(ctx, botID, commands); err != nil {
-		return botReply{Text: "Invalid command list. Each command must be 1-32 chars (letters, digits, underscores) with a non-empty description. Try again or /cancel."}, err
+		return botReply{Text: botFatherCommandListInvalidText()}, err
 	}
 	return botReply{Text: "Success! Command list updated. /help"}, nil
 }
@@ -819,11 +963,11 @@ func (s *Service) applySetInlineGeo(ctx context.Context, botID int64, text strin
 		s.log.Error("botfather: set inline geo", zap.Int64("bot_user_id", botID), zap.Error(err))
 		return botReply{}, err
 	}
-	state := "disabled"
+	state := "DISABLED"
 	if enabled {
-		state = "enabled"
+		state = "ENABLED"
 	}
-	return botReply{Text: fmt.Sprintf("Success! Inline location requests are now %s.", state)}, nil
+	return botReply{Text: fmt.Sprintf("Success! Inline location request settings updated. New status is %s /help", state)}, nil
 }
 
 func telegramLoginConfigurationPrompt(username string) string {
@@ -1107,15 +1251,11 @@ func (s *Service) applyToggle(ctx context.Context, botID int64, text string, joi
 		s.log.Error("botfather: apply toggle", zap.Int64("bot_user_id", botID), zap.Bool("join", join), zap.Error(err))
 		return botReply{}, err
 	}
-	what := "Group privacy"
-	if join {
-		what = "Group joining"
-	}
 	state := "disabled"
 	if on {
 		state = "enabled"
 	}
-	return botReply{Text: fmt.Sprintf("Success! %s is now %s.", what, state)}, nil
+	return botReply{Text: fmt.Sprintf("Success! The new status is: %s. /help", strings.ToUpper(state))}, nil
 }
 
 // okReply 把 service 调用结果转成提示：err==nil 回成功，否则回校验失败提示。

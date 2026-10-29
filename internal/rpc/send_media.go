@@ -51,6 +51,10 @@ type outgoingSend struct {
 	// 频道侧忽略（官方群/频道不渲染特效）。
 	effect         int64
 	allowPaidStars int64
+	paidStars      int64
+	// paidStarsReady means a batch caller already gated paidStars for every item,
+	// so the per-message price is not read again.
+	paidStarsReady bool
 }
 
 type privateSendBaseUserResolver interface {
@@ -175,8 +179,12 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 	if r.deps.Messages == nil {
 		return nil, false, peerIDInvalidErr()
 	}
-	if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, p.allowPaidStars, 1); err != nil {
-		return nil, false, err
+	if !p.paidStarsReady {
+		charged, err := r.privatePaidStarsCharge(ctx, userID, peer.ID, p.allowPaidStars, 1)
+		if err != nil {
+			return nil, false, err
+		}
+		p.paidStars = charged
 	}
 	if err := r.ensureVoiceMessagesAllowed(ctx, userID, peer, p.media != nil && p.media.HasUnreadPayload()); err != nil {
 		return nil, false, err
@@ -245,6 +253,8 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		GroupedID:              p.groupedID,
 		Effect:                 p.effect,
 		ClearDraft:             p.clearDraft,
+		PaidStars:              p.paidStars,
+		PaidStarsBalance:       r.starsBalancePayload,
 	})
 	if err != nil {
 		fields := append(r.contextLogFields(ctx),
@@ -276,6 +286,11 @@ func (r *Router) sendOutgoing(ctx context.Context, userID int64, peer domain.Pee
 		}
 	}
 	updates := tgPrivateSendResultUpdates(res, p.randomID, true, users, chats)
+	if !res.Duplicate && res.PaidStars != nil {
+		// The recipient's balance (and the sender's other sessions) were
+		// committed as durable deliveries in the send transaction.
+		updates.Updates = append(updates.Updates, &tg.UpdateStarsBalance{Balance: &tg.StarsAmount{Amount: res.PaidStars.SenderBalance}})
+	}
 	if res.NextScheduled != nil {
 		updates.Updates = append(updates.Updates, r.tgNewScheduledMessageUpdates(ctx, userID, *res.NextScheduled, 0, int(r.clock.Now().Unix())).Updates...)
 	}
@@ -592,12 +607,22 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 	if err != nil {
 		return nil, err
 	}
+	scheduled := req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix()))
+	var albumPaidStars int64
 	if peer.Type == domain.PeerTypeUser {
 		if req.AllowPaidFloodskip {
 			return nil, paymentUnsupportedErr()
 		}
-		if err := r.ensurePrivateContactAllowed(ctx, userID, peer.ID, req.AllowPaidStars, absentCount); err != nil {
+		// Gate the album once and charge every item this price: reading the price
+		// again per item could exceed the allowance if the recipient raises it mid-album.
+		albumPaidStars, err = r.privatePaidStarsCharge(ctx, userID, peer.ID, req.AllowPaidStars, absentCount)
+		if err != nil {
 			return nil, err
+		}
+		if !scheduled {
+			if err := r.ensurePaidStarsBalance(ctx, userID, albumPaidStars, absentCount); err != nil {
+				return nil, err
+			}
 		}
 	}
 	pendingMedia := make([]tg.InputMediaClass, 0, absentCount)
@@ -661,10 +686,12 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 			clearDraft:             clearDraftPending,
 			groupedID:              groupedID,
 			allowPaidStars:         req.AllowPaidStars,
+			paidStars:              albumPaidStars,
+			paidStarsReady:         peer.Type == domain.PeerTypeUser,
 		}
 		var result tg.UpdatesClass
 		duplicate := false
-		if req.ScheduleDate != 0 && !scheduleDateIsImmediate(req.ScheduleDate, int(r.clock.Now().Unix())) {
+		if scheduled {
 			result, err = r.scheduleOutgoing(ctx, userID, peer, p, req.ScheduleDate, 0)
 		} else {
 			result, duplicate, err = r.sendOutgoing(ctx, userID, peer, p)

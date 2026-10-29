@@ -726,44 +726,59 @@ func (s *Service) ListStickerSets(ctx context.Context, kind domain.StickerSetKin
 	return s.media.ListStickerSets(ctx, kind)
 }
 
+// stickerSetPublishAttempts bounds how often a lookup re-reads after a
+// concurrent write invalidated its snapshot. The cache epoch is shared by every
+// set, so a steady stream of unrelated sticker-set writes must not keep a cold
+// lookup re-querying PostgreSQL; the last read is still a valid answer for a
+// read racing a write, it is only left out of the cache.
+const stickerSetPublishAttempts = 3
+
 // ResolveStickerSet 按 ref 解析贴纸集，并按 DocumentIDs 顺序加载其文档。
 func (s *Service) ResolveStickerSet(ctx context.Context, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, bool, error) {
-	if set, docs, ok := s.stickerSetCache.get(ref); ok {
-		return set, docs, true, nil
-	}
-	// 负缓存：首次按需查询未找到的 ref 在 TTL 内直接短路，避免客户端
-	// 反复请求不存在的 short_name 时每次都访问 PG。
-	if s.stickerSetNegCache != nil && s.stickerSetNegCache.has(ref) {
-		return domain.StickerSet{}, nil, false, nil
-	}
-	var (
-		set   domain.StickerSet
-		found bool
-		err   error
-	)
-	switch ref.Kind {
-	case domain.StickerSetRefByID:
-		set, found, err = s.media.GetStickerSetByID(ctx, ref.ID)
-	case domain.StickerSetRefByShortName:
-		set, found, err = s.media.GetStickerSetByShortName(ctx, ref.ShortName)
-	case domain.StickerSetRefBySystem:
-		set, found, err = s.media.GetStickerSetBySystemKey(ctx, ref.SystemKey)
-	default:
-		return domain.StickerSet{}, nil, false, nil
-	}
-	if err != nil || !found {
-		if err == nil && !found && s.stickerSetNegCache != nil {
-			s.stickerSetNegCache.put(ref)
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return domain.StickerSet{}, nil, false, err
 		}
-		return domain.StickerSet{}, nil, found, err
+		epoch := s.stickerSetCache.loadEpoch()
+		if set, docs, ok := s.stickerSetCache.get(ref); ok {
+			return set, docs, true, nil
+		}
+		// 负缓存：首次按需查询未找到的 ref 在 TTL 内直接短路，避免客户端
+		// 反复请求不存在的 short_name 时每次都访问 PG。
+		if s.stickerSetNegCache != nil && s.stickerSetNegCache.has(ref) {
+			return domain.StickerSet{}, nil, false, nil
+		}
+		var (
+			set   domain.StickerSet
+			found bool
+			err   error
+		)
+		switch ref.Kind {
+		case domain.StickerSetRefByID:
+			set, found, err = s.media.GetStickerSetByID(ctx, ref.ID)
+		case domain.StickerSetRefByShortName:
+			set, found, err = s.media.GetStickerSetByShortName(ctx, ref.ShortName)
+		case domain.StickerSetRefBySystem:
+			set, found, err = s.media.GetStickerSetBySystemKey(ctx, ref.SystemKey)
+		default:
+			return domain.StickerSet{}, nil, false, nil
+		}
+		if err != nil || !found {
+			if err == nil && !found && s.stickerSetNegCache != nil {
+				s.stickerSetNegCache.put(ref)
+			}
+			return domain.StickerSet{}, nil, found, err
+		}
+		docs, err := s.media.GetDocuments(ctx, set.DocumentIDs)
+		if err != nil {
+			return domain.StickerSet{}, nil, false, err
+		}
+		ordered := orderDocuments(docs, set.DocumentIDs)
+		if s.stickerSetCache.putIfEpoch(set, ordered, epoch) || attempt >= stickerSetPublishAttempts {
+			return set, ordered, true, nil
+		}
+		// 旧查询不得覆盖并发修改；重试时优先使用写路径刚发布的缓存。
 	}
-	docs, err := s.media.GetDocuments(ctx, set.DocumentIDs)
-	if err != nil {
-		return domain.StickerSet{}, nil, false, err
-	}
-	ordered := orderDocuments(docs, set.DocumentIDs)
-	s.stickerSetCache.put(set, ordered)
-	return set, ordered, true, nil
 }
 
 // orderDocuments 把无序的文档按 ids 顺序重排（GetDocuments 用 ANY 查询不保证顺序）。

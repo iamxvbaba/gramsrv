@@ -767,12 +767,16 @@ func TestLoadDockerRoleYAMLFiles(t *testing.T) {
 	t.Run("core bot api", func(t *testing.T) {
 		t.Setenv("TELESRV_CONFIG", filepath.Join(dockerConfigDir, "core.yaml"))
 		t.Setenv("TELESRV_BOT_API_ADDR", "0.0.0.0:8088")
+		t.Setenv("TELESRV_BOT_API_PUBLIC_URL", "https://api.example.test")
 		cfg, err := LoadCore()
 		if err != nil {
 			t.Fatalf("load Docker core.yaml: %v", err)
 		}
 		if cfg.BotAPIAddr != "0.0.0.0:8088" {
 			t.Fatalf("Docker core BotAPIAddr = %q, want the TELESRV_BOT_API_ADDR value", cfg.BotAPIAddr)
+		}
+		if cfg.BotAPIPublicURL != "https://api.example.test" {
+			t.Fatalf("Docker core BotAPIPublicURL = %q, want the TELESRV_BOT_API_PUBLIC_URL value", cfg.BotAPIPublicURL)
 		}
 	})
 }
@@ -786,7 +790,7 @@ func TestDockerBotAPIOverridePublishesCoreGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .env.example: %v", err)
 	}
-	for _, line := range []string{"TELESRV_BOT_API_ADDR=\n", "TELESRV_BOT_API_BIND_IP=127.0.0.1\n", "TELESRV_BOT_API_PORT=8088\n"} {
+	for _, line := range []string{"TELESRV_BOT_API_ADDR=\n", "TELESRV_BOT_API_BIND_IP=127.0.0.1\n", "TELESRV_BOT_API_PORT=8088\n", "TELESRV_BOT_API_PUBLIC_URL=\n"} {
 		if !strings.Contains(string(envExample), line) {
 			t.Errorf(".env.example is missing %q (the gateway must default to off on loopback)", strings.TrimSpace(line))
 		}

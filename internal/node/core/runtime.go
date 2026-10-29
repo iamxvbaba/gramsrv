@@ -1159,7 +1159,8 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		botsapp.WithTelegramLogin(telegramLoginService),
 		botsapp.WithGramsrvOperatorBot(cfg.OperatorBotUserID, cfg.OperatorBotChatIDs, adminService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
-		botsapp.WithPublicBaseURL(cfg.PublicBaseURL))
+		botsapp.WithPublicBaseURL(cfg.PublicBaseURL),
+		botsapp.WithBotAPIURL(cfg.BotAPIPublicURL))
 	groupCallStore := postgres.NewGroupCallStore(pool)
 	groupCallsService := groupcallsapp.NewService(groupCallStore, groupcallsapp.WithPublicBaseURL(cfg.PublicBaseURL))
 	if cfg.GroupCallControlAddr != "" {
@@ -1734,6 +1735,7 @@ func runWithConfig(logger *zap.Logger, cfg config.CoreConfig, buildMeta common.B
 		Stars:                        starsService,
 		Premium:                      premiumService,
 		Gifts:                        giftsService,
+		MainTabs:                     postgres.NewPeerMainTabStore(pool),
 		Passkey:                      passkeyService,
 		Themes:                       themeService,
 		GeoIP:                        geoIPResolver,

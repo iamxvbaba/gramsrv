@@ -93,6 +93,8 @@ http:
   # Empty disables the HTTP Bot API gateway. Enable with 0.0.0.0:8088 and
   # publish it through compose.bot-api.yaml (see deploy/docker/.env.example).
   bot_api_addr: "${TELESRV_BOT_API_ADDR}"
+  # Bot API base URL BotFather shows with a token; empty shows nothing.
+  bot_api_public_url: "${TELESRV_BOT_API_PUBLIC_URL}"
   admin_api_addr: 0.0.0.0:2599
   admin_api_token: ${TELESRV_ADMIN_API_TOKEN}
   public_link_web_addr: 0.0.0.0:2401

@@ -555,6 +555,21 @@ func TestTDesktopPassiveChannelStubs(t *testing.T) {
 		t.Fatalf("telemetry=%+v moderation=%+v, want separate durable streams",
 			events, moderationReports.Reports())
 	}
+	// Clients report one message once per view and may still hold metrics
+	// for a local (unsent) message id: both are accepted, not MSG_ID_INVALID.
+	metric := func(msgID int, viewID int64) tg.InputMessageReadMetric {
+		return tg.InputMessageReadMetric{MsgID: msgID, ViewID: viewID, TimeInViewMs: 10, ActiveTimeInViewMs: 10,
+			HeightToViewportRatioPermille: 1000, SeenRangeRatioPermille: 1000}
+	}
+	if ok, err := r.onMessagesReportReadMetrics(ownerCtx, &tg.MessagesReportReadMetricsRequest{
+		Peer:    inputPeerChannel(channel),
+		Metrics: []tg.InputMessageReadMetric{metric(1, 100), metric(1, 101), metric(-3, 102)},
+	}); err != nil || !ok {
+		t.Fatalf("messages.reportReadMetrics repeated/local ids = ok %v err %v, want true nil", ok, err)
+	}
+	if events := telemetryEvents.Events(); len(events) != 3 || len(events[2].SubjectIDs) != 1 || events[2].SubjectIDs[0] != 1 {
+		t.Fatalf("repeated read metrics telemetry = %+v, want one event for message 1", events)
+	}
 	if ok, err := r.onMessagesReportMusicListen(ownerCtx, &tg.MessagesReportMusicListenRequest{
 		ID:               &tg.InputDocument{ID: 1, AccessHash: 2},
 		ListenedDuration: 1,

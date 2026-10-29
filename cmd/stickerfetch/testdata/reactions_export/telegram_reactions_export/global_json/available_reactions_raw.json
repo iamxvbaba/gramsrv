@@ -1,0 +1,405 @@
+{
+  "result": {
+    "reactions": [
+      {
+        "reaction": "👍",
+        "title": "Thumbs Up",
+        "static_icon": {
+          "id": 1000001,
+          "access_hash": 10000010,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "image/webp",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "appear_animation": {
+          "id": 1000002,
+          "access_hash": 10000020,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "select_animation": {
+          "id": 1000003,
+          "access_hash": 10000030,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "activate_animation": {
+          "id": 1000004,
+          "access_hash": 10000040,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "effect_animation": {
+          "id": 1000005,
+          "access_hash": 10000050,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "around_animation": {
+          "id": 3000001,
+          "access_hash": 30000010,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "center_icon": {
+          "id": 1000006,
+          "access_hash": 10000060,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        }
+      },
+      {
+        "reaction": "🔥",
+        "title": "Fire",
+        "premium": true,
+        "static_icon": {
+          "id": 2000001,
+          "access_hash": 20000010,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "image/webp",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "appear_animation": {
+          "id": 2000002,
+          "access_hash": 20000020,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "select_animation": {
+          "id": 2000003,
+          "access_hash": 20000030,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "activate_animation": {
+          "id": 2000004,
+          "access_hash": 20000040,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "effect_animation": {
+          "id": 2000005,
+          "access_hash": 20000050,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        },
+        "around_animation": {
+          "id": 3000001,
+          "access_hash": 30000010,
+          "file_reference": "0102",
+          "date": "2023-11-14T22:13:20Z",
+          "mime_type": "application/x-tgsticker",
+          "size": 16,
+          "dc_id": 2,
+          "attributes": [
+            {
+              "_": "DocumentAttributeImageSize",
+              "w": 512,
+              "h": 512
+            }
+          ],
+          "thumbs": [
+            {
+              "_": "PhotoPathSize",
+              "type": "j",
+              "bytes": "1020"
+            },
+            {
+              "_": "PhotoSize",
+              "type": "m",
+              "w": 128,
+              "h": 128,
+              "size": 15
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -284,6 +285,44 @@ LIMIT $2`, args...)
 	}
 	page.Transactions = txns
 	return page, nil
+}
+
+// chargePaidMessageStarsTx debits a private paid message from the sender and
+// credits the recipient the same 85% share as channel paid messages, inside the
+// caller's send transaction, with a paid_message ledger row on each side.
+func chargePaidMessageStarsTx(ctx context.Context, tx pgx.Tx, senderUserID, recipientUserID, amount int64) (domain.PaidStarsCharge, error) {
+	if senderUserID == 0 || recipientUserID == 0 || senderUserID == recipientUserID || amount <= 0 {
+		return domain.PaidStarsCharge{}, domain.ErrStarsInvalidAmount
+	}
+	date := int(time.Now().Unix())
+	var balance int64
+	err := tx.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id = $1 FOR UPDATE`, senderUserID).Scan(&balance)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && balance < amount) {
+		return domain.PaidStarsCharge{}, domain.ErrStarsInsufficient
+	}
+	if err != nil {
+		return domain.PaidStarsCharge{}, fmt.Errorf("select stars balance for paid message: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE stars_balances SET balance = balance - $2, updated_at = now() WHERE user_id = $1`, senderUserID, amount); err != nil {
+		return domain.PaidStarsCharge{}, fmt.Errorf("debit stars balance for paid message: %w", err)
+	}
+	if err := insertStarsTxn(ctx, tx, senderUserID, -amount, domain.StarsReasonPaidMessage, domain.Peer{Type: domain.PeerTypeUser, ID: recipientUserID}, date, "Paid message", ""); err != nil {
+		return domain.PaidStarsCharge{}, err
+	}
+	credited := amount * paidMessageChannelCommissionPermille / 1000
+	var recipientBalance int64
+	if err := tx.QueryRow(ctx, `
+INSERT INTO stars_balances (user_id, balance, updated_at) VALUES ($1, $2, now())
+ON CONFLICT (user_id) DO UPDATE SET balance = stars_balances.balance + EXCLUDED.balance, updated_at = now()
+RETURNING balance`, recipientUserID, credited).Scan(&recipientBalance); err != nil {
+		return domain.PaidStarsCharge{}, fmt.Errorf("credit stars balance for paid message: %w", err)
+	}
+	if credited > 0 {
+		if err := insertStarsTxn(ctx, tx, recipientUserID, credited, domain.StarsReasonPaidMessage, domain.Peer{Type: domain.PeerTypeUser, ID: senderUserID}, date, "Paid message", ""); err != nil {
+			return domain.PaidStarsCharge{}, err
+		}
+	}
+	return domain.PaidStarsCharge{Amount: amount, SenderBalance: balance - amount, RecipientBalance: recipientBalance}, nil
 }
 
 // starsTransactionQueryParts centralizes the sign predicate and keyset

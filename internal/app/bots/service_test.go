@@ -37,6 +37,13 @@ func newOwner(t *testing.T, users *memory.UserStore, phone string) domain.User {
 // 保证单测确定性；异步派发由 mtprotoedge bot e2e 覆盖），返回 BotFather 最新回复文本。
 func sendToBotFather(t *testing.T, svc *Service, messages *memory.MessageStore, owner domain.User, text string) string {
 	t.Helper()
+	return latestBotFatherMessage(t, svc, messages, owner, text).Body
+}
+
+// latestBotFatherMessage 与 sendToBotFather 相同，但返回整条消息（含 ReplyMarkup），
+// 供按钮式对话的断言使用。
+func latestBotFatherMessage(t *testing.T, svc *Service, messages *memory.MessageStore, owner domain.User, text string) domain.Message {
+	t.Helper()
 	ctx := context.Background()
 	svc.respondAsBotFather(owner.ID, text)
 	list, err := messages.ListByUser(ctx, owner.ID, domain.MessageFilter{
@@ -56,7 +63,7 @@ func sendToBotFather(t *testing.T, svc *Service, messages *memory.MessageStore, 
 	if latest.ID == 0 {
 		t.Fatalf("no BotFather reply after sending %q", text)
 	}
-	return latest.Body
+	return latest
 }
 
 var tokenRe = regexp.MustCompile(`(\d+):([A-Za-z0-9_-]{35})`)

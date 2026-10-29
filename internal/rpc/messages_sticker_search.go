@@ -9,33 +9,46 @@ import (
 )
 
 func (r *Router) onMessagesSearchStickerSets(ctx context.Context, req *tg.MessagesSearchStickerSetsRequest) (tg.MessagesFoundStickerSetsClass, error) {
-	if _, _, err := r.currentUserID(ctx); err != nil {
-		return nil, internalErr()
-	}
 	if req == nil {
 		return nil, inputRequestInvalidErr()
 	}
-	if utf8.RuneCountInString(req.Q) > maxStickerSearchQLength {
+	return r.searchStickerSetsOfKind(ctx, domain.StickerSetKindStickers, req.Q, req.ExcludeFeatured, req.Hash)
+}
+
+// onMessagesSearchEmojiStickerSets searches custom emoji packs the same way
+// sticker packs are searched.
+func (r *Router) onMessagesSearchEmojiStickerSets(ctx context.Context, req *tg.MessagesSearchEmojiStickerSetsRequest) (tg.MessagesFoundStickerSetsClass, error) {
+	if req == nil {
+		return nil, inputRequestInvalidErr()
+	}
+	return r.searchStickerSetsOfKind(ctx, domain.StickerSetKindEmoji, req.Q, req.ExcludeFeatured, req.Hash)
+}
+
+func (r *Router) searchStickerSetsOfKind(ctx context.Context, kind domain.StickerSetKind, q string, excludeFeatured bool, reqHash int64) (tg.MessagesFoundStickerSetsClass, error) {
+	if _, _, err := r.currentUserID(ctx); err != nil {
+		return nil, internalErr()
+	}
+	if utf8.RuneCountInString(q) > maxStickerSearchQLength {
 		return nil, limitInvalidErr()
 	}
-	sets, err := r.stickerCatalogSets(ctx, domain.StickerSetKindStickers)
+	sets, err := r.stickerCatalogSets(ctx, kind)
 	if err != nil {
 		return nil, internalErr()
 	}
-	found := domain.SearchStickerSets(sets, domain.StickerSetKindStickers, req.Q)
-	// The current featured catalog contains every public regular sticker set.
-	if req.ExcludeFeatured {
+	found := domain.SearchStickerSets(sets, kind, q)
+	// The current featured catalog contains every public set of the kind.
+	if excludeFeatured {
 		found = nil
 	}
 	if len(found) > 100 {
 		found = found[:100]
 	}
-	found, err = r.stickerSetsWithViewerInstallState(ctx, domain.StickerSetKindStickers, found)
+	found, err = r.stickerSetsWithViewerInstallState(ctx, kind, found)
 	if err != nil {
 		return nil, err
 	}
 	hash := stickerSetsCatalogHash(found)
-	if req.Hash != 0 && req.Hash == hash {
+	if reqHash != 0 && reqHash == hash {
 		return &tg.MessagesFoundStickerSetsNotModified{}, nil
 	}
 	ids := make([]int64, 0, len(found)*5)

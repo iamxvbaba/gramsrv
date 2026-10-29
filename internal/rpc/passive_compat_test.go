@@ -146,6 +146,8 @@ func TestAccountWallpaperSeedLookupAndAckRPCs(t *testing.T) {
 		&tg.InputWallPaperSlug{Slug: first.Slug},
 		themeAliasInput,
 		nofileInput,
+		// Unknown slugs are skipped instead of failing the whole call.
+		&tg.InputWallPaperSlug{Slug: "no-such-wallpaper-slug"},
 	}}).Encode(&multiReq); err != nil {
 		t.Fatalf("encode getMultiWallPapers request: %v", err)
 	}

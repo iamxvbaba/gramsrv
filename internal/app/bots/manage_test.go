@@ -297,7 +297,7 @@ func TestBotFatherSetCommandsFlow(t *testing.T) {
 	bot := makeBot(t, svc, owner, "Flow Bot", "flow_test_bot")
 	ctx := context.Background()
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/setcommands"); !strings.Contains(reply, "username") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/setcommands"); !strings.Contains(reply, "list of commands") {
 		t.Fatalf("/setcommands reply = %q, want pick bot", reply)
 	}
 	if reply := sendToBotFather(t, svc, messages, owner, "@flow_test_bot"); !strings.Contains(reply, "list of commands") {
@@ -313,7 +313,7 @@ func TestBotFatherSetCommandsFlow(t *testing.T) {
 	// 非法格式（无 -）保留 state 提示重试。
 	sendToBotFather(t, svc, messages, owner, "/setcommands")
 	sendToBotFather(t, svc, messages, owner, "@flow_test_bot")
-	if reply := sendToBotFather(t, svc, messages, owner, "noseparator"); !strings.Contains(reply, "Invalid format") {
+	if reply := sendToBotFather(t, svc, messages, owner, "noseparator"); !strings.Contains(reply, "list of commands is invalid") {
 		t.Fatalf("invalid format reply = %q", reply)
 	}
 }
@@ -371,7 +371,7 @@ func TestBotFatherSetInlineFlow(t *testing.T) {
 	bot := makeBot(t, svc, owner, "Inline Flow", "inline_flow_bot")
 	ctx := context.Background()
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/setinline"); !strings.Contains(reply, "inline mode") {
+	if reply := sendToBotFather(t, svc, messages, owner, "/setinline"); !strings.Contains(reply, "inline queries status") {
 		t.Fatalf("/setinline reply = %q, want pick bot", reply)
 	}
 	if reply := sendToBotFather(t, svc, messages, owner, "@inline_flow_bot"); !strings.Contains(reply, "placeholder") {
@@ -393,7 +393,15 @@ func TestBotFatherSetInlineFlow(t *testing.T) {
 		t.Fatalf("inline placeholder after /empty = %q, want empty", p.InlinePlaceholder)
 	}
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinegeo"); !strings.Contains(reply, "location requests") {
+	// /setinlinegeo 只列 inline mode 已开启的 bot。
+	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinegeo"); !strings.Contains(reply, "inline mode enabled") {
+		t.Fatalf("/setinlinegeo without inline bots reply = %q", reply)
+	}
+	sendToBotFather(t, svc, messages, owner, "/setinline")
+	sendToBotFather(t, svc, messages, owner, "@inline_flow_bot")
+	sendToBotFather(t, svc, messages, owner, "Search inline stuff")
+
+	if reply := sendToBotFather(t, svc, messages, owner, "/setinlinegeo"); !strings.Contains(reply, "location request settings") {
 		t.Fatalf("/setinlinegeo reply = %q, want pick bot", reply)
 	}
 	if reply := sendToBotFather(t, svc, messages, owner, "@inline_flow_bot"); !strings.Contains(reply, "location") {
@@ -631,8 +639,12 @@ func TestBotFatherDeleteBotRejectsForeignBot(t *testing.T) {
 	makeBot(t, svc, owner, "Own Bot", "own_owner_bot")
 	makeBot(t, svc, other, "Other Bot", "other_owner_bot")
 
-	if reply := sendToBotFather(t, svc, messages, owner, "/deletebot"); !strings.Contains(reply, "@own_owner_bot") {
-		t.Fatalf("/deletebot reply = %q, want own bot in list", reply)
+	picker := latestBotFatherMessage(t, svc, messages, owner, "/deletebot")
+	if !strings.Contains(picker.Body, "Choose a bot to delete") {
+		t.Fatalf("/deletebot reply = %q, want picker prompt", picker.Body)
+	}
+	if got := botFatherPickerButtonTexts(t, picker); !containsString(got, "@own_owner_bot") || containsString(got, "@other_owner_bot") {
+		t.Fatalf("/deletebot buttons = %v, want only the owner's bot", got)
 	}
 	if reply := sendToBotFather(t, svc, messages, owner, "@other_owner_bot"); !strings.Contains(reply, "among yours") {
 		t.Fatalf("foreign bot reply = %q, want rejection", reply)

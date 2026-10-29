@@ -496,3 +496,37 @@ func TestTransientPrivateBigReactionCacheIsBoundedAndExpires(t *testing.T) {
 		t.Fatalf("transient cache entries = %d, want <= %d", got, transientPrivateBigReactionMaxEntries)
 	}
 }
+
+// top_msg_id on updateMessageReactions names a forum topic. A reply thread in
+// an ordinary group is not a topic: setting it there made clients ask for
+// forum topics of a non-forum chat (CHANNEL_FORUM_MISSING).
+func TestChannelReactionsTopMsgIDOnlyForForums(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	for _, forum := range []bool{false, true} {
+		res := domain.ChannelMessageReactionsResult{
+			Channel: domain.Channel{ID: 9002, Megagroup: true, Forum: forum},
+			Message: domain.ChannelMessage{
+				ID: 7, ChannelID: 9002, SenderUserID: friend.ID,
+				ReplyTo: &domain.MessageReply{MessageID: 3, TopMessageID: 3},
+			},
+		}
+		updates := r.channelMessagesReactionsUpdates(ctx, owner.ID, res, []int{7})
+		var update *tg.UpdateMessageReactions
+		for _, u := range updates.Updates {
+			if mr, ok := u.(*tg.UpdateMessageReactions); ok {
+				update = mr
+			}
+		}
+		if update == nil {
+			t.Fatalf("forum=%v: no updateMessageReactions in %#v", forum, updates.Updates)
+		}
+		topID, has := update.GetTopMsgID()
+		if forum && (!has || topID != 3) {
+			t.Fatalf("forum topic reply: top_msg_id = %d (set %v), want 3", topID, has)
+		}
+		if !forum && has {
+			t.Fatalf("ordinary group reply: top_msg_id = %d, want unset", topID)
+		}
+	}
+}

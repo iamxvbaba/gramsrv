@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -85,11 +86,12 @@ func (c *countingMediaStore) GetStickerSetByID(ctx context.Context, id int64) (d
 
 type countingBlobBackend struct {
 	BlobBackend
-	getRangeCalls int
+	// WarmCaches 并发读 blob，计数必须是原子的。
+	getRangeCalls atomic.Int64
 }
 
 func (c *countingBlobBackend) GetRange(ctx context.Context, objectKey string, offset, limit int64) ([]byte, int64, error) {
-	c.getRangeCalls++
+	c.getRangeCalls.Add(1)
 	return c.BlobBackend.GetRange(ctx, objectKey, offset, limit)
 }
 
@@ -138,8 +140,8 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	if counting.getBlobCalls != 1 {
 		t.Errorf("getBlobCalls = %d, want 1", counting.getBlobCalls)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Errorf("getRangeCalls = %d, want 1", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Errorf("getRangeCalls = %d, want 1", got)
 	}
 	// 后续请求：同 location 命中元数据与字节缓存；[5,10) 直接从内存切片。
 	c2, ok, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: "doc:42", Offset: 5, Limit: 5})
@@ -152,8 +154,8 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 	if counting.getBlobCalls != 1 {
 		t.Errorf("getBlobCalls = %d, want 1 (cache hit)", counting.getBlobCalls)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Errorf("getRangeCalls = %d, want 1 (byte cache hit)", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Errorf("getRangeCalls = %d, want 1 (byte cache hit)", got)
 	}
 }
 
@@ -352,8 +354,8 @@ func TestGetFileLogsCacheHitMiss(t *testing.T) {
 		second["returned_bytes"] != int64(5) {
 		t.Fatalf("second cache log = %#v, want byte cache hit", second)
 	}
-	if blobs.getRangeCalls != 1 {
-		t.Fatalf("GetRange calls = %d, want only first miss to read backend", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 1 {
+		t.Fatalf("GetRange calls = %d, want only first miss to read backend", got)
 	}
 }
 
@@ -390,8 +392,8 @@ func TestGetFileDoesNotByteCacheLargeBlob(t *testing.T) {
 			t.Fatalf("chunk %d = %q, want seven x bytes", i, chunk.Bytes)
 		}
 	}
-	if blobs.getRangeCalls != 2 {
-		t.Errorf("getRangeCalls = %d, want 2 (large blob is not byte cached)", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 2 {
+		t.Errorf("getRangeCalls = %d, want 2 (large blob is not byte cached)", got)
 	}
 }
 
@@ -464,8 +466,8 @@ func TestGetFileHashesUsesBatchedSHA256Ranges(t *testing.T) {
 	if err != nil || !found || len(empty) != 0 {
 		t.Fatalf("eof hashes len=%d found=%v err=%v", len(empty), found, err)
 	}
-	if blobs.getRangeCalls != 2 {
-		t.Fatalf("GetRange calls = %d, want 2", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 2 {
+		t.Fatalf("GetRange calls = %d, want 2", got)
 	}
 }
 
@@ -500,8 +502,8 @@ func TestGetFileHashesUsesStoredWholeSHAForSinglePartBlob(t *testing.T) {
 	if len(hashes) != 1 || hashes[0].Limit != len(content) || !bytes.Equal(hashes[0].Hash, sum) {
 		t.Fatalf("hashes = %+v, want stored whole sha", hashes)
 	}
-	if blobs.getRangeCalls != 0 {
-		t.Fatalf("GetRange calls = %d, want 0", blobs.getRangeCalls)
+	if got := blobs.getRangeCalls.Load(); got != 0 {
+		t.Fatalf("GetRange calls = %d, want 0", got)
 	}
 }
 
@@ -582,5 +584,92 @@ func TestResolveStickerSetCachesOnFirstUse(t *testing.T) {
 	}
 	if counting.getSetByIDCalls != 1 {
 		t.Fatalf("second ResolveStickerSet calls = %d, want cache hit", counting.getSetByIDCalls)
+	}
+}
+
+// blockedStickerDocumentsStore 挂起第一次查询的已读快照，允许 RPC 在该查询发布缓存前完成写入。
+type blockedStickerDocumentsStore struct {
+	*fakeMediaStore
+	loaded  chan struct{}
+	release chan struct{}
+	blocked atomic.Bool
+}
+
+func (s *blockedStickerDocumentsStore) GetDocuments(ctx context.Context, ids []int64) ([]domain.Document, error) {
+	docs, err := s.fakeMediaStore.GetDocuments(ctx, ids)
+	if s.blocked.CompareAndSwap(false, true) {
+		close(s.loaded)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return docs, err
+}
+
+func TestStickerSetCacheRejectsConcurrentStaleLoads(t *testing.T) {
+	for _, mutation := range []string{"delete", "rename"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			media := &blockedStickerDocumentsStore{
+				fakeMediaStore: newFakeMediaStore(),
+				loaded:         make(chan struct{}),
+				release:        make(chan struct{}),
+			}
+			if err := media.PutDocument(ctx, domain.Document{ID: 1000001}); err != nil {
+				t.Fatal(err)
+			}
+			if err := media.PutStickerSet(ctx, domain.StickerSet{
+				ID: 1, AccessHash: 2, CreatorUserID: 42, ShortName: "TestSet", Title: "Original",
+				Kind: domain.StickerSetKindStickers, DocumentIDs: []int64{1000001},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc := NewService(media, nil, 2)
+			ref := domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: 1, AccessHash: 2}
+			done := make(chan error, 1)
+			go func() {
+				_, _, _, err := svc.ResolveStickerSet(ctx, ref)
+				done <- err
+			}()
+			select {
+			case <-media.loaded:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+
+			if mutation == "delete" {
+				// 缓存尚为空时的失效也必须挡住在途查询。
+				if _, err := svc.AdminDeleteStickerSet(ctx, 1); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, _, err := svc.RenameStickerSet(ctx, 42, ref, "Renamed", testStickerSetDeliveryEffects); err != nil {
+				t.Fatal(err)
+			}
+			close(media.release)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+
+			for _, lookup := range []domain.StickerSetRef{ref, {Kind: domain.StickerSetRefByShortName, ShortName: "TestSet"}} {
+				set, _, found, err := svc.ResolveStickerSet(ctx, lookup)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mutation == "delete" && found {
+					t.Fatalf("stale load resurrected deleted set: %+v", set)
+				}
+				if mutation == "rename" && (!found || set.Title != "Renamed") {
+					t.Fatalf("stale load overwrote renamed set: set=%+v found=%v", set, found)
+				}
+			}
+		})
 	}
 }

@@ -79,6 +79,9 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if m.NoForwards {
 		msg.SetNoforwards(true)
 	}
+	if m.PaidStars > 0 {
+		msg.SetPaidMessageStars(m.PaidStars)
+	}
 	if m.Pinned {
 		msg.SetPinned(true)
 	}

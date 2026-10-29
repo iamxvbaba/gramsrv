@@ -124,3 +124,41 @@ func TestStickerSearchUnicodeAndPerItemKeywords(t *testing.T) {
 		t.Fatalf("mixed sticker type: %v", got)
 	}
 }
+
+// messages.searchEmojiStickerSets searches custom emoji packs and never
+// returns regular sticker packs.
+func TestEmojiStickerSetSearchFindsOnlyEmojiPacks(t *testing.T) {
+	r, _, _ := userStickerSetRouter(t)
+	files := r.deps.Files.(*fakeFiles)
+	files.sets[domain.StickerSetKindEmoji] = []domain.StickerSet{
+		{ID: 70, Title: "Cat emoji", ShortName: "cat_emoji", Kind: domain.StickerSetKindEmoji, Emojis: true, DocumentIDs: []int64{701}, Hash: 7},
+		{ID: 71, Title: "Dog emoji", ShortName: "dog_emoji", Kind: domain.StickerSetKindEmoji, Emojis: true, DocumentIDs: []int64{711}, Hash: 8},
+	}
+	files.sets[domain.StickerSetKindStickers] = []domain.StickerSet{
+		{ID: 72, Title: "Cat stickers", ShortName: "cat_stickers", Kind: domain.StickerSetKindStickers, DocumentIDs: []int64{721}, Hash: 9},
+	}
+	for _, id := range []int64{701, 711, 721} {
+		files.docs[id] = domain.Document{ID: id, AccessHash: id + 1000, DCID: 2}
+	}
+	r.invalidateStickerCatalog(domain.StickerSetKindEmoji)
+	r.invalidateStickerCatalog(domain.StickerSetKindStickers)
+	ctx := WithUserID(context.Background(), 1000000001)
+	result, err := r.onMessagesSearchEmojiStickerSets(ctx, &tg.MessagesSearchEmojiStickerSetsRequest{Q: "cat"})
+	if err != nil {
+		t.Fatalf("searchEmojiStickerSets: %v", err)
+	}
+	found, ok := result.(*tg.MessagesFoundStickerSets)
+	if !ok || len(found.Sets) != 1 {
+		t.Fatalf("searchEmojiStickerSets = %#v, want one emoji pack", result)
+	}
+	if set := found.Sets[0].GetSet(); set.ID != 70 || !set.Emojis {
+		t.Fatalf("found set = %+v, want emoji pack 70", set)
+	}
+	cached, err := r.onMessagesSearchEmojiStickerSets(ctx, &tg.MessagesSearchEmojiStickerSetsRequest{Q: "cat", Hash: found.Hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cached.(*tg.MessagesFoundStickerSetsNotModified); !ok {
+		t.Fatalf("same hash = %T, want notModified", cached)
+	}
+}
