@@ -565,6 +565,12 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			return domain.StarGiftTransferResult{}, err
 		}
 	}
+	// The seller side of the sale is the listing price; the buyer may pay it
+	// in another currency (ListingAmount set).
+	listing := req.Amount
+	if req.ListingAmount.Valid() {
+		listing = req.ListingAmount
+	}
 	var replayUniqueID, replayFromID, replayToID, replayAmount int64
 	var replayFromType, replayToType, replayCurrency string
 	replayErr := s.db.QueryRow(ctx, `SELECT t.unique_gift_id,t.from_peer_type,t.from_peer_id,t.to_peer_type,t.to_peer_id,
@@ -574,7 +580,7 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 		&replayUniqueID, &replayFromType, &replayFromID, &replayToType, &replayToID, &replayCurrency, &replayAmount)
 	if replayErr == nil {
 		if replayUniqueID != unique.ID || replayToType != string(req.To.Type) || replayToID != req.To.ID ||
-			replayCurrency != string(req.Amount.Currency) || replayAmount != req.Amount.Amount {
+			replayCurrency != string(listing.Currency) || replayAmount != listing.Amount {
 			return domain.StarGiftTransferResult{}, domain.ErrStarGiftResaleUnavailable
 		}
 		seller = domain.Peer{Type: domain.PeerType(replayFromType), ID: replayFromID}
@@ -630,7 +636,7 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 				return err
 			}
 			if sellerFrozen || sellerType != string(seller.Type) || sellerID != seller.ID ||
-				listingCurrency != string(req.Amount.Currency) || listingAmount != req.Amount.Amount {
+				listingCurrency != string(listing.Currency) || listingAmount != listing.Amount {
 				return domain.ErrStarGiftResaleUnavailable
 			}
 			saved, found, err := lockSavedStarGiftByUniqueID(ctx, tx, uniqueID)
@@ -646,7 +652,7 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			if err != nil {
 				return err
 			}
-			if _, commission, err := s.creditPeerLifecycleAmount(ctx, tx, seller, req.BuyerUserID, req.Amount,
+			if _, commission, err := s.creditPeerLifecycleAmount(ctx, tx, seller, req.BuyerUserID, listing,
 				domain.StarsReasonGiftResale, domain.Peer{Type: domain.PeerTypeUser, ID: req.BuyerUserID},
 				gift.ID, req.Date, "Collectible gift sale"); err != nil {
 				return err
@@ -723,7 +729,7 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 			if _, err := tx.Exec(ctx, `INSERT INTO star_gift_sales(unique_gift_id,seller_peer_type,seller_peer_id,
 			 buyer_peer_type,buyer_peer_id,currency,amount,commission_amount,sold_at,command_key)
 			 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, result.Unique.ID, string(seller.Type), seller.ID,
-				string(req.To.Type), req.To.ID, string(req.Amount.Currency), req.Amount.Amount, commissionAmount,
+				string(req.To.Type), req.To.ID, string(listing.Currency), listing.Amount, commissionAmount,
 				req.Date, strings.TrimSpace(req.CommandKey)); err != nil {
 				return err
 			}

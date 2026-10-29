@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -266,6 +267,19 @@ type StarsTransactionPage struct {
 
 // TonUSDRate is the fixed local-ledger USD reference rate, not a live market quote.
 const TonUSDRate = 1.3448279670684584
+
+// StarUSDRate is the USD reference value of one Star (the usd_rate clients
+// are given), used with TonUSDRate to price a Stars listing in TON.
+const StarUSDRate = 0.013
+
+// StarsToNanoTON converts a Stars price to nanoton at the reference rates,
+// rounding up so the seller is never short.
+func StarsToNanoTON(stars int64) int64 {
+	if stars <= 0 {
+		return 0
+	}
+	return int64(math.Ceil(float64(stars) * StarUSDRate / TonUSDRate * 1e9))
+}
 
 // TonTransaction is an entry in telesrv's internal nanoton ledger. It models
 // the Telegram TON-denominated gift UI without contacting a wallet, Fragment,
