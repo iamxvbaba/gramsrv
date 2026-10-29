@@ -335,6 +335,9 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		Settings:       tg.PeerSettings{},
 		NotifySettings: *tdesktop.NotifySettings(),
 	}
+	if tab, ok := r.mainTabFor(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}); ok {
+		full.SetMainTab(tab)
+	}
 	if u.ID != currentUserID {
 		if svc, ok := r.deps.Messages.(PrivateNoForwardsService); ok {
 			state, err := svc.GetPrivateNoForwards(ctx, currentUserID, u.ID)
