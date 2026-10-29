@@ -135,7 +135,6 @@ ON CONFLICT (user_id) DO UPDATE SET balance = $2, granted = true, updated_at = n
 	return err
 }
 
-
 func TestScheduledMessagePaidStarsPersisted(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

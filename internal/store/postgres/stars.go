@@ -189,6 +189,9 @@ LIMIT $2`, args...)
 	return page, nil
 }
 
+// chargePaidMessageStarsTx debits a private paid message from the sender and
+// credits the recipient the same 85% share as channel paid messages, inside the
+// caller's send transaction, with a paid_message ledger row on each side.
 func chargePaidMessageStarsTx(ctx context.Context, tx pgx.Tx, senderUserID, recipientUserID, amount int64) (domain.PaidStarsCharge, error) {
 	if senderUserID == 0 || recipientUserID == 0 || senderUserID == recipientUserID || amount <= 0 {
 		return domain.PaidStarsCharge{}, domain.ErrStarsInvalidAmount
@@ -223,6 +226,8 @@ RETURNING balance`, recipientUserID, credited).Scan(&recipientBalance); err != n
 	}
 	return domain.PaidStarsCharge{Amount: amount, SenderBalance: balance - amount, RecipientBalance: recipientBalance}, nil
 }
+
+// CountCreditAllUsers 统计批量贷记的候选账号数（真实用户：is_bot=false 且非系统账号）。
 func (s *StarsStore) CountCreditAllUsers(ctx context.Context) (int64, error) {
 	var count int64
 	err := s.db.QueryRow(ctx, `

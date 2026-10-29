@@ -3510,15 +3510,19 @@ type WalletGiftTransfer struct {
 }
 
 type WalletGramCommand struct {
-	ID            int64
-	CommandKey    string
-	Kind          string
-	FromUserID    int64
-	ToUserID      int64
-	AmountNanoton int64
-	BalanceAfter  int64
-	TransactionID int64
-	CreatedAt     pgtype.Timestamptz
+	ID                int64
+	CommandKey        string
+	Kind              string
+	FromUserID        int64
+	ToUserID          int64
+	AmountNanoton     int64
+	BalanceAfter      int64
+	TransactionID     int64
+	CreatedAt         pgtype.Timestamptz
+	AuthorizationHash []byte
+	RequestHash       []byte
+	MessageRandomID   *int64
+	TransferDate      *int32
 }
 
 type WebAuthorization struct {
