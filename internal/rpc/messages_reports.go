@@ -188,8 +188,9 @@ func (r *Router) onMessagesReportReadMetrics(ctx context.Context, req *tg.Messag
 	ids := make([]int, 0, len(req.Metrics))
 	payload := make([]readMetricTelemetry, 0, len(req.Metrics))
 	for _, metric := range req.Metrics {
+		// A local (unsent) message id is stale telemetry, not an error.
 		if metric.MsgID <= 0 || metric.MsgID > domain.MaxMessageBoxID {
-			return false, messageIDInvalidErr()
+			continue
 		}
 		if metric.ViewID == 0 || metric.TimeInViewMs < 0 ||
 			metric.TimeInViewMs > 24*60*60*1000 ||
@@ -229,12 +230,19 @@ func (r *Router) onMessagesReportReadMetrics(ctx context.Context, req *tg.Messag
 	sort.Slice(payload, func(i, j int) bool {
 		return payload[i].MessageID < payload[j].MessageID
 	})
+	sort.Ints(ids)
 	if r.deps.ClientTelemetry == nil {
 		return false, internalErr()
 	}
+	distinct := make([]int, 0, len(ids))
+	for i, id := range ids {
+		if i == 0 || id != ids[i-1] {
+			distinct = append(distinct, id)
+		}
+	}
 	if _, _, err := r.deps.ClientTelemetry.Record(
 		ctx, userID, domain.ClientTelemetryReadMetrics, peer,
-		messageIDs64(ids),
+		messageIDs64(distinct),
 		struct {
 			Metrics []readMetricTelemetry `json:"metrics"`
 		}{Metrics: payload},
@@ -346,7 +354,20 @@ func (r *Router) validateTelemetryMessageIDs(ctx context.Context, userID int64, 
 // the server no longer holds (deleted/trimmed history) are dropped instead of
 // turning a routine stats flush into an error.
 func (r *Router) resolveTelemetryMessageIDs(ctx context.Context, userID int64, peer domain.Peer, ids []int, payload []readMetricTelemetry) ([]int, []readMetricTelemetry, error) {
-	existing, err := r.telemetryExistingMessageIDs(ctx, userID, peer, ids)
+	if len(ids) == 0 {
+		return nil, []readMetricTelemetry{}, nil
+	}
+	// One message can be reported several times (one metric per view), so
+	// the existence check runs on the distinct ids.
+	unique := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; !dup {
+			seen[id] = struct{}{}
+			unique = append(unique, id)
+		}
+	}
+	existing, err := r.telemetryExistingMessageIDs(ctx, userID, peer, unique)
 	if err != nil {
 		return nil, nil, err
 	}

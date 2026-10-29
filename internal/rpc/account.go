@@ -281,9 +281,18 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		if len(wallpapers) > 100 {
 			return nil, tgerr400("WALLPAPER_INVALID")
 		}
-		found, ok := tdesktop.LookupWallPapers(wallpapers)
-		if !ok {
-			return nil, tgerr400("WALLPAPER_INVALID")
+		// Return the wallpapers that exist and skip unknown ones. Android asks
+		// for every theme-accent pattern slug at once, and one slug from the
+		// official catalog that this server lacks used to fail the whole call,
+		// so none of the patterns loaded.
+		found := make([]tg.WallPaperClass, 0, len(wallpapers))
+		for _, input := range wallpapers {
+			wallpaper, ok := tdesktop.LookupWallPaper(input)
+			if !ok {
+				r.log.Debug("wallpaper reference skipped", wallpaperReferenceLogFields("account.getMultiWallPapers", input)...)
+				continue
+			}
+			found = append(found, wallpaper)
 		}
 		return found, nil
 	})
