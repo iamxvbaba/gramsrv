@@ -1345,12 +1345,14 @@ func ValidateStarGiftCollectibleWrite(write StarGiftCollectibleWrite) error {
 // preview response includes the target attribute plus the published selectable pool. A pool may
 // intentionally contain one deterministic model or pattern; when it contains several entries,
 // every entry must still have its own document identity so clients do not deduplicate the pool.
+// Only attributes with a positive weight are selectable: the preview sample and the upgrade draw
+// skip zero-weight attributes, so they cannot make up the two backdrops a preview needs.
 func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireStoredAsset bool) error {
 	validateAnimated := func(kind StarGiftCollectibleAttributeKind, attributes []StarGiftCollectibleAttribute) error {
 		selectable := 0
 		documents := make(map[int64]struct{}, len(attributes))
 		for _, attribute := range attributes {
-			if attribute.RarityKind != StarGiftRarityPermille || attribute.Crafted {
+			if attribute.RarityKind != StarGiftRarityPermille || attribute.Crafted || attribute.RarityPermille <= 0 {
 				continue
 			}
 			selectable++
@@ -1381,11 +1383,13 @@ func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireS
 		if attribute.RarityKind != StarGiftRarityPermille || attribute.Crafted {
 			continue
 		}
-		selectableBackdrops++
 		if _, exists := seenBackdropIDs[attribute.BackdropID]; exists {
 			return fmt.Errorf("%w: duplicate backdrop_id %d", ErrStarGiftCollectibleInvalid, attribute.BackdropID)
 		}
 		seenBackdropIDs[attribute.BackdropID] = struct{}{}
+		if attribute.RarityPermille > 0 {
+			selectableBackdrops++
+		}
 	}
 	if selectableBackdrops < 2 {
 		return fmt.Errorf("%w: backdrop preview requires at least two selectable attributes", ErrStarGiftCollectibleInvalid)

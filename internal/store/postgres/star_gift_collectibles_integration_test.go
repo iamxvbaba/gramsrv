@@ -540,6 +540,76 @@ UPDATE star_gift_collectible_revisions SET status='published', published_at=now(
 	}
 }
 
+// The upgrade preview samples only positive weights, so zero-weight backdrops
+// must not make up the two backdrops the activation trigger requires.
+func TestStarGiftCollectiblePreviewActivationIgnoresZeroWeightPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	gifts := NewStarGiftStore(pool)
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Zero Weight Preview " + suffix, Stars: 10, ConvertStars: 5, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "zero-weight-preview.tgs"), Blob: collectibleTestBlob(baseDocumentID, "zero-weight-preview"),
+		Animation: collectibleTestAnimation("zero-weight-preview.tgs"), Actor: "integration", CommandID: "zero-weight-preview-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create zero-weight catalog: %v", err)
+	}
+	animation := collectibleTestAnimation("zero-weight-preview-attribute.tgs")
+	publishRevision := func(revision int, backdropWeights ...int) int64 {
+		t.Helper()
+		var revisionID int64
+		if err := pool.QueryRow(ctx, `
+INSERT INTO star_gift_collectible_revisions
+    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id)
+VALUES ($1, $2, 10, 10, $3, 'draft', 'integration', $4)
+RETURNING id`, entry.Gift.ID, revision, fmt.Sprintf("zero-%s-%d", suffix, revision),
+			fmt.Sprintf("zero-weight-preview-pool-%s-%d", suffix, revision)).Scan(&revisionID); err != nil {
+			t.Fatalf("insert revision %d: %v", revision, err)
+		}
+		if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_models
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, crafted, sort_order)
+VALUES ($1, 'Only Model', $2, $3::jsonb, $4, 'model.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, false, 0)`,
+			revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+			t.Fatalf("insert revision %d model: %v", revision, err)
+		}
+		if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_patterns
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, sort_order)
+VALUES ($1, 'Only Pattern', $2, $3::jsonb, $4, 'pattern.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, 0)`,
+			revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+			t.Fatalf("insert revision %d pattern: %v", revision, err)
+		}
+		for index, weight := range backdropWeights {
+			if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_backdrops
+    (collectible_revision_id, name, backdrop_id, center_color, edge_color, pattern_color, text_color,
+     rarity_kind, rarity_permille, sort_order)
+VALUES ($1, $2, $3, 1, 2, 3, 4, 'permille', $4, $3)`, revisionID, fmt.Sprintf("Backdrop %d", index+1), index+1, weight); err != nil {
+				t.Fatalf("insert revision %d backdrop weight %d: %v", revision, weight, err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `
+UPDATE star_gift_collectible_revisions SET status='published', published_at=now() WHERE id=$1`, revisionID); err != nil {
+			t.Fatalf("publish revision %d directly: %v", revision, err)
+		}
+		return revisionID
+	}
+
+	oneDrawable := publishRevision(1, 1000, 0, 0)
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_catalog SET collectible_revision_id=$2 WHERE gift_id=$1`, entry.Gift.ID, oneDrawable); err == nil {
+		t.Fatal("database activated a preview pool with one drawable backdrop and zero-weight extras")
+	}
+	twoDrawable := publishRevision(2, 999, 1, 0)
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_catalog SET collectible_revision_id=$2 WHERE gift_id=$1`, entry.Gift.ID, twoDrawable); err != nil {
+		t.Fatalf("activate a preview pool with two drawable backdrops and a zero-weight one: %v", err)
+	}
+}
+
 func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
