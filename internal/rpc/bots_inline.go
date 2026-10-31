@@ -933,7 +933,9 @@ func inlineExternalContentDocumentSpec(resultType string, document domain.BotInl
 		attrs = ensureDocumentAttribute(attrs, domain.DocumentAttribute{Kind: domain.DocAttrSticker})
 	}
 	attrs = ensureFilenameAttribute(attrs, inlineExternalContentFilename(resultType, mime))
-	return domain.DocumentSpec{MimeType: mime, Attributes: attrs}
+	// A "video" result stays a video even when it has no audio track; only a
+	// "gif" result is an animation.
+	return domain.DocumentSpec{MimeType: mime, Attributes: attrs, NosoundVideo: resultType == "video"}
 }
 
 func inlineExternalContentDimensions(attrs []domain.DocumentAttribute) (int, int) {

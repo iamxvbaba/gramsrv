@@ -624,7 +624,12 @@ func (r *Router) botAPIDocumentMedia(ctx context.Context, botID int64, kind stri
 	var err error
 	switch {
 	case len(file.Bytes) > 0:
-		document, err = r.deps.Files.CreateDocumentFromBytes(ctx, file.Bytes, domain.DocumentSpec{MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile})
+		// The official Bot API sends videos through TDLib, which always sets
+		// nosound_video, so a silent sendVideo stays a video; sendAnimation
+		// already carries the animated attribute.
+		document, err = r.deps.Files.CreateDocumentFromBytes(ctx, file.Bytes, domain.DocumentSpec{
+			MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile, NosoundVideo: kind == "video",
+		})
 	case file.RemoteURL != "":
 		document, err = r.deps.Files.CreateDocumentFromURL(ctx, file.RemoteURL)
 		document.Attributes = mergeDocumentAttributes(document.Attributes, attrs)

@@ -67,10 +67,10 @@ func faststartMP4(data []byte) ([]byte, bool) {
 // mp4Layout 是只读 box 头得出的顶层结构信息，用于在不读取整段媒体的前提下判断是否需要
 // faststart 以及如何流式重写。
 type mp4Layout struct {
-	needsFaststart       bool  // moov 在 mdat 之后
-	moovIsLast           bool  // moov 是最后一个顶层 box（可走流式重写）
-	ftypStart, ftypEnd   int64
-	moovStart, moovEnd   int64
+	needsFaststart     bool // moov 在 mdat 之后
+	moovIsLast         bool // moov 是最后一个顶层 box（可走流式重写）
+	ftypStart, ftypEnd int64
+	moovStart, moovEnd int64
 }
 
 // inspectMP4Layout 只读顶层 box 头（每个 ≤16 字节，跳过 box 负载）来判定结构，避免为了
@@ -240,4 +240,87 @@ func patchCo64(box []byte, delta int64) bool {
 		off += 8
 	}
 	return true
+}
+
+// mp4TrackKinds 读取 moov box（含 box 头）里各 trak 的 mdia/hdlr handler_type，报告是否存在
+// 视频轨（vide）和音频轨（soun）。ok=false 表示结构无法完整解析，调用方应保持客户端给出的分类。
+func mp4TrackKinds(moov []byte) (hasVideo, hasAudio, ok bool) {
+	boxes, ok := parseTopLevelBoxes(moov)
+	if !ok || len(boxes) != 1 || boxes[0].typ != "moov" {
+		return false, false, false
+	}
+	children, ok := childBoxes(moov, boxes[0])
+	if !ok {
+		return false, false, false
+	}
+	for _, trak := range children {
+		if trak.typ != "trak" {
+			continue
+		}
+		handler, ok := trakHandler(moov, trak)
+		if !ok {
+			return false, false, false
+		}
+		switch handler {
+		case "vide":
+			hasVideo = true
+		case "soun":
+			hasAudio = true
+		}
+	}
+	return hasVideo, hasAudio, true
+}
+
+// trakHandler 返回 trak/mdia/hdlr 的 handler_type。
+func trakHandler(data []byte, trak boxRef) (string, bool) {
+	children, ok := childBoxes(data, trak)
+	if !ok {
+		return "", false
+	}
+	for _, mdia := range children {
+		if mdia.typ != "mdia" {
+			continue
+		}
+		parts, ok := childBoxes(data, mdia)
+		if !ok {
+			return "", false
+		}
+		for _, hdlr := range parts {
+			if hdlr.typ != "hdlr" {
+				continue
+			}
+			// hdlr 负载：version/flags(4) + pre_defined(4) + handler_type(4) + ...
+			payload := data[hdlr.start+boxHeaderSize(data, hdlr) : hdlr.end]
+			if len(payload) < 12 {
+				return "", false
+			}
+			return string(payload[8:12]), true
+		}
+	}
+	return "", false
+}
+
+// childBoxes 解析容器 box 的子 box，偏移相对于 data。
+func childBoxes(data []byte, parent boxRef) ([]boxRef, bool) {
+	start := parent.start + boxHeaderSize(data, parent)
+	if start > parent.end {
+		return nil, false
+	}
+	children, ok := parseTopLevelBoxes(data[start:parent.end])
+	if !ok {
+		return nil, false
+	}
+	for i := range children {
+		children[i].start += start
+		children[i].end += start
+	}
+	return children, true
+}
+
+// boxHeaderSize 是 box 头长度：largesize（size==1）为 16 字节，否则 8 字节。
+func boxHeaderSize(data []byte, b boxRef) int {
+	if binary.BigEndian.Uint32(data[b.start:b.start+4]) == 1 {
+		return 16
+	}
+	return 8
 }
