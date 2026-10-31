@@ -320,6 +320,7 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	// 上传前会做这步；DrKLO 发 story 视频不转码导致 moov 在末尾，TDesktop 流式播放路径
 	// 无法解复用（av_read_frame Invalid data）。不转码、保留原编码（含 HEVC）。
 	body = s.maybeFaststartVideoBlob(ctx, spec.MimeType, body)
+	spec = s.markSilentMP4Animated(ctx, body, spec)
 	spec = s.normalizeUploadedTGS(ctx, body, spec)
 	docID := randomID()
 	if err := s.media.PutFileBlob(ctx, domain.FileBlob{
@@ -428,6 +429,79 @@ func canonicalGIFVideoAttributes(attrs []domain.DocumentAttribute, video GIFVide
 		Duration: video.Duration, SupportsStreaming: true, NoSound: true, VideoCodec: "h264",
 	})
 	return out
+}
+
+// maxSilenceProbeMoovBytes 限制为判断音轨而读入内存的 moov 大小；更大的 moov 按客户端分类落库。
+const maxSilenceProbeMoovBytes = 8 << 20
+
+// markSilentMP4Animated 让未声明 nosound_video 的无声 MP4 视频按 GIF（animated）落库，与官方
+// server 一致：TDesktop 只在要把无声视频保留为普通视频时设置 nosound_video（api_media.cpp
+// PrepareUploadedDocument: silent = !animated && (groupId || isSilentVideo())），反推出未设该标志
+// 的无声 MP4 会被 server 当作 GIF；TDLib 发送 MP4 动画只带 video 属性、不带 animated
+// （AnimationsManager::get_input_media），依赖这条规则才能被对端识别为动画。
+func (s *Service) markSilentMP4Animated(ctx context.Context, body assembledUploadBlob, spec domain.DocumentSpec) domain.DocumentSpec {
+	if !silentMP4Candidate(spec) || body.Size <= 0 {
+		return spec
+	}
+	readAt := func(off, n int64) ([]byte, error) {
+		data, _, err := s.blobs.GetRange(ctx, body.ObjectKey, off, n)
+		return data, err
+	}
+	layout, ok := inspectMP4Layout(body.Size, readAt)
+	if !ok {
+		return spec
+	}
+	size := layout.moovEnd - layout.moovStart
+	if size <= 0 || size > maxSilenceProbeMoovBytes {
+		return spec
+	}
+	moov, err := readAt(layout.moovStart, size)
+	if err != nil || int64(len(moov)) != size {
+		return spec
+	}
+	return silentMP4AnimatedSpec(spec, moov)
+}
+
+// silentMP4Candidate 只接纳可能被转为 GIF 的上传：普通 video/mp4 视频，未要求按文件或按
+// 无声视频发送，也不是圆形视频、贴纸、音频或已带 animated 的文档。
+func silentMP4Candidate(spec domain.DocumentSpec) bool {
+	if spec.ForceFile || spec.NosoundVideo || !strings.EqualFold(strings.TrimSpace(spec.MimeType), "video/mp4") {
+		return false
+	}
+	video := false
+	for _, attr := range spec.Attributes {
+		switch attr.Kind {
+		case domain.DocAttrAnimated, domain.DocAttrSticker, domain.DocAttrAudio, domain.DocAttrCustomEmoji:
+			return false
+		case domain.DocAttrVideo:
+			if attr.RoundMessage {
+				return false
+			}
+			video = true
+		}
+	}
+	return video
+}
+
+// silentMP4AnimatedSpec 在 moov 确认有视频轨且没有音频轨时，加上 animated 并把视频属性标为无声。
+func silentMP4AnimatedSpec(spec domain.DocumentSpec, moov []byte) domain.DocumentSpec {
+	if !silentMP4Candidate(spec) {
+		return spec
+	}
+	hasVideo, hasAudio, ok := mp4TrackKinds(moov)
+	if !ok || !hasVideo || hasAudio {
+		return spec
+	}
+	attrs := make([]domain.DocumentAttribute, 0, len(spec.Attributes)+1)
+	for _, attr := range spec.Attributes {
+		if attr.Kind == domain.DocAttrVideo {
+			attrs = append(attrs, domain.DocumentAttribute{Kind: domain.DocAttrAnimated})
+			attr.NoSound = true
+		}
+		attrs = append(attrs, attr)
+	}
+	spec.Attributes = attrs
+	return spec
 }
 
 // maxFaststartBytes 限制 faststart 一次性载入内存的视频大小；超过则跳过（流式 faststart
@@ -558,6 +632,13 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 		data = converted.Data
 		spec.MimeType = "video/mp4"
 		spec.Attributes = canonicalGIFVideoAttributes(spec.Attributes, converted, spec.NosoundVideo)
+	} else if boxes, ok := parseTopLevelBoxes(data); ok {
+		for _, b := range boxes {
+			if b.typ == "moov" {
+				spec = silentMP4AnimatedSpec(spec, data[b.start:b.end])
+				break
+			}
+		}
 	}
 	objectKey, size, sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
 	if err != nil {
