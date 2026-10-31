@@ -4066,8 +4066,18 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 			req.SupplyTotal = bundle.Gift.UpgradeVariants
 		}
 	}
-	if req.SlugPrefix = strings.ToLower(strings.TrimSpace(req.SlugPrefix)); req.SlugPrefix == "" {
-		req.SlugPrefix = "official-" + req.SourceGiftID
+	if req.SlugPrefix = strings.TrimSpace(req.SlugPrefix); req.SlugPrefix == "" {
+		// Telegram-style "PlushPepe-123": the title without spaces or
+		// punctuation. A title with no Latin letters falls back to "Gift"
+		// plus the tail of the id ("Gift081615"), never to bare digits.
+		req.SlugPrefix = domain.StarGiftSlugPrefixFromTitle(req.Title)
+		if req.SlugPrefix == "" {
+			id := req.SourceGiftID
+			if len(id) > 6 {
+				id = id[len(id)-6:]
+			}
+			req.SlugPrefix = "Gift" + id
+		}
 	}
 
 	// Scheduled release ("отложенный дроп") for a snapshot gift. The snapshot's own

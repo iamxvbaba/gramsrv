@@ -756,13 +756,13 @@ func (s *StarGiftStore) ResolveSavedIDs(ctx context.Context, owner domain.Peer, 
 		keys = append(keys, resolveKey{value: value})
 		values = append(values, value)
 	}
-	query := `SELECT p.saved_id::bigint, COALESCE(u.slug, ''), p.id
+	query := `SELECT p.saved_id::bigint, COALESCE(lower(u.slug), ''), p.id
 FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
-  AND (p.saved_id::bigint=ANY($3::bigint[]) OR u.slug=ANY($4::text[]))`
+  AND (p.saved_id::bigint=ANY($3::bigint[]) OR lower(u.slug)=ANY($4::text[]))`
 	if owner.Type == domain.PeerTypeUser {
-		query = `SELECT ref.msg_id, COALESCE(u.slug, ''), p.id
+		query = `SELECT ref.msg_id, COALESCE(lower(u.slug), ''), p.id
 FROM peer_star_gifts p
 LEFT JOIN unique_star_gifts u ON u.id=p.unique_gift_id
 CROSS JOIN LATERAL (
@@ -773,7 +773,7 @@ CROSS JOIN LATERAL (
 ) ref
 WHERE p.owner_peer_type=$1 AND p.owner_peer_id=$2 AND p.lifecycle_status='active'
 	  AND (ref.msg_id=ANY($3::bigint[])
-	   OR u.slug=ANY($4::text[]))`
+	   OR lower(u.slug)=ANY($4::text[]))`
 	}
 	rows, err := s.db.Query(ctx, query, string(owner.Type), owner.ID, values, slugs)
 	if err != nil {
@@ -1041,7 +1041,7 @@ func savedStarGiftRefWhere(ref domain.SavedStarGiftRef) (string, []any) {
 	args := []any{string(ref.Owner.Type), ref.Owner.ID}
 	if ref.Slug != "" {
 		args = append(args, strings.ToLower(strings.TrimSpace(ref.Slug)))
-		return "owner_peer_type = $1 AND owner_peer_id = $2 AND unique_gift_id = (SELECT id FROM unique_star_gifts WHERE slug = $3)", args
+		return "owner_peer_type = $1 AND owner_peer_id = $2 AND unique_gift_id = (SELECT id FROM unique_star_gifts WHERE lower(slug) = $3)", args
 	}
 	switch ref.Owner.Type {
 	case domain.PeerTypeChannel:
